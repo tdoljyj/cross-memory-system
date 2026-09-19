@@ -18,6 +18,12 @@ MODEL_REV = "2fc06364715b967f1860aea9cf38778875588b17"
 MODEL_SHA = "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696"
 Q8_SHA = "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
 SERVER_SHA = "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba"
+RUNTIME_ASSET_NAME = "llama-b11033-bin-win-vulkan-x64.zip"
+RUNTIME_ASSET_BYTES = 31766410
+RUNTIME_ASSET_SHA256 = "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2"
+RUNTIME_DIR = r"C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002\\runtime\\b11033-vulkan"
+RUNTIME_TREE_SEMANTICS = "EXACT_RELEASE_ZIP_AND_EXTRACTED_TREE_MATCH / NO_EXTRA_MISSING_OR_MUTATED_FILES"
+CONFIG_SOURCES = "SIGNED_ARGV_ONLY / CHILD_ENV_ALLOWLIST / NO_LLAMA_ARG / NO_PROGRAMDATA_APPDATA_CONFIG"
 LLAMA_COMMIT = "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
 ORCH_COMMIT = '9aa75f272d6bf9007db036479d8e01bc088e0912'
 ORCH_BLOB = '7389eed2d7cfd722c78db63d024ae84668eb760e'
@@ -83,6 +89,7 @@ REQUIRED_EVIDENCE = {
     "ORCHESTRATOR_OWNED_PROCESS_REGISTRY_FOR_FORCE_KILL",
     "OPAQUE_REGISTERED_EXECUTION_CONTEXT_CANNOT_BE_CALLER_FORGED",
     "PROCESS_WRAPPER_AND_ORIGINAL_NATIVE_HANDLE_IDENTITY_REGISTRY",
+    "RUNTIME_RELEASE_ASSET_SHA256_AND_EXTRACTED_TREE_EXACT_MATCH",
 }
 REQUIRED_FINAL_ISSUANCE = {
     "STATIC_REVIEW_OR_TESTS_CONFIRM_PROFILE_STATUS_GUARD_AND_PID_OWNERSHIP_GUARD",
@@ -172,9 +179,18 @@ def validate_native_source_binding(profile: dict) -> bool:
         if p.stat().st_size != identity["bytes"] or git_blob_sha1(p) != identity["git_blob_sha1"] or hashlib.sha256(p.read_bytes()).hexdigest() != identity["sha256"]:
             return False
     policy = (native / "policy.go").read_text(encoding="utf-8")
+    owner = (native / "owner.go").read_text(encoding="utf-8")
+    platform_windows = (native / "platform_windows.go").read_text(encoding="utf-8")
+    build_helper = (ROOT / "scripts/model-program/build_m1_07_native_owner.py").read_text(encoding="utf-8")
     if 'const issuerPublicKeyHex = "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03"' not in policy:
         return False
     if 'const issuerPublicKeySHA256 = "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c"' not in policy:
+        return False
+    if "Env: sanitizedServerEnv()" not in platform_windows or "zip.OpenReader(runtimeAssetPath)" not in platform_windows:
+        return False
+    if 'allowed := []string{"SystemRoot", "WINDIR", "TEMP", "TMP"}' not in owner:
+        return False
+    if 'if os.environ.get("GOFLAGS")' not in build_helper or 'GOENV="off"' not in build_helper or 'GOWORK="off"' not in build_helper:
         return False
     binary_sha = code.get("native_owner_binary_sha256")
     if not isinstance(binary_sha, str) or len(binary_sha) != 64 or any(c not in "0123456789abcdef" for c in binary_sha):
@@ -233,6 +249,14 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
         return False, "M1_07_RUNTIME_BINDING"
     if runtime.get("server_executable") != "llama-server.exe" or runtime.get("server_executable_sha256") != SERVER_SHA:
         return False, "M1_07_RUNTIME_BINDING"
+    if (
+        runtime.get("runtime_asset_name") != RUNTIME_ASSET_NAME
+        or runtime.get("runtime_asset_bytes") != RUNTIME_ASSET_BYTES
+        or runtime.get("runtime_asset_sha256") != RUNTIME_ASSET_SHA256
+        or runtime.get("runtime_directory") != RUNTIME_DIR
+        or runtime.get("runtime_tree_attestation_semantics") != RUNTIME_TREE_SEMANTICS
+    ):
+        return False, "M1_07_RUNTIME_TREE_BINDING"
 
     config = (profile.get("config_revision") or {}).get("server") or {}
     if config.get("host") != "127.0.0.1" or config.get("port") != 18087 or config.get("external_bind") is not False or config.get("external_network") is not False:
@@ -243,6 +267,8 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
         return False, "M1_07_CPU_ONLY_BOUNDARY"
     if config.get("threads") != 2 or config.get("threads_batch") != 2 or config.get("parallel") != 1 or config.get("ctx_size") != 2048:
         return False, "M1_07_COMPUTE_BOUNDARY"
+    if config.get("configuration_sources") != CONFIG_SOURCES:
+        return False, "M1_07_CONFIGURATION_SOURCE_BOUNDARY"
 
     scenarios = profile.get("scenario_contract") or []
     if {x.get("scenario_id") for x in scenarios} != SCENARIOS:
