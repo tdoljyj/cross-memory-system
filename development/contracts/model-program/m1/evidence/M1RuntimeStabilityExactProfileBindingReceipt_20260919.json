@@ -5,31 +5,41 @@
   "stage_id": "MODEL-PROGRAM-M1",
   "task_id": "M1-07",
   "created_at_utc": "2026-09-19T10:22:14.4365891Z",
-  "status": "EXACT_PROFILE_CANDIDATE_BOUND / MAJOR_REMEDIATION_STATICALLY_VALIDATED / EFFECTFUL_EXECUTION_BLOCKED / FRESH_CONTEXT_RE_REVIEW_REQUIRED",
+  "status": "CURRENT_AUTHORITATIVE_REMEDIATION_BINDING / ROUND_2 / MAJOR_01_02_03_04_CLOSED_AUTHOR_SIDE / EFFECTFUL_EXECUTION_BLOCKED / FRESH_CONTEXT_RE_REVIEW_REQUIRED",
   "source_baseline": {
     "main_merge_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
     "stage_successor_ref": "../governance/M1StageEntryAuthorization.v1.0.2.json",
     "m1_06a_pc_baseline": "CLOSED_SUCCESS"
   },
   "candidate": {
-    "path": "../governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.candidate.json",
-    "git_blob_sha1": "b0c70a230b664e1754dd79ceb63e8159b7b610db",
+    "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.candidate.json",
+    "git_blob_sha1": "f64f265fb57ccb07ab22c270c802c37b57a401dd",
     "profile_id": "M1-STAB-QWEN35-08B-PC-001-CANDIDATE",
     "status": "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE",
     "effectful_authority_issued": false,
+    "authority_effect": "NONE / PROFILE_PREPARATION_ONLY",
     "issued_successor_profile_id": "M1-STAB-QWEN35-08B-PC-001-ISSUED"
   },
   "orchestrator": {
-    "path": "../../../scripts/model-program/m1_runtime_stability_pc.py",
-    "code_commit": "2209576a79af035a4ffe4a59aab4c0039107f36f",
-    "git_blob_sha1": "b197aba8c4ab3d736f063ac823ddfeec85289f0d",
-    "normalized_sha256": "de43baf3445a415dd1639948aa3e674f1d04582f75b2c29f7cc3bd6e1f490d1e",
+    "path": "scripts/model-program/m1_runtime_stability_pc.py",
+    "code_commit": "52c99f179a4046430fbafc1ea610303dbfcbc5ce",
+    "git_blob_sha1": "60310021d161eeb0aace2dd670241523845a60f0",
+    "normalized_sha256": "59a4a95ce234b76c4f6852370ff2b05a5dcd6b3de372d45e59a558041e4bed8a",
+    "exact_binding_module_path": "scripts/model-program/m1_runtime_stability_binding.py",
+    "exact_binding_module_git_blob_sha1": "d86bd85a06bccfabe1fbcd7345a3895c4cf4e836",
     "default_mode": "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD",
-    "process_ownership_guard": "FORCE_KILL_ACCEPTS_ONLY_THE_PROFILE_OWNED_SUBPROCESS_POPEN_HANDLE / NO_ARBITRARY_PID_KILL_PATH",
-    "crash_semantics": "ACTIVE_STREAM_OBSERVED -> FORCE_KILL_PROFILE_OWNED_SERVER -> CLOSE_STREAM_CONNECTION -> WAIT_PORT_RELEASE -> EXACT_RESTART",
-    "exact_scope_guard": "HARD_BOUND_ISSUED_PROFILE_ID / DESK-W-591 / Q8_0_SHA256 / LLAMA_CPP_B11033_COMMIT / LLAMA_SERVER_SHA256 / 127.0.0.1:18087 / THREADS_2 / THREADS_BATCH_2 / GPU_OFFLOAD_DISABLED",
-    "owner_authorization_guard": "CANONICAL_JSON_SHA256 / AUTHORIZATION_ID / AUTHORIZED_PROFILE_ID / AUTHORITY_EFFECT / ISSUED_AT_UTC",
-    "evidence_and_budget_guard": "WINDOWS_RSS_PROCESS_METRICS / MAX_WALL_TIME_1800 / MAX_STORAGE_134217728 / ATOMIC_SINGLE_ATTEMPT_GUARD"
+    "machine_identity_guard": {
+      "logical_name": "DESK-W-591",
+      "source": "WINDOWS_HKLM_MACHINEGUID",
+      "canonicalization": "SHA256_UTF8_PREFIX_windows-machineguid_COLON_TRIM_LOWERCASE",
+      "sha256": "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522",
+      "raw_identifier_stored": false
+    },
+    "process_ownership_guard": "VALIDATED_EXECUTION_CONTEXT + INTERNAL_OWNED_PROCESS_REGISTRY + CONTEXT_NONCE / FOREIGN_POPEN_REJECTED / NO_ARBITRARY_PID_KILL_PATH",
+    "crash_semantics": "ACTIVE_STREAM_OBSERVED -> FORCE_KILL_ORCHESTRATOR_OWNED_SERVER -> CLOSE_STREAM_CONNECTION -> WAIT_PORT_RELEASE -> EXACT_RESTART -> HEALTH -> MINIMAL_PROBE",
+    "exact_scope_guard": "PROFILE_DECLARED_IDENTITY_EQUALS_HARD_CODED_EXPECTED_IDENTITY AND ACTUAL_SCRIPT_BYTES_EQUAL_HARD_CODED_EXPECTED_HASH / DESK-W-591 MACHINEGUID HASH / Q8_0_SHA256 / LLAMA_CPP_B11033_COMMIT / LLAMA_SERVER_SHA256 / 127.0.0.1:18087 / THREADS_2 / THREADS_BATCH_2 / GPU_OFFLOAD_DISABLED",
+    "owner_authorization_guard": "AUTHORIZATION_OBJECT_CANONICAL_SHA256 + INDEPENDENT_ISSUED_PROFILE_OUTER EXPECTED_AUTHORIZATION_ID_AND_SHA256 + STRICT UTC AWARE TIMESTAMP",
+    "evidence_and_budget_guard": "PER_SUCCESSFUL_POPEN PROCESS_START_EVIDENCE WITH INITIAL_RSS_OR_EXPLICIT_FAILURE / BOUNDED_STDOUT_STDERR / BUDGETED JSON+JSONL / GLOBAL_MONOTONIC_DEADLINE_1800 / PERSISTENT ATOMIC MAX_ATTEMPTS_1"
   },
   "exact_execution_scope_if_later_issued": {
     "device": "DESK-W-591",
@@ -51,23 +61,24 @@
   "static_validation": {
     "compile_result": "PASS",
     "candidate_validator": {
-      "path": "../../../scripts/model-program/validate_m1_07_profile_candidate.py",
-      "git_blob_sha1": "aa3cf3713f298831d259504cb77caab31e14e591",
+      "path": "scripts/model-program/validate_m1_07_profile_candidate.py",
+      "git_blob_sha1": "e59a9ba3ad9421b74eb0d89834d4d0788aaf8f6d",
       "result": "PASS"
     },
     "candidate_tests": {
-      "path": "../../../../tests/test_model_program_m1_07_profile_candidate.py",
-      "git_blob_sha1": "04b244ae994ff69350c289ff33d59dcc10ccc2cc",
-      "passed": 24,
+      "path": "tests/test_model_program_m1_07_profile_candidate.py",
+      "git_blob_sha1": "0d3eb778a0e6c7ef5964b5cd315ea885d59ef524",
+      "passed": 29,
+      "failed": 0
+    },
+    "m1_validators": {
+      "passed": 4,
       "failed": 0
     },
     "full_m1_regression": {
-      "validators_passed": 4,
-      "validators_failed": 0,
-      "pytest_passed": 53,
+      "pytest_passed": 58,
       "pytest_failed": 0,
-      "environment_note": "jsonschema and pytest were installed only into temporary .validation-deps inside the non-canonical validation checkout, then removed; system Python and tracked repository files were not modified.",
-      "validation_workspace_git_status": "CLEAN"
+      "environment_note": "pytest and jsonschema were installed only into temporary .validation-deps in the isolated validation worktree; system Python and tracked files were not modified."
     },
     "default_orchestrator_readback": {
       "execution_ready": false,
@@ -82,36 +93,67 @@
     "model_loaded": false,
     "llama_server_started": false,
     "inference_performed": false,
+    "m1_07_scenario_executed": false,
     "cancellation_test_executed": false,
     "crash_test_executed": false,
     "port_18087_bound": false,
     "hosted_provider_called": false,
-    "external_network_access": false,
     "training_performed": false,
-    "production_mutation": false
+    "distillation_performed": false,
+    "promotion_performed": false,
+    "activation_performed": false,
+    "production_mutation": false,
+    "release_performed": false,
+    "m1_08_started": false
   },
   "remaining_final_issuance_gates": [
-    "Fresh-Context read-only re-review of corrected exact candidate profile and orchestrator",
-    "Owner explicit M1-07 effectful execution authorization after re-review PASS",
+    "Fresh-Context read-only final re-review of this exact remediation head",
+    "Owner explicit M1-07 effectful execution authorization only after Fresh-Context PASS",
     "bind final expiry",
-    "create issued successor profile with exact profile_id M1-STAB-QWEN35-08B-PC-001-ISSUED",
-    "set effectful_authority_issued=true and exact M1-07 authority effect",
-    "bind exact Owner final execution authorization object with canonical SHA-256"
+    "create exact ISSUED successor M1-STAB-QWEN35-08B-PC-001-ISSUED",
+    "bind independent trusted Owner authorization ID and canonical SHA-256 in issued profile outer binding"
   ],
-  "conclusion": "PASS / M1_07_MAJOR_REMEDIATION_PREPARED_AND_STATICALLY_VALIDATED / EXECUTION_NOT_AUTHORIZED",
-  "next_frontier": "FRESH_CONTEXT_READ_ONLY_M1_07_PROFILE_AND_ORCHESTRATOR_RE_REVIEW / DO_NOT_EXECUTE_MODEL",
+  "conclusion": "READY_FOR_FRESH_CONTEXT_RE_REVIEW / EFFECTFUL_EXECUTION_BLOCKED",
+  "next_frontier": "FRESH_CONTEXT_READ_ONLY_M1_07_PROFILE_ORCHESTRATOR_FINAL_RE_REVIEW / DO_NOT_ISSUE / DO_NOT_EXECUTE",
   "review_remediation": {
     "source_verdict": "BLOCKED / M1_07_PROFILE_OR_ORCHESTRATOR_CORRECTION_REQUIRED",
-    "remediation_scope": "ONLY_PREVIOUS_MAJOR_FINDINGS / NO_SCENARIO_EXPANSION / NO_EFFECTFUL_EXECUTION",
+    "remediation_scope": "MAJOR_01_02_03_04_ONLY / NO_SCOPE_EXPANSION / NO_EFFECTFUL_EXECUTION",
     "resolved_items": [
-      "MAJOR-01: runtime gate now hard-binds exact issued profile ID, physical device scope, model/runtime identity, loopback port 18087, CPU thread limits, and compute limits instead of trusting mutable profile declarations alone",
-      "MAJOR-02: Owner final execution authorization now requires an exact structured authorization object with canonical JSON SHA-256 and cross-binding to issued profile ID and exact M1-07 authority effect",
-      "MAJOR-03: orchestrator now implements RSS process metrics, wall/storage budget checks, and an atomic one-attempt guard consistent with max_attempts=1"
+      "MAJOR-01 CLOSED AUTHOR-SIDE: exact orchestrator commit/blob/normalized SHA are independently hard-bound and profile-declared identity must equal them; actual script bytes must also equal the hard-coded expected hashes. DESK-W-591 is additionally bound to a stable Windows HKLM MachineGuid canonical SHA-256 read from the OS.",
+      "MAJOR-02 CLOSED AUTHOR-SIDE: Owner authorization self-hash is insufficient by design; execution also requires independently bound expected authorization ID and expected canonical SHA-256 from the issued-profile outer trusted binding, plus strict timezone-aware UTC issued_at_utc.",
+      "MAJOR-03 CLOSED AUTHOR-SIDE: every successful Popen creates process-start evidence with initial RSS or explicit RSS failure; stdout/stderr and JSON/JSONL writes are hard-budgeted to 134217728 bytes; all long waits/hash loops use a global 1800-second monotonic deadline; max_attempts=1 remains persistent atomic no-reuse.",
+      "MAJOR-04 CLOSED AUTHOR-SIDE: run/start_server/kill paths require a sealed ValidatedExecutionContext; process kill accepts only internally wrapped processes registered to that context; foreign Popen handles are rejected."
     ],
-    "additional_hardening": [
-      "candidate validator now rejects non-18087 port drift",
-      "negative tests cover port/thread/device/model/authorization-digest drift",
-      "default invocation remains validate-only and starts no server"
+    "required_negative_behavior_coverage": [
+      "wrong orchestrator commit -> FAIL",
+      "wrong orchestrator blob -> FAIL",
+      "wrong orchestrator normalized SHA -> FAIL",
+      "actual script bytes drift -> FAIL",
+      "COMPUTERNAME spoof with machine identity mismatch -> FAIL",
+      "authorization object self-rehash without trusted expected SHA match -> FAIL",
+      "authorization_id drift -> FAIL",
+      "naive issued_at_utc -> FAIL",
+      "health failure after Popen retains per-start RSS/process evidence",
+      "stdout/stderr storage ceiling attempt -> FAIL CLOSED",
+      "scenario-internal wall deadline expiry -> FAIL CLOSED",
+      "direct run bypass -> BLOCKED",
+      "direct start_server bypass -> BLOCKED",
+      "foreign Popen kill attempt -> REJECTED",
+      "candidate default invocation remains validate-only and starts no server/model"
     ]
-  }
+  },
+  "updated_at_utc": "2026-09-19T11:17:11.3127652Z",
+  "authoritative_for_current_binding": true,
+  "remediation_round": 2,
+  "source_review": {
+    "exact_reviewed_head": "2454c44817c642e76ecfb25317fe1192b3a003c4",
+    "verdict": "BLOCKED / M1_07_PROFILE_OR_ORCHESTRATOR_CORRECTION_REQUIRED",
+    "mode": "REMEDIATION ONLY / NO SCOPE EXPANSION / NO EFFECTFUL EXECUTION"
+  },
+  "historical_evidence": [
+    {
+      "path": "development/contracts/model-program/m1/evidence/M1RuntimeStabilityProfileCandidatePreparationReceipt_20260919.json",
+      "required_governance_status": "HISTORICAL / SUPERSEDED_FOR_CURRENT_BINDING"
+    }
+  ]
 }

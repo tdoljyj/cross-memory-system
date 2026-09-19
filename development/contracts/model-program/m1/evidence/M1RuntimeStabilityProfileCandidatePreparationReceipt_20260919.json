@@ -5,7 +5,7 @@
   "stage_id": "MODEL-PROGRAM-M1",
   "task_id": "M1-07",
   "created_at_utc": "2026-09-19T10:17:11.9002090Z",
-  "status": "PROFILE_CANDIDATE_PREPARED / SELF_VALIDATED / NO_EFFECTFUL_AUTHORITY / NO_MODEL_LOAD",
+  "status": "HISTORICAL / SUPERSEDED_FOR_CURRENT_BINDING",
   "source_baseline": {
     "main_merge_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
     "stage_successor": "M1StageEntryAuthorization.v1.0.2.json",
@@ -95,5 +95,14 @@
     "issue successor profile with status ISSUED and effectful_authority_issued=true"
   ],
   "conclusion": "PASS / M1_07_PROFILE_PREPARATION_COMPLETE / EXECUTION_REMAINS_BLOCKED",
-  "next_frontier": "IMPLEMENT_NON_EFFECTFUL_M1_07_ORCHESTRATOR_AND_BIND_EXACT_CODE / DO_NOT_EXECUTE_MODEL"
+  "next_frontier": "IMPLEMENT_NON_EFFECTFUL_M1_07_ORCHESTRATOR_AND_BIND_EXACT_CODE / DO_NOT_EXECUTE_MODEL",
+  "historical_original_status": "PROFILE_CANDIDATE_PREPARED / SELF_VALIDATED / NO_EFFECTFUL_AUTHORITY / NO_MODEL_LOAD",
+  "governance": {
+    "lifecycle": "HISTORICAL",
+    "superseded_for_current_binding": true,
+    "current_authoritative_remediation_receipt_path": "development/contracts/model-program/m1/evidence/M1RuntimeStabilityExactProfileBindingReceipt_20260919.json",
+    "current_authoritative_remediation_receipt_record_id": "M1-STAB-QWEN35-08B-PC-001-EXACT-BINDING-20260919",
+    "current_authoritative_remediation_receipt_git_blob_sha1": "3ea9ebce1196d09da3c863de7f57e4d51ae701f3",
+    "consumer_rule": "DO_NOT_USE_THIS_HISTORICAL_RECEIPT_FOR_CURRENT_BINDING; FOLLOW_CURRENT_AUTHORITATIVE_REMEDIATION_RECEIPT"
+  }
 }
