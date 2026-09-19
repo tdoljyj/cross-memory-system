@@ -321,19 +321,21 @@ class OutputBudget:
         self._lock = threading.Lock()
         self._failure: StabilityError | None = None
 
-    def reserve(self, amount: int, capture: bool = False) -> None:
+    def reserve(self, amount: int, capture: bool = False, allow_after_failure: bool = False) -> None:
         if amount < 0:
             raise StabilityError("OUTPUT_STORAGE_BUDGET_INVALID", f"negative amount={amount}")
         with self._lock:
-            if self._failure is not None:
+            if self._failure is not None and not allow_after_failure:
                 raise self._failure
             effective_limit = self.limit - EXPECTED_EVIDENCE_RESERVE_BYTES if capture else self.limit
             if self.used + amount > effective_limit:
-                self._failure = StabilityError(
+                exc = StabilityError(
                     "OUTPUT_STORAGE_BUDGET_EXCEEDED",
                     f"used={self.used} requested={amount} limit={effective_limit} capture={capture}",
                 )
-                raise self._failure
+                if self._failure is None:
+                    self._failure = exc
+                raise exc
             self.used += amount
 
     def set_failure(self, exc: StabilityError) -> None:
@@ -347,18 +349,23 @@ class OutputBudget:
         if exc is not None:
             raise exc
 
-    def write_bytes(self, path: Path, data: bytes, append: bool = False) -> None:
-        self.reserve(len(data))
+    def write_bytes(self, path: Path, data: bytes, append: bool = False, allow_after_failure: bool = False) -> None:
+        self.reserve(len(data), allow_after_failure=allow_after_failure)
         path.parent.mkdir(parents=True, exist_ok=True)
         mode = "ab" if append else "wb"
         with path.open(mode) as f:
             f.write(data)
 
-    def write_text(self, path: Path, text: str, append: bool = False) -> None:
-        self.write_bytes(path, text.encode("utf-8"), append=append)
+    def write_text(self, path: Path, text: str, append: bool = False, allow_after_failure: bool = False) -> None:
+        self.write_bytes(path, text.encode("utf-8"), append=append, allow_after_failure=allow_after_failure)
 
-    def append_jsonl(self, path: Path, event: dict[str, Any]) -> None:
-        self.write_text(path, json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n", append=True)
+    def append_jsonl(self, path: Path, event: dict[str, Any], allow_after_failure: bool = False) -> None:
+        self.write_text(
+            path,
+            json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n",
+            append=True,
+            allow_after_failure=allow_after_failure,
+        )
 
 
 class BoundedCapture:
@@ -678,7 +685,11 @@ def record_process_start_evidence(ctx: ValidatedExecutionContext, owned: OwnedSe
     try:
         rss = process_rss_bytes(owned.proc)
         base.update({"initial_rss_bytes": rss, "rss_capture_succeeded": True})
-        ctx.budget.append_jsonl(ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl", base)
+        ctx.budget.append_jsonl(
+            ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl",
+            base,
+            allow_after_failure=True,
+        )
         return rss
     except Exception as exc:
         if isinstance(exc, StabilityError):
@@ -693,7 +704,11 @@ def record_process_start_evidence(ctx: ValidatedExecutionContext, owned: OwnedSe
             "rss_failure_code": code,
             "rss_failure_message": message,
         })
-        ctx.budget.append_jsonl(ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl", base)
+        ctx.budget.append_jsonl(
+            ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl",
+            base,
+            allow_after_failure=True,
+        )
         raise StabilityError(code, message)
 
 
