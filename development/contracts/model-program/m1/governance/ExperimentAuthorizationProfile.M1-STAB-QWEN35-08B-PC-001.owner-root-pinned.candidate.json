@@ -111,9 +111,12 @@
     "owner_boundary_normalized_sha256": "35fea706a095a2cba6e3e31377e56c2246e890dfce751d1b038185e8b58a41b7",
     "native_owner_source_path": "scripts/model-program/m1-runtime-owner",
     "native_owner_source_manifest_path": "scripts/model-program/m1-runtime-owner/source-manifest.json",
-    "native_owner_source_manifest_sha256": "ecf1279eb8e8e443af5b0fc3bff7d94e4e1147203d314dc07970ef9667b887d5",
-    "native_owner_binary_sha256": "398045c9166189383506135302152dc11dbad4cf7ee032edb5b85aa398560aed",
-    "python_execution_surface": "PERMANENTLY_VALIDATE_ONLY / NO_EFFECTFUL_IMPLEMENTATION"
+    "native_owner_source_manifest_sha256": "335a998f3acbb70cddecf02cb2de644264146164508133dccc3299255bbdd36d",
+    "native_owner_binary_sha256": "ce44ea928b8e124c91e7694b84090c279e171e37471b9bb9a453aabf66dfc28a",
+    "python_execution_surface": "PERMANENTLY_VALIDATE_ONLY / NO_EFFECTFUL_IMPLEMENTATION",
+    "native_owner_build_provenance_helper_path": "scripts/model-program/build_m1_07_native_owner.py",
+    "native_owner_build_provenance_helper_sha256": "52ef67351c3f976593c4332f47ca1805340de40df6f3cce22b2a38f9feded1b2",
+    "native_owner_build_provenance_semantics": "EXACT_SOURCE_DIRECTORY_SET / MANIFEST_BINDS_HELPER / VERIFIED_SOURCE_SNAPSHOT_ONLY / CLEAN_GO_ENV"
   },
   "config_revision": {
     "profile_config_id": "M1-STAB-PC-QWEN35-Q8_0-v1",
@@ -462,6 +465,7 @@
     "owner_public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
     "private_key_storage_locator": "windows-local-owner-key://DESK-W-591/Clued/M1-07/Owner-Ed25519-Root",
     "private_key_material_present_in_repository": false,
-    "successor_state": "OWNER_ROOT_PINNED / R1_TARGETED_REMEDIATION / NATIVE_SOURCE_BINARY_RUNTIME_TREE_EXACT_BOUND / NOT_ISSUED / INDEPENDENT_REVIEW_REQUIRED / NO_MODEL_EXECUTION / NO_MERGE"
+    "successor_state": "OWNER_ROOT_PINNED / R2_BUILD_PROVENANCE_CLOSED / NATIVE_SOURCE_BINARY_RUNTIME_TREE_EXACT_BOUND / NOT_ISSUED / INDEPENDENT_REVIEW_REQUIRED / NO_MODEL_EXECUTION / NO_MERGE",
+    "r2_remediation_predecessor_exact_head": "ffff2580f1c3fb9453fef9bd517cd5e12b01226e"
   }
 }
