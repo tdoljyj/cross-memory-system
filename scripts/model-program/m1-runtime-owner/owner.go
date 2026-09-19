@@ -259,6 +259,21 @@ func (c *controller) event(ctx *executionContext, scenario, kind string, fields 
 	v["kind"] = kind
 	return c.write(ctx, "M1RuntimeStabilityEvents.jsonl", v, true, false)
 }
+func sanitizedServerEnv() []string {
+	// The exact llama.cpp runtime reads PROGRAMDATA/APPDATA config.ini and many
+	// LLAMA_ARG_* variables before argv. Never inherit those authority surfaces.
+	// Keep only OS plumbing required by the Windows child; signed argv remains
+	// the sole llama-server configuration source.
+	allowed := []string{"SystemRoot", "WINDIR", "TEMP", "TMP"}
+	env := make([]string, 0, len(allowed))
+	for _, key := range allowed {
+		if value, ok := os.LookupEnv(key); ok && value != "" {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
+}
+
 func serverCommand() []string {
 	return []string{serverPath, "--model", modelPath, "--offline", "--host", "127.0.0.1", "--port", "18087", "--no-webui", "--threads", "2", "--threads-batch", "2", "--ctx-size", "2048", "--parallel", "1", "--n-gpu-layers", "0", "--device", "none", "--no-op-offload"}
 }
