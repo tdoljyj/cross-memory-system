@@ -17,9 +17,11 @@ MODEL_SHA = "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696"
 Q8_SHA = "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
 SERVER_SHA = "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba"
 LLAMA_COMMIT = "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
-ORCH_COMMIT = "732ff6328b9446a836ad40d41ba543a35d13fe1d"
-ORCH_BLOB = "c737e6d40ab93740eb9e77a8c2f5edeb3c0776af"
-ORCH_NORMALIZED_SHA256 = "69ff7e33640363653cfbd8d1339a4bf3485804708affd6837edd33abe16b0ad7"
+ORCH_COMMIT = "2209576a79af035a4ffe4a59aab4c0039107f36f"
+ORCH_BLOB = "b197aba8c4ab3d736f063ac823ddfeec85289f0d"
+ORCH_NORMALIZED_SHA256 = "a42954f6a88f2be5931072113088be74830a0424e5117f6b8c9a26aad9088df8"
+ISSUED_PROFILE_ID = "M1-STAB-QWEN35-08B-PC-001-ISSUED"
+ATTEMPT_GUARD_PATH = r"C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-STAB-QWEN35-08B-PC-001\M1RuntimeStabilityAttemptGuard.json"
 
 REQUIRED_PROHIBITED = {
     "EXECUTION_WHILE_PROFILE_STATUS_IS_NOT_ISSUED",
@@ -87,6 +89,8 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
         return False, "M1_07_CANDIDATE_STATUS"
     if profile.get("effectful_authority_issued") is not False or profile.get("authority_effect") != "NONE / PROFILE_PREPARATION_ONLY":
         return False, "M1_07_AUTHORITY_EXPANSION"
+    if profile.get("issued_successor_profile_id") != ISSUED_PROFILE_ID:
+        return False, "M1_07_ISSUED_SUCCESSOR_ID"
 
     if profile.get("model_program_revision", {}).get("plan_sha256") != PLAN_SHA:
         return False, "M1_07_PLAN_BINDING"
@@ -106,13 +110,13 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
         return False, "M1_07_RUNTIME_BINDING"
 
     config = (profile.get("config_revision") or {}).get("server") or {}
-    if config.get("host") != "127.0.0.1" or config.get("external_bind") is not False or config.get("external_network") is not False:
+    if config.get("host") != "127.0.0.1" or config.get("port") != 18087 or config.get("external_bind") is not False or config.get("external_network") is not False:
         return False, "M1_07_LOOPBACK_BOUNDARY"
     if config.get("offline") is not True or config.get("webui") is not False:
         return False, "M1_07_NETWORK_UI_BOUNDARY"
     if config.get("n_gpu_layers") != 0 or config.get("device") != "none" or config.get("op_offload") is not False:
         return False, "M1_07_CPU_ONLY_BOUNDARY"
-    if config.get("threads") != 2 or config.get("threads_batch") != 2 or config.get("parallel") != 1:
+    if config.get("threads") != 2 or config.get("threads_batch") != 2 or config.get("parallel") != 1 or config.get("ctx_size") != 2048:
         return False, "M1_07_COMPUTE_BOUNDARY"
 
     scenarios = profile.get("scenario_contract") or []
@@ -131,8 +135,36 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
     if profile.get("max_attempts") != 1 or profile.get("max_wall_time") != 1800 or profile.get("max_storage") != 134217728:
         return False, "M1_07_BUDGET"
     compute = profile.get("max_compute") or {}
-    if compute.get("cpu_threads") != 2 or compute.get("gpu_layers") != 0 or compute.get("max_parallel_server_processes") != 1:
+    if (
+        compute.get("device") != "DESK-W-591"
+        or compute.get("cpu_threads") != 2
+        or compute.get("gpu_layers") != 0
+        or compute.get("non_cpu_devices") != "NONE"
+        or compute.get("max_parallel_server_processes") != 1
+        or compute.get("max_profile_owned_server_starts") != 7
+    ):
         return False, "M1_07_COMPUTE_BUDGET"
+
+    control = profile.get("execution_control") or {}
+    if control.get("attempt_guard_path") != ATTEMPT_GUARD_PATH:
+        return False, "M1_07_ATTEMPT_GUARD_PATH"
+    if control.get("attempt_guard_semantics") != "ATOMIC_CREATE_ON_FIRST_EFFECTFUL_ATTEMPT / NO_REUSE_AFTER_SUCCESS_OR_FAILURE":
+        return False, "M1_07_ATTEMPT_GUARD_SEMANTICS"
+    if control.get("final_issued_profile_id") != ISSUED_PROFILE_ID:
+        return False, "M1_07_EXECUTION_CONTROL_PROFILE_ID"
+    if "M1RuntimeStabilityProcessMetrics.jsonl" not in set(profile.get("allowed_outputs") or []):
+        return False, "M1_07_PROCESS_METRICS_OUTPUT"
+    if "M1RuntimeStabilityAttemptGuard.json" not in set(profile.get("allowed_outputs") or []):
+        return False, "M1_07_ATTEMPT_GUARD_OUTPUT"
+    evidence = set(profile.get("evidence_requirements") or [])
+    for required_evidence in (
+        "PROCESS_RSS_SAMPLES",
+        "PROCESS_RSS_SAMPLES_PER_SERVER_START",
+        "OWNER_FINAL_EXECUTION_AUTHORIZATION_ID_AND_SHA256",
+        "ATTEMPT_GUARD_PATH_AND_CLAIM_EVENT",
+    ):
+        if required_evidence not in evidence:
+            return False, "M1_07_EVIDENCE_REQUIREMENTS"
 
     if not exact_code_binding(profile):
         return False, "M1_07_CODE_BINDING"
@@ -153,6 +185,8 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
         "OWNER_EXPLICIT_M1_07_EFFECTFUL_EXECUTION_AUTHORIZATION",
         "BIND_FINAL_EXPIRY",
         "CREATE_ISSUED_SUCCESSOR_PROFILE_WITH_STATUS_ISSUED",
+        "SET_ISSUED_SUCCESSOR_PROFILE_ID_TO_M1-STAB-QWEN35-08B-PC-001-ISSUED",
+        "BIND_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT_WITH_CANONICAL_SHA256",
     ):
         if required not in requirements:
             return False, "M1_07_FINAL_ISSUANCE_REQUIREMENTS"
@@ -162,6 +196,8 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
 def execution_readiness(profile: dict) -> tuple[bool, str]:
     if profile.get("status") != "ISSUED":
         return False, "PROFILE_NOT_ISSUED"
+    if profile.get("profile_id") != ISSUED_PROFILE_ID:
+        return False, "PROFILE_ID_SCOPE_DRIFT"
     if profile.get("effectful_authority_issued") is not True:
         return False, "EFFECTFUL_AUTHORITY_NOT_ISSUED"
     if not exact_code_binding(profile):
