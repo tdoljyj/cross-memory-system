@@ -5,9 +5,15 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 P = ROOT / "scripts/model-program/validate_m1_07_profile_candidate.py"
+O = ROOT / "scripts/model-program/m1_runtime_stability_pc.py"
+
 spec = importlib.util.spec_from_file_location("m1_07_validator", P)
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
+
+orch_spec = importlib.util.spec_from_file_location("m1_07_orchestrator", O)
+orch = importlib.util.module_from_spec(orch_spec)
+orch_spec.loader.exec_module(orch)
 
 
 class ModelProgramM107CandidateTests(unittest.TestCase):
@@ -23,6 +29,12 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         self.assertFalse(ready)
         self.assertEqual(reason, "PROFILE_NOT_ISSUED")
 
+    def test_orchestrator_agrees_candidate_is_not_execution_ready(self):
+        p = self.load_candidate()
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "PROFILE_NOT_ISSUED")
+
     def test_forced_issued_status_without_authority_is_not_ready(self):
         p = copy.deepcopy(self.load_candidate())
         p["status"] = "ISSUED"
@@ -30,13 +42,22 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         self.assertFalse(ready)
         self.assertEqual(reason, "EFFECTFUL_AUTHORITY_NOT_ISSUED")
 
-    def test_forced_authority_with_unbound_code_is_not_ready(self):
+    def test_forced_effectful_authority_without_owner_final_auth_is_not_ready(self):
         p = copy.deepcopy(self.load_candidate())
         p["status"] = "ISSUED"
         p["effectful_authority_issued"] = True
         ready, reason = m.execution_readiness(p)
         self.assertFalse(ready)
-        self.assertEqual(reason, "EXECUTION_CODE_BINDING_UNRESOLVED")
+        self.assertEqual(reason, "OWNER_FINAL_EXECUTION_AUTHORIZATION_MISSING")
+
+    def test_owner_auth_without_expiry_is_not_ready(self):
+        p = copy.deepcopy(self.load_candidate())
+        p["status"] = "ISSUED"
+        p["effectful_authority_issued"] = True
+        p["owner_final_execution_authorization"] = {"present": True, "owner_message": "test-only"}
+        ready, reason = m.execution_readiness(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "EXPIRY_UNRESOLVED")
 
     def test_non_loopback_host_fails(self):
         p = copy.deepcopy(self.load_candidate())
@@ -74,14 +95,27 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         self.assertFalse(good)
         self.assertEqual(code, "M1_07_PROHIBITED_BOUNDARY")
 
-    def test_code_binding_must_remain_unresolved_in_candidate(self):
+    def test_code_binding_drift_fails(self):
         p = copy.deepcopy(self.load_candidate())
-        p["code_revision"]["status"] = "EXACT_BOUND"
-        p["code_revision"]["required_script_git_blob_sha1"] = "deadbeef"
-        p["code_revision"]["required_code_commit"] = "deadbeef"
+        p["code_revision"]["required_script_normalized_sha256"] = "deadbeef"
         good, code = m.validate_candidate(p)
         self.assertFalse(good)
-        self.assertEqual(code, "M1_07_CANDIDATE_CODE_MUST_REMAIN_UNBOUND")
+        self.assertEqual(code, "M1_07_CODE_BINDING")
+
+    def test_orchestrator_default_mode_is_validate_only(self):
+        src = O.read_text(encoding="utf-8")
+        self.assertIn("if not args.validate_only and not args.execute:", src)
+        self.assertIn("args.validate_only = True", src)
+        self.assertIn('"server_started": False', src)
+        self.assertIn('"model_loaded": False', src)
+
+    def test_crash_guard_kills_only_owned_popen_handle(self):
+        src = O.read_text(encoding="utf-8")
+        self.assertIn("def force_kill_owned(proc:", src)
+        self.assertIn("proc.kill()", src)
+        self.assertNotIn("taskkill", src.lower())
+        self.assertNotIn("Stop-Process", src)
+        self.assertNotIn("os.kill(", src)
 
 
 if __name__ == "__main__":
