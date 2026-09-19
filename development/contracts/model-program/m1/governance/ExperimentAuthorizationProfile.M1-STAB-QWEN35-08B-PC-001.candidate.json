@@ -88,9 +88,9 @@
     "repository": "tdoljyj/cross-memory-system",
     "base_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
     "required_script_path": "scripts/model-program/m1_runtime_stability_pc.py",
-    "required_script_git_blob_sha1": "c737e6d40ab93740eb9e77a8c2f5edeb3c0776af",
-    "required_script_normalized_sha256": "69ff7e33640363653cfbd8d1339a4bf3485804708affd6837edd33abe16b0ad7",
-    "required_code_commit": "732ff6328b9446a836ad40d41ba543a35d13fe1d",
+    "required_script_git_blob_sha1": "b197aba8c4ab3d736f063ac823ddfeec85289f0d",
+    "required_script_normalized_sha256": "a42954f6a88f2be5931072113088be74830a0424e5117f6b8c9a26aad9088df8",
+    "required_code_commit": "2209576a79af035a4ffe4a59aab4c0039107f36f",
     "orchestrator_default_mode": "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD",
     "execution_allowed_while_candidate": false
   },
@@ -239,7 +239,8 @@
     "RESTART_EXACT_PROFILE_OWNED_LLAMA_SERVER",
     "GRACEFULLY_TERMINATE_PROFILE_OWNED_LLAMA_SERVER",
     "CAPTURE_PROCESS_PORT_HTTP_AND_RUNTIME_EVIDENCE",
-    "WRITE_NON_PRODUCTION_M1_07_EVIDENCE_ONLY"
+    "WRITE_NON_PRODUCTION_M1_07_EVIDENCE_ONLY",
+    "WRITE_NON_PRODUCTION_M1_07_ATTEMPT_GUARD"
   ],
   "prohibited_operations": [
     "EXECUTION_WHILE_PROFILE_STATUS_IS_NOT_ISSUED",
@@ -304,7 +305,8 @@
     "M1RuntimeStabilityProcessMetrics.jsonl",
     "M1RuntimeStabilityDigests.json",
     "M1RuntimeStabilityCloseout.json",
-    "sanitized stdout/stderr logs for profile-owned llama-server processes"
+    "sanitized stdout/stderr logs for profile-owned llama-server processes",
+    "M1RuntimeStabilityAttemptGuard.json"
   ],
   "release_ceiling": "M1_07_PC_RUNTIME_STABILITY_EVIDENCE_ONLY / NO_M1_08_AUTHORITY / NO_QUALITY_SELECTION / NO_RELEASE / NO_PRODUCTION",
   "stop_conditions": [
@@ -328,7 +330,11 @@
     "SCENARIO_TIMEOUT",
     "OUTPUT_STORAGE_BUDGET_EXCEEDED",
     "COST_NONZERO",
-    "ORPHAN_PROFILE_OWNED_SERVER_AFTER_CLEANUP"
+    "ORPHAN_PROFILE_OWNED_SERVER_AFTER_CLEANUP",
+    "OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT_INVALID_OR_UNBOUND",
+    "EXACT_M1_07_RUNTIME_SCOPE_DRIFT",
+    "MAX_ATTEMPTS_EXCEEDED",
+    "MAX_WALL_TIME_EXCEEDED"
   ],
   "evidence_requirements": [
     "PROFILE_ID_AND_FINAL_ISSUED_COMMIT",
@@ -350,7 +356,10 @@
     "NO_EXTERNAL_NETWORK_AND_NO_HOSTED_PROVIDER",
     "NO_MODEL_RUNTIME_MUTATION",
     "EXPLICIT_PC_ONLY_BACKGROUND_SEMANTICS",
-    "NO_M1_08_OR_RELEASE_AUTHORITY"
+    "NO_M1_08_OR_RELEASE_AUTHORITY",
+    "OWNER_FINAL_EXECUTION_AUTHORIZATION_ID_AND_SHA256",
+    "ATTEMPT_GUARD_PATH_AND_CLAIM_EVENT",
+    "PROCESS_RSS_SAMPLES_PER_SERVER_START"
   ],
   "expiry": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
   "final_issuance_requirements": [
@@ -361,9 +370,18 @@
     "CREATE_ISSUED_SUCCESSOR_PROFILE_WITH_STATUS_ISSUED",
     "SET_EFFECTFUL_AUTHORITY_ISSUED_TRUE",
     "SET_AUTHORITY_EFFECT_TO_M1-07_PC_RUNTIME_STABILITY_EXECUTION_ONLY",
-    "BIND_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT"
+    "BIND_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT",
+    "SET_ISSUED_SUCCESSOR_PROFILE_ID_TO_M1-STAB-QWEN35-08B-PC-001-ISSUED",
+    "BIND_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT_WITH_CANONICAL_SHA256"
   ],
   "effectful_authority_issued": false,
-  "fail_closed_rule": "IF_STATUS_IS_NOT_ISSUED_OR_OWNER_FINAL_EXECUTION_AUTHORIZATION_IS_ABSENT_OR_EXPIRY_IS_UNRESOLVED_OR_BOUND_ORCHESTRATOR_SHA_DRIFTS_THEN M1-07 MUST NOT START LLAMA-SERVER OR LOAD A MODEL",
-  "authority_effect": "NONE / PROFILE_PREPARATION_ONLY"
+  "fail_closed_rule": "IF_STATUS_IS_NOT_ISSUED_OR_ISSUED_PROFILE_ID_IS_NOT_EXACT_OR_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT_IS_ABSENT_OR_DIGEST_INVALID_OR_EXPIRY_IS_UNRESOLVED_OR_EXPIRED_OR_BOUND_ORCHESTRATOR_SHA_DRIFTS_OR_DEVICE_MODEL_RUNTIME_CONFIG_SCOPE_DRIFTS_OR_ATTEMPT_GUARD_ALREADY_EXISTS_THEN M1-07 MUST_NOT_START_LLAMA-SERVER_OR_LOAD_A_MODEL",
+  "authority_effect": "NONE / PROFILE_PREPARATION_ONLY",
+  "issued_successor_profile_id": "M1-STAB-QWEN35-08B-PC-001-ISSUED",
+  "execution_control": {
+    "attempt_guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-STAB-QWEN35-08B-PC-001\\M1RuntimeStabilityAttemptGuard.json",
+    "attempt_guard_semantics": "ATOMIC_CREATE_ON_FIRST_EFFECTFUL_ATTEMPT / NO_REUSE_AFTER_SUCCESS_OR_FAILURE",
+    "owner_authorization_binding": "CANONICAL_JSON_SHA256_OVER_AUTHORIZATION_OBJECT_EXCLUDING_SHA256 / PROFILE_ID_AND_AUTHORITY_EFFECT_MUST_MATCH",
+    "final_issued_profile_id": "M1-STAB-QWEN35-08B-PC-001-ISSUED"
+  }
 }
