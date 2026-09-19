@@ -174,7 +174,7 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         self.assertEqual(runtime["runtime_asset_sha256"], "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2")
         self.assertEqual(runtime["runtime_tree_attestation_semantics"], "EXACT_RELEASE_ZIP_AND_EXTRACTED_TREE_MATCH / NO_EXTRA_MISSING_OR_MUTATED_FILES")
         self.assertEqual(p["config_revision"]["server"]["configuration_sources"], "SIGNED_ARGV_ONLY / CHILD_ENV_ALLOWLIST / NO_LLAMA_ARG / NO_PROGRAMDATA_APPDATA_CONFIG")
-        self.assertIn("zip.OpenReader(runtimeAssetPath)", NATIVE_WINDOWS.read_text(encoding="utf-8"))
+        self.assertIn("zip.OpenReader(assetPath)", NATIVE_WINDOWS.read_text(encoding="utf-8"))\n        self.assertIn("attestRuntimeTreeAgainst(runtimeAssetPath, runtimeDir, runtimeAssetBytes, runtimeAssetSHA, deadline)", NATIVE_WINDOWS.read_text(encoding="utf-8"))
         self.assertIn("Env: sanitizedServerEnv()", NATIVE_WINDOWS.read_text(encoding="utf-8"))
         self.assertIn('allowed := []string{"SystemRoot", "WINDIR", "TEMP", "TMP"}', NATIVE_OWNER.read_text(encoding="utf-8"))
 
