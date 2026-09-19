@@ -1,0 +1,170 @@
+{
+  "schema_version": "clued.model-m1-07-owner-root-pinned-successor-r1-remediation-receipt/1",
+  "record_id": "M1-STAB-QWEN35-08B-PC-001-OWNER-ROOT-PINNED-SUCCESSOR-R1-20260920",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-07",
+  "role": "AUTHOR_SIDE_TARGETED_REMEDIATION / NOT_FRESH_CONTEXT_REVIEWER",
+  "status": "AUTHOR_SIDE_R1_REMEDIATION_PASS / INDEPENDENT_RE_REVIEW_REQUIRED / NOT_ISSUED",
+  "branch": "model-program/m1-07-owner-root-successor-r1-20260920",
+  "review_predecessor_exact_head": "aa127d5d0623cce921cb90643ec620ace2b70a1f",
+  "owner_root_predecessor_exact_head": "d58df9c4a1885512bd4dd9b94f121b6a84e25744",
+  "validated_code_candidate_head": "e08ee68f56e7222ae1364e62821a9df551433c83",
+  "pre_receipt_documentation_head": "b366378096bb3f8745ca7ad35ab24d4002838df3",
+  "formal_base": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
+  "owner_enrollment": {
+    "boundary_adoption_event": 833,
+    "boundary_adoption_receipt": "9e614dc6-8db4-4e64-8035-cfbec4d4bcba",
+    "successor_preparation_gate_event": 834,
+    "successor_preparation_gate_receipt": "03cc1671-440c-4ae6-a2f9-947ff6777741",
+    "algorithm": "Ed25519",
+    "public_key_canonical": "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03",
+    "public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
+    "private_key_material_read_or_used": false
+  },
+  "targeted_major_closure": {
+    "MAJOR_01_runtime_environment_and_config_injection": {
+      "status": "AUTHOR_SIDE_CLOSED_PENDING_INDEPENDENT_RE_REVIEW",
+      "mechanism": "SIGNED_FIXED_ARGV_ONLY / CHILD_ENV_ALLOWLIST_SYSTEMROOT_WINDIR_TEMP_TMP / NO_PROGRAMDATA / NO_APPDATA / NO_LLAMA_ARG_INHERITANCE",
+      "regression": "server_environment_strips_llama_and_config_injection"
+    },
+    "MAJOR_02_source_to_binary_build_provenance": {
+      "status": "AUTHOR_SIDE_CLOSED_PENDING_INDEPENDENT_RE_REVIEW",
+      "mechanism": "GOFLAGS_REJECT_BEFORE_OUTPUT / GOENV_OFF / GOWORK_OFF / GOEXPERIMENT_EMPTY / GOTOOLCHAIN_LOCAL / GOPROXY_OFF / GOSUMDB_OFF / CGO_DISABLED",
+      "adversarial_regression": "GOFLAGS=-overlay rejected before build output creation"
+    },
+    "MAJOR_03_exact_runtime_implementation_identity": {
+      "status": "AUTHOR_SIDE_CLOSED_PENDING_INDEPENDENT_RE_REVIEW",
+      "mechanism": "EXACT_RELEASE_ZIP_SHA256 + EXTRACTED_TREE_EXACT_FILE_SET_SIZE_AND_SHA256_MATCH_BEFORE_EFFECT",
+      "adversarial_regressions": [
+        "same-size runtime file content drift rejected",
+        "extra runtime file rejected",
+        "missing runtime file rejected"
+      ]
+    }
+  },
+  "successor_candidate": {
+    "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.owner-root-pinned.candidate.json",
+    "bytes": 22762,
+    "sha256": "ef7a247a70f8b11a186794f92b3ab7221aa7d5e9461d0f2866a0e198abda9057",
+    "git_blob_sha1": "114da1d775ce35463a1a6e80b01c97ff935e69dd",
+    "status": "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE",
+    "effectful_authority_issued": false,
+    "authority_effect": "NONE / PROFILE_PREPARATION_ONLY",
+    "expiry": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
+    "owner_final_execution_authorization": null
+  },
+  "native_owner": {
+    "source_manifest_path": "scripts/model-program/m1-runtime-owner/source-manifest.json",
+    "source_manifest_bytes": 2708,
+    "source_manifest_sha256": "ecf1279eb8e8e443af5b0fc3bff7d94e4e1147203d314dc07970ef9667b887d5",
+    "source_manifest_git_blob_sha1": "d6a1c68477d9829de1405ba581036f5c7b1213ae",
+    "development_binary_sha256": "398045c9166189383506135302152dc11dbad4cf7ee032edb5b85aa398560aed",
+    "development_binary_bytes": 10437632,
+    "build_helper_path": "scripts/model-program/build_m1_07_native_owner.py",
+    "build_helper_bytes": 4804,
+    "build_helper_sha256": "294427af817506c7db52b9f8a8393d70f6b3bae20c7a8797e93b0711d209aff6",
+    "build_helper_git_blob_sha1": "737fd87dee43a0b6cbb53242dfea7804f0175194",
+    "external_build_receipt_sha256": "e0e0ce88c0260f7dd104af8ae9c88171417bb80e95390eabcb0faf0d7f1db5d8",
+    "external_build_receipt_bytes": 1500,
+    "compiler": "go version go1.27.1 windows/amd64",
+    "compiler_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+    "target": {
+      "goos": "windows",
+      "goarch": "amd64",
+      "goamd64": "v1"
+    },
+    "effective_build_environment": {
+      "GOENV": "off",
+      "GOFLAGS": "",
+      "GOWORK": "off",
+      "GOEXPERIMENT": "",
+      "GOTOOLCHAIN": "local",
+      "GOPROXY": "off",
+      "GOSUMDB": "off",
+      "CGO_ENABLED": "0"
+    }
+  },
+  "runtime_binding": {
+    "release_tag": "b11033",
+    "runtime_commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+    "release_asset_name": "llama-b11033-bin-win-vulkan-x64.zip",
+    "release_asset_bytes": 31766410,
+    "release_asset_sha256": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2",
+    "tree_semantics": "EXACT_RELEASE_ZIP_AND_EXTRACTED_TREE_MATCH / NO_EXTRA_MISSING_OR_MUTATED_FILES"
+  },
+  "validation": {
+    "focused": {
+      "result": "PASS",
+      "tests": 59,
+      "log_sha256": "1751dabdec552ce64b32eda7ac107b78878c55f2c61135e7819cf04a9a50f66c"
+    },
+    "validators": {
+      "validate_m1_entry_bindings": {
+        "result": "PASS",
+        "log_sha256": "2efffca9a513e96537655e0631d439dd0fcce9c5cf49398ef853c8f2da1508a8"
+      },
+      "validate_m1_harness": {
+        "result": "PASS",
+        "log_sha256": "073268477d26c57708e0a3f6c52f0a0a450982d38c7425c6c6eba407e5db2775"
+      },
+      "validate_m1_package_profile": {
+        "result": "PASS",
+        "log_sha256": "fa7cd580e2a39e077b7bbb58cb2dcb2126ffd749d581c0e9119f06d82b8ac861"
+      },
+      "validate_m1_07_profile_candidate": {
+        "result": "PASS",
+        "log_sha256": "4cd3b4def50214bb19dfb8ac119050285d1edc0013306b104d32e6d72bb83ac9"
+      }
+    },
+    "full_m1": {
+      "result": "PASS",
+      "tests": 88,
+      "log_sha256": "88febea78b76217d37b2d5c459a75b755b395bd204bc03f9c34a5d109d328c73"
+    },
+    "native_go": {
+      "result": "PASS",
+      "leaf_cases": 100,
+      "failed_test_events": 0,
+      "log_sha256": "e9efa04fd1618ec7734486ed4ebd58f288bcf0eeecca5670bd3ffbc2b9609466"
+    },
+    "go_vet": {
+      "result": "PASS",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "rejection_checks": {
+    "non_issued_successor_exact_binary": {
+      "exit_code": 3,
+      "reason": "PROFILE_NOT_ISSUED",
+      "output_directory_created": false,
+      "llama_server_before_after": [0, 0]
+    },
+    "fabricated_issued_without_owner_signature": {
+      "exit_code": 3,
+      "reason": "OWNER_SIGNATURE_ALGORITHM",
+      "output_directory_created": false,
+      "llama_server_before_after": [0, 0]
+    }
+  },
+  "effects": {
+    "owner_final_issuance_performed": false,
+    "owner_private_key_used": false,
+    "llama_server_started": false,
+    "model_loaded": false,
+    "real_m1_07_scenario_executed": false,
+    "m1_08_started": false,
+    "training_or_distillation_performed": false,
+    "promotion_or_activation_performed": false,
+    "production_mutation": false,
+    "pr_268_merged": false
+  },
+  "pr_268_readback": {
+    "state": "open",
+    "merged": false,
+    "head": "d58df9c4a1885512bd4dd9b94f121b6a84e25744"
+  },
+  "independent_re_review_performed": false,
+  "remaining_gate": "FRESH_CONTEXT / READ_ONLY / REVIEWER_NOT_MODIFIER / INDEPENDENT OWNER-ROOT-PINNED SUCCESSOR R1 FINAL RE-REVIEW",
+  "conclusion": "AUTHOR_SIDE_R1_TARGETED_REMEDIATION_PASS / DO_NOT_ISSUE / DO_NOT_EXECUTE / DO_NOT_MERGE"
+}
