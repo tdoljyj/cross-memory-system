@@ -1,0 +1,46 @@
+{
+  "schema_version": "clued.model-m1-benchmark-validation-receipt/1",
+  "record_id": "M1-BENCH-QWEN35-08B-PC-003-VALIDATION-RECEIPT-20260919",
+  "task_id": "M1-06",
+  "sub_scope": "PC_BASELINE / STRICT_CPU_ONLY",
+  "profile_id": "M1-BENCH-QWEN35-08B-PC-003",
+  "validated_at_utc": "2026-09-19T09:19:11.7868442Z",
+  "repository": "tdoljyj/cross-memory-system",
+  "branch": "model-program/m1-06-pc-benchmark-20260919",
+  "branch_head_before_receipt": "0f50bba1c273a9636eab0f2e51f21a762bdc00c9",
+  "local_validation_checkout": "TEMPORARY_SHALLOW_CLONE / NOT_CANONICAL",
+  "validators": [
+    {
+      "path": "scripts/model-program/validate_m1_entry_bindings.py",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "PASS: MODEL-PROGRAM-M1 Profiles 001/002 closed fail-closed; Profile 003 exact download/integrity closed PASS with dual rehash; inference/evaluation/training remain prohibited"
+    },
+    {
+      "path": "scripts/model-program/validate_m1_harness.py",
+      "exit_code": 0,
+      "result": "PASS",
+      "dependency_note": "jsonschema installed only into temporary .validation-deps directory after initial environment-only ModuleNotFoundError; repository and system Python environment were not modified.",
+      "output": "PASS: MODEL-PROGRAM-M1 M1-04 static invocation harness is schema-bound, fail-closed, candidate-only, and real Local provider execution remains blocked"
+    },
+    {
+      "path": "scripts/model-program/validate_m1_package_profile.py",
+      "exit_code": 0,
+      "result": "PASS",
+      "output": "PASS: MODEL-PROGRAM-M1 M1-05 Profile 002 closed PASS with four exact-lineage GGUF variants integrity-verified; quality selection remains deferred to M1-06",
+      "note": "The script intentionally exercises one-shot lock rejection internally; its expected fail-closed diagnostic does not change the final exit-code-0 PASS."
+    }
+  ],
+  "pytest": {
+    "command": "python -m pytest -q tests/test_model_program_m1_entry.py tests/test_model_program_m1_harness.py tests/test_model_program_m1_package.py",
+    "result": "PASS",
+    "passed": 26,
+    "failed": 0,
+    "duration_seconds": 0.11,
+    "dependency_note": "pytest installed only into temporary .validation-deps directory; repository and system Python environment were not modified."
+  },
+  "benchmark_evidence_ref": "DeviceBenchmarkEvidence.PC.DESK-W-591.v1.0.1.json",
+  "benchmark_closeout_ref": "M1BenchmarkPCProfile003ExecutionCloseout_20260919.json",
+  "conclusion": "PASS / M1_06_PC_BENCHMARK_EVIDENCE_REGRESSION_VALIDATED",
+  "scope_effect": "VALIDATES_PC_SUB_SCOPE_EVIDENCE_ONLY / DOES_NOT_CLOSE_PHONE_TABLET_MAC / DOES_NOT_AUTHORIZE_M1_07"
+}
