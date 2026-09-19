@@ -1,0 +1,99 @@
+{
+  "schema_version": "clued.model-m1-07-profile-preparation-receipt/1",
+  "record_id": "M1-STAB-QWEN35-08B-PC-001-CANDIDATE-PREPARATION-20260919",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-07",
+  "created_at_utc": "2026-09-19T10:17:11.9002090Z",
+  "status": "PROFILE_CANDIDATE_PREPARED / SELF_VALIDATED / NO_EFFECTFUL_AUTHORITY / NO_MODEL_LOAD",
+  "source_baseline": {
+    "main_merge_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
+    "stage_successor": "M1StageEntryAuthorization.v1.0.2.json",
+    "stage_successor_git_blob_sha1": "51d00b12935e84b93ce19693e56387b67556ad95",
+    "m1_06a_status": "CLOSED_SUCCESS / PC DESK-W-591"
+  },
+  "candidate": {
+    "path": "../governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.candidate.json",
+    "git_blob_sha1": "ac5f222dc8218fa1894b1a432456fabb67d6a64e",
+    "profile_id": "M1-STAB-QWEN35-08B-PC-001-CANDIDATE",
+    "status": "BLOCKED_PENDING_EXECUTION_CODE_REVIEW_AND_FINAL_ISSUANCE",
+    "effectful_authority_issued": false,
+    "authority_effect": "NONE / PROFILE_PREPARATION_ONLY"
+  },
+  "physical_readback": {
+    "device_name": "DESK-W-591",
+    "model_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002\\packages\\Qwen3.5-0.8B-Q8_0.gguf",
+    "model_bytes": 833592320,
+    "model_sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d",
+    "server_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002\\runtime\\b11033-vulkan\\llama-server.exe",
+    "server_bytes": 9216,
+    "server_sha256": "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba",
+    "server_version": "0.4.1-dev",
+    "server_build": 11033,
+    "server_commit_short": "8ed1a55ef",
+    "build_toolchain": "Clang 20.1.8 for Windows x86_64",
+    "help_flags_confirmed": [
+      "--offline",
+      "--host",
+      "--port",
+      "--parallel",
+      "--device none",
+      "--n-gpu-layers",
+      "--no-op-offload",
+      "--no-webui",
+      "--threads-http"
+    ]
+  },
+  "scenario_scope": {
+    "load_unload": "3 cold load / minimal local probe / graceful unload cycles",
+    "cancellation": "1 in-flight loopback streaming request cancellation + post-cancel health/probe",
+    "background": "PC background-service controller disconnect / fresh-client reconnect only",
+    "crash_restart": "1 test-owned server forced crash during active request + exact restart + post-restart health/probe",
+    "mobile_background_resume_claimed": false,
+    "os_sleep_hibernate_reboot_in_scope": false
+  },
+  "validation": {
+    "validator_path": "../../../scripts/model-program/validate_m1_07_profile_candidate.py",
+    "validator_git_blob_sha1": "a1197ca6236d29fea60f48c01c99acfe0b941440",
+    "validator_result": "PASS",
+    "test_path": "../../../../tests/test_model_program_m1_07_profile_candidate.py",
+    "test_git_blob_sha1": "977eaa45c39329ca15efc8115d97543f0912ae06",
+    "tests_passed": 10,
+    "tests_failed": 0,
+    "checks": [
+      "candidate is not execution-ready",
+      "forced ISSUED without authority remains blocked",
+      "forced authority with unbound code remains blocked",
+      "non-loopback bind rejected",
+      "GPU offload rejected",
+      "quality-winner leakage rejected",
+      "mobile background claim rejected",
+      "M1-08 authority leakage rejected",
+      "candidate code binding must remain unresolved",
+      "full candidate validator PASS"
+    ]
+  },
+  "effects": {
+    "llama_server_started": false,
+    "model_loaded": false,
+    "inference_performed": false,
+    "benchmark_performed": false,
+    "port_18087_bound": false,
+    "external_network_access": false,
+    "hosted_provider_call": false,
+    "training_performed": false,
+    "promotion_or_activation": false,
+    "production_mutation": false
+  },
+  "unresolved_required_before_final_issuance": [
+    "implement non-effectful fail-closed orchestrator",
+    "bind exact orchestrator code commit and git blob sha1",
+    "review orchestrator ownership and process-kill guard",
+    "Fresh-Context read-only profile/orchestrator review or Owner-accepted equivalent",
+    "Owner explicit M1-07 effectful execution authorization",
+    "bind final expiry",
+    "issue successor profile with status ISSUED and effectful_authority_issued=true"
+  ],
+  "conclusion": "PASS / M1_07_PROFILE_PREPARATION_COMPLETE / EXECUTION_REMAINS_BLOCKED",
+  "next_frontier": "IMPLEMENT_NON_EFFECTFUL_M1_07_ORCHESTRATOR_AND_BIND_EXACT_CODE / DO_NOT_EXECUTE_MODEL"
+}
