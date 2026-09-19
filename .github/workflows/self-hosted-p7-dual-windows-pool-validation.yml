@@ -1,0 +1,72 @@
+name: Self-hosted P7 dual Windows pool validation
+
+on:
+  push:
+    branches:
+      - ci/self-hosted-p7-dual-windows-pool-20260919
+
+permissions:
+  contents: read
+
+jobs:
+  validate-home-windows:
+    name: Validate home Windows runner
+    runs-on:
+      - self-hosted
+      - Windows
+      - X64
+      - clued
+      - pool-general
+      - trust-internal
+      - site-home
+      - cap-python312
+      - cap-node24
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify home runner toolchain
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "START=$([DateTime]::UtcNow.ToString('o'))"
+          Write-Host "Runner=${{ runner.name }}"
+          if ("${{ runner.name }}" -ne "clued-ci-home-win-01") { throw "Unexpected home runner" }
+          python --version
+          python -c "import sys; assert sys.version_info[:2] == (3, 12), sys.version"
+          node --version
+          if (-not ((node --version) -match '^v24\.')) { throw "Node 24 required" }
+          Start-Sleep -Seconds 20
+          Write-Host "END=$([DateTime]::UtcNow.ToString('o'))"
+
+  validate-company-windows:
+    name: Validate company Windows runner
+    runs-on:
+      - self-hosted
+      - Windows
+      - X64
+      - clued
+      - pool-general
+      - trust-internal
+      - site-company
+      - cap-python312
+      - cap-node24
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify company runner toolchain
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "START=$([DateTime]::UtcNow.ToString('o'))"
+          Write-Host "Runner=${{ runner.name }}"
+          if ("${{ runner.name }}" -ne "clued-ci-company-win-01") { throw "Unexpected company runner" }
+          python --version
+          python -c "import sys; assert sys.version_info[:2] == (3, 12), sys.version"
+          node --version
+          if (-not ((node --version) -match '^v24\.')) { throw "Node 24 required" }
+          Start-Sleep -Seconds 20
+          Write-Host "END=$([DateTime]::UtcNow.ToString('o'))"
