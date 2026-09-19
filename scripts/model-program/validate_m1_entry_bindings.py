@@ -26,9 +26,9 @@ ISSUED_REQ_PROHIBITED=BASE_REQ_PROHIBITED|{'MODEL_LOAD'}
 
 def load(p): return json.loads(p.read_text(encoding='utf-8'))
 def fail(msg): print('FAIL: '+msg,file=sys.stderr); raise SystemExit(1)
-def git_blob_sha1(p):
-    b=Path(p).read_bytes()
-    return hashlib.sha1(b'blob '+str(len(b)).encode()+b'\\0'+b).hexdigest()
+def semantic_sha256(v):
+    b=json.dumps(v,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode('utf-8')
+    return hashlib.sha256(b).hexdigest()
 
 def has_tbb(v):
     if isinstance(v,str): return 'TO_BE_BOUND' in v
