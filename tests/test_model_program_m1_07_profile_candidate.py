@@ -20,6 +20,25 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
     def load_candidate(self):
         return m.load(m.CANDIDATE)
 
+    def issued_profile(self):
+        p = copy.deepcopy(self.load_candidate())
+        p["profile_id"] = m.ISSUED_PROFILE_ID
+        p["status"] = "ISSUED"
+        p["effectful_authority_issued"] = True
+        p["authority_effect"] = "M1-07_PC_RUNTIME_STABILITY_EXECUTION_ONLY"
+        auth = {
+            "present": True,
+            "authorization_id": "OWNER-M1-07-TEST-STATIC",
+            "owner_message": "static-test-only",
+            "authorized_profile_id": m.ISSUED_PROFILE_ID,
+            "authorized_authority_effect": "M1-07_PC_RUNTIME_STABILITY_EXECUTION_ONLY",
+            "issued_at_utc": "2026-09-19T10:00:00+00:00",
+        }
+        auth["sha256"] = orch.owner_authorization_sha256(auth)
+        p["owner_final_execution_authorization"] = auth
+        p["expiry"] = "2099-01-01T00:00:00+00:00"
+        return p
+
     def test_full_validator(self):
         self.assertEqual(m.main(), 0)
 
@@ -35,9 +54,17 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         self.assertFalse(ready)
         self.assertEqual(reason, "PROFILE_NOT_ISSUED")
 
-    def test_forced_issued_status_without_authority_is_not_ready(self):
+    def test_forced_issued_status_without_exact_issued_profile_id_is_not_ready(self):
         p = copy.deepcopy(self.load_candidate())
         p["status"] = "ISSUED"
+        ready, reason = m.execution_readiness(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "PROFILE_ID_SCOPE_DRIFT")
+
+    def test_exact_issued_profile_id_without_authority_is_not_ready(self):
+        p = copy.deepcopy(self.load_candidate())
+        p["status"] = "ISSUED"
+        p["profile_id"] = m.ISSUED_PROFILE_ID
         ready, reason = m.execution_readiness(p)
         self.assertFalse(ready)
         self.assertEqual(reason, "EFFECTFUL_AUTHORITY_NOT_ISSUED")
@@ -45,16 +72,15 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
     def test_forced_effectful_authority_without_owner_final_auth_is_not_ready(self):
         p = copy.deepcopy(self.load_candidate())
         p["status"] = "ISSUED"
+        p["profile_id"] = m.ISSUED_PROFILE_ID
         p["effectful_authority_issued"] = True
         ready, reason = m.execution_readiness(p)
         self.assertFalse(ready)
         self.assertEqual(reason, "OWNER_FINAL_EXECUTION_AUTHORIZATION_MISSING")
 
     def test_owner_auth_without_expiry_is_not_ready(self):
-        p = copy.deepcopy(self.load_candidate())
-        p["status"] = "ISSUED"
-        p["effectful_authority_issued"] = True
-        p["owner_final_execution_authorization"] = {"present": True, "owner_message": "test-only"}
+        p = self.issued_profile()
+        p["expiry"] = "TO_BE_BOUND_AT_FINAL_ISSUANCE"
         ready, reason = m.execution_readiness(p)
         self.assertFalse(ready)
         self.assertEqual(reason, "EXPIRY_UNRESOLVED")
@@ -101,6 +127,63 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         good, code = m.validate_candidate(p)
         self.assertFalse(good)
         self.assertEqual(code, "M1_07_CODE_BINDING")
+
+    def test_non_exact_port_fails_candidate_validation(self):
+        p = copy.deepcopy(self.load_candidate())
+        p["config_revision"]["server"]["port"] = 18088
+        good, code = m.validate_candidate(p)
+        self.assertFalse(good)
+        self.assertEqual(code, "M1_07_LOOPBACK_BOUNDARY")
+
+    def test_orchestrator_exact_issued_profile_is_static_ready(self):
+        p = self.issued_profile()
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertTrue(ready)
+        self.assertEqual(reason, "READY")
+
+    def test_orchestrator_rejects_port_drift_before_execution(self):
+        p = self.issued_profile()
+        p["config_revision"]["server"]["port"] = 18088
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "M1_07_CONFIG_SCOPE_DRIFT:port")
+
+    def test_orchestrator_rejects_thread_drift_before_execution(self):
+        p = self.issued_profile()
+        p["config_revision"]["server"]["threads"] = 3
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "M1_07_CONFIG_SCOPE_DRIFT:threads")
+
+    def test_orchestrator_rejects_device_scope_drift_before_execution(self):
+        p = self.issued_profile()
+        p["runtime_and_device_profile"]["device_name"] = "Turing"
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "M1_07_DEVICE_SCOPE_DRIFT")
+
+    def test_orchestrator_rejects_model_subject_drift_before_execution(self):
+        p = self.issued_profile()
+        p["exact_model_ids_and_revisions"]["stability_subject"]["sha256"] = "0" * 64
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "M1_07_STABILITY_SUBJECT_DRIFT")
+
+    def test_orchestrator_rejects_owner_authorization_digest_drift(self):
+        p = self.issued_profile()
+        p["owner_final_execution_authorization"]["owner_message"] = "tampered"
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "OWNER_FINAL_EXECUTION_AUTHORIZATION_DIGEST_INVALID")
+
+    def test_orchestrator_contains_process_metrics_and_budget_guards(self):
+        src = O.read_text(encoding="utf-8")
+        self.assertIn("M1RuntimeStabilityProcessMetrics.jsonl", src)
+        self.assertIn("def process_rss_bytes(", src)
+        self.assertIn("def enforce_output_storage_budget(", src)
+        self.assertIn("def enforce_wall_budget(", src)
+        self.assertIn("def claim_attempt_guard(", src)
+        self.assertIn("MAX_ATTEMPTS_EXCEEDED", src)
 
     def test_orchestrator_default_mode_is_validate_only(self):
         src = O.read_text(encoding="utf-8")
