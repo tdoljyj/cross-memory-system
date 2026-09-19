@@ -48,6 +48,20 @@ home-primary / Turing
 
 Runtime online/busy state is intentionally **not** stored in Git. The inventory records desired identity and capabilities; GitHub remains the runtime status surface.
 
+
+## Current qualification status
+
+The two-host/four-runner pool is operational and qualification-complete through P14A, with Turing cold boot additionally qualified in P14B.
+
+- P7 dual Windows parallelism: PASS — Actions run `35411176126`
+- P8 dual Linux/Docker parallelism: PASS — Actions run `35413330672`
+- P14A company → home failover: PASS — run `35420799275`, exact commit `1bebc816da05da5d11073e366754ed8f768c1d0f`
+- P14A home → company failover: PASS — run `35421162688`, exact commit `586929dd64e9c48346291dd7f60bb50ac25a8c62`
+- P14B Turing cold boot: PASS — post-boot P7 attempt 3 and P8 attempt 5 both succeeded
+- DESK-W-591 cold boot: DEFERRED / NOT TESTED
+
+Known operational notes: GitHub runner online/offline status can lag behind the actual runner session, so scheduler/job evidence and local watchdog state are authoritative for failover qualification. Turing's post-boot Runner/Docker qualification is PASS, but containerized scanners that must download external databases still require separate proxy-egress hardening. Full historical evidence and troubleshooting notes are intentionally kept outside this repository in the Clued资料中心.
+
 ## Runner profiles
 
 ### windows-general-v1
