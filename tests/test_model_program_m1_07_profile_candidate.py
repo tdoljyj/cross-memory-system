@@ -1,7 +1,15 @@
+import contextlib
 import copy
 import importlib.util
+import io
+import json
+import os
 import pathlib
+import sys
+import tempfile
+import time
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 P = ROOT / "scripts/model-program/validate_m1_07_profile_candidate.py"
@@ -14,6 +22,31 @@ spec.loader.exec_module(m)
 orch_spec = importlib.util.spec_from_file_location("m1_07_orchestrator", O)
 orch = importlib.util.module_from_spec(orch_spec)
 orch_spec.loader.exec_module(orch)
+
+
+class FakePopen:
+    def __init__(self, pid=42420, stdout_bytes=b"", stderr_bytes=b""):
+        self.pid = pid
+        self.stdout = io.BytesIO(stdout_bytes)
+        self.stderr = io.BytesIO(stderr_bytes)
+        self.returncode = None
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -9
+
+    def terminate(self):
+        self.returncode = 0
+
+    def send_signal(self, _sig):
+        self.returncode = 0
+
+    def wait(self, timeout=None):
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
 
 
 class ModelProgramM107CandidateTests(unittest.TestCase):
@@ -36,178 +69,321 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         }
         auth["sha256"] = orch.owner_authorization_sha256(auth)
         p["owner_final_execution_authorization"] = auth
+        p["trusted_execution_bindings"]["expected_owner_authorization_id"] = auth["authorization_id"]
+        p["trusted_execution_bindings"]["expected_owner_authorization_sha256"] = auth["sha256"]
         p["expiry"] = "2099-01-01T00:00:00+00:00"
         return p
+
+    def make_context(self, profile=None, initial_used=0):
+        temp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(temp.name)
+        guard = root / "guard.json"
+        guard.write_text("{}\n", encoding="utf-8")
+        budget = orch.OutputBudget(orch.EXPECTED_MAX_STORAGE, initial_used=initial_used)
+        ctx = orch.ValidatedExecutionContext(
+            profile or self.issued_profile(),
+            root,
+            guard,
+            time.monotonic(),
+            budget,
+            {
+                "logical_name": "DESK-W-591",
+                "machine_identity_source": orch.EXPECTED_MACHINE_IDENTITY_SOURCE,
+                "machine_identity_sha256": orch.EXPECTED_MACHINE_IDENTITY_SHA256,
+            },
+            orch._CONTEXT_SEAL,
+        )
+        return temp, ctx
+
+    def assert_stability_error(self, expected_code, fn):
+        with self.assertRaises(orch.StabilityError) as cm:
+            fn()
+        self.assertEqual(cm.exception.code, expected_code)
 
     def test_full_validator(self):
         self.assertEqual(m.main(), 0)
 
     def test_candidate_is_not_execution_ready(self):
         p = self.load_candidate()
-        ready, reason = m.execution_readiness(p)
-        self.assertFalse(ready)
-        self.assertEqual(reason, "PROFILE_NOT_ISSUED")
-
-    def test_orchestrator_agrees_candidate_is_not_execution_ready(self):
-        p = self.load_candidate()
         ready, reason = orch.validate_execution_profile(p)
         self.assertFalse(ready)
         self.assertEqual(reason, "PROFILE_NOT_ISSUED")
+        self.assertEqual(p["status"], "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE")
+        self.assertIs(p["effectful_authority_issued"], False)
+        self.assertEqual(p["authority_effect"], "NONE / PROFILE_PREPARATION_ONLY")
 
-    def test_forced_issued_status_without_exact_issued_profile_id_is_not_ready(self):
-        p = copy.deepcopy(self.load_candidate())
-        p["status"] = "ISSUED"
-        ready, reason = m.execution_readiness(p)
-        self.assertFalse(ready)
-        self.assertEqual(reason, "PROFILE_ID_SCOPE_DRIFT")
+    def test_candidate_exact_stability_semantics(self):
+        p = self.load_candidate()
+        semantics = set(p["exact_model_ids_and_revisions"]["stability_subject"]["selection_semantics"].split(" / "))
+        self.assertEqual(semantics, m.REQUIRED_MODEL_SEMANTICS)
 
-    def test_exact_issued_profile_id_without_authority_is_not_ready(self):
-        p = copy.deepcopy(self.load_candidate())
-        p["status"] = "ISSUED"
-        p["profile_id"] = m.ISSUED_PROFILE_ID
-        ready, reason = m.execution_readiness(p)
-        self.assertFalse(ready)
-        self.assertEqual(reason, "EFFECTFUL_AUTHORITY_NOT_ISSUED")
-
-    def test_forced_effectful_authority_without_owner_final_auth_is_not_ready(self):
-        p = copy.deepcopy(self.load_candidate())
-        p["status"] = "ISSUED"
-        p["profile_id"] = m.ISSUED_PROFILE_ID
-        p["effectful_authority_issued"] = True
-        ready, reason = m.execution_readiness(p)
-        self.assertFalse(ready)
-        self.assertEqual(reason, "OWNER_FINAL_EXECUTION_AUTHORIZATION_MISSING")
-
-    def test_owner_auth_without_expiry_is_not_ready(self):
+    def test_profile_declares_another_orchestrator_commit_fails(self):
         p = self.issued_profile()
-        p["expiry"] = "TO_BE_BOUND_AT_FINAL_ISSUANCE"
-        ready, reason = m.execution_readiness(p)
+        p["code_revision"]["required_code_commit"] = "0" * 40
+        ready, reason = orch.validate_execution_profile(p)
         self.assertFalse(ready)
-        self.assertEqual(reason, "EXPIRY_UNRESOLVED")
+        self.assertEqual(reason, "EXECUTION_ORCHESTRATOR_COMMIT_DRIFT")
 
-    def test_non_loopback_host_fails(self):
-        p = copy.deepcopy(self.load_candidate())
-        p["config_revision"]["server"]["host"] = "0.0.0.0"
-        good, code = m.validate_candidate(p)
-        self.assertFalse(good)
-        self.assertEqual(code, "M1_07_LOOPBACK_BOUNDARY")
+    def test_profile_declares_another_orchestrator_blob_fails(self):
+        p = self.issued_profile()
+        p["code_revision"]["required_script_git_blob_sha1"] = "0" * 40
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "EXECUTION_ORCHESTRATOR_BLOB_DRIFT")
 
-    def test_gpu_offload_fails(self):
-        p = copy.deepcopy(self.load_candidate())
-        p["config_revision"]["server"]["n_gpu_layers"] = 1
-        good, code = m.validate_candidate(p)
-        self.assertFalse(good)
-        self.assertEqual(code, "M1_07_CPU_ONLY_BOUNDARY")
+    def test_profile_declares_another_orchestrator_normalized_sha_fails(self):
+        p = self.issued_profile()
+        p["code_revision"]["required_script_normalized_sha256"] = "0" * 64
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "EXECUTION_ORCHESTRATOR_NORMALIZED_SHA256_DRIFT")
 
-    def test_quality_winner_leak_fails(self):
-        p = copy.deepcopy(self.load_candidate())
-        p["exact_model_ids_and_revisions"]["stability_subject"]["selection_semantics"] = "QUALITY_WINNER"
-        good, code = m.validate_candidate(p)
-        self.assertFalse(good)
-        self.assertEqual(code, "M1_07_QUALITY_SELECTION_LEAK")
+    def test_actual_script_bytes_mismatch_hardcoded_expected_sha_fails(self):
+        p = self.issued_profile()
+        with mock.patch.object(orch, "normalized_text_sha256", return_value="0" * 64):
+            ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "EXECUTION_SCRIPT_SHA256_DRIFT")
 
-    def test_mobile_background_claim_fails(self):
-        p = copy.deepcopy(self.load_candidate())
-        bg = next(x for x in p["scenario_contract"] if x["scenario_id"] == "M1-07-PC-BACKGROUND-001")
-        bg["semantics"] = "MOBILE_APP_BACKGROUND_RESUME"
-        good, code = m.validate_candidate(p)
-        self.assertFalse(good)
-        self.assertEqual(code, "M1_07_BACKGROUND_SCOPE")
+    def test_computername_spoof_cannot_bypass_machine_identity(self):
+        p = self.issued_profile()
+        with (
+            mock.patch.dict(os.environ, {"COMPUTERNAME": "DESK-W-591"}, clear=False),
+            mock.patch.object(orch.os, "name", "nt"),
+            mock.patch.object(orch.socket, "gethostname", return_value="DESK-W-591"),
+            mock.patch.object(orch, "windows_machine_identity_sha256", return_value="0" * 64),
+        ):
+            self.assert_stability_error(
+                "DEVICE_MACHINE_IDENTITY_DRIFT",
+                lambda: orch.verify_physical_device_identity(p),
+            )
 
-    def test_m1_08_authority_removal_fails(self):
-        p = copy.deepcopy(self.load_candidate())
-        p["prohibited_operations"].remove("M1_08_EXECUTION")
-        good, code = m.validate_candidate(p)
-        self.assertFalse(good)
-        self.assertEqual(code, "M1_07_PROHIBITED_BOUNDARY")
+    def test_authorization_self_rehash_still_fails_independent_expected_sha(self):
+        p = self.issued_profile()
+        auth = p["owner_final_execution_authorization"]
+        auth["owner_message"] = "tampered-but-self-rehashed"
+        auth["sha256"] = orch.owner_authorization_sha256(auth)
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "OWNER_AUTHORIZATION_SHA_TRUSTED_BINDING_MISMATCH")
 
-    def test_code_binding_drift_fails(self):
-        p = copy.deepcopy(self.load_candidate())
-        p["code_revision"]["required_script_normalized_sha256"] = "deadbeef"
-        good, code = m.validate_candidate(p)
-        self.assertFalse(good)
-        self.assertEqual(code, "M1_07_CODE_BINDING")
+    def test_authorization_id_drift_fails_independent_expected_id(self):
+        p = self.issued_profile()
+        auth = p["owner_final_execution_authorization"]
+        auth["authorization_id"] = "OWNER-M1-07-DRIFT"
+        auth["sha256"] = orch.owner_authorization_sha256(auth)
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "OWNER_AUTHORIZATION_ID_TRUSTED_BINDING_MISMATCH")
 
-    def test_non_exact_port_fails_candidate_validation(self):
-        p = copy.deepcopy(self.load_candidate())
-        p["config_revision"]["server"]["port"] = 18088
-        good, code = m.validate_candidate(p)
-        self.assertFalse(good)
-        self.assertEqual(code, "M1_07_LOOPBACK_BOUNDARY")
+    def test_naive_issued_at_utc_fails(self):
+        p = self.issued_profile()
+        auth = p["owner_final_execution_authorization"]
+        auth["issued_at_utc"] = "2026-09-19T10:00:00"
+        auth["sha256"] = orch.owner_authorization_sha256(auth)
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "OWNER_FINAL_EXECUTION_AUTHORIZATION_TIME_INVALID")
 
-    def test_orchestrator_exact_issued_profile_is_static_ready(self):
+    def test_non_utc_issued_at_fails(self):
+        p = self.issued_profile()
+        auth = p["owner_final_execution_authorization"]
+        auth["issued_at_utc"] = "2026-09-19T18:00:00+08:00"
+        auth["sha256"] = orch.owner_authorization_sha256(auth)
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "OWNER_FINAL_EXECUTION_AUTHORIZATION_TIME_INVALID")
+
+    def test_server_start_health_failure_still_has_process_start_rss_evidence(self):
+        temp, ctx = self.make_context()
+        fake = FakePopen()
+        try:
+            with (
+                mock.patch.object(orch, "build_server_command", return_value=[r"C:\fake\llama-server.exe"]),
+                mock.patch.object(orch.subprocess, "Popen", return_value=fake),
+                mock.patch.object(orch, "process_rss_bytes", return_value=123456),
+                mock.patch.object(orch, "wait_health", side_effect=orch.StabilityError("HEALTH_TIMEOUT", "fake")),
+            ):
+                self.assert_stability_error("HEALTH_TIMEOUT", lambda: orch.run_cancel(ctx))
+            rows = [
+                json.loads(line)
+                for line in (ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            start = next(row for row in rows if row["sample"] == "process-start")
+            self.assertEqual(start["scenario"], "M1-07-PC-CANCEL-001")
+            self.assertEqual(start["start_index"], 1)
+            self.assertEqual(start["start_label"], "cancel")
+            self.assertEqual(start["pid"], fake.pid)
+            self.assertIs(start["process_created"], True)
+            self.assertEqual(start["initial_rss_bytes"], 123456)
+            self.assertIs(start["rss_capture_succeeded"], True)
+        finally:
+            temp.cleanup()
+
+    def test_rss_failure_after_popen_is_evidenced_then_fails_closed(self):
+        temp, ctx = self.make_context()
+        fake = FakePopen(pid=42421)
+        try:
+            with (
+                mock.patch.object(orch, "build_server_command", return_value=[r"C:\fake\llama-server.exe"]),
+                mock.patch.object(orch.subprocess, "Popen", return_value=fake),
+                mock.patch.object(
+                    orch,
+                    "process_rss_bytes",
+                    side_effect=orch.StabilityError("PROCESS_METRICS_READ_FAILED", "fake-rss-failure"),
+                ),
+            ):
+                self.assert_stability_error(
+                    "PROCESS_METRICS_READ_FAILED",
+                    lambda: orch.start_server(ctx, "M1-07-PC-LOAD-001", "rss-fail"),
+                )
+            rows = [
+                json.loads(line)
+                for line in (ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            start = rows[-1]
+            self.assertIs(start["process_created"], True)
+            self.assertIs(start["rss_capture_succeeded"], False)
+            self.assertEqual(start["rss_failure_code"], "PROCESS_METRICS_READ_FAILED")
+        finally:
+            temp.cleanup()
+
+    def test_stdout_stderr_attempt_to_exceed_storage_ceiling_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            with (
+                mock.patch.object(orch, "EXPECTED_MAX_STORAGE", 256),
+                mock.patch.object(orch, "EXPECTED_EVIDENCE_RESERVE_BYTES", 64),
+            ):
+                budget = orch.OutputBudget(256)
+                capture = orch.BoundedCapture(io.BytesIO(b"x" * 1024), root / "spam.log", budget)
+                capture.start()
+                capture.join(2.0)
+                self.assert_stability_error("OUTPUT_STORAGE_BUDGET_EXCEEDED", budget.raise_if_failed)
+                self.assertLessEqual((root / "spam.log").stat().st_size, 192)
+
+    def test_process_start_evidence_can_use_reserved_bytes_after_capture_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            with (
+                mock.patch.object(orch, "EXPECTED_MAX_STORAGE", 512),
+                mock.patch.object(orch, "EXPECTED_EVIDENCE_RESERVE_BYTES", 256),
+            ):
+                budget = orch.OutputBudget(512)
+                with self.assertRaises(orch.StabilityError):
+                    budget.reserve(300, capture=True)
+                evidence = root / "metrics.jsonl"
+                budget.append_jsonl(evidence, {"process_created": True, "pid": 1}, allow_after_failure=True)
+                self.assertTrue(evidence.is_file())
+                self.assertLessEqual(budget.used, 512)
+
+    def test_wall_deadline_inside_scenario_fails_closed(self):
+        temp, ctx = self.make_context()
+        try:
+            ctx.deadline = time.monotonic() - 0.01
+            self.assert_stability_error("MAX_WALL_TIME_EXCEEDED", lambda: orch.wait_health(ctx, timeout=60.0))
+        finally:
+            temp.cleanup()
+
+    def test_direct_run_bypass_attempt_is_blocked(self):
+        self.assert_stability_error("EXECUTION_CONTEXT_REQUIRED", lambda: orch.run(self.load_candidate()))
+
+    def test_direct_start_server_bypass_attempt_is_blocked(self):
+        self.assert_stability_error(
+            "EXECUTION_CONTEXT_REQUIRED",
+            lambda: orch.start_server(self.load_candidate(), "M1-07-PC-LOAD-001", "bypass"),
+        )
+
+    def test_foreign_popen_passed_to_kill_is_rejected(self):
+        temp, ctx = self.make_context()
+        try:
+            foreign = FakePopen(pid=99999)
+            self.assert_stability_error("FOREIGN_PROCESS_REJECTED", lambda: orch.force_kill_owned(ctx, foreign))
+            self.assertIsNone(foreign.returncode)
+        finally:
+            temp.cleanup()
+
+    def test_owned_process_from_other_context_is_rejected(self):
+        temp1, ctx1 = self.make_context()
+        temp2, ctx2 = self.make_context()
+        fake = FakePopen(pid=42422)
+        capture1 = orch.BoundedCapture(fake.stdout, ctx1.output_dir / "a.out", ctx1.budget)
+        capture2 = orch.BoundedCapture(fake.stderr, ctx1.output_dir / "a.err", ctx1.budget)
+        owned = orch.OwnedServerProcess(
+            fake, ctx1.nonce, "a", "M1-07-PC-LOAD-001", 1, capture1, capture2, orch._OWNED_PROCESS_SEAL
+        )
+        ctx1.owned[fake.pid] = owned
+        try:
+            self.assert_stability_error("FOREIGN_PROCESS_REJECTED", lambda: orch.force_kill_owned(ctx2, owned))
+        finally:
+            temp1.cleanup()
+            temp2.cleanup()
+
+    def test_candidate_default_invocation_is_validate_only_and_effect_free(self):
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(sys, "argv", [str(O)]),
+            mock.patch.object(orch.subprocess, "Popen", side_effect=AssertionError("Popen must not be called")),
+            contextlib.redirect_stdout(stdout),
+        ):
+            rc = orch.main()
+        self.assertEqual(rc, 0)
+        result = json.loads(stdout.getvalue().strip())
+        self.assertIs(result["execution_ready"], False)
+        self.assertEqual(result["reason"], "PROFILE_NOT_ISSUED")
+        self.assertIs(result["server_started"], False)
+        self.assertIs(result["model_loaded"], False)
+
+    def test_candidate_does_not_create_execution_context(self):
+        p = self.load_candidate()
+        with tempfile.TemporaryDirectory() as td:
+            self.assert_stability_error(
+                "EXECUTION_AUTHORIZATION_BLOCKED",
+                lambda: orch.authorize_execution(p, pathlib.Path(td) / "effectful"),
+            )
+
+    def test_exact_issued_static_profile_passes_non_effectful_gate(self):
         p = self.issued_profile()
         ready, reason = orch.validate_execution_profile(p)
         self.assertTrue(ready)
         self.assertEqual(reason, "READY")
 
-    def test_orchestrator_rejects_port_drift_before_execution(self):
+    def test_wrong_machine_binding_in_profile_fails_static_gate(self):
         p = self.issued_profile()
+        p["runtime_and_device_profile"]["machine_identity"]["sha256"] = "0" * 64
+        ready, reason = orch.validate_execution_profile(p)
+        self.assertFalse(ready)
+        self.assertEqual(reason, "M1_07_MACHINE_IDENTITY_BINDING_DRIFT")
+
+    def test_non_loopback_port_or_gpu_drift_fails_candidate_validation(self):
+        p = self.load_candidate()
         p["config_revision"]["server"]["port"] = 18088
-        ready, reason = orch.validate_execution_profile(p)
-        self.assertFalse(ready)
-        self.assertEqual(reason, "M1_07_CONFIG_SCOPE_DRIFT:port")
+        self.assertEqual(m.validate_candidate(p), (False, "M1_07_LOOPBACK_BOUNDARY"))
+        p = self.load_candidate()
+        p["config_revision"]["server"]["n_gpu_layers"] = 1
+        self.assertEqual(m.validate_candidate(p), (False, "M1_07_CPU_ONLY_BOUNDARY"))
 
-    def test_orchestrator_rejects_thread_drift_before_execution(self):
-        p = self.issued_profile()
-        p["config_revision"]["server"]["threads"] = 3
-        ready, reason = orch.validate_execution_profile(p)
-        self.assertFalse(ready)
-        self.assertEqual(reason, "M1_07_CONFIG_SCOPE_DRIFT:threads")
+    def test_m1_08_authority_leak_fails_candidate_validation(self):
+        p = self.load_candidate()
+        p["prohibited_operations"].remove("M1_08_EXECUTION")
+        self.assertEqual(m.validate_candidate(p), (False, "M1_07_PROHIBITED_BOUNDARY"))
 
-    def test_orchestrator_rejects_device_scope_drift_before_execution(self):
-        p = self.issued_profile()
-        p["runtime_and_device_profile"]["device_name"] = "Turing"
-        ready, reason = orch.validate_execution_profile(p)
-        self.assertFalse(ready)
-        self.assertEqual(reason, "M1_07_DEVICE_SCOPE_DRIFT")
-
-    def test_orchestrator_rejects_model_subject_drift_before_execution(self):
-        p = self.issued_profile()
-        p["exact_model_ids_and_revisions"]["stability_subject"]["sha256"] = "0" * 64
-        ready, reason = orch.validate_execution_profile(p)
-        self.assertFalse(ready)
-        self.assertEqual(reason, "M1_07_STABILITY_SUBJECT_DRIFT")
-
-    def test_orchestrator_rejects_owner_authorization_digest_drift(self):
-        p = self.issued_profile()
-        p["owner_final_execution_authorization"]["owner_message"] = "tampered"
-        ready, reason = orch.validate_execution_profile(p)
-        self.assertFalse(ready)
-        self.assertEqual(reason, "OWNER_FINAL_EXECUTION_AUTHORIZATION_DIGEST_INVALID")
-
-    def test_orchestrator_contains_process_metrics_and_budget_guards(self):
+    def test_crash_ordering_remains_active_stream_kill_close_restart(self):
         src = O.read_text(encoding="utf-8")
-        self.assertIn("M1RuntimeStabilityProcessMetrics.jsonl", src)
-        self.assertIn("def process_rss_bytes(", src)
-        self.assertIn("def enforce_output_storage_budget(", src)
-        self.assertIn("def enforce_wall_budget(", src)
-        self.assertIn("def claim_attempt_guard(", src)
-        self.assertIn("MAX_ATTEMPTS_EXCEEDED", src)
+        block = src.split("def run_crash_restart", 1)[1].split("\ndef run(", 1)[0]
+        open_pos = block.index("stream_conn, stream_resp, first = open_stream(ctx)")
+        kill_pos = block.index("force_kill_owned(ctx, owned)")
+        close_pos = block.index("stream_conn.close()")
+        restart_pos = block.index('start_server(ctx, "M1-07-PC-CRASH-001", "crash-after")')
+        self.assertLess(open_pos, kill_pos)
+        self.assertLess(kill_pos, close_pos)
+        self.assertLess(close_pos, restart_pos)
 
-    def test_orchestrator_default_mode_is_validate_only(self):
+    def test_no_arbitrary_pid_termination_pathways(self):
         src = O.read_text(encoding="utf-8")
-        self.assertIn("if not args.validate_only and not args.execute:", src)
-        self.assertIn("args.validate_only = True", src)
-        self.assertIn('"server_started": False', src)
-        self.assertIn('"model_loaded": False', src)
-
-    def test_crash_guard_kills_only_owned_popen_handle(self):
-        src = O.read_text(encoding="utf-8")
-        self.assertIn("def force_kill_owned(proc:", src)
-        self.assertIn("proc.kill()", src)
         self.assertNotIn("taskkill", src.lower())
         self.assertNotIn("Stop-Process", src)
         self.assertNotIn("os.kill(", src)
-
-    def test_crash_occurs_while_stream_connection_is_still_open(self):
-        src = O.read_text(encoding="utf-8")
-        block = src.split("def run_crash_restart", 1)[1].split("\ndef run(", 1)[0]
-        open_pos = block.index("stream_conn, stream_resp, first = open_stream(profile)")
-        kill_pos = block.index("force_kill_owned(proc)")
-        close_pos = block.index("stream_conn.close()")
-        self.assertLess(open_pos, kill_pos)
-        self.assertLess(kill_pos, close_pos)
 
 
 if __name__ == "__main__":
