@@ -62,10 +62,10 @@ def main():
     if f'const issuerPublicKeySHA256 = "{OWNER_PUBLIC_KEY_SHA256}"' not in policy:
         raise RuntimeError("successor build requires exact Owner public-key fingerprint")
     digest = hashlib.sha256(raw).hexdigest()
-    output.mkdir(parents=True, exist_ok=False)
-    binary = output / ("m1-07-owner.exe" if os.name == "nt" else "m1-07-owner")
     with tempfile.TemporaryDirectory(prefix="m107-go-build-") as temp:
         env = build_env(os.environ.get("CLUED_M107_GOCACHE", temp))
+        output.mkdir(parents=True, exist_ok=False)
+        binary = output / ("m1-07-owner.exe" if os.name == "nt" else "m1-07-owner")
         argv = [str(go), "build", "-trimpath", "-buildvcs=false", "-ldflags=-X main.nativeSourceDigest=" + digest, "-o", str(binary), "."]
         process = subprocess.run(argv, cwd=SOURCE, env=env, capture_output=True, text=True, timeout=300)
         (output / "build.log").write_text(process.stdout + process.stderr, encoding="utf-8")
