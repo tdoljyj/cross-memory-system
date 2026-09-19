@@ -95,12 +95,12 @@
     "base_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
     "required_script_path": "scripts/model-program/m1_runtime_stability_pc.py",
     "required_script_git_blob_sha1": "60310021d161eeb0aace2dd670241523845a60f0",
-    "required_script_normalized_sha256": "1998a53330bcc0485412132906274e85b725e1d13c1d6c68d2e004037d6daddb",
+    "required_script_normalized_sha256": "59a4a95ce234b76c4f6852370ff2b05a5dcd6b3de372d45e59a558041e4bed8a",
     "required_code_commit": "52c99f179a4046430fbafc1ea610303dbfcbc5ce",
     "orchestrator_default_mode": "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD",
     "execution_allowed_while_candidate": false,
     "exact_binding_module_path": "scripts/model-program/m1_runtime_stability_binding.py",
-    "exact_binding_module_git_blob_sha1": "34b43e84042b304796da6afe365617555fc06d63"
+    "exact_binding_module_git_blob_sha1": "d86bd85a06bccfabe1fbcd7345a3895c4cf4e836"
   },
   "config_revision": {
     "profile_config_id": "M1-STAB-PC-QWEN35-Q8_0-v1",
