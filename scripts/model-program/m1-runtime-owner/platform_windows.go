@@ -3,6 +3,7 @@
 package main
 
 import (
+	"archive/zip"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -47,43 +48,115 @@ func (realPlatform) physical() (string, string, error) {
 	raw := strings.ToLower(strings.TrimSpace(syscall.UTF16ToString(buf)))
 	return strings.ToUpper(name), sha([]byte("windows-machineguid:" + raw)), nil
 }
-func fileHash(path string, bytesExpected int64, expected string, deadline time.Time) error {
-	f, e := os.Open(path)
-	if e != nil {
-		return e
-	}
-	defer f.Close()
-	st, e := f.Stat()
-	if e != nil {
-		return e
-	}
-	if st.Size() != bytesExpected || !st.Mode().IsRegular() {
-		return fail("EXACT_FILE_SIZE_DRIFT")
-	}
+func hashReader(r io.Reader, deadline time.Time) (string, int64, error) {
 	h := sha256.New()
 	buf := make([]byte, 1<<20)
+	var total int64
 	for {
 		if !time.Now().Before(deadline) {
-			return fail("MAX_WALL_TIME_EXCEEDED")
+			return "", total, fail("MAX_WALL_TIME_EXCEEDED")
 		}
-		n, er := f.Read(buf)
+		n, er := r.Read(buf)
 		if n > 0 {
+			total += int64(n)
 			h.Write(buf[:n])
 		}
 		if er == io.EOF {
 			break
 		}
 		if er != nil {
-			return er
+			return "", total, er
 		}
 	}
-	if hex.EncodeToString(h.Sum(nil)) != expected {
+	return hex.EncodeToString(h.Sum(nil)), total, nil
+}
+func fileHash(path string, bytesExpected int64, expected string, deadline time.Time) error {
+	lst, e := os.Lstat(path)
+	if e != nil {
+		return e
+	}
+	if !lst.Mode().IsRegular() || lst.Size() != bytesExpected {
+		return fail("EXACT_FILE_SIZE_DRIFT")
+	}
+	f, e := os.Open(path)
+	if e != nil {
+		return e
+	}
+	defer f.Close()
+	digest, total, e := hashReader(f, deadline)
+	if e != nil {
+		return e
+	}
+	if total != bytesExpected {
+		return fail("EXACT_FILE_SIZE_DRIFT")
+	}
+	if digest != expected {
 		return &fault{"EXACT_FILE_DIGEST_DRIFT", filepath.Base(path)}
 	}
 	return nil
 }
+func attestRuntimeTree(deadline time.Time) error {
+	if e := fileHash(runtimeAssetPath, runtimeAssetBytes, runtimeAssetSHA, deadline); e != nil {
+		return e
+	}
+	z, e := zip.OpenReader(runtimeAssetPath)
+	if e != nil {
+		return e
+	}
+	defer z.Close()
+	type spec struct {
+		bytes int64
+		sha   string
+	}
+	expected := make(map[string]spec, len(z.File))
+	for _, entry := range z.File {
+		name := entry.Name
+		if entry.FileInfo().IsDir() || name == "" || filepath.Base(name) != name || strings.ContainsAny(name, `/\`) {
+			return fail("RUNTIME_TREE_ARCHIVE_PATH_INVALID")
+		}
+		if _, exists := expected[name]; exists {
+			return fail("RUNTIME_TREE_DUPLICATE_ENTRY")
+		}
+		r, er := entry.Open()
+		if er != nil {
+			return er
+		}
+		digest, total, er := hashReader(r, deadline)
+		closeErr := r.Close()
+		if er != nil {
+			return er
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if total != int64(entry.UncompressedSize64) {
+			return fail("RUNTIME_TREE_ARCHIVE_SIZE_DRIFT")
+		}
+		expected[name] = spec{bytes: total, sha: digest}
+	}
+	actual, e := os.ReadDir(runtimeDir)
+	if e != nil {
+		return e
+	}
+	if len(actual) != len(expected) {
+		return fail("RUNTIME_TREE_FILE_SET_DRIFT")
+	}
+	for _, entry := range actual {
+		if entry.IsDir() {
+			return fail("RUNTIME_TREE_FILE_SET_DRIFT")
+		}
+		want, ok := expected[entry.Name()]
+		if !ok {
+			return &fault{"RUNTIME_TREE_UNEXPECTED_FILE", entry.Name()}
+		}
+		if e := fileHash(filepath.Join(runtimeDir, entry.Name()), want.bytes, want.sha, deadline); e != nil {
+			return e
+		}
+	}
+	return nil
+}
 func (realPlatform) attestFiles(deadline time.Time) error {
-	if e := fileHash(serverPath, 9216, serverSHA, deadline); e != nil {
+	if e := attestRuntimeTree(deadline); e != nil {
 		return e
 	}
 	return fileHash(modelPath, 833592320, modelSHA, deadline)
@@ -227,7 +300,7 @@ func (realPlatform) start(cmd []string, out, errOut io.Writer) (process, error) 
 	defer stderrW.Close()
 	// syscall.StartProcess returns the ORIGINAL creation-time process handle.
 	// It is retained for kill, wait, liveness and RSS, never reopened via PID.
-	id, h, e := syscall.StartProcess(cmd[0], cmd, &syscall.ProcAttr{Dir: filepath.Dir(cmd[0]), Env: os.Environ(), Files: []uintptr{null.Fd(), stdoutW.Fd(), stderrW.Fd()}, Sys: &syscall.SysProcAttr{HideWindow: true, CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP}})
+	id, h, e := syscall.StartProcess(cmd[0], cmd, &syscall.ProcAttr{Dir: filepath.Dir(cmd[0]), Env: sanitizedServerEnv(), Files: []uintptr{null.Fd(), stdoutW.Fd(), stderrW.Fd()}, Sys: &syscall.SysProcAttr{HideWindow: true, CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP}})
 	if e != nil {
 		stdoutR.Close()
 		stderrR.Close()
