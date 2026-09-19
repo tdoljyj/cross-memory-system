@@ -1,0 +1,157 @@
+{
+  "schema": "clued.self-hosted-node-profiles/v1",
+  "repository": "tdoljyj/cross-memory-system",
+  "runner_package": {
+    "version": "2.337.0",
+    "windows_x64_sha256": "1150692afa94e71f872017e254ea55b6eece1eece3fe7e3a6d4c93d0a1b85cfc",
+    "linux_x64_sha256": "70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613",
+    "auto_update_after_registration": true
+  },
+  "runner_profiles": {
+    "windows-general-v1": {
+      "os": "Windows",
+      "arch": "X64",
+      "required_custom_labels": [
+        "clued",
+        "pool-general",
+        "trust-internal",
+        "cap-python312"
+      ],
+      "optional_custom_labels": [
+        "cap-node24"
+      ],
+      "runtime_contract": {
+        "git": "required",
+        "python": "3.12",
+        "node": "24 when cap-node24 is advertised"
+      },
+      "execution": {
+        "startup": "current-user-login",
+        "priority_class": "BelowNormal",
+        "service_mode": "opt-in only"
+      }
+    },
+    "linux-docker-wsl2-v1": {
+      "os": "Linux",
+      "arch": "X64",
+      "required_custom_labels": [
+        "clued",
+        "pool-general",
+        "trust-internal",
+        "Linux",
+        "cap-docker-linux",
+        "runtime-wsl2"
+      ],
+      "optional_custom_labels": [],
+      "runtime_contract": {
+        "git": "required",
+        "systemd": "required",
+        "docker": "native Linux engine required",
+        "docker_group_access": "required for runner user"
+      },
+      "execution": {
+        "startup": "systemd",
+        "wsl_keepalive": true
+      }
+    }
+  },
+  "capacity_profiles": {
+    "compact-v1": {
+      "description": "16 GB-class personal host; preserve foreground responsiveness.",
+      "minimum_host_memory_gb": 12,
+      "wsl_memory_gb": 6,
+      "wsl_processors": 3,
+      "wsl_swap_gb": 2,
+      "watchdog_interval_seconds": 30,
+      "suspend_free_memory_gb": 2.0,
+      "resume_free_memory_gb": 3.5,
+      "suspend_c_free_gb": 40,
+      "resume_c_free_gb": 55
+    },
+    "workstation-v1": {
+      "description": "64 GB-class workstation; allow heavier parallel CI while preserving host headroom.",
+      "minimum_host_memory_gb": 48,
+      "wsl_memory_gb": 28,
+      "wsl_processors": 16,
+      "wsl_swap_gb": 8,
+      "watchdog_interval_seconds": 60,
+      "suspend_free_memory_gb": 6.0,
+      "resume_free_memory_gb": 10.0,
+      "suspend_c_free_gb": 50,
+      "resume_c_free_gb": 80
+    }
+  },
+  "lifecycle_states": [
+    "planned",
+    "enrolling",
+    "validated",
+    "active",
+    "draining",
+    "maintenance",
+    "retired"
+  ],
+  "hosts": [
+    {
+      "host_id": "company-primary",
+      "hostname": "DESK-W-591",
+      "site": "company",
+      "state": "active",
+      "capacity_profile": "workstation-v1",
+      "watchdog_path": "C:\\clued-ci\\watchdog-clued-ci.ps1",
+      "windows_runner": {
+        "profile": "windows-general-v1",
+        "name": "clued-ci-company-win-01",
+        "root": "C:\\clued-ci\\runner-company-win-01",
+        "launcher": "C:\\clued-ci\\start-company-runner.cmd",
+        "capabilities": [
+          "cap-python312",
+          "cap-node24"
+        ]
+      },
+      "linux_runner": {
+        "profile": "linux-docker-wsl2-v1",
+        "name": "clued-ci-company-linux-01",
+        "distro": "CluedCI-Linux",
+        "user": "runner",
+        "root": "/home/runner/actions-runner",
+        "service_unit": "actions.runner.tdoljyj-cross-memory-system.clued-ci-company-linux-01.service",
+        "manage_native_docker": true,
+        "capabilities": [
+          "cap-docker-linux",
+          "runtime-wsl2"
+        ]
+      }
+    },
+    {
+      "host_id": "home-primary",
+      "hostname": "Turing",
+      "site": "home",
+      "state": "active",
+      "capacity_profile": "compact-v1",
+      "watchdog_path": "C:\\clued-ci\\watchdog-home-runner.ps1",
+      "windows_runner": {
+        "profile": "windows-general-v1",
+        "name": "clued-ci-home-win-01",
+        "root": "C:\\clued-ci\\runner-home-win-01",
+        "launcher": "C:\\clued-ci\\start-clued-ci-home-win-01.cmd",
+        "capabilities": [
+          "cap-python312",
+          "cap-node24"
+        ]
+      },
+      "linux_runner": {
+        "profile": "linux-docker-wsl2-v1",
+        "name": "clued-ci-home-linux-01",
+        "distro": "Ubuntu-24.04",
+        "user": "chase",
+        "root": "/home/chase/actions-runner",
+        "service_unit": "actions.runner.tdoljyj-cross-memory-system.clued-ci-home-linux-01.service",
+        "manage_native_docker": true,
+        "capabilities": [
+          "cap-docker-linux",
+          "runtime-wsl2"
+        ]
+      }
+    }
+  ]
+}

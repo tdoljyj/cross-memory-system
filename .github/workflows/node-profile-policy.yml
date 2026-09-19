@@ -1,0 +1,99 @@
+name: node-profile-policy
+
+on:
+  pull_request:
+    paths:
+      - "scripts/ci/self-hosted/**"
+      - ".github/workflows/node-profile-policy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/ci/self-hosted/**"
+      - ".github/workflows/node-profile-policy.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trusted-windows:
+    name: >-
+      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository &&
+              github.actor == github.repository_owner)))
+          && 'node-profile-policy-windows' || 'node-profile-policy-windows-skipped' }}
+    if: >-
+      (github.event_name == 'push' &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner)
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python scripts/ci/self-hosted/validate_node_profiles.py
+      - name: Parse PowerShell onboarding scripts
+        shell: powershell
+        run: |
+          $files = @(
+            'scripts/ci/self-hosted/bootstrap-windows-runner.ps1',
+            'scripts/ci/self-hosted/apply-wsl-capacity-profile.ps1',
+            'scripts/ci/self-hosted/render-host-watchdog.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "${file}: $($_.Message)" }
+              throw "PowerShell parse failed: $file"
+            }
+          }
+
+  trusted-linux:
+    name: >-
+      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository &&
+              github.actor == github.repository_owner)))
+          && 'node-profile-policy-linux' || 'node-profile-policy-linux-skipped' }}
+    if: >-
+      (github.event_name == 'push' &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner)
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 scripts/ci/self-hosted/validate_node_profiles.py
+      - run: bash -n scripts/ci/self-hosted/bootstrap-linux-runner.sh
+
+  untrusted-hosted:
+    name: >-
+      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              (github.event.pull_request.head.repo.full_name != github.repository ||
+               github.actor != github.repository_owner))))
+          && 'node-profile-policy' || 'node-profile-policy-hosted-skipped' }}
+    if: >-
+      (github.event_name == 'push' &&
+       github.actor != github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       (github.event.pull_request.head.repo.full_name != github.repository ||
+        github.actor != github.repository_owner))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 scripts/ci/self-hosted/validate_node_profiles.py
+      - run: bash -n scripts/ci/self-hosted/bootstrap-linux-runner.sh
