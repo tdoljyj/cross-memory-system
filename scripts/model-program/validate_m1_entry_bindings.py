@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import json,sys
+import hashlib,json,sys
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -26,6 +26,9 @@ ISSUED_REQ_PROHIBITED=BASE_REQ_PROHIBITED|{'MODEL_LOAD'}
 
 def load(p): return json.loads(p.read_text(encoding='utf-8'))
 def fail(msg): print('FAIL: '+msg,file=sys.stderr); raise SystemExit(1)
+def git_blob_sha1(p):
+    b=Path(p).read_bytes()
+    return hashlib.sha1(b'blob '+str(len(b)).encode()+b'\\0'+b).hexdigest()
 
 def has_tbb(v):
     if isinstance(v,str): return 'TO_BE_BOUND' in v
@@ -80,6 +83,78 @@ def main():
     stage=load(BASE/'governance/M1StageEntryAuthorization.v1.0.1.json')
     if stage.get('bound_plan',{}).get('sha256')!=PLAN:
         fail('M1 stage plan binding drift')
+
+    stage2=load(BASE/'governance/M1StageEntryAuthorization.v1.0.2.json')
+    pred=stage2.get('predecessor') or {}
+    if pred.get('path')!='M1StageEntryAuthorization.v1.0.1.json' or pred.get('git_blob_sha1')!='7d9fbf7bc083d980cd7a3f43ef2bfdc0a58dd17c':
+        fail('M1 stage successor predecessor declaration drift')
+    if git_blob_sha1(BASE/'governance/M1StageEntryAuthorization.v1.0.1.json')!='7d9fbf7bc083d980cd7a3f43ef2bfdc0a58dd17c':
+        fail('M1 stage predecessor bytes drift')
+    if stage2.get('bound_plan',{}).get('sha256')!=PLAN or stage2.get('bound_plan',{}).get('plan_semantics_changed') is not False:
+        fail('M1 stage successor plan binding drift')
+    if stage2.get('amendment_scope',{}).get('type')!='TARGETED_EXECUTION_DEPENDENCY_REFRAME_ONLY':
+        fail('M1 stage successor scope expansion')
+    if stage2.get('m1_hard_boundaries')!=stage.get('m1_hard_boundaries'):
+        fail('M1 stage successor hard-boundary drift')
+    if stage2.get('exact_experiment_profile_required_before')!=stage.get('exact_experiment_profile_required_before'):
+        fail('M1 stage successor effectful-profile gate drift')
+    if stage2.get('independent_review')!=stage.get('independent_review'):
+        fail('M1 stage successor independent-review drift')
+
+    prog=stage2.get('m1_06_progressive_acceptance') or {}
+    a=prog.get('M1-06A') or {}
+    b=prog.get('M1-06B') or {}
+    cc=prog.get('M1-06C') or {}
+    if a.get('current_status')!='CLOSED_SUCCESS' or a.get('accepted_device_classes')!=['PC'] or a.get('accepted_device_names')!=['DESK-W-591']:
+        fail('M1-06A accepted PC baseline binding invalid')
+    if b.get('current_status')!='DEFERRED_NO_BOUND_DEVICE' or b.get('required_real_device_classes')!=['Phone','Tablet'] or b.get('coverage_claim')!='NONE':
+        fail('M1-06B deferred mobile coverage invalid')
+    if cc.get('current_status')!='DEFERRED_NO_BOUND_DEVICE' or cc.get('required_real_device_classes')!=['Mac'] or cc.get('coverage_claim')!='NONE':
+        fail('M1-06C deferred Mac coverage invalid')
+    if prog.get('full_m1_06_status')!='OPEN / PC_COMPLETE / PHONE_TABLET_MAC_DEFERRED':
+        fail('full M1-06 incorrectly closed')
+
+    pp=stage2.get('progression_policy') or {}
+    p7=pp.get('m1_07') or {}
+    p8=pp.get('m1_08') or {}
+    p9=pp.get('m1_09') or {}
+    p10=pp.get('m1_10') or {}
+    if p7.get('progression_gate')!='M1-06A_CLOSED_SUCCESS' or p7.get('gate_satisfied') is not True or p7.get('effectful_execution_authorized_by_stage_successor') is not False or p7.get('exact_experiment_profile_still_required') is not True:
+        fail('M1-07 successor progression gate invalid')
+    if p8.get('gate_satisfied') is not False or p8.get('effectful_execution_authorized_by_stage_successor') is not False or p8.get('exact_experiment_profile_still_required') is not True:
+        fail('M1-08 successor progression gate invalid')
+    if p9.get('gate_satisfied') is not False or p9.get('final_selection_authorized') is not False:
+        fail('M1-09 final-selection gate weakened')
+    if p10.get('gate_satisfied') is not False or p10.get('final_m1_acceptance_allowed') is not False:
+        fail('M1-10 final acceptance gate weakened')
+
+    coverage=stage2.get('required_final_device_coverage') or {}
+    if coverage.get('device_classes')!=['Phone','Tablet','PC','Mac'] or coverage.get('all_complete') is not False or coverage.get('may_claim_full_cross_device_baseline') is not False:
+        fail('M1 final device coverage gate invalid')
+    expected_status={
+        'Phone':'DEFERRED_NO_BOUND_DEVICE',
+        'Tablet':'DEFERRED_NO_BOUND_DEVICE',
+        'PC':'PASS / DESK-W-591_STRICT_CPU_BASELINE_ACCEPTED',
+        'Mac':'DEFERRED_NO_BOUND_DEVICE',
+    }
+    if coverage.get('status')!=expected_status:
+        fail('M1 final device coverage status drift')
+
+    expected_allowed=set(stage.get('allowed_without_experiment_profile') or [])|{'M1-07_EXPERIMENT_PROFILE_PREPARATION_AFTER_M1-06A_CLOSEOUT'}
+    if set(stage2.get('allowed_without_experiment_profile') or [])!=expected_allowed:
+        fail('M1 stage successor profile-free allowance expansion')
+    if stage2.get('authority_effect')!='M1_STAGE_SUCCESSOR_DEPENDENCY_ORDER_ONLY / M1-07_PROFILE_PREPARATION_ALLOWED / EFFECTFUL_MODEL_ACTIONS_STILL_REQUIRE_SEPARATE_EXACT_EXPERIMENT_PROFILE':
+        fail('M1 stage successor authority effect drift')
+
+    pc_closeout=load(BASE/'evidence/M1BenchmarkPCProfile003ExecutionCloseout_20260919.json')
+    if pc_closeout.get('status')!='PASS / M1_06_PC_STRICT_CPU_FOUR_VARIANT_BASELINE_ACCEPTED':
+        fail('M1-06A PC closeout not PASS')
+    if pc_closeout.get('scope_disposition',{}).get('pc_baseline')!='CLOSED_SUCCESS' or pc_closeout.get('scope_disposition',{}).get('full_m1_06')!='OPEN':
+        fail('M1-06A PC closeout scope disposition invalid')
+    pc_evidence=load(BASE/'evidence/DeviceBenchmarkEvidence.PC.DESK-W-591.v1.0.1.json')
+    concl=pc_evidence.get('conclusions') or {}
+    if concl.get('pc_strict_cpu_baseline_evidence_complete') is not True or concl.get('full_m1_06_closed') is not False:
+        fail('M1-06A PC evidence completion boundary invalid')
 
     old=load(BASE/'registries/DeviceRuntimeMatrix.v1.0.1.json')
     runtimes={x['runtime_id']:x for x in old['runtime_candidates']}
@@ -166,7 +241,7 @@ def main():
     except SyntaxError:
         fail('bound download script does not compile')
 
-    print('PASS: MODEL-PROGRAM-M1 Profiles 001/002 closed fail-closed; Profile 003 exact download/integrity closed PASS with dual rehash; inference/evaluation/training remain prohibited')
+    print('PASS: MODEL-PROGRAM-M1 stage successor v1.0.2 preserves hard boundaries; M1-06A PC baseline is accepted; Phone/Tablet/Mac remain deferred; M1-07 profile preparation is allowed but effectful execution remains separately profile-gated')
     return 0
 
 if __name__=='__main__': raise SystemExit(main())
