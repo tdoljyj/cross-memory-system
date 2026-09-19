@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 M1 = ROOT / "development/contracts/model-program/m1"
 CANDIDATE = M1 / "governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.candidate.json"
 ORCHESTRATOR = ROOT / "scripts/model-program/m1_runtime_stability_pc.py"
+BINDING = ROOT / "scripts/model-program/m1_runtime_stability_binding.py"
 
 PLAN_SHA = "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
 MODEL_REV = "2fc06364715b967f1860aea9cf38778875588b17"
@@ -17,12 +19,21 @@ MODEL_SHA = "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696"
 Q8_SHA = "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
 SERVER_SHA = "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba"
 LLAMA_COMMIT = "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
-ORCH_COMMIT = "2209576a79af035a4ffe4a59aab4c0039107f36f"
-ORCH_BLOB = "b197aba8c4ab3d736f063ac823ddfeec85289f0d"
-ORCH_NORMALIZED_SHA256 = "de43baf3445a415dd1639948aa3e674f1d04582f75b2c29f7cc3bd6e1f490d1e"
+ORCH_COMMIT = "52c99f179a4046430fbafc1ea610303dbfcbc5ce"
+ORCH_BLOB = "60310021d161eeb0aace2dd670241523845a60f0"
+ORCH_NORMALIZED_SHA256 = "1998a53330bcc0485412132906274e85b725e1d13c1d6c68d2e004037d6daddb"
+BINDING_BLOB = "34b43e84042b304796da6afe365617555fc06d63"
 ISSUED_PROFILE_ID = "M1-STAB-QWEN35-08B-PC-001-ISSUED"
+MACHINE_IDENTITY_SHA256 = "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522"
 ATTEMPT_GUARD_PATH = r"C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-STAB-QWEN35-08B-PC-001\M1RuntimeStabilityAttemptGuard.json"
 
+REQUIRED_MODEL_SEMANTICS = {
+    "STABILITY_REFERENCE_ONLY",
+    "CONTINUITY_SUBJECT",
+    "NOT_QUALITY_WINNER",
+    "NOT_RELEASE_SELECTION",
+    "NOT_TEACHER_SELECTION",
+}
 REQUIRED_PROHIBITED = {
     "EXECUTION_WHILE_PROFILE_STATUS_IS_NOT_ISSUED",
     "EXECUTION_WITH_UNBOUND_CODE_REVISION",
@@ -47,12 +58,35 @@ REQUIRED_PROHIBITED = {
     "ACTIVATION",
     "M1_08_EXECUTION",
 }
-
 SCENARIOS = {
     "M1-07-PC-LOAD-001",
     "M1-07-PC-CANCEL-001",
     "M1-07-PC-BACKGROUND-001",
     "M1-07-PC-CRASH-001",
+}
+REQUIRED_EVIDENCE = {
+    "PROCESS_RSS_SAMPLES",
+    "PROCESS_RSS_SAMPLES_PER_SERVER_START",
+    "OWNER_FINAL_EXECUTION_AUTHORIZATION_ID_AND_SHA256",
+    "ATTEMPT_GUARD_PATH_AND_CLAIM_EVENT",
+    "STABLE_WINDOWS_MACHINE_IDENTITY_SHA256_FROM_SYSTEM_SOURCE",
+    "PROCESS_START_EVIDENCE_IMMEDIATELY_AFTER_EVERY_SUCCESSFUL_POPEN",
+    "INITIAL_RSS_OR_EXPLICIT_RSS_FAILURE_PER_SERVER_START",
+    "GLOBAL_MONOTONIC_DEADLINE_1800_SECONDS",
+    "BOUNDED_STDOUT_STDERR_AND_BUDGETED_JSON_JSONL_WRITES",
+    "VALIDATED_EXECUTION_CONTEXT_REQUIRED_FOR_EFFECTFUL_ENTRY_POINTS",
+    "ORCHESTRATOR_OWNED_PROCESS_REGISTRY_FOR_FORCE_KILL",
+}
+REQUIRED_FINAL_ISSUANCE = {
+    "STATIC_REVIEW_OR_TESTS_CONFIRM_PROFILE_STATUS_GUARD_AND_PID_OWNERSHIP_GUARD",
+    "OWNER_EXPLICIT_M1_07_EFFECTFUL_EXECUTION_AUTHORIZATION",
+    "BIND_FINAL_EXPIRY",
+    "CREATE_ISSUED_SUCCESSOR_PROFILE_WITH_STATUS_ISSUED",
+    "SET_ISSUED_SUCCESSOR_PROFILE_ID_TO_M1-STAB-QWEN35-08B-PC-001-ISSUED",
+    "BIND_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT_WITH_CANONICAL_SHA256",
+    "BIND_TRUSTED_OWNER_AUTHORIZATION_ID_AND_SHA256_IN_ISSUED_PROFILE_OUTER_BINDING",
+    "RETAIN_EXACT_MACHINE_IDENTITY_SHA256_BINDING",
+    "RETAIN_EXACT_ORCHESTRATOR_COMMIT_BLOB_AND_NORMALIZED_SHA256_BINDING",
 }
 
 
@@ -70,6 +104,24 @@ def normalized_text_sha256(path: Path) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def git_blob_sha1(path: Path) -> str:
+    data = path.read_bytes()
+    return hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+
+
+def binding_values() -> tuple[str, str, str]:
+    spec = importlib.util.spec_from_file_location("m1_runtime_stability_binding_validator", BINDING)
+    if spec is None or spec.loader is None:
+        return "", "", ""
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return (
+        module.EXPECTED_ORCHESTRATOR_COMMIT,
+        module.EXPECTED_ORCHESTRATOR_BLOB_SHA1,
+        module.EXPECTED_ORCHESTRATOR_NORMALIZED_SHA256,
+    )
+
+
 def exact_code_binding(profile: dict) -> bool:
     code = profile.get("code_revision") or {}
     return (
@@ -78,7 +130,15 @@ def exact_code_binding(profile: dict) -> bool:
         and code.get("required_script_git_blob_sha1") == ORCH_BLOB
         and code.get("required_script_normalized_sha256") == ORCH_NORMALIZED_SHA256
         and code.get("required_script_path") == "scripts/model-program/m1_runtime_stability_pc.py"
+        and code.get("exact_binding_module_path") == "scripts/model-program/m1_runtime_stability_binding.py"
+        and code.get("exact_binding_module_git_blob_sha1") == BINDING_BLOB
         and code.get("execution_allowed_while_candidate") is False
+        and ORCHESTRATOR.is_file()
+        and BINDING.is_file()
+        and git_blob_sha1(ORCHESTRATOR) == ORCH_BLOB
+        and normalized_text_sha256(ORCHESTRATOR) == ORCH_NORMALIZED_SHA256
+        and git_blob_sha1(BINDING) == BINDING_BLOB
+        and binding_values() == (ORCH_COMMIT, ORCH_BLOB, ORCH_NORMALIZED_SHA256)
     )
 
 
@@ -98,15 +158,28 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
     if model.get("upstream_revision") != MODEL_REV or model.get("upstream_weight_sha256") != MODEL_SHA:
         return False, "M1_07_MODEL_LINEAGE"
     subject = model.get("stability_subject") or {}
-    if subject.get("variant_id") != "q8_0" or subject.get("sha256") != Q8_SHA or subject.get("bytes") != 833592320:
+    if subject.get("variant_id") != "q8_0" or subject.get("filename") != "Qwen3.5-0.8B-Q8_0.gguf":
         return False, "M1_07_STABILITY_SUBJECT"
-    if "NOT_QUALITY_WINNER" not in subject.get("selection_semantics", ""):
-        return False, "M1_07_QUALITY_SELECTION_LEAK"
+    if subject.get("sha256") != Q8_SHA or subject.get("bytes") != 833592320:
+        return False, "M1_07_STABILITY_SUBJECT"
+    semantics = set(str(subject.get("selection_semantics", "")).split(" / "))
+    if semantics != REQUIRED_MODEL_SEMANTICS:
+        return False, "M1_07_STABILITY_SEMANTICS"
 
     runtime = profile.get("runtime_and_device_profile") or {}
-    if runtime.get("device_name") != "DESK-W-591" or runtime.get("binding_state") != "EXACT_BOUND":
+    if runtime.get("device_name") != "DESK-W-591" or runtime.get("device_class") != "PC" or runtime.get("binding_state") != "EXACT_BOUND":
         return False, "M1_07_DEVICE_BINDING"
-    if runtime.get("runtime_commit") != LLAMA_COMMIT or runtime.get("server_executable_sha256") != SERVER_SHA:
+    machine = runtime.get("machine_identity") or {}
+    if (
+        machine.get("source") != "WINDOWS_HKLM_MACHINEGUID"
+        or machine.get("canonicalization") != "SHA256_UTF8_PREFIX_windows-machineguid_COLON_TRIM_LOWERCASE"
+        or machine.get("sha256") != MACHINE_IDENTITY_SHA256
+        or machine.get("raw_identifier_stored") is not False
+    ):
+        return False, "M1_07_MACHINE_IDENTITY_BINDING"
+    if runtime.get("runtime_release_tag") != "b11033" or runtime.get("runtime_commit") != LLAMA_COMMIT:
+        return False, "M1_07_RUNTIME_BINDING"
+    if runtime.get("server_executable") != "llama-server.exe" or runtime.get("server_executable_sha256") != SERVER_SHA:
         return False, "M1_07_RUNTIME_BINDING"
 
     config = (profile.get("config_revision") or {}).get("server") or {}
@@ -127,11 +200,12 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
         return False, "M1_07_BACKGROUND_SCOPE"
     if "NO_CLAIM_ABOUT_PHONE_TABLET_APP_BACKGROUND_RESUME" not in set(bg.get("pass_criteria") or []):
         return False, "M1_07_BACKGROUND_SCOPE"
+    crash = next((x for x in scenarios if x.get("scenario_id") == "M1-07-PC-CRASH-001"), {})
+    if "AFTER_FIRST_NONEMPTY_STREAM_EVENT_FORCE_TERMINATE_ONLY_ORCHESTRATOR_OWNED_LLAMA_SERVER" not in set(crash.get("steps") or []):
+        return False, "M1_07_CRASH_OWNERSHIP_SCOPE"
 
-    prohibited = set(profile.get("prohibited_operations") or [])
-    if not REQUIRED_PROHIBITED.issubset(prohibited):
+    if not REQUIRED_PROHIBITED.issubset(set(profile.get("prohibited_operations") or [])):
         return False, "M1_07_PROHIBITED_BOUNDARY"
-
     if profile.get("max_attempts") != 1 or profile.get("max_wall_time") != 1800 or profile.get("max_storage") != 134217728:
         return False, "M1_07_BUDGET"
     compute = profile.get("max_compute") or {}
@@ -152,24 +226,26 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
         return False, "M1_07_ATTEMPT_GUARD_SEMANTICS"
     if control.get("final_issued_profile_id") != ISSUED_PROFILE_ID:
         return False, "M1_07_EXECUTION_CONTROL_PROFILE_ID"
-    if "M1RuntimeStabilityProcessMetrics.jsonl" not in set(profile.get("allowed_outputs") or []):
-        return False, "M1_07_PROCESS_METRICS_OUTPUT"
-    if "M1RuntimeStabilityAttemptGuard.json" not in set(profile.get("allowed_outputs") or []):
-        return False, "M1_07_ATTEMPT_GUARD_OUTPUT"
-    evidence = set(profile.get("evidence_requirements") or [])
-    for required_evidence in (
-        "PROCESS_RSS_SAMPLES",
-        "PROCESS_RSS_SAMPLES_PER_SERVER_START",
-        "OWNER_FINAL_EXECUTION_AUTHORIZATION_ID_AND_SHA256",
-        "ATTEMPT_GUARD_PATH_AND_CLAIM_EVENT",
+    if control.get("owner_authorization_binding") != "INDEPENDENT_ISSUED_PROFILE_OUTER_BINDING / AUTHORIZATION_ID_AND_RECOMPUTED_CANONICAL_SHA256_MUST_MATCH":
+        return False, "M1_07_OWNER_AUTH_BINDING_POLICY"
+
+    trusted = profile.get("trusted_execution_bindings") or {}
+    if (
+        trusted.get("binding_location") != "ISSUED_PROFILE_OUTER_BINDING"
+        or trusted.get("expected_owner_authorization_id") != "TO_BE_BOUND_AT_FINAL_ISSUANCE"
+        or trusted.get("expected_owner_authorization_sha256") != "TO_BE_BOUND_AT_FINAL_ISSUANCE"
+        or trusted.get("rule") != "OWNER_AUTHORIZATION_OBJECT_CANNOT_SELF_DECLARE_EXPECTED_ID_OR_SHA256"
     ):
-        if required_evidence not in evidence:
-            return False, "M1_07_EVIDENCE_REQUIREMENTS"
+        return False, "M1_07_TRUSTED_AUTH_BINDING_PREISSUANCE"
+
+    outputs = set(profile.get("allowed_outputs") or [])
+    if "M1RuntimeStabilityProcessMetrics.jsonl" not in outputs or "M1RuntimeStabilityAttemptGuard.json" not in outputs:
+        return False, "M1_07_REQUIRED_OUTPUTS"
+    if not REQUIRED_EVIDENCE.issubset(set(profile.get("evidence_requirements") or [])):
+        return False, "M1_07_EVIDENCE_REQUIREMENTS"
 
     if not exact_code_binding(profile):
         return False, "M1_07_CODE_BINDING"
-    if not ORCHESTRATOR.is_file() or normalized_text_sha256(ORCHESTRATOR) != ORCH_NORMALIZED_SHA256:
-        return False, "M1_07_ORCHESTRATOR_BYTES_DRIFT"
     if (profile.get("code_revision") or {}).get("orchestrator_default_mode") != "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD":
         return False, "M1_07_ORCHESTRATOR_DEFAULT_MODE"
 
@@ -179,17 +255,8 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
         return False, "M1_07_OWNER_AUTH_PREMATURE"
     if "NO_M1_08_AUTHORITY" not in profile.get("release_ceiling", ""):
         return False, "M1_07_RELEASE_CEILING"
-    requirements = set(profile.get("final_issuance_requirements") or [])
-    for required in (
-        "STATIC_REVIEW_OR_TESTS_CONFIRM_PROFILE_STATUS_GUARD_AND_PID_OWNERSHIP_GUARD",
-        "OWNER_EXPLICIT_M1_07_EFFECTFUL_EXECUTION_AUTHORIZATION",
-        "BIND_FINAL_EXPIRY",
-        "CREATE_ISSUED_SUCCESSOR_PROFILE_WITH_STATUS_ISSUED",
-        "SET_ISSUED_SUCCESSOR_PROFILE_ID_TO_M1-STAB-QWEN35-08B-PC-001-ISSUED",
-        "BIND_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT_WITH_CANONICAL_SHA256",
-    ):
-        if required not in requirements:
-            return False, "M1_07_FINAL_ISSUANCE_REQUIREMENTS"
+    if not REQUIRED_FINAL_ISSUANCE.issubset(set(profile.get("final_issuance_requirements") or [])):
+        return False, "M1_07_FINAL_ISSUANCE_REQUIREMENTS"
     return True, "PASS"
 
 
@@ -244,7 +311,7 @@ def main():
     if ready or reason != "PROFILE_NOT_ISSUED":
         fail("candidate must remain fail-closed for execution")
 
-    print("PASS: M1-07 PC runtime-stability candidate is exact-bound to model/runtime/device/config/scenarios and orchestrator code, while review/Owner final issuance remain unresolved and effectful execution is fail-closed")
+    print("PASS: M1-07 candidate is non-issued, exact-bound to the reviewed orchestrator and stable Windows machine identity, and retains independent Owner-authorization issuance binding")
     return 0
 
 
