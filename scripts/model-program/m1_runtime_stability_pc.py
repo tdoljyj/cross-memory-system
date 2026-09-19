@@ -412,7 +412,7 @@ class BoundedCapture:
 
 
 class OwnedServerProcess:
-    __slots__ = ("proc", "label", "scenario", "start_index", "stdout_capture", "stderr_capture")
+    __slots__ = ("pid", "label", "scenario", "start_index")
 
     def __init__(self, *args: Any, **kwargs: Any):
         raise StabilityError(
@@ -451,7 +451,7 @@ class ValidatedExecutionContext:
 
 def _build_execution_authority_registry():
     valid_contexts: dict[int, dict[str, Any]] = {}
-    owned_processes: dict[int, dict[int, tuple[OwnedServerProcess, subprocess.Popen[Any]]]] = {}
+    owned_processes: dict[int, dict[int, tuple[OwnedServerProcess, subprocess.Popen[Any], str, str, int, BoundedCapture, BoundedCapture]]] = {}
 
     def digest(value: Any) -> str:
         return hashlib.sha256(canonical_json(value)).hexdigest()
@@ -532,33 +532,35 @@ def _build_execution_authority_registry():
         if start_index > EXPECTED_MAX_SERVER_STARTS:
             raise StabilityError("MAX_SERVER_STARTS_EXCEEDED", f"count={record['server_start_count']}")
         owned = object.__new__(OwnedServerProcess)
-        object.__setattr__(owned, "proc", proc)
+        object.__setattr__(owned, "pid", proc.pid)
         object.__setattr__(owned, "label", label)
         object.__setattr__(owned, "scenario", scenario)
         object.__setattr__(owned, "start_index", start_index)
-        object.__setattr__(owned, "stdout_capture", stdout_capture)
-        object.__setattr__(owned, "stderr_capture", stderr_capture)
-        owned_processes[id(ctx)][proc.pid] = (owned, proc)
+        owned_processes[id(ctx)][id(owned)] = (
+            owned, proc, label, scenario, start_index, stdout_capture, stderr_capture,
+        )
         record["server_start_count"] = start_index
         object.__setattr__(ctx, "server_start_count", start_index)
         return owned
 
-    def require_owned(ctx: ValidatedExecutionContext, owned: Any) -> OwnedServerProcess:
+    def require_owned(
+        ctx: ValidatedExecutionContext,
+        owned: Any,
+    ) -> tuple[subprocess.Popen[Any], str, str, int, BoundedCapture, BoundedCapture]:
         require_ctx(ctx)
         if not isinstance(owned, OwnedServerProcess):
             raise StabilityError(
                 "FOREIGN_PROCESS_REJECTED",
                 "kill/cleanup accepts only internally registered orchestrator-owned process wrappers",
             )
-        proc = getattr(owned, "proc", None)
-        pid = getattr(proc, "pid", None)
-        entry = owned_processes.get(id(ctx), {}).get(pid)
-        if entry is None or entry[0] is not owned or entry[1] is not proc:
+        entry = owned_processes.get(id(ctx), {}).get(id(owned))
+        if entry is None or entry[0] is not owned:
             raise StabilityError(
                 "FOREIGN_PROCESS_REJECTED",
-                "process wrapper or underlying Popen was not created and registered by this execution context",
+                "wrapper identity was not created and registered by start_server in this execution context",
             )
-        return owned
+        _, proc, label, scenario, start_index, stdout_capture, stderr_capture = entry
+        return proc, label, scenario, start_index, stdout_capture, stderr_capture
 
     return create_context, require_ctx, create_owned_process, require_owned
 
@@ -740,19 +742,19 @@ def process_rss_bytes(proc: subprocess.Popen[Any]) -> int:
 
 
 def record_process_start_evidence(ctx: ValidatedExecutionContext, owned: OwnedServerProcess, command: list[str]) -> int:
-    _require_owned(ctx, owned)
+    proc, label, scenario, start_index, _, _ = _require_owned(ctx, owned)
     base = {
         "ts_utc": now_utc(),
-        "scenario": owned.scenario,
+        "scenario": scenario,
         "sample": "process-start",
-        "start_index": owned.start_index,
-        "start_label": owned.label,
-        "pid": owned.proc.pid,
+        "start_index": start_index,
+        "start_label": label,
+        "pid": proc.pid,
         "process_created": True,
         "command": command,
     }
     try:
-        rss = process_rss_bytes(owned.proc)
+        rss = process_rss_bytes(proc)
         base.update({"initial_rss_bytes": rss, "rss_capture_succeeded": True})
         ctx.budget.append_jsonl(
             ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl",
@@ -782,20 +784,20 @@ def record_process_start_evidence(ctx: ValidatedExecutionContext, owned: OwnedSe
 
 
 def record_process_metrics(ctx: ValidatedExecutionContext, owned: OwnedServerProcess, sample: str) -> int:
-    _require_owned(ctx, owned)
+    proc, label, scenario, start_index, _, _ = _require_owned(ctx, owned)
     ctx.check_limits()
-    rss = process_rss_bytes(owned.proc)
+    rss = process_rss_bytes(proc)
     ctx.budget.append_jsonl(
         ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl",
         {
             "ts_utc": now_utc(),
-            "scenario": owned.scenario,
+            "scenario": scenario,
             "sample": sample,
-            "start_index": owned.start_index,
-            "start_label": owned.label,
-            "pid": owned.proc.pid,
+            "start_index": start_index,
+            "start_label": label,
+            "pid": proc.pid,
             "rss_bytes": rss,
-            "process_alive": owned.proc.poll() is None,
+            "process_alive": proc.poll() is None,
         },
     )
     return rss
@@ -885,8 +887,13 @@ del _make_start_server, _create_owned_process, _build_execution_authority_regist
 
 
 def owned_process_alive(ctx: ValidatedExecutionContext, owned: OwnedServerProcess) -> bool:
-    _require_owned(ctx, owned)
-    return owned.proc.poll() is None
+    proc, _, _, _, _, _ = _require_owned(ctx, owned)
+    return proc.poll() is None
+
+
+def owned_process_pid(ctx: ValidatedExecutionContext, owned: OwnedServerProcess) -> int:
+    proc, _, _, _, _, _ = _require_owned(ctx, owned)
+    return int(proc.pid)
 
 
 def _cleanup_timeout(ctx: ValidatedExecutionContext, ceiling: float) -> float:
@@ -897,18 +904,17 @@ def _cleanup_timeout(ctx: ValidatedExecutionContext, ceiling: float) -> float:
 
 
 def _close_captures(ctx: ValidatedExecutionContext, owned: OwnedServerProcess, raise_budget_failure: bool = True) -> None:
-    _require_owned(ctx, owned)
+    _, _, _, _, stdout_capture, stderr_capture = _require_owned(ctx, owned)
     timeout = _cleanup_timeout(ctx, 2.0)
-    owned.stdout_capture.join(timeout)
-    owned.stderr_capture.join(timeout)
+    stdout_capture.join(timeout)
+    stderr_capture.join(timeout)
     if raise_budget_failure:
         ctx.budget.raise_if_failed()
 
 
 def graceful_stop_owned(ctx: ValidatedExecutionContext, owned: OwnedServerProcess, timeout: float = 10.0) -> bool:
-    _require_owned(ctx, owned)
+    proc, _, _, _, _, _ = _require_owned(ctx, owned)
     ctx.check_limits()
-    proc = owned.proc
     if proc.poll() is not None:
         _close_captures(ctx, owned)
         return True
@@ -926,8 +932,7 @@ def graceful_stop_owned(ctx: ValidatedExecutionContext, owned: OwnedServerProces
 
 
 def force_kill_owned(ctx: ValidatedExecutionContext, owned: OwnedServerProcess, timeout: float = 10.0) -> None:
-    _require_owned(ctx, owned)
-    proc = owned.proc
+    proc, _, _, _, _, _ = _require_owned(ctx, owned)
     if proc.poll() is None:
         proc.kill()
     proc.wait(timeout=_cleanup_timeout(ctx, timeout))
@@ -937,8 +942,8 @@ def force_kill_owned(ctx: ValidatedExecutionContext, owned: OwnedServerProcess, 
 
 def _safe_cleanup_owned(ctx: ValidatedExecutionContext, owned: OwnedServerProcess) -> None:
     try:
-        if owned.proc.poll() is None:
-            proc = owned.proc
+        proc, _, _, _, _, _ = _require_owned(ctx, owned)
+        if proc.poll() is None:
             proc.kill()
             try:
                 proc.wait(timeout=_cleanup_timeout(ctx, 5.0))
@@ -1063,16 +1068,15 @@ def run_load_cycles(ctx: ValidatedExecutionContext) -> dict[str, Any]:
             ready = wait_health(ctx)
             rss = record_process_metrics(ctx, owned, f"cycle-{i}-ready")
             probe = minimal_probe(ctx)
-            event(ctx, "M1-07-PC-LOAD-001", "ready", cycle=i, pid=owned.proc.pid, readiness_seconds=ready, rss_bytes=rss)
+            event(ctx, "M1-07-PC-LOAD-001", "ready", cycle=i, pid=owned_process_pid(ctx, owned), readiness_seconds=ready, rss_bytes=rss)
             graceful = graceful_stop_owned(ctx, owned)
             if not graceful:
                 raise StabilityError("GRACEFUL_STOP_FAILED", f"cycle={i}")
             if not wait_port_released(ctx, cfg["host"], int(cfg["port"])):
                 raise StabilityError("PORT_RELEASE_TIMEOUT", f"cycle={i}")
-            rows.append({"cycle": i, "pid": owned.proc.pid, "readiness_seconds": ready, "rss_bytes": rss, "probe": probe, "graceful_exit": True})
+            rows.append({"cycle": i, "pid": owned_process_pid(ctx, owned), "readiness_seconds": ready, "rss_bytes": rss, "probe": probe, "graceful_exit": True})
         finally:
-            if owned.proc.poll() is None:
-                _safe_cleanup_owned(ctx, owned)
+            _safe_cleanup_owned(ctx, owned)
     return {"scenario_id": "M1-07-PC-LOAD-001", "cycles": rows, "pass": len(rows) == 3}
 
 
@@ -1101,15 +1105,14 @@ def run_cancel(ctx: ValidatedExecutionContext) -> dict[str, Any]:
             "post_cancel_health_seconds": post_health, "post_cancel_probe": probe, "pass": True,
         }
     finally:
-        if owned.proc.poll() is None:
-            _safe_cleanup_owned(ctx, owned)
+        _safe_cleanup_owned(ctx, owned)
 
 
 def run_background_reconnect(ctx: ValidatedExecutionContext) -> dict[str, Any]:
     _require_ctx(ctx)
     cfg = server_config(ctx.profile)
     owned, _ = start_server(ctx, "M1-07-PC-BACKGROUND-001", "background")
-    pid = owned.proc.pid
+    pid = owned_process_pid(ctx, owned)
     try:
         ready = wait_health(ctx)
         rss_ready = record_process_metrics(ctx, owned, "ready")
@@ -1134,15 +1137,14 @@ def run_background_reconnect(ctx: ValidatedExecutionContext) -> dict[str, Any]:
             "reconnect_health_seconds": reconnect, "probe": probe, "pass": True,
         }
     finally:
-        if owned.proc.poll() is None:
-            _safe_cleanup_owned(ctx, owned)
+        _safe_cleanup_owned(ctx, owned)
 
 
 def run_crash_restart(ctx: ValidatedExecutionContext) -> dict[str, Any]:
     _require_ctx(ctx)
     cfg = server_config(ctx.profile)
     owned, _ = start_server(ctx, "M1-07-PC-CRASH-001", "crash-before")
-    first_pid = owned.proc.pid
+    first_pid = owned_process_pid(ctx, owned)
     try:
         ready1 = wait_health(ctx)
         rss_before_crash = record_process_metrics(ctx, owned, "pre-crash-ready")
@@ -1160,7 +1162,7 @@ def run_crash_restart(ctx: ValidatedExecutionContext) -> dict[str, Any]:
             raise StabilityError("CRASH_PORT_RELEASE_TIMEOUT", "port not released after forced crash")
 
         owned2, _ = start_server(ctx, "M1-07-PC-CRASH-001", "crash-after")
-        second_pid = owned2.proc.pid
+        second_pid = owned_process_pid(ctx, owned2)
         event(ctx, "M1-07-PC-CRASH-001", "server_restarted", pid=second_pid)
         try:
             ready2 = wait_health(ctx)
@@ -1170,8 +1172,7 @@ def run_crash_restart(ctx: ValidatedExecutionContext) -> dict[str, Any]:
             if not graceful or not wait_port_released(ctx, cfg["host"], int(cfg["port"])):
                 raise StabilityError("RESTART_CLEANUP_FAILED", "restarted server did not exit/release port")
         finally:
-            if owned2.proc.poll() is None:
-                _safe_cleanup_owned(ctx, owned2)
+            _safe_cleanup_owned(ctx, owned2)
 
         return {
             "scenario_id": "M1-07-PC-CRASH-001", "first_pid": first_pid, "second_pid": second_pid,
@@ -1180,8 +1181,7 @@ def run_crash_restart(ctx: ValidatedExecutionContext) -> dict[str, Any]:
             "post_restart_probe": probe, "pass": True,
         }
     finally:
-        if owned.proc.poll() is None:
-            _safe_cleanup_owned(ctx, owned)
+        _safe_cleanup_owned(ctx, owned)
 
 
 def run(ctx: ValidatedExecutionContext) -> dict[str, Any]:

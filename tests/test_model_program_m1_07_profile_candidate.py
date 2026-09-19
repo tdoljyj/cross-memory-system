@@ -332,23 +332,24 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         try:
             self.assertFalse(hasattr(orch, "_OWNED_PROCESS_SEAL"))
             self.assertFalse(hasattr(ctx, "owned"))
+            self.assertFalse(hasattr(orch, "_create_owned_process"))
             self.assert_stability_error(
                 "OWNED_PROCESS_CONSTRUCTION_FORBIDDEN",
                 lambda: orch.OwnedServerProcess(),
             )
             forged = object.__new__(orch.OwnedServerProcess)
-            object.__setattr__(forged, "proc", foreign)
+            object.__setattr__(forged, "pid", foreign.pid)
             object.__setattr__(forged, "label", "foreign")
             object.__setattr__(forged, "scenario", "M1-07-PC-CRASH-001")
             object.__setattr__(forged, "start_index", 99)
-            object.__setattr__(forged, "stdout_capture", orch.BoundedCapture(foreign.stdout, ctx.output_dir / "foreign.out", ctx.budget))
-            object.__setattr__(forged, "stderr_capture", orch.BoundedCapture(foreign.stderr, ctx.output_dir / "foreign.err", ctx.budget))
+            with self.assertRaises(AttributeError):
+                object.__setattr__(forged, "proc", foreign)
             self.assert_stability_error("FOREIGN_PROCESS_REJECTED", lambda: orch.force_kill_owned(ctx, forged))
             self.assertEqual(foreign.kill_calls, 0)
         finally:
             temp.cleanup()
 
-    def test_registered_wrapper_underlying_popen_swap_is_rejected(self):
+    def test_registered_wrapper_metadata_cannot_redirect_internal_process(self):
         temp, ctx = self.make_context()
         original = FakePopen(pid=42423)
         foreign_same_pid = FakePopen(pid=42423)
@@ -359,11 +360,14 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
                 mock.patch.object(orch, "process_rss_bytes", return_value=123456),
             ):
                 owned, _ = orch.start_server(ctx, "M1-07-PC-LOAD-001", "registered")
-            owned.proc = foreign_same_pid
-            self.assert_stability_error("FOREIGN_PROCESS_REJECTED", lambda: orch.force_kill_owned(ctx, owned))
-            self.assertEqual(foreign_same_pid.kill_calls, 0)
-            owned.proc = original
+            self.assertFalse(hasattr(owned, "proc"))
+            with self.assertRaises(AttributeError):
+                object.__setattr__(owned, "proc", foreign_same_pid)
+            owned.pid = 99999
+            owned.label = "caller-mutated-diagnostic"
             orch.force_kill_owned(ctx, owned)
+            self.assertEqual(foreign_same_pid.kill_calls, 0)
+            self.assertEqual(original.kill_calls, 1)
         finally:
             temp.cleanup()
 
