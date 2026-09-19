@@ -81,18 +81,26 @@
     "server_commit_short": "8ed1a55ef",
     "build_toolchain": "Clang 20.1.8 for Windows x86_64",
     "package_root": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002",
-    "exact_model_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002\\packages\\Qwen3.5-0.8B-Q8_0.gguf"
+    "exact_model_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002\\packages\\Qwen3.5-0.8B-Q8_0.gguf",
+    "machine_identity": {
+      "source": "WINDOWS_HKLM_MACHINEGUID",
+      "canonicalization": "SHA256_UTF8_PREFIX_windows-machineguid_COLON_TRIM_LOWERCASE",
+      "sha256": "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522",
+      "raw_identifier_stored": false
+    }
   },
   "code_revision": {
     "status": "EXACT_BOUND",
     "repository": "tdoljyj/cross-memory-system",
     "base_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
     "required_script_path": "scripts/model-program/m1_runtime_stability_pc.py",
-    "required_script_git_blob_sha1": "b197aba8c4ab3d736f063ac823ddfeec85289f0d",
-    "required_script_normalized_sha256": "de43baf3445a415dd1639948aa3e674f1d04582f75b2c29f7cc3bd6e1f490d1e",
-    "required_code_commit": "2209576a79af035a4ffe4a59aab4c0039107f36f",
+    "required_script_git_blob_sha1": "60310021d161eeb0aace2dd670241523845a60f0",
+    "required_script_normalized_sha256": "1998a53330bcc0485412132906274e85b725e1d13c1d6c68d2e004037d6daddb",
+    "required_code_commit": "52c99f179a4046430fbafc1ea610303dbfcbc5ce",
     "orchestrator_default_mode": "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD",
-    "execution_allowed_while_candidate": false
+    "execution_allowed_while_candidate": false,
+    "exact_binding_module_path": "scripts/model-program/m1_runtime_stability_binding.py",
+    "exact_binding_module_git_blob_sha1": "34b43e84042b304796da6afe365617555fc06d63"
   },
   "config_revision": {
     "profile_config_id": "M1-STAB-PC-QWEN35-Q8_0-v1",
@@ -359,7 +367,14 @@
     "NO_M1_08_OR_RELEASE_AUTHORITY",
     "OWNER_FINAL_EXECUTION_AUTHORIZATION_ID_AND_SHA256",
     "ATTEMPT_GUARD_PATH_AND_CLAIM_EVENT",
-    "PROCESS_RSS_SAMPLES_PER_SERVER_START"
+    "PROCESS_RSS_SAMPLES_PER_SERVER_START",
+    "STABLE_WINDOWS_MACHINE_IDENTITY_SHA256_FROM_SYSTEM_SOURCE",
+    "PROCESS_START_EVIDENCE_IMMEDIATELY_AFTER_EVERY_SUCCESSFUL_POPEN",
+    "INITIAL_RSS_OR_EXPLICIT_RSS_FAILURE_PER_SERVER_START",
+    "GLOBAL_MONOTONIC_DEADLINE_1800_SECONDS",
+    "BOUNDED_STDOUT_STDERR_AND_BUDGETED_JSON_JSONL_WRITES",
+    "VALIDATED_EXECUTION_CONTEXT_REQUIRED_FOR_EFFECTFUL_ENTRY_POINTS",
+    "ORCHESTRATOR_OWNED_PROCESS_REGISTRY_FOR_FORCE_KILL"
   ],
   "expiry": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
   "final_issuance_requirements": [
@@ -372,7 +387,10 @@
     "SET_AUTHORITY_EFFECT_TO_M1-07_PC_RUNTIME_STABILITY_EXECUTION_ONLY",
     "BIND_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT",
     "SET_ISSUED_SUCCESSOR_PROFILE_ID_TO_M1-STAB-QWEN35-08B-PC-001-ISSUED",
-    "BIND_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT_WITH_CANONICAL_SHA256"
+    "BIND_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT_WITH_CANONICAL_SHA256",
+    "BIND_TRUSTED_OWNER_AUTHORIZATION_ID_AND_SHA256_IN_ISSUED_PROFILE_OUTER_BINDING",
+    "RETAIN_EXACT_MACHINE_IDENTITY_SHA256_BINDING",
+    "RETAIN_EXACT_ORCHESTRATOR_COMMIT_BLOB_AND_NORMALIZED_SHA256_BINDING"
   ],
   "effectful_authority_issued": false,
   "fail_closed_rule": "IF_STATUS_IS_NOT_ISSUED_OR_ISSUED_PROFILE_ID_IS_NOT_EXACT_OR_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT_IS_ABSENT_OR_DIGEST_INVALID_OR_EXPIRY_IS_UNRESOLVED_OR_EXPIRED_OR_BOUND_ORCHESTRATOR_SHA_DRIFTS_OR_DEVICE_MODEL_RUNTIME_CONFIG_SCOPE_DRIFTS_OR_ATTEMPT_GUARD_ALREADY_EXISTS_THEN M1-07 MUST_NOT_START_LLAMA-SERVER_OR_LOAD_A_MODEL",
@@ -381,7 +399,13 @@
   "execution_control": {
     "attempt_guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-STAB-QWEN35-08B-PC-001\\M1RuntimeStabilityAttemptGuard.json",
     "attempt_guard_semantics": "ATOMIC_CREATE_ON_FIRST_EFFECTFUL_ATTEMPT / NO_REUSE_AFTER_SUCCESS_OR_FAILURE",
-    "owner_authorization_binding": "CANONICAL_JSON_SHA256_OVER_AUTHORIZATION_OBJECT_EXCLUDING_SHA256 / PROFILE_ID_AND_AUTHORITY_EFFECT_MUST_MATCH",
+    "owner_authorization_binding": "INDEPENDENT_ISSUED_PROFILE_OUTER_BINDING / AUTHORIZATION_ID_AND_RECOMPUTED_CANONICAL_SHA256_MUST_MATCH",
     "final_issued_profile_id": "M1-STAB-QWEN35-08B-PC-001-ISSUED"
+  },
+  "trusted_execution_bindings": {
+    "binding_location": "ISSUED_PROFILE_OUTER_BINDING",
+    "expected_owner_authorization_id": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
+    "expected_owner_authorization_sha256": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
+    "rule": "OWNER_AUTHORIZATION_OBJECT_CANNOT_SELF_DECLARE_EXPECTED_ID_OR_SHA256"
   }
 }
