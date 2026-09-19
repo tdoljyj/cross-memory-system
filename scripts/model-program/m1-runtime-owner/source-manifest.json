@@ -44,9 +44,9 @@
       "sha256": "b9b27c8474e39d5b16f26400b6d2bd5bd66a51b3579ddffd7aa9ff30852989c4"
     }
   },
-  "role": "OWNER_ROOT_PINNED_SUCCESSOR_R1_NOT_ISSUANCE",
+  "role": "OWNER_ROOT_PINNED_SUCCESSOR_R2_NOT_ISSUANCE",
   "schema_version": "clued.m1-07-native-source-manifest/1",
-  "source_base": "aa127d5d0623cce921cb90643ec620ace2b70a1f",
+  "source_base": "ffff2580f1c3fb9453fef9bd517cd5e12b01226e",
   "test_files_excluded_from_production": [
     "owner_test.go",
     "runtime_tree_windows_test.go"
@@ -60,5 +60,16 @@
     "private_key_location": "OWNER_ONLY / NON_SECRET_LOCATOR_NOT_EMBEDDED_IN_BINARY"
   },
   "r1_remediation_predecessor_exact_head": "aa127d5d0623cce921cb90643ec620ace2b70a1f",
-  "owner_root_predecessor_exact_head": "d58df9c4a1885512bd4dd9b94f121b6a84e25744"
+  "owner_root_predecessor_exact_head": "d58df9c4a1885512bd4dd9b94f121b6a84e25744",
+  "r2_remediation_predecessor_exact_head": "ffff2580f1c3fb9453fef9bd517cd5e12b01226e",
+  "non_build_metadata_files": [
+    "source-manifest.json",
+    "test-migration.json"
+  ],
+  "build_provenance_helper": {
+    "path": "scripts/model-program/build_m1_07_native_owner.py",
+    "bytes": 7067,
+    "git_blob_sha1": "90d4706debb0362cb78e1f9f2ff16444eb38786f",
+    "sha256": "52ef67351c3f976593c4332f47ca1805340de40df6f3cce22b2a38f9feded1b2"
+  }
 }
