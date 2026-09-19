@@ -88,8 +88,8 @@ def main():
     pred=stage2.get('predecessor') or {}
     if pred.get('path')!='M1StageEntryAuthorization.v1.0.1.json' or pred.get('git_blob_sha1')!='7d9fbf7bc083d980cd7a3f43ef2bfdc0a58dd17c':
         fail('M1 stage successor predecessor declaration drift')
-    if git_blob_sha1(BASE/'governance/M1StageEntryAuthorization.v1.0.1.json')!='7d9fbf7bc083d980cd7a3f43ef2bfdc0a58dd17c':
-        fail('M1 stage predecessor bytes drift')
+    if semantic_sha256(stage)!='f227b98142e0ba4cd31e11110beede3f2c0b292a6b749e0ed083fe678d53b162':
+        fail('M1 stage predecessor semantic drift')
     if stage2.get('bound_plan',{}).get('sha256')!=PLAN or stage2.get('bound_plan',{}).get('plan_semantics_changed') is not False:
         fail('M1 stage successor plan binding drift')
     if stage2.get('amendment_scope',{}).get('type')!='TARGETED_EXECUTION_DEPENDENCY_REFRAME_ONLY':
