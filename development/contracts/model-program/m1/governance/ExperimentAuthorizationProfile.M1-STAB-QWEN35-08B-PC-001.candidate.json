@@ -88,9 +88,9 @@
     "repository": "tdoljyj/cross-memory-system",
     "base_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
     "required_script_path": "scripts/model-program/m1_runtime_stability_pc.py",
-    "required_script_git_blob_sha1": "41c9952526573a204382e4b2af1f262ba13dd212",
-    "required_script_normalized_sha256": "f37864adfe91bb2ec632ff2c3b17a714da9f40eb69bcf16c360d0a5144b3f7c2",
-    "required_code_commit": "3904702a615d618a760fc8e850bf891482592a3c",
+    "required_script_git_blob_sha1": "c737e6d40ab93740eb9e77a8c2f5edeb3c0776af",
+    "required_script_normalized_sha256": "69ff7e33640363653cfbd8d1339a4bf3485804708affd6837edd33abe16b0ad7",
+    "required_code_commit": "732ff6328b9446a836ad40d41ba543a35d13fe1d",
     "orchestrator_default_mode": "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD",
     "execution_allowed_while_candidate": false
   },
