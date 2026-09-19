@@ -295,17 +295,28 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         )
 
     def test_candidate_cannot_forge_registered_execution_context(self):
+        candidate = self.load_candidate()
+        self.assertEqual(candidate["status"], "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE")
+        self.assertIs(candidate["effectful_authority_issued"], False)
         self.assertFalse(hasattr(orch, "_CONTEXT_SEAL"))
         self.assert_stability_error(
             "EXECUTION_CONTEXT_CONSTRUCTION_FORBIDDEN",
             lambda: orch.ValidatedExecutionContext(),
         )
-        forged = object.__new__(orch.ValidatedExecutionContext)
-        with mock.patch.object(orch.subprocess, "Popen", side_effect=AssertionError("Popen must not be reached")):
-            self.assert_stability_error(
-                "EXECUTION_CONTEXT_REQUIRED",
-                lambda: orch.start_server(forged, "M1-07-PC-LOAD-001", "forged"),
-            )
+        temp, valid_ctx = self.make_context()
+        try:
+            forged = object.__new__(orch.ValidatedExecutionContext)
+            for name in orch.ValidatedExecutionContext.__slots__:
+                object.__setattr__(forged, name, getattr(valid_ctx, name))
+            popen = mock.Mock(side_effect=AssertionError("Popen must not be reached"))
+            with mock.patch.object(orch.subprocess, "Popen", popen):
+                self.assert_stability_error(
+                    "EXECUTION_CONTEXT_REQUIRED",
+                    lambda: orch.start_server(forged, "M1-07-PC-LOAD-001", "forged"),
+                )
+            self.assertEqual(popen.call_count, 0)
+        finally:
+            temp.cleanup()
 
     def test_authorized_context_tamper_is_rejected_before_popen(self):
         temp, ctx = self.make_context()

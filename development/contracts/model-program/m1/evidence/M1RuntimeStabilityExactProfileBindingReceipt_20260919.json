@@ -13,7 +13,7 @@
   },
   "candidate": {
     "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.candidate.json",
-    "git_blob_sha1": "af9d8516610868512e302b03f36b076bbadf8e8a",
+    "git_blob_sha1": "0adf3f17de93963a9ecc74cdd9dc157e215a30c8",
     "profile_id": "M1-STAB-QWEN35-08B-PC-001-CANDIDATE",
     "status": "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE",
     "effectful_authority_issued": false,
@@ -22,11 +22,11 @@
   },
   "orchestrator": {
     "path": "scripts/model-program/m1_runtime_stability_pc.py",
-    "code_commit": "7c430bf143d1f8e9b66c7c02ff7caa406190ccbb",
-    "git_blob_sha1": "1b07232fd63cf6d0b2079919a6cc0ab0fec4e09a",
-    "normalized_sha256": "31c1a57eb29e49bc090af2664c4b2fbb083a97c28a081e27601cce2265b297c6",
+    "code_commit": "b807b9986e314d3adfedb05b69728fbe879ffabb",
+    "git_blob_sha1": "461f093f15780f91d4d55aa316bfe23cff761681",
+    "normalized_sha256": "d3984c39a0c4ac3a77a3f87c26603a86cdb360f4e7349448501eaab092699dc9",
     "exact_binding_module_path": "scripts/model-program/m1_runtime_stability_binding.py",
-    "exact_binding_module_git_blob_sha1": "1a0c111f06a8b36ea559547b66d04d46df3efc02",
+    "exact_binding_module_git_blob_sha1": "e0d54c1cd5d61d44700c5c85af6840473a38d7e9",
     "default_mode": "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD",
     "machine_identity_guard": {
       "logical_name": "DESK-W-591",
@@ -35,7 +35,7 @@
       "sha256": "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522",
       "raw_identifier_stored": false
     },
-    "process_ownership_guard": "OPAQUE_INTERNAL_VALIDATED_CONTEXT_REGISTRY / CALLER_CONSTRUCTORS_FORBIDDEN / POST_AUTH_CONTEXT_TAMPER_FAIL_CLOSED / INTERNAL_WRAPPER_PLUS_ORIGINAL_POPEN_IDENTITY_REGISTRY / FOREIGN_OR_SWAPPED_POPEN_REJECTED",
+    "process_ownership_guard": "OPAQUE_INTERNAL_VALIDATED_CONTEXT_REGISTRY / CALLER_CONSTRUCTORS_FORBIDDEN / POST_AUTH_CONTEXT_TAMPER_FAIL_CLOSED / EXACT_WRAPPER_OBJECT_IDENTITY_TO_INTERNAL_ORIGINAL_POPEN_REGISTRY / ACTUAL PROCESS AND CAPTURES RESOLVED ONLY FROM INTERNAL REGISTRY / WRAPPER FIELDS NON_AUTHORITATIVE / FOREIGN WRAPPER REJECTED",
     "crash_semantics": "ACTIVE_STREAM_OBSERVED -> FORCE_KILL_INTERNALLY_REGISTERED_ORCHESTRATOR_OWNED_SERVER -> CLOSE_STREAM_CONNECTION -> WAIT_PORT_RELEASE -> EXACT_RESTART -> HEALTH -> MINIMAL_PROBE",
     "exact_scope_guard": "PROFILE_DECLARED_IDENTITY_EQUALS_HARD_CODED_EXPECTED_IDENTITY AND ACTUAL_SCRIPT_BYTES_EQUAL_HARD_CODED_EXPECTED_HASH / DESK-W-591 MACHINEGUID HASH / Q8_0_SHA256 / LLAMA_CPP_B11033_COMMIT / LLAMA_SERVER_SHA256 / 127.0.0.1:18087 / THREADS_2 / THREADS_BATCH_2 / GPU_OFFLOAD_DISABLED",
     "owner_authorization_guard": "AUTHORIZATION_OBJECT_CANONICAL_SHA256 + INDEPENDENT_ISSUED_PROFILE_OUTER EXPECTED_AUTHORIZATION_ID_AND_SHA256 + STRICT UTC AWARE TIMESTAMP",
@@ -62,12 +62,12 @@
     "compile_result": "PASS",
     "candidate_validator": {
       "path": "scripts/model-program/validate_m1_07_profile_candidate.py",
-      "git_blob_sha1": "a8976ef765159f87e677a64c02f9b16db4ffc711",
+      "git_blob_sha1": "4445a4b780e33c6339f0026a14ef14adddd434b3",
       "result": "PASS"
     },
     "candidate_tests": {
       "path": "tests/test_model_program_m1_07_profile_candidate.py",
-      "git_blob_sha1": "115022b909da80b896a0a027f2a919ef736e9419",
+      "git_blob_sha1": "5f040bbb2132d826d21a25da459d766dd8434020",
       "passed": 33,
       "failed": 0
     },
@@ -121,7 +121,7 @@
     "remediation_scope": "MAJOR_04_ONLY / NO_SCOPE_EXPANSION / NO_EFFECTFUL_EXECUTION",
     "resolved_items": [
       "MAJOR-01/02/03 RETAINED CLOSED AUTHOR-SIDE: exact orchestrator/device binding, independent Owner authorization binding, and evidence/budget/deadline/attempt guards remain unchanged in authority and pass regression.",
-      "MAJOR-04 REMEDIATED AUTHOR-SIDE: externally reusable module seals and caller-writable ctx.owned registry were removed. ValidatedExecutionContext and OwnedServerProcess constructors now fail closed. Only authorize_execution can register a valid context in an opaque internal closure registry; context profile/deadline/budget/guard/physical identity/start-count tamper is rejected. Only start_server can register an owned wrapper, and ownership binds both wrapper identity and the original Popen object identity."
+      "MAJOR-04 REMEDIATED AUTHOR-SIDE: module-level construction seals and caller-writable ctx.owned are absent. ValidatedExecutionContext and OwnedServerProcess public constructors fail closed. authorize_execution alone registers an exact context object in an opaque internal authority registry. start_server alone creates and registers an exact wrapper object whose identity maps internally to the original Popen, captures, and lifecycle metadata. force-kill/stop/RSS/cleanup resolve the actual process from that internal registry and do not trust caller-writable wrapper pid/metadata fields."
     ],
     "required_negative_behavior_coverage": [
       "wrong orchestrator commit -> FAIL",
@@ -138,16 +138,17 @@
       "direct run bypass -> BLOCKED",
       "direct start_server bypass -> BLOCKED",
       "caller construction of ValidatedExecutionContext -> BLOCKED",
-      "object.__new__ forged unregistered context -> BLOCKED BEFORE Popen",
+      "object.__new__ forged context with every visible field copied from an authorized context -> BLOCKED BEFORE Popen / Popen call count = 0",
       "post-authorization profile/deadline context tamper -> BLOCKED BEFORE Popen",
       "direct foreign Popen kill -> REJECTED",
-      "caller construction/object.__new__ forged OwnedServerProcess -> REJECTED",
-      "registered wrapper underlying Popen swap, including same PID -> REJECTED WITHOUT KILL",
-      "owned process from another execution context -> REJECTED",
+      "caller construction/object.__new__ forged OwnedServerProcess with copied pid/metadata -> REJECTED / foreign kill call count = 0",
+      "attempt to attach foreign Popen to wrapper -> impossible because wrapper exposes no process slot",
+      "exact start_server wrapper diagnostic metadata mutation cannot redirect lifecycle target; original registry Popen remains authoritative",
+      "owned process wrapper from another execution context -> REJECTED",
       "candidate default invocation remains validate-only and starts no server/model"
     ]
   },
-  "updated_at_utc": "2026-09-19T11:51:47.866567+00:00",
+  "updated_at_utc": "2026-09-19T12:15:00.904238+00:00",
   "authoritative_for_current_binding": true,
   "remediation_round": 3,
   "source_review": {

@@ -94,13 +94,13 @@
     "repository": "tdoljyj/cross-memory-system",
     "base_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
     "required_script_path": "scripts/model-program/m1_runtime_stability_pc.py",
-    "required_script_git_blob_sha1": "1b07232fd63cf6d0b2079919a6cc0ab0fec4e09a",
-    "required_script_normalized_sha256": "31c1a57eb29e49bc090af2664c4b2fbb083a97c28a081e27601cce2265b297c6",
-    "required_code_commit": "7c430bf143d1f8e9b66c7c02ff7caa406190ccbb",
+    "required_script_git_blob_sha1": "461f093f15780f91d4d55aa316bfe23cff761681",
+    "required_script_normalized_sha256": "d3984c39a0c4ac3a77a3f87c26603a86cdb360f4e7349448501eaab092699dc9",
+    "required_code_commit": "b807b9986e314d3adfedb05b69728fbe879ffabb",
     "orchestrator_default_mode": "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD",
     "execution_allowed_while_candidate": false,
     "exact_binding_module_path": "scripts/model-program/m1_runtime_stability_binding.py",
-    "exact_binding_module_git_blob_sha1": "1a0c111f06a8b36ea559547b66d04d46df3efc02"
+    "exact_binding_module_git_blob_sha1": "e0d54c1cd5d61d44700c5c85af6840473a38d7e9"
   },
   "config_revision": {
     "profile_config_id": "M1-STAB-PC-QWEN35-Q8_0-v1",
@@ -404,7 +404,7 @@
     "owner_authorization_binding": "INDEPENDENT_ISSUED_PROFILE_OUTER_BINDING / AUTHORIZATION_ID_AND_RECOMPUTED_CANONICAL_SHA256_MUST_MATCH",
     "final_issued_profile_id": "M1-STAB-QWEN35-08B-PC-001-ISSUED",
     "validated_context_semantics": "OPAQUE_INTERNAL_REGISTRY / CONSTRUCTOR_FORBIDDEN / POST_AUTH_CONTEXT_TAMPER_FAIL_CLOSED",
-    "process_ownership_semantics": "INTERNAL_REGISTRY_BINDS_WRAPPER_AND_ORIGINAL_POPEN_IDENTITY / CALLER_CANNOT_REGISTER_FOREIGN_PROCESS"
+    "process_ownership_semantics": "INTERNAL_REGISTRY_BINDS_EXACT_WRAPPER_IDENTITY_TO_ORIGINAL_POPEN / EFFECTFUL_LIFECYCLE_RESOLVES_POPEN_FROM_INTERNAL_REGISTRY / WRAPPER_FIELDS_NON_AUTHORITATIVE / CALLER_CANNOT_REGISTER_FOREIGN_PROCESS"
   },
   "trusted_execution_bindings": {
     "binding_location": "ISSUED_PROFILE_OUTER_BINDING",
