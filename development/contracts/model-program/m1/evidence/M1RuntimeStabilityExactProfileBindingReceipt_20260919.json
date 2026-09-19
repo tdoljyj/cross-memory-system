@@ -4,216 +4,155 @@
   "program_id": "CLUED-FIRST-PARTY-MODEL",
   "stage_id": "MODEL-PROGRAM-M1",
   "task_id": "M1-07",
-  "created_at_utc": "2026-09-19T10:22:14.4365891Z",
-  "status": "CURRENT_AUTHORITATIVE_REMEDIATION_BINDING / ROUND_4 / MAJOR_04_ISOLATED_OWNER_BOUNDARY_REMEDIATED_AUTHOR_SIDE / EFFECTFUL_EXECUTION_BLOCKED / FRESH_CONTEXT_RE_REVIEW_REQUIRED",
+  "status": "CURRENT_AUTHORITATIVE_REMEDIATION_BINDING / ROUND_5 / AUTHOR_SIDE_VALIDATION_PASS / INDEPENDENT_REVIEW_AND_CONTRACT_ADOPTION_PENDING / NO_ISSUANCE",
+  "remediation_round": 5,
+  "authoritative_for_current_binding": true,
+  "role": "REMEDIATION_AUTHOR / NOT_FRESH_CONTEXT_REVIEWER",
   "source_baseline": {
     "main_merge_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
-    "stage_successor_ref": "../governance/M1StageEntryAuthorization.v1.0.2.json",
-    "m1_06a_pc_baseline": "CLOSED_SUCCESS"
+    "starting_blocked_reviewed_head": "15aea8fe4c7702a49ed1c722cea00857b091c5ad"
   },
   "candidate": {
     "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.candidate.json",
-    "git_blob_sha1": "db5daeebadb43ec60e5583554a69c5117bf6da2f",
-    "profile_id": "M1-STAB-QWEN35-08B-PC-001-CANDIDATE",
+    "bytes": 20672,
+    "sha256": "2dc7e38e3a2ecb9f6e288447e585ca3c65a3ff72c4054ca1692b95470fa3f74b",
+    "git_blob_sha1": "f9fe1e0ab3f1f74f3c1b4b249e2142cd79e01aca",
     "status": "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE",
     "effectful_authority_issued": false,
-    "authority_effect": "NONE / PROFILE_PREPARATION_ONLY",
-    "issued_successor_profile_id": "M1-STAB-QWEN35-08B-PC-001-ISSUED"
+    "authority_effect": "NONE / PROFILE_PREPARATION_ONLY"
   },
-  "orchestrator": {
+  "python_facade": {
     "path": "scripts/model-program/m1_runtime_stability_pc.py",
-    "code_commit": "c9577cd80db44d33de663bd077e26ee70de701c2",
-    "git_blob_sha1": "0a2a06bfe08fc79b86fd41e7f040c70fb7208d9c",
-    "normalized_sha256": "c36a627109c4bff6cec8243f4b1914008296940bff69ea65b233380d35ed1b88",
-    "exact_binding_module_path": "scripts/model-program/m1_runtime_stability_binding.py",
-    "exact_binding_module_git_blob_sha1": "19297703bb813152a9da739f5057af40cbd93ae1",
-    "default_mode": "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD",
-    "machine_identity_guard": {
-      "logical_name": "DESK-W-591",
-      "source": "WINDOWS_HKLM_MACHINEGUID",
-      "canonicalization": "SHA256_UTF8_PREFIX_windows-machineguid_COLON_TRIM_LOWERCASE",
-      "sha256": "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522",
-      "raw_identifier_stored": false
-    },
-    "process_ownership_guard": "OWNER_PROCESS_LOCAL_REGISTRY_BINDS_EXACT_WRAPPER_IDENTITY_TO_ORIGINAL_POPEN / EFFECTFUL_LIFECYCLE_RESOLVES_POPEN_FROM_INTERNAL_REGISTRY / WRAPPER_FIELDS_NON_AUTHORITATIVE / NO_CALLER_PROCESS_INJECTION",
-    "crash_semantics": "ACTIVE_STREAM_OBSERVED -> FORCE_KILL_INTERNALLY_REGISTERED_ORCHESTRATOR_OWNED_SERVER -> CLOSE_STREAM_CONNECTION -> WAIT_PORT_RELEASE -> EXACT_RESTART -> HEALTH -> MINIMAL_PROBE",
-    "exact_scope_guard": "PROFILE_DECLARED_IDENTITY_EQUALS_HARD_CODED_EXPECTED_IDENTITY AND ACTUAL_SCRIPT_BYTES_EQUAL_HARD_CODED_EXPECTED_HASH / DESK-W-591 MACHINEGUID HASH / Q8_0_SHA256 / LLAMA_CPP_B11033_COMMIT / LLAMA_SERVER_SHA256 / 127.0.0.1:18087 / THREADS_2 / THREADS_BATCH_2 / GPU_OFFLOAD_DISABLED",
-    "owner_authorization_guard": "AUTHORIZATION_OBJECT_CANONICAL_SHA256 + INDEPENDENT_ISSUED_PROFILE_OUTER EXPECTED_AUTHORIZATION_ID_AND_SHA256 + STRICT UTC AWARE TIMESTAMP",
-    "evidence_and_budget_guard": "PER_SUCCESSFUL_POPEN PROCESS_START_EVIDENCE WITH INITIAL_RSS_OR_EXPLICIT_FAILURE / BOUNDED_STDOUT_STDERR / BUDGETED JSON+JSONL / GLOBAL_MONOTONIC_DEADLINE_1800 / PERSISTENT ATOMIC MAX_ATTEMPTS_1",
-    "validated_context_guard": "OWNER_PROCESS_LOCAL_EXACT_IDENTITY_REGISTRY / NOT_A_PYTHON_SANDBOX / CONSTRUCTOR_FORBIDDEN / POST_AUTH_CONTEXT_TAMPER_FAIL_CLOSED",
-    "execution_boundary": "DIRECT_NATIVE_COMMAND_LINE_BOUND_CPYTHON_OWNER / ISOLATED_NO_SITE / IMPORT_VALIDATE_ONLY / NO_UNTRUSTED_PYTHON_IN_OWNER",
-    "owner_boundary_helper": {
-      "path": "scripts/model-program/m1_runtime_stability_owner_boundary.py",
-      "git_blob_sha1": "51fa9519f1f17185253e0220fdd8487b21a5d2ec",
-      "normalized_sha256": "49a865b115b5c7512622315df392a5cfaebfd020dab768267a3d87e56d5325a5",
-      "returns_authority_capability": false
-    },
-    "trust_boundary_limitation": "NOT_A_SAME_INTERPRETER_SANDBOX; NO_UNTRUSTED_CODE_OR_PLUGIN_LOADED_IN_OWNER; CODE_REPLACEMENT_DEBUGGER_PROCESS_INJECTION_AND_OS_ACCOUNT_COMPROMISE_ARE_NOT_PREVENTED_BY_PYTHON_OBJECT_IDENTITY"
+    "bytes": 18640,
+    "sha256": "d21414bbb7f206426ccb66c799dfbcd3753391910a357b4489a2a93dc231e4af",
+    "git_blob_sha1": "7389eed2d7cfd722c78db63d024ae84668eb760e",
+    "implementation_commit": "9aa75f272d6bf9007db036479d8e01bc088e0912",
+    "effectful_implementation_present": false
   },
-  "exact_execution_scope_if_later_issued": {
-    "device": "DESK-W-591",
-    "model_variant": "Qwen3.5-0.8B-Q8_0.gguf",
-    "model_sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d",
-    "runtime": "llama.cpp b11033 / commit 8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
-    "server_sha256": "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba",
-    "host": "127.0.0.1",
-    "port": 18087,
-    "offline": true,
-    "strict_cpu_only": true,
-    "scenarios": [
-      "3x cold load / probe / graceful unload",
-      "1x in-flight stream cancellation + post-cancel health/probe",
-      "1x PC background-service controller disconnect/reconnect",
-      "1x forced profile-owned server crash during active stream + exact restart"
-    ]
+  "owner_boundary_lint": {
+    "path": "scripts/model-program/m1_runtime_stability_owner_boundary.py",
+    "bytes": 1857,
+    "sha256": "35fea706a095a2cba6e3e31377e56c2246e890dfce751d1b038185e8b58a41b7",
+    "git_blob_sha1": "7a6bf6017ba233e474fe72e499e67a3e5581e16a"
   },
-  "static_validation": {
-    "compile_result": "PASS",
-    "candidate_validator": {
-      "path": "scripts/model-program/validate_m1_07_profile_candidate.py",
-      "git_blob_sha1": "bac23a3c21ea508f64494728439cc55f7c09b322",
-      "result": "PASS"
+  "binding_module": {
+    "path": "scripts/model-program/m1_runtime_stability_binding.py",
+    "bytes": 605,
+    "sha256": "650c142895a95f363e1f66a1140a85fdf2ff90e886ddc4c6acab60b65d4e5cb9",
+    "git_blob_sha1": "13620a3fceba05edd35cb3f167eaa5c4c40050ba"
+  },
+  "native_owner": {
+    "source_directory": "scripts/model-program/m1-runtime-owner",
+    "implementation_commit": "12d6ecf01cbc9b7fdf38c147c97f3ff9c84b0efc",
+    "source_manifest": {
+      "path": "scripts/model-program/m1-runtime-owner/source-manifest.json",
+      "bytes": 1993,
+      "sha256": "2c16ab6aa87916ca03c49e0c03191de869fabe503523ba04ea712968334997d6",
+      "git_blob_sha1": "9bb9d074e2987802be187ebb6c2e9713ba6fbef7"
     },
-    "candidate_tests": {
-      "path": "tests/test_model_program_m1_07_profile_candidate.py",
-      "git_blob_sha1": "eaadd142dd5aa1d436e15d348a12d5f7ea5b64ec",
-      "passed": 48,
-      "failed": 0,
-      "preexisting_tests_retained": 33,
-      "new_boundary_tests": 15
+    "test_migration": {
+      "path": "scripts/model-program/m1-runtime-owner/test-migration.json",
+      "bytes": 4071,
+      "sha256": "7a53a48803fac1b1bdb04e6859db547f3637e107a57f8f6d0ff2b47ad320fef8",
+      "git_blob_sha1": "5285c0652f7baead006ddea761c2d55c3555f933"
     },
-    "m1_validators": {
-      "passed": 4,
-      "failed": 0
-    },
-    "full_m1_regression": {
-      "test_runner": "python -m unittest",
-      "tests_passed": 77,
-      "tests_failed": 0,
-      "environment_note": "jsonschema==4.25.1 installed only into a newly created isolated validation dependency directory; system Python unchanged; removed after final validation."
-    },
-    "default_orchestrator_readback": {
-      "profile_id": "M1-STAB-QWEN35-08B-PC-001-CANDIDATE",
-      "status": "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE",
+    "production_issuer_key_bound": false,
+    "embedded_python": false,
+    "caller_process_or_callback_input": false,
+    "boundary_contract_adopted_by_owner": false,
+    "development_build": {
+      "role": "AUTHOR_SIDE_DEVELOPMENT_BUILD_NOT_ISSUANCE",
+      "compiler": "go version go1.27.1 windows/amd64",
+      "compiler_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+      "argv": [
+        "C:\\Users\\Public\\Clued\\Validation\\M107-major04-r5-tools-20260919\\go\\bin\\go.exe",
+        "build",
+        "-trimpath",
+        "-buildvcs=false",
+        "-ldflags=-X main.nativeSourceDigest=2c16ab6aa87916ca03c49e0c03191de869fabe503523ba04ea712968334997d6",
+        "-o",
+        "C:\\Users\\Public\\Clued\\Validation\\M107-major04-r5-tools-20260919\\evidence\\prepack\\development-build\\m1-07-owner.exe",
+        "."
+      ],
+      "native_source_manifest_sha256": "2c16ab6aa87916ca03c49e0c03191de869fabe503523ba04ea712968334997d6",
+      "binary_sha256": "737d963155ffbdec78ef8eae4bd3a0d132c96bea6db51c21c181a6e8cbc65213",
+      "binary_bytes": 10198528,
+      "issuer_key_bound": false,
       "effectful_authority_issued": false,
-      "execution_ready": false,
-      "reason": "PROFILE_NOT_ISSUED",
-      "server_started": false,
-      "model_loaded": false,
-      "llama_server_process_count_before": 0,
-      "llama_server_process_count_after": 0
-    },
-    "validation_role": "AUTHOR_SIDE / NOT_AN_INDEPENDENT_REVIEW",
-    "tested_clean_head": "eae896d05e92b809ece2e3afad324eaea43df55a",
-    "packaging_rule": "Receipt-only successor must preserve all tested source/test blobs and be revalidated before publication; no self-referential final-head claim.",
-    "process_observations": {
-      "before": {
-        "host": "DESK-W-591",
-        "observed_at_utc": "2026-09-19T13:05:35.503635+00:00",
-        "method": "ASCII_NUMERIC_WINDOWS_QUERY_AND_MARKED_RUNNING_WSL_QUERY",
-        "windows_llama_server_count": 0,
-        "wsl": {
-          "verified": true,
-          "running_distributions": [
-            "CluedCI-Linux"
-          ],
-          "samples": [
-            {
-              "distribution": "CluedCI-Linux",
-              "verified": true,
-              "count": 0,
-              "pgrep_exit_code": 1
-            }
-          ],
-          "llama_server_count": 0,
-          "no_distribution_started": true
-        }
-      },
-      "after": {
-        "host": "DESK-W-591",
-        "observed_at_utc": "2026-09-19T13:05:36.782898+00:00",
-        "method": "ASCII_NUMERIC_WINDOWS_QUERY_AND_MARKED_RUNNING_WSL_QUERY",
-        "windows_llama_server_count": 0,
-        "wsl": {
-          "verified": true,
-          "running_distributions": [
-            "CluedCI-Linux"
-          ],
-          "samples": [
-            {
-              "distribution": "CluedCI-Linux",
-              "verified": true,
-              "count": 0,
-              "pgrep_exit_code": 1
-            }
-          ],
-          "llama_server_count": 0,
-          "no_distribution_started": true
-        }
-      }
-    },
-    "repository_status": {
-      "tracked_before": 0,
-      "tracked_after": 0,
-      "full_before": 0,
-      "full_after": 0,
-      "scope": "isolated repair clone at tested_clean_head; author edits committed before this validation cycle"
-    },
-    "validation_commands": {
+      "binary_executed_by_build_helper": false
+    }
+  },
+  "validation": {
+    "role": "AUTHOR_SIDE / NOT_INDEPENDENT_REVIEW",
+    "tested_clean_head": "f5ed88dc5d8af8cfa77f7ab833b75b625a2db2bf",
+    "focused_tests_passed": 55,
+    "full_m1_tests_passed": 84,
+    "m1_validators_passed": 4,
+    "native_leaf_cases_passed": 88,
+    "native_parent_events_excluded_from_leaf_count": true,
+    "go_vet": "PASS",
+    "old_python_test_names_retained": 48,
+    "new_python_tests": 7,
+    "legacy_lifecycle_cases_migrated_to_native": 11,
+    "name_retention_not_identical_assertion_claim": true,
+    "commands": {
       "focused": {
-        "exit_code": 0,
-        "test_count": 48,
-        "log_sha256": "0f47bfb931b9cdf9c184f8798dc35cb8e72f080dd459513d50ee5c076313ce9c",
         "argv": [
           "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+          "-B",
           "-m",
           "unittest",
           "tests.test_model_program_m1_07_profile_candidate",
           "-v"
-        ]
+        ],
+        "exit_code": 0,
+        "test_count": 55,
+        "log_sha256": "75ef847551eb4858616c2fe7847eb78470a98966fd2174ddecbd78e70b43d7e1"
       },
       "validate_m1_entry_bindings": {
-        "exit_code": 0,
-        "test_count": null,
-        "log_sha256": "23e6a59e8a26770d10a4b33dafca3d33e03e1e191b9091b4974a6939146d1eb3",
         "argv": [
           "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+          "-B",
           "scripts/model-program/validate_m1_entry_bindings.py"
-        ]
+        ],
+        "exit_code": 0,
+        "test_count": null,
+        "log_sha256": "f9269568f9fc1e3c5146f9a8108b0d003c2acb9286faabb7536cea23762cf76c"
       },
       "validate_m1_harness": {
-        "exit_code": 0,
-        "test_count": null,
-        "log_sha256": "d0a7e9017958bdb6b01670daac6f40a2adb9f98c0f765863d8e2da07efdaad9f",
         "argv": [
           "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+          "-B",
           "scripts/model-program/validate_m1_harness.py"
-        ]
+        ],
+        "exit_code": 0,
+        "test_count": null,
+        "log_sha256": "76ae2f63b2b46570bd9f8854cda7747ec701023ca3f81c4334c15bfadac6c066"
       },
       "validate_m1_package_profile": {
-        "exit_code": 0,
-        "test_count": null,
-        "log_sha256": "046699271b28748591abf7fe167fd8a5071acbc6e65fd4e829347403d081b219",
         "argv": [
           "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+          "-B",
           "scripts/model-program/validate_m1_package_profile.py"
-        ]
+        ],
+        "exit_code": 0,
+        "test_count": null,
+        "log_sha256": "d12c7615a6b633ce46591bac8724025c9a5692625bdc706e9fb0c4cb8eba63b5"
       },
       "validate_m1_07_profile_candidate": {
+        "argv": [
+          "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+          "-B",
+          "scripts/model-program/validate_m1_07_profile_candidate.py"
+        ],
         "exit_code": 0,
         "test_count": null,
-        "log_sha256": "4123627bb9a76782ae9abaa6cbd2f98d827870e6fd56771f733fcad22c1a41ac",
-        "argv": [
-          "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
-          "scripts/model-program/validate_m1_07_profile_candidate.py"
-        ]
+        "log_sha256": "6fae4c8686b586e7de5246857cb5d3d758a4d23c652463349665b416fadb7166"
       },
       "full-m1": {
-        "exit_code": 0,
-        "test_count": 77,
-        "log_sha256": "dbdda9b3028c9d34b989bc9e89a3673de78e3d9627eea7516ceab745e9893406",
         "argv": [
           "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+          "-B",
           "-m",
           "unittest",
           "tests.test_model_program_m1_entry",
@@ -221,114 +160,119 @@
           "tests.test_model_program_m1_package",
           "tests.test_model_program_m1_07_profile_candidate",
           "-v"
-        ]
+        ],
+        "exit_code": 0,
+        "test_count": 84,
+        "log_sha256": "24daa5f9a6a09b39437f4caee54b1d35636473f088c5f08432e2c39d73237d7a"
       },
       "default-readback": {
-        "exit_code": 0,
-        "test_count": null,
-        "log_sha256": "4f1a7f4a3353ae5d0a187ffdecf4fff4f1d9aaa5e15cf4153954cab0bcde22e0",
         "argv": [
           "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
-          "C:\\Users\\Public\\Clued\\Validation\\M107-major04-r4-8db4-20260919\\scripts\\model-program\\m1_runtime_stability_pc.py"
-        ]
+          "-B",
+          "scripts/model-program/m1_runtime_stability_pc.py"
+        ],
+        "exit_code": 0,
+        "test_count": null,
+        "log_sha256": "3702c6a3ab3703f3e7ae1802e326ba27f2c9b50aacf28db294a4bd292741eb0f"
+      },
+      "native-json": {
+        "argv": [
+          "C:\\Users\\Public\\Clued\\Validation\\M107-major04-r5-tools-20260919\\go\\bin\\go.exe",
+          "test",
+          "-json",
+          "-count=1",
+          "./..."
+        ],
+        "exit_code": 0,
+        "test_count": null,
+        "log_sha256": "fc240042b05392239bc7f711a53c303dd1b486a61a199b0715a6f5e225818992"
+      },
+      "native-vet": {
+        "argv": [
+          "C:\\Users\\Public\\Clued\\Validation\\M107-major04-r5-tools-20260919\\go\\bin\\go.exe",
+          "vet",
+          "./..."
+        ],
+        "exit_code": 0,
+        "test_count": null,
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "native-build": {
+        "argv": [
+          "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+          "-B",
+          "scripts/model-program/build_m1_07_native_owner.py",
+          "--go",
+          "C:\\Users\\Public\\Clued\\Validation\\M107-major04-r5-tools-20260919\\go\\bin\\go.exe",
+          "--output",
+          "C:\\Users\\Public\\Clued\\Validation\\M107-major04-r5-tools-20260919\\evidence\\prepack\\development-build"
+        ],
+        "exit_code": 0,
+        "test_count": null,
+        "log_sha256": "0e8e39ac44afce422ed76c7e426e5487c3c60a14642f7e72d2e29854eaaa7fca"
       }
     },
-    "test_boundary_disclosure": {
-      "owner_lifecycle_controls": "Trusted white-box fixture substitutes native startup verification only inside the test loader; all Popen controls are fake/mock. This is not proof against malicious code loaded into the trusted owner.",
-      "external_import_controls": "Unmodified public facade without the owner-fixture substitution.",
-      "real_child_interpreters": "Only isolated Python import-spoof rejection and current non-issued candidate rejection. No model/server/scenario execution."
-    }
+    "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "go": "go version go1.27.1 windows/amd64",
+    "temporary_python_dependencies": {
+      "attrs": "26.1.0",
+      "jsonschema": "4.25.1",
+      "jsonschema-specifications": "2025.9.1",
+      "referencing": "0.37.0",
+      "rpds-py": "2026.6.3",
+      "typing_extensions": "4.16.0"
+    },
+    "repository_clean_before_after": true,
+    "source_bytes_match_exact_git_blobs": true,
+    "windows_llama_server_before_after": [
+      0,
+      0
+    ],
+    "wsl_observed_running_distribution": "CluedCI-Linux",
+    "wsl_llama_server_before_after": [
+      0,
+      0
+    ],
+    "process_snapshot_limitation": "Before/after snapshots, NOT continuous monitoring. Prepack WSL stderr decoding warning in runner; counts from numeric stdout; final-head runner captures WSL bytes without implicit locale decoding. Host recorded via socket.gethostname on final-head rerun.",
+    "packaging_rule": "Receipt-only successor must preserve all tested code/tests and be rerun on final head; final-head raw logs live outside repository to avoid self-reference.",
+    "raw_prepack_verification_sha256": "12a1c5ec92804ff59b31792e7912cb97e4d4c182fd5e32dcd153f69160f1921e"
+  },
+  "evidence_boundaries": {
+    "real_native_child_processes": "Candidate rejection / unbound-issuer rejection / invalid CLI only",
+    "native_lifecycle": "Actual shipped controller with fake process/OS/HTTP; no real server or port",
+    "windows_native_process_api_positive_control": "NOT EXECUTED",
+    "actual_model_qualification": "NOT EXECUTED",
+    "python_loader_replay": "Old whitebox loader now cannot install absent effectful branch",
+    "independent_closure": "NOT PERFORMED",
+    "contract_adoption": "NOT PERFORMED",
+    "os_account_acl_services_deployment": "NOT CHANGED"
   },
   "effects": {
-    "model_loaded": false,
+    "owner_final_issuance_performed": false,
     "llama_server_started": false,
-    "inference_performed": false,
-    "m1_07_scenario_executed": false,
-    "cancellation_test_executed": false,
-    "crash_test_executed": false,
-    "port_18087_bound": false,
-    "hosted_provider_called": false,
+    "model_loaded": false,
+    "real_m1_07_scenario_executed": false,
+    "m1_08_started": false,
     "training_performed": false,
     "distillation_performed": false,
     "promotion_performed": false,
     "activation_performed": false,
     "production_mutation": false,
     "release_performed": false,
-    "m1_08_started": false,
-    "real_child_python_rejection_tests_performed": true,
-    "owner_final_issuance_performed": false,
     "repository_merge_performed": false
   },
-  "remaining_final_issuance_gates": [
-    "Fresh-Context read-only final re-review of this exact remediation head",
-    "Owner explicit M1-07 effectful execution authorization only after Fresh-Context PASS",
-    "bind final expiry",
-    "create exact ISSUED successor M1-STAB-QWEN35-08B-PC-001-ISSUED",
-    "bind independent trusted Owner authorization ID and canonical SHA-256 in issued profile outer binding"
-  ],
-  "conclusion": "AUTHOR_SIDE_VALIDATION_PASS / READY_FOR_FRESH_CONTEXT_RE_REVIEW / EFFECTFUL_EXECUTION_BLOCKED",
-  "next_frontier": "FRESH_CONTEXT_READ_ONLY_MAJOR_04_ROUND_4_RE_REVIEW / DO_NOT_ISSUE / DO_NOT_EXECUTE",
-  "review_remediation": {
-    "source_verdict": "BLOCKED / M1_07_PROFILE_OR_ORCHESTRATOR_CORRECTION_REQUIRED",
-    "remediation_scope": "MAJOR_04_ONLY / NO_SCOPE_EXPANSION / NO_EFFECTFUL_EXECUTION",
-    "resolved_items": [
-      "AUTHOR-SIDE ONLY: MAJOR-01/02/03 authorization, exact binding, physical identity, budget, deadline and attempt checks retained with passing regression; no new independent verdict is asserted.",
-      "MAJOR-04 remediation candidate: ordinary imports install only a validate-only facade with no live runtime registry, registration factory, execution controller or activation token. Effectful definitions exist only in the direct native-command-line-verified isolated standalone owner interpreter.",
-      "Within the trusted owner, exact context/wrapper identities and original-Popen registry resolution remain enforced; visible wrapper metadata cannot redirect lifecycle targets. Python closure secrecy is not claimed as an authority boundary."
-    ],
-    "required_negative_behavior_coverage": [
-      "wrong orchestrator commit -> FAIL",
-      "wrong orchestrator blob -> FAIL",
-      "wrong orchestrator normalized SHA -> FAIL",
-      "actual script bytes drift -> FAIL",
-      "COMPUTERNAME spoof with machine identity mismatch -> FAIL",
-      "authorization object self-rehash without trusted expected SHA match -> FAIL",
-      "authorization_id drift -> FAIL",
-      "naive issued_at_utc -> FAIL",
-      "health failure after Popen retains per-start RSS/process evidence",
-      "stdout/stderr storage ceiling attempt -> FAIL CLOSED",
-      "scenario-internal wall deadline expiry -> FAIL CLOSED",
-      "direct run bypass -> BLOCKED",
-      "direct start_server bypass -> BLOCKED",
-      "caller construction of ValidatedExecutionContext -> BLOCKED",
-      "object.__new__ forged context with every visible field copied from an authorized context -> BLOCKED BEFORE Popen / Popen call count = 0",
-      "post-authorization profile/deadline context tamper -> BLOCKED BEFORE Popen",
-      "direct foreign Popen kill -> REJECTED",
-      "caller construction/object.__new__ forged OwnedServerProcess with copied pid/metadata -> REJECTED / foreign kill call count = 0",
-      "attempt to attach foreign Popen to wrapper -> impossible because wrapper exposes no process slot",
-      "exact start_server wrapper diagnostic metadata mutation cannot redirect lifecycle target; original registry Popen remains authoritative",
-      "owned process wrapper from another execution context -> REJECTED",
-      "candidate default invocation remains validate-only and starts no server/model",
-      "normal import exposes no context/process writer or live registry; effectful entry __closure__ is None",
-      "copy every real mock-owner context diagnostic field into a facade context -> reject / Popen call_count=0",
-      "copy exact registered wrapper metadata into foreign facade wrapper -> reject / foreign kill_calls=0",
-      "all wrapper pid/label/scenario/start_index changes -> only original internally registered fake Popen killed",
-      "real isolated python -c interpreter with spoofed __main__, sys.argv and sys.orig_argv -> facade only / Popen call_count=0",
-      "direct native owner launch with current candidate -> PROFILE_NOT_ISSUED / no output directory / no scenario",
-      "native command schema rejects PID/process/callback/test/registry inputs; helper validation returns no capability",
-      "owner boundary helper source is exact-bound; profile helper digest drift -> reject"
-    ],
-    "independent_closure_status": "PENDING_FRESH_CONTEXT_RE_REVIEW / MAJOR_04_NOT_FORMALLY_CLOSED",
-    "mechanism_change": "REPLACE_SHARED_INTERPRETER_CAPABILITY_SECRECY_WITH_STANDALONE_TRUSTED_OWNER_BOUNDARY"
-  },
-  "updated_at_utc": "2026-09-19T13:06:52.104053+00:00",
-  "authoritative_for_current_binding": true,
-  "remediation_round": 4,
-  "source_review": {
-    "exact_reviewed_head": "8db4e5e8c9fd7d95813141077f62a6f761427dbc",
-    "verdict": "BLOCKED / M1_07_PROFILE_OR_ORCHESTRATOR_CORRECTION_REQUIRED",
-    "mode": "REMEDIATION ONLY / MAJOR_04 / NO SCOPE EXPANSION / NO EFFECTFUL EXECUTION"
-  },
-  "historical_evidence": [
-    {
-      "path": "development/contracts/model-program/m1/evidence/M1RuntimeStabilityProfileCandidatePreparationReceipt_20260919.json",
-      "required_governance_status": "HISTORICAL / SUPERSEDED_FOR_CURRENT_BINDING"
-    }
-  ],
   "previous_remediation_receipt": {
-    "exact_head": "8db4e5e8c9fd7d95813141077f62a6f761427dbc",
-    "sha256": "2fb02f4a261fd61a578f8517134fc77f91cf7b86cee70abfa46b9a4ce2c3ae29",
-    "git_blob_sha1": "9221d3c0e076056bdc8691764e7eb42b15878ac9",
-    "status": "HISTORICAL / MAJOR_04_NOT_CLOSED"
-  }
+    "exact_head": "15aea8fe4c7702a49ed1c722cea00857b091c5ad",
+    "sha256": "27acdbf8b3594fb93617e0bae5200ee24a2644ca1c7c1f6971ae53411497b052",
+    "status": "HISTORICAL / ROUND_4 / MAJOR_04_NOT_FORMALLY_CLOSED"
+  },
+  "remaining_gates": [
+    "Fresh-Context independent read-only review of exact r5 final head",
+    "Independent acceptance assessment of native boundary and signature contract",
+    "Explicit Owner contract adoption if reviewed acceptable",
+    "Separately approved and reviewed code successor pinning trusted issuer public key and rebinding native source/binary",
+    "Separate Owner Final Issuance and signed exact profile; never implied by this receipt"
+  ],
+  "conclusion": "AUTHOR_SIDE_VALIDATION_PASS / MAJOR_04_NOT_FORMALLY_CLOSED / EFFECTFUL_EXECUTION_BLOCKED",
+  "next_frontier": "FRESH_CONTEXT_READ_ONLY_R5_RE_REVIEW_AND_CONTRACT_COMPATIBILITY_ASSESSMENT / DO_NOT_ISSUE / DO_NOT_EXECUTE"
 }

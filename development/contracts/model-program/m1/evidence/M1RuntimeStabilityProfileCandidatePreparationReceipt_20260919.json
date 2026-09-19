@@ -102,8 +102,8 @@
     "superseded_for_current_binding": true,
     "current_authoritative_remediation_receipt_path": "development/contracts/model-program/m1/evidence/M1RuntimeStabilityExactProfileBindingReceipt_20260919.json",
     "current_authoritative_remediation_receipt_record_id": "M1-STAB-QWEN35-08B-PC-001-EXACT-BINDING-20260919",
-    "current_authoritative_remediation_receipt_git_blob_sha1": "f22c2f6935ec1d7bf7abf10ac8bf708116cffc8a",
+    "current_authoritative_remediation_receipt_git_blob_sha1": "63e48aae64e365ae9659f8af6882e3339a6839c4",
     "consumer_rule": "DO_NOT_USE_THIS_HISTORICAL_RECEIPT_FOR_CURRENT_BINDING; FOLLOW_CURRENT_AUTHORITATIVE_REMEDIATION_RECEIPT",
-    "current_authoritative_remediation_round": 4
+    "current_authoritative_remediation_round": 5
   }
 }
