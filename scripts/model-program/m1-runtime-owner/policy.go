@@ -297,6 +297,7 @@ func scopePolicy() object {
 		"config_revision/server/ctx_size": 2048, "config_revision/server/parallel": 1,
 		"config_revision/server/n_gpu_layers": 0, "config_revision/server/device": "none", "config_revision/server/op_offload": false,
 		"config_revision/server/external_bind": false, "config_revision/server/external_network": false,
+		"config_revision/server/configuration_sources": "SIGNED_ARGV_ONLY / CHILD_ENV_ALLOWLIST / NO_LLAMA_ARG / NO_PROGRAMDATA_APPDATA_CONFIG",
 		"max_wall_time": 1800, "max_storage": storageLimit, "max_attempts": 1,
 		"max_compute/device": "DESK-W-591", "max_compute/cpu_threads": 2, "max_compute/gpu_layers": 0,
 		"max_compute/non_cpu_devices": "NONE", "max_compute/max_parallel_server_processes": 1, "max_compute/max_profile_owned_server_starts": 7,
