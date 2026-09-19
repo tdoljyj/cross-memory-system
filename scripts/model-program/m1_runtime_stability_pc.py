@@ -2,26 +2,43 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import http.client
+import importlib.util
 import json
 import os
 import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 SCRIPT_PATH = Path(__file__).resolve()
 ROOT = SCRIPT_PATH.parents[2]
 DEFAULT_CANDIDATE = ROOT / "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.candidate.json"
+BINDING_PATH = SCRIPT_PATH.with_name("m1_runtime_stability_binding.py")
+
+_binding_spec = importlib.util.spec_from_file_location("m1_runtime_stability_binding", BINDING_PATH)
+if _binding_spec is None or _binding_spec.loader is None:
+    raise RuntimeError(f"cannot load runtime-stability binding module: {BINDING_PATH}")
+_binding = importlib.util.module_from_spec(_binding_spec)
+_binding_spec.loader.exec_module(_binding)
+
+EXPECTED_ORCHESTRATOR_COMMIT = _binding.EXPECTED_ORCHESTRATOR_COMMIT
+EXPECTED_ORCHESTRATOR_BLOB_SHA1 = _binding.EXPECTED_ORCHESTRATOR_BLOB_SHA1
+EXPECTED_ORCHESTRATOR_NORMALIZED_SHA256 = _binding.EXPECTED_ORCHESTRATOR_NORMALIZED_SHA256
 
 EXPECTED_ISSUED_PROFILE_ID = "M1-STAB-QWEN35-08B-PC-001-ISSUED"
 EXPECTED_AUTHORITY_EFFECT = "M1-07_PC_RUNTIME_STABILITY_EXECUTION_ONLY"
 EXPECTED_BASE_COMMIT = "bd80de6beed04a52b74f763baa7c274b5741fb1d"
 EXPECTED_DEVICE_NAME = "DESK-W-591"
+EXPECTED_MACHINE_IDENTITY_SOURCE = "WINDOWS_HKLM_MACHINEGUID"
+EXPECTED_MACHINE_IDENTITY_CANONICALIZATION = "SHA256_UTF8_PREFIX_windows-machineguid_COLON_TRIM_LOWERCASE"
+EXPECTED_MACHINE_IDENTITY_SHA256 = "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522"
 EXPECTED_MODEL_FILENAME = "Qwen3.5-0.8B-Q8_0.gguf"
 EXPECTED_MODEL_BYTES = 833592320
 EXPECTED_MODEL_SHA256 = "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
@@ -37,8 +54,13 @@ EXPECTED_PARALLEL = 1
 EXPECTED_CTX_SIZE = 2048
 EXPECTED_MAX_WALL_TIME = 1800
 EXPECTED_MAX_STORAGE = 134217728
+EXPECTED_EVIDENCE_RESERVE_BYTES = 1048576
 EXPECTED_MAX_ATTEMPTS = 1
+EXPECTED_MAX_SERVER_STARTS = 7
 EXPECTED_ATTEMPT_GUARD_PATH = Path(r"C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-STAB-QWEN35-08B-PC-001\M1RuntimeStabilityAttemptGuard.json")
+
+_CONTEXT_SEAL = object()
+_OWNED_PROCESS_SEAL = object()
 
 
 class StabilityError(RuntimeError):
@@ -55,27 +77,30 @@ def canonical_json(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def normalized_text_sha256(path: Path) -> str:
     text = path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def append_jsonl(path: Path, event: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8", newline="\n") as f:
-        f.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+def git_blob_sha1(path: Path) -> str:
+    data = path.read_bytes()
+    return hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+
+
+def sha256_file(path: Path, ctx: "ValidatedExecutionContext | None" = None) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while True:
+            if ctx is not None:
+                ctx.check_limits()
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def now_utc() -> str:
-    import datetime
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
@@ -86,6 +111,29 @@ def _is_hex(value: Any, length: int) -> bool:
 def owner_authorization_sha256(auth: dict[str, Any]) -> str:
     payload = {k: v for k, v in auth.items() if k != "sha256"}
     return hashlib.sha256(canonical_json(payload)).hexdigest()
+
+
+def parse_utc_timestamp(value: Any) -> datetime.datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError("timestamp missing")
+    dt = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None or dt.utcoffset() is None:
+        raise ValueError("naive timestamp")
+    if dt.utcoffset() != datetime.timedelta(0):
+        raise ValueError("timestamp is not UTC")
+    return dt.astimezone(datetime.timezone.utc)
+
+
+def server_config(profile: dict[str, Any]) -> dict[str, Any]:
+    return ((profile.get("config_revision") or {}).get("server") or {})
+
+
+def model_binding(profile: dict[str, Any]) -> dict[str, Any]:
+    return ((profile.get("exact_model_ids_and_revisions") or {}).get("stability_subject") or {})
+
+
+def runtime_binding(profile: dict[str, Any]) -> dict[str, Any]:
+    return profile.get("runtime_and_device_profile") or {}
 
 
 def validate_execution_profile(profile: dict[str, Any]) -> tuple[bool, str]:
@@ -109,14 +157,26 @@ def validate_execution_profile(profile: dict[str, Any]) -> tuple[bool, str]:
         return False, "OWNER_FINAL_EXECUTION_AUTHORIZATION_PROFILE_MISMATCH"
     if auth.get("authorized_authority_effect") != EXPECTED_AUTHORITY_EFFECT:
         return False, "OWNER_FINAL_EXECUTION_AUTHORIZATION_SCOPE_MISMATCH"
-    auth_sha = auth.get("sha256")
-    if not _is_hex(auth_sha, 64) or auth_sha != owner_authorization_sha256(auth):
-        return False, "OWNER_FINAL_EXECUTION_AUTHORIZATION_DIGEST_INVALID"
     try:
-        import datetime
-        datetime.datetime.fromisoformat(str(auth["issued_at_utc"]).replace("Z", "+00:00"))
+        parse_utc_timestamp(auth.get("issued_at_utc"))
     except Exception:
         return False, "OWNER_FINAL_EXECUTION_AUTHORIZATION_TIME_INVALID"
+    recomputed_auth_sha = owner_authorization_sha256(auth)
+    auth_sha = auth.get("sha256")
+    if not _is_hex(auth_sha, 64) or auth_sha != recomputed_auth_sha:
+        return False, "OWNER_FINAL_EXECUTION_AUTHORIZATION_DIGEST_INVALID"
+
+    trusted = profile.get("trusted_execution_bindings") or {}
+    expected_auth_id = trusted.get("expected_owner_authorization_id")
+    expected_auth_sha = trusted.get("expected_owner_authorization_sha256")
+    if not isinstance(expected_auth_id, str) or not expected_auth_id or expected_auth_id == "TO_BE_BOUND_AT_FINAL_ISSUANCE":
+        return False, "OWNER_AUTHORIZATION_TRUSTED_BINDING_MISSING"
+    if not _is_hex(expected_auth_sha, 64):
+        return False, "OWNER_AUTHORIZATION_TRUSTED_BINDING_MISSING"
+    if auth.get("authorization_id") != expected_auth_id:
+        return False, "OWNER_AUTHORIZATION_ID_TRUSTED_BINDING_MISMATCH"
+    if recomputed_auth_sha != expected_auth_sha:
+        return False, "OWNER_AUTHORIZATION_SHA_TRUSTED_BINDING_MISMATCH"
 
     code = profile.get("code_revision") or {}
     if code.get("status") != "EXACT_BOUND":
@@ -127,12 +187,15 @@ def validate_execution_profile(profile: dict[str, Any]) -> tuple[bool, str]:
         return False, "EXECUTION_CODE_BASE_DRIFT"
     if code.get("required_script_path") != "scripts/model-program/m1_runtime_stability_pc.py":
         return False, "EXECUTION_SCRIPT_PATH_DRIFT"
-    if not _is_hex(code.get("required_code_commit"), 40) or not _is_hex(code.get("required_script_git_blob_sha1"), 40):
-        return False, "EXECUTION_CODE_IDENTITY_INVALID"
-    expected_script_sha = code.get("required_script_normalized_sha256")
-    if not _is_hex(expected_script_sha, 64):
-        return False, "EXECUTION_CODE_BINDING_UNRESOLVED"
-    if normalized_text_sha256(SCRIPT_PATH) != expected_script_sha:
+    if code.get("required_code_commit") != EXPECTED_ORCHESTRATOR_COMMIT:
+        return False, "EXECUTION_ORCHESTRATOR_COMMIT_DRIFT"
+    if code.get("required_script_git_blob_sha1") != EXPECTED_ORCHESTRATOR_BLOB_SHA1:
+        return False, "EXECUTION_ORCHESTRATOR_BLOB_DRIFT"
+    if code.get("required_script_normalized_sha256") != EXPECTED_ORCHESTRATOR_NORMALIZED_SHA256:
+        return False, "EXECUTION_ORCHESTRATOR_NORMALIZED_SHA256_DRIFT"
+    if git_blob_sha1(SCRIPT_PATH) != EXPECTED_ORCHESTRATOR_BLOB_SHA1:
+        return False, "EXECUTION_SCRIPT_BLOB_DRIFT"
+    if normalized_text_sha256(SCRIPT_PATH) != EXPECTED_ORCHESTRATOR_NORMALIZED_SHA256:
         return False, "EXECUTION_SCRIPT_SHA256_DRIFT"
 
     model = model_binding(profile)
@@ -145,8 +208,15 @@ def validate_execution_profile(profile: dict[str, Any]) -> tuple[bool, str]:
         return False, "M1_07_STABILITY_SUBJECT_DRIFT"
 
     runtime = runtime_binding(profile)
+    machine = runtime.get("machine_identity") or {}
     if runtime.get("device_name") != EXPECTED_DEVICE_NAME or runtime.get("device_class") != "PC":
         return False, "M1_07_DEVICE_SCOPE_DRIFT"
+    if (
+        machine.get("source") != EXPECTED_MACHINE_IDENTITY_SOURCE
+        or machine.get("canonicalization") != EXPECTED_MACHINE_IDENTITY_CANONICALIZATION
+        or machine.get("sha256") != EXPECTED_MACHINE_IDENTITY_SHA256
+    ):
+        return False, "M1_07_MACHINE_IDENTITY_BINDING_DRIFT"
     if (
         runtime.get("runtime_release_tag") != EXPECTED_RUNTIME_RELEASE_TAG
         or runtime.get("runtime_commit") != EXPECTED_RUNTIME_COMMIT
@@ -189,7 +259,7 @@ def validate_execution_profile(profile: dict[str, Any]) -> tuple[bool, str]:
         or compute.get("gpu_layers") != 0
         or compute.get("non_cpu_devices") != "NONE"
         or compute.get("max_parallel_server_processes") != 1
-        or compute.get("max_profile_owned_server_starts") != 7
+        or compute.get("max_profile_owned_server_starts") != EXPECTED_MAX_SERVER_STARTS
     ):
         return False, "M1_07_MAX_COMPUTE_DRIFT"
 
@@ -203,10 +273,7 @@ def validate_execution_profile(profile: dict[str, Any]) -> tuple[bool, str]:
     if not expiry or expiry == "TO_BE_BOUND_AT_FINAL_ISSUANCE":
         return False, "EXPIRY_UNRESOLVED"
     try:
-        import datetime
-        expiry_dt = datetime.datetime.fromisoformat(expiry.replace("Z", "+00:00"))
-        if expiry_dt.tzinfo is None:
-            return False, "EXPIRY_INVALID"
+        expiry_dt = parse_utc_timestamp(expiry)
         if datetime.datetime.now(datetime.timezone.utc) >= expiry_dt:
             return False, "PROFILE_EXPIRED"
     except Exception:
@@ -215,180 +282,219 @@ def validate_execution_profile(profile: dict[str, Any]) -> tuple[bool, str]:
     return True, "READY"
 
 
-def server_config(profile: dict[str, Any]) -> dict[str, Any]:
-    return ((profile.get("config_revision") or {}).get("server") or {})
+def windows_machine_identity_sha256() -> str:
+    if os.name != "nt":
+        raise StabilityError("DEVICE_OS_DRIFT", "Windows machine identity required")
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as key:
+        raw = str(winreg.QueryValueEx(key, "MachineGuid")[0])
+    canonical = "windows-machineguid:" + raw.strip().lower()
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def model_binding(profile: dict[str, Any]) -> dict[str, Any]:
-    return ((profile.get("exact_model_ids_and_revisions") or {}).get("stability_subject") or {})
-
-
-def runtime_binding(profile: dict[str, Any]) -> dict[str, Any]:
-    return profile.get("runtime_and_device_profile") or {}
-
-
-def preflight(profile: dict[str, Any], out_dir: Path) -> dict[str, Any]:
+def verify_physical_device_identity(profile: dict[str, Any]) -> dict[str, Any]:
     if os.name != "nt":
         raise StabilityError("DEVICE_OS_DRIFT", "M1-07 PC stability profile is bound to Windows DESK-W-591")
-    actual_device = os.environ.get("COMPUTERNAME", "")
-    if actual_device.upper() != EXPECTED_DEVICE_NAME:
-        raise StabilityError("DEVICE_IDENTITY_DRIFT", f"expected={EXPECTED_DEVICE_NAME} actual={actual_device}")
-
-    cfg = server_config(profile)
-    if cfg.get("host") != "127.0.0.1" or cfg.get("external_bind") is not False:
-        raise StabilityError("NON_LOOPBACK_BIND", "server must bind only to 127.0.0.1")
-    if cfg.get("offline") is not True or cfg.get("external_network") is not False:
-        raise StabilityError("EXTERNAL_NETWORK_BOUNDARY", "offline/loopback-only boundary missing")
-    if cfg.get("device") != "none" or cfg.get("n_gpu_layers") != 0 or cfg.get("op_offload") is not False:
-        raise StabilityError("GPU_OFFLOAD_BOUNDARY", "strict CPU-only boundary missing")
-
+    actual_logical_name = socket.gethostname().strip()
+    if actual_logical_name.upper() != EXPECTED_DEVICE_NAME:
+        raise StabilityError("DEVICE_LOGICAL_NAME_DRIFT", f"expected={EXPECTED_DEVICE_NAME} actual={actual_logical_name}")
+    actual_machine_sha = windows_machine_identity_sha256()
+    if actual_machine_sha != EXPECTED_MACHINE_IDENTITY_SHA256:
+        raise StabilityError("DEVICE_MACHINE_IDENTITY_DRIFT", f"expected_sha256={EXPECTED_MACHINE_IDENTITY_SHA256} actual_sha256={actual_machine_sha}")
     runtime = runtime_binding(profile)
-    model = model_binding(profile)
-    server_path = Path(runtime["package_root"]) / "runtime" / "b11033-vulkan" / runtime["server_executable"]
-    model_path = Path(runtime["exact_model_path"])
-
-    if not server_path.is_file():
-        raise StabilityError("SERVER_EXECUTABLE_MISSING", str(server_path))
-    if not model_path.is_file():
-        raise StabilityError("MODEL_PATH_MISSING", str(model_path))
-
-    server_bytes = server_path.stat().st_size
-    model_bytes = model_path.stat().st_size
-    server_sha = sha256_file(server_path)
-    model_sha = sha256_file(model_path)
-    if server_bytes != runtime.get("server_executable_bytes") or server_sha != runtime.get("server_executable_sha256"):
-        raise StabilityError("SERVER_EXECUTABLE_DIGEST_DRIFT", server_sha)
-    if model_bytes != model.get("bytes") or model_sha != model.get("sha256"):
-        raise StabilityError("MODEL_DIGEST_DRIFT", model_sha)
-
-    host = cfg["host"]
-    port = int(cfg["port"])
-    if not port_is_free(host, port):
-        raise StabilityError("PORT_ALREADY_IN_USE", f"{host}:{port}")
-
-    result = {
-        "profile_id": profile.get("profile_id"),
-        "checked_at_utc": now_utc(),
-        "server_path": str(server_path),
-        "server_bytes": server_bytes,
-        "server_sha256": server_sha,
-        "model_path": str(model_path),
-        "model_bytes": model_bytes,
-        "model_sha256": model_sha,
-        "host": host,
-        "port": port,
-        "port_free": True,
+    machine = runtime.get("machine_identity") or {}
+    if machine.get("sha256") != actual_machine_sha:
+        raise StabilityError("DEVICE_PROFILE_MACHINE_IDENTITY_DRIFT", "profile machine identity does not match physical machine")
+    return {
+        "logical_name": actual_logical_name,
+        "machine_identity_source": EXPECTED_MACHINE_IDENTITY_SOURCE,
+        "machine_identity_sha256": actual_machine_sha,
     }
-    (out_dir / "M1RuntimeStabilityPreflight.json").write_text(
-        json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
+
+
+class OutputBudget:
+    def __init__(self, limit: int, initial_used: int = 0):
+        if limit != EXPECTED_MAX_STORAGE:
+            raise StabilityError("OUTPUT_STORAGE_BUDGET_INVALID", f"limit={limit}")
+        self.limit = limit
+        self.used = initial_used
+        self._lock = threading.Lock()
+        self._failure: StabilityError | None = None
+
+    def reserve(self, amount: int, capture: bool = False) -> None:
+        if amount < 0:
+            raise StabilityError("OUTPUT_STORAGE_BUDGET_INVALID", f"negative amount={amount}")
+        with self._lock:
+            if self._failure is not None:
+                raise self._failure
+            effective_limit = self.limit - EXPECTED_EVIDENCE_RESERVE_BYTES if capture else self.limit
+            if self.used + amount > effective_limit:
+                self._failure = StabilityError(
+                    "OUTPUT_STORAGE_BUDGET_EXCEEDED",
+                    f"used={self.used} requested={amount} limit={effective_limit} capture={capture}",
+                )
+                raise self._failure
+            self.used += amount
+
+    def set_failure(self, exc: StabilityError) -> None:
+        with self._lock:
+            if self._failure is None:
+                self._failure = exc
+
+    def raise_if_failed(self) -> None:
+        with self._lock:
+            exc = self._failure
+        if exc is not None:
+            raise exc
+
+    def write_bytes(self, path: Path, data: bytes, append: bool = False) -> None:
+        self.reserve(len(data))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        mode = "ab" if append else "wb"
+        with path.open(mode) as f:
+            f.write(data)
+
+    def write_text(self, path: Path, text: str, append: bool = False) -> None:
+        self.write_bytes(path, text.encode("utf-8"), append=append)
+
+    def append_jsonl(self, path: Path, event: dict[str, Any]) -> None:
+        self.write_text(path, json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n", append=True)
+
+
+class BoundedCapture:
+    def __init__(self, stream: BinaryIO | None, path: Path, budget: OutputBudget):
+        self.stream = stream
+        self.path = path
+        self.budget = budget
+        self._thread = threading.Thread(target=self._run, name=f"capture-{path.name}", daemon=True)
+        self._started = False
+
+    def start(self) -> None:
+        if self.stream is None:
+            return
+        self._started = True
+        self._thread.start()
+
+    def _run(self) -> None:
+        assert self.stream is not None
+        discard = False
+        try:
+            with self.path.open("ab") as out:
+                while True:
+                    chunk = self.stream.read(65536)
+                    if not chunk:
+                        break
+                    if discard:
+                        continue
+                    try:
+                        self.budget.reserve(len(chunk), capture=True)
+                        out.write(chunk)
+                        out.flush()
+                    except StabilityError as exc:
+                        self.budget.set_failure(exc)
+                        discard = True
+        except Exception as exc:
+            self.budget.set_failure(StabilityError("OUTPUT_CAPTURE_FAILURE", repr(exc)))
+        finally:
+            try:
+                self.stream.close()
+            except Exception:
+                pass
+
+    def join(self, timeout: float) -> None:
+        if self._started:
+            self._thread.join(timeout=max(0.0, timeout))
+
+
+class OwnedServerProcess:
+    __slots__ = ("proc", "context_nonce", "label", "scenario", "start_index", "stdout_capture", "stderr_capture", "_seal")
+
+    def __init__(
+        self,
+        proc: subprocess.Popen[Any],
+        context_nonce: object,
+        label: str,
+        scenario: str,
+        start_index: int,
+        stdout_capture: BoundedCapture,
+        stderr_capture: BoundedCapture,
+        seal: object,
+    ):
+        if seal is not _OWNED_PROCESS_SEAL:
+            raise StabilityError("OWNED_PROCESS_CONSTRUCTION_FORBIDDEN", "owned process wrappers are orchestrator-internal")
+        self.proc = proc
+        self.context_nonce = context_nonce
+        self.label = label
+        self.scenario = scenario
+        self.start_index = start_index
+        self.stdout_capture = stdout_capture
+        self.stderr_capture = stderr_capture
+        self._seal = seal
+
+
+class ValidatedExecutionContext:
+    __slots__ = (
+        "profile", "output_dir", "events_path", "attempt_guard", "started_monotonic", "deadline",
+        "budget", "nonce", "owned", "server_start_count", "_seal", "physical_identity",
     )
-    return result
+
+    def __init__(
+        self,
+        profile: dict[str, Any],
+        output_dir: Path,
+        attempt_guard: Path,
+        started_monotonic: float,
+        budget: OutputBudget,
+        physical_identity: dict[str, Any],
+        seal: object,
+    ):
+        if seal is not _CONTEXT_SEAL:
+            raise StabilityError("EXECUTION_CONTEXT_CONSTRUCTION_FORBIDDEN", "context must be created by authorize_execution")
+        self.profile = profile
+        self.output_dir = output_dir
+        self.events_path = output_dir / "M1RuntimeStabilityEvents.jsonl"
+        self.attempt_guard = attempt_guard
+        self.started_monotonic = started_monotonic
+        self.deadline = started_monotonic + EXPECTED_MAX_WALL_TIME
+        self.budget = budget
+        self.nonce = object()
+        self.owned: dict[int, OwnedServerProcess] = {}
+        self.server_start_count = 0
+        self._seal = seal
+        self.physical_identity = physical_identity
+
+    def check_limits(self) -> None:
+        _require_ctx(self)
+        self.budget.raise_if_failed()
+        if time.monotonic() >= self.deadline:
+            raise StabilityError("MAX_WALL_TIME_EXCEEDED", f"limit={EXPECTED_MAX_WALL_TIME}")
+
+    def remaining_time(self, ceiling: float | None = None) -> float:
+        self.check_limits()
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise StabilityError("MAX_WALL_TIME_EXCEEDED", f"limit={EXPECTED_MAX_WALL_TIME}")
+        if ceiling is not None:
+            remaining = min(remaining, ceiling)
+        return max(0.001, remaining)
 
 
-def port_is_free(host: str, port: int) -> bool:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
-        sock.bind((host, port))
-        return True
-    except OSError:
-        return False
-    finally:
-        sock.close()
+def _require_ctx(ctx: Any) -> ValidatedExecutionContext:
+    if not isinstance(ctx, ValidatedExecutionContext) or getattr(ctx, "_seal", None) is not _CONTEXT_SEAL:
+        raise StabilityError("EXECUTION_CONTEXT_REQUIRED", "effectful entry point requires ValidatedExecutionContext")
+    return ctx
 
 
-def wait_port_released(host: str, port: int, timeout: float = 10.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if port_is_free(host, port):
-            return True
-        time.sleep(0.2)
-    return False
-
-
-def process_rss_bytes(proc: subprocess.Popen[Any]) -> int:
-    if proc.poll() is not None:
-        raise StabilityError("PROCESS_METRICS_PROCESS_EXITED", f"pid={proc.pid}")
-    if os.name != "nt":
-        raise StabilityError("PROCESS_METRICS_UNSUPPORTED_OS", os.name)
-    import ctypes
-    from ctypes import wintypes
-
-    class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
-        _fields_ = [
-            ("cb", wintypes.DWORD),
-            ("PageFaultCount", wintypes.DWORD),
-            ("PeakWorkingSetSize", ctypes.c_size_t),
-            ("WorkingSetSize", ctypes.c_size_t),
-            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-            ("QuotaPagedPoolUsage", ctypes.c_size_t),
-            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-            ("PagefileUsage", ctypes.c_size_t),
-            ("PeakPagefileUsage", ctypes.c_size_t),
-            ("PrivateUsage", ctypes.c_size_t),
-        ]
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    psapi = ctypes.WinDLL("psapi", use_last_error=True)
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    kernel32.CloseHandle.restype = wintypes.BOOL
-    psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESS_MEMORY_COUNTERS_EX), wintypes.DWORD]
-    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
-
-    handle = kernel32.OpenProcess(0x0400 | 0x0010, False, proc.pid)
-    if not handle:
-        raise StabilityError("PROCESS_METRICS_OPEN_FAILED", f"pid={proc.pid} winerr={ctypes.get_last_error()}")
-    try:
-        counters = PROCESS_MEMORY_COUNTERS_EX()
-        counters.cb = ctypes.sizeof(counters)
-        if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
-            raise StabilityError("PROCESS_METRICS_READ_FAILED", f"pid={proc.pid} winerr={ctypes.get_last_error()}")
-        return int(counters.WorkingSetSize)
-    finally:
-        kernel32.CloseHandle(handle)
-
-
-def record_process_metrics(proc: subprocess.Popen[Any], out_dir: Path, scenario: str, sample: str) -> int:
-    rss = process_rss_bytes(proc)
-    append_jsonl(
-        out_dir / "M1RuntimeStabilityProcessMetrics.jsonl",
-        {
-            "ts_utc": now_utc(),
-            "scenario": scenario,
-            "sample": sample,
-            "pid": proc.pid,
-            "rss_bytes": rss,
-            "process_alive": proc.poll() is None,
-        },
-    )
-    return rss
-
-
-def directory_size_bytes(root: Path) -> int:
-    total = 0
-    for p in root.rglob("*"):
-        if p.is_file():
-            total += p.stat().st_size
-    return total
-
-
-def enforce_output_storage_budget(profile: dict[str, Any], out_dir: Path) -> int:
-    used = directory_size_bytes(out_dir)
-    limit = int(profile.get("max_storage") or 0)
-    if limit != EXPECTED_MAX_STORAGE or used > limit:
-        raise StabilityError("OUTPUT_STORAGE_BUDGET_EXCEEDED", f"used={used} limit={limit}")
-    return used
-
-
-def enforce_wall_budget(profile: dict[str, Any], started: float) -> float:
-    elapsed = time.monotonic() - started
-    limit = float(profile.get("max_wall_time") or 0)
-    if limit != EXPECTED_MAX_WALL_TIME or elapsed > limit:
-        raise StabilityError("MAX_WALL_TIME_EXCEEDED", f"elapsed={elapsed:.3f} limit={limit}")
-    return elapsed
+def _require_owned(ctx: ValidatedExecutionContext, owned: Any) -> OwnedServerProcess:
+    _require_ctx(ctx)
+    if not isinstance(owned, OwnedServerProcess) or getattr(owned, "_seal", None) is not _OWNED_PROCESS_SEAL:
+        raise StabilityError("FOREIGN_PROCESS_REJECTED", "kill/cleanup accepts only orchestrator-owned process wrappers")
+    if owned.context_nonce is not ctx.nonce:
+        raise StabilityError("FOREIGN_PROCESS_REJECTED", "process belongs to a different execution context")
+    current = ctx.owned.get(owned.proc.pid)
+    if current is not owned:
+        raise StabilityError("FOREIGN_PROCESS_REJECTED", "process is not in this execution context registry")
+    return owned
 
 
 def claim_attempt_guard(profile: dict[str, Any], output_dir: Path) -> Path:
@@ -410,35 +516,246 @@ def claim_attempt_guard(profile: dict[str, Any], output_dir: Path) -> Path:
     return guard
 
 
+def authorize_execution(profile: dict[str, Any], output_dir: Path) -> ValidatedExecutionContext:
+    ready, reason = validate_execution_profile(profile)
+    if not ready:
+        raise StabilityError("EXECUTION_AUTHORIZATION_BLOCKED", reason)
+    physical = verify_physical_device_identity(profile)
+    output_dir.mkdir(parents=True, exist_ok=False)
+    started = time.monotonic()
+    guard = claim_attempt_guard(profile, output_dir)
+    budget = OutputBudget(EXPECTED_MAX_STORAGE, initial_used=guard.stat().st_size)
+    ctx = ValidatedExecutionContext(profile, output_dir, guard, started, budget, physical, _CONTEXT_SEAL)
+    event(ctx, "PROFILE", "attempt_guard_claimed", path=str(guard))
+    event(ctx, "PROFILE", "physical_device_bound", **physical)
+    return ctx
+
+
+def event(ctx: ValidatedExecutionContext, scenario: str, kind: str, **extra: Any) -> None:
+    _require_ctx(ctx)
+    ctx.check_limits()
+    ctx.budget.append_jsonl(
+        ctx.events_path,
+        {"ts_utc": now_utc(), "scenario": scenario, "kind": kind, **extra},
+    )
+
+
+def write_json(ctx: ValidatedExecutionContext, path: Path, value: Any) -> None:
+    _require_ctx(ctx)
+    ctx.check_limits()
+    ctx.budget.write_text(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+
+
+def preflight(ctx: ValidatedExecutionContext) -> dict[str, Any]:
+    _require_ctx(ctx)
+    profile = ctx.profile
+    cfg = server_config(profile)
+    if cfg.get("host") != EXPECTED_HOST or cfg.get("external_bind") is not False:
+        raise StabilityError("NON_LOOPBACK_BIND", "server must bind only to 127.0.0.1")
+    if cfg.get("offline") is not True or cfg.get("external_network") is not False:
+        raise StabilityError("EXTERNAL_NETWORK_BOUNDARY", "offline/loopback-only boundary missing")
+    if cfg.get("device") != "none" or cfg.get("n_gpu_layers") != 0 or cfg.get("op_offload") is not False:
+        raise StabilityError("GPU_OFFLOAD_BOUNDARY", "strict CPU-only boundary missing")
+
+    runtime = runtime_binding(profile)
+    model = model_binding(profile)
+    server_path = Path(runtime["package_root"]) / "runtime" / "b11033-vulkan" / runtime["server_executable"]
+    model_path = Path(runtime["exact_model_path"])
+    if not server_path.is_file():
+        raise StabilityError("SERVER_EXECUTABLE_MISSING", str(server_path))
+    if not model_path.is_file():
+        raise StabilityError("MODEL_PATH_MISSING", str(model_path))
+
+    server_bytes = server_path.stat().st_size
+    model_bytes = model_path.stat().st_size
+    server_sha = sha256_file(server_path, ctx)
+    model_sha = sha256_file(model_path, ctx)
+    if server_bytes != EXPECTED_SERVER_BYTES or server_sha != EXPECTED_SERVER_SHA256:
+        raise StabilityError("SERVER_EXECUTABLE_DIGEST_DRIFT", server_sha)
+    if model_bytes != EXPECTED_MODEL_BYTES or model_sha != EXPECTED_MODEL_SHA256:
+        raise StabilityError("MODEL_DIGEST_DRIFT", model_sha)
+
+    host = cfg["host"]
+    port = int(cfg["port"])
+    if not port_is_free(host, port):
+        raise StabilityError("PORT_ALREADY_IN_USE", f"{host}:{port}")
+
+    result = {
+        "profile_id": profile.get("profile_id"),
+        "checked_at_utc": now_utc(),
+        "device_logical_name": ctx.physical_identity["logical_name"],
+        "machine_identity_source": ctx.physical_identity["machine_identity_source"],
+        "machine_identity_sha256": ctx.physical_identity["machine_identity_sha256"],
+        "server_path": str(server_path),
+        "server_bytes": server_bytes,
+        "server_sha256": server_sha,
+        "model_path": str(model_path),
+        "model_bytes": model_bytes,
+        "model_sha256": model_sha,
+        "host": host,
+        "port": port,
+        "port_free": True,
+    }
+    write_json(ctx, ctx.output_dir / "M1RuntimeStabilityPreflight.json", result)
+    return result
+
+
+def port_is_free(host: str, port: int) -> bool:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        sock.bind((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def wait_port_released(ctx: ValidatedExecutionContext, host: str, port: int, timeout: float = 10.0) -> bool:
+    _require_ctx(ctx)
+    end = time.monotonic() + ctx.remaining_time(timeout)
+    while time.monotonic() < end:
+        ctx.check_limits()
+        if port_is_free(host, port):
+            return True
+        time.sleep(min(0.2, ctx.remaining_time(0.2)))
+    ctx.check_limits()
+    return False
+
+
+def process_rss_bytes(proc: subprocess.Popen[Any]) -> int:
+    if proc.poll() is not None:
+        raise StabilityError("PROCESS_METRICS_PROCESS_EXITED", f"pid={proc.pid}")
+    if os.name != "nt":
+        raise StabilityError("PROCESS_METRICS_UNSUPPORTED_OS", os.name)
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t),
+            ("PrivateUsage", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESS_MEMORY_COUNTERS_EX), wintypes.DWORD]
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x0400 | 0x0010, False, proc.pid)
+    if not handle:
+        raise StabilityError("PROCESS_METRICS_OPEN_FAILED", f"pid={proc.pid} winerr={ctypes.get_last_error()}")
+    try:
+        counters = PROCESS_MEMORY_COUNTERS_EX()
+        counters.cb = ctypes.sizeof(counters)
+        if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            raise StabilityError("PROCESS_METRICS_READ_FAILED", f"pid={proc.pid} winerr={ctypes.get_last_error()}")
+        return int(counters.WorkingSetSize)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def record_process_start_evidence(ctx: ValidatedExecutionContext, owned: OwnedServerProcess, command: list[str]) -> int:
+    _require_owned(ctx, owned)
+    base = {
+        "ts_utc": now_utc(),
+        "scenario": owned.scenario,
+        "sample": "process-start",
+        "start_index": owned.start_index,
+        "start_label": owned.label,
+        "pid": owned.proc.pid,
+        "process_created": True,
+        "command": command,
+    }
+    try:
+        rss = process_rss_bytes(owned.proc)
+        base.update({"initial_rss_bytes": rss, "rss_capture_succeeded": True})
+        ctx.budget.append_jsonl(ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl", base)
+        return rss
+    except Exception as exc:
+        if isinstance(exc, StabilityError):
+            code = exc.code
+            message = str(exc)
+        else:
+            code = "PROCESS_METRICS_READ_FAILED"
+            message = repr(exc)
+        base.update({
+            "initial_rss_bytes": None,
+            "rss_capture_succeeded": False,
+            "rss_failure_code": code,
+            "rss_failure_message": message,
+        })
+        ctx.budget.append_jsonl(ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl", base)
+        raise StabilityError(code, message)
+
+
+def record_process_metrics(ctx: ValidatedExecutionContext, owned: OwnedServerProcess, sample: str) -> int:
+    _require_owned(ctx, owned)
+    ctx.check_limits()
+    rss = process_rss_bytes(owned.proc)
+    ctx.budget.append_jsonl(
+        ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl",
+        {
+            "ts_utc": now_utc(),
+            "scenario": owned.scenario,
+            "sample": sample,
+            "start_index": owned.start_index,
+            "start_label": owned.label,
+            "pid": owned.proc.pid,
+            "rss_bytes": rss,
+            "process_alive": owned.proc.poll() is None,
+        },
+    )
+    return rss
+
+
+def directory_size_bytes(ctx: ValidatedExecutionContext, root: Path) -> int:
+    _require_ctx(ctx)
+    total = 0
+    for p in root.rglob("*"):
+        ctx.check_limits()
+        if p.is_file():
+            total += p.stat().st_size
+    return total
+
+
+def enforce_output_storage_budget(ctx: ValidatedExecutionContext) -> int:
+    _require_ctx(ctx)
+    ctx.budget.raise_if_failed()
+    used = directory_size_bytes(ctx, ctx.output_dir) + ctx.attempt_guard.stat().st_size
+    if used > EXPECTED_MAX_STORAGE:
+        raise StabilityError("OUTPUT_STORAGE_BUDGET_EXCEEDED", f"used={used} limit={EXPECTED_MAX_STORAGE}")
+    return used
+
+
 def build_server_command(profile: dict[str, Any]) -> list[str]:
     cfg = server_config(profile)
     runtime = runtime_binding(profile)
     server_path = Path(runtime["package_root"]) / "runtime" / "b11033-vulkan" / runtime["server_executable"]
     model_path = Path(runtime["exact_model_path"])
     return [
-        str(server_path),
-        "--model", str(model_path),
-        "--offline",
-        "--host", str(cfg["host"]),
-        "--port", str(cfg["port"]),
-        "--no-webui",
-        "--threads", str(cfg["threads"]),
-        "--threads-batch", str(cfg["threads_batch"]),
-        "--ctx-size", str(cfg["ctx_size"]),
-        "--parallel", str(cfg["parallel"]),
-        "--n-gpu-layers", str(cfg["n_gpu_layers"]),
-        "--device", str(cfg["device"]),
-        "--no-op-offload",
+        str(server_path), "--model", str(model_path), "--offline",
+        "--host", str(cfg["host"]), "--port", str(cfg["port"]), "--no-webui",
+        "--threads", str(cfg["threads"]), "--threads-batch", str(cfg["threads_batch"]),
+        "--ctx-size", str(cfg["ctx_size"]), "--parallel", str(cfg["parallel"]),
+        "--n-gpu-layers", str(cfg["n_gpu_layers"]), "--device", str(cfg["device"]), "--no-op-offload",
     ]
 
 
-def start_server(profile: dict[str, Any], out_dir: Path, label: str) -> tuple[subprocess.Popen[Any], list[str]]:
-    cmd = build_server_command(profile)
-    stdout_path = out_dir / f"{label}.stdout.txt"
-    stderr_path = out_dir / f"{label}.stderr.txt"
-    stdout = stdout_path.open("w", encoding="utf-8", newline="\n")
-    stderr = stderr_path.open("w", encoding="utf-8", newline="\n")
-
+def start_server(ctx: ValidatedExecutionContext, scenario: str, label: str) -> tuple[OwnedServerProcess, list[str]]:
+    _require_ctx(ctx)
+    ctx.check_limits()
+    if ctx.server_start_count >= EXPECTED_MAX_SERVER_STARTS:
+        raise StabilityError("MAX_SERVER_STARTS_EXCEEDED", f"count={ctx.server_start_count}")
+    cmd = build_server_command(ctx.profile)
     creationflags = 0
     startupinfo = None
     if os.name == "nt":
@@ -447,66 +764,119 @@ def start_server(profile: dict[str, Any], out_dir: Path, label: str) -> tuple[su
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = 0
 
+    stdout_path = ctx.output_dir / f"{label}.stdout.txt"
+    stderr_path = ctx.output_dir / f"{label}.stderr.txt"
+    ctx.budget.write_bytes(stdout_path, b"")
+    ctx.budget.write_bytes(stderr_path, b"")
+
     proc = subprocess.Popen(
         cmd,
         cwd=str(Path(cmd[0]).parent),
         stdin=subprocess.DEVNULL,
-        stdout=stdout,
-        stderr=stderr,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         creationflags=creationflags,
         startupinfo=startupinfo,
     )
-    proc._clued_stdout_handle = stdout  # type: ignore[attr-defined]
-    proc._clued_stderr_handle = stderr  # type: ignore[attr-defined]
-    return proc, cmd
+    ctx.server_start_count += 1
+    start_index = ctx.server_start_count
+    stdout_capture = BoundedCapture(proc.stdout, stdout_path, ctx.budget)
+    stderr_capture = BoundedCapture(proc.stderr, stderr_path, ctx.budget)
+    owned = OwnedServerProcess(proc, ctx.nonce, label, scenario, start_index, stdout_capture, stderr_capture, _OWNED_PROCESS_SEAL)
+    ctx.owned[proc.pid] = owned
+    stdout_capture.start()
+    stderr_capture.start()
+    try:
+        initial_rss = record_process_start_evidence(ctx, owned, cmd)
+        event(ctx, scenario, "server_started", start_index=start_index, label=label, pid=proc.pid, command=cmd, initial_rss_bytes=initial_rss)
+        return owned, cmd
+    except Exception:
+        _safe_cleanup_owned(ctx, owned)
+        raise
 
 
-def close_server_handles(proc: subprocess.Popen[Any]) -> None:
-    for name in ("_clued_stdout_handle", "_clued_stderr_handle"):
-        handle = getattr(proc, name, None)
-        if handle:
-            try:
-                handle.close()
-            except Exception:
-                pass
+def owned_process_alive(ctx: ValidatedExecutionContext, owned: OwnedServerProcess) -> bool:
+    _require_owned(ctx, owned)
+    return owned.proc.poll() is None
 
 
-def owned_process_alive(proc: subprocess.Popen[Any]) -> bool:
-    return proc.poll() is None
+def _cleanup_timeout(ctx: ValidatedExecutionContext, ceiling: float) -> float:
+    remaining = ctx.deadline - time.monotonic()
+    if remaining <= 0:
+        return min(1.0, ceiling)
+    return max(0.05, min(ceiling, remaining))
 
 
-def graceful_stop_owned(proc: subprocess.Popen[Any], timeout: float = 10.0) -> bool:
+def _close_captures(ctx: ValidatedExecutionContext, owned: OwnedServerProcess, raise_budget_failure: bool = True) -> None:
+    _require_owned(ctx, owned)
+    timeout = _cleanup_timeout(ctx, 2.0)
+    owned.stdout_capture.join(timeout)
+    owned.stderr_capture.join(timeout)
+    if raise_budget_failure:
+        ctx.budget.raise_if_failed()
+
+
+def graceful_stop_owned(ctx: ValidatedExecutionContext, owned: OwnedServerProcess, timeout: float = 10.0) -> bool:
+    _require_owned(ctx, owned)
+    ctx.check_limits()
+    proc = owned.proc
     if proc.poll() is not None:
-        close_server_handles(proc)
+        _close_captures(ctx, owned)
         return True
     try:
         if os.name == "nt" and hasattr(signal, "CTRL_BREAK_EVENT"):
             proc.send_signal(signal.CTRL_BREAK_EVENT)
         else:
             proc.terminate()
-        proc.wait(timeout=timeout)
-        close_server_handles(proc)
+        proc.wait(timeout=ctx.remaining_time(timeout))
+        _close_captures(ctx, owned)
         return True
-    except Exception:
+    except subprocess.TimeoutExpired:
+        ctx.check_limits()
         return False
 
 
-def force_kill_owned(proc: subprocess.Popen[Any], timeout: float = 10.0) -> None:
+def force_kill_owned(ctx: ValidatedExecutionContext, owned: OwnedServerProcess, timeout: float = 10.0) -> None:
+    _require_owned(ctx, owned)
+    proc = owned.proc
     if proc.poll() is None:
         proc.kill()
-    proc.wait(timeout=timeout)
-    close_server_handles(proc)
+    proc.wait(timeout=_cleanup_timeout(ctx, timeout))
+    _close_captures(ctx, owned, raise_budget_failure=False)
+    ctx.budget.raise_if_failed()
 
 
-def request_json(host: str, port: int, method: str, path: str, payload: dict[str, Any] | None = None, timeout: float = 10.0) -> tuple[int, Any]:
-    conn = http.client.HTTPConnection(host, port, timeout=timeout)
+def _safe_cleanup_owned(ctx: ValidatedExecutionContext, owned: OwnedServerProcess) -> None:
+    try:
+        if owned.proc.poll() is None:
+            proc = owned.proc
+            proc.kill()
+            try:
+                proc.wait(timeout=_cleanup_timeout(ctx, 5.0))
+            except Exception:
+                pass
+        _close_captures(ctx, owned, raise_budget_failure=False)
+    except Exception:
+        pass
+
+
+def request_json(
+    ctx: ValidatedExecutionContext,
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None = None,
+    timeout: float = 10.0,
+) -> tuple[int, Any]:
+    _require_ctx(ctx)
+    cfg = server_config(ctx.profile)
+    conn = http.client.HTTPConnection(cfg["host"], int(cfg["port"]), timeout=ctx.remaining_time(timeout))
     try:
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {} if body is None else {"Content-Type": "application/json"}
         conn.request(method, path, body=body, headers=headers)
         resp = conn.getresponse()
         raw = resp.read()
-        data: Any
+        ctx.check_limits()
         try:
             data = json.loads(raw.decode("utf-8")) if raw else None
         except Exception:
@@ -516,35 +886,31 @@ def request_json(host: str, port: int, method: str, path: str, payload: dict[str
         conn.close()
 
 
-def wait_health(host: str, port: int, timeout: float = 60.0) -> float:
+def wait_health(ctx: ValidatedExecutionContext, timeout: float = 60.0) -> float:
+    _require_ctx(ctx)
     start = time.monotonic()
-    deadline = start + timeout
+    local_end = start + ctx.remaining_time(timeout)
     last_error = ""
-    while time.monotonic() < deadline:
+    while time.monotonic() < local_end:
+        ctx.check_limits()
         try:
-            status, _ = request_json(host, port, "GET", "/health", timeout=2.0)
+            status, _ = request_json(ctx, "GET", "/health", timeout=min(2.0, ctx.remaining_time(2.0)))
             if 200 <= status < 300:
                 return time.monotonic() - start
             last_error = f"status={status}"
+        except StabilityError:
+            raise
         except Exception as exc:
             last_error = repr(exc)
-        time.sleep(0.25)
+        time.sleep(min(0.25, ctx.remaining_time(0.25)))
+    ctx.check_limits()
     raise StabilityError("HEALTH_TIMEOUT", last_error)
 
 
-def minimal_probe(profile: dict[str, Any]) -> dict[str, Any]:
-    cfg = server_config(profile)
+def minimal_probe(ctx: ValidatedExecutionContext) -> dict[str, Any]:
     status, data = request_json(
-        cfg["host"],
-        int(cfg["port"]),
-        "POST",
-        "/completion",
-        {
-            "prompt": "Reply with exactly: OK",
-            "n_predict": 8,
-            "temperature": 0,
-            "stream": False,
-        },
+        ctx, "POST", "/completion",
+        {"prompt": "Reply with exactly: OK", "n_predict": 8, "temperature": 0, "stream": False},
         timeout=30.0,
     )
     if not (200 <= status < 300):
@@ -552,10 +918,10 @@ def minimal_probe(profile: dict[str, Any]) -> dict[str, Any]:
     return {"status": status, "response": data}
 
 
-def open_stream(profile: dict[str, Any]) -> tuple[http.client.HTTPConnection, http.client.HTTPResponse, bytes]:
-    cfg = server_config(profile)
-    host, port = cfg["host"], int(cfg["port"])
-    conn = http.client.HTTPConnection(host, port, timeout=30.0)
+def open_stream(ctx: ValidatedExecutionContext) -> tuple[http.client.HTTPConnection, http.client.HTTPResponse, bytes]:
+    _require_ctx(ctx)
+    cfg = server_config(ctx.profile)
+    conn = http.client.HTTPConnection(cfg["host"], int(cfg["port"]), timeout=ctx.remaining_time(30.0))
     payload = json.dumps({
         "prompt": "Count upward from 1 and keep going with one number per token.",
         "n_predict": 512,
@@ -569,6 +935,7 @@ def open_stream(profile: dict[str, Any]) -> tuple[http.client.HTTPConnection, ht
             conn.close()
             raise StabilityError("STREAM_HTTP_FAILURE", f"status={resp.status}")
         first = resp.read(1)
+        ctx.check_limits()
         if not first:
             conn.close()
             raise StabilityError("STREAM_NO_DATA", "stream ended before cancellation point")
@@ -581,238 +948,208 @@ def open_stream(profile: dict[str, Any]) -> tuple[http.client.HTTPConnection, ht
         raise
 
 
-def stream_then_cancel(profile: dict[str, Any]) -> dict[str, Any]:
-    conn, resp, first = open_stream(profile)
+def stream_then_cancel(ctx: ValidatedExecutionContext) -> dict[str, Any]:
+    conn, resp, first = open_stream(ctx)
     try:
         return {"http_status": resp.status, "first_byte_hex": first.hex(), "cancelled_by_client_close": True}
     finally:
         conn.close()
 
 
-def event(events_path: Path, scenario: str, kind: str, **extra: Any) -> None:
-    append_jsonl(events_path, {"ts_utc": now_utc(), "scenario": scenario, "kind": kind, **extra})
+def sleep_with_deadline(ctx: ValidatedExecutionContext, seconds: float) -> None:
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        ctx.check_limits()
+        time.sleep(min(0.25, end - time.monotonic(), ctx.remaining_time(0.25)))
 
 
-def run_load_cycles(profile: dict[str, Any], out_dir: Path, events: Path) -> dict[str, Any]:
-    cfg = server_config(profile)
+def run_load_cycles(ctx: ValidatedExecutionContext) -> dict[str, Any]:
+    _require_ctx(ctx)
+    cfg = server_config(ctx.profile)
     rows = []
     for i in range(1, 4):
         label = f"load-{i:02d}"
-        proc, cmd = start_server(profile, out_dir, label)
-        event(events, "M1-07-PC-LOAD-001", "server_started", cycle=i, pid=proc.pid, command=cmd)
+        owned, _ = start_server(ctx, "M1-07-PC-LOAD-001", label)
         try:
-            ready = wait_health(cfg["host"], int(cfg["port"]))
-            rss = record_process_metrics(proc, out_dir, "M1-07-PC-LOAD-001", f"cycle-{i}-ready")
-            probe = minimal_probe(profile)
-            event(events, "M1-07-PC-LOAD-001", "ready", cycle=i, pid=proc.pid, readiness_seconds=ready, rss_bytes=rss)
-            graceful = graceful_stop_owned(proc)
+            ready = wait_health(ctx)
+            rss = record_process_metrics(ctx, owned, f"cycle-{i}-ready")
+            probe = minimal_probe(ctx)
+            event(ctx, "M1-07-PC-LOAD-001", "ready", cycle=i, pid=owned.proc.pid, readiness_seconds=ready, rss_bytes=rss)
+            graceful = graceful_stop_owned(ctx, owned)
             if not graceful:
                 raise StabilityError("GRACEFUL_STOP_FAILED", f"cycle={i}")
-            if not wait_port_released(cfg["host"], int(cfg["port"])):
+            if not wait_port_released(ctx, cfg["host"], int(cfg["port"])):
                 raise StabilityError("PORT_RELEASE_TIMEOUT", f"cycle={i}")
-            rows.append({"cycle": i, "pid": proc.pid, "readiness_seconds": ready, "rss_bytes": rss, "probe": probe, "graceful_exit": True})
+            rows.append({"cycle": i, "pid": owned.proc.pid, "readiness_seconds": ready, "rss_bytes": rss, "probe": probe, "graceful_exit": True})
         finally:
-            if owned_process_alive(proc):
-                force_kill_owned(proc)
+            if owned.proc.poll() is None:
+                _safe_cleanup_owned(ctx, owned)
     return {"scenario_id": "M1-07-PC-LOAD-001", "cycles": rows, "pass": len(rows) == 3}
 
 
-def run_cancel(profile: dict[str, Any], out_dir: Path, events: Path) -> dict[str, Any]:
-    cfg = server_config(profile)
-    proc, cmd = start_server(profile, out_dir, "cancel")
-    event(events, "M1-07-PC-CANCEL-001", "server_started", pid=proc.pid, command=cmd)
+def run_cancel(ctx: ValidatedExecutionContext) -> dict[str, Any]:
+    _require_ctx(ctx)
+    cfg = server_config(ctx.profile)
+    owned, _ = start_server(ctx, "M1-07-PC-CANCEL-001", "cancel")
     try:
-        ready = wait_health(cfg["host"], int(cfg["port"]))
-        rss_ready = record_process_metrics(proc, out_dir, "M1-07-PC-CANCEL-001", "ready")
-        cancelled = stream_then_cancel(profile)
-        time.sleep(0.5)
-        alive = owned_process_alive(proc)
+        ready = wait_health(ctx)
+        rss_ready = record_process_metrics(ctx, owned, "ready")
+        cancelled = stream_then_cancel(ctx)
+        sleep_with_deadline(ctx, 0.5)
+        alive = owned_process_alive(ctx, owned)
         if not alive:
             raise StabilityError("SERVER_CRASHED_AFTER_CANCEL", "server process exited")
-        post_health = wait_health(cfg["host"], int(cfg["port"]), timeout=5.0)
-        rss_post_cancel = record_process_metrics(proc, out_dir, "M1-07-PC-CANCEL-001", "post-cancel")
-        probe = minimal_probe(profile)
-        graceful = graceful_stop_owned(proc)
-        if not graceful or not wait_port_released(cfg["host"], int(cfg["port"])):
+        post_health = wait_health(ctx, timeout=5.0)
+        rss_post_cancel = record_process_metrics(ctx, owned, "post-cancel")
+        probe = minimal_probe(ctx)
+        graceful = graceful_stop_owned(ctx, owned)
+        if not graceful or not wait_port_released(ctx, cfg["host"], int(cfg["port"])):
             raise StabilityError("CANCEL_CLEANUP_FAILED", "server did not exit/release port")
         return {
-            "scenario_id": "M1-07-PC-CANCEL-001",
-            "readiness_seconds": ready,
-            "rss_ready_bytes": rss_ready,
-            "rss_post_cancel_bytes": rss_post_cancel,
-            "cancel": cancelled,
-            "server_alive_after_cancel": alive,
-            "post_cancel_health_seconds": post_health,
-            "post_cancel_probe": probe,
-            "pass": True,
+            "scenario_id": "M1-07-PC-CANCEL-001", "readiness_seconds": ready,
+            "rss_ready_bytes": rss_ready, "rss_post_cancel_bytes": rss_post_cancel,
+            "cancel": cancelled, "server_alive_after_cancel": alive,
+            "post_cancel_health_seconds": post_health, "post_cancel_probe": probe, "pass": True,
         }
     finally:
-        if owned_process_alive(proc):
-            force_kill_owned(proc)
+        if owned.proc.poll() is None:
+            _safe_cleanup_owned(ctx, owned)
 
 
-def run_background_reconnect(profile: dict[str, Any], out_dir: Path, events: Path) -> dict[str, Any]:
-    cfg = server_config(profile)
-    proc, cmd = start_server(profile, out_dir, "background")
-    pid = proc.pid
-    event(events, "M1-07-PC-BACKGROUND-001", "server_started", pid=pid, command=cmd)
+def run_background_reconnect(ctx: ValidatedExecutionContext) -> dict[str, Any]:
+    _require_ctx(ctx)
+    cfg = server_config(ctx.profile)
+    owned, _ = start_server(ctx, "M1-07-PC-BACKGROUND-001", "background")
+    pid = owned.proc.pid
     try:
-        ready = wait_health(cfg["host"], int(cfg["port"]))
-        rss_ready = record_process_metrics(proc, out_dir, "M1-07-PC-BACKGROUND-001", "ready")
-        status, _ = request_json(cfg["host"], int(cfg["port"]), "GET", "/health", timeout=2.0)
+        ready = wait_health(ctx)
+        rss_ready = record_process_metrics(ctx, owned, "ready")
+        status, _ = request_json(ctx, "GET", "/health", timeout=2.0)
         if not (200 <= status < 300):
             raise StabilityError("BACKGROUND_INITIAL_HEALTH_FAILED", str(status))
-        time.sleep(10.0)
-        same_pid_alive = owned_process_alive(proc)
+        sleep_with_deadline(ctx, 10.0)
+        same_pid_alive = owned_process_alive(ctx, owned)
         if not same_pid_alive:
             raise StabilityError("BACKGROUND_SERVER_EXITED", "server exited while controller detached")
-        reconnect = wait_health(cfg["host"], int(cfg["port"]), timeout=5.0)
-        rss_reconnect = record_process_metrics(proc, out_dir, "M1-07-PC-BACKGROUND-001", "fresh-client-reconnect")
-        probe = minimal_probe(profile)
-        graceful = graceful_stop_owned(proc)
-        if not graceful or not wait_port_released(cfg["host"], int(cfg["port"])):
+        reconnect = wait_health(ctx, timeout=5.0)
+        rss_reconnect = record_process_metrics(ctx, owned, "fresh-client-reconnect")
+        probe = minimal_probe(ctx)
+        graceful = graceful_stop_owned(ctx, owned)
+        if not graceful or not wait_port_released(ctx, cfg["host"], int(cfg["port"])):
             raise StabilityError("BACKGROUND_CLEANUP_FAILED", "server did not exit/release port")
         return {
             "scenario_id": "M1-07-PC-BACKGROUND-001",
             "semantics": "PC_BACKGROUND_SERVICE_CONTINUITY_ONLY / NOT_MOBILE_APP_BACKGROUND_RESUME",
-            "pid": pid,
-            "readiness_seconds": ready,
-            "rss_ready_bytes": rss_ready,
-            "rss_reconnect_bytes": rss_reconnect,
-            "same_pid_alive_after_10s_no_client": same_pid_alive,
-            "reconnect_health_seconds": reconnect,
-            "probe": probe,
-            "pass": True,
+            "pid": pid, "readiness_seconds": ready, "rss_ready_bytes": rss_ready,
+            "rss_reconnect_bytes": rss_reconnect, "same_pid_alive_after_10s_no_client": same_pid_alive,
+            "reconnect_health_seconds": reconnect, "probe": probe, "pass": True,
         }
     finally:
-        if owned_process_alive(proc):
-            force_kill_owned(proc)
+        if owned.proc.poll() is None:
+            _safe_cleanup_owned(ctx, owned)
 
 
-def run_crash_restart(profile: dict[str, Any], out_dir: Path, events: Path) -> dict[str, Any]:
-    cfg = server_config(profile)
-    proc, cmd = start_server(profile, out_dir, "crash-before")
-    first_pid = proc.pid
-    event(events, "M1-07-PC-CRASH-001", "server_started", pid=first_pid, command=cmd)
+def run_crash_restart(ctx: ValidatedExecutionContext) -> dict[str, Any]:
+    _require_ctx(ctx)
+    cfg = server_config(ctx.profile)
+    owned, _ = start_server(ctx, "M1-07-PC-CRASH-001", "crash-before")
+    first_pid = owned.proc.pid
     try:
-        ready1 = wait_health(cfg["host"], int(cfg["port"]))
-        rss_before_crash = record_process_metrics(proc, out_dir, "M1-07-PC-CRASH-001", "pre-crash-ready")
-        stream_conn, stream_resp, first = open_stream(profile)
+        ready1 = wait_health(ctx)
+        rss_before_crash = record_process_metrics(ctx, owned, "pre-crash-ready")
+        stream_conn, stream_resp, first = open_stream(ctx)
         event(
-            events,
-            "M1-07-PC-CRASH-001",
-            "active_stream_observed",
-            pid=first_pid,
-            http_status=stream_resp.status,
-            first_byte_hex=first.hex(),
+            ctx, "M1-07-PC-CRASH-001", "active_stream_observed",
+            pid=first_pid, http_status=stream_resp.status, first_byte_hex=first.hex(),
         )
         try:
-            force_kill_owned(proc)
-            event(events, "M1-07-PC-CRASH-001", "forced_crash_during_active_stream", pid=first_pid)
+            force_kill_owned(ctx, owned)
+            event(ctx, "M1-07-PC-CRASH-001", "forced_crash_during_active_stream", pid=first_pid)
         finally:
             stream_conn.close()
-        if not wait_port_released(cfg["host"], int(cfg["port"])):
+        if not wait_port_released(ctx, cfg["host"], int(cfg["port"])):
             raise StabilityError("CRASH_PORT_RELEASE_TIMEOUT", "port not released after forced crash")
 
-        proc2, cmd2 = start_server(profile, out_dir, "crash-after")
-        second_pid = proc2.pid
-        event(events, "M1-07-PC-CRASH-001", "server_restarted", pid=second_pid, command=cmd2)
+        owned2, _ = start_server(ctx, "M1-07-PC-CRASH-001", "crash-after")
+        second_pid = owned2.proc.pid
+        event(ctx, "M1-07-PC-CRASH-001", "server_restarted", pid=second_pid)
         try:
-            ready2 = wait_health(cfg["host"], int(cfg["port"]))
-            rss_after_restart = record_process_metrics(proc2, out_dir, "M1-07-PC-CRASH-001", "post-restart-ready")
-            probe = minimal_probe(profile)
-            graceful = graceful_stop_owned(proc2)
-            if not graceful or not wait_port_released(cfg["host"], int(cfg["port"])):
+            ready2 = wait_health(ctx)
+            rss_after_restart = record_process_metrics(ctx, owned2, "post-restart-ready")
+            probe = minimal_probe(ctx)
+            graceful = graceful_stop_owned(ctx, owned2)
+            if not graceful or not wait_port_released(ctx, cfg["host"], int(cfg["port"])):
                 raise StabilityError("RESTART_CLEANUP_FAILED", "restarted server did not exit/release port")
         finally:
-            if owned_process_alive(proc2):
-                force_kill_owned(proc2)
+            if owned2.proc.poll() is None:
+                _safe_cleanup_owned(ctx, owned2)
 
         return {
-            "scenario_id": "M1-07-PC-CRASH-001",
-            "first_pid": first_pid,
-            "second_pid": second_pid,
-            "first_readiness_seconds": ready1,
-            "restart_readiness_seconds": ready2,
-            "rss_before_crash_bytes": rss_before_crash,
-            "rss_after_restart_bytes": rss_after_restart,
-            "post_restart_probe": probe,
-            "pass": True,
+            "scenario_id": "M1-07-PC-CRASH-001", "first_pid": first_pid, "second_pid": second_pid,
+            "first_readiness_seconds": ready1, "restart_readiness_seconds": ready2,
+            "rss_before_crash_bytes": rss_before_crash, "rss_after_restart_bytes": rss_after_restart,
+            "post_restart_probe": probe, "pass": True,
         }
     finally:
-        if owned_process_alive(proc):
-            force_kill_owned(proc)
+        if owned.proc.poll() is None:
+            _safe_cleanup_owned(ctx, owned)
 
 
-def run(profile: dict[str, Any], output_dir: Path) -> dict[str, Any]:
-    output_dir.mkdir(parents=True, exist_ok=False)
-    events = output_dir / "M1RuntimeStabilityEvents.jsonl"
-    start = time.monotonic()
-    attempt_guard = claim_attempt_guard(profile, output_dir)
-    event(events, "PROFILE", "attempt_guard_claimed", path=str(attempt_guard))
+def run(ctx: ValidatedExecutionContext) -> dict[str, Any]:
+    _require_ctx(ctx)
+    ctx.check_limits()
+    pre = preflight(ctx)
+    event(ctx, "PROFILE", "preflight_pass", **pre)
+    enforce_output_storage_budget(ctx)
 
-    pre = preflight(profile, output_dir)
-    event(events, "PROFILE", "preflight_pass", **pre)
-    enforce_wall_budget(profile, start)
-    enforce_output_storage_budget(profile, output_dir)
+    load = run_load_cycles(ctx)
+    write_json(ctx, ctx.output_dir / "M1RuntimeStabilityLoad.json", load)
+    enforce_output_storage_budget(ctx)
 
-    load = run_load_cycles(profile, output_dir, events)
-    (output_dir / "M1RuntimeStabilityLoad.json").write_text(json.dumps(load, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    enforce_wall_budget(profile, start)
-    enforce_output_storage_budget(profile, output_dir)
+    cancel = run_cancel(ctx)
+    write_json(ctx, ctx.output_dir / "M1RuntimeStabilityCancel.json", cancel)
+    enforce_output_storage_budget(ctx)
 
-    cancel = run_cancel(profile, output_dir, events)
-    (output_dir / "M1RuntimeStabilityCancel.json").write_text(json.dumps(cancel, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    enforce_wall_budget(profile, start)
-    enforce_output_storage_budget(profile, output_dir)
+    background = run_background_reconnect(ctx)
+    write_json(ctx, ctx.output_dir / "M1RuntimeStabilityBackgroundReconnect.json", background)
+    enforce_output_storage_budget(ctx)
 
-    background = run_background_reconnect(profile, output_dir, events)
-    (output_dir / "M1RuntimeStabilityBackgroundReconnect.json").write_text(json.dumps(background, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    enforce_wall_budget(profile, start)
-    enforce_output_storage_budget(profile, output_dir)
+    crash = run_crash_restart(ctx)
+    write_json(ctx, ctx.output_dir / "M1RuntimeStabilityCrashRestart.json", crash)
+    enforce_output_storage_budget(ctx)
 
-    crash = run_crash_restart(profile, output_dir, events)
-    (output_dir / "M1RuntimeStabilityCrashRestart.json").write_text(json.dumps(crash, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    enforce_wall_budget(profile, start)
-    enforce_output_storage_budget(profile, output_dir)
-
-    runtime = runtime_binding(profile)
-    model = model_binding(profile)
+    runtime = runtime_binding(ctx.profile)
+    model = model_binding(ctx.profile)
     server_path = Path(runtime["package_root"]) / "runtime" / "b11033-vulkan" / runtime["server_executable"]
     model_path = Path(runtime["exact_model_path"])
     digests = {
-        "model_sha256_post": sha256_file(model_path),
+        "model_sha256_post": sha256_file(model_path, ctx),
         "model_sha256_expected": model["sha256"],
-        "server_sha256_post": sha256_file(server_path),
+        "server_sha256_post": sha256_file(server_path, ctx),
         "server_sha256_expected": runtime["server_executable_sha256"],
     }
     digests["pass"] = (
         digests["model_sha256_post"] == digests["model_sha256_expected"]
         and digests["server_sha256_post"] == digests["server_sha256_expected"]
     )
-    (output_dir / "M1RuntimeStabilityDigests.json").write_text(json.dumps(digests, indent=2) + "\n", encoding="utf-8")
+    write_json(ctx, ctx.output_dir / "M1RuntimeStabilityDigests.json", digests)
     if not digests["pass"]:
         raise StabilityError("POST_RUN_DIGEST_DRIFT", json.dumps(digests))
 
-    final_wall = enforce_wall_budget(profile, start)
-    final_storage = enforce_output_storage_budget(profile, output_dir)
+    ctx.check_limits()
+    final_storage = enforce_output_storage_budget(ctx)
+    final_wall = time.monotonic() - ctx.started_monotonic
     summary = {
-        "profile_id": profile["profile_id"],
-        "attempt_guard": str(attempt_guard),
-        "started_at_utc": pre["checked_at_utc"],
-        "ended_at_utc": now_utc(),
-        "wall_seconds": round(final_wall, 3),
-        "output_storage_bytes": final_storage,
-        "load": load["pass"],
-        "cancel": cancel["pass"],
-        "background_reconnect": background["pass"],
-        "crash_restart": crash["pass"],
-        "post_run_digests": digests["pass"],
+        "profile_id": ctx.profile["profile_id"], "attempt_guard": str(ctx.attempt_guard),
+        "started_at_utc": pre["checked_at_utc"], "ended_at_utc": now_utc(),
+        "wall_seconds": round(final_wall, 3), "output_storage_bytes": final_storage,
+        "load": load["pass"], "cancel": cancel["pass"], "background_reconnect": background["pass"],
+        "crash_restart": crash["pass"], "post_run_digests": digests["pass"],
         "pass": all([load["pass"], cancel["pass"], background["pass"], crash["pass"], digests["pass"]]),
     }
-    (output_dir / "M1RuntimeStabilityCloseout.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n"
-    )
+    write_json(ctx, ctx.output_dir / "M1RuntimeStabilityCloseout.json", summary)
+    ctx.check_limits()
+    enforce_output_storage_budget(ctx)
     return summary
 
 
@@ -843,7 +1180,7 @@ def main() -> int:
             "server_started": False,
             "model_loaded": False,
         }, ensure_ascii=False))
-        return 0 if not ready else 0
+        return 0
 
     if not ready:
         print(f"BLOCKED: {reason}", file=sys.stderr)
@@ -853,7 +1190,8 @@ def main() -> int:
         return 2
 
     try:
-        result = run(profile, args.output_dir)
+        ctx = authorize_execution(profile, args.output_dir)
+        result = run(ctx)
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result.get("pass") else 1
     except StabilityError as exc:
