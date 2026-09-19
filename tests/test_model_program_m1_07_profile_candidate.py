@@ -179,6 +179,18 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         self.assertIn("attestRuntimeTreeAgainst(runtimeAssetPath, runtimeDir, runtimeAssetBytes, runtimeAssetSHA, deadline)", NATIVE_WINDOWS.read_text(encoding="utf-8"))
         self.assertIn("Env: sanitizedServerEnv()", NATIVE_WINDOWS.read_text(encoding="utf-8"))
         self.assertIn('allowed := []string{"SystemRoot", "WINDIR", "TEMP", "TMP"}', NATIVE_OWNER.read_text(encoding="utf-8"))
+        self.assertEqual(
+            p["code_revision"]["native_owner_build_provenance_helper_path"],
+            "scripts/model-program/build_m1_07_native_owner.py",
+        )
+        self.assertEqual(
+            p["code_revision"]["native_owner_build_provenance_helper_sha256"],
+            hashlib.sha256(BUILD_HELPER.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(
+            p["code_revision"]["native_owner_build_provenance_semantics"],
+            "EXACT_SOURCE_DIRECTORY_SET / MANIFEST_BINDS_HELPER / VERIFIED_SOURCE_SNAPSHOT_ONLY / CLEAN_GO_ENV",
+        )
 
     def test_build_helper_rejects_inherited_goflags_overlay_before_output(self):
         self.assertTrue(GO)
