@@ -1,0 +1,117 @@
+{
+  "schema_version": "clued.model-m1-real-local-inference-binding/1",
+  "record_id": "CLUED-MODEL-M1-REAL-LOCAL-INFERENCE-BINDING-v1.0.1-20260919",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-04",
+  "status": "EVIDENCE_ADOPTED / REAL_LOCAL_INFERENCE_PROVEN / EXECUTION_AUTHORITY_NONE",
+  "created_at_utc": "2026-09-19T09:59:48.7863451Z",
+  "repository_baseline": {
+    "main_merge_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
+    "stage_successor": "../governance/M1StageEntryAuthorization.v1.0.2.json",
+    "predecessor_static_harness_binding": {
+      "path": "M1InvocationHarnessBinding.v1.0.1.json",
+      "git_blob_sha1": "9cecab96102ed0e30ab566c18f96db5fb90ebcd7",
+      "disposition": "IMMUTABLE_PREDECESSOR / STATIC_HARNESS_ONLY"
+    }
+  },
+  "evidence_projection": {
+    "path": "../evidence/M1RealLocalInferenceEvidenceProjection.v1.0.1.json",
+    "git_blob_sha1": "8502198ef03fe5a20c31c46ef25508f804764523",
+    "source_profile_id": "M1-INF-QWEN35-08B-Q8_0-001",
+    "source_profile_sha256": "45211288a98e860f83cf96d3d1684884d96348dda9bc23d3b11061a97c77e6cc",
+    "source_class": "LOCAL_IMMUTABLE_EXPERIMENT_EVIDENCE / HASH_BOUND_PROJECTION"
+  },
+  "proven_binding": {
+    "device_class": "PC",
+    "device_name": "DESK-W-591",
+    "provider_type": "Local",
+    "provider_id": "m1-qwen35-08b-llamacpp",
+    "adapter_id": "m1-qwen35-08b-llamacpp-local-v1",
+    "adapter_version": "m1-local-inference-0.1.0",
+    "adapter_sha256": "b9e3d16aa505fff39eec4de4ac2e34858feeacf230f3e85a1d5c1830456b7220",
+    "capability": "structured_generate",
+    "model": {
+      "external_model_id": "Qwen/Qwen3.5-0.8B",
+      "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+      "variant_id": "q8_0",
+      "gguf_bytes": 833592320,
+      "gguf_sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
+    },
+    "runtime": {
+      "runtime_id": "llama.cpp",
+      "release_tag": "b11033",
+      "source_commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+      "backend": "CPU"
+    }
+  },
+  "proven_execution_facts": {
+    "historical_profile_was_issued": true,
+    "historical_scope_non_production": true,
+    "historical_model_load_allowed": true,
+    "historical_model_inference_allowed": true,
+    "historical_training_allowed": false,
+    "historical_production_allowed": false,
+    "exact_profile_hash_reconciled_with_execution_and_spent_ledger": true,
+    "independent_read_only_review_passed": true,
+    "one_generation_post": true,
+    "exact_synthetic_output_schema_satisfied": true,
+    "output_payload": {
+      "status": "ok",
+      "value": "clued-local-smoke"
+    },
+    "result_outcome": "succeeded",
+    "result_error": null,
+    "candidate_authority": "NON_AUTHORITATIVE_CANDIDATE",
+    "candidate_canonical_status": "NOT_CANONICAL",
+    "single_attempt_spent": true,
+    "retry_allowed": false,
+    "server_terminated_after_attempt": true,
+    "smoke_elapsed_ms": 1531,
+    "smoke_elapsed_ms_benchmark_eligible": false
+  },
+  "capability_authority_interpretation": {
+    "local_capability_successor_was_current_at_execution_time": true,
+    "local_capability_successor_is_not_adopted_as_global_current_capability_by_this_binding": true,
+    "expired_or_consumed_historical_authority_is_not_renewed": true,
+    "global_protocol_capability_profile_mutated": false,
+    "new_model_call_authority_created": false
+  },
+  "proven_and_unproven_stability_claims": {
+    "model_load_path": "PROVEN_ONCE",
+    "clean_server_termination": "PROVEN_ONCE",
+    "absolute_deadline_watchdog_path": "IMPLEMENTED_NOT_SEPARATELY_QUALIFIED",
+    "cancellation": {
+      "current_provider_descriptor_claim": false,
+      "adapter_signal_termination_path": "IMPLEMENTED_NOT_QUALIFIED",
+      "claim_gate": "CLAIM_TRUE_ONLY_AFTER_PROCESS_TERMINATION_CONTROL_TEST",
+      "m1_07_status": "TO_BE_QUALIFIED"
+    },
+    "pc_background_idle_resume": "NOT_TESTED",
+    "server_crash_detection": "NOT_TESTED",
+    "restart_recovery": "NOT_TESTED",
+    "mobile_background_lifecycle": "NOT_TESTED / NOT_CLAIMED"
+  },
+  "m1_07_readiness": {
+    "profile_preparation_allowed_by_stage_successor": true,
+    "exact_execution_profile_required": true,
+    "effectful_execution_authorized": false,
+    "allowed_reference_variant": "q8_0 / ALREADY_REAL-INFERENCE-QUALIFIED / NOT_A_QUALITY_WINNER",
+    "next_required_artifacts": [
+      "M1-07 exact stability scenario contract",
+      "exact stability orchestrator implementation and digest",
+      "M1-07 candidate profile with execution_code bound",
+      "Fresh-Context pre-execution review",
+      "separate Owner issuance before effectful execution"
+    ]
+  },
+  "hard_boundaries": {
+    "training": false,
+    "promotion": false,
+    "activation": false,
+    "production": false,
+    "canonical_write": false,
+    "quality_ranking": false,
+    "global_capability_activation": false
+  },
+  "authority_effect": "AUDIT_BINDING_AND_M1-07_PREPARATION_PREREQUISITE_ONLY / NO_EFFECTFUL_MODEL_EXECUTION"
+}
