@@ -224,6 +224,12 @@ def validate_native_source_binding(profile: dict) -> bool:
     ):
         if required not in build_helper:
             return False
+    if code.get("native_owner_build_provenance_helper_path") != "scripts/model-program/build_m1_07_native_owner.py":
+        return False
+    if code.get("native_owner_build_provenance_helper_sha256") != helper_identity.get("sha256"):
+        return False
+    if code.get("native_owner_build_provenance_semantics") != "EXACT_SOURCE_DIRECTORY_SET / MANIFEST_BINDS_HELPER / VERIFIED_SOURCE_SNAPSHOT_ONLY / CLEAN_GO_ENV":
+        return False
     binary_sha = code.get("native_owner_binary_sha256")
     if not isinstance(binary_sha, str) or len(binary_sha) != 64 or any(c not in "0123456789abcdef" for c in binary_sha):
         return False
