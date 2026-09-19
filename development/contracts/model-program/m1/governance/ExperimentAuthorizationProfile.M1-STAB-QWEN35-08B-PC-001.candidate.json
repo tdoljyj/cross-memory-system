@@ -3,7 +3,7 @@
   "profile_id": "M1-STAB-QWEN35-08B-PC-001-CANDIDATE",
   "stage_id": "MODEL-PROGRAM-M1",
   "task_id": "M1-07",
-  "status": "BLOCKED_PENDING_EXECUTION_CODE_REVIEW_AND_FINAL_ISSUANCE",
+  "status": "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE",
   "objective": "Prepare the exact PC runtime-stability qualification profile for Qwen3.5-0.8B Q8_0 on DESK-W-591 using llama-server b11033. Scope is cold load/unload, in-flight request cancellation, PC background-service disconnect/reconnect, and test-owned process crash/restart recovery. This candidate grants no execution authority.",
   "owner_authorization": {
     "holder": "OWNER",
@@ -84,13 +84,15 @@
     "exact_model_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002\\packages\\Qwen3.5-0.8B-Q8_0.gguf"
   },
   "code_revision": {
-    "status": "TO_BE_BOUND_AFTER_NON_EFFECTFUL_ORCHESTRATOR_IMPLEMENTATION_AND_REVIEW",
+    "status": "EXACT_BOUND",
     "repository": "tdoljyj/cross-memory-system",
     "base_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
     "required_script_path": "scripts/model-program/m1_runtime_stability_pc.py",
-    "required_script_git_blob_sha1": "TO_BE_BOUND",
-    "required_code_commit": "TO_BE_BOUND",
-    "execution_allowed_while_unbound": false
+    "required_script_git_blob_sha1": "41c9952526573a204382e4b2af1f262ba13dd212",
+    "required_script_normalized_sha256": "f37864adfe91bb2ec632ff2c3b17a714da9f40eb69bcf16c360d0a5144b3f7c2",
+    "required_code_commit": "3904702a615d618a760fc8e850bf891482592a3c",
+    "orchestrator_default_mode": "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD",
+    "execution_allowed_while_candidate": false
   },
   "config_revision": {
     "profile_config_id": "M1-STAB-PC-QWEN35-Q8_0-v1",
@@ -352,16 +354,16 @@
   ],
   "expiry": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
   "final_issuance_requirements": [
-    "IMPLEMENT_NON_EFFECTFUL_FAIL_CLOSED_ORCHESTRATOR_WITH_NO_EXECUTION_DURING_IMPLEMENTATION",
-    "BIND_EXACT_ORCHESTRATOR_COMMIT_AND_GIT_BLOB_SHA1",
     "STATIC_REVIEW_OR_TESTS_CONFIRM_PROFILE_STATUS_GUARD_AND_PID_OWNERSHIP_GUARD",
-    "FRESH_CONTEXT_READ_ONLY_PROFILE_REVIEW_PASS_OR_EQUIVALENT_OWNER_ACCEPTED_REVIEW",
+    "FRESH_CONTEXT_READ_ONLY_PROFILE_AND_ORCHESTRATOR_REVIEW_PASS_OR_OWNER_ACCEPTED_EQUIVALENT",
     "OWNER_EXPLICIT_M1_07_EFFECTFUL_EXECUTION_AUTHORIZATION",
     "BIND_FINAL_EXPIRY",
-    "CHANGE_STATUS_TO_ISSUED",
-    "SET_EFFECTFUL_AUTHORITY_ISSUED_TRUE"
+    "CREATE_ISSUED_SUCCESSOR_PROFILE_WITH_STATUS_ISSUED",
+    "SET_EFFECTFUL_AUTHORITY_ISSUED_TRUE",
+    "SET_AUTHORITY_EFFECT_TO_M1-07_PC_RUNTIME_STABILITY_EXECUTION_ONLY",
+    "BIND_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT"
   ],
   "effectful_authority_issued": false,
-  "fail_closed_rule": "IF_STATUS_IS_NOT_ISSUED_OR_EXECUTION_CODE_BINDING_IS_UNRESOLVED_OR_OWNER_FINAL_EXECUTION_AUTHORIZATION_IS_ABSENT_THEN_M1_07_MUST_NOT_START_LLAMA_SERVER_OR_LOAD_A_MODEL",
+  "fail_closed_rule": "IF_STATUS_IS_NOT_ISSUED_OR_OWNER_FINAL_EXECUTION_AUTHORIZATION_IS_ABSENT_OR_EXPIRY_IS_UNRESOLVED_OR_BOUND_ORCHESTRATOR_SHA_DRIFTS_THEN M1-07 MUST NOT START LLAMA-SERVER OR LOAD A MODEL",
   "authority_effect": "NONE / PROFILE_PREPARATION_ONLY"
 }
