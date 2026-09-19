@@ -12,6 +12,7 @@ M1 = ROOT / "development/contracts/model-program/m1"
 CANDIDATE = M1 / "governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.owner-root-pinned.candidate.json"
 ORCHESTRATOR = ROOT / "scripts/model-program/m1_runtime_stability_pc.py"
 BINDING = ROOT / "scripts/model-program/m1_runtime_stability_binding.py"
+BUILD_HELPER = ROOT / "scripts/model-program/build_m1_07_native_owner.py"
 
 PLAN_SHA = "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
 MODEL_REV = "2fc06364715b967f1860aea9cf38778875588b17"
@@ -172,7 +173,27 @@ def validate_native_source_binding(profile: dict) -> bool:
         return False
     manifest = load(path)
     expected = {"go.mod", "bindings.go", "policy.go", "owner.go", "platform_windows.go", "platform_other.go", "scenarios.go", "main.go"}
+    expected_tests = {"owner_test.go", "runtime_tree_windows_test.go"}
+    expected_metadata = {"source-manifest.json", "test-migration.json"}
     if set(manifest.get("production_files", {})) != expected:
+        return False
+    if set(manifest.get("test_files_excluded_from_production", [])) != expected_tests:
+        return False
+    if set(manifest.get("non_build_metadata_files", [])) != expected_metadata:
+        return False
+    actual_entries = {p.name for p in native.iterdir()}
+    if actual_entries != expected | expected_tests | expected_metadata:
+        return False
+    if any(p.is_symlink() or not p.is_file() for p in native.iterdir()):
+        return False
+    helper_identity = manifest.get("build_provenance_helper") or {}
+    if helper_identity.get("path") != "scripts/model-program/build_m1_07_native_owner.py":
+        return False
+    if (
+        BUILD_HELPER.stat().st_size != helper_identity.get("bytes")
+        or git_blob_sha1(BUILD_HELPER) != helper_identity.get("git_blob_sha1")
+        or hashlib.sha256(BUILD_HELPER.read_bytes()).hexdigest() != helper_identity.get("sha256")
+    ):
         return False
     for name, identity in manifest["production_files"].items():
         p = native / name
@@ -181,7 +202,7 @@ def validate_native_source_binding(profile: dict) -> bool:
     policy = (native / "policy.go").read_text(encoding="utf-8")
     owner = (native / "owner.go").read_text(encoding="utf-8")
     platform_windows = (native / "platform_windows.go").read_text(encoding="utf-8")
-    build_helper = (ROOT / "scripts/model-program/build_m1_07_native_owner.py").read_text(encoding="utf-8")
+    build_helper = BUILD_HELPER.read_text(encoding="utf-8")
     if 'const issuerPublicKeyHex = "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03"' not in policy:
         return False
     if 'const issuerPublicKeySHA256 = "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c"' not in policy:
@@ -192,6 +213,17 @@ def validate_native_source_binding(profile: dict) -> bool:
         return False
     if 'if os.environ.get("GOFLAGS")' not in build_helper or 'GOENV="off"' not in build_helper or 'GOWORK="off"' not in build_helper:
         return False
+    for required in (
+        "actual_entries = {p.name for p in SOURCE.iterdir()}",
+        "stat.S_ISREG(os.lstat(p).st_mode)",
+        "verified_files: dict[str, bytes] = {}",
+        'build_source = temp_root / "verified-source"',
+        "cwd=build_source",
+        'GOMODCACHE=modcache',
+        'GOTMPDIR=gotmp',
+    ):
+        if required not in build_helper:
+            return False
     binary_sha = code.get("native_owner_binary_sha256")
     if not isinstance(binary_sha, str) or len(binary_sha) != 64 or any(c not in "0123456789abcdef" for c in binary_sha):
         return False
