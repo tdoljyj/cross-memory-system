@@ -19,9 +19,56 @@ spec = importlib.util.spec_from_file_location("m1_07_validator", P)
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 
-orch_spec = importlib.util.spec_from_file_location("m1_07_orchestrator", O)
-orch = importlib.util.module_from_spec(orch_spec)
-orch_spec.loader.exec_module(orch)
+# Normal imports are the unprivileged validation facade. No mock is applied.
+orch_spec = importlib.util.spec_from_file_location("m1_07_public_orchestrator", O)
+public_orch = importlib.util.module_from_spec(orch_spec)
+orch_spec.loader.exec_module(public_orch)
+
+
+def load_trusted_owner_unit_fixture():
+    """White-box unit fixture, not a production activation or review receipt.
+
+    Only this test loader substitutes the native startup check so the existing
+    lifecycle tests can use fake Popen objects. External-boundary negative tests
+    below use public_orch without this substitution. There is no --test switch
+    or runtime factory in the shipped import facade.
+    """
+    real_spec = importlib.util.spec_from_file_location
+
+    class TestBoundaryLoader:
+        def __init__(self, original):
+            self.original = original
+
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, module):
+            self.original.exec_module(module)
+            module.require_owner_process = mock.Mock(return_value=None)
+
+    def fixture_spec(name, location, *args, **kwargs):
+        result = real_spec(name, location, *args, **kwargs)
+        if pathlib.Path(location) == O.with_name("m1_runtime_stability_owner_boundary.py"):
+            result.loader = TestBoundaryLoader(result.loader)
+        return result
+
+    owner_spec = real_spec("__main__", O)
+    owner = importlib.util.module_from_spec(owner_spec)
+    with (
+        mock.patch.object(importlib.util, "spec_from_file_location", side_effect=fixture_spec),
+        mock.patch.object(sys, "argv", [str(O), "--validate-only"]),
+        contextlib.redirect_stdout(io.StringIO()),
+    ):
+        try:
+            owner_spec.loader.exec_module(owner)
+        except SystemExit as exc:
+            if exc.code != 0:
+                raise
+    return owner
+
+
+orch = load_trusted_owner_unit_fixture()
+
 
 
 class FakePopen:
@@ -376,6 +423,8 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
                 object.__setattr__(owned, "proc", foreign_same_pid)
             owned.pid = 99999
             owned.label = "caller-mutated-diagnostic"
+            owned.scenario = "caller-mutated-scenario"
+            owned.start_index = 99999
             orch.force_kill_owned(ctx, owned)
             self.assertEqual(foreign_same_pid.kill_calls, 0)
             self.assertEqual(original.kill_calls, 1)
@@ -460,7 +509,7 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
 
     def test_crash_ordering_remains_active_stream_kill_close_restart(self):
         src = O.read_text(encoding="utf-8")
-        block = src.split("def run_crash_restart", 1)[1].split("\ndef run(", 1)[0]
+        block = src.split("def run_crash_restart", 1)[1].split("\n    def run(", 1)[0]
         open_pos = block.index("stream_conn, stream_resp, first = open_stream(ctx)")
         kill_pos = block.index("force_kill_owned(ctx, owned)")
         close_pos = block.index("stream_conn.close()")
@@ -474,6 +523,190 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         self.assertNotIn("taskkill", src.lower())
         self.assertNotIn("Stop-Process", src)
         self.assertNotIn("os.kill(", src)
+
+
+class ModelProgramM107ImportBoundaryTests(unittest.TestCase):
+    def assert_rejected(self, code, fn):
+        with self.assertRaises(public_orch.StabilityError) as cm:
+            fn()
+        self.assertEqual(cm.exception.code, code)
+
+    def test_import_exposes_no_context_or_process_registration_factory(self):
+        for name in (
+            "_CONTEXT_SEAL", "_OWNED_PROCESS_SEAL", "_create_validated_context",
+            "_create_owned_process", "_build_execution_authority_registry",
+            "_make_authorize_execution", "_make_start_server", "_owner_bootstrap_allowed",
+            "valid_contexts", "owned_processes", "claim_attempt_guard",
+        ):
+            self.assertFalse(hasattr(public_orch, name), name)
+
+    def test_imported_entry_closures_contain_no_registry_or_factory(self):
+        for name in ("authorize_execution", "start_server", "force_kill_owned", "_require_ctx", "_require_owned"):
+            entry = getattr(public_orch, name)
+            self.assertIsNone(entry.__closure__, name)
+            self.assertEqual(entry.__code__.co_freevars, (), name)
+
+    def test_imported_forged_context_rejected_before_popen(self):
+        case = ModelProgramM107CandidateTests()
+        temp, valid = case.make_context()
+        try:
+            forged = object.__new__(public_orch.ValidatedExecutionContext)
+            for field in public_orch.ValidatedExecutionContext.__slots__:
+                object.__setattr__(forged, field, getattr(valid, field))
+            popen = mock.Mock(side_effect=AssertionError("no Popen in import facade"))
+            with mock.patch.object(public_orch.subprocess, "Popen", popen):
+                self.assert_rejected("EXECUTION_CONTEXT_REQUIRED", lambda: public_orch.start_server(forged, "M1-07-PC-LOAD-001", "forged"))
+            self.assertEqual(popen.call_count, 0)
+        finally:
+            temp.cleanup()
+
+    def test_imported_foreign_wrapper_copied_metadata_cannot_kill(self):
+        case = ModelProgramM107CandidateTests()
+        temp, ctx = case.make_context()
+        original = FakePopen(pid=42450)
+        foreign = FakePopen(pid=original.pid)
+        try:
+            with (
+                mock.patch.object(orch, "build_server_command", return_value=[r"C:\fake\llama-server.exe"]),
+                mock.patch.object(orch.subprocess, "Popen", return_value=original),
+                mock.patch.object(orch, "process_rss_bytes", return_value=123456),
+            ):
+                actual, _ = orch.start_server(ctx, "M1-07-PC-LOAD-001", "registered-fixture")
+            forged = object.__new__(public_orch.OwnedServerProcess)
+            for field in public_orch.OwnedServerProcess.__slots__:
+                object.__setattr__(forged, field, getattr(actual, field))
+            with self.assertRaises(AttributeError):
+                object.__setattr__(forged, "proc", foreign)
+            self.assert_rejected("FOREIGN_PROCESS_REJECTED", lambda: public_orch.force_kill_owned(ctx, forged))
+            self.assertEqual(foreign.kill_calls, 0)
+            self.assertEqual(original.kill_calls, 0)
+            # The exact wrapper still controls only its originally registered fake.
+            orch.force_kill_owned(ctx, actual)
+            self.assertEqual(original.kill_calls, 1)
+            self.assertEqual(foreign.kill_calls, 0)
+        finally:
+            temp.cleanup()
+
+    def test_imported_even_real_context_and_wrapper_have_no_owner_authority(self):
+        case = ModelProgramM107CandidateTests()
+        temp, ctx = case.make_context()
+        foreign = FakePopen()
+        try:
+            popen = mock.Mock(side_effect=AssertionError("no Popen in facade"))
+            with mock.patch.object(public_orch.subprocess, "Popen", popen):
+                self.assert_rejected("EXECUTION_CONTEXT_REQUIRED", lambda: public_orch.start_server(ctx, "M1-07-PC-LOAD-001", "not-owner"))
+            self.assertEqual(popen.call_count, 0)
+            self.assert_rejected("FOREIGN_PROCESS_REJECTED", lambda: public_orch.force_kill_owned(ctx, foreign))
+            self.assertEqual(foreign.kill_calls, 0)
+        finally:
+            temp.cleanup()
+
+    def test_imported_issued_fixture_cannot_export_context(self):
+        p = ModelProgramM107CandidateTests().issued_profile()
+        with tempfile.TemporaryDirectory() as td:
+            output = pathlib.Path(td) / "must-not-exist"
+            self.assert_rejected("ISOLATED_OWNER_PROCESS_REQUIRED", lambda: public_orch.authorize_execution(p, output))
+            self.assertFalse(output.exists())
+
+    def test_candidate_remains_blocked_and_creates_no_output(self):
+        with tempfile.TemporaryDirectory() as td:
+            output = pathlib.Path(td) / "must-not-exist"
+            self.assert_rejected("EXECUTION_AUTHORIZATION_BLOCKED", lambda: public_orch.authorize_execution(m.load(m.CANDIDATE), output))
+            self.assertFalse(output.exists())
+
+    def test_changing_imported_name_does_not_install_runtime(self):
+        with mock.patch.object(public_orch, "__name__", "__main__"):
+            self.assertFalse(hasattr(public_orch, "_build_execution_authority_registry"))
+            self.assert_rejected("EXECUTION_CONTEXT_REQUIRED", lambda: public_orch.start_server(object(), "x", "x"))
+
+    def test_native_launch_rejects_python_c_and_foreign_script(self):
+        boundary = public_orch._owner_boundary
+        image = str(pathlib.Path(sys.executable).resolve())
+        with self.assertRaises(boundary.OwnerBoundaryError):
+            boundary.validate_native_owner_command(image, [image, "-I", "-S", "-c", "pass"], O)
+        with tempfile.TemporaryDirectory() as td:
+            foreign_script = pathlib.Path(td) / "foreign.py"
+            foreign_script.write_text("pass", encoding="utf-8")
+            argv = [image, "-I", "-S", str(foreign_script), "--execute", "--profile", str(m.CANDIDATE.resolve()), "--output-dir", str(pathlib.Path(td) / "out")]
+            with self.assertRaises(boundary.OwnerBoundaryError):
+                boundary.validate_native_owner_command(image, argv, O)
+
+    def test_native_launch_validation_returns_no_activation_capability(self):
+        boundary = public_orch._owner_boundary
+        image = str(pathlib.Path(sys.executable).resolve())
+        with tempfile.TemporaryDirectory() as td:
+            argv = [image, "-I", "-S", str(O), "--execute", "--profile", str(m.CANDIDATE.resolve()), "--output-dir", str(pathlib.Path(td) / "out")]
+            self.assertIsNone(boundary.validate_native_owner_command(image, argv, O))
+            self.assertFalse(hasattr(public_orch, "_create_validated_context"))
+            self.assert_rejected("EXECUTION_CONTEXT_REQUIRED", lambda: public_orch.start_server(object(), "x", "x"))
+
+    def test_native_launch_has_no_pid_process_or_callback_input(self):
+        boundary = public_orch._owner_boundary
+        image = str(pathlib.Path(sys.executable).resolve())
+        with tempfile.TemporaryDirectory() as td:
+            base = [image, "-I", "-S", str(O), "--execute", "--profile", str(m.CANDIDATE.resolve()), "--output-dir", str(pathlib.Path(td) / "out")]
+            for forbidden in ("--pid", "--process", "--callback", "--test", "--registry"):
+                with self.assertRaises(boundary.OwnerBoundaryError):
+                    boundary.validate_native_owner_command(image, base + [forbidden, "1"], O)
+
+    def test_plain_import_process_cannot_satisfy_native_startup(self):
+        with self.assertRaises(public_orch._owner_boundary.OwnerBoundaryError):
+            public_orch._owner_boundary.require_owner_process(O)
+
+    def test_boundary_helper_is_exact_bound(self):
+        p = ModelProgramM107CandidateTests().issued_profile()
+        p["code_revision"]["owner_boundary_normalized_sha256"] = "0" * 64
+        self.assertEqual(public_orch.validate_execution_profile(p), (False, "OWNER_BOUNDARY_CODE_BINDING_DRIFT"))
+
+
+    def test_real_isolated_c_process_name_and_argv_spoof_stay_unprivileged(self):
+        # A real new interpreter, but not the exact standalone owner launch.
+        # Even with __main__ and mutable argv spoofed, no runtime is installed.
+        program = "\n".join([
+            "import importlib.util, pathlib, sys, subprocess",
+            "from unittest import mock",
+            "script, profile, output = sys.argv[1:]",
+            "sys.argv = [script, '--execute', '--profile', profile, '--output-dir', output]",
+            "sys.orig_argv = [sys.executable, '-I', '-S'] + sys.argv",
+            "spec = importlib.util.spec_from_file_location('__main__', script)",
+            "module = importlib.util.module_from_spec(spec)",
+            "with mock.patch.object(subprocess, 'Popen', side_effect=AssertionError('no child process')) as popen:",
+            "    try:",
+            "        spec.loader.exec_module(module)",
+            "    except SystemExit as exc:",
+            "        assert exc.code == 3, exc.code",
+            "    assert module.start_server.__closure__ is None",
+            "    assert module._require_owned.__closure__ is None",
+            "    assert not hasattr(module, '_build_execution_authority_registry')",
+            "    try:",
+            "        module.start_server(object(), 'x', 'x')",
+            "    except module.StabilityError as exc:",
+            "        assert exc.code == 'EXECUTION_CONTEXT_REQUIRED'",
+            "    else:",
+            "        raise AssertionError('imported start accepted')",
+            "    assert popen.call_count == 0",
+            "assert not pathlib.Path(output).exists()",
+            "print('IMPORT_SPOOF_REJECTED / POPEN_CALL_COUNT=0')",
+        ])
+        with tempfile.TemporaryDirectory() as td:
+            result = orch.subprocess.run(
+                [sys.executable, "-I", "-S", "-c", program, str(O), str(m.CANDIDATE.resolve()), str(pathlib.Path(td) / "output")],
+                capture_output=True, text=True, timeout=30,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("POPEN_CALL_COUNT=0", result.stdout)
+
+    def test_real_direct_owner_candidate_rejects_without_scenario_or_output(self):
+        # This tests only the candidate rejection gate, not M1-07 execution.
+        with tempfile.TemporaryDirectory() as td:
+            output = pathlib.Path(td) / "must-not-exist"
+            result = orch.subprocess.run(
+                [sys.executable, "-I", "-S", str(O), "--execute", "--profile", str(m.CANDIDATE.resolve()), "--output-dir", str(output)],
+                capture_output=True, text=True, timeout=30,
+            )
+            self.assertFalse(output.exists())
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("PROFILE_NOT_ISSUED", result.stderr)
 
 
 if __name__ == "__main__":

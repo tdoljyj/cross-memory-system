@@ -19,10 +19,13 @@ MODEL_SHA = "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696"
 Q8_SHA = "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
 SERVER_SHA = "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba"
 LLAMA_COMMIT = "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
-ORCH_COMMIT = "b807b9986e314d3adfedb05b69728fbe879ffabb"
-ORCH_BLOB = "461f093f15780f91d4d55aa316bfe23cff761681"
-ORCH_NORMALIZED_SHA256 = "d3984c39a0c4ac3a77a3f87c26603a86cdb360f4e7349448501eaab092699dc9"
-BINDING_BLOB = "e0d54c1cd5d61d44700c5c85af6840473a38d7e9"
+ORCH_COMMIT = "c9577cd80db44d33de663bd077e26ee70de701c2"
+ORCH_BLOB = "0a2a06bfe08fc79b86fd41e7f040c70fb7208d9c"
+ORCH_NORMALIZED_SHA256 = "c36a627109c4bff6cec8243f4b1914008296940bff69ea65b233380d35ed1b88"
+BINDING_BLOB = "19297703bb813152a9da739f5057af40cbd93ae1"
+OWNER_BOUNDARY = ROOT / "scripts/model-program/m1_runtime_stability_owner_boundary.py"
+OWNER_BOUNDARY_BLOB = '51fa9519f1f17185253e0220fdd8487b21a5d2ec'
+OWNER_BOUNDARY_SHA256 = '49a865b115b5c7512622315df392a5cfaebfd020dab768267a3d87e56d5325a5'
 ISSUED_PROFILE_ID = "M1-STAB-QWEN35-08B-PC-001-ISSUED"
 MACHINE_IDENTITY_SHA256 = "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522"
 ATTEMPT_GUARD_PATH = r"C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-STAB-QWEN35-08B-PC-001\M1RuntimeStabilityAttemptGuard.json"
@@ -135,6 +138,12 @@ def exact_code_binding(profile: dict) -> bool:
         and code.get("exact_binding_module_path") == "scripts/model-program/m1_runtime_stability_binding.py"
         and code.get("exact_binding_module_git_blob_sha1") == BINDING_BLOB
         and code.get("execution_allowed_while_candidate") is False
+        and code.get("owner_boundary_path") == "scripts/model-program/m1_runtime_stability_owner_boundary.py"
+        and code.get("owner_boundary_git_blob_sha1") == OWNER_BOUNDARY_BLOB
+        and code.get("owner_boundary_normalized_sha256") == OWNER_BOUNDARY_SHA256
+        and OWNER_BOUNDARY.is_file()
+        and git_blob_sha1(OWNER_BOUNDARY) == OWNER_BOUNDARY_BLOB
+        and normalized_text_sha256(OWNER_BOUNDARY) == OWNER_BOUNDARY_SHA256
         and ORCHESTRATOR.is_file()
         and BINDING.is_file()
         and git_blob_sha1(ORCHESTRATOR) == ORCH_BLOB
@@ -230,10 +239,15 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
         return False, "M1_07_EXECUTION_CONTROL_PROFILE_ID"
     if control.get("owner_authorization_binding") != "INDEPENDENT_ISSUED_PROFILE_OUTER_BINDING / AUTHORIZATION_ID_AND_RECOMPUTED_CANONICAL_SHA256_MUST_MATCH":
         return False, "M1_07_OWNER_AUTH_BINDING_POLICY"
-    if control.get("validated_context_semantics") != "OPAQUE_INTERNAL_REGISTRY / CONSTRUCTOR_FORBIDDEN / POST_AUTH_CONTEXT_TAMPER_FAIL_CLOSED":
+    if control.get("validated_context_semantics") != "OWNER_PROCESS_LOCAL_EXACT_IDENTITY_REGISTRY / NOT_A_PYTHON_SANDBOX / CONSTRUCTOR_FORBIDDEN / POST_AUTH_CONTEXT_TAMPER_FAIL_CLOSED":
         return False, "M1_07_CONTEXT_REGISTRY_POLICY"
-    if control.get("process_ownership_semantics") != "INTERNAL_REGISTRY_BINDS_EXACT_WRAPPER_IDENTITY_TO_ORIGINAL_POPEN / EFFECTFUL_LIFECYCLE_RESOLVES_POPEN_FROM_INTERNAL_REGISTRY / WRAPPER_FIELDS_NON_AUTHORITATIVE / CALLER_CANNOT_REGISTER_FOREIGN_PROCESS":
+    if control.get("process_ownership_semantics") != "OWNER_PROCESS_LOCAL_REGISTRY_BINDS_EXACT_WRAPPER_IDENTITY_TO_ORIGINAL_POPEN / EFFECTFUL_LIFECYCLE_RESOLVES_POPEN_FROM_INTERNAL_REGISTRY / WRAPPER_FIELDS_NON_AUTHORITATIVE / NO_CALLER_PROCESS_INJECTION":
         return False, "M1_07_PROCESS_OWNERSHIP_POLICY"
+
+    if control.get("execution_boundary") != 'DIRECT_NATIVE_COMMAND_LINE_BOUND_CPYTHON_OWNER / ISOLATED_NO_SITE / IMPORT_VALIDATE_ONLY / NO_UNTRUSTED_PYTHON_IN_OWNER':
+        return False, "M1_07_OWNER_PROCESS_BOUNDARY"
+    if control.get("import_surface") != "VALIDATE_ONLY / NO_RUNTIME_REGISTRY / NO_CONTEXT_EXPORT / NO_PROCESS_CONTROL":
+        return False, "M1_07_IMPORT_SURFACE"
 
     trusted = profile.get("trusted_execution_bindings") or {}
     if (
