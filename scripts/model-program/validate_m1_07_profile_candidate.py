@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 M1 = ROOT / "development/contracts/model-program/m1"
 CANDIDATE = M1 / "governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.candidate.json"
+ORCHESTRATOR = ROOT / "scripts/model-program/m1_runtime_stability_pc.py"
 
 PLAN_SHA = "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
 MODEL_REV = "2fc06364715b967f1860aea9cf38778875588b17"
@@ -15,6 +17,9 @@ MODEL_SHA = "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696"
 Q8_SHA = "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
 SERVER_SHA = "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba"
 LLAMA_COMMIT = "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
+ORCH_COMMIT = "3904702a615d618a760fc8e850bf891482592a3c"
+ORCH_BLOB = "41c9952526573a204382e4b2af1f262ba13dd212"
+ORCH_NORMALIZED_SHA256 = "f37864adfe91bb2ec632ff2c3b17a714da9f40eb69bcf16c360d0a5144b3f7c2"
 
 REQUIRED_PROHIBITED = {
     "EXECUTION_WHILE_PROFILE_STATUS_IS_NOT_ISSUED",
@@ -58,19 +63,27 @@ def fail(message: str):
     raise SystemExit(1)
 
 
-def has_unresolved_code_binding(profile: dict) -> bool:
+def normalized_text_sha256(path: Path) -> str:
+    text = path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def exact_code_binding(profile: dict) -> bool:
     code = profile.get("code_revision") or {}
     return (
-        code.get("status") != "EXACT_BOUND"
-        or code.get("required_script_git_blob_sha1") in (None, "", "TO_BE_BOUND")
-        or code.get("required_code_commit") in (None, "", "TO_BE_BOUND")
+        code.get("status") == "EXACT_BOUND"
+        and code.get("required_code_commit") == ORCH_COMMIT
+        and code.get("required_script_git_blob_sha1") == ORCH_BLOB
+        and code.get("required_script_normalized_sha256") == ORCH_NORMALIZED_SHA256
+        and code.get("required_script_path") == "scripts/model-program/m1_runtime_stability_pc.py"
+        and code.get("execution_allowed_while_candidate") is False
     )
 
 
 def validate_candidate(profile: dict) -> tuple[bool, str]:
     if profile.get("task_id") != "M1-07":
         return False, "M1_07_TASK_ID"
-    if profile.get("status") != "BLOCKED_PENDING_EXECUTION_CODE_REVIEW_AND_FINAL_ISSUANCE":
+    if profile.get("status") != "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE":
         return False, "M1_07_CANDIDATE_STATUS"
     if profile.get("effectful_authority_issued") is not False or profile.get("authority_effect") != "NONE / PROFILE_PREPARATION_ONLY":
         return False, "M1_07_AUTHORITY_EXPANSION"
@@ -108,7 +121,7 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
     bg = next((x for x in scenarios if x.get("scenario_id") == "M1-07-PC-BACKGROUND-001"), {})
     if bg.get("semantics") != "PC_BACKGROUND_SERVICE_CONTINUITY_ONLY / NOT_MOBILE_APP_BACKGROUND_RESUME":
         return False, "M1_07_BACKGROUND_SCOPE"
-    if not any("NO_CLAIM_ABOUT_PHONE_TABLET_APP_BACKGROUND_RESUME" == x for x in bg.get("pass_criteria", [])):
+    if "NO_CLAIM_ABOUT_PHONE_TABLET_APP_BACKGROUND_RESUME" not in set(bg.get("pass_criteria") or []):
         return False, "M1_07_BACKGROUND_SCOPE"
 
     prohibited = set(profile.get("prohibited_operations") or [])
@@ -121,17 +134,28 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
     if compute.get("cpu_threads") != 2 or compute.get("gpu_layers") != 0 or compute.get("max_parallel_server_processes") != 1:
         return False, "M1_07_COMPUTE_BUDGET"
 
-    if has_unresolved_code_binding(profile) is not True:
-        return False, "M1_07_CANDIDATE_CODE_MUST_REMAIN_UNBOUND"
-    if (profile.get("code_revision") or {}).get("execution_allowed_while_unbound") is not False:
-        return False, "M1_07_UNBOUND_CODE_EXECUTION"
+    if not exact_code_binding(profile):
+        return False, "M1_07_CODE_BINDING"
+    if not ORCHESTRATOR.is_file() or normalized_text_sha256(ORCHESTRATOR) != ORCH_NORMALIZED_SHA256:
+        return False, "M1_07_ORCHESTRATOR_BYTES_DRIFT"
+    if (profile.get("code_revision") or {}).get("orchestrator_default_mode") != "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD":
+        return False, "M1_07_ORCHESTRATOR_DEFAULT_MODE"
 
     if profile.get("expiry") != "TO_BE_BOUND_AT_FINAL_ISSUANCE":
         return False, "M1_07_EXPIRY_PREMATURE"
+    if profile.get("owner_final_execution_authorization") is not None:
+        return False, "M1_07_OWNER_AUTH_PREMATURE"
     if "NO_M1_08_AUTHORITY" not in profile.get("release_ceiling", ""):
         return False, "M1_07_RELEASE_CEILING"
-    if "OWNER_EXPLICIT_M1_07_EFFECTFUL_EXECUTION_AUTHORIZATION" not in set(profile.get("final_issuance_requirements") or []):
-        return False, "M1_07_OWNER_FINAL_AUTH_REQUIRED"
+    requirements = set(profile.get("final_issuance_requirements") or [])
+    for required in (
+        "STATIC_REVIEW_OR_TESTS_CONFIRM_PROFILE_STATUS_GUARD_AND_PID_OWNERSHIP_GUARD",
+        "OWNER_EXPLICIT_M1_07_EFFECTFUL_EXECUTION_AUTHORIZATION",
+        "BIND_FINAL_EXPIRY",
+        "CREATE_ISSUED_SUCCESSOR_PROFILE_WITH_STATUS_ISSUED",
+    ):
+        if required not in requirements:
+            return False, "M1_07_FINAL_ISSUANCE_REQUIREMENTS"
     return True, "PASS"
 
 
@@ -140,10 +164,15 @@ def execution_readiness(profile: dict) -> tuple[bool, str]:
         return False, "PROFILE_NOT_ISSUED"
     if profile.get("effectful_authority_issued") is not True:
         return False, "EFFECTFUL_AUTHORITY_NOT_ISSUED"
-    if has_unresolved_code_binding(profile):
-        return False, "EXECUTION_CODE_BINDING_UNRESOLVED"
+    if not exact_code_binding(profile):
+        return False, "EXECUTION_CODE_BINDING_INVALID"
+    auth = profile.get("owner_final_execution_authorization") or {}
+    if auth.get("present") is not True or not auth.get("owner_message"):
+        return False, "OWNER_FINAL_EXECUTION_AUTHORIZATION_MISSING"
     if profile.get("expiry") in (None, "", "TO_BE_BOUND_AT_FINAL_ISSUANCE"):
         return False, "EXPIRY_UNRESOLVED"
+    if profile.get("authority_effect") != "M1-07_PC_RUNTIME_STABILITY_EXECUTION_ONLY":
+        return False, "M1_07_AUTHORITY_EFFECT"
     return True, "READY"
 
 
@@ -177,9 +206,9 @@ def main():
         fail(code)
     ready, reason = execution_readiness(candidate)
     if ready or reason != "PROFILE_NOT_ISSUED":
-        fail("candidate must be fail-closed for execution")
+        fail("candidate must remain fail-closed for execution")
 
-    print("PASS: M1-07 PC runtime-stability candidate is exact for known model/runtime/device/config/scenario boundaries, code binding remains unresolved, and effectful execution is fail-closed")
+    print("PASS: M1-07 PC runtime-stability candidate is exact-bound to model/runtime/device/config/scenarios and orchestrator code, while review/Owner final issuance remain unresolved and effectful execution is fail-closed")
     return 0
 
 
