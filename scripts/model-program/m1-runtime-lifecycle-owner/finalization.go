@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sort"
+	"path/filepath"
 	"time"
 )
 
@@ -25,8 +25,8 @@ func checkDeadline(now, deadline, expiry time.Time) error {
 	return nil
 }
 
-// No new execution authority is created by finalization. A consumed context
-// retains only the ability to close its own child handles and record failure.
+// Only this stack frame enables terminal evidence. It does not issue a reusable
+// post-expiry capability, accept an output name, or resurrect lifecycle authority.
 func (c *controller) finalizeAttempt(ctx *executionContext, cause error) (finalErr error) {
 	if e := c.requireContext(ctx); e != nil {
 		return errors.Join(cause, e)
@@ -34,7 +34,11 @@ func (c *controller) finalizeAttempt(ctx *executionContext, cause error) (finalE
 	if prior, done := c.finalized[ctx]; done {
 		return errors.Join(cause, prior)
 	}
-	defer func() { c.finalized[ctx] = finalErr }()
+	if c.finalizing[ctx] {
+		return errors.Join(cause, fail("FINALIZATION_ALREADY_ACTIVE"))
+	}
+	c.finalizing[ctx] = true
+	defer func() { delete(c.finalizing, ctx); c.finalized[ctx] = finalErr }()
 	cleanup := c.cleanupProcesses(ctx)
 	free := c.sys.portFree()
 	if !free {
@@ -58,54 +62,57 @@ func (c *controller) finalizeAttempt(ctx *executionContext, cause error) (finalE
 			return nil
 		}
 	}
-	_, guardErr := os.Lstat(c.paths.guard)
-	_, rootErr := os.Lstat(c.paths.testRoot)
-	remaining := c.remainingOwnedState()
-	// Failure evidence uses the already-authorized append-only Events stream.
-	// It is the only post-expiry write capability and records the exact creation
-	// ledger still owned by this attempt, including live pathname observations.
-	evidenceErr := c.writeTerminalEvidence(ctx, object{
-		"profile_id": issuedID, "scenario": "FINALIZATION", "kind": "terminal_failure",
-		"pass": false, "failure": fmt.Sprint(result), "cleanup_failure": fmt.Sprint(cleanup),
-		"port_18088_free": free,
-		"guard_exists":    guardErr == nil, "guard_state_error": fmt.Sprint(guardErr),
-		"runtime_root_exists": rootErr == nil, "runtime_root_state_error": fmt.Sprint(rootErr),
-		"runtime_root_preserved_for_forensics": rootErr == nil,
-		"remaining_test_owned_state": remaining,
-		"current_bytes_sha256": map[bool]string{true: sha(c.currentBytes), false: ""}[len(c.currentBytes) != 0],
-		"ts_utc": c.now().UTC().Format(time.RFC3339Nano),
-	})
-	if evidenceErr != nil {
-		result = errors.Join(result, fmt.Errorf("TERMINAL_EVIDENCE_UNAVAILABLE: %w", evidenceErr))
-	}
-	return result
+	// The only post-expiry writer constructs a fixed failure event itself.
+	// There is no generic raw/bool bypass and no caller-supplied event payload.
+	return errors.Join(result, c.writeTerminalFailure(ctx, result, cleanup, free))
 }
 
-func (c *controller) remainingOwnedState() []any {
-	keys := make([]string, 0, len(c.created))
-	for path := range c.created {
-		keys = append(keys, path)
+func (c *controller) writeTerminalFailure(ctx *executionContext, cause, cleanup error, free bool) error {
+	if e := c.requireContext(ctx); e != nil {
+		return e
 	}
-	sort.Strings(keys)
-	rows := make([]any, 0, len(keys))
-	for _, path := range keys {
-		row := object{"path": path, "creation_identity": c.created[path]}
-		st, err := os.Lstat(path)
-		if err == nil {
-			row["exists"] = true
-			row["is_dir"] = st.IsDir()
-			row["size"] = json.Number(strconvFormatInt(st.Size()))
-			row["mode"] = st.Mode().String()
-			if final, fe := c.sys.finalPath(path); fe == nil {
-				row["final_path"] = final
-			} else {
-				row["final_path_error"] = fe.Error()
-			}
-		} else {
-			row["exists"] = false
-			row["state_error"] = err.Error()
+	if !c.finalizing[ctx] || cause == nil {
+		return fail("TERMINAL_FINALIZER_AUTHORITY_REQUIRED")
+	}
+	if _, done := c.finalized[ctx]; done {
+		return fail("ATTEMPT_ALREADY_FINALIZED")
+	}
+	state, stateErr := c.remainingOwnedState(ctx)
+	// These observations describe the pre-append state, not a fictitious atomic
+	// snapshot or the post-append hash of the Events file being written below.
+	row := object{
+		"profile_id": issuedID, "scenario": "FINALIZATION", "kind": "terminal_failure", "pass": false,
+		"failure": boundedDiagnostic(cause), "cleanup_failure": boundedDiagnostic(cleanup),
+		"port_18088_free": free, "remaining_test_owned_state": state,
+		"remaining_state_error":        boundedDiagnostic(stateErr),
+		"invalidates_success_closeout": true,
+		"ts_utc":                       c.now().UTC().Format(time.RFC3339Nano),
+	}
+	raw := append(canonical(row), '\n')
+	if e := ctx.budget.consume(int64(len(raw)), false); e != nil {
+		return errors.Join(stateErr, fmt.Errorf("TERMINAL_EVIDENCE_UNAVAILABLE: %w", e))
+	}
+	path := filepath.Join(c.paths.evidence, "M1RuntimeLifecycleEvents.jsonl")
+	_, e := os.Lstat(path)
+	if e == nil || os.IsNotExist(e) {
+		var f *os.File
+		f, e = c.openOwnedWrite(path, os.IsNotExist(e))
+		if e == nil {
+			e = writeSyncClose(f, raw)
 		}
-		rows = append(rows, row)
 	}
-	return rows
+	if e != nil {
+		e = fmt.Errorf("TERMINAL_EVIDENCE_UNAVAILABLE: %w", e)
+	}
+	return errors.Join(stateErr, e)
+}
+func boundedDiagnostic(e error) string {
+	if e == nil {
+		return ""
+	}
+	s := e.Error()
+	if len(s) > 4096 {
+		return s[:4096] + " [DIAGNOSTIC_TRUNCATED]"
+	}
+	return s
 }

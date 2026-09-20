@@ -6,12 +6,6 @@
   "effectful_authority_issued": false,
   "files": [
     {
-      "bytes": 8725,
-      "git_blob_sha1": "81d985648579b276b212723bbceecc1572369867",
-      "path": "README.md",
-      "sha256": "d1e24a8d11c324419d58d01755da9abf7e8b657808ac9829cf2e23cd7f14b456"
-    },
-    {
       "bytes": 614,
       "git_blob_sha1": "4c9e4b962d0f7ddbfb16c7e7948e095e3c0176b0",
       "path": "bindings.go",
@@ -66,10 +60,16 @@
       "sha256": "0e2bac3f004a2999aaf7bb05c57efc068031d505577ca4ee68f0ee4cca628028"
     },
     {
-      "bytes": 3599,
-      "git_blob_sha1": "2bc485b90df1b82b0f156a9a20c6514798b62433",
+      "bytes": 3766,
+      "git_blob_sha1": "6b902ac1592911572254e6b34885009052fdc313",
       "path": "finalization.go",
-      "sha256": "e7a68e93267b71699c90e31aafb53c0a1742accaf59d00ce9390b19143e9295d"
+      "sha256": "17e8bc456e3103a3d90fb3896e80317bbe816efb2e751354adc1e57d878d3213"
+    },
+    {
+      "bytes": 9383,
+      "git_blob_sha1": "53e5fa80db2ab9b02c4e2cbf380f163ddf805dff",
+      "path": "forensics.go",
+      "sha256": "dbfd3380cbf56edd4b639004832ce84e27a60ae7e9aafd3c5e43a30d44af4749"
     },
     {
       "bytes": 49,
@@ -96,10 +96,10 @@
       "sha256": "dab032fe2c7a6d6b845d266ead695673e93a72c138a63d0097be27704f129b1a"
     },
     {
-      "bytes": 21543,
-      "git_blob_sha1": "af5013f22b6fbcdaa00e7b7529768b62f2e6bf5b",
+      "bytes": 22231,
+      "git_blob_sha1": "20e465c0e9ec5f19a0c1766215da1304bff51812",
       "path": "owner.go",
-      "sha256": "7307f7014a8e9d233ed11aba090ea26996062f7a2060f8bcd58982fb910f8cfc"
+      "sha256": "c7249afd2972bfaa70630d9ca691aee03800b0785e2abc050d1bc5446bae1d39"
     },
     {
       "bytes": 20572,
@@ -156,10 +156,16 @@
       "sha256": "31e9566693b42c0fb9820b8aeb6d2fa009e72caeec8ed9de5029b4c748adb07c"
     },
     {
-      "bytes": 20945,
-      "git_blob_sha1": "910079d9cf200840f2f3070a254a357592bc4373",
+      "bytes": 8725,
+      "git_blob_sha1": "81d985648579b276b212723bbceecc1572369867",
+      "path": "README.md",
+      "sha256": "d1e24a8d11c324419d58d01755da9abf7e8b657808ac9829cf2e23cd7f14b456"
+    },
+    {
+      "bytes": 19295,
+      "git_blob_sha1": "03e589ef4af9a51995b99caf9cfac870ad6c28e6",
       "path": "remediation_test.go",
-      "sha256": "6ff7a83bb5ecd5cb698007081e5806f485ae87b63ae17fddbc93c5614a0b1a84"
+      "sha256": "c684321af40b8d1b56a8fdd3e683269082738f709dc6af6b946ea75cb436d136"
     },
     {
       "bytes": 4823,
@@ -172,6 +178,12 @@
       "git_blob_sha1": "dd52d7dca0db6647c27ceab7b4d76f8e028ebadb",
       "path": "scenarios.go",
       "sha256": "84b26ab4ff455835d5e1f29890822824694c5f568e9241993b946a6b1abd9af3"
+    },
+    {
+      "bytes": 9103,
+      "git_blob_sha1": "708f9dc621382ebcfdf48f01fc75a33dabfaa9b0",
+      "path": "terminal_evidence_test.go",
+      "sha256": "06c5c3143e11c948d31bcbb7b9090289945c1c7af472d54630d407900814a33d"
     }
   ],
   "implementation_base": "3d8a4c88373f5a54831b40d34c0ad89281d02ac1",
@@ -205,12 +217,13 @@
       "MAJOR-08"
     ],
     "independent_review_pass": false,
+    "intermediate_repair_head": "3991a79f589ecd258b4339aac4f3f4843c3ddb37",
     "repair_base_head": "02384f219c3dddc027dd39640a313657286df197",
-    "repair_base_source_manifest_sha256": "c932c2a1b2f82bd386bf7e875b62c45f7a7a684e6847bb8d26de8c9304eaf0d5",
-    "repository_successor_commit": "PENDING_SOURCE_FREEZE",
-    "revision": "MAJOR-07-MAJOR-08-r2",
-    "status": "TARGETED_SOURCE_REMEDIATION_CANDIDATE / WINDOWS_NATIVE_REQUALIFICATION_PENDING / INDEPENDENT_CLOSURE_PENDING",
-    "validation_boundary": "SOURCE-ONLY TARGETED REMEDIATION / NO OWNER BINARY OR REAL MODEL EXECUTION"
+    "repair_base_source_manifest_sha256": "2102bb528440ab52ebdde9a677b606ff54d8226412c0e4c065cba68aaf7f5219",
+    "repository_successor_commit": null,
+    "revision": "MAJOR-07-MAJOR-08-r3",
+    "status": "SOURCE_FREEZE_CANDIDATE / EXACT_NATIVE_REQUALIFICATION_AND_INDEPENDENT_CLOSURE_PENDING",
+    "validation_boundary": "NON_MODEL_FIXTURES_ONLY / NO_OWNER_BINARY_EXECUTION / NO_ISSUANCE"
   },
   "role": "EFFECTFUL_OWNER_IMPLEMENTATION_PREPARATION_CANDIDATE / NO_FINAL_ISSUANCE / NO_EXECUTION",
   "schema_version": "clued.m1-08-native-owner-source-manifest/1"

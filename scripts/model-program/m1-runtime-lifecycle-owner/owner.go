@@ -162,11 +162,12 @@ type controller struct {
 	currentBytes  []byte
 	currentSpec   transitionSpec
 	finalized     map[*executionContext]error
+	finalizing    map[*executionContext]bool
 	completed     map[*executionContext]bool
 }
 
 func newController(sys platform, trust admission, paths layout) *controller {
-	return &controller{payload: reviewedPayload(), sys: sys, trust: trust, paths: paths, now: time.Now, contexts: map[*executionContext]*contextRecord{}, processes: map[*ownedProcess]*processRecord{}, immutablePins: map[string]*os.File{}, dirPins: map[string]*os.File{}, created: map[string]string{}, finalized: map[*executionContext]error{}, completed: map[*executionContext]bool{}}
+	return &controller{payload: reviewedPayload(), sys: sys, trust: trust, paths: paths, now: time.Now, contexts: map[*executionContext]*contextRecord{}, processes: map[*ownedProcess]*processRecord{}, immutablePins: map[string]*os.File{}, dirPins: map[string]*os.File{}, created: map[string]string{}, finalized: map[*executionContext]error{}, finalizing: map[*executionContext]bool{}, completed: map[*executionContext]bool{}}
 }
 
 func (c *controller) requireContext(ctx *executionContext) error {
@@ -194,6 +195,9 @@ func (c *controller) requireContext(ctx *executionContext) error {
 func (c *controller) limits(ctx *executionContext) error {
 	if e := c.requireContext(ctx); e != nil {
 		return e
+	}
+	if _, done := c.finalized[ctx]; done {
+		return fail("ATTEMPT_ALREADY_FINALIZED")
 	}
 	if e := ctx.budget.err(); e != nil {
 		return e
@@ -367,67 +371,104 @@ func (c *controller) createNewSynced(path string, data []byte, mode os.FileMode)
 	return writeSyncClose(f, data)
 }
 
-var exactEvidenceOutputs = map[string]bool{
-	"M1RuntimeLifecyclePreflight.json": true,
-	"M1RuntimeLifecycleEvents.jsonl": true,
-	"M1RuntimeLifecycleInstall.json": true,
-	"M1RuntimeLifecycleUpgrade.json": true,
-	"M1RuntimeLifecycleRollback.json": true,
-	"M1RuntimeLifecycleDigests.json": true,
-	"M1RuntimeLifecycleCleanup.json": true,
-	"M1RuntimeLifecycleCloseout.json": true,
-	"M1RuntimeLifecycleAttemptGuard.snapshot.json": true,
+// The immutable list is the frozen Contract/Profile output set. Only Events
+// may append; a JSON result is CREATE_NEW and may never overwrite a prior result.
+func evidenceOutputAllowed(name string, appendLine bool) bool {
+	if name == "M1RuntimeLifecycleEvents.jsonl" {
+		return appendLine
+	}
+	if appendLine {
+		return false
+	}
+	switch name {
+	case "M1RuntimeLifecyclePreflight.json", "M1RuntimeLifecycleInstall.json",
+		"M1RuntimeLifecycleUpgrade.json", "M1RuntimeLifecycleRollback.json",
+		"M1RuntimeLifecycleDigests.json", "M1RuntimeLifecycleCleanup.json",
+		"M1RuntimeLifecycleCloseout.json", "M1RuntimeLifecycleAttemptGuard.snapshot.json":
+		return true
+	}
+	return false
 }
 
-// writeEvidence is the normal lifecycle evidence capability. It is deliberately
-// subject to the live profile deadline/expiry gate; expiry cannot be bypassed
-// by routing a normal lifecycle effect through the evidence directory.
+// Normal evidence never spends the forensic reserve or bypasses a stop condition.
 func (c *controller) writeEvidence(ctx *executionContext, name string, v any, appendLine bool) error {
 	if e := c.limits(ctx); e != nil {
 		return e
 	}
-	return c.writeEvidenceBounded(ctx, name, v, appendLine, false)
-}
-
-// writeTerminalEvidence is a narrow post-expiry capability used only by the
-// finalizer. It cannot restore lifecycle authority: only the already-authorized
-// append-only Events stream is writable, and requireContext still proves the
-// exact consumed immutable execution context.
-func (c *controller) writeTerminalEvidence(ctx *executionContext, v any) error {
-	if e := c.requireContext(ctx); e != nil {
-		return e
-	}
-	return c.writeEvidenceBounded(ctx, "M1RuntimeLifecycleEvents.jsonl", v, true, true)
-}
-
-func (c *controller) writeEvidenceBounded(ctx *executionContext, name string, v any, appendLine, terminal bool) error {
-	if e := c.requireContext(ctx); e != nil {
-		return e
-	}
-	if filepath.Base(name) != name || name == "" || !exactEvidenceOutputs[name] {
+	if !evidenceOutputAllowed(name, appendLine) {
 		return fail("EVIDENCE_OUTPUT_NOT_AUTHORIZED")
 	}
-	if terminal && name != "M1RuntimeLifecycleEvents.jsonl" {
-		return fail("TERMINAL_EVIDENCE_OUTPUT_NOT_AUTHORIZED")
-	}
 	raw := append(canonical(v), '\n')
-	if e := ctx.budget.consume(int64(len(raw)), false); e != nil {
+	if e := c.limits(ctx); e != nil {
+		return e
+	}
+	if e := ctx.budget.consume(int64(len(raw)), true); e != nil {
 		return e
 	}
 	path := filepath.Join(c.paths.evidence, name)
+	create := true
 	if appendLine {
-		_, se := os.Lstat(path)
-		if se != nil && !os.IsNotExist(se) {
-			return se
-		}
-		f, e := c.openOwnedWrite(path, os.IsNotExist(se))
-		if e != nil {
+		_, e := os.Lstat(path)
+		if e != nil && !os.IsNotExist(e) {
 			return e
 		}
-		return writeSyncClose(f, raw)
+		create = os.IsNotExist(e)
 	}
-	return c.createNewSynced(path, raw, 0600)
+	f, e := c.openNormalEvidence(ctx, path, create)
+	if e != nil {
+		return e
+	}
+	// A slow native open/validation may have exhausted the live authority.
+	// Preserve a newly-created empty object for forensics; never write late bytes.
+	if e = c.limits(ctx); e != nil {
+		return errors.Join(e, f.Close())
+	}
+	e = writeSyncClose(f, raw)
+	return errors.Join(e, c.limits(ctx))
 }
+
+func (c *controller) openNormalEvidence(ctx *executionContext, path string, create bool) (*os.File, error) {
+	if e := c.limits(ctx); e != nil {
+		return nil, e
+	}
+	if !samePath(filepath.Dir(path), c.paths.evidence) || !c.allowedWritePath(path) {
+		return nil, fail("EVIDENCE_PATH_OUTSIDE_OUTPUT")
+	}
+	fs, e := c.filesystem()
+	if e != nil {
+		return nil, e
+	}
+	parent, e := c.pinDirectory(c.paths.evidence)
+	if e != nil {
+		return nil, e
+	}
+	// Gate immediately before the first native create/open, after parent I/O.
+	if e = c.limits(ctx); e != nil {
+		return nil, e
+	}
+	f, e := fs.openFileAt(parent, path, create, "write")
+	if e != nil {
+		return nil, e
+	}
+	if e = c.sys.verifyWriteHandle(f, path); e == nil {
+		e = c.ownedIdentity(f, path, create)
+	}
+	if e == nil && !create {
+		e = c.verifyNoNamedStreams(path)
+	}
+	if e == nil && !create {
+		_, e = f.Seek(0, io.SeekEnd)
+	}
+	if e != nil {
+		e = errors.Join(e, f.Close())
+		if create {
+			return nil, &createdObjectFailure{cause: e}
+		}
+		return nil, e
+	}
+	return f, nil
+}
+
 func (c *controller) event(ctx *executionContext, scenario, kind string, fields object) error {
 	row := object{}
 	for k, v := range fields {
