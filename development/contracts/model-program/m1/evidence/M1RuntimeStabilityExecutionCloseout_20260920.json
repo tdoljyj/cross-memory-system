@@ -1,0 +1,196 @@
+{
+  "schema_version": "clued.model-m1-07-runtime-stability-execution-closeout/1",
+  "record_id": "M1-STAB-QWEN35-08B-PC-001-RUNTIME-STABILITY-EXECUTION-CLOSEOUT-20260920",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-07",
+  "status": "AUTHOR_SIDE_CLOSEOUT_PASS / EFFECTFUL_EXECUTION_COMPLETE / ONE_SHOT_CONSUMED / FRESH_CONTEXT_FINAL_REVIEW_PENDING",
+  "role": "EXECUTION_CLOSEOUT_AUTHOR / NOT_FRESH_CONTEXT_REVIEWER",
+  "authority": {
+    "owner_instruction": "确认授权",
+    "issued_profile_id": "M1-STAB-QWEN35-08B-PC-001-ISSUED",
+    "issued_profile_sha256": "04890ac27ca176711d51c930ed055bb318cf2b0d57adcdfaf228b4734a6f2aec",
+    "final_issuance_commit": "231c2ec88fff0935ae6e22c060765737946e48ca",
+    "owner_authorization_id": "OWNER-M1-07-FINAL-20260920T025307Z-c3aed8d8-16e6-4c65-be99-a8b638d04f15",
+    "owner_authorization_sha256": "1da5f79aafdd6d9045b85d5120f16487e896749b532f5196980e84b778b700ad",
+    "issued_at_utc": "2026-09-20T02:53:07Z",
+    "expiry": "2026-09-21T02:53:07Z",
+    "authority_effect": "M1-07_PC_RUNTIME_STABILITY_EXECUTION_ONLY"
+  },
+  "execution": {
+    "device_name": "DESK-W-591",
+    "execution_started_utc": "2026-09-20T02:58:19.5084742Z",
+    "attempt_guard_claimed_utc": "2026-09-20T02:58:20.4878862Z",
+    "execution_completed_utc": "2026-09-20T02:58:42.6610708Z",
+    "process_exit_code": 0,
+    "native_result": {
+      "pass": true,
+      "scope": "M1-07_PC_RUNTIME_STABILITY_EVIDENCE_ONLY"
+    },
+    "native_owner_sha256": "e0956d6d8194acefad85c54750b9802fe7faea648aeba5dd4408f41534e8680c",
+    "native_source_manifest_sha256": "f7bb4e269af3c3457072f68564e944c9813643b8d1bc9ba8295b572bbc8dfc52",
+    "machine_identity_sha256": "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522",
+    "model_sha256_pre": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d",
+    "model_sha256_post": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d",
+    "server_sha256_pre": "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba",
+    "server_sha256_post": "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba",
+    "server_starts": 7,
+    "ready_events": 6,
+    "process_metric_records": 17,
+    "wall_milliseconds": 23047
+  },
+  "scenario_results": {
+    "load_3_cycles": "PASS",
+    "cancel_and_post_cancel_health": "PASS",
+    "background_controller_disconnect_and_fresh_client_reconnect": "PASS",
+    "forced_crash_during_active_stream_and_restart": "PASS",
+    "post_run_digest_stability": "PASS",
+    "cleanup_no_orphan_server": "PASS"
+  },
+  "one_shot_accounting": {
+    "max_attempts": 1,
+    "attempts_used": 1,
+    "guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-STAB-QWEN35-08B-PC-001\\M1RuntimeStabilityAttemptGuard.json",
+    "guard_snapshot_sha256": "0e9067bc02e075999862b1db7e7e7d1460a0db60fee66d8bb5149da23693db09",
+    "semantics": "FIRST_EFFECTFUL_ATTEMPT_CONSUMES_PROFILE / NO_REUSE_AFTER_SUCCESS_OR_FAILURE",
+    "same_profile_retry_allowed": false,
+    "profile_effectful_execution_state": "CONSUMED"
+  },
+  "runtime_effects": {
+    "model_loaded_during_authorized_test": true,
+    "llama_server_started_during_authorized_test": true,
+    "external_bind_performed": false,
+    "hosted_provider_call_performed": false,
+    "training_performed": false,
+    "distillation_performed": false,
+    "promotion_performed": false,
+    "activation_performed": false,
+    "production_deployment_performed": false,
+    "m1_08_started": false,
+    "repository_merge_performed": false
+  },
+  "post_execution_observation": {
+    "llama_server_process_count": 0,
+    "native_owner_process_count": 0,
+    "port_18087_listener_count": 0,
+    "cleanup_verified_by_runtime_closeout": true,
+    "note": "TCP TIME_WAIT records may remain after loopback test connections; no listener or owned process remained."
+  },
+  "evidence_snapshot": {
+    "repo_directory": "development/contracts/model-program/m1/evidence/M1RuntimeStabilityExecution_20260920",
+    "artifact_count": 24,
+    "manifest": {
+      "M1RuntimeStabilityAttemptGuard.snapshot.json": {
+        "bytes": 290,
+        "sha256": "0e9067bc02e075999862b1db7e7e7d1460a0db60fee66d8bb5149da23693db09"
+      },
+      "M1RuntimeStabilityBackgroundReconnect.json": {
+        "bytes": 101,
+        "sha256": "bf7f034c0c36ec61b2eebe5f00fc1983efed305cbf31aa92c4c0e4f3d70230d5"
+      },
+      "M1RuntimeStabilityCancel.json": {
+        "bytes": 14,
+        "sha256": "63b684854bd4961bcb515b09823ea700dda69135486c5e11352bb1d7850f534e"
+      },
+      "M1RuntimeStabilityCloseout.json": {
+        "bytes": 130,
+        "sha256": "eaa37c403e31ad390a7f176af93ee7941d7aca006aeb14711adb3036abc2b382"
+      },
+      "M1RuntimeStabilityCrashRestart.json": {
+        "bytes": 14,
+        "sha256": "63b684854bd4961bcb515b09823ea700dda69135486c5e11352bb1d7850f534e"
+      },
+      "M1RuntimeStabilityDigests.json": {
+        "bytes": 189,
+        "sha256": "1d35243db407790fae0fd8b9215f1eac5cd757ceda70b677ecf50535c49183fb"
+      },
+      "M1RuntimeStabilityEvents.jsonl": {
+        "bytes": 2520,
+        "sha256": "6d619c44a0f6aae5646984778750ad31b050521d936832488958ebbb597be585"
+      },
+      "M1RuntimeStabilityLoad.json": {
+        "bytes": 25,
+        "sha256": "0d450ab0f35a9e187c35782318b1cd4555cde5336ee094c66c136ab8fab3b2db"
+      },
+      "M1RuntimeStabilityPreflight.json": {
+        "bytes": 489,
+        "sha256": "e13827b9d8209aee2bcb736da81086ddcc7fe3018e5271acd985b6372e907768"
+      },
+      "M1RuntimeStabilityProcessMetrics.jsonl": {
+        "bytes": 6582,
+        "sha256": "db4884e1f0156d047c1d34a869993165aebeeb916e5c8655cf843c7554453523"
+      },
+      "background.stderr.txt": {
+        "bytes": 3304,
+        "sha256": "4eb18ddcc012b4f7610e9d44f26eec537ab3cd2ae1453b4e04c74438cf99c109"
+      },
+      "background.stdout.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "cancel.stderr.txt": {
+        "bytes": 3632,
+        "sha256": "40c114f2aecbd31c018cf84b552188276b9cb43fb031cb06437fde0b90504fc6"
+      },
+      "cancel.stdout.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "crash-after.stderr.txt": {
+        "bytes": 3304,
+        "sha256": "a949669a719c48a2703558dfa4353b88535995f366fc579419086c2275475f06"
+      },
+      "crash-after.stdout.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "crash-before.stderr.txt": {
+        "bytes": 2725,
+        "sha256": "cb5cfa00c5a4fecbf3e187c4b1d2428ee982f2bfa498570fa4e4a10222d1c76a"
+      },
+      "crash-before.stdout.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "load-01.stderr.txt": {
+        "bytes": 3304,
+        "sha256": "7baff1fc6fa2ece721f4e27f60429f7b30736c0a10456f2cca576a229b25249c"
+      },
+      "load-01.stdout.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "load-02.stderr.txt": {
+        "bytes": 3304,
+        "sha256": "8b8d26f8476179166edff2a3e314a9b0bf94b53462dd885fff5d051e7d9f26eb"
+      },
+      "load-02.stdout.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "load-03.stderr.txt": {
+        "bytes": 3304,
+        "sha256": "6d9f07a7c230890729659586a9b78d0df8760d7d36959c7a64e4e39584be245a"
+      },
+      "load-03.stdout.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "review_scope": {
+    "review_target": "THIS CLOSEOUT COMMIT ONLY, including inherited issued profile and snapshotted execution evidence",
+    "required_verdict_target": "Whether M1-07 runtime stability effectful execution can be formally closed with 0 BLOCKER / 0 MAJOR",
+    "independent_review": "PENDING",
+    "do_not_infer": [
+      "M1-08 authorization",
+      "training authority",
+      "promotion",
+      "activation",
+      "production deployment",
+      "release"
+    ]
+  },
+  "conclusion": "AUTHOR_SIDE_CLOSEOUT_PASS / M1-07 EXECUTION EVIDENCE COMPLETE / FORMAL CLOSURE PENDING FRESH_CONTEXT INDEPENDENT FINAL REVIEW",
+  "next_gate": "FRESH_CONTEXT_READ_ONLY_INDEPENDENT_M1_07_EXECUTION_FINAL_REVIEW"
+}
