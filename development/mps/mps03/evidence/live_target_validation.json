@@ -1,0 +1,21 @@
+{
+  "schema": "clued.mps03.live-target-validation.v2",
+  "captured_on": "2026-09-20",
+  "target": "clued-auth-test/uscrdifznmlvczcekqpw",
+  "real_connection": true,
+  "primitive_existence_read_check": true,
+  "real_postgres_rollback_validation": true,
+  "formal_create_commit_path": true,
+  "same_request_replay_same_receipt": true,
+  "durable_rows_left_behind": false,
+  "live_http_bridge_durable_write_executed": false,
+  "third_party_agent_host_invoked": false,
+  "formal_primitives": {
+    "mps_issue_context_pack": true,
+    "mps_register_change_set": true,
+    "mps_issue_mutation_intent": true,
+    "mps_compute_request_fingerprint": true,
+    "mps_commit_mutation": true
+  },
+  "production_touched": false
+}

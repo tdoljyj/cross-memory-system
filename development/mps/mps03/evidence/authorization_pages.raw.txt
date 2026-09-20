@@ -1,0 +1,67 @@
+
+> clued-cloud@0.1.0 test:authorization:pages
+> node --test tests/consent-account-race.test.mjs tests/project-invitations-ui.test.mjs tests/supabase-browser.test.mjs tests/development-contexts-ui.test.mjs tests/home-project-create.test.mjs
+
+✔ late account A GET cannot overwrite B identity or selected permissions (13.0412ms)
+✔ same-account refresh preserves choice, uses fresh token, then account change blocks late POST redirect (3.5821ms)
+✔ mismatched stable subject cannot display or approve resources (3.1385ms)
+✔ explicit account switch clears state and aborts an in-flight decision (5.1665ms)
+✔ unmounted consent ignores an old denial response (5.9539ms)
+✔ password recovery uses existing home callback, prevents duplicate requests, and avoids account enumeration (5.0958ms)
+✔ password recovery rate-limit failure does not claim an email was sent (1.4492ms)
+✔ unknown password recovery result remains unknown and permits an explicit retry (2.1979ms)
+✔ unmounted recovery page ignores late acknowledgement (2.5473ms)
+✔ tri-state group checkbox isolates exact resources/environments and preserves manual choices (7.1727ms)
+✔ signed-out page has no bearer input or retired publication/bridge controls and sends no requests (4.8687ms)
+✔ late owner A list cannot populate owner B account (2.5746ms)
+✔ create selects an existing owned project, uses current human token, and confirms the actual reloaded context (3.6445ms)
+✔ unknown create survives reload and repeats the exact original operation without another key (3.9644ms)
+✔ account change clears pending context UI and prevents an old create response claiming success (3.2241ms)
+✔ mismatched reloaded result does not claim success and blocks another creation (2.4334ms)
+✔ home creates an unconfirmed project through the current authenticated Canonical contract (4.1185ms)
+✔ HTTP 200 rejected receipt preserves input and list instead of claiming success (1.3841ms)
+✔ committed receipt without a project preserves input and list instead of claiming success (0.8131ms)
+✔ retired success envelope preserves input and list instead of claiming success (1.6202ms)
+✔ HTTP failure preserves input and list instead of claiming success (2.3068ms)
+✔ lost response preserves input and list instead of claiming success (1.1112ms)
+✔ missing login or empty project name sends no request (3.2411ms)
+✔ confirm uses the current M1 PATCH operation and CAS version (1.4904ms)
+✔ start uses the current M1 PATCH operation and CAS version (1.9246ms)
+✔ pause uses the current M1 PATCH operation and CAS version (1.7407ms)
+✔ complete uses the current M1 PATCH operation and CAS version (3.8206ms)
+✔ archive selection uses the current M1 PATCH operation and CAS version (5.2855ms)
+✔ archive button uses the current M1 PATCH operation and CAS version (1.1513ms)
+✔ restore completed uses the current M1 PATCH operation and CAS version (0.8592ms)
+✔ restore archived uses the current M1 PATCH operation and CAS version (0.8388ms)
+✔ HTTP 200 rejection or mismatched/stale project never replaces the displayed project (2.6235ms)
+✔ unsupported progress and terminal direct pause never send a write (1.5639ms)
+✔ lost response retries the exact payload/key and resolves the replay receipt through its real project ID (1.5618ms)
+✔ changing the trimmed name clears the pending operation even if the original name is restored (1.2151ms)
+✔ changing accounts clears the pending creation and never reuses another subject operation (1.3274ms)
+✔ committed replay without the exact project in the refreshed list keeps its original retry key (1.032ms)
+✔ invite fragment is removed before any network call; identity changes suppress late inspect results (10.7208ms)
+✔ acceptance posts exact inspected version and verifies the returned membership before success (24.8049ms)
+✔ create unknown acknowledgement survives reload and reuses identical parameters and idempotency key (7.3322ms)
+✔ confirmed create displays only a fragment link and duplicate pending invitation needs revocation (3.2097ms)
+✔ member reduction can only remove existing actions; failed write keeps selected state without claiming success (2.8706ms)
+✔ registration invokes only existing identity service, never a memory write or automatic invitation acceptance (1.5647ms)
+✔ account, projects and home navigation plus HMR use one instance and one fixed callback policy (10.2772ms)
+✔ SSR creates no persistent session or shared browser cache (1.8011ms)
+✔ home recovery tokens are consumed once across repeated effects and module replacement (3.5911ms)
+✔ projects PKCE callback exchanges once and preserves a separate invitation fragment (1.8579ms)
+✔ malformed or rejected callback never falls back to a successful identity (1.8767ms)
+✔ a different login callback cannot silently reuse a pending identity result (3.4419ms)
+✔ all account entry pages import the shared client instead of constructing another instance (5.3225ms)
+✔ public build values select one explicit project, while absent values retain compatibility (4.5769ms)
+✔ partial public configuration and private keys fail before client creation (14.9758ms)
+✔ changed build configuration during HMR cannot silently reuse another project client (3.569ms)
+✔ actual Vite config rejects private or incomplete public values before Worker plugin loading (2.8016ms)
+✔ actual Vite config accepts a complete public pair and preserves the existing plugins (1.4459ms)
+ℹ tests 55
+ℹ suites 0
+ℹ pass 55
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 962.2409

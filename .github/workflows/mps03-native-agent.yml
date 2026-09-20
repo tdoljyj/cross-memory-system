@@ -1,0 +1,28 @@
+name: MPS-03 Native Agent
+
+on:
+  pull_request:
+    paths:
+      - "development/mps/mps03/**"
+      - "tests/mps03/**"
+      - "scripts/mps03/**"
+      - ".github/workflows/mps03-native-agent.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mps03-local-reference-and-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: MPS-03 bounded entry tests
+        run: python scripts/mps03/run_acceptance.py
+      - name: MPS-03 cross-entry process evidence
+        run: python scripts/mps03/capture_cross_entry_evidence.py
+      - name: Compile MPS-03 Python
+        run: python -m compileall -q development/mps/mps03 tests/mps03 scripts/mps03

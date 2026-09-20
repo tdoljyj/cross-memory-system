@@ -1,0 +1,38 @@
+
+> clued-cloud@0.1.0 test:authorization:transport
+> node --test tests/delegated-oauth-transport.test.mjs tests/development-context-api.test.mjs tests/mcp-authorization-errors.test.mjs
+
+CIMD (Client ID Metadata Document) is disabled: add '"compatibility_flags": ["global_fetch_strictly_public"]' to your wrangler.jsonc to enable. See: https://developers.cloudflare.com/workers/configuration/compatibility-flags/#global-fetch-strictly-public
+✔ real OAuth discovery challenges unauthenticated MCP and advertises the new issuer (38.7243ms)
+✔ PKCE and target are validated before consent or storage (12.0833ms)
+✔ consent requires the matching browser cookie and rejects cross-origin POST (28.0371ms)
+✔ two consent instances for the same client issue independent simultaneously usable grants (54.0153ms)
+✔ refresh downscoping cannot retain write capability in encrypted application props (15.7757ms)
+✔ database revocation denies existing access and refresh even when provider KV remains unchanged (13.0152ms)
+✔ context write requires an explicit write scope and unknown tools fail closed (0.2446ms)
+✔ real provider access_token revocation commits DB denial before success despite stale KV copies (11.3258ms)
+✔ real provider refresh_token revocation commits DB denial before success despite stale KV copies (13.5713ms)
+✔ wrong-client revocation cannot reach the issuer revoke RPC (16.8379ms)
+✔ denial is committed through request CAS before redirecting access_denied (12.3255ms)
+✔ failed database revoke keeps provider tokens and never reports success (18.7938ms)
+✔ streamed oversized requests without Content-Length are stopped before OAuth storage (0.8919ms)
+✔ transient authorization outage during refresh preserves the usable refresh token (11.9748ms)
+✔ API: default-off rejects and does not contact storage; tool list unchanged (36.6901ms)
+✔ API: scoped binding hash only, ordinary default, no-store and stable IDs (9.6973ms)
+✔ API: direct OAuth JWT and retired routes cannot enter successor context business RPC (2.8028ms)
+✔ API: no token, wrong origin and binding on management fail before DB (14.4361ms)
+✔ API: owner management authenticates JWT then invokes separate owner RPC (10.2258ms)
+✔ API: server authorization failure is not turned into a successful package (3.6451ms)
+✔ consumer: account/mode reset rejects a late completed old response even if transport ignores abort (1.6632ms)
+✔ consumer: unauthenticated local draft has no canonical claim or receipt (0.2876ms)
+✔ resource denials stay denied without triggering an OAuth challenge (41.9321ms)
+✔ invalid JWT still challenges authentication (3.1533ms)
+✔ missing credentials challenge before storage; authorized empty list succeeds (5.7106ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 489.6408

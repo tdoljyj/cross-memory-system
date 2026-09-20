@@ -1,0 +1,32 @@
+
+> clued-cloud@0.1.0 test:authorization:invitations
+> node --test --test-force-exit tests/project-invitations-db.test.mjs
+
+▶ Project invitations v1.3: real PostgreSQL qualification and actor boundaries
+  ✔ human owner setup creates only owned development contexts with stable receipts (25.7861ms)
+  ✔ owner invitations bind exact resources and verified recipient with truthful token replay (25.163ms)
+  ✔ a new developer verifies email and accepts without creating any personal memory (57.5677ms)
+  ✔ membership actions only shrink with CAS; revoke never becomes self-service grant (10.6384ms)
+  ✔ invited reader uses actual actor identity and only the exact development context (62.0233ms)
+  ✔ member revoke/reinvite never revives an old Binding; editor writes preserve true owner and actor (31.847ms)
+  ✔ separate close and feedback consent preserves real actors and own feedback only (39.7771ms)
+  ✔ owned context feedback and closure follow the same explicit action semantics (35.2957ms)
+  ✔ context-only restore is a scoped capability projection without Canonical sessions or checkpoints (35.7654ms)
+  ✔ owner grant revocation removes displayed effective capabilities and scoped restore (21.3252ms)
+  ✔ invited development history uses existing after_cursor and exact environment filtering (13.4691ms)
+  ✔ qualification reduction waits for prior business commit, then immediately removes write (134.996ms)
+  ✔ qualification revocation committed first blocks a queued write without side effects (118.5853ms)
+  ✔ invitation expiry, verified identity change and cancel/accept races fail closed (155.4459ms)
+  ✔ queued member work validates context ownership after the ownership change commits (110.8466ms)
+  ✔ offline administrator bootstrap is one-time, audited and never grants project or memory access (12.0308ms)
+  ✔ a historical context owner loses access when current project ownership changes (9.9237ms)
+  ✔ invitation secrets and private actor helpers are not public data (6.4085ms)
+✔ Project invitations v1.3: real PostgreSQL qualification and actor boundaries (5338.1662ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5473.0757

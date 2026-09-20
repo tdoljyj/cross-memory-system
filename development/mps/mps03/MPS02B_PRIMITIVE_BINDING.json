@@ -1,0 +1,22 @@
+{
+  "parent_contract": {
+    "document_id": "CLUED-UCR-UVC-MPS-SCOPE-ACCEPTANCE-v0.1.2-20260916",
+    "raw_markdown_sha256": "95a356fb21c57c016ec8cec25c63e395c19cacc86284ba73dcaf51eaa1917066"
+  },
+  "mps02b_core_final_review_package_sha256": "62367208c5a0e87b11431a0cb90defdcdc0d59d12e603762ee4e98256cf1ae69",
+  "mps02b_core_review_verdict": "PASS_MPS02B_CORE_FINAL_REVIEW",
+  "mps02b_core_close": "PASS",
+  "required_postgres_primitives": [
+    "clued_private.mps_issue_context_pack(text,text,text,text,jsonb,text)",
+    "clued_private.mps_register_change_set(text,text,jsonb)",
+    "clued_private.mps_issue_mutation_intent(jsonb)",
+    "clued_private.mps_compute_request_fingerprint(jsonb,jsonb)",
+    "clued_private.mps_commit_mutation(text,text,text,jsonb)"
+  ],
+  "nonproduction_target": "clued-auth-test/uscrdifznmlvczcekqpw",
+  "note": "MPS-03 entry code must reuse these server-side MPS-02A/02B primitives rather than create an independent Current/CAS/Receipt authority.",
+  "source_package_sha256": "d9404c40322bfb78dea7b0015dbee012a49e2463c4a97be38d4b6fca09ca9ab9",
+  "mps02a_source_sha256": "d9a64c43dcd1529a7a0f26bb61df68b5cb9d881dedb4ee21b5b0bd6e43eabea7",
+  "mps02b_source_sha256": "9f2b23349075aecac474300420e7a9dd02749bf8ddfd3751047876ae448296af",
+  "repository_policy": "binding-metadata-only; MPS-02A/02B SQL is not duplicated into MPS-03 paths"
+}

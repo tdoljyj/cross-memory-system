@@ -1,0 +1,10 @@
+{
+  "validation": {
+    "ok": true,
+    "mode": "REAL_POSTGRES_ROLLBACK_VALIDATION",
+    "target": "clued-auth-test/uscrdifznmlvczcekqpw",
+    "durable_rows_left_behind": false,
+    "formal_create_commit_path": true,
+    "same_request_replay_same_receipt": true
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "schema": "clued.mps03.cross-entry-evidence.v1",
+  "captured_at_ns": 1789863534670351900,
+  "qualification": "implementation-candidate-local-reference-backend",
+  "g5_real_third_party_host_pass_claimed": false,
+  "processes": {
+    "canonical_gateway_pid": 17764,
+    "native_entry_pid": 22504,
+    "agent_host_adapter_pid": 28936,
+    "all_distinct": true
+  },
+  "chain_1_native_create_agent_read": {
+    "object_id": "obj_b5e3a8a263a748a8a92d52e4f019581d",
+    "native_revision_id": "rv_371f92b6de964b2da409f181b6957552",
+    "agent_revision_id": "rv_371f92b6de964b2da409f181b6957552",
+    "same_revision": true,
+    "same_adoption": true
+  },
+  "chain_2_agent_proposal_native_confirm": {
+    "proposal_id": "prop_8bfb4b8cb5a94b4aa414fe1e0b1d3874",
+    "proposal_digest": "ddba272de4a7e511cf333829a26f365a75300668979f9a1d7ff1df363f387a37",
+    "receipt_id": "rc_07bdd67b513c4b9daa1e325670d47e59",
+    "committed_revision_id": "rv_cba971ff22184e5d9188123fa741b0ad",
+    "committed_adoption_id": "ad_43d3dc7413d8402cab1d70fc771eeb78",
+    "ok": true
+  },
+  "chain_3_native_confirm_agent_continue": {
+    "native_revision_id": "rv_cba971ff22184e5d9188123fa741b0ad",
+    "agent_revision_id": "rv_cba971ff22184e5d9188123fa741b0ad",
+    "native_adoption_id": "ad_43d3dc7413d8402cab1d70fc771eeb78",
+    "agent_adoption_id": "ad_43d3dc7413d8402cab1d70fc771eeb78",
+    "same_revision": true,
+    "same_adoption": true,
+    "body": {
+      "items": [
+        "walk",
+        "coffee"
+      ]
+    }
+  },
+  "all_required_local_chains_pass": true
+}
