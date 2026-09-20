@@ -1,0 +1,70 @@
+{
+  "schema_version": "clued.model-m1-stage-successor-adoption-receipt/1",
+  "record_id": "M1-STAGE-ENTRY-v1.0.3-OWNER-ADOPTION-20260920",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "date": "2026-09-20",
+  "status": "OWNER_ADOPTED / M1_07_FORMALLY_CLOSED / M1_08_PREPARATION_FRONTIER_ESTABLISHED / EFFECTFUL_EXECUTION_NOT_AUTHORIZED",
+  "owner_authorization": {
+    "source": "CURRENT_CONVERSATION",
+    "owner_message": "正式接受 d91b7a6418afa811530ca39bb1fe43f322ccc375 的独立终审 PASS，将 Clued 第一方模型 M1-07 Runtime Stability 标记为 CLOSED / COMPLETED；随后处理 PR #270 的正式基线合并，并重新计算 Program Frontier，进入 M1-08 Runtime Lifecycle Smoke 的准备阶段。不得由此自动授权训练、蒸馏、promotion、activation、release 或 production deployment。",
+    "interpretation": "ACCEPT_M1_07_CLOSEOUT / MERGE_PR_270 / ADVANCE_TO_M1_08_PREPARATION_ONLY"
+  },
+  "m1_07_acceptance": {
+    "reviewed_exact_head": "d91b7a6418afa811530ca39bb1fe43f322ccc375",
+    "verdict": "PASS / M1_07_RUNTIME_STABILITY_FORMAL_CLOSEOUT_ACCEPTABLE",
+    "blocker_count": 0,
+    "major_count": 0,
+    "minor_count": 0,
+    "closeout_sha256": "1896a9af5a73136cd1f99619eb1296394f261f049271bff5108f0bb3f4090080",
+    "pr": 270,
+    "formal_baseline_merge_commit": "0e31b8a3b7da55bf9723a3d0650081ef98b5e85b",
+    "status": "CLOSED / COMPLETED"
+  },
+  "successor": {
+    "path": "../governance/M1StageEntryAuthorization.v1.0.3.json",
+    "git_blob_sha1": "d9df0260d62f7cbc99b251036c00abb485f666bc",
+    "predecessor_path": "../governance/M1StageEntryAuthorization.v1.0.2.json",
+    "predecessor_git_blob_sha1": "51d00b12935e84b93ce19693e56387b67556ad95",
+    "bound_plan_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+    "creation_commit": "a0a1073ad0aad20c4adb4ee3a7b59f78bd683267"
+  },
+  "frontier_recalculation": {
+    "previous_frontier": "M1-07_RUNTIME_STABILITY",
+    "completed_item": "M1-07",
+    "new_frontier": "M1-08_RUNTIME_LIFECYCLE_SMOKE_PREPARATION",
+    "m1_08_progression_gate_satisfied": true,
+    "allowed_now": [
+      "M1-08_CONTRACT_PREPARATION",
+      "M1-08_EXACT_EXPERIMENT_PROFILE_PREPARATION",
+      "M1-08_EVIDENCE_REQUIREMENTS_PREPARATION",
+      "M1-08_ALLOWED_OUTPUTS_AND_STOP_CONDITIONS_PREPARATION",
+      "FRESH_CONTEXT_REVIEW_PREPARATION"
+    ],
+    "not_allowed_now": [
+      "REAL_INSTALL_EXECUTION",
+      "REAL_UPGRADE_EXECUTION",
+      "REAL_ROLLBACK_EXECUTION",
+      "MODEL_OR_RUNTIME_MUTATION_OUTSIDE_SEPARATELY_AUTHORIZED_PROFILE"
+    ]
+  },
+  "hard_boundaries": {
+    "training_authorized": false,
+    "continued_pretraining_authorized": false,
+    "sft_authorized": false,
+    "distillation_authorized": false,
+    "preference_training_authorized": false,
+    "promotion_authorized": false,
+    "activation_authorized": false,
+    "release_authorized": false,
+    "production_deployment_authorized": false,
+    "procurement_authorized": false,
+    "budget_authorized": false
+  },
+  "repository_state": {
+    "base_commit": "0e31b8a3b7da55bf9723a3d0650081ef98b5e85b",
+    "working_branch": "model-program/m1-08-preparation-20260920",
+    "authority_effect": "GOVERNANCE_FRONTIER_SUCCESSOR_ONLY / NO_EFFECTFUL_MODEL_OR_RUNTIME_ACTION"
+  },
+  "next_gate": "PREPARE_AND_REVIEW_EXACT_M1-08_RUNTIME_LIFECYCLE_EXPERIMENT_PROFILE / OWNER_AUTHORIZATION_REQUIRED_BEFORE_ANY_EFFECTFUL_INSTALL_UPGRADE_OR_ROLLBACK"
+}
