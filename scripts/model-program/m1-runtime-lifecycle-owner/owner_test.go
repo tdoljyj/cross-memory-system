@@ -176,7 +176,7 @@ func TestServerLaunchIsExactAndSlotDerived(t *testing.T) {
 	l := serverLaunch(slot, env)
 	if !samePath(l.executable, filepath.Join(slot,"payload","runtime","b11033-vulkan","llama-server.exe")) { t.Fatal(l.executable) }
 	if !samePath(l.cwd, filepath.Join(slot,"payload","runtime","b11033-vulkan")) { t.Fatal(l.cwd) }
-	if len(l.argv) != 23 || l.argv[3] != "--offline" || l.argv[5] != "127.0.0.1" || l.argv[7] != "18088" || l.argv[19] != "--device" || l.argv[20] != "none" {
+	if len(l.argv) != 22 || l.argv[3] != "--offline" || l.argv[5] != "127.0.0.1" || l.argv[7] != "18088" || l.argv[19] != "--device" || l.argv[20] != "none" {
 		t.Fatalf("argv=%#v", l.argv)
 	}
 }
