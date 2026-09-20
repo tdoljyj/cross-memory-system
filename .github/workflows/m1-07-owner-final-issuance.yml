@@ -1,0 +1,111 @@
+name: M1-07 Owner Final Issuance
+
+on:
+  push:
+    branches:
+      - model-program/m1-07-final-issuance-20260920
+    paths:
+      - .github/workflows/m1-07-owner-final-issuance.yml
+
+permissions:
+  contents: write
+
+jobs:
+  issue-on-enrolled-owner-device:
+    if: >-
+      github.event.before == '9eeab66567f57000ac6748a01209d0424f3189bb' &&
+      github.event.head_commit.message == 'model-program: authorize M1-07 final issuance on DESK-W-591'
+    runs-on: [self-hosted, Windows, X64, site-company, trust-internal, cap-python312]
+    timeout-minutes: 15
+    steps:
+      - name: Sign, validate-only, and commit exact issued profile
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PYTHON: python.exe
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+
+          if ($env:COMPUTERNAME.ToUpperInvariant() -ne 'DESK-W-591') {
+            throw 'Final Issuance must run on DESK-W-591'
+          }
+          if (@(Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue).Count -ne 0) {
+            throw 'llama-server must be absent before Final Issuance'
+          }
+          $guard = 'C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-STAB-QWEN35-08B-PC-001\M1RuntimeStabilityAttemptGuard.json'
+          if (Test-Path -LiteralPath $guard) {
+            throw 'M1-07 attempt guard already exists; issuance fails closed'
+          }
+
+          $work = Join-Path $env:RUNNER_TEMP ('m107-final-issuance-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path -LiteralPath $work) {
+            throw 'fresh issuance workspace required'
+          }
+          New-Item -ItemType Directory -Path $work | Out-Null
+          Set-Location $work
+
+          $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes('x-access-token:' + $env:GITHUB_TOKEN))
+          $header = 'AUTHORIZATION: basic ' + $basic
+          git init --quiet
+          git remote add origin ('https://github.com/' + $env:GITHUB_REPOSITORY + '.git')
+          git -c "http.extraheader=$header" fetch --quiet --depth=1 origin $env:GITHUB_SHA
+          git checkout --quiet --detach FETCH_HEAD
+          if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) {
+            throw 'workflow commit checkout drift'
+          }
+          git merge-base --is-ancestor d0cf8836b1553f4d1b2239dba6d5a1b4e4aecb7b HEAD
+          if ($LASTEXITCODE -ne 0) {
+            throw 'reviewed exact head is not an ancestor'
+          }
+
+          $candidate = 'development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.owner-root-pinned.candidate.json'
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $candidate).Hash.ToLowerInvariant() -ne '05a3a6cd1a7956617d906ba7b612cdd5c6436d2ff40195d8cdb1647035cd7d90') {
+            throw 'candidate digest drift'
+          }
+
+          $validationRoot = 'C:\Users\Public\Clued\Validation'
+          $native = @(
+            Get-ChildItem -LiteralPath $validationRoot -Filter 'm1-07-owner.exe' -File -Recurse -ErrorAction SilentlyContinue |
+              Where-Object { (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant() -eq 'e0956d6d8194acefad85c54750b9802fe7faea648aeba5dd4408f41534e8680c' } |
+              Sort-Object FullName
+          )
+          if ($native.Count -lt 1) {
+            throw 'exact reviewed native owner binary not found under the bounded validation root'
+          }
+
+          $issued = 'development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.issued.json'
+          $receipt = 'development/contracts/model-program/m1/evidence/M1RuntimeOwnerFinalIssuanceReceipt_20260920.json'
+          & $env:PYTHON scripts/model-program/issue_m1_07_final_profile.py `
+            --candidate $candidate `
+            --output $issued `
+            --receipt $receipt `
+            --native-owner $native[0].FullName `
+            --python-facade scripts/model-program/m1_runtime_stability_pc.py `
+            --expiry-hours 24 `
+            --reviewed-head d0cf8836b1553f4d1b2239dba6d5a1b4e4aecb7b
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Final Issuance signer failed'
+          }
+
+          if (@(Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue).Count -ne 0) {
+            throw 'llama-server appeared during Final Issuance'
+          }
+          if (Test-Path -LiteralPath $guard) {
+            throw 'attempt guard was created during Final Issuance'
+          }
+          $changed = @(git status --porcelain | ForEach-Object { $_.Substring(3) } | Sort-Object)
+          $expected = @($issued, $receipt) | Sort-Object
+          if (($changed -join "`n") -ne ($expected -join "`n")) {
+            throw 'unexpected repository mutation during Final Issuance'
+          }
+
+          git add -- $issued $receipt
+          $staged = @(git diff --cached --name-only | Sort-Object)
+          if (($staged -join "`n") -ne ($expected -join "`n")) {
+            throw 'unexpected staged mutation during Final Issuance'
+          }
+          git -c user.name='AI@DESK-W-591' -c user.email='ai@clued.local' commit --quiet -m 'model-program: issue Owner-signed M1-07 profile'
+          git -c "http.extraheader=$header" push --quiet origin ('HEAD:refs/heads/' + $env:GITHUB_REF_NAME)
+
+          Write-Output 'PASS: Owner Final Issuance completed; no model execution; no PR merge'
