@@ -114,5 +114,15 @@
     "REAL_RUNTIME_LIFECYCLE_SMOKE_EXECUTION"
   ],
   "next_gate": "FRESH_CONTEXT / READ_ONLY / REVIEWER_NOT_MODIFIER / INDEPENDENT M1-08 EFFECTFUL OWNER IMPLEMENTATION FINAL REVIEW",
-  "authority_effect": "NONE / IMPLEMENTATION PREPARATION AND NON_EFFECTFUL QUALIFICATION ONLY"
+  "authority_effect": "NONE / IMPLEMENTATION PREPARATION AND NON_EFFECTFUL QUALIFICATION ONLY",
+  "post_qualification_read_only_machine_state": {
+    "checked_device": "DESK-W-591",
+    "attempt_guard_exists": false,
+    "guard_parent_exists": false,
+    "runtime_test_root_exists": false,
+    "production_evidence_path_exists": false,
+    "llama_server_process_count": 0,
+    "loopback_127_0_0_1_port_18088_listener_count": 0,
+    "semantics": "READ_ONLY_POST_QUALIFICATION_OBSERVATION / CONFIRMS NO REAL M1_08 EFFECTFUL EXECUTION OCCURRED"
+  }
 }
