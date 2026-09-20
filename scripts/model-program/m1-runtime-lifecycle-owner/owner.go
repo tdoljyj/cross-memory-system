@@ -41,6 +41,7 @@ type platform interface {
 	physical() (string, string, error)
 	windowsDirectory() (string, error)
 	pathIsReparse(string) (bool, error)
+	hardlinkCount(string) (uint32, error)
 	namedStreams(string) ([]string, error)
 	atomicPublish(temp, dst string, replace bool) error
 	start(launchEnvelope, io.Writer, io.Writer) (process, error)
