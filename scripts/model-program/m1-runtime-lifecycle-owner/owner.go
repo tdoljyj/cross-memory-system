@@ -21,6 +21,15 @@ var productionLayout = layout{
 	testRoot: testRoot, tempRoot: tempRoot, guard: attemptGuardPath, guardParent: guardParentPath, evidence: evidenceDir,
 }
 
+type directoryIdentity struct {
+	canonicalPath            string
+	filesystemType           string
+	volumeSerial             string
+	fileID                   string
+	ownerSID                 string
+	securityDescriptorSHA256 string
+}
+
 type launchEnvelope struct {
 	executable string
 	argv       []string
@@ -41,6 +50,8 @@ type platform interface {
 	physical() (string, string, error)
 	windowsDirectory() (string, error)
 	pathIsReparse(string) (bool, error)
+	finalPath(string) (string, error)
+	directoryIdentity(string) (directoryIdentity, error)
 	hardlinkCount(string) (uint32, error)
 	namedStreams(string) ([]string, error)
 	atomicPublish(temp, dst string, replace bool) error
