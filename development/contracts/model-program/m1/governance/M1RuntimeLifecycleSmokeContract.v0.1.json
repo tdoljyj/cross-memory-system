@@ -114,18 +114,41 @@
   },
   "activation_protocol": {
     "current_manifest_path": "state\\current.json",
-    "update_method": "WRITE_NEW_TEMP_FILE / FLUSH / ATOMIC_REPLACE_WITHIN_SAME_VOLUME",
+    "update_method": "SAME_DIRECTORY_TEMP_FILE / CREATE_NEW / WRITE_CANONICAL_JSON / FLUSH_FILE_BUFFERS / CLOSE / REOPEN_AND_HASH_VERIFY / ONE_NATIVE_SAME_VOLUME_RENAME_OR_REPLACE_PRIMITIVE / NEVER_DELETE_CURRENT_THEN_RENAME",
     "active_revision_must_reference_verified_slot_only": true,
     "partial_slot_activation_forbidden": true,
     "current_manifest_fields": [
       "profile_id",
       "active_revision_id",
+      "previous_active_revision_id",
+      "transition_index",
       "slot_manifest_sha256",
       "payload_model_sha256",
       "payload_runtime_asset_sha256",
       "activated_at_utc"
     ],
-    "rollback_source": "PREVIOUSLY_VERIFIED_REVISION_A_ONLY"
+    "rollback_source": "PREVIOUSLY_VERIFIED_REVISION_A_ONLY",
+    "initial_publish": "ABSENT_TO_A: DESTINATION_MUST_BE_ABSENT_AT_LAST_CHECK; USE_SINGLE_SAME_VOLUME_NATIVE_RENAME_WITH_NO_OVERWRITE; UNEXPECTED_EXISTENCE_FAILS_CLOSED",
+    "replacement_publish": "A_TO_B_AND_B_TO_A: USE_SINGLE_SAME_VOLUME_NATIVE_REPLACE_PRIMITIVE; OLD_OR_NEW_COMPLETE_CURRENT_MAY_EXIST_ACROSS_CRASH, BUT PARTIAL_JSON_OR_DELETE_THEN_GAP_IS_FORBIDDEN",
+    "post_publish_verification": "REOPEN_CURRENT_WITH_NO_REPARSE_FOLLOW / PARSE_STRICT_JSON / RECOMPUTE_SHA256 / RESOLVE_REFERENCED_SLOT / REVERIFY_SLOT_MANIFEST_BEFORE_SERVER_START",
+    "fault_injection_requirement_before_final_issuance": "STATIC_OR_NEGATIVE_TESTS_MUST_PROVE_CURRENT_IS_NEVER_PARTIAL_AND_NO_IMPLEMENTATION_PATH_DELETES_CURRENT_BEFORE_REPLACEMENT",
+    "expected_transition_indices": [
+      {
+        "transition_index": 1,
+        "from": null,
+        "to": "M1-LIFE-A"
+      },
+      {
+        "transition_index": 2,
+        "from": "M1-LIFE-A",
+        "to": "M1-LIFE-B"
+      },
+      {
+        "transition_index": 3,
+        "from": "M1-LIFE-B",
+        "to": "M1-LIFE-A"
+      }
+    ]
   },
   "scenario_contract": [
     {
@@ -229,7 +252,23 @@
       "n_predict": 8,
       "temperature": 0,
       "stream": false
-    }
+    },
+    "exact_server_argv_semantics": [
+      "ABSOLUTE_SLOT_LLAMA_SERVER_EXE",
+      "--model ABSOLUTE_ACTIVE_SLOT_Q8_0_MODEL",
+      "--offline",
+      "--host 127.0.0.1",
+      "--port 18088",
+      "--no-webui",
+      "--threads 2",
+      "--threads-batch 2",
+      "--ctx-size 2048",
+      "--parallel 1",
+      "--n-gpu-layers 0",
+      "--device none",
+      "--no-op-offload"
+    ],
+    "configuration_sources": "PROFILE_BOUND_ARGV_ONLY / CHILD_ENV_ALLOWLIST / NO_LLAMA_ARG / NO_PROGRAMDATA_APPDATA_CONFIG"
   },
   "one_shot_execution": {
     "max_attempts": 1,
@@ -239,9 +278,9 @@
   },
   "failure_and_cleanup": {
     "fail_closed": true,
-    "on_partial_install": "DO_NOT_ACTIVATE_PARTIAL_SLOT / REMOVE_PARTIAL_TEST_SLOT_IF_SAFE / PRESERVE_EVIDENCE",
-    "on_partial_upgrade": "KEEP_LAST_VERIFIED_A_ACTIVE / NEVER_POINT_CURRENT_TO_PARTIAL_B / REMOVE_PARTIAL_B_IF_SAFE / PRESERVE_EVIDENCE",
-    "on_rollback_failure": "DO_NOT_CLAIM_ROLLBACK_SUCCESS / STOP_SERVER / PRESERVE_LAST_VERIFIED_ACTIVE_STATE_IF_SAFE / PRESERVE_EVIDENCE",
+    "on_partial_install": "BEFORE_A_ACTIVATION: DO_NOT_ACTIVATE_PARTIAL_A / REMOVE_PARTIAL_A_IF_SAFE / PRESERVE_EVIDENCE. AFTER_A_ACTIVATION_BUT_BEFORE_INSTALL_PROBE_PASS: STOP_PROFILE_SERVER, REMOVE_CURRENT_IF_AND_ONLY_IF_IT_STILL_REFERENCES_UNVERIFIED_A, PRESERVE_RUNTIME_ROOT_FOR_FORENSICS_UNLESS_SAFE_CLEANUP_IS_EXACTLY_PROVEN, PRESERVE_EVIDENCE, DO_NOT_CLAIM_INSTALL_SUCCESS.",
+    "on_partial_upgrade": "BEFORE_B_ACTIVATION: KEEP_VERIFIED_A_ACTIVE / NEVER_POINT_CURRENT_TO_PARTIAL_B. AFTER_B_ACTIVATION_BUT_BEFORE_UPGRADE_PROBE_PASS: STOP_PROFILE_SERVER, ATOMICALLY_RESTORE_PREVIOUSLY_VERIFIED_A_IF_A_REVERIFIES_EXACT, RECORD_RECOVERY; OTHERWISE_FAIL_CLOSED_WITH_NO_SUCCESS_CLAIM. PRESERVE_EVIDENCE.",
+    "on_rollback_failure": "BEFORE_A_REACTIVATION: KEEP_VERIFIED_B_ACTIVE. AFTER_A_REACTIVATION_BUT_BEFORE_ROLLBACK_PROBE_PASS: STOP_PROFILE_SERVER; IF_B_REVERIFIES_EXACT, ATOMICALLY_RESTORE_PREVIOUSLY_VERIFIED_B_AND_RECORD_RECOVERY; OTHERWISE FAIL_CLOSED. DO_NOT_CLAIM_ROLLBACK_SUCCESS / PRESERVE_EVIDENCE.",
     "always": [
       "TERMINATE_ONLY_PROFILE_OWNED_SERVER",
       "VERIFY_PORT_18088_NOT_LISTENING",
@@ -250,7 +289,8 @@
       "PRESERVE_PERSISTENT_ATTEMPT_GUARD",
       "PRESERVE_EVIDENCE_OUTPUT"
     ],
-    "successful_closeout_final_machine_state": "TEST_OWNED_LIFECYCLE_RUNTIME_ROOT_REMOVED / PERSISTENT_ATTEMPT_GUARD_RETAINED / EVIDENCE_OUTPUT_RETAINED / SOURCE_PACKAGE_UNCHANGED / NO_SERVER / NO_PORT_18088_LISTENER"
+    "successful_closeout_final_machine_state": "TEST_OWNED_LIFECYCLE_RUNTIME_ROOT_REMOVED / PERSISTENT_ATTEMPT_GUARD_RETAINED / EVIDENCE_OUTPUT_RETAINED / SOURCE_PACKAGE_UNCHANGED / NO_SERVER / NO_PORT_18088_LISTENER",
+    "failure_closeout_rule": "ON_ANY_FAILURE THE ATTEMPT_GUARD_REMAINS CONSUMED. DO NOT REQUIRE DELETION OF THE RUNTIME TEST ROOT IF THAT WOULD DESTROY FORENSIC STATE; INSTEAD REQUIRE NO_PROFILE_OWNED_SERVER_AND_NO_PORT_18088_LISTENER_AND_EXACT_EVIDENCE_OF_REMAINING_TEST_OWNED_STATE."
   },
   "allowed_operations_if_separately_issued": [
     "READ_EXACT_LOCAL_M1PKG002_SOURCE",
@@ -352,7 +392,14 @@
     "EXPLICIT_NO_BINARY_VERSION_MIGRATION_CLAIM",
     "NO_M1_09_TRAINING_PROMOTION_ACTIVATION_RELEASE_OR_PRODUCTION_AUTHORITY",
     "PERSISTENT_ATTEMPT_GUARD_SURVIVES_SUCCESSFUL_RUNTIME_ROOT_CLEANUP",
-    "PERSISTENT_EVIDENCE_OUTPUT_SURVIVES_SUCCESSFUL_RUNTIME_ROOT_CLEANUP"
+    "PERSISTENT_EVIDENCE_OUTPUT_SURVIVES_SUCCESSFUL_RUNTIME_ROOT_CLEANUP",
+    "WINDOWS_PATH_COMPONENT_REPARSE_POINT_JUNCTION_SYMLINK_MOUNTPOINT_REJECTION_FOR_EFFECTFUL_WRITE_ROOTS",
+    "RECURSIVE_CLEANUP_NEVER_FOLLOWS_REPARSE_POINTS",
+    "EXACT_SLOT_LAYOUT_AND_PER_FILE_POST_COPY_VERIFICATION",
+    "ATOMIC_CURRENT_PUBLISH_INITIAL_AND_REPLACEMENT_SEMANTICS",
+    "CURRENT_TRANSITION_INDEX_SEQUENCE_1_2_3",
+    "FAILURE_RECOVERY_AFTER_POST_ACTIVATION_PROBE_FAILURE",
+    "BOUND_SOURCE_PAYLOAD_SET_PRE_POST_ATTESTATION_WITHOUT_WHOLE_PACKAGE_ROOT_OVERCLAIM"
   ],
   "stop_conditions": [
     "PROFILE_NOT_ISSUED",
@@ -383,7 +430,12 @@
     "ORPHAN_PROFILE_OWNED_SERVER_AFTER_CLEANUP",
     "FINAL_TEST_RUNTIME_STATE_NOT_REMOVED",
     "MAX_ATTEMPTS_EXCEEDED",
-    "MAX_WALL_TIME_EXCEEDED"
+    "MAX_WALL_TIME_EXCEEDED",
+    "REPARSE_POINT_OR_PATH_ESCAPE_DETECTED",
+    "UNEXPECTED_PREEXISTING_SLOT_OR_EVIDENCE_ENTRY",
+    "SOURCE_BOUND_PAYLOAD_REPARSE_OR_IDENTITY_DRIFT",
+    "CURRENT_TRANSITION_INDEX_OR_PREVIOUS_REVISION_MISMATCH",
+    "POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION"
   ],
   "release_ceiling": "M1_08_PC_RUNTIME_LIFECYCLE_SMOKE_EVIDENCE_ONLY / LIFECYCLE_MECHANICS_ONLY / NO_BINARY_MIGRATION_CLAIM / NO_M1_09 / NO_TRAINING / NO_PROMOTION / NO_ACTIVATION / NO_RELEASE / NO_PRODUCTION",
   "final_issuance_gate": {
@@ -397,7 +449,11 @@
       "BIND_FINAL_ISSUED_PROFILE_ID",
       "BIND_FINAL_EXPIRY",
       "BIND_OWNER_AUTHORIZATION_ID_AND_CANONICAL_SHA256",
-      "CONFIRM_TEST_ROOT_AND_EVIDENCE_OUTPUT_DIR_ABSENT_AND_PORT_18088_FREE_IMMEDIATELY_BEFORE_ATTEMPT"
+      "CONFIRM_TEST_ROOT_AND_EVIDENCE_OUTPUT_DIR_ABSENT_AND_PORT_18088_FREE_IMMEDIATELY_BEFORE_ATTEMPT",
+      "NEGATIVE_TESTS_REJECT_REPARSE_POINT_JUNCTION_SYMLINK_AND_PATH_ESCAPE_CASES",
+      "NEGATIVE_TESTS_PROVE_RECURSIVE_CLEANUP_NEVER_TRAVERSES_REPARSE_POINT",
+      "FAULT_INJECTION_TESTS_PROVE_CURRENT_PUBLISH_IS_OLD_OR_NEW_COMPLETE_JSON_NEVER_PARTIAL_OR_MISSING_DUE_TO_DELETE_THEN_RENAME",
+      "FAULT_INJECTION_TESTS_PROVE_POST_ACTIVATION_PROBE_FAILURE_RECOVERS_LAST_VERIFIED_REVISION_OR_FAILS_CLOSED"
     ]
   },
   "authority_effect": "NONE / CONTRACT_PREPARATION_ONLY",
@@ -411,6 +467,83 @@
       "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001",
       "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001",
       "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-001"
+    ]
+  },
+  "path_safety": {
+    "canonical_root_policy": "ALL_EFFECTFUL_WRITES_MUST_REMAIN_UNDER_ONE_OF_THE_THREE_EXACT_WRITE_ROOTS / CASE_INSENSITIVE_WINDOWS_CANONICAL_PATH_PREFIX_CHECK_AFTER_HANDLE_RESOLUTION",
+    "exact_write_roots": [
+      "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001",
+      "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001",
+      "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-001"
+    ],
+    "writable_ancestor_rule": "FROM_C:\\Users\\Public\\Clued\\ModelProgram\\M1_DOWN_TO_EACH_EXACT_WRITE_ROOT, EVERY_EXISTING_COMPONENT_MUST_BE_A_REAL_DIRECTORY_AND_MUST_NOT_BE_A_REPARSE_POINT_OR_JUNCTION_OR_SYMLINK_OR_MOUNT_POINT",
+    "created_entry_rule": "CREATE_NEW_ONLY_FOR_NEW_FILES_AND_DIRECTORIES / REJECT_PREEXISTING_UNEXPECTED_ENTRIES / REJECT_REPARSE_POINTS / NO_CALLER_SUPPLIED_PATHS",
+    "slot_file_rule": "COPIED_PAYLOAD_FILES_MUST_BE_NEW_REGULAR_FILES / NO_HARDLINKS / NO_SYMLINKS / NO_REPARSE_POINTS / VERIFY_SIZE_AND_SHA256_AFTER_CLOSE",
+    "recursive_delete_rule": "DELETE_ONLY_ENTRIES_ENUMERATED_BENEATH_EXACT_TEST_ROOT / NEVER_FOLLOW_OR_RECURSE_THROUGH_REPARSE_POINTS / ABORT_ON_ANY_UNEXPECTED_ENTRY_OR_PATH_ESCAPE",
+    "source_rule": "SOURCE_ROOT_IS_READ_ONLY_INPUT / NEVER_OPEN_SOURCE_PAYLOAD_WITH_WRITE_OR_DELETE_ACCESS / REJECT_SOURCE_REPARSE_DRIFT_WITHIN_BOUND_PAYLOAD_SET",
+    "evidence_rule": "EVIDENCE_DIR_MUST_BE_NEW / EVIDENCE_FILES_CREATE_NEW_ONLY / EVIDENCE_IS_NEVER_PART_OF_RUNTIME_ROOT_CLEANUP",
+    "guard_rule": "ATTEMPT_GUARD_CREATE_NEW_AT_EXACT_PERSISTENT_PATH / NEVER_DELETE_OR_OVERWRITE_GUARD"
+  },
+  "source_payload_attestation": {
+    "semantics": "BOUND_PAYLOAD_SET_ONLY / NOT_WHOLE_M1PKG002_DIRECTORY_CLAIM",
+    "exact_entries": [
+      {
+        "role": "MODEL",
+        "relative_path": "packages\\Qwen3.5-0.8B-Q8_0.gguf",
+        "bytes": 833592320,
+        "sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
+      },
+      {
+        "role": "RUNTIME_ARCHIVE",
+        "relative_path": "runtime\\llama-b11033-bin-win-vulkan-x64.zip",
+        "bytes": 31766410,
+        "sha256": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2"
+      },
+      {
+        "role": "RUNTIME_EXTRACTED_TREE",
+        "relative_path": "runtime\\b11033-vulkan",
+        "tree_semantics": "EXACT_ARCHIVE_ENTRY_FILE_SET_AND_PER_FILE_SIZE_SHA256_MATCH / NO_EXTRA_MISSING_OR_MUTATED_FILES"
+      }
+    ],
+    "required_checks": [
+      "PRE_ATTEMPT_BOUND_PAYLOAD_ATTESTATION",
+      "BEFORE_EACH_SLOT_COPY_SOURCE_ENTRY_RECHECK_IF_PREVIOUS_CHECK_CAN_BE_STALE",
+      "POST_SCENARIO_BOUND_PAYLOAD_ATTESTATION",
+      "FINAL_POST_CLEANUP_BOUND_PAYLOAD_ATTESTATION"
+    ],
+    "whole_package_root_unchanged_claim": false
+  },
+  "slot_layout": {
+    "A": {
+      "manifest": "revisions\\A\\manifest.json",
+      "model": "revisions\\A\\payload\\model\\Qwen3.5-0.8B-Q8_0.gguf",
+      "runtime_archive": "revisions\\A\\payload\\runtime\\llama-b11033-bin-win-vulkan-x64.zip",
+      "runtime_tree": "revisions\\A\\payload\\runtime\\b11033-vulkan\\**",
+      "server_executable": "revisions\\A\\payload\\runtime\\b11033-vulkan\\llama-server.exe"
+    },
+    "B": {
+      "manifest": "revisions\\B\\manifest.json",
+      "model": "revisions\\B\\payload\\model\\Qwen3.5-0.8B-Q8_0.gguf",
+      "runtime_archive": "revisions\\B\\payload\\runtime\\llama-b11033-bin-win-vulkan-x64.zip",
+      "runtime_tree": "revisions\\B\\payload\\runtime\\b11033-vulkan\\**",
+      "server_executable": "revisions\\B\\payload\\runtime\\b11033-vulkan\\llama-server.exe"
+    },
+    "slot_manifest_required_fields": [
+      "profile_id",
+      "contract_id",
+      "revision_id",
+      "predecessor_revision_id",
+      "model_relative_path",
+      "model_bytes",
+      "model_sha256",
+      "runtime_archive_relative_path",
+      "runtime_archive_bytes",
+      "runtime_archive_sha256",
+      "runtime_tree_attestation",
+      "server_executable_relative_path",
+      "server_executable_bytes",
+      "server_executable_sha256",
+      "created_at_utc"
     ]
   }
 }
