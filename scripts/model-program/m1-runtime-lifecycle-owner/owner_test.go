@@ -45,6 +45,19 @@ func (f *fakePlatform) windowsDirectory() (string, error) {
 func (f *fakePlatform) pathIsReparse(path string) (bool, error) {
 	return f.reparse[filepath.Clean(path)], nil
 }
+func (f *fakePlatform) finalPath(path string) (string, error) {
+	return filepath.Clean(path), nil
+}
+func (f *fakePlatform) directoryIdentity(path string) (directoryIdentity, error) {
+	return directoryIdentity{
+		canonicalPath: filepath.Clean(path),
+		filesystemType: "NTFS",
+		volumeSerial: "1234abcd",
+		fileID: "0000000000000001",
+		ownerSID: "S-1-5-18",
+		securityDescriptorSHA256: strings.Repeat("a",64),
+	}, nil
+}
 func (f *fakePlatform) hardlinkCount(path string) (uint32, error) {
 	if n, ok := f.links[filepath.Clean(path)]; ok { return n, nil }
 	return 1, nil
