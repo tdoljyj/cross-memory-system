@@ -97,6 +97,14 @@ type executionContext struct {
 	budget            *budget
 	consumed          bool
 }
+type contextRecord struct {
+	profileDigest     string
+	started, deadline time.Time
+	physical          string
+	starts            int
+	budget            *budget
+	consumed          bool
+}
 
 type ownedProcess struct {
 	id              int
@@ -115,33 +123,44 @@ type controller struct {
 	trust     admission
 	paths     layout
 	now       func() time.Time
-	contexts  map[*executionContext]string
+	contexts  map[*executionContext]*contextRecord
 	processes map[*ownedProcess]*processRecord
 }
 
 func newController(sys platform, trust admission, paths layout) *controller {
-	return &controller{sys: sys, trust: trust, paths: paths, now: time.Now, contexts: map[*executionContext]string{}, processes: map[*ownedProcess]*processRecord{}}
+	return &controller{sys: sys, trust: trust, paths: paths, now: time.Now, contexts: map[*executionContext]*contextRecord{}, processes: map[*ownedProcess]*processRecord{}}
 }
 
 func (c *controller) requireContext(ctx *executionContext) error {
 	if ctx == nil {
 		return fail("EXECUTION_CONTEXT_REQUIRED")
 	}
-	d, ok := c.contexts[ctx]
+	r, ok := c.contexts[ctx]
 	if !ok {
 		return fail("EXECUTION_CONTEXT_REQUIRED")
 	}
-	if d != ctx.profileDigest || digest(ctx.profile) != ctx.profileDigest || ctx.consumed == false {
+	if digest(ctx.profile) != r.profileDigest ||
+		ctx.profileDigest != r.profileDigest ||
+		ctx.started != r.started ||
+		ctx.deadline != r.deadline ||
+		ctx.physical != r.physical ||
+		ctx.starts != r.starts ||
+		ctx.budget != r.budget ||
+		ctx.consumed != r.consumed ||
+		!ctx.consumed {
 		return fail("EXECUTION_CONTEXT_TAMPERED")
 	}
-	if ctx.starts < 0 || ctx.starts > maxStarts {
-		return fail("EXECUTION_CONTEXT_TAMPERED")
-	}
-	if !c.now().Before(ctx.deadline) {
-		return fail("MAX_WALL_TIME_EXCEEDED")
+	return nil
+}
+func (c *controller) limits(ctx *executionContext) error {
+	if e := c.requireContext(ctx); e != nil {
+		return e
 	}
 	if e := ctx.budget.err(); e != nil {
 		return e
+	}
+	if !c.now().Before(ctx.deadline) {
+		return fail("MAX_WALL_TIME_EXCEEDED")
 	}
 	return nil
 }
@@ -197,7 +216,7 @@ func (c *controller) authorize(p object) (*executionContext, error) {
 	}
 	b := &budget{limit: maxStorage, reserve: evidenceReserve, used: int64(len(guardBytes) + 1)}
 	ctx := &executionContext{profile: p, profileDigest: digest(p), started: start, deadline: deadline, physical: machine, budget: b, consumed: true}
-	c.contexts[ctx] = ctx.profileDigest
+	c.contexts[ctx] = &contextRecord{profileDigest: ctx.profileDigest, started: start, deadline: deadline, physical: machine, starts: 0, budget: b, consumed: true}
 	// Every later path creation is below exact reviewed roots.
 	if e = c.createOwnedDirs(); e != nil {
 		return nil, e
@@ -321,8 +340,11 @@ func (c *controller) event(ctx *executionContext, scenario, kind string, fields 
 }
 
 func (c *controller) startServer(ctx *executionContext, slotRoot, scenario, label string) (w *ownedProcess, err error) {
-	if e := c.requireContext(ctx); e != nil {
+	if e := c.limits(ctx); e != nil {
 		return nil, e
+	}
+	if label == "" || filepath.Base(label) != label {
+		return nil, fail("LABEL_PATH_INVALID")
 	}
 	if ctx.starts >= maxStarts {
 		return nil, fail("MAX_SERVER_STARTS_EXCEEDED")
@@ -374,6 +396,7 @@ func (c *controller) startServer(ctx *executionContext, slotRoot, scenario, labe
 	w = &ownedProcess{id: p.pid(), scenario: scenario, label: label, startIndex: idx}
 	c.processes[w] = &processRecord{ctx: ctx, proc: p, stdout: out, stderr: er}
 	ctx.starts = idx
+	c.contexts[ctx].starts = idx
 	defer func() {
 		if err != nil {
 			if ce := c.forceKill(ctx, w); ce != nil {
