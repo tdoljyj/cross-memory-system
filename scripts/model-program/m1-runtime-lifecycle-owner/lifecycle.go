@@ -241,6 +241,15 @@ func (c *controller) attestRegular(path string, expectedBytes int64, expectedSHA
 	if e = c.verifyNoNamedStreams(path); e != nil {
 		return e
 	}
+	if writable {
+		links, le := c.sys.hardlinkCount(path)
+		if le != nil {
+			return le
+		}
+		if links != 1 {
+			return fail("SLOT_HARDLINK_FORBIDDEN")
+		}
+	}
 	got, total, e := hashFile(path, deadline)
 	if e != nil {
 		return e
