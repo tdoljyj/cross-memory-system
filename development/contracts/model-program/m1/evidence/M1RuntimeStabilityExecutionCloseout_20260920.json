@@ -121,56 +121,56 @@
         "sha256": "db4884e1f0156d047c1d34a869993165aebeeb916e5c8655cf843c7554453523"
       },
       "background.stderr.txt": {
-        "bytes": 3339,
-        "sha256": "4ddfba6b6e07ba54dfae7ed0806b45ea894d93a4e343dc4bbf1f6a67fb5295b0"
+        "bytes": 3304,
+        "sha256": "4eb18ddcc012b4f7610e9d44f26eec537ab3cd2ae1453b4e04c74438cf99c109"
       },
       "background.stdout.txt": {
         "bytes": 0,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "cancel.stderr.txt": {
-        "bytes": 3671,
-        "sha256": "5d9fc0e7c6ab1df3ff6ac426ca606afac7b5e4b785504cf7942cf7b9d383cca2"
+        "bytes": 3632,
+        "sha256": "40c114f2aecbd31c018cf84b552188276b9cb43fb031cb06437fde0b90504fc6"
       },
       "cancel.stdout.txt": {
         "bytes": 0,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "crash-after.stderr.txt": {
-        "bytes": 3339,
-        "sha256": "33303b96ae74a586697d4487698519b3a78837c64e33565820d3556a0c33992a"
+        "bytes": 3304,
+        "sha256": "a949669a719c48a2703558dfa4353b88535995f366fc579419086c2275475f06"
       },
       "crash-after.stdout.txt": {
         "bytes": 0,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "crash-before.stderr.txt": {
-        "bytes": 2755,
-        "sha256": "559136b80c8f1f83d4d7263f18f74b7a8930171f33d193ed87acfba038bfba4c"
+        "bytes": 2725,
+        "sha256": "cb5cfa00c5a4fecbf3e187c4b1d2428ee982f2bfa498570fa4e4a10222d1c76a"
       },
       "crash-before.stdout.txt": {
         "bytes": 0,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "load-01.stderr.txt": {
-        "bytes": 3339,
-        "sha256": "4f650097e839ca25c93231a0fecacb5b9504e0577ceee9139431272be5aed849"
+        "bytes": 3304,
+        "sha256": "7baff1fc6fa2ece721f4e27f60429f7b30736c0a10456f2cca576a229b25249c"
       },
       "load-01.stdout.txt": {
         "bytes": 0,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "load-02.stderr.txt": {
-        "bytes": 3339,
-        "sha256": "576de8c125c918299190cbe8ce16dd07bd26e9be63c0e4e9de4c3675a2c7b2e1"
+        "bytes": 3304,
+        "sha256": "8b8d26f8476179166edff2a3e314a9b0bf94b53462dd885fff5d051e7d9f26eb"
       },
       "load-02.stdout.txt": {
         "bytes": 0,
         "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "load-03.stderr.txt": {
-        "bytes": 3339,
-        "sha256": "c5093af2c76f8542c01fd14a7a338e555ae0e26f56ef99fb82f52ff754c68e84"
+        "bytes": 3304,
+        "sha256": "6d9f07a7c230890729659586a9b78d0df8760d7d36959c7a64e4e39584be245a"
       },
       "load-03.stdout.txt": {
         "bytes": 0,
