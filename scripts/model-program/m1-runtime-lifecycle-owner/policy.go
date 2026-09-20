@@ -575,6 +575,18 @@ func validateStatic(p object, now time.Time, publicKeyFingerprint string) error 
 	if !isHex(gp, 64) {
 		return fail("GUARD_PARENT_PROVISIONING_EVIDENCE_UNBOUND")
 	}
+	gpi, ok := get(p, "trusted_execution_bindings/guard_parent_provisioning_identity").(object)
+	if !ok ||
+		text(gpi, "canonical_path") != guardParentPath ||
+		!strings.EqualFold(text(gpi, "filesystem_type"), "NTFS") ||
+		!isHex(text(gpi, "volume_serial"), 8) ||
+		!isHex(text(gpi, "file_id"), 16) ||
+		!strings.HasPrefix(strings.ToUpper(text(gpi, "owner_sid")), "S-") ||
+		!isHex(text(gpi, "security_descriptor_sha256"), 64) ||
+		gpi["empty_parent"] != true ||
+		gpi["non_reparse"] != true {
+		return fail("GUARD_PARENT_PROVISIONING_IDENTITY_UNBOUND")
+	}
 	auth, ok := get(p, "owner_final_execution_authorization").(object)
 	if !ok || auth["present"] != true || text(auth, "owner_message") == "" {
 		return fail("OWNER_FINAL_EXECUTION_AUTHORIZATION_MISSING")
