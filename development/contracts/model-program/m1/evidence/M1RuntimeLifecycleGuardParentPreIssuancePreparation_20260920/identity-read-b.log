@@ -1,0 +1,5 @@
+=== RUN   TestGuardParentPreparationIdentity
+GUARD_PARENT_IDENTITY_JSON={"attempt_guard_absent":true,"canonical_path":"C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001","empty_parent":true,"file_id":"008e000000093e73","filesystem_type":"NTFS","non_reparse":true,"owner_sid":"S-1-5-21-858977881-4031698862-3006450925-1000","security_descriptor_sha256":"f9a26120ad42e5b810fa72ecbd2713b82ca9f5f5c7c1932e339b08d17b6e6f85","volume_serial":"9686166e"}
+--- PASS: TestGuardParentPreparationIdentity (0.00s)
+PASS
+ok  	clued/m1-runtime-lifecycle-owner	0.104s

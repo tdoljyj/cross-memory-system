@@ -1,0 +1,53 @@
+{
+  "schema_version": "clued.m1-08-guard-parent-provisioning-receipt/1",
+  "status": "AUTHOR_SIDE_PREPARATION_COMPLETE / INDEPENDENT_REVIEW_REQUIRED_BEFORE_FINAL_ISSUANCE",
+  "owner_authorization": {
+    "source": "CURRENT_CONVERSATION",
+    "instruction": "好 接受pass结论 进行下一步",
+    "scope": "M1-08 GUARD PARENT PRE-ISSUANCE PREPARATION ONLY"
+  },
+  "exact_bindings": {
+    "final_implementation_head": "faaf0ff85d73e5be7615a4dc7426997e29cc80d2",
+    "r5_source_freeze": "96312735a2341c145e360f19a6f3a08ec222d64a",
+    "contract_git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
+    "profile_git_blob_sha1": "51b0083f74dd12318b7cdcdf3b939d31723de787",
+    "implementation_source_tree": "ebfb3db331e5fa817e0cc7bf9ea979fe1b33f964",
+    "source_manifest_sha256": "149ce89eed53e279220ae8bb7577c3b93c3cd491bee674fcae4984a67772e666"
+  },
+  "guard_parent_provisioning_identity": {
+    "attempt_guard_absent": true,
+    "canonical_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001",
+    "empty_parent": true,
+    "file_id": "008e000000093e73",
+    "filesystem_type": "NTFS",
+    "non_reparse": true,
+    "owner_sid": "S-1-5-21-858977881-4031698862-3006450925-1000",
+    "security_descriptor_sha256": "f9a26120ad42e5b810fa72ecbd2713b82ca9f5f5c7c1932e339b08d17b6e6f85",
+    "volume_serial": "9686166e"
+  },
+  "qualification": {
+    "toolchain_archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+    "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+    "helper_sha256": "6e6ce4f058e19d40f27ee5b138f66bbd9fc0e63814ef2da281718e3df0735032",
+    "host_raw_initial_log_sha256": "343021b30f080b292186949b628d8b786a7e63f022bb5db82baa2d20fe162664",
+    "host_raw_post_log_sha256": "197ec9468fd2f1d1264e944bc7ada617161cfd29426fe26bbda6bbdc82330578",
+    "review_log_a_sha256": "af625e3aa027b4e721c4f704e21c5c025551c6caf005a6e1241d1bb86cd7c4c3",
+    "review_log_b_sha256": "95b20df7d70d6359d1c10f1c5e8ff2ef4ede1ae52657a271dc51f2ebea9f308b",
+    "source_manifest_file_sha256": "149ce89eed53e279220ae8bb7577c3b93c3cd491bee674fcae4984a67772e666",
+    "two_read_identity_equal": true,
+    "production_identity_path_used": "verifySafeExistingPath -> pinDirectory -> directoryIdentityHandle -> readPinnedDirectory"
+  },
+  "authority_state": {
+    "owner_root_decision": "UNRESOLVED / NOT_SELECTED",
+    "effectful_authority_issued": false,
+    "attempt_guard_created": false,
+    "final_issuance_performed": false,
+    "real_lifecycle_executed": false
+  },
+  "limitations": [
+    "This is Guard Parent provisioning evidence, not Final Issuance.",
+    "No Owner Root was selected or reused.",
+    "No Attempt Guard file was created.",
+    "Identity observations are point-in-time and must be revalidated at Final Issuance/execution."
+  ]
+}
