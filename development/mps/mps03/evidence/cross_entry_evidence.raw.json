@@ -1,34 +1,34 @@
 {
   "schema": "clued.mps03.cross-entry-evidence.v1",
-  "captured_at_ns": 1789886496006692100,
+  "captured_at_ns": 1789887168815851600,
   "qualification": "implementation-candidate-local-reference-backend",
   "g5_real_third_party_host_pass_claimed": false,
   "processes": {
-    "canonical_gateway_pid": 12440,
-    "native_entry_pid": 45132,
-    "agent_host_adapter_pid": 47324,
+    "canonical_gateway_pid": 40020,
+    "native_entry_pid": 19592,
+    "agent_host_adapter_pid": 46352,
     "all_distinct": true
   },
   "chain_1_native_create_agent_read": {
-    "object_id": "obj_bf5b294d04684f3d8b5939f2181d675f",
-    "native_revision_id": "rv_551b44ef64ed4ed3b27df762ac210e18",
-    "agent_revision_id": "rv_551b44ef64ed4ed3b27df762ac210e18",
+    "object_id": "obj_4f3a465b040f4aee99cb8a092ae617bd",
+    "native_revision_id": "rv_8f36c5e52af049e0a10250c6b10456a3",
+    "agent_revision_id": "rv_8f36c5e52af049e0a10250c6b10456a3",
     "same_revision": true,
     "same_adoption": true
   },
   "chain_2_agent_proposal_native_confirm": {
-    "proposal_id": "prop_b9263510e357462b9f5b123293fa7184",
+    "proposal_id": "prop_7fb1f72e20bd4ba1988ae4b758985348",
     "proposal_digest": "ddba272de4a7e511cf333829a26f365a75300668979f9a1d7ff1df363f387a37",
-    "receipt_id": "rc_1e0de4ab06034e029f798374e2fad29f",
-    "committed_revision_id": "rv_1e517e07303340a7973efca32dc0b370",
-    "committed_adoption_id": "ad_207fb28683bc4c03bb251db0bf60b15e",
+    "receipt_id": "rc_6600a9c34c3240c097279204f7cc663d",
+    "committed_revision_id": "rv_b734816afa284e00aceb1c9b9716fb8f",
+    "committed_adoption_id": "ad_8f6a11834d994082a0436b284fd94f8d",
     "ok": true
   },
   "chain_3_native_confirm_agent_continue": {
-    "native_revision_id": "rv_1e517e07303340a7973efca32dc0b370",
-    "agent_revision_id": "rv_1e517e07303340a7973efca32dc0b370",
-    "native_adoption_id": "ad_207fb28683bc4c03bb251db0bf60b15e",
-    "agent_adoption_id": "ad_207fb28683bc4c03bb251db0bf60b15e",
+    "native_revision_id": "rv_b734816afa284e00aceb1c9b9716fb8f",
+    "agent_revision_id": "rv_b734816afa284e00aceb1c9b9716fb8f",
+    "native_adoption_id": "ad_8f6a11834d994082a0436b284fd94f8d",
+    "agent_adoption_id": "ad_8f6a11834d994082a0436b284fd94f8d",
     "same_revision": true,
     "same_adoption": true,
     "body": {

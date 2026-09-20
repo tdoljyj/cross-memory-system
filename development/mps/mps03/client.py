@@ -3,11 +3,15 @@ import json
 import ipaddress
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 try:
     from .common import ProtocolError
 except ImportError:
     from common import ProtocolError
+
+class _NoGatewayRedirects(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, new_url):
+        return None
 
 class GatewayClient:
     def __init__(self, base_url: str, entry_kind: str, entry_secret: str):
@@ -23,6 +27,7 @@ class GatewayClient:
         if not valid:
             raise RuntimeError("MPS-03 gateway URL must be an HTTP loopback origin with an explicit port")
         self.base_url=base_url.rstrip('/'); self.entry_kind=entry_kind; self.entry_secret=entry_secret; self.token=None
+        self._opener=build_opener(ProxyHandler({}),_NoGatewayRedirects())
     def start_session(self):
         r=self._request("POST","/v1/sessions",{"entry_kind":self.entry_kind,"entry_secret":self.entry_secret},auth=False); self.token=r["session_token"]; return r
     def _request(self,method,path,body=None,auth=True,_retried_session=False):
@@ -33,7 +38,7 @@ class GatewayClient:
             headers["Authorization"]="Bearer "+self.token
         req=Request(self.base_url+path,data=data,headers=headers,method=method)
         try:
-            with urlopen(req,timeout=10) as r:
+            with self._opener.open(req,timeout=10) as r:
                 payload=json.loads(r.read().decode())
                 if not isinstance(payload,dict): raise ValueError("gateway response is not an object")
                 return payload
