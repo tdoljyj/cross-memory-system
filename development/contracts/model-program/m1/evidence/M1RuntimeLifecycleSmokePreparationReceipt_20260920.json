@@ -20,15 +20,15 @@
   "prepared_objects": {
     "lifecycle_contract": {
       "path": "../governance/M1RuntimeLifecycleSmokeContract.v0.1.json",
-      "git_blob_sha1": "f761df9df590b82eb3f8defc551804236223c0c0",
-      "raw_sha256": "5d21b7f14a0765905e48ef99f090bad190589b8ea871749914ce470f867a1c26",
-      "bytes": 19092
+      "git_blob_sha1": "750e7fc4eaf1a3b0008a8b7ad628ca19d89e8012",
+      "raw_sha256": "e937d87afc5a3a91271b3197c640a9daaf4e9047c39fdb372e1836a3947ade9d",
+      "bytes": 27113
     },
     "experiment_profile_candidate": {
       "path": "../governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json",
-      "git_blob_sha1": "022d934e80679c12852374dfbc3112ac54360745",
-      "raw_sha256": "9a111320c2030f46fb9c88887b1595af291efd27294509a42db5dfad57d70f55",
-      "bytes": 19070,
+      "git_blob_sha1": "7143544ae94576c578af4fdc9be97575af1789ca",
+      "raw_sha256": "0c1394138cbe643265f828bd285d3a303be45256522792e289ddaa45c915ac94",
+      "bytes": 21824,
       "profile_id": "M1-LIFE-QWEN35-08B-PC-001-CANDIDATE",
       "effectful_authority_issued": false
     }
@@ -63,7 +63,12 @@
     "firewall_mutation_allowed": false,
     "max_attempts": 1,
     "max_server_starts_if_future_issued": 3,
-    "server_bind_if_future_issued": "127.0.0.1:18088 / OFFLINE / CPU_ONLY"
+    "server_bind_if_future_issued": "127.0.0.1:18088 / OFFLINE / CPU_ONLY",
+    "path_reparse_escape_fail_closed": true,
+    "cleanup_never_follows_reparse_points": true,
+    "atomic_current_publish_specified": true,
+    "post_activation_failure_recovery_specified": true,
+    "source_attestation_narrowed_to_bound_payload_set": true
   },
   "effects_performed_during_preparation": {
     "real_install": false,
@@ -90,5 +95,43 @@
     "FINAL_EXPIRY_NOT_BOUND"
   ],
   "next_gate": "FRESH_CONTEXT_READ_ONLY_CONTRACT_AND_PROFILE_CANDIDATE_REVIEW / REVIEWER_NOT_MODIFIER / NO_EFFECTFUL_EXECUTION",
-  "authority_effect": "PREPARATION_RECEIPT_ONLY / NO_EXECUTION_AUTHORITY"
+  "authority_effect": "PREPARATION_RECEIPT_ONLY / NO_EXECUTION_AUTHORITY",
+  "author_side_adversarial_self_review": {
+    "independent_review": false,
+    "status": "AUTHOR_SIDE_SELF_REVIEW_COMPLETE / FRESH_CONTEXT_REVIEW_STILL_REQUIRED",
+    "findings_closed": [
+      {
+        "id": "SELF-01",
+        "severity": "MAJOR_IF_UNFIXED",
+        "issue": "Attempt Guard was initially inside the runtime test root and would have been deleted by successful cleanup, allowing same-profile reuse.",
+        "disposition": "FIXED",
+        "fix": "Moved Attempt Guard to persistent runtime-state path outside runtime test root; evidence also lives outside runtime root; guard and evidence explicitly survive successful cleanup."
+      },
+      {
+        "id": "SELF-02",
+        "severity": "MAJOR_IF_UNFIXED",
+        "issue": "Windows path ownership and cleanup semantics did not explicitly reject reparse points/junctions/symlinks or prevent recursive deletion from escaping the test root.",
+        "disposition": "FIXED",
+        "fix": "Added effectful write-root ancestry checks, reparse/junction/symlink/mount-point rejection, CREATE_NEW rules, no hardlinks for copied payload files, and cleanup that never follows reparse points."
+      },
+      {
+        "id": "SELF-03",
+        "severity": "MAJOR_IF_UNFIXED",
+        "issue": "Atomic current-manifest publication and post-activation failure recovery were underspecified.",
+        "disposition": "FIXED",
+        "fix": "Defined initial publish vs replacement semantics, no delete-current-then-rename, transition indices 1/2/3, post-publish hash/reparse verification, fault-injection requirements, and restoration of the last verified revision after post-activation probe failure."
+      },
+      {
+        "id": "SELF-04",
+        "severity": "MINOR_TO_MAJOR_IF_OVERCLAIMED",
+        "issue": "Source immutability evidence wording could be read as claiming the entire m1pkg002 directory was unchanged although only the lifecycle-bound payload needs to be normative.",
+        "disposition": "FIXED",
+        "fix": "Narrowed source attestation to exact Q8_0 model + runtime archive + extracted runtime tree; whole package root unchanged claim explicitly false."
+      }
+    ],
+    "current_author_side_blockers": 0,
+    "current_author_side_majors": 0,
+    "current_author_side_minors": 0,
+    "note": "This self-review is not an independent verdict and cannot replace Fresh-Context review."
+  }
 }
