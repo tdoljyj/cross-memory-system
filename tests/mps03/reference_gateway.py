@@ -4,10 +4,10 @@ import argparse, json, os, sqlite3, threading
 from http.server import ThreadingHTTPServer
 
 try:
-    from mps03.common import ProtocolError, canonical_json, new_id, now_ns, sha256_json, validate_create_content
+    from mps03.common import ProtocolError, canonical_json, new_id, now_ns, sha256_json, validate_create_content, normalize_request_id
     from mps03.gateway_http import Handler
 except ImportError:
-    from common import ProtocolError, canonical_json, new_id, now_ns, sha256_json, validate_create_content
+    from common import ProtocolError, canonical_json, new_id, now_ns, sha256_json, validate_create_content, normalize_request_id
     from gateway_http import Handler
 
 SCHEMA = r'''
@@ -115,8 +115,7 @@ class CanonicalStore:
         return stamp
 
     def create_object(self, token: str, title: str, body: dict, request_id: str) -> dict:
-        if not request_id:
-            raise ProtocolError("REQUEST_ID_REQUIRED", "request_id is required")
+        request_id=normalize_request_id(request_id)
         content=validate_create_content(title,body)
         payload = {"op": "create_object", "content": content}
         fp = sha256_json(payload)
@@ -179,7 +178,7 @@ class CanonicalStore:
 
     def confirm_proposal(self, token: str, object_id: str, proposal_id: str, state_stamp: dict, request_id: str,
                          adoption_scope: str="object", adoption_purpose: str="mps03_accept_agent_proposal") -> dict:
-        if not request_id: raise ProtocolError("REQUEST_ID_REQUIRED","request_id is required")
+        request_id=normalize_request_id(request_id)
         if adoption_scope!="object" or adoption_purpose!="mps03_accept_agent_proposal":
             raise ProtocolError("CONFIRMATION_SCOPE_IMMUTABLE","confirmation scope and purpose are fixed by the proposal",400)
         payload={"op":"confirm_proposal","object_id":object_id,"proposal_id":proposal_id,

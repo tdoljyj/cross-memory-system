@@ -7,6 +7,7 @@ This directory contains the two bounded MPS-03 entry implementations and the thi
 ## Authority and Current
 
 - Native and Agent are separate HTTP processes and establish separate sessions.
+- The five Native pages show plan content and plain-language results by default; protocol fields are available only in expandable technical details. The ordinary create form accepts plan text, while the existing JSON API and legacy form field remain available to development callers.
 - Caller-provided principal/role labels are not authority. An entry credential is mapped to a server-side principal at gateway startup.
 - Every Native request requires HTTP Basic authentication (`native` as username); every Agent request requires a Bearer credential. Configure four separate secrets with 32 random characters after their fixed prefixes: `mps03-native-gw-`, `mps03-agent-gw-`, `mps03-native-access-`, and `mps03-agent-access-`. The gateway receives both entry secrets in `MPS03_NATIVE_ENTRY_SECRET` and `MPS03_AGENT_ENTRY_SECRET`. Give the Native process only `MPS03_NATIVE_ENTRY_SECRET` and `MPS03_NATIVE_ACCESS_SECRET`; give the Agent process only `MPS03_AGENT_ENTRY_SECRET` and `MPS03_AGENT_ACCESS_SECRET`. Secrets are not accepted through command-line flags. Run these processes under separate protected service identities or containers so another local process cannot read their environments. Startup enforces disjoint namespaces. Native writes reject cross-origin browser requests. Both listeners and their `--gateway` HTTP origin are restricted to loopback; a third-party Agent Host must connect through a separately authenticated TLS ingress or tunnel terminating on loopback.
 - Resource × Action permission is still resolved by the existing MPS context-pack/authorization state; list/history/proposal reads do not bypass it.
@@ -17,6 +18,7 @@ This directory contains the two bounded MPS-03 entry implementations and the thi
 - Read responses check the caller's `read` permission and return an action-bound `state_stamp` for the next bounded operation (`propose` for Agent, `update` for Native); `read_state_stamp` remains available separately. These stamps may have different authorization generations even for the same Current. Agent proposal issuance checks the Agent's `propose` basis, then binds the formal update MutationIntent to the fixed Native principal's `update` ContextPack. Only an authenticated Native confirmation can commit that intent. Different Current versions between these observations fail closed.
 - The PostgreSQL bridge retrieves body content by the exact immutable Revision and Adoption named in the issued ContextPack. It does not combine a VOLATILE pack call with a separate Current read in the same outer SQL snapshot.
 - Repeated pending Agent suggestions of the same content reuse the formal immutable ChangeSet identity and issue a fresh MutationIntent. Content already materialized as a Revision is proposed through the formal `PREMATERIALIZED` adoption path, so returning to an older body does not violate the per-object unique Revision digest. Native suggestion listing and confirmation require an MPS-03 proposal purpose plus the fixed Native update ContextPack provenance; unrelated formal intents cannot enter this confirmation path.
+- A confirmation carrying a different adoption scope or purpose is rejected before the PostgreSQL bridge can commit. Both backends normalize request IDs exactly as the formal primitive does (ordinary leading/trailing spaces removed) before replay lookup and write.
 
 ## Durable mutation boundary
 
@@ -31,6 +33,8 @@ PostgreSQL write responses return the immutable committed outcome and its revisi
 ## Test-only reference backend
 
 The SQLite reference gateway lives only at `tests/mps03/reference_gateway.py`. It is for local cross-process acceptance and is **not** a deployable or authoritative backend. Local reference PASS is never a live `clued-auth-test` PASS and never a G5/G7 aggregate claim.
+
+The MPS-03 self-hosted CI job runs candidate code only for an owner-origin, same-repository PR or an owner-triggered manual run. A skipped untrusted job is not validation or acceptance.
 
 ## Local checks
 

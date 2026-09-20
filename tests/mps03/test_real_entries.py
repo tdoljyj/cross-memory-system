@@ -1,4 +1,5 @@
 import base64, json, os, pathlib, re, socket, subprocess, sys, tempfile, time, unittest
+from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -7,6 +8,16 @@ REPO=pathlib.Path(__file__).resolve().parents[2]
 IMPL=REPO/"development"/"mps"
 PY=sys.executable
 ENTRY_AUTH={}
+
+class DefaultVisibleText(HTMLParser):
+    def __init__(self):
+        super().__init__(); self.details_depth=0; self.parts=[]
+    def handle_starttag(self,tag,attrs):
+        if tag=="details": self.details_depth+=1
+    def handle_endtag(self,tag):
+        if tag=="details": self.details_depth-=1
+    def handle_data(self,data):
+        if self.details_depth==0: self.parts.append(data)
 
 def free_port():
     s=socket.socket(); s.bind(("127.0.0.1",0)); p=s.getsockname()[1]; s.close(); return p
@@ -131,6 +142,25 @@ class RealEntries(unittest.TestCase):
         self.assertEqual(a["revision_id"],b["revision_id"])
         self.assertEqual(a["adoption_id"],b["adoption_id"])
 
+    def test_normalized_request_key_replays_exact_receipt(self):
+        payload={"title":"Trimmed key","body":{"v":1},"request_id":"  req-create-trim-001  "}
+        a=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",payload)
+        b=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{**payload,"request_id":"req-create-trim-001"})
+        self.assertTrue(a["ok"]); self.assertEqual(a,b)
+        conflict=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{**payload,"body":{"v":2},"request_id":"req-create-trim-001"})
+        self.assertEqual(conflict.get("error"),"IDEMPOTENCY_CONFLICT")
+
+    def test_confirmation_target_change_rejected_before_write(self):
+        created=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"Target","body":{"v":1},"request_id":"req-target-create"})
+        oid=created["object_id"]
+        proposal=self.agent_propose(oid,{"v":2})
+        observed=req("GET",f"http://127.0.0.1:{self.pn}/api/objects/{oid}")
+        session=req("POST",f"http://127.0.0.1:{self.pg}/v1/sessions",{"entry_kind":"NATIVE","entry_secret":self.native_secret})["session_token"]
+        for scope,purpose in (("project","mps03_accept_agent_proposal"),("object","other_purpose")):
+            status,out=raw_req("POST",f"http://127.0.0.1:{self.pg}/v1/objects/{oid}/confirm",json.dumps({"proposal_id":proposal["proposal_id"],"state_stamp":observed["state_stamp"],"request_id":"req-target-reject-"+scope+purpose,"adoption_scope":scope,"adoption_purpose":purpose}),authorization="Bearer "+session)
+            self.assertEqual(status,400); self.assertEqual(out.get("error"),"CONFIRMATION_SCOPE_IMMUTABLE")
+            self.assertEqual(req("GET",f"http://127.0.0.1:{self.pn}/api/objects/{oid}")["revision_id"],observed["revision_id"])
+
     def test_stale_native_confirmation_fails_closed(self):
         c=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"Stale","body":{"v":1},"request_id":"req-create-stale"}); oid=c["object_id"]
         p1=self.agent_propose(oid,{"v":2})
@@ -193,8 +223,16 @@ class RealEntries(unittest.TestCase):
             url=f"http://127.0.0.1:{self.pn}{path}"
             with urlopen(Request(url,headers=headers_for(url)),timeout=5) as r:
                 text=r.read().decode(); self.assertEqual(r.status,200); self.assertIn("<html",text)
+                visible=DefaultVisibleText(); visible.feed(text)
+                for protocol_term in ("state_stamp","revision_id","adoption_id","receipt_id","context_pack_digest","proposal_id"):
+                    self.assertNotIn(protocol_term," ".join(visible.parts))
                 if path.endswith("/proposals"):
-                    self.assertIn("--- current",text); self.assertIn("+++ proposed",text)
+                    self.assertIn("--- before",text); self.assertIn("+++ after",text)
+                if path=="/":
+                    self.assertIn('name="details"',text)
+                    self.assertNotIn("Body JSON",text)
+                if path.startswith("/object/"):
+                    self.assertIn("<summary>Technical details</summary>",text)
 
     def test_native_html_does_not_mask_gateway_read_failure(self):
         for path in ("/object/obj_missing", "/object/obj_missing/proposals", "/object/obj_missing/connection"):
@@ -217,6 +255,11 @@ class RealEntries(unittest.TestCase):
                 return response.read().decode()
         first=submit(); replay=submit()
         self.assertEqual(re.search(r'/object/(obj_[a-z0-9]+)',first).group(1),re.search(r'/object/(obj_[a-z0-9]+)',replay).group(1))
+        for result in (first,replay):
+            visible=DefaultVisibleText(); visible.feed(result)
+            self.assertIn("Plan created."," ".join(visible.parts))
+            self.assertNotIn("receipt_id"," ".join(visible.parts))
+            self.assertIn("<summary>Technical details</summary>",result)
 
     def test_request_id_different_payload_conflicts(self):
         first=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"One","body":{"v":1},"request_id":"req-conflict-create"})

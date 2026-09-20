@@ -84,3 +84,13 @@ def validate_create_content(title: str, body: Any) -> dict:
     if "title" in body:
         raise ProtocolError("TITLE_IN_BODY_NOT_ALLOWED", "title must be supplied only in the title field", 400)
     return {**body, "title": title}
+
+
+def normalize_request_id(value: Any) -> str:
+    """Use the same request key as the formal MPS-02B commit primitive."""
+    if not isinstance(value, str):
+        raise ProtocolError("REQUEST_ID_REQUIRED", "request_id must be 8 to 160 characters", 400)
+    request_id = value.strip(" ")  # pg_catalog.btrim(text) removes ordinary spaces.
+    if not 8 <= len(request_id) <= 160:
+        raise ProtocolError("REQUEST_ID_REQUIRED", "request_id must be 8 to 160 characters", 400)
+    return request_id

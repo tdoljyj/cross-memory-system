@@ -5,6 +5,8 @@
     "20260916022851_mps_02b_atomic_mutation.sql": "9f2b23349075aecac474300420e7a9dd02749bf8ddfd3751047876ae448296af"
   },
   "all_pass": true,
+  "normalized_create_key_replays_exact_receipt": true,
+  "changed_confirmation_target_rejected_without_outcome": true,
   "same_create_outcome_after_later_current": true,
   "same_confirm_outcome_after_later_current": true,
   "different_payload_conflict": true,

@@ -16,10 +16,10 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
 try:
-    from .common import ProtocolError, new_id, sha256_json, validate_create_content, require_secret_namespace, NATIVE_GATEWAY_PREFIX, AGENT_GATEWAY_PREFIX
+    from .common import ProtocolError, new_id, sha256_json, validate_create_content, normalize_request_id, require_secret_namespace, NATIVE_GATEWAY_PREFIX, AGENT_GATEWAY_PREFIX
     from .gateway_http import Handler
 except ImportError:
-    from common import ProtocolError, new_id, sha256_json, validate_create_content, require_secret_namespace, NATIVE_GATEWAY_PREFIX, AGENT_GATEWAY_PREFIX
+    from common import ProtocolError, new_id, sha256_json, validate_create_content, normalize_request_id, require_secret_namespace, NATIVE_GATEWAY_PREFIX, AGENT_GATEWAY_PREFIX
     from gateway_http import Handler
 
 EXPECTED_NONPROD_TARGET = "clued-auth-test/uscrdifznmlvczcekqpw"
@@ -227,7 +227,7 @@ where r.object_id={_t('oid')} and r.revision_id={_t('rid')}
 
     def create_object(self, token: str, title: str, body: dict, request_id: str) -> dict:
         s=self._session(token); self._require(s,"create")
-        if not isinstance(request_id,str) or len(request_id)<8: raise ProtocolError("REQUEST_ID_REQUIRED","request_id is required")
+        request_id=normalize_request_id(request_id)
         content=validate_create_content(title,body)
         # The installed MPS-02B commit primitive requires an existing Object/Current.
         # Build that otherwise-invisible basis and the formal create MutationIntent in the
@@ -503,7 +503,9 @@ where i.object_id={_t('oid')} and i.operation='update'
     def confirm_proposal(self, token: str, object_id: str, proposal_id: str, state_stamp: dict, request_id: str,
                          adoption_scope: str="object", adoption_purpose: str=MPS03_PROPOSAL_PURPOSE) -> dict:
         s=self._session(token); self._require(s,"confirm")
-        if not isinstance(request_id,str) or len(request_id)<8: raise ProtocolError("REQUEST_ID_REQUIRED","request_id is required")
+        request_id=normalize_request_id(request_id)
+        if adoption_scope!="object" or adoption_purpose!=MPS03_PROPOSAL_PURPOSE:
+            raise ProtocolError("CONFIRMATION_SCOPE_IMMUTABLE","confirmation scope and purpose are fixed by the proposal",400)
         if not isinstance(state_stamp,dict): raise ProtocolError("STATE_STAMP_REQUIRED","state_stamp must be an object")
         self._assert_object_owner(object_id)
         # Scope/purpose are already immutable inside the server-issued intent; caller cannot rewrite them here.

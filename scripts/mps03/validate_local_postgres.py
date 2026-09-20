@@ -58,6 +58,13 @@ try:
     created=store.create_object(native,'Review object',{'value':1},'review-create-001')
     replay=store.create_object(native,'Review object',{'value':1},'review-create-001')
     if replay != created: raise AssertionError('create replay changed')
+    spaced=store.create_object(native,'Space key',{'value':1},'  review-space-001  ')
+    if store.create_object(native,'Space key',{'value':1},'review-space-001') != spaced:
+        raise AssertionError('trimmed create request did not replay the original Receipt')
+    if store.create_object(native,'Space key',{'value':1},'  review-space-001  ') != spaced:
+        raise AssertionError('same spaced create request did not replay the original Receipt')
+    if store.create_object(native,'Space key',{'value':2},'review-space-001').get('error')!='IDEMPOTENCY_CONFLICT':
+        raise AssertionError('same normalized create key accepted different content')
     conflicting=store.create_object(native,'Review object',{'value':99},'review-create-001')
     if conflicting.get('error')!='IDEMPOTENCY_CONFLICT': raise AssertionError('different create payload replayed')
     oid=created['object_id']
@@ -112,6 +119,19 @@ where object_id='"""+oid+"' and action in ('read','propose','update');")
     proposal=store.create_proposal(agent,oid,{'value':2},observed['state_stamp'])
     repeated_uncommitted=store.create_proposal(agent,oid,{'value':2},observed['state_stamp'])
     if repeated_uncommitted['proposal_id']==proposal['proposal_id'] or repeated_uncommitted['confirmation_intent']['proposal_or_change_id']!=proposal['confirmation_intent']['proposal_or_change_id']: raise AssertionError('identical pending suggestion did not reuse ChangeSet with a fresh intent')
+    for scope,purpose,request_key in (
+        ('project','mps03_accept_agent_proposal','review-wrong-scope'),
+        ('object','other_purpose','review-wrong-purpose'),
+    ):
+        try:
+            store.confirm_proposal(native,oid,proposal['proposal_id'],native_observed['state_stamp'],request_key,scope,purpose)
+            raise AssertionError('changed confirmation target was accepted')
+        except ProtocolError as error:
+            if error.code!='CONFIRMATION_SCOPE_IMMUTABLE' or error.status!=400: raise
+        if int(sql("select count(*) from clued_private.mps_request_outcomes where request_id='"+request_key+"';")):
+            raise AssertionError('changed confirmation target created a durable outcome')
+    if store.read_object(native,oid)['revision_id']!=native_observed['revision_id']:
+        raise AssertionError('changed confirmation target advanced Current')
     committed=store.confirm_proposal(native,oid,proposal['proposal_id'],native_observed['state_stamp'],'review-confirm-001')
     confirmed_replay=store.confirm_proposal(native,oid,proposal['proposal_id'],native_observed['state_stamp'],'review-confirm-001')
     if committed != confirmed_replay: raise AssertionError('confirm replay changed')
@@ -166,6 +186,6 @@ where object_id='"""+oid+"' and action in ('read','propose','update');")
     except RuntimeError as error:
         if 'MPS03_CREATE_NOT_COMMITTED' not in str(error): raise
     if int(sql('select count(*) from clued_private.mps_objects;'))!=before: raise AssertionError('noncommitted create left a bootstrap object')
-    print(json.dumps({'qualification':'ISOLATED_LOCAL_POSTGRES_WITH_MPS02B_COMPAT_SHIM' if args.compat_shim else 'ISOLATED_LOCAL_POSTGRES_UNMODIFIED_SOURCES','source_sha256':source_hashes,'all_pass':True,'same_create_outcome_after_later_current':True,'same_confirm_outcome_after_later_current':True,'different_payload_conflict':True,'agent_sees_new_current':True,'stale_agent_proposal_rejected':True,'altered_agent_stamp_rejected':True,'distinct_allowed_action_generations':True,'cross_user_object_operations_rejected':True,'interleaved_read_keeps_stamp_and_body_together':True,'identical_pending_suggestion_reuses_change_set':True,'previously_proposed_body_can_be_readopted':True,'foreign_intent_excluded_from_list_and_confirm':True,'noncommitted_create_rolled_back':True,'container_removed_on_exit':True},indent=2))
+    print(json.dumps({'qualification':'ISOLATED_LOCAL_POSTGRES_WITH_MPS02B_COMPAT_SHIM' if args.compat_shim else 'ISOLATED_LOCAL_POSTGRES_UNMODIFIED_SOURCES','source_sha256':source_hashes,'all_pass':True,'normalized_create_key_replays_exact_receipt':True,'changed_confirmation_target_rejected_without_outcome':True,'same_create_outcome_after_later_current':True,'same_confirm_outcome_after_later_current':True,'different_payload_conflict':True,'agent_sees_new_current':True,'stale_agent_proposal_rejected':True,'altered_agent_stamp_rejected':True,'distinct_allowed_action_generations':True,'cross_user_object_operations_rejected':True,'interleaved_read_keeps_stamp_and_body_together':True,'identical_pending_suggestion_reuses_change_set':True,'previously_proposed_body_can_be_readopted':True,'foreign_intent_excluded_from_list_and_confirm':True,'noncommitted_create_rolled_back':True,'container_removed_on_exit':True},indent=2))
 finally:
     docker('rm','-f',container)
