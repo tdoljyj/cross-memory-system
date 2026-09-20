@@ -1,0 +1,27 @@
+{
+  "at_utc": "2026-09-20T14:40:34.433542+00:00",
+  "computer_name": "DESK-W-591",
+  "continuous_monitoring": false,
+  "label": "POST",
+  "llama_server_process_rows": [],
+  "paths": {
+    "current": {
+      "exists": false,
+      "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001\\state\\current.json"
+    },
+    "evidence": {
+      "exists": false,
+      "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-001"
+    },
+    "guard": {
+      "exists": false,
+      "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001\\M1RuntimeLifecycleAttemptGuard.json"
+    },
+    "runtime_root": {
+      "exists": false,
+      "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001"
+    }
+  },
+  "port_18088_loopback_accepting": false,
+  "source_freeze_sha": "96312735a2341c145e360f19a6f3a08ec222d64a"
+}

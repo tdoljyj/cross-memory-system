@@ -1,0 +1,130 @@
+{
+  "branch": "model-program/m1-08-capture-boundary-r5-linearization-20260920",
+  "candidate_profile_git_blob_sha1": "51b0083f74dd12318b7cdcdf3b939d31723de787",
+  "contract_git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
+  "effectful_authority_issued": false,
+  "focused": {
+    "fail": 0,
+    "skip": 0,
+    "subtest_pass": 2,
+    "tests": [
+      "TestR5CaptureRevokeIsPersistenceBarrier",
+      "TestR5CaptureTimeBoundaryCheckedInsidePersistenceGate"
+    ],
+    "top_level_pass": 2
+  },
+  "guard_parent_provisioned": false,
+  "host_observation": {
+    "post": {
+      "at_utc": "2026-09-20T14:40:34.433542+00:00",
+      "computer_name": "DESK-W-591",
+      "continuous_monitoring": false,
+      "label": "POST",
+      "llama_server_process_rows": [],
+      "paths": {
+        "current": {
+          "exists": false,
+          "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001\\state\\current.json"
+        },
+        "evidence": {
+          "exists": false,
+          "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-001"
+        },
+        "guard": {
+          "exists": false,
+          "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001\\M1RuntimeLifecycleAttemptGuard.json"
+        },
+        "runtime_root": {
+          "exists": false,
+          "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001"
+        }
+      },
+      "port_18088_loopback_accepting": false,
+      "source_freeze_sha": "96312735a2341c145e360f19a6f3a08ec222d64a"
+    },
+    "pre": {
+      "at_utc": "2026-09-20T14:38:30.351381+00:00",
+      "computer_name": "DESK-W-591",
+      "continuous_monitoring": false,
+      "label": "PRE",
+      "llama_server_process_rows": [],
+      "paths": {
+        "current": {
+          "exists": false,
+          "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001\\state\\current.json"
+        },
+        "evidence": {
+          "exists": false,
+          "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-001"
+        },
+        "guard": {
+          "exists": false,
+          "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001\\M1RuntimeLifecycleAttemptGuard.json"
+        },
+        "runtime_root": {
+          "exists": false,
+          "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001"
+        }
+      },
+      "port_18088_loopback_accepting": false,
+      "source_freeze_sha": "96312735a2341c145e360f19a6f3a08ec222d64a"
+    }
+  },
+  "independent_review_pass": false,
+  "issuer_root_bound": false,
+  "limitations": [
+    "PRE/POST are time-point observations, not continuous monitoring",
+    "Owner binary was built but never invoked",
+    "No real model, llama-server, install, upgrade or rollback execution was performed",
+    "EXE bodies and Go toolchain body are not committed as evidence",
+    "Author-side remediation evidence does not substitute for Fresh-Context independent review"
+  ],
+  "major_07_status": "CLOSED_PREVIOUSLY / REGRESSION_PASS",
+  "major_08_author_side_status": "R5_LINEARIZATION_REMEDIATED / INDEPENDENT_REVIEW_PENDING",
+  "merged": false,
+  "owner_binary": {
+    "bytes": 7499264,
+    "executed": false,
+    "sha256": "ec51918394d70a23c43e7350bd65991948dcc8cfd1c967ec32952bd6e0d4b160"
+  },
+  "runs": [
+    {
+      "fail": 0,
+      "label": "a",
+      "skip": 0,
+      "subtest_pass": 24,
+      "top_level_pass": 70
+    },
+    {
+      "fail": 0,
+      "label": "b",
+      "skip": 0,
+      "subtest_pass": 24,
+      "top_level_pass": 70
+    }
+  ],
+  "source_freeze_parent": "0433d9e89080433d66f9c9a19b7f93669b6c0cd0",
+  "source_freeze_sha": "96312735a2341c145e360f19a6f3a08ec222d64a",
+  "source_manifest_sha256": "149ce89eed53e279220ae8bb7577c3b93c3cd491bee674fcae4984a67772e666",
+  "status": "AUTHOR_SIDE_R5_EXACT_WINDOWS_QUALIFICATION_PASS / INDEPENDENT_REVIEW_PENDING",
+  "toolchain": {
+    "archive_bytes": 78931360,
+    "archive_name": "go1.27.1.windows-amd64.zip",
+    "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+    "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+    "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+    "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+    "target": {
+      "goamd64": "v1",
+      "goarch": "amd64",
+      "goos": "windows"
+    },
+    "tree_file_count": 15639,
+    "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+    "version": "go version go1.27.1 windows/amd64"
+  },
+  "windows_test_binary": {
+    "bytes": 12503040,
+    "sha256": "5c54ab63c82dc66a09744985de54fb6443f99f492bc5b395edca84fd5ba3eb9d"
+  }
+}

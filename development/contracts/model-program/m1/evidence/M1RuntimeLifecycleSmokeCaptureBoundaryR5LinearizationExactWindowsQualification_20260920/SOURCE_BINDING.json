@@ -1,0 +1,11 @@
+{
+  "branch": "model-program/m1-08-capture-boundary-r5-linearization-20260920",
+  "candidate_profile_git_blob_sha1": "51b0083f74dd12318b7cdcdf3b939d31723de787",
+  "contract_git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
+  "contract_profile_bytes_changed_from_parent": false,
+  "governance_subtree_git_tree_sha1": "06e56cec702436ac701ddd9e649d862e389c1454",
+  "source_freeze_parent": "0433d9e89080433d66f9c9a19b7f93669b6c0cd0",
+  "source_freeze_sha": "96312735a2341c145e360f19a6f3a08ec222d64a",
+  "source_manifest_sha256": "149ce89eed53e279220ae8bb7577c3b93c3cd491bee674fcae4984a67772e666",
+  "source_subtree_git_tree_sha1": "ebfb3db331e5fa817e0cc7bf9ea979fe1b33f964"
+}

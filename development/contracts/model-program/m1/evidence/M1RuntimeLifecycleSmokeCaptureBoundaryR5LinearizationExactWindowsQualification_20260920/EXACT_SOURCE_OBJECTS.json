@@ -1,0 +1,192 @@
+{
+  "objects": [
+    {
+      "bytes": 8725,
+      "git_blob_sha1": "81d985648579b276b212723bbceecc1572369867",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/README.md",
+      "sha256": "d1e24a8d11c324419d58d01755da9abf7e8b657808ac9829cf2e23cd7f14b456"
+    },
+    {
+      "bytes": 614,
+      "git_blob_sha1": "4c9e4b962d0f7ddbfb16c7e7948e095e3c0176b0",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/bindings.go",
+      "sha256": "3c94f8d4fd8b1e2bbdc185c9524b984ae3208d86c9094fac754d8849949d8266"
+    },
+    {
+      "bytes": 733,
+      "git_blob_sha1": "35b1caa3f426022a60f39435c1abd14cab6f608a",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/bounded_io.go",
+      "sha256": "8650b9901d8a7944a80a86fcb25826b4255aa3fc2f56f1a79a2b1a15f555fbdf"
+    },
+    {
+      "bytes": 15655,
+      "git_blob_sha1": "490647e6e096a781037d2d6194f88118e8323867",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/build.py",
+      "sha256": "3a955b88c7a483a7f4185dcded7a04ba0ec4ac86137cf771abde790b4f8f8956"
+    },
+    {
+      "bytes": 1620,
+      "git_blob_sha1": "5373e0b8b27cedace6704ce00bef825589b0c179",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/canonical-vectors.json",
+      "sha256": "26376507c8089a893c7c48dd5140d77235588a6d1afdd62faac4950ba0b03c74"
+    },
+    {
+      "bytes": 10627,
+      "git_blob_sha1": "5be32f15eaae3261af88ea8b1448f2d6fa4cc819",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/filesystem.go",
+      "sha256": "ea0903d4be2bf6332c1e29f4da306c60fde0046a9634231828b23c9169a12b03"
+    },
+    {
+      "bytes": 863,
+      "git_blob_sha1": "5db634432b1f90f5b261eea3fbf31a6c1768aae8",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/filesystem_fixture_other_test.go",
+      "sha256": "1ab0c080401ff6f180649c35161623cf6edb7ee2189ac2d0b8979e2cc373ddf9"
+    },
+    {
+      "bytes": 2220,
+      "git_blob_sha1": "8993abf4f6833359a9cabf6744256cbb8edaabcf",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/filesystem_fixture_test.go",
+      "sha256": "97402e33a957c7efb7e5087f5ee6261ee884581c2869700bcd1de832bc3c5cb3"
+    },
+    {
+      "bytes": 624,
+      "git_blob_sha1": "8f93dd7d395e17423fd4992d6611f4d7b66dad56",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/filesystem_fixture_windows_test.go",
+      "sha256": "68658ffae1925f9d155fe549d1e40a367473a34efaaa6b94dca7739218d4f11f"
+    },
+    {
+      "bytes": 11520,
+      "git_blob_sha1": "2d6e9a550c60ada1b57f7cec8c6ef099b4086577",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/filesystem_windows.go",
+      "sha256": "0e2bac3f004a2999aaf7bb05c57efc068031d505577ca4ee68f0ee4cca628028"
+    },
+    {
+      "bytes": 14821,
+      "git_blob_sha1": "34f2484791af30f7edd9fcc733a9f8e48ddd9fcf",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/finalization.go",
+      "sha256": "f407698814abe6206d95eabaf21726906115716f81d06102af0aaa78295a7753"
+    },
+    {
+      "bytes": 49,
+      "git_blob_sha1": "ed7c8e4ee4bc05642f288b397173d3060ea8d29d",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/go.mod",
+      "sha256": "02c76ba9ab8985de38b41978005c47739cad67a8fb26f195a66369548dcf785b"
+    },
+    {
+      "bytes": 34338,
+      "git_blob_sha1": "a4ae20a842e5784e82f34ec057462bef216cac54",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/lifecycle.go",
+      "sha256": "0a51eaa7cf7be81420a3c94b8246dbd8bc7e0f13002a365299f43294b2319ae1"
+    },
+    {
+      "bytes": 3488,
+      "git_blob_sha1": "187d4ea4998a98a5a37fe305b45c64a255bb1279",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/main.go",
+      "sha256": "aff2ce9448d03eceedf70a6d045b1a98bf2129b516ba98b49beb6b3af3ce8b98"
+    },
+    {
+      "bytes": 894,
+      "git_blob_sha1": "14b7af46c1e157ae49e6f1f983f2b2873087dbef",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/network_windows.go",
+      "sha256": "dab032fe2c7a6d6b845d266ead695673e93a72c138a63d0097be27704f129b1a"
+    },
+    {
+      "bytes": 26228,
+      "git_blob_sha1": "4152a5f3dfd2b3b665e4aae0d05a497a7df94c46",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/owner.go",
+      "sha256": "a8abe9e33425f98925d5239d38c095e18d6c1b496136ffd0fcac90c9e03e6a87"
+    },
+    {
+      "bytes": 21048,
+      "git_blob_sha1": "71972a71f75c8a8f0fddd7b4fb36521ddf9ed1d1",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/owner_test.go",
+      "sha256": "080eccd07b4d809bd7fc00a3ed0931fe1c9d3704b53c4cb63b4ddccd8f36be8b"
+    },
+    {
+      "bytes": 669,
+      "git_blob_sha1": "f58301d55c0e6e79929e484cbc629781748cbc1c",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/payload_policy.go",
+      "sha256": "9bb1eadfbdeafcf1cd80b90c99bf93cd96660edb319680398a307bf51aed28a0"
+    },
+    {
+      "bytes": 1304,
+      "git_blob_sha1": "a61d115b7b106012e54911cc120f0789665eaf7e",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/platform_other.go",
+      "sha256": "7b42b1232e97a0c6c7d9d0e50e76677dad24d209d1869fa7833aaa52dcc77d95"
+    },
+    {
+      "bytes": 17114,
+      "git_blob_sha1": "6f5460c274e6c118d6f9d9c310f8e72a7b10a86f",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/platform_windows.go",
+      "sha256": "b518c531c194603d67177eb4ace440ed9a96dd72a98a853a2dcc40b653d44d6a"
+    },
+    {
+      "bytes": 6797,
+      "git_blob_sha1": "a52008d7e7650c8f7f0f247464582f6c5f110603",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/platform_windows_test.go",
+      "sha256": "c95817814b382d7b3341a8cc7b32323d78650a256919c9cad6a64914045a2474"
+    },
+    {
+      "bytes": 30103,
+      "git_blob_sha1": "25dfa6e31e18571f6bec12e6cbb696c9e580756f",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/policy.go",
+      "sha256": "9254ef2e73ed634b65aeda9f0470a9e780db2e1529f73e0dbbb001b690f10f04"
+    },
+    {
+      "bytes": 2958,
+      "git_blob_sha1": "f07088810e75dd83f78c957234151b48e8c808e4",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/publication.go",
+      "sha256": "f967c5ddcdb3dbae56ca76b2e4258fdf97601ea3be3219470834656a6e5edf67"
+    },
+    {
+      "bytes": 7751,
+      "git_blob_sha1": "2f20d334703284b0d440b95e5b00abb40587d3e0",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/qualification_scope.py",
+      "sha256": "7038de1e8c14a4cfbfc3bfa74cbb48d61915615510c77ab5ce2b64ac5be6832c"
+    },
+    {
+      "bytes": 3509,
+      "git_blob_sha1": "e5fb2fc76ec1c38071e6462d4617bff79e56ecc8",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/qualification_scope_test.py",
+      "sha256": "31e9566693b42c0fb9820b8aeb6d2fa009e72caeec8ed9de5029b4c748adb07c"
+    },
+    {
+      "bytes": 40477,
+      "git_blob_sha1": "f4289520f2902f44b5c93cee913580810922c1ef",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/remediation_test.go",
+      "sha256": "31c9c04c3b48c234f6be4bdcf4c62b98c04d09fce74492e23d5d196b84a49055"
+    },
+    {
+      "bytes": 4823,
+      "git_blob_sha1": "f8676ea300873fcf42be037564257508286dea86",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/remediation_windows_test.go",
+      "sha256": "1a15c13016395077676ac1f29c2a7f0923d75dba4ea013fdfe436eaa9a524b49"
+    },
+    {
+      "bytes": 13962,
+      "git_blob_sha1": "dd52d7dca0db6647c27ceab7b4d76f8e028ebadb",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/scenarios.go",
+      "sha256": "84b26ab4ff455835d5e1f29890822824694c5f568e9241993b946a6b1abd9af3"
+    },
+    {
+      "bytes": 8620,
+      "git_blob_sha1": "6d9103d4cf33c1bd47d1c4e1c3d69846f7376770",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/source-manifest.json",
+      "sha256": "149ce89eed53e279220ae8bb7577c3b93c3cd491bee674fcae4984a67772e666"
+    },
+    {
+      "bytes": 42486,
+      "git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
+      "path": "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.json",
+      "sha256": "b40040a1302620b965bdf6dbe2283d0d6d5f9413c8c784e4b65d9cd030ac7ee3"
+    },
+    {
+      "bytes": 37761,
+      "git_blob_sha1": "51b0083f74dd12318b7cdcdf3b939d31723de787",
+      "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json",
+      "sha256": "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3"
+    }
+  ],
+  "source_freeze_sha": "96312735a2341c145e360f19a6f3a08ec222d64a",
+  "source_manifest_sha256": "149ce89eed53e279220ae8bb7577c3b93c3cd491bee674fcae4984a67772e666"
+}

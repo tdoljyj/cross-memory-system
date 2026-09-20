@@ -1,0 +1,9 @@
+=== RUN   TestR5CaptureRevokeIsPersistenceBarrier
+--- PASS: TestR5CaptureRevokeIsPersistenceBarrier (0.09s)
+=== RUN   TestR5CaptureTimeBoundaryCheckedInsidePersistenceGate
+=== RUN   TestR5CaptureTimeBoundaryCheckedInsidePersistenceGate/expiry
+=== RUN   TestR5CaptureTimeBoundaryCheckedInsidePersistenceGate/max-wall
+--- PASS: TestR5CaptureTimeBoundaryCheckedInsidePersistenceGate (0.09s)
+    --- PASS: TestR5CaptureTimeBoundaryCheckedInsidePersistenceGate/expiry (0.04s)
+    --- PASS: TestR5CaptureTimeBoundaryCheckedInsidePersistenceGate/max-wall (0.04s)
+PASS

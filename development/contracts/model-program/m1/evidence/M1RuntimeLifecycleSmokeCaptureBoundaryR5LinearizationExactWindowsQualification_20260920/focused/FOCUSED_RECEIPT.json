@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r5-linearization-96312735-final-a\\m1-08-owner.tests.exe",
+    "-test.v",
+    "-test.count=1",
+    "-test.run",
+    "^TestR5"
+  ],
+  "cwd": "C:\\Users\\Windows\\.dsh\\projects\\cross-memory-system\\scripts\\model-program\\m1-runtime-lifecycle-owner",
+  "effectful_authority_issued": false,
+  "ended_at_utc": "2026-09-20T14:40:24.181744+00:00",
+  "environment": {
+    "SystemRoot": "C:\\WINDOWS",
+    "TEMP": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r5-linearization-96312735-final-focused\\temp",
+    "TMP": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r5-linearization-96312735-final-focused\\temp",
+    "WINDIR": "C:\\WINDOWS"
+  },
+  "exit_code": 0,
+  "fail": 0,
+  "independent_review_pass": false,
+  "owner_binary_executed": false,
+  "skip": 0,
+  "source_freeze_sha": "96312735a2341c145e360f19a6f3a08ec222d64a",
+  "source_manifest_sha256": "149ce89eed53e279220ae8bb7577c3b93c3cd491bee674fcae4984a67772e666",
+  "started_at_utc": "2026-09-20T14:40:23.927679+00:00",
+  "subtest_pass": 2,
+  "test_binary": {
+    "bytes": 12503040,
+    "sha256": "5c54ab63c82dc66a09744985de54fb6443f99f492bc5b395edca84fd5ba3eb9d"
+  },
+  "top_level_pass": 2
+}
