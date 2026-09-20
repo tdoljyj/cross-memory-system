@@ -20,15 +20,15 @@
   "prepared_objects": {
     "lifecycle_contract": {
       "path": "../governance/M1RuntimeLifecycleSmokeContract.v0.1.json",
-      "git_blob_sha1": "74e438fa5c4798869a8932da9c8b88b53bfede05",
-      "raw_sha256": "c7c3f06f8115d11f81fa97c9ee73f57808c93f20ad14b728687c63d8fde70455",
-      "bytes": 27865
+      "git_blob_sha1": "0ae8b9eaabf9280a0b09b084f353faf7bed45c39",
+      "raw_sha256": "d612007679d173ad33edd36775a9bce3f75999c4efafd3a0091dcd817d0cfdba",
+      "bytes": 33839
     },
     "experiment_profile_candidate": {
       "path": "../governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json",
-      "git_blob_sha1": "d2fff1c8cb8044fd42b57dc25d749725aba31a0e",
-      "raw_sha256": "dbc7d81f1f219f6f7b47bdf14e5d32886ff9a27d39441b9fffd82b7585a002f2",
-      "bytes": 22245,
+      "git_blob_sha1": "16aed80dcaa994f0956b86f09369ae24d26c790b",
+      "raw_sha256": "530fa59d2bfbf1ca0753177e59778d5737af665c65263d3d06cfad65f1fdc8c2",
+      "bytes": 26876,
       "profile_id": "M1-LIFE-QWEN35-08B-PC-001-CANDIDATE",
       "effectful_authority_issued": false
     }
@@ -96,11 +96,11 @@
     "OWNER_FINAL_M1_08_EFFECTFUL_AUTHORIZATION_NOT_GRANTED",
     "FINAL_EXPIRY_NOT_BOUND"
   ],
-  "next_gate": "FRESH_CONTEXT_READ_ONLY_CONTRACT_AND_PROFILE_CANDIDATE_REVIEW / REVIEWER_NOT_MODIFIER / NO_EFFECTFUL_EXECUTION",
-  "authority_effect": "PREPARATION_RECEIPT_ONLY / NO_EXECUTION_AUTHORITY",
+  "next_gate": "FRESH_CONTEXT_READ_ONLY_RE_REVIEW_OF_REMEDIATED_EXACT_HEAD / EFFECTFUL_OWNER_IMPLEMENTATION_PREPARATION_ONLY_IF_0_BLOCKER_0_MAJOR",
+  "authority_effect": "NONE / CONTRACT_AND_PROFILE_REMEDIATION_ONLY",
   "author_side_adversarial_self_review": {
     "independent_review": false,
-    "status": "AUTHOR_SIDE_SELF_REVIEW_COMPLETE / FRESH_CONTEXT_REVIEW_STILL_REQUIRED",
+    "status": "AUTHOR_SIDE_SELF_REVIEW_REOPENED_AFTER_INDEPENDENT_FINDINGS / TARGETED_REMEDIATION_APPLIED / FRESH_CONTEXT_RE_REVIEW_REQUIRED",
     "findings_closed": [
       {
         "id": "SELF-01",
@@ -141,6 +141,39 @@
     "current_author_side_blockers": 0,
     "current_author_side_majors": 0,
     "current_author_side_minors": 0,
-    "note": "This self-review is not an independent verdict and cannot replace Fresh-Context review."
+    "note": "This author-side remediation record is not an independent verdict and cannot replace Fresh-Context re-review."
+  },
+  "remediation_after_independent_review": {
+    "reviewed_exact_head": "5b3b3e2d7538ceb1f2e3c79d94a9811f96ad6c49",
+    "independent_verdict": "BLOCKED / M1_08_CONTRACT_OR_PROFILE_CORRECTION_REQUIRED",
+    "findings_addressed": [
+      {
+        "finding_id": "MAJOR-01",
+        "disposition": "TARGETED_REMEDIATION_APPLIED",
+        "change": "Require the exact guard parent to preexist and be verified safe before Final Issuance; the issued profile cannot create or recreate it; the first profile-owned filesystem write is atomic CREATE_NEW of the exact Attempt Guard file."
+      },
+      {
+        "finding_id": "MAJOR-02",
+        "disposition": "TARGETED_REMEDIATION_APPLIED",
+        "change": "Define exact normal and failure-recovery current transitions, transition_kind, recovery_of_transition_index, recovery transition 3 for failed B probe and transition 4 for failed rollback-A probe, followed by terminal failure."
+      },
+      {
+        "finding_id": "MAJOR-03",
+        "disposition": "TARGETED_REMEDIATION_APPLIED",
+        "change": "Enumerate and reject NTFS named alternate data streams on every bound source and slot regular file; copy semantics must preserve only the unnamed default stream."
+      },
+      {
+        "finding_id": "MINOR-01",
+        "disposition": "TARGETED_REMEDIATION_APPLIED",
+        "change": "Replace residual whole-package unchanged wording with exact bound-source-payload-set semantics."
+      },
+      {
+        "finding_id": "MINOR-02",
+        "disposition": "TARGETED_REMEDIATION_APPLIED",
+        "change": "Bind exact same-directory current temp paths for transition indices 1 through 4."
+      }
+    ],
+    "scope": "CONTRACT_AND_PROFILE_CANDIDATE_ONLY / NO_EFFECTFUL_OWNER / NO_FINAL_ISSUANCE / NO_EXECUTION / NO_MERGE",
+    "independent_re_review_required": true
   }
 }
