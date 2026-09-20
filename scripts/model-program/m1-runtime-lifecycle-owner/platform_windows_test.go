@@ -109,3 +109,21 @@ func TestWindowsReparsePointDetection(t *testing.T) {
 	rp,e:=sys.pathIsReparse(link); if e!=nil { t.Fatal(e) }
 	if !rp { t.Fatal("symlink was not reported as reparse point") }
 }
+
+
+func TestWindowsFinalPathAndDirectoryIdentity(t *testing.T) {
+	sys:=realPlatform{}
+	dir:=t.TempDir()
+	final,e:=sys.finalPath(dir)
+	if e!=nil { t.Fatal(e) }
+	if !samePath(final,dir) { t.Fatalf("final=%q dir=%q",final,dir) }
+	id,e:=sys.directoryIdentity(dir)
+	if e!=nil { t.Fatal(e) }
+	if !samePath(id.canonicalPath,dir) ||
+		!strings.EqualFold(id.filesystemType,"NTFS") ||
+		len(id.volumeSerial)!=8 || len(id.fileID)!=16 ||
+		!strings.HasPrefix(strings.ToUpper(id.ownerSID),"S-") ||
+		len(id.securityDescriptorSHA256)!=64 {
+		t.Fatalf("identity=%#v",id)
+	}
+}
