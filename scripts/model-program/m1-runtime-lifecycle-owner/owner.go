@@ -84,7 +84,9 @@ type captureWriter struct {
 
 func (w *captureWriter) Write(p []byte) (int, error) {
 	if e := w.b.consume(int64(len(p)), true); e != nil {
-		return 0, e
+		// Keep draining the child's pipe after the evidence budget has failed so
+		// cleanup cannot deadlock behind a full stdout/stderr pipe.
+		return len(p), nil
 	}
 	return w.f.Write(p)
 }
@@ -405,7 +407,7 @@ func (c *controller) startServer(ctx *executionContext, slotRoot, scenario, labe
 			}
 		}
 	}()
-	if e = c.event(ctx, scenario, "server_started", object{"pid": p.pid(), "start_index": idx, "executable": launch.executable, "argv": stringsAsAny(launch.argv), "cwd": launch.cwd, "environment_names": []any{"SystemRoot", "WINDIR", "TEMP", "TMP"}, "endpoint": "127.0.0.1:18088"}); e != nil {
+	if e = c.event(ctx, scenario, "server_started", object{"pid": p.pid(), "start_index": idx, "executable": launch.executable, "argv": stringsAsAny(launch.argv), "cwd": launch.cwd, "environment_names": []any{"SystemRoot", "WINDIR", "TEMP", "TMP"}, "environment": stringsAsAny(launch.env), "endpoint": "127.0.0.1:18088"}); e != nil {
 		return w, e
 	}
 	return w, nil
@@ -427,6 +429,16 @@ func (c *controller) resolve(ctx *executionContext, w *ownedProcess) (*processRe
 		return nil, fail("FOREIGN_PROCESS_REJECTED")
 	}
 	return r, nil
+}
+func (c *controller) ownedAlive(ctx *executionContext, w *ownedProcess) (bool, error) {
+	r, e := c.resolve(ctx, w)
+	if e != nil {
+		return false, e
+	}
+	if r.closed {
+		return false, nil
+	}
+	return r.proc.alive()
 }
 func (c *controller) forceKill(ctx *executionContext, w *ownedProcess) error {
 	r, e := c.resolve(ctx, w)
