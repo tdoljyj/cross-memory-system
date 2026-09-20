@@ -176,5 +176,60 @@
     "scope": "CONTRACT_AND_PROFILE_CANDIDATE_ONLY / NO_EFFECTFUL_OWNER / NO_FINAL_ISSUANCE / NO_EXECUTION / NO_MERGE",
     "independent_re_review_required": true,
     "consistency_followup": "AUTHOR_SIDE_REVERSE_CHECK_CLOSED_SUCCESS_PATH_VS_FAILURE_RECOVERY_TRANSITION_AMBIGUITY_AND_EXPLICITLY_BOUND_SEPARATE_GUARD_PARENT_PROVISIONING_EVIDENCE_REQUIREMENT"
+  },
+  "remediation_after_independent_re_review_major_04": {
+    "reviewed_exact_head": "fd00d0f7aa15637b538a319d5d8df101f4434ba3",
+    "exact_base": "324a1f96d60c5e374a6275b0bd382e6f7be1ee89",
+    "independent_verdict": "BLOCKED / M1_08_CONTRACT_OR_PROFILE_CORRECTION_REQUIRED",
+    "finding_summary": {
+      "BLOCKER": 0,
+      "MAJOR": 1,
+      "MINOR": 0
+    },
+    "finding": {
+      "finding_id": "MAJOR-04",
+      "disposition": "TARGETED_REMEDIATION_APPLIED / AUTHOR_SIDE_REVERSE_REVIEW_0_BLOCKER_0_MAJOR / FRESH_CONTEXT_RE_REVIEW_REQUIRED",
+      "issue": "Effectful child-process launch environment and working directory were not exact-bound.",
+      "remediation": [
+        "Child environment is rebuilt from an empty map; no caller/parent environment inheritance and no caller-supplied environment map, override, callback, or dynamic injection.",
+        "PATH is absent; SystemRoot/WINDIR come only from trusted Windows GetWindowsDirectoryW; TEMP/TMP are bound to the exact profile-owned test path.",
+        "LLAMA/proxy/CUDA/Vulkan/backend/device and DLL/runtime-search environment influence is forbidden by exact allowlist and fail-closed policy.",
+        "CWD is the exact verified active-slot payload\\runtime\\b11033-vulkan directory.",
+        "Executable, argv, environment, CWD, loopback endpoint, and original OS process handle form one immutable profile-derived launch envelope.",
+        "Final Issuance now requires static and negative tests against environment pollution and caller launch-parameter injection."
+      ]
+    },
+    "resulting_objects": {
+      "lifecycle_contract": {
+        "path": "../governance/M1RuntimeLifecycleSmokeContract.v0.1.json",
+        "git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
+        "raw_sha256": "b40040a1302620b965bdf6dbe2283d0d6d5f9413c8c784e4b65d9cd030ac7ee3",
+        "bytes": 42486
+      },
+      "experiment_profile_candidate": {
+        "path": "../governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json",
+        "git_blob_sha1": "d4d917661e16bab798308c7b8706923476219b93",
+        "raw_sha256": "933863d5eb340fda8212fcdd95c9065a793af9a304036d973002cbbd69fb3add",
+        "bytes": 37761
+      }
+    },
+    "author_side_adversarial_reverse_review": {
+      "independent_review": false,
+      "verdict": "0 BLOCKER / 0 MAJOR",
+      "attack_classes_checked": [
+        "inherited environment",
+        "PATH/DLL search bypass",
+        "TEMP/TMP/config pollution",
+        "working-directory bypass",
+        "caller callback/process/command/path/environment/network endpoint bypass",
+        "Contract/Profile mismatch",
+        "new BLOCKER/MAJOR regression",
+        "MAJOR-01/02/03 and MINOR-01/02 regression"
+      ],
+      "note": "AUTHOR_SIDE_ONLY / NOT_PASS_EVIDENCE / MUST_BE_RECHECKED_BY_NEW_FRESH_CONTEXT_INDEPENDENT_REVIEWER"
+    },
+    "scope": "TARGETED MAJOR-04 REMEDIATION ONLY / CONTRACT + PROFILE / NO EFFECTFUL OWNER IMPLEMENTATION / NO EXECUTION / NO FINAL ISSUANCE / NO MERGE",
+    "receipt_is_independent_pass_evidence": false,
+    "independent_re_review_required": true
   }
 }
