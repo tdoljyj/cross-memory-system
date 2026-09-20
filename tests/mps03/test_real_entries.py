@@ -1,9 +1,10 @@
-import base64, json, os, pathlib, re, socket, subprocess, sys, tempfile, threading, time, unittest
+import base64, io, json, os, pathlib, re, socket, subprocess, sys, tempfile, threading, time, unittest
 from html.parser import HTMLParser
 from http.server import ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
+from unittest.mock import patch
 
 REPO=pathlib.Path(__file__).resolve().parents[2]
 IMPL=REPO/"development"/"mps"
@@ -301,6 +302,15 @@ class RealEntries(unittest.TestCase):
     def test_native_page_failures_and_lost_ack_recover_with_same_key(self):
         gateway=GatewayClient(f"http://127.0.0.1:{self.pg}","NATIVE",self.native_secret)
         gateway.start_session()
+        denied_client=GatewayClient(f"http://127.0.0.1:{self.pg}","NATIVE",self.native_secret)
+        def deny_new_session(operation,*args):
+            denied_client.token="expired-session"
+            def denied(request,*_args,**_kwargs):
+                code=b"ENTRY_AUTHENTICATION_FAILED" if request.full_url.endswith("/v1/sessions") else b"SESSION_REQUIRED"
+                payload=b'{"ok":false,"error":"'+code+b'"}'
+                raise HTTPError(request.full_url,401,"Unauthorized",{},io.BytesIO(payload))
+            with patch.object(denied_client._opener,"open",side_effect=denied):
+                return getattr(denied_client,operation)(*args)
         class LostAck:
             base_url=gateway.base_url
             token=gateway.token
@@ -308,6 +318,8 @@ class RealEntries(unittest.TestCase):
             first_confirm=None
             list_failure=False
             page_failure=False
+            create_session_denial=True
+            confirm_session_denial=True
             create_retry_errors=[(403,"MPS_AUTHORIZATION_DENIED"),(409,"IDEMPOTENCY_CONFLICT")]
             confirm_retry_errors=[(403,"MPS_AUTHORIZATION_DENIED"),(409,"STALE_CONTEXT_REQUIRES_REFRESH")]
             def list_objects(self):
@@ -323,6 +335,9 @@ class RealEntries(unittest.TestCase):
                     return {"ok":False,"error":"GATEWAY_UNAVAILABLE","http_status":503}
                 return gateway.history(*args)
             def create_object(self,*args):
+                if self.first_create is not None and self.create_session_denial:
+                    self.create_session_denial=False
+                    return deny_new_session("create_object",*args)
                 if self.first_create is not None and self.create_retry_errors:
                     status,code=self.create_retry_errors.pop(0)
                     return {"ok":False,"error":code,"http_status":status}
@@ -332,6 +347,9 @@ class RealEntries(unittest.TestCase):
                     raise ProtocolError("GATEWAY_UNAVAILABLE","response lost after commit",503)
                 return out
             def confirm(self,*args):
+                if self.first_confirm is not None and self.confirm_session_denial:
+                    self.confirm_session_denial=False
+                    return deny_new_session("confirm",*args)
                 if self.first_confirm is not None and self.confirm_retry_errors:
                     status,code=self.confirm_retry_errors.pop(0)
                     return {"ok":False,"error":code,"http_status":status}
@@ -368,10 +386,10 @@ class RealEntries(unittest.TestCase):
             self.assertEqual(retry.action,"/create")
             self.assertEqual({k:retry.fields[k] for k in create},create)
             self.assertEqual(retry.fields["_recovery_pending"],"1")
-            for expected_status,authorized in ((401,False),(403,True),(409,True)):
+            for expected_status,authorized in ((401,False),(401,True),(403,True),(409,True)):
                 previous=retry.fields.copy()
                 status,_,page=html_req("POST",base+retry.action,retry.fields,authorized=authorized)
-                self.assertEqual(status,expected_status)
+                self.assertEqual(status,expected_status,page)
                 self.assertIn("original result is still unknown",page)
                 retry=RetryForm(); retry.feed(page)
                 self.assertEqual(retry.fields,previous)
@@ -411,7 +429,7 @@ class RealEntries(unittest.TestCase):
             self.assertEqual(retry.action,f"/object/{oid}/confirm")
             self.assertEqual({k:retry.fields[k] for k in confirm},confirm)
             self.assertEqual(retry.fields["_recovery_pending"],"1")
-            for expected_status,authorized in ((401,False),(403,True),(409,True)):
+            for expected_status,authorized in ((401,False),(401,True),(403,True),(409,True)):
                 previous=retry.fields.copy()
                 status,_,page=html_req("POST",base+retry.action,retry.fields,authorized=authorized)
                 self.assertEqual(status,expected_status)

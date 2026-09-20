@@ -29,7 +29,17 @@ class GatewayClient:
         self.base_url=base_url.rstrip('/'); self.entry_kind=entry_kind; self.entry_secret=entry_secret; self.token=None
         self._opener=build_opener(ProxyHandler({}),_NoGatewayRedirects())
     def start_session(self):
-        r=self._request("POST","/v1/sessions",{"entry_kind":self.entry_kind,"entry_secret":self.entry_secret},auth=False); self.token=r["session_token"]; return r
+        r=self._request("POST","/v1/sessions",{"entry_kind":self.entry_kind,"entry_secret":self.entry_secret},auth=False)
+        if r.get("ok") is False:
+            status=r.get("http_status")
+            if not isinstance(status,int) or not 400<=status<=599: status=502
+            code=r.get("error") if isinstance(r.get("error"),str) else "GATEWAY_SESSION_FAILED"
+            raise ProtocolError(code,"gateway session could not be established",status)
+        token=r.get("session_token")
+        if not isinstance(token,str) or not token:
+            raise ProtocolError("GATEWAY_INVALID_RESPONSE","gateway returned an invalid session response",502)
+        self.token=token
+        return r
     def _request(self,method,path,body=None,auth=True,_retried_session=False):
         data=None if body is None else json.dumps(body,ensure_ascii=False,separators=(",",":")).encode()
         headers={"Content-Type":"application/json"}

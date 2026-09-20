@@ -24,7 +24,9 @@ class Handler(BaseHTTPRequestHandler):
             super().log_message(fmt, *args)
 
     def _json(self):
-        n = int(self.headers.get("Content-Length", "0") or 0)
+        try: n = int(self.headers.get("Content-Length", "0") or 0)
+        except ValueError: raise ProtocolError("INVALID_CONTENT_LENGTH", "invalid request length", 400) from None
+        if n < 0: raise ProtocolError("INVALID_CONTENT_LENGTH", "invalid request length", 400)
         raw = self.rfile.read(n) if n else b"{}"
         value = strict_json_loads(strict_utf8_decode(raw))
         if not isinstance(value, dict):
