@@ -243,7 +243,7 @@
     },
     "finding": {
       "finding_id": "MAJOR-05",
-      "disposition": "TARGETED_REMEDIATION_APPLIED / AUTHOR_SIDE_TARGETED_REVIEW_REQUIRED / FRESH_CONTEXT_RE_REVIEW_REQUIRED",
+      "disposition": "TARGETED_REMEDIATION_APPLIED / AUTHOR_SIDE_REVERSE_REVIEW_0_BLOCKER_0_MAJOR / FRESH_CONTEXT_RE_REVIEW_REQUIRED",
       "issue": "Experiment Profile exact-bound lifecycle_contract_git_blob_sha1 remained pinned to the pre-MAJOR-04 Contract blob at two normative locations.",
       "remediation": [
         "Updated binding.lifecycle_contract_git_blob_sha1 from 6430869c661b5d42f0540032a3bbd569fd88ba77 to f422d4da73deb1cafb6c00468602c8309d896786.",
@@ -270,6 +270,21 @@
     "profile_binding_fix_commit": "1752d4070a705e13fa0efe787cde8a10652f11e0",
     "scope": "TARGETED MAJOR-05 REMEDIATION ONLY / PROFILE EXACT-BINDING + RECEIPT HISTORY / CONTRACT UNCHANGED / NO EFFECTFUL OWNER IMPLEMENTATION / NO EXECUTION / NO FINAL ISSUANCE / NO MERGE",
     "receipt_is_independent_pass_evidence": false,
-    "independent_re_review_required": true
+    "independent_re_review_required": true,
+    "author_side_targeted_reverse_review": {
+      "independent_review": false,
+      "verdict": "0 BLOCKER / 0 MAJOR",
+      "checks": [
+        "PR #272 head ancestry starts exactly from reviewed head 291a62957751231826773666a0bce96cbe6a6832.",
+        "Only Profile and Preparation Receipt changed; Lifecycle Contract remained blob f422d4da73deb1cafb6c00468602c8309d896786.",
+        "Both normative Profile lifecycle_contract_git_blob_sha1 bindings now equal f422d4da73deb1cafb6c00468602c8309d896786.",
+        "Old Contract blob 6430869c661b5d42f0540032a3bbd569fd88ba77 no longer appears in the Profile.",
+        "Contract/Profile launch_envelope structures remain exactly equal.",
+        "Candidate remains non-effectful: effectful_authority_issued=false and execution_allowed_while_candidate=false.",
+        "MAJOR-04 launch environment/CWD remediation semantics were not modified by MAJOR-05.",
+        "MAJOR-01/02/03 and MINOR-01/02 remediation semantics were not modified by MAJOR-05."
+      ],
+      "note": "AUTHOR_SIDE_ONLY / NOT_INDEPENDENT_PASS_EVIDENCE / FRESH_CONTEXT_RE_REVIEW_STILL_REQUIRED"
+    }
   }
 }
