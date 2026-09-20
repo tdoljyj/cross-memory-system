@@ -10,6 +10,7 @@ ap.add_argument('--image',default='postgres:17.6')
 args=ap.parse_args()
 sys.path.insert(0,str(REPO/'development'/'mps'))
 from mps03.mps02b_pg_gateway import PgMPS02BStore
+from mps03.common import ProtocolError
 
 container='clued-mps03-review-'+uuid.uuid4().hex[:12]
 def docker(*args,input=None):
@@ -35,7 +36,7 @@ try:
             pass
         time.sleep(.1)
     else: raise RuntimeError('PostgreSQL did not become ready')
-    sql('create role anon; create role authenticated; create schema extensions; create schema auth; create table auth.users(id uuid primary key); insert into auth.users values (\'00000000-0000-0000-0000-000000000001\');')
+    sql('create role anon; create role authenticated; create schema extensions; create schema auth; create table auth.users(id uuid primary key); insert into auth.users values (\'00000000-0000-0000-0000-000000000001\'), (\'00000000-0000-0000-0000-000000000002\');')
     source_hashes={}
     for source in [args.mps02a_sql,args.mps02b_sql]:
         raw=source.read_bytes(); source_hashes[source.name]=hashlib.sha256(raw).hexdigest()
@@ -48,7 +49,7 @@ try:
     store.user_id='00000000-0000-0000-0000-000000000001'
     store.authority_domain='mps03-local-review'
     store.native_principal='native-review'; store.agent_principal='agent-review'
-    store.native_secret='native-gateway-review-secret'; store.agent_secret='agent-gateway-review-secret'
+    store.native_secret='mps03-native-gw-'+'n'*32; store.agent_secret='mps03-agent-gw-'+'a'*32
     store.sessions={}
     store._psql=sql
     store._assert_primitives()
@@ -72,6 +73,32 @@ where object_id='"""+oid+"' and action in ('read','propose','update');")
     if observed['read_state_stamp']['authorization_generation']!=2 or observed['state_stamp']['authorization_generation']!=3: raise AssertionError('Agent read/propose generations were not separated')
     native_observed=store.read_object(native,oid)
     if native_observed['read_state_stamp']['authorization_generation']!=4 or native_observed['state_stamp']['authorization_generation']!=5: raise AssertionError('Native read/update generations were not separated')
+    other=PgMPS02BStore.__new__(PgMPS02BStore)
+    other.user_id='00000000-0000-0000-0000-000000000002'
+    other.authority_domain=store.authority_domain
+    other.native_principal=store.native_principal; other.agent_principal=store.agent_principal
+    other.native_secret=store.native_secret; other.agent_secret=store.agent_secret
+    other.sessions={}; other._psql=sql
+    other_native=other.create_session('NATIVE',other.native_secret)['session_token']
+    other_agent=other.create_session('THIRD_PARTY_AGENT_HOST',other.agent_secret)['session_token']
+    if other.list_objects(other_native)['objects']: raise AssertionError('other user listed first user object')
+    for value in (1,99):
+        try:
+            other.create_object(other_native,'Review object',{'value':value},'review-create-001')
+            raise AssertionError('other user replayed first user create request')
+        except RuntimeError as error:
+            if 'OBJECT_NOT_FOUND' not in str(error): raise
+    for operation in (
+        lambda: other.read_object(other_agent,oid),
+        lambda: other.history(other_native,oid),
+        lambda: other.create_proposal(other_agent,oid,{'value':2},observed['state_stamp']),
+        lambda: other.confirm_proposal(other_native,oid,'foreign-proposal',native_observed['state_stamp'],'foreign-request-001'),
+    ):
+        try:
+            operation()
+            raise AssertionError('other user accessed first user object')
+        except ProtocolError as error:
+            if error.code!='OBJECT_NOT_FOUND' or error.status!=404: raise
     foreign_change=json.loads(sql("select clued_private.mps_register_change_set('"+oid+"','foreign-change-1','{\"mode\":\"REPLACE_JSON_V1\",\"content\":{\"value\":99}}'::jsonb)::text;"))
     foreign_pack=store._read_for(store.native_principal,oid,'update')
     foreign_intent=json.loads(sql("select clued_private.mps_issue_mutation_intent(jsonb_build_object("+
@@ -139,6 +166,6 @@ where object_id='"""+oid+"' and action in ('read','propose','update');")
     except RuntimeError as error:
         if 'MPS03_CREATE_NOT_COMMITTED' not in str(error): raise
     if int(sql('select count(*) from clued_private.mps_objects;'))!=before: raise AssertionError('noncommitted create left a bootstrap object')
-    print(json.dumps({'qualification':'ISOLATED_LOCAL_POSTGRES_WITH_MPS02B_COMPAT_SHIM' if args.compat_shim else 'ISOLATED_LOCAL_POSTGRES_UNMODIFIED_SOURCES','source_sha256':source_hashes,'all_pass':True,'same_create_outcome_after_later_current':True,'same_confirm_outcome_after_later_current':True,'different_payload_conflict':True,'agent_sees_new_current':True,'stale_agent_proposal_rejected':True,'altered_agent_stamp_rejected':True,'distinct_allowed_action_generations':True,'interleaved_read_keeps_stamp_and_body_together':True,'identical_pending_suggestion_reuses_change_set':True,'previously_proposed_body_can_be_readopted':True,'foreign_intent_excluded_from_list_and_confirm':True,'noncommitted_create_rolled_back':True,'container_removed_on_exit':True},indent=2))
+    print(json.dumps({'qualification':'ISOLATED_LOCAL_POSTGRES_WITH_MPS02B_COMPAT_SHIM' if args.compat_shim else 'ISOLATED_LOCAL_POSTGRES_UNMODIFIED_SOURCES','source_sha256':source_hashes,'all_pass':True,'same_create_outcome_after_later_current':True,'same_confirm_outcome_after_later_current':True,'different_payload_conflict':True,'agent_sees_new_current':True,'stale_agent_proposal_rejected':True,'altered_agent_stamp_rejected':True,'distinct_allowed_action_generations':True,'cross_user_object_operations_rejected':True,'interleaved_read_keeps_stamp_and_body_together':True,'identical_pending_suggestion_reuses_change_set':True,'previously_proposed_body_can_be_readopted':True,'foreign_intent_excluded_from_list_and_confirm':True,'noncommitted_create_rolled_back':True,'container_removed_on_exit':True},indent=2))
 finally:
     docker('rm','-f',container)

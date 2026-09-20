@@ -12,6 +12,7 @@
   "stale_agent_proposal_rejected": true,
   "altered_agent_stamp_rejected": true,
   "distinct_allowed_action_generations": true,
+  "cross_user_object_operations_rejected": true,
   "interleaved_read_keeps_stamp_and_body_together": true,
   "identical_pending_suggestion_reuses_change_set": true,
   "previously_proposed_body_can_be_readopted": true,

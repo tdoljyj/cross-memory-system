@@ -59,10 +59,10 @@ class RealEntries(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp=tempfile.TemporaryDirectory(); cls.db=os.path.join(cls.tmp.name,"canonical.sqlite3")
         cls.pg,cls.pn,cls.pa=free_port(),free_port(),free_port()
-        cls.native_secret="native-test-secret-32bytes-000001"
-        cls.agent_secret="agent-test-secret-32bytes-0000002"
-        cls.native_access="native-inbound-access-secret-32bytes-001"
-        cls.agent_access="agent-inbound-access-secret-32bytes-0002"
+        cls.native_secret="mps03-native-gw-"+"n"*32
+        cls.agent_secret="mps03-agent-gw-"+"a"*32
+        cls.native_access="mps03-native-access-"+"u"*32
+        cls.agent_access="mps03-agent-access-"+"v"*32
         ENTRY_AUTH[cls.pn]="Basic "+base64.b64encode(("native:"+cls.native_access).encode()).decode()
         ENTRY_AUTH[cls.pa]="Bearer "+cls.agent_access
         env=os.environ.copy(); env["PYTHONPATH"]=os.pathsep.join([str(IMPL),str(REPO)])

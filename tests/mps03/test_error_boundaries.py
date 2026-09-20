@@ -16,6 +16,13 @@ from mps.mps03.gateway_http import Handler
 
 
 class ErrorBoundaries(unittest.TestCase):
+    def test_gateway_url_rejects_non_loopback_or_embedded_credentials(self):
+        for url in ("https://example.test:443","http://example.test:8080",
+                    "http://user:secret@127.0.0.1:8080","http://127.0.0.1:8080/path",
+                    "http://127.0.0.1:8080/?token=secret"):
+            with self.subTest(url=url), self.assertRaisesRegex(RuntimeError,"loopback"):
+                GatewayClient(url,"NATIVE","test-secret")
+        GatewayClient("http://127.0.0.1:8080","NATIVE","test-secret")
     def test_gateway_transport_failure_is_structured(self):
         client=GatewayClient("http://127.0.0.1:1","THIRD_PARTY_AGENT_HOST","agent-secret")
         client.token="session"

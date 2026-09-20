@@ -3,6 +3,15 @@ import base64, binascii, hashlib, json, secrets, time, uuid
 from typing import Any
 
 PROTOCOL_VERSION = "clued.mps03.entry.v1"
+NATIVE_GATEWAY_PREFIX = "mps03-native-gw-"
+AGENT_GATEWAY_PREFIX = "mps03-agent-gw-"
+NATIVE_ACCESS_PREFIX = "mps03-native-access-"
+AGENT_ACCESS_PREFIX = "mps03-agent-access-"
+
+def require_secret_namespace(value: str, prefix: str, name: str) -> None:
+    """Keep the four entry credentials disjoint even across separate processes."""
+    if not isinstance(value, str) or not value.startswith(prefix) or len(value[len(prefix):]) < 32:
+        raise RuntimeError(f"{name} requires its dedicated prefix and at least 32 secret characters")
 
 def canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)

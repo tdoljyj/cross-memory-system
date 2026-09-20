@@ -14,6 +14,7 @@ class PgBridgeOutcome(unittest.TestCase):
         self.store.agent_principal="agent"
         self.store._session=lambda token:{"principal":"native"}
         self.store._require=lambda session,action:None
+        self.store._assert_object_owner=lambda object_id:None
         self.store._read_for=lambda *args: self.fail("a write response must not read later Current")
         self.durable={"status":"committed","object_id":"obj_1","result_revision_id":"rv_1","result_adoption_id":"ad_1","receipt_id":"rc_1","outcome_digest":"digest_1"}
         self.store._json=lambda sql,variables:dict(self.durable)

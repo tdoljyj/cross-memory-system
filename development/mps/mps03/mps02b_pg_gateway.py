@@ -16,10 +16,10 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
 try:
-    from .common import ProtocolError, new_id, sha256_json, validate_create_content
+    from .common import ProtocolError, new_id, sha256_json, validate_create_content, require_secret_namespace, NATIVE_GATEWAY_PREFIX, AGENT_GATEWAY_PREFIX
     from .gateway_http import Handler
 except ImportError:
-    from common import ProtocolError, new_id, sha256_json, validate_create_content
+    from common import ProtocolError, new_id, sha256_json, validate_create_content, require_secret_namespace, NATIVE_GATEWAY_PREFIX, AGENT_GATEWAY_PREFIX
     from gateway_http import Handler
 
 EXPECTED_NONPROD_TARGET = "clued-auth-test/uscrdifznmlvczcekqpw"
@@ -60,9 +60,8 @@ def _assert_entry_bindings(native_principal: str, agent_principal: str,
                            native_secret: str, agent_secret: str) -> None:
     if (not native_principal or not agent_principal or native_principal == agent_principal):
         raise RuntimeError("Native and Agent principals must be distinct and nonempty")
-    if (not isinstance(native_secret,str) or not isinstance(agent_secret,str)
-            or len(native_secret)<32 or len(agent_secret)<32 or native_secret == agent_secret):
-        raise RuntimeError("Native and Agent gateway secrets must be distinct and at least 32 characters")
+    require_secret_namespace(native_secret,NATIVE_GATEWAY_PREFIX,"Native gateway secret")
+    require_secret_namespace(agent_secret,AGENT_GATEWAY_PREFIX,"Agent gateway secret")
 
 
 def _assert_loopback_host(host: str) -> None:
@@ -129,6 +128,7 @@ class PgMPS02BStore:
                 ("STALE_CONTEXT_REQUIRES_REFRESH",409), ("IDEMPOTENCY_CONFLICT",409),
                 ("CONFIRMATION_TARGET_CHANGED",409), ("INTENT_IDENTITY_CONFLICT",409),
                 ("MPS_AUTHORIZATION_DENIED",403), ("MPS_RESULT_READ_DENIED",403),
+                ("OBJECT_NOT_FOUND",404),
                 ("MPS_CONTEXT_BASIS_NOT_FOUND_OR_INCONSISTENT",404), ("MPS_INTENT_NOT_FOUND",404),
             ]
             for code,status in mapping:
@@ -174,7 +174,17 @@ select jsonb_build_object(
         allowed={self.native_principal:{"read","create","confirm","history"},self.agent_principal:{"read","propose","history"}}
         if action not in allowed.get(s["principal"],set()): raise ProtocolError("ACTION_NOT_AUTHORIZED",f"principal cannot {action}",403)
 
+    def _assert_object_owner(self, object_id: str) -> None:
+        result=self._json(f"""
+select jsonb_build_object('owned',exists(
+ select 1 from clued_private.mps_objects o where o.object_id={_t('oid')} and o.user_id=({_t('uid')})::uuid
+))::text;
+""",{"oid":object_id,"uid":self.user_id})
+        if result.get("owned") is not True:
+            raise ProtocolError("OBJECT_NOT_FOUND","object not found",404)
+
     def _read_for(self, principal: str, object_id: str, action: str="read") -> dict:
+        self._assert_object_owner(object_id)
         # The pack function is VOLATILE and uses a fresh inner snapshot. Reading
         # Current in the same outer SELECT can pair its stamp with an older body.
         issued=self._json(
@@ -263,6 +273,10 @@ begin
      and q.stable_request_principal_id=v_in.principal
      and q.request_id=v_in.request_id;
   if found then
+    if not exists(select 1 from clued_private.mps_objects o
+                  where o.object_id=v_existing.object_id and o.user_id=v_in.user_id) then
+      raise exception 'OBJECT_NOT_FOUND' using errcode='P0001';
+    end if;
     select i.intent_body, c.state_stamp, ch.change_body->'content'
       into v_existing_intent, v_existing_stamp, v_existing_content
       from clued_private.mps_mutation_intents i
@@ -406,6 +420,7 @@ from clued_private.mps_objects o where o.user_id=({_t('uid')})::uuid;
         observed_digest=observed_state_stamp.get("state_stamp_digest")
         if not observed_digest:
             raise ProtocolError("STATE_STAMP_DIGEST_REQUIRED","Agent proposal must bind the exact state it observed",400)
+        self._assert_object_owner(object_id)
         observed_stamp={k:v for k,v in observed_state_stamp.items() if k!="state_stamp_digest"}
         sql=f"""
 with cp as (
@@ -490,6 +505,7 @@ where i.object_id={_t('oid')} and i.operation='update'
         s=self._session(token); self._require(s,"confirm")
         if not isinstance(request_id,str) or len(request_id)<8: raise ProtocolError("REQUEST_ID_REQUIRED","request_id is required")
         if not isinstance(state_stamp,dict): raise ProtocolError("STATE_STAMP_REQUIRED","state_stamp must be an object")
+        self._assert_object_owner(object_id)
         # Scope/purpose are already immutable inside the server-issued intent; caller cannot rewrite them here.
         submitted_stamp={k:v for k,v in state_stamp.items() if k!="state_stamp_digest"}
         sql=f"""

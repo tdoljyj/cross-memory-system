@@ -31,8 +31,8 @@ def stop(p):
     if p.stderr:p.stderr.close()
 
 def main():
-    pg,pn,pa=port(),port(),port(); ns='native-evidence-secret-not-recorded'; ag='agent-evidence-secret-not-recorded'; env=os.environ.copy(); env['PYTHONPATH']=os.pathsep.join([str(IMPL),str(REPO)])
-    native_access='native-evidence-inbound-access-secret-0001'; agent_access='agent-evidence-inbound-access-secret-0002'
+    pg,pn,pa=port(),port(),port(); ns='mps03-native-gw-'+'n'*32; ag='mps03-agent-gw-'+'a'*32; env=os.environ.copy(); env['PYTHONPATH']=os.pathsep.join([str(IMPL),str(REPO)])
+    native_access='mps03-native-access-'+'u'*32; agent_access='mps03-agent-access-'+'v'*32
     env['MPS03_NATIVE_ACCESS_SECRET']=native_access; env['MPS03_AGENT_ACCESS_SECRET']=agent_access
     ENTRY_AUTH[pn]='Basic '+base64.b64encode(('native:'+native_access).encode()).decode()
     ENTRY_AUTH[pa]='Bearer '+agent_access
