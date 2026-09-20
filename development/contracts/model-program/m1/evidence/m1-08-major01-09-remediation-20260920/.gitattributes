@@ -1,0 +1,2 @@
+# Preserve qualification log and receipt bytes exactly as observed on Windows.
+* -text
