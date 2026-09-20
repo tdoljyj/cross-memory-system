@@ -181,7 +181,10 @@ class NativeHandler(BaseHTTPRequestHandler):
             if p=="/api/objects": return self._forward(self.client.create_object(b.get("title","Untitled"),b.get("body",{}),b.get("request_id","")))
             if len(parts)==4 and parts[:2]==["api","objects"] and parts[3]=="confirm": return self._forward(self.client.confirm(parts[2],b.get("proposal_id",""),b.get("state_stamp",{}),b.get("request_id","")))
             self._send_json(404,{"ok":False,"error":"NOT_FOUND"})
-        except ProtocolError as e:self._send_json(e.status,e.as_dict())
+        except ProtocolError as e:
+            form_route=(p=="/create" or (p.startswith("/object/") and p.endswith("/confirm"))) and self.headers.get("Content-Type","").startswith("application/x-www-form-urlencoded")
+            if form_route: self._html_error({**e.as_dict(),"http_status":e.status})
+            else: self._send_json(e.status,e.as_dict())
 
 def main(argv=None):
     ap=argparse.ArgumentParser(); ap.add_argument("--gateway",required=True); ap.add_argument("--host",default="127.0.0.1"); ap.add_argument("--port",type=int,required=True); args=ap.parse_args(argv)

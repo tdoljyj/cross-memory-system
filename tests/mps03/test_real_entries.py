@@ -36,8 +36,8 @@ class RetryForm(HTMLParser):
     def handle_endtag(self,tag):
         if tag=="form": self.in_form=False
 
-def html_req(method,url,fields=None):
-    headers=headers_for(url)
+def html_req(method,url,fields=None,authorized=True):
+    headers=headers_for(url,authorized)
     data=None if fields is None else urlencode(fields).encode()
     if data is not None: headers["Content-Type"]="application/x-www-form-urlencoded"
     request=Request(url,data=data,headers=headers,method=method)
@@ -214,6 +214,10 @@ class RealEntries(unittest.TestCase):
         self.assertEqual(status,401); self.assertEqual(wrong.get("error"),"ENTRY_ACCESS_DENIED")
         status,cross_origin=raw_req("POST",f"http://127.0.0.1:{self.pn}/api/objects",'{"title":"no","request_id":"req-csrf-0001"}',origin="https://other.example")
         self.assertEqual(status,403); self.assertEqual(cross_origin.get("error"),"ENTRY_ORIGIN_DENIED")
+        status,content_type,page=html_req("POST",f"http://127.0.0.1:{self.pn}/create",{"title":"no","details":"x","request_id":"req-unauth-form"},authorized=False)
+        self.assertEqual(status,401); self.assertIn("text/html",content_type)
+        visible=DefaultVisibleText(); visible.feed(page)
+        self.assertIn("Access is no longer available."," ".join(visible.parts))
 
     def test_agent_proposal_rejects_observation_that_became_stale(self):
         created=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"Agent stale","body":{"v":1},"request_id":"req-agent-stale-create"})
