@@ -1,0 +1,158 @@
+{
+  "schema_version": "clued.model-m1-07-owner-root-pinned-successor-r2-remediation-receipt/1",
+  "record_id": "M1-STAB-QWEN35-08B-PC-001-OWNER-ROOT-PINNED-SUCCESSOR-R2-20260920",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-07",
+  "role": "AUTHOR_SIDE_TARGETED_R2_REMEDIATION / NOT_FRESH_CONTEXT_REVIEWER",
+  "status": "AUTHOR_SIDE_R2_REMEDIATION_PASS / INDEPENDENT_RE_REVIEW_REQUIRED / NOT_ISSUED",
+  "branch": "model-program/m1-07-owner-root-successor-r2-20260920",
+  "r2_remediation_predecessor_exact_head": "ffff2580f1c3fb9453fef9bd517cd5e12b01226e",
+  "r1_review_predecessor_exact_head": "aa127d5d0623cce921cb90643ec620ace2b70a1f",
+  "owner_root_predecessor_exact_head": "d58df9c4a1885512bd4dd9b94f121b6a84e25744",
+  "validated_code_candidate_head": "d680d2635a2dd42cca84becaec298c2babf470df",
+  "pre_receipt_documentation_head": "028a3b503bc7a92a640e7f2341a1b04f4b3c5203",
+  "formal_base": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
+  "prior_r1_receipt_sha256": "b1a6c459a7a699e2cddb7f187bfde697aef93af293303e780ad11b6a097e84f6",
+  "owner_enrollment": {
+    "boundary_adoption_event": 833,
+    "successor_preparation_gate_event": 834,
+    "algorithm": "Ed25519",
+    "public_key_canonical": "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03",
+    "public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
+    "private_key_material_read_or_used": false
+  },
+  "same_session_pre_review_finding": {
+    "severity": "MAJOR",
+    "finding": "R1 build helper verified manifest-listed files but executed go build in the original package directory, so an unmanifested production Go input could enter the binary.",
+    "external_adversarial_proof": {
+      "r1_unmanifested_extra_go_build_exit": 0,
+      "r1_unmanifested_extra_go_binary_sha256": "0edee300534e6c65a94b2463a36a80e0ede9edf7495436b92ad109a46401cafa",
+      "r1_manifest_digest_still_reported": "ecf1279eb8e8e443af5b0fc3bff7d94e4e1147203d314dc07970ef9667b887d5"
+    }
+  },
+  "r2_targeted_closure": {
+    "status": "AUTHOR_SIDE_CLOSED_PENDING_INDEPENDENT_RE_REVIEW",
+    "exact_source_directory_set": "EIGHT_MANIFEST_BOUND_PRODUCTION_FILES + TWO_EXPLICIT_TEST_FILES + TWO_EXPLICIT_NON_BUILD_METADATA_FILES / EXTRA_MISSING_OR_NON_REGULAR_ENTRY_REJECTED_BEFORE_OUTPUT",
+    "helper_identity": "SOURCE_MANIFEST_BINDS_BUILD_HELPER_BYTES_SHA256_AND_GIT_BLOB",
+    "compiler_input": "ONLY_PREVERIFIED_PRODUCTION_BYTES_WRITTEN_TO_FRESH_VERIFIED_SOURCE_SNAPSHOT",
+    "build_working_directory": "FRESH_VERIFIED_SOURCE_SNAPSHOT / NEVER_REPOSITORY_PACKAGE_DIRECTORY",
+    "go_environment": "GOENV_OFF / GOFLAGS_EMPTY / GOWORK_OFF / GOEXPERIMENT_EMPTY / GOTOOLCHAIN_LOCAL / GOPROXY_OFF / GOSUMDB_OFF / CGO_DISABLED / FRESH_GOCACHE_GOMODCACHE_GOTMPDIR"
+  },
+  "adversarial_r2_proof": {
+    "unmanifested_extra_go": {
+      "exit_code": 1,
+      "reason_match": "native source directory set drift",
+      "output_directory_created": false,
+      "log_sha256": "55283b1a8c0e1cea9d92ba9ed3156433ccf88d059f6e7e29e46527fa9f3218e4"
+    },
+    "clean_snapshot_build": {
+      "result": "PASS",
+      "native_source_manifest_sha256": "335a998f3acbb70cddecf02cb2de644264146164508133dccc3299255bbdd36d",
+      "binary_sha256": "ce44ea928b8e124c91e7694b84090c279e171e37471b9bb9a453aabf66dfc28a",
+      "binary_bytes": 10437632,
+      "external_build_receipt_sha256": "40c4a2e751ed33c42d8537e2f9a9b7a220a09b39f3256d613b9b9a4487269153"
+    }
+  },
+  "successor_candidate": {
+    "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.owner-root-pinned.candidate.json",
+    "bytes": 23223,
+    "sha256": "30b52405c5a3297eed29b545074010c098e3041c34e838120e2be42b570e4363",
+    "git_blob_sha1": "030750cafdb50859a5329ee758591e0df40208d5",
+    "status": "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE",
+    "effectful_authority_issued": false,
+    "authority_effect": "NONE / PROFILE_PREPARATION_ONLY",
+    "expiry": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
+    "owner_final_execution_authorization": null,
+    "build_provenance_helper_sha256": "52ef67351c3f976593c4332f47ca1805340de40df6f3cce22b2a38f9feded1b2",
+    "build_provenance_semantics": "EXACT_SOURCE_DIRECTORY_SET / MANIFEST_BINDS_HELPER / VERIFIED_SOURCE_SNAPSHOT_ONLY / CLEAN_GO_ENV"
+  },
+  "native_owner": {
+    "source_manifest_path": "scripts/model-program/m1-runtime-owner/source-manifest.json",
+    "source_manifest_bytes": 3152,
+    "source_manifest_sha256": "335a998f3acbb70cddecf02cb2de644264146164508133dccc3299255bbdd36d",
+    "source_manifest_git_blob_sha1": "33df16b38ae39c5e80b085e2b9e90459bf9fcb7a",
+    "development_binary_sha256": "ce44ea928b8e124c91e7694b84090c279e171e37471b9bb9a453aabf66dfc28a",
+    "development_binary_bytes": 10437632,
+    "build_helper_path": "scripts/model-program/build_m1_07_native_owner.py",
+    "build_helper_bytes": 7067,
+    "build_helper_sha256": "52ef67351c3f976593c4332f47ca1805340de40df6f3cce22b2a38f9feded1b2",
+    "build_helper_git_blob_sha1": "90d4706debb0362cb78e1f9f2ff16444eb38786f",
+    "compiler": "go version go1.27.1 windows/amd64",
+    "compiler_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490"
+  },
+  "validation": {
+    "focused": {
+      "result": "PASS",
+      "tests": 61,
+      "log_sha256": "809b864de37ca1197d0d581ea29e32c82b160511b90b309befc313272960b235"
+    },
+    "validators": {
+      "validate_m1_entry_bindings": {
+        "result": "PASS",
+        "log_sha256": "2efffca9a513e96537655e0631d439dd0fcce9c5cf49398ef853c8f2da1508a8"
+      },
+      "validate_m1_harness": {
+        "result": "PASS",
+        "log_sha256": "073268477d26c57708e0a3f6c52f0a0a450982d38c7425c6c6eba407e5db2775"
+      },
+      "validate_m1_package_profile": {
+        "result": "PASS",
+        "log_sha256": "4e1394f6f66bcb8f749de24036c06f6226e41357ccaafacb3ef6d353c92157c1"
+      },
+      "validate_m1_07_profile_candidate": {
+        "result": "PASS",
+        "log_sha256": "4cd3b4def50214bb19dfb8ac119050285d1edc0013306b104d32e6d72bb83ac9"
+      }
+    },
+    "full_m1": {
+      "result": "PASS",
+      "tests": 90,
+      "log_sha256": "84a82c826a72a7e2dd95b2ec67089f52aa6aa6146ca1769fe0ad9594139f24fe"
+    },
+    "native_go": {
+      "result": "PASS",
+      "leaf_cases": 100,
+      "failed_test_events": 0,
+      "log_sha256": "2d1de7230c0cf33b4bf8805016daf5696565040c207ce068be1b29f2b8f5f82b"
+    },
+    "go_vet": {
+      "result": "PASS",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "rejection_checks": {
+    "non_issued_successor_exact_binary": {
+      "exit_code": 3,
+      "reason": "PROFILE_NOT_ISSUED",
+      "output_directory_created": false,
+      "llama_server_before_after": [0, 0]
+    },
+    "fabricated_issued_without_owner_signature": {
+      "exit_code": 3,
+      "reason": "OWNER_SIGNATURE_ALGORITHM",
+      "output_directory_created": false,
+      "llama_server_before_after": [0, 0]
+    }
+  },
+  "effects": {
+    "owner_final_issuance_performed": false,
+    "owner_private_key_used": false,
+    "llama_server_started": false,
+    "model_loaded": false,
+    "real_m1_07_scenario_executed": false,
+    "m1_08_started": false,
+    "training_or_distillation_performed": false,
+    "promotion_or_activation_performed": false,
+    "production_mutation": false,
+    "pr_268_merged": false
+  },
+  "pr_268_readback": {
+    "state": "open",
+    "merged": false,
+    "head": "d58df9c4a1885512bd4dd9b94f121b6a84e25744"
+  },
+  "independent_re_review_performed": false,
+  "remaining_gate": "FRESH_CONTEXT / READ_ONLY / REVIEWER_NOT_MODIFIER / INDEPENDENT OWNER-ROOT-PINNED SUCCESSOR R2 FINAL RE-REVIEW",
+  "conclusion": "AUTHOR_SIDE_R2_TARGETED_REMEDIATION_PASS / DO_NOT_ISSUE / DO_NOT_EXECUTE / DO_NOT_MERGE"
+}
