@@ -11,9 +11,9 @@ NON-PRODUCTION ONLY. This module deliberately reuses the exact durable primitive
 It does not reimplement Current/CAS/Receipt semantics in the entry adapters.
 """
 from __future__ import annotations
-import argparse, base64, json, os, re, shutil, subprocess, threading
+import argparse, base64, json, os, re, secrets, shutil, subprocess, threading
 from typing import Any
-from urllib.parse import parse_qsl, unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
 try:
     from .common import ProtocolError, new_id, sha256_json, validate_create_content
@@ -55,6 +55,15 @@ def _assert_nonprod_dsn(dsn: str) -> None:
         raise RuntimeError("non-production database connection target rejected")
 
 
+def _assert_entry_bindings(native_principal: str, agent_principal: str,
+                           native_secret: str, agent_secret: str) -> None:
+    if (not native_principal or not agent_principal or native_principal == agent_principal):
+        raise RuntimeError("Native and Agent principals must be distinct and nonempty")
+    if (not isinstance(native_secret,str) or not isinstance(agent_secret,str)
+            or len(native_secret)<32 or len(agent_secret)<32 or native_secret == agent_secret):
+        raise RuntimeError("Native and Agent gateway secrets must be distinct and at least 32 characters")
+
+
 def _b64(value: str) -> str:
     return base64.b64encode(value.encode("utf-8")).decode("ascii")
 
@@ -75,6 +84,7 @@ class PgMPS02BStore:
         if allow_nonprod_write != "MPS03_NONPROD_WRITE_APPROVED":
             raise RuntimeError("explicit non-production write guard not satisfied")
         _assert_nonprod_dsn(dsn)
+        _assert_entry_bindings(native_principal,agent_principal,native_secret,agent_secret)
         if not shutil.which("psql"):
             raise RuntimeError("psql is required for mps02b_pg_gateway")
         self.dsn=dsn; self.user_id=user_id; self.authority_domain=authority_domain
@@ -84,13 +94,25 @@ class PgMPS02BStore:
         self._assert_primitives()
 
     def _psql(self, sql: str, variables: dict[str,str] | None=None) -> str:
-        cmd=["psql",self.dsn,"-X","-A","-t","-q","-v","ON_ERROR_STOP=1"]
+        uri=urlsplit(self.dsn)
+        password=unquote(uri.password or "")
+        # Keep the connection password out of the process command line.
+        authority=uri.netloc.rsplit("@",1)
+        if len(authority)==2:
+            user=authority[0].split(":",1)[0]
+            uri=uri._replace(netloc=f"{user}@{authority[1]}")
+        cmd=["psql",urlunsplit(uri),"-X","-A","-t","-q","-v","ON_ERROR_STOP=1"]
         for k,v in (variables or {}).items(): cmd += ["-v",f"{k}={_b64(v)}"]
         env=os.environ.copy()
-        for key in ("PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGUSER", "PGSERVICE"):
+        for key in ("PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGUSER", "PGSERVICE", "PGPASSWORD"):
             env.pop(key, None)
+        if password:
+            env["PGPASSWORD"]=password
         env.setdefault("PGOPTIONS","-c client_min_messages=warning")
-        p=subprocess.run(cmd,input=sql,text=True,capture_output=True,env=env,timeout=30)
+        try:
+            p=subprocess.run(cmd,input=sql,text=True,capture_output=True,env=env,timeout=30)
+        except subprocess.TimeoutExpired:
+            raise ProtocolError("MPS02B_POSTGRES_TIMEOUT","database operation timed out",503) from None
         if p.returncode:
             err=(p.stderr or p.stdout).strip()
             mapping=[
@@ -100,8 +122,8 @@ class PgMPS02BStore:
                 ("MPS_CONTEXT_BASIS_NOT_FOUND_OR_INCONSISTENT",404), ("MPS_INTENT_NOT_FOUND",404),
             ]
             for code,status in mapping:
-                if code in err: raise ProtocolError(code,code,status,{"postgres":err[-1000:]})
-            raise ProtocolError("MPS02B_POSTGRES_ERROR","MPS-02B database operation failed",500,{"postgres":err[-1500:]})
+                if code in err: raise ProtocolError(code,code,status)
+            raise ProtocolError("MPS02B_POSTGRES_ERROR","MPS-02B database operation failed",500)
         lines=[x.strip() for x in p.stdout.splitlines() if x.strip()]
         return lines[-1] if lines else ""
 
@@ -109,7 +131,7 @@ class PgMPS02BStore:
         raw=self._psql(sql,variables)
         if not raw: return {"ok":True}
         try:return json.loads(raw)
-        except Exception as e: raise ProtocolError("MPS02B_INVALID_DB_RESPONSE","database did not return JSON",500,{"raw":raw[-1000:],"reason":str(e)})
+        except Exception: raise ProtocolError("MPS02B_INVALID_DB_RESPONSE","database did not return JSON",500) from None
 
     def _assert_primitives(self):
         sql="""
@@ -129,7 +151,8 @@ select jsonb_build_object(
         mapping={"NATIVE":(self.native_secret,self.native_principal),"THIRD_PARTY_AGENT_HOST":(self.agent_secret,self.agent_principal)}
         if entry_kind not in mapping: raise ProtocolError("ENTRY_KIND_REJECTED","unsupported entry kind",403)
         expected,principal=mapping[entry_kind]
-        if not entry_secret or entry_secret != expected: raise ProtocolError("ENTRY_AUTHENTICATION_FAILED","entry credential rejected",401)
+        if not isinstance(entry_secret,str) or not secrets.compare_digest(entry_secret,expected):
+            raise ProtocolError("ENTRY_AUTHENTICATION_FAILED","entry credential rejected",401)
         token=new_id("sess"); self.sessions[token]={"principal":principal,"entry_kind":entry_kind}
         return {"ok":True,"session_token":token,"principal":principal,"entry_kind":entry_kind}
 
@@ -184,7 +207,7 @@ where r.object_id={_t('oid')} and r.revision_id={_t('rid')}
 
     def create_object(self, token: str, title: str, body: dict, request_id: str) -> dict:
         s=self._session(token); self._require(s,"create")
-        if not request_id or len(request_id)<8: raise ProtocolError("REQUEST_ID_REQUIRED","request_id is required")
+        if not isinstance(request_id,str) or len(request_id)<8: raise ProtocolError("REQUEST_ID_REQUIRED","request_id is required")
         content=validate_create_content(title,body)
         # The installed MPS-02B commit primitive requires an existing Object/Current.
         # Build that otherwise-invisible basis and the formal create MutationIntent in the
@@ -432,7 +455,8 @@ where i.object_id={_t('oid')};
     def confirm_proposal(self, token: str, object_id: str, proposal_id: str, state_stamp: dict, request_id: str,
                          adoption_scope: str="object", adoption_purpose: str="accept_proposal") -> dict:
         s=self._session(token); self._require(s,"confirm")
-        if not request_id or len(request_id)<8: raise ProtocolError("REQUEST_ID_REQUIRED","request_id is required")
+        if not isinstance(request_id,str) or len(request_id)<8: raise ProtocolError("REQUEST_ID_REQUIRED","request_id is required")
+        if not isinstance(state_stamp,dict): raise ProtocolError("STATE_STAMP_REQUIRED","state_stamp must be an object")
         # Scope/purpose are already immutable inside the server-issued intent; caller cannot rewrite them here.
         submitted_stamp={k:v for k,v in state_stamp.items() if k!="state_stamp_digest"}
         sql=f"""

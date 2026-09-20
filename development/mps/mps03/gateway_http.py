@@ -75,6 +75,6 @@ class Handler(BaseHTTPRequestHandler):
             status, obj = self._dispatch()
         except ProtocolError as e:
             status, obj = e.status, e.as_dict()
-        except Exception as e:
-            status, obj = 500, {"ok": False, "error": "INTERNAL_ERROR", "message": str(e)}
+        except Exception:
+            status, obj = 500, {"ok": False, "error": "INTERNAL_ERROR", "message": "gateway operation failed"}
         self._send(status, obj)

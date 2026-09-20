@@ -1,4 +1,5 @@
-import pathlib, sys, unittest
+import pathlib, subprocess, sys, unittest
+from unittest.mock import patch
 REPO=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(REPO/"development"/"mps"))
 from mps03.common import ProtocolError
@@ -35,4 +36,31 @@ class PgBridgeGuards(unittest.TestCase):
         with self.assertRaises(ProtocolError) as rejected:
             store.create_proposal("agent-session","object-1",["not an object"],{})
         self.assertEqual(rejected.exception.code,"JSON_OBJECT_REQUIRED")
+    def test_entry_authority_requires_distinct_principals_and_secrets(self):
+        dsn="postgresql://postgres:secret@db.uscrdifznmlvczcekqpw.supabase.co:5432/postgres?sslmode=verify-full"
+        base={**KW,"dsn":dsn,"native_secret":"n"*32,"agent_secret":"a"*32}
+        for override in ({"agent_secret":"n"*32},{"agent_secret":""},{"agent_principal":"n"}):
+            with self.subTest(override=override), self.assertRaises(RuntimeError):
+                PgMPS02BStore(**{**base,**override},target_id=EXPECTED_NONPROD_TARGET,
+                                allow_nonprod_write="MPS03_NONPROD_WRITE_APPROVED")
+    def test_database_timeout_does_not_expose_connection_secret(self):
+        store=PgMPS02BStore.__new__(PgMPS02BStore)
+        store.dsn="postgresql://postgres:private-password@db.uscrdifznmlvczcekqpw.supabase.co/postgres"
+        def timeout(command,**kwargs):
+            self.assertNotIn("private-password",str(command))
+            self.assertEqual(kwargs["env"]["PGPASSWORD"],"private-password")
+            raise subprocess.TimeoutExpired(command,30)
+        with patch("mps03.mps02b_pg_gateway.subprocess.run",side_effect=timeout):
+            with self.assertRaises(ProtocolError) as caught:
+                store._psql("select 1")
+        self.assertEqual(caught.exception.status,503)
+        self.assertNotIn("private-password",str(caught.exception.as_dict()))
+    def test_malformed_confirmation_stamp_is_client_error(self):
+        store=PgMPS02BStore.__new__(PgMPS02BStore)
+        store.sessions={"native-session":{"principal":"native","entry_kind":"NATIVE"}}
+        store.native_principal="native"
+        store.agent_principal="agent"
+        with self.assertRaises(ProtocolError) as caught:
+            store.confirm_proposal("native-session","object-1","proposal-1",["bad"],"request-123")
+        self.assertEqual(caught.exception.code,"STATE_STAMP_REQUIRED")
 if __name__=="__main__": unittest.main()

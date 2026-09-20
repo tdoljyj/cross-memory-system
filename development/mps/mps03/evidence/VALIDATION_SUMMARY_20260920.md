@@ -17,7 +17,7 @@ Status: IMPLEMENTATION CANDIDATE / NON-PRODUCTION / REVALIDATION AFTER REVIEW FI
 Command:
 `python scripts/mps03/run_acceptance.py`
 
-Result after independent-review fixes: 26/26 PASS, 0 fail, 0 skipped. Coverage includes entry authentication, full-stamp and digest verification of the Agent's observation, Native form replay/diff, PostgreSQL outcome regression, DSN identity rejection, non-object proposal rejection, and Native HTML error propagation.
+Result after independent-review fixes: 31/31 PASS, 0 fail, 0 skipped. Coverage includes entry authentication, full-stamp and digest verification of the Agent's observation, Native form replay/diff, PostgreSQL outcome regression, DSN identity rejection, non-object proposal rejection, Native HTML error propagation, distinct entry principals/secrets, redacted database timeout and gateway errors, structured gateway outage response, and malformed confirmation stamp rejection.
 Raw result: `evidence/mps03_acceptance.raw.txt`
 
 Command:
@@ -27,7 +27,7 @@ Result: Native, canonical reference gateway, and Agent Adapter ran as three dist
 Qualification remains local-reference-backend; no real third-party host PASS is claimed.
 Raw result: `evidence/cross_entry_evidence.raw.json`
 
-The earlier 16/16 and 22/22 runs belong to prior PR heads and are superseded by the new 26/26 raw result. Their historical CI results remain bound to those prior SHAs.
+The earlier 16/16, 22/22, and 26/26 runs belong to prior PR heads and are superseded by the new 31/31 raw result. Their historical CI results remain bound to those prior SHAs.
 
 ## CI runner policy
 
@@ -36,6 +36,8 @@ Command:
 
 Result: PASS / `violations=[]`. The MPS-03 workflow uses the existing trusted self-hosted Windows Python 3.12 capability pool and top-level concurrency with cancel-in-progress.
 Raw result: `evidence/runner_budget_policy.raw.json`
+
+On prior head `8e6467a96c458851fee128cc8b1ad28c45dba452`, Trivy first stalled while downloading the vulnerability database; a failed-job retry completed that scan and the secrets scan, but the misconfiguration scan exhausted its default deadline while its default `mirror.gcr.io` checks bundle source timed out. The scoped CI follow-up selects Trivy's official GHCR checks bundle source for both runner lanes. Scanner types, HIGH/CRITICAL threshold, pinned image, and `--exit-code 1` remain unchanged. This local note does not claim the follow-up CI result; the exact-head GitHub run must be checked separately.
 
 ## Existing affected Clued authorization regression
 Commands:
