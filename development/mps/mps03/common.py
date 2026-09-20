@@ -36,6 +36,12 @@ class ProtocolError(RuntimeError):
     def as_dict(self) -> dict:
         return {"ok": False, "error": self.code, "message": self.message, "details": self.details}
 
+def strict_utf8_decode(raw: bytes) -> str:
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ProtocolError("INVALID_UTF8", "request body must be UTF-8", 400) from None
+
 
 def strict_json_loads(raw: str):
     def pairs_hook(pairs):

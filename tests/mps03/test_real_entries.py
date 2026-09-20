@@ -246,6 +246,21 @@ class RealEntries(unittest.TestCase):
         status,payload=raw_req("POST",f"http://127.0.0.1:{self.pn}/api/objects",'[]')
         self.assertEqual(status,400); self.assertEqual(payload.get("error"),"JSON_OBJECT_REQUIRED")
 
+    def test_invalid_utf8_returns_bounded_entry_errors(self):
+        for url,content_type,expected_type in (
+            (f"http://127.0.0.1:{self.pn}/api/objects","application/json","application/json"),
+            (f"http://127.0.0.1:{self.pa}/agent/read","application/json","application/json"),
+            (f"http://127.0.0.1:{self.pn}/create","application/x-www-form-urlencoded","text/html"),
+        ):
+            with self.subTest(url=url):
+                headers=headers_for(url); headers["Content-Type"]=content_type
+                request=Request(url,data=b"\xff",headers=headers,method="POST")
+                with self.assertRaises(HTTPError) as caught: urlopen(request,timeout=5)
+                self.assertEqual(caught.exception.code,400)
+                self.assertIn(expected_type,caught.exception.headers.get("Content-Type",""))
+                body=caught.exception.read().decode()
+                self.assertIn("INVALID_UTF8",body)
+
     def test_native_five_user_surfaces_render(self):
         c=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"UI","body":{"items":[]},"request_id":"req-ui-create-01"}); oid=c["object_id"]
         # Agent creates an open suggestion so the suggestion/diff/confirm surface has real content.
@@ -293,6 +308,8 @@ class RealEntries(unittest.TestCase):
             first_confirm=None
             list_failure=False
             page_failure=False
+            create_retry_errors=[(403,"MPS_AUTHORIZATION_DENIED"),(409,"IDEMPOTENCY_CONFLICT")]
+            confirm_retry_errors=[(403,"MPS_AUTHORIZATION_DENIED"),(409,"STALE_CONTEXT_REQUIRES_REFRESH")]
             def list_objects(self):
                 if self.list_failure:
                     return {"ok":False,"error":"GATEWAY_UNAVAILABLE","http_status":503}
@@ -306,12 +323,18 @@ class RealEntries(unittest.TestCase):
                     return {"ok":False,"error":"GATEWAY_UNAVAILABLE","http_status":503}
                 return gateway.history(*args)
             def create_object(self,*args):
+                if self.first_create is not None and self.create_retry_errors:
+                    status,code=self.create_retry_errors.pop(0)
+                    return {"ok":False,"error":code,"http_status":status}
                 out=gateway.create_object(*args)
                 if self.first_create is None:
                     self.first_create=out
                     raise ProtocolError("GATEWAY_UNAVAILABLE","response lost after commit",503)
                 return out
             def confirm(self,*args):
+                if self.first_confirm is not None and self.confirm_retry_errors:
+                    status,code=self.confirm_retry_errors.pop(0)
+                    return {"ok":False,"error":code,"http_status":status}
                 out=gateway.confirm(*args)
                 if self.first_confirm is None:
                     self.first_confirm=out
@@ -343,7 +366,16 @@ class RealEntries(unittest.TestCase):
             self.assertNotIn("The change was not saved",page)
             retry=RetryForm(); retry.feed(page)
             self.assertEqual(retry.action,"/create")
-            self.assertEqual(retry.fields,create)
+            self.assertEqual({k:retry.fields[k] for k in create},create)
+            self.assertEqual(retry.fields["_recovery_pending"],"1")
+            for expected_status,authorized in ((401,False),(403,True),(409,True)):
+                previous=retry.fields.copy()
+                status,_,page=html_req("POST",base+retry.action,retry.fields,authorized=authorized)
+                self.assertEqual(status,expected_status)
+                self.assertIn("original result is still unknown",page)
+                retry=RetryForm(); retry.feed(page)
+                self.assertEqual(retry.fields,previous)
+                self.assertNotIn("Edit and submit as a new request",page)
             status,_,page=html_req("POST",base+retry.action,retry.fields)
             self.assertEqual(status,200); self.assertIn("Plan created.",page)
             replay=gateway.create_object(create["title"],{"details":create["details"]},create["request_id"])
@@ -377,7 +409,15 @@ class RealEntries(unittest.TestCase):
             self.assertEqual(status,503); self.assertIn("text/html",content_type)
             retry=RetryForm(); retry.feed(page)
             self.assertEqual(retry.action,f"/object/{oid}/confirm")
-            self.assertEqual(retry.fields,confirm)
+            self.assertEqual({k:retry.fields[k] for k in confirm},confirm)
+            self.assertEqual(retry.fields["_recovery_pending"],"1")
+            for expected_status,authorized in ((401,False),(403,True),(409,True)):
+                previous=retry.fields.copy()
+                status,_,page=html_req("POST",base+retry.action,retry.fields,authorized=authorized)
+                self.assertEqual(status,expected_status)
+                self.assertIn("original result is still unknown",page)
+                retry=RetryForm(); retry.feed(page)
+                self.assertEqual(retry.fields,previous)
             status,_,page=html_req("POST",base+retry.action,retry.fields)
             self.assertEqual(status,200); self.assertIn("Suggestion confirmed.",page)
             replay=gateway.confirm(oid,confirm["proposal_id"],stamp,confirm["request_id"])

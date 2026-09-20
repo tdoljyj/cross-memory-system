@@ -4,7 +4,15 @@ import json, os
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
-from .common import ProtocolError, strict_json_loads
+from .common import ProtocolError, strict_json_loads, strict_utf8_decode
+
+STORE_ERROR_STATUS = {
+    "IDEMPOTENCY_CONFLICT": 409, "STALE_CONTEXT_REQUIRES_REFRESH": 409,
+    "CONFIRMATION_TARGET_CHANGED": 409, "INTENT_IDENTITY_CONFLICT": 409,
+    "MPS_AUTHORIZATION_DENIED": 403, "MPS_RESULT_READ_DENIED": 403,
+    "OBJECT_NOT_FOUND": 404, "MPS_CONTEXT_BASIS_NOT_FOUND_OR_INCONSISTENT": 404,
+    "MPS_INTENT_NOT_FOUND": 404,
+}
 
 class Handler(BaseHTTPRequestHandler):
     """Transport-only gateway handler. Durable semantics live in the injected store."""
@@ -18,7 +26,7 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self):
         n = int(self.headers.get("Content-Length", "0") or 0)
         raw = self.rfile.read(n) if n else b"{}"
-        value = strict_json_loads(raw.decode("utf-8"))
+        value = strict_json_loads(strict_utf8_decode(raw))
         if not isinstance(value, dict):
             raise ProtocolError("JSON_OBJECT_REQUIRED", "request body must be a JSON object", 400)
         return value
@@ -73,6 +81,8 @@ class Handler(BaseHTTPRequestHandler):
     def _handle(self):
         try:
             status, obj = self._dispatch()
+            if status == 200 and isinstance(obj, dict) and obj.get("ok") is False:
+                status = STORE_ERROR_STATUS.get(obj.get("error"), 409 if obj.get("status") == "conflict" else 500)
         except ProtocolError as e:
             status, obj = e.status, e.as_dict()
         except Exception:

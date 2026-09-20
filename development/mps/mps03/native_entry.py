@@ -5,10 +5,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 try:
     from .client import GatewayClient
-    from .common import strict_json_loads, ProtocolError, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
+    from .common import strict_json_loads, strict_utf8_decode, ProtocolError, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
 except ImportError:
     from client import GatewayClient
-    from common import strict_json_loads, ProtocolError, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
+    from common import strict_json_loads, strict_utf8_decode, ProtocolError, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
 
 class NativeHandler(BaseHTTPRequestHandler):
     client: GatewayClient = None  # type: ignore
@@ -16,13 +16,19 @@ class NativeHandler(BaseHTTPRequestHandler):
     server_version="CluedMPS03Native/1"
     def log_message(self,fmt,*args):
         if os.environ.get("MPS03_HTTP_LOG")=="1": super().log_message(fmt,*args)
-    def _raw(self):
-        n=int(self.headers.get("Content-Length","0") or 0); return self.rfile.read(n) if n else b""
+    def _raw(self,max_bytes=None):
+        try: n=int(self.headers.get("Content-Length","0") or 0)
+        except ValueError: raise ProtocolError("INVALID_CONTENT_LENGTH","invalid request length",400) from None
+        if n<0: raise ProtocolError("INVALID_CONTENT_LENGTH","invalid request length",400)
+        if max_bytes is not None and n>max_bytes: raise ProtocolError("FORM_TOO_LARGE","form exceeds the supported size",413)
+        return self.rfile.read(n) if n else b""
     def _body(self):
-        value=strict_json_loads((self._raw() or b"{}").decode())
+        value=strict_json_loads(strict_utf8_decode(self._raw() or b"{}"))
         if not isinstance(value,dict): raise ProtocolError("JSON_OBJECT_REQUIRED","request body must be a JSON object",400)
         return value
-    def _form(self): return {k:v[-1] for k,v in parse_qs(self._raw().decode(),keep_blank_values=True).items()}
+    def _form(self):
+        try: return {k:v[-1] for k,v in parse_qs(strict_utf8_decode(self._raw(262144)),keep_blank_values=True,errors="strict").items()}
+        except UnicodeDecodeError: raise ProtocolError("INVALID_UTF8","request body must be UTF-8",400) from None
     def _send_json(self,status,obj):
         b=(json.dumps(obj,ensure_ascii=False,separators=(",",":"))+"\n").encode(); self.send_response(status); self.send_header("Content-Type","application/json; charset=utf-8"); self.send_header("Cache-Control","no-store"); self.send_header("Content-Length",str(len(b)));
         if status==401: self.send_header("WWW-Authenticate",'Basic realm="Clued Native"')
@@ -68,9 +74,18 @@ class NativeHandler(BaseHTTPRequestHandler):
         return self._page("Result",f'<h1>{html.escape(message)}</h1>'+link+self._technical(out))
     def _form_failure(self,out,fields,kind,object_id=""):
         status=out.get("http_status") or 500
-        uncertain=status>=500
-        if uncertain:
+        pending=fields.get("_recovery_pending")=="1"
+        uncertain=status>=500 or pending
+        if pending and status<500:
+            message="This retry was rejected, but the original result is still unknown. Keep this exact request and try again after resolving the error."
+        elif uncertain:
             message="We could not confirm the result. Retry this exact request to recover its original result."
+        elif status==401:
+            message="Access is no longer available. Check your Native credential before trying again."
+        elif status==403:
+            message="You do not have permission to make this change."
+        elif out.get("error")=="IDEMPOTENCY_CONFLICT":
+            message="This request key belongs to a different change. Review the plan before starting a new request."
         elif out.get("error") in ("STALE_CONTEXT_REQUIRES_REFRESH","CONFIRMATION_TARGET_CHANGED"):
             message="This plan changed. Review the latest suggestion before confirming again."
         else:
@@ -81,14 +96,14 @@ class NativeHandler(BaseHTTPRequestHandler):
             details=fields.get(detail_name,"")
             submitted=f'<h2>Submitted plan</h2><p><strong>Title:</strong> {html.escape(title)}</p><pre>{html.escape(details)}</pre>'
             if uncertain:
-                action='<form method="post" action="/create">'+''.join(f'<input type="hidden" name="{name}" value="{html.escape(fields.get(name,""),quote=True)}">' for name in ("title",detail_name,"request_id"))+'<button>Retry this exact request</button></form>'
+                action='<form method="post" action="/create">'+''.join(f'<input type="hidden" name="{name}" value="{html.escape(fields.get(name,""),quote=True)}">' for name in ("title",detail_name,"request_id"))+'<input type="hidden" name="_recovery_pending" value="1"><button>Retry this exact request</button></form>'
             else:
                 action=f'<form method="post" action="/create"><label>Title <input name="title" value="{html.escape(title,quote=True)}" required></label><label><br>Plan details<textarea name="{detail_name}">{html.escape(details)}</textarea></label><input type="hidden" name="request_id" value="{new_id("req")}"><button>Edit and submit as a new request</button></form>'
             back='<p><a href="/">Back to plans</a></p>'
         else:
             submitted='<h2>Submitted suggestion</h2><p>Review the plan before making another change.</p>'
             if uncertain:
-                action=f'<form method="post" action="/object/{html.escape(object_id,quote=True)}/confirm">'+''.join(f'<input type="hidden" name="{name}" value="{html.escape(fields.get(name,""),quote=True)}">' for name in ("proposal_id","state_stamp_json","request_id"))+'<button>Retry this exact confirmation</button></form>'
+                action=f'<form method="post" action="/object/{html.escape(object_id,quote=True)}/confirm">'+''.join(f'<input type="hidden" name="{name}" value="{html.escape(fields.get(name,""),quote=True)}">' for name in ("proposal_id","state_stamp_json","request_id"))+'<input type="hidden" name="_recovery_pending" value="1"><button>Retry this exact confirmation</button></form>'
             else: action=''
             back=f'<p><a href="/object/{html.escape(object_id,quote=True)}/proposals">Review latest suggestions</a></p>'
         body=f'<h1>{html.escape(message)}</h1>'+submitted+action+back+self._technical(out)
@@ -159,9 +174,14 @@ class NativeHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             p=urlparse(self.path).path
+            parts=[x for x in p.split('/') if x]
+            form_content=self.headers.get("Content-Type","").startswith("application/x-www-form-urlencoded")
+            create_form=p=="/create" and form_content
+            confirm_form=len(parts)==3 and parts[0]=="object" and parts[2]=="confirm" and form_content
+            f=None
+            f=self._form() if create_form or confirm_form else None
             self._authenticate(); self._check_origin()
-            if p=="/create" and self.headers.get("Content-Type","").startswith("application/x-www-form-urlencoded"):
-                f=self._form()
+            if create_form:
                 try:
                     body=strict_json_loads(f["body_json"]) if "body_json" in f else {"details":f.get("details","")}
                     out=self.client.create_object(f.get("title","Untitled"),body,f.get("request_id",""))
@@ -169,9 +189,7 @@ class NativeHandler(BaseHTTPRequestHandler):
                 status=200 if out.get("ok") else out.get("http_status",409)
                 if not out.get("ok"): return self._form_failure(out,f,"create")
                 return self._send_html(status,self._result(out,"Plan created.",out.get("object_id", "")))
-            parts=[x for x in p.split('/') if x]
-            if len(parts)==3 and parts[0]=="object" and parts[2]=="confirm" and self.headers.get("Content-Type","").startswith("application/x-www-form-urlencoded"):
-                f=self._form()
+            if confirm_form:
                 try:
                     stamp=strict_json_loads(f.get("state_stamp_json","{}"))
                     out=self.client.confirm(parts[1],f.get("proposal_id",""),stamp,f.get("request_id",""))
@@ -184,8 +202,9 @@ class NativeHandler(BaseHTTPRequestHandler):
             if len(parts)==4 and parts[:2]==["api","objects"] and parts[3]=="confirm": return self._forward(self.client.confirm(parts[2],b.get("proposal_id",""),b.get("state_stamp",{}),b.get("request_id","")))
             self._send_json(404,{"ok":False,"error":"NOT_FOUND"})
         except ProtocolError as e:
-            form_route=(p=="/create" or (p.startswith("/object/") and p.endswith("/confirm"))) and self.headers.get("Content-Type","").startswith("application/x-www-form-urlencoded")
-            if form_route: self._html_error({**e.as_dict(),"http_status":e.status})
+            if (create_form or confirm_form) and f is not None:
+                self._form_failure({**e.as_dict(),"http_status":e.status},f,"create" if create_form else "confirm",parts[1] if confirm_form else "")
+            elif create_form or confirm_form: self._html_error({**e.as_dict(),"http_status":e.status})
             else: self._send_json(e.status,e.as_dict())
 
 def main(argv=None):

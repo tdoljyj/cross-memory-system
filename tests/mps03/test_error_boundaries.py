@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import pathlib
@@ -7,16 +8,57 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 REPO=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(REPO/"development"))
 from mps.mps03.client import GatewayClient
 from mps.mps03.common import ProtocolError
 from mps.mps03.gateway_http import Handler
+from mps.mps03.native_entry import NativeHandler
 
 
 class ErrorBoundaries(unittest.TestCase):
+    def test_store_conflict_is_http_409_for_gateway_native_form_and_api(self):
+        class ConflictStore:
+            def create_session(self,*args): return {"ok":True,"session_token":"test-session","principal":"native-user"}
+            def create_object(self,*args): return {"ok":False,"status":"conflict","error":"IDEMPOTENCY_CONFLICT"}
+        class ConflictHandler(Handler):
+            store=ConflictStore()
+        gateway=ThreadingHTTPServer(("127.0.0.1",0),ConflictHandler)
+        gateway_thread=threading.Thread(target=gateway.serve_forever,daemon=True); gateway_thread.start()
+        invalid=Request(f"http://127.0.0.1:{gateway.server_port}/v1/sessions",data=b"\xff",headers={"Content-Type":"application/json"},method="POST")
+        with self.assertRaises(HTTPError) as caught: urlopen(invalid,timeout=5)
+        self.assertEqual(caught.exception.code,400)
+        self.assertEqual(json.loads(caught.exception.read())["error"],"INVALID_UTF8")
+        client=GatewayClient(f"http://127.0.0.1:{gateway.server_port}","NATIVE","test-gateway-secret")
+        client.start_session()
+        self.assertEqual(client.create_object("title",{},"req-conflict")["http_status"],409)
+        access="mps03-native-access-"+"x"*32
+        class NativeTestHandler(NativeHandler):
+            access_secret=access
+        NativeTestHandler.client=client
+        native=ThreadingHTTPServer(("127.0.0.1",0),NativeTestHandler)
+        native_thread=threading.Thread(target=native.serve_forever,daemon=True); native_thread.start()
+        try:
+            base=f"http://127.0.0.1:{native.server_port}"
+            auth="Basic "+base64.b64encode(("native:"+access).encode()).decode()
+            form=Request(base+"/create",data=urlencode({"title":"title","details":"x","request_id":"req-conflict"}).encode(),headers={"Content-Type":"application/x-www-form-urlencoded","Authorization":auth},method="POST")
+            with self.assertRaises(HTTPError) as caught: urlopen(form,timeout=5)
+            self.assertEqual(caught.exception.code,409)
+            page=caught.exception.read().decode()
+            self.assertIn("This request key belongs to a different change",page)
+            self.assertNotIn("We could not confirm the result",page)
+            self.assertIn("Edit and submit as a new request",page)
+            api=Request(base+"/api/objects",data=json.dumps({"title":"title","body":{},"request_id":"req-conflict"}).encode(),headers={"Content-Type":"application/json","Authorization":auth},method="POST")
+            with self.assertRaises(HTTPError) as caught: urlopen(api,timeout=5)
+            self.assertEqual(caught.exception.code,409)
+            self.assertEqual(json.loads(caught.exception.read())["error"],"IDEMPOTENCY_CONFLICT")
+        finally:
+            native.shutdown(); native.server_close(); native_thread.join(timeout=5)
+            gateway.shutdown(); gateway.server_close(); gateway_thread.join(timeout=5)
+
     def test_gateway_url_rejects_non_loopback_or_embedded_credentials(self):
         for url in ("https://example.test:443","http://example.test:8080",
                     "http://user:secret@127.0.0.1:8080","http://127.0.0.1:8080/path",

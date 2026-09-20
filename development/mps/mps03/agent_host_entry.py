@@ -5,10 +5,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 try:
     from .client import GatewayClient
-    from .common import strict_json_loads, ProtocolError, require_entry_access, require_secret_namespace, AGENT_GATEWAY_PREFIX, AGENT_ACCESS_PREFIX
+    from .common import strict_json_loads, strict_utf8_decode, ProtocolError, require_entry_access, require_secret_namespace, AGENT_GATEWAY_PREFIX, AGENT_ACCESS_PREFIX
 except ImportError:
     from client import GatewayClient
-    from common import strict_json_loads, ProtocolError, require_entry_access, require_secret_namespace, AGENT_GATEWAY_PREFIX, AGENT_ACCESS_PREFIX
+    from common import strict_json_loads, strict_utf8_decode, ProtocolError, require_entry_access, require_secret_namespace, AGENT_GATEWAY_PREFIX, AGENT_ACCESS_PREFIX
 
 class AgentHandler(BaseHTTPRequestHandler):
     client: GatewayClient = None  # type: ignore
@@ -18,7 +18,7 @@ class AgentHandler(BaseHTTPRequestHandler):
         if os.environ.get("MPS03_HTTP_LOG")=="1": super().log_message(fmt,*args)
     def _body(self):
         n=int(self.headers.get("Content-Length","0") or 0); raw=self.rfile.read(n) if n else b"{}"
-        value=strict_json_loads(raw.decode())
+        value=strict_json_loads(strict_utf8_decode(raw))
         if not isinstance(value,dict): raise ProtocolError("JSON_OBJECT_REQUIRED","request body must be a JSON object",400)
         return value
     def _send(self,status,obj):
