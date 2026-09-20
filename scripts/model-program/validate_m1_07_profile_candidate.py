@@ -235,7 +235,7 @@ def validate_native_source_binding(profile: dict) -> bool:
         "validate_toolchain_archive(archive)",
         "safe_extract_verified_toolchain(archive, toolchain_root)",
         "actual_entries = {p.name for p in SOURCE.iterdir()}",
-        "stat.S_ISREG(os.lstat(p).st_mode)",
+        "stat.S_ISREG(os.lstat(path).st_mode)",
         "verified_files: dict[str, bytes] = {}",
         'build_source = temp_root / "verified-source"',
         "cwd=build_source",
