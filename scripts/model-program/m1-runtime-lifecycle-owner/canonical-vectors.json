@@ -1,0 +1,56 @@
+{
+  "generator": "Python standard json.dumps(sort_keys=True,ensure_ascii=False,separators=(comma,colon))",
+  "vectors": [
+    {
+      "input": {
+        "path": "C:\\Users\\Public\\Clued\\state\\current.json"
+      },
+      "canonical_utf8_hex": "7b2270617468223a22433a5c5c55736572735c5c5075626c69635c5c436c7565645c5c73746174655c5c63757272656e742e6a736f6e227d"
+    },
+    {
+      "input": {
+        "path": "payload\\model\\Qwen3.5-0.8B-Q8_0.gguf"
+      },
+      "canonical_utf8_hex": "7b2270617468223a227061796c6f61645c5c6d6f64656c5c5c5177656e332e352d302e38422d51385f302e67677566227d"
+    },
+    {
+      "input": {
+        "control": "\u0000\b\f\n\r\t\"\\"
+      },
+      "canonical_utf8_hex": "7b22636f6e74726f6c223a225c75303030305c625c665c6e5c725c745c225c5c227d"
+    },
+    {
+      "input": {
+        "unicode": "印记・続ける 😀  "
+      },
+      "canonical_utf8_hex": "7b22756e69636f6465223a22e58db0e8aeb0e383bbe7b69ae38191e3828b20f09f9880e280a8e280a9227d"
+    },
+    {
+      "input": {
+        "z": [
+          {
+            "b": true,
+            "a": null
+          },
+          2
+        ],
+        "a": "<>&"
+      },
+      "canonical_utf8_hex": "7b2261223a223c3e26222c227a223a5b7b2261223a6e756c6c2c2262223a747275657d2c325d7d"
+    },
+    {
+      "input": {
+        "zero": 0,
+        "negative": -12,
+        "array": [
+          true,
+          false,
+          null,
+          "\\\\",
+          "end\\"
+        ]
+      },
+      "canonical_utf8_hex": "7b226172726179223a5b747275652c66616c73652c6e756c6c2c225c5c5c5c222c22656e645c5c225d2c226e65676174697665223a2d31322c227a65726f223a307d"
+    }
+  ]
+}

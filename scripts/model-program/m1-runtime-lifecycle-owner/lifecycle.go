@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,9 +22,9 @@ type hashWriter interface {
 	Sum([]byte) []byte
 }
 
-func newStreamingSHA256() *streamingSHA { return &streamingSHA{h: sha256.New()} }
+func newStreamingSHA256() *streamingSHA             { return &streamingSHA{h: sha256.New()} }
 func (s *streamingSHA) Write(p []byte) (int, error) { return s.h.Write(p) }
-func (s *streamingSHA) Hex() string { return hex.EncodeToString(s.h.Sum(nil)) }
+func (s *streamingSHA) Hex() string                 { return hex.EncodeToString(s.h.Sum(nil)) }
 
 type fileSpec struct {
 	bytes int64
@@ -38,7 +39,7 @@ type sourceAttestation struct {
 
 type slotAttestation struct {
 	revision, manifestSHA, modelSHA, assetSHA, treeSHA string
-	treeFiles                                         int
+	treeFiles                                          int
 }
 
 type transitionSpec struct {
@@ -238,7 +239,11 @@ func (c *controller) attestRegular(path string, expectedBytes int64, expectedSHA
 	if e := c.verifySafeExistingPath(path); e != nil {
 		return e
 	}
-	st, e := os.Lstat(path)
+	pinned, e := c.pinImmutable(path, writable)
+	if e != nil {
+		return e
+	}
+	st, e := pinned.Stat()
 	if e != nil {
 		return e
 	}
@@ -249,6 +254,9 @@ func (c *controller) attestRegular(path string, expectedBytes int64, expectedSHA
 		return e
 	}
 	if writable {
+		if e = c.verifyCreatedPath(path, false); e != nil {
+			return e
+		}
 		links, le := c.sys.hardlinkCount(path)
 		if le != nil {
 			return le
@@ -257,7 +265,12 @@ func (c *controller) attestRegular(path string, expectedBytes int64, expectedSHA
 			return fail("SLOT_HARDLINK_FORBIDDEN")
 		}
 	}
-	got, total, e := hashFile(path, deadline)
+	if _, e = pinned.Seek(0, io.SeekStart); e != nil {
+		return e
+	}
+	h := sha256.New()
+	total, e := copyChecked(h, pinned, func() error { return checkDeadline(c.now(), deadline, time.Time{}) })
+	got := hex.EncodeToString(h.Sum(nil))
 	if e != nil {
 		return e
 	}
@@ -295,7 +308,7 @@ func zipSpecs(assetPath string, deadline time.Time) (map[string]fileSpec, string
 			return nil, "", er
 		}
 		h := sha256.New()
-		n, er := io.Copy(h, io.LimitReader(r, int64(entry.UncompressedSize64)+1))
+		n, er := copyChecked(h, io.LimitReader(r, int64(entry.UncompressedSize64)+1), func() error { return checkDeadline(time.Now(), deadline, time.Time{}) })
 		ce := r.Close()
 		if er != nil {
 			return nil, "", er
@@ -365,10 +378,10 @@ func (c *controller) attestTree(dir string, specs map[string]fileSpec, deadline 
 }
 
 func (c *controller) attestSource(deadline time.Time) (sourceAttestation, error) {
-	if e := c.attestRegular(c.paths.sourceModel, modelBytes, modelSHA, deadline, false); e != nil {
+	if e := c.attestRegular(c.paths.sourceModel, c.payload.modelBytes, c.payload.modelSHA, deadline, false); e != nil {
 		return sourceAttestation{}, e
 	}
-	if e := c.attestRegular(c.paths.sourceAsset, runtimeAssetBytes, runtimeAssetSHA, deadline, false); e != nil {
+	if e := c.attestRegular(c.paths.sourceAsset, c.payload.assetBytes, c.payload.assetSHA, deadline, false); e != nil {
 		return sourceAttestation{}, e
 	}
 	specs, treeSHA, e := zipSpecs(c.paths.sourceAsset, deadline)
@@ -378,20 +391,31 @@ func (c *controller) attestSource(deadline time.Time) (sourceAttestation, error)
 	if e = c.attestTree(c.paths.sourceRuntime, specs, deadline, false); e != nil {
 		return sourceAttestation{}, e
 	}
-	return sourceAttestation{modelSHA: modelSHA, assetSHA: runtimeAssetSHA, treeSHA: treeSHA, treeFiles: len(specs), specs: specs}, nil
+	return sourceAttestation{modelSHA: c.payload.modelSHA, assetSHA: c.payload.assetSHA, treeSHA: treeSHA, treeFiles: len(specs), specs: specs}, nil
 }
 
 func (c *controller) createDirExact(path string) error {
-	if !c.allowedWritePath(path) {
+	if !c.allowedWritePath(path) || samePath(path, c.paths.guard) {
 		return fail("REPARSE_POINT_OR_PATH_ESCAPE_DETECTED")
 	}
-	if e := c.verifySafeParent(path); e != nil {
+	sys, e := c.filesystem()
+	if e != nil {
 		return e
 	}
-	if e := os.Mkdir(path, 0700); e != nil {
+	parent, e := c.pinDirectory(filepath.Dir(path))
+	if e != nil {
 		return e
 	}
-	return c.verifySafeExistingPath(path)
+	f, e := sys.openDirectoryAt(parent, path, true)
+	if e != nil {
+		return e
+	}
+	if e = c.ownedIdentity(f, path, true); e != nil {
+		_ = f.Close()
+		return e
+	}
+	c.dirPins[pathKey(path)] = f
+	return nil
 }
 
 func (c *controller) copyExact(ctx *executionContext, src, dst string, spec fileSpec) error {
@@ -399,6 +423,9 @@ func (c *controller) copyExact(ctx *executionContext, src, dst string, spec file
 		return e
 	}
 	if e := c.attestRegular(src, spec.bytes, spec.sha, ctx.deadline, false); e != nil {
+		return e
+	}
+	if e := c.limits(ctx); e != nil {
 		return e
 	}
 	if e := c.verifySafeParent(dst); e != nil {
@@ -412,17 +439,12 @@ func (c *controller) copyExact(ctx *executionContext, src, dst string, spec file
 		return e
 	}
 	defer in.Close()
-	out, e := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	out, e := c.openOwnedWrite(dst, true)
 	if e != nil {
 		return e
 	}
-	if e = c.sys.verifyWriteHandle(out, dst); e != nil {
-		_ = out.Close()
-		_ = os.Remove(dst)
-		return e
-	}
 	h := sha256.New()
-	n, we := io.Copy(io.MultiWriter(out, h), io.LimitReader(in, spec.bytes+1))
+	n, we := copyChecked(io.MultiWriter(out, h), io.LimitReader(in, spec.bytes+1), func() error { return c.limits(ctx) })
 	if we == nil && n != spec.bytes {
 		we = fail("EXACT_FILE_SIZE_DRIFT")
 	}
@@ -437,7 +459,6 @@ func (c *controller) copyExact(ctx *executionContext, src, dst string, spec file
 		we = ce
 	}
 	if we != nil {
-		_ = os.Remove(dst)
 		return we
 	}
 	return c.attestRegular(dst, spec.bytes, spec.sha, ctx.deadline, true)
@@ -480,6 +501,9 @@ func (c *controller) materializeSlot(ctx *executionContext, revision string) (sl
 		filepath.Join(root, "payload", "runtime"),
 		filepath.Join(root, "payload", "runtime", "b11033-vulkan"),
 	} {
+		if e = c.limits(ctx); e != nil {
+			return slotAttestation{}, e
+		}
 		if e = c.createDirExact(p); e != nil {
 			return slotAttestation{}, e
 		}
@@ -487,10 +511,10 @@ func (c *controller) materializeSlot(ctx *executionContext, revision string) (sl
 	modelDst := filepath.Join(root, "payload", "model", "Qwen3.5-0.8B-Q8_0.gguf")
 	assetDst := filepath.Join(root, "payload", "runtime", "llama-b11033-bin-win-vulkan-x64.zip")
 	treeDst := filepath.Join(root, "payload", "runtime", "b11033-vulkan")
-	if e = c.copyExact(ctx, c.paths.sourceModel, modelDst, fileSpec{bytes: modelBytes, sha: modelSHA}); e != nil {
+	if e = c.copyExact(ctx, c.paths.sourceModel, modelDst, fileSpec{bytes: c.payload.modelBytes, sha: c.payload.modelSHA}); e != nil {
 		return slotAttestation{}, e
 	}
-	if e = c.copyExact(ctx, c.paths.sourceAsset, assetDst, fileSpec{bytes: runtimeAssetBytes, sha: runtimeAssetSHA}); e != nil {
+	if e = c.copyExact(ctx, c.paths.sourceAsset, assetDst, fileSpec{bytes: c.payload.assetBytes, sha: c.payload.assetSHA}); e != nil {
 		return slotAttestation{}, e
 	}
 	names := make([]string, 0, len(source.specs))
@@ -507,21 +531,21 @@ func (c *controller) materializeSlot(ctx *executionContext, revision string) (sl
 		return slotAttestation{}, e
 	}
 	manifest := object{
-		"profile_id": issuedID,
-		"contract_id": "M1-08-RUNTIME-LIFECYCLE-SMOKE-PC-v0.1",
-		"revision_id": revision,
-		"predecessor_revision_id": nil,
-		"model_relative_path": `payload\model\Qwen3.5-0.8B-Q8_0.gguf`,
-		"model_bytes": json.Number(strconvFormatInt(modelBytes)),
-		"model_sha256": modelSHA,
-		"runtime_archive_relative_path": `payload\runtime\llama-b11033-bin-win-vulkan-x64.zip`,
-		"runtime_archive_bytes": json.Number(strconvFormatInt(runtimeAssetBytes)),
-		"runtime_archive_sha256": runtimeAssetSHA,
-		"runtime_tree_attestation": "EXACT_RELEASE_ZIP_AND_EXTRACTED_TREE_MATCH / NO_EXTRA_MISSING_OR_MUTATED_FILES",
+		"profile_id":                      issuedID,
+		"contract_id":                     "M1-08-RUNTIME-LIFECYCLE-SMOKE-PC-v0.1",
+		"revision_id":                     revision,
+		"predecessor_revision_id":         nil,
+		"model_relative_path":             `payload\model\Qwen3.5-0.8B-Q8_0.gguf`,
+		"model_bytes":                     json.Number(strconvFormatInt(c.payload.modelBytes)),
+		"model_sha256":                    c.payload.modelSHA,
+		"runtime_archive_relative_path":   `payload\runtime\llama-b11033-bin-win-vulkan-x64.zip`,
+		"runtime_archive_bytes":           json.Number(strconvFormatInt(c.payload.assetBytes)),
+		"runtime_archive_sha256":          c.payload.assetSHA,
+		"runtime_tree_attestation":        "EXACT_RELEASE_ZIP_AND_EXTRACTED_TREE_MATCH / NO_EXTRA_MISSING_OR_MUTATED_FILES",
 		"server_executable_relative_path": `payload\runtime\b11033-vulkan\llama-server.exe`,
-		"server_executable_bytes": json.Number(strconvFormatInt(serverBytes)),
-		"server_executable_sha256": serverSHA,
-		"created_at_utc": c.now().UTC().Format(time.RFC3339Nano),
+		"server_executable_bytes":         json.Number(strconvFormatInt(c.payload.serverBytes)),
+		"server_executable_sha256":        c.payload.serverSHA,
+		"created_at_utc":                  c.now().UTC().Format(time.RFC3339Nano),
 	}
 	if predecessor != "" {
 		manifest["predecessor_revision_id"] = predecessor
@@ -531,6 +555,9 @@ func (c *controller) materializeSlot(ctx *executionContext, revision string) (sl
 		return slotAttestation{}, e
 	}
 	manifestPath := filepath.Join(root, "manifest.json")
+	if e = c.limits(ctx); e != nil {
+		return slotAttestation{}, e
+	}
 	if e = c.createNewSynced(manifestPath, raw, 0600); e != nil {
 		return slotAttestation{}, e
 	}
@@ -567,7 +594,10 @@ func (c *controller) verifySlot(root string, deadline time.Time) (slotAttestatio
 	} else if links != 1 {
 		return slotAttestation{}, fail("SLOT_HARDLINK_FORBIDDEN")
 	}
-	raw, e := os.ReadFile(manifestPath)
+	if _, e := c.pinImmutable(manifestPath, true); e != nil {
+		return slotAttestation{}, e
+	}
+	raw, e := c.readOwned(manifestPath)
 	if e != nil {
 		return slotAttestation{}, e
 	}
@@ -595,16 +625,16 @@ func (c *controller) verifySlot(root string, deadline time.Time) (slotAttestatio
 		return slotAttestation{}, fail("SLOT_MANIFEST_PREDECESSOR_DRIFT")
 	}
 	expected := object{
-		"model_relative_path": `payload\model\Qwen3.5-0.8B-Q8_0.gguf`,
-		"model_bytes": json.Number(strconvFormatInt(modelBytes)),
-		"model_sha256": modelSHA,
-		"runtime_archive_relative_path": `payload\runtime\llama-b11033-bin-win-vulkan-x64.zip`,
-		"runtime_archive_bytes": json.Number(strconvFormatInt(runtimeAssetBytes)),
-		"runtime_archive_sha256": runtimeAssetSHA,
-		"runtime_tree_attestation": "EXACT_RELEASE_ZIP_AND_EXTRACTED_TREE_MATCH / NO_EXTRA_MISSING_OR_MUTATED_FILES",
+		"model_relative_path":             `payload\model\Qwen3.5-0.8B-Q8_0.gguf`,
+		"model_bytes":                     json.Number(strconvFormatInt(c.payload.modelBytes)),
+		"model_sha256":                    c.payload.modelSHA,
+		"runtime_archive_relative_path":   `payload\runtime\llama-b11033-bin-win-vulkan-x64.zip`,
+		"runtime_archive_bytes":           json.Number(strconvFormatInt(c.payload.assetBytes)),
+		"runtime_archive_sha256":          c.payload.assetSHA,
+		"runtime_tree_attestation":        "EXACT_RELEASE_ZIP_AND_EXTRACTED_TREE_MATCH / NO_EXTRA_MISSING_OR_MUTATED_FILES",
 		"server_executable_relative_path": `payload\runtime\b11033-vulkan\llama-server.exe`,
-		"server_executable_bytes": json.Number(strconvFormatInt(serverBytes)),
-		"server_executable_sha256": serverSHA,
+		"server_executable_bytes":         json.Number(strconvFormatInt(c.payload.serverBytes)),
+		"server_executable_sha256":        c.payload.serverSHA,
 	}
 	for k, v := range expected {
 		if !equal(m[k], v) {
@@ -617,10 +647,10 @@ func (c *controller) verifySlot(root string, deadline time.Time) (slotAttestatio
 	model := filepath.Join(root, "payload", "model", "Qwen3.5-0.8B-Q8_0.gguf")
 	asset := filepath.Join(root, "payload", "runtime", "llama-b11033-bin-win-vulkan-x64.zip")
 	treeDir := filepath.Join(root, "payload", "runtime", "b11033-vulkan")
-	if e = c.attestRegular(model, modelBytes, modelSHA, deadline, true); e != nil {
+	if e = c.attestRegular(model, c.payload.modelBytes, c.payload.modelSHA, deadline, true); e != nil {
 		return slotAttestation{}, e
 	}
-	if e = c.attestRegular(asset, runtimeAssetBytes, runtimeAssetSHA, deadline, true); e != nil {
+	if e = c.attestRegular(asset, c.payload.assetBytes, c.payload.assetSHA, deadline, true); e != nil {
 		return slotAttestation{}, e
 	}
 	specs, treeSHA, e := zipSpecs(asset, deadline)
@@ -630,10 +660,10 @@ func (c *controller) verifySlot(root string, deadline time.Time) (slotAttestatio
 	if e = c.attestTree(treeDir, specs, deadline, true); e != nil {
 		return slotAttestation{}, e
 	}
-	if e = c.attestRegular(filepath.Join(treeDir, "llama-server.exe"), serverBytes, serverSHA, deadline, true); e != nil {
+	if e = c.attestRegular(filepath.Join(treeDir, "llama-server.exe"), c.payload.serverBytes, c.payload.serverSHA, deadline, true); e != nil {
 		return slotAttestation{}, e
 	}
-	return slotAttestation{revision: revision, manifestSHA: sha(raw), modelSHA: modelSHA, assetSHA: runtimeAssetSHA, treeSHA: treeSHA, treeFiles: len(specs)}, nil
+	return slotAttestation{revision: revision, manifestSHA: sha(raw), modelSHA: c.payload.modelSHA, assetSHA: c.payload.assetSHA, treeSHA: treeSHA, treeFiles: len(specs)}, nil
 }
 
 func currentPath(paths layout) string { return filepath.Join(paths.testRoot, "state", "current.json") }
@@ -653,7 +683,7 @@ func (c *controller) readCurrent() (object, []byte, error) {
 	} else if links != 1 {
 		return nil, nil, fail("CURRENT_MANIFEST_HARDLINK_FORBIDDEN")
 	}
-	raw, e := os.ReadFile(path)
+	raw, e := c.readOwned(path)
 	if e != nil {
 		return nil, nil, e
 	}
@@ -699,8 +729,8 @@ func (c *controller) verifyCurrentObject(m object, spec transitionSpec, deadline
 		return e
 	}
 	if text(m, "slot_manifest_sha256") != att.manifestSHA ||
-		text(m, "payload_model_sha256") != modelSHA ||
-		text(m, "payload_runtime_asset_sha256") != runtimeAssetSHA {
+		text(m, "payload_model_sha256") != c.payload.modelSHA ||
+		text(m, "payload_runtime_asset_sha256") != c.payload.assetSHA {
 		return fail("CURRENT_MANIFEST_SLOT_BINDING_DRIFT")
 	}
 	return nil
@@ -779,15 +809,15 @@ func (c *controller) publishCurrent(ctx *executionContext, spec transitionSpec) 
 		return nil, e
 	}
 	current := object{
-		"profile_id": issuedID,
-		"active_revision_id": spec.to,
-		"previous_active_revision_id": nil,
-		"transition_index": json.Number(strconvFormatInt(int64(spec.index))),
-		"slot_manifest_sha256": att.manifestSHA,
-		"payload_model_sha256": modelSHA,
-		"payload_runtime_asset_sha256": runtimeAssetSHA,
-		"activated_at_utc": c.now().UTC().Format(time.RFC3339Nano),
-		"transition_kind": spec.kind,
+		"profile_id":                   issuedID,
+		"active_revision_id":           spec.to,
+		"previous_active_revision_id":  nil,
+		"transition_index":             json.Number(strconvFormatInt(int64(spec.index))),
+		"slot_manifest_sha256":         att.manifestSHA,
+		"payload_model_sha256":         c.payload.modelSHA,
+		"payload_runtime_asset_sha256": c.payload.assetSHA,
+		"activated_at_utc":             c.now().UTC().Format(time.RFC3339Nano),
+		"transition_kind":              spec.kind,
 		"recovery_of_transition_index": spec.recoveryOf,
 	}
 	if spec.from != "" {
@@ -798,64 +828,66 @@ func (c *controller) publishCurrent(ctx *executionContext, spec transitionSpec) 
 		return nil, e
 	}
 	temp := currentTempPath(c.paths, spec.index)
+	if e = c.limits(ctx); e != nil {
+		return nil, e
+	}
 	if e = c.createNewSynced(temp, raw, 0600); e != nil {
 		return nil, e
 	}
-	reopened, e := os.ReadFile(temp)
+	reopened, e := c.readOwned(temp)
 	if e != nil || !bytes.Equal(reopened, raw) || sha(reopened) != sha(raw) {
 		return nil, fail("CURRENT_MANIFEST_ATOMICITY_UNPROVEN")
 	}
+	if e = c.limits(ctx); e != nil {
+		return nil, e
+	}
 	replace := spec.index != 1
-	if e = c.sys.atomicPublish(temp, currentPath(c.paths), replace); e != nil {
-		if ae := c.verifyCurrentFailureAtomicity(oldRaw, raw, spec.index == 1); ae != nil {
-			return nil, ae
+	nativeErr := c.publishOwned(temp, currentPath(c.paths), replace)
+	state, post, postRaw, observeErr := c.observePublication(oldRaw, raw, spec.index == 1)
+	if state == publicationCommitted {
+		c.currentBytes = append([]byte(nil), raw...)
+		c.currentSpec = spec
+	}
+	if nativeErr != nil || observeErr != nil || state != publicationCommitted {
+		cause := errors.Join(nativeErr, observeErr)
+		if cause == nil {
+			cause = fail("CURRENT_PUBLICATION_NOT_COMMITTED")
 		}
-		return nil, e
+		return post, &publicationFailure{state: state, cause: cause, expected: raw}
 	}
-	post, postRaw, e := c.readCurrent()
-	if e != nil || !bytes.Equal(postRaw, raw) || !transitionMatches(post, spec) {
-		return nil, fail("CURRENT_MANIFEST_ATOMICITY_UNPROVEN")
-	}
-	if _, e = c.verifySlot(slot, ctx.deadline); e != nil {
-		return nil, e
+	if e = c.verifyCurrentObject(post, spec, ctx.deadline); e != nil {
+		return post, &publicationFailure{state: publicationCommitted, cause: e, expected: raw}
 	}
 	if e = c.event(ctx, "LIFECYCLE", "current_published", object{
 		"transition_index": json.Number(strconvFormatInt(int64(spec.index))),
-		"from": current["previous_active_revision_id"],
-		"to": spec.to,
-		"transition_kind": spec.kind,
-		"recovery_of_transition_index": spec.recoveryOf,
+		"from":             current["previous_active_revision_id"], "to": spec.to,
+		"transition_kind": spec.kind, "recovery_of_transition_index": spec.recoveryOf,
 		"current_sha256": sha(postRaw),
 	}); e != nil {
-		return nil, e
+		return post, &publicationFailure{state: publicationCommitted, cause: e, expected: raw}
 	}
 	return post, nil
 }
 
 func (c *controller) requireCurrentRevision(ctx *executionContext, revision string) error {
+	if c.currentSpec.to != revision {
+		return fail("CURRENT_TRANSITION_INDEX_OR_PREVIOUS_REVISION_MISMATCH")
+	}
+	return c.requireCurrentTransition(ctx, c.currentSpec)
+}
+func (c *controller) requireCurrentTransition(ctx *executionContext, spec transitionSpec) error {
 	if e := c.limits(ctx); e != nil {
 		return e
 	}
-	m, _, e := c.readCurrent()
+	m, raw, e := c.readCurrent()
 	if e != nil {
 		return e
 	}
-	if text(m, "active_revision_id") != revision {
-		return fail("CURRENT_TRANSITION_INDEX_OR_PREVIOUS_REVISION_MISMATCH")
+	if len(c.currentBytes) == 0 || !bytes.Equal(raw, c.currentBytes) {
+		return fail("CURRENT_COMMITTED_SNAPSHOT_DRIFT")
 	}
-	slot := slotRootFor(c.paths, revision)
-	att, e := c.verifySlot(slot, ctx.deadline)
-	if e != nil {
-		return e
-	}
-	if text(m, "slot_manifest_sha256") != att.manifestSHA ||
-		text(m, "payload_model_sha256") != modelSHA ||
-		text(m, "payload_runtime_asset_sha256") != runtimeAssetSHA {
-		return fail("CURRENT_MANIFEST_SLOT_BINDING_DRIFT")
-	}
-	return nil
+	return c.verifyCurrentObject(m, spec, ctx.deadline)
 }
-
 
 func (c *controller) removeUnverifiedInitialCurrent(ctx *executionContext) error {
 	if e := c.requireContext(ctx); e != nil {
@@ -867,9 +899,12 @@ func (c *controller) removeUnverifiedInitialCurrent(ctx *executionContext) error
 	} else if e != nil {
 		return e
 	}
-	m, _, e := c.readCurrent()
+	m, raw, e := c.readCurrent()
 	if e != nil {
 		return e
+	}
+	if len(c.currentBytes) == 0 || !bytes.Equal(raw, c.currentBytes) {
+		return fail("CURRENT_COMMITTED_SNAPSHOT_DRIFT")
 	}
 	if e = c.verifyCurrentObject(m, successTransition(1), ctx.deadline); e != nil {
 		// Contract allows removal iff current still refers to exact unverified A.
@@ -879,19 +914,19 @@ func (c *controller) removeUnverifiedInitialCurrent(ctx *executionContext) error
 	if e = c.verifySafeExistingPath(path); e != nil {
 		return e
 	}
-	return os.Remove(path)
+	return c.removeOwned(path)
 }
 
 func partialSlotAllowed(specs map[string]fileSpec) map[string]bool {
 	allowed := map[string]bool{
-		".": true,
-		"manifest.json": false,
-		"payload": true,
+		".":                               true,
+		"manifest.json":                   false,
+		"payload":                         true,
 		filepath.Join("payload", "model"): true,
-		filepath.Join("payload", "model", "Qwen3.5-0.8B-Q8_0.gguf"): false,
-		filepath.Join("payload", "runtime"): true,
+		filepath.Join("payload", "model", "Qwen3.5-0.8B-Q8_0.gguf"):                false,
+		filepath.Join("payload", "runtime"):                                        true,
 		filepath.Join("payload", "runtime", "llama-b11033-bin-win-vulkan-x64.zip"): false,
-		filepath.Join("payload", "runtime", "b11033-vulkan"): true,
+		filepath.Join("payload", "runtime", "b11033-vulkan"):                       true,
 	}
 	for name := range specs {
 		allowed[filepath.Join("payload", "runtime", "b11033-vulkan", name)] = false
@@ -909,7 +944,10 @@ func (c *controller) removePartialSlotIfSafe(root string, specs map[string]fileS
 		return e
 	}
 	allowed := partialSlotAllowed(specs)
-	type row struct{ path, rel string; dir bool }
+	type row struct {
+		path, rel string
+		dir       bool
+	}
 	rows := []row{}
 	e := filepath.WalkDir(root, func(path string, d os.DirEntry, er error) error {
 		if er != nil {
@@ -929,16 +967,21 @@ func (c *controller) removePartialSlotIfSafe(root string, specs map[string]fileS
 		if !ok || wantDir != d.IsDir() {
 			return faild("UNEXPECTED_PREEXISTING_SLOT_OR_EVIDENCE_ENTRY", rel)
 		}
-		rows = append(rows, row{path:path, rel:rel, dir:d.IsDir()})
+		if e := c.verifyCreatedPath(path, d.IsDir()); e != nil {
+			return e
+		}
+		rows = append(rows, row{path: path, rel: rel, dir: d.IsDir()})
 		return nil
 	})
 	if e != nil {
 		return e
 	}
-	sort.Slice(rows, func(i,j int) bool {
+	sort.Slice(rows, func(i, j int) bool {
 		di := strings.Count(rows[i].rel, string(filepath.Separator))
 		dj := strings.Count(rows[j].rel, string(filepath.Separator))
-		if di != dj { return di > dj }
+		if di != dj {
+			return di > dj
+		}
 		return rows[i].rel > rows[j].rel
 	})
 	for _, row := range rows {
@@ -948,14 +991,14 @@ func (c *controller) removePartialSlotIfSafe(root string, specs map[string]fileS
 		if e := c.verifySafeExistingPath(row.path); e != nil {
 			return e
 		}
-		if e := os.Remove(row.path); e != nil {
+		if e := c.removeOwned(row.path); e != nil {
 			return e
 		}
 	}
 	if e := c.verifySafeExistingPath(root); e != nil {
 		return e
 	}
-	return os.Remove(root)
+	return c.removeOwned(root)
 }
 
 func (c *controller) runtimeExpectedEntries(deadline time.Time) (map[string]bool, error) {
@@ -964,10 +1007,10 @@ func (c *controller) runtimeExpectedEntries(deadline time.Time) (map[string]bool
 		return nil, e
 	}
 	expected := map[string]bool{
-		"state": true,
-		filepath.Join("state", "temp"): true,
+		"state":                                true,
+		filepath.Join("state", "temp"):         true,
 		filepath.Join("state", "current.json"): false,
-		"revisions": true,
+		"revisions":                            true,
 	}
 	for _, d := range []string{"A", "B"} {
 		root := filepath.Join("revisions", d)
@@ -987,6 +1030,9 @@ func (c *controller) runtimeExpectedEntries(deadline time.Time) (map[string]bool
 }
 
 func (c *controller) removeRuntimeRootSuccess(ctx *executionContext) error {
+	if e := c.requireCurrentTransition(ctx, successTransition(3)); e != nil {
+		return e
+	}
 	if e := c.limits(ctx); e != nil {
 		return e
 	}
@@ -1000,7 +1046,7 @@ func (c *controller) removeRuntimeRootSuccess(ctx *executionContext) error {
 			return er
 		}
 		if samePath(path, c.paths.testRoot) {
-			return c.verifySafeExistingPath(path)
+			return c.verifyCreatedPath(path, true)
 		}
 		if !withinPath(c.paths.testRoot, path) {
 			return fail("REPARSE_POINT_OR_PATH_ESCAPE_DETECTED")
@@ -1011,6 +1057,9 @@ func (c *controller) removeRuntimeRootSuccess(ctx *executionContext) error {
 		rel, er := filepath.Rel(c.paths.testRoot, path)
 		if er != nil {
 			return er
+		}
+		if e := c.verifyCreatedPath(path, d.IsDir()); e != nil {
+			return e
 		}
 		actual[rel] = d.IsDir()
 		return nil
@@ -1039,16 +1088,22 @@ func (c *controller) removeRuntimeRootSuccess(ctx *executionContext) error {
 		return paths[i] > paths[j]
 	})
 	for _, rel := range paths {
+		if e := c.limits(ctx); e != nil {
+			return e
+		}
 		path := filepath.Join(c.paths.testRoot, rel)
 		if e := c.verifySafeExistingPath(path); e != nil {
 			return e
 		}
-		if e := os.Remove(path); e != nil {
+		if e := c.removeOwned(path); e != nil {
 			return e
 		}
 	}
 	if e := c.verifySafeExistingPath(c.paths.testRoot); e != nil {
 		return e
 	}
-	return os.Remove(c.paths.testRoot)
+	if e := c.limits(ctx); e != nil {
+		return e
+	}
+	return c.removeOwned(c.paths.testRoot)
 }

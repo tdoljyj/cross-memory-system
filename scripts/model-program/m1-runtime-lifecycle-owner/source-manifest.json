@@ -6,10 +6,10 @@
   "effectful_authority_issued": false,
   "files": [
     {
-      "bytes": 5013,
-      "git_blob_sha1": "6bd48c46266f41262b247d13190c5f5229c0900d",
+      "bytes": 8725,
+      "git_blob_sha1": "81d985648579b276b212723bbceecc1572369867",
       "path": "README.md",
-      "sha256": "da788964fa4be74465bea49e70c1dedce4dbb47581517d9392dac247effe9430"
+      "sha256": "d1e24a8d11c324419d58d01755da9abf7e8b657808ac9829cf2e23cd7f14b456"
     },
     {
       "bytes": 614,
@@ -18,10 +18,58 @@
       "sha256": "3c94f8d4fd8b1e2bbdc185c9524b984ae3208d86c9094fac754d8849949d8266"
     },
     {
-      "bytes": 14282,
-      "git_blob_sha1": "0fc3276d64fa038feabfdebd9b25435d6bd9dfc4",
+      "bytes": 733,
+      "git_blob_sha1": "35b1caa3f426022a60f39435c1abd14cab6f608a",
+      "path": "bounded_io.go",
+      "sha256": "8650b9901d8a7944a80a86fcb25826b4255aa3fc2f56f1a79a2b1a15f555fbdf"
+    },
+    {
+      "bytes": 15655,
+      "git_blob_sha1": "490647e6e096a781037d2d6194f88118e8323867",
       "path": "build.py",
-      "sha256": "9b5797078a01b0b74ab104f53dc0e08a0f66d74778c1dbf00f64e36bcb0a2036"
+      "sha256": "3a955b88c7a483a7f4185dcded7a04ba0ec4ac86137cf771abde790b4f8f8956"
+    },
+    {
+      "bytes": 1620,
+      "git_blob_sha1": "5373e0b8b27cedace6704ce00bef825589b0c179",
+      "path": "canonical-vectors.json",
+      "sha256": "26376507c8089a893c7c48dd5140d77235588a6d1afdd62faac4950ba0b03c74"
+    },
+    {
+      "bytes": 10627,
+      "git_blob_sha1": "5be32f15eaae3261af88ea8b1448f2d6fa4cc819",
+      "path": "filesystem.go",
+      "sha256": "ea0903d4be2bf6332c1e29f4da306c60fde0046a9634231828b23c9169a12b03"
+    },
+    {
+      "bytes": 863,
+      "git_blob_sha1": "5db634432b1f90f5b261eea3fbf31a6c1768aae8",
+      "path": "filesystem_fixture_other_test.go",
+      "sha256": "1ab0c080401ff6f180649c35161623cf6edb7ee2189ac2d0b8979e2cc373ddf9"
+    },
+    {
+      "bytes": 2220,
+      "git_blob_sha1": "8993abf4f6833359a9cabf6744256cbb8edaabcf",
+      "path": "filesystem_fixture_test.go",
+      "sha256": "97402e33a957c7efb7e5087f5ee6261ee884581c2869700bcd1de832bc3c5cb3"
+    },
+    {
+      "bytes": 624,
+      "git_blob_sha1": "8f93dd7d395e17423fd4992d6611f4d7b66dad56",
+      "path": "filesystem_fixture_windows_test.go",
+      "sha256": "68658ffae1925f9d155fe549d1e40a367473a34efaaa6b94dca7739218d4f11f"
+    },
+    {
+      "bytes": 11520,
+      "git_blob_sha1": "2d6e9a550c60ada1b57f7cec8c6ef099b4086577",
+      "path": "filesystem_windows.go",
+      "sha256": "0e2bac3f004a2999aaf7bb05c57efc068031d505577ca4ee68f0ee4cca628028"
+    },
+    {
+      "bytes": 2499,
+      "git_blob_sha1": "afdfa78c2ccd2420bfabbea1f94f9c24927bbd36",
+      "path": "finalization.go",
+      "sha256": "d8092c37d74d5a6e97a0c084a0708106897f6662a4ea4875eadd561feec71973"
     },
     {
       "bytes": 49,
@@ -30,58 +78,100 @@
       "sha256": "02c76ba9ab8985de38b41978005c47739cad67a8fb26f195a66369548dcf785b"
     },
     {
-      "bytes": 31798,
-      "git_blob_sha1": "c8f47cf83115867adce20f7edae11d9510740444",
+      "bytes": 34338,
+      "git_blob_sha1": "a4ae20a842e5784e82f34ec057462bef216cac54",
       "path": "lifecycle.go",
-      "sha256": "0bda2a6bab5ad5a9b8624398e5f28b56af7e97c86f72db6256a009b478c1e986"
+      "sha256": "0a51eaa7cf7be81420a3c94b8246dbd8bc7e0f13002a365299f43294b2319ae1"
     },
     {
-      "bytes": 3469,
-      "git_blob_sha1": "5057ca6fc138aadfa1e16af58d64ad47fa589dd1",
+      "bytes": 3488,
+      "git_blob_sha1": "187d4ea4998a98a5a37fe305b45c64a255bb1279",
       "path": "main.go",
-      "sha256": "9f274c72687f24eb3292ccabb3c140c16219861393ee2a92578490da71c10da8"
+      "sha256": "aff2ce9448d03eceedf70a6d045b1a98bf2129b516ba98b49beb6b3af3ce8b98"
     },
     {
-      "bytes": 17183,
-      "git_blob_sha1": "12ac97ad44fe3b18a84eabbff258b089b534c097",
+      "bytes": 894,
+      "git_blob_sha1": "14b7af46c1e157ae49e6f1f983f2b2873087dbef",
+      "path": "network_windows.go",
+      "sha256": "dab032fe2c7a6d6b845d266ead695673e93a72c138a63d0097be27704f129b1a"
+    },
+    {
+      "bytes": 19980,
+      "git_blob_sha1": "017e49c31d00e4c3b9ada20a7b73244f13169428",
       "path": "owner.go",
-      "sha256": "cb84b43e8e6ba543efcdd2f19e76e964ecde530c324d347eec829ec685eee7ee"
+      "sha256": "4e601fd93fe21789b69938f0ddbccf0ce98c53c1160a7239956e9192c5f50d5d"
     },
     {
-      "bytes": 18261,
-      "git_blob_sha1": "947468dee6611017510ef6228df403c75bf126e2",
+      "bytes": 20572,
+      "git_blob_sha1": "8d50da6ca7de91f1fbdcedfd010087ae5a6fcba1",
       "path": "owner_test.go",
-      "sha256": "e76c66cd3702e854e378e2585b45cdcce36bb094d5cbc96161cbde63d850574b"
+      "sha256": "5be436c29f1f612a57179e9fd744be92e3d50e944b84b4158adc117615ee097e"
     },
     {
-      "bytes": 1333,
-      "git_blob_sha1": "e905221883ba6645d7b5424c62c9a46f3112df88",
+      "bytes": 669,
+      "git_blob_sha1": "f58301d55c0e6e79929e484cbc629781748cbc1c",
+      "path": "payload_policy.go",
+      "sha256": "9bb1eadfbdeafcf1cd80b90c99bf93cd96660edb319680398a307bf51aed28a0"
+    },
+    {
+      "bytes": 1304,
+      "git_blob_sha1": "a61d115b7b106012e54911cc120f0789665eaf7e",
       "path": "platform_other.go",
-      "sha256": "55c77bb6463ffedb1248af87317c2507e896d184659d7050d36a87f6609a8043"
+      "sha256": "7b42b1232e97a0c6c7d9d0e50e76677dad24d209d1869fa7833aaa52dcc77d95"
     },
     {
-      "bytes": 18021,
-      "git_blob_sha1": "f5d01f71e7027a18e90a0bb41b29c0059ac3c2fa",
+      "bytes": 17114,
+      "git_blob_sha1": "6f5460c274e6c118d6f9d9c310f8e72a7b10a86f",
       "path": "platform_windows.go",
-      "sha256": "7786222cb3080b1b99a8a846f3579d2272d190da32767f12fc65a7e591b4c004"
+      "sha256": "b518c531c194603d67177eb4ace440ed9a96dd72a98a853a2dcc40b653d44d6a"
     },
     {
-      "bytes": 5387,
-      "git_blob_sha1": "f3f522af56ac9581d629b7244249d2efe85e6e76",
+      "bytes": 5832,
+      "git_blob_sha1": "f6fa9bb266b04979cfafb37b2da0bfff08700c27",
       "path": "platform_windows_test.go",
-      "sha256": "0238d262326a2e6510ad055b6d49c6db0efca8953bc3508b2a066988ff2aa123"
+      "sha256": "7a2722588ee6b3bb6f90e6b20cafcecf4d2451dfbef916665b24dcf1d9f8fd29"
     },
     {
-      "bytes": 28176,
-      "git_blob_sha1": "2da079f9d7812e9334f84c97695f3be5327c5295",
+      "bytes": 30103,
+      "git_blob_sha1": "25dfa6e31e18571f6bec12e6cbb696c9e580756f",
       "path": "policy.go",
-      "sha256": "695b5a6a837e5c80112e3f605d16e06fc328176adf2d2cdc6d3c83f7e0582759"
+      "sha256": "9254ef2e73ed634b65aeda9f0470a9e780db2e1529f73e0dbbb001b690f10f04"
     },
     {
-      "bytes": 15190,
-      "git_blob_sha1": "8b95e8cc00dfd6a096276b96f9ada800bce81411",
+      "bytes": 2958,
+      "git_blob_sha1": "f07088810e75dd83f78c957234151b48e8c808e4",
+      "path": "publication.go",
+      "sha256": "f967c5ddcdb3dbae56ca76b2e4258fdf97601ea3be3219470834656a6e5edf67"
+    },
+    {
+      "bytes": 7751,
+      "git_blob_sha1": "2f20d334703284b0d440b95e5b00abb40587d3e0",
+      "path": "qualification_scope.py",
+      "sha256": "7038de1e8c14a4cfbfc3bfa74cbb48d61915615510c77ab5ce2b64ac5be6832c"
+    },
+    {
+      "bytes": 3509,
+      "git_blob_sha1": "e5fb2fc76ec1c38071e6462d4617bff79e56ecc8",
+      "path": "qualification_scope_test.py",
+      "sha256": "31e9566693b42c0fb9820b8aeb6d2fa009e72caeec8ed9de5029b4c748adb07c"
+    },
+    {
+      "bytes": 18940,
+      "git_blob_sha1": "c2c54668c99c28087a64a4474e3bf850833546ae",
+      "path": "remediation_test.go",
+      "sha256": "b6b2ea1aa941d74d624c8966cd4667cd9c4bec80d54817b00057781bcc20f202"
+    },
+    {
+      "bytes": 4823,
+      "git_blob_sha1": "f8676ea300873fcf42be037564257508286dea86",
+      "path": "remediation_windows_test.go",
+      "sha256": "1a15c13016395077676ac1f29c2a7f0923d75dba4ea013fdfe436eaa9a524b49"
+    },
+    {
+      "bytes": 13962,
+      "git_blob_sha1": "dd52d7dca0db6647c27ceab7b4d76f8e028ebadb",
       "path": "scenarios.go",
-      "sha256": "83b1dbe5363a964c0434023000eb9eb714e4403c8f37aa1fcee0067302c21692"
+      "sha256": "84b26ab4ff455835d5e1f29890822824694c5f568e9241993b946a6b1abd9af3"
     }
   ],
   "implementation_base": "3d8a4c88373f5a54831b40d34c0ad89281d02ac1",
@@ -108,6 +198,27 @@
   },
   "owner_binary_execution_authorized": false,
   "qualification_semantics": "STATIC_NEGATIVE_FAULT_AND_WINDOWS_NATIVE_TESTS_ONLY / TEST_OWNED_TEMP_PATHS / HANDLE_RESOLVED_WRITE_BOUNDARIES / NO_PRODUCTION_GUARD_OR_RUNTIME_ROOT / OWNER_BINARY_NOT_EXECUTED",
+  "remediation": {
+    "exact_windows_toolchain_qualification_repeated": false,
+    "finding_ids": [
+      "MAJOR-01",
+      "MAJOR-02",
+      "MAJOR-03",
+      "MAJOR-04",
+      "MAJOR-05",
+      "MAJOR-06",
+      "MAJOR-07",
+      "MAJOR-08",
+      "MAJOR-09"
+    ],
+    "independent_review_pass": false,
+    "repair_base_head": "015eecb50f86d6ab59228e91b12f7007e88f9387",
+    "repair_base_source_manifest_sha256": "c932c2a1b2f82bd386bf7e875b62c45f7a7a684e6847bb8d26de8c9304eaf0d5",
+    "repository_successor_commit": null,
+    "revision": "MAJOR-01-THROUGH-MAJOR-09-r1",
+    "status": "SOURCE_REMEDIATION_CANDIDATE / LOCAL_REGRESSION_PASS / WINDOWS_NATIVE_QUALIFICATION_AND_INDEPENDENT_CLOSURE_PENDING",
+    "validation_boundary": "LINUX_GO_1.23.2_FIXTURES_AND_WINDOWS_CROSS_COMPILATION_ONLY / NO_OWNER_BINARY_OR_REAL_MODEL_EXECUTION"
+  },
   "role": "EFFECTFUL_OWNER_IMPLEMENTATION_PREPARATION_CANDIDATE / NO_FINAL_ISSUANCE / NO_EXECUTION",
   "schema_version": "clued.m1-08-native-owner-source-manifest/1"
 }

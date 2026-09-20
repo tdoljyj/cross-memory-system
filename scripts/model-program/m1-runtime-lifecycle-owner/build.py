@@ -2,6 +2,10 @@
 """Build the M1-08 native owner as a non-effectful implementation artifact."""
 from __future__ import annotations
 
+import sys
+sys.dont_write_bytecode = True  # imported helpers must not write __pycache__ into source
+from qualification_scope import QualificationScope, validate_output_path, require_go_test_report
+
 import argparse
 import ctypes
 import hashlib
@@ -221,11 +225,8 @@ def main() -> int:
     args = ap.parse_args()
 
     archive = args.toolchain_archive.resolve(strict=True)
-    output = args.output.resolve()
-    if output.is_relative_to(ROOT):
-        ap.error("output must be outside repository")
-    if output.exists():
-        ap.error("output must be a new directory")
+    # Reject lexical aliases and protected overlap BEFORE resolving or creating.
+    output = Path(validate_output_path(str(args.output), str(ROOT)))
 
     validate_toolchain_archive(archive)
     verify_exact_file(CONTRACT, size=CONTRACT_BYTES, sha256=CONTRACT_SHA256, blob=CONTRACT_BLOB)
@@ -238,88 +239,98 @@ def main() -> int:
     if 'const issuerPublicKeyHex = ""' not in bindings or 'const issuerPublicKeySHA256 = ""' not in bindings:
         raise RuntimeError("implementation preparation unexpectedly binds an issuer root")
 
-    output.mkdir(parents=True, exist_ok=False)
-    with tempfile.TemporaryDirectory(prefix="m108-owner-build-") as td:
-        temp_root = Path(td)
-        toolchain_root = temp_root / "verified-toolchain"
-        toolchain_root.mkdir()
-        go, tree_sha, tree_count = extract_exact_toolchain(archive, toolchain_root)
-        goroot = toolchain_root / "go"
-        env = exact_build_env(temp_root, goroot)
+    with QualificationScope(output, ROOT) as scope:
+        with tempfile.TemporaryDirectory(prefix="m108-owner-build-", dir=scope.output) as td:
+            temp_root = Path(td)
+            toolchain_root = temp_root / "verified-toolchain"
+            toolchain_root.mkdir()
+            go, tree_sha, tree_count = extract_exact_toolchain(archive, toolchain_root)
+            goroot = toolchain_root / "go"
+            env = exact_build_env(temp_root, goroot)
 
-        version = subprocess.check_output([str(go), "version"], env=env, text=True, timeout=30).strip()
-        target = subprocess.check_output(
-            [str(go), "env", "GOOS", "GOARCH", "GOAMD64", "GOROOT"],
-            env=env, text=True, timeout=30,
-        ).splitlines()
-        if version != TOOLCHAIN_VERSION or target[:3] != ["windows", "amd64", "v1"]:
-            raise RuntimeError("toolchain self-reported identity drift")
-        if Path(target[3]).resolve() != goroot.resolve():
-            raise RuntimeError("toolchain GOROOT drift")
+            version = subprocess.check_output([str(go), "version"], env=env, text=True, timeout=30).strip()
+            target = subprocess.check_output(
+                [str(go), "env", "GOOS", "GOARCH", "GOAMD64", "GOROOT"],
+                env=env, text=True, timeout=30,
+            ).splitlines()
+            if version != TOOLCHAIN_VERSION or target[:3] != ["windows", "amd64", "v1"]:
+                raise RuntimeError("toolchain self-reported identity drift")
+            if Path(target[3]).resolve() != goroot.resolve():
+                raise RuntimeError("toolchain GOROOT drift")
 
-        run_logged([str(go), "test", "-count=1", "./..."], cwd=HERE, env=env, log=output/"go-test.log")
-        run_logged([str(go), "vet", "./..."], cwd=HERE, env=env, log=output/"go-vet.log")
+            run_logged([str(go), "test", "-json", "-count=1", "./..."], cwd=HERE, env=env, log=output/"go-test.log")
+            test_report = require_go_test_report((output/"go-test.log").read_text(encoding="utf-8"), (
+                "TestRemediationFullLifecycleProductionFunctionsOnTinyFixture",
+                "TestRemediationGuardFirstEffectRechecksExpiry",
+                "TestRemediationCreatedGuardValidationFailureConsumesAndReports",
+                "TestWindowsRemediationRetainedGuardParentAndRelativeCreate",
+                "TestWindowsRemediationNativeFailureLeavesOldAndTemp",
+                "TestWindowsRemediationNativeReplacementPreservesOldReader",
+            ))
+            run_logged([str(Path(sys.executable).resolve()), "-B", "-m", "unittest", "-v", "qualification_scope_test"],
+                       cwd=HERE, env=env, log=output/"python-qualification-scope.log")
+            run_logged([str(go), "vet", "./..."], cwd=HERE, env=env, log=output/"go-vet.log")
 
-        test_binary = output / "m1-08-owner.tests.exe"
-        run_logged(
-            [str(go), "test", "-c", "-trimpath", "-o", str(test_binary)],
-            cwd=HERE, env=env, log=output/"go-test-compile.log",
-        )
+            test_binary = output / "m1-08-owner.tests.exe"
+            run_logged(
+                [str(go), "test", "-c", "-trimpath", "-o", str(test_binary)],
+                cwd=HERE, env=env, log=output/"go-test-compile.log",
+            )
 
-        binary = output / "m1-08-owner.exe"
-        ldflags = "-s -w -buildid= -X main.nativeSourceDigest=" + manifest_sha
-        argv = [
-            str(go), "build", "-trimpath", "-buildvcs=false", "-mod=readonly",
-            "-ldflags=" + ldflags, "-o", str(binary), ".",
-        ]
-        run_logged(argv, cwd=HERE, env=env, log=output/"go-build.log")
+            binary = output / "m1-08-owner.exe"
+            ldflags = "-s -w -buildid= -X main.nativeSourceDigest=" + manifest_sha
+            argv = [
+                str(go), "build", "-trimpath", "-buildvcs=false", "-mod=readonly",
+                "-ldflags=" + ldflags, "-o", str(binary), ".",
+            ]
+            run_logged(argv, cwd=HERE, env=env, log=output/"go-build.log")
 
-    receipt = {
-        "schema_version": "clued.m1-08-native-owner-build-receipt/1",
-        "role": "IMPLEMENTATION_PREPARATION_BUILD / NO_EFFECTFUL_AUTHORITY / OWNER_BINARY_NOT_EXECUTED",
-        "implementation_base": IMPLEMENTATION_BASE,
-        "contract_git_blob_sha1": CONTRACT_BLOB,
-        "candidate_profile_git_blob_sha1": CANDIDATE_BLOB,
-        "native_source_manifest_sha256": manifest_sha,
-        "toolchain": {
-            "archive_name": TOOLCHAIN_ARCHIVE_NAME,
-            "archive_bytes": TOOLCHAIN_ARCHIVE_BYTES,
-            "archive_sha256": TOOLCHAIN_ARCHIVE_SHA256,
-            "tree_file_count": tree_count,
-            "tree_sha256": tree_sha,
-            "go_exe_sha256": TOOLCHAIN_GO_EXE_SHA256,
-            "compile_exe_sha256": TOOLCHAIN_COMPILE_EXE_SHA256,
-            "link_exe_sha256": TOOLCHAIN_LINK_EXE_SHA256,
-            "version": version,
-            "target": {"goos": target[0], "goarch": target[1], "goamd64": target[2]},
-        },
-        "tests": {
-            "go_test_pass": True,
-            "go_vet_pass": True,
-            "windows_test_binary_compiled": True,
-            "tests_use_production_guard_or_test_root": False,
-        },
-        "owner_binary": {
-            "path": str(binary),
-            "bytes": binary.stat().st_size,
-            "sha256": sha256_file(binary),
-            "executed_by_build_helper": False,
-        },
-        "windows_test_binary": {
-            "path": str(test_binary),
-            "bytes": test_binary.stat().st_size,
-            "sha256": sha256_file(test_binary),
-        },
-        "issuer_root_bound": False,
-        "effectful_authority_issued": False,
-        "attempt_guard_created": False,
-        "runtime_test_root_created": False,
-        "llama_server_started": False,
-        "model_loaded": False,
-        "install_upgrade_rollback_executed": False,
-    }
-    (output/"build-receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps(receipt, sort_keys=True))
+        receipt = {
+            "schema_version": "clued.m1-08-native-owner-build-receipt/1",
+            "role": "IMPLEMENTATION_PREPARATION_BUILD / NO_EFFECTFUL_AUTHORITY / OWNER_BINARY_NOT_EXECUTED",
+            "implementation_base": IMPLEMENTATION_BASE,
+            "contract_git_blob_sha1": CONTRACT_BLOB,
+            "candidate_profile_git_blob_sha1": CANDIDATE_BLOB,
+            "native_source_manifest_sha256": manifest_sha,
+            "toolchain": {
+                "archive_name": TOOLCHAIN_ARCHIVE_NAME,
+                "archive_bytes": TOOLCHAIN_ARCHIVE_BYTES,
+                "archive_sha256": TOOLCHAIN_ARCHIVE_SHA256,
+                "tree_file_count": tree_count,
+                "tree_sha256": tree_sha,
+                "go_exe_sha256": TOOLCHAIN_GO_EXE_SHA256,
+                "compile_exe_sha256": TOOLCHAIN_COMPILE_EXE_SHA256,
+                "link_exe_sha256": TOOLCHAIN_LINK_EXE_SHA256,
+                "version": version,
+                "target": {"goos": target[0], "goarch": target[1], "goamd64": target[2]},
+            },
+            "tests": {
+                "go_test_pass": True,
+                "go_test_level_report": test_report,
+                "qualification_scope_tests_pass": True,
+                "go_vet_pass": True,
+                "windows_test_binary_compiled": True,
+                "test_scope": "TEST_BINARY_ONLY / TEST_OWNED_TEMP_PATHS / NO_REAL_MODEL",
+            },
+            "owner_binary": {
+                "path": str(binary),
+                "bytes": binary.stat().st_size,
+                "sha256": sha256_file(binary),
+                "executed_by_build_helper": False,
+            },
+            "windows_test_binary": {
+                "path": str(test_binary),
+                "bytes": test_binary.stat().st_size,
+                "sha256": sha256_file(test_binary),
+            },
+            "issuer_root_bound": False,
+            "effectful_authority_issued": False,
+            "qualification_namespace": scope.evidence(),
+            "production_effects_authorized": False,
+            "production_host_observation": "NOT_PERFORMED / DO_NOT_INFER_FROM_BUILD_SUCCESS",
+        }
+        (output/"build-receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(receipt, sort_keys=True))
     return 0
 
 
