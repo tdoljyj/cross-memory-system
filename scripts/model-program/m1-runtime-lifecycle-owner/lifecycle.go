@@ -164,6 +164,13 @@ func (c *controller) verifySafeExistingPath(path string) error {
 	if rp {
 		return fail("REPARSE_POINT_OR_PATH_ESCAPE_DETECTED")
 	}
+	resolved, e := c.sys.finalPath(path)
+	if e != nil {
+		return e
+	}
+	if !samePath(resolved, path) {
+		return fail("REPARSE_POINT_OR_PATH_ESCAPE_DETECTED")
+	}
 	return nil
 }
 func (c *controller) verifySafeParent(path string) error {
@@ -844,6 +851,31 @@ func (c *controller) requireCurrentRevision(ctx *executionContext, revision stri
 	return nil
 }
 
+
+func (c *controller) removeUnverifiedInitialCurrent(ctx *executionContext) error {
+	if e := c.requireContext(ctx); e != nil {
+		return e
+	}
+	path := currentPath(c.paths)
+	if _, e := os.Lstat(path); os.IsNotExist(e) {
+		return nil
+	} else if e != nil {
+		return e
+	}
+	m, _, e := c.readCurrent()
+	if e != nil {
+		return e
+	}
+	if e = c.verifyCurrentObject(m, successTransition(1), ctx.deadline); e != nil {
+		// Contract allows removal iff current still refers to exact unverified A.
+		// Any drift is retained for forensics and fails closed.
+		return e
+	}
+	if e = c.verifySafeExistingPath(path); e != nil {
+		return e
+	}
+	return os.Remove(path)
+}
 
 func (c *controller) runtimeExpectedEntries(deadline time.Time) (map[string]bool, error) {
 	source, e := c.attestSource(deadline)
