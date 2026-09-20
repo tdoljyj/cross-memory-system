@@ -299,7 +299,15 @@ func (c *controller) run(ctx *executionContext) (err error) {
 
 	a, e := c.materializeSlot(ctx, revisionA)
 	if e != nil {
-		return e
+		ce := c.removePartialSlotIfSafe(slotRootFor(c.paths, revisionA), pre.specs)
+		_ = c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{
+			"profile_id": issuedID, "pass": false, "failure_code": codeOf(e),
+			"activation_occurred": false, "partial_slot_cleanup": map[bool]string{true:"REMOVED_SAFE_PARTIAL_A", false:"RETAINED_UNSAFE_FOR_FORENSICS"}[ce == nil],
+		}, false)
+		if ce != nil {
+			return fmt.Errorf("%w; partial-A-safe-cleanup=%v", e, ce)
+		}
+		return c.terminalFailure(ctx, "M1-08-PC-INSTALL-001", e, object{"activation_occurred":false,"partial_A_removed_if_safe":true})
 	}
 	if _, e = c.publishCurrent(ctx, successTransition(1)); e != nil {
 		return e
@@ -335,7 +343,19 @@ func (c *controller) run(ctx *executionContext) (err error) {
 
 	b, e := c.materializeSlot(ctx, revisionB)
 	if e != nil {
-		return e
+		if ae := c.requireCurrentRevision(ctx, revisionA); ae != nil {
+			return fmt.Errorf("%w; verified-A-preservation-check=%v", e, ae)
+		}
+		ce := c.removePartialSlotIfSafe(slotRootFor(c.paths, revisionB), pre.specs)
+		_ = c.writeEvidence(ctx, "M1RuntimeLifecycleUpgrade.json", object{
+			"profile_id": issuedID, "pass": false, "failure_code": codeOf(e),
+			"activation_occurred": false, "verified_A_remained_active": true,
+			"partial_slot_cleanup": map[bool]string{true:"REMOVED_SAFE_PARTIAL_B", false:"RETAINED_UNSAFE_FOR_FORENSICS"}[ce == nil],
+		}, false)
+		if ce != nil {
+			return fmt.Errorf("%w; partial-B-safe-cleanup=%v", e, ce)
+		}
+		return c.terminalFailure(ctx, "M1-08-PC-UPGRADE-001", e, object{"activation_occurred":false,"verified_A_remained_active":true})
 	}
 	if _, e = c.publishCurrent(ctx, successTransition(2)); e != nil {
 		return e
