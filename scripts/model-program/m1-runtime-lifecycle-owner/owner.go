@@ -52,6 +52,7 @@ type platform interface {
 	pathIsReparse(string) (bool, error)
 	finalPath(string) (string, error)
 	directoryIdentity(string) (directoryIdentity, error)
+	verifyWriteHandle(*os.File, string) error
 	hardlinkCount(string) (uint32, error)
 	namedStreams(string) ([]string, error)
 	atomicPublish(temp, dst string, replace bool) error
@@ -324,6 +325,11 @@ func (c *controller) createNewSynced(path string, data []byte, mode os.FileMode)
 	if e != nil {
 		return e
 	}
+	if e = c.sys.verifyWriteHandle(f, path); e != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return e
+	}
 	_, we := f.Write(data)
 	if we == nil {
 		we = f.Sync()
@@ -351,8 +357,20 @@ func (c *controller) writeEvidence(ctx *executionContext, name string, v any, ap
 		if e := c.verifySafeParent(path); e != nil {
 			return e
 		}
-		f, e := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		flags := os.O_APPEND | os.O_WRONLY
+		if _, se := os.Lstat(path); os.IsNotExist(se) {
+			flags |= os.O_CREATE | os.O_EXCL
+		} else if se != nil {
+			return se
+		} else if se = c.verifySafeExistingPath(path); se != nil {
+			return se
+		}
+		f, e := os.OpenFile(path, flags, 0600)
 		if e != nil {
+			return e
+		}
+		if e = c.sys.verifyWriteHandle(f, path); e != nil {
+			_ = f.Close()
 			return e
 		}
 		_, we := f.Write(raw)
@@ -411,6 +429,11 @@ func (c *controller) startServer(ctx *executionContext, slotRoot, scenario, labe
 	errPath := filepath.Join(c.paths.evidence, label+".stderr.txt")
 	out, e := os.OpenFile(outPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if e != nil {
+		return nil, e
+	}
+	if e = c.sys.verifyWriteHandle(out, outPath); e != nil {
+		_ = out.Close()
+		_ = os.Remove(outPath)
 		return nil, e
 	}
 	defer func() {
