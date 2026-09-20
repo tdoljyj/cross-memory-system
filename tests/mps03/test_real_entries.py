@@ -267,7 +267,7 @@ class RealEntries(unittest.TestCase):
                     self.assertIn("<summary>Technical details</summary>",text)
 
     def test_native_html_does_not_mask_gateway_read_failure(self):
-        for path in ("/object/obj_missing", "/object/obj_missing/proposals", "/object/obj_missing/connection"):
+        for path in ("/object/obj_missing", "/object/obj_missing/proposals", "/object/obj_missing/history", "/object/obj_missing/connection"):
             url=f"http://127.0.0.1:{self.pn}{path}"
             with self.subTest(path=path):
                 status,content_type,page=html_req("GET",url)

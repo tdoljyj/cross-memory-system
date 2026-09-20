@@ -138,6 +138,8 @@ class NativeHandler(BaseHTTPRequestHandler):
                         blocks.append(f'''<section><h3>Suggested change</h3><h4>Before</h4>{self._content(cur.get("body"))}<h4>After</h4>{self._content(pr.get("proposed_body"))}<h4>Difference</h4><pre>{html.escape(diff)}</pre>{confirm_form}{self._technical(pr)}</section>''')
                     body=nav+"<h1>Suggestions / diff / confirm</h1>"+(''.join(blocks) or '<p>No open suggestions.</p>'); return self._send_html(200,self._page("Suggestions",body))
                 if len(parts)==3 and parts[2]=="history":
+                    current=self.client.read_object(oid)
+                    if not current.get("ok"): return self._html_error(current)
                     h=self.client.history(oid)
                     if not h.get("ok"): return self._html_error(h)
                     versions=''.join(f'<li><h2>Version {i}</h2>{self._content(row.get("body"))}{self._technical(row)}</li>' for i,row in enumerate(h.get("history",[]),1))
