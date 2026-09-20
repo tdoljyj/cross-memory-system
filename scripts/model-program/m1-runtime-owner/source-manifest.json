@@ -44,9 +44,9 @@
       "sha256": "b9b27c8474e39d5b16f26400b6d2bd5bd66a51b3579ddffd7aa9ff30852989c4"
     }
   },
-  "role": "OWNER_ROOT_PINNED_SUCCESSOR_R2_NOT_ISSUANCE",
+  "role": "OWNER_ROOT_PINNED_SUCCESSOR_R3_NOT_ISSUANCE",
   "schema_version": "clued.m1-07-native-source-manifest/1",
-  "source_base": "ffff2580f1c3fb9453fef9bd517cd5e12b01226e",
+  "source_base": "986bb165c303bde53bfafb2ebed92fcfac1bc7f2",
   "test_files_excluded_from_production": [
     "owner_test.go",
     "runtime_tree_windows_test.go"
@@ -68,8 +68,26 @@
   ],
   "build_provenance_helper": {
     "path": "scripts/model-program/build_m1_07_native_owner.py",
-    "bytes": 7067,
-    "git_blob_sha1": "90d4706debb0362cb78e1f9f2ff16444eb38786f",
-    "sha256": "52ef67351c3f976593c4332f47ca1805340de40df6f3cce22b2a38f9feded1b2"
+    "bytes": 14395,
+    "git_blob_sha1": "8b480de192e471d3c6b3269124642e8b269140d0",
+    "sha256": "136e1cb51790da25ab5601dc6a9ac2056089ea57076852cca589f398e076a74e"
+  },
+  "r3_remediation_predecessor_exact_head": "986bb165c303bde53bfafb2ebed92fcfac1bc7f2",
+  "native_build_toolchain": {
+    "archive_name": "go1.27.1.windows-amd64.zip",
+    "archive_bytes": 78931360,
+    "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+    "tree_file_count": 15639,
+    "tree_sha256": "b6c3561132d8efde201d5d39a12daa893a2c4a053432ea6c427f0246df5b1fe3",
+    "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+    "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+    "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+    "version": "go version go1.27.1 windows/amd64",
+    "target": {
+      "goos": "windows",
+      "goarch": "amd64",
+      "goamd64": "v1"
+    },
+    "semantics": "EXACT_OFFICIAL_ZIP / FRESH_SAFE_EXTRACTION / EXTRACTED_TREE_EXACT_MATCH / NO_CALLER_EXECUTABLE"
   }
 }
