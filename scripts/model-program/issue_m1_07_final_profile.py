@@ -32,10 +32,8 @@ EXPECTED_PUBLIC_KEY_SHA256 = "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f434
 EXPECTED_NATIVE_OWNER_SHA256 = "e0956d6d8194acefad85c54750b9802fe7faea648aeba5dd4408f41534e8680c"
 EXPECTED_PRIVATE_KEY = Path(r"C:\Users\Windows\AppData\Local\Clued\OwnerKeys\M1RuntimeOwner\root-20260919T162148Z\owner-root-ed25519.pkcs8.pem")
 EXPECTED_PRIVATE_KEY_LOCATOR = "windows-local-owner-key://DESK-W-591/Clued/M1-07/Owner-Ed25519-Root"
-OPENSSL_CANDIDATES = (
-    Path(r"C:\Program Files\Git\usr\bin\openssl.exe"),
-    Path(r"C:\Program Files\Git\mingw64\bin\openssl.exe"),
-)
+EXPECTED_OPENSSL = Path(r"C:\Program Files\Git\usr\bin\openssl.exe")
+EXPECTED_OPENSSL_SHA256 = "78340fb01dea2df5caab73dcf28833b31329226a4c9e02f717f1d399592265b9"
 SPKI_ED25519_PREFIX = bytes.fromhex("302a300506032b6570032100")
 
 
@@ -62,11 +60,10 @@ def regular_file(path: Path, label: str) -> None:
 
 
 def openssl_path() -> Path:
-    matches = [path for path in OPENSSL_CANDIDATES if path.is_file()]
-    if len(matches) != 1:
-        raise RuntimeError("exactly one approved absolute OpenSSL path is required")
-    regular_file(matches[0], "OpenSSL")
-    return matches[0]
+    regular_file(EXPECTED_OPENSSL, "OpenSSL")
+    if sha256_file(EXPECTED_OPENSSL) != EXPECTED_OPENSSL_SHA256:
+        raise RuntimeError("approved OpenSSL digest drift")
+    return EXPECTED_OPENSSL
 
 
 def safe_env(temp_dir: Path) -> dict[str, str]:
