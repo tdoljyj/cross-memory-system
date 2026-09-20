@@ -126,10 +126,10 @@
       "sha256": "b518c531c194603d67177eb4ace440ed9a96dd72a98a853a2dcc40b653d44d6a"
     },
     {
-      "bytes": 5832,
-      "git_blob_sha1": "f6fa9bb266b04979cfafb37b2da0bfff08700c27",
+      "bytes": 6797,
+      "git_blob_sha1": "a52008d7e7650c8f7f0f247464582f6c5f110603",
       "path": "platform_windows_test.go",
-      "sha256": "7a2722588ee6b3bb6f90e6b20cafcecf4d2451dfbef916665b24dcf1d9f8fd29"
+      "sha256": "c95817814b382d7b3341a8cc7b32323d78650a256919c9cad6a64914045a2474"
     },
     {
       "bytes": 30103,

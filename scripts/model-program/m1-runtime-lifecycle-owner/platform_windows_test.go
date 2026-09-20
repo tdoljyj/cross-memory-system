@@ -3,10 +3,13 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWindowsDirectoryComesFromOSAPI(t *testing.T) {
@@ -181,14 +184,34 @@ func TestWindowsReparsePointDetection(t *testing.T) {
 		t.Fatal(e)
 	}
 	if e := os.Symlink(target, link); e != nil {
-		t.Skipf("symlink unavailable without developer mode/privilege: %v", e)
+		// A junction is a real NTFS reparse point. Exercise the same detection
+		// assertion without elevating privileges or enabling Developer Mode.
+		// Both names are generated siblings inside this test's temp directory.
+		if strings.ContainsAny(link+target, "&|<>^()%!\"\r\n") {
+			t.Fatal("unsafe test-only junction command path")
+		}
+		wd, we := sys.windowsDirectory()
+		if we != nil {
+			t.Fatal(we)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, filepath.Join(wd, "System32", "cmd.exe"), "/d", "/c", "mklink", "/J", link, target)
+		cmd.Dir = dir
+		cmd.Env = []string{"SystemRoot=" + wd, "WINDIR=" + wd, "TEMP=" + dir, "TMP=" + dir}
+		if output, je := cmd.CombinedOutput(); je != nil {
+			t.Fatalf("symlink unavailable (%v); junction fixture failed: %v %s", e, je, output)
+		}
+		t.Logf("fixture_kind=NTFS_DIRECTORY_JUNCTION; symlink_creation_unavailable=%v", e)
+	} else {
+		t.Log("fixture_kind=SYMBOLIC_LINK")
 	}
 	rp, e := sys.pathIsReparse(link)
 	if e != nil {
 		t.Fatal(e)
 	}
 	if !rp {
-		t.Fatal("symlink was not reported as reparse point")
+		t.Fatal("native link fixture was not reported as reparse point")
 	}
 }
 
