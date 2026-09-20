@@ -368,15 +368,15 @@ func TestRemediationEvidenceReserveSurvivesCaptureExhaustion(t *testing.T) {
 	if e := c.limits(ctx); e == nil {
 		t.Fatal("business continued after overflow")
 	}
-	if e := c.writeEvidence(ctx, "forensic.json", object{"cause": "capture_overflow"}, false); e != nil {
+	if e := c.writeTerminalEvidence(ctx, object{"scenario": "FINALIZATION", "kind": "terminal_failure", "cause": "capture_overflow"}); e != nil {
 		t.Fatal(e)
 	}
-	exists(t, filepath.Join(c.paths.evidence, "forensic.json"), true)
+	exists(t, filepath.Join(c.paths.evidence, "M1RuntimeLifecycleEvents.jsonl"), true)
 }
 func TestRemediationFinalizationAggregatesListenerAndEvidenceFailure(t *testing.T) {
 	c, ctx, f := tinyLifecycle(t)
 	f.portBlocked = true
-	f.blockedWrites = map[string]bool{filepath.Join(c.paths.evidence, "M1RuntimeLifecycleTerminalFailure.json"): true}
+	f.blockedWrites = map[string]bool{filepath.Join(c.paths.evidence, "M1RuntimeLifecycleEvents.jsonl"): true}
 	e := c.finalizeAttempt(ctx, fail("ORIGINAL_FIXTURE_ERROR"))
 	s := e.Error()
 	for _, want := range []string{"ORIGINAL_FIXTURE_ERROR", "LISTENER_REMAINS", "TERMINAL_EVIDENCE_UNAVAILABLE"} {
@@ -406,7 +406,10 @@ func TestRemediationExpiryDeadlineAndContextBinding(t *testing.T) {
 		t.Fatal("write after expiry")
 	}
 	exists(t, slotRootFor(c.paths, revisionA), false)
-	if e := c.writeEvidence(ctx, "expired-finalization.json", object{"expired": true}, false); e != nil {
+	if e := c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{"expired": true}, false); codeOf(e) != "PROFILE_EXPIRED_OR_REVOKED" {
+		t.Fatalf("normal evidence remained authorized after expiry: %v", e)
+	}
+	if e := c.writeTerminalEvidence(ctx, object{"scenario": "FINALIZATION", "kind": "terminal_failure", "expired": true}); e != nil {
 		t.Fatal(e)
 	}
 	ctx.expires = expiry.Add(time.Hour)
@@ -429,6 +432,48 @@ func (r *delayedFixtureReader) Read(p []byte) (int, error) {
 	*r.now = r.expiry
 	return copy(p, "late"), io.EOF
 }
+func TestRemediationEvidenceAllowlistAndExpiredNormalScenarioFailClosed(t *testing.T) {
+	c, ctx, _ := tinyLifecycle(t)
+	if e := c.writeEvidence(ctx, "not-authorized.json", object{"x": true}, false); codeOf(e) != "EVIDENCE_OUTPUT_NOT_AUTHORIZED" {
+		t.Fatalf("unauthorized evidence output accepted: %v", e)
+	}
+	expiry := time.Now().UTC()
+	ctx.expires = expiry
+	ctx.deadline = expiry
+	c.contexts[ctx].expires = expiry
+	c.contexts[ctx].deadline = expiry
+	c.now = func() time.Time { return expiry }
+	if e := c.recordScenario(ctx, "M1RuntimeLifecycleInstall.json", object{"revision_id": revisionA}); codeOf(e) != "PROFILE_EXPIRED_OR_REVOKED" {
+		t.Fatalf("expired normal scenario write accepted: %v", e)
+	}
+	if e := c.event(ctx, "fixture", "normal_event", object{}); codeOf(e) != "PROFILE_EXPIRED_OR_REVOKED" {
+		t.Fatalf("expired normal event accepted: %v", e)
+	}
+	if e := c.writeTerminalEvidence(ctx, object{"scenario": "FINALIZATION", "kind": "terminal_failure"}); e != nil {
+		t.Fatalf("terminal safety evidence unavailable after expiry: %v", e)
+	}
+}
+
+func TestRemediationFailureEvidenceCarriesRemainingOwnershipLedger(t *testing.T) {
+	c, ctx, _ := tinyLifecycle(t)
+	if e := c.finalizeAttempt(ctx, fail("FIXTURE_FAILURE")); e == nil {
+		t.Fatal("failure unexpectedly passed")
+	}
+	raw, e := os.ReadFile(filepath.Join(c.paths.evidence, "M1RuntimeLifecycleEvents.jsonl"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
+	var row map[string]any
+	if e = json.Unmarshal(lines[len(lines)-1], &row); e != nil {
+		t.Fatal(e)
+	}
+	remaining, ok := row["remaining_test_owned_state"].([]any)
+	if !ok || len(remaining) == 0 {
+		t.Fatalf("missing exact remaining ownership ledger: %s", raw)
+	}
+}
+
 func TestRemediationExpiryDuringReadPreventsSubsequentWrite(t *testing.T) {
 	now := time.Now()
 	expiry := now.Add(time.Second)
@@ -468,7 +513,7 @@ func TestRemediationRunProbeFailureReachesTerminalRecovery(t *testing.T) {
 					t.Fatal(e)
 				}
 			}
-			exists(t, filepath.Join(c.paths.evidence, "M1RuntimeLifecycleTerminalFailure.json"), true)
+			exists(t, filepath.Join(c.paths.evidence, "M1RuntimeLifecycleEvents.jsonl"), true)
 			exists(t, filepath.Join(c.paths.evidence, "M1RuntimeLifecycleCloseout.json"), false)
 			exists(t, c.paths.guard, true)
 			exists(t, c.paths.testRoot, true)
