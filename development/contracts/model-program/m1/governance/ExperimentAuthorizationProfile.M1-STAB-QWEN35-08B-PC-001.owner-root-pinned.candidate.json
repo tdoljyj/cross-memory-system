@@ -111,12 +111,29 @@
     "owner_boundary_normalized_sha256": "35fea706a095a2cba6e3e31377e56c2246e890dfce751d1b038185e8b58a41b7",
     "native_owner_source_path": "scripts/model-program/m1-runtime-owner",
     "native_owner_source_manifest_path": "scripts/model-program/m1-runtime-owner/source-manifest.json",
-    "native_owner_source_manifest_sha256": "335a998f3acbb70cddecf02cb2de644264146164508133dccc3299255bbdd36d",
-    "native_owner_binary_sha256": "ce44ea928b8e124c91e7694b84090c279e171e37471b9bb9a453aabf66dfc28a",
+    "native_owner_source_manifest_sha256": "f7bb4e269af3c3457072f68564e944c9813643b8d1bc9ba8295b572bbc8dfc52",
+    "native_owner_binary_sha256": "e0956d6d8194acefad85c54750b9802fe7faea648aeba5dd4408f41534e8680c",
     "python_execution_surface": "PERMANENTLY_VALIDATE_ONLY / NO_EFFECTFUL_IMPLEMENTATION",
     "native_owner_build_provenance_helper_path": "scripts/model-program/build_m1_07_native_owner.py",
-    "native_owner_build_provenance_helper_sha256": "52ef67351c3f976593c4332f47ca1805340de40df6f3cce22b2a38f9feded1b2",
-    "native_owner_build_provenance_semantics": "EXACT_SOURCE_DIRECTORY_SET / MANIFEST_BINDS_HELPER / VERIFIED_SOURCE_SNAPSHOT_ONLY / CLEAN_GO_ENV"
+    "native_owner_build_provenance_helper_sha256": "a4e79b9c04d783c2ac5cff8108068eca7d26f48d224f52ecdf7ad4d43c54f1b1",
+    "native_owner_build_provenance_semantics": "EXACT_SOURCE_DIRECTORY_SET / MANIFEST_BINDS_HELPER / VERIFIED_SOURCE_SNAPSHOT_ONLY / EXACT_OFFICIAL_TOOLCHAIN_ZIP_AND_TREE / CLEAN_GO_ENV / NO_CALLER_EXECUTABLE",
+    "native_owner_build_toolchain": {
+      "archive_name": "go1.27.1.windows-amd64.zip",
+      "archive_bytes": 78931360,
+      "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+      "tree_file_count": 15639,
+      "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+      "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+      "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+      "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+      "version": "go version go1.27.1 windows/amd64",
+      "target": {
+        "goos": "windows",
+        "goarch": "amd64",
+        "goamd64": "v1"
+      },
+      "semantics": "EXACT_OFFICIAL_ZIP / FRESH_SAFE_EXTRACTION / EXTRACTED_TREE_EXACT_MATCH / NO_CALLER_EXECUTABLE"
+    }
   },
   "config_revision": {
     "profile_config_id": "M1-STAB-PC-QWEN35-Q8_0-v1",
@@ -398,7 +415,8 @@
     "PROCESS_WRAPPER_AND_ORIGINAL_NATIVE_HANDLE_IDENTITY_REGISTRY",
     "NATIVE_SOURCE_MANIFEST_AND_EXECUTABLE_SHA256",
     "WHOLE_PROFILE_SIGNATURE_WITH_INDEPENDENT_PINNED_ISSUER_KEY",
-    "PYTHON_FACADE_HAS_NO_EFFECTFUL_IMPLEMENTATION"
+    "PYTHON_FACADE_HAS_NO_EFFECTFUL_IMPLEMENTATION",
+    "NATIVE_BUILD_TOOLCHAIN_ZIP_TREE_AND_COMPILER_IDENTITIES"
   ],
   "expiry": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
   "final_issuance_requirements": [
@@ -417,7 +435,8 @@
     "RETAIN_EXACT_ORCHESTRATOR_COMMIT_BLOB_AND_NORMALIZED_SHA256_BINDING",
     "VERIFY_WHOLE_ISSUED_PROFILE_SIGNATURE_IN_NATIVE_OWNER",
     "FRESH_CONTEXT_READ_ONLY_REVIEW_OF_OWNER_ROOT_PINNED_SUCCESSOR_PASS",
-    "RETAIN_EXACT_OWNER_PUBLIC_KEY_FINGERPRINT_AND_NATIVE_SOURCE_BINARY_BINDINGS_AT_FINAL_ISSUANCE"
+    "RETAIN_EXACT_OWNER_PUBLIC_KEY_FINGERPRINT_AND_NATIVE_SOURCE_BINARY_BINDINGS_AT_FINAL_ISSUANCE",
+    "RETAIN_EXACT_NATIVE_BUILD_TOOLCHAIN_BINDING_AT_FINAL_ISSUANCE"
   ],
   "effectful_authority_issued": false,
   "fail_closed_rule": "IF_STATUS_IS_NOT_ISSUED_OR_ISSUED_PROFILE_ID_IS_NOT_EXACT_OR_OWNER_FINAL_EXECUTION_AUTHORIZATION_OBJECT_IS_ABSENT_OR_DIGEST_INVALID_OR_EXPIRY_IS_UNRESOLVED_OR_EXPIRED_OR_BOUND_ORCHESTRATOR_SHA_DRIFTS_OR_DEVICE_MODEL_RUNTIME_CONFIG_SCOPE_DRIFTS_OR_ATTEMPT_GUARD_ALREADY_EXISTS_THEN M1-07 MUST_NOT_START_LLAMA-SERVER_OR_LOAD_A_MODEL; PYTHON_EXECUTION_IS_PERMANENTLY_DISABLED; NATIVE_OWNER_REQUIRES THE PINNED OWNER ED25519 ROOT, WHOLE-PROFILE SIGNATURE, AND EXACT NATIVE BINARY/SOURCE BINDINGS; PINNED_ROOT_ALONE GRANTS NO EXECUTION AUTHORITY; THIS SUCCESSOR REMAINS NON-ISSUED.",
@@ -465,7 +484,8 @@
     "owner_public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
     "private_key_storage_locator": "windows-local-owner-key://DESK-W-591/Clued/M1-07/Owner-Ed25519-Root",
     "private_key_material_present_in_repository": false,
-    "successor_state": "OWNER_ROOT_PINNED / R2_BUILD_PROVENANCE_CLOSED / NATIVE_SOURCE_BINARY_RUNTIME_TREE_EXACT_BOUND / NOT_ISSUED / INDEPENDENT_REVIEW_REQUIRED / NO_MODEL_EXECUTION / NO_MERGE",
-    "r2_remediation_predecessor_exact_head": "ffff2580f1c3fb9453fef9bd517cd5e12b01226e"
+    "successor_state": "OWNER_ROOT_PINNED / R3_TOOLCHAIN_PROVENANCE_CLOSED / NATIVE_SOURCE_BINARY_RUNTIME_TREE_EXACT_BOUND / NOT_ISSUED / INDEPENDENT_REVIEW_REQUIRED / NO_MODEL_EXECUTION / NO_MERGE",
+    "r2_remediation_predecessor_exact_head": "ffff2580f1c3fb9453fef9bd517cd5e12b01226e",
+    "r3_remediation_predecessor_exact_head": "986bb165c303bde53bfafb2ebed92fcfac1bc7f2"
   }
 }
