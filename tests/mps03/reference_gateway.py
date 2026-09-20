@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, json, sqlite3, threading
+import argparse, json, os, sqlite3, threading
 from http.server import ThreadingHTTPServer
 
 try:
@@ -235,10 +235,11 @@ def main(argv=None):
     ap.add_argument("--db",required=True)
     ap.add_argument("--host",default="127.0.0.1")
     ap.add_argument("--port",type=int,required=True)
-    ap.add_argument("--native-secret",required=True)
-    ap.add_argument("--agent-secret",required=True)
     args=ap.parse_args(argv)
-    Handler.store=CanonicalStore(args.db,args.native_secret,args.agent_secret)
+    native_secret=os.environ.get("MPS03_NATIVE_ENTRY_SECRET","")
+    agent_secret=os.environ.get("MPS03_AGENT_ENTRY_SECRET","")
+    if not native_secret or not agent_secret: raise RuntimeError("test gateway entry secrets required")
+    Handler.store=CanonicalStore(args.db,native_secret,agent_secret)
     srv=ThreadingHTTPServer((args.host,args.port),Handler)
     print(json.dumps({"ready":True,"backend":"TEST_ONLY_SQLITE_REFERENCE","host":args.host,"port":args.port,"db":args.db,"formal_pass_claimed":False}),flush=True)
     try: srv.serve_forever()

@@ -548,21 +548,20 @@ where a.object_id={_t('oid')} and a.adoption_purpose <> 'mps03_create_bootstrap'
 
 def main(argv=None):
     ap=argparse.ArgumentParser()
-    ap.add_argument("--dsn",default=os.environ.get("MPS03_DATABASE_URL"),required=os.environ.get("MPS03_DATABASE_URL") is None)
     ap.add_argument("--user-id",default=os.environ.get("MPS03_TEST_USER_ID"),required=os.environ.get("MPS03_TEST_USER_ID") is None)
     ap.add_argument("--authority-domain",default=os.environ.get("MPS03_AUTHORITY_DOMAIN","clued-mps03-nonprod"))
     ap.add_argument("--native-principal",default=os.environ.get("MPS03_NATIVE_PRINCIPAL","mps03-native-user"))
     ap.add_argument("--agent-principal",default=os.environ.get("MPS03_AGENT_PRINCIPAL","mps03-agent-host"))
-    ap.add_argument("--native-secret",default=os.environ.get("MPS03_NATIVE_ENTRY_SECRET"),required=os.environ.get("MPS03_NATIVE_ENTRY_SECRET") is None)
-    ap.add_argument("--agent-secret",default=os.environ.get("MPS03_AGENT_ENTRY_SECRET"),required=os.environ.get("MPS03_AGENT_ENTRY_SECRET") is None)
     ap.add_argument("--target-id",default=os.environ.get("MPS03_TARGET_ID",EXPECTED_NONPROD_TARGET))
     ap.add_argument("--allow-nonprod-write",default=os.environ.get("MPS03_ALLOW_NONPROD_WRITE",""))
     ap.add_argument("--host",default="127.0.0.1"); ap.add_argument("--port",type=int,required=True)
     args=ap.parse_args(argv)
     _assert_loopback_host(args.host)
-    Handler.store=PgMPS02BStore(args.dsn,user_id=args.user_id,authority_domain=args.authority_domain,
-        native_principal=args.native_principal,agent_principal=args.agent_principal,native_secret=args.native_secret,
-        agent_secret=args.agent_secret,target_id=args.target_id,allow_nonprod_write=args.allow_nonprod_write)
+    Handler.store=PgMPS02BStore(os.environ.get("MPS03_DATABASE_URL",""),user_id=args.user_id,authority_domain=args.authority_domain,
+        native_principal=args.native_principal,agent_principal=args.agent_principal,
+        native_secret=os.environ.get("MPS03_NATIVE_ENTRY_SECRET",""),
+        agent_secret=os.environ.get("MPS03_AGENT_ENTRY_SECRET",""),
+        target_id=args.target_id,allow_nonprod_write=args.allow_nonprod_write)
     from http.server import ThreadingHTTPServer
     srv=ThreadingHTTPServer((args.host,args.port),Handler)
     print(json.dumps({"ready":True,"backend":"MPS02B_POSTGRES","target_id":args.target_id,"host":args.host,"port":args.port}),flush=True)

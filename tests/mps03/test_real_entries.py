@@ -66,13 +66,20 @@ class RealEntries(unittest.TestCase):
         ENTRY_AUTH[cls.pn]="Basic "+base64.b64encode(("native:"+cls.native_access).encode()).decode()
         ENTRY_AUTH[cls.pa]="Bearer "+cls.agent_access
         env=os.environ.copy(); env["PYTHONPATH"]=os.pathsep.join([str(IMPL),str(REPO)])
-        env["MPS03_NATIVE_ACCESS_SECRET"]=cls.native_access
-        env["MPS03_AGENT_ACCESS_SECRET"]=cls.agent_access
+        for key in ("MPS03_NATIVE_ENTRY_SECRET","MPS03_AGENT_ENTRY_SECRET",
+                    "MPS03_NATIVE_ACCESS_SECRET","MPS03_AGENT_ACCESS_SECRET"):
+            env.pop(key,None)
+        cls.gateway_env={**env,"MPS03_NATIVE_ENTRY_SECRET":cls.native_secret,"MPS03_AGENT_ENTRY_SECRET":cls.agent_secret}
+        native_env={**env,"MPS03_NATIVE_ENTRY_SECRET":cls.native_secret,"MPS03_NATIVE_ACCESS_SECRET":cls.native_access}
+        agent_env={**env,"MPS03_AGENT_ENTRY_SECRET":cls.agent_secret,"MPS03_AGENT_ACCESS_SECRET":cls.agent_access}
         cls.procs=[
-            subprocess.Popen([PY,"-m","tests.mps03.reference_gateway","--db",cls.db,"--port",str(cls.pg),"--native-secret",cls.native_secret,"--agent-secret",cls.agent_secret],cwd=REPO,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
-            subprocess.Popen([PY,"-m","mps03.native_entry","--gateway",f"http://127.0.0.1:{cls.pg}","--port",str(cls.pn),"--entry-secret",cls.native_secret],cwd=REPO,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
-            subprocess.Popen([PY,"-m","mps03.agent_host_entry","--gateway",f"http://127.0.0.1:{cls.pg}","--port",str(cls.pa),"--entry-secret",cls.agent_secret],cwd=REPO,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
+            subprocess.Popen([PY,"-m","tests.mps03.reference_gateway","--db",cls.db,"--port",str(cls.pg)],cwd=REPO,env=cls.gateway_env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
+            subprocess.Popen([PY,"-m","mps03.native_entry","--gateway",f"http://127.0.0.1:{cls.pg}","--port",str(cls.pn)],cwd=REPO,env=native_env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
+            subprocess.Popen([PY,"-m","mps03.agent_host_entry","--gateway",f"http://127.0.0.1:{cls.pg}","--port",str(cls.pa)],cwd=REPO,env=agent_env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
         ]
+        for proc in cls.procs:
+            if any(secret in " ".join(proc.args) for secret in (cls.native_secret,cls.agent_secret,cls.native_access,cls.agent_access)):
+                raise AssertionError("entry credential leaked through process arguments")
         wait(f"http://127.0.0.1:{cls.pg}/health"); wait(f"http://127.0.0.1:{cls.pn}/health"); wait(f"http://127.0.0.1:{cls.pa}/health")
     @classmethod
     def tearDownClass(cls):
@@ -225,8 +232,7 @@ class RealEntries(unittest.TestCase):
         view=req("GET",f"http://127.0.0.1:{self.pn}/api/objects/{oid}")
         commit=req("POST",f"http://127.0.0.1:{self.pn}/api/objects/{oid}/confirm",{"proposal_id":p["proposal_id"],"state_stamp":view["state_stamp"],"request_id":"req-restart-confirm"})
         old=self.procs[0]; stop_proc(old)
-        env=os.environ.copy(); env["PYTHONPATH"]=os.pathsep.join([str(IMPL),str(REPO)])
-        newp=subprocess.Popen([PY,"-m","tests.mps03.reference_gateway","--db",self.db,"--port",str(self.pg),"--native-secret",self.native_secret,"--agent-secret",self.agent_secret],cwd=REPO,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        newp=subprocess.Popen([PY,"-m","tests.mps03.reference_gateway","--db",self.db,"--port",str(self.pg)],cwd=REPO,env=self.gateway_env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         self.procs[0]=newp; wait(f"http://127.0.0.1:{self.pg}/health")
         after=req("POST",f"http://127.0.0.1:{self.pa}/agent/continue",{"object_id":oid})
         self.assertEqual(after["revision_id"],commit["revision_id"]); self.assertEqual(after["adoption_id"],commit["adoption_id"])

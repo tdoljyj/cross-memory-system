@@ -45,12 +45,13 @@ class AgentHandler(BaseHTTPRequestHandler):
             self._send(e.status,e.as_dict())
 
 def main(argv=None):
-    ap=argparse.ArgumentParser(); ap.add_argument("--gateway",required=True); ap.add_argument("--host",default="127.0.0.1"); ap.add_argument("--port",type=int,required=True); ap.add_argument("--entry-secret",required=True); args=ap.parse_args(argv)
+    ap=argparse.ArgumentParser(); ap.add_argument("--gateway",required=True); ap.add_argument("--host",default="127.0.0.1"); ap.add_argument("--port",type=int,required=True); args=ap.parse_args(argv)
     if args.host!="localhost" and not ipaddress.ip_address(args.host).is_loopback: raise RuntimeError("Agent entry must bind to loopback behind an authenticated TLS ingress")
     access_secret=os.environ.get("MPS03_AGENT_ACCESS_SECRET","")
-    require_secret_namespace(args.entry_secret,AGENT_GATEWAY_PREFIX,"Agent gateway secret")
+    entry_secret=os.environ.get("MPS03_AGENT_ENTRY_SECRET","")
+    require_secret_namespace(entry_secret,AGENT_GATEWAY_PREFIX,"Agent gateway secret")
     require_secret_namespace(access_secret,AGENT_ACCESS_PREFIX,"Agent caller access secret")
-    c=GatewayClient(args.gateway,"THIRD_PARTY_AGENT_HOST",args.entry_secret)
+    c=GatewayClient(args.gateway,"THIRD_PARTY_AGENT_HOST",entry_secret)
     last=None
     for _ in range(100):
         try:

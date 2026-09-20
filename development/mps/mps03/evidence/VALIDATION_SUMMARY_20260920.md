@@ -17,7 +17,7 @@ Status: IMPLEMENTATION CANDIDATE / NON-PRODUCTION / REVALIDATION AFTER REVIEW FI
 Command:
 `python scripts/mps03/run_acceptance.py`
 
-Result after independent-review fixes: 37/37 PASS, 0 fail, 0 skipped. Coverage includes entry authentication and four disjoint credential namespaces, full-stamp and digest verification of the Agent's observation, Native form replay/diff, PostgreSQL outcome regression, DSN identity rejection, loopback-only gateway URL and binding, proxy-free and redirect-free gateway transport, non-object proposal rejection, Native HTML error propagation, redacted database timeout and gateway errors, cross-user replay error mapping, structured gateway outage response, and malformed confirmation stamp rejection.
+Result after independent-review fixes: 37/37 PASS, 0 fail, 0 skipped. Coverage includes entry authentication and four disjoint credential namespaces passed through separate process environments without credential-bearing arguments, full-stamp and digest verification of the Agent's observation, Native form replay/diff, PostgreSQL outcome regression, DSN identity rejection, loopback-only gateway URL and binding, proxy-free and redirect-free gateway transport, non-object proposal rejection, Native HTML error propagation, redacted database timeout and gateway errors, cross-user replay error mapping, structured gateway outage response, and malformed confirmation stamp rejection.
 Raw result: `evidence/mps03_acceptance.raw.txt`
 
 Command:

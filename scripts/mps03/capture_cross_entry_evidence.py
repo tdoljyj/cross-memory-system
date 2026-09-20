@@ -33,16 +33,22 @@ def stop(p):
 def main():
     pg,pn,pa=port(),port(),port(); ns='mps03-native-gw-'+'n'*32; ag='mps03-agent-gw-'+'a'*32; env=os.environ.copy(); env['PYTHONPATH']=os.pathsep.join([str(IMPL),str(REPO)])
     native_access='mps03-native-access-'+'u'*32; agent_access='mps03-agent-access-'+'v'*32
-    env['MPS03_NATIVE_ACCESS_SECRET']=native_access; env['MPS03_AGENT_ACCESS_SECRET']=agent_access
+    for key in ('MPS03_NATIVE_ENTRY_SECRET','MPS03_AGENT_ENTRY_SECRET','MPS03_NATIVE_ACCESS_SECRET','MPS03_AGENT_ACCESS_SECRET'):
+        env.pop(key,None)
+    gateway_env={**env,'MPS03_NATIVE_ENTRY_SECRET':ns,'MPS03_AGENT_ENTRY_SECRET':ag}
+    native_env={**env,'MPS03_NATIVE_ENTRY_SECRET':ns,'MPS03_NATIVE_ACCESS_SECRET':native_access}
+    agent_env={**env,'MPS03_AGENT_ENTRY_SECRET':ag,'MPS03_AGENT_ACCESS_SECRET':agent_access}
     ENTRY_AUTH[pn]='Basic '+base64.b64encode(('native:'+native_access).encode()).decode()
     ENTRY_AUTH[pa]='Bearer '+agent_access
     with tempfile.TemporaryDirectory() as td:
         db=str(pathlib.Path(td)/'canonical.sqlite3')
         ps=[
-          subprocess.Popen([PY,'-m','tests.mps03.reference_gateway','--db',db,'--port',str(pg),'--native-secret',ns,'--agent-secret',ag],cwd=REPO,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
-          subprocess.Popen([PY,'-m','mps03.native_entry','--gateway',f'http://127.0.0.1:{pg}','--port',str(pn),'--entry-secret',ns],cwd=REPO,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
-          subprocess.Popen([PY,'-m','mps03.agent_host_entry','--gateway',f'http://127.0.0.1:{pg}','--port',str(pa),'--entry-secret',ag],cwd=REPO,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
+          subprocess.Popen([PY,'-m','tests.mps03.reference_gateway','--db',db,'--port',str(pg)],cwd=REPO,env=gateway_env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
+          subprocess.Popen([PY,'-m','mps03.native_entry','--gateway',f'http://127.0.0.1:{pg}','--port',str(pn)],cwd=REPO,env=native_env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
+          subprocess.Popen([PY,'-m','mps03.agent_host_entry','--gateway',f'http://127.0.0.1:{pg}','--port',str(pa)],cwd=REPO,env=agent_env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
         ]
+        if any(secret in ' '.join(p.args) for p in ps for secret in (ns,ag,native_access,agent_access)):
+            raise AssertionError('entry credential leaked through process arguments')
         try:
             wait(f'http://127.0.0.1:{pg}/health'); wait(f'http://127.0.0.1:{pn}/health'); wait(f'http://127.0.0.1:{pa}/health')
             created=call('POST',f'http://127.0.0.1:{pn}/api/objects',{'title':'Evidence plan','body':{'items':['walk']},'request_id':'evidence-create-0001'}); oid=created['object_id']
