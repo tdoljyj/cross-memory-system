@@ -1,0 +1,218 @@
+{
+  "authority": {
+    "final_issuance": false,
+    "guard_parent_provisioned_by_this_task": false,
+    "issuer_root_bound": false,
+    "merge_authorized": false,
+    "model_started": false,
+    "owner_binary_executed": false,
+    "production_lifecycle_authorized": false
+  },
+  "branch": "model-program/m1-08-major01-09-remediation-20260920",
+  "evidence_files": [
+    {
+      "bytes": 2693,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/A/build-receipt.json",
+      "sha256": "b03fe71e647602e75353de358e40fba07c142721fac4f026880265c2785b788d"
+    },
+    {
+      "bytes": 57904,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/A/go-test.log",
+      "sha256": "59010e04bf1a53df904e2e8ea6e4e08b9351e5a7d0196488767f8738cca0f8bb"
+    },
+    {
+      "bytes": 567,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/A/python-build-boundary-tests.log",
+      "sha256": "6cbe091efc1d99d8fdd358075e8176303d04c140068362ddaa7f37f6ae4c3664"
+    },
+    {
+      "bytes": 0,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/A/go-vet.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 0,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/A/go-test-compile.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 0,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/A/go-build.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 2693,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/B/build-receipt.json",
+      "sha256": "91bda635e29ac6f3eac33655f832631c5f621208e7f594af9e6c6686b166d635"
+    },
+    {
+      "bytes": 57916,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/B/go-test.log",
+      "sha256": "78196d8b9cf52d0b05486e115e9e03f3e8d521a94ba48a1e8b0baa9ec999ab97"
+    },
+    {
+      "bytes": 567,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/B/python-build-boundary-tests.log",
+      "sha256": "6cbe091efc1d99d8fdd358075e8176303d04c140068362ddaa7f37f6ae4c3664"
+    },
+    {
+      "bytes": 0,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/B/go-vet.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 0,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/B/go-test-compile.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 0,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/B/go-build.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 54849,
+      "path": "development/contracts/model-program/m1/evidence/m1-08-major01-09-remediation-20260920/historical-first-attempt-go-test.log",
+      "sha256": "d6d984099ddc778c8746b570ca55b1df182ca34c9e52306f73d3b5676f922e0f"
+    }
+  ],
+  "finding_results": [
+    {
+      "author_status": "REMEDIATED_AND_SELF_VERIFIED",
+      "id": "MAJOR-01",
+      "independent_status": "PENDING",
+      "summary": "JSON backslash escaping; independent Python golden vector; slot materialize/verify roundtrip"
+    },
+    {
+      "author_status": "REMEDIATED_AND_SELF_VERIFIED",
+      "id": "MAJOR-02",
+      "independent_status": "PENDING",
+      "summary": "Symmetric verified opened-handle capture entry before any child start"
+    },
+    {
+      "author_status": "REMEDIATED_AND_SELF_VERIFIED",
+      "id": "MAJOR-03",
+      "independent_status": "PENDING",
+      "summary": "Retained ancestor handles, native relative creation, recorded file-ID provenance, by-handle deletion, partial ADS/hardlink rejection"
+    },
+    {
+      "author_status": "REMEDIATED_AND_SELF_VERIFIED",
+      "id": "MAJOR-04",
+      "independent_status": "PENDING",
+      "summary": "One same-volume NTFS native rename; native sharing-failure test; no ReplaceFileW or delete/copy fallback"
+    },
+    {
+      "author_status": "REMEDIATED_AND_SELF_VERIFIED",
+      "id": "MAJOR-05",
+      "independent_status": "PENDING",
+      "summary": "Explicit commit outcome and shared recovery entry for post-commit verification/evidence/probe failures"
+    },
+    {
+      "author_status": "REMEDIATED_AND_SELF_VERIFIED",
+      "id": "MAJOR-06",
+      "independent_status": "PENDING",
+      "summary": "Exact saved final Current bytes and complete 3N semantics before destructive cleanup"
+    },
+    {
+      "author_status": "REMEDIATED_AND_SELF_VERIFIED",
+      "id": "MAJOR-07",
+      "independent_status": "PENDING",
+      "summary": "Unified terminal finalization; aggregate original/cleanup/port/evidence errors; usable forensic reserve"
+    },
+    {
+      "author_status": "REMEDIATED_AND_SELF_VERIFIED",
+      "id": "MAJOR-08",
+      "independent_status": "PENDING",
+      "summary": "Signed expiry bound into immutable context and deadline; pre-guard and bounded-stream checks; no business cleanup after expiry"
+    },
+    {
+      "author_status": "REMEDIATED_AND_SELF_VERIFIED",
+      "id": "MAJOR-09",
+      "independent_status": "PENDING",
+      "summary": "Fixed non-production output namespace, pinned ancestry, bounded temp/cache paths, observed no-skip qualification events"
+    }
+  ],
+  "historical_first_attempt": {
+    "fail_cases": 1,
+    "failure": "Reparse symlink fixture lacked Windows privilege; replaced by test-owned directory junction; no skips permitted",
+    "pass_cases": 61,
+    "status": "FAILED_NOT_DISCARDED"
+  },
+  "independent_verdict": null,
+  "limits": [
+    "Native tests use inert temporary payloads and fake processes, not real model execution.",
+    "Build/test evidence is not a live production-path absence or liveness attestation.",
+    "Native rename evidence does not establish power-loss durability.",
+    "Author verification is not independent final acceptance."
+  ],
+  "protected_objects": [
+    {
+      "bytes": 42486,
+      "path": "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.json",
+      "sha256": "b40040a1302620b965bdf6dbe2283d0d6d5f9413c8c784e4b65d9cd030ac7ee3",
+      "unchanged": true
+    },
+    {
+      "bytes": 37761,
+      "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json",
+      "sha256": "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3",
+      "unchanged": true
+    }
+  ],
+  "qualification": [
+    {
+      "owner_binary_sha256": "bf7e2077839484ac7264457bbe3141c068f9720d91d323f1064a4fb4e5db787b",
+      "run": "A",
+      "test_binary_sha256": "4dba96b5c4560574d6abab795c9fb6747b196106f312613aca21b2b2b5ca6ebe",
+      "tests": {
+        "go_test_pass": true,
+        "go_vet_pass": true,
+        "observed_test_events": {
+          "all_test_cases": 66,
+          "failed": 0,
+          "passed": 66,
+          "root_tests": 48,
+          "skipped": 0
+        },
+        "python_build_boundary_tests_pass": true,
+        "tests_use_production_guard_or_test_root": false,
+        "windows_test_binary_compiled": true
+      }
+    },
+    {
+      "owner_binary_sha256": "bf7e2077839484ac7264457bbe3141c068f9720d91d323f1064a4fb4e5db787b",
+      "run": "B",
+      "test_binary_sha256": "4dba96b5c4560574d6abab795c9fb6747b196106f312613aca21b2b2b5ca6ebe",
+      "tests": {
+        "go_test_pass": true,
+        "go_vet_pass": true,
+        "observed_test_events": {
+          "all_test_cases": 66,
+          "failed": 0,
+          "passed": 66,
+          "root_tests": 48,
+          "skipped": 0
+        },
+        "python_build_boundary_tests_pass": true,
+        "tests_use_production_guard_or_test_root": false,
+        "windows_test_binary_compiled": true
+      }
+    }
+  ],
+  "qualification_host": "DESK-W-591",
+  "recorded_at_utc": "2026-09-20T09:27:13.819663+00:00",
+  "remediation_base": "015eecb50f86d6ab59228e91b12f7007e88f9387",
+  "repository": "tdoljyj/cross-memory-system",
+  "reproducible_owner_binary": true,
+  "reproducible_test_binary": true,
+  "role": "AUTHOR_REMEDIATION_AND_SELF_VERIFICATION / INDEPENDENT_FINAL_REVIEW_PENDING / NO_EXECUTION_AUTHORITY",
+  "schema_version": "clued.m1-08-major01-09-remediation-receipt/1",
+  "self_review_remaining_findings": {
+    "blocker": 0,
+    "major": 0,
+    "minor": 0
+  },
+  "source_freeze_head": "5c58eb6d55880b60ff52ab06415b35368f2ae525",
+  "source_manifest_members": 22,
+  "source_manifest_sha256": "4ba8d48d1f9df271c16e5be55bb813ff255915cfe01fe18475dff836a9db2816"
+}

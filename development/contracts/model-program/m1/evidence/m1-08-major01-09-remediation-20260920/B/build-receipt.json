@@ -1,0 +1,57 @@
+{
+  "candidate_profile_git_blob_sha1": "51b0083f74dd12318b7cdcdf3b939d31723de787",
+  "contract_git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
+  "effectful_authority_issued": false,
+  "filesystem_boundary": {
+    "fixed_qualification_root": "C:\\Users\\Public\\Clued\\Validation\\M108-owner-qualification",
+    "production_path_effect_claim": "NO_OWNER_BINARY_EXECUTED; NO_PRODUCTION_ROOT_PASSED_TO_BUILD_OR_TESTS; NOT_A_LIVE_RUNTIME_ATTESTATION",
+    "temporary_files_inside_output": true,
+    "validated_output": "C:\\Users\\Public\\Clued\\Validation\\M108-owner-qualification\\m108-remediation-B-20260920"
+  },
+  "implementation_base": "3d8a4c88373f5a54831b40d34c0ad89281d02ac1",
+  "issuer_root_bound": false,
+  "native_source_manifest_sha256": "4ba8d48d1f9df271c16e5be55bb813ff255915cfe01fe18475dff836a9db2816",
+  "owner_binary": {
+    "bytes": 7440384,
+    "executed_by_build_helper": false,
+    "path": "C:\\Users\\Public\\Clued\\Validation\\M108-owner-qualification\\m108-remediation-B-20260920\\m1-08-owner.exe",
+    "sha256": "bf7e2077839484ac7264457bbe3141c068f9720d91d323f1064a4fb4e5db787b"
+  },
+  "role": "IMPLEMENTATION_PREPARATION_BUILD / NO_EFFECTFUL_AUTHORITY / OWNER_BINARY_NOT_EXECUTED",
+  "schema_version": "clued.m1-08-native-owner-build-receipt/1",
+  "tests": {
+    "go_test_pass": true,
+    "go_vet_pass": true,
+    "observed_test_events": {
+      "all_test_cases": 66,
+      "failed": 0,
+      "passed": 66,
+      "root_tests": 48,
+      "skipped": 0
+    },
+    "python_build_boundary_tests_pass": true,
+    "tests_use_production_guard_or_test_root": false,
+    "windows_test_binary_compiled": true
+  },
+  "toolchain": {
+    "archive_bytes": 78931360,
+    "archive_name": "go1.27.1.windows-amd64.zip",
+    "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+    "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+    "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+    "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+    "target": {
+      "goamd64": "v1",
+      "goarch": "amd64",
+      "goos": "windows"
+    },
+    "tree_file_count": 15639,
+    "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+    "version": "go version go1.27.1 windows/amd64"
+  },
+  "windows_test_binary": {
+    "bytes": 12288512,
+    "path": "C:\\Users\\Public\\Clued\\Validation\\M108-owner-qualification\\m108-remediation-B-20260920\\m1-08-owner.tests.exe",
+    "sha256": "4dba96b5c4560574d6abab795c9fb6747b196106f312613aca21b2b2b5ca6ebe"
+  }
+}
