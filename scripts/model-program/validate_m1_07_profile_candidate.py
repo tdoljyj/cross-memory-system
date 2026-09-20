@@ -38,6 +38,19 @@ MACHINE_IDENTITY_SHA256 = "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55
 ATTEMPT_GUARD_PATH = r"C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-STAB-QWEN35-08B-PC-001\M1RuntimeStabilityAttemptGuard.json"
 OWNER_PUBLIC_KEY_HEX = "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03"
 OWNER_PUBLIC_KEY_SHA256 = "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c"
+NATIVE_BUILD_TOOLCHAIN = {
+    "archive_name": "go1.27.1.windows-amd64.zip",
+    "archive_bytes": 78931360,
+    "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+    "tree_file_count": 15639,
+    "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+    "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+    "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+    "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+    "version": "go version go1.27.1 windows/amd64",
+    "target": {"goos": "windows", "goarch": "amd64", "goamd64": "v1"},
+    "semantics": "EXACT_OFFICIAL_ZIP / FRESH_SAFE_EXTRACTION / EXTRACTED_TREE_EXACT_MATCH / NO_CALLER_EXECUTABLE",
+}
 
 REQUIRED_MODEL_SEMANTICS = {
     "STABILITY_REFERENCE_ONLY",
@@ -91,6 +104,7 @@ REQUIRED_EVIDENCE = {
     "OPAQUE_REGISTERED_EXECUTION_CONTEXT_CANNOT_BE_CALLER_FORGED",
     "PROCESS_WRAPPER_AND_ORIGINAL_NATIVE_HANDLE_IDENTITY_REGISTRY",
     "RUNTIME_RELEASE_ASSET_SHA256_AND_EXTRACTED_TREE_EXACT_MATCH",
+    "NATIVE_BUILD_TOOLCHAIN_ZIP_TREE_AND_COMPILER_IDENTITIES",
 }
 REQUIRED_FINAL_ISSUANCE = {
     "STATIC_REVIEW_OR_TESTS_CONFIRM_PROFILE_STATUS_GUARD_AND_PID_OWNERSHIP_GUARD",
@@ -102,6 +116,7 @@ REQUIRED_FINAL_ISSUANCE = {
     "BIND_TRUSTED_OWNER_AUTHORIZATION_ID_AND_SHA256_IN_ISSUED_PROFILE_OUTER_BINDING",
     "RETAIN_EXACT_MACHINE_IDENTITY_SHA256_BINDING",
     "RETAIN_EXACT_ORCHESTRATOR_COMMIT_BLOB_AND_NORMALIZED_SHA256_BINDING",
+    "RETAIN_EXACT_NATIVE_BUILD_TOOLCHAIN_BINDING_AT_FINAL_ISSUANCE",
 }
 
 
@@ -181,6 +196,8 @@ def validate_native_source_binding(profile: dict) -> bool:
         return False
     if set(manifest.get("non_build_metadata_files", [])) != expected_metadata:
         return False
+    if manifest.get("native_build_toolchain") != NATIVE_BUILD_TOOLCHAIN:
+        return False
     actual_entries = {p.name for p in native.iterdir()}
     if actual_entries != expected | expected_tests | expected_metadata:
         return False
@@ -214,6 +231,9 @@ def validate_native_source_binding(profile: dict) -> bool:
     if 'if os.environ.get("GOFLAGS")' not in build_helper or 'GOENV="off"' not in build_helper or 'GOWORK="off"' not in build_helper:
         return False
     for required in (
+        'parser.add_argument("--toolchain-archive", required=True, type=Path)',
+        "validate_toolchain_archive(archive)",
+        "safe_extract_verified_toolchain(archive, toolchain_root)",
         "actual_entries = {p.name for p in SOURCE.iterdir()}",
         "stat.S_ISREG(os.lstat(p).st_mode)",
         "verified_files: dict[str, bytes] = {}",
@@ -221,6 +241,10 @@ def validate_native_source_binding(profile: dict) -> bool:
         "cwd=build_source",
         'GOMODCACHE=modcache',
         'GOTMPDIR=gotmp',
+        'GOROOT=goroot',
+        'file_sha256(go) != TOOLCHAIN_GO_EXE_SHA256',
+        'file_sha256(compile_exe) != TOOLCHAIN_COMPILE_EXE_SHA256',
+        'file_sha256(link_exe) != TOOLCHAIN_LINK_EXE_SHA256',
     ):
         if required not in build_helper:
             return False
@@ -228,7 +252,11 @@ def validate_native_source_binding(profile: dict) -> bool:
         return False
     if code.get("native_owner_build_provenance_helper_sha256") != helper_identity.get("sha256"):
         return False
-    if code.get("native_owner_build_provenance_semantics") != "EXACT_SOURCE_DIRECTORY_SET / MANIFEST_BINDS_HELPER / VERIFIED_SOURCE_SNAPSHOT_ONLY / CLEAN_GO_ENV":
+    if code.get("native_owner_build_provenance_semantics") != "EXACT_SOURCE_DIRECTORY_SET / MANIFEST_BINDS_HELPER / VERIFIED_SOURCE_SNAPSHOT_ONLY / EXACT_OFFICIAL_TOOLCHAIN_ZIP_AND_TREE / CLEAN_GO_ENV / NO_CALLER_EXECUTABLE":
+        return False
+    if code.get("native_owner_build_toolchain") != NATIVE_BUILD_TOOLCHAIN:
+        return False
+    if 'parser.add_argument("--go"' in build_helper:
         return False
     binary_sha = code.get("native_owner_binary_sha256")
     if not isinstance(binary_sha, str) or len(binary_sha) != 64 or any(c not in "0123456789abcdef" for c in binary_sha):
