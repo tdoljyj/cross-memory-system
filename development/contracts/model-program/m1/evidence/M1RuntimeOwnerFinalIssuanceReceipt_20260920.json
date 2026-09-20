@@ -1,0 +1,50 @@
+{
+  "schema_version": "clued.model-m1-07-owner-final-issuance-receipt/1",
+  "record_id": "M1-STAB-QWEN35-08B-PC-001-FINAL-ISSUANCE-20260920T025307Z",
+  "status": "OWNER_FINAL_ISSUANCE_COMPLETE / ISSUED / NOT_EXECUTED / NO_MERGE",
+  "task_id": "M1-07",
+  "reviewed_exact_head": "d0cf8836b1553f4d1b2239dba6d5a1b4e4aecb7b",
+  "candidate_sha256": "05a3a6cd1a7956617d906ba7b612cdd5c6436d2ff40195d8cdb1647035cd7d90",
+  "issued_profile_path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.issued.json",
+  "issued_profile_sha256": "04890ac27ca176711d51c930ed055bb318cf2b0d57adcdfaf228b4734a6f2aec",
+  "issued_at_utc": "2026-09-20T02:53:07Z",
+  "expiry": "2026-09-21T02:53:07Z",
+  "expiry_policy": "ISSUED_AT_PLUS_24_HOURS",
+  "owner_authorization_id": "OWNER-M1-07-FINAL-20260920T025307Z-c3aed8d8-16e6-4c65-be99-a8b638d04f15",
+  "owner_authorization_sha256": "1da5f79aafdd6d9045b85d5120f16487e896749b532f5196980e84b778b700ad",
+  "owner_public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
+  "owner_private_key_locator": "windows-local-owner-key://DESK-W-591/Clued/M1-07/Owner-Ed25519-Root",
+  "owner_private_key_material_exported": false,
+  "native_owner_sha256": "e0956d6d8194acefad85c54750b9802fe7faea648aeba5dd4408f41534e8680c",
+  "native_validate_only": {
+    "execution_ready": false,
+    "model_loaded": false,
+    "profile_checks_ready": true,
+    "profile_id": "M1-STAB-QWEN35-08B-PC-001-ISSUED",
+    "reason": "READY_FOR_NATIVE_AUTHORIZATION",
+    "server_started": false
+  },
+  "python_facade_validate_only": {
+    "profile_id": "M1-STAB-QWEN35-08B-PC-001-ISSUED",
+    "status": "ISSUED",
+    "effectful_authority_issued": true,
+    "execution_ready": false,
+    "profile_checks_ready": true,
+    "reason": "NATIVE_OWNER_PROCESS_REQUIRED",
+    "server_started": false,
+    "model_loaded": false
+  },
+  "effects": {
+    "llama_server_started": false,
+    "model_loaded": false,
+    "real_m1_07_scenario_executed": false,
+    "attempt_guard_created": false,
+    "m1_08_started": false,
+    "training_or_distillation_performed": false,
+    "promotion_or_activation_performed": false,
+    "production_mutation": false,
+    "release_performed": false,
+    "pr_268_merged": false
+  },
+  "next_gate": "SEPARATE_OWNER_DECISION_TO_INVOKE_EXACT_ISSUED_PROFILE_ONCE_BEFORE_EXPIRY"
+}
