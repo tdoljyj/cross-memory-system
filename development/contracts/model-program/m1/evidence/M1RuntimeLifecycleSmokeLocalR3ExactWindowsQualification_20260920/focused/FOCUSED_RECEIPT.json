@@ -1,0 +1,92 @@
+{
+  "source_freeze_sha": "148f2695685b892f6bac9b3026f208bae4118024",
+  "source_manifest_sha256": "2d47a06b43d91cad2342188242c9d11a70fa6587f6c951ba84dbe6f9b3f1b217",
+  "argv": [
+    "c:\\users\\public\\clued\\qualification\\m1-08-owner\\m108-0708-r3-2d47a06b43d9-a\\m1-08-owner.tests.exe",
+    "-test.v",
+    "-test.count=1",
+    "-test.run",
+    "TestR3|TestRemediation(Evidence|Finalization|Expiry|FailureEvidence|RunProbe|CreatedGuard)"
+  ],
+  "cwd": "C:\\Users\\Windows\\AppData\\Local\\Temp\\clued-m108-local-r3-2d47a0-20260920\\scripts\\model-program\\m1-runtime-lifecycle-owner",
+  "environment": {
+    "SystemRoot": "C:\\Windows",
+    "WINDIR": "C:\\Windows",
+    "TEMP": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-focused\\temp",
+    "TMP": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-focused\\temp"
+  },
+  "started_at_utc": "2026-09-20T12:20:13.331410+00:00",
+  "finished_at_utc": "2026-09-20T12:20:15.464824+00:00",
+  "exit_code": 0,
+  "top_level_pass": 20,
+  "subtest_pass": 8,
+  "fail": 0,
+  "skip": 0,
+  "native_test_binary": {
+    "bytes": 12464640,
+    "path": "c:\\users\\public\\clued\\qualification\\m1-08-owner\\m108-0708-r3-2d47a06b43d9-a\\m1-08-owner.tests.exe",
+    "sha256": "7242523f09b84ceb68c1c708177d380c69d380ce8555e9bfdfb766db14c3f222"
+  },
+  "status": "FOCUSED_WINDOWS_PASS",
+  "qualification_namespace": {
+    "fixed_root": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner",
+    "resolved_output": "c:\\users\\public\\clued\\qualification\\m1-08-owner\\m108-0708-r3-2d47a06b43d9-focused",
+    "native_directory_observations": [
+      {
+        "path": "C:\\",
+        "handle_resolved_path": "C:\\",
+        "volume_serial": "9686166e",
+        "file_id": "0005000000000005",
+        "non_reparse": true
+      },
+      {
+        "path": "C:\\Users",
+        "handle_resolved_path": "C:\\Users",
+        "volume_serial": "9686166e",
+        "file_id": "0001000000000e5c",
+        "non_reparse": true
+      },
+      {
+        "path": "C:\\Users\\Public",
+        "handle_resolved_path": "C:\\Users\\Public",
+        "volume_serial": "9686166e",
+        "file_id": "0001000000000e8d",
+        "non_reparse": true
+      },
+      {
+        "path": "C:\\Users\\Public\\Clued",
+        "handle_resolved_path": "C:\\Users\\Public\\Clued",
+        "volume_serial": "9686166e",
+        "file_id": "00090000000bad44",
+        "non_reparse": true
+      },
+      {
+        "path": "C:\\Users\\Public\\Clued\\Qualification",
+        "handle_resolved_path": "C:\\Users\\Public\\Clued\\Qualification",
+        "volume_serial": "9686166e",
+        "file_id": "00190000000a20ad",
+        "non_reparse": true
+      },
+      {
+        "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner",
+        "handle_resolved_path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner",
+        "volume_serial": "9686166e",
+        "file_id": "000f0000002c21a9",
+        "non_reparse": true
+      },
+      {
+        "path": "c:\\users\\public\\clued\\qualification\\m1-08-owner\\m108-0708-r3-2d47a06b43d9-focused",
+        "handle_resolved_path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-focused",
+        "volume_serial": "9686166e",
+        "file_id": "000e00000027c665",
+        "non_reparse": true
+      }
+    ],
+    "protected_namespace_overlap": false,
+    "temporary_files_caches_logs": "CONFINED_UNDER_RESOLVED_OUTPUT",
+    "provisioned_qualification_root": false,
+    "host_wide_no_effect_observation": "NOT_PERFORMED"
+  },
+  "owner_binary_executed": false,
+  "independent_review_pass": false
+}

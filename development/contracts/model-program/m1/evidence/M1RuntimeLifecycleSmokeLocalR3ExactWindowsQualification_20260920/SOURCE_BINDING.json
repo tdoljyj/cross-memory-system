@@ -1,0 +1,14 @@
+{
+  "blocked_review_head": "02384f219c3dddc027dd39640a313657286df197",
+  "driver_sha256": "3fc9994bd6efb83f8c10985e08d659b9708da12b1ff65200dc93e3e134107381",
+  "frozen_baseline_files": 2,
+  "landing_base": "3991a79f589ecd258b4339aac4f3f4843c3ddb37",
+  "local_r3_input_zip_sha256": "ea15826e48d1ecab967b60cf23fb99645a9916520887536620aacc423cfe33a1",
+  "other_successor_used_as_source_or_qualification": false,
+  "patch_sha256": "e6689ece8f6bad76936fd57fa806121096b592dfd56df0bfe99e95b68c5979b9",
+  "preserved_other_manifest_sha256": "2f93920176846e40dd2cdf9596cf79cfe438dbaa5f94c44136dd59a7e3ecac99",
+  "preserved_unrelated_successor": "bde18612db695b90003cabb239f8e6600b6b87cd",
+  "source_closure_files": 29,
+  "source_freeze_sha": "148f2695685b892f6bac9b3026f208bae4118024",
+  "source_manifest_sha256": "2d47a06b43d91cad2342188242c9d11a70fa6587f6c951ba84dbe6f9b3f1b217"
+}

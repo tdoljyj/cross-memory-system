@@ -1,0 +1,111 @@
+{
+  "artifact_bytes_rehashed_this_execution": true,
+  "branch": "model-program/m1-08-local-r3-exact-2d47a0-20260920",
+  "focused": {
+    "exit_code": 0,
+    "fail": 0,
+    "skip": 0,
+    "status": "FOCUSED_WINDOWS_PASS",
+    "subtest_pass": 8,
+    "top_level_pass": 20
+  },
+  "guard_parent_provisioned": false,
+  "independent_review_pass": false,
+  "issuer_root_bound": false,
+  "limitations": [
+    "PRE/POST are time points, not continuous monitoring",
+    "NTFS_DIRECTORY_JUNCTION is not symlink-specific native execution",
+    "Test binary was executed; Owner binary was built but never invoked by this workflow",
+    "EXEs, toolchain and model bodies are not embedded; their exact identities and original receipts are embedded",
+    "Source manifest pending markers are retained unchanged after freeze; use this external receipt for execution status"
+  ],
+  "major_07_08_formally_closed": false,
+  "measured_at_utc": "2026-09-20T12:21:44.794711+00:00",
+  "merged": false,
+  "owner_binary_executed_by_this_workflow": false,
+  "profile_issued": false,
+  "python_version": "3.12.10",
+  "runs": [
+    {
+      "fail": 0,
+      "go_vet_pass": true,
+      "label": "a",
+      "measured_artifacts": {
+        "owner_binary": {
+          "bytes": 7494144,
+          "sha256": "4b66f10b501163bc51a2e6e8b5634a77a8e2a6ceeeb43a204e1d09108e0271c0"
+        },
+        "windows_test_binary": {
+          "bytes": 12464640,
+          "sha256": "7242523f09b84ceb68c1c708177d380c69d380ce8555e9bfdfb766db14c3f222"
+        }
+      },
+      "python_pass": 10,
+      "reparse_fixture_kinds": [
+        "NTFS_DIRECTORY_JUNCTION"
+      ],
+      "skip": 0,
+      "subtest_pass": 22,
+      "toolchain": {
+        "archive_bytes": 78931360,
+        "archive_name": "go1.27.1.windows-amd64.zip",
+        "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+        "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+        "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+        "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+        "target": {
+          "goamd64": "v1",
+          "goarch": "amd64",
+          "goos": "windows"
+        },
+        "tree_file_count": 15639,
+        "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+        "version": "go version go1.27.1 windows/amd64"
+      },
+      "top_level_pass": 64,
+      "windows_native_top_level_pass": 12
+    },
+    {
+      "fail": 0,
+      "go_vet_pass": true,
+      "label": "b",
+      "measured_artifacts": {
+        "owner_binary": {
+          "bytes": 7494144,
+          "sha256": "4b66f10b501163bc51a2e6e8b5634a77a8e2a6ceeeb43a204e1d09108e0271c0"
+        },
+        "windows_test_binary": {
+          "bytes": 12464640,
+          "sha256": "7242523f09b84ceb68c1c708177d380c69d380ce8555e9bfdfb766db14c3f222"
+        }
+      },
+      "python_pass": 10,
+      "reparse_fixture_kinds": [
+        "NTFS_DIRECTORY_JUNCTION"
+      ],
+      "skip": 0,
+      "subtest_pass": 22,
+      "toolchain": {
+        "archive_bytes": 78931360,
+        "archive_name": "go1.27.1.windows-amd64.zip",
+        "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+        "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+        "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+        "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+        "target": {
+          "goamd64": "v1",
+          "goarch": "amd64",
+          "goos": "windows"
+        },
+        "tree_file_count": 15639,
+        "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+        "version": "go version go1.27.1 windows/amd64"
+      },
+      "top_level_pass": 64,
+      "windows_native_top_level_pass": 12
+    }
+  ],
+  "source_freeze_sha": "148f2695685b892f6bac9b3026f208bae4118024",
+  "source_manifest_sha256": "2d47a06b43d91cad2342188242c9d11a70fa6587f6c951ba84dbe6f9b3f1b217",
+  "status": "AUTHOR_SIDE_EXACT_WINDOWS_QUALIFICATION_PASS / INDEPENDENT_REVIEW_PENDING"
+}

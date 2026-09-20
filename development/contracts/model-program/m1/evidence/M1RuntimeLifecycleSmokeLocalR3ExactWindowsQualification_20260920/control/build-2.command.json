@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+    "-B",
+    "C:\\Users\\Windows\\AppData\\Local\\Temp\\clued-m108-local-r3-2d47a0-20260920\\scripts\\model-program\\m1-runtime-lifecycle-owner\\build.py",
+    "--toolchain-archive",
+    "C:\\Users\\Windows\\AppData\\Local\\Temp\\go1.27.1.windows-amd64.zip",
+    "--output",
+    "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-b"
+  ],
+  "started_at_utc": "2026-09-20T12:17:58.928304+00:00",
+  "finished_at_utc": "2026-09-20T12:18:41.712916+00:00",
+  "exit_code": 0
+}

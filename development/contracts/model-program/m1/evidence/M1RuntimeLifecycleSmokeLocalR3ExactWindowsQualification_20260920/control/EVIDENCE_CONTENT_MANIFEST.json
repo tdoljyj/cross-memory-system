@@ -1,0 +1,130 @@
+{
+  "entries": [
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-control\\build-1.command.json",
+      "bytes": 612,
+      "sha256": "368d7b657a4dbdd3556cfa5631f877e48d39d8719d44dbba0c84f8bdb78b6440"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-control\\build-1.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-control\\build-1.stdout.log",
+      "bytes": 9886,
+      "sha256": "08a7536ee6d42ba8e2b77711acbd7446ab878ef63a98a68dbd88330e9a339b1e"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-control\\build-2.command.json",
+      "bytes": 612,
+      "sha256": "299d14de771d62f9e660d954ce9e29bfbc0b1137f4b36d1a33828ed773a52b23"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-control\\build-2.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-control\\build-2.stdout.log",
+      "bytes": 9886,
+      "sha256": "a50b3e1b336577a0b40791dce007e872c5a8d921ee80697e000f0a7bd319b01d"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-control\\POST_QUALIFICATION.json",
+      "bytes": 867,
+      "sha256": "727a4a60f02865a86a2b8e4511f76d95a941b95347f408d5c85e02893489843f"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-control\\PRE_QUALIFICATION.json",
+      "bytes": 867,
+      "sha256": "ea385cdf1de51785f121549c69e1e787fb101e66741d0c2f6be65fd8bf4d68f6"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-control\\QUALIFICATION_RESULT.json",
+      "bytes": 21320,
+      "sha256": "1fb01a62e630517398159f586581d2c4e36f33d87c19bb1590b66777169de237"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-a\\build-receipt.json",
+      "bytes": 11466,
+      "sha256": "7e460c5b6f069a07421e96bffe12452bf9419b59da77d5eb88fa108f42fee5d6"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-a\\go-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-a\\go-test-compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-a\\go-test.log",
+      "bytes": 78898,
+      "sha256": "9bccab7de7019c2cf0e69aeed96eaa34c7c45beaf8049f743b27438d035e595b"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-a\\go-vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-a\\m1-08-owner.exe",
+      "bytes": 7494144,
+      "sha256": "4b66f10b501163bc51a2e6e8b5634a77a8e2a6ceeeb43a204e1d09108e0271c0"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-a\\m1-08-owner.tests.exe",
+      "bytes": 12464640,
+      "sha256": "7242523f09b84ceb68c1c708177d380c69d380ce8555e9bfdfb766db14c3f222"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-a\\python-qualification-scope.log",
+      "bytes": 1489,
+      "sha256": "67ad9aaad495dd15dcebc6f17ede51cecdea9c562b613ad46ebe79de8ece2ddb"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-b\\build-receipt.json",
+      "bytes": 11466,
+      "sha256": "25946b5464e4d046cfc94669fcde7efd891fa821ee40af9e034e269a33458224"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-b\\go-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-b\\go-test-compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-b\\go-test.log",
+      "bytes": 78885,
+      "sha256": "621ae32bd90478d3c11b0880c313aa80670440f73cb5453f272bb14afc7a8b76"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-b\\go-vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-b\\m1-08-owner.exe",
+      "bytes": 7494144,
+      "sha256": "4b66f10b501163bc51a2e6e8b5634a77a8e2a6ceeeb43a204e1d09108e0271c0"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-b\\m1-08-owner.tests.exe",
+      "bytes": 12464640,
+      "sha256": "7242523f09b84ceb68c1c708177d380c69d380ce8555e9bfdfb766db14c3f222"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-2d47a06b43d9-b\\python-qualification-scope.log",
+      "bytes": 1489,
+      "sha256": "67ad9aaad495dd15dcebc6f17ede51cecdea9c562b613ad46ebe79de8ece2ddb"
+    }
+  ],
+  "self_excluded": true
+}

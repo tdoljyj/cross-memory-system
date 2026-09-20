@@ -1,0 +1,57 @@
+=== RUN   TestRemediationEvidenceReserveSurvivesCaptureExhaustion
+--- PASS: TestRemediationEvidenceReserveSurvivesCaptureExhaustion (0.01s)
+=== RUN   TestRemediationFinalizationAggregatesListenerAndEvidenceFailure
+--- PASS: TestRemediationFinalizationAggregatesListenerAndEvidenceFailure (0.01s)
+=== RUN   TestRemediationExpiryDeadlineAndContextBinding
+--- PASS: TestRemediationExpiryDeadlineAndContextBinding (0.01s)
+=== RUN   TestRemediationEvidenceAllowlistAndExpiredNormalScenarioFailClosed
+--- PASS: TestRemediationEvidenceAllowlistAndExpiredNormalScenarioFailClosed (0.01s)
+=== RUN   TestRemediationFailureEvidenceCarriesRemainingOwnershipLedger
+--- PASS: TestRemediationFailureEvidenceCarriesRemainingOwnershipLedger (0.01s)
+=== RUN   TestRemediationExpiryDuringReadPreventsSubsequentWrite
+--- PASS: TestRemediationExpiryDuringReadPreventsSubsequentWrite (0.00s)
+=== RUN   TestRemediationRunProbeFailureReachesTerminalRecovery
+=== RUN   TestRemediationRunProbeFailureReachesTerminalRecovery/1
+=== RUN   TestRemediationRunProbeFailureReachesTerminalRecovery/2
+=== RUN   TestRemediationRunProbeFailureReachesTerminalRecovery/3
+--- PASS: TestRemediationRunProbeFailureReachesTerminalRecovery (0.37s)
+    --- PASS: TestRemediationRunProbeFailureReachesTerminalRecovery/1 (0.06s)
+    --- PASS: TestRemediationRunProbeFailureReachesTerminalRecovery/2 (0.15s)
+    --- PASS: TestRemediationRunProbeFailureReachesTerminalRecovery/3 (0.16s)
+=== RUN   TestRemediationFinalizationPreservesWaitAndOriginalErrors
+--- PASS: TestRemediationFinalizationPreservesWaitAndOriginalErrors (0.01s)
+=== RUN   TestRemediationCreatedGuardValidationFailureConsumesAndReports
+--- PASS: TestRemediationCreatedGuardValidationFailureConsumesAndReports (0.00s)
+=== RUN   TestR3ExpiredLowerEvidenceGateIsFailClosed
+--- PASS: TestR3ExpiredLowerEvidenceGateIsFailClosed (0.01s)
+=== RUN   TestR3FailureFinalizationRevokesNormalAndTerminalReuse
+--- PASS: TestR3FailureFinalizationRevokesNormalAndTerminalReuse (0.01s)
+=== RUN   TestR3SuccessFinalizationCannotStartSecondLifecycle
+--- PASS: TestR3SuccessFinalizationCannotStartSecondLifecycle (0.16s)
+=== RUN   TestR3ForensicsRecordsLiveIdentityDigestsAndCurrent
+--- PASS: TestR3ForensicsRecordsLiveIdentityDigestsAndCurrent (0.05s)
+=== RUN   TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting
+=== RUN   TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting/unknown
+=== RUN   TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting/identity
+=== RUN   TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting/reparse
+=== RUN   TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting/ads
+=== RUN   TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting/hardlink
+--- PASS: TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting (0.07s)
+    --- PASS: TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting/unknown (0.02s)
+    --- PASS: TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting/identity (0.01s)
+    --- PASS: TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting/reparse (0.01s)
+    --- PASS: TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting/ads (0.01s)
+    --- PASS: TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting/hardlink (0.01s)
+=== RUN   TestR3EvidenceModeAndSignedCeiling
+--- PASS: TestR3EvidenceModeAndSignedCeiling (0.01s)
+=== RUN   TestR3NormalEvidenceCannotSpendForensicReserve
+--- PASS: TestR3NormalEvidenceCannotSpendForensicReserve (0.01s)
+=== RUN   TestR3ExpiryDuringEvidenceHandleValidationWritesNoBytes
+--- PASS: TestR3ExpiryDuringEvidenceHandleValidationWritesNoBytes (0.01s)
+=== RUN   TestR3ExpiryCleanupKillsOnlyOwnedFixtureProcess
+--- PASS: TestR3ExpiryCleanupKillsOnlyOwnedFixtureProcess (0.01s)
+=== RUN   TestR3TerminalStateLimitsEnvelopeReuseAndTime
+--- PASS: TestR3TerminalStateLimitsEnvelopeReuseAndTime (0.01s)
+=== RUN   TestR3ForensicsDistinguishesObservedAndCachedCurrent
+--- PASS: TestR3ForensicsDistinguishesObservedAndCachedCurrent (0.05s)
+PASS
