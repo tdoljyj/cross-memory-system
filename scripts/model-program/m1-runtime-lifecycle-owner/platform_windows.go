@@ -229,16 +229,24 @@ func fileSecurityIdentity(path string) (string, string, error) {
 		}
 		return "", "", fail("GUARD_PARENT_SECURITY_IDENTITY_FAILED")
 	}
-	var sidText uintptr
+	var sidText *uint16
 	ok, _, er = procConvertSidToStringSidW.Call(owner, uintptr(unsafe.Pointer(&sidText)))
-	if ok == 0 || sidText == 0 {
+	if ok == 0 || sidText == nil {
 		if ce := nonzeroCallError(er); ce != nil {
 			return "", "", ce
 		}
 		return "", "", fail("GUARD_PARENT_SECURITY_IDENTITY_FAILED")
 	}
-	defer procLocalFree.Call(sidText)
-	sid := syscall.UTF16ToString((*[1 << 15]uint16)(unsafe.Pointer(sidText))[:])
+	defer procLocalFree.Call(uintptr(unsafe.Pointer(sidText)))
+	chars := unsafe.Slice(sidText, 1024)
+	end := 0
+	for end < len(chars) && chars[end] != 0 {
+		end++
+	}
+	if end == len(chars) {
+		return "", "", fail("GUARD_PARENT_SECURITY_IDENTITY_FAILED")
+	}
+	sid := syscall.UTF16ToString(chars[:end])
 	sum := sha256.Sum256(buf[:needed])
 	return sid, hex.EncodeToString(sum[:]), nil
 }
