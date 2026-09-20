@@ -282,6 +282,28 @@ func (sys realPlatform) directoryIdentity(path string) (directoryIdentity, error
 	}, nil
 }
 
+func (realPlatform) verifyWriteHandle(f *os.File, expected string) error {
+	if f == nil {
+		return fail("WRITE_HANDLE_REQUIRED")
+	}
+	h := syscall.Handle(f.Fd())
+	resolved, e := finalPathFromHandle(h)
+	if e != nil {
+		return e
+	}
+	if !samePath(resolved, expected) {
+		return fail("REPARSE_POINT_OR_PATH_ESCAPE_DETECTED")
+	}
+	var info syscall.ByHandleFileInformation
+	if e = syscall.GetFileInformationByHandle(h, &info); e != nil {
+		return e
+	}
+	if info.NumberOfLinks != 1 {
+		return fail("WRITE_HANDLE_HARDLINK_FORBIDDEN")
+	}
+	return nil
+}
+
 func (realPlatform) hardlinkCount(path string) (uint32, error) {
 	f, e := os.Open(path)
 	if e != nil {
