@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -98,14 +99,33 @@ func (b *budget) latch(e error) {
 func (b *budget) err() error { b.mu.Lock(); defer b.mu.Unlock(); return b.failure }
 
 type captureWriter struct {
-	f *os.File
-	b *budget
+	f                 *os.File
+	b                 *budget
+	now               func() time.Time
+	deadline, expires time.Time
+	revoked           *atomic.Bool
+}
+
+func (w *captureWriter) persistentAuthority() bool {
+	if w == nil || w.f == nil || w.b == nil || w.now == nil || w.revoked == nil || w.revoked.Load() {
+		return false
+	}
+	return checkDeadline(w.now(), w.deadline, w.expires) == nil
 }
 
 func (w *captureWriter) Write(p []byte) (int, error) {
+	// After expiry/deadline/finalization we must keep draining the child pipe so
+	// cleanup cannot deadlock, but normal lifecycle evidence authority is gone:
+	// bytes are discarded and never persisted.
+	if !w.persistentAuthority() {
+		return len(p), nil
+	}
 	if e := w.b.consume(int64(len(p)), true); e != nil {
-		// Keep draining the child's pipe after the evidence budget has failed so
-		// cleanup cannot deadlock behind a full stdout/stderr pipe.
+		return len(p), nil
+	}
+	// Budget accounting can race the authority boundary. Recheck immediately
+	// before the lower-level persistent write; late bytes are drained/discarded.
+	if !w.persistentAuthority() {
 		return len(p), nil
 	}
 	n, err := w.f.Write(p)
@@ -145,6 +165,7 @@ type processRecord struct {
 	ctx            *executionContext
 	proc           process
 	stdout, stderr *os.File
+	captureRevoked *atomic.Bool
 	closed         bool
 }
 
@@ -384,6 +405,37 @@ func exactEvidenceOutput(name string) bool {
 	}
 	return false
 }
+
+const signedCaptureOutputClass = "sanitized stdout/stderr logs for profile-owned llama-server processes"
+
+func exactCaptureOutput(scenario, label string) bool {
+	switch {
+	case scenario == "M1-08-PC-INSTALL-001" && label == "install-a":
+		return true
+	case scenario == "M1-08-PC-UPGRADE-001" && label == "upgrade-b":
+		return true
+	case scenario == "M1-08-PC-ROLLBACK-001" && label == "rollback-a":
+		return true
+	default:
+		return false
+	}
+}
+
+func captureOutputAuthorized(ctx *executionContext, scenario, label string) error {
+	if !exactCaptureOutput(scenario, label) {
+		return fail("CAPTURE_OUTPUT_NOT_AUTHORIZED")
+	}
+	outputs, ok := get(ctx.profile, "allowed_outputs").([]any)
+	if ok {
+		for _, output := range outputs {
+			if output == signedCaptureOutputClass {
+				return nil
+			}
+		}
+	}
+	return fail("CAPTURE_OUTPUT_NOT_AUTHORIZED_BY_SIGNED_PROFILE")
+}
+
 func evidenceOutputAuthorized(ctx *executionContext, name string, appendLine bool) error {
 	if filepath.Base(name) != name || !exactEvidenceOutput(name) {
 		return fail("EVIDENCE_OUTPUT_NOT_AUTHORIZED")
@@ -495,6 +547,11 @@ func (c *controller) startServer(ctx *executionContext, slotRoot, scenario, labe
 	if label == "" || filepath.Base(label) != label {
 		return nil, fail("LABEL_PATH_INVALID")
 	}
+	// Capture outputs have two independent ceilings before any file/process
+	// effect: exact immutable scenario/label pairs and the signed output class.
+	if e := captureOutputAuthorized(ctx, scenario, label); e != nil {
+		return nil, e
+	}
 	if ctx.starts >= maxStarts {
 		return nil, fail("MAX_SERVER_STARTS_EXCEEDED")
 	}
@@ -546,13 +603,22 @@ func (c *controller) startServer(ctx *executionContext, slotRoot, scenario, labe
 	if e = c.limits(ctx); e != nil {
 		return nil, e
 	}
-	p, e := c.sys.start(launch, &captureWriter{out, ctx.budget}, &captureWriter{er, ctx.budget})
+	// Recheck the signed/code capture ceiling immediately before launch too;
+	// a narrower signed profile must never permit child/process effects.
+	if e = captureOutputAuthorized(ctx, scenario, label); e != nil {
+		return nil, e
+	}
+	captureRevoked := &atomic.Bool{}
+	stdoutCapture := &captureWriter{f: out, b: ctx.budget, now: c.now, deadline: ctx.deadline, expires: ctx.expires, revoked: captureRevoked}
+	stderrCapture := &captureWriter{f: er, b: ctx.budget, now: c.now, deadline: ctx.deadline, expires: ctx.expires, revoked: captureRevoked}
+	p, e := c.sys.start(launch, stdoutCapture, stderrCapture)
 	if e != nil {
+		captureRevoked.Store(true)
 		return nil, e
 	}
 	idx := ctx.starts + 1
 	w = &ownedProcess{id: p.pid(), scenario: scenario, label: label, startIndex: idx}
-	c.processes[w] = &processRecord{ctx: ctx, proc: p, stdout: out, stderr: er}
+	c.processes[w] = &processRecord{ctx: ctx, proc: p, stdout: out, stderr: er, captureRevoked: captureRevoked}
 	ctx.starts = idx
 	c.contexts[ctx].starts = idx
 	defer func() {
@@ -655,6 +721,14 @@ func (c *controller) closeProcess(r *processRecord) error {
 	r.closed = true
 	return errors.Join(e1, e2)
 }
+func (c *controller) revokeCapturePersistence(ctx *executionContext) {
+	for _, r := range c.processes {
+		if r.ctx == ctx && r.captureRevoked != nil {
+			r.captureRevoked.Store(true)
+		}
+	}
+}
+
 func (c *controller) cleanupProcesses(ctx *executionContext) error {
 	var result error
 	for w, r := range c.processes {

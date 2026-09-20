@@ -141,9 +141,9 @@ func TestRemediationBothCaptureHandlesRejectBeforeLaunch(t *testing.T) {
 			c, ctx, f := tinyLifecycle(t)
 			materialize(t, c, ctx, revisionA)
 			publish(t, c, ctx, successTransition(1))
-			p := filepath.Join(c.paths.evidence, "gated."+stream+".txt")
+			p := filepath.Join(c.paths.evidence, "install-a."+stream+".txt")
 			f.blockedWrites = map[string]bool{p: true}
-			w, e := c.startServer(ctx, slotRootFor(c.paths, revisionA), "fixture", "gated")
+			w, e := c.startServer(ctx, slotRootFor(c.paths, revisionA), "M1-08-PC-INSTALL-001", "install-a")
 			if e == nil || w != nil || f.proc != nil || ctx.starts != 0 {
 				t.Fatalf("write gate not before start: %v", e)
 			}
@@ -880,5 +880,111 @@ func TestR3ForensicsDistinguishesObservedAndCachedCurrent(t *testing.T) {
 	inv := get(r3FailureEvent(t, c), "remaining_test_owned_state").(object)
 	if text(inv, "observed_current/sha256") != sha(actual) || get(inv, "observed_current/matches_last_committed_bytes") != false {
 		t.Fatalf("cached state presented as live: %s", canonical(inv))
+	}
+}
+
+func TestR4CaptureRequiresSignedClassBeforeFileOrLaunchEffect(t *testing.T) {
+	c, ctx, f := tinyLifecycle(t)
+	materialize(t, c, ctx, revisionA)
+	publish(t, c, ctx, successTransition(1))
+	ctx.profile["allowed_outputs"] = []any{
+		"M1RuntimeLifecyclePreflight.json", "M1RuntimeLifecycleEvents.jsonl", "M1RuntimeLifecycleInstall.json",
+		"M1RuntimeLifecycleUpgrade.json", "M1RuntimeLifecycleRollback.json", "M1RuntimeLifecycleDigests.json",
+		"M1RuntimeLifecycleCleanup.json", "M1RuntimeLifecycleCloseout.json", "M1RuntimeLifecycleAttemptGuard.snapshot.json",
+	}
+	ctx.profileDigest = digest(ctx.profile)
+	c.contexts[ctx].profileDigest = ctx.profileDigest
+	w, e := c.startServer(ctx, slotRootFor(c.paths, revisionA), "M1-08-PC-INSTALL-001", "install-a")
+	if codeOf(e) != "CAPTURE_OUTPUT_NOT_AUTHORIZED_BY_SIGNED_PROFILE" || w != nil || f.proc != nil || ctx.starts != 0 {
+		t.Fatalf("signed capture ceiling not enforced before effect: w=%v proc=%v starts=%d err=%v", w, f.proc, ctx.starts, e)
+	}
+	exists(t, filepath.Join(c.paths.evidence, "install-a.stdout.txt"), false)
+	exists(t, filepath.Join(c.paths.evidence, "install-a.stderr.txt"), false)
+}
+
+func TestR4CaptureRequiresExactCodePairBeforeFileOrLaunchEffect(t *testing.T) {
+	c, ctx, f := tinyLifecycle(t)
+	materialize(t, c, ctx, revisionA)
+	publish(t, c, ctx, successTransition(1))
+	w, e := c.startServer(ctx, slotRootFor(c.paths, revisionA), "M1-08-PC-INSTALL-001", "unreviewed-label")
+	if codeOf(e) != "CAPTURE_OUTPUT_NOT_AUTHORIZED" || w != nil || f.proc != nil || ctx.starts != 0 {
+		t.Fatalf("code capture ceiling not enforced before effect: w=%v proc=%v starts=%d err=%v", w, f.proc, ctx.starts, e)
+	}
+	exists(t, filepath.Join(c.paths.evidence, "unreviewed-label.stdout.txt"), false)
+	exists(t, filepath.Join(c.paths.evidence, "unreviewed-label.stderr.txt"), false)
+}
+
+func TestR4ExpiredCaptureIsDrainedButNotPersisted(t *testing.T) {
+	c, ctx, f := tinyLifecycle(t)
+	materialize(t, c, ctx, revisionA)
+	publish(t, c, ctx, successTransition(1))
+	now := time.Now().UTC()
+	expiry := now.Add(time.Second)
+	ctx.expires, ctx.deadline = expiry, expiry
+	c.contexts[ctx].expires, c.contexts[ctx].deadline = expiry, expiry
+	c.now = func() time.Time { return now }
+	w, e := c.startServer(ctx, slotRootFor(c.paths, revisionA), "M1-08-PC-INSTALL-001", "install-a")
+	if e != nil || w == nil || f.stdoutWriter == nil || f.proc == nil {
+		t.Fatalf("fixture start: %v", e)
+	}
+	defer func() {
+		f.proc.live = false
+		_ = c.closeProcess(c.processes[w])
+	}()
+	if _, e = f.stdoutWriter.Write([]byte("BEFORE_EXPIRY\n")); e != nil {
+		t.Fatal(e)
+	}
+	path := filepath.Join(c.paths.evidence, "install-a.stdout.txt")
+	before, e := os.ReadFile(path)
+	if e != nil || !bytes.Contains(before, []byte("BEFORE_EXPIRY")) {
+		t.Fatalf("pre-expiry capture missing: %q %v", before, e)
+	}
+	now = expiry
+	if e = c.limits(ctx); codeOf(e) != "PROFILE_EXPIRED_OR_REVOKED" {
+		t.Fatalf("fixture did not expire: %v", e)
+	}
+	if n, e := f.stdoutWriter.Write([]byte("AFTER_EXPIRY\n")); e != nil || n != len("AFTER_EXPIRY\n") {
+		t.Fatalf("expired pipe not safely drained: n=%d err=%v", n, e)
+	}
+	after, e := os.ReadFile(path)
+	if e != nil || !bytes.Equal(before, after) || bytes.Contains(after, []byte("AFTER_EXPIRY")) {
+		t.Fatalf("post-expiry bytes persisted: before=%q after=%q err=%v", before, after, e)
+	}
+}
+
+func TestR4FinalizationRevokesCaptureEvenWhenOwnedProcessCleanupFails(t *testing.T) {
+	c, ctx, f := tinyLifecycle(t)
+	materialize(t, c, ctx, revisionA)
+	publish(t, c, ctx, successTransition(1))
+	w, e := c.startServer(ctx, slotRootFor(c.paths, revisionA), "M1-08-PC-INSTALL-001", "install-a")
+	if e != nil || w == nil || f.stdoutWriter == nil || f.proc == nil {
+		t.Fatalf("fixture start: %v", e)
+	}
+	defer func() {
+		f.proc.live = false
+		_ = c.closeProcess(c.processes[w])
+	}()
+	if _, e = f.stdoutWriter.Write([]byte("BEFORE_FINALIZE\n")); e != nil {
+		t.Fatal(e)
+	}
+	path := filepath.Join(c.paths.evidence, "install-a.stdout.txt")
+	before, e := os.ReadFile(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	f.proc.killErr = fail("FIXTURE_KILL_FAILED")
+	finalErr := c.finalizeAttempt(ctx, fail("FIXTURE_FAILURE"))
+	if finalErr == nil || !strings.Contains(finalErr.Error(), "FIXTURE_KILL_FAILED") {
+		t.Fatalf("cleanup failure not preserved: %v", finalErr)
+	}
+	if !f.proc.live || c.processes[w].closed {
+		t.Fatal("fixture must retain live owned process/file to exercise revoked capture")
+	}
+	if n, e := f.stdoutWriter.Write([]byte("AFTER_FINALIZE\n")); e != nil || n != len("AFTER_FINALIZE\n") {
+		t.Fatalf("revoked pipe not safely drained: n=%d err=%v", n, e)
+	}
+	after, e := os.ReadFile(path)
+	if e != nil || !bytes.Equal(before, after) || bytes.Contains(after, []byte("AFTER_FINALIZE")) {
+		t.Fatalf("post-finalization bytes persisted: before=%q after=%q err=%v", before, after, e)
 	}
 }

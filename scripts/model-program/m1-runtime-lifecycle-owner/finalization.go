@@ -81,6 +81,10 @@ func (c *controller) finalizeAttempt(ctx *executionContext, cause error) (finalE
 	if c.terminal[ctx] != nil {
 		return errors.Join(cause, fail("FINALIZATION_ALREADY_IN_PROGRESS"))
 	}
+	// Normal lifecycle evidence authority ends at finalization entry, before
+	// cleanup. If a child cannot be killed, its pipes may still be drained but
+	// captureWriter must discard all later bytes rather than persist them.
+	c.revokeCapturePersistence(ctx)
 	defer func() { delete(c.terminal, ctx); c.finalized[ctx] = finalErr }()
 	cleanup := c.cleanupProcesses(ctx)
 	free := c.sys.portFree()

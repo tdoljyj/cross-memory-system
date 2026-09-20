@@ -66,10 +66,10 @@
       "sha256": "0e2bac3f004a2999aaf7bb05c57efc068031d505577ca4ee68f0ee4cca628028"
     },
     {
-      "bytes": 14563,
-      "git_blob_sha1": "9932d8ca5a51d908f5c5107ab76f0b1448806a9d",
+      "bytes": 14821,
+      "git_blob_sha1": "34f2484791af30f7edd9fcc733a9f8e48ddd9fcf",
       "path": "finalization.go",
-      "sha256": "714c4d144225df7309a9410abaefd9f63c471b4844161553f1790b42d6d3fa4c"
+      "sha256": "f407698814abe6206d95eabaf21726906115716f81d06102af0aaa78295a7753"
     },
     {
       "bytes": 49,
@@ -96,16 +96,16 @@
       "sha256": "dab032fe2c7a6d6b845d266ead695673e93a72c138a63d0097be27704f129b1a"
     },
     {
-      "bytes": 23071,
-      "git_blob_sha1": "98f35780c8a91bee50b51017a4d652ee30dfeae1",
+      "bytes": 25667,
+      "git_blob_sha1": "e42457e636a21aaed2b2b2242559c27cb21d8c5d",
       "path": "owner.go",
-      "sha256": "26e64d96f9d20c058f784af8e49ab895235ed99803b940481f895c3f14d919dc"
+      "sha256": "8b7eae068f984dda6f63e774dd4b6f3370680b9e148c36019d478c50b9ceb7d7"
     },
     {
-      "bytes": 20932,
-      "git_blob_sha1": "bc9827b136c0697fc83655e93159576590547be8",
+      "bytes": 21048,
+      "git_blob_sha1": "71972a71f75c8a8f0fddd7b4fb36521ddf9ed1d1",
       "path": "owner_test.go",
-      "sha256": "856d26db0a2ec20ce61d86ed12c3180add183acd72cda47896c18990264dd56f"
+      "sha256": "080eccd07b4d809bd7fc00a3ed0931fe1c9d3704b53c4cb63b4ddccd8f36be8b"
     },
     {
       "bytes": 669,
@@ -156,10 +156,10 @@
       "sha256": "31e9566693b42c0fb9820b8aeb6d2fa009e72caeec8ed9de5029b4c748adb07c"
     },
     {
-      "bytes": 32297,
-      "git_blob_sha1": "56b2855cb5758b42095f23c9045169f4809a9198",
+      "bytes": 37121,
+      "git_blob_sha1": "405cd4eb96fe1fb60268e61bce96d88eb6e72dfb",
       "path": "remediation_test.go",
-      "sha256": "1f376b98caad84361044c69e5e1bd699ca08597cb02d2f68f87ac0afbc89d8bd"
+      "sha256": "4e0a15549ce4cddcba9c29569ddc8384c9a50e10b78414371c4e1dffd0f0645d"
     },
     {
       "bytes": 4823,
@@ -205,10 +205,10 @@
       "MAJOR-08"
     ],
     "independent_review_pass": false,
-    "repair_base_head": "3991a79f589ecd258b4339aac4f3f4843c3ddb37",
-    "repair_base_source_manifest_sha256": "a2b12c1d83ad2ec2cd0fa280e167469c44bc9b21f333a9cc44b8f59c991738f0",
+    "repair_base_head": "d09b6365f9d93941cd59c3c2ee89e0f6fc0ab2c4",
+    "repair_base_source_manifest_sha256": "2d47a06b43d91cad2342188242c9d11a70fa6587f6c951ba84dbe6f9b3f1b217",
     "repository_successor_commit": null,
-    "revision": "MAJOR-07-MAJOR-08-r3",
+    "revision": "MAJOR-07-MAJOR-08-r4-capture-boundary",
     "status": "LOCAL_SOURCE_CANDIDATE / AUTHOR_SIDE_REGRESSION_PASS / REPOSITORY_LANDING_AND_EXACT_WINDOWS_REQUALIFICATION_PENDING",
     "validation_boundary": "LOCAL_LINUX_GO_1.23.2_NON_MODEL_FIXTURES / NO_OWNER_BINARY_OR_REAL_MODEL_EXECUTION / NOT_INDEPENDENT_REVIEW"
   },

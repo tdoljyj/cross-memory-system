@@ -57,6 +57,7 @@ type fakePlatform struct {
 	links                          map[string]uint32
 	request                        *http.Request
 	started                        launchEnvelope
+	stdoutWriter, stderrWriter     io.Writer
 	proc                           *fakeProcess
 	finalOverride                  map[string]string
 	identityOverride               map[string]directoryIdentity
@@ -139,6 +140,7 @@ func (f *fakePlatform) atomicPublish(temp, dst string, replace bool) error {
 }
 func (f *fakePlatform) start(l launchEnvelope, out, errOut io.Writer) (process, error) {
 	f.started = l
+	f.stdoutWriter, f.stderrWriter = out, errOut
 	if f.proc == nil || !f.proc.live {
 		f.proc = &fakeProcess{id: 1234, live: true}
 	}
@@ -183,6 +185,7 @@ func registeredContext(t *testing.T, c *controller) *executionContext {
 		"M1RuntimeLifecyclePreflight.json", "M1RuntimeLifecycleEvents.jsonl", "M1RuntimeLifecycleInstall.json",
 		"M1RuntimeLifecycleUpgrade.json", "M1RuntimeLifecycleRollback.json", "M1RuntimeLifecycleDigests.json",
 		"M1RuntimeLifecycleCleanup.json", "M1RuntimeLifecycleCloseout.json", "M1RuntimeLifecycleAttemptGuard.snapshot.json",
+		signedCaptureOutputClass,
 	}}
 	ctx := &executionContext{profile: p, profileDigest: digest(p), started: now, deadline: now.Add(time.Hour), physical: machineSHA, budget: b, consumed: true}
 	c.contexts[ctx] = &contextRecord{payload: c.payload, profileDigest: ctx.profileDigest, started: ctx.started, deadline: ctx.deadline, physical: ctx.physical, starts: 0, budget: b, consumed: true}
