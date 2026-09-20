@@ -219,6 +219,7 @@ class RealEntries(unittest.TestCase):
         self.assertEqual(status,401); self.assertIn("text/html",content_type)
         visible=DefaultVisibleText(); visible.feed(page)
         self.assertIn("Access is no longer available."," ".join(visible.parts))
+        self.assertNotIn("req-unauth-form",page)
 
     def test_agent_proposal_rejects_observation_that_became_stale(self):
         created=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"Agent stale","body":{"v":1},"request_id":"req-agent-stale-create"})
@@ -390,6 +391,10 @@ class RealEntries(unittest.TestCase):
                 previous=retry.fields.copy()
                 status,_,page=html_req("POST",base+retry.action,retry.fields,authorized=authorized)
                 self.assertEqual(status,expected_status,page)
+                if not authorized:
+                    self.assertIn("retry the exact same request",page)
+                    self.assertNotIn(previous["request_id"],page)
+                    continue  # The already-rendered recovery form remains the retry source.
                 self.assertIn("original result is still unknown",page)
                 retry=RetryForm(); retry.feed(page)
                 self.assertEqual(retry.fields,previous)
@@ -433,6 +438,10 @@ class RealEntries(unittest.TestCase):
                 previous=retry.fields.copy()
                 status,_,page=html_req("POST",base+retry.action,retry.fields,authorized=authorized)
                 self.assertEqual(status,expected_status)
+                if not authorized:
+                    self.assertIn("retry the exact same request",page)
+                    self.assertNotIn(previous["request_id"],page)
+                    continue  # Recover from the prior form after credential restoration.
                 self.assertIn("original result is still unknown",page)
                 retry=RetryForm(); retry.feed(page)
                 self.assertEqual(retry.fields,previous)

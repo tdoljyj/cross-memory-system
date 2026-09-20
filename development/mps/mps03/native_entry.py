@@ -50,7 +50,9 @@ class NativeHandler(BaseHTTPRequestHandler):
         return f'<details><summary>Technical details</summary><pre>{payload}</pre></details>'
     def _html_error(self,out):
         status=out.get("http_status") or 500
-        if status==401: message="Access is no longer available. Check your Native credential and reload this page."
+        if status==401:
+            message=("Access is no longer available. Restore your Native credential, then return to the previous form and retry the exact same request."
+                     if self.command=="POST" else "Access is no longer available. Check your Native credential and reload this page.")
         elif status==403: message="You do not have permission to open this page."
         elif status==404: message="This plan or page could not be found."
         elif status==409: message="This view is out of date. Reload it and review the latest plan."
@@ -177,8 +179,8 @@ class NativeHandler(BaseHTTPRequestHandler):
             create_form=p=="/create" and form_content
             confirm_form=len(parts)==3 and parts[0]=="object" and parts[2]=="confirm" and form_content
             f=None
-            f=self._form() if create_form or confirm_form else None
             self._authenticate(); self._check_origin()
+            f=self._form() if create_form or confirm_form else None
             if create_form:
                 try:
                     body=strict_json_loads(f["body_json"]) if "body_json" in f else {"details":f.get("details","")}

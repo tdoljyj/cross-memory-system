@@ -106,6 +106,21 @@ class ErrorBoundaries(unittest.TestCase):
                         self.assertEqual(response.status,408)
                         self.assertEqual(json.loads(response.read())["error"],"REQUEST_BODY_TIMEOUT")
                         conn.close()
+            native_auth="Basic "+base64.b64encode(("native:"+native_access).encode()).decode()
+            for auth,origin,expected in ((None,None,401),(native_auth,"https://other.example",403),(native_auth,None,413)):
+                with self.subTest(native_form_auth=bool(auth),origin=origin):
+                    conn=HTTPConnection("127.0.0.1",native.server_port,timeout=5)
+                    conn.putrequest("POST","/create")
+                    conn.putheader("Content-Type","application/x-www-form-urlencoded")
+                    conn.putheader("Content-Length","262145")
+                    if auth: conn.putheader("Authorization",auth)
+                    if origin: conn.putheader("Origin",origin)
+                    conn.endheaders()
+                    response=conn.getresponse()
+                    self.assertEqual(response.status,expected)
+                    self.assertIn("text/html",response.getheader("Content-Type"))
+                    response.read()
+                    conn.close()
         finally:
             for server,thread in ((native,native_thread),(agent,agent_thread),(gateway,gateway_thread),(denied,denied_thread)):
                 server.shutdown(); server.server_close(); thread.join(timeout=5)
