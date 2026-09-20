@@ -4,7 +4,7 @@ import json, os
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
-from .common import ProtocolError, request_content_length, strict_json_loads, strict_utf8_decode
+from .common import ProtocolError, bounded_request_body, strict_json_loads, strict_utf8_decode
 
 STORE_ERROR_STATUS = {
     "IDEMPOTENCY_CONFLICT": 409, "STALE_CONTEXT_REQUIRES_REFRESH": 409,
@@ -24,8 +24,7 @@ class Handler(BaseHTTPRequestHandler):
             super().log_message(fmt, *args)
 
     def _json(self):
-        n = request_content_length(self.headers)
-        raw = self.rfile.read(n) if n else b"{}"
+        raw = bounded_request_body(self) or b"{}"
         value = strict_json_loads(strict_utf8_decode(raw))
         if not isinstance(value, dict):
             raise ProtocolError("JSON_OBJECT_REQUIRED", "request body must be a JSON object", 400)

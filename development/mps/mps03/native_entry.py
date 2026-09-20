@@ -5,10 +5,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 try:
     from .client import GatewayClient
-    from .common import strict_json_loads, strict_utf8_decode, ProtocolError, request_content_length, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
+    from .common import strict_json_loads, strict_utf8_decode, ProtocolError, bounded_request_body, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
 except ImportError:
     from client import GatewayClient
-    from common import strict_json_loads, strict_utf8_decode, ProtocolError, request_content_length, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
+    from common import strict_json_loads, strict_utf8_decode, ProtocolError, bounded_request_body, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
 
 class NativeHandler(BaseHTTPRequestHandler):
     client: GatewayClient = None  # type: ignore
@@ -17,9 +17,9 @@ class NativeHandler(BaseHTTPRequestHandler):
     def log_message(self,fmt,*args):
         if os.environ.get("MPS03_HTTP_LOG")=="1": super().log_message(fmt,*args)
     def _raw(self,max_bytes=None):
-        n=request_content_length(self.headers)
-        if max_bytes is not None and n>max_bytes: raise ProtocolError("FORM_TOO_LARGE","form exceeds the supported size",413)
-        return self.rfile.read(n) if n else b""
+        if max_bytes is not None:
+            return bounded_request_body(self,max_bytes,"FORM_TOO_LARGE","form exceeds the supported size")
+        return bounded_request_body(self)
     def _body(self):
         value=strict_json_loads(strict_utf8_decode(self._raw() or b"{}"))
         if not isinstance(value,dict): raise ProtocolError("JSON_OBJECT_REQUIRED","request body must be a JSON object",400)

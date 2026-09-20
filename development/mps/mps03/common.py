@@ -7,6 +7,8 @@ NATIVE_GATEWAY_PREFIX = "mps03-native-gw-"
 AGENT_GATEWAY_PREFIX = "mps03-agent-gw-"
 NATIVE_ACCESS_PREFIX = "mps03-native-access-"
 AGENT_ACCESS_PREFIX = "mps03-agent-access-"
+MAX_JSON_REQUEST_BYTES = 1_048_576
+REQUEST_BODY_TIMEOUT_SECONDS = 5.0
 
 def require_secret_namespace(value: str, prefix: str, name: str) -> None:
     """Keep the four entry credentials disjoint even across separate processes."""
@@ -37,7 +39,7 @@ class ProtocolError(RuntimeError):
         return {"ok": False, "error": self.code, "message": self.message, "details": self.details}
 
 def request_content_length(headers) -> int:
-    """Accept one canonical ASCII decimal length, or an absent header for an empty body."""
+    """Accept one nonempty ASCII-decimal length, or an absent header for an empty body."""
     values = headers.get_all("Content-Length", [])
     if not values:
         return 0
@@ -47,6 +49,35 @@ def request_content_length(headers) -> int:
         return int(values[0])
     except ValueError:
         raise ProtocolError("INVALID_CONTENT_LENGTH", "invalid request length", 400) from None
+
+def bounded_request_body(handler, max_bytes: int = MAX_JSON_REQUEST_BYTES,
+                         too_large_code: str = "REQUEST_TOO_LARGE",
+                         too_large_message: str = "request body exceeds the supported size") -> bytes:
+    n = request_content_length(handler.headers)
+    if n > max_bytes:
+        raise ProtocolError(too_large_code, too_large_message, 413)
+    if not n:
+        return b""
+    deadline = time.monotonic() + REQUEST_BODY_TIMEOUT_SECONDS
+    previous_timeout = handler.connection.gettimeout()
+    chunks = []
+    remaining = n
+    try:
+        while remaining:
+            seconds_left = deadline - time.monotonic()
+            if seconds_left <= 0:
+                raise TimeoutError
+            handler.connection.settimeout(seconds_left)
+            chunk = handler.rfile.read1(min(remaining, 65536))
+            if not chunk:
+                raise ProtocolError("INCOMPLETE_REQUEST_BODY", "request body ended before declared length", 400)
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+    except TimeoutError:
+        raise ProtocolError("REQUEST_BODY_TIMEOUT", "request body read timed out", 408) from None
+    finally:
+        handler.connection.settimeout(previous_timeout)
 
 def strict_utf8_decode(raw: bytes) -> str:
     try:

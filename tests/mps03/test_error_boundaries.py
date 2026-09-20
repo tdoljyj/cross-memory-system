@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 REPO=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(REPO/"development"))
 from mps.mps03.client import GatewayClient
-from mps.mps03.common import ProtocolError, request_content_length
+from mps.mps03.common import ProtocolError, bounded_request_body, request_content_length
 from mps.mps03.gateway_http import Handler
 from mps.mps03.native_entry import NativeHandler
 from mps.mps03.agent_host_entry import AgentHandler
@@ -85,6 +85,27 @@ class ErrorBoundaries(unittest.TestCase):
                     self.assertEqual(response.status,400)
                     self.assertEqual(json.loads(response.read())["error"],"INVALID_CONTENT_LENGTH")
                     conn.close()
+                with self.subTest(port=port,length="oversized"):
+                    conn=HTTPConnection("127.0.0.1",port,timeout=5)
+                    conn.putrequest("POST",path)
+                    conn.putheader("Content-Length","1048577")
+                    for name,value in headers.items(): conn.putheader(name,value)
+                    conn.endheaders()
+                    response=conn.getresponse()
+                    self.assertEqual(response.status,413)
+                    self.assertEqual(json.loads(response.read())["error"],"REQUEST_TOO_LARGE")
+                    conn.close()
+                with self.subTest(port=port,length="unfinished"):
+                    with patch("mps.mps03.common.REQUEST_BODY_TIMEOUT_SECONDS",0.2):
+                        conn=HTTPConnection("127.0.0.1",port,timeout=5)
+                        conn.putrequest("POST",path)
+                        conn.putheader("Content-Length","1")
+                        for name,value in headers.items(): conn.putheader(name,value)
+                        conn.endheaders()
+                        response=conn.getresponse()
+                        self.assertEqual(response.status,408)
+                        self.assertEqual(json.loads(response.read())["error"],"REQUEST_BODY_TIMEOUT")
+                        conn.close()
         finally:
             for server,thread in ((native,native_thread),(agent,agent_thread),(gateway,gateway_thread),(denied,denied_thread)):
                 server.shutdown(); server.server_close(); thread.join(timeout=5)
@@ -96,6 +117,27 @@ class ErrorBoundaries(unittest.TestCase):
         with self.assertRaises(ProtocolError) as caught:
             request_content_length(headers)
         self.assertEqual(caught.exception.code,"INVALID_CONTENT_LENGTH")
+
+    def test_body_deadline_is_total_even_when_bytes_keep_arriving(self):
+        from email.message import Message
+        from types import SimpleNamespace
+        headers=Message()
+        headers.add_header("Content-Length","3")
+        class Connection:
+            timeout=None
+            def gettimeout(self): return self.timeout
+            def settimeout(self,value): self.timeout=value
+        class Reader:
+            def read1(self,n): return b"x"
+        connection=Connection()
+        handler=SimpleNamespace(headers=headers,connection=connection,rfile=Reader())
+        with patch("mps.mps03.common.REQUEST_BODY_TIMEOUT_SECONDS",0.15), \
+             patch("mps.mps03.common.time.monotonic",side_effect=[0,0,0.1,0.2]):
+            with self.assertRaises(ProtocolError) as caught:
+                bounded_request_body(handler)
+        self.assertEqual(caught.exception.status,408)
+        self.assertEqual(caught.exception.code,"REQUEST_BODY_TIMEOUT")
+        self.assertIsNone(connection.timeout)
 
     def test_store_conflict_is_http_409_for_gateway_native_form_and_api(self):
         class ConflictStore:
