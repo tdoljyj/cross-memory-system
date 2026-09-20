@@ -28,7 +28,9 @@ class NativeHandler(BaseHTTPRequestHandler):
         if status==401: self.send_header("WWW-Authenticate",'Basic realm="Clued Native"')
         self.end_headers(); self.wfile.write(b)
     def _send_html(self,status,markup):
-        b=markup.encode(); self.send_response(status); self.send_header("Content-Type","text/html; charset=utf-8"); self.send_header("Cache-Control","no-store"); self.send_header("Content-Length",str(len(b))); self.end_headers(); self.wfile.write(b)
+        b=markup.encode(); self.send_response(status); self.send_header("Content-Type","text/html; charset=utf-8"); self.send_header("Cache-Control","no-store"); self.send_header("Content-Length",str(len(b)));
+        if status==401: self.send_header("WWW-Authenticate",'Basic realm="Clued Native"')
+        self.end_headers(); self.wfile.write(b)
     def _forward(self,obj):
         return self._send_json(obj.get("http_status") or (409 if obj.get("ok") is False else 200),obj)
     def _authenticate(self):
@@ -42,6 +44,16 @@ class NativeHandler(BaseHTTPRequestHandler):
     def _technical(self,obj):
         payload=html.escape(json.dumps(obj,ensure_ascii=False,indent=2))
         return f'<details><summary>Technical details</summary><pre>{payload}</pre></details>'
+    def _html_error(self,out):
+        status=out.get("http_status") or 500
+        if status==401: message="Access is no longer available. Check your Native credential and reload this page."
+        elif status==403: message="You do not have permission to open this page."
+        elif status==404: message="This plan or page could not be found."
+        elif status==409: message="This view is out of date. Reload it and review the latest plan."
+        elif status>=500: message="Clued is temporarily unavailable. Reload this page to try again."
+        else: message="Could not open this page. Reload it or return to plans."
+        body=f'<h1>{html.escape(message)}</h1><p><a href="/">Back to plans</a></p>'+self._technical(out)
+        return self._send_html(status,self._page("Could not open page",body))
     def _content(self,value,omit_title=False):
         if isinstance(value,dict):
             fields=''.join(f'<li><strong>{html.escape(str(k))}</strong>: {self._content(v)}</li>' for k,v in value.items() if not (omit_title and k=="title"))
@@ -51,14 +63,36 @@ class NativeHandler(BaseHTTPRequestHandler):
         if value is None: return '<span>None</span>'
         return '<span class="content">'+html.escape(str(value))+'</span>'
     def _result(self,out,success_text,object_id=""):
-        if out.get("ok"):
-            message=success_text
-        elif out.get("error") in ("STALE_CONTEXT_REQUIRES_REFRESH","CONFIRMATION_TARGET_CHANGED"):
-            message="This plan changed. Refresh it, review the suggestion, then confirm again."
-        else:
-            message="The change was not saved. Review the plan and try again."
+        message=success_text
         link=f'<p><a href="/object/{html.escape(object_id)}">Review plan</a></p>' if object_id else '<p><a href="/">Back to plans</a></p>'
         return self._page("Result",f'<h1>{html.escape(message)}</h1>'+link+self._technical(out))
+    def _form_failure(self,out,fields,kind,object_id=""):
+        status=out.get("http_status") or 500
+        uncertain=status>=500
+        if uncertain:
+            message="We could not confirm the result. Retry this exact request to recover its original result."
+        elif out.get("error") in ("STALE_CONTEXT_REQUIRES_REFRESH","CONFIRMATION_TARGET_CHANGED"):
+            message="This plan changed. Review the latest suggestion before confirming again."
+        else:
+            message="This request was rejected. Review the details before trying again."
+        if kind=="create":
+            title=fields.get("title","Untitled")
+            detail_name="body_json" if "body_json" in fields else "details"
+            details=fields.get(detail_name,"")
+            submitted=f'<h2>Submitted plan</h2><p><strong>Title:</strong> {html.escape(title)}</p><pre>{html.escape(details)}</pre>'
+            if uncertain:
+                action='<form method="post" action="/create">'+''.join(f'<input type="hidden" name="{name}" value="{html.escape(fields.get(name,""),quote=True)}">' for name in ("title",detail_name,"request_id"))+'<button>Retry this exact request</button></form>'
+            else:
+                action=f'<form method="post" action="/create"><label>Title <input name="title" value="{html.escape(title,quote=True)}" required></label><label><br>Plan details<textarea name="{detail_name}">{html.escape(details)}</textarea></label><input type="hidden" name="request_id" value="{new_id("req")}"><button>Edit and submit as a new request</button></form>'
+            back='<p><a href="/">Back to plans</a></p>'
+        else:
+            submitted='<h2>Submitted suggestion</h2><p>Review the plan before making another change.</p>'
+            if uncertain:
+                action=f'<form method="post" action="/object/{html.escape(object_id,quote=True)}/confirm">'+''.join(f'<input type="hidden" name="{name}" value="{html.escape(fields.get(name,""),quote=True)}">' for name in ("proposal_id","state_stamp_json","request_id"))+'<button>Retry this exact confirmation</button></form>'
+            else: action=''
+            back=f'<p><a href="/object/{html.escape(object_id,quote=True)}/proposals">Review latest suggestions</a></p>'
+        body=f'<h1>{html.escape(message)}</h1>'+submitted+action+back+self._technical(out)
+        return self._send_html(status,self._page("Request result",body))
     def _obj_nav(self,oid):
         q=html.escape(oid); return f'<nav><a href="/object/{q}">Detail</a><a href="/object/{q}/proposals">Suggestions</a><a href="/object/{q}/history">History</a><a href="/object/{q}/connection">Connection & Context</a></nav>'
     def do_GET(self):
@@ -77,7 +111,7 @@ class NativeHandler(BaseHTTPRequestHandler):
                 return self._forward({"ok":True,"entry":"NATIVE","gateway":self.client.base_url,"state_stamp":obj.get("state_stamp"),"revision_id":obj.get("revision_id"),"adoption_id":obj.get("adoption_id"),"context_pack_digest":obj.get("context_pack_digest")})
             if p=="/":
                 listing=self.client.list_objects()
-                if not listing.get("ok"): return self._forward(listing)
+                if not listing.get("ok"): return self._html_error(listing)
                 objs=listing.get("objects",[]); lis=''.join(f'<li><a href="/object/{html.escape(o["object_id"])}">{html.escape(o.get("title") or o["object_id"])}</a></li>' for o in objs)
                 body=f'''<h1>Objects</h1><ul>{lis}</ul><h2>Create a plan</h2><form method="post" action="/create"><label>Title <input name="title" required></label><label><br>Plan details<textarea name="details"></textarea></label><input type="hidden" name="request_id" value="{new_id('req')}"><button>Create</button></form>'''
                 return self._send_html(200,self._page("Clued Native",body))
@@ -85,15 +119,15 @@ class NativeHandler(BaseHTTPRequestHandler):
                 oid=parts[1]; nav=self._obj_nav(oid)
                 if len(parts)==2:
                     o=self.client.read_object(oid)
-                    if not o.get("ok"): return self._forward(o)
+                    if not o.get("ok"): return self._html_error(o)
                     title=o.get("body",{}).get("title") if isinstance(o.get("body"),dict) else None
                     body=nav+"<h1>"+html.escape(title or "Plan details")+"</h1><h2>Plan content</h2>"+self._content(o.get("body"),omit_title=True)+self._technical(o)
                     return self._send_html(200,self._page("Plan details",body))
                 if len(parts)==3 and parts[2]=="proposals":
                     cur=self.client.read_object(oid)
-                    if not cur.get("ok"): return self._forward(cur)
+                    if not cur.get("ok"): return self._html_error(cur)
                     proposal_result=self.client.proposals(oid)
-                    if not proposal_result.get("ok"): return self._forward(proposal_result)
+                    if not proposal_result.get("ok"): return self._html_error(proposal_result)
                     props=proposal_result.get("proposals",[]); blocks=[]
                     for pr in props:
                         if pr.get("status")!="OPEN": continue
@@ -105,31 +139,43 @@ class NativeHandler(BaseHTTPRequestHandler):
                     body=nav+"<h1>Suggestions / diff / confirm</h1>"+(''.join(blocks) or '<p>No open suggestions.</p>'); return self._send_html(200,self._page("Suggestions",body))
                 if len(parts)==3 and parts[2]=="history":
                     h=self.client.history(oid)
-                    if not h.get("ok"): return self._forward(h)
+                    if not h.get("ok"): return self._html_error(h)
                     versions=''.join(f'<li><h2>Version {i}</h2>{self._content(row.get("body"))}{self._technical(row)}</li>' for i,row in enumerate(h.get("history",[]),1))
                     body=nav+"<h1>History</h1><ol>"+versions+"</ol>"+self._technical(h)
                     return self._send_html(200,self._page("History",body))
                 if len(parts)==3 and parts[2]=="connection":
                     o=self.client.read_object(oid)
-                    if not o.get("ok"): return self._forward(o)
+                    if not o.get("ok"): return self._html_error(o)
                     detail={"entry":"NATIVE","gateway":self.client.base_url,"revision_id":o.get("revision_id"),"adoption_id":o.get("adoption_id"),"state_stamp":o.get("state_stamp"),"context_pack_digest":o.get("context_pack_digest")}
                     body=nav+"<h1>Connection & context</h1><p>Connected to Clued. Your permissions are checked for each action.</p>"+self._technical(detail)
                     return self._send_html(200,self._page("Connection & context",body))
-            self._send_json(404,{"ok":False,"error":"NOT_FOUND"})
-        except ProtocolError as e:self._send_json(e.status,e.as_dict())
+            if p.startswith("/api/"): self._send_json(404,{"ok":False,"error":"NOT_FOUND"})
+            else: self._html_error({"ok":False,"error":"NOT_FOUND","http_status":404})
+        except ProtocolError as e:
+            if p=="/health" or p.startswith("/api/"): self._send_json(e.status,e.as_dict())
+            else: self._html_error({**e.as_dict(),"http_status":e.status})
     def do_POST(self):
         try:
             p=urlparse(self.path).path
             self._authenticate(); self._check_origin()
             if p=="/create" and self.headers.get("Content-Type","").startswith("application/x-www-form-urlencoded"):
-                f=self._form(); body=strict_json_loads(f["body_json"]) if "body_json" in f else {"details":f.get("details","")}
-                out=self.client.create_object(f.get("title","Untitled"),body,f.get("request_id",""))
+                f=self._form()
+                try:
+                    body=strict_json_loads(f["body_json"]) if "body_json" in f else {"details":f.get("details","")}
+                    out=self.client.create_object(f.get("title","Untitled"),body,f.get("request_id",""))
+                except ProtocolError as e: out={**e.as_dict(),"http_status":e.status}
                 status=200 if out.get("ok") else out.get("http_status",409)
+                if not out.get("ok"): return self._form_failure(out,f,"create")
                 return self._send_html(status,self._result(out,"Plan created.",out.get("object_id", "")))
             parts=[x for x in p.split('/') if x]
             if len(parts)==3 and parts[0]=="object" and parts[2]=="confirm" and self.headers.get("Content-Type","").startswith("application/x-www-form-urlencoded"):
-                f=self._form(); stamp=strict_json_loads(f.get("state_stamp_json","{}")); out=self.client.confirm(parts[1],f.get("proposal_id",""),stamp,f.get("request_id",""))
+                f=self._form()
+                try:
+                    stamp=strict_json_loads(f.get("state_stamp_json","{}"))
+                    out=self.client.confirm(parts[1],f.get("proposal_id",""),stamp,f.get("request_id",""))
+                except ProtocolError as e: out={**e.as_dict(),"http_status":e.status}
                 status=200 if out.get("ok") else out.get("http_status",409)
+                if not out.get("ok"): return self._form_failure(out,f,"confirm",parts[1])
                 return self._send_html(status,self._result(out,"Suggestion confirmed.",parts[1]))
             b=self._body()
             if p=="/api/objects": return self._forward(self.client.create_object(b.get("title","Untitled"),b.get("body",{}),b.get("request_id","")))

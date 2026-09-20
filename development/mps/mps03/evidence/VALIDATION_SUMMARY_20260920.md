@@ -17,7 +17,7 @@ Status: IMPLEMENTATION CANDIDATE / NON-PRODUCTION / REVALIDATION AFTER REVIEW FI
 Command:
 `python scripts/mps03/run_acceptance.py`
 
-Result after independent-review fixes: 39/39 PASS, 0 fail, 0 skipped. Coverage includes entry authentication and four disjoint credential namespaces passed through separate process environments without credential-bearing arguments, full-stamp and digest verification of the Agent's observation, Native form replay/diff and default human-readable content, normalized request-key replay, immutable confirmation scope/purpose rejection, PostgreSQL outcome regression, DSN identity rejection, loopback-only gateway URL and binding, proxy-free and redirect-free gateway transport, non-object proposal rejection, Native HTML error propagation, redacted database timeout and gateway errors, cross-user replay error mapping, structured gateway outage response, and malformed confirmation stamp rejection.
+Result after independent-review fixes: 40/40 PASS, 0 fail, 0 skipped. Coverage includes entry authentication and four disjoint credential namespaces passed through separate process environments without credential-bearing arguments, full-stamp and digest verification of the Agent's observation, Native form replay/diff and default human-readable content, same-key HTML recovery after a durable create or confirmation loses its response, user-readable HTML errors across all five Native pages while API errors remain JSON, normalized request-key replay, immutable confirmation scope/purpose rejection, PostgreSQL outcome regression, DSN identity rejection, loopback-only gateway URL and binding, proxy-free and redirect-free gateway transport, non-object proposal rejection, redacted database timeout and gateway errors, cross-user replay error mapping, structured gateway outage response, and malformed confirmation stamp rejection.
 Raw result: `evidence/mps03_acceptance.raw.txt`
 
 Command:
@@ -27,7 +27,7 @@ Result: Native, canonical reference gateway, and Agent Adapter ran as three dist
 Qualification remains local-reference-backend; no real third-party host PASS is claimed.
 Raw result: `evidence/cross_entry_evidence.raw.json`
 
-The earlier 16/16, 22/22, 26/26, 31/31, 32/32, 35/35, and 37/37 runs belong to prior PR heads and are superseded by the new 39/39 raw result. Their historical CI results remain bound to those prior SHAs.
+The earlier 16/16, 22/22, 26/26, 31/31, 32/32, 35/35, 37/37, and 39/39 runs belong to prior PR heads and are superseded by the new 40/40 raw result. Their historical CI results remain bound to those prior SHAs.
 
 ## CI runner policy
 

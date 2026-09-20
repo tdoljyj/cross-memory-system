@@ -1,11 +1,16 @@
-import base64, json, os, pathlib, re, socket, subprocess, sys, tempfile, time, unittest
+import base64, json, os, pathlib, re, socket, subprocess, sys, tempfile, threading, time, unittest
 from html.parser import HTMLParser
+from http.server import ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 REPO=pathlib.Path(__file__).resolve().parents[2]
 IMPL=REPO/"development"/"mps"
+sys.path.insert(0,str(IMPL))
+from mps03.client import GatewayClient
+from mps03.common import ProtocolError
+from mps03.native_entry import NativeHandler
 PY=sys.executable
 ENTRY_AUTH={}
 
@@ -18,6 +23,29 @@ class DefaultVisibleText(HTMLParser):
         if tag=="details": self.details_depth-=1
     def handle_data(self,data):
         if self.details_depth==0: self.parts.append(data)
+
+class RetryForm(HTMLParser):
+    def __init__(self):
+        super().__init__(); self.in_form=False; self.action=""; self.fields={}
+    def handle_starttag(self,tag,attrs):
+        a=dict(attrs)
+        if tag=="form" and not self.action:
+            self.in_form=True; self.action=a.get("action","")
+        elif tag=="input" and self.in_form and a.get("name"):
+            self.fields[a["name"]]=a.get("value","")
+    def handle_endtag(self,tag):
+        if tag=="form": self.in_form=False
+
+def html_req(method,url,fields=None):
+    headers=headers_for(url)
+    data=None if fields is None else urlencode(fields).encode()
+    if data is not None: headers["Content-Type"]="application/x-www-form-urlencoded"
+    request=Request(url,data=data,headers=headers,method=method)
+    try:
+        with urlopen(request,timeout=5) as response:
+            return response.status,response.headers.get("Content-Type",""),response.read().decode()
+    except HTTPError as error:
+        return error.code,error.headers.get("Content-Type",""),error.read().decode()
 
 def free_port():
     s=socket.socket(); s.bind(("127.0.0.1",0)); p=s.getsockname()[1]; s.close(); return p
@@ -237,10 +265,122 @@ class RealEntries(unittest.TestCase):
     def test_native_html_does_not_mask_gateway_read_failure(self):
         for path in ("/object/obj_missing", "/object/obj_missing/proposals", "/object/obj_missing/connection"):
             url=f"http://127.0.0.1:{self.pn}{path}"
-            with self.subTest(path=path), self.assertRaises(HTTPError) as caught:
-                urlopen(Request(url,headers=headers_for(url)),timeout=5)
-            self.assertEqual(caught.exception.code,404)
-            self.assertEqual(json.loads(caught.exception.read().decode())["error"],"OBJECT_NOT_FOUND")
+            with self.subTest(path=path):
+                status,content_type,page=html_req("GET",url)
+                self.assertEqual(status,404)
+                self.assertIn("text/html",content_type)
+                visible=DefaultVisibleText(); visible.feed(page)
+                self.assertIn("This plan or page could not be found."," ".join(visible.parts))
+                self.assertNotIn("OBJECT_NOT_FOUND"," ".join(visible.parts))
+                self.assertIn("OBJECT_NOT_FOUND",page)
+                self.assertIn('<summary>Technical details</summary>',page)
+            api=f"http://127.0.0.1:{self.pn}/api/objects/obj_missing"
+            status,payload=raw_req("GET",api,"")
+            self.assertEqual(status,404)
+            self.assertEqual(payload["error"],"OBJECT_NOT_FOUND")
+
+    def test_native_page_failures_and_lost_ack_recover_with_same_key(self):
+        gateway=GatewayClient(f"http://127.0.0.1:{self.pg}","NATIVE",self.native_secret)
+        gateway.start_session()
+        class LostAck:
+            base_url=gateway.base_url
+            token=gateway.token
+            first_create=None
+            first_confirm=None
+            list_failure=False
+            page_failure=False
+            def list_objects(self):
+                if self.list_failure:
+                    return {"ok":False,"error":"GATEWAY_UNAVAILABLE","http_status":503}
+                return gateway.list_objects()
+            def read_object(self,*args):
+                if self.page_failure:
+                    return {"ok":False,"error":"GATEWAY_UNAVAILABLE","http_status":503}
+                return gateway.read_object(*args)
+            def history(self,*args):
+                if self.page_failure:
+                    return {"ok":False,"error":"GATEWAY_UNAVAILABLE","http_status":503}
+                return gateway.history(*args)
+            def create_object(self,*args):
+                out=gateway.create_object(*args)
+                if self.first_create is None:
+                    self.first_create=out
+                    raise ProtocolError("GATEWAY_UNAVAILABLE","response lost after commit",503)
+                return out
+            def confirm(self,*args):
+                out=gateway.confirm(*args)
+                if self.first_confirm is None:
+                    self.first_confirm=out
+                    raise ProtocolError("GATEWAY_UNAVAILABLE","response lost after commit",503)
+                return out
+            def __getattr__(self,name): return getattr(gateway,name)
+        fake=LostAck()
+        class TestHandler(NativeHandler):
+            client=fake
+            access_secret=self.native_access
+        server=ThreadingHTTPServer(("127.0.0.1",0),TestHandler)
+        port=server.server_address[1]
+        ENTRY_AUTH[port]=ENTRY_AUTH[self.pn]
+        thread=threading.Thread(target=server.serve_forever,daemon=True); thread.start()
+        try:
+            base=f"http://127.0.0.1:{port}"
+            fake.list_failure=True
+            status,content_type,page=html_req("GET",base+"/")
+            self.assertEqual(status,503); self.assertIn("text/html",content_type)
+            visible=DefaultVisibleText(); visible.feed(page)
+            self.assertIn("Clued is temporarily unavailable."," ".join(visible.parts))
+            self.assertNotIn("GATEWAY_UNAVAILABLE"," ".join(visible.parts))
+            fake.list_failure=False
+
+            create={"title":"Lost response plan","details":"one unique plan","request_id":"req-lost-ack-create"}
+            status,content_type,page=html_req("POST",base+"/create",create)
+            self.assertEqual(status,503); self.assertIn("text/html",content_type)
+            self.assertIn("could not confirm the result",page)
+            self.assertNotIn("The change was not saved",page)
+            retry=RetryForm(); retry.feed(page)
+            self.assertEqual(retry.action,"/create")
+            self.assertEqual(retry.fields,create)
+            status,_,page=html_req("POST",base+retry.action,retry.fields)
+            self.assertEqual(status,200); self.assertIn("Plan created.",page)
+            replay=gateway.create_object(create["title"],{"details":create["details"]},create["request_id"])
+            self.assertEqual(replay,fake.first_create)
+            objects=gateway.list_objects()["objects"]
+            self.assertEqual(sum(o.get("title")==create["title"] for o in objects),1)
+            bad={"title":"Fix me","body_json":"{invalid","request_id":"req-invalid-form"}
+            status,content_type,page=html_req("POST",base+"/create",bad)
+            self.assertEqual(status,400); self.assertIn("text/html",content_type)
+            self.assertIn("{invalid",page)
+            self.assertIn("Edit and submit as a new request",page)
+            self.assertNotIn("Retry this exact request",page)
+
+            oid=fake.first_create["object_id"]
+            fake.page_failure=True
+            for path in (f"/object/{oid}",f"/object/{oid}/proposals",f"/object/{oid}/history",f"/object/{oid}/connection"):
+                with self.subTest(path=path):
+                    status,content_type,page=html_req("GET",base+path)
+                    self.assertEqual(status,503); self.assertIn("text/html",content_type)
+                    visible=DefaultVisibleText(); visible.feed(page)
+                    self.assertIn("Clued is temporarily unavailable."," ".join(visible.parts))
+                    self.assertNotIn("GATEWAY_UNAVAILABLE"," ".join(visible.parts))
+            status,payload=raw_req("GET",base+f"/api/objects/{oid}","")
+            self.assertEqual(status,503); self.assertEqual(payload["error"],"GATEWAY_UNAVAILABLE")
+            fake.page_failure=False
+            proposed=self.agent_propose(oid,{"details":"updated plan"})
+            self.assertTrue(proposed["ok"])
+            stamp=gateway.read_object(oid)["state_stamp"]
+            confirm={"proposal_id":proposed["proposal_id"],"state_stamp_json":json.dumps(stamp,separators=(",",":")),"request_id":"req-lost-ack-confirm"}
+            status,content_type,page=html_req("POST",base+f"/object/{oid}/confirm",confirm)
+            self.assertEqual(status,503); self.assertIn("text/html",content_type)
+            retry=RetryForm(); retry.feed(page)
+            self.assertEqual(retry.action,f"/object/{oid}/confirm")
+            self.assertEqual(retry.fields,confirm)
+            status,_,page=html_req("POST",base+retry.action,retry.fields)
+            self.assertEqual(status,200); self.assertIn("Suggestion confirmed.",page)
+            replay=gateway.confirm(oid,confirm["proposal_id"],stamp,confirm["request_id"])
+            self.assertEqual(replay,fake.first_confirm)
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=3)
+            ENTRY_AUTH.pop(port,None)
 
     def test_native_create_form_reuses_request_identity_on_retry(self):
         page_url=f"http://127.0.0.1:{self.pn}/"
