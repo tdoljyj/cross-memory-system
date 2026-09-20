@@ -20,7 +20,7 @@
     "m1_stage_successor_git_blob_sha1": "d9df0260d62f7cbc99b251036c00abb485f666bc",
     "m1_stage_successor_merge_commit": "324a1f96d60c5e374a6275b0bd382e6f7be1ee89",
     "lifecycle_contract_ref": "M1RuntimeLifecycleSmokeContract.v0.1.json",
-    "lifecycle_contract_git_blob_sha1": "6430869c661b5d42f0540032a3bbd569fd88ba77"
+    "lifecycle_contract_git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786"
   },
   "prerequisites": {
     "m1_06a_gate": "CLOSED_SUCCESS",
@@ -129,7 +129,7 @@
     "repository": "tdoljyj/cross-memory-system",
     "preparation_base_commit": "324a1f96d60c5e374a6275b0bd382e6f7be1ee89",
     "lifecycle_contract_path": "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.json",
-    "lifecycle_contract_git_blob_sha1": "6430869c661b5d42f0540032a3bbd569fd88ba77",
+    "lifecycle_contract_git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
     "required_effectful_owner_source_path": "TO_BE_CREATED_AS_REVIEWED_SUCCESSOR_BEFORE_FINAL_ISSUANCE",
     "required_effectful_owner_source_manifest_sha256": "TO_BE_BOUND_AFTER_IMPLEMENTATION_REVIEW",
     "required_effectful_owner_binary_sha256": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
