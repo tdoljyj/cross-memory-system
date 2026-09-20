@@ -416,6 +416,11 @@ func (c *controller) copyExact(ctx *executionContext, src, dst string, spec file
 	if e != nil {
 		return e
 	}
+	if e = c.sys.verifyWriteHandle(out, dst); e != nil {
+		_ = out.Close()
+		_ = os.Remove(dst)
+		return e
+	}
 	h := sha256.New()
 	n, we := io.Copy(io.MultiWriter(out, h), io.LimitReader(in, spec.bytes+1))
 	if we == nil && n != spec.bytes {
