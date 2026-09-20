@@ -1,0 +1,34 @@
+[
+  {
+    "argv": [
+      "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "-B",
+      "C:\\Users\\Windows\\AppData\\Local\\Temp\\clued-m108-reviewer-remediate\\scripts\\model-program\\m1-runtime-lifecycle-owner\\build.py",
+      "--toolchain-archive",
+      "C:\\Users\\Windows\\AppData\\Local\\Temp\\go1.27.1.windows-amd64.zip",
+      "--output",
+      "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-a"
+    ],
+    "ended_utc": "2026-09-20T11:23:50.752642+00:00",
+    "exit_code": 0,
+    "label": "a",
+    "output": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-a",
+    "started_utc": "2026-09-20T11:23:17.768047+00:00"
+  },
+  {
+    "argv": [
+      "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "-B",
+      "C:\\Users\\Windows\\AppData\\Local\\Temp\\clued-m108-reviewer-remediate\\scripts\\model-program\\m1-runtime-lifecycle-owner\\build.py",
+      "--toolchain-archive",
+      "C:\\Users\\Windows\\AppData\\Local\\Temp\\go1.27.1.windows-amd64.zip",
+      "--output",
+      "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-b"
+    ],
+    "ended_utc": "2026-09-20T11:24:24.951795+00:00",
+    "exit_code": 0,
+    "label": "b",
+    "output": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-b",
+    "started_utc": "2026-09-20T11:23:50.752642+00:00"
+  }
+]

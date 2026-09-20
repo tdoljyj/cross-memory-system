@@ -1,0 +1,27 @@
+{
+  "intermediate_repair_head": "3991a79f589ecd258b4339aac4f3f4843c3ddb37",
+  "objects": [
+    {
+      "bytes": 9135,
+      "git_blob_sha1": "c5b4a65a5330359921536bde4c27f9d361d29614",
+      "path": "scripts/model-program/m1-runtime-lifecycle-owner/source-manifest.json",
+      "sha256": "2f93920176846e40dd2cdf9596cf79cfe438dbaa5f94c44136dd59a7e3ecac99"
+    },
+    {
+      "bytes": 42486,
+      "git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
+      "path": "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.json",
+      "sha256": "b40040a1302620b965bdf6dbe2283d0d6d5f9413c8c784e4b65d9cd030ac7ee3"
+    },
+    {
+      "bytes": 37761,
+      "git_blob_sha1": "51b0083f74dd12318b7cdcdf3b939d31723de787",
+      "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json",
+      "sha256": "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3"
+    }
+  ],
+  "repair_base": "02384f219c3dddc027dd39640a313657286df197",
+  "source_closure_files": 31,
+  "source_freeze": "37bee117aaba72a088b6a2379d4daa2a93c2bce7",
+  "source_unchanged_during_qualification": true
+}

@@ -1,0 +1,13 @@
+{
+  "computer": "DESK-W-591",
+  "exact_head": "37bee117aaba72a088b6a2379d4daa2a93c2bce7",
+  "guard_exists": false,
+  "listener_18088": 0,
+  "llama_server_count": 0,
+  "phase": "POST",
+  "production_evidence_exists": false,
+  "runtime_root_exists": false,
+  "semantics": "POINT_IN_TIME / NOT_CONTINUOUS_MONITORING",
+  "tracked_status": "",
+  "utc": "2026-09-20T11:24:26.234397+00:00"
+}

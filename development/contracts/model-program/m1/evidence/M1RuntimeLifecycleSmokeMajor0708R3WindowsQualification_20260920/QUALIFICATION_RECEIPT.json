@@ -1,0 +1,89 @@
+{
+  "builds": [
+    {
+      "actual_artifact_rehash": {
+        "owner_binary": {
+          "bytes": 7488000,
+          "sha256": "a0dcf5ba4c8c8253aee5ec0ff918a20a559d61034a88f5fd1026363a35948704"
+        },
+        "windows_test_binary": {
+          "bytes": 12439040,
+          "sha256": "2de22f74b487a975e58706a5930605cd233ef78a581eb7444c976030b284d929"
+        }
+      },
+      "label": "a",
+      "source_manifest_sha256": "2f93920176846e40dd2cdf9596cf79cfe438dbaa5f94c44136dd59a7e3ecac99",
+      "test_summary": {
+        "fail": 0,
+        "skip": 0,
+        "subtest_pass": 21,
+        "top_level_pass": 59,
+        "windows_native_top_level_pass": 12
+      }
+    },
+    {
+      "actual_artifact_rehash": {
+        "owner_binary": {
+          "bytes": 7488000,
+          "sha256": "a0dcf5ba4c8c8253aee5ec0ff918a20a559d61034a88f5fd1026363a35948704"
+        },
+        "windows_test_binary": {
+          "bytes": 12439040,
+          "sha256": "2de22f74b487a975e58706a5930605cd233ef78a581eb7444c976030b284d929"
+        }
+      },
+      "label": "b",
+      "source_manifest_sha256": "2f93920176846e40dd2cdf9596cf79cfe438dbaa5f94c44136dd59a7e3ecac99",
+      "test_summary": {
+        "fail": 0,
+        "skip": 0,
+        "subtest_pass": 21,
+        "top_level_pass": 59,
+        "windows_native_top_level_pass": 12
+      }
+    }
+  ],
+  "commands": [
+    {
+      "argv": [
+        "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "C:\\Users\\Windows\\AppData\\Local\\Temp\\clued-m108-reviewer-remediate\\scripts\\model-program\\m1-runtime-lifecycle-owner\\build.py",
+        "--toolchain-archive",
+        "C:\\Users\\Windows\\AppData\\Local\\Temp\\go1.27.1.windows-amd64.zip",
+        "--output",
+        "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-a"
+      ],
+      "ended_utc": "2026-09-20T11:23:50.752642+00:00",
+      "exit_code": 0,
+      "label": "a",
+      "output": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-a",
+      "started_utc": "2026-09-20T11:23:17.768047+00:00"
+    },
+    {
+      "argv": [
+        "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "C:\\Users\\Windows\\AppData\\Local\\Temp\\clued-m108-reviewer-remediate\\scripts\\model-program\\m1-runtime-lifecycle-owner\\build.py",
+        "--toolchain-archive",
+        "C:\\Users\\Windows\\AppData\\Local\\Temp\\go1.27.1.windows-amd64.zip",
+        "--output",
+        "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-b"
+      ],
+      "ended_utc": "2026-09-20T11:24:24.951795+00:00",
+      "exit_code": 0,
+      "label": "b",
+      "output": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-0708-r3-b",
+      "started_utc": "2026-09-20T11:23:50.752642+00:00"
+    }
+  ],
+  "effectful_authority_issued": false,
+  "independent_review_pass": false,
+  "issuer_root_bound": false,
+  "model_execution_authorized": false,
+  "observation_limit": "PRE_POST_ONLY / NOT_CONTINUOUS",
+  "owner_binary_executed": false,
+  "qualification_status": "PASS / AUTHOR_QUALIFICATION_ONLY",
+  "source_freeze": "37bee117aaba72a088b6a2379d4daa2a93c2bce7",
+  "source_manifest_sha256": "2f93920176846e40dd2cdf9596cf79cfe438dbaa5f94c44136dd59a7e3ecac99"
+}
