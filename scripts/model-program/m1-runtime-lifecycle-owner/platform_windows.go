@@ -3,6 +3,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,6 +22,14 @@ var (
 	kernel32                  = syscall.NewLazyDLL("kernel32.dll")
 	procGetWindowsDirectoryW  = kernel32.NewProc("GetWindowsDirectoryW")
 	procGetFileAttributesW    = kernel32.NewProc("GetFileAttributesW")
+	procGetFinalPathNameByHandleW = kernel32.NewProc("GetFinalPathNameByHandleW")
+	procGetVolumePathNameW    = kernel32.NewProc("GetVolumePathNameW")
+	procGetVolumeInformationW = kernel32.NewProc("GetVolumeInformationW")
+	procLocalFree             = kernel32.NewProc("LocalFree")
+	advapi32                  = syscall.NewLazyDLL("advapi32.dll")
+	procGetFileSecurityW      = advapi32.NewProc("GetFileSecurityW")
+	procGetSecurityDescriptorOwner = advapi32.NewProc("GetSecurityDescriptorOwner")
+	procConvertSidToStringSidW = advapi32.NewProc("ConvertSidToStringSidW")
 	procFindFirstStreamW      = kernel32.NewProc("FindFirstStreamW")
 	procFindNextStreamW       = kernel32.NewProc("FindNextStreamW")
 	procFindClose             = kernel32.NewProc("FindClose")
@@ -33,6 +44,8 @@ const (
 	movefileWriteThrough       = 0x00000008
 	replacefileWriteThrough    = 0x00000001
 	errorHandleEOF             = syscall.Errno(38)
+	ownerSecurityInformation   = 0x00000001
+	daclSecurityInformation    = 0x00000004
 )
 
 func nonzeroCallError(e error) error {
@@ -104,6 +117,169 @@ func (realPlatform) pathIsReparse(path string) (bool, error) {
 		return false, fail("WINDOWS_FILE_ATTRIBUTES_FAILED")
 	}
 	return uint32(attrs)&fileAttributeReparsePoint != 0, nil
+}
+
+func finalPathFromHandle(h syscall.Handle) (string, error) {
+	buf := make([]uint16, 32768)
+	n, _, er := procGetFinalPathNameByHandleW.Call(
+		uintptr(h),
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(len(buf)),
+		0,
+	)
+	if n == 0 || n >= uintptr(len(buf)) {
+		if ce := nonzeroCallError(er); ce != nil {
+			return "", ce
+		}
+		return "", fail("HANDLE_RESOLVED_CANONICAL_PATH_INVALID")
+	}
+	p := syscall.UTF16ToString(buf[:n])
+	if strings.HasPrefix(p, `\\?\UNC\`) {
+		return "", fail("REPARSE_POINT_OR_PATH_ESCAPE_DETECTED")
+	}
+	p = strings.TrimPrefix(p, `\\?\`)
+	p = filepath.Clean(p)
+	if !filepath.IsAbs(p) || filepath.VolumeName(p) == "" {
+		return "", fail("HANDLE_RESOLVED_CANONICAL_PATH_INVALID")
+	}
+	return p, nil
+}
+
+func (realPlatform) finalPath(path string) (string, error) {
+	f, e := os.Open(path)
+	if e != nil {
+		return "", e
+	}
+	defer f.Close()
+	return finalPathFromHandle(syscall.Handle(f.Fd()))
+}
+
+func volumeIdentity(path string) (string, string, error) {
+	p, e := syscall.UTF16PtrFromString(path)
+	if e != nil {
+		return "", "", e
+	}
+	root := make([]uint16, 32768)
+	ok, _, er := procGetVolumePathNameW.Call(
+		uintptr(unsafe.Pointer(p)),
+		uintptr(unsafe.Pointer(&root[0])),
+		uintptr(len(root)),
+	)
+	if ok == 0 {
+		if ce := nonzeroCallError(er); ce != nil {
+			return "", "", ce
+		}
+		return "", "", fail("GUARD_PARENT_FILESYSTEM_IDENTITY_FAILED")
+	}
+	fs := make([]uint16, 64)
+	var serial uint32
+	ok, _, er = procGetVolumeInformationW.Call(
+		uintptr(unsafe.Pointer(&root[0])),
+		0, 0,
+		uintptr(unsafe.Pointer(&serial)),
+		0, 0,
+		uintptr(unsafe.Pointer(&fs[0])),
+		uintptr(len(fs)),
+	)
+	if ok == 0 {
+		if ce := nonzeroCallError(er); ce != nil {
+			return "", "", ce
+		}
+		return "", "", fail("GUARD_PARENT_FILESYSTEM_IDENTITY_FAILED")
+	}
+	return strings.ToUpper(syscall.UTF16ToString(fs)), fmt.Sprintf("%08x", serial), nil
+}
+
+func fileSecurityIdentity(path string) (string, string, error) {
+	p, e := syscall.UTF16PtrFromString(path)
+	if e != nil {
+		return "", "", e
+	}
+	var needed uint32
+	securityInfo := uintptr(ownerSecurityInformation | daclSecurityInformation)
+	procGetFileSecurityW.Call(
+		uintptr(unsafe.Pointer(p)), securityInfo, 0, 0,
+		uintptr(unsafe.Pointer(&needed)),
+	)
+	if needed == 0 || needed > 1<<20 {
+		return "", "", fail("GUARD_PARENT_SECURITY_IDENTITY_FAILED")
+	}
+	buf := make([]byte, needed)
+	ok, _, er := procGetFileSecurityW.Call(
+		uintptr(unsafe.Pointer(p)), securityInfo,
+		uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)),
+		uintptr(unsafe.Pointer(&needed)),
+	)
+	if ok == 0 {
+		if ce := nonzeroCallError(er); ce != nil {
+			return "", "", ce
+		}
+		return "", "", fail("GUARD_PARENT_SECURITY_IDENTITY_FAILED")
+	}
+	var owner uintptr
+	var defaulted uint32
+	ok, _, er = procGetSecurityDescriptorOwner.Call(
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(unsafe.Pointer(&owner)),
+		uintptr(unsafe.Pointer(&defaulted)),
+	)
+	if ok == 0 || owner == 0 {
+		if ce := nonzeroCallError(er); ce != nil {
+			return "", "", ce
+		}
+		return "", "", fail("GUARD_PARENT_SECURITY_IDENTITY_FAILED")
+	}
+	var sidText uintptr
+	ok, _, er = procConvertSidToStringSidW.Call(owner, uintptr(unsafe.Pointer(&sidText)))
+	if ok == 0 || sidText == 0 {
+		if ce := nonzeroCallError(er); ce != nil {
+			return "", "", ce
+		}
+		return "", "", fail("GUARD_PARENT_SECURITY_IDENTITY_FAILED")
+	}
+	defer procLocalFree.Call(sidText)
+	sid := syscall.UTF16ToString((*[1 << 15]uint16)(unsafe.Pointer(sidText))[:])
+	sum := sha256.Sum256(buf[:needed])
+	return sid, hex.EncodeToString(sum[:]), nil
+}
+
+func (sys realPlatform) directoryIdentity(path string) (directoryIdentity, error) {
+	f, e := os.Open(path)
+	if e != nil {
+		return directoryIdentity{}, e
+	}
+	defer f.Close()
+	st, e := f.Stat()
+	if e != nil {
+		return directoryIdentity{}, e
+	}
+	if !st.IsDir() {
+		return directoryIdentity{}, fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
+	}
+	canonical, e := finalPathFromHandle(syscall.Handle(f.Fd()))
+	if e != nil {
+		return directoryIdentity{}, e
+	}
+	var info syscall.ByHandleFileInformation
+	if e = syscall.GetFileInformationByHandle(syscall.Handle(f.Fd()), &info); e != nil {
+		return directoryIdentity{}, e
+	}
+	fsType, serial, e := volumeIdentity(canonical)
+	if e != nil {
+		return directoryIdentity{}, e
+	}
+	ownerSID, securitySHA, e := fileSecurityIdentity(canonical)
+	if e != nil {
+		return directoryIdentity{}, e
+	}
+	return directoryIdentity{
+		canonicalPath: canonical,
+		filesystemType: fsType,
+		volumeSerial: serial,
+		fileID: fmt.Sprintf("%08x%08x", info.FileIndexHigh, info.FileIndexLow),
+		ownerSID: ownerSID,
+		securityDescriptorSHA256: securitySHA,
+	}, nil
 }
 
 func (realPlatform) hardlinkCount(path string) (uint32, error) {
