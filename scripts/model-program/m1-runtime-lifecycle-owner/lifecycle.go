@@ -877,6 +877,82 @@ func (c *controller) removeUnverifiedInitialCurrent(ctx *executionContext) error
 	return os.Remove(path)
 }
 
+func partialSlotAllowed(specs map[string]fileSpec) map[string]bool {
+	allowed := map[string]bool{
+		".": true,
+		"manifest.json": false,
+		"payload": true,
+		filepath.Join("payload", "model"): true,
+		filepath.Join("payload", "model", "Qwen3.5-0.8B-Q8_0.gguf"): false,
+		filepath.Join("payload", "runtime"): true,
+		filepath.Join("payload", "runtime", "llama-b11033-bin-win-vulkan-x64.zip"): false,
+		filepath.Join("payload", "runtime", "b11033-vulkan"): true,
+	}
+	for name := range specs {
+		allowed[filepath.Join("payload", "runtime", "b11033-vulkan", name)] = false
+	}
+	return allowed
+}
+
+func (c *controller) removePartialSlotIfSafe(root string, specs map[string]fileSpec) error {
+	if !samePath(root, slotRootFor(c.paths, revisionA)) && !samePath(root, slotRootFor(c.paths, revisionB)) {
+		return fail("REPARSE_POINT_OR_PATH_ESCAPE_DETECTED")
+	}
+	if _, e := os.Lstat(root); os.IsNotExist(e) {
+		return nil
+	} else if e != nil {
+		return e
+	}
+	allowed := partialSlotAllowed(specs)
+	type row struct{ path, rel string; dir bool }
+	rows := []row{}
+	e := filepath.WalkDir(root, func(path string, d os.DirEntry, er error) error {
+		if er != nil {
+			return er
+		}
+		if !withinPath(root, path) {
+			return fail("REPARSE_POINT_OR_PATH_ESCAPE_DETECTED")
+		}
+		if e := c.verifySafeExistingPath(path); e != nil {
+			return e
+		}
+		rel, er := filepath.Rel(root, path)
+		if er != nil {
+			return er
+		}
+		wantDir, ok := allowed[rel]
+		if !ok || wantDir != d.IsDir() {
+			return faild("UNEXPECTED_PREEXISTING_SLOT_OR_EVIDENCE_ENTRY", rel)
+		}
+		rows = append(rows, row{path:path, rel:rel, dir:d.IsDir()})
+		return nil
+	})
+	if e != nil {
+		return e
+	}
+	sort.Slice(rows, func(i,j int) bool {
+		di := strings.Count(rows[i].rel, string(filepath.Separator))
+		dj := strings.Count(rows[j].rel, string(filepath.Separator))
+		if di != dj { return di > dj }
+		return rows[i].rel > rows[j].rel
+	})
+	for _, row := range rows {
+		if samePath(row.path, root) {
+			continue
+		}
+		if e := c.verifySafeExistingPath(row.path); e != nil {
+			return e
+		}
+		if e := os.Remove(row.path); e != nil {
+			return e
+		}
+	}
+	if e := c.verifySafeExistingPath(root); e != nil {
+		return e
+	}
+	return os.Remove(root)
+}
+
 func (c *controller) runtimeExpectedEntries(deadline time.Time) (map[string]bool, error) {
 	source, e := c.attestSource(deadline)
 	if e != nil {
