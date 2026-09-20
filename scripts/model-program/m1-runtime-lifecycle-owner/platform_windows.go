@@ -246,7 +246,7 @@ func parseExactEnvironment(env []string) (map[string]string, error) {
 }
 
 func validateLaunchEnvelope(sys realPlatform, launch launchEnvelope) error {
-	if !filepath.IsAbs(launch.executable) || !filepath.IsAbs(launch.cwd) || len(launch.argv) != 23 {
+	if !filepath.IsAbs(launch.executable) || !filepath.IsAbs(launch.cwd) || len(launch.argv) != 22 {
 		return fail("EXECUTABLE_ARGV_ENDPOINT_OR_PROCESS_OWNERSHIP_DRIFT")
 	}
 	slot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Clean(launch.cwd))))
