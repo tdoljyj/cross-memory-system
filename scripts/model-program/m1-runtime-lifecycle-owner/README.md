@@ -21,7 +21,7 @@ The child launch envelope is derived internally from the verified active slot. T
 
 The fixed production sequence is:
 
-1. verify exact issued profile, whole-profile Owner signature, source/binary bindings, device identity, source payload, guard parent, absence preconditions, and free loopback port;
+1. verify exact issued profile, whole-profile Owner signature, source/binary bindings, device identity, source payload, the separately provisioned guard-parent evidence hash plus signed live directory identity (handle-resolved canonical path, NTFS volume, file ID, owner/ACL digest), absence preconditions, and free loopback port;
 2. atomically `CREATE_NEW` the persistent one-shot Attempt Guard as the first profile-owned filesystem write;
 3. create only exact test/evidence directories;
 4. materialize and verify revision A, publish transition 1, probe A;
@@ -29,12 +29,12 @@ The fixed production sequence is:
 6. reverify A, publish transition 3, probe A rollback;
 7. reattest source payload, stop all owned processes, remove only the verified test-owned lifecycle tree, retain guard/evidence, and verify closeout.
 
-Upgrade probe failure may only publish transition `3 RECOVERY B->A recovery_of=2`, then terminal failure. Rollback probe failure may only publish transition `4 RECOVERY A->B recovery_of=3`, then terminal failure. No other transition graph is accepted.
+Before A activation, a partial A slot is removed only when every remaining entry is proven to be within the exact allowed slot shape and free of reparse escape; otherwise it is retained for forensics. Before B activation, verified A must remain active and the same safe-partial cleanup rule applies to B. If A was activated but its install probe fails, `current.json` is removed iff it still resolves to the exact unverified transition-1 A; the runtime root and evidence are retained. Upgrade probe failure may only publish transition `3 RECOVERY B->A recovery_of=2`, then terminal failure. Rollback probe failure may only publish transition `4 RECOVERY A->B recovery_of=3`, then terminal failure. No other transition graph is accepted.
 
 ## Qualification tests
 
-`owner_test.go` exercises fixed CLI rejection, candidate non-execution, deliberately unbound trust root, environment-pollution resistance, exact launch derivation, transition-graph rejection, exact temp names, current-manifest fault points (old-or-new complete bytes), path escape/symlink rejection, process ownership anti-forgery, strict static scope binding, whole-profile signature protection, strict JSON, and loopback-only request construction.
+`owner_test.go` exercises fixed CLI rejection, candidate non-execution, deliberately unbound trust root, environment-pollution resistance, exact launch derivation, transition-graph rejection, exact temp names, current-manifest fault points (old-or-new complete bytes), handle-resolved path escape/reparse rejection, guard-parent live-identity drift, append-target substitution, process ownership anti-forgery, reviewed-candidate semantic binding, strict JSON, and loopback-only request construction.
 
-`platform_windows_test.go` adds Windows-only checks for exact launch-envelope validation, native current replacement, NTFS named ADS rejection, and reparse-point rejection. These tests use only test-owned temporary paths and never use the M1-08 production guard/test/source paths.
+`platform_windows_test.go` adds Windows-only checks for exact launch-envelope validation, native current replacement, NTFS named ADS rejection, hardlink detection, reparse-point rejection, trusted Windows-directory resolution, and handle-resolved directory identity. These tests use only test-owned temporary paths and never use the M1-08 production guard/test/source paths.
 
-Run `python build.py --output <absolute-path>` to verify the exact source manifest, run non-effectful tests/vet, compile the Windows test binary, and build the Windows owner executable with the source-manifest SHA-256 injected into the binary. The build script never executes the owner binary.
+Run `python -B build.py --toolchain-archive <exact-go1.27.1-windows-amd64.zip> --output <new-absolute-path>` to verify the exact Contract/Profile objects, source manifest, complete official Go toolchain archive/tree and compiler/linker identities; then run non-effectful tests/vet, compile the Windows test binary, and build the Windows owner executable with the source-manifest SHA-256 injected into the binary. The helper reconstructs its build environment without caller `PATH`/`GOFLAGS` and never executes the owner binary.
