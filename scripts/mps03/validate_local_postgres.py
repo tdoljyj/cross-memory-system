@@ -72,7 +72,19 @@ where object_id='"""+oid+"' and action in ('read','propose','update');")
     if observed['read_state_stamp']['authorization_generation']!=2 or observed['state_stamp']['authorization_generation']!=3: raise AssertionError('Agent read/propose generations were not separated')
     native_observed=store.read_object(native,oid)
     if native_observed['read_state_stamp']['authorization_generation']!=4 or native_observed['state_stamp']['authorization_generation']!=5: raise AssertionError('Native read/update generations were not separated')
+    foreign_change=json.loads(sql("select clued_private.mps_register_change_set('"+oid+"','foreign-change-1','{\"mode\":\"REPLACE_JSON_V1\",\"content\":{\"value\":99}}'::jsonb)::text;"))
+    foreign_pack=store._read_for(store.native_principal,oid,'update')
+    foreign_intent=json.loads(sql("select clued_private.mps_issue_mutation_intent(jsonb_build_object("+
+        "'context_pack_digest','"+foreign_pack['context_pack_digest']+"','object_id','"+oid+"','operation','update',"+
+        "'proposal_or_change_id','foreign-change-1','proposal_or_change_digest','"+foreign_change['change_digest']+"',"+
+        "'target_revision',jsonb_build_object('mode','DERIVE_FROM_EXACT_CHANGE','change_id','foreign-change-1','change_digest','"+foreign_change['change_digest']+"'),"+
+        "'adoption_scope','object','adoption_purpose','foreign_workflow'))::text;"))
+    if any(item['proposal_id']==foreign_intent['intent_id'] for item in store.list_proposals(native,oid)['proposals']): raise AssertionError('foreign intent listed as Agent proposal')
+    foreign_rejected=store.confirm_proposal(native,oid,foreign_intent['intent_id'],native_observed['state_stamp'],'review-foreign-001')
+    if foreign_rejected.get('error')!='MPS_INTENT_NOT_FOUND': raise AssertionError('foreign intent accepted through MPS-03 confirm')
     proposal=store.create_proposal(agent,oid,{'value':2},observed['state_stamp'])
+    repeated_uncommitted=store.create_proposal(agent,oid,{'value':2},observed['state_stamp'])
+    if repeated_uncommitted['proposal_id']==proposal['proposal_id'] or repeated_uncommitted['confirmation_intent']['proposal_or_change_id']!=proposal['confirmation_intent']['proposal_or_change_id']: raise AssertionError('identical pending suggestion did not reuse ChangeSet with a fresh intent')
     committed=store.confirm_proposal(native,oid,proposal['proposal_id'],native_observed['state_stamp'],'review-confirm-001')
     confirmed_replay=store.confirm_proposal(native,oid,proposal['proposal_id'],native_observed['state_stamp'],'review-confirm-001')
     if committed != confirmed_replay: raise AssertionError('confirm replay changed')
@@ -111,6 +123,14 @@ where object_id='"""+oid+"' and action in ('read','propose','update');")
         store._json=original_json
     if not interleaved['done'] or consistent_old_read['revision_id']!=second_commit['revision_id'] or consistent_old_read['body']!={'value':3}: raise AssertionError('concurrent read mixed stamp and body')
     if store.read_object(agent,oid)['body']!={'value':4}: raise AssertionError('interleaved confirmation did not advance Current')
+    repeated_observed=store.read_object(agent,oid)
+    repeated=store.create_proposal(agent,oid,{'value':2},repeated_observed['state_stamp'])
+    if repeated['proposal_id']==proposal['proposal_id'] or repeated['confirmation_intent']['target_revision'].get('mode')!='PREMATERIALIZED' or repeated['confirmation_intent']['target_revision'].get('revision_id')!=committed['revision_id']: raise AssertionError('previously materialized content was not bound to the exact prior Revision')
+    visible_repeated=[item for item in store.list_proposals(native,oid)['proposals'] if item['proposal_id']==repeated['proposal_id']]
+    if len(visible_repeated)!=1 or visible_repeated[0]['proposed_body']!={'value':2}: raise AssertionError('re-adoption suggestion lost its proposed body')
+    repeated_native=store.read_object(native,oid)
+    repeated_commit=store.confirm_proposal(native,oid,repeated['proposal_id'],repeated_native['state_stamp'],'review-confirm-004')
+    if not repeated_commit.get('ok') or store.read_object(agent,oid)['body']!={'value':2}: raise AssertionError('previously proposed content could not be re-adopted')
     before=int(sql('select count(*) from clued_private.mps_objects;'))
     sql("create or replace function clued_private.mps_commit_mutation(p_authority_domain_id text,p_stable_request_principal_id text,p_request_id text,p_input jsonb) returns jsonb language sql as $$ select '{\"status\":\"conflict\",\"error\":\"INJECTED_CONFLICT\"}'::jsonb $$;")
     try:
@@ -119,6 +139,6 @@ where object_id='"""+oid+"' and action in ('read','propose','update');")
     except RuntimeError as error:
         if 'MPS03_CREATE_NOT_COMMITTED' not in str(error): raise
     if int(sql('select count(*) from clued_private.mps_objects;'))!=before: raise AssertionError('noncommitted create left a bootstrap object')
-    print(json.dumps({'qualification':'ISOLATED_LOCAL_POSTGRES_WITH_MPS02B_COMPAT_SHIM' if args.compat_shim else 'ISOLATED_LOCAL_POSTGRES_UNMODIFIED_SOURCES','source_sha256':source_hashes,'all_pass':True,'same_create_outcome_after_later_current':True,'same_confirm_outcome_after_later_current':True,'different_payload_conflict':True,'agent_sees_new_current':True,'stale_agent_proposal_rejected':True,'altered_agent_stamp_rejected':True,'distinct_allowed_action_generations':True,'interleaved_read_keeps_stamp_and_body_together':True,'noncommitted_create_rolled_back':True,'container_removed_on_exit':True},indent=2))
+    print(json.dumps({'qualification':'ISOLATED_LOCAL_POSTGRES_WITH_MPS02B_COMPAT_SHIM' if args.compat_shim else 'ISOLATED_LOCAL_POSTGRES_UNMODIFIED_SOURCES','source_sha256':source_hashes,'all_pass':True,'same_create_outcome_after_later_current':True,'same_confirm_outcome_after_later_current':True,'different_payload_conflict':True,'agent_sees_new_current':True,'stale_agent_proposal_rejected':True,'altered_agent_stamp_rejected':True,'distinct_allowed_action_generations':True,'interleaved_read_keeps_stamp_and_body_together':True,'identical_pending_suggestion_reuses_change_set':True,'previously_proposed_body_can_be_readopted':True,'foreign_intent_excluded_from_list_and_confirm':True,'noncommitted_create_rolled_back':True,'container_removed_on_exit':True},indent=2))
 finally:
     docker('rm','-f',container)

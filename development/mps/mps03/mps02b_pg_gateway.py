@@ -11,7 +11,7 @@ NON-PRODUCTION ONLY. This module deliberately reuses the exact durable primitive
 It does not reimplement Current/CAS/Receipt semantics in the entry adapters.
 """
 from __future__ import annotations
-import argparse, base64, json, os, re, secrets, shutil, subprocess, threading
+import argparse, base64, ipaddress, json, os, re, secrets, shutil, subprocess, threading
 from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 
@@ -24,6 +24,7 @@ except ImportError:
 
 EXPECTED_NONPROD_TARGET = "clued-auth-test/uscrdifznmlvczcekqpw"
 EXPECTED_PROJECT_REF = "uscrdifznmlvczcekqpw"
+MPS03_PROPOSAL_PURPOSE = "mps03_accept_agent_proposal"
 
 
 def _assert_nonprod_dsn(dsn: str) -> None:
@@ -62,6 +63,15 @@ def _assert_entry_bindings(native_principal: str, agent_principal: str,
     if (not isinstance(native_secret,str) or not isinstance(agent_secret,str)
             or len(native_secret)<32 or len(agent_secret)<32 or native_secret == agent_secret):
         raise RuntimeError("Native and Agent gateway secrets must be distinct and at least 32 characters")
+
+
+def _assert_loopback_host(host: str) -> None:
+    try:
+        loopback = host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = False
+    if not loopback:
+        raise RuntimeError("MPS-03 gateway must bind to loopback")
 
 
 def _b64(value: str) -> str:
@@ -397,8 +407,6 @@ from clued_private.mps_objects o where o.user_id=({_t('uid')})::uuid;
         if not observed_digest:
             raise ProtocolError("STATE_STAMP_DIGEST_REQUIRED","Agent proposal must bind the exact state it observed",400)
         observed_stamp={k:v for k,v in observed_state_stamp.items() if k!="state_stamp_digest"}
-        change_id=new_id("chg")
-        change_body={"mode":"REPLACE_JSON_V1","content":proposed_body}
         sql=f"""
 with cp as (
  select clued_private.mps_issue_context_pack({_t('oid')},{_t('domain')},{_t('principal')},'propose','[]'::jsonb,null) p
@@ -412,15 +420,32 @@ with cp as (
  select guard.p agent_pack,native_pack.p write_pack from guard,native_pack
  where ((guard.p#>'{{context_pack,composite_state_stamp}}') - 'authorization_generation')
    = ((native_pack.p#>'{{context_pack,composite_state_stamp}}') - 'authorization_generation')
+), prior as (
+ select r.revision_id,r.revision_digest from clued_private.mps_revisions r
+ where r.object_id={_t('oid')} and r.revision_digest=clued_private.mps_json_v1_sha256({_j('body')})
+), desired as (
+ select case when prior.revision_id is null then
+  jsonb_build_object('mode','REPLACE_JSON_V1','content',{_j('body')})
+ else jsonb_build_object('mode','ADOPT_PREMATERIALIZED_V1',
+  'revision_id',prior.revision_id,'revision_digest',prior.revision_digest) end change_body,
+  prior.revision_id,prior.revision_digest
+ from aligned left join prior on true
 ), ch as (
- select clued_private.mps_register_change_set({_t('oid')},{_t('change_id')},{_j('change_body')}) c from aligned
+ select clued_private.mps_register_change_set({_t('oid')},
+  coalesce((select c.change_id from clued_private.mps_change_sets c
+   where c.object_id={_t('oid')}
+    and c.change_digest=clued_private.mps_json_v1_sha256(desired.change_body)),
+   'chg_' || clued_private.mps_json_v1_sha256(desired.change_body)),
+   desired.change_body) c from desired
 ), mi as (
  select clued_private.mps_issue_mutation_intent(jsonb_build_object(
   'context_pack_digest',aligned.write_pack->>'pack_digest','object_id',{_t('oid')},'operation','update',
   'proposal_or_change_id',ch.c->>'change_id','proposal_or_change_digest',ch.c->>'change_digest',
-  'target_revision',jsonb_build_object('mode','DERIVE_FROM_EXACT_CHANGE','change_id',ch.c->>'change_id','change_digest',ch.c->>'change_digest'),
-  'adoption_scope','object','adoption_purpose','accept_proposal'
- )) i from aligned,ch
+  'target_revision',case when desired.revision_id is null then
+    jsonb_build_object('mode','DERIVE_FROM_EXACT_CHANGE','change_id',ch.c->>'change_id','change_digest',ch.c->>'change_digest')
+   else jsonb_build_object('mode','PREMATERIALIZED','revision_id',desired.revision_id,'revision_digest',desired.revision_digest) end,
+  'adoption_scope','object','adoption_purpose','{MPS03_PROPOSAL_PURPOSE}'
+ )) i from aligned,ch,desired
 )
 select case when cp.p#>>'{{context_pack,state_stamp_digest}}' is distinct from {_t('observed_digest')}
  or cp.p#>'{{context_pack,composite_state_stamp}}' is distinct from {_j('observed_stamp')}
@@ -434,7 +459,7 @@ else
   'proposal_context_pack_digest',cp.p->>'pack_digest','context_pack_digest',aligned.write_pack->>'pack_digest',
   'proposed_body',{_j('body')}) end::text from cp left join aligned on true left join mi on true;
 """
-        return self._json(sql,{"oid":object_id,"domain":self.authority_domain,"principal":s["principal"],"native":self.native_principal,"observed_digest":observed_digest,"observed_stamp":json.dumps(observed_stamp,ensure_ascii=False,separators=(",",":")),"change_id":change_id,"change_body":json.dumps(change_body,ensure_ascii=False,separators=(",",":")),"body":json.dumps(proposed_body,ensure_ascii=False,separators=(",",":"))})
+        return self._json(sql,{"oid":object_id,"domain":self.authority_domain,"principal":s["principal"],"native":self.native_principal,"observed_digest":observed_digest,"observed_stamp":json.dumps(observed_stamp,ensure_ascii=False,separators=(",",":")),"body":json.dumps(proposed_body,ensure_ascii=False,separators=(",",":"))})
 
     def list_proposals(self, token: str, object_id: str) -> dict:
         s=self._session(token); self._require(s,"read")
@@ -442,18 +467,26 @@ else
         sql=f"""
 select jsonb_build_object('ok',true,'proposals',coalesce(jsonb_agg(jsonb_build_object(
  'proposal_id',i.intent_id,'status',case when ro.intent_id is null then 'OPEN' else 'ADOPTED' end,
- 'proposal_digest',i.proposal_or_change_digest,'proposed_body',c.change_body->'content',
+ 'proposal_digest',i.proposal_or_change_digest,'proposed_body',coalesce(c.change_body->'content',r.content),
  'state_stamp_digest',i.state_stamp_digest,'confirmation_intent',i.intent_body
 ) order by i.created_at),'[]'::jsonb))::text
 from clued_private.mps_mutation_intents i
+join clued_private.mps_context_packs p on p.object_id=i.object_id and p.pack_digest=i.context_pack_digest
 join clued_private.mps_change_sets c on c.object_id=i.object_id and c.change_id=i.proposal_or_change_id and c.change_digest=i.proposal_or_change_digest
+left join clued_private.mps_revisions r on r.object_id=i.object_id and r.revision_id=c.change_body->>'revision_id'
+ and r.revision_digest=c.change_body->>'revision_digest'
 left join clued_private.mps_request_outcomes ro on ro.intent_id=i.intent_id
-where i.object_id={_t('oid')};
+where i.object_id={_t('oid')} and i.operation='update'
+ and i.adoption_scope='object' and i.adoption_purpose='{MPS03_PROPOSAL_PURPOSE}'
+ and ((i.target_revision->>'mode'='DERIVE_FROM_EXACT_CHANGE' and c.change_body->>'mode'='REPLACE_JSON_V1')
+   or (i.target_revision->>'mode'='PREMATERIALIZED' and c.change_body->>'mode'='ADOPT_PREMATERIALIZED_V1' and r.revision_id is not null))
+ and p.authority_domain_id={_t('domain')} and p.stable_request_principal_id={_t('native')}
+ and p.action='update';
 """
-        return self._json(sql,{"oid":object_id})
+        return self._json(sql,{"oid":object_id,"domain":self.authority_domain,"native":self.native_principal})
 
     def confirm_proposal(self, token: str, object_id: str, proposal_id: str, state_stamp: dict, request_id: str,
-                         adoption_scope: str="object", adoption_purpose: str="accept_proposal") -> dict:
+                         adoption_scope: str="object", adoption_purpose: str=MPS03_PROPOSAL_PURPOSE) -> dict:
         s=self._session(token); self._require(s,"confirm")
         if not isinstance(request_id,str) or len(request_id)<8: raise ProtocolError("REQUEST_ID_REQUIRED","request_id is required")
         if not isinstance(state_stamp,dict): raise ProtocolError("STATE_STAMP_REQUIRED","state_stamp must be an object")
@@ -461,16 +494,24 @@ where i.object_id={_t('oid')};
         submitted_stamp={k:v for k,v in state_stamp.items() if k!="state_stamp_digest"}
         sql=f"""
 with i as (
- select intent_body from clued_private.mps_mutation_intents where object_id={_t('oid')} and intent_id={_t('pid')}
+ select i.intent_body from clued_private.mps_mutation_intents i
+ join clued_private.mps_context_packs p on p.object_id=i.object_id and p.pack_digest=i.context_pack_digest
+ join clued_private.mps_change_sets c on c.object_id=i.object_id and c.change_id=i.proposal_or_change_id and c.change_digest=i.proposal_or_change_digest
+ where i.object_id={_t('oid')} and i.intent_id={_t('pid')} and i.operation='update'
+  and i.adoption_scope='object' and i.adoption_purpose='{MPS03_PROPOSAL_PURPOSE}'
+  and ((i.target_revision->>'mode'='DERIVE_FROM_EXACT_CHANGE' and c.change_body->>'mode'='REPLACE_JSON_V1')
+    or (i.target_revision->>'mode'='PREMATERIALIZED' and c.change_body->>'mode'='ADOPT_PREMATERIALIZED_V1'))
+  and p.authority_domain_id={_t('domain')} and p.stable_request_principal_id={_t('native')}
+  and p.action='update'
 ), f as (
  select clued_private.mps_compute_request_fingerprint(i.intent_body,{_j('stamp')}) fp,i.intent_body from i
 ), o as (
  select clued_private.mps_commit_mutation({_t('domain')},{_t('principal')},{_t('request_id')},
  jsonb_build_object('confirmation_intent',f.intent_body,'composite_state_stamp',{_j('stamp')},'request_fingerprint',f.fp)) outcome from f
 )
-select coalesce(o.outcome,jsonb_build_object('status','conflict','error','MPS_INTENT_NOT_FOUND'))::text from o;
+select coalesce((select o.outcome from o),jsonb_build_object('status','conflict','error','MPS_INTENT_NOT_FOUND'))::text;
 """
-        outcome=self._json(sql,{"oid":object_id,"pid":proposal_id,"stamp":json.dumps(submitted_stamp,ensure_ascii=False,separators=(",",":")),"domain":self.authority_domain,"principal":s["principal"],"request_id":request_id})
+        outcome=self._json(sql,{"oid":object_id,"pid":proposal_id,"stamp":json.dumps(submitted_stamp,ensure_ascii=False,separators=(",",":")),"domain":self.authority_domain,"native":self.native_principal,"principal":s["principal"],"request_id":request_id})
         if outcome.get("status") == "committed":
             return {"ok":True,**outcome,"object_id":object_id,"revision_id":outcome.get("result_revision_id"),"adoption_id":outcome.get("result_adoption_id")}
         return {"ok":False,**outcome}
@@ -502,6 +543,7 @@ def main(argv=None):
     ap.add_argument("--allow-nonprod-write",default=os.environ.get("MPS03_ALLOW_NONPROD_WRITE",""))
     ap.add_argument("--host",default="127.0.0.1"); ap.add_argument("--port",type=int,required=True)
     args=ap.parse_args(argv)
+    _assert_loopback_host(args.host)
     Handler.store=PgMPS02BStore(args.dsn,user_id=args.user_id,authority_domain=args.authority_domain,
         native_principal=args.native_principal,agent_principal=args.agent_principal,native_secret=args.native_secret,
         agent_secret=args.agent_secret,target_id=args.target_id,allow_nonprod_write=args.allow_nonprod_write)

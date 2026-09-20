@@ -13,6 +13,9 @@
   "altered_agent_stamp_rejected": true,
   "distinct_allowed_action_generations": true,
   "interleaved_read_keeps_stamp_and_body_together": true,
+  "identical_pending_suggestion_reuses_change_set": true,
+  "previously_proposed_body_can_be_readopted": true,
+  "foreign_intent_excluded_from_list_and_confirm": true,
   "noncommitted_create_rolled_back": true,
   "container_removed_on_exit": true
 }

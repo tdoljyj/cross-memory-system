@@ -62,7 +62,7 @@ class Handler(BaseHTTPRequestHandler):
                 return 200, self.store.create_proposal(self._token(), oid, b.get("proposed_body", {}), b.get("observed_state_stamp", {}))
             if len(parts) == 4 and parts[3] == "confirm" and method == "POST":
                 b = self._json()
-                return 200, self.store.confirm_proposal(self._token(), oid, b.get("proposal_id", ""), b.get("state_stamp", {}), b.get("request_id", ""), b.get("adoption_scope", "object"), b.get("adoption_purpose", "accept_proposal"))
+                return 200, self.store.confirm_proposal(self._token(), oid, b.get("proposal_id", ""), b.get("state_stamp", {}), b.get("request_id", ""), b.get("adoption_scope", "object"), b.get("adoption_purpose", "mps03_accept_agent_proposal"))
             if len(parts) == 4 and parts[3] == "history" and method == "GET":
                 return 200, self.store.history(self._token(), oid)
         raise ProtocolError("NOT_FOUND", "endpoint not found", 404)

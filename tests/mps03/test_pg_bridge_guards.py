@@ -3,7 +3,7 @@ from unittest.mock import patch
 REPO=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(REPO/"development"/"mps"))
 from mps03.common import ProtocolError
-from mps03.mps02b_pg_gateway import PgMPS02BStore, EXPECTED_NONPROD_TARGET, _assert_nonprod_dsn
+from mps03.mps02b_pg_gateway import PgMPS02BStore, EXPECTED_NONPROD_TARGET, _assert_loopback_host, _assert_nonprod_dsn
 
 KW=dict(dsn="postgresql://invalid",user_id="00000000-0000-0000-0000-000000000001",authority_domain="d",native_principal="n",agent_principal="a",native_secret="ns",agent_secret="as")
 class PgBridgeGuards(unittest.TestCase):
@@ -43,6 +43,12 @@ class PgBridgeGuards(unittest.TestCase):
             with self.subTest(override=override), self.assertRaises(RuntimeError):
                 PgMPS02BStore(**{**base,**override},target_id=EXPECTED_NONPROD_TARGET,
                                 allow_nonprod_write="MPS03_NONPROD_WRITE_APPROVED")
+    def test_gateway_only_binds_to_loopback(self):
+        for host in ("127.0.0.1","localhost","::1"):
+            _assert_loopback_host(host)
+        for host in ("0.0.0.0","192.0.2.4","example.test"):
+            with self.subTest(host=host), self.assertRaisesRegex(RuntimeError,"loopback"):
+                _assert_loopback_host(host)
     def test_database_timeout_does_not_expose_connection_secret(self):
         store=PgMPS02BStore.__new__(PgMPS02BStore)
         store.dsn="postgresql://postgres:private-password@db.uscrdifznmlvczcekqpw.supabase.co/postgres"
