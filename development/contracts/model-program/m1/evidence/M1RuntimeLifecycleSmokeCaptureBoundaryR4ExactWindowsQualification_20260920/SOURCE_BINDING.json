@@ -1,0 +1,12 @@
+{
+  "blocked_review_head": "d09b6365f9d93941cd59c3c2ee89e0f6fc0ab2c4",
+  "repair_base": "d09b6365f9d93941cd59c3c2ee89e0f6fc0ab2c4",
+  "source_freeze_sha": "5a691080fedd38e069f1bbb0ba335a34750e4682",
+  "source_manifest_sha256": "40eaa69913ade714d2e717a94a317d1b2ecce9b73b9ef0824b9aeeff345dc801",
+  "source_closure_files": 29,
+  "frozen_baseline_files": 2,
+  "implementation_changed_files": 5,
+  "exact_windows_driver_sha256": "376f0d217d1e102113cecac3b63f3fec44a728bc2e9144bc5a0e0b9a46c4e476",
+  "focused_driver_sha256": "fe0b2c0ab05ee1255320d17bbb4366e930e3665d803ff9d8a348010aa59d33dc",
+  "other_branch_or_successor_used_as_source": false
+}

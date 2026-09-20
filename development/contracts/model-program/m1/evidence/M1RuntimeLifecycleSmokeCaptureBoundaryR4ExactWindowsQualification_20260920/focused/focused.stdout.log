@@ -1,0 +1,9 @@
+=== RUN   TestR4CaptureRequiresSignedClassBeforeFileOrLaunchEffect
+--- PASS: TestR4CaptureRequiresSignedClassBeforeFileOrLaunchEffect (0.04s)
+=== RUN   TestR4CaptureRequiresExactCodePairBeforeFileOrLaunchEffect
+--- PASS: TestR4CaptureRequiresExactCodePairBeforeFileOrLaunchEffect (0.04s)
+=== RUN   TestR4ExpiredCaptureIsDrainedButNotPersisted
+--- PASS: TestR4ExpiredCaptureIsDrainedButNotPersisted (0.04s)
+=== RUN   TestR4FinalizationRevokesCaptureEvenWhenOwnedProcessCleanupFails
+--- PASS: TestR4FinalizationRevokesCaptureEvenWhenOwnedProcessCleanupFails (0.06s)
+PASS

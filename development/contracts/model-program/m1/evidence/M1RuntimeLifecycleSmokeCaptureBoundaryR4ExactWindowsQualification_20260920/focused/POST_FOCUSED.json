@@ -1,0 +1,25 @@
+{
+  "at_utc": "2026-09-20T13:42:52.259142+00:00",
+  "computer_name": "DESK-W-591",
+  "paths": {
+    "guard": {
+      "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001\\M1RuntimeLifecycleAttemptGuard.json",
+      "exists": false
+    },
+    "current": {
+      "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001\\state\\current.json",
+      "exists": false
+    },
+    "evidence": {
+      "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-001",
+      "exists": false
+    },
+    "runtime_root": {
+      "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001",
+      "exists": false
+    }
+  },
+  "processes": [],
+  "listeners": [],
+  "continuous_monitoring": false
+}

@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+    "-B",
+    "C:\\Users\\Windows\\.dsh\\projects\\cross-memory-system\\scripts\\model-program\\m1-runtime-lifecycle-owner\\build.py",
+    "--toolchain-archive",
+    "C:\\Users\\Windows\\AppData\\Local\\Temp\\go1.27.1.windows-amd64.zip",
+    "--output",
+    "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-a"
+  ],
+  "started_at_utc": "2026-09-20T13:40:06.408100+00:00",
+  "finished_at_utc": "2026-09-20T13:40:40.765303+00:00",
+  "exit_code": 0
+}

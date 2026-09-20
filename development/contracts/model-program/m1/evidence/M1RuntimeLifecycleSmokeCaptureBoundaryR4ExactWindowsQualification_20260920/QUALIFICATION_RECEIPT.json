@@ -1,0 +1,119 @@
+{
+  "status": "AUTHOR_SIDE_EXACT_WINDOWS_QUALIFICATION_PASS / INDEPENDENT_REVIEW_PENDING",
+  "source_freeze_sha": "5a691080fedd38e069f1bbb0ba335a34750e4682",
+  "source_manifest_sha256": "40eaa69913ade714d2e717a94a317d1b2ecce9b73b9ef0824b9aeeff345dc801",
+  "repair_base_sha": "d09b6365f9d93941cd59c3c2ee89e0f6fc0ab2c4",
+  "branch": "model-program/m1-08-capture-boundary-r4-exact-d09b63-20260920",
+  "runs": [
+    {
+      "label": "a",
+      "top_level_pass": 68,
+      "subtest_pass": 22,
+      "fail": 0,
+      "skip": 0,
+      "windows_native_top_level_pass": 12,
+      "python_pass": 10,
+      "go_vet_pass": true,
+      "reparse_fixture_kinds": [
+        "NTFS_DIRECTORY_JUNCTION"
+      ],
+      "measured_artifacts": {
+        "owner_binary": {
+          "bytes": 7497216,
+          "sha256": "c588c050a499b830cbb6212dab1761fa31397d83cc6ff4580dfcc8a09ab9c344"
+        },
+        "windows_test_binary": {
+          "bytes": 12487168,
+          "sha256": "677179a18d55e5171a9a72f74ac92347b56be176885e94a30166e8b2f656f985"
+        }
+      },
+      "toolchain": {
+        "archive_bytes": 78931360,
+        "archive_name": "go1.27.1.windows-amd64.zip",
+        "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+        "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+        "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+        "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+        "target": {
+          "goamd64": "v1",
+          "goarch": "amd64",
+          "goos": "windows"
+        },
+        "tree_file_count": 15639,
+        "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+        "version": "go version go1.27.1 windows/amd64"
+      }
+    },
+    {
+      "label": "b",
+      "top_level_pass": 68,
+      "subtest_pass": 22,
+      "fail": 0,
+      "skip": 0,
+      "windows_native_top_level_pass": 12,
+      "python_pass": 10,
+      "go_vet_pass": true,
+      "reparse_fixture_kinds": [
+        "NTFS_DIRECTORY_JUNCTION"
+      ],
+      "measured_artifacts": {
+        "owner_binary": {
+          "bytes": 7497216,
+          "sha256": "c588c050a499b830cbb6212dab1761fa31397d83cc6ff4580dfcc8a09ab9c344"
+        },
+        "windows_test_binary": {
+          "bytes": 12487168,
+          "sha256": "677179a18d55e5171a9a72f74ac92347b56be176885e94a30166e8b2f656f985"
+        }
+      },
+      "toolchain": {
+        "archive_bytes": 78931360,
+        "archive_name": "go1.27.1.windows-amd64.zip",
+        "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+        "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+        "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+        "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+        "target": {
+          "goamd64": "v1",
+          "goarch": "amd64",
+          "goos": "windows"
+        },
+        "tree_file_count": 15639,
+        "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+        "version": "go version go1.27.1 windows/amd64"
+      }
+    }
+  ],
+  "focused": {
+    "status": "FOCUSED_WINDOWS_PASS",
+    "exit_code": 0,
+    "top_level_pass": 4,
+    "subtest_pass": 0,
+    "fail": 0,
+    "skip": 0,
+    "required_tests": [
+      "TestR4CaptureRequiresSignedClassBeforeFileOrLaunchEffect",
+      "TestR4CaptureRequiresExactCodePairBeforeFileOrLaunchEffect",
+      "TestR4ExpiredCaptureIsDrainedButNotPersisted",
+      "TestR4FinalizationRevokesCaptureEvenWhenOwnedProcessCleanupFails"
+    ]
+  },
+  "artifact_bytes_rehashed_this_execution": true,
+  "owner_binary_executed_by_this_workflow": false,
+  "profile_issued": false,
+  "issuer_root_bound": false,
+  "guard_parent_provisioned": false,
+  "merged": false,
+  "independent_review_pass": false,
+  "major_07_08_formally_closed": false,
+  "python_version": "3.12.10",
+  "measured_at_utc": "2026-09-20T13:44:33.586208+00:00",
+  "limitations": [
+    "PRE/POST are time-point observations, not continuous monitoring",
+    "NTFS_DIRECTORY_JUNCTION is not symlink-specific native execution",
+    "Test binary was executed; Owner binary was built but never invoked",
+    "EXEs, toolchain and model bodies are not embedded; exact identities and original receipts are embedded",
+    "Source manifest pending markers are retained unchanged after freeze; use this external receipt for execution status",
+    "Author-side remediation evidence does not substitute for Fresh-Context independent review"
+  ]
+}

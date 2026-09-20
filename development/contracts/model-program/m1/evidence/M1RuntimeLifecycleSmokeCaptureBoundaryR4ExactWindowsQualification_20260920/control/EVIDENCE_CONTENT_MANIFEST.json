@@ -1,0 +1,130 @@
+{
+  "entries": [
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-control\\build-1.command.json",
+      "bytes": 602,
+      "sha256": "d8310c128da7ee58713b63e6b6c22689b2d6cdcb4ff800b1ba66740242872e53"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-control\\build-1.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-control\\build-1.stdout.log",
+      "bytes": 10216,
+      "sha256": "867231ed8e0e359a0bc0ec8d84279187a795966ab0ed0ba6a05c7ba791afc4cc"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-control\\build-2.command.json",
+      "bytes": 602,
+      "sha256": "98884abf9791b40c1b3a5e668f326d56ae64ad2f6b05832900d2bf208a71cc17"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-control\\build-2.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-control\\build-2.stdout.log",
+      "bytes": 10216,
+      "sha256": "32a2437dffa0e5c51396044c9cd0d20ff4f7ff2953046466bb4e6cf110d35ac8"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-control\\POST_QUALIFICATION.json",
+      "bytes": 867,
+      "sha256": "fe4ee6924110ce302bde3fef1b4492d53a650504524f22ae403fd6f3eec88087"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-control\\PRE_QUALIFICATION.json",
+      "bytes": 867,
+      "sha256": "54d631559c8c8a3804b3888d94bbb27b40583380d76d73e70c7b3fa98856eb1a"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-control\\QUALIFICATION_RESULT.json",
+      "bytes": 22572,
+      "sha256": "fdd496692ecd42beb14d356a107f2aab2c1f9eab7980a29e7e229b3e80906e40"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-a\\build-receipt.json",
+      "bytes": 11832,
+      "sha256": "b4eb586dacbfa9190d4c4eb4c9c4a94d01640c9d0caaded04330f5ab2d7212ef"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-a\\go-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-a\\go-test-compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-a\\go-test.log",
+      "bytes": 82559,
+      "sha256": "97d447c068fe857f213b73f754d7629f749e0f9bafe911198d6576465cb25b68"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-a\\go-vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-a\\m1-08-owner.exe",
+      "bytes": 7497216,
+      "sha256": "c588c050a499b830cbb6212dab1761fa31397d83cc6ff4580dfcc8a09ab9c344"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-a\\m1-08-owner.tests.exe",
+      "bytes": 12487168,
+      "sha256": "677179a18d55e5171a9a72f74ac92347b56be176885e94a30166e8b2f656f985"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-a\\python-qualification-scope.log",
+      "bytes": 1489,
+      "sha256": "67ad9aaad495dd15dcebc6f17ede51cecdea9c562b613ad46ebe79de8ece2ddb"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-b\\build-receipt.json",
+      "bytes": 11832,
+      "sha256": "b945ea95c099ec9dbef15688e792a611888d74e968e59c75ce28dd35e5e9cabc"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-b\\go-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-b\\go-test-compile.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-b\\go-test.log",
+      "bytes": 82577,
+      "sha256": "8882d24855e36addeb7c5a988ca6459aa6d92b1dcefe73c53fad870c7ab37344"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-b\\go-vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-b\\m1-08-owner.exe",
+      "bytes": 7497216,
+      "sha256": "c588c050a499b830cbb6212dab1761fa31397d83cc6ff4580dfcc8a09ab9c344"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-b\\m1-08-owner.tests.exe",
+      "bytes": 12487168,
+      "sha256": "677179a18d55e5171a9a72f74ac92347b56be176885e94a30166e8b2f656f985"
+    },
+    {
+      "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-b\\python-qualification-scope.log",
+      "bytes": 1489,
+      "sha256": "67ad9aaad495dd15dcebc6f17ede51cecdea9c562b613ad46ebe79de8ece2ddb"
+    }
+  ],
+  "self_excluded": true
+}

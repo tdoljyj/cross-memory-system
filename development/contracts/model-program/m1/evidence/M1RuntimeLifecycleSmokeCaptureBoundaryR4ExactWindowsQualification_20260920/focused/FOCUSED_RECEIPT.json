@@ -1,0 +1,101 @@
+{
+  "source_freeze_sha": "5a691080fedd38e069f1bbb0ba335a34750e4682",
+  "source_manifest_sha256": "40eaa69913ade714d2e717a94a317d1b2ecce9b73b9ef0824b9aeeff345dc801",
+  "argv": [
+    "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-a\\m1-08-owner.tests.exe",
+    "-test.v",
+    "-test.count=1",
+    "-test.run",
+    "^TestR4"
+  ],
+  "cwd": "C:\\Users\\Windows\\.dsh\\projects\\cross-memory-system\\scripts\\model-program\\m1-runtime-lifecycle-owner",
+  "environment": {
+    "SystemRoot": "C:\\WINDOWS",
+    "WINDIR": "C:\\WINDOWS",
+    "TEMP": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-focused\\temp",
+    "TMP": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-focused\\temp"
+  },
+  "started_at_utc": "2026-09-20T13:42:50.809610+00:00",
+  "finished_at_utc": "2026-09-20T13:42:50.998532+00:00",
+  "exit_code": 0,
+  "top_level_pass": 4,
+  "subtest_pass": 0,
+  "fail": 0,
+  "skip": 0,
+  "required_tests": [
+    "TestR4CaptureRequiresSignedClassBeforeFileOrLaunchEffect",
+    "TestR4CaptureRequiresExactCodePairBeforeFileOrLaunchEffect",
+    "TestR4ExpiredCaptureIsDrainedButNotPersisted",
+    "TestR4FinalizationRevokesCaptureEvenWhenOwnedProcessCleanupFails"
+  ],
+  "native_test_binary": {
+    "bytes": 12487168,
+    "path": "c:\\users\\public\\clued\\qualification\\m1-08-owner\\m108-r4-capture-boundary-40eaa69913ad-a\\m1-08-owner.tests.exe",
+    "sha256": "677179a18d55e5171a9a72f74ac92347b56be176885e94a30166e8b2f656f985"
+  },
+  "status": "FOCUSED_WINDOWS_PASS",
+  "qualification_namespace": {
+    "fixed_root": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner",
+    "resolved_output": "c:\\users\\public\\clued\\qualification\\m1-08-owner\\m108-r4-capture-boundary-40eaa69913ad-focused",
+    "native_directory_observations": [
+      {
+        "path": "C:\\",
+        "handle_resolved_path": "C:\\",
+        "volume_serial": "9686166e",
+        "file_id": "0005000000000005",
+        "non_reparse": true
+      },
+      {
+        "path": "C:\\Users",
+        "handle_resolved_path": "C:\\Users",
+        "volume_serial": "9686166e",
+        "file_id": "0001000000000e5c",
+        "non_reparse": true
+      },
+      {
+        "path": "C:\\Users\\Public",
+        "handle_resolved_path": "C:\\Users\\Public",
+        "volume_serial": "9686166e",
+        "file_id": "0001000000000e8d",
+        "non_reparse": true
+      },
+      {
+        "path": "C:\\Users\\Public\\Clued",
+        "handle_resolved_path": "C:\\Users\\Public\\Clued",
+        "volume_serial": "9686166e",
+        "file_id": "00090000000bad44",
+        "non_reparse": true
+      },
+      {
+        "path": "C:\\Users\\Public\\Clued\\Qualification",
+        "handle_resolved_path": "C:\\Users\\Public\\Clued\\Qualification",
+        "volume_serial": "9686166e",
+        "file_id": "00190000000a20ad",
+        "non_reparse": true
+      },
+      {
+        "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner",
+        "handle_resolved_path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner",
+        "volume_serial": "9686166e",
+        "file_id": "000f0000002c21a9",
+        "non_reparse": true
+      },
+      {
+        "path": "c:\\users\\public\\clued\\qualification\\m1-08-owner\\m108-r4-capture-boundary-40eaa69913ad-focused",
+        "handle_resolved_path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\m108-r4-capture-boundary-40eaa69913ad-focused",
+        "volume_serial": "9686166e",
+        "file_id": "00240000000c0192",
+        "non_reparse": true
+      }
+    ],
+    "protected_namespace_overlap": false,
+    "temporary_files_caches_logs": "CONFINED_UNDER_RESOLVED_OUTPUT",
+    "provisioned_qualification_root": false,
+    "host_wide_no_effect_observation": "NOT_PERFORMED"
+  },
+  "owner_binary_executed": false,
+  "independent_review_pass": false,
+  "limitations": [
+    "PRE/POST are time-point observations, not continuous monitoring"
+  ]
+}
