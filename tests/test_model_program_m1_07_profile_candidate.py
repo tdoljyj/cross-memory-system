@@ -22,6 +22,7 @@ O = ROOT / "scripts/model-program/m1_runtime_stability_pc.py"
 BUILD_HELPER = ROOT / "scripts/model-program/build_m1_07_native_owner.py"
 NATIVE_WINDOWS = ROOT / "scripts/model-program/m1-runtime-owner/platform_windows.go"
 NATIVE_OWNER = ROOT / "scripts/model-program/m1-runtime-owner/owner.go"
+TOOLCHAIN_ARCHIVE = pathlib.Path(os.environ["CLUED_M107_GO_TOOLCHAIN_ARCHIVE"]) if os.environ.get("CLUED_M107_GO_TOOLCHAIN_ARCHIVE") else None
 
 spec = importlib.util.spec_from_file_location("m1_07_validator", P)
 m = importlib.util.module_from_spec(spec)
@@ -189,11 +190,38 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         )
         self.assertEqual(
             p["code_revision"]["native_owner_build_provenance_semantics"],
-            "EXACT_SOURCE_DIRECTORY_SET / MANIFEST_BINDS_HELPER / VERIFIED_SOURCE_SNAPSHOT_ONLY / CLEAN_GO_ENV",
+            "EXACT_SOURCE_DIRECTORY_SET / MANIFEST_BINDS_HELPER / VERIFIED_SOURCE_SNAPSHOT_ONLY / EXACT_OFFICIAL_TOOLCHAIN_ZIP_AND_TREE / CLEAN_GO_ENV / NO_CALLER_EXECUTABLE",
         )
+        self.assertEqual(p["code_revision"]["native_owner_build_toolchain"], m.NATIVE_BUILD_TOOLCHAIN)
+
+    def require_toolchain_archive(self):
+        self.assertIsNotNone(TOOLCHAIN_ARCHIVE, "set CLUED_M107_GO_TOOLCHAIN_ARCHIVE")
+        self.assertTrue(TOOLCHAIN_ARCHIVE.is_file())
+        return TOOLCHAIN_ARCHIVE
+
+    def test_build_helper_has_no_caller_go_executable_surface(self):
+        self.assertTrue(GO)
+        with tempfile.TemporaryDirectory() as td:
+            output = pathlib.Path(td) / "must-not-exist"
+            p = subprocess.run(
+                [
+                    sys.executable,
+                    str(BUILD_HELPER),
+                    "--go",
+                    str(GO),
+                    "--output",
+                    str(output),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertNotEqual(p.returncode, 0)
+            self.assertFalse(output.exists())
+            self.assertNotIn('parser.add_argument("--go"', BUILD_HELPER.read_text(encoding="utf-8"))
 
     def test_build_helper_rejects_inherited_goflags_overlay_before_output(self):
-        self.assertTrue(GO)
+        archive = self.require_toolchain_archive()
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
             overlay = root / "overlay.json"
@@ -202,15 +230,25 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
             env = os.environ.copy()
             env["GOFLAGS"] = "-overlay=" + str(overlay)
             p = subprocess.run(
-                [sys.executable, str(BUILD_HELPER), "--go", str(GO), "--output", str(output)],
-                env=env, capture_output=True, text=True, timeout=30,
+                [
+                    sys.executable,
+                    str(BUILD_HELPER),
+                    "--toolchain-archive",
+                    str(archive),
+                    "--output",
+                    str(output),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=90,
             )
             self.assertNotEqual(p.returncode, 0)
             self.assertIn("forbidden inherited Go build environment: GOFLAGS", p.stdout + p.stderr)
             self.assertFalse(output.exists())
 
     def test_build_helper_rejects_unmanifested_source_before_output(self):
-        self.assertTrue(GO)
+        archive = self.require_toolchain_archive()
         with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as od:
             sandbox = pathlib.Path(td)
             helper_dir = sandbox / "scripts/model-program"
@@ -227,8 +265,8 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
                 [
                     sys.executable,
                     str(helper_dir / BUILD_HELPER.name),
-                    "--go",
-                    str(GO),
+                    "--toolchain-archive",
+                    str(archive),
                     "--output",
                     str(output),
                 ],
@@ -241,8 +279,43 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
             self.assertIn("native source directory set drift", p.stdout + p.stderr)
             self.assertFalse(output.exists())
 
+    def test_build_helper_rejects_tampered_toolchain_archive_before_output(self):
+        archive = self.require_toolchain_archive()
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            tampered = root / m.NATIVE_BUILD_TOOLCHAIN["archive_name"]
+            shutil.copy2(archive, tampered)
+            with tampered.open("r+b") as handle:
+                handle.seek(4096)
+                original = handle.read(1)
+                self.assertEqual(len(original), 1)
+                handle.seek(4096)
+                handle.write(bytes([original[0] ^ 1]))
+            self.assertEqual(tampered.stat().st_size, m.NATIVE_BUILD_TOOLCHAIN["archive_bytes"])
+            self.assertNotEqual(hashlib.sha256(tampered.read_bytes()).hexdigest(), m.NATIVE_BUILD_TOOLCHAIN["archive_sha256"])
+            output = root / "must-not-exist"
+            env = os.environ.copy()
+            env.pop("GOFLAGS", None)
+            p = subprocess.run(
+                [
+                    sys.executable,
+                    str(BUILD_HELPER),
+                    "--toolchain-archive",
+                    str(tampered),
+                    "--output",
+                    str(output),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertNotEqual(p.returncode, 0)
+            self.assertIn("toolchain archive digest drift", p.stdout + p.stderr)
+            self.assertFalse(output.exists())
+
     def test_build_helper_clean_snapshot_matches_candidate_binary(self):
-        self.assertTrue(GO)
+        archive = self.require_toolchain_archive()
         with tempfile.TemporaryDirectory() as td:
             output = pathlib.Path(td) / "clean-build"
             env = os.environ.copy()
@@ -251,15 +324,15 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
                 [
                     sys.executable,
                     str(BUILD_HELPER),
-                    "--go",
-                    str(GO),
+                    "--toolchain-archive",
+                    str(archive),
                     "--output",
                     str(output),
                 ],
                 env=env,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=120,
             )
             self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
             built = output / ("m1-07-owner.exe" if os.name == "nt" else "m1-07-owner")
@@ -267,6 +340,12 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
                 hashlib.sha256(built.read_bytes()).hexdigest(),
                 self.load_candidate()["code_revision"]["native_owner_binary_sha256"],
             )
+            receipt = json.loads((output / "build-receipt.json").read_text(encoding="utf-8"))
+            self.assertEqual(receipt["toolchain_archive_sha256"], m.NATIVE_BUILD_TOOLCHAIN["archive_sha256"])
+            self.assertEqual(receipt["toolchain_tree_sha256"], m.NATIVE_BUILD_TOOLCHAIN["tree_sha256"])
+            self.assertEqual(receipt["compiler_sha256"], m.NATIVE_BUILD_TOOLCHAIN["go_exe_sha256"])
+            self.assertEqual(receipt["compiler_compile_exe_sha256"], m.NATIVE_BUILD_TOOLCHAIN["compile_exe_sha256"])
+            self.assertEqual(receipt["compiler_link_exe_sha256"], m.NATIVE_BUILD_TOOLCHAIN["link_exe_sha256"])
 
     def test_candidate_binary_binding_matches_rebuilt_native_owner(self):
         p = self.load_candidate()
