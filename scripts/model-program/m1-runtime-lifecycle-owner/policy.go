@@ -291,6 +291,142 @@ func isHex(s string, n int) bool {
 	return e == nil
 }
 
+func exactArgvSemantics() []any {
+	return []any{
+		"ABSOLUTE_SLOT_LLAMA_SERVER_EXE",
+		"--model ABSOLUTE_ACTIVE_SLOT_Q8_0_MODEL",
+		"--offline",
+		"--host 127.0.0.1",
+		"--port 18088",
+		"--no-webui",
+		"--threads 2",
+		"--threads-batch 2",
+		"--ctx-size 2048",
+		"--parallel 1",
+		"--n-gpu-layers 0",
+		"--device none",
+		"--no-op-offload",
+	}
+}
+
+func exactLaunchEnvelopePolicy() object {
+	return object{
+		"envelope_semantics": "IMMUTABLE_PROFILE_DERIVED_LAUNCH_ENVELOPE / CALLER_CANNOT_OVERRIDE_EXECUTABLE_ARGV_ENVIRONMENT_CWD_ENDPOINT_OR_PROCESS_OWNERSHIP",
+		"caller_supplied_launch_material_allowed": false,
+		"caller_supplied_command_allowed": false,
+		"caller_supplied_process_factory_allowed": false,
+		"caller_supplied_callback_allowed": false,
+		"executable": object{
+			"source": "VERIFIED_ACTIVE_SLOT_ONLY",
+			"exact_relative_path": \`payload\\runtime\\b11033-vulkan\\llama-server.exe\`,
+			"resolution": "ABSOLUTE_PATH_DERIVED_ONLY_FROM_EXACT_VERIFIED_ACTIVE_SLOT / NO_CALLER_PATH / NO_PATH_SEARCH",
+			"sha256": serverSHA,
+			"caller_override_allowed": false,
+		},
+		"argv": object{
+			"source": "PROFILE_BOUND_CONSTANTS_PLUS_ABSOLUTE_VERIFIED_ACTIVE_SLOT_MODEL_PATH_ONLY",
+			"exact_semantics": exactArgvSemantics(),
+			"caller_supplied_args_allowed": false,
+			"caller_override_or_append_allowed": false,
+			"dynamic_injection_allowed": false,
+		},
+		"child_environment": object{
+			"construction": "START_FROM_EMPTY_ENVIRONMENT_MAP / DO_NOT_INHERIT_PARENT_OR_CALLER_ENVIRONMENT / EMIT_ONLY_EXACT_ALLOWLIST",
+			"windows_name_comparison": "CASE_INSENSITIVE",
+			"caller_supplied_environment_map_allowed": false,
+			"caller_environment_override_allowed": false,
+			"callback_or_dynamic_environment_injection_allowed": false,
+			"allowed_names_exact": []any{"SystemRoot", "WINDIR", "TEMP", "TMP"},
+			"system_root_and_windir": object{
+				"source": "TRUSTED_WINDOWS_OS_API_GetWindowsDirectoryW_ONLY",
+				"value_semantics": "CANONICAL_ABSOLUTE_WINDOWS_DIRECTORY_RETURNED_BY_OS_API / SET BOTH SystemRoot AND WINDIR FROM THAT RESULT",
+				"parent_or_caller_environment_read_allowed": false,
+				"caller_value_allowed": false,
+			},
+			"temp_and_tmp": object{
+				"exact_value": tempRoot,
+				"value_semantics": "BOTH TEMP AND TMP EQUAL THE EXACT PROFILE_OWNED_TEST_PATH / DIRECTORY MUST REMAIN UNDER EXACT TEST ROOT",
+				"parent_or_caller_environment_read_allowed": false,
+				"caller_value_allowed": false,
+			},
+			"path_variable": object{
+				"allowed": false,
+				"semantics": "PATH MUST BE ABSENT / NEVER INHERIT OR ACCEPT CALLER PATH",
+			},
+			"forbidden_names_exact": []any{
+				"PATH","PATHEXT","LLAMA_ARG","HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","NO_PROXY",
+				"http_proxy","https_proxy","all_proxy","no_proxy","CUDA_VISIBLE_DEVICES","CUDA_DEVICE_ORDER",
+				"VK_ICD_FILENAMES","VK_LAYER_PATH","VULKAN_SDK","APPDATA","LOCALAPPDATA","PROGRAMDATA",
+				"USERPROFILE","HOMEDRIVE","HOMEPATH","PYTHONPATH","PYTHONHOME","LD_LIBRARY_PATH",
+				"LIB","LIBPATH","INCLUDE","TMPDIR",
+			},
+			"forbidden_name_prefixes": []any{
+				"LLAMA_","GGML_","CUDA_","NVIDIA_","VK_","VULKAN_","HIP_","ROCR_","SYCL_","ONEAPI_","OMP_","KMP_",
+			},
+			"unlisted_variable_policy": "OMIT / FAIL_CLOSED_IF EFFECTFUL OWNER ATTEMPTS TO PROPAGATE OR ADD ANY UNLISTED ENVIRONMENT VARIABLE",
+			"semantic_invariant": "ENVIRONMENT INPUT MUST NOT CHANGE EXECUTABLE_ARGV_DLL_RUNTIME_RESOLUTION_CONFIGURATION_NETWORK_ENDPOINT_CPU_ONLY_DEVICE_SEMANTICS_OR_CWD",
+		},
+		"dll_and_runtime_resolution": object{
+			"semantics": "NO_ENVIRONMENT_OR_CALLER_CONTROL / EXACT ACTIVE SLOT EXECUTABLE DIRECTORY AND EXACT ACTIVE SLOT CWD PLUS TRUSTED WINDOWS SYSTEM DIRECTORIES ONLY",
+			"PATH_search_allowed": false,
+			"caller_dll_directory_allowed": false,
+			"caller_runtime_search_path_allowed": false,
+			"environment_search_path_allowed": false,
+			"caller_preload_or_backend_override_allowed": false,
+		},
+		"cwd": object{
+			"source": "VERIFIED_ACTIVE_SLOT_ONLY",
+			"exact_relative_path": \`payload\\runtime\\b11033-vulkan\`,
+			"resolution": "ABSOLUTE_PATH_DERIVED_ONLY_FROM_EXACT_VERIFIED_ACTIVE_SLOT ROOT",
+			"caller_supplied_cwd_allowed": false,
+			"caller_override_allowed": false,
+		},
+		"endpoint": object{
+			"bind_host": "127.0.0.1",
+			"bind_port": json.Number("18088"),
+			"probe_path": "/completion",
+			"caller_override_allowed": false,
+			"external_bind_allowed": false,
+			"external_network_allowed": false,
+		},
+		"process_ownership": object{
+			"source": "EFFECTFUL_OWNER_DIRECT_CHILD_CREATE_ONLY",
+			"semantics": "ORIGINAL_OS_PROCESS_HANDLE_RETURNED_BY_THE_EXACT_LAUNCH_ONLY / CALLER_CANNOT_SUPPLY_PID_HANDLE_PROCESS_OBJECT_FACTORY_CALLBACK_OR_REPLACEMENT",
+			"caller_supplied_pid_allowed": false,
+			"caller_supplied_handle_allowed": false,
+			"caller_supplied_process_object_allowed": false,
+			"caller_supplied_factory_or_callback_allowed": false,
+		},
+	}
+}
+
+func exactSuccessTransitions() []any {
+	return []any{
+		object{"transition_index":json.Number("1"),"from":nil,"to":revisionA,"transition_kind":"NORMAL","recovery_of_transition_index":nil},
+		object{"transition_index":json.Number("2"),"from":revisionA,"to":revisionB,"transition_kind":"NORMAL","recovery_of_transition_index":nil},
+		object{"transition_index":json.Number("3"),"from":revisionB,"to":revisionA,"transition_kind":"NORMAL","recovery_of_transition_index":nil},
+	}
+}
+
+func exactRecoveryTransitions() []any {
+	return []any{
+		object{
+			"trigger":"UPGRADE_B_ACTIVATED_BUT_PROBE_FAILED",
+			"transition_index":json.Number("3"),"from":revisionB,"to":revisionA,
+			"transition_kind":"RECOVERY","recovery_of_transition_index":json.Number("2"),
+			"required_reverification":"M1-LIFE-A_EXACT",
+			"terminal_after_publish":"PROFILE_FAILED / NO_FURTHER_TRANSITIONS",
+		},
+		object{
+			"trigger":"ROLLBACK_A_ACTIVATED_BUT_PROBE_FAILED",
+			"transition_index":json.Number("4"),"from":revisionA,"to":revisionB,
+			"transition_kind":"RECOVERY","recovery_of_transition_index":json.Number("3"),
+			"required_reverification":"M1-LIFE-B_EXACT",
+			"terminal_after_publish":"PROFILE_FAILED / NO_FURTHER_TRANSITIONS",
+		},
+	}
+}
+
 func scopePolicy() object {
 	return object{
 		"task_id":                    "M1-08",
@@ -324,6 +460,19 @@ func scopePolicy() object {
 		"lifecycle_revision_binding/persistent_attempt_guard_path":     attemptGuardPath,
 		"lifecycle_revision_binding/persistent_evidence_output_dir":    evidenceDir,
 		"lifecycle_revision_binding/guard_parent_path":                 guardParentPath,
+		"lifecycle_revision_binding/source_package_mutation_allowed":   false,
+		"lifecycle_revision_binding/binary_version_migration_claim_allowed": false,
+		"lifecycle_revision_binding/revision_A/revision_id":            revisionA,
+		"lifecycle_revision_binding/revision_A/role":                   "INSTALL_BASELINE_AND_ROLLBACK_TARGET",
+		"lifecycle_revision_binding/revision_A/model_sha256":           modelSHA,
+		"lifecycle_revision_binding/revision_A/runtime_asset_sha256":   runtimeAssetSHA,
+		"lifecycle_revision_binding/revision_B/revision_id":            revisionB,
+		"lifecycle_revision_binding/revision_B/role":                   "UPGRADE_TARGET",
+		"lifecycle_revision_binding/revision_B/predecessor_revision_id": revisionA,
+		"lifecycle_revision_binding/revision_B/model_sha256":           modelSHA,
+		"lifecycle_revision_binding/revision_B/runtime_asset_sha256":   runtimeAssetSHA,
+		"lifecycle_revision_binding/guard_parent_must_preexist_before_final_issuance": true,
+		"lifecycle_revision_binding/guard_parent_creation_authorized_by_profile":      false,
 		"config_revision/server_probe/host":                            "127.0.0.1",
 		"config_revision/server_probe/port":                            json.Number("18088"),
 		"config_revision/server_probe/offline":                         true,
@@ -338,9 +487,23 @@ func scopePolicy() object {
 		"config_revision/server_probe/external_bind":                   false,
 		"config_revision/server_probe/external_network":                false,
 		"config_revision/server_probe/max_server_starts":               json.Number("3"),
-		"config_revision/lifecycle/current_manifest_relative_path":     `state\current.json`,
-		"config_revision/lifecycle/attempt_guard_location":             "EXACT_PERSISTENT_RUNTIME_STATE_PATH_OUTSIDE_TEST_ROOT",
-		"config_revision/lifecycle/first_profile_owned_write":          "CREATE_NEW_EXACT_ATTEMPT_GUARD_FILE",
+		"config_revision/server_probe/exact_server_argv_semantics":     exactArgvSemantics(),
+		"config_revision/server_probe/configuration_sources":           "PROFILE_BOUND_ARGV_AND_EXACT_LAUNCH_ENVELOPE_ONLY / CHILD_ENV_REBUILT_FROM_EMPTY_EXACT_ALLOWLIST / NO_LLAMA_ARG / NO_PROGRAMDATA_APPDATA_CONFIG / NO_CALLER_OR_PARENT_ENVIRONMENT_INHERITANCE",
+		"config_revision/server_probe/launch_envelope":                  exactLaunchEnvelopePolicy(),
+		"config_revision/lifecycle/current_manifest_relative_path":     \`state\\current.json\`,
+		"config_revision/lifecycle/current_temp_paths": object{
+			"1":\`state\\current.transition-1.tmp\`,"2":\`state\\current.transition-2.tmp\`,
+			"3":\`state\\current.transition-3.tmp\`,"4":\`state\\current.transition-4.tmp\`,
+		},
+		"config_revision/lifecycle/activation_atomicity":                "SAME_VOLUME_ATOMIC_REPLACE",
+		"config_revision/lifecycle/partial_slot_activation_allowed":    false,
+		"config_revision/lifecycle/system_path_mutation_allowed":       false,
+		"config_revision/lifecycle/registry_mutation_allowed":          false,
+		"config_revision/lifecycle/windows_service_mutation_allowed":   false,
+		"config_revision/lifecycle/firewall_mutation_allowed":          false,
+		"config_revision/lifecycle/attempt_guard_location":              "EXACT_PERSISTENT_RUNTIME_STATE_PATH_OUTSIDE_TEST_ROOT",
+		"config_revision/lifecycle/guard_parent_precondition":           "PREEXISTING_VERIFIED_REAL_NON_REPARSE_DIRECTORY / PROFILE_MUST_NOT_CREATE_OR_RECREATE",
+		"config_revision/lifecycle/first_profile_owned_write":           "CREATE_NEW_EXACT_ATTEMPT_GUARD_FILE",
 		"max_wall_time":                                     json.Number("1800"),
 		"max_storage":                                       json.Number(strconv.FormatInt(maxStorage, 10)),
 		"max_attempts":                                      json.Number("1"),
@@ -350,13 +513,27 @@ func scopePolicy() object {
 		"max_compute/non_cpu_devices":                       "NONE",
 		"max_compute/max_parallel_server_processes":         json.Number("1"),
 		"max_compute/max_profile_owned_server_starts":       json.Number("3"),
+		"max_cost_and_currency/max_cost_microunits":         json.Number("0"),
+		"max_cost_and_currency/currency":                    "USD",
 		"execution_control/attempt_guard_path":              attemptGuardPath,
-		"execution_control/current_manifest_path":           testRoot + `\state\current.json`,
+		"execution_control/current_manifest_path":           testRoot + \`\\state\\current.json\`,
 		"execution_control/evidence_output_dir":             evidenceDir,
 		"execution_control/guard_parent_path":               guardParentPath,
 		"execution_control/owner_signature_policy":          "Ed25519-CLUED-CANONICAL-JSON-v1 / ENTIRE_ISSUED_PROFILE_EXCEPT_owner_signature / PINNED_OWNER_ROOT",
-		"lifecycle_safety_binding/child_launch_cwd":         `EXACT VERIFIED ACTIVE SLOT payload\runtime\b11033-vulkan ABSOLUTE DIRECTORY ONLY / NO CALLER CONTROL`,
-		"lifecycle_safety_binding/child_launch_environment": `EMPTY_BASE_ENVIRONMENT / EXACT ALLOWLIST SystemRoot,WINDIR,TEMP,TMP ONLY / SystemRoot+WINDIR FROM TRUSTED GetWindowsDirectoryW / TEMP+TMP=C:\Users\Public\Clued\ModelProgram\M1\runtime-lifecycle-smoke\M1-LIFE-QWEN35-08B-PC-001\state\temp / PATH ABSENT / ALL OTHER VARIABLES OMITTED / NO CALLER OR PARENT INHERITANCE`,
+		"execution_control/launch_envelope_semantics":        "EXACT_EXECUTABLE_ARGV_CHILD_ENVIRONMENT_CWD_LOOPBACK_ENDPOINT_AND_ORIGINAL_OS_PROCESS_HANDLE_FORM_ONE_IMMUTABLE_PROFILE_DERIVED_ENVELOPE / NO_CALLER_OVERRIDE_OR_DYNAMIC_INJECTION",
+		"lifecycle_safety_binding/write_root_policy":         "EXACT_TEST_ROOT + EXACT_PERSISTENT_GUARD_PATH + EXACT_PERSISTENT_EVIDENCE_DIR_ONLY",
+		"lifecycle_safety_binding/windows_path_safety":       "REJECT_REPARSE_POINT_JUNCTION_SYMLINK_MOUNTPOINT_ON_EFFECTFUL_WRITE_ANCESTRY_AND_CREATED_TREE / NO_CALLER_SUPPLIED_PATHS / NO_CALLER_SUPPLIED_UNC_DEVICE_NAMESPACE_OR ADS PATHS",
+		"lifecycle_safety_binding/recursive_cleanup":         "NEVER_FOLLOW_REPARSE_POINTS / ABORT_ON_UNEXPECTED_ENTRY_OR_PATH_ESCAPE",
+		"lifecycle_safety_binding/current_publish":           "EXACT SAME-DIRECTORY TEMP PATH PER TRANSITION INDEX / CREATE_NEW + CANONICAL JSON + FLUSH + REOPEN HASH VERIFY + ONE NATIVE SAME-VOLUME RENAME_OR_REPLACE / NEVER DELETE CURRENT THEN RENAME / NO CALLER-CONTROLLED TEMP NAME",
+		"lifecycle_safety_binding/transition_sequence":       exactSuccessTransitions(),
+		"lifecycle_safety_binding/failure_recovery_transition_sequence": exactRecoveryTransitions(),
+		"lifecycle_safety_binding/transition_branch_rule": "ONLY THREE BRANCHES ARE LEGAL: SUCCESS=1N,2N,3N; UPGRADE_FAILURE=1N,2N,3R(link=2) THEN TERMINAL FAILURE; ROLLBACK_FAILURE=1N,2N,3N,4R(link=3) THEN TERMINAL FAILURE. NO OTHER INDEX/KIND/LINKAGE.",
+		"lifecycle_safety_binding/ntfs_stream_policy": "ENUMERATE STREAMS FOR EVERY BOUND SOURCE AND MATERIALIZED SLOT REGULAR FILE / ONLY UNNAMED DEFAULT ::$DATA ALLOWED / ANY NAMED STREAM INCLUDING Zone.Identifier FAILS CLOSED / COPY ONLY DEFAULT STREAM OR USE EXPLICIT SKIP-ALTERNATE-STREAMS SEMANTICS",
+		"lifecycle_safety_binding/attempt_guard_bootstrap": "EXACT GUARD PARENT MUST PREEXIST BEFORE FINAL ISSUANCE / PROFILE CANNOT CREATE OR RECREATE IT / PROVISIONING REQUIRES SEPARATELY REVIEWED OWNER-AUTHORIZED PREPARATION EVIDENCE / FIRST PROFILE-OWNED WRITE IS CREATE_NEW OF GUARD FILE",
+		"lifecycle_safety_binding/child_launch_cwd":         \`EXACT VERIFIED ACTIVE SLOT payload\\runtime\\b11033-vulkan ABSOLUTE DIRECTORY ONLY / NO CALLER CONTROL\`,
+		"lifecycle_safety_binding/child_launch_environment": \`EMPTY_BASE_ENVIRONMENT / EXACT ALLOWLIST SystemRoot,WINDIR,TEMP,TMP ONLY / SystemRoot+WINDIR FROM TRUSTED GetWindowsDirectoryW / TEMP+TMP=C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001\\state\\temp / PATH ABSENT / ALL OTHER VARIABLES OMITTED / NO CALLER OR PARENT INHERITANCE\`,
+		"lifecycle_safety_binding/child_launch_envelope": "EXECUTABLE + ARGV + ENVIRONMENT + CWD + 127.0.0.1:18088 ENDPOINT + ORIGINAL OS PROCESS HANDLE ARE JOINTLY IMMUTABLE AND PROFILE-DERIVED",
+		"release_ceiling": "M1_08_PC_RUNTIME_LIFECYCLE_SMOKE_EVIDENCE_ONLY / LIFECYCLE_MECHANICS_ONLY / NO_BINARY_MIGRATION_CLAIM / NO_M1_09 / NO_TRAINING / NO_PROMOTION / NO_MODEL_PROMOTION_OR_RELEASE_ACTIVATION / NO_RELEASE / NO_PRODUCTION",
 	}
 }
 
