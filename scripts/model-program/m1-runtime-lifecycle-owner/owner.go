@@ -367,12 +367,48 @@ func (c *controller) createNewSynced(path string, data []byte, mode os.FileMode)
 	return writeSyncClose(f, data)
 }
 
+var exactEvidenceOutputs = map[string]bool{
+	"M1RuntimeLifecyclePreflight.json": true,
+	"M1RuntimeLifecycleEvents.jsonl": true,
+	"M1RuntimeLifecycleInstall.json": true,
+	"M1RuntimeLifecycleUpgrade.json": true,
+	"M1RuntimeLifecycleRollback.json": true,
+	"M1RuntimeLifecycleDigests.json": true,
+	"M1RuntimeLifecycleCleanup.json": true,
+	"M1RuntimeLifecycleCloseout.json": true,
+	"M1RuntimeLifecycleAttemptGuard.snapshot.json": true,
+}
+
+// writeEvidence is the normal lifecycle evidence capability. It is deliberately
+// subject to the live profile deadline/expiry gate; expiry cannot be bypassed
+// by routing a normal lifecycle effect through the evidence directory.
 func (c *controller) writeEvidence(ctx *executionContext, name string, v any, appendLine bool) error {
+	if e := c.limits(ctx); e != nil {
+		return e
+	}
+	return c.writeEvidenceBounded(ctx, name, v, appendLine, false)
+}
+
+// writeTerminalEvidence is a narrow post-expiry capability used only by the
+// finalizer. It cannot restore lifecycle authority: only the already-authorized
+// append-only Events stream is writable, and requireContext still proves the
+// exact consumed immutable execution context.
+func (c *controller) writeTerminalEvidence(ctx *executionContext, v any) error {
 	if e := c.requireContext(ctx); e != nil {
 		return e
 	}
-	if filepath.Base(name) != name || name == "" {
-		return fail("EVIDENCE_PATH_OUTSIDE_OUTPUT")
+	return c.writeEvidenceBounded(ctx, "M1RuntimeLifecycleEvents.jsonl", v, true, true)
+}
+
+func (c *controller) writeEvidenceBounded(ctx *executionContext, name string, v any, appendLine, terminal bool) error {
+	if e := c.requireContext(ctx); e != nil {
+		return e
+	}
+	if filepath.Base(name) != name || name == "" || !exactEvidenceOutputs[name] {
+		return fail("EVIDENCE_OUTPUT_NOT_AUTHORIZED")
+	}
+	if terminal && name != "M1RuntimeLifecycleEvents.jsonl" {
+		return fail("TERMINAL_EVIDENCE_OUTPUT_NOT_AUTHORIZED")
 	}
 	raw := append(canonical(v), '\n')
 	if e := ctx.budget.consume(int64(len(raw)), false); e != nil {
