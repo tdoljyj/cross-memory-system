@@ -82,7 +82,7 @@
     "training": false,
     "distillation": false,
     "promotion": false,
-    "activation": false,
+    "model_promotion_or_release_activation": false,
     "release": false,
     "production_deployment": false
   },
