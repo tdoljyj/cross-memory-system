@@ -219,7 +219,7 @@
     {
       "workflow": "public-mcp-behavior.yml",
       "runs_on": [
-        "[self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]",
+        "[self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, site-company]",
         "ubuntu-latest"
       ],
       "hosted": true,

@@ -11,8 +11,9 @@ NON-PRODUCTION ONLY. This module deliberately reuses the exact durable primitive
 It does not reimplement Current/CAS/Receipt semantics in the entry adapters.
 """
 from __future__ import annotations
-import argparse, base64, json, os, shutil, subprocess, threading
+import argparse, base64, json, os, re, shutil, subprocess, threading
 from typing import Any
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 try:
     from .common import ProtocolError, new_id, sha256_json, validate_create_content
@@ -22,6 +23,36 @@ except ImportError:
     from gateway_http import Handler
 
 EXPECTED_NONPROD_TARGET = "clued-auth-test/uscrdifznmlvczcekqpw"
+EXPECTED_PROJECT_REF = "uscrdifznmlvczcekqpw"
+
+
+def _assert_nonprod_dsn(dsn: str) -> None:
+    """Bind the write-capable entry to the named Supabase project, not a label."""
+    try:
+        uri = urlsplit(dsn)
+        host, port = uri.hostname, uri.port or 5432
+        user = unquote(uri.username or "")
+        options = parse_qsl(uri.query, keep_blank_values=True, strict_parsing=True)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("non-production database connection target rejected") from error
+    if uri.scheme not in {"postgres", "postgresql"} or uri.fragment or not host or port != 5432:
+        raise RuntimeError("non-production database connection target rejected")
+    if unquote(uri.path) != "/postgres":
+        raise RuntimeError("non-production database connection target rejected")
+    if len({key for key, _ in options}) != len(options):
+        raise RuntimeError("non-production database connection target rejected")
+    settings = dict(options)
+    if set(settings) - {"sslmode", "sslrootcert", "connect_timeout", "application_name"}:
+        raise RuntimeError("non-production database connection target rejected")
+    if settings.get("sslmode") != "verify-full":
+        raise RuntimeError("non-production database connection requires sslmode=verify-full")
+    direct = host == f"db.{EXPECTED_PROJECT_REF}.supabase.co" and user == "postgres"
+    session_pooler = (
+        re.fullmatch(r"aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com", host) is not None
+        and user == f"postgres.{EXPECTED_PROJECT_REF}"
+    )
+    if not (direct or session_pooler):
+        raise RuntimeError("non-production database connection target rejected")
 
 
 def _b64(value: str) -> str:
@@ -43,6 +74,7 @@ class PgMPS02BStore:
             raise RuntimeError(f"target guard failed: expected {EXPECTED_NONPROD_TARGET}")
         if allow_nonprod_write != "MPS03_NONPROD_WRITE_APPROVED":
             raise RuntimeError("explicit non-production write guard not satisfied")
+        _assert_nonprod_dsn(dsn)
         if not shutil.which("psql"):
             raise RuntimeError("psql is required for mps02b_pg_gateway")
         self.dsn=dsn; self.user_id=user_id; self.authority_domain=authority_domain
@@ -54,7 +86,10 @@ class PgMPS02BStore:
     def _psql(self, sql: str, variables: dict[str,str] | None=None) -> str:
         cmd=["psql",self.dsn,"-X","-A","-t","-q","-v","ON_ERROR_STOP=1"]
         for k,v in (variables or {}).items(): cmd += ["-v",f"{k}={_b64(v)}"]
-        env=os.environ.copy(); env.setdefault("PGOPTIONS","-c client_min_messages=warning")
+        env=os.environ.copy()
+        for key in ("PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGUSER", "PGSERVICE"):
+            env.pop(key, None)
+        env.setdefault("PGOPTIONS","-c client_min_messages=warning")
         p=subprocess.run(cmd,input=sql,text=True,capture_output=True,env=env,timeout=30)
         if p.returncode:
             err=(p.stderr or p.stdout).strip()
@@ -107,28 +142,45 @@ select jsonb_build_object(
         if action not in allowed.get(s["principal"],set()): raise ProtocolError("ACTION_NOT_AUTHORIZED",f"principal cannot {action}",403)
 
     def _read_for(self, principal: str, object_id: str, action: str="read") -> dict:
-        sql=f"""
-with p as (
- select clued_private.mps_issue_context_pack({_t('oid')},{_t('domain')},{_t('principal')},{_t('action')},'[]'::jsonb,null) as pack
-), h as (
- select s.current_revision_id,s.current_adoption_id,r.revision_digest,r.content
- from clued_private.mps_state_heads s join clued_private.mps_revisions r
- on r.object_id=s.object_id and r.revision_id=s.current_revision_id
- where s.object_id={_t('oid')}
-)
-select jsonb_build_object('ok',true,'object_id',{_t('oid')},'title',coalesce(h.content->>'title','Untitled'),
- 'revision_id',h.current_revision_id,'revision_digest',h.revision_digest,'adoption_id',h.current_adoption_id,
- 'body',h.content,'state_stamp',p.pack#>'{{context_pack,composite_state_stamp}}',
- 'context_pack_digest',p.pack->>'pack_digest','context_pack',p.pack->'context_pack')::text from p,h;
-"""
-        r=self._json(sql,{"oid":object_id,"domain":self.authority_domain,"principal":principal,"action":action})
-        if not r: raise ProtocolError("OBJECT_NOT_FOUND","object not found",404)
-        raw_stamp=dict(r.get("state_stamp") or {})
-        digest=(r.get("context_pack") or {}).get("state_stamp_digest") or sha256_json(raw_stamp)
+        # The pack function is VOLATILE and uses a fresh inner snapshot. Reading
+        # Current in the same outer SELECT can pair its stamp with an older body.
+        issued=self._json(
+            f"select clued_private.mps_issue_context_pack({_t('oid')},{_t('domain')},{_t('principal')},{_t('action')},'[]'::jsonb,null)::text;",
+            {"oid":object_id,"domain":self.authority_domain,"principal":principal,"action":action},
+        )
+        pack=issued.get("context_pack") or {}
+        stamp=pack.get("composite_state_stamp") or {}
+        revision=pack.get("exact_revision") or {}
+        adoption=pack.get("adoption") or {}
+        revision_id=revision.get("revision_id")
+        revision_digest=revision.get("revision_digest")
+        adoption_id=adoption.get("adoption_id")
+        if (not issued.get("pack_digest") or pack.get("object_identity",{}).get("object_id") != object_id
+                or stamp.get("object_id") != object_id or stamp.get("current_revision_id") != revision_id
+                or stamp.get("current_adoption_id") != adoption_id or not revision_digest):
+            raise ProtocolError("MPS02B_INCONSISTENT_CONTEXT_READ","context pack identity is inconsistent",500)
+        # Revisions and adoptions are immutable. A later statement can safely
+        # fetch the exact revision named by the pack even if Current advances.
+        result=self._json(f"""
+select jsonb_build_object('ok',true,'object_id',{_t('oid')},
+ 'title',coalesce(r.content->>'title','Untitled'),'revision_id',r.revision_id,
+ 'revision_digest',r.revision_digest,'adoption_id',a.adoption_id,'body',r.content)::text
+from clued_private.mps_revisions r join clued_private.mps_adoptions a
+ on a.object_id=r.object_id and a.revision_id=r.revision_id
+where r.object_id={_t('oid')} and r.revision_id={_t('rid')}
+ and r.revision_digest={_t('digest')} and a.adoption_id={_t('aid')};
+""",{"oid":object_id,"rid":revision_id,"digest":revision_digest,"aid":adoption_id})
+        if (result.get("revision_id") != revision_id or result.get("revision_digest") != revision_digest
+                or result.get("adoption_id") != adoption_id or not isinstance(result.get("body"),dict)):
+            raise ProtocolError("MPS02B_INCONSISTENT_CONTEXT_READ","exact revision is not available",500)
+        raw_stamp=dict(stamp)
+        digest=pack.get("state_stamp_digest")
+        if not digest:
+            raise ProtocolError("MPS02B_INCONSISTENT_CONTEXT_READ","context stamp digest is missing",500)
         raw_stamp["state_stamp_digest"]=digest
-        r["state_stamp"]=raw_stamp
-        r["state_stamp_digest"]=digest
-        return r
+        result.update({"state_stamp":raw_stamp,"state_stamp_digest":digest,
+                       "context_pack_digest":issued["pack_digest"],"context_pack":pack})
+        return result
 
     def create_object(self, token: str, title: str, body: dict, request_id: str) -> dict:
         s=self._session(token); self._require(s,"create")
@@ -270,7 +322,26 @@ commit;
         return outcome
 
     def read_object(self, token: str, object_id: str) -> dict:
-        s=self._session(token); self._require(s,"read"); return self._read_for(s["principal"],object_id,"read")
+        s=self._session(token); self._require(s,"read")
+        result=self._read_for(s["principal"],object_id,"read")
+        result["read_state_stamp"]=result["state_stamp"]
+        next_action="propose" if s["entry_kind"]=="THIRD_PARTY_AGENT_HOST" else "update"
+        try:
+            action_result=self._read_for(s["principal"],object_id,next_action)
+        except ProtocolError as error:
+            if error.status == 403:
+                result["state_stamp_action"]="read"
+                return result
+            raise
+        def current_part(stamp):
+            return {key:value for key,value in stamp.items()
+                    if key not in {"authorization_generation","state_stamp_digest"}}
+        if current_part(result["state_stamp"]) != current_part(action_result["state_stamp"]):
+            raise ProtocolError("STALE_CONTEXT_REQUIRES_REFRESH","Current changed during read",409)
+        for key in ("state_stamp","state_stamp_digest","context_pack_digest","context_pack"):
+            result[key]=action_result[key]
+        result["state_stamp_action"]=next_action
+        return result
 
     def list_objects(self, token: str) -> dict:
         s=self._session(token); self._require(s,"read")
@@ -295,6 +366,8 @@ from clued_private.mps_objects o where o.user_id=({_t('uid')})::uuid;
 
     def create_proposal(self, token: str, object_id: str, proposed_body: dict, observed_state_stamp: dict) -> dict:
         s=self._session(token); self._require(s,"propose")
+        if not isinstance(proposed_body,dict):
+            raise ProtocolError("JSON_OBJECT_REQUIRED","proposed body must be a JSON object",400)
         if not isinstance(observed_state_stamp,dict):
             raise ProtocolError("OBSERVED_STATE_REQUIRED","Agent proposal must include an observed state object",400)
         observed_digest=observed_state_stamp.get("state_stamp_digest")
@@ -309,27 +382,36 @@ with cp as (
 ), guard as (
  select p from cp where p#>>'{{context_pack,state_stamp_digest}}'={_t('observed_digest')}
   and p#>'{{context_pack,composite_state_stamp}}'={_j('observed_stamp')}
+), native_pack as (
+ select clued_private.mps_issue_context_pack({_t('oid')},{_t('domain')},{_t('native')},'update','[]'::jsonb,null) p
+ from guard
+), aligned as (
+ select guard.p agent_pack,native_pack.p write_pack from guard,native_pack
+ where ((guard.p#>'{{context_pack,composite_state_stamp}}') - 'authorization_generation')
+   = ((native_pack.p#>'{{context_pack,composite_state_stamp}}') - 'authorization_generation')
 ), ch as (
- select clued_private.mps_register_change_set({_t('oid')},{_t('change_id')},{_j('change_body')}) c from guard
+ select clued_private.mps_register_change_set({_t('oid')},{_t('change_id')},{_j('change_body')}) c from aligned
 ), mi as (
  select clued_private.mps_issue_mutation_intent(jsonb_build_object(
-  'context_pack_digest',guard.p->>'pack_digest','object_id',{_t('oid')},'operation','update',
+  'context_pack_digest',aligned.write_pack->>'pack_digest','object_id',{_t('oid')},'operation','update',
   'proposal_or_change_id',ch.c->>'change_id','proposal_or_change_digest',ch.c->>'change_digest',
   'target_revision',jsonb_build_object('mode','DERIVE_FROM_EXACT_CHANGE','change_id',ch.c->>'change_id','change_digest',ch.c->>'change_digest'),
   'adoption_scope','object','adoption_purpose','accept_proposal'
- )) i from guard,ch
+ )) i from aligned,ch
 )
 select case when cp.p#>>'{{context_pack,state_stamp_digest}}' is distinct from {_t('observed_digest')}
- or cp.p#>'{{context_pack,composite_state_stamp}}' is distinct from {_j('observed_stamp')} then
+ or cp.p#>'{{context_pack,composite_state_stamp}}' is distinct from {_j('observed_stamp')}
+ or aligned.write_pack is null then
  jsonb_build_object('ok',false,'error','STALE_CONTEXT_REQUIRES_REFRESH',
   'current_state_stamp',(cp.p#>'{{context_pack,composite_state_stamp}}') || jsonb_build_object('state_stamp_digest',cp.p#>>'{{context_pack,state_stamp_digest}}'))
 else
  jsonb_build_object('ok',true,'proposal_id',mi.i->>'intent_id','proposal_digest',mi.i->>'proposal_or_change_digest',
   'confirmation_intent',mi.i,'state_stamp',(cp.p#>'{{context_pack,composite_state_stamp}}') || jsonb_build_object('state_stamp_digest',cp.p#>>'{{context_pack,state_stamp_digest}}'),
-  'state_stamp_digest',cp.p#>>'{{context_pack,state_stamp_digest}}','context_pack_digest',cp.p->>'pack_digest',
-  'proposed_body',{_j('body')}) end::text from cp left join mi on true;
+  'state_stamp_digest',cp.p#>>'{{context_pack,state_stamp_digest}}',
+  'proposal_context_pack_digest',cp.p->>'pack_digest','context_pack_digest',aligned.write_pack->>'pack_digest',
+  'proposed_body',{_j('body')}) end::text from cp left join aligned on true left join mi on true;
 """
-        return self._json(sql,{"oid":object_id,"domain":self.authority_domain,"principal":s["principal"],"observed_digest":observed_digest,"observed_stamp":json.dumps(observed_stamp,ensure_ascii=False,separators=(",",":")),"change_id":change_id,"change_body":json.dumps(change_body,ensure_ascii=False,separators=(",",":")),"body":json.dumps(proposed_body,ensure_ascii=False,separators=(",",":"))})
+        return self._json(sql,{"oid":object_id,"domain":self.authority_domain,"principal":s["principal"],"native":self.native_principal,"observed_digest":observed_digest,"observed_stamp":json.dumps(observed_stamp,ensure_ascii=False,separators=(",",":")),"change_id":change_id,"change_body":json.dumps(change_body,ensure_ascii=False,separators=(",",":")),"body":json.dumps(proposed_body,ensure_ascii=False,separators=(",",":"))})
 
     def list_proposals(self, token: str, object_id: str) -> dict:
         s=self._session(token); self._require(s,"read")

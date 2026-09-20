@@ -189,6 +189,14 @@ class RealEntries(unittest.TestCase):
                 if path.endswith("/proposals"):
                     self.assertIn("--- current",text); self.assertIn("+++ proposed",text)
 
+    def test_native_html_does_not_mask_gateway_read_failure(self):
+        for path in ("/object/obj_missing", "/object/obj_missing/proposals", "/object/obj_missing/connection"):
+            url=f"http://127.0.0.1:{self.pn}{path}"
+            with self.subTest(path=path), self.assertRaises(HTTPError) as caught:
+                urlopen(Request(url,headers=headers_for(url)),timeout=5)
+            self.assertEqual(caught.exception.code,404)
+            self.assertEqual(json.loads(caught.exception.read().decode())["error"],"OBJECT_NOT_FOUND")
+
     def test_native_create_form_reuses_request_identity_on_retry(self):
         page_url=f"http://127.0.0.1:{self.pn}/"
         with urlopen(Request(page_url,headers=headers_for(page_url)),timeout=5) as response:

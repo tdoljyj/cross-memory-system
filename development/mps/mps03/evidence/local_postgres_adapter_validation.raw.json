@@ -11,6 +11,8 @@
   "agent_sees_new_current": true,
   "stale_agent_proposal_rejected": true,
   "altered_agent_stamp_rejected": true,
+  "distinct_allowed_action_generations": true,
+  "interleaved_read_keeps_stamp_and_body_together": true,
   "noncommitted_create_rolled_back": true,
   "container_removed_on_exit": true
 }

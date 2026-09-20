@@ -17,7 +17,7 @@ Status: IMPLEMENTATION CANDIDATE / NON-PRODUCTION / REVALIDATION AFTER REVIEW FI
 Command:
 `python scripts/mps03/run_acceptance.py`
 
-Result after scoped fixes: 22/22 PASS, 0 fail, 0 skipped. Added entry authentication, full-stamp and digest verification of the Agent's observation, Native form replay/diff, and PostgreSQL outcome regression coverage.
+Result after independent-review fixes: 26/26 PASS, 0 fail, 0 skipped. Coverage includes entry authentication, full-stamp and digest verification of the Agent's observation, Native form replay/diff, PostgreSQL outcome regression, DSN identity rejection, non-object proposal rejection, and Native HTML error propagation.
 Raw result: `evidence/mps03_acceptance.raw.txt`
 
 Command:
@@ -27,7 +27,7 @@ Result: Native, canonical reference gateway, and Agent Adapter ran as three dist
 Qualification remains local-reference-backend; no real third-party host PASS is claimed.
 Raw result: `evidence/cross_entry_evidence.raw.json`
 
-The earlier 16/16 run belongs to the prior PR head and is superseded by the new 22/22 raw result. Its historical CI result remains visible on that exact prior SHA.
+The earlier 16/16 and 22/22 runs belong to prior PR heads and are superseded by the new 26/26 raw result. Their historical CI results remain bound to those prior SHAs.
 
 ## CI runner policy
 
@@ -58,7 +58,7 @@ Production `clued-prod` was not touched.
 Live target fact record: `evidence/live_target_validation.json`
 Rollback validation raw result: `evidence/live_postgres_rollback_validation.raw.json`
 
-The prior Docker environment check reported the daemon unavailable; that historical result remains in `evidence/local_docker_gate_environment.raw.txt`. Docker was available for this follow-up. The new `scripts/mps03/validate_local_postgres.py` ran a disposable PostgreSQL 17 container with no network and exercised the Python bridge against the supplied MPS-02A/02B SQL. It verified create/replay, different-payload conflict, Agent proposal/Native confirm, a later Current change followed by exact replay of the old outcomes, stale and altered Agent observation rejection, and rollback of a bootstrap create when the formal commit returned a non-committed result. Raw result: `evidence/local_postgres_adapter_validation.raw.json`.
+The prior Docker environment check reported the daemon unavailable; that historical result remains in `evidence/local_docker_gate_environment.raw.txt`. Docker was available for this follow-up. The new `scripts/mps03/validate_local_postgres.py` ran a disposable PostgreSQL 17 container with no network and exercised the Python bridge against the supplied MPS-02A/02B SQL. It verified create/replay, different-payload conflict, Agent proposal/Native confirm with distinct allowed authorization generations for Agent read/propose and Native read/update, a later Current change followed by exact replay of the old outcomes, stale and altered Agent observation rejection, a confirmation interleaved between ContextPack issuance and exact Revision fetch without mixing stamp and body, and rollback of a bootstrap create when the formal commit returned a non-committed result. Raw result: `evidence/local_postgres_adapter_validation.raw.json`. A transient container initialization race on the first follow-up attempt was fixed in the local test harness; the recorded successful rerun used the final harness and removed its container on exit.
 
 **Qualification limit:** the supplied historical MPS-02B SQL calls nonstandard `pg_catalog.jsonb_object_length`. A clean PostgreSQL 17 instance lacks that function, so this local adapter run used an explicit test-only compatibility shim. It is not an unmodified formal MPS-02B G4 PASS. Read-only queries against the named `clued-auth-test` target confirmed its installed `mps_register_change_set` does not reference that missing function; see `evidence/live_target_primitive_readcheck_20260920.json`. No live MPS-03 HTTP bridge write was executed in this follow-up.
 
