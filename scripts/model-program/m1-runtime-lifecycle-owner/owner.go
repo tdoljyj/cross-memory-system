@@ -163,10 +163,11 @@ type controller struct {
 	currentSpec   transitionSpec
 	finalized     map[*executionContext]error
 	completed     map[*executionContext]bool
+	terminal      map[*executionContext]*terminalEvidenceState
 }
 
 func newController(sys platform, trust admission, paths layout) *controller {
-	return &controller{payload: reviewedPayload(), sys: sys, trust: trust, paths: paths, now: time.Now, contexts: map[*executionContext]*contextRecord{}, processes: map[*ownedProcess]*processRecord{}, immutablePins: map[string]*os.File{}, dirPins: map[string]*os.File{}, created: map[string]string{}, finalized: map[*executionContext]error{}, completed: map[*executionContext]bool{}}
+	return &controller{payload: reviewedPayload(), sys: sys, trust: trust, paths: paths, now: time.Now, contexts: map[*executionContext]*contextRecord{}, processes: map[*ownedProcess]*processRecord{}, immutablePins: map[string]*os.File{}, dirPins: map[string]*os.File{}, created: map[string]string{}, finalized: map[*executionContext]error{}, completed: map[*executionContext]bool{}, terminal: map[*executionContext]*terminalEvidenceState{}}
 }
 
 func (c *controller) requireContext(ctx *executionContext) error {
@@ -194,6 +195,9 @@ func (c *controller) requireContext(ctx *executionContext) error {
 func (c *controller) limits(ctx *executionContext) error {
 	if e := c.requireContext(ctx); e != nil {
 		return e
+	}
+	if _, done := c.finalized[ctx]; done || c.terminal[ctx] != nil {
+		return fail("LIFECYCLE_AUTHORITY_TERMINATED")
 	}
 	if e := ctx.budget.err(); e != nil {
 		return e
@@ -367,66 +371,111 @@ func (c *controller) createNewSynced(path string, data []byte, mode os.FileMode)
 	return writeSyncClose(f, data)
 }
 
-var exactEvidenceOutputs = map[string]bool{
-	"M1RuntimeLifecyclePreflight.json": true,
-	"M1RuntimeLifecycleEvents.jsonl": true,
-	"M1RuntimeLifecycleInstall.json": true,
-	"M1RuntimeLifecycleUpgrade.json": true,
-	"M1RuntimeLifecycleRollback.json": true,
-	"M1RuntimeLifecycleDigests.json": true,
-	"M1RuntimeLifecycleCleanup.json": true,
-	"M1RuntimeLifecycleCloseout.json": true,
-	"M1RuntimeLifecycleAttemptGuard.snapshot.json": true,
+// The implementation ceiling is immutable code, not a mutable map. The signed
+// profile must ALSO authorize the exact name: a narrower signed list never grows.
+func exactEvidenceOutput(name string) bool {
+	switch name {
+	case "M1RuntimeLifecyclePreflight.json", "M1RuntimeLifecycleEvents.jsonl",
+		"M1RuntimeLifecycleInstall.json", "M1RuntimeLifecycleUpgrade.json",
+		"M1RuntimeLifecycleRollback.json", "M1RuntimeLifecycleDigests.json",
+		"M1RuntimeLifecycleCleanup.json", "M1RuntimeLifecycleCloseout.json",
+		"M1RuntimeLifecycleAttemptGuard.snapshot.json":
+		return true
+	}
+	return false
+}
+func evidenceOutputAuthorized(ctx *executionContext, name string, appendLine bool) error {
+	if filepath.Base(name) != name || !exactEvidenceOutput(name) {
+		return fail("EVIDENCE_OUTPUT_NOT_AUTHORIZED")
+	}
+	if appendLine != (name == "M1RuntimeLifecycleEvents.jsonl") {
+		return fail("EVIDENCE_OUTPUT_MODE_NOT_AUTHORIZED")
+	}
+	outputs, ok := get(ctx.profile, "allowed_outputs").([]any)
+	if ok {
+		for _, output := range outputs {
+			if output == name {
+				return nil
+			}
+		}
+	}
+	return fail("EVIDENCE_OUTPUT_NOT_AUTHORIZED_BY_SIGNED_PROFILE")
 }
 
-// writeEvidence is the normal lifecycle evidence capability. It is deliberately
-// subject to the live profile deadline/expiry gate; expiry cannot be bypassed
-// by routing a normal lifecycle effect through the evidence directory.
 func (c *controller) writeEvidence(ctx *executionContext, name string, v any, appendLine bool) error {
-	if e := c.limits(ctx); e != nil {
-		return e
-	}
 	return c.writeEvidenceBounded(ctx, name, v, appendLine, false)
 }
 
-// writeTerminalEvidence is a narrow post-expiry capability used only by the
-// finalizer. It cannot restore lifecycle authority: only the already-authorized
-// append-only Events stream is writable, and requireContext still proves the
-// exact consumed immutable execution context.
+// This helper does NOT mint terminal authority. Only finalizeAttempt enters
+// the terminal state; normal calls, finalized contexts and reuse all fail closed.
 func (c *controller) writeTerminalEvidence(ctx *executionContext, v any) error {
-	if e := c.requireContext(ctx); e != nil {
-		return e
-	}
 	return c.writeEvidenceBounded(ctx, "M1RuntimeLifecycleEvents.jsonl", v, true, true)
 }
 
 func (c *controller) writeEvidenceBounded(ctx *executionContext, name string, v any, appendLine, terminal bool) error {
-	if e := c.requireContext(ctx); e != nil {
-		return e
-	}
-	if filepath.Base(name) != name || name == "" || !exactEvidenceOutputs[name] {
-		return fail("EVIDENCE_OUTPUT_NOT_AUTHORIZED")
-	}
-	if terminal && name != "M1RuntimeLifecycleEvents.jsonl" {
-		return fail("TERMINAL_EVIDENCE_OUTPUT_NOT_AUTHORIZED")
-	}
-	raw := append(canonical(v), '\n')
-	if e := ctx.budget.consume(int64(len(raw)), false); e != nil {
-		return e
-	}
-	path := filepath.Join(c.paths.evidence, name)
-	if appendLine {
-		_, se := os.Lstat(path)
-		if se != nil && !os.IsNotExist(se) {
-			return se
-		}
-		f, e := c.openOwnedWrite(path, os.IsNotExist(se))
+	check := func() error { return c.limits(ctx) }
+	if terminal {
+		state, e := c.requireTerminalEvidence(ctx)
 		if e != nil {
 			return e
 		}
-		return writeSyncClose(f, raw)
+		row, ok := v.(object)
+		if name != "M1RuntimeLifecycleEvents.jsonl" || !appendLine || !ok ||
+			row["profile_id"] != issuedID || row["scenario"] != "FINALIZATION" ||
+			row["kind"] != "terminal_failure" || row["pass"] != false {
+			return fail("TERMINAL_EVIDENCE_ENVELOPE_NOT_AUTHORIZED")
+		}
+		if state.writeAttempted {
+			return fail("TERMINAL_EVIDENCE_ALREADY_ATTEMPTED")
+		}
+		state.writeAttempted = true
+		check = func() error {
+			live, e := c.requireTerminalEvidence(ctx)
+			if e == nil && live != state {
+				return fail("TERMINAL_EVIDENCE_STATE_DRIFT")
+			}
+			return e
+		}
 	}
-	return c.createNewSynced(path, raw, 0600)
+	if e := check(); e != nil {
+		return e
+	}
+	if e := evidenceOutputAuthorized(ctx, name, appendLine); e != nil {
+		return e
+	}
+	raw := append(canonical(v), '\n')
+	if terminal && len(raw) > maxTerminalEvidenceBytes {
+		return fail("TERMINAL_EVIDENCE_SIZE_LIMIT")
+	}
+	if e := check(); e != nil {
+		return e
+	}
+	// Ordinary evidence, like child capture, cannot consume the forensic reserve.
+	if e := ctx.budget.consume(int64(len(raw)), !terminal); e != nil {
+		return e
+	}
+	path := filepath.Join(c.paths.evidence, name)
+	create := true
+	if appendLine {
+		_, e := os.Lstat(path)
+		if e != nil && !os.IsNotExist(e) {
+			return e
+		}
+		create = os.IsNotExist(e)
+	}
+	if e := check(); e != nil {
+		return e
+	}
+	f, e := c.openOwnedWrite(path, create)
+	if e != nil {
+		return e
+	}
+	// Opening or validating a handle can outlast expiry. No bytes are written
+	// after such a late return; a just-created empty object remains forensic state.
+	if e = check(); e != nil {
+		return errors.Join(e, f.Close())
+	}
+	return errors.Join(writeSyncClose(f, raw), check())
 }
 func (c *controller) event(ctx *executionContext, scenario, kind string, fields object) error {
 	row := object{}

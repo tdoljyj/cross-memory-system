@@ -66,10 +66,10 @@
       "sha256": "0e2bac3f004a2999aaf7bb05c57efc068031d505577ca4ee68f0ee4cca628028"
     },
     {
-      "bytes": 3599,
-      "git_blob_sha1": "2bc485b90df1b82b0f156a9a20c6514798b62433",
+      "bytes": 14563,
+      "git_blob_sha1": "9932d8ca5a51d908f5c5107ab76f0b1448806a9d",
       "path": "finalization.go",
-      "sha256": "e7a68e93267b71699c90e31aafb53c0a1742accaf59d00ce9390b19143e9295d"
+      "sha256": "714c4d144225df7309a9410abaefd9f63c471b4844161553f1790b42d6d3fa4c"
     },
     {
       "bytes": 49,
@@ -96,16 +96,16 @@
       "sha256": "dab032fe2c7a6d6b845d266ead695673e93a72c138a63d0097be27704f129b1a"
     },
     {
-      "bytes": 21543,
-      "git_blob_sha1": "af5013f22b6fbcdaa00e7b7529768b62f2e6bf5b",
+      "bytes": 23071,
+      "git_blob_sha1": "98f35780c8a91bee50b51017a4d652ee30dfeae1",
       "path": "owner.go",
-      "sha256": "7307f7014a8e9d233ed11aba090ea26996062f7a2060f8bcd58982fb910f8cfc"
+      "sha256": "26e64d96f9d20c058f784af8e49ab895235ed99803b940481f895c3f14d919dc"
     },
     {
-      "bytes": 20572,
-      "git_blob_sha1": "8d50da6ca7de91f1fbdcedfd010087ae5a6fcba1",
+      "bytes": 20932,
+      "git_blob_sha1": "bc9827b136c0697fc83655e93159576590547be8",
       "path": "owner_test.go",
-      "sha256": "5be436c29f1f612a57179e9fd744be92e3d50e944b84b4158adc117615ee097e"
+      "sha256": "856d26db0a2ec20ce61d86ed12c3180add183acd72cda47896c18990264dd56f"
     },
     {
       "bytes": 669,
@@ -156,10 +156,10 @@
       "sha256": "31e9566693b42c0fb9820b8aeb6d2fa009e72caeec8ed9de5029b4c748adb07c"
     },
     {
-      "bytes": 20945,
-      "git_blob_sha1": "910079d9cf200840f2f3070a254a357592bc4373",
+      "bytes": 32297,
+      "git_blob_sha1": "56b2855cb5758b42095f23c9045169f4809a9198",
       "path": "remediation_test.go",
-      "sha256": "6ff7a83bb5ecd5cb698007081e5806f485ae87b63ae17fddbc93c5614a0b1a84"
+      "sha256": "1f376b98caad84361044c69e5e1bd699ca08597cb02d2f68f87ac0afbc89d8bd"
     },
     {
       "bytes": 4823,
@@ -205,12 +205,12 @@
       "MAJOR-08"
     ],
     "independent_review_pass": false,
-    "repair_base_head": "02384f219c3dddc027dd39640a313657286df197",
-    "repair_base_source_manifest_sha256": "c932c2a1b2f82bd386bf7e875b62c45f7a7a684e6847bb8d26de8c9304eaf0d5",
-    "repository_successor_commit": "PENDING_SOURCE_FREEZE",
-    "revision": "MAJOR-07-MAJOR-08-r2",
-    "status": "TARGETED_SOURCE_REMEDIATION_CANDIDATE / WINDOWS_NATIVE_REQUALIFICATION_PENDING / INDEPENDENT_CLOSURE_PENDING",
-    "validation_boundary": "SOURCE-ONLY TARGETED REMEDIATION / NO OWNER BINARY OR REAL MODEL EXECUTION"
+    "repair_base_head": "3991a79f589ecd258b4339aac4f3f4843c3ddb37",
+    "repair_base_source_manifest_sha256": "a2b12c1d83ad2ec2cd0fa280e167469c44bc9b21f333a9cc44b8f59c991738f0",
+    "repository_successor_commit": null,
+    "revision": "MAJOR-07-MAJOR-08-r3",
+    "status": "LOCAL_SOURCE_CANDIDATE / AUTHOR_SIDE_REGRESSION_PASS / REPOSITORY_LANDING_AND_EXACT_WINDOWS_REQUALIFICATION_PENDING",
+    "validation_boundary": "LOCAL_LINUX_GO_1.23.2_NON_MODEL_FIXTURES / NO_OWNER_BINARY_OR_REAL_MODEL_EXECUTION / NOT_INDEPENDENT_REVIEW"
   },
   "role": "EFFECTFUL_OWNER_IMPLEMENTATION_PREPARATION_CANDIDATE / NO_FINAL_ISSUANCE / NO_EXECUTION",
   "schema_version": "clued.m1-08-native-owner-source-manifest/1"

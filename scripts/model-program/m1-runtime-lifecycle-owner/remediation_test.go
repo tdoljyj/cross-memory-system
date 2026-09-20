@@ -360,16 +360,16 @@ func TestRemediationSafeOwnedPartialCleanupUsesLedger(t *testing.T) {
 func TestRemediationEvidenceReserveSurvivesCaptureExhaustion(t *testing.T) {
 	c, ctx, _ := tinyLifecycle(t)
 	b := ctx.budget
-	b.limit = b.used + 4096
-	b.reserve = 2048
-	if e := b.consume(2049, true); e == nil {
+	b.limit = b.used + 65536
+	b.reserve = 32768
+	if e := b.consume(32769, true); e == nil {
 		t.Fatal("capture overflow not latched")
 	}
 	if e := c.limits(ctx); e == nil {
 		t.Fatal("business continued after overflow")
 	}
-	if e := c.writeTerminalEvidence(ctx, object{"scenario": "FINALIZATION", "kind": "terminal_failure", "cause": "capture_overflow"}); e != nil {
-		t.Fatal(e)
+	if e := c.finalizeAttempt(ctx, fail("CAPTURE_OVERFLOW")); e == nil || strings.Contains(e.Error(), "TERMINAL_EVIDENCE_UNAVAILABLE") {
+		t.Fatalf("forensic reserve unavailable: %v", e)
 	}
 	exists(t, filepath.Join(c.paths.evidence, "M1RuntimeLifecycleEvents.jsonl"), true)
 }
@@ -409,8 +409,11 @@ func TestRemediationExpiryDeadlineAndContextBinding(t *testing.T) {
 	if e := c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{"expired": true}, false); codeOf(e) != "PROFILE_EXPIRED_OR_REVOKED" {
 		t.Fatalf("normal evidence remained authorized after expiry: %v", e)
 	}
-	if e := c.writeTerminalEvidence(ctx, object{"scenario": "FINALIZATION", "kind": "terminal_failure", "expired": true}); e != nil {
-		t.Fatal(e)
+	if e := c.writeTerminalEvidence(ctx, object{}); codeOf(e) != "TERMINAL_EVIDENCE_REQUIRES_FINALIZATION" {
+		t.Fatalf("terminal helper minted authority: %v", e)
+	}
+	if e := c.finalizeAttempt(ctx, fail("EXPIRED_FIXTURE")); e == nil || strings.Contains(e.Error(), "TERMINAL_EVIDENCE_UNAVAILABLE") {
+		t.Fatalf("safe expired finalization failed: %v", e)
 	}
 	ctx.expires = expiry.Add(time.Hour)
 	if e := c.requireContext(ctx); e == nil {
@@ -449,7 +452,7 @@ func TestRemediationEvidenceAllowlistAndExpiredNormalScenarioFailClosed(t *testi
 	if e := c.event(ctx, "fixture", "normal_event", object{}); codeOf(e) != "PROFILE_EXPIRED_OR_REVOKED" {
 		t.Fatalf("expired normal event accepted: %v", e)
 	}
-	if e := c.writeTerminalEvidence(ctx, object{"scenario": "FINALIZATION", "kind": "terminal_failure"}); e != nil {
+	if e := c.finalizeAttempt(ctx, fail("EXPIRED_FIXTURE")); e == nil || strings.Contains(e.Error(), "TERMINAL_EVIDENCE_UNAVAILABLE") {
 		t.Fatalf("terminal safety evidence unavailable after expiry: %v", e)
 	}
 }
@@ -468,8 +471,8 @@ func TestRemediationFailureEvidenceCarriesRemainingOwnershipLedger(t *testing.T)
 	if e = json.Unmarshal(lines[len(lines)-1], &row); e != nil {
 		t.Fatal(e)
 	}
-	remaining, ok := row["remaining_test_owned_state"].([]any)
-	if !ok || len(remaining) == 0 {
+	remaining, ok := row["remaining_test_owned_state"].(map[string]any)
+	if !ok || remaining["complete"] != true || len(remaining["objects"].([]any)) == 0 {
 		t.Fatalf("missing exact remaining ownership ledger: %s", raw)
 	}
 }
@@ -505,12 +508,14 @@ func TestRemediationRunProbeFailureReachesTerminalRecovery(t *testing.T) {
 			case 1:
 				exists(t, currentPath(c.paths), false)
 			case 2:
-				if e := c.requireCurrentTransition(ctx, upgradeRecovery()); e != nil {
-					t.Fatal(e)
+				m, raw, e := c.readCurrent()
+				if e != nil || !transitionMatches(m, upgradeRecovery()) || !bytes.Equal(raw, c.currentBytes) {
+					t.Fatalf("unexpected retained recovery state: %v", e)
 				}
 			case 3:
-				if e := c.requireCurrentTransition(ctx, rollbackRecovery()); e != nil {
-					t.Fatal(e)
+				m, raw, e := c.readCurrent()
+				if e != nil || !transitionMatches(m, rollbackRecovery()) || !bytes.Equal(raw, c.currentBytes) {
+					t.Fatalf("unexpected retained recovery state: %v", e)
 				}
 			}
 			exists(t, filepath.Join(c.paths.evidence, "M1RuntimeLifecycleEvents.jsonl"), true)
@@ -614,5 +619,266 @@ func TestRemediationCanonicalPythonGoldenVectors(t *testing.T) {
 		if got != text(v, "canonical_utf8_hex") {
 			t.Fatalf("Python/Go canonical bytes drift, vector %d", i)
 		}
+	}
+}
+
+// R3 regressions exercise only the existing non-model fixture platform. They
+// neither execute the Owner nor act against real lifecycle/Guard namespaces.
+func r3FailureEvent(t *testing.T, c *controller) object {
+	t.Helper()
+	raw, e := os.ReadFile(filepath.Join(c.paths.evidence, "M1RuntimeLifecycleEvents.jsonl"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
+	m, e := decodeObject(lines[len(lines)-1])
+	if e != nil {
+		t.Fatal(e)
+	}
+	if text(m, "scenario") != "FINALIZATION" || text(m, "kind") != "terminal_failure" || m["pass"] != false {
+		t.Fatalf("not a failure event: %s", raw)
+	}
+	return m
+}
+func r3Expire(c *controller, ctx *executionContext) {
+	now := time.Now().UTC()
+	ctx.expires, ctx.deadline = now, now
+	c.contexts[ctx].expires, c.contexts[ctx].deadline = now, now
+	c.now = func() time.Time { return now }
+}
+func TestR3ExpiredLowerEvidenceGateIsFailClosed(t *testing.T) {
+	c, ctx, _ := tinyLifecycle(t)
+	r3Expire(c, ctx)
+	if e := c.writeEvidenceBounded(ctx, "M1RuntimeLifecycleInstall.json", object{"pass": true}, false, false); codeOf(e) != "PROFILE_EXPIRED_OR_REVOKED" {
+		t.Fatalf("lower gate: %v", e)
+	}
+	if e := c.writeTerminalEvidence(ctx, object{}); codeOf(e) != "TERMINAL_EVIDENCE_REQUIRES_FINALIZATION" {
+		t.Fatalf("unscoped terminal gate: %v", e)
+	}
+	exists(t, filepath.Join(c.paths.evidence, "M1RuntimeLifecycleInstall.json"), false)
+	exists(t, filepath.Join(c.paths.evidence, "M1RuntimeLifecycleEvents.jsonl"), false)
+}
+func TestR3FailureFinalizationRevokesNormalAndTerminalReuse(t *testing.T) {
+	c, ctx, _ := tinyLifecycle(t)
+	if e := c.finalizeAttempt(ctx, fail("FIRST_FAILURE")); e == nil {
+		t.Fatal("failure lost")
+	}
+	path := filepath.Join(c.paths.evidence, "M1RuntimeLifecycleEvents.jsonl")
+	before, _ := os.ReadFile(path)
+	if e := c.event(ctx, "business", "after_finalization", object{}); codeOf(e) != "LIFECYCLE_AUTHORITY_TERMINATED" {
+		t.Fatalf("normal resumed: %v", e)
+	}
+	if e := c.writeTerminalEvidence(ctx, object{}); codeOf(e) != "TERMINAL_EVIDENCE_AUTHORITY_CLOSED" {
+		t.Fatalf("terminal reused: %v", e)
+	}
+	if e := c.finalizeAttempt(ctx, nil); e == nil || !strings.Contains(e.Error(), "FIRST_FAILURE") {
+		t.Fatalf("failure not latched: %v", e)
+	}
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(before, after) {
+		t.Fatal("idempotent finalization wrote a second event")
+	}
+	if _, e := c.materializeSlot(ctx, revisionA); codeOf(e) != "LIFECYCLE_AUTHORITY_TERMINATED" {
+		t.Fatalf("lifecycle resumed: %v", e)
+	}
+}
+func TestR3SuccessFinalizationCannotStartSecondLifecycle(t *testing.T) {
+	c, ctx, _ := tinyLifecycle(t)
+	if e := c.run(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if e := c.run(ctx); codeOf(e) != "LIFECYCLE_AUTHORITY_TERMINATED" {
+		t.Fatalf("success context reused: %v", e)
+	}
+	exists(t, c.paths.testRoot, false)
+	exists(t, c.paths.guard, true)
+}
+func TestR3ForensicsRecordsLiveIdentityDigestsAndCurrent(t *testing.T) {
+	c, ctx, _ := tinyLifecycle(t)
+	materialize(t, c, ctx, revisionA)
+	publish(t, c, ctx, successTransition(1))
+	want := append([]byte(nil), c.currentBytes...)
+	if e := c.finalizeAttempt(ctx, fail("FOR_FORENSICS")); e == nil || strings.Contains(e.Error(), "EXACT_REMAINING_STATE_UNAVAILABLE") {
+		t.Fatalf("snapshot failure: %v", e)
+	}
+	m := r3FailureEvent(t, c)
+	inv := get(m, "remaining_test_owned_state").(object)
+	if inv["complete"] != true || text(inv, "observed_current/sha256") != sha(want) || get(inv, "observed_current/matches_last_committed_bytes") != true {
+		t.Fatalf("inexact Current: %s", canonical(inv))
+	}
+	rows := get(inv, "objects").([]any)
+	model := filepath.Join(slotRootFor(c.paths, revisionA), "payload", "model", "Qwen3.5-0.8B-Q8_0.gguf")
+	found := false
+	for _, raw := range rows {
+		row := raw.(object)
+		if samePath(text(row, "path"), model) {
+			found = true
+			if row["ownership_matches"] != true || text(row, "live_identity") != text(row, "creation_identity") || text(row, "sha256") != c.payload.modelSHA {
+				t.Fatalf("model not exact: %s", canonical(row))
+			}
+		}
+	}
+	if !found {
+		t.Fatal("remaining model omitted")
+	}
+	if text(inv, "objects_sha256") != digest(rows) {
+		t.Fatal("object list digest mismatch")
+	}
+	exists(t, c.paths.guard, true)
+	exists(t, c.paths.testRoot, true)
+}
+func TestR3ForensicsRejectsUnknownAndUnsafeStateWithoutDeleting(t *testing.T) {
+	for _, kind := range []string{"unknown", "identity", "reparse", "ads", "hardlink"} {
+		t.Run(kind, func(t *testing.T) {
+			c, ctx, f := tinyLifecycle(t)
+			path := filepath.Join(c.paths.testRoot, "fixture.txt")
+			data := []byte("non-model test fixture")
+			if kind == "unknown" {
+				if e := os.WriteFile(path, data, 0600); e != nil {
+					t.Fatal(e)
+				}
+			} else {
+				if e := c.createNewSynced(path, data, 0600); e != nil {
+					t.Fatal(e)
+				}
+			}
+			switch kind {
+			case "identity":
+				c.created[pathKey(path)] = "different-fixture-identity"
+			case "reparse":
+				f.reparse = map[string]bool{path: true}
+			case "ads":
+				f.streams = map[string][]string{path: {"::$DATA", ":unexpected:$DATA"}}
+			case "hardlink":
+				f.links = map[string]uint32{path: 2}
+			}
+			e := c.finalizeAttempt(ctx, fail("ORIGINAL"))
+			if e == nil || !strings.Contains(e.Error(), "EXACT_REMAINING_STATE_UNAVAILABLE") || strings.Contains(e.Error(), "TERMINAL_EVIDENCE_UNAVAILABLE") {
+				t.Fatalf("unsafe state misreported: %v", e)
+			}
+			m := r3FailureEvent(t, c)
+			if get(m, "remaining_test_owned_state/complete") != false {
+				t.Fatal("incomplete state called exact")
+			}
+			after, e := os.ReadFile(path)
+			if e != nil || !bytes.Equal(data, after) {
+				t.Fatal("forensics changed foreign/unsafe state")
+			}
+			exists(t, c.paths.guard, true)
+		})
+	}
+}
+func TestR3EvidenceModeAndSignedCeiling(t *testing.T) {
+	c, ctx, _ := tinyLifecycle(t)
+	if e := c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{}, true); codeOf(e) != "EVIDENCE_OUTPUT_MODE_NOT_AUTHORIZED" {
+		t.Fatalf("JSON append allowed: %v", e)
+	}
+	if e := c.writeEvidence(ctx, "M1RuntimeLifecycleEvents.jsonl", object{}, false); codeOf(e) != "EVIDENCE_OUTPUT_MODE_NOT_AUTHORIZED" {
+		t.Fatalf("stream replace allowed: %v", e)
+	}
+	// A separately registered fixture context models a signed narrower list.
+	ctx.profile["allowed_outputs"] = []any{"M1RuntimeLifecycleInstall.json"}
+	ctx.profileDigest = digest(ctx.profile)
+	c.contexts[ctx].profileDigest = ctx.profileDigest
+	if e := c.event(ctx, "fixture", "not_in_signed_list", object{}); codeOf(e) != "EVIDENCE_OUTPUT_NOT_AUTHORIZED_BY_SIGNED_PROFILE" {
+		t.Fatalf("signed scope widened: %v", e)
+	}
+	exists(t, filepath.Join(c.paths.evidence, "M1RuntimeLifecycleEvents.jsonl"), false)
+}
+func TestR3NormalEvidenceCannotSpendForensicReserve(t *testing.T) {
+	c, ctx, _ := tinyLifecycle(t)
+	ctx.budget.limit = ctx.budget.used + 65536
+	ctx.budget.reserve = 32768
+	if e := c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{"large": strings.Repeat("x", 33000)}, false); codeOf(e) != "OUTPUT_STORAGE_BUDGET_EXCEEDED" {
+		t.Fatalf("reserve spent: %v", e)
+	}
+	if e := c.finalizeAttempt(ctx, fail("RESERVE_FIXTURE")); e == nil || strings.Contains(e.Error(), "TERMINAL_EVIDENCE_UNAVAILABLE") {
+		t.Fatalf("reserve not available: %v", e)
+	}
+	if get(r3FailureEvent(t, c), "remaining_test_owned_state/complete") != true {
+		t.Fatal("no exact final inventory")
+	}
+}
+
+type r3LateEvidencePlatform struct {
+	*fakePlatform
+	latePath string
+	advance  func()
+}
+
+func (f *r3LateEvidencePlatform) verifyWriteHandle(file *os.File, path string) error {
+	if path == f.latePath {
+		f.advance()
+	}
+	return f.fakePlatform.verifyWriteHandle(file, path)
+}
+func TestR3ExpiryDuringEvidenceHandleValidationWritesNoBytes(t *testing.T) {
+	c, ctx, f := tinyLifecycle(t)
+	now := time.Now().UTC()
+	expiry := now.Add(time.Second)
+	ctx.expires, ctx.deadline = expiry, expiry
+	c.contexts[ctx].expires, c.contexts[ctx].deadline = expiry, expiry
+	c.now = func() time.Time { return now }
+	path := filepath.Join(c.paths.evidence, "M1RuntimeLifecycleInstall.json")
+	c.sys = &r3LateEvidencePlatform{fakePlatform: f, latePath: path, advance: func() { now = expiry }}
+	if e := c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{"pass": true}, false); codeOf(e) != "PROFILE_EXPIRED_OR_REVOKED" {
+		t.Fatalf("late handle accepted: %v", e)
+	}
+	raw, e := os.ReadFile(path)
+	if e != nil || len(raw) != 0 {
+		t.Fatalf("late business bytes written: %q %v", raw, e)
+	}
+}
+func TestR3ExpiryCleanupKillsOnlyOwnedFixtureProcess(t *testing.T) {
+	c, ctx, _ := tinyLifecycle(t)
+	owned := &fakeProcess{id: 1, live: true}
+	foreign := &fakeProcess{id: 2, live: true}
+	c.processes[&ownedProcess{id: 1}] = &processRecord{ctx: ctx, proc: owned}
+	c.processes[&ownedProcess{id: 2}] = &processRecord{ctx: &executionContext{}, proc: foreign}
+	r3Expire(c, ctx)
+	e := c.finalizeAttempt(ctx, fail("EXPIRY"))
+	if e == nil || strings.Contains(e.Error(), "TERMINAL_EVIDENCE_UNAVAILABLE") {
+		t.Fatalf("cleanup/forensics: %v", e)
+	}
+	if owned.kills != 1 || owned.live || foreign.kills != 0 || !foreign.live {
+		t.Fatal("process ownership changed")
+	}
+}
+
+func TestR3TerminalStateLimitsEnvelopeReuseAndTime(t *testing.T) {
+	c, ctx, _ := tinyLifecycle(t)
+	now := time.Now().UTC()
+	c.now = func() time.Time { return now }
+	c.terminal[ctx] = &terminalEvidenceState{deadline: now.Add(time.Second)} // controlled fixture phase
+	row := object{"profile_id": issuedID, "scenario": "FINALIZATION", "kind": "terminal_failure", "pass": false}
+	if e := c.writeEvidenceBounded(ctx, "M1RuntimeLifecycleInstall.json", row, false, true); codeOf(e) != "TERMINAL_EVIDENCE_ENVELOPE_NOT_AUTHORIZED" {
+		t.Fatalf("terminal output widened: %v", e)
+	}
+	if e := c.writeEvidenceBounded(ctx, "M1RuntimeLifecycleInstall.json", object{}, false, false); codeOf(e) != "LIFECYCLE_AUTHORITY_TERMINATED" {
+		t.Fatalf("normal authority within terminal phase: %v", e)
+	}
+	if e := c.writeTerminalEvidence(ctx, row); e != nil {
+		t.Fatal(e)
+	}
+	if e := c.writeTerminalEvidence(ctx, row); codeOf(e) != "TERMINAL_EVIDENCE_ALREADY_ATTEMPTED" {
+		t.Fatalf("terminal reused: %v", e)
+	}
+	now = now.Add(time.Second)
+	if _, e := c.requireTerminalEvidence(ctx); codeOf(e) != "TERMINAL_SAFETY_WINDOW_EXCEEDED" {
+		t.Fatalf("unbounded safety window: %v", e)
+	}
+}
+func TestR3ForensicsDistinguishesObservedAndCachedCurrent(t *testing.T) {
+	c, ctx, _ := tinyLifecycle(t)
+	materialize(t, c, ctx, revisionA)
+	publish(t, c, ctx, successTransition(1))
+	actual := append([]byte(nil), c.currentBytes...)
+	c.currentBytes = []byte("stale controller snapshot fixture")
+	if e := c.finalizeAttempt(ctx, fail("STALE_CACHE")); e == nil {
+		t.Fatal("failure lost")
+	}
+	inv := get(r3FailureEvent(t, c), "remaining_test_owned_state").(object)
+	if text(inv, "observed_current/sha256") != sha(actual) || get(inv, "observed_current/matches_last_committed_bytes") != false {
+		t.Fatalf("cached state presented as live: %s", canonical(inv))
 	}
 }
