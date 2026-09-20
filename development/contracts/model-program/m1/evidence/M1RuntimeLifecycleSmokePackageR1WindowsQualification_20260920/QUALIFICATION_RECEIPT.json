@@ -82,6 +82,7 @@
   "contract_profile_unchanged": true,
   "created_utc": "2026-09-20T10:00:27.802605+00:00",
   "effectful_authority_issued": false,
+  "evidence_storage": "ORIGINAL_MACHINE_BYTES_PRESERVED_BY_SCOPED_GIT_ATTRIBUTES; CONTENT_MANIFEST_VERIFIED_AGAINST_GIT_BLOBS",
   "formal_finding_closure": "NOT_ISSUED_REQUIRES_FRESH_CONTEXT_INDEPENDENT_REVIEW",
   "independent_review_performed": false,
   "initial_attempts": {

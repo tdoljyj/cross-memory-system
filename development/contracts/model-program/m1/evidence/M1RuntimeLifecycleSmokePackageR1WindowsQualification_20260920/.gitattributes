@@ -1,0 +1,2 @@
+# Preserve original qualification log and receipt bytes, including CRLF.
+* -text

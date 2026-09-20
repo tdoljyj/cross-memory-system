@@ -1,6 +1,11 @@
 {
   "files": [
     {
+      "bytes": 81,
+      "path": ".gitattributes",
+      "sha256": "dfe11c588afc990602e01c4dfcf31a8fa89832d4feb52d38833cf22fa505aded"
+    },
+    {
       "bytes": 10103,
       "path": "build-a/build-receipt.json",
       "sha256": "6d046a122145b9bda9454ac009f4871d493ab3ef4934a5526aff658e49379d16"
@@ -86,9 +91,9 @@
       "sha256": "8d6ef00c63542afd931f4423a5d6e8bec6cc318754da49d8763ed5328a71224f"
     },
     {
-      "bytes": 5367,
+      "bytes": 5495,
       "path": "QUALIFICATION_RECEIPT.json",
-      "sha256": "8f1987c38776f61efa1152e7602e74649b0a8fb4385c8fd9696d3266abb3d4c4"
+      "sha256": "263ec4776c20bc69f158c2ab2f8aa4ce987dc1150f7fbd5bda2ef0c9467e6890"
     }
   ],
   "manifest_excludes_itself": true
