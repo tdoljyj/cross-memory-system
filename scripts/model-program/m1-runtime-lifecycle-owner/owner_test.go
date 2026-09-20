@@ -266,3 +266,27 @@ func TestLoopbackRequestIsFixed(t *testing.T) {
 	if resp.StatusCode!=200 || f.request==nil || f.request.URL.String()!="http://127.0.0.1:18088/completion" { t.Fatalf("%v %#v",resp.StatusCode,f.request) }
 	if _,_,e=c.request(ctx,"GET","http://attacker",nil,time.Second); codeOf(e)!="LOOPBACK_REQUEST_PATH_FORBIDDEN" { t.Fatalf("%v",e) }
 }
+
+
+func TestImplementationPolicyMatchesReviewedCandidateProfile(t *testing.T) {
+	p := filepath.Join("..", "..", "..", "development", "contracts", "model-program", "m1", "governance", "ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json")
+	raw, e := os.ReadFile(p)
+	if e != nil { t.Fatal(e) }
+	profile, e := decodeObject(raw)
+	if e != nil { t.Fatal(e) }
+	checks := []struct{ path string; want any }{
+		{"authority_and_sources/lifecycle_contract_git_blob_sha1", contractBlobSHA1},
+		{"config_revision/server_probe/exact_server_argv_semantics", exactArgvSemantics()},
+		{"config_revision/server_probe/launch_envelope", exactLaunchEnvelopePolicy()},
+		{"lifecycle_safety_binding/transition_sequence", exactSuccessTransitions()},
+		{"lifecycle_safety_binding/failure_recovery_transition_sequence", exactRecoveryTransitions()},
+		{"lifecycle_safety_binding/child_launch_environment", scopePolicy()["lifecycle_safety_binding/child_launch_environment"]},
+		{"lifecycle_safety_binding/child_launch_cwd", scopePolicy()["lifecycle_safety_binding/child_launch_cwd"]},
+		{"lifecycle_safety_binding/child_launch_envelope", scopePolicy()["lifecycle_safety_binding/child_launch_envelope"]},
+	}
+	for _, tc := range checks {
+		if !equal(get(profile,tc.path),tc.want) {
+			t.Fatalf("reviewed candidate mismatch at %s\ngot=%s\nwant=%s",tc.path,canonical(get(profile,tc.path)),canonical(tc.want))
+		}
+	}
+}
