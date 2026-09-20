@@ -32,7 +32,7 @@ class NativeHandler(BaseHTTPRequestHandler):
         if status==401: self.send_header("WWW-Authenticate",'Basic realm="Clued Native"')
         self.end_headers(); self.wfile.write(b)
     def _send_html(self,status,markup):
-        b=markup.encode(); self.send_response(status); self.send_header("Content-Type","text/html; charset=utf-8"); self.send_header("Cache-Control","no-store"); self.send_header("Content-Length",str(len(b)));
+        b=markup.encode(); self.send_response(status); self.send_header("Content-Type","text/html; charset=utf-8"); self.send_header("Cache-Control","no-store"); self.send_header("Content-Security-Policy","frame-ancestors 'none'"); self.send_header("X-Frame-Options","DENY"); self.send_header("Content-Length",str(len(b)));
         if status==401: self.send_header("WWW-Authenticate",'Basic realm="Clued Native"')
         self.end_headers(); self.wfile.write(b)
     def _forward(self,obj):

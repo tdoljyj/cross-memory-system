@@ -272,6 +272,8 @@ class RealEntries(unittest.TestCase):
             url=f"http://127.0.0.1:{self.pn}{path}"
             with urlopen(Request(url,headers=headers_for(url)),timeout=5) as r:
                 text=r.read().decode(); self.assertEqual(r.status,200); self.assertIn("<html",text)
+                self.assertEqual(r.headers.get("Content-Security-Policy"),"frame-ancestors 'none'")
+                self.assertEqual(r.headers.get("X-Frame-Options"),"DENY")
                 visible=DefaultVisibleText(); visible.feed(text)
                 for protocol_term in ("state_stamp","revision_id","adoption_id","receipt_id","context_pack_digest","proposal_id"):
                     self.assertNotIn(protocol_term," ".join(visible.parts))
