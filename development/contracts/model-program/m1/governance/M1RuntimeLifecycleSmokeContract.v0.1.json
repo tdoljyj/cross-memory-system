@@ -85,13 +85,11 @@
     "root": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001",
     "must_not_exist_before_first_effectful_attempt": true,
     "allowed_children": [
-      "state\\M1RuntimeLifecycleAttemptGuard.json",
       "state\\current.json",
       "revisions\\A\\manifest.json",
       "revisions\\A\\payload\\**",
       "revisions\\B\\manifest.json",
-      "revisions\\B\\payload\\**",
-      "evidence\\**"
+      "revisions\\B\\payload\\**"
     ],
     "system_path_mutation": false,
     "registry_mutation": false,
@@ -235,7 +233,7 @@
   },
   "one_shot_execution": {
     "max_attempts": 1,
-    "attempt_guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001\\state\\M1RuntimeLifecycleAttemptGuard.json",
+    "attempt_guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001\\M1RuntimeLifecycleAttemptGuard.json",
     "claim_semantics": "ATOMIC_CREATE_ON_FIRST_EFFECTFUL_ATTEMPT / NO_REUSE_AFTER_SUCCESS_OR_FAILURE",
     "retry_same_profile_allowed": false
   },
@@ -248,9 +246,11 @@
       "TERMINATE_ONLY_PROFILE_OWNED_SERVER",
       "VERIFY_PORT_18088_NOT_LISTENING",
       "NEVER_TOUCH_SOURCE_PACKAGE",
-      "NEVER_TOUCH_NON_TEST_OWNED_PROCESS_OR_PATH"
+      "NEVER_TOUCH_NON_TEST_OWNED_PROCESS_OR_PATH",
+      "PRESERVE_PERSISTENT_ATTEMPT_GUARD",
+      "PRESERVE_EVIDENCE_OUTPUT"
     ],
-    "successful_closeout_final_machine_state": "TEST_OWNED_LIFECYCLE_RUNTIME_ROOT_REMOVED / SOURCE_PACKAGE_UNCHANGED / NO_SERVER / NO_PORT_18088_LISTENER"
+    "successful_closeout_final_machine_state": "TEST_OWNED_LIFECYCLE_RUNTIME_ROOT_REMOVED / PERSISTENT_ATTEMPT_GUARD_RETAINED / EVIDENCE_OUTPUT_RETAINED / SOURCE_PACKAGE_UNCHANGED / NO_SERVER / NO_PORT_18088_LISTENER"
   },
   "allowed_operations_if_separately_issued": [
     "READ_EXACT_LOCAL_M1PKG002_SOURCE",
@@ -265,8 +265,8 @@
     "SEND_LOOPBACK_ONLY_HEALTH_AND_MINIMAL_COMPLETION_PROBES",
     "GRACEFULLY_TERMINATE_PROFILE_OWNED_LLAMA_SERVER",
     "REMOVE_ONLY_TEST_OWNED_LIFECYCLE_SLOTS_AND_STATE",
-    "WRITE_NON_PRODUCTION_M1_08_EVIDENCE_ONLY",
-    "WRITE_NON_PRODUCTION_M1_08_ATTEMPT_GUARD"
+    "WRITE_NON_PRODUCTION_M1_08_EVIDENCE_ONLY_TO_EXACT_PERSISTENT_EVIDENCE_PATH",
+    "WRITE_PERSISTENT_M1_08_ATTEMPT_GUARD_TO_EXACT_RUNTIME_STATE_PATH"
   ],
   "prohibited_operations": [
     "ANY_EFFECTFUL_EXECUTION_WHILE_PROFILE_IS_CANDIDATE",
@@ -283,7 +283,7 @@
     "FIREWALL_MUTATION",
     "REBOOT_SLEEP_HIBERNATE_TEST",
     "TERMINATE_NON_TEST_OWNED_PROCESS",
-    "WRITE_OUTSIDE_EXACT_TEST_ROOT_EXCEPT_READ_ONLY_SOURCE_ACCESS",
+    "WRITE_OUTSIDE_EXACT_TEST_ROOT_EXCEPT_EXACT_GUARD_AND_EVIDENCE_PATHS_AND_READ_ONLY_SOURCE_ACCESS",
     "BINARY_VERSION_UPGRADE_CLAIM",
     "QUALITY_RANKING",
     "QUALITY_WINNER_SELECTION",
@@ -296,7 +296,7 @@
     "LORA_OR_ADAPTER_TRAINING",
     "MODEL_MERGE",
     "PROMOTION",
-    "ACTIVATION",
+    "MODEL_PROMOTION_OR_RELEASE_ACTIVATION",
     "RELEASE",
     "PRODUCTION_DEPLOYMENT",
     "PRODUCTION_TRAFFIC",
@@ -350,7 +350,9 @@
     "FINAL_CLEANUP_NO_ORPHAN_SERVER_AND_NO_PORT_LISTENER",
     "FINAL_TEST_ROOT_RUNTIME_STATE_REMOVED",
     "EXPLICIT_NO_BINARY_VERSION_MIGRATION_CLAIM",
-    "NO_M1_09_TRAINING_PROMOTION_ACTIVATION_RELEASE_OR_PRODUCTION_AUTHORITY"
+    "NO_M1_09_TRAINING_PROMOTION_ACTIVATION_RELEASE_OR_PRODUCTION_AUTHORITY",
+    "PERSISTENT_ATTEMPT_GUARD_SURVIVES_SUCCESSFUL_RUNTIME_ROOT_CLEANUP",
+    "PERSISTENT_EVIDENCE_OUTPUT_SURVIVES_SUCCESSFUL_RUNTIME_ROOT_CLEANUP"
   ],
   "stop_conditions": [
     "PROFILE_NOT_ISSUED",
@@ -365,6 +367,7 @@
     "RUNTIME_TREE_DRIFT",
     "TEST_ROOT_ALREADY_EXISTS_BEFORE_FIRST_ATTEMPT",
     "ATTEMPT_GUARD_ALREADY_EXISTS",
+    "EVIDENCE_OUTPUT_DIR_ALREADY_EXISTS",
     "PARTIAL_SLOT_WOULD_BECOME_ACTIVE",
     "CURRENT_MANIFEST_ATOMICITY_UNPROVEN",
     "PORT_18088_ALREADY_IN_USE_BY_NON_PROFILE_PROCESS",
@@ -394,8 +397,20 @@
       "BIND_FINAL_ISSUED_PROFILE_ID",
       "BIND_FINAL_EXPIRY",
       "BIND_OWNER_AUTHORIZATION_ID_AND_CANONICAL_SHA256",
-      "CONFIRM_TEST_ROOT_ABSENT_AND_PORT_18088_FREE_IMMEDIATELY_BEFORE_ATTEMPT"
+      "CONFIRM_TEST_ROOT_AND_EVIDENCE_OUTPUT_DIR_ABSENT_AND_PORT_18088_FREE_IMMEDIATELY_BEFORE_ATTEMPT"
     ]
   },
-  "authority_effect": "NONE / CONTRACT_PREPARATION_ONLY"
+  "authority_effect": "NONE / CONTRACT_PREPARATION_ONLY",
+  "persistent_paths": {
+    "attempt_guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001\\M1RuntimeLifecycleAttemptGuard.json",
+    "attempt_guard_must_survive_runtime_cleanup": true,
+    "evidence_output_dir": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-001",
+    "evidence_output_dir_must_not_exist_before_first_effectful_attempt": true,
+    "evidence_must_survive_runtime_cleanup": true,
+    "exact_write_roots": [
+      "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001",
+      "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001",
+      "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-001"
+    ]
+  }
 }
