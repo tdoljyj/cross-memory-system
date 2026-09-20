@@ -66,10 +66,10 @@
       "sha256": "0e2bac3f004a2999aaf7bb05c57efc068031d505577ca4ee68f0ee4cca628028"
     },
     {
-      "bytes": 2499,
-      "git_blob_sha1": "afdfa78c2ccd2420bfabbea1f94f9c24927bbd36",
+      "bytes": 3599,
+      "git_blob_sha1": "2bc485b90df1b82b0f156a9a20c6514798b62433",
       "path": "finalization.go",
-      "sha256": "d8092c37d74d5a6e97a0c084a0708106897f6662a4ea4875eadd561feec71973"
+      "sha256": "e7a68e93267b71699c90e31aafb53c0a1742accaf59d00ce9390b19143e9295d"
     },
     {
       "bytes": 49,
@@ -96,10 +96,10 @@
       "sha256": "dab032fe2c7a6d6b845d266ead695673e93a72c138a63d0097be27704f129b1a"
     },
     {
-      "bytes": 19980,
-      "git_blob_sha1": "017e49c31d00e4c3b9ada20a7b73244f13169428",
+      "bytes": 21543,
+      "git_blob_sha1": "af5013f22b6fbcdaa00e7b7529768b62f2e6bf5b",
       "path": "owner.go",
-      "sha256": "4e601fd93fe21789b69938f0ddbccf0ce98c53c1160a7239956e9192c5f50d5d"
+      "sha256": "7307f7014a8e9d233ed11aba090ea26996062f7a2060f8bcd58982fb910f8cfc"
     },
     {
       "bytes": 20572,
@@ -156,10 +156,10 @@
       "sha256": "31e9566693b42c0fb9820b8aeb6d2fa009e72caeec8ed9de5029b4c748adb07c"
     },
     {
-      "bytes": 18940,
-      "git_blob_sha1": "c2c54668c99c28087a64a4474e3bf850833546ae",
+      "bytes": 20945,
+      "git_blob_sha1": "910079d9cf200840f2f3070a254a357592bc4373",
       "path": "remediation_test.go",
-      "sha256": "b6b2ea1aa941d74d624c8966cd4667cd9c4bec80d54817b00057781bcc20f202"
+      "sha256": "6ff7a83bb5ecd5cb698007081e5806f485ae87b63ae17fddbc93c5614a0b1a84"
     },
     {
       "bytes": 4823,
@@ -201,23 +201,16 @@
   "remediation": {
     "exact_windows_toolchain_qualification_repeated": false,
     "finding_ids": [
-      "MAJOR-01",
-      "MAJOR-02",
-      "MAJOR-03",
-      "MAJOR-04",
-      "MAJOR-05",
-      "MAJOR-06",
       "MAJOR-07",
-      "MAJOR-08",
-      "MAJOR-09"
+      "MAJOR-08"
     ],
     "independent_review_pass": false,
-    "repair_base_head": "015eecb50f86d6ab59228e91b12f7007e88f9387",
+    "repair_base_head": "02384f219c3dddc027dd39640a313657286df197",
     "repair_base_source_manifest_sha256": "c932c2a1b2f82bd386bf7e875b62c45f7a7a684e6847bb8d26de8c9304eaf0d5",
-    "repository_successor_commit": null,
-    "revision": "MAJOR-01-THROUGH-MAJOR-09-r1",
-    "status": "SOURCE_REMEDIATION_CANDIDATE / LOCAL_REGRESSION_PASS / WINDOWS_NATIVE_QUALIFICATION_AND_INDEPENDENT_CLOSURE_PENDING",
-    "validation_boundary": "LINUX_GO_1.23.2_FIXTURES_AND_WINDOWS_CROSS_COMPILATION_ONLY / NO_OWNER_BINARY_OR_REAL_MODEL_EXECUTION"
+    "repository_successor_commit": "PENDING_SOURCE_FREEZE",
+    "revision": "MAJOR-07-MAJOR-08-r2",
+    "status": "TARGETED_SOURCE_REMEDIATION_CANDIDATE / WINDOWS_NATIVE_REQUALIFICATION_PENDING / INDEPENDENT_CLOSURE_PENDING",
+    "validation_boundary": "SOURCE-ONLY TARGETED REMEDIATION / NO OWNER BINARY OR REAL MODEL EXECUTION"
   },
   "role": "EFFECTFUL_OWNER_IMPLEMENTATION_PREPARATION_CANDIDATE / NO_FINAL_ISSUANCE / NO_EXECUTION",
   "schema_version": "clued.m1-08-native-owner-source-manifest/1"
