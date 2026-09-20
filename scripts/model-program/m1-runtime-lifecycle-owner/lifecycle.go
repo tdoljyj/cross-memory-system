@@ -694,7 +694,7 @@ func (c *controller) verifyCurrentObject(m object, spec transitionSpec, deadline
 	return nil
 }
 
-func (c *controller) assertCurrentPrecondition(spec transitionSpec) ([]byte, error) {
+func (c *controller) assertCurrentPrecondition(spec transitionSpec, deadline time.Time) ([]byte, error) {
 	path := currentPath(c.paths)
 	if spec.index == 1 {
 		if _, e := os.Lstat(path); os.IsNotExist(e) {
@@ -721,7 +721,7 @@ func (c *controller) assertCurrentPrecondition(spec transitionSpec) ([]byte, err
 	default:
 		return nil, fail("UNAUTHORIZED_CURRENT_TRANSITION_INDEX_KIND_OR_RECOVERY_LINKAGE")
 	}
-	if e = c.verifyCurrentObject(m, prior, time.Now().Add(maxWall)); e != nil {
+	if e = c.verifyCurrentObject(m, prior, deadline); e != nil {
 		return nil, e
 	}
 	return raw, nil
@@ -757,7 +757,7 @@ func (c *controller) publishCurrent(ctx *executionContext, spec transitionSpec) 
 	if !legal {
 		return nil, fail("UNAUTHORIZED_CURRENT_TRANSITION_INDEX_KIND_OR_RECOVERY_LINKAGE")
 	}
-	oldRaw, e := c.assertCurrentPrecondition(spec)
+	oldRaw, e := c.assertCurrentPrecondition(spec, ctx.deadline)
 	if e != nil {
 		return nil, e
 	}
