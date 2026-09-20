@@ -206,7 +206,8 @@ func (c *controller) authorize(p object) (*executionContext, error) {
 	}
 	// All checks below are read-only until the exact guard CREATE_NEW. The
 	// guard is the first profile-owned filesystem write by construction.
-	if e = c.verifyGuardParent(); e != nil {
+	guardIdentity, e := c.verifyGuardParent(p)
+	if e != nil {
 		return nil, e
 	}
 	if e = c.requireAbsent(c.paths.guard, "ATTEMPT_GUARD_ALREADY_EXISTS"); e != nil {
@@ -221,7 +222,18 @@ func (c *controller) authorize(p object) (*executionContext, error) {
 	if !c.sys.portFree() {
 		return nil, fail("PORT_18088_ALREADY_IN_USE_BY_NON_PROFILE_PROCESS")
 	}
-	guardBytes := canonical(object{"profile_id": issuedID, "profile_sha256": digest(p), "contract_git_blob_sha1": contractBlobSHA1, "claimed_at_utc": c.now().UTC().Format(time.RFC3339Nano), "native_source_manifest_sha256": c.trust.sourceDigest, "native_binary_sha256": c.trust.binaryDigest, "semantics": "FIRST_PROFILE_OWNED_WRITE / ONE_SHOT / NO_REUSE_AFTER_SUCCESS_OR_FAILURE"})
+	guardBytes := canonical(object{
+		"profile_id": issuedID, "profile_sha256": digest(p), "contract_git_blob_sha1": contractBlobSHA1,
+		"claimed_at_utc": c.now().UTC().Format(time.RFC3339Nano),
+		"native_source_manifest_sha256": c.trust.sourceDigest, "native_binary_sha256": c.trust.binaryDigest,
+		"guard_parent_identity": object{
+			"canonical_path": guardIdentity.canonicalPath, "filesystem_type": guardIdentity.filesystemType,
+			"volume_serial": guardIdentity.volumeSerial, "file_id": guardIdentity.fileID,
+			"owner_sid": guardIdentity.ownerSID, "security_descriptor_sha256": guardIdentity.securityDescriptorSHA256,
+			"empty_parent": true, "non_reparse": true,
+		},
+		"semantics": "FIRST_PROFILE_OWNED_WRITE / ONE_SHOT / NO_REUSE_AFTER_SUCCESS_OR_FAILURE",
+	})
 	if e = c.createNewSynced(c.paths.guard, append(guardBytes, '\n'), 0600); e != nil {
 		if os.IsExist(e) {
 			return nil, fail("MAX_ATTEMPTS_EXCEEDED")
@@ -255,25 +267,38 @@ func (c *controller) requireAbsent(path, code string) error {
 	return fail(code)
 }
 
-func (c *controller) verifyGuardParent() error {
+func (c *controller) verifyGuardParent(p object) (directoryIdentity, error) {
 	st, e := os.Lstat(c.paths.guardParent)
-	if e != nil {
-		return fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
-	}
-	if !st.IsDir() {
-		return fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
+	if e != nil || !st.IsDir() {
+		return directoryIdentity{}, fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
 	}
 	if e = c.verifySafeExistingPath(c.paths.guardParent); e != nil {
-		return fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
+		return directoryIdentity{}, fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
+	}
+	live, e := c.sys.directoryIdentity(c.paths.guardParent)
+	if e != nil {
+		return directoryIdentity{}, fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
+	}
+	bound, ok := get(p, "trusted_execution_bindings/guard_parent_provisioning_identity").(object)
+	if !ok ||
+		!samePath(live.canonicalPath, c.paths.guardParent) ||
+		!samePath(live.canonicalPath, text(bound, "canonical_path")) ||
+		!strings.EqualFold(live.filesystemType, text(bound, "filesystem_type")) ||
+		!strings.EqualFold(live.volumeSerial, text(bound, "volume_serial")) ||
+		!strings.EqualFold(live.fileID, text(bound, "file_id")) ||
+		!strings.EqualFold(live.ownerSID, text(bound, "owner_sid")) ||
+		!strings.EqualFold(live.securityDescriptorSHA256, text(bound, "security_descriptor_sha256")) ||
+		bound["empty_parent"] != true || bound["non_reparse"] != true {
+		return directoryIdentity{}, fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
 	}
 	rows, e := os.ReadDir(c.paths.guardParent)
 	if e != nil {
-		return e
+		return directoryIdentity{}, e
 	}
 	if len(rows) != 0 {
-		return fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
+		return directoryIdentity{}, fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
 	}
-	return nil
+	return live, nil
 }
 
 func (c *controller) createOwnedDirs() error {
