@@ -6,10 +6,10 @@
   "effectful_authority_issued": false,
   "files": [
     {
-      "bytes": 4000,
-      "git_blob_sha1": "49ab40728d288c633da0554f205544bd233f20db",
+      "bytes": 5013,
+      "git_blob_sha1": "6bd48c46266f41262b247d13190c5f5229c0900d",
       "path": "README.md",
-      "sha256": "5b7758962e1f657d6a643c50efe2eb303583ae4eb141f8249438c1ad92a5ddf7"
+      "sha256": "da788964fa4be74465bea49e70c1dedce4dbb47581517d9392dac247effe9430"
     },
     {
       "bytes": 614,
@@ -30,10 +30,10 @@
       "sha256": "02c76ba9ab8985de38b41978005c47739cad67a8fb26f195a66369548dcf785b"
     },
     {
-      "bytes": 28122,
-      "git_blob_sha1": "68052ea7ae35aa9975af67c7e140f14f8622d956",
+      "bytes": 31798,
+      "git_blob_sha1": "c8f47cf83115867adce20f7edae11d9510740444",
       "path": "lifecycle.go",
-      "sha256": "a4a30c3eecc0dd8dbc579ddd987e2052511c2d2d63450f23d917d1def91cf777"
+      "sha256": "0bda2a6bab5ad5a9b8624398e5f28b56af7e97c86f72db6256a009b478c1e986"
     },
     {
       "bytes": 3469,
@@ -42,46 +42,46 @@
       "sha256": "9f274c72687f24eb3292ccabb3c140c16219861393ee2a92578490da71c10da8"
     },
     {
-      "bytes": 14936,
-      "git_blob_sha1": "ab1c17c852bdec415898fe262c3be5873ff8e973",
+      "bytes": 17183,
+      "git_blob_sha1": "12ac97ad44fe3b18a84eabbff258b089b534c097",
       "path": "owner.go",
-      "sha256": "f1cb460a3f9462d0e06f071ba60284658d7c8e91fb8de7a55854502fe4e74ed7"
+      "sha256": "cb84b43e8e6ba543efcdd2f19e76e964ecde530c324d347eec829ec685eee7ee"
     },
     {
-      "bytes": 13618,
-      "git_blob_sha1": "01c4b7f551480fef9726580e65622ad42ef806fb",
+      "bytes": 18261,
+      "git_blob_sha1": "947468dee6611017510ef6228df403c75bf126e2",
       "path": "owner_test.go",
-      "sha256": "65d3855f8fb79092cbb9d65f7df944a17b341cb7ae11128b7426a2539e92f94e"
+      "sha256": "e76c66cd3702e854e378e2585b45cdcce36bb094d5cbc96161cbde63d850574b"
     },
     {
-      "bytes": 992,
-      "git_blob_sha1": "c4ac17702f4d4e5300a5ddac70667aafe8c19cc3",
+      "bytes": 1333,
+      "git_blob_sha1": "e905221883ba6645d7b5424c62c9a46f3112df88",
       "path": "platform_other.go",
-      "sha256": "674787c9f405a70c44e58597cb2ba4f37adbf87b814ef897fbba2d2d9a48260c"
+      "sha256": "55c77bb6463ffedb1248af87317c2507e896d184659d7050d36a87f6609a8043"
     },
     {
-      "bytes": 12037,
-      "git_blob_sha1": "7b5b91a53d39ee2db980664954f300f334dca839",
+      "bytes": 18021,
+      "git_blob_sha1": "f5d01f71e7027a18e90a0bb41b29c0059ac3c2fa",
       "path": "platform_windows.go",
-      "sha256": "2658ea3db1f9bff548daac9ed3104539fec89c6f3467c0b1b704cf86900a992f"
+      "sha256": "7786222cb3080b1b99a8a846f3579d2272d190da32767f12fc65a7e591b4c004"
     },
     {
-      "bytes": 4827,
-      "git_blob_sha1": "81cdc7f2f2d2037309a4beab785f311340ed2c27",
+      "bytes": 5387,
+      "git_blob_sha1": "f3f522af56ac9581d629b7244249d2efe85e6e76",
       "path": "platform_windows_test.go",
-      "sha256": "41743b0e425b5bfb37122364ff103d07893958b94439112bcc317fbf6e4eb2b4"
+      "sha256": "0238d262326a2e6510ad055b6d49c6db0efca8953bc3508b2a066988ff2aa123"
     },
     {
-      "bytes": 27622,
-      "git_blob_sha1": "db0dd0dc0291e4d32a56926290ee77fbbfa0a253",
+      "bytes": 28176,
+      "git_blob_sha1": "2da079f9d7812e9334f84c97695f3be5327c5295",
       "path": "policy.go",
-      "sha256": "d4f2e3caf724307fc783e13e34995a6f30a6d7d9ae82f282bdc28aeb7f208021"
+      "sha256": "695b5a6a837e5c80112e3f605d16e06fc328176adf2d2cdc6d3c83f7e0582759"
     },
     {
-      "bytes": 12761,
-      "git_blob_sha1": "68ccaa9f5b4443698be11b2fb99bedbf040df67c",
+      "bytes": 15190,
+      "git_blob_sha1": "8b95e8cc00dfd6a096276b96f9ada800bce81411",
       "path": "scenarios.go",
-      "sha256": "26e3c4541d61a0340379a657078118a1ab048f4169a16c84db58e0d58f1aa45f"
+      "sha256": "83b1dbe5363a964c0434023000eb9eb714e4403c8f37aa1fcee0067302c21692"
     }
   ],
   "implementation_base": "3d8a4c88373f5a54831b40d34c0ad89281d02ac1",
@@ -107,7 +107,7 @@
     "version": "go version go1.27.1 windows/amd64"
   },
   "owner_binary_execution_authorized": false,
-  "qualification_semantics": "STATIC_NEGATIVE_AND_FAULT_TESTS_ONLY / TEST_OWNED_TEMP_PATHS / NO_PRODUCTION_GUARD_OR_RUNTIME_ROOT / OWNER_BINARY_NOT_EXECUTED",
+  "qualification_semantics": "STATIC_NEGATIVE_FAULT_AND_WINDOWS_NATIVE_TESTS_ONLY / TEST_OWNED_TEMP_PATHS / HANDLE_RESOLVED_WRITE_BOUNDARIES / NO_PRODUCTION_GUARD_OR_RUNTIME_ROOT / OWNER_BINARY_NOT_EXECUTED",
   "role": "EFFECTFUL_OWNER_IMPLEMENTATION_PREPARATION_CANDIDATE / NO_FINAL_ISSUANCE / NO_EXECUTION",
   "schema_version": "clued.m1-08-native-owner-source-manifest/1"
 }
