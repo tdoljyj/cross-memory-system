@@ -20,7 +20,7 @@
     "m1_stage_successor_git_blob_sha1": "d9df0260d62f7cbc99b251036c00abb485f666bc",
     "m1_stage_successor_merge_commit": "324a1f96d60c5e374a6275b0bd382e6f7be1ee89",
     "lifecycle_contract_ref": "M1RuntimeLifecycleSmokeContract.v0.1.json",
-    "lifecycle_contract_git_blob_sha1": "067ff16c18780e1cc8b1ea56137ba58075a59052"
+    "lifecycle_contract_git_blob_sha1": "f761df9df590b82eb3f8defc551804236223c0c0"
   },
   "prerequisites": {
     "m1_06a_gate": "CLOSED_SUCCESS",
@@ -116,14 +116,16 @@
       "runtime_asset_sha256": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2"
     },
     "activation_protocol": "WRITE_NEW_TEMP_CURRENT / FLUSH / ATOMIC_REPLACE_WITHIN_SAME_VOLUME / VERIFIED_SLOT_ONLY",
-    "expected_transition": "ABSENT -> A -> B -> A -> FINAL_TEST_RUNTIME_STATE_REMOVED"
+    "expected_transition": "ABSENT -> A -> B -> A -> RUNTIME_ROOT_REMOVED / GUARD_AND_EVIDENCE_RETAINED",
+    "persistent_attempt_guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001\\M1RuntimeLifecycleAttemptGuard.json",
+    "persistent_evidence_output_dir": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-001"
   },
   "code_revision": {
     "status": "UNBOUND_EFFECTFUL_OWNER / PREPARATION_ONLY",
     "repository": "tdoljyj/cross-memory-system",
     "preparation_base_commit": "324a1f96d60c5e374a6275b0bd382e6f7be1ee89",
     "lifecycle_contract_path": "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.json",
-    "lifecycle_contract_git_blob_sha1": "067ff16c18780e1cc8b1ea56137ba58075a59052",
+    "lifecycle_contract_git_blob_sha1": "f761df9df590b82eb3f8defc551804236223c0c0",
     "required_effectful_owner_source_path": "TO_BE_CREATED_AS_REVIEWED_SUCCESSOR_BEFORE_FINAL_ISSUANCE",
     "required_effectful_owner_source_manifest_sha256": "TO_BE_BOUND_AFTER_IMPLEMENTATION_REVIEW",
     "required_effectful_owner_binary_sha256": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
@@ -151,13 +153,13 @@
     },
     "lifecycle": {
       "current_manifest_relative_path": "state\\current.json",
-      "attempt_guard_relative_path": "state\\M1RuntimeLifecycleAttemptGuard.json",
       "activation_atomicity": "SAME_VOLUME_ATOMIC_REPLACE",
       "partial_slot_activation_allowed": false,
       "system_path_mutation_allowed": false,
       "registry_mutation_allowed": false,
       "windows_service_mutation_allowed": false,
-      "firewall_mutation_allowed": false
+      "firewall_mutation_allowed": false,
+      "attempt_guard_location": "EXACT_PERSISTENT_RUNTIME_STATE_PATH_OUTSIDE_TEST_ROOT"
     }
   },
   "scenario_contract": [
@@ -193,8 +195,8 @@
     "SEND_LOOPBACK_ONLY_HEALTH_AND_MINIMAL_COMPLETION_PROBES",
     "GRACEFULLY_TERMINATE_PROFILE_OWNED_LLAMA_SERVER",
     "REMOVE_ONLY_TEST_OWNED_LIFECYCLE_SLOTS_AND_STATE",
-    "WRITE_NON_PRODUCTION_M1_08_EVIDENCE_ONLY",
-    "WRITE_NON_PRODUCTION_M1_08_ATTEMPT_GUARD"
+    "WRITE_NON_PRODUCTION_M1_08_EVIDENCE_ONLY_TO_EXACT_PERSISTENT_EVIDENCE_PATH",
+    "WRITE_PERSISTENT_M1_08_ATTEMPT_GUARD_TO_EXACT_RUNTIME_STATE_PATH"
   ],
   "prohibited_operations": [
     "EXECUTION_WHILE_PROFILE_STATUS_IS_NOT_ISSUED",
@@ -212,7 +214,7 @@
     "FIREWALL_MUTATION",
     "REBOOT_SLEEP_HIBERNATE_TEST",
     "TERMINATE_NON_TEST_OWNED_PROCESS",
-    "WRITE_OUTSIDE_EXACT_TEST_ROOT_EXCEPT_READ_ONLY_SOURCE_ACCESS",
+    "WRITE_OUTSIDE_EXACT_TEST_ROOT_EXCEPT_EXACT_GUARD_AND_EVIDENCE_PATHS_AND_READ_ONLY_SOURCE_ACCESS",
     "BINARY_VERSION_UPGRADE_CLAIM",
     "QUALITY_RANKING",
     "QUALITY_WINNER_SELECTION",
@@ -227,7 +229,7 @@
     "SEMANTIC_INDEX_WRITE",
     "SEMANTIC_RECALL_RELEASE",
     "PROMOTION",
-    "ACTIVATION",
+    "MODEL_PROMOTION_OR_RELEASE_ACTIVATION",
     "RELEASE",
     "PRODUCTION_DEPLOYMENT",
     "PRODUCTION_TRAFFIC",
@@ -279,6 +281,7 @@
     "RUNTIME_TREE_DRIFT",
     "TEST_ROOT_ALREADY_EXISTS_BEFORE_FIRST_ATTEMPT",
     "ATTEMPT_GUARD_ALREADY_EXISTS",
+    "EVIDENCE_OUTPUT_DIR_ALREADY_EXISTS",
     "PARTIAL_SLOT_WOULD_BECOME_ACTIVE",
     "CURRENT_MANIFEST_ATOMICITY_UNPROVEN",
     "PORT_18088_ALREADY_IN_USE_BY_NON_PROFILE_PROCESS",
@@ -320,7 +323,9 @@
     "FINAL_CLEANUP_NO_ORPHAN_SERVER_AND_NO_PORT_LISTENER",
     "FINAL_TEST_ROOT_RUNTIME_STATE_REMOVED",
     "EXPLICIT_NO_BINARY_VERSION_MIGRATION_CLAIM",
-    "NO_M1_09_TRAINING_PROMOTION_ACTIVATION_RELEASE_OR_PRODUCTION_AUTHORITY"
+    "NO_M1_09_TRAINING_PROMOTION_ACTIVATION_RELEASE_OR_PRODUCTION_AUTHORITY",
+    "PERSISTENT_ATTEMPT_GUARD_SURVIVES_SUCCESSFUL_RUNTIME_ROOT_CLEANUP",
+    "PERSISTENT_EVIDENCE_OUTPUT_SURVIVES_SUCCESSFUL_RUNTIME_ROOT_CLEANUP"
   ],
   "expiry": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
   "final_issuance_requirements": [
@@ -335,14 +340,14 @@
     "BIND_FINAL_ISSUED_PROFILE_ID",
     "BIND_FINAL_EXPIRY",
     "BIND_OWNER_AUTHORIZATION_ID_AND_RECOMPUTED_CANONICAL_SHA256",
-    "CONFIRM_TEST_ROOT_ABSENT_AND_PORT_18088_FREE_IMMEDIATELY_BEFORE_ATTEMPT"
+    "CONFIRM_TEST_ROOT_AND_EVIDENCE_OUTPUT_DIR_ABSENT_AND_PORT_18088_FREE_IMMEDIATELY_BEFORE_ATTEMPT"
   ],
   "effectful_authority_issued": false,
-  "fail_closed_rule": "THIS CANDIDATE MUST NOT PERFORM INSTALL, UPGRADE, ROLLBACK, MODEL LOAD, OR SERVER START. FINAL ISSUANCE IS IMPOSSIBLE UNTIL THE EFFECTFUL OWNER SOURCE AND BINARY ARE EXACTLY BOUND, INDEPENDENTLY REVIEWED, THE WHOLE ISSUED PROFILE IS OWNER-SIGNED, FINAL AUTHORIZATION AND EXPIRY ARE BOUND, AND THE ONE-SHOT GUARD IS UNUSED. ANY BINDING DRIFT, PARTIAL SLOT, NON-ATOMIC ACTIVATION, SOURCE MUTATION, SYSTEM MUTATION, OR NON-LOOPBACK/EXTERNAL NETWORK REQUIREMENT MUST FAIL CLOSED.",
+  "fail_closed_rule": "THIS CANDIDATE MUST NOT PERFORM INSTALL, UPGRADE, ROLLBACK, MODEL LOAD, OR SERVER START. FINAL ISSUANCE IS IMPOSSIBLE UNTIL THE EFFECTFUL OWNER SOURCE AND BINARY ARE EXACTLY BOUND, INDEPENDENTLY REVIEWED, THE WHOLE ISSUED PROFILE IS OWNER-SIGNED, FINAL AUTHORIZATION AND EXPIRY ARE BOUND, AND THE PERSISTENT ONE-SHOT GUARD IS UNUSED AND THE EXACT EVIDENCE OUTPUT DIRECTORY DOES NOT ALREADY EXIST. ANY BINDING DRIFT, PARTIAL SLOT, NON-ATOMIC ACTIVATION, SOURCE MUTATION, SYSTEM MUTATION, OR NON-LOOPBACK/EXTERNAL NETWORK REQUIREMENT MUST FAIL CLOSED.",
   "authority_effect": "NONE / PROFILE_PREPARATION_ONLY",
   "issued_successor_profile_id": "M1-LIFE-QWEN35-08B-PC-001-ISSUED",
   "execution_control": {
-    "attempt_guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001\\state\\M1RuntimeLifecycleAttemptGuard.json",
+    "attempt_guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001\\M1RuntimeLifecycleAttemptGuard.json",
     "attempt_guard_semantics": "ATOMIC_CREATE_ON_FIRST_EFFECTFUL_ATTEMPT / NO_REUSE_AFTER_SUCCESS_OR_FAILURE",
     "current_manifest_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001\\state\\current.json",
     "activation_semantics": "VERIFIED_SLOT_ONLY / WRITE_TEMP_FLUSH_ATOMIC_REPLACE_SAME_VOLUME",
@@ -351,7 +356,8 @@
     "execution_boundary": "SEPARATE_EFFECTFUL_OWNER_REQUIRED / NO_EFFECTFUL_IMPLEMENTATION_EXISTS_IN_THIS_PREPARATION",
     "owner_signature_policy": "Ed25519-CLUED-CANONICAL-JSON-v1 / ENTIRE_ISSUED_PROFILE_EXCEPT_owner_signature / PINNED_OWNER_ROOT",
     "issuer_public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
-    "issuer_trust_root_status": "OWNER_ROOT_ALREADY_ENROLLED / REUSE_REQUIRES_REVIEWED_M1_08_OWNER_IMPLEMENTATION / PRIVATE_KEY_OWNER_ONLY"
+    "issuer_trust_root_status": "OWNER_ROOT_ALREADY_ENROLLED / REUSE_REQUIRES_REVIEWED_M1_08_OWNER_IMPLEMENTATION / PRIVATE_KEY_OWNER_ONLY",
+    "evidence_output_dir": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-001"
   },
   "trusted_execution_bindings": {
     "binding_location": "ISSUED_PROFILE_OUTER_BINDING",
