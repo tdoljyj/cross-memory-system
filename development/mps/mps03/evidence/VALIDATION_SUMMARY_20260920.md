@@ -27,6 +27,14 @@ Result: Native, canonical reference gateway, and Agent Adapter ran as three dist
 Qualification remains local-reference-backend; no real third-party host PASS is claimed.
 Raw result: `evidence/cross_entry_evidence.raw.json`
 
+## CI runner policy
+
+Command:
+`python scripts/ci/validate_runner_budget_policy.py`
+
+Result: PASS / `violations=[]`. The MPS-03 workflow uses the existing trusted self-hosted Windows Python 3.12 capability pool and top-level concurrency with cancel-in-progress.
+Raw result: `evidence/runner_budget_policy.raw.json`
+
 ## Existing affected Clued authorization regression
 Commands:
 - `npm.cmd run typecheck` — PASS

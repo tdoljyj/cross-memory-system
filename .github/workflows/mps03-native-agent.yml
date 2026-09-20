@@ -12,14 +12,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   mps03-local-reference-and-static:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          python-version: "3.13"
+          persist-credentials: false
       - name: MPS-03 bounded entry tests
         run: python scripts/mps03/run_acceptance.py
       - name: MPS-03 cross-entry process evidence
