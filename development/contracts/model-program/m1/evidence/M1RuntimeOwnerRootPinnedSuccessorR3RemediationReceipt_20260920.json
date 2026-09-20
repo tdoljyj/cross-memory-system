@@ -1,0 +1,189 @@
+{
+  "schema_version": "clued.model-m1-07-owner-root-pinned-successor-r3-remediation-receipt/1",
+  "record_id": "M1-STAB-QWEN35-08B-PC-001-OWNER-ROOT-PINNED-SUCCESSOR-R3-20260920",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-07",
+  "role": "AUTHOR_SIDE_TARGETED_R3_REMEDIATION / NOT_FRESH_CONTEXT_REVIEWER",
+  "status": "AUTHOR_SIDE_R3_REMEDIATION_PASS / INDEPENDENT_RE_REVIEW_REQUIRED / NOT_ISSUED",
+  "branch": "model-program/m1-07-owner-root-successor-r3-20260920",
+  "r3_remediation_predecessor_exact_head": "986bb165c303bde53bfafb2ebed92fcfac1bc7f2",
+  "r2_remediation_predecessor_exact_head": "ffff2580f1c3fb9453fef9bd517cd5e12b01226e",
+  "owner_root_predecessor_exact_head": "d58df9c4a1885512bd4dd9b94f121b6a84e25744",
+  "validated_code_candidate_head": "5366c14d9233d4ad75374b0fa840daf4bd116352",
+  "pre_receipt_documentation_head": "11be417d75a0c63a26c4d3cc4a253d8e2c1909ce",
+  "formal_base": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
+  "prior_r2_receipt_sha256": "0299d54cb8ed228b908bd8c6daface34cc4981618b649efbc6f64120e296f981",
+  "owner_enrollment": {
+    "boundary_adoption_event": 833,
+    "successor_preparation_gate_event": 834,
+    "algorithm": "Ed25519",
+    "public_key_canonical": "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03",
+    "public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
+    "private_key_material_read_or_used": false
+  },
+  "same_session_pre_review_finding": {
+    "severity": "MAJOR",
+    "finding": "R2 accepted a caller-selected --go executable and therefore did not prove that the exact verified source snapshot was compiled by the approved toolchain.",
+    "external_fake_go_proof": {
+      "fake_go_sha256": "1723413e1616a4fba388985fc1d6cf09cdd5a247dfbf447e603ba009f70cacdf",
+      "approved_go_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+      "r2_helper_exit_code": 0,
+      "r2_output_binary_sha256": "ce44ea928b8e124c91e7694b84090c279e171e37471b9bb9a453aabf66dfc28a",
+      "r2_manifest_digest_reported": "335a998f3acbb70cddecf02cb2de644264146164508133dccc3299255bbdd36d",
+      "r2_fake_go_build_receipt_sha256": "5ec5753e9754723d3e5bcca5816290946460cd2ed32b5619900e16469f8350f0"
+    }
+  },
+  "r3_targeted_closure": {
+    "status": "AUTHOR_SIDE_CLOSED_PENDING_INDEPENDENT_RE_REVIEW",
+    "caller_compiler_surface": "REMOVED / NO --go EXECUTABLE ARGUMENT",
+    "toolchain_input": "EXACT_OFFICIAL_GO_1_27_1_WINDOWS_AMD64_ZIP_ONLY",
+    "archive_verification": "REGULAR_FILE + EXACT_FILENAME + EXACT_BYTES + EXACT_SHA256 BEFORE TOOLCHAIN EXECUTION OR OUTPUT",
+    "extraction": "FRESH_TEMPORARY_SAFE_EXTRACTION / NO_ABSOLUTE_TRAVERSAL_BACKSLASH_DUPLICATE_OR_SYMLINK_ENTRY",
+    "tree_verification": "EXACT_15639_FILE_SET + PER_FILE_SIZE_SHA256 + CANONICAL_TREE_SHA256",
+    "compiler_component_pinning": "GO_EXE + COMPILE_EXE + LINK_EXE EXACT_SHA256",
+    "goroot": "FORCED_TO_FRESH_VERIFIED_TOOLCHAIN",
+    "source_compilation": "VERIFIED_SOURCE_SNAPSHOT_ONLY",
+    "go_environment": "GOENV_OFF / GOFLAGS_EMPTY / GOWORK_OFF / GOEXPERIMENT_EMPTY / GOTOOLCHAIN_LOCAL / GOPROXY_OFF / GOSUMDB_OFF / CGO_DISABLED / FRESH_GOCACHE_GOMODCACHE_GOTMPDIR / VERIFIED_GOROOT"
+  },
+  "native_build_toolchain": {
+    "archive_name": "go1.27.1.windows-amd64.zip",
+    "archive_bytes": 78931360,
+    "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+    "tree_file_count": 15639,
+    "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+    "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+    "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+    "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+    "version": "go version go1.27.1 windows/amd64",
+    "target": {
+      "goos": "windows",
+      "goarch": "amd64",
+      "goamd64": "v1"
+    },
+    "semantics": "EXACT_OFFICIAL_ZIP / FRESH_SAFE_EXTRACTION / EXTRACTED_TREE_EXACT_MATCH / NO_CALLER_EXECUTABLE"
+  },
+  "adversarial_r3_proof": {
+    "old_caller_go_argument": {
+      "exit_code": 2,
+      "output_directory_created": false,
+      "log_sha256": "9995dadf0ecfe56232a364a1402a8079724d72ac98d9005a66664a7a1188b7d7"
+    },
+    "tampered_exact_name_toolchain_archive": {
+      "exit_code": 1,
+      "output_directory_created": false,
+      "reason_match": "toolchain archive size drift OR toolchain archive digest drift",
+      "log_sha256": "d90f0dbd11b27478ce217b1981090008fd0af560a807c834dbbd88ee9f72495a"
+    },
+    "focused_same_size_archive_bit_flip": {
+      "result": "PASS",
+      "semantics": "EXACT_SIZE_PRESERVED / SHA256_CHANGED / HELPER_REJECTS_BEFORE_OUTPUT"
+    },
+    "official_toolchain_clean_build": {
+      "result": "PASS",
+      "native_source_manifest_sha256": "f7bb4e269af3c3457072f68564e944c9813643b8d1bc9ba8295b572bbc8dfc52",
+      "binary_sha256": "e0956d6d8194acefad85c54750b9802fe7faea648aeba5dd4408f41534e8680c",
+      "binary_bytes": 10437632,
+      "external_build_receipt_sha256": "ea404ed9c03f1f7a84598d2a6a63e5003725170929fb0acde1986011e456452b"
+    }
+  },
+  "successor_candidate": {
+    "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.owner-root-pinned.candidate.json",
+    "bytes": 24409,
+    "sha256": "05a3a6cd1a7956617d906ba7b612cdd5c6436d2ff40195d8cdb1647035cd7d90",
+    "git_blob_sha1": "de7b00ce4c16d3ea4d2bc7f857754668ba80da60",
+    "status": "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE",
+    "effectful_authority_issued": false,
+    "authority_effect": "NONE / PROFILE_PREPARATION_ONLY",
+    "expiry": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
+    "owner_final_execution_authorization": null,
+    "build_provenance_helper_sha256": "a4e79b9c04d783c2ac5cff8108068eca7d26f48d224f52ecdf7ad4d43c54f1b1",
+    "build_provenance_semantics": "EXACT_SOURCE_DIRECTORY_SET / MANIFEST_BINDS_HELPER / VERIFIED_SOURCE_SNAPSHOT_ONLY / EXACT_OFFICIAL_TOOLCHAIN_ZIP_AND_TREE / CLEAN_GO_ENV / NO_CALLER_EXECUTABLE"
+  },
+  "native_owner": {
+    "source_manifest_path": "scripts/model-program/m1-runtime-owner/source-manifest.json",
+    "source_manifest_bytes": 4098,
+    "source_manifest_sha256": "f7bb4e269af3c3457072f68564e944c9813643b8d1bc9ba8295b572bbc8dfc52",
+    "source_manifest_git_blob_sha1": "042b783310f1d3be5aef9e15d501cad73c321b83",
+    "development_binary_sha256": "e0956d6d8194acefad85c54750b9802fe7faea648aeba5dd4408f41534e8680c",
+    "development_binary_bytes": 10437632,
+    "build_helper_path": "scripts/model-program/build_m1_07_native_owner.py",
+    "build_helper_bytes": 14395,
+    "build_helper_sha256": "a4e79b9c04d783c2ac5cff8108068eca7d26f48d224f52ecdf7ad4d43c54f1b1",
+    "build_helper_git_blob_sha1": "ffc18937c7722209ba6d1b38fd4ae00d89b58194"
+  },
+  "validation": {
+    "focused": {
+      "result": "PASS",
+      "tests": 63,
+      "log_sha256": "dfac86cd8613b8d582e94d1f82facd8da0d076ff406b0c47e4719f52575932f3"
+    },
+    "validators": {
+      "validate_m1_entry_bindings": {
+        "result": "PASS",
+        "log_sha256": "2efffca9a513e96537655e0631d439dd0fcce9c5cf49398ef853c8f2da1508a8"
+      },
+      "validate_m1_harness": {
+        "result": "PASS",
+        "log_sha256": "073268477d26c57708e0a3f6c52f0a0a450982d38c7425c6c6eba407e5db2775"
+      },
+      "validate_m1_package_profile": {
+        "result": "PASS",
+        "log_sha256": "80bbd3246397c9a94c5c5a5121c08213a9cedc2430ca30a29fa079109ec95754"
+      },
+      "validate_m1_07_profile_candidate": {
+        "result": "PASS",
+        "log_sha256": "4cd3b4def50214bb19dfb8ac119050285d1edc0013306b104d32e6d72bb83ac9"
+      }
+    },
+    "full_m1": {
+      "result": "PASS",
+      "tests": 92,
+      "log_sha256": "a92a391545eb9434d30fc7a9bc8c765556ce0bd5f4fdaef405d6e7918fbc6459"
+    },
+    "native_go": {
+      "result": "PASS",
+      "leaf_cases": 100,
+      "failed_test_events": 0,
+      "log_sha256": "a49ef1651a490e00f949bf72521f2d1fb3c6add8edbe5409b6f939ab4a88fb5a"
+    },
+    "go_vet": {
+      "result": "PASS",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "rejection_checks": {
+    "non_issued_successor_exact_binary": {
+      "exit_code": 3,
+      "reason": "PROFILE_NOT_ISSUED",
+      "output_directory_created": false,
+      "llama_server_before_after": [0, 0]
+    },
+    "fabricated_issued_without_owner_signature": {
+      "exit_code": 3,
+      "reason": "OWNER_SIGNATURE_ALGORITHM",
+      "output_directory_created": false,
+      "llama_server_before_after": [0, 0]
+    }
+  },
+  "effects": {
+    "owner_final_issuance_performed": false,
+    "owner_private_key_used": false,
+    "llama_server_started": false,
+    "model_loaded": false,
+    "real_m1_07_scenario_executed": false,
+    "m1_08_started": false,
+    "training_or_distillation_performed": false,
+    "promotion_or_activation_performed": false,
+    "production_mutation": false,
+    "pr_268_merged": false
+  },
+  "pr_268_readback": {
+    "state": "open",
+    "merged": false,
+    "head": "d58df9c4a1885512bd4dd9b94f121b6a84e25744"
+  },
+  "independent_re_review_performed": false,
+  "remaining_gate": "FRESH_CONTEXT / READ_ONLY / REVIEWER_NOT_MODIFIER / INDEPENDENT OWNER-ROOT-PINNED SUCCESSOR R3 FINAL RE-REVIEW",
+  "conclusion": "AUTHOR_SIDE_R3_TARGETED_REMEDIATION_PASS / DO_NOT_ISSUE / DO_NOT_EXECUTE / DO_NOT_MERGE"
+}
