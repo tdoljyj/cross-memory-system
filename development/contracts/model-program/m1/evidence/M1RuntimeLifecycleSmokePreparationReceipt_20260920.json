@@ -1,0 +1,94 @@
+{
+  "schema_version": "clued.model-m1-08-runtime-lifecycle-preparation-receipt/1",
+  "record_id": "M1-08-RUNTIME-LIFECYCLE-PREPARATION-20260920",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-08",
+  "status": "PREPARATION_COMPLETE / CONTRACT_AND_EXACT_PROFILE_CANDIDATE_READY_FOR_FRESH_CONTEXT_REVIEW / NO_EFFECTFUL_EXECUTION",
+  "owner_instruction": {
+    "source": "CURRENT_CONVERSATION",
+    "message": "好 开始 M1-08 Exact Profile + Runtime Lifecycle Smoke 合同准备",
+    "interpreted_scope": "PREPARATION_ONLY / NO_REAL_INSTALL_UPGRADE_ROLLBACK"
+  },
+  "baseline": {
+    "formal_frontier_merge_commit": "324a1f96d60c5e374a6275b0bd382e6f7be1ee89",
+    "stage_successor_ref": "../governance/M1StageEntryAuthorization.v1.0.3.json",
+    "stage_successor_git_blob_sha1": "d9df0260d62f7cbc99b251036c00abb485f666bc",
+    "m1_07_reviewed_exact_head": "d91b7a6418afa811530ca39bb1fe43f322ccc375",
+    "m1_07_closeout_sha256": "1896a9af5a73136cd1f99619eb1296394f261f049271bff5108f0bb3f4090080"
+  },
+  "prepared_objects": {
+    "lifecycle_contract": {
+      "path": "../governance/M1RuntimeLifecycleSmokeContract.v0.1.json",
+      "git_blob_sha1": "f761df9df590b82eb3f8defc551804236223c0c0",
+      "raw_sha256": "5d21b7f14a0765905e48ef99f090bad190589b8ea871749914ce470f867a1c26",
+      "bytes": 19092
+    },
+    "experiment_profile_candidate": {
+      "path": "../governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json",
+      "git_blob_sha1": "022d934e80679c12852374dfbc3112ac54360745",
+      "raw_sha256": "9a111320c2030f46fb9c88887b1595af291efd27294509a42db5dfad57d70f55",
+      "bytes": 19070,
+      "profile_id": "M1-LIFE-QWEN35-08B-PC-001-CANDIDATE",
+      "effectful_authority_issued": false
+    }
+  },
+  "lifecycle_scope": {
+    "install": "ISOLATED_TEST_OWNED_REVISION_A_MATERIALIZATION_AND_ACTIVATION",
+    "upgrade": "A_TO_B_LIFECYCLE_REVISION_SWITCH_WITH_IDENTICAL_IMMUTABLE_PAYLOAD_BYTES",
+    "rollback": "B_TO_PREVIOUSLY_VERIFIED_A_AND_POST_ROLLBACK_USABILITY_PROBE",
+    "final_cleanup": "REMOVE_RUNTIME_TEST_ROOT_ONLY / RETAIN_PERSISTENT_ATTEMPT_GUARD_AND_EVIDENCE",
+    "binary_version_migration_claim": false,
+    "os_installer_claim": false,
+    "windows_service_install_claim": false
+  },
+  "persistent_safety": {
+    "attempt_guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001\\M1RuntimeLifecycleAttemptGuard.json",
+    "evidence_output_dir": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-001",
+    "runtime_test_root": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001",
+    "guard_survives_runtime_cleanup": true,
+    "evidence_survives_runtime_cleanup": true,
+    "same_profile_retry_allowed": false
+  },
+  "preparation_self_check": {
+    "contract_profile_blob_binding_match": true,
+    "effectful_owner_implementation_present": false,
+    "candidate_execution_allowed": false,
+    "source_package_mutation_allowed": false,
+    "external_network_allowed": false,
+    "hosted_provider_allowed": false,
+    "system_path_mutation_allowed": false,
+    "registry_mutation_allowed": false,
+    "windows_service_mutation_allowed": false,
+    "firewall_mutation_allowed": false,
+    "max_attempts": 1,
+    "max_server_starts_if_future_issued": 3,
+    "server_bind_if_future_issued": "127.0.0.1:18088 / OFFLINE / CPU_ONLY"
+  },
+  "effects_performed_during_preparation": {
+    "real_install": false,
+    "real_upgrade": false,
+    "real_rollback": false,
+    "model_loaded": false,
+    "llama_server_started": false,
+    "attempt_guard_created": false,
+    "lifecycle_test_root_created": false,
+    "source_package_modified": false,
+    "training": false,
+    "distillation": false,
+    "promotion": false,
+    "activation": false,
+    "release": false,
+    "production_deployment": false
+  },
+  "unresolved_by_design": [
+    "EFFECTFUL_OWNER_SOURCE_NOT_IMPLEMENTED",
+    "EFFECTFUL_OWNER_SOURCE_MANIFEST_SHA256_NOT_BOUND",
+    "EFFECTFUL_OWNER_BINARY_SHA256_NOT_BOUND",
+    "FINAL_ISSUED_PROFILE_NOT_CREATED",
+    "OWNER_FINAL_M1_08_EFFECTFUL_AUTHORIZATION_NOT_GRANTED",
+    "FINAL_EXPIRY_NOT_BOUND"
+  ],
+  "next_gate": "FRESH_CONTEXT_READ_ONLY_CONTRACT_AND_PROFILE_CANDIDATE_REVIEW / REVIEWER_NOT_MODIFIER / NO_EFFECTFUL_EXECUTION",
+  "authority_effect": "PREPARATION_RECEIPT_ONLY / NO_EXECUTION_AUTHORITY"
+}
