@@ -988,3 +988,111 @@ func TestR4FinalizationRevokesCaptureEvenWhenOwnedProcessCleanupFails(t *testing
 		t.Fatalf("post-finalization bytes persisted: before=%q after=%q err=%v", before, after, e)
 	}
 }
+
+func r5StartedCapture(t *testing.T) (*controller, *executionContext, *fakePlatform, *ownedProcess, *captureWriter) {
+	t.Helper()
+	c, ctx, f := tinyLifecycle(t)
+	materialize(t, c, ctx, revisionA)
+	publish(t, c, ctx, successTransition(1))
+	w, e := c.startServer(ctx, slotRootFor(c.paths, revisionA), "M1-08-PC-INSTALL-001", "install-a")
+	if e != nil || w == nil || f.proc == nil {
+		t.Fatalf("fixture start: w=%v proc=%v err=%v", w, f.proc, e)
+	}
+	cw, ok := f.stdoutWriter.(*captureWriter)
+	if !ok || cw.authority == nil {
+		t.Fatalf("stdout capture is not authority-bound: %T", f.stdoutWriter)
+	}
+	stderr, ok := f.stderrWriter.(*captureWriter)
+	if !ok || stderr.authority != cw.authority {
+		t.Fatal("stdout/stderr do not share one process capture authority")
+	}
+	return c, ctx, f, w, cw
+}
+
+func TestR5CaptureRevokeIsPersistenceBarrier(t *testing.T) {
+	c, ctx, f, w, cw := r5StartedCapture(t)
+	defer func() {
+		f.proc.live = false
+		_ = c.closeProcess(c.processes[w])
+	}()
+	cw.authority.mu.Lock()
+	started := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		close(started)
+		c.revokeCapturePersistence(ctx)
+		close(done)
+	}()
+	<-started
+	select {
+	case <-done:
+		cw.authority.mu.Unlock()
+		t.Fatal("revocation crossed an active persistence gate")
+	case <-time.After(50 * time.Millisecond):
+	}
+	cw.authority.mu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("revocation did not complete after persistence gate released")
+	}
+	if !cw.authority.revoked {
+		t.Fatal("revocation barrier returned without latching revoked state")
+	}
+	path := filepath.Join(c.paths.evidence, "install-a.stdout.txt")
+	before, e := os.ReadFile(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if n, e := cw.Write([]byte("AFTER_REVOKE\n")); e != nil || n != len("AFTER_REVOKE\n") {
+		t.Fatalf("revoked pipe not drained: n=%d err=%v", n, e)
+	}
+	after, e := os.ReadFile(path)
+	if e != nil || !bytes.Equal(before, after) {
+		t.Fatalf("post-barrier capture persisted: before=%q after=%q err=%v", before, after, e)
+	}
+}
+
+func TestR5CaptureTimeBoundaryCheckedInsidePersistenceGate(t *testing.T) {
+	for _, kind := range []string{"expiry", "max-wall"} {
+		t.Run(kind, func(t *testing.T) {
+			c, ctx, f := tinyLifecycle(t)
+			materialize(t, c, ctx, revisionA)
+			publish(t, c, ctx, successTransition(1))
+			now := time.Now().UTC()
+			boundary := now.Add(time.Second)
+			ctx.deadline = boundary
+			ctx.expires = boundary
+			if kind == "max-wall" {
+				ctx.expires = boundary.Add(time.Minute)
+			}
+			c.contexts[ctx].deadline = ctx.deadline
+			c.contexts[ctx].expires = ctx.expires
+			c.now = func() time.Time { return now }
+			w, e := c.startServer(ctx, slotRootFor(c.paths, revisionA), "M1-08-PC-INSTALL-001", "install-a")
+			if e != nil {
+				t.Fatal(e)
+			}
+			defer func() {
+				f.proc.live = false
+				_ = c.closeProcess(c.processes[w])
+			}()
+			cw := f.stdoutWriter.(*captureWriter)
+			cw.authority.mu.Lock()
+			done := make(chan error, 1)
+			go func() {
+				_, e := cw.Write([]byte("AFTER_BOUNDARY\n"))
+				done <- e
+			}()
+			now = boundary
+			cw.authority.mu.Unlock()
+			if e = <-done; e != nil {
+				t.Fatal(e)
+			}
+			raw, e := os.ReadFile(filepath.Join(c.paths.evidence, "install-a.stdout.txt"))
+			if e != nil || bytes.Contains(raw, []byte("AFTER_BOUNDARY")) {
+				t.Fatalf("%s bytes persisted after boundary: %q %v", kind, raw, e)
+			}
+		})
+	}
+}

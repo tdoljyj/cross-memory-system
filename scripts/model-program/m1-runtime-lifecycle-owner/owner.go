@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -98,34 +97,54 @@ func (b *budget) latch(e error) {
 }
 func (b *budget) err() error { b.mu.Lock(); defer b.mu.Unlock(); return b.failure }
 
+type captureAuthority struct {
+	mu      sync.Mutex
+	revoked bool
+}
+
+func (a *captureAuthority) revoke() {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	a.revoked = true
+	a.mu.Unlock()
+}
+
 type captureWriter struct {
 	f                 *os.File
 	b                 *budget
 	now               func() time.Time
 	deadline, expires time.Time
-	revoked           *atomic.Bool
+	authority         *captureAuthority
 }
 
-func (w *captureWriter) persistentAuthority() bool {
-	if w == nil || w.f == nil || w.b == nil || w.now == nil || w.revoked == nil || w.revoked.Load() {
+func (w *captureWriter) persistentAuthorityLocked() bool {
+	if w == nil || w.f == nil || w.b == nil || w.now == nil || w.authority == nil || w.authority.revoked {
 		return false
 	}
 	return checkDeadline(w.now(), w.deadline, w.expires) == nil
 }
 
 func (w *captureWriter) Write(p []byte) (int, error) {
-	// After expiry/deadline/finalization we must keep draining the child pipe so
-	// cleanup cannot deadlock, but normal lifecycle evidence authority is gone:
-	// bytes are discarded and never persisted.
-	if !w.persistentAuthority() {
+	// The process-wide capture authority gate is the persistence linearization
+	// point. Revocation takes the same gate and therefore cannot return while a
+	// writer is between its final authority check and the lower-level File.Write.
+	// A write already inside this critical section completes before revocation;
+	// after revoke() returns, later pipe bytes are drained/discarded only.
+	if w == nil || w.authority == nil {
+		return len(p), nil
+	}
+	w.authority.mu.Lock()
+	defer w.authority.mu.Unlock()
+	if !w.persistentAuthorityLocked() {
 		return len(p), nil
 	}
 	if e := w.b.consume(int64(len(p)), true); e != nil {
 		return len(p), nil
 	}
-	// Budget accounting can race the authority boundary. Recheck immediately
-	// before the lower-level persistent write; late bytes are drained/discarded.
-	if !w.persistentAuthority() {
+	// Recheck expiry/max-wall while holding the same persistence gate.
+	if !w.persistentAuthorityLocked() {
 		return len(p), nil
 	}
 	n, err := w.f.Write(p)
@@ -162,11 +181,11 @@ type ownedProcess struct {
 	startIndex      int
 }
 type processRecord struct {
-	ctx            *executionContext
-	proc           process
-	stdout, stderr *os.File
-	captureRevoked *atomic.Bool
-	closed         bool
+	ctx              *executionContext
+	proc             process
+	stdout, stderr   *os.File
+	captureAuthority *captureAuthority
+	closed           bool
 }
 
 type controller struct {
@@ -608,17 +627,17 @@ func (c *controller) startServer(ctx *executionContext, slotRoot, scenario, labe
 	if e = captureOutputAuthorized(ctx, scenario, label); e != nil {
 		return nil, e
 	}
-	captureRevoked := &atomic.Bool{}
-	stdoutCapture := &captureWriter{f: out, b: ctx.budget, now: c.now, deadline: ctx.deadline, expires: ctx.expires, revoked: captureRevoked}
-	stderrCapture := &captureWriter{f: er, b: ctx.budget, now: c.now, deadline: ctx.deadline, expires: ctx.expires, revoked: captureRevoked}
+	captureAuth := &captureAuthority{}
+	stdoutCapture := &captureWriter{f: out, b: ctx.budget, now: c.now, deadline: ctx.deadline, expires: ctx.expires, authority: captureAuth}
+	stderrCapture := &captureWriter{f: er, b: ctx.budget, now: c.now, deadline: ctx.deadline, expires: ctx.expires, authority: captureAuth}
 	p, e := c.sys.start(launch, stdoutCapture, stderrCapture)
 	if e != nil {
-		captureRevoked.Store(true)
+		captureAuth.revoke()
 		return nil, e
 	}
 	idx := ctx.starts + 1
 	w = &ownedProcess{id: p.pid(), scenario: scenario, label: label, startIndex: idx}
-	c.processes[w] = &processRecord{ctx: ctx, proc: p, stdout: out, stderr: er, captureRevoked: captureRevoked}
+	c.processes[w] = &processRecord{ctx: ctx, proc: p, stdout: out, stderr: er, captureAuthority: captureAuth}
 	ctx.starts = idx
 	c.contexts[ctx].starts = idx
 	defer func() {
@@ -723,8 +742,10 @@ func (c *controller) closeProcess(r *processRecord) error {
 }
 func (c *controller) revokeCapturePersistence(ctx *executionContext) {
 	for _, r := range c.processes {
-		if r.ctx == ctx && r.captureRevoked != nil {
-			r.captureRevoked.Store(true)
+		if r.ctx == ctx && r.captureAuthority != nil {
+			// revoke() is a barrier: once it returns, no in-flight capture writer
+			// can still be between its final authority check and File.Write.
+			r.captureAuthority.revoke()
 		}
 	}
 }

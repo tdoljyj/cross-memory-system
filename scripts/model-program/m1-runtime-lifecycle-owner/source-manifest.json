@@ -96,10 +96,10 @@
       "sha256": "dab032fe2c7a6d6b845d266ead695673e93a72c138a63d0097be27704f129b1a"
     },
     {
-      "bytes": 25667,
-      "git_blob_sha1": "e42457e636a21aaed2b2b2242559c27cb21d8c5d",
+      "bytes": 26228,
+      "git_blob_sha1": "4152a5f3dfd2b3b665e4aae0d05a497a7df94c46",
       "path": "owner.go",
-      "sha256": "8b7eae068f984dda6f63e774dd4b6f3370680b9e148c36019d478c50b9ceb7d7"
+      "sha256": "a8abe9e33425f98925d5239d38c095e18d6c1b496136ffd0fcac90c9e03e6a87"
     },
     {
       "bytes": 21048,
@@ -156,10 +156,10 @@
       "sha256": "31e9566693b42c0fb9820b8aeb6d2fa009e72caeec8ed9de5029b4c748adb07c"
     },
     {
-      "bytes": 37121,
-      "git_blob_sha1": "405cd4eb96fe1fb60268e61bce96d88eb6e72dfb",
+      "bytes": 40477,
+      "git_blob_sha1": "f4289520f2902f44b5c93cee913580810922c1ef",
       "path": "remediation_test.go",
-      "sha256": "4e0a15549ce4cddcba9c29569ddc8384c9a50e10b78414371c4e1dffd0f0645d"
+      "sha256": "31c9c04c3b48c234f6be4bdcf4c62b98c04d09fce74492e23d5d196b84a49055"
     },
     {
       "bytes": 4823,
@@ -201,16 +201,15 @@
   "remediation": {
     "exact_windows_toolchain_qualification_repeated": false,
     "finding_ids": [
-      "MAJOR-07",
       "MAJOR-08"
     ],
     "independent_review_pass": false,
-    "repair_base_head": "d09b6365f9d93941cd59c3c2ee89e0f6fc0ab2c4",
-    "repair_base_source_manifest_sha256": "2d47a06b43d91cad2342188242c9d11a70fa6587f6c951ba84dbe6f9b3f1b217",
+    "repair_base_head": "0433d9e89080433d66f9c9a19b7f93669b6c0cd0",
+    "repair_base_source_manifest_sha256": "40eaa69913ade714d2e717a94a317d1b2ecce9b73b9ef0824b9aeeff345dc801",
     "repository_successor_commit": null,
-    "revision": "MAJOR-07-MAJOR-08-r4-capture-boundary",
-    "status": "LOCAL_SOURCE_CANDIDATE / AUTHOR_SIDE_REGRESSION_PASS / REPOSITORY_LANDING_AND_EXACT_WINDOWS_REQUALIFICATION_PENDING",
-    "validation_boundary": "LOCAL_LINUX_GO_1.23.2_NON_MODEL_FIXTURES / NO_OWNER_BINARY_OR_REAL_MODEL_EXECUTION / NOT_INDEPENDENT_REVIEW"
+    "revision": "MAJOR-08-r5-capture-linearization",
+    "status": "LOCAL_SOURCE_CANDIDATE / R5_LINEARIZATION_REMEDIATION / EXACT_WINDOWS_REQUALIFICATION_PENDING",
+    "validation_boundary": "NO_OWNER_BINARY_OR_REAL_MODEL_EXECUTION / NOT_INDEPENDENT_REVIEW"
   },
   "role": "EFFECTFUL_OWNER_IMPLEMENTATION_PREPARATION_CANDIDATE / NO_FINAL_ISSUANCE / NO_EXECUTION",
   "schema_version": "clued.m1-08-native-owner-source-manifest/1"
