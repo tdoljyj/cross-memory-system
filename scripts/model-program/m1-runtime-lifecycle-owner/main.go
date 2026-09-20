@@ -113,13 +113,18 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		return 3
 	}
 	c := newController(realPlatform{}, admission{publicKey: issuerPublicKeyHex, publicKeyFingerprint: issuerPublicKeySHA256, sourceDigest: nativeSourceDigest, binaryDigest: bin}, productionLayout)
+	defer c.closeFilesystem()
 	ctx, e := c.authorize(p)
 	if e != nil {
-		fmt.Fprintln(stderr, "BLOCKED:", codeOf(e))
+		fmt.Fprintln(stderr, "BLOCKED:", e)
 		return 3
 	}
 	if e = c.run(ctx); e != nil {
 		fmt.Fprintln(stderr, "FAIL_CLOSED:", e)
+		return 1
+	}
+	if e = c.closeFilesystem(); e != nil {
+		fmt.Fprintln(stderr, "FAIL_CLOSED: filesystem handle cleanup:", e)
 		return 1
 	}
 	fmt.Fprintln(stdout, `{"pass":true,"scope":"M1_08_PC_RUNTIME_LIFECYCLE_SMOKE_EVIDENCE_ONLY"}`)

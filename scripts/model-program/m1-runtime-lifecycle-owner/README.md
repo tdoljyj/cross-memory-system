@@ -37,4 +37,50 @@ Before A activation, a partial A slot is removed only when every remaining entry
 
 `platform_windows_test.go` adds Windows-only checks for exact launch-envelope validation, native current replacement, NTFS named ADS rejection, hardlink detection, reparse-point rejection, trusted Windows-directory resolution, and handle-resolved directory identity. These tests use only test-owned temporary paths and never use the M1-08 production guard/test/source paths.
 
-Run `python -B build.py --toolchain-archive <exact-go1.27.1-windows-amd64.zip> --output <new-absolute-path>` to verify the exact Contract/Profile objects, source manifest, complete official Go toolchain archive/tree and compiler/linker identities; then run non-effectful tests/vet, compile the Windows test binary, and build the Windows owner executable with the source-manifest SHA-256 injected into the binary. The helper reconstructs its build environment without caller `PATH`/`GOFLAGS` and never executes the owner binary.
+Run `python -B build.py --toolchain-archive <exact-go1.27.1-windows-amd64.zip> --output C:\Users\Public\Clued\Validation\M108-owner-qualification\<new-name>` to verify the exact Contract/Profile objects, source manifest, complete official Go toolchain archive/tree and compiler/linker identities; then run non-effectful tests/vet, compile the Windows test binary, and build the Windows owner executable with the source-manifest SHA-256 injected into the binary. The helper reconstructs its build environment without caller `PATH`/`GOFLAGS` and never executes the owner binary.
+
+
+## MAJOR-01 through MAJOR-09 remediation candidate
+
+This successor remains unissued, with an empty issuer root and no execution
+authority. The accepted Contract/Profile bytes are unchanged. Source changes
+require a new manifest and new qualification, followed by independent review.
+
+The write path uses retained directory handles and native relative opens. Each
+created file/directory receives an in-memory volume/file-ID provenance record;
+cleanup reopens a DELETE-capable handle and compares that record before any
+removal. Persistent Guard/evidence deletion is forbidden. Payload read leases
+remain live through use. Current publication uses one native same-volume NTFS
+rename, not ReplaceFileW or a delete/rename sequence, with explicit committed,
+not-committed, and unknown outcomes. This is not a power-loss durability claim.
+
+Post-commit validation, evidence, and probe errors enter the same bounded
+recovery branch. Unknown state is retained rather than labelled uncommitted.
+Destructive success cleanup requires the exact recorded final 3N bytes and
+transition semantics. Failure finalization reports process cleanup, listener,
+remaining paths, and evidence errors without overwriting the original failure.
+Capture exhaustion does not consume the reserved forensic budget. Signed expiry
+clamps normal execution; expiry never authorizes a new start or extends the
+allowed lifecycle. Safety termination/reporting is separate from business work.
+
+Qualification output is restricted to a NEW direct child of
+`C:\Users\Public\Clued\Validation\M108-owner-qualification`. The CLI does not
+accept an alternate root. Build temporary/cache paths stay below that output;
+existing ancestry is opened without reparse following and pinned during build.
+Use `python -I -B build.py --toolchain-archive <reviewed-zip> --output
+C:\Users\Public\Clued\Validation\M108-owner-qualification\<new-name>`.
+The build parses per-test JSON and rejects skipped/unfinished/failing tests;
+it also runs the Python namespace tests, vet, and compilation. It never runs
+`m1-08-owner.exe`. Receipt filesystem statements describe the controlled build,
+not a substitute for independent live production-runtime observation.
+
+`remediation_test.go` uses small inert payloads and fake child processes through
+the production lifecycle functions. On Windows its filesystem delegates to the
+actual native filesystem adapter. Test-only payload sizes, faults, and adapters
+are absent from the CLI and are not execution authorization. The native test
+suite requires NTFS ADS/hardlinks and reparse fixture availability.
+
+The reparse test uses a test-owned directory junction when Windows does not
+grant symlink privilege; only the trusted absolute cmd.exe creates that inert
+fixture. It never launches the owner or any model executable. A missing reparse
+fixture remains a qualification failure, not a skip.

@@ -19,33 +19,29 @@ import (
 type realPlatform struct{}
 
 var (
-	kernel32                  = syscall.NewLazyDLL("kernel32.dll")
-	procGetWindowsDirectoryW  = kernel32.NewProc("GetWindowsDirectoryW")
-	procGetFileAttributesW    = kernel32.NewProc("GetFileAttributesW")
-	procGetFinalPathNameByHandleW = kernel32.NewProc("GetFinalPathNameByHandleW")
-	procGetVolumePathNameW    = kernel32.NewProc("GetVolumePathNameW")
-	procGetVolumeInformationW = kernel32.NewProc("GetVolumeInformationW")
-	procLocalFree             = kernel32.NewProc("LocalFree")
-	advapi32                  = syscall.NewLazyDLL("advapi32.dll")
-	procGetFileSecurityW      = advapi32.NewProc("GetFileSecurityW")
+	kernel32                       = syscall.NewLazyDLL("kernel32.dll")
+	procGetWindowsDirectoryW       = kernel32.NewProc("GetWindowsDirectoryW")
+	procGetFileAttributesW         = kernel32.NewProc("GetFileAttributesW")
+	procGetFinalPathNameByHandleW  = kernel32.NewProc("GetFinalPathNameByHandleW")
+	procGetVolumePathNameW         = kernel32.NewProc("GetVolumePathNameW")
+	procGetVolumeInformationW      = kernel32.NewProc("GetVolumeInformationW")
+	procLocalFree                  = kernel32.NewProc("LocalFree")
+	advapi32                       = syscall.NewLazyDLL("advapi32.dll")
+	procGetFileSecurityW           = advapi32.NewProc("GetFileSecurityW")
 	procGetSecurityDescriptorOwner = advapi32.NewProc("GetSecurityDescriptorOwner")
-	procConvertSidToStringSidW = advapi32.NewProc("ConvertSidToStringSidW")
-	procFindFirstStreamW      = kernel32.NewProc("FindFirstStreamW")
-	procFindNextStreamW       = kernel32.NewProc("FindNextStreamW")
-	procFindClose             = kernel32.NewProc("FindClose")
-	procMoveFileExW           = kernel32.NewProc("MoveFileExW")
-	procReplaceFileW          = kernel32.NewProc("ReplaceFileW")
-	procGenerateConsoleCtrl   = kernel32.NewProc("GenerateConsoleCtrlEvent")
+	procConvertSidToStringSidW     = advapi32.NewProc("ConvertSidToStringSidW")
+	procFindFirstStreamW           = kernel32.NewProc("FindFirstStreamW")
+	procFindNextStreamW            = kernel32.NewProc("FindNextStreamW")
+	procFindClose                  = kernel32.NewProc("FindClose")
+	procGenerateConsoleCtrl        = kernel32.NewProc("GenerateConsoleCtrlEvent")
 )
 
 const (
 	fileAttributeReparsePoint = 0x00000400
-	invalidFileAttributes      = 0xffffffff
-	movefileWriteThrough       = 0x00000008
-	replacefileWriteThrough    = 0x00000001
-	errorHandleEOF             = syscall.Errno(38)
-	ownerSecurityInformation   = 0x00000001
-	daclSecurityInformation    = 0x00000004
+	invalidFileAttributes     = 0xffffffff
+	errorHandleEOF            = syscall.Errno(38)
+	ownerSecurityInformation  = 0x00000001
+	daclSecurityInformation   = 0x00000004
 )
 
 func nonzeroCallError(e error) error {
@@ -281,11 +277,11 @@ func (sys realPlatform) directoryIdentity(path string) (directoryIdentity, error
 		return directoryIdentity{}, e
 	}
 	return directoryIdentity{
-		canonicalPath: canonical,
-		filesystemType: fsType,
-		volumeSerial: serial,
-		fileID: fmt.Sprintf("%08x%08x", info.FileIndexHigh, info.FileIndexLow),
-		ownerSID: ownerSID,
+		canonicalPath:            canonical,
+		filesystemType:           fsType,
+		volumeSerial:             serial,
+		fileID:                   fmt.Sprintf("%08x%08x", info.FileIndexHigh, info.FileIndexLow),
+		ownerSID:                 ownerSID,
 		securityDescriptorSHA256: securitySHA,
 	}, nil
 }
@@ -368,58 +364,27 @@ func (realPlatform) namedStreams(path string) ([]string, error) {
 	return streams, nil
 }
 
-func (realPlatform) atomicPublish(temp, dst string, replace bool) error {
-	if !filepath.IsAbs(temp) || !filepath.IsAbs(dst) || !samePath(filepath.Dir(temp), filepath.Dir(dst)) {
+func (sys realPlatform) atomicPublish(temp, dst string, replace bool) error {
+	if !filepath.IsAbs(temp) || !samePath(filepath.Dir(temp), filepath.Dir(dst)) {
 		return fail("CURRENT_MANIFEST_ATOMICITY_UNPROVEN")
 	}
-	tv := filepath.VolumeName(filepath.Clean(temp))
-	dv := filepath.VolumeName(filepath.Clean(dst))
-	if tv == "" || !strings.EqualFold(tv, dv) {
-		return fail("CURRENT_MANIFEST_ATOMICITY_UNPROVEN")
-	}
-	tp, e := syscall.UTF16PtrFromString(temp)
+	c := newController(sys, admission{}, layout{})
+	defer c.closeFilesystem()
+	d, e := c.pinDirectory(filepath.Dir(temp))
 	if e != nil {
 		return e
 	}
-	dp, e := syscall.UTF16PtrFromString(dst)
+	f, e := sys.openRelative(d, filepath.Base(temp), temp, fsDelete)
 	if e != nil {
 		return e
 	}
+	defer f.Close()
 	if replace {
 		if _, e = os.Lstat(dst); e != nil {
-			return fail("CURRENT_MANIFEST_ATOMICITY_UNPROVEN")
+			return e
 		}
-		ok, _, er := procReplaceFileW.Call(
-			uintptr(unsafe.Pointer(dp)),
-			uintptr(unsafe.Pointer(tp)),
-			0,
-			replacefileWriteThrough,
-			0,
-			0,
-		)
-		if ok == 0 {
-			if ce := nonzeroCallError(er); ce != nil {
-				return ce
-			}
-			return fail("CURRENT_MANIFEST_ATOMICITY_UNPROVEN")
-		}
-		return nil
 	}
-	if _, e = os.Lstat(dst); !os.IsNotExist(e) {
-		return fail("CURRENT_MANIFEST_ATOMICITY_UNPROVEN")
-	}
-	ok, _, er := procMoveFileExW.Call(
-		uintptr(unsafe.Pointer(tp)),
-		uintptr(unsafe.Pointer(dp)),
-		movefileWriteThrough,
-	)
-	if ok == 0 {
-		if ce := nonzeroCallError(er); ce != nil {
-			return ce
-		}
-		return fail("CURRENT_MANIFEST_ATOMICITY_UNPROVEN")
-	}
-	return nil
+	return sys.renameByHandle(f, d, filepath.Base(dst), replace)
 }
 
 func parseExactEnvironment(env []string) (map[string]string, error) {
@@ -614,7 +579,7 @@ func (sys realPlatform) start(launch launchEnvelope, out, errOut io.Writer) (pro
 			Env:   append([]string(nil), launch.env...),
 			Files: []uintptr{null.Fd(), stdoutW.Fd(), stderrW.Fd()},
 			Sys: &syscall.SysProcAttr{
-				HideWindow:     true,
+				HideWindow:    true,
 				CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
 			},
 		},

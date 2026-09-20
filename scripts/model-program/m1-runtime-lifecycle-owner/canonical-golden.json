@@ -1,0 +1,21 @@
+{
+  "description": "Python json.dumps(sort_keys=True, separators=(comma,colon), ensure_ascii=False); no production keys",
+  "value": {
+    "absolute": "C:\\Users\\Public\\Clued\\ModelProgram\\M1",
+    "relative": "payload\\model\\Qwen3.5-0.8B-Q8_0.gguf",
+    "control": "\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f",
+    "unicode": "中文😀  ",
+    "nested": [
+      {
+        "quote": "\"",
+        "slash": "/",
+        "backslash": "\\"
+      },
+      true,
+      false,
+      null,
+      123
+    ]
+  },
+  "expected_canonical_utf8": "{\"absolute\":\"C:\\\\Users\\\\Public\\\\Clued\\\\ModelProgram\\\\M1\",\"control\":\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\",\"nested\":[{\"backslash\":\"\\\\\",\"quote\":\"\\\"\",\"slash\":\"/\"},true,false,null,123],\"relative\":\"payload\\\\model\\\\Qwen3.5-0.8B-Q8_0.gguf\",\"unicode\":\"中文😀  \"}"
+}

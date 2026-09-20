@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -167,9 +168,7 @@ func (c *controller) probeActiveSlot(ctx *executionContext, revision, scenario, 
 		return e
 	}
 	defer func() {
-		if ce := c.forceKill(ctx, w); ce != nil && err == nil {
-			err = ce
-		}
+		err = errors.Join(err, c.forceKill(ctx, w))
 	}()
 	if e = c.health(ctx, 60*time.Second); e != nil {
 		return e
@@ -204,11 +203,8 @@ func (c *controller) recordScenario(ctx *executionContext, name string, v object
 }
 
 func (c *controller) terminalFailure(ctx *executionContext, scenario string, cause error, recovery object) error {
-	_ = c.event(ctx, scenario, "terminal_failure", object{
-		"failure_code": codeOf(cause),
-		"recovery":     recovery,
-	})
-	return faild("PROFILE_FAILED_TERMINAL", codeOf(cause))
+	ev := c.event(ctx, scenario, "terminal_failure", object{"failure_code": codeOf(cause), "failure": cause.Error(), "recovery": recovery})
+	return errors.Join(fail("PROFILE_FAILED_TERMINAL"), cause, ev)
 }
 
 func (c *controller) recoverUpgradeFailure(ctx *executionContext, cause error) error {
@@ -216,26 +212,26 @@ func (c *controller) recoverUpgradeFailure(ctx *executionContext, cause error) e
 		return fmt.Errorf("%w; cleanup=%v", cause, e)
 	}
 	if !c.sys.portFree() {
-		return fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION")
+		return errors.Join(cause, fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION"))
 	}
 	if _, e := c.verifySlot(slotRootFor(c.paths, revisionA), ctx.deadline); e != nil {
-		return fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION")
+		return errors.Join(cause, e, fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION"))
 	}
 	if _, e := c.publishCurrent(ctx, upgradeRecovery()); e != nil {
-		return fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION")
+		return errors.Join(cause, e, fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION"))
 	}
-	if e := c.requireCurrentRevision(ctx, revisionA); e != nil {
-		return fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION")
+	if e := c.requireCurrentExact(ctx, upgradeRecovery()); e != nil {
+		return errors.Join(cause, e, fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION"))
 	}
-	_ = c.writeEvidence(ctx, "M1RuntimeLifecycleUpgrade.json", object{
-		"profile_id": issuedID,
-		"pass":       false,
-		"failure_code": codeOf(cause),
+	ev := c.writeEvidence(ctx, "M1RuntimeLifecycleUpgrade.json", object{
+		"profile_id":                issuedID,
+		"pass":                      false,
+		"failure_code":              codeOf(cause),
 		"recovery_transition_index": json.Number("3"),
-		"recovery_to": revisionA,
-		"terminal_after_recovery": true,
+		"recovery_to":               revisionA,
+		"terminal_after_recovery":   true,
 	}, false)
-	return c.terminalFailure(ctx, "M1-08-PC-UPGRADE-001", cause, object{
+	return c.terminalFailure(ctx, "M1-08-PC-UPGRADE-001", errors.Join(cause, ev), object{
 		"transition_index": json.Number("3"), "to": revisionA, "recovery_of_transition_index": json.Number("2"),
 	})
 }
@@ -245,39 +241,42 @@ func (c *controller) recoverRollbackFailure(ctx *executionContext, cause error) 
 		return fmt.Errorf("%w; cleanup=%v", cause, e)
 	}
 	if !c.sys.portFree() {
-		return fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION")
+		return errors.Join(cause, fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION"))
 	}
 	if _, e := c.verifySlot(slotRootFor(c.paths, revisionB), ctx.deadline); e != nil {
-		return fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION")
+		return errors.Join(cause, e, fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION"))
 	}
 	if _, e := c.publishCurrent(ctx, rollbackRecovery()); e != nil {
-		return fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION")
+		return errors.Join(cause, e, fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION"))
 	}
-	if e := c.requireCurrentRevision(ctx, revisionB); e != nil {
-		return fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION")
+	if e := c.requireCurrentExact(ctx, rollbackRecovery()); e != nil {
+		return errors.Join(cause, e, fail("POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION"))
 	}
-	_ = c.writeEvidence(ctx, "M1RuntimeLifecycleRollback.json", object{
-		"profile_id": issuedID,
-		"pass":       false,
-		"failure_code": codeOf(cause),
+	ev := c.writeEvidence(ctx, "M1RuntimeLifecycleRollback.json", object{
+		"profile_id":                issuedID,
+		"pass":                      false,
+		"failure_code":              codeOf(cause),
 		"recovery_transition_index": json.Number("4"),
-		"recovery_to": revisionB,
-		"terminal_after_recovery": true,
+		"recovery_to":               revisionB,
+		"terminal_after_recovery":   true,
 	}, false)
-	return c.terminalFailure(ctx, "M1-08-PC-ROLLBACK-001", cause, object{
+	return c.terminalFailure(ctx, "M1-08-PC-ROLLBACK-001", errors.Join(cause, ev), object{
 		"transition_index": json.Number("4"), "to": revisionB, "recovery_of_transition_index": json.Number("3"),
 	})
 }
 
 func (c *controller) run(ctx *executionContext) (err error) {
-	if e := c.limits(ctx); e != nil {
+	if e := c.requireContext(ctx); e != nil {
 		return e
 	}
 	defer func() {
-		if ce := c.cleanupProcesses(ctx); ce != nil && err == nil {
-			err = ce
+		if err != nil {
+			err = c.finalizeFailure(ctx, err)
 		}
 	}()
+	if e := c.limits(ctx); e != nil {
+		return e
+	}
 
 	pre, e := c.attestSource(ctx.deadline)
 	if e != nil {
@@ -299,41 +298,19 @@ func (c *controller) run(ctx *executionContext) (err error) {
 
 	a, e := c.materializeSlot(ctx, revisionA)
 	if e != nil {
-		ce := c.removePartialSlotIfSafe(slotRootFor(c.paths, revisionA), pre.specs)
-		_ = c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{
+		ce := c.removePartialSlotIfSafe(ctx, slotRootFor(c.paths, revisionA), pre.specs)
+		ee := c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{
 			"profile_id": issuedID, "pass": false, "failure_code": codeOf(e),
-			"activation_occurred": false, "partial_slot_cleanup": map[bool]string{true:"REMOVED_SAFE_PARTIAL_A", false:"RETAINED_UNSAFE_FOR_FORENSICS"}[ce == nil],
+			"activation_occurred": false, "partial_slot_cleanup": map[bool]string{true: "REMOVED_SAFE_PARTIAL_A", false: "RETAINED_UNSAFE_FOR_FORENSICS"}[ce == nil],
 		}, false)
+		e = errors.Join(e, ee)
 		if ce != nil {
 			return fmt.Errorf("%w; partial-A-safe-cleanup=%v", e, ce)
 		}
-		return c.terminalFailure(ctx, "M1-08-PC-INSTALL-001", e, object{"activation_occurred":false,"partial_A_removed_if_safe":true})
+		return c.terminalFailure(ctx, "M1-08-PC-INSTALL-001", e, object{"activation_occurred": false, "partial_A_removed_if_safe": true})
 	}
-	if _, e = c.publishCurrent(ctx, successTransition(1)); e != nil {
+	if e = c.activateAndProbe(ctx, successTransition(1), "M1-08-PC-INSTALL-001", "install-a"); e != nil {
 		return e
-	}
-	if e = c.probeActiveSlot(ctx, revisionA, "M1-08-PC-INSTALL-001", "install-a"); e != nil {
-		if ce := c.cleanupProcesses(ctx); ce != nil {
-			return fmt.Errorf("%w; cleanup=%v", e, ce)
-		}
-		if !c.sys.portFree() {
-			return e
-		}
-		// Contract: after A activation but before install probe PASS, remove
-		// current iff it still points to the exact unverified A. Preserve the
-		// runtime root and evidence for forensics; the one-shot guard remains.
-		if re := c.removeUnverifiedInitialCurrent(ctx); re != nil {
-			_ = c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{
-				"profile_id": issuedID, "pass": false, "failure_code": codeOf(e),
-				"conditional_current_removal": "FAILED_CLOSED", "removal_failure_code": codeOf(re),
-			}, false)
-			return fmt.Errorf("%w; conditional-current-removal=%v", e, re)
-		}
-		_ = c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{
-			"profile_id": issuedID, "pass": false, "failure_code": codeOf(e),
-			"conditional_current_removal": "REMOVED_EXACT_UNVERIFIED_A",
-		}, false)
-		return c.terminalFailure(ctx, "M1-08-PC-INSTALL-001", e, object{"recovery": "REMOVE_CURRENT_IF_EXACT_UNVERIFIED_A / RUNTIME_ROOT_RETAINED"})
 	}
 	if e = c.recordScenario(ctx, "M1RuntimeLifecycleInstall.json", object{
 		"revision_id": revisionA, "slot_manifest_sha256": a.manifestSHA, "transition_index": json.Number("1"), "probe": "PASS",
@@ -346,22 +323,20 @@ func (c *controller) run(ctx *executionContext) (err error) {
 		if ae := c.requireCurrentRevision(ctx, revisionA); ae != nil {
 			return fmt.Errorf("%w; verified-A-preservation-check=%v", e, ae)
 		}
-		ce := c.removePartialSlotIfSafe(slotRootFor(c.paths, revisionB), pre.specs)
-		_ = c.writeEvidence(ctx, "M1RuntimeLifecycleUpgrade.json", object{
+		ce := c.removePartialSlotIfSafe(ctx, slotRootFor(c.paths, revisionB), pre.specs)
+		ee := c.writeEvidence(ctx, "M1RuntimeLifecycleUpgrade.json", object{
 			"profile_id": issuedID, "pass": false, "failure_code": codeOf(e),
 			"activation_occurred": false, "verified_A_remained_active": true,
-			"partial_slot_cleanup": map[bool]string{true:"REMOVED_SAFE_PARTIAL_B", false:"RETAINED_UNSAFE_FOR_FORENSICS"}[ce == nil],
+			"partial_slot_cleanup": map[bool]string{true: "REMOVED_SAFE_PARTIAL_B", false: "RETAINED_UNSAFE_FOR_FORENSICS"}[ce == nil],
 		}, false)
+		e = errors.Join(e, ee)
 		if ce != nil {
 			return fmt.Errorf("%w; partial-B-safe-cleanup=%v", e, ce)
 		}
-		return c.terminalFailure(ctx, "M1-08-PC-UPGRADE-001", e, object{"activation_occurred":false,"verified_A_remained_active":true})
+		return c.terminalFailure(ctx, "M1-08-PC-UPGRADE-001", e, object{"activation_occurred": false, "verified_A_remained_active": true})
 	}
-	if _, e = c.publishCurrent(ctx, successTransition(2)); e != nil {
+	if e = c.activateAndProbe(ctx, successTransition(2), "M1-08-PC-UPGRADE-001", "upgrade-b"); e != nil {
 		return e
-	}
-	if e = c.probeActiveSlot(ctx, revisionB, "M1-08-PC-UPGRADE-001", "upgrade-b"); e != nil {
-		return c.recoverUpgradeFailure(ctx, e)
 	}
 	if e = c.recordScenario(ctx, "M1RuntimeLifecycleUpgrade.json", object{
 		"from": revisionA, "to": revisionB, "slot_manifest_sha256": b.manifestSHA, "transition_index": json.Number("2"), "probe": "PASS", "binary_version_migration_claim": false,
@@ -376,11 +351,8 @@ func (c *controller) run(ctx *executionContext) (err error) {
 	if a2.manifestSHA != a.manifestSHA {
 		return fail("ROLLBACK_TARGET_A_IDENTITY_DRIFT")
 	}
-	if _, e = c.publishCurrent(ctx, successTransition(3)); e != nil {
+	if e = c.activateAndProbe(ctx, successTransition(3), "M1-08-PC-ROLLBACK-001", "rollback-a"); e != nil {
 		return e
-	}
-	if e = c.probeActiveSlot(ctx, revisionA, "M1-08-PC-ROLLBACK-001", "rollback-a"); e != nil {
-		return c.recoverRollbackFailure(ctx, e)
 	}
 	if e = c.recordScenario(ctx, "M1RuntimeLifecycleRollback.json", object{
 		"from": revisionB, "to": revisionA, "slot_manifest_sha256": a.manifestSHA, "transition_index": json.Number("3"), "probe": "PASS",
@@ -396,7 +368,7 @@ func (c *controller) run(ctx *executionContext) (err error) {
 		return fail("UNEXPECTED_SOURCE_PACKAGE_MUTATION")
 	}
 	if e = c.writeEvidence(ctx, "M1RuntimeLifecycleDigests.json", object{
-		"profile_id": issuedID,
+		"profile_id":              issuedID,
 		"source_model_sha256_pre": pre.modelSHA, "source_model_sha256_post": post.modelSHA,
 		"source_runtime_asset_sha256_pre": pre.assetSHA, "source_runtime_asset_sha256_post": post.assetSHA,
 		"source_runtime_tree_sha256_pre": pre.treeSHA, "source_runtime_tree_sha256_post": post.treeSHA,
@@ -407,7 +379,7 @@ func (c *controller) run(ctx *executionContext) (err error) {
 
 	// Re-verify the final active state and both immutable lifecycle slots
 	// immediately before destructive success cleanup.
-	if e = c.requireCurrentRevision(ctx, revisionA); e != nil {
+	if e = c.requireCurrentExact(ctx, successTransition(3)); e != nil {
 		return e
 	}
 	if _, e = c.verifySlot(slotRootFor(c.paths, revisionB), ctx.deadline); e != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -72,7 +73,7 @@ type budget struct {
 func (b *budget) consume(n int64, capture bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.failure != nil {
+	if b.failure != nil && capture {
 		return b.failure
 	}
 	ceiling := b.limit
@@ -81,7 +82,9 @@ func (b *budget) consume(n int64, capture bool) error {
 	}
 	if n < 0 || n > ceiling-b.used {
 		e := fail("OUTPUT_STORAGE_BUDGET_EXCEEDED")
-		b.failure = e
+		if b.failure == nil {
+			b.failure = e
+		}
 		return e
 	}
 	b.used += n
@@ -100,13 +103,22 @@ func (w *captureWriter) Write(p []byte) (int, error) {
 		// cleanup cannot deadlock behind a full stdout/stderr pipe.
 		return len(p), nil
 	}
-	return w.f.Write(p)
+	n, e := w.f.Write(p)
+	if e != nil {
+		w.b.mu.Lock()
+		if w.b.failure == nil {
+			w.b.failure = e
+		}
+		w.b.mu.Unlock()
+	}
+	return n, e
 }
 
 type executionContext struct {
 	profile           object
 	profileDigest     string
 	started, deadline time.Time
+	expires           time.Time
 	physical          string
 	starts            int
 	budget            *budget
@@ -115,6 +127,7 @@ type executionContext struct {
 type contextRecord struct {
 	profileDigest     string
 	started, deadline time.Time
+	expires           time.Time
 	physical          string
 	starts            int
 	budget            *budget
@@ -134,16 +147,22 @@ type processRecord struct {
 }
 
 type controller struct {
-	sys       platform
-	trust     admission
-	paths     layout
-	now       func() time.Time
-	contexts  map[*executionContext]*contextRecord
-	processes map[*ownedProcess]*processRecord
+	sys         platform
+	trust       admission
+	paths       layout
+	now         func() time.Time
+	contexts    map[*executionContext]*contextRecord
+	processes   map[*ownedProcess]*processRecord
+	directories map[string]*os.File
+	payloadPins map[string]*os.File
+	created     map[string]fileIdentity
+	currentRaw  []byte
+	currentSpec transitionSpec
+	payload     payloadIdentity
 }
 
 func newController(sys platform, trust admission, paths layout) *controller {
-	return &controller{sys: sys, trust: trust, paths: paths, now: time.Now, contexts: map[*executionContext]*contextRecord{}, processes: map[*ownedProcess]*processRecord{}}
+	return &controller{sys: sys, trust: trust, paths: paths, now: time.Now, contexts: map[*executionContext]*contextRecord{}, processes: map[*ownedProcess]*processRecord{}, directories: map[string]*os.File{}, payloadPins: map[string]*os.File{}, created: map[string]fileIdentity{}, payload: productionPayload()}
 }
 
 func (c *controller) requireContext(ctx *executionContext) error {
@@ -158,6 +177,7 @@ func (c *controller) requireContext(ctx *executionContext) error {
 		ctx.profileDigest != r.profileDigest ||
 		ctx.started != r.started ||
 		ctx.deadline != r.deadline ||
+		ctx.expires != r.expires ||
 		ctx.physical != r.physical ||
 		ctx.starts != r.starts ||
 		ctx.budget != r.budget ||
@@ -173,6 +193,9 @@ func (c *controller) limits(ctx *executionContext) error {
 	}
 	if e := ctx.budget.err(); e != nil {
 		return e
+	}
+	if !ctx.expires.IsZero() && !c.now().Before(ctx.expires) {
+		return fail("PROFILE_EXPIRED_OR_REVOKED")
 	}
 	if !c.now().Before(ctx.deadline) {
 		return fail("MAX_WALL_TIME_EXCEEDED")
@@ -201,7 +224,11 @@ func (c *controller) authorize(p object) (*executionContext, error) {
 		return nil, fail("DEVICE_PHYSICAL_IDENTITY_DRIFT")
 	}
 	start := c.now()
-	deadline := start.Add(maxWall)
+	expires, e := utc(text(p, "expiry"))
+	if e != nil {
+		return nil, fail("PROFILE_EXPIRY_INVALID")
+	}
+	deadline := executionDeadline(start, expires)
 	if _, e = c.attestSource(deadline); e != nil {
 		return nil, e
 	}
@@ -225,7 +252,7 @@ func (c *controller) authorize(p object) (*executionContext, error) {
 	}
 	guardBytes := canonical(object{
 		"profile_id": issuedID, "profile_sha256": digest(p), "contract_git_blob_sha1": contractBlobSHA1,
-		"claimed_at_utc": c.now().UTC().Format(time.RFC3339Nano),
+		"claimed_at_utc":                c.now().UTC().Format(time.RFC3339Nano),
 		"native_source_manifest_sha256": c.trust.sourceDigest, "native_binary_sha256": c.trust.binaryDigest,
 		"guard_parent_identity": object{
 			"canonical_path": guardIdentity.canonicalPath, "filesystem_type": guardIdentity.filesystemType,
@@ -235,24 +262,32 @@ func (c *controller) authorize(p object) (*executionContext, error) {
 		},
 		"semantics": "FIRST_PROFILE_OWNED_WRITE / ONE_SHOT / NO_REUSE_AFTER_SUCCESS_OR_FAILURE",
 	})
-	if e = c.createNewSynced(c.paths.guard, append(guardBytes, '\n'), 0600); e != nil {
-		if os.IsExist(e) {
+	claimError := c.claimGuard(p, append(guardBytes, '\n'), deadline)
+	if _, claimed := c.created[fileKey(c.paths.guard)]; !claimed {
+		if os.IsExist(claimError) {
 			return nil, fail("MAX_ATTEMPTS_EXCEEDED")
 		}
-		return nil, e
+		return nil, claimError
 	}
 	b := &budget{limit: maxStorage, reserve: evidenceReserve, used: int64(len(guardBytes) + 1)}
-	ctx := &executionContext{profile: p, profileDigest: digest(p), started: start, deadline: deadline, physical: machine, budget: b, consumed: true}
-	c.contexts[ctx] = &contextRecord{profileDigest: ctx.profileDigest, started: start, deadline: deadline, physical: machine, starts: 0, budget: b, consumed: true}
+	ctx := &executionContext{profile: p, profileDigest: digest(p), started: start, deadline: deadline, expires: expires, physical: machine, budget: b, consumed: true}
+	c.contexts[ctx] = &contextRecord{profileDigest: ctx.profileDigest, started: start, deadline: deadline, expires: expires, physical: machine, budget: b, consumed: true}
+	if claimError != nil {
+		return ctx, c.finalizeFailure(ctx, claimError)
+	}
+
 	// Every later path creation is below exact reviewed roots.
-	if e = c.createOwnedDirs(); e != nil {
-		return nil, e
+	if e = c.limits(ctx); e != nil {
+		return ctx, c.finalizeFailure(ctx, e)
+	}
+	if e = c.createOwnedDirs(ctx); e != nil {
+		return ctx, c.finalizeFailure(ctx, e)
 	}
 	if e = c.writeEvidence(ctx, "M1RuntimeLifecycleAttemptGuard.snapshot.json", object{"path": c.paths.guard, "sha256": sha(append(append([]byte(nil), guardBytes...), '\n')), "claimed_at_utc": c.now().UTC().Format(time.RFC3339Nano)}, false); e != nil {
-		return nil, e
+		return ctx, c.finalizeFailure(ctx, e)
 	}
 	if e = c.event(ctx, "PROFILE", "attempt_guard_claimed", object{"path": c.paths.guard}); e != nil {
-		return nil, e
+		return ctx, c.finalizeFailure(ctx, e)
 	}
 	return ctx, nil
 }
@@ -276,7 +311,15 @@ func (c *controller) verifyGuardParent(p object) (directoryIdentity, error) {
 	if e = c.verifySafeExistingPath(c.paths.guardParent); e != nil {
 		return directoryIdentity{}, fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
 	}
-	live, e := c.sys.directoryIdentity(c.paths.guardParent)
+	directory, e := c.pinDirectory(c.paths.guardParent)
+	if e != nil {
+		return directoryIdentity{}, e
+	}
+	fp, e := c.fsPlatform()
+	if e != nil {
+		return directoryIdentity{}, e
+	}
+	live, e := fp.guardIdentity(directory)
 	if e != nil {
 		return directoryIdentity{}, fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
 	}
@@ -302,15 +345,12 @@ func (c *controller) verifyGuardParent(p object) (directoryIdentity, error) {
 	return live, nil
 }
 
-func (c *controller) createOwnedDirs() error {
+func (c *controller) createOwnedDirs(ctx *executionContext) error {
 	for _, p := range []string{c.paths.evidence, c.paths.testRoot, filepath.Join(c.paths.testRoot, "state"), c.paths.tempRoot, filepath.Join(c.paths.testRoot, "revisions")} {
-		if e := c.verifySafeParent(p); e != nil {
+		if e := c.limits(ctx); e != nil {
 			return e
 		}
-		if e := os.Mkdir(p, 0700); e != nil {
-			return e
-		}
-		if e := c.verifySafeExistingPath(p); e != nil {
+		if e := c.createOwnedDirectory(p); e != nil {
 			return e
 		}
 	}
@@ -318,27 +358,15 @@ func (c *controller) createOwnedDirs() error {
 }
 
 func (c *controller) createNewSynced(path string, data []byte, mode os.FileMode) error {
-	if e := c.verifySafeParent(path); e != nil {
-		return e
-	}
-	f, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	f, e := c.openOwnedWrite(path, false)
 	if e != nil {
-		return e
-	}
-	if e = c.sys.verifyWriteHandle(f, path); e != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
 		return e
 	}
 	_, we := f.Write(data)
 	if we == nil {
 		we = f.Sync()
 	}
-	ce := f.Close()
-	if we == nil {
-		we = ce
-	}
-	return we
+	return errors.Join(we, f.Close())
 }
 
 func (c *controller) writeEvidence(ctx *executionContext, name string, v any, appendLine bool) error {
@@ -354,37 +382,27 @@ func (c *controller) writeEvidence(ctx *executionContext, name string, v any, ap
 	}
 	path := filepath.Join(c.paths.evidence, name)
 	if appendLine {
-		if e := c.verifySafeParent(path); e != nil {
+		if _, e := os.Lstat(path); e == nil {
+			if e = c.verifySafeExistingPath(path); e != nil {
+				return e
+			}
+		} else if !os.IsNotExist(e) {
 			return e
 		}
-		flags := os.O_APPEND | os.O_WRONLY
-		if _, se := os.Lstat(path); os.IsNotExist(se) {
-			flags |= os.O_CREATE | os.O_EXCL
-		} else if se != nil {
-			return se
-		} else if se = c.verifySafeExistingPath(path); se != nil {
-			return se
-		}
-		f, e := os.OpenFile(path, flags, 0600)
+		_, known := c.created[fileKey(path)]
+		f, e := c.openOwnedWrite(path, known)
 		if e != nil {
-			return e
-		}
-		if e = c.sys.verifyWriteHandle(f, path); e != nil {
-			_ = f.Close()
 			return e
 		}
 		_, we := f.Write(raw)
 		if we == nil {
 			we = f.Sync()
 		}
-		ce := f.Close()
-		if we == nil {
-			we = ce
-		}
-		return we
+		return errors.Join(we, f.Close())
 	}
 	return c.createNewSynced(path, raw, 0600)
 }
+
 func (c *controller) event(ctx *executionContext, scenario, kind string, fields object) error {
 	row := object{}
 	for k, v := range fields {
@@ -427,21 +445,17 @@ func (c *controller) startServer(ctx *executionContext, slotRoot, scenario, labe
 	launch := serverLaunch(slotRoot, env)
 	outPath := filepath.Join(c.paths.evidence, label+".stdout.txt")
 	errPath := filepath.Join(c.paths.evidence, label+".stderr.txt")
-	out, e := os.OpenFile(outPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	out, e := c.openOwnedWrite(outPath, false)
 	if e != nil {
 		return nil, e
 	}
-	if e = c.sys.verifyWriteHandle(out, outPath); e != nil {
-		_ = out.Close()
-		_ = os.Remove(outPath)
-		return nil, e
-	}
+
 	defer func() {
 		if w == nil {
 			out.Close()
 		}
 	}()
-	er, e := os.OpenFile(errPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	er, e := c.openOwnedWrite(errPath, false)
 	if e != nil {
 		return nil, e
 	}
@@ -450,6 +464,9 @@ func (c *controller) startServer(ctx *executionContext, slotRoot, scenario, labe
 			er.Close()
 		}
 	}()
+	if e = c.limits(ctx); e != nil {
+		return nil, e
+	}
 	p, e := c.sys.start(launch, &captureWriter{out, ctx.budget}, &captureWriter{er, ctx.budget})
 	if e != nil {
 		return nil, e
@@ -507,19 +524,20 @@ func (c *controller) forceKill(ctx *executionContext, w *ownedProcess) error {
 	if r.closed {
 		return nil
 	}
-	alive, e := r.proc.alive()
-	if e != nil {
-		return e
+	alive, queryErr := r.proc.alive()
+	var killErr error
+	// An uncertain liveness query must not suppress cleanup of a process for
+	// which this controller still owns the original creation-time handle.
+	if alive || queryErr != nil {
+		killErr = r.proc.kill()
 	}
-	if alive {
-		if e = r.proc.kill(); e != nil {
-			return e
-		}
+	waitErr := r.proc.wait(c.waitTimeout(ctx, 10*time.Second))
+	postAlive, postErr := r.proc.alive()
+	outcome := errors.Join(queryErr, killErr, waitErr, postErr)
+	if postErr != nil || postAlive {
+		return errors.Join(outcome, fail("OWNED_PROCESS_EXIT_NOT_VERIFIED"))
 	}
-	if e = r.proc.wait(c.waitTimeout(ctx, 10*time.Second)); e != nil {
-		return e
-	}
-	return c.closeProcess(r)
+	return errors.Join(outcome, c.closeProcess(r))
 }
 func (c *controller) gracefulStop(ctx *executionContext, w *ownedProcess) error {
 	r, e := c.resolve(ctx, w)
@@ -550,20 +568,21 @@ func (c *controller) closeProcess(r *processRecord) error {
 	if e := r.proc.close(); e != nil {
 		return e
 	}
-	e1 := r.stdout.Close()
-	e2 := r.stderr.Close()
-	r.closed = true
-	if e1 != nil {
-		return e1
+	var e error
+	for _, f := range []*os.File{r.stdout, r.stderr} {
+		if f != nil {
+			e = errors.Join(e, f.Sync(), f.Close())
+		}
 	}
-	return e2
+	r.closed = true
+	return e
 }
 func (c *controller) cleanupProcesses(ctx *executionContext) error {
 	var first error
 	for w, r := range c.processes {
 		if r.ctx == ctx && !r.closed {
-			if e := c.forceKill(ctx, w); e != nil && first == nil {
-				first = e
+			if e := c.forceKill(ctx, w); e != nil {
+				first = errors.Join(first, e)
 			}
 		}
 	}
@@ -595,4 +614,23 @@ func serverLaunch(slotRoot string, env []string) launchEnvelope {
 	model := filepath.Join(slotRoot, "payload", "model", "Qwen3.5-0.8B-Q8_0.gguf")
 	argv := []string{exe, "--model", model, "--offline", "--host", "127.0.0.1", "--port", "18088", "--no-webui", "--threads", "2", "--threads-batch", "2", "--ctx-size", "2048", "--parallel", "1", "--n-gpu-layers", "0", "--device", "none", "--no-op-offload"}
 	return launchEnvelope{executable: exe, argv: argv, env: append([]string(nil), env...), cwd: filepath.Join(slotRoot, "payload", "runtime", "b11033-vulkan")}
+}
+
+func executionDeadline(start, expiry time.Time) time.Time {
+	d := start.Add(maxWall)
+	if expiry.Before(d) {
+		d = expiry
+	}
+	return d
+}
+
+// Called only after the native issuer, source, device and scope gates pass.
+func (c *controller) claimGuard(p object, raw []byte, deadline time.Time) error {
+	if _, e := c.verifyGuardParent(p); e != nil {
+		return e
+	}
+	if !c.now().Before(deadline) {
+		return fail("PROFILE_EXPIRED_OR_REVOKED")
+	}
+	return c.createNewSynced(c.paths.guard, raw, 0600)
 }
