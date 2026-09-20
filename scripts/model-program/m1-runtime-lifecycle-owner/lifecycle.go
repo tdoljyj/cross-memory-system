@@ -515,6 +515,9 @@ func (c *controller) materializeSlot(ctx *executionContext, revision string) (sl
 		manifest["predecessor_revision_id"] = predecessor
 	}
 	raw := canonical(manifest)
+	if e = ctx.budget.consume(int64(len(raw)), true); e != nil {
+		return slotAttestation{}, e
+	}
 	manifestPath := filepath.Join(root, "manifest.json")
 	if e = c.createNewSynced(manifestPath, raw, 0600); e != nil {
 		return slotAttestation{}, e
@@ -546,6 +549,11 @@ func (c *controller) verifySlot(root string, deadline time.Time) (slotAttestatio
 	}
 	if e := c.verifyNoNamedStreams(manifestPath); e != nil {
 		return slotAttestation{}, e
+	}
+	if links, le := c.sys.hardlinkCount(manifestPath); le != nil {
+		return slotAttestation{}, le
+	} else if links != 1 {
+		return slotAttestation{}, fail("SLOT_HARDLINK_FORBIDDEN")
 	}
 	raw, e := os.ReadFile(manifestPath)
 	if e != nil {
@@ -628,6 +636,11 @@ func (c *controller) readCurrent() (object, []byte, error) {
 	if e := c.verifyNoNamedStreams(path); e != nil {
 		return nil, nil, e
 	}
+	if links, le := c.sys.hardlinkCount(path); le != nil {
+		return nil, nil, le
+	} else if links != 1 {
+		return nil, nil, fail("CURRENT_MANIFEST_HARDLINK_FORBIDDEN")
+	}
 	raw, e := os.ReadFile(path)
 	if e != nil {
 		return nil, nil, e
@@ -661,6 +674,26 @@ func transitionMatches(m object, spec transitionSpec) bool {
 	}
 	return equal(m["recovery_of_transition_index"], spec.recoveryOf)
 }
+func (c *controller) verifyCurrentObject(m object, spec transitionSpec, deadline time.Time) error {
+	if !transitionMatches(m, spec) {
+		return fail("CURRENT_TRANSITION_INDEX_OR_PREVIOUS_REVISION_MISMATCH")
+	}
+	if _, e := utc(text(m, "activated_at_utc")); e != nil {
+		return fail("CURRENT_MANIFEST_TIME_INVALID")
+	}
+	slot := slotRootFor(c.paths, spec.to)
+	att, e := c.verifySlot(slot, deadline)
+	if e != nil {
+		return e
+	}
+	if text(m, "slot_manifest_sha256") != att.manifestSHA ||
+		text(m, "payload_model_sha256") != modelSHA ||
+		text(m, "payload_runtime_asset_sha256") != runtimeAssetSHA {
+		return fail("CURRENT_MANIFEST_SLOT_BINDING_DRIFT")
+	}
+	return nil
+}
+
 func (c *controller) assertCurrentPrecondition(spec transitionSpec) ([]byte, error) {
 	path := currentPath(c.paths)
 	if spec.index == 1 {
@@ -675,25 +708,21 @@ func (c *controller) assertCurrentPrecondition(spec transitionSpec) ([]byte, err
 	if e != nil {
 		return nil, e
 	}
-	if text(m, "active_revision_id") != spec.from {
-		return nil, fail("CURRENT_TRANSITION_INDEX_OR_PREVIOUS_REVISION_MISMATCH")
-	}
-	var expectedPrior int
+	var prior transitionSpec
 	switch {
 	case spec.index == 2 && spec.kind == "NORMAL":
-		expectedPrior = 1
+		prior = successTransition(1)
 	case spec.index == 3 && spec.kind == "NORMAL":
-		expectedPrior = 2
+		prior = successTransition(2)
 	case spec.index == 3 && spec.kind == "RECOVERY":
-		expectedPrior = 2
+		prior = successTransition(2)
 	case spec.index == 4 && spec.kind == "RECOVERY":
-		expectedPrior = 3
+		prior = successTransition(3)
 	default:
 		return nil, fail("UNAUTHORIZED_CURRENT_TRANSITION_INDEX_KIND_OR_RECOVERY_LINKAGE")
 	}
-	idx, ok := m["transition_index"].(json.Number)
-	if !ok || string(idx) != strconvFormatInt(int64(expectedPrior)) {
-		return nil, fail("CURRENT_TRANSITION_INDEX_OR_PREVIOUS_REVISION_MISMATCH")
+	if e = c.verifyCurrentObject(m, prior, time.Now().Add(maxWall)); e != nil {
+		return nil, e
 	}
 	return raw, nil
 }
@@ -753,6 +782,9 @@ func (c *controller) publishCurrent(ctx *executionContext, spec transitionSpec) 
 		current["previous_active_revision_id"] = spec.from
 	}
 	raw := canonical(current)
+	if e = ctx.budget.consume(int64(len(raw)), true); e != nil {
+		return nil, e
+	}
 	temp := currentTempPath(c.paths, spec.index)
 	if e = c.createNewSynced(temp, raw, 0600); e != nil {
 		return nil, e
@@ -812,23 +844,6 @@ func (c *controller) requireCurrentRevision(ctx *executionContext, revision stri
 	return nil
 }
 
-func (c *controller) removeUnverifiedInitialCurrent(ctx *executionContext) error {
-	if e := c.requireContext(ctx); e != nil {
-		return e
-	}
-	m, _, e := c.readCurrent()
-	if e != nil {
-		return e
-	}
-	if !transitionMatches(m, successTransition(1)) {
-		return fail("CURRENT_TRANSITION_INDEX_OR_PREVIOUS_REVISION_MISMATCH")
-	}
-	path := currentPath(c.paths)
-	if e = c.verifySafeExistingPath(path); e != nil {
-		return e
-	}
-	return os.Remove(path)
-}
 
 func (c *controller) runtimeExpectedEntries(deadline time.Time) (map[string]bool, error) {
 	source, e := c.attestSource(deadline)
