@@ -66,6 +66,10 @@ func (f *fakePlatform) directoryIdentity(path string) (directoryIdentity, error)
 		securityDescriptorSHA256: strings.Repeat("a",64),
 	}, nil
 }
+func (f *fakePlatform) verifyWriteHandle(file *os.File, expected string) error {
+	if file == nil { return fail("WRITE_HANDLE_REQUIRED") }
+	return nil
+}
 func (f *fakePlatform) hardlinkCount(path string) (uint32, error) {
 	if n, ok := f.links[filepath.Clean(path)]; ok { return n, nil }
 	return 1, nil
@@ -381,4 +385,20 @@ func TestFutureIssuedProfileRequiresGuardProvisioningIdentity(t *testing.T) {
 	// object; directly verify the identity shape helper invariant as well.
 	id,ok:=get(p,"trusted_execution_bindings/guard_parent_provisioning_identity").(object)
 	if ok || id!=nil { t.Fatal("unexpected identity") }
+}
+
+
+func TestEvidenceAppendRejectsReparseTargetBeforeWrite(t *testing.T) {
+	p:=testLayout(t)
+	if e:=os.MkdirAll(p.evidence,0700); e!=nil { t.Fatal(e) }
+	target:=filepath.Join(p.evidence,"M1RuntimeLifecycleEvents.jsonl")
+	if e:=os.WriteFile(target,[]byte("seed\n"),0600); e!=nil { t.Fatal(e) }
+	f:=&fakePlatform{reparse:map[string]bool{filepath.Clean(target):true}}
+	c:=newController(f,admission{},p)
+	ctx:=registeredContext(t,c)
+	before,_:=os.ReadFile(target)
+	e:=c.writeEvidence(ctx,"M1RuntimeLifecycleEvents.jsonl",object{"x":"y"},true)
+	if codeOf(e)!="REPARSE_POINT_OR_PATH_ESCAPE_DETECTED" { t.Fatalf("reparse append accepted: %v",e) }
+	after,_:=os.ReadFile(target)
+	if !bytes.Equal(before,after) { t.Fatal("evidence target changed despite reparse rejection") }
 }
