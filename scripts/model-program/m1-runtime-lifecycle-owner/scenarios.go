@@ -418,6 +418,9 @@ func (c *controller) run(ctx *executionContext) (err error) {
 	if e = c.limits(ctx); e != nil {
 		return e
 	}
+	if ctx.deadline.Sub(c.now()) < time.Second {
+		return fail("MAX_WALL_TIME_EXCEEDED")
+	}
 	if e = c.writeEvidence(ctx, "M1RuntimeLifecycleCloseout.json", object{
 		"profile_id": issuedID, "pass": true, "server_starts": json.Number(strconvFormatInt(int64(ctx.starts))), "binary_version_migration_claim": false,
 		"install": "PASS", "upgrade": "PASS", "rollback": "PASS", "cleanup": "PASS",
