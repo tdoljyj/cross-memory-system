@@ -241,3 +241,81 @@ count remains 0 -> 0 -> 0.
 This remains **NOT FINAL ISSUANCE**. No Owner private key was read or used, no
 real M1-07 scenario ran, no llama-server/model was started, and PR #268 remains
 outside r2 merge authority.
+
+
+## Owner-root successor r3 exact-toolchain provenance remediation
+
+Same-session technical pre-review of r2 exact head
+`986bb165c303bde53bfafb2ebed92fcfac1bc7f2` found one remaining MAJOR:
+the r2 helper accepted a caller-selected `--go` executable. A repository-external
+fake `go.exe` that did not compile the verified source at all was able to copy a
+known Candidate binary to `-o`, spoof `go version` / `go env`, and still make
+the r2 helper exit 0 with a legitimate-looking receipt. Therefore r2 source-set
+closure did not yet prove source-to-binary compiler provenance.
+
+r3 changes only that toolchain-provenance boundary:
+
+1. The `--go` executable argument is removed. The helper accepts only
+   `--toolchain-archive`; callers cannot nominate a compiler executable.
+2. Before any toolchain executable or build output is created, the archive must
+   be exactly `go1.27.1.windows-amd64.zip`, 78,931,360 bytes, SHA-256
+   `a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d`.
+3. The exact archive is safely extracted into a fresh temporary toolchain
+   directory. Absolute/traversal/backslash paths, duplicate entries and symlinks
+   are rejected. The extracted file set, every file size/SHA, and a canonical
+   15,639-file tree digest are then checked before compiler execution.
+4. The canonical extracted tree SHA-256 is
+   `bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79`.
+   The extracted `go.exe`, `compile.exe`, and `link.exe` are additionally
+   pinned to:
+   - go.exe: `d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490`
+   - compile.exe: `69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01`
+   - link.exe: `9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720`
+5. `GOROOT` is forced to that freshly extracted exact toolchain, while
+   `GOENV=off`, empty `GOFLAGS`, `GOWORK=off`, empty `GOEXPERIMENT`,
+   `GOTOOLCHAIN=local`, offline module settings, CGO disabled, and fresh
+   GOCACHE/GOMODCACHE/GOTMPDIR remain in force.
+6. The manifest and Candidate both bind the exact toolchain contract. The
+   source directory exact-set and verified-source snapshot protections from r2
+   remain unchanged.
+
+r3 exact identities:
+
+- remediation predecessor:
+  `986bb165c303bde53bfafb2ebed92fcfac1bc7f2`
+- validated code candidate head:
+  `5366c14d9233d4ad75374b0fa840daf4bd116352`
+- Candidate SHA-256:
+  `05a3a6cd1a7956617d906ba7b612cdd5c6436d2ff40195d8cdb1647035cd7d90`
+- native source manifest SHA-256:
+  `f7bb4e269af3c3457072f68564e944c9813643b8d1bc9ba8295b572bbc8dfc52`
+- build helper SHA-256:
+  `a4e79b9c04d783c2ac5cff8108068eca7d26f48d224f52ecdf7ad4d43c54f1b1`
+- development native binary SHA-256:
+  `e0956d6d8194acefad85c54750b9802fe7faea648aeba5dd4408f41534e8680c`
+- external build receipt SHA-256:
+  `ea404ed9c03f1f7a84598d2a6a63e5003725170929fb0acde1986011e456452b`
+
+Adversarial closure evidence:
+
+- r2 fake-go proof: fake compiler SHA-256
+  `1723413e1616a4fba388985fc1d6cf09cdd5a247dfbf447e603ba009f70cacdf`
+  was accepted by the r2 helper and produced a successful receipt without
+  compiling source.
+- r3 old `--go` invocation: rejected at CLI, exit 2, no output directory.
+- r3 tampered exact-name toolchain archive: rejected before output creation.
+- focused regression additionally performs a same-size bit flip in the official
+  archive and requires digest rejection before output.
+- clean r3 build uses only the fresh exact official toolchain extraction and
+  reproduces the Candidate-bound binary.
+
+Final author-side r3 verification: focused 63/63 PASS; four M1 validators PASS;
+full M1 92/92 PASS; native Go 100 leaf cases PASS / 0 failed; go vet PASS.
+The exact NON-ISSUED Candidate returns exit 3 / `PROFILE_NOT_ISSUED` with no
+output; an ISSUED-shaped unsigned profile returns exit 3 /
+`OWNER_SIGNATURE_ALGORITHM` with no output; Windows llama-server process
+count remains 0 -> 0 for both rejection checks.
+
+This remains **NOT FINAL ISSUANCE**. No Owner private key was read or used, no
+real M1-07 scenario ran, no llama-server/model was started, and PR #268 remains
+outside r3 merge authority.
