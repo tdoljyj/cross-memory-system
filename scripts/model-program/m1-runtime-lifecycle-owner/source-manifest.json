@@ -1,0 +1,113 @@
+{
+  "candidate_profile_git_blob_sha1": "51b0083f74dd12318b7cdcdf3b939d31723de787",
+  "candidate_profile_raw_sha256": "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3",
+  "contract_git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
+  "contract_raw_sha256": "b40040a1302620b965bdf6dbe2283d0d6d5f9413c8c784e4b65d9cd030ac7ee3",
+  "effectful_authority_issued": false,
+  "files": [
+    {
+      "bytes": 4000,
+      "git_blob_sha1": "49ab40728d288c633da0554f205544bd233f20db",
+      "path": "README.md",
+      "sha256": "5b7758962e1f657d6a643c50efe2eb303583ae4eb141f8249438c1ad92a5ddf7"
+    },
+    {
+      "bytes": 614,
+      "git_blob_sha1": "4c9e4b962d0f7ddbfb16c7e7948e095e3c0176b0",
+      "path": "bindings.go",
+      "sha256": "3c94f8d4fd8b1e2bbdc185c9524b984ae3208d86c9094fac754d8849949d8266"
+    },
+    {
+      "bytes": 14282,
+      "git_blob_sha1": "0fc3276d64fa038feabfdebd9b25435d6bd9dfc4",
+      "path": "build.py",
+      "sha256": "9b5797078a01b0b74ab104f53dc0e08a0f66d74778c1dbf00f64e36bcb0a2036"
+    },
+    {
+      "bytes": 49,
+      "git_blob_sha1": "ed7c8e4ee4bc05642f288b397173d3060ea8d29d",
+      "path": "go.mod",
+      "sha256": "02c76ba9ab8985de38b41978005c47739cad67a8fb26f195a66369548dcf785b"
+    },
+    {
+      "bytes": 28122,
+      "git_blob_sha1": "68052ea7ae35aa9975af67c7e140f14f8622d956",
+      "path": "lifecycle.go",
+      "sha256": "a4a30c3eecc0dd8dbc579ddd987e2052511c2d2d63450f23d917d1def91cf777"
+    },
+    {
+      "bytes": 3469,
+      "git_blob_sha1": "5057ca6fc138aadfa1e16af58d64ad47fa589dd1",
+      "path": "main.go",
+      "sha256": "9f274c72687f24eb3292ccabb3c140c16219861393ee2a92578490da71c10da8"
+    },
+    {
+      "bytes": 14936,
+      "git_blob_sha1": "ab1c17c852bdec415898fe262c3be5873ff8e973",
+      "path": "owner.go",
+      "sha256": "f1cb460a3f9462d0e06f071ba60284658d7c8e91fb8de7a55854502fe4e74ed7"
+    },
+    {
+      "bytes": 13618,
+      "git_blob_sha1": "01c4b7f551480fef9726580e65622ad42ef806fb",
+      "path": "owner_test.go",
+      "sha256": "65d3855f8fb79092cbb9d65f7df944a17b341cb7ae11128b7426a2539e92f94e"
+    },
+    {
+      "bytes": 992,
+      "git_blob_sha1": "c4ac17702f4d4e5300a5ddac70667aafe8c19cc3",
+      "path": "platform_other.go",
+      "sha256": "674787c9f405a70c44e58597cb2ba4f37adbf87b814ef897fbba2d2d9a48260c"
+    },
+    {
+      "bytes": 12037,
+      "git_blob_sha1": "7b5b91a53d39ee2db980664954f300f334dca839",
+      "path": "platform_windows.go",
+      "sha256": "2658ea3db1f9bff548daac9ed3104539fec89c6f3467c0b1b704cf86900a992f"
+    },
+    {
+      "bytes": 4827,
+      "git_blob_sha1": "81cdc7f2f2d2037309a4beab785f311340ed2c27",
+      "path": "platform_windows_test.go",
+      "sha256": "41743b0e425b5bfb37122364ff103d07893958b94439112bcc317fbf6e4eb2b4"
+    },
+    {
+      "bytes": 27622,
+      "git_blob_sha1": "db0dd0dc0291e4d32a56926290ee77fbbfa0a253",
+      "path": "policy.go",
+      "sha256": "d4f2e3caf724307fc783e13e34995a6f30a6d7d9ae82f282bdc28aeb7f208021"
+    },
+    {
+      "bytes": 12761,
+      "git_blob_sha1": "68ccaa9f5b4443698be11b2fb99bedbf040df67c",
+      "path": "scenarios.go",
+      "sha256": "26e3c4541d61a0340379a657078118a1ab048f4169a16c84db58e0d58f1aa45f"
+    }
+  ],
+  "implementation_base": "3d8a4c88373f5a54831b40d34c0ad89281d02ac1",
+  "issuer_root": {
+    "public_key_hex": null,
+    "public_key_sha256_fingerprint": null,
+    "status": "UNBOUND_BY_DESIGN / OWNER_DECISION_AND_REVIEWED_SUCCESSOR_REQUIRED_BEFORE_FINAL_ISSUANCE"
+  },
+  "native_build_toolchain": {
+    "archive_bytes": 78931360,
+    "archive_name": "go1.27.1.windows-amd64.zip",
+    "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+    "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+    "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+    "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+    "target": {
+      "goamd64": "v1",
+      "goarch": "amd64",
+      "goos": "windows"
+    },
+    "tree_file_count": 15639,
+    "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+    "version": "go version go1.27.1 windows/amd64"
+  },
+  "owner_binary_execution_authorized": false,
+  "qualification_semantics": "STATIC_NEGATIVE_AND_FAULT_TESTS_ONLY / TEST_OWNED_TEMP_PATHS / NO_PRODUCTION_GUARD_OR_RUNTIME_ROOT / OWNER_BINARY_NOT_EXECUTED",
+  "role": "EFFECTFUL_OWNER_IMPLEMENTATION_PREPARATION_CANDIDATE / NO_FINAL_ISSUANCE / NO_EXECUTION",
+  "schema_version": "clued.m1-08-native-owner-source-manifest/1"
+}
