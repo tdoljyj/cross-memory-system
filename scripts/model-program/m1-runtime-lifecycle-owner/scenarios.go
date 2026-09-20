@@ -57,7 +57,7 @@ func (c *controller) sleep(ctx *executionContext, d time.Duration) error {
 		}
 		time.Sleep(left)
 	}
-	return c.limits(ctx)
+	return nil
 }
 
 func (c *controller) health(ctx *executionContext, timeout time.Duration) error {
@@ -375,11 +375,25 @@ func (c *controller) run(ctx *executionContext) (err error) {
 		return e
 	}
 
+	// Re-verify the final active state and both immutable lifecycle slots
+	// immediately before destructive success cleanup.
+	if e = c.requireCurrentRevision(ctx, revisionA); e != nil {
+		return e
+	}
+	if _, e = c.verifySlot(slotRootFor(c.paths, revisionB), ctx.deadline); e != nil {
+		return e
+	}
 	if e = c.cleanupProcesses(ctx); e != nil {
 		return e
 	}
 	if !c.sys.portFree() {
 		return fail("ORPHAN_PROFILE_OWNED_SERVER_AFTER_CLEANUP")
+	}
+	if e = c.limits(ctx); e != nil {
+		return e
+	}
+	if ctx.deadline.Sub(c.now()) < 5*time.Second {
+		return fail("MAX_WALL_TIME_EXCEEDED")
 	}
 	if e = c.removeRuntimeRootSuccess(ctx); e != nil {
 		return e
@@ -393,9 +407,15 @@ func (c *controller) run(ctx *executionContext) (err error) {
 	if _, e = os.Stat(c.paths.evidence); e != nil {
 		return fail("PERSISTENT_EVIDENCE_MISSING_AFTER_CLEANUP")
 	}
+	if e = c.limits(ctx); e != nil {
+		return e
+	}
 	if e = c.writeEvidence(ctx, "M1RuntimeLifecycleCleanup.json", object{
 		"profile_id": issuedID, "runtime_test_root_removed": true, "attempt_guard_retained": true, "evidence_retained": true, "port_18088_free": true,
 	}, false); e != nil {
+		return e
+	}
+	if e = c.limits(ctx); e != nil {
 		return e
 	}
 	if e = c.writeEvidence(ctx, "M1RuntimeLifecycleCloseout.json", object{
