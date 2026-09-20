@@ -1,0 +1,150 @@
+{
+  "base": "015eecb50f86d6ab59228e91b12f7007e88f9387",
+  "package_sha256": "f174f032133d6f828c0ad8435361f6f5b669a4008c85ac00df98f67b5595b2ec",
+  "patch_sha256": "76d892e66ae1560f9da02dbe76e8da7daf22f47c745edbded6229839bd1eec18",
+  "manifest_sha256": "a715ccce33d91525794ff994b4ec0def40c9b733b0cb1cae71737a95e3862792",
+  "source_members": [
+    {
+      "path": "README.md",
+      "sha256": "d1e24a8d11c324419d58d01755da9abf7e8b657808ac9829cf2e23cd7f14b456",
+      "bytes": 8725
+    },
+    {
+      "path": "bindings.go",
+      "sha256": "3c94f8d4fd8b1e2bbdc185c9524b984ae3208d86c9094fac754d8849949d8266",
+      "bytes": 614
+    },
+    {
+      "path": "bounded_io.go",
+      "sha256": "8650b9901d8a7944a80a86fcb25826b4255aa3fc2f56f1a79a2b1a15f555fbdf",
+      "bytes": 733
+    },
+    {
+      "path": "build.py",
+      "sha256": "3a955b88c7a483a7f4185dcded7a04ba0ec4ac86137cf771abde790b4f8f8956",
+      "bytes": 15655
+    },
+    {
+      "path": "canonical-vectors.json",
+      "sha256": "26376507c8089a893c7c48dd5140d77235588a6d1afdd62faac4950ba0b03c74",
+      "bytes": 1620
+    },
+    {
+      "path": "filesystem.go",
+      "sha256": "ea0903d4be2bf6332c1e29f4da306c60fde0046a9634231828b23c9169a12b03",
+      "bytes": 10627
+    },
+    {
+      "path": "filesystem_fixture_other_test.go",
+      "sha256": "1ab0c080401ff6f180649c35161623cf6edb7ee2189ac2d0b8979e2cc373ddf9",
+      "bytes": 863
+    },
+    {
+      "path": "filesystem_fixture_test.go",
+      "sha256": "97402e33a957c7efb7e5087f5ee6261ee884581c2869700bcd1de832bc3c5cb3",
+      "bytes": 2220
+    },
+    {
+      "path": "filesystem_fixture_windows_test.go",
+      "sha256": "68658ffae1925f9d155fe549d1e40a367473a34efaaa6b94dca7739218d4f11f",
+      "bytes": 624
+    },
+    {
+      "path": "filesystem_windows.go",
+      "sha256": "0e2bac3f004a2999aaf7bb05c57efc068031d505577ca4ee68f0ee4cca628028",
+      "bytes": 11520
+    },
+    {
+      "path": "finalization.go",
+      "sha256": "d8092c37d74d5a6e97a0c084a0708106897f6662a4ea4875eadd561feec71973",
+      "bytes": 2499
+    },
+    {
+      "path": "go.mod",
+      "sha256": "02c76ba9ab8985de38b41978005c47739cad67a8fb26f195a66369548dcf785b",
+      "bytes": 49
+    },
+    {
+      "path": "lifecycle.go",
+      "sha256": "0a51eaa7cf7be81420a3c94b8246dbd8bc7e0f13002a365299f43294b2319ae1",
+      "bytes": 34338
+    },
+    {
+      "path": "main.go",
+      "sha256": "aff2ce9448d03eceedf70a6d045b1a98bf2129b516ba98b49beb6b3af3ce8b98",
+      "bytes": 3488
+    },
+    {
+      "path": "network_windows.go",
+      "sha256": "dab032fe2c7a6d6b845d266ead695673e93a72c138a63d0097be27704f129b1a",
+      "bytes": 894
+    },
+    {
+      "path": "owner.go",
+      "sha256": "4e601fd93fe21789b69938f0ddbccf0ce98c53c1160a7239956e9192c5f50d5d",
+      "bytes": 19980
+    },
+    {
+      "path": "owner_test.go",
+      "sha256": "5be436c29f1f612a57179e9fd744be92e3d50e944b84b4158adc117615ee097e",
+      "bytes": 20572
+    },
+    {
+      "path": "payload_policy.go",
+      "sha256": "9bb1eadfbdeafcf1cd80b90c99bf93cd96660edb319680398a307bf51aed28a0",
+      "bytes": 669
+    },
+    {
+      "path": "platform_other.go",
+      "sha256": "7b42b1232e97a0c6c7d9d0e50e76677dad24d209d1869fa7833aaa52dcc77d95",
+      "bytes": 1304
+    },
+    {
+      "path": "platform_windows.go",
+      "sha256": "b518c531c194603d67177eb4ace440ed9a96dd72a98a853a2dcc40b653d44d6a",
+      "bytes": 17114
+    },
+    {
+      "path": "platform_windows_test.go",
+      "sha256": "7a2722588ee6b3bb6f90e6b20cafcecf4d2451dfbef916665b24dcf1d9f8fd29",
+      "bytes": 5832
+    },
+    {
+      "path": "policy.go",
+      "sha256": "9254ef2e73ed634b65aeda9f0470a9e780db2e1529f73e0dbbb001b690f10f04",
+      "bytes": 30103
+    },
+    {
+      "path": "publication.go",
+      "sha256": "f967c5ddcdb3dbae56ca76b2e4258fdf97601ea3be3219470834656a6e5edf67",
+      "bytes": 2958
+    },
+    {
+      "path": "qualification_scope.py",
+      "sha256": "7038de1e8c14a4cfbfc3bfa74cbb48d61915615510c77ab5ce2b64ac5be6832c",
+      "bytes": 7751
+    },
+    {
+      "path": "qualification_scope_test.py",
+      "sha256": "31e9566693b42c0fb9820b8aeb6d2fa009e72caeec8ed9de5029b4c748adb07c",
+      "bytes": 3509
+    },
+    {
+      "path": "remediation_test.go",
+      "sha256": "b6b2ea1aa941d74d624c8966cd4667cd9c4bec80d54817b00057781bcc20f202",
+      "bytes": 18940
+    },
+    {
+      "path": "remediation_windows_test.go",
+      "sha256": "1a15c13016395077676ac1f29c2a7f0923d75dba4ea013fdfe436eaa9a524b49",
+      "bytes": 4823
+    },
+    {
+      "path": "scenarios.go",
+      "sha256": "84b26ab4ff455835d5e1f29890822824694c5f568e9241993b946a6b1abd9af3",
+      "bytes": 13962
+    }
+  ],
+  "contract_profile_unchanged": true,
+  "status": "EXACT_PACKAGE_APPLIED_AND_VERIFIED"
+}

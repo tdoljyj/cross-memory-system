@@ -1,0 +1,189 @@
+{
+  "candidate_profile_git_blob_sha1": "51b0083f74dd12318b7cdcdf3b939d31723de787",
+  "contract_git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
+  "effectful_authority_issued": false,
+  "implementation_base": "3d8a4c88373f5a54831b40d34c0ad89281d02ac1",
+  "issuer_root_bound": false,
+  "native_source_manifest_sha256": "2102bb528440ab52ebdde9a677b606ff54d8226412c0e4c065cba68aaf7f5219",
+  "owner_binary": {
+    "bytes": 7450112,
+    "executed_by_build_helper": false,
+    "path": "c:\\users\\public\\clued\\qualification\\m1-08-owner\\package-r1-native-a-20260920\\m1-08-owner.exe",
+    "sha256": "c84983f09fcc55af5e263ce0e91230e0e3275cc21993e01bb23a945c1146ba3b"
+  },
+  "production_effects_authorized": false,
+  "production_host_observation": "NOT_PERFORMED / DO_NOT_INFER_FROM_BUILD_SUCCESS",
+  "qualification_namespace": {
+    "fixed_root": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner",
+    "host_wide_no_effect_observation": "NOT_PERFORMED",
+    "native_directory_observations": [
+      {
+        "file_id": "0005000000000005",
+        "handle_resolved_path": "C:\\",
+        "non_reparse": true,
+        "path": "C:\\",
+        "volume_serial": "9686166e"
+      },
+      {
+        "file_id": "0001000000000e5c",
+        "handle_resolved_path": "C:\\Users",
+        "non_reparse": true,
+        "path": "C:\\Users",
+        "volume_serial": "9686166e"
+      },
+      {
+        "file_id": "0001000000000e8d",
+        "handle_resolved_path": "C:\\Users\\Public",
+        "non_reparse": true,
+        "path": "C:\\Users\\Public",
+        "volume_serial": "9686166e"
+      },
+      {
+        "file_id": "00090000000bad44",
+        "handle_resolved_path": "C:\\Users\\Public\\Clued",
+        "non_reparse": true,
+        "path": "C:\\Users\\Public\\Clued",
+        "volume_serial": "9686166e"
+      },
+      {
+        "file_id": "00190000000a20ad",
+        "handle_resolved_path": "C:\\Users\\Public\\Clued\\Qualification",
+        "non_reparse": true,
+        "path": "C:\\Users\\Public\\Clued\\Qualification",
+        "volume_serial": "9686166e"
+      },
+      {
+        "file_id": "000f0000002c21a9",
+        "handle_resolved_path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner",
+        "non_reparse": true,
+        "path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner",
+        "volume_serial": "9686166e"
+      },
+      {
+        "file_id": "000b0000002c21ec",
+        "handle_resolved_path": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\package-r1-native-a-20260920",
+        "non_reparse": true,
+        "path": "c:\\users\\public\\clued\\qualification\\m1-08-owner\\package-r1-native-a-20260920",
+        "volume_serial": "9686166e"
+      }
+    ],
+    "protected_namespace_overlap": false,
+    "provisioned_qualification_root": false,
+    "resolved_output": "c:\\users\\public\\clued\\qualification\\m1-08-owner\\package-r1-native-a-20260920",
+    "temporary_files_caches_logs": "CONFINED_UNDER_RESOLVED_OUTPUT"
+  },
+  "role": "IMPLEMENTATION_PREPARATION_BUILD / NO_EFFECTFUL_AUTHORITY / OWNER_BINARY_NOT_EXECUTED",
+  "schema_version": "clued.m1-08-native-owner-build-receipt/1",
+  "tests": {
+    "go_test_level_report": {
+      "fail": 0,
+      "outcomes": {
+        "TestAtomicityClassifierAcceptsOnlyOldOrNewComplete": "pass",
+        "TestCandidateCannotExecuteAndRootIsUnbound": "pass",
+        "TestCleanupAuthorityStillResolvesAfterDeadline": "pass",
+        "TestContextIsControllerOwnedAndTamperEvident": "pass",
+        "TestEnvironmentIsRebuiltFromEmpty": "pass",
+        "TestEvidenceAppendRejectsReparseTargetBeforeWrite": "pass",
+        "TestFixedCLIRejectsCallerAuthoritySurfaces": "pass",
+        "TestForeignProcessObjectCannotBeUsed": "pass",
+        "TestFutureIssuedProfileRequiresGuardProvisioningIdentity": "pass",
+        "TestGuardParentRequiresSignedLiveIdentity": "pass",
+        "TestHandleResolvedPathMismatchFailsClosed": "pass",
+        "TestIllegalTransitionRejectedBeforeFilesystemEffects": "pass",
+        "TestImplementationPolicyMatchesReviewedCandidateProfile": "pass",
+        "TestLoopbackRequestIsFixed": "pass",
+        "TestNamedStreamAndReparseAreFailClosed": "pass",
+        "TestRemediationBothCaptureHandlesRejectBeforeLaunch": "pass",
+        "TestRemediationBothCaptureHandlesRejectBeforeLaunch/stderr": "pass",
+        "TestRemediationBothCaptureHandlesRejectBeforeLaunch/stdout": "pass",
+        "TestRemediationCanonicalIndependentJSONGolden": "pass",
+        "TestRemediationCanonicalPythonGoldenVectors": "pass",
+        "TestRemediationCreatedGuardValidationFailureConsumesAndReports": "pass",
+        "TestRemediationEvidenceReserveSurvivesCaptureExhaustion": "pass",
+        "TestRemediationExpiryDeadlineAndContextBinding": "pass",
+        "TestRemediationExpiryDuringReadPreventsSubsequentWrite": "pass",
+        "TestRemediationFinalizationAggregatesListenerAndEvidenceFailure": "pass",
+        "TestRemediationFinalizationPreservesWaitAndOriginalErrors": "pass",
+        "TestRemediationFullLifecycleProductionFunctionsOnTinyFixture": "pass",
+        "TestRemediationGuardFirstEffectRechecksExpiry": "pass",
+        "TestRemediationMaterializeManifestRoundTrip": "pass",
+        "TestRemediationPartialCleanupRequiresCreationOwnershipAndNoAliases": "pass",
+        "TestRemediationPartialCleanupRequiresCreationOwnershipAndNoAliases/ads": "pass",
+        "TestRemediationPartialCleanupRequiresCreationOwnershipAndNoAliases/hardlink": "pass",
+        "TestRemediationPartialCleanupRequiresCreationOwnershipAndNoAliases/unknown": "pass",
+        "TestRemediationPreCommitFaultPreservesExactOldCurrent": "pass",
+        "TestRemediationPublicationAfterCommitFaultRoutesAllRecoveries": "pass",
+        "TestRemediationPublicationAfterCommitFaultRoutesAllRecoveries/1": "pass",
+        "TestRemediationPublicationAfterCommitFaultRoutesAllRecoveries/2": "pass",
+        "TestRemediationPublicationAfterCommitFaultRoutesAllRecoveries/3": "pass",
+        "TestRemediationPublicationEvidenceErrorIsCommittedFailure": "pass",
+        "TestRemediationRunProbeFailureReachesTerminalRecovery": "pass",
+        "TestRemediationRunProbeFailureReachesTerminalRecovery/1": "pass",
+        "TestRemediationRunProbeFailureReachesTerminalRecovery/2": "pass",
+        "TestRemediationRunProbeFailureReachesTerminalRecovery/3": "pass",
+        "TestRemediationSafeOwnedPartialCleanupUsesLedger": "pass",
+        "TestRemediationSuccessCleanupRequiresExactFinalTransition": "pass",
+        "TestRemediationSuccessCleanupRequiresExactFinalTransition/activated_at_utc": "pass",
+        "TestRemediationSuccessCleanupRequiresExactFinalTransition/previous_active_revision_id": "pass",
+        "TestRemediationSuccessCleanupRequiresExactFinalTransition/profile_id": "pass",
+        "TestRemediationSuccessCleanupRequiresExactFinalTransition/recovery_of_transition_index": "pass",
+        "TestRemediationSuccessCleanupRequiresExactFinalTransition/transition_index": "pass",
+        "TestRemediationSuccessCleanupRequiresExactFinalTransition/transition_kind": "pass",
+        "TestRemediationTinyPayloadCannotEnterProductionAdmission": "pass",
+        "TestRemediationUnknownPublicationDoesNotInventRecoveryAuthority": "pass",
+        "TestServerLaunchIsExactAndSlotDerived": "pass",
+        "TestStrictJSONRejectsDuplicateKeys": "pass",
+        "TestTransitionShapesAndTempNames": "pass",
+        "TestWindowsAtomicCurrentPublishInitialAndReplace": "pass",
+        "TestWindowsDirectoryComesFromOSAPI": "pass",
+        "TestWindowsFinalPathAndDirectoryIdentity": "pass",
+        "TestWindowsHardlinkCountDetectsAliasing": "pass",
+        "TestWindowsLaunchEnvelopeRejectsPollutionAndOverrides": "pass",
+        "TestWindowsNamedADSIsEnumeratedAndRejected": "pass",
+        "TestWindowsRemediationImmutablePayloadHandleRejectsWriter": "pass",
+        "TestWindowsRemediationNativeCrossDirectoryRenameRejected": "pass",
+        "TestWindowsRemediationNativeFailureLeavesOldAndTemp": "pass",
+        "TestWindowsRemediationNativeReplacementPreservesOldReader": "pass",
+        "TestWindowsRemediationRetainedGuardParentAndRelativeCreate": "pass",
+        "TestWindowsReparsePointDetection": "pass"
+      },
+      "required_tests": [
+        "TestRemediationFullLifecycleProductionFunctionsOnTinyFixture",
+        "TestRemediationGuardFirstEffectRechecksExpiry",
+        "TestRemediationCreatedGuardValidationFailureConsumesAndReports",
+        "TestWindowsRemediationRetainedGuardParentAndRelativeCreate",
+        "TestWindowsRemediationNativeFailureLeavesOldAndTemp",
+        "TestWindowsRemediationNativeReplacementPreservesOldReader"
+      ],
+      "skip": 0,
+      "subtest_pass": 17,
+      "top_level_pass": 51
+    },
+    "go_test_pass": true,
+    "go_vet_pass": true,
+    "qualification_scope_tests_pass": true,
+    "test_scope": "TEST_BINARY_ONLY / TEST_OWNED_TEMP_PATHS / NO_REAL_MODEL",
+    "windows_test_binary_compiled": true
+  },
+  "toolchain": {
+    "archive_bytes": 78931360,
+    "archive_name": "go1.27.1.windows-amd64.zip",
+    "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+    "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+    "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+    "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+    "target": {
+      "goamd64": "v1",
+      "goarch": "amd64",
+      "goos": "windows"
+    },
+    "tree_file_count": 15639,
+    "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+    "version": "go version go1.27.1 windows/amd64"
+  },
+  "windows_test_binary": {
+    "bytes": 12330496,
+    "path": "c:\\users\\public\\clued\\qualification\\m1-08-owner\\package-r1-native-a-20260920\\m1-08-owner.tests.exe",
+    "sha256": "e7c2f9e9e8e5d7a3302250052650b03c9d4a1a6f6176990a6391a6f73f8501a1"
+  }
+}

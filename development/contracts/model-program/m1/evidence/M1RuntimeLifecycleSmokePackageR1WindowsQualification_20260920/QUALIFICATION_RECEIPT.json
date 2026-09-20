@@ -1,0 +1,124 @@
+{
+  "binary_reproducibility": "ACTUAL_BYTES_AND_SHA256_RECHECKED_BOTH_OUTPUTS_MATCH",
+  "branch": "model-program/m1-08-package-r1-native-20260920",
+  "builds": [
+    {
+      "directory": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\package-r1-native-a-20260920",
+      "label": "a",
+      "owner_binary": {
+        "bytes": 7450112,
+        "sha256": "c84983f09fcc55af5e263ce0e91230e0e3275cc21993e01bb23a945c1146ba3b"
+      },
+      "source_manifest_sha256": "2102bb528440ab52ebdde9a677b606ff54d8226412c0e4c065cba68aaf7f5219",
+      "tests": {
+        "fail": 0,
+        "go_vet": true,
+        "python": 10,
+        "skip": 0,
+        "subtests": 17,
+        "top_level": 51,
+        "windows_native_top_level": 12
+      },
+      "toolchain": {
+        "archive_bytes": 78931360,
+        "archive_name": "go1.27.1.windows-amd64.zip",
+        "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+        "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+        "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+        "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+        "target": {
+          "goamd64": "v1",
+          "goarch": "amd64",
+          "goos": "windows"
+        },
+        "tree_file_count": 15639,
+        "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+        "version": "go version go1.27.1 windows/amd64"
+      },
+      "windows_test_binary": {
+        "bytes": 12330496,
+        "sha256": "e7c2f9e9e8e5d7a3302250052650b03c9d4a1a6f6176990a6391a6f73f8501a1"
+      }
+    },
+    {
+      "directory": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\package-r1-native-b-20260920",
+      "label": "b",
+      "owner_binary": {
+        "bytes": 7450112,
+        "sha256": "c84983f09fcc55af5e263ce0e91230e0e3275cc21993e01bb23a945c1146ba3b"
+      },
+      "source_manifest_sha256": "2102bb528440ab52ebdde9a677b606ff54d8226412c0e4c065cba68aaf7f5219",
+      "tests": {
+        "fail": 0,
+        "go_vet": true,
+        "python": 10,
+        "skip": 0,
+        "subtests": 17,
+        "top_level": 51,
+        "windows_native_top_level": 12
+      },
+      "toolchain": {
+        "archive_bytes": 78931360,
+        "archive_name": "go1.27.1.windows-amd64.zip",
+        "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+        "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+        "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+        "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+        "target": {
+          "goamd64": "v1",
+          "goarch": "amd64",
+          "goos": "windows"
+        },
+        "tree_file_count": 15639,
+        "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+        "version": "go version go1.27.1 windows/amd64"
+      },
+      "windows_test_binary": {
+        "bytes": 12330496,
+        "sha256": "e7c2f9e9e8e5d7a3302250052650b03c9d4a1a6f6176990a6391a6f73f8501a1"
+      }
+    }
+  ],
+  "contract_profile_unchanged": true,
+  "created_utc": "2026-09-20T10:00:27.802605+00:00",
+  "effectful_authority_issued": false,
+  "formal_finding_closure": "NOT_ISSUED_REQUIRES_FRESH_CONTEXT_INDEPENDENT_REVIEW",
+  "independent_review_performed": false,
+  "initial_attempts": {
+    "blocked_test": "TestWindowsReparsePointDetection",
+    "each_fail": 0,
+    "each_skip": 1,
+    "each_top_level_pass": 50,
+    "qualification_pass": false,
+    "runs": 2,
+    "source_head": "3c8f17323d9a42c33080af7b19d95bf35b9de436"
+  },
+  "issuer_root_bound": false,
+  "merge_authorized": false,
+  "native_fixture_change": {
+    "files": [
+      "platform_windows_test.go",
+      "source-manifest.json"
+    ],
+    "fixture_helper": "Absolute OS-derived System32/cmd.exe; fixed mklink /J; sanitized test-owned sibling paths; four-variable environment; ten-second timeout. No privilege or machine-policy changes.",
+    "observed_fixture": "NTFS_DIRECTORY_JUNCTION",
+    "production_implementation_changed_after_exact_package_landing": false,
+    "reason": "Original two native runs correctly blocked on one privilege-dependent SKIP; test-only junction fallback now exercises unchanged reparse detection assertion.",
+    "symlink_specific_native_creation_tested": false
+  },
+  "observation_semantics": "PRE_AND_POST_POINT_IN_TIME_NOT_CONTINUOUS_HOST_MONITORING",
+  "owner_binary_executed": false,
+  "package_landing_head": "3c8f17323d9a42c33080af7b19d95bf35b9de436",
+  "package_sha256": "f174f032133d6f828c0ad8435361f6f5b669a4008c85ac00df98f67b5595b2ec",
+  "production_model_or_lifecycle_executed": false,
+  "qualification_device": "DESK-W-591",
+  "remediation_base": "015eecb50f86d6ab59228e91b12f7007e88f9387",
+  "repository": "tdoljyj/cross-memory-system",
+  "schema_version": "clued.m1-08-package-r1-native-qualification/1",
+  "source_closure_files": 29,
+  "source_freeze_head": "474cd63c0ecabe827fe76467ae3867237b623d7e",
+  "source_manifest_sha256": "2102bb528440ab52ebdde9a677b606ff54d8226412c0e4c065cba68aaf7f5219",
+  "source_members": 28,
+  "status": "AUTHOR_QUALIFICATION_PASS_READY_FOR_INDEPENDENT_REVIEW",
+  "windows_os": "Microsoft Windows NT 10.0.26200.0"
+}

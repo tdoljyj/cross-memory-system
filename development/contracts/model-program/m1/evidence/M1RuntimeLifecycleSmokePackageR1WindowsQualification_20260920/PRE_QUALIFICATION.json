@@ -1,0 +1,32 @@
+{
+    "machine":  "DESK-W-591",
+    "llama_server_count":  0,
+    "listeners":  [
+
+                  ],
+    "utc":  "2026-09-20T09:55:46.1408003Z",
+    "os":  "Microsoft Windows NT 10.0.26200.0",
+    "listener_count":  0,
+    "semantics":  "READ_ONLY_POINT_IN_TIME_OBSERVATION_NOT_CONTINUOUS_MONITOR",
+    "llama_processes":  [
+
+                        ],
+    "paths":  [
+                  {
+                      "exists":  false,
+                      "path":  "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001"
+                  },
+                  {
+                      "exists":  false,
+                      "path":  "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001\\M1RuntimeLifecycleAttemptGuard.json"
+                  },
+                  {
+                      "exists":  false,
+                      "path":  "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001"
+                  },
+                  {
+                      "exists":  false,
+                      "path":  "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-001"
+                  }
+              ]
+}

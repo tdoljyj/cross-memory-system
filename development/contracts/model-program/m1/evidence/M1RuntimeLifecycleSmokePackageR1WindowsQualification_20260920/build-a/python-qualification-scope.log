@@ -1,0 +1,15 @@
+test_aliases_and_bad_labels_rejected (qualification_scope_test.QualificationScopeTests.test_aliases_and_bad_labels_rejected) ... ok
+test_component_aware_overlap (qualification_scope_test.QualificationScopeTests.test_component_aware_overlap) ... ok
+test_fixed_direct_child (qualification_scope_test.QualificationScopeTests.test_fixed_direct_child) ... ok
+test_import_and_scope_validation_perform_no_filesystem_write (qualification_scope_test.QualificationScopeTests.test_import_and_scope_validation_perform_no_filesystem_write) ... ok
+test_invalid_scope_rejected_without_any_mkdir (qualification_scope_test.QualificationScopeTests.test_invalid_scope_rejected_without_any_mkdir) ... ok
+test_protected_namespace_and_ancestors_rejected (qualification_scope_test.QualificationScopeTests.test_protected_namespace_and_ancestors_rejected) ... ok
+test_repository_ancestor_overlap (qualification_scope_test.QualificationScopeTests.test_repository_ancestor_overlap) ... ok
+test_missing_test_and_failure_rejected (qualification_scope_test.QualificationTestReportTests.test_missing_test_and_failure_rejected) ... ok
+test_package_ok_cannot_hide_skip (qualification_scope_test.QualificationTestReportTests.test_package_ok_cannot_hide_skip) ... ok
+test_required_native_test_pass_required (qualification_scope_test.QualificationTestReportTests.test_required_native_test_pass_required) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.002s
+
+OK

@@ -1,0 +1,95 @@
+{
+  "files": [
+    {
+      "bytes": 10103,
+      "path": "build-a/build-receipt.json",
+      "sha256": "6d046a122145b9bda9454ac009f4871d493ab3ef4934a5526aff658e49379d16"
+    },
+    {
+      "bytes": 0,
+      "path": "build-a/go-build.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 0,
+      "path": "build-a/go-test-compile.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 62392,
+      "path": "build-a/go-test.log",
+      "sha256": "4d373e2f9fb03a02c898c88dadaea15e7064e981346d9150941e07a7394d51fc"
+    },
+    {
+      "bytes": 0,
+      "path": "build-a/go-vet.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 1489,
+      "path": "build-a/python-qualification-scope.log",
+      "sha256": "67ad9aaad495dd15dcebc6f17ede51cecdea9c562b613ad46ebe79de8ece2ddb"
+    },
+    {
+      "bytes": 10103,
+      "path": "build-b/build-receipt.json",
+      "sha256": "b20d894636eb661ecc90b738d65c58c39ed735752f0f139ac620f7daa6f1a2fc"
+    },
+    {
+      "bytes": 0,
+      "path": "build-b/go-build.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 0,
+      "path": "build-b/go-test-compile.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 62454,
+      "path": "build-b/go-test.log",
+      "sha256": "a568746064d86d18dc720d97de2ad43bae777a257f91f9592fb5dd49de9b75a4"
+    },
+    {
+      "bytes": 0,
+      "path": "build-b/go-vet.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 1489,
+      "path": "build-b/python-qualification-scope.log",
+      "sha256": "67ad9aaad495dd15dcebc6f17ede51cecdea9c562b613ad46ebe79de8ece2ddb"
+    },
+    {
+      "bytes": 4841,
+      "path": "EXACT_PACKAGE_LANDING.json",
+      "sha256": "0b053d871fe28f1c53a527d982eb0526f037fc52331cf55b26d3dc007556333b"
+    },
+    {
+      "bytes": 62436,
+      "path": "initial-skipped-a/go-test.log",
+      "sha256": "7456d8e7045ad91a77059680465b4a5dd312e418b7f27b48e81c88136519bc84"
+    },
+    {
+      "bytes": 62401,
+      "path": "initial-skipped-b/go-test.log",
+      "sha256": "cfae8fde6734e87fd050c4ca55e79448d42a231a8b326baa424cfbd17825baf7"
+    },
+    {
+      "bytes": 1259,
+      "path": "POST_QUALIFICATION.json",
+      "sha256": "0a8d2fcb896c1d9b846402bc320b9fe5fd6e0da58af881b5a02046ef5300586c"
+    },
+    {
+      "bytes": 1259,
+      "path": "PRE_QUALIFICATION.json",
+      "sha256": "8d6ef00c63542afd931f4423a5d6e8bec6cc318754da49d8763ed5328a71224f"
+    },
+    {
+      "bytes": 5367,
+      "path": "QUALIFICATION_RECEIPT.json",
+      "sha256": "8f1987c38776f61efa1152e7602e74649b0a8fb4385c8fd9696d3266abb3d4c4"
+    }
+  ],
+  "manifest_excludes_itself": true
+}
