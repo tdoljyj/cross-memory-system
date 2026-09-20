@@ -57,7 +57,7 @@ func (c *controller) sleep(ctx *executionContext, d time.Duration) error {
 		}
 		time.Sleep(left)
 	}
-	return nil
+	return c.limits(ctx)
 }
 
 func (c *controller) health(ctx *executionContext, timeout time.Duration) error {
@@ -427,5 +427,5 @@ func (c *controller) run(ctx *executionContext) (err error) {
 	}, false); e != nil {
 		return e
 	}
-	return c.limits(ctx)
+	return nil
 }
