@@ -10,6 +10,7 @@
   "different_payload_conflict": true,
   "agent_sees_new_current": true,
   "stale_agent_proposal_rejected": true,
+  "altered_agent_stamp_rejected": true,
   "noncommitted_create_rolled_back": true,
   "container_removed_on_exit": true
 }

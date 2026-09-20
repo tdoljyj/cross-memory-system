@@ -161,7 +161,7 @@ class CanonicalStore:
             obj=c.execute("SELECT * FROM objects WHERE object_id=?",(object_id,)).fetchone()
             if not obj: raise ProtocolError("OBJECT_NOT_FOUND","object not found",404)
             current_stamp=self._stamp(obj)
-            if observed_state_stamp.get("state_stamp_digest") != current_stamp["state_stamp_digest"]:
+            if observed_state_stamp != current_stamp:
                 raise ProtocolError("STALE_CONTEXT_REQUIRES_REFRESH","observed state is stale",409,{"current_state_stamp":current_stamp})
             pid=new_id("prop"); pd=sha256_json(proposed_body); t=now_ns()
             c.execute("INSERT INTO proposals VALUES(?,?,?,?,?,?,?,?,?,?)",

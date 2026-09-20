@@ -295,9 +295,12 @@ from clued_private.mps_objects o where o.user_id=({_t('uid')})::uuid;
 
     def create_proposal(self, token: str, object_id: str, proposed_body: dict, observed_state_stamp: dict) -> dict:
         s=self._session(token); self._require(s,"propose")
+        if not isinstance(observed_state_stamp,dict):
+            raise ProtocolError("OBSERVED_STATE_REQUIRED","Agent proposal must include an observed state object",400)
         observed_digest=observed_state_stamp.get("state_stamp_digest")
         if not observed_digest:
             raise ProtocolError("STATE_STAMP_DIGEST_REQUIRED","Agent proposal must bind the exact state it observed",400)
+        observed_stamp={k:v for k,v in observed_state_stamp.items() if k!="state_stamp_digest"}
         change_id=new_id("chg")
         change_body={"mode":"REPLACE_JSON_V1","content":proposed_body}
         sql=f"""
@@ -305,6 +308,7 @@ with cp as (
  select clued_private.mps_issue_context_pack({_t('oid')},{_t('domain')},{_t('principal')},'propose','[]'::jsonb,null) p
 ), guard as (
  select p from cp where p#>>'{{context_pack,state_stamp_digest}}'={_t('observed_digest')}
+  and p#>'{{context_pack,composite_state_stamp}}'={_j('observed_stamp')}
 ), ch as (
  select clued_private.mps_register_change_set({_t('oid')},{_t('change_id')},{_j('change_body')}) c from guard
 ), mi as (
@@ -315,7 +319,8 @@ with cp as (
   'adoption_scope','object','adoption_purpose','accept_proposal'
  )) i from guard,ch
 )
-select case when cp.p#>>'{{context_pack,state_stamp_digest}}' is distinct from {_t('observed_digest')} then
+select case when cp.p#>>'{{context_pack,state_stamp_digest}}' is distinct from {_t('observed_digest')}
+ or cp.p#>'{{context_pack,composite_state_stamp}}' is distinct from {_j('observed_stamp')} then
  jsonb_build_object('ok',false,'error','STALE_CONTEXT_REQUIRES_REFRESH',
   'current_state_stamp',(cp.p#>'{{context_pack,composite_state_stamp}}') || jsonb_build_object('state_stamp_digest',cp.p#>>'{{context_pack,state_stamp_digest}}'))
 else
@@ -324,7 +329,7 @@ else
   'state_stamp_digest',cp.p#>>'{{context_pack,state_stamp_digest}}','context_pack_digest',cp.p->>'pack_digest',
   'proposed_body',{_j('body')}) end::text from cp left join mi on true;
 """
-        return self._json(sql,{"oid":object_id,"domain":self.authority_domain,"principal":s["principal"],"observed_digest":observed_digest,"change_id":change_id,"change_body":json.dumps(change_body,ensure_ascii=False,separators=(",",":")),"body":json.dumps(proposed_body,ensure_ascii=False,separators=(",",":"))})
+        return self._json(sql,{"oid":object_id,"domain":self.authority_domain,"principal":s["principal"],"observed_digest":observed_digest,"observed_stamp":json.dumps(observed_stamp,ensure_ascii=False,separators=(",",":")),"change_id":change_id,"change_body":json.dumps(change_body,ensure_ascii=False,separators=(",",":")),"body":json.dumps(proposed_body,ensure_ascii=False,separators=(",",":"))})
 
     def list_proposals(self, token: str, object_id: str) -> dict:
         s=self._session(token); self._require(s,"read")

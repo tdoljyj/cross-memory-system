@@ -12,7 +12,7 @@ This directory contains the two bounded MPS-03 entry implementations and the thi
 - Resource × Action permission is still resolved by the existing MPS context-pack/authorization state; list/history/proposal reads do not bypass it.
 - Neither entry stores a local Current. They re-read the shared gateway.
 - Agent exposes read/propose/continue only; Native exposes create/read/confirm/history/context only.
-- Agent proposals must carry the exact `observed_state_stamp` from a prior Agent read. A newer Current fails closed instead of silently rebasing the recommendation.
+- Agent proposals must carry the exact `observed_state_stamp` from a prior Agent read. The full stamp and its digest are checked against the current ContextPack; a newer or altered Current fails closed instead of silently rebasing the recommendation.
 
 ## Durable mutation boundary
 

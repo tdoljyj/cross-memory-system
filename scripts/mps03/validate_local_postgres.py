@@ -65,6 +65,8 @@ try:
     if latest['body']!={'value':2}: raise AssertionError('Current body mismatch')
     stale=store.create_proposal(agent,oid,{'value':3},observed['state_stamp'])
     if stale.get('error')!='STALE_CONTEXT_REQUIRES_REFRESH': raise AssertionError('stale proposal accepted')
+    altered=dict(latest['state_stamp']); altered['workflow_instance_version']=-1
+    if store.create_proposal(agent,oid,{'value':3},altered).get('error')!='STALE_CONTEXT_REQUIRES_REFRESH': raise AssertionError('altered stamp accepted')
     second=store.create_proposal(agent,oid,{'value':3},latest['state_stamp'])
     second_commit=store.confirm_proposal(native,oid,second['proposal_id'],latest['state_stamp'],'review-confirm-002')
     if second_commit['revision_id']==committed['revision_id']: raise AssertionError('later mutation did not advance Current')
@@ -78,6 +80,6 @@ try:
     except RuntimeError as error:
         if 'MPS03_CREATE_NOT_COMMITTED' not in str(error): raise
     if int(sql('select count(*) from clued_private.mps_objects;'))!=before: raise AssertionError('noncommitted create left a bootstrap object')
-    print(json.dumps({'qualification':'ISOLATED_LOCAL_POSTGRES_WITH_MPS02B_COMPAT_SHIM' if args.compat_shim else 'ISOLATED_LOCAL_POSTGRES_UNMODIFIED_SOURCES','source_sha256':source_hashes,'all_pass':True,'same_create_outcome_after_later_current':True,'same_confirm_outcome_after_later_current':True,'different_payload_conflict':True,'agent_sees_new_current':True,'stale_agent_proposal_rejected':True,'noncommitted_create_rolled_back':True,'container_removed_on_exit':True},indent=2))
+    print(json.dumps({'qualification':'ISOLATED_LOCAL_POSTGRES_WITH_MPS02B_COMPAT_SHIM' if args.compat_shim else 'ISOLATED_LOCAL_POSTGRES_UNMODIFIED_SOURCES','source_sha256':source_hashes,'all_pass':True,'same_create_outcome_after_later_current':True,'same_confirm_outcome_after_later_current':True,'different_payload_conflict':True,'agent_sees_new_current':True,'stale_agent_proposal_rejected':True,'altered_agent_stamp_rejected':True,'noncommitted_create_rolled_back':True,'container_removed_on_exit':True},indent=2))
 finally:
     docker('rm','-f',container)

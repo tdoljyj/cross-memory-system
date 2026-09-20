@@ -159,6 +159,9 @@ class RealEntries(unittest.TestCase):
         self.assertTrue(confirmed["ok"])
         stale=self.agent_propose(oid,{"v":3},observed)
         self.assertEqual(stale.get("error"),"STALE_CONTEXT_REQUIRES_REFRESH")
+        latest=req("POST",f"http://127.0.0.1:{self.pa}/agent/read",{"object_id":oid})["state_stamp"]
+        altered=dict(latest); altered["workflow_instance_version"]=-1
+        self.assertEqual(self.agent_propose(oid,{"v":3},altered).get("error"),"STALE_CONTEXT_REQUIRES_REFRESH")
         status,missing=raw_req("POST",f"http://127.0.0.1:{self.pa}/agent/propose",json.dumps({"object_id":oid,"proposed_body":{"v":3}}))
         self.assertEqual(status,400); self.assertEqual(missing.get("error"),"OBSERVED_STATE_REQUIRED")
 
