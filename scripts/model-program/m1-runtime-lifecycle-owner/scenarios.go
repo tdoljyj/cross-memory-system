@@ -174,8 +174,22 @@ func (c *controller) probeActiveSlot(ctx *executionContext, revision, scenario, 
 	if e = c.health(ctx, 60*time.Second); e != nil {
 		return e
 	}
+	alive, e := c.ownedAlive(ctx, w)
+	if e != nil {
+		return e
+	}
+	if !alive {
+		return fail("PROFILE_OWNED_SERVER_EXITED_BEFORE_PROBE")
+	}
 	if e = c.probe(ctx); e != nil {
 		return e
+	}
+	alive, e = c.ownedAlive(ctx, w)
+	if e != nil {
+		return e
+	}
+	if !alive {
+		return fail("PROFILE_OWNED_SERVER_EXITED_DURING_PROBE")
 	}
 	if e = c.gracefulStop(ctx, w); e != nil {
 		return e
@@ -297,7 +311,9 @@ func (c *controller) run(ctx *executionContext) (err error) {
 		if !c.sys.portFree() {
 			return e
 		}
-		_ = c.removeUnverifiedInitialCurrent(ctx)
+		// A was already atomically published before the probe failed. Do not
+		// delete current.json or the runtime root on terminal failure; retain
+		// the exact failed state for forensics and consume the one-shot guard.
 		_ = c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{"profile_id": issuedID, "pass": false, "failure_code": codeOf(e)}, false)
 		return c.terminalFailure(ctx, "M1-08-PC-INSTALL-001", e, object{"recovery": "NONE / INITIAL A NOT VERIFIED"})
 	}
