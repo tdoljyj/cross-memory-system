@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 )
 
@@ -59,18 +60,52 @@ func (c *controller) finalizeAttempt(ctx *executionContext, cause error) (finalE
 	}
 	_, guardErr := os.Lstat(c.paths.guard)
 	_, rootErr := os.Lstat(c.paths.testRoot)
-	// A failed write is returned, never turned into a successful forensic record.
-	evidenceErr := c.writeEvidence(ctx, "M1RuntimeLifecycleTerminalFailure.json", object{
-		"profile_id": issuedID, "pass": false,
-		"failure": fmt.Sprint(result), "cleanup_failure": fmt.Sprint(cleanup),
+	remaining := c.remainingOwnedState()
+	// Failure evidence uses the already-authorized append-only Events stream.
+	// It is the only post-expiry write capability and records the exact creation
+	// ledger still owned by this attempt, including live pathname observations.
+	evidenceErr := c.writeTerminalEvidence(ctx, object{
+		"profile_id": issuedID, "scenario": "FINALIZATION", "kind": "terminal_failure",
+		"pass": false, "failure": fmt.Sprint(result), "cleanup_failure": fmt.Sprint(cleanup),
 		"port_18088_free": free,
 		"guard_exists":    guardErr == nil, "guard_state_error": fmt.Sprint(guardErr),
 		"runtime_root_exists": rootErr == nil, "runtime_root_state_error": fmt.Sprint(rootErr),
 		"runtime_root_preserved_for_forensics": rootErr == nil,
-		"ts_utc":                               c.now().UTC().Format(time.RFC3339Nano),
-	}, false)
+		"remaining_test_owned_state": remaining,
+		"current_bytes_sha256": map[bool]string{true: sha(c.currentBytes), false: ""}[len(c.currentBytes) != 0],
+		"ts_utc": c.now().UTC().Format(time.RFC3339Nano),
+	})
 	if evidenceErr != nil {
 		result = errors.Join(result, fmt.Errorf("TERMINAL_EVIDENCE_UNAVAILABLE: %w", evidenceErr))
 	}
 	return result
+}
+
+func (c *controller) remainingOwnedState() []any {
+	keys := make([]string, 0, len(c.created))
+	for path := range c.created {
+		keys = append(keys, path)
+	}
+	sort.Strings(keys)
+	rows := make([]any, 0, len(keys))
+	for _, path := range keys {
+		row := object{"path": path, "creation_identity": c.created[path]}
+		st, err := os.Lstat(path)
+		if err == nil {
+			row["exists"] = true
+			row["is_dir"] = st.IsDir()
+			row["size"] = json.Number(strconvFormatInt(st.Size()))
+			row["mode"] = st.Mode().String()
+			if final, fe := c.sys.finalPath(path); fe == nil {
+				row["final_path"] = final
+			} else {
+				row["final_path_error"] = fe.Error()
+			}
+		} else {
+			row["exists"] = false
+			row["state_error"] = err.Error()
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
