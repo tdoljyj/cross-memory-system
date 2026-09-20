@@ -1,0 +1,118 @@
+{
+  "schema_version": "clued.model-m1-08-effectful-owner-implementation-preparation-receipt/1",
+  "record_id": "M1-08-EFFECTFUL-OWNER-IMPLEMENTATION-PREPARATION-20260920",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-08",
+  "status": "IMPLEMENTATION_PREPARATION_COMPLETE / AUTHOR_SIDE_QUALIFICATION_PASS / FRESH_CONTEXT_IMPLEMENTATION_REVIEW_REQUIRED / NO_EFFECTFUL_AUTHORITY",
+  "accepted_contract_profile_review": {
+    "reviewed_exact_head": "3d8a4c88373f5a54831b40d34c0ad89281d02ac1",
+    "exact_base": "324a1f96d60c5e374a6275b0bd382e6f7be1ee89",
+    "verdict": "PASS / M1_08_CONTRACT_AND_PROFILE_CANDIDATE_ACCEPTABLE_FOR_EFFECTFUL_OWNER_IMPLEMENTATION_PREPARATION",
+    "findings": {
+      "BLOCKER": 0,
+      "MAJOR": 0,
+      "MINOR": 0
+    },
+    "lifecycle_contract_git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
+    "lifecycle_contract_raw_sha256": "b40040a1302620b965bdf6dbe2283d0d6d5f9413c8c784e4b65d9cd030ac7ee3",
+    "exact_profile_candidate_git_blob_sha1": "51b0083f74dd12318b7cdcdf3b939d31723de787",
+    "exact_profile_candidate_raw_sha256": "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3"
+  },
+  "implementation": {
+    "branch": "model-program/m1-08-effectful-owner-implementation-20260920",
+    "exact_source_head": "77487cdfce9c944d1b96b685c076fd20a6c50342",
+    "source_directory": "scripts/model-program/m1-runtime-lifecycle-owner",
+    "source_manifest_path": "scripts/model-program/m1-runtime-lifecycle-owner/source-manifest.json",
+    "source_manifest_git_blob_sha1": "2f8ccf3f011d6bee1e857b8753625ebb0c168730",
+    "source_manifest_raw_sha256": "c932c2a1b2f82bd386bf7e875b62c45f7a7a684e6847bb8d26de8c9304eaf0d5",
+    "source_manifest_bytes": 4626,
+    "source_file_count": 13,
+    "implementation_base": "3d8a4c88373f5a54831b40d34c0ad89281d02ac1",
+    "issuer_root_bound": false,
+    "effectful_authority_issued": false
+  },
+  "qualification": {
+    "device": "DESK-W-591",
+    "toolchain": {
+      "archive_name": "go1.27.1.windows-amd64.zip",
+      "archive_bytes": 78931360,
+      "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+      "extracted_tree_file_count": 15639,
+      "extracted_tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+      "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+      "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+      "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+      "version": "go version go1.27.1 windows/amd64",
+      "target": "windows/amd64 GOAMD64=v1"
+    },
+    "test_count": 25,
+    "go_test": "PASS",
+    "go_vet": "PASS",
+    "build_A": {
+      "owner_binary_bytes": 7367680,
+      "owner_binary_sha256": "00f990924571e08e93be8ca5d70a0a40f49c11362303f88d3fd466fd661c5de7",
+      "windows_test_binary_bytes": 11899392,
+      "windows_test_binary_sha256": "868c549050f57b98cb4ac7cd9fcfe2f50df3324e1f4578c7c25b84428a3388fb"
+    },
+    "build_B": {
+      "owner_binary_bytes": 7367680,
+      "owner_binary_sha256": "00f990924571e08e93be8ca5d70a0a40f49c11362303f88d3fd466fd661c5de7",
+      "windows_test_binary_bytes": 11899392,
+      "windows_test_binary_sha256": "868c549050f57b98cb4ac7cd9fcfe2f50df3324e1f4578c7c25b84428a3388fb"
+    },
+    "reproducibility": "PASS / TWO_INDEPENDENT_QUALIFICATION_BUILDS_BYTE_IDENTITY_BY_SIZE_AND_SHA256",
+    "owner_binary_executed": false,
+    "production_guard_or_runtime_paths_used_by_tests": false
+  },
+  "author_side_reverse_review": {
+    "independent_review": false,
+    "verdict": "0 BLOCKER / 0 MAJOR FOUND BY AUTHOR_SIDE_REVERSE_REVIEW",
+    "checks": [
+      "Fixed CLI exposes no caller command/executable/argv/environment/CWD/endpoint/PID/handle/process/factory/callback/root/evidence/test authority.",
+      "Future issued profile is whole-profile Ed25519 verified, exact-bound to Contract, source manifest, binary, physical device, authority limits, transition graph, launch envelope, Owner final authorization and expiry.",
+      "Guard parent is outside profile provisioning authority and future issuance must bind both reviewed provisioning evidence SHA-256 and signed live directory identity; live canonical path, NTFS volume/file identity, owner/ACL digest, non-reparse and empty-parent state are rechecked before first write.",
+      "Attempt Guard remains first profile-owned filesystem write and uses CREATE_NEW at the exact persistent path.",
+      "Existing/read/write paths reject reparse escape; effectful file writes verify the opened OS handle resolves to the exact expected path and has a single link before bytes are written.",
+      "Bound source and materialized slot regular files reject named NTFS ADS; copied slot files reject hardlink aliasing.",
+      "Current publication admits only 1N none->A, 2N A->B, 3N B->A, 3R B->A recovery_of=2 and 4R A->B recovery_of=3; same-directory exact temp names and native same-volume publication are enforced.",
+      "Pre-activation partial A/B cleanup deletes only an exact allowed non-reparse partial-slot shape; unsafe or unexpected state is retained for forensics.",
+      "Install probe failure conditionally removes current only if it still resolves to exact unverified transition-1 A; runtime root/evidence and consumed guard remain.",
+      "Upgrade/rollback post-activation probe failures reverify the previous good slot, publish only the exact recovery transition, postverify the restored current/slot, then terminate the profile as failed.",
+      "Child process environment is rebuilt from empty with only SystemRoot/WINDIR/TEMP/TMP; PATH and caller/parent/LLAMA/proxy/CUDA/Vulkan/backend/device variables cannot enter the envelope.",
+      "Executable, argv, environment, CWD, loopback 127.0.0.1:18088 and original creation-time OS process handle are revalidated/owned by the native owner; foreign process objects are rejected.",
+      "Success cleanup reverifies final A current and both A/B slots, refuses unexpected/reparse entries, removes only exact test-owned runtime state, and retains guard/evidence.",
+      "Build helper verifies exact Contract/Profile, exact source closure and exact official Go 1.27.1 archive/tree/compiler/linker identities; build environment is reconstructed without caller PATH/GOFLAGS and owner binary is never executed."
+    ],
+    "note": "AUTHOR_SIDE_ONLY / NOT_INDEPENDENT_PASS_EVIDENCE"
+  },
+  "effects_performed": {
+    "attempt_guard_created": false,
+    "guard_parent_created": false,
+    "runtime_test_root_created": false,
+    "evidence_output_dir_created_at_production_path": false,
+    "llama_server_started": false,
+    "model_loaded": false,
+    "install_executed": false,
+    "upgrade_executed": false,
+    "rollback_executed": false,
+    "training": false,
+    "distillation": false,
+    "promotion": false,
+    "activation": false,
+    "release": false,
+    "production_deployment": false,
+    "pr_merged": false
+  },
+  "intentionally_unresolved": [
+    "FRESH_CONTEXT_INDEPENDENT_IMPLEMENTATION_FINAL_REVIEW",
+    "OWNER_EXPLICIT_M1_08_ISSUER_ROOT_DECISION",
+    "REVIEWED_OWNER_ROOT_BINDING_SUCCESSOR",
+    "SEPARATELY_REVIEWED_OWNER_AUTHORIZED_GUARD_PARENT_PROVISIONING_AND_BOUND_EVIDENCE",
+    "FINAL_ISSUED_PROFILE_WITH_EXACT_SOURCE_MANIFEST_AND_BINARY_BINDINGS",
+    "OWNER_FINAL_M1_08_EFFECTFUL_EXECUTION_AUTHORIZATION",
+    "REAL_RUNTIME_LIFECYCLE_SMOKE_EXECUTION"
+  ],
+  "next_gate": "FRESH_CONTEXT / READ_ONLY / REVIEWER_NOT_MODIFIER / INDEPENDENT M1-08 EFFECTFUL OWNER IMPLEMENTATION FINAL REVIEW",
+  "authority_effect": "NONE / IMPLEMENTATION PREPARATION AND NON_EFFECTFUL QUALIFICATION ONLY"
+}
