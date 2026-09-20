@@ -93,7 +93,8 @@
       "revisions\\A\\manifest.json",
       "revisions\\A\\payload\\**",
       "revisions\\B\\manifest.json",
-      "revisions\\B\\payload\\**"
+      "revisions\\B\\payload\\**",
+      "state\\temp\\**"
     ],
     "system_path_mutation": false,
     "registry_mutation": false,
@@ -328,7 +329,149 @@
       "--device none",
       "--no-op-offload"
     ],
-    "configuration_sources": "PROFILE_BOUND_ARGV_ONLY / CHILD_ENV_ALLOWLIST / NO_LLAMA_ARG / NO_PROGRAMDATA_APPDATA_CONFIG"
+    "configuration_sources": "PROFILE_BOUND_ARGV_AND_EXACT_LAUNCH_ENVELOPE_ONLY / CHILD_ENV_REBUILT_FROM_EMPTY_EXACT_ALLOWLIST / NO_LLAMA_ARG / NO_PROGRAMDATA_APPDATA_CONFIG / NO_CALLER_OR_PARENT_ENVIRONMENT_INHERITANCE",
+    "launch_envelope": {
+      "envelope_semantics": "IMMUTABLE_PROFILE_DERIVED_LAUNCH_ENVELOPE / CALLER_CANNOT_OVERRIDE_EXECUTABLE_ARGV_ENVIRONMENT_CWD_ENDPOINT_OR_PROCESS_OWNERSHIP",
+      "caller_supplied_launch_material_allowed": false,
+      "caller_supplied_command_allowed": false,
+      "caller_supplied_process_factory_allowed": false,
+      "caller_supplied_callback_allowed": false,
+      "executable": {
+        "source": "VERIFIED_ACTIVE_SLOT_ONLY",
+        "exact_relative_path": "payload\\runtime\\b11033-vulkan\\llama-server.exe",
+        "resolution": "ABSOLUTE_PATH_DERIVED_ONLY_FROM_EXACT_VERIFIED_ACTIVE_SLOT / NO_CALLER_PATH / NO_PATH_SEARCH",
+        "sha256": "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba",
+        "caller_override_allowed": false
+      },
+      "argv": {
+        "source": "PROFILE_BOUND_CONSTANTS_PLUS_ABSOLUTE_VERIFIED_ACTIVE_SLOT_MODEL_PATH_ONLY",
+        "exact_semantics": [
+          "ABSOLUTE_SLOT_LLAMA_SERVER_EXE",
+          "--model ABSOLUTE_ACTIVE_SLOT_Q8_0_MODEL",
+          "--offline",
+          "--host 127.0.0.1",
+          "--port 18088",
+          "--no-webui",
+          "--threads 2",
+          "--threads-batch 2",
+          "--ctx-size 2048",
+          "--parallel 1",
+          "--n-gpu-layers 0",
+          "--device none",
+          "--no-op-offload"
+        ],
+        "caller_supplied_args_allowed": false,
+        "caller_override_or_append_allowed": false,
+        "dynamic_injection_allowed": false
+      },
+      "child_environment": {
+        "construction": "START_FROM_EMPTY_ENVIRONMENT_MAP / DO_NOT_INHERIT_PARENT_OR_CALLER_ENVIRONMENT / EMIT_ONLY_EXACT_ALLOWLIST",
+        "windows_name_comparison": "CASE_INSENSITIVE",
+        "caller_supplied_environment_map_allowed": false,
+        "caller_environment_override_allowed": false,
+        "callback_or_dynamic_environment_injection_allowed": false,
+        "allowed_names_exact": [
+          "SystemRoot",
+          "WINDIR",
+          "TEMP",
+          "TMP"
+        ],
+        "system_root_and_windir": {
+          "source": "TRUSTED_WINDOWS_OS_API_GetWindowsDirectoryW_ONLY",
+          "value_semantics": "CANONICAL_ABSOLUTE_WINDOWS_DIRECTORY_RETURNED_BY_OS_API / SET BOTH SystemRoot AND WINDIR FROM THAT RESULT",
+          "parent_or_caller_environment_read_allowed": false,
+          "caller_value_allowed": false
+        },
+        "temp_and_tmp": {
+          "exact_value": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-001\\state\\temp",
+          "value_semantics": "BOTH TEMP AND TMP EQUAL THE EXACT PROFILE_OWNED_TEST_PATH / DIRECTORY MUST REMAIN UNDER EXACT TEST ROOT",
+          "parent_or_caller_environment_read_allowed": false,
+          "caller_value_allowed": false
+        },
+        "path_variable": {
+          "allowed": false,
+          "semantics": "PATH MUST BE ABSENT / NEVER INHERIT OR ACCEPT CALLER PATH"
+        },
+        "forbidden_names_exact": [
+          "PATH",
+          "PATHEXT",
+          "LLAMA_ARG",
+          "HTTP_PROXY",
+          "HTTPS_PROXY",
+          "ALL_PROXY",
+          "NO_PROXY",
+          "http_proxy",
+          "https_proxy",
+          "all_proxy",
+          "no_proxy",
+          "CUDA_VISIBLE_DEVICES",
+          "CUDA_DEVICE_ORDER",
+          "VK_ICD_FILENAMES",
+          "VK_LAYER_PATH",
+          "VULKAN_SDK",
+          "APPDATA",
+          "LOCALAPPDATA",
+          "PROGRAMDATA",
+          "USERPROFILE",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "PYTHONPATH",
+          "PYTHONHOME",
+          "LD_LIBRARY_PATH",
+          "LIB",
+          "LIBPATH",
+          "INCLUDE",
+          "TMPDIR"
+        ],
+        "forbidden_name_prefixes": [
+          "LLAMA_",
+          "GGML_",
+          "CUDA_",
+          "NVIDIA_",
+          "VK_",
+          "VULKAN_",
+          "HIP_",
+          "ROCR_",
+          "SYCL_",
+          "ONEAPI_",
+          "OMP_",
+          "KMP_"
+        ],
+        "unlisted_variable_policy": "OMIT / FAIL_CLOSED_IF EFFECTFUL OWNER ATTEMPTS TO PROPAGATE OR ADD ANY UNLISTED ENVIRONMENT VARIABLE",
+        "semantic_invariant": "ENVIRONMENT INPUT MUST NOT CHANGE EXECUTABLE_ARGV_DLL_RUNTIME_RESOLUTION_CONFIGURATION_NETWORK_ENDPOINT_CPU_ONLY_DEVICE_SEMANTICS_OR_CWD"
+      },
+      "dll_and_runtime_resolution": {
+        "semantics": "NO_ENVIRONMENT_OR_CALLER_CONTROL / EXACT ACTIVE SLOT EXECUTABLE DIRECTORY AND EXACT ACTIVE SLOT CWD PLUS TRUSTED WINDOWS SYSTEM DIRECTORIES ONLY",
+        "PATH_search_allowed": false,
+        "caller_dll_directory_allowed": false,
+        "caller_runtime_search_path_allowed": false,
+        "environment_search_path_allowed": false,
+        "caller_preload_or_backend_override_allowed": false
+      },
+      "cwd": {
+        "source": "VERIFIED_ACTIVE_SLOT_ONLY",
+        "exact_relative_path": "payload\\runtime\\b11033-vulkan",
+        "resolution": "ABSOLUTE_PATH_DERIVED_ONLY_FROM_EXACT_VERIFIED_ACTIVE_SLOT ROOT",
+        "caller_supplied_cwd_allowed": false,
+        "caller_override_allowed": false
+      },
+      "endpoint": {
+        "bind_host": "127.0.0.1",
+        "bind_port": 18088,
+        "probe_path": "/completion",
+        "caller_override_allowed": false,
+        "external_bind_allowed": false,
+        "external_network_allowed": false
+      },
+      "process_ownership": {
+        "source": "EFFECTFUL_OWNER_DIRECT_CHILD_CREATE_ONLY",
+        "semantics": "ORIGINAL_OS_PROCESS_HANDLE_RETURNED_BY_THE_EXACT_LAUNCH_ONLY / CALLER_CANNOT_SUPPLY_PID_HANDLE_PROCESS_OBJECT_FACTORY_CALLBACK_OR_REPLACEMENT",
+        "caller_supplied_pid_allowed": false,
+        "caller_supplied_handle_allowed": false,
+        "caller_supplied_process_object_allowed": false,
+        "caller_supplied_factory_or_callback_allowed": false
+      }
+    }
   },
   "one_shot_execution": {
     "max_attempts": 1,
@@ -408,7 +551,12 @@
     "PRODUCTION_SECRET_MUTATION",
     "PROCUREMENT",
     "BUDGET_SPEND",
-    "M1_09_EXECUTION"
+    "M1_09_EXECUTION",
+    "INHERIT_CALLER_OR_PARENT_CHILD_PROCESS_ENVIRONMENT",
+    "ACCEPT_CALLER_SUPPLIED_ENVIRONMENT_MAP_OVERRIDE_OR_DYNAMIC_INJECTION",
+    "ACCEPT_CALLER_SUPPLIED_EXECUTABLE_ARGV_COMMAND_CWD_ENDPOINT_PROCESS_PID_HANDLE_FACTORY_OR_CALLBACK",
+    "PATH_OR_DLL_RUNTIME_SEARCH_ENVIRONMENT_INFLUENCE",
+    "ENVIRONMENT_DRIVEN_LLAMA_PROXY_CUDA_VULKAN_BACKEND_DEVICE_OR_CPU_SEMANTICS_OVERRIDE"
   ],
   "budgets": {
     "max_wall_seconds": 1800,
@@ -469,7 +617,12 @@
     "CURRENT_TRANSITION_KIND_AND_RECOVERY_OF_LINKAGE_FOR_EVERY_CURRENT_PUBLICATION",
     "FAILURE_BRANCH_TRANSITION_GRAPH_MATCHES_EXACT_AUTHORIZED_RECOVERY_SEQUENCE",
     "NO_NAMED_NTFS_ALTERNATE_DATA_STREAMS_ON_BOUND_SOURCE_OR_SLOT_REGULAR_FILES",
-    "GUARD_PARENT_PROVISIONING_EVIDENCE_BOUND_BEFORE_FINAL_ISSUANCE"
+    "GUARD_PARENT_PROVISIONING_EVIDENCE_BOUND_BEFORE_FINAL_ISSUANCE",
+    "EXACT_LAUNCH_ENVELOPE_EXECUTABLE_ARGV_ENVIRONMENT_CWD_ENDPOINT_AND_PROCESS_OWNERSHIP_ATTESTATION",
+    "CHILD_ENVIRONMENT_REBUILT_FROM_EMPTY_WITH_ONLY_EXACT_ALLOWLIST_AND_NO_PARENT_OR_CALLER_INHERITANCE",
+    "SYSTEMROOT_WINDIR_FROM_TRUSTED_WINDOWS_OS_API_AND_TEMP_TMP_AT_EXACT_PROFILE_OWNED_TEST_PATH",
+    "NO_PATH_LLAMA_PROXY_CUDA_VULKAN_BACKEND_DEVICE_OR_DLL_RUNTIME_SEARCH_ENVIRONMENT_INFLUENCE",
+    "CHILD_CWD_WAS_EXACT_VERIFIED_ACTIVE_SLOT_RUNTIME_DIRECTORY"
   ],
   "stop_conditions": [
     "PROFILE_NOT_ISSUED",
@@ -509,7 +662,12 @@
     "ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE",
     "PROFILE_ATTEMPT_TO_CREATE_OR_RECREATE_GUARD_PARENT",
     "UNAUTHORIZED_CURRENT_TRANSITION_INDEX_KIND_OR_RECOVERY_LINKAGE",
-    "NAMED_NTFS_ALTERNATE_DATA_STREAM_DETECTED_ON_BOUND_SOURCE_OR_SLOT_FILE"
+    "NAMED_NTFS_ALTERNATE_DATA_STREAM_DETECTED_ON_BOUND_SOURCE_OR_SLOT_FILE",
+    "CALLER_OR_PARENT_CHILD_PROCESS_ENVIRONMENT_INHERITANCE_DETECTED",
+    "UNAUTHORIZED_LAUNCH_ENVELOPE_OVERRIDE_OR_DYNAMIC_INJECTION",
+    "PATH_DLL_RUNTIME_SEARCH_OR_BACKEND_DEVICE_ENVIRONMENT_INFLUENCE_DETECTED",
+    "CHILD_CWD_NOT_EXACT_VERIFIED_ACTIVE_SLOT_RUNTIME_DIRECTORY",
+    "EXECUTABLE_ARGV_ENDPOINT_OR_PROCESS_OWNERSHIP_DRIFT"
   ],
   "release_ceiling": "M1_08_PC_RUNTIME_LIFECYCLE_SMOKE_EVIDENCE_ONLY / LIFECYCLE_MECHANICS_ONLY / NO_BINARY_MIGRATION_CLAIM / NO_M1_09 / NO_TRAINING / NO_PROMOTION / NO_MODEL_PROMOTION_OR_RELEASE_ACTIVATION / NO_RELEASE / NO_PRODUCTION",
   "final_issuance_gate": {
@@ -534,7 +692,10 @@
       "NEGATIVE_TEST_PROVES_ABSENT_OR_UNSAFE_GUARD_PARENT_FAILS_BEFORE_ANY_PROFILE_OWNED_WRITE",
       "FAULT_INJECTION_TESTS_PROVE_EXACT_RECOVERY_TRANSITION_3_AND_4_PUBLICATION_AND_TERMINAL_FAILURE_SEMANTICS",
       "NEGATIVE_TESTS_ENUMERATE_AND_REJECT_NTFS_NAMED_ALTERNATE_DATA_STREAMS_ON_SOURCE_AND_SLOT_FILES",
-      "BIND_SEPARATELY_REVIEWED_OWNER_AUTHORIZED_GUARD_PARENT_PROVISIONING_EVIDENCE"
+      "BIND_SEPARATELY_REVIEWED_OWNER_AUTHORIZED_GUARD_PARENT_PROVISIONING_EVIDENCE",
+      "STATIC_AND_NEGATIVE_TESTS_PROVE_CHILD_ENVIRONMENT_IS_REBUILT_FROM_EMPTY_WITH_ONLY_SYSTEMROOT_WINDIR_FROM_TRUSTED_WINDOWS_OS_API_AND_TEMP_TMP_AT_THE_EXACT_PROFILE_OWNED_TEST_PATH_AND_WITHOUT_INHERITED_PATH_PROXY_LLAMA_CUDA_VULKAN_BACKEND_DEVICE_OR_DLL_RUNTIME_SEARCH_VARIABLES",
+      "STATIC_AND_NEGATIVE_TESTS_PROVE_CALLER_ENVIRONMENT_POLLUTION_CANNOT_CHANGE_EXECUTABLE_ARGV_DLL_RUNTIME_RESOLUTION_CONFIGURATION_LOOPBACK_ENDPOINT_CPU_ONLY_DEVICE_SEMANTICS_OR_EXACT_ACTIVE_SLOT_CWD",
+      "STATIC_AND_NEGATIVE_TESTS_PROVE_CALLER_CANNOT_SUPPLY_OR_OVERRIDE_PROCESS_PID_HANDLE_FACTORY_CALLBACK_COMMAND_EXECUTABLE_PATH_ARGV_ENVIRONMENT_CWD_OR_NETWORK_ENDPOINT"
     ]
   },
   "authority_effect": "NONE / CONTRACT_PREPARATION_ONLY",
