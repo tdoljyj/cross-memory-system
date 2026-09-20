@@ -311,11 +311,21 @@ func (c *controller) run(ctx *executionContext) (err error) {
 		if !c.sys.portFree() {
 			return e
 		}
-		// A was already atomically published before the probe failed. Do not
-		// delete current.json or the runtime root on terminal failure; retain
-		// the exact failed state for forensics and consume the one-shot guard.
-		_ = c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{"profile_id": issuedID, "pass": false, "failure_code": codeOf(e)}, false)
-		return c.terminalFailure(ctx, "M1-08-PC-INSTALL-001", e, object{"recovery": "NONE / INITIAL A NOT VERIFIED"})
+		// Contract: after A activation but before install probe PASS, remove
+		// current iff it still points to the exact unverified A. Preserve the
+		// runtime root and evidence for forensics; the one-shot guard remains.
+		if re := c.removeUnverifiedInitialCurrent(ctx); re != nil {
+			_ = c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{
+				"profile_id": issuedID, "pass": false, "failure_code": codeOf(e),
+				"conditional_current_removal": "FAILED_CLOSED", "removal_failure_code": codeOf(re),
+			}, false)
+			return fmt.Errorf("%w; conditional-current-removal=%v", e, re)
+		}
+		_ = c.writeEvidence(ctx, "M1RuntimeLifecycleInstall.json", object{
+			"profile_id": issuedID, "pass": false, "failure_code": codeOf(e),
+			"conditional_current_removal": "REMOVED_EXACT_UNVERIFIED_A",
+		}, false)
+		return c.terminalFailure(ctx, "M1-08-PC-INSTALL-001", e, object{"recovery": "REMOVE_CURRENT_IF_EXACT_UNVERIFIED_A / RUNTIME_ROOT_RETAINED"})
 	}
 	if e = c.recordScenario(ctx, "M1RuntimeLifecycleInstall.json", object{
 		"revision_id": revisionA, "slot_manifest_sha256": a.manifestSHA, "transition_index": json.Number("1"), "probe": "PASS",
