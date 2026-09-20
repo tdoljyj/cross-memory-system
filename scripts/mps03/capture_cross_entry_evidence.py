@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import json, os, pathlib, socket, subprocess, sys, tempfile, time
+import base64, json, os, pathlib, socket, subprocess, sys, tempfile, time
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 REPO=pathlib.Path(__file__).resolve().parents[2]; IMPL=REPO/'development'/'mps'; PY=sys.executable
 
 def port():
     s=socket.socket(); s.bind(('127.0.0.1',0)); p=s.getsockname()[1]; s.close(); return p
 
+ENTRY_AUTH={}
 def call(method,url,body=None):
-    data=None if body is None else json.dumps(body,separators=(',',':')).encode(); req=Request(url,data=data,method=method,headers={'Content-Type':'application/json'})
+    headers={'Content-Type':'application/json'}
+    if urlparse(url).port in ENTRY_AUTH: headers['Authorization']=ENTRY_AUTH[urlparse(url).port]
+    data=None if body is None else json.dumps(body,separators=(',',':')).encode(); req=Request(url,data=data,method=method,headers=headers)
     with urlopen(req,timeout=5) as r:return json.loads(r.read().decode())
 
 def wait(url):
@@ -28,6 +32,10 @@ def stop(p):
 
 def main():
     pg,pn,pa=port(),port(),port(); ns='native-evidence-secret-not-recorded'; ag='agent-evidence-secret-not-recorded'; env=os.environ.copy(); env['PYTHONPATH']=os.pathsep.join([str(IMPL),str(REPO)])
+    native_access='native-evidence-inbound-access-secret-0001'; agent_access='agent-evidence-inbound-access-secret-0002'
+    env['MPS03_NATIVE_ACCESS_SECRET']=native_access; env['MPS03_AGENT_ACCESS_SECRET']=agent_access
+    ENTRY_AUTH[pn]='Basic '+base64.b64encode(('native:'+native_access).encode()).decode()
+    ENTRY_AUTH[pa]='Bearer '+agent_access
     with tempfile.TemporaryDirectory() as td:
         db=str(pathlib.Path(td)/'canonical.sqlite3')
         ps=[
@@ -39,7 +47,7 @@ def main():
             wait(f'http://127.0.0.1:{pg}/health'); wait(f'http://127.0.0.1:{pn}/health'); wait(f'http://127.0.0.1:{pa}/health')
             created=call('POST',f'http://127.0.0.1:{pn}/api/objects',{'title':'Evidence plan','body':{'items':['walk']},'request_id':'evidence-create-0001'}); oid=created['object_id']
             read=call('POST',f'http://127.0.0.1:{pa}/agent/read',{'object_id':oid})
-            prop=call('POST',f'http://127.0.0.1:{pa}/agent/propose',{'object_id':oid,'proposed_body':{'items':['walk','coffee']}})
+            prop=call('POST',f'http://127.0.0.1:{pa}/agent/propose',{'object_id':oid,'proposed_body':{'items':['walk','coffee']},'observed_state_stamp':read['state_stamp']})
             view=call('GET',f'http://127.0.0.1:{pn}/api/objects/{oid}')
             commit=call('POST',f'http://127.0.0.1:{pn}/api/objects/{oid}/confirm',{'proposal_id':prop['proposal_id'],'state_stamp':view['state_stamp'],'request_id':'evidence-confirm-0001'})
             continued=call('POST',f'http://127.0.0.1:{pa}/agent/continue',{'object_id':oid})

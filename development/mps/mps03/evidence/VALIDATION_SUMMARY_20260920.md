@@ -1,6 +1,6 @@
 # MPS-03 Repository Implementation Validation — 2026-09-20
 
-Status: IMPLEMENTATION CANDIDATE / NON-PRODUCTION / REVIEWABLE
+Status: IMPLEMENTATION CANDIDATE / NON-PRODUCTION / REVALIDATION AFTER REVIEW FINDINGS
 
 ## Authority / scope
 - Authorization package: CLUED-UCR-UVC-MPS-03-START-AUTH-v1-20260920
@@ -17,7 +17,7 @@ Status: IMPLEMENTATION CANDIDATE / NON-PRODUCTION / REVIEWABLE
 Command:
 `python scripts/mps03/run_acceptance.py`
 
-Result: 16/16 PASS, 0 fail, 0 skipped.
+Result after scoped fixes: 22/22 PASS, 0 fail, 0 skipped. Added entry authentication, stale Agent observation, Native form replay/diff, and PostgreSQL outcome regression coverage.
 Raw result: `evidence/mps03_acceptance.raw.txt`
 
 Command:
@@ -26,6 +26,8 @@ Command:
 Result: Native, canonical reference gateway, and Agent Adapter ran as three distinct processes; all three required local cross-entry chains PASS.
 Qualification remains local-reference-backend; no real third-party host PASS is claimed.
 Raw result: `evidence/cross_entry_evidence.raw.json`
+
+The earlier 16/16 run belongs to the prior PR head and is superseded by the new 22/22 raw result. Its historical CI result remains visible on that exact prior SHA.
 
 ## CI runner policy
 
@@ -45,19 +47,20 @@ Commands:
 - `npm.cmd run test:authorization:integration` — 1/1 PASS
 - `npm.cmd run test:authorization:pages` — 55/55 PASS
 
-Successful regression total: 153/153 PASS, 0 skipped.
+Successful regression total on the previous PR implementation head: 153/153 PASS, 0 skipped. The scoped follow-up changes are confined to MPS-03 Python entry/bridge/test/evidence paths; those existing Clued authorization suites have not been rerun for this follow-up.
 The initial database teardown EBUSY raw log is preserved and not hidden; retry raw log is preserved separately.
 
 ## Live target and local DB gate
-A real connection to `clued-auth-test/uscrdifznmlvczcekqpw` first verified all five formal MPS primitives by read-only inspection. A second real PostgreSQL validation executed the formal create + same-request replay path inside an explicit transaction and then ROLLBACKed it; the formal create committed inside the test transaction, replay returned the same Receipt, and zero durable validation rows were left behind.
+A previous real connection to `clued-auth-test/uscrdifznmlvczcekqpw` verified all five formal MPS primitives by read-only inspection. A previous PostgreSQL validation executed the formal create + same-request replay path inside an explicit transaction and then ROLLBACKed it; the formal create committed inside the test transaction, replay returned the same Receipt, and zero durable validation rows were left behind. **These results predate the present bridge fixes and are not current-head live bridge validation.**
 No durable MPS-03 HTTP bridge write was executed.
 No real third-party Agent Host was invoked.
 Production `clued-prod` was not touched.
 Live target fact record: `evidence/live_target_validation.json`
 Rollback validation raw result: `evidence/live_postgres_rollback_validation.raw.json`
 
-The Turing Docker Desktop Linux daemon was unavailable when checked, so the local Docker-based G4 Supabase gate was NOT EXECUTED and is NOT claimed as PASS.
-Raw environment result: `evidence/local_docker_gate_environment.raw.txt`
+The prior Docker environment check reported the daemon unavailable; that historical result remains in `evidence/local_docker_gate_environment.raw.txt`. Docker was available for this follow-up. The new `scripts/mps03/validate_local_postgres.py` ran a disposable PostgreSQL 17 container with no network and exercised the Python bridge against the supplied MPS-02A/02B SQL. It verified create/replay, different-payload conflict, Agent proposal/Native confirm, a later Current change followed by exact replay of the old outcomes, stale Agent observation rejection, and rollback of a bootstrap create when the formal commit returned a non-committed result. Raw result: `evidence/local_postgres_adapter_validation.raw.json`.
+
+**Qualification limit:** the supplied historical MPS-02B SQL calls nonstandard `pg_catalog.jsonb_object_length`. A clean PostgreSQL 17 instance lacks that function, so this local adapter run used an explicit test-only compatibility shim. It is not an unmodified formal MPS-02B G4 PASS. Read-only queries against the named `clued-auth-test` target confirmed its installed `mps_register_change_set` does not reference that missing function; see `evidence/live_target_primitive_readcheck_20260920.json`. No live MPS-03 HTTP bridge write was executed in this follow-up.
 
 ## Claim boundary
 This evidence does NOT claim G7 Aggregate PASS, full 69 E2E PASS, deployment, release/GA, production traffic/write, or downstream MPS authority.

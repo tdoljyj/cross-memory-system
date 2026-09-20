@@ -4,10 +4,10 @@ import argparse, json, sqlite3, threading
 from http.server import ThreadingHTTPServer
 
 try:
-    from mps03.common import ProtocolError, canonical_json, new_id, now_ns, sha256_json
+    from mps03.common import ProtocolError, canonical_json, new_id, now_ns, sha256_json, validate_create_content
     from mps03.gateway_http import Handler
 except ImportError:
-    from common import ProtocolError, canonical_json, new_id, now_ns, sha256_json
+    from common import ProtocolError, canonical_json, new_id, now_ns, sha256_json, validate_create_content
     from gateway_http import Handler
 
 SCHEMA = r'''
@@ -117,7 +117,8 @@ class CanonicalStore:
     def create_object(self, token: str, title: str, body: dict, request_id: str) -> dict:
         if not request_id:
             raise ProtocolError("REQUEST_ID_REQUIRED", "request_id is required")
-        payload = {"op": "create_object", "title": title, "body": body}
+        content=validate_create_content(title,body)
+        payload = {"op": "create_object", "content": content}
         fp = sha256_json(payload)
         with self._lock, self._connect() as c:
             c.execute("BEGIN IMMEDIATE")

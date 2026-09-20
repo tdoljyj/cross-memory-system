@@ -1,21 +1,35 @@
-import json, os, pathlib, socket, subprocess, sys, tempfile, time, unittest
-from urllib.error import URLError
+import base64, json, os, pathlib, re, socket, subprocess, sys, tempfile, time, unittest
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 REPO=pathlib.Path(__file__).resolve().parents[2]
 IMPL=REPO/"development"/"mps"
 PY=sys.executable
+ENTRY_AUTH={}
 
 def free_port():
     s=socket.socket(); s.bind(("127.0.0.1",0)); p=s.getsockname()[1]; s.close(); return p
 
+def headers_for(url, authorized=True, origin=None):
+    headers={"Content-Type":"application/json"}
+    if authorized and urlparse(url).port in ENTRY_AUTH:
+        headers["Authorization"]=ENTRY_AUTH[urlparse(url).port]
+    if origin is not None: headers["Origin"]=origin
+    return headers
+
 def req(method,url,body=None):
     data=None if body is None else json.dumps(body,separators=(",",":")).encode()
-    r=Request(url,data=data,method=method,headers={"Content-Type":"application/json"})
-    with urlopen(r,timeout=5) as x:return json.loads(x.read().decode())
+    r=Request(url,data=data,method=method,headers=headers_for(url))
+    try:
+        with urlopen(r,timeout=5) as x:return json.loads(x.read().decode())
+    except HTTPError as error:
+        return json.loads(error.read().decode())
 
-def raw_req(method,url,raw):
-    r=Request(url,data=raw.encode(),method=method,headers={"Content-Type":"application/json"})
+def raw_req(method,url,raw,authorized=True,origin=None,authorization=None):
+    headers=headers_for(url,authorized,origin)
+    if authorization is not None: headers["Authorization"]=authorization
+    r=Request(url,data=raw.encode(),method=method,headers=headers)
     try:
         with urlopen(r,timeout=5) as x:return x.status,json.loads(x.read().decode())
     except Exception as e:
@@ -47,7 +61,13 @@ class RealEntries(unittest.TestCase):
         cls.pg,cls.pn,cls.pa=free_port(),free_port(),free_port()
         cls.native_secret="native-test-secret-32bytes-000001"
         cls.agent_secret="agent-test-secret-32bytes-0000002"
+        cls.native_access="native-inbound-access-secret-32bytes-001"
+        cls.agent_access="agent-inbound-access-secret-32bytes-0002"
+        ENTRY_AUTH[cls.pn]="Basic "+base64.b64encode(("native:"+cls.native_access).encode()).decode()
+        ENTRY_AUTH[cls.pa]="Bearer "+cls.agent_access
         env=os.environ.copy(); env["PYTHONPATH"]=os.pathsep.join([str(IMPL),str(REPO)])
+        env["MPS03_NATIVE_ACCESS_SECRET"]=cls.native_access
+        env["MPS03_AGENT_ACCESS_SECRET"]=cls.agent_access
         cls.procs=[
             subprocess.Popen([PY,"-m","tests.mps03.reference_gateway","--db",cls.db,"--port",str(cls.pg),"--native-secret",cls.native_secret,"--agent-secret",cls.agent_secret],cwd=REPO,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
             subprocess.Popen([PY,"-m","mps03.native_entry","--gateway",f"http://127.0.0.1:{cls.pg}","--port",str(cls.pn),"--entry-secret",cls.native_secret],cwd=REPO,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True),
@@ -58,6 +78,12 @@ class RealEntries(unittest.TestCase):
     def tearDownClass(cls):
         for p in cls.procs: stop_proc(p)
         cls.tmp.cleanup()
+        ENTRY_AUTH.pop(cls.pn,None); ENTRY_AUTH.pop(cls.pa,None)
+
+    def agent_propose(self, oid, proposed_body, observed_state_stamp=None):
+        if observed_state_stamp is None:
+            observed_state_stamp=req("POST",f"http://127.0.0.1:{self.pa}/agent/read",{"object_id":oid})["state_stamp"]
+        return req("POST",f"http://127.0.0.1:{self.pa}/agent/propose",{"object_id":oid,"proposed_body":proposed_body,"observed_state_stamp":observed_state_stamp})
 
     def test_three_required_cross_entry_chains(self):
         # Native create -> Agent read
@@ -68,7 +94,7 @@ class RealEntries(unittest.TestCase):
         self.assertEqual(agent_read["state_stamp"]["state_stamp_digest"],created["state_stamp"]["state_stamp_digest"])
 
         # Agent proposal -> Native confirm
-        proposed=req("POST",f"http://127.0.0.1:{self.pa}/agent/propose",{"object_id":oid,"proposed_body":{"items":["walk","coffee"]}})
+        proposed=self.agent_propose(oid,{"items":["walk","coffee"]},agent_read["state_stamp"])
         self.assertTrue(proposed["ok"])
         native_view=req("GET",f"http://127.0.0.1:{self.pn}/api/objects/{oid}")
         confirmed=req("POST",f"http://127.0.0.1:{self.pn}/api/objects/{oid}/confirm",{"proposal_id":proposed["proposal_id"],"state_stamp":native_view["state_stamp"],"request_id":"req-confirm-001"})
@@ -82,7 +108,7 @@ class RealEntries(unittest.TestCase):
 
     def test_idempotent_confirm_and_conflict(self):
         c=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"Idem","body":{"v":1},"request_id":"req-create-idem"}); oid=c["object_id"]
-        p=req("POST",f"http://127.0.0.1:{self.pa}/agent/propose",{"object_id":oid,"proposed_body":{"v":2}})
+        p=self.agent_propose(oid,{"v":2})
         view=req("GET",f"http://127.0.0.1:{self.pn}/api/objects/{oid}")
         a=req("POST",f"http://127.0.0.1:{self.pn}/api/objects/{oid}/confirm",{"proposal_id":p["proposal_id"],"state_stamp":view["state_stamp"],"request_id":"req-confirm-idem"})
         b=req("POST",f"http://127.0.0.1:{self.pn}/api/objects/{oid}/confirm",{"proposal_id":p["proposal_id"],"state_stamp":view["state_stamp"],"request_id":"req-confirm-idem"})
@@ -100,10 +126,10 @@ class RealEntries(unittest.TestCase):
 
     def test_stale_native_confirmation_fails_closed(self):
         c=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"Stale","body":{"v":1},"request_id":"req-create-stale"}); oid=c["object_id"]
-        p1=req("POST",f"http://127.0.0.1:{self.pa}/agent/propose",{"object_id":oid,"proposed_body":{"v":2}})
+        p1=self.agent_propose(oid,{"v":2})
         stale_view=req("GET",f"http://127.0.0.1:{self.pn}/api/objects/{oid}")
         ok=req("POST",f"http://127.0.0.1:{self.pn}/api/objects/{oid}/confirm",{"proposal_id":p1["proposal_id"],"state_stamp":stale_view["state_stamp"],"request_id":"req-stale-first"}); self.assertTrue(ok["ok"])
-        p2=req("POST",f"http://127.0.0.1:{self.pa}/agent/propose",{"object_id":oid,"proposed_body":{"v":3}})
+        p2=self.agent_propose(oid,{"v":3})
         bad=req("POST",f"http://127.0.0.1:{self.pn}/api/objects/{oid}/confirm",{"proposal_id":p2["proposal_id"],"state_stamp":stale_view["state_stamp"],"request_id":"req-stale-second"})
         self.assertEqual(bad.get("error"),"STALE_CONTEXT_REQUIRES_REFRESH")
 
@@ -113,6 +139,28 @@ class RealEntries(unittest.TestCase):
         # Supplying a principal label is intentionally irrelevant; only the entry credential selects the server-side principal.
         ok=req("POST",f"http://127.0.0.1:{self.pg}/v1/sessions",{"entry_kind":"NATIVE","entry_secret":self.native_secret,"principal":"agent-host"})
         self.assertEqual(ok["principal"],"native-user")
+
+    def test_entry_ports_reject_callers_without_access_credentials(self):
+        status,native=raw_req("POST",f"http://127.0.0.1:{self.pn}/api/objects",'{"title":"no","request_id":"req-unauth-0001"}',authorized=False)
+        self.assertEqual(status,401); self.assertEqual(native.get("error"),"ENTRY_ACCESS_DENIED")
+        status,agent=raw_req("POST",f"http://127.0.0.1:{self.pa}/agent/read",'{"object_id":"obj_unknown"}',authorized=False)
+        self.assertEqual(status,401); self.assertEqual(agent.get("error"),"ENTRY_ACCESS_DENIED")
+        status,wrong=raw_req("POST",f"http://127.0.0.1:{self.pa}/agent/read",'{"object_id":"obj_unknown"}',authorization="Bearer "+self.native_access)
+        self.assertEqual(status,401); self.assertEqual(wrong.get("error"),"ENTRY_ACCESS_DENIED")
+        status,cross_origin=raw_req("POST",f"http://127.0.0.1:{self.pn}/api/objects",'{"title":"no","request_id":"req-csrf-0001"}',origin="https://other.example")
+        self.assertEqual(status,403); self.assertEqual(cross_origin.get("error"),"ENTRY_ORIGIN_DENIED")
+
+    def test_agent_proposal_rejects_observation_that_became_stale(self):
+        created=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"Agent stale","body":{"v":1},"request_id":"req-agent-stale-create"})
+        oid=created["object_id"]
+        observed=req("POST",f"http://127.0.0.1:{self.pa}/agent/read",{"object_id":oid})["state_stamp"]
+        first=self.agent_propose(oid,{"v":2},observed)
+        confirmed=req("POST",f"http://127.0.0.1:{self.pn}/api/objects/{oid}/confirm",{"proposal_id":first["proposal_id"],"state_stamp":observed,"request_id":"req-agent-stale-confirm"})
+        self.assertTrue(confirmed["ok"])
+        stale=self.agent_propose(oid,{"v":3},observed)
+        self.assertEqual(stale.get("error"),"STALE_CONTEXT_REQUIRES_REFRESH")
+        status,missing=raw_req("POST",f"http://127.0.0.1:{self.pa}/agent/propose",json.dumps({"object_id":oid,"proposed_body":{"v":3}}))
+        self.assertEqual(status,400); self.assertEqual(missing.get("error"),"OBSERVED_STATE_REQUIRED")
 
     def test_duplicate_json_key_and_float_rejected_at_entry(self):
         status,payload=raw_req("POST",f"http://127.0.0.1:{self.pn}/api/objects",'{"title":"dup","body":{"v":1,"v":2},"request_id":"req-dup-0001"}')
@@ -129,21 +177,40 @@ class RealEntries(unittest.TestCase):
     def test_native_five_user_surfaces_render(self):
         c=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"UI","body":{"items":[]},"request_id":"req-ui-create-01"}); oid=c["object_id"]
         # Agent creates an open suggestion so the suggestion/diff/confirm surface has real content.
-        req("POST",f"http://127.0.0.1:{self.pa}/agent/propose",{"object_id":oid,"proposed_body":{"items":["x"]}})
+        self.agent_propose(oid,{"items":["x"]})
         urls=["/",f"/object/{oid}",f"/object/{oid}/proposals",f"/object/{oid}/history",f"/object/{oid}/connection"]
         for path in urls:
-            with urlopen(f"http://127.0.0.1:{self.pn}{path}",timeout=5) as r:
+            url=f"http://127.0.0.1:{self.pn}{path}"
+            with urlopen(Request(url,headers=headers_for(url)),timeout=5) as r:
                 text=r.read().decode(); self.assertEqual(r.status,200); self.assertIn("<html",text)
+                if path.endswith("/proposals"):
+                    self.assertIn("--- current",text); self.assertIn("+++ proposed",text)
+
+    def test_native_create_form_reuses_request_identity_on_retry(self):
+        page_url=f"http://127.0.0.1:{self.pn}/"
+        with urlopen(Request(page_url,headers=headers_for(page_url)),timeout=5) as response:
+            page=response.read().decode()
+        request_id=re.search(r'name="request_id" value="([^"]+)"',page).group(1)
+        url=f"http://127.0.0.1:{self.pn}/create"
+        data=urlencode({"title":"Form replay","body_json":"{}","request_id":request_id}).encode()
+        def submit():
+            headers=headers_for(url); headers["Content-Type"]="application/x-www-form-urlencoded"
+            with urlopen(Request(url,data=data,headers=headers,method="POST"),timeout=5) as response:
+                return response.read().decode()
+        first=submit(); replay=submit()
+        self.assertEqual(re.search(r'/object/(obj_[a-z0-9]+)',first).group(1),re.search(r'/object/(obj_[a-z0-9]+)',replay).group(1))
 
     def test_request_id_different_payload_conflicts(self):
         first=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"One","body":{"v":1},"request_id":"req-conflict-create"})
         self.assertTrue(first["ok"])
         second=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"Two","body":{"v":2},"request_id":"req-conflict-create"})
         self.assertEqual(second.get("error"),"IDEMPOTENCY_CONFLICT")
+        status,duplicate_title=raw_req("POST",f"http://127.0.0.1:{self.pn}/api/objects",'{"title":"One","body":{"title":"One"},"request_id":"req-title-in-body"}')
+        self.assertEqual(status,400); self.assertEqual(duplicate_title.get("error"),"TITLE_IN_BODY_NOT_ALLOWED")
 
     def test_z_gateway_restart_preserves_current_and_session(self):
         c=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"Restart","body":{"v":1},"request_id":"req-restart-create"}); oid=c["object_id"]
-        p=req("POST",f"http://127.0.0.1:{self.pa}/agent/propose",{"object_id":oid,"proposed_body":{"v":2}})
+        p=self.agent_propose(oid,{"v":2})
         view=req("GET",f"http://127.0.0.1:{self.pn}/api/objects/{oid}")
         commit=req("POST",f"http://127.0.0.1:{self.pn}/api/objects/{oid}/confirm",{"proposal_id":p["proposal_id"],"state_stamp":view["state_stamp"],"request_id":"req-restart-confirm"})
         old=self.procs[0]; stop_proc(old)
@@ -156,10 +223,7 @@ class RealEntries(unittest.TestCase):
     def test_agent_cannot_confirm_and_native_cannot_propose_at_gateway(self):
         # Authorization is service-side; entry role is not authority by itself.
         # This test observes the public Agent adapter surface: it intentionally has no confirm endpoint.
-        try:
-            req("POST",f"http://127.0.0.1:{self.pa}/agent/confirm",{})
-        except Exception as e:
-            # 404 is expected; urllib raises for it.
-            self.assertIn("404",str(e))
+        status,payload=raw_req("POST",f"http://127.0.0.1:{self.pa}/agent/confirm",'{}')
+        self.assertEqual(status,404); self.assertEqual(payload.get("error"),"NOT_FOUND")
 
 if __name__=="__main__": unittest.main(verbosity=2)

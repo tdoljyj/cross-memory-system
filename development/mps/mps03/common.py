@@ -1,5 +1,5 @@
 from __future__ import annotations
-import hashlib, json, time, uuid
+import base64, binascii, hashlib, json, secrets, time, uuid
 from typing import Any
 
 PROTOCOL_VERSION = "clued.mps03.entry.v1"
@@ -46,3 +46,32 @@ def strict_json_loads(raw: str):
         raise
     except Exception as e:
         raise ProtocolError("INVALID_JSON", "request body must be valid JSON", 400, {"reason": str(e)})
+
+
+def require_entry_access(header: str, kind: str, access_secret: str) -> None:
+    """Authenticate the caller at the entry, independently of its gateway session."""
+    try:
+        scheme, value = header.split(" ", 1)
+        if kind == "NATIVE":
+            if scheme.lower() != "basic":
+                raise ValueError("Basic required")
+            decoded = base64.b64decode(value, validate=True).decode("utf-8")
+            user, supplied_secret = decoded.split(":", 1)
+            valid = secrets.compare_digest(user, "native") and secrets.compare_digest(supplied_secret, access_secret)
+        else:
+            valid = scheme.lower() == "bearer" and secrets.compare_digest(value, access_secret)
+    except (ValueError, UnicodeError, binascii.Error):
+        valid = False
+    if not valid:
+        raise ProtocolError("ENTRY_ACCESS_DENIED", "entry caller credential required", 401)
+
+
+def validate_create_content(title: str, body: Any) -> dict:
+    """Keep the full create payload represented in the formal content digest."""
+    if not isinstance(title, str) or not title.strip():
+        raise ProtocolError("INVALID_TITLE", "title must be a nonempty string", 400)
+    if not isinstance(body, dict):
+        raise ProtocolError("JSON_OBJECT_REQUIRED", "object body must be a JSON object", 400)
+    if "title" in body:
+        raise ProtocolError("TITLE_IN_BODY_NOT_ALLOWED", "title must be supplied only in the title field", 400)
+    return {**body, "title": title}

@@ -15,10 +15,10 @@ import argparse, base64, json, os, shutil, subprocess, threading
 from typing import Any
 
 try:
-    from .common import ProtocolError, new_id, sha256_json
+    from .common import ProtocolError, new_id, sha256_json, validate_create_content
     from .gateway_http import Handler
 except ImportError:
-    from common import ProtocolError, new_id, sha256_json
+    from common import ProtocolError, new_id, sha256_json, validate_create_content
     from gateway_http import Handler
 
 EXPECTED_NONPROD_TARGET = "clued-auth-test/uscrdifznmlvczcekqpw"
@@ -133,7 +133,7 @@ select jsonb_build_object('ok',true,'object_id',{_t('oid')},'title',coalesce(h.c
     def create_object(self, token: str, title: str, body: dict, request_id: str) -> dict:
         s=self._session(token); self._require(s,"create")
         if not request_id or len(request_id)<8: raise ProtocolError("REQUEST_ID_REQUIRED","request_id is required")
-        content=dict(body); content.setdefault("title",title)
+        content=validate_create_content(title,body)
         # The installed MPS-02B commit primitive requires an existing Object/Current.
         # Build that otherwise-invisible basis and the formal create MutationIntent in the
         # same transaction. The only durable request/outcome/Receipt commit is still
@@ -213,8 +213,8 @@ begin
   insert into clued_private.mps_revisions(object_id,revision_id,revision_digest,content)
     values(
       v_oid,v_rid,
-      clued_private.mps_json_v1_sha256('{"_mps03_bootstrap":1}'::jsonb),
-      '{"_mps03_bootstrap":1}'::jsonb);
+       clued_private.mps_json_v1_sha256('{{"_mps03_bootstrap":1}}'::jsonb),
+       '{{"_mps03_bootstrap":1}}'::jsonb);
   insert into clued_private.mps_adoptions(object_id,adoption_id,revision_id,adoption_scope,adoption_purpose)
     values(v_oid,v_aid,v_rid,'object','mps03_create_bootstrap');
   insert into clued_private.mps_workflow_versions(
@@ -245,12 +245,15 @@ begin
     'target_revision',pg_catalog.jsonb_build_object(
       'mode','DERIVE_FROM_EXACT_CHANGE','change_id',v_change->>'change_id','change_digest',v_change->>'change_digest'),
     'adoption_scope','object','adoption_purpose','create'));
-  v_stamp:=v_pack#>'{context_pack,composite_state_stamp}';
+  v_stamp:=v_pack#>'{{context_pack,composite_state_stamp}}';
   v_fingerprint:=clued_private.mps_compute_request_fingerprint(v_intent,v_stamp);
   v_outcome:=clued_private.mps_commit_mutation(
     v_in.authority_domain_id,v_in.principal,v_in.request_id,
     pg_catalog.jsonb_build_object(
-      'confirmation_intent',v_intent,'composite_state_stamp',v_stamp,'request_fingerprint',v_fingerprint));
+       'confirmation_intent',v_intent,'composite_state_stamp',v_stamp,'request_fingerprint',v_fingerprint));
+  if v_outcome->>'status' is distinct from 'committed' then
+    raise exception 'MPS03_CREATE_NOT_COMMITTED:%',coalesce(v_outcome->>'error','unknown') using errcode='P0001';
+  end if;
   insert into _mps03_create_result values(
     pg_catalog.jsonb_build_object('ok',v_outcome->>'status'='committed','object_id',v_oid) || v_outcome);
 end
@@ -262,11 +265,8 @@ commit;
             "domain":self.authority_domain,"principal":s["principal"],"request_id":request_id,
             "native":self.native_principal,"agent":self.agent_principal})
         if outcome.get("status") == "committed":
-            oid=outcome.get("object_id")
-            current=self._read_for(s["principal"],oid,"read")
             return {"ok":True,**outcome,"revision_id":outcome.get("result_revision_id"),
-                "adoption_id":outcome.get("result_adoption_id"),"body":current.get("body"),
-                "state_stamp":current.get("state_stamp")}
+                "adoption_id":outcome.get("result_adoption_id")}
         return outcome
 
     def read_object(self, token: str, object_id: str) -> dict:
@@ -361,8 +361,7 @@ select coalesce(o.outcome,jsonb_build_object('status','conflict','error','MPS_IN
 """
         outcome=self._json(sql,{"oid":object_id,"pid":proposal_id,"stamp":json.dumps(submitted_stamp,ensure_ascii=False,separators=(",",":")),"domain":self.authority_domain,"principal":s["principal"],"request_id":request_id})
         if outcome.get("status") == "committed":
-            current=self._read_for(s["principal"],object_id,"read")
-            return {"ok":True,**outcome,"object_id":object_id,"revision_id":outcome.get("result_revision_id"),"adoption_id":outcome.get("result_adoption_id"),"body":current.get("body"),"state_stamp":current.get("state_stamp")}
+            return {"ok":True,**outcome,"object_id":object_id,"revision_id":outcome.get("result_revision_id"),"adoption_id":outcome.get("result_adoption_id")}
         return {"ok":False,**outcome}
 
     def history(self, token: str, object_id: str) -> dict:

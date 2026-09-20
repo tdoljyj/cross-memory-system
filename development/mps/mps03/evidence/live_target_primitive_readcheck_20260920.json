@@ -1,0 +1,19 @@
+{
+  "schema": "clued.mps03.live-target-primitive-readcheck.v1",
+  "captured_on": "2026-09-20",
+  "method": "Supabase connected execute_sql; read-only metadata queries",
+  "project_id": "uscrdifznmlvczcekqpw",
+  "target": "clued-auth-test",
+  "database_name": "postgres",
+  "has_pg_catalog_jsonb_object_length": false,
+  "has_clued_private_mps_register_change_set": true,
+  "has_clued_private_mps_commit_mutation": true,
+  "installed_register_change_set_uses_missing_function": false,
+  "qualification": "READ_ONLY_METADATA_ONLY",
+  "live_bridge_write_executed_this_validation": false,
+  "source_queries": [
+    "select current_database(), to_regprocedure('pg_catalog.jsonb_object_length(jsonb)') is not null, to_regprocedure('clued_private.mps_register_change_set(text,text,jsonb)') is not null, to_regprocedure('clued_private.mps_commit_mutation(text,text,text,jsonb)') is not null",
+    "select position('pg_catalog.jsonb_object_length' in pg_get_functiondef(to_regprocedure('clued_private.mps_register_change_set(text,text,jsonb)'))) > 0"
+  ],
+  "note": "The supplied historical MPS-02B SQL copy uses a nonstandard pg_catalog function on a clean PostgreSQL 17 database. The installed function on this named target does not use that missing function. No claim about other installed-function semantics or live MPS-03 bridge execution follows from this read."
+}
