@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 REPO=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(REPO/"development"))
 from mps.mps03.client import GatewayClient
-from mps.mps03.common import ProtocolError
+from mps.mps03.common import ProtocolError, request_content_length
 from mps.mps03.gateway_http import Handler
 from mps.mps03.native_entry import NativeHandler
 from mps.mps03.agent_host_entry import AgentHandler
@@ -44,6 +44,12 @@ class ErrorBoundaries(unittest.TestCase):
             store=object()
         gateway=ThreadingHTTPServer(("127.0.0.1",0),GatewayTestHandler)
         gateway_thread=threading.Thread(target=gateway.serve_forever,daemon=True); gateway_thread.start()
+        native_access="mps03-native-access-"+"x"*32
+        class NativeTestHandler(NativeHandler):
+            access_secret=native_access
+        NativeTestHandler.client=client
+        native=ThreadingHTTPServer(("127.0.0.1",0),NativeTestHandler)
+        native_thread=threading.Thread(target=native.serve_forever,daemon=True); native_thread.start()
         try:
             with self.assertRaises(ProtocolError) as caught: client.start_session()
             self.assertEqual(caught.exception.status,401)
@@ -55,8 +61,9 @@ class ErrorBoundaries(unittest.TestCase):
             for port,path,headers in (
                 (agent.server_port,"/agent/read",{"Authorization":"Bearer "+access}),
                 (gateway.server_port,"/v1/sessions",{}),
+                (native.server_port,"/api/objects",{"Authorization":"Basic "+base64.b64encode(("native:"+native_access).encode()).decode()}),
             ):
-                for length in ("invalid","-1"):
+                for length in ("invalid","-1","","+1","1 ","1, 1"):
                     with self.subTest(port=port,length=length):
                         conn=HTTPConnection("127.0.0.1",port,timeout=5)
                         conn.putrequest("POST",path)
@@ -67,9 +74,28 @@ class ErrorBoundaries(unittest.TestCase):
                         self.assertEqual(response.status,400)
                         self.assertEqual(json.loads(response.read())["error"],"INVALID_CONTENT_LENGTH")
                         conn.close()
+                with self.subTest(port=port,length="duplicate"):
+                    conn=HTTPConnection("127.0.0.1",port,timeout=5)
+                    conn.putrequest("POST",path)
+                    conn.putheader("Content-Length","0")
+                    conn.putheader("Content-Length","0")
+                    for name,value in headers.items(): conn.putheader(name,value)
+                    conn.endheaders()
+                    response=conn.getresponse()
+                    self.assertEqual(response.status,400)
+                    self.assertEqual(json.loads(response.read())["error"],"INVALID_CONTENT_LENGTH")
+                    conn.close()
         finally:
-            for server,thread in ((agent,agent_thread),(gateway,gateway_thread),(denied,denied_thread)):
+            for server,thread in ((native,native_thread),(agent,agent_thread),(gateway,gateway_thread),(denied,denied_thread)):
                 server.shutdown(); server.server_close(); thread.join(timeout=5)
+
+    def test_content_length_rejects_non_ascii_decimal_digits(self):
+        from email.message import Message
+        headers=Message()
+        headers.add_header("Content-Length","\u0661")
+        with self.assertRaises(ProtocolError) as caught:
+            request_content_length(headers)
+        self.assertEqual(caught.exception.code,"INVALID_CONTENT_LENGTH")
 
     def test_store_conflict_is_http_409_for_gateway_native_form_and_api(self):
         class ConflictStore:

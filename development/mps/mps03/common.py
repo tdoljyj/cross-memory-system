@@ -36,6 +36,18 @@ class ProtocolError(RuntimeError):
     def as_dict(self) -> dict:
         return {"ok": False, "error": self.code, "message": self.message, "details": self.details}
 
+def request_content_length(headers) -> int:
+    """Accept one canonical ASCII decimal length, or an absent header for an empty body."""
+    values = headers.get_all("Content-Length", [])
+    if not values:
+        return 0
+    if len(values) != 1 or not values[0] or not values[0].isascii() or not values[0].isdecimal():
+        raise ProtocolError("INVALID_CONTENT_LENGTH", "invalid request length", 400)
+    try:
+        return int(values[0])
+    except ValueError:
+        raise ProtocolError("INVALID_CONTENT_LENGTH", "invalid request length", 400) from None
+
 def strict_utf8_decode(raw: bytes) -> str:
     try:
         return raw.decode("utf-8")

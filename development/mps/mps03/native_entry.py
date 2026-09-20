@@ -5,10 +5,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 try:
     from .client import GatewayClient
-    from .common import strict_json_loads, strict_utf8_decode, ProtocolError, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
+    from .common import strict_json_loads, strict_utf8_decode, ProtocolError, request_content_length, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
 except ImportError:
     from client import GatewayClient
-    from common import strict_json_loads, strict_utf8_decode, ProtocolError, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
+    from common import strict_json_loads, strict_utf8_decode, ProtocolError, request_content_length, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
 
 class NativeHandler(BaseHTTPRequestHandler):
     client: GatewayClient = None  # type: ignore
@@ -17,9 +17,7 @@ class NativeHandler(BaseHTTPRequestHandler):
     def log_message(self,fmt,*args):
         if os.environ.get("MPS03_HTTP_LOG")=="1": super().log_message(fmt,*args)
     def _raw(self,max_bytes=None):
-        try: n=int(self.headers.get("Content-Length","0") or 0)
-        except ValueError: raise ProtocolError("INVALID_CONTENT_LENGTH","invalid request length",400) from None
-        if n<0: raise ProtocolError("INVALID_CONTENT_LENGTH","invalid request length",400)
+        n=request_content_length(self.headers)
         if max_bytes is not None and n>max_bytes: raise ProtocolError("FORM_TOO_LARGE","form exceeds the supported size",413)
         return self.rfile.read(n) if n else b""
     def _body(self):

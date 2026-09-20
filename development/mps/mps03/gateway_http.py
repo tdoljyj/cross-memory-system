@@ -4,7 +4,7 @@ import json, os
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
-from .common import ProtocolError, strict_json_loads, strict_utf8_decode
+from .common import ProtocolError, request_content_length, strict_json_loads, strict_utf8_decode
 
 STORE_ERROR_STATUS = {
     "IDEMPOTENCY_CONFLICT": 409, "STALE_CONTEXT_REQUIRES_REFRESH": 409,
@@ -24,9 +24,7 @@ class Handler(BaseHTTPRequestHandler):
             super().log_message(fmt, *args)
 
     def _json(self):
-        try: n = int(self.headers.get("Content-Length", "0") or 0)
-        except ValueError: raise ProtocolError("INVALID_CONTENT_LENGTH", "invalid request length", 400) from None
-        if n < 0: raise ProtocolError("INVALID_CONTENT_LENGTH", "invalid request length", 400)
+        n = request_content_length(self.headers)
         raw = self.rfile.read(n) if n else b"{}"
         value = strict_json_loads(strict_utf8_decode(raw))
         if not isinstance(value, dict):
