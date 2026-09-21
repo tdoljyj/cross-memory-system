@@ -14,7 +14,7 @@ export const P6_AUTHORITY_CONFLICT_POLICY = {
 } as const;
 
 export const currentWorkContract = {
-  version: "clued-v1.6-m1",
+  version: "clued-v1.6-m1-k-cont",
   read_order: [
     "global_registry_and_priority",
     "project_state_task_decision",
@@ -39,6 +39,9 @@ export const currentWorkContract = {
   project_merge_write_enabled: false,
   canonical_export: "authorized_live_recheck",
   double_write: false,
+  constraint_marker: "decision.type_fields.constraint=true",
+  checkpoint_coverage: "explicit_context_track_and_event_ids",
+  unabsorbed_owner_decisions: "remain_pending_until_explicitly_absorbed",
 } as const;
 
 export const recordTools = [
@@ -65,7 +68,7 @@ export const recordTools = [
   {
     name: "clued_record_mutate",
     description:
-      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt.",
+      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). Use decision.type_fields.constraint=true for a resident constraint.",
     inputSchema: {
       type: "object",
       required: ["operation", "record_type", "record_schema_version", "lifecycle_status", "scope", "idempotency_key", "authority", "confidence_reason"],
@@ -81,7 +84,18 @@ export const recordTools = [
         base_version: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] },
         source_refs: { type: "array", uniqueItems: true, items: { type: "string", format: "uuid" } },
         source_unavailable_reason: { anyOf: [{ type: "string", maxLength: 1000 }, { type: "null" }] },
-        mutation: { type: "object" },
+        mutation: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            content: { type: "string" },
+            type_fields: { type: "object" },
+            relations: { type: "object" },
+            closure_summary: { type: "string" },
+            closed_reason: { type: "string" },
+          },
+          additionalProperties: false,
+        },
         reclassification_reason: { anyOf: [{ type: "string" }, { type: "null" }] },
         authority: { type: "string", enum: ["user_explicit", "observed", "inferred", "imported"] },
         user_confirmed: { type: "boolean" },
