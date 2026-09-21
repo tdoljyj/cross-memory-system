@@ -1,0 +1,61 @@
+{
+  "schema_version": "clued.model-m1-08-owner-final-issuance-receipt/1",
+  "record_id": "M1-LIFE-QWEN35-08B-PC-001-FINAL-ISSUANCE-20260921T020013Z",
+  "status": "OWNER_FINAL_ISSUANCE_COMPLETE / ISSUED / VALIDATE_ONLY_PASS / NOT_EXECUTED / ATTEMPT_GUARD_ABSENT / NO_MERGE",
+  "task_id": "M1-08",
+  "reviewed_exact_head": "6ef2994a948a88a158d76de50a5f6586b95ae59f",
+  "independent_review_verdict": "PASS / M1_08_OWNER_ROOT_PINNED_SUCCESSOR_ACCEPTABLE_FOR_FINAL_ISSUANCE_PREPARATION",
+  "candidate_sha256": "b66e3273367becf1e01a3b5aed923e11421734d44fc8c1a7af47ae4b7643ca67",
+  "issued_profile_path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.issued.json",
+  "issued_profile_sha256": "56bb22bce8f4afcc53e4fa5b08ae5d972d36f1706b651d7603b50907a2277279",
+  "issued_at_utc": "2026-09-21T02:00:13Z",
+  "expiry": "2026-09-22T02:00:13Z",
+  "expiry_policy": "ISSUED_AT_PLUS_24_HOURS",
+  "owner_authorization_id": "OWNER-M1-08-FINAL-20260921T020013Z-5becdd3f-3f2d-4ecb-a29b-2f8eac6e6fde",
+  "owner_authorization_sha256": "651218b66f23e4c3f99c8171bfc109b188ca9c5276fef1d11fe5c10f45b24a80",
+  "owner_public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
+  "owner_private_key_locator": "windows-local-owner-key://DESK-W-591/Clued/M1-07/Owner-Ed25519-Root",
+  "owner_private_key_material_exported": false,
+  "effectful_owner_source_tree_git_sha1": "968b8cedb9e8c854968436a1482d534bc774b481",
+  "effectful_owner_source_manifest_git_blob_sha1": "ed46f7aeb8509d09c60048a09ff68013c257d393",
+  "effectful_owner_source_manifest_sha256": "67e9f42be2a7933c42c62386c873e113bade3ba365fe89b28f73a4ac982d641e",
+  "effectful_owner_binary_sha256": "7e9a9e7dfc32a92646dcff5a278d86a9dbd79556152a937e1c5bfda75b946785",
+  "guard_parent_preissuance_evidence_sha256": "dcd914376d2bbd8fd8112104861200cf1f103aee567ea6d6f5500d9632a9349a",
+  "guard_parent_live_revalidation": {
+    "revalidated_at_utc": "2026-09-21T02:00:13Z",
+    "method": "EXACT_6ef2994_PRODUCTION_PATH_SAFETY_AND_PINNED_DIRECTORY_IDENTITY / verifySafeExistingPath -> pinDirectory -> directoryIdentityHandle -> readPinnedDirectory",
+    "identity": {
+      "canonical_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001",
+      "filesystem_type": "NTFS",
+      "volume_serial": "9686166e",
+      "file_id": "008e000000093e73",
+      "owner_sid": "S-1-5-21-858977881-4031698862-3006450925-1000",
+      "security_descriptor_sha256": "f9a26120ad42e5b810fa72ecbd2713b82ca9f5f5c7c1932e339b08d17b6e6f85",
+      "empty_parent": true,
+      "non_reparse": true
+    },
+    "attempt_guard_absent": true
+  },
+  "native_validate_only": {
+    "execution_ready": false,
+    "model_loaded": false,
+    "profile_checks_ready": true,
+    "profile_id": "M1-LIFE-QWEN35-08B-PC-001-ISSUED",
+    "reason": "READY_FOR_NATIVE_AUTHORIZATION",
+    "server_started": false
+  },
+  "issuance_helper_sha256": "24a73f0acbb0c88dda1a2b8d513c7a4bf284d0da894f2acdfce5cefa54aac5f3",
+  "effects": {
+    "owner_binary_execute_mode_invoked": false,
+    "attempt_guard_created": false,
+    "llama_server_started": false,
+    "model_loaded": false,
+    "real_m1_08_lifecycle_executed": false,
+    "training_or_distillation_performed": false,
+    "promotion_or_activation_performed": false,
+    "production_mutation": false,
+    "release_performed": false,
+    "repository_merge_performed": false
+  },
+  "next_gate": "SEPARATE_OWNER_DECISION_TO_INVOKE_EXACT_ISSUED_PROFILE_ONCE_BEFORE_EXPIRY"
+}
