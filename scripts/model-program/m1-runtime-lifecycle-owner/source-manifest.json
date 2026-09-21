@@ -133,9 +133,9 @@
                   },
                   {
                       "path":  "predecessor_guard_test.go",
-                      "bytes":  2198,
-                      "sha256":  "e381cbf7307817200958ad0123f92050622699db8768476be493ab74fc655b0e",
-                      "git_blob_sha1":  "9df0f4a18e8df792bf9f57199260136ddd874085"
+                      "bytes":  2567,
+                      "sha256":  "907d77560b6e2f7fe9369041bed8b16e6de43ce3dd9a10002536f7ecc625d019",
+                      "git_blob_sha1":  "8a0ea8682cd953e119489f41121e1ad67aa480cc"
                   },
                   {
                       "path":  "probe_structural_test.go",
@@ -224,8 +224,8 @@
                         "pc002_retry_allowed":  false,
                         "pc001_guard_preservation_required":  true,
                         "pc002_guard_preservation_required":  true,
-                        "status":  "ATTEMPT3_SUCCESSOR_PREPARATION / STRUCTURAL_PROBE_REMEDIATION / EXACT_WINDOWS_REQUALIFICATION_REQUIRED / NO_FINAL_ISSUANCE",
-                        "validation_boundary":  "NO PC003 PARENT PROVISIONING / NO PC003 ATTEMPT_GUARD / NO OWNER EFFECTFUL EXECUTION / NOT_INDEPENDENT_REVIEW"
+                        "status":  "ATTEMPT3_SUCCESSOR_PREPARATION / STRUCTURAL_PROBE_REMEDIATION / PC003_PARENT_PROVISIONED_REVIEWED / EXACT_WINDOWS_REQUALIFICATION_REQUIRED / NO_FINAL_ISSUANCE",
+                        "validation_boundary":  "PC003 PARENT PROVISIONING IS EXTERNAL REVIEWED EVIDENCE ONLY / BUILD DOES NOT CREATE OR MODIFY PARENT / NO PC003 ATTEMPT GUARD / NO OWNER EFFECTFUL EXECUTION / NOT_INDEPENDENT_REVIEW"
                     },
     "role":  "EFFECTFUL_OWNER_ATTEMPT3_PROBE_REMEDIATION_PREPARATION / NO_FINAL_ISSUANCE / NO_EXECUTION",
     "schema_version":  "clued.m1-08-native-owner-source-manifest/1",
@@ -236,7 +236,7 @@
                                              "predecessor_source_tree":  "968b8cedb9e8c854968436a1482d534bc774b481",
                                              "owner_root_reuse":  "EXPLICITLY_AUTHORIZED",
                                              "guard_parent_preissuance_evidence":  {
-                                                                                       "status":  "PENDING_SEPARATE_PC003_PARENT_PROVISIONING_REVIEW",
+                                                                                       "status":  "REVIEWED_AND_BOUND_IN_SUCCESSOR_PROFILE / POINT_IN_TIME_ONLY",
                                                                                        "point_in_time_only":  true,
                                                                                        "revalidation_required_at_final_issuance_and_execution":  true
                                                                                    },
@@ -250,5 +250,5 @@
                                          },
     "candidate_profile_binding_semantics":  "IMPLEMENTATION_BASE_CANDIDATE_ONLY / NOT_SUCCESSOR_QUALIFICATION_TARGET",
     "successor_profile_path":  "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-003.owner-root-pinned.candidate.json",
-    "successor_profile_qualification_semantics":  "BUILD_HELPER_VALIDATES NON-ISSUED PC003 SUCCESSOR PROFILE SOURCE PATH/MANIFEST/TREE + PINNED OWNER ROOT + AUTHORITY CLOSED; PC003 PARENT BINDINGS REMAIN PENDING SEPARATE PROVISIONING REVIEW"
+    "successor_profile_qualification_semantics":  "BUILD_HELPER_VALIDATES NON-ISSUED PC003 SUCCESSOR PROFILE SOURCE PATH/MANIFEST/TREE + PINNED OWNER ROOT + REVIEWED PC003 PARENT BINDINGS + AUTHORITY CLOSED; LIVE PARENT REVALIDATION REMAINS REQUIRED AT FINAL ISSUANCE AND EXECUTION"
 }
