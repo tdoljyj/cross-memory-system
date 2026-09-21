@@ -52,9 +52,11 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
 
     const userId = uuid();
     const tokenHash = hash();
+    const projectContext = `project:${uuid()}`;
     await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'k-cont@example.invalid',now())", [userId]);
     await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
-      values($1,'synthetic','K-CONT database test',$2,array['context:read','context:write','audit:read'],array['global'])`, [userId, tokenHash]);
+      values($1,'synthetic','K-CONT database test',$2,array['context:read','context:write','audit:read'],array['global',$3])`,
+      [userId, tokenHash, projectContext]);
     const anon = server.getPgClient();
     clients.push(anon);
     await anon.connect();
@@ -96,9 +98,43 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     assert.equal(constrained.active_constraints[0].title, "Resident constraint");
     assert.ok(constrained.authority_conflicts.some((item) => item.title === "Resident constraint" && item.status === "review_required"));
 
-    const workLog = await rpc("clued_mcp_restore", { context_key: "global", response_view: "work_log" });
+    const boundedSession = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
+    const boundedFirst = await rpc("clued_mcp_append_event", {
+      context_key: "global", session_token: boundedSession.session_token, base_version: boundedSession.version,
+      event_type: "note", payload: { marker: "bounded-first" }, idempotency_key: uuid(),
+    });
+    await rpc("clued_mcp_append_event", {
+      context_key: "global", session_token: boundedSession.session_token, base_version: boundedFirst.version,
+      event_type: "note", payload: { marker: "bounded-second" }, idempotency_key: uuid(),
+    });
+    const workLog = await rpc("clued_mcp_restore", {
+      context_key: "global", response_view: "work_log", event_limit: 1, event_budget_bytes: 4096,
+    });
     assert.equal(typeof workLog.work_log, "string");
     assert.equal("events_after_checkpoint" in workLog, false);
+    assert.equal(workLog.event_page.returned, 1);
+    assert.equal(workLog.event_page.truncated, true);
+    assert.match(workLog.work_log, /bounded-first/);
+    assert.doesNotMatch(workLog.work_log, /bounded-second/);
+    assert.match(workLog.work_log, /More pending events remain/);
+
+    const projectWorkLog = await rpc("clued_mcp_restore", {
+      context_key: projectContext, response_view: "work_log", event_limit: 1, event_budget_bytes: 4096,
+    });
+    assert.match(projectWorkLog.work_log, /Resident constraint/);
+    assert.match(projectWorkLog.work_log, /scope=global/);
+
+    const exactCoverageSession = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
+    await assert.rejects(
+      rpc("clued_mcp_commit_checkpoint", {
+        context_key: "global", session_token: exactCoverageSession.session_token, base_version: exactCoverageSession.version,
+        snapshot: { stage: "K-CONT" }, summary: "Reject false cross-context coverage.",
+        next_action: "Keep both contexts separate.", idempotency_key: uuid(),
+        coverage: { mode: "explicit", contexts: ["global", projectContext], tracks: ["k-cont"], event_ids: [] },
+      }),
+      /checkpoint_context_not_covered/,
+    );
+
     const audit = await rpc("clued_mcp_audit_receipts", { context_key: "global" });
     assert.equal(Array.isArray(audit.session_compliance), true);
     assert.equal(typeof audit.checkpoint_reminder, "boolean");
