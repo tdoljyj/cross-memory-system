@@ -72,6 +72,15 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
       context_key: "global", session_token: restored.session_token, base_version: first.version,
       event_type: "note", payload: { marker: "k-cont-second" }, idempotency_key: uuid(),
     });
+    await assert.rejects(
+      rpc("clued_mcp_commit_checkpoint", {
+        context_key: "global", session_token: restored.session_token, base_version: second.version,
+        snapshot: { stage: "K-CONT" }, summary: "Reject missing coverage mode.",
+        next_action: "Keep both events pending.", idempotency_key: uuid(),
+        coverage: { contexts: ["global"], tracks: ["k-cont"], event_ids: [first.event_id] },
+      }),
+      /checkpoint_coverage_required/,
+    );
     const checkpoint = await rpc("clued_mcp_commit_checkpoint", {
       context_key: "global", session_token: restored.session_token, base_version: second.version,
       snapshot: { stage: "K-CONT" }, summary: "Absorb only the declared event.", next_action: "Resume the uncovered event.",
