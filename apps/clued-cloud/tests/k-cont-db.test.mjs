@@ -108,7 +108,7 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
       event_type: "note", payload: { marker: "bounded-second" }, idempotency_key: uuid(),
     });
     const workLog = await rpc("clued_mcp_restore", {
-      context_key: "global", response_view: "work_log", event_cursor: Number(second.event_id), event_limit: 1, event_budget_bytes: 4096,
+      context_key: "global", response_view: "work_log", event_cursor: Number(boundedFirst.event_id) - 1, event_limit: 1, event_budget_bytes: 4096,
     });
     assert.equal(typeof workLog.work_log, "string");
     assert.equal("events_after_checkpoint" in workLog, false);
