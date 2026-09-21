@@ -1,0 +1,220 @@
+{
+  "schema_version": "clued.model-m1-08-runtime-lifecycle-execution-closeout/1",
+  "record_id": "M1-LIFE-QWEN35-08B-PC-003-RUNTIME-LIFECYCLE-EXECUTION-CLOSEOUT-20260921",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-08",
+  "status": "AUTHOR_SIDE_CLOSEOUT_PASS / EFFECTFUL_EXECUTION_COMPLETE / ONE_SHOT_CONSUMED / FRESH_CONTEXT_FINAL_REVIEW_PENDING",
+  "role": "EXECUTION_CLOSEOUT_AUTHOR / NOT_FRESH_CONTEXT_REVIEWER",
+  "authority": {
+    "source": "CURRENT_CONVERSATION_COMBINED_AUTHORIZATION_20260921",
+    "reviewed_exact_head": "d9792adf9733757f705f2938d2de30f46afe4350",
+    "issued_profile_id": "M1-LIFE-QWEN35-08B-PC-003-ISSUED",
+    "issued_profile_sha256": "2d56f40fc50789b17fd4bd4e84b682ce1905452a1156f96a2ec2b05469e38f4b",
+    "final_issuance_commit": "bf8244b5d3503215f17a5c5471d5d3c364dac0a2",
+    "owner_authorization_id": "OWNER-M1-08-PC003-FINAL-20260921T093557Z-d88ef189-3b08-40de-b78c-b556c93080e9",
+    "owner_authorization_sha256": "d871e71668b6b9e557dc25c7f33be35740a04a17a94ba388e7b56b74e69f7cda",
+    "issued_at_utc": "2026-09-21T09:35:57Z",
+    "expiry": "2026-09-22T09:35:57Z",
+    "authority_effect": "M1-08_PC_RUNTIME_LIFECYCLE_SMOKE_EXECUTION_ONLY"
+  },
+  "execution": {
+    "device_name": "DESK-W-591",
+    "execution_started_utc": "2026-09-21T09:38:55.250055+00:00",
+    "execution_completed_utc": "2026-09-21T09:40:01.179528+00:00",
+    "process_exit_code": 0,
+    "native_result": {
+      "pass": true,
+      "scope": "M1_08_PC_RUNTIME_LIFECYCLE_SMOKE_EVIDENCE_ONLY"
+    },
+    "native_owner_sha256": "a527ff09ddfe23dd3b891b82d79cd3a5be5a6023960d24b06d1e2b784a2fe8a6",
+    "native_source_manifest_sha256": "637fc894b2388b130ed9d11dd4c6a06b3d5feada8775cf926fcd39a5f83a39ac",
+    "machine_identity_sha256": "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522",
+    "model_sha256_pre": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d",
+    "model_sha256_post": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d",
+    "runtime_asset_sha256_pre": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2",
+    "runtime_asset_sha256_post": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2",
+    "runtime_tree_sha256_pre": "c1a7bdfffbdc0328e238d9bc39db6dfd7ba7405aea7403646c75e67483e54627",
+    "runtime_tree_sha256_post": "c1a7bdfffbdc0328e238d9bc39db6dfd7ba7405aea7403646c75e67483e54627",
+    "server_starts": 3,
+    "wall_milliseconds": 65929
+  },
+  "lifecycle_results": {
+    "install": "PASS",
+    "upgrade": "PASS",
+    "rollback": "PASS",
+    "cleanup": "PASS",
+    "revision_sequence": [
+      "M1-LIFE-A",
+      "M1-LIFE-B",
+      "M1-LIFE-A"
+    ],
+    "binary_version_migration_claim": false,
+    "source_payload_unchanged": true
+  },
+  "one_shot_accounting": {
+    "max_attempts": 1,
+    "attempts_used": 1,
+    "guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-003\\M1RuntimeLifecycleAttemptGuard.json",
+    "guard_sha256": "e1c7ea100787025724a8be19cb01f9e05bc27d29c0f43e53cf06ff9a4c3ec462",
+    "semantics": "FIRST_EFFECTFUL_ATTEMPT_CONSUMES_PROFILE / NO_REUSE_AFTER_SUCCESS_OR_FAILURE",
+    "same_profile_retry_allowed": false,
+    "profile_effectful_execution_state": "CONSUMED"
+  },
+  "runtime_effects": {
+    "model_loaded_during_authorized_test": true,
+    "llama_server_started_during_authorized_test": true,
+    "external_bind_performed": false,
+    "hosted_provider_call_performed": false,
+    "training_performed": false,
+    "distillation_performed": false,
+    "promotion_performed": false,
+    "activation_performed": false,
+    "production_deployment_performed": false,
+    "release_performed": false,
+    "repository_merge_performed": false
+  },
+  "post_execution_observation": {
+    "llama_server_process_count": 0,
+    "native_owner_process_count": 0,
+    "port_18088_listener_count": 0,
+    "runtime_test_root_removed": true,
+    "attempt_guard_retained": true,
+    "evidence_retained": true,
+    "cleanup_verified_by_runtime_closeout": true
+  },
+  "evidence_snapshot": {
+    "repo_directory": "development/contracts/model-program/m1/evidence/M1RuntimeLifecycleAttempt3EffectfulExecution_20260921",
+    "artifact_count": 28,
+    "manifest": {
+      "FINAL_ISSUANCE_STARTED.json": {
+        "bytes": 193,
+        "sha256": "a25a54d32dae23653d030f95c1581e31d3079b8b88b54f2deb5f241ce873b05e"
+      },
+      "ISSUANCE_COMMIT.json": {
+        "bytes": 310,
+        "sha256": "e909752bd6262ed8eb0b8d40888974349c7975c7f460b923c24b975d3bd9f124"
+      },
+      "LIVE_IDENTITY.raw.stderr.log": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "LIVE_IDENTITY.raw.stdout.log": {
+        "bytes": 1754,
+        "sha256": "af68568c3e01bc3fb733b5296742799a5007289f9672f73a5def8e43fadc4cb4"
+      },
+      "LIVE_RECHECK.json": {
+        "bytes": 2554,
+        "sha256": "8088e21f507354ed498a1b187a1cf7522dc5b160eb62520ada5441fbeec62a6d"
+      },
+      "M1RuntimeLifecycleAttemptGuard.snapshot.json": {
+        "bytes": 257,
+        "sha256": "bae4b671e7c6c41dab8e7791d116bc5039476234dd132e62fc82315d957666ad"
+      },
+      "M1RuntimeLifecycleCleanup.json": {
+        "bytes": 161,
+        "sha256": "5d83a9e8a0651b797ebf923b161a38bf94bd54c2c98e6ce9372f32b05cea7fc6"
+      },
+      "M1RuntimeLifecycleCloseout.json": {
+        "bytes": 188,
+        "sha256": "a83e7f14fb4d676680a275a41b6562683ff07a269219cda2ee613967b574dee6"
+      },
+      "M1RuntimeLifecycleDigests.json": {
+        "bytes": 684,
+        "sha256": "117b6d10c19fcb27ad56d566ccd18886086fadcc21d978bd431a9e6a980f595e"
+      },
+      "M1RuntimeLifecycleEvents.jsonl": {
+        "bytes": 6397,
+        "sha256": "57b6984d14da2f84b34b80ed43c6ed17415eec23e0f48e0ef258edf4146e8b43"
+      },
+      "M1RuntimeLifecycleInstall.json": {
+        "bytes": 214,
+        "sha256": "00bd738b2563e5f16f2a92fcce8f8e2e3466ce9c8a04b4f84bb94864bb3892c9"
+      },
+      "M1RuntimeLifecyclePreflight.json": {
+        "bytes": 714,
+        "sha256": "092b17054785558b8c87a5c993026a3bb789750043e0df9ada2aedd04ee597e7"
+      },
+      "M1RuntimeLifecycleRollback.json": {
+        "bytes": 224,
+        "sha256": "8b7f7925fa0495c8e46ecebdd9f6b58f10e5600b00383f66656b29ecc37beed1"
+      },
+      "M1RuntimeLifecycleUpgrade.json": {
+        "bytes": 263,
+        "sha256": "3323056e968bc2e0073b303fc9ee973c12e9c5625a108e2618901f7797dc0ee7"
+      },
+      "ONE_SHOT_DISPATCH_STARTED.json": {
+        "bytes": 252,
+        "sha256": "3b027c8c4ddfe0659abb507753725043c82fb3475672f137f7397c8bdc4a1e80"
+      },
+      "OWNER_AUTHORIZATION_INPUT.json": {
+        "bytes": 897,
+        "sha256": "5061c78c2cadce49f9ee77b10863894729ff4ec35b34f8dd86bd4311d1074968"
+      },
+      "OWNER_EXECUTION.stderr.log": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "OWNER_EXECUTION.stdout.log": {
+        "bytes": 71,
+        "sha256": "d776349255456d98b54610b2ece78dc205a04c3a5fdcecefeea3f259920cd1f1"
+      },
+      "OWNER_PROCESS_ID.json": {
+        "bytes": 235,
+        "sha256": "20c1e8f08800da1889b3ca7f3b87a6bff36c56ff4a35a8e8281366c8159c4d30"
+      },
+      "OWNER_PROCESS_RESULT.json": {
+        "bytes": 639,
+        "sha256": "96acc1bf4bcdb92b8232b089f10b1bdba0d75754a852d3e67e92c9df2ad8e396"
+      },
+      "PRE_EXECUTION_GATES.json": {
+        "bytes": 944,
+        "sha256": "b10addf3b666bd00e29a16fc12de4d0dc5a077887619adea16dd01fdb6d50ac9"
+      },
+      "REVIEWED_REMOTE_HEAD_AT_ISSUANCE.txt": {
+        "bytes": 105,
+        "sha256": "a01bc677aaa863dcc1656be8052117c10fb6a48a158a275d9bbb2e17b1d3675a"
+      },
+      "install-a.stderr.txt": {
+        "bytes": 3370,
+        "sha256": "b6a95df7e78c6731d2ec9fd06d52afb47e89f6a49fead1c5cb62a5708cd0a395"
+      },
+      "install-a.stdout.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "rollback-a.stderr.txt": {
+        "bytes": 3370,
+        "sha256": "0ac08f31be8eeca1ba46350472b504d2aab679b249d6020636e7ebb6ca04da69"
+      },
+      "rollback-a.stdout.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "upgrade-b.stderr.txt": {
+        "bytes": 3370,
+        "sha256": "ee045c40f522fdc30dba67ddca3c58973e16b1736867bbdd392b9ef9ee08ef91"
+      },
+      "upgrade-b.stdout.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "review_scope": {
+    "review_target": "THIS CLOSEOUT SUCCESSOR COMMIT ONLY, including inherited issued profile and snapshotted execution evidence",
+    "required_verdict_target": "Whether M1-08 runtime lifecycle effectful execution can be formally closed with 0 BLOCKER / 0 MAJOR",
+    "independent_review": "PENDING",
+    "do_not_infer": [
+      "M1-09 authorization",
+      "training authority",
+      "distillation",
+      "promotion",
+      "activation",
+      "production deployment",
+      "release"
+    ]
+  },
+  "conclusion": "AUTHOR_SIDE_CLOSEOUT_PASS / M1-08 EXECUTION EVIDENCE COMPLETE / FORMAL CLOSURE PENDING FRESH_CONTEXT INDEPENDENT FINAL REVIEW",
+  "next_gate": "FRESH_CONTEXT_READ_ONLY_INDEPENDENT_M1_08_EXECUTION_FINAL_REVIEW"
+}

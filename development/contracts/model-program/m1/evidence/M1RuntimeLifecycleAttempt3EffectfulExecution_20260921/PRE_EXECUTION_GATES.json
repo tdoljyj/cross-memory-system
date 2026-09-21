@@ -1,0 +1,23 @@
+{
+  "observed_at_utc": "2026-09-21T09:38:55.241745+00:00",
+  "exact_reviewed_head": "d9792adf9733757f705f2938d2de30f46afe4350",
+  "issued_commit": "bf8244b5d3503215f17a5c5471d5d3c364dac0a2",
+  "signature_verification": "PASS / PINNED_OWNER_ROOT",
+  "authorization_digest": "PASS",
+  "expiry": "2026-09-22T09:35:57Z",
+  "mutation_scope": "PASS / ISSUANCE_ONLY",
+  "native_validate_only": {
+    "execution_ready": false,
+    "model_loaded": false,
+    "profile_checks_ready": true,
+    "profile_id": "M1-LIFE-QWEN35-08B-PC-003-ISSUED",
+    "reason": "READY_FOR_NATIVE_AUTHORIZATION",
+    "server_started": false
+  },
+  "pc001_pc002_guards": "EXACT_PRESERVED",
+  "pc003_guard_absent": true,
+  "server_absent": true,
+  "port_free": true,
+  "live_identity_recheck_sha256": "8088e21f507354ed498a1b187a1cf7522dc5b160eb62520ada5441fbeec62a6d",
+  "immediate_parent_revalidation": "NATIVE_AUTHORIZE_RECHECKS_PINNED_IDENTITIES_BEFORE_FIRST_GUARD_WRITE"
+}

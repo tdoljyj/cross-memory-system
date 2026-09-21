@@ -1,0 +1,8 @@
+{
+  "source": "CURRENT_CONVERSATION",
+  "owner_message": "批准 M1-08 PC-003 Final Issuance；若 Exact Head d9792adf9733757f705f2938d2de30f46afe4350 未变化，且签名、expiry、live parent identities、PC-001/PC-002 Guard hashes、owner binary identity、validate-only 全部通过，则继续批准同一 PC-003 Issued Profile 的唯一一次非生产 Effectful Runtime Lifecycle Smoke：Install → Upgrade → Rollback → Cleanup。任何签发或执行 Gate 失败立即 fail-closed；不得重试同一 Profile；不得训练、蒸馏、promotion、activation、release 或 production deployment。",
+  "reviewed_exact_head": "d9792adf9733757f705f2938d2de30f46afe4350",
+  "accepted_external_review": "PASS / M1_08_PC003_PRE_EXECUTION_FINAL_ACCEPTABLE_FOR_FINAL_ISSUANCE_AND_SEPARATELY_AUTHORIZED_ONE_SHOT_EXECUTION",
+  "expiry_policy": "ISSUED_AT_PLUS_24_HOURS",
+  "no_retry": true
+}
