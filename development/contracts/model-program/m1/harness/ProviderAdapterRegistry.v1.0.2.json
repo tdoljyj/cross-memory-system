@@ -1,0 +1,66 @@
+{
+  "schema_version": "clued.model-m1-provider-adapter-registry/1",
+  "record_id": "CLUED-MODEL-M1-PROVIDER-ADAPTER-REGISTRY-v1.0.2-20260921",
+  "status": "HISTORICAL_QUALIFICATION_RECOVERED / EXECUTION_PROFILE_CONSUMED / EXECUTION_DISABLED",
+  "predecessor": {
+    "path": "ProviderAdapterRegistry.v1.0.1.json",
+    "git_blob_sha1": "c9da69648b22529ab98abb82ec6540ddf03e73de",
+    "disposition": "IMMUTABLE_PREDECESSOR / SUPERSEDED_FOR_M1_04_HISTORICAL_CLOSEOUT"
+  },
+  "binding_ref": "M1InvocationHarnessBinding.v1.0.2.json",
+  "static_qualification_identity": {
+    "provider_id": "m1-qwen35-08b-llamacpp",
+    "adapter_id": "m1-qwen35-08b-llamacpp-v1",
+    "mode": "HISTORICAL_ONE_SHOT_EXECUTION_QUALIFIED",
+    "execution_qualification": true,
+    "current_execution_authority": false,
+    "authority_effect": "NONE"
+  },
+  "static_qualification_identity_sha256": "sha256:19a85d0e24d9112bead886fe506f1d9e99d3cf72afd7f90bee27706f7859d68d",
+  "adapters": [
+    {
+      "adapter_id": "m1-qwen35-08b-llamacpp-v1",
+      "adapter_version": "m1-runtime-b11033-v2",
+      "provider_id": "m1-qwen35-08b-llamacpp",
+      "provider_type": "Local",
+      "internal_model_id": "qwen-qwen3.5-0.8b",
+      "external_model_id": "Qwen/Qwen3.5-0.8B",
+      "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+      "snapshot_weight_sha256": "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696",
+      "runtime_id": "llama.cpp",
+      "runtime_release_tag": "b11033",
+      "runtime_revision": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+      "runtime_package_binding": {
+        "path": "../package/RuntimePackageSelection.v1.0.1.json",
+        "git_blob_sha1": "4aa482c5a6b8dbe50441efa496d8f19f3cd5405b",
+        "asset_sha256": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2"
+      },
+      "adapter_identity": {
+        "adapter_id": "m1-qwen35-08b-llamacpp-v1",
+        "adapter_version": "m1-runtime-b11033-v2",
+        "external_model_id": "Qwen/Qwen3.5-0.8B",
+        "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+        "runtime_revision": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
+      },
+      "adapter_artifact_digest": "sha256:b9e3d16aa505fff39eec4de4ac2e34858feeacf230f3e85a1d5c1830456b7220",
+      "target_capabilities": [
+        "structured_generate"
+      ],
+      "qualified_capabilities": [
+        "structured_generate"
+      ],
+      "execution_allowed": false,
+      "execution_blockers": [
+        "M1_INF_QWEN35_08B_Q8_0_001_CONSUMED",
+        "NEW_EFFECTFUL_CALL_REQUIRES_NEW_EXACT_EXPERIMENT_PROFILE"
+      ]
+    }
+  ],
+  "historical_execution_closeout": {
+    "path": "../evidence/M1InvocationProfile001HistoricalEvidenceRecoveryCloseout_20260921.json",
+    "git_blob_sha1": "30a0004063883c6545bd8fcaa377ca2072013627",
+    "profile_id": "M1-INF-QWEN35-08B-Q8_0-001",
+    "profile_status": "CLOSED_SUCCESS / CONSUMED"
+  },
+  "authority_effect": "NONE"
+}
