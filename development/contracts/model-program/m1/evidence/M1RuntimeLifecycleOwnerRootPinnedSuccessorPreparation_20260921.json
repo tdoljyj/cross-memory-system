@@ -5,7 +5,7 @@
   "stage_id": "MODEL-PROGRAM-M1",
   "task_id": "M1-08",
   "role": "SUCCESSOR_IMPLEMENTER / NOT_FRESH_CONTEXT_REVIEWER",
-  "status": "AUTHOR_SIDE_SUCCESSOR_PREPARATION_PASS / EXACT_WINDOWS_REQUALIFIED / NOT_INDEPENDENTLY_REVIEWED / NOT_ISSUED",
+  "status": "AUTHOR_SIDE_SUCCESSOR_PREPARATION_PASS / MAJOR-01_TARGETED_CORRECTION / EXACT_WINDOWS_REQUALIFIED / NOT_INDEPENDENTLY_REVIEWED / NOT_ISSUED",
   "predecessor_exact_head": "4574c472d17cd20f32dc3b7b0ca75243e731dda7",
   "owner_decision": {
     "source": "CURRENT_CONVERSATION",
@@ -29,22 +29,22 @@
   },
   "successor_source": {
     "path": "scripts/model-program/m1-runtime-lifecycle-owner",
-    "source_tree_git_sha1": "694896e3e1e78458ac1dc6f32e17d862e0561337",
+    "source_tree_git_sha1": "968b8cedb9e8c854968436a1482d534bc774b481",
     "source_manifest_path": "scripts/model-program/m1-runtime-lifecycle-owner/source-manifest.json",
-    "source_manifest_git_blob_sha1": "f7c6d8fafa2d41e59725b47bd6f91793d0b02a55",
-    "source_manifest_sha256": "09680d3ec6b67321a762b0e2f6f22f54850cdc5b11551d8ada2f8e6d805bb1fd",
+    "source_manifest_git_blob_sha1": "ed46f7aeb8509d09c60048a09ff68013c257d393",
+    "source_manifest_sha256": "67e9f42be2a7933c42c62386c873e113bade3ba365fe89b28f73a4ac982d641e",
     "bindings_git_blob_sha1": "d86018cc44f829247481aab3c0054286e5e6ff8b",
     "bindings_sha256": "a1841505a59d802ee3afab4abdd4ca4b718ff0e530a84d139e3f8932fa2f4d8e",
     "issuer_key_bound": true,
     "effectful_authority_issued": false,
     "owner_binary_execution_authorized": false,
-    "build_helper_git_blob_sha1": "83634f0e7d38107f04999985b0afb75b9451285b",
-    "build_helper_sha256": "302912cc8d8c185c2eef2f38c4f440e1b566e722613735b63383b83cce66e4db"
+    "build_helper_git_blob_sha1": "5c8f3ae2a988a77eb4cf4fcd2f0f25dd410d3428",
+    "build_helper_sha256": "63eeef7b2396e27036837ee349d4e2613d929be3331811dcd07f4e5ae2813a94"
   },
   "successor_profile": {
     "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.owner-root-pinned.candidate.json",
-    "git_blob_sha1": "5c9febfca5752ba1a9fbc13affd228c9b62a2a55",
-    "sha256": "8c8a71b53fca5e1e28a5b87c6fe763116ef7c0b440585b630c8dd74b0e3a1c27",
+    "git_blob_sha1": "c505ac42d33a7b8deef54bb7c37e6241797d8c7c",
+    "sha256": "b66e3273367becf1e01a3b5aed923e11421734d44fc8c1a7af47ae4b7643ca67",
     "status": "BLOCKED_PENDING_FRESH_CONTEXT_REVIEW_AND_FINAL_ISSUANCE",
     "effectful_authority_issued": false,
     "authority_effect": "NONE / PROFILE_PREPARATION_ONLY",
@@ -59,19 +59,19 @@
     "attempt_guard_created": false
   },
   "validation": {
-    "state": "AUTHOR_SIDE_PASS",
-    "validated_source_commit": "e053da2d8dd0a569a9c4d586b123a92e613a03fa",
-    "validated_source_tree_git_sha1": "694896e3e1e78458ac1dc6f32e17d862e0561337",
-    "native_source_manifest_sha256": "09680d3ec6b67321a762b0e2f6f22f54850cdc5b11551d8ada2f8e6d805bb1fd",
+    "state": "AUTHOR_SIDE_PASS / MAJOR-01_CORRECTED / EXACT_SUCCESSOR_PROFILE_QUALIFIED",
+    "validated_source_commit": "c3a4f77251b2243efc90fdc96f57d567ba7c2cc9",
+    "validated_source_tree_git_sha1": "968b8cedb9e8c854968436a1482d534bc774b481",
+    "native_source_manifest_sha256": "67e9f42be2a7933c42c62386c873e113bade3ba365fe89b28f73a4ac982d641e",
     "qualification_host": "DESK-W-591",
-    "qualification_output": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\owner_root_successor_e053da2_build_03",
-    "build_receipt_sha256": "c22498c316f65b0b2ef4853308aad2506d9e529743be60d15bc5624f37b08439",
-    "go_test_log_sha256": "ec53cb07018b808d0c9df958f8a93cf5c2bee7292bda6a67a83ba1e4d518b0da",
+    "qualification_output": "C:\\Users\\Public\\Clued\\Qualification\\M1-08-Owner\\owner_root_major01_c3a4f77_build_01",
+    "build_receipt_sha256": "eac1f64c1f519b805910e7ef3ea2b2a8afa8bda3d9ca677a21f0ffd17db83e07",
+    "go_test_log_sha256": "141941ee009e84f8d55cd96c60292c0b2311b10913abf61a475c33880fa8e2e6",
     "go_vet_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "qualification_scope_log_sha256": "67ad9aaad495dd15dcebc6f17ede51cecdea9c562b613ad46ebe79de8ece2ddb",
     "go_build_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "go_test_compile_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "development_owner_binary_sha256": "9f60e785914a26160c80552e5b2e8066964dc6a04c1d39f5a1485ebfe96882c2",
+    "development_owner_binary_sha256": "7e9a9e7dfc32a92646dcff5a278d86a9dbd79556152a937e1c5bfda75b946785",
     "development_owner_binary_bytes": 7499776,
     "windows_test_binary_sha256": "4765ccae2da57d834f7ca7a6135587a97078f523b25da88959f064a7f2039952",
     "windows_test_binary_bytes": 12504064,
@@ -84,7 +84,7 @@
     },
     "go_vet": "PASS",
     "qualification_scope_tests": "PASS",
-    "static_successor_binding_check": "PASS",
+    "static_successor_binding_check": "PASS / BUILD HELPER VALIDATED EXACT NON-ISSUED SUCCESSOR PROFILE SOURCE_PATH + MANIFEST_SHA256 + MANIFEST_GIT_BLOB + SOURCE_TREE + PINNED_OWNER_ROOT + AUTHORITY_CLOSED",
     "renamed_stage_consistency_test": "TestCandidateCannotExecuteAndEmptyIssuerInputFailsClosed / PASS",
     "owner_binary_executed_by_build_helper": false,
     "owner_binary_executed_during_author_side_validation": false,
@@ -92,7 +92,13 @@
     "attempt_guard_after": false,
     "llama_server_process_count_before": 0,
     "llama_server_process_count_after": 0,
-    "worktree_status_lines_after": 0
+    "worktree_status_lines_after": 0,
+    "qualified_successor_profile_git_blob_sha1": "c505ac42d33a7b8deef54bb7c37e6241797d8c7c",
+    "qualified_successor_profile_sha256": "b66e3273367becf1e01a3b5aed923e11421734d44fc8c1a7af47ae4b7643ca67",
+    "qualified_successor_profile_bytes": 41464,
+    "base_candidate_profile_git_blob_sha1": "51b0083f74dd12318b7cdcdf3b939d31723de787",
+    "qualified_successor_source_tree_git_sha1": "968b8cedb9e8c854968436a1482d534bc774b481",
+    "successor_profile_static_binding_check": true
   },
   "effects": {
     "owner_final_issuance_performed": false,
@@ -106,12 +112,11 @@
     "repository_merge_performed": false
   },
   "remaining_gates": [
-    "Exact Windows author-side successor validation without effectful execution",
-    "Fresh-Context read-only independent review of the exact Owner-root-pinned successor head",
-    "Separate Owner Final Issuance only after independent review PASS and immediate pre-issuance revalidation",
+    "Fresh-Context read-only independent re-review of the corrected exact Owner-root-pinned successor head",
+    "Separate Owner Final Issuance only after independent re-review PASS and immediate pre-issuance live identity revalidation",
     "No real M1-08 lifecycle execution until separately issued exact signed profile exists"
   ],
-  "conclusion": "AUTHOR_SIDE_PASS / OWNER_ROOT_REUSED_AND_PINNED / GUARD_PARENT_PREISSUANCE_EVIDENCE_BOUND / STAGE-CONSISTENT EXACT SOURCE REQUALIFIED / DEVELOPMENT BINARY BUILT NOT EXECUTED / NOT_ISSUED / NO_EFFECTFUL_EXECUTION",
+  "conclusion": "AUTHOR_SIDE_PASS / MAJOR-01 SOURCE-PATH + SUCCESSOR-PROFILE-QUALIFICATION BINDING CORRECTED / EXACT WINDOWS REQUALIFIED / OWNER_ROOT_REUSED_AND_PINNED / GUARD_PARENT_PREISSUANCE_EVIDENCE_BOUND / DEVELOPMENT BINARY BUILT NOT EXECUTED / NOT_ISSUED / NO_EFFECTFUL_EXECUTION",
   "author_side_correction_history": {
     "initial_successor_head": "5829871217bdfa2682486cdf489c1c0d1f4922e0",
     "build_helper_finding": "STALE IMPLEMENTATION-PREPARATION INVARIANT REJECTED LEGITIMATE OWNER ROOT PINNING",
@@ -120,7 +125,11 @@
     "documentation_consistency_finding": "README AND TEST NAME RETAINED STALE UNBOUND-ROOT STAGE WORDING AFTER LEGITIMATE ROOT PINNING",
     "documentation_consistency_repair_head": "e053da2d8dd0a569a9c4d586b123a92e613a03fa",
     "documentation_consistency_repair": "README AUTHORITY STATE UPDATED; TEST RENAMED TO STATE ACTUAL EMPTY-ISSUER HELPER CONDITION; NO EFFECTFUL SEMANTICS CHANGED",
-    "final_requalification": "PASS / FULL EXACT WINDOWS BUILD TEST VET / 70 TOP-LEVEL + 24 SUBTEST / 0 FAIL / 0 SKIP",
-    "effectful_side_effects_during_corrections": "NONE / NO OWNER EXECUTION / NO ATTEMPT GUARD / NO LLAMA-SERVER"
+    "final_requalification": "PASS / FULL EXACT WINDOWS BUILD TEST VET / 70 TOP-LEVEL + 24 SUBTEST / 0 FAIL / 0 SKIP / EXACT SUCCESSOR PROFILE STATIC BINDING CHECK PASS",
+    "effectful_side_effects_during_corrections": "NONE / NO OWNER EXECUTION / NO ATTEMPT GUARD / NO LLAMA-SERVER",
+    "fresh_context_major_01_finding": "OWNER-ROOT-PINNED SUCCESSOR PROFILE USED SOURCE DIRECTORY WHILE PRODUCTION validateStatic REQUIRED source-manifest.json; BUILD HELPER QUALIFIED ONLY THE OLD BASE CANDIDATE AND DID NOT VALIDATE THE SUCCESSOR PROFILE",
+    "fresh_context_major_01_repair_head": "c3a4f77251b2243efc90fdc96f57d567ba7c2cc9",
+    "fresh_context_major_01_repair": "SUCCESSOR PROFILE SOURCE PATH ALIGNED TO PRODUCTION ADMISSION; BUILD HELPER NOW VALIDATES THE EXACT NON-ISSUED SUCCESSOR PROFILE SOURCE PATH, MANIFEST SHA-256, MANIFEST GIT BLOB, SOURCE TREE, PINNED OWNER ROOT, AND CLOSED AUTHORITY. BASE CANDIDATE REMAINS AN IMPLEMENTATION BASELINE ONLY.",
+    "fresh_context_major_01_requalification": "PASS / DESK-W-591 / EXACT GO 1.27.1 / 70 TOP-LEVEL + 24 SUBTEST / 0 FAIL / 0 SKIP / QUALIFICATION-SCOPE PASS / GO VET PASS / OWNER BINARY BUILT NOT EXECUTED"
   }
 }
