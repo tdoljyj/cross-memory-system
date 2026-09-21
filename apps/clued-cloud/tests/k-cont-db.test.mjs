@@ -178,6 +178,28 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     });
     assert.equal((await appendTarget(globalRecordId, "global_target")).status, "committed");
     assert.equal((await appendTarget(projectRecordId, "project_target")).status, "committed");
+    const evidenceId = uuid();
+    await admin.query(`insert into public.clued_evidence
+      (id,user_id,evidence_schema_version,evidence_type,storage_ref,content_hash,receipt_id)
+      values($1,$2,1,'test_output','k-cont-fixture',$3,$4)`, [evidenceId, userId, hash(), uuid()]);
+    assert.equal((await rpc("clued_event_append", {
+      event_schema_version: 1, event_type: "extension:kcont:linked_evidence", event_scope: projectContext,
+      target_refs: [{ kind: "record", id: projectRecordId }, { kind: "evidence", id: evidenceId }],
+      audit_visibility: "work_log", idempotency_key: uuid(),
+    })).status, "committed");
+    assert.equal((await rpc("clued_event_append", {
+      event_schema_version: 1, event_type: "extension:kcont:unscoped_evidence", event_scope: projectContext,
+      target_refs: [{ kind: "evidence", id: evidenceId }], audit_visibility: "work_log", idempotency_key: uuid(),
+    })).status, "committed");
+    const unknownKind = await rpc("clued_event_append", {
+      event_schema_version: 1, event_type: "extension:kcont:rejected_unknown_kind", event_scope: projectContext,
+      target_refs: [{ kind: "unknown", id: globalRecordId }], audit_visibility: "work_log", idempotency_key: uuid(),
+    });
+    assert.equal(unknownKind.status, "rejected");
+    assert.equal((await admin.query("select count(*)::int as count from public.clued_context_events where user_id=$1 and canonical_event_type='extension:kcont:rejected_unknown_kind'", [userId])).rows[0].count, 0);
+    assert.equal((await appendTarget(globalRecordId, "historical_unknown_kind")).status, "committed");
+    await admin.query(`update public.clued_context_events set target_refs=jsonb_build_array(jsonb_build_object('kind','unknown','id',$2::text))
+      where user_id=$1 and canonical_event_type='extension:kcont:historical_unknown_kind'`, [userId, globalRecordId]);
     const otherProjectId = uuid();
     await admin.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at) values($1,$2,'Other project','other project',$3,'confirmed',now())",
       [otherProjectId, userId, `project:${otherProjectId}`]);
@@ -218,14 +240,32 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     assert.equal(reduced.authority_conflicts.some((item) => item.title === "Resident constraint"), false);
     const globalEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:global_target");
     const projectEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:project_target");
+    const linkedEvidenceEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:linked_evidence");
+    const unscopedEvidenceEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:unscoped_evidence");
+    const historicalUnknownEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:historical_unknown_kind");
     const otherProjectEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:other_project_target");
     const historicalMalformedEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:invalid_id");
     assert.deepEqual(globalEvent.target_refs, []);
     assert.deepEqual(globalEvent.record_targets, []);
     assert.deepEqual(projectEvent.target_refs.map((item) => item.id), [projectRecordId]);
     assert.deepEqual(projectEvent.record_targets.map((item) => item.title), ["Project constraint"]);
+    assert.deepEqual(linkedEvidenceEvent.target_refs.map((item) => item.id), [projectRecordId, evidenceId]);
+    assert.deepEqual(unscopedEvidenceEvent.target_refs, []);
+    assert.deepEqual(historicalUnknownEvent.target_refs, []);
     assert.deepEqual(otherProjectEvent.target_refs, []);
     assert.deepEqual(historicalMalformedEvent.record_targets, []);
+    const hiddenSearch = await reducedRpc("clued_mcp_search_context", {
+      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:global_target",
+    });
+    assert.deepEqual(hiddenSearch.results[0].target_refs, []);
+    const historicalSearch = await reducedRpc("clued_mcp_search_context", {
+      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:historical_unknown_kind",
+    });
+    assert.deepEqual(historicalSearch.results[0].target_refs, []);
+    const visibleSearch = await reducedRpc("clued_mcp_search_context", {
+      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:project_target",
+    });
+    assert.deepEqual(visibleSearch.results[0].target_refs.map((item) => item.id), [projectRecordId]);
     const reducedLog = await reducedRpc("clued_mcp_restore", { context_key: projectContext, response_view: "work_log" });
     assert.doesNotMatch(reducedLog.work_log, /Remain visible during resume\./);
     assert.doesNotMatch(reducedLog.work_log, new RegExp(globalRecordId));
