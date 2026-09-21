@@ -33,7 +33,7 @@ const initialize = await rpc(1, "initialize", {
 assert.equal(initialize.status, 200);
 const initialized = await initialize.json();
 assert.equal(initialized.result.protocolVersion, "2025-06-18");
-assert.deepEqual(initialized.result.serverInfo, { name: "Clued Continuity", version: "0.3.1" });
+assert.deepEqual(initialized.result.serverInfo, { name: "Clued Continuity", version: "0.4.0" });
 
 const ping = await rpc(2, "ping");
 assert.equal(ping.status, 200);
