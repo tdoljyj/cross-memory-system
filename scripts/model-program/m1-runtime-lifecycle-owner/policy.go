@@ -17,11 +17,11 @@ import (
 	"unicode/utf8"
 )
 
-const candidateID = "M1-LIFE-QWEN35-08B-PC-001-CANDIDATE"
-const issuedID = "M1-LIFE-QWEN35-08B-PC-001-ISSUED"
+const candidateID = "M1-LIFE-QWEN35-08B-PC-002-CANDIDATE"
+const issuedID = "M1-LIFE-QWEN35-08B-PC-002-ISSUED"
 const authorityEffect = "M1-08_PC_RUNTIME_LIFECYCLE_SMOKE_EXECUTION_ONLY"
-const contractBlobSHA1 = "f422d4da73deb1cafb6c00468602c8309d896786"
-const contractPath = "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.json"
+const contractBlobSHA1 = "5db350700e831a0423dd1e6f568d6f24f0c956ef"
+const contractPath = "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.1.json"
 const repository = "tdoljyj/cross-memory-system"
 const implementationBase = "3d8a4c88373f5a54831b40d34c0ad89281d02ac1"
 const machineSHA = "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522"
@@ -32,11 +32,13 @@ const sourcePackageRoot = `C:\Users\Public\Clued\ModelProgram\M1\packages\Qwen_Q
 const sourceModelPath = sourcePackageRoot + `\packages\Qwen3.5-0.8B-Q8_0.gguf`
 const sourceRuntimeAssetPath = sourcePackageRoot + `\runtime\llama-b11033-bin-win-vulkan-x64.zip`
 const sourceRuntimeDir = sourcePackageRoot + `\runtime\b11033-vulkan`
-const testRoot = `C:\Users\Public\Clued\ModelProgram\M1\runtime-lifecycle-smoke\M1-LIFE-QWEN35-08B-PC-001`
+const testRoot = `C:\Users\Public\Clued\ModelProgram\M1\runtime-lifecycle-smoke\M1-LIFE-QWEN35-08B-PC-002`
 const tempRoot = testRoot + `\state\temp`
-const attemptGuardPath = `C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-LIFE-QWEN35-08B-PC-001\M1RuntimeLifecycleAttemptGuard.json`
-const guardParentPath = `C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-LIFE-QWEN35-08B-PC-001`
-const evidenceDir = `C:\Users\Public\Clued\ModelProgram\M1\evidence\M1-LIFE-QWEN35-08B-PC-001`
+const attemptGuardPath = `C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-LIFE-QWEN35-08B-PC-002\M1RuntimeLifecycleAttemptGuard.json`
+const guardParentPath = `C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-LIFE-QWEN35-08B-PC-002`
+const evidenceDir = `C:\Users\Public\Clued\ModelProgram\M1\evidence\M1-LIFE-QWEN35-08B-PC-002`
+const evidenceParentPath = `C:\Users\Public\Clued\ModelProgram\M1\evidence`
+const runtimeLifecycleParentPath = `C:\Users\Public\Clued\ModelProgram\M1\runtime-lifecycle-smoke`
 const modelBytes int64 = 833592320
 const runtimeAssetBytes int64 = 31766410
 const serverBytes int64 = 9216
@@ -531,7 +533,7 @@ func scopePolicy() object {
 		"lifecycle_safety_binding/ntfs_stream_policy":                   "ENUMERATE STREAMS FOR EVERY BOUND SOURCE AND MATERIALIZED SLOT REGULAR FILE / ONLY UNNAMED DEFAULT ::$DATA ALLOWED / ANY NAMED STREAM INCLUDING Zone.Identifier FAILS CLOSED / COPY ONLY DEFAULT STREAM OR USE EXPLICIT SKIP-ALTERNATE-STREAMS SEMANTICS",
 		"lifecycle_safety_binding/attempt_guard_bootstrap":              "EXACT GUARD PARENT MUST PREEXIST BEFORE FINAL ISSUANCE / PROFILE CANNOT CREATE OR RECREATE IT / PROVISIONING REQUIRES SEPARATELY REVIEWED OWNER-AUTHORIZED PREPARATION EVIDENCE / FIRST PROFILE-OWNED WRITE IS CREATE_NEW OF GUARD FILE",
 		"lifecycle_safety_binding/child_launch_cwd":                     `EXACT VERIFIED ACTIVE SLOT payload\runtime\b11033-vulkan ABSOLUTE DIRECTORY ONLY / NO CALLER CONTROL`,
-		"lifecycle_safety_binding/child_launch_environment":             `EMPTY_BASE_ENVIRONMENT / EXACT ALLOWLIST SystemRoot,WINDIR,TEMP,TMP ONLY / SystemRoot+WINDIR FROM TRUSTED GetWindowsDirectoryW / TEMP+TMP=C:\Users\Public\Clued\ModelProgram\M1\runtime-lifecycle-smoke\M1-LIFE-QWEN35-08B-PC-001\state\temp / PATH ABSENT / ALL OTHER VARIABLES OMITTED / NO CALLER OR PARENT INHERITANCE`,
+		"lifecycle_safety_binding/child_launch_environment":             `EMPTY_BASE_ENVIRONMENT / EXACT ALLOWLIST SystemRoot,WINDIR,TEMP,TMP ONLY / SystemRoot+WINDIR FROM TRUSTED GetWindowsDirectoryW / TEMP+TMP=C:\Users\Public\Clued\ModelProgram\M1\runtime-lifecycle-smoke\M1-LIFE-QWEN35-08B-PC-002\state\temp / PATH ABSENT / ALL OTHER VARIABLES OMITTED / NO CALLER OR PARENT INHERITANCE`,
 		"lifecycle_safety_binding/child_launch_envelope":                "EXECUTABLE + ARGV + ENVIRONMENT + CWD + 127.0.0.1:18088 ENDPOINT + ORIGINAL OS PROCESS HANDLE ARE JOINTLY IMMUTABLE AND PROFILE-DERIVED",
 		"release_ceiling":                                               "M1_08_PC_RUNTIME_LIFECYCLE_SMOKE_EVIDENCE_ONLY / LIFECYCLE_MECHANICS_ONLY / NO_BINARY_MIGRATION_CLAIM / NO_M1_09 / NO_TRAINING / NO_PROMOTION / NO_MODEL_PROMOTION_OR_RELEASE_ACTIVATION / NO_RELEASE / NO_PRODUCTION",
 	}
@@ -586,6 +588,27 @@ func validateStatic(p object, now time.Time, publicKeyFingerprint string) error 
 		gpi["empty_parent"] != true ||
 		gpi["non_reparse"] != true {
 		return fail("GUARD_PARENT_PROVISIONING_IDENTITY_UNBOUND")
+	}
+	parentBindings := []struct {
+		evidencePath string
+		identityPath string
+		exactPath    string
+	}{
+		{"trusted_execution_bindings/evidence_parent_provisioning_evidence_sha256", "trusted_execution_bindings/evidence_parent_provisioning_identity", evidenceParentPath},
+		{"trusted_execution_bindings/runtime_lifecycle_parent_provisioning_evidence_sha256", "trusted_execution_bindings/runtime_lifecycle_parent_provisioning_identity", runtimeLifecycleParentPath},
+	}
+	for _, binding := range parentBindings {
+		if !isHex(text(p, binding.evidencePath), 64) {
+			return fail("EXECUTION_PARENT_PROVISIONING_EVIDENCE_UNBOUND")
+		}
+		id, ok := get(p, binding.identityPath).(object)
+		if !ok || text(id, "canonical_path") != binding.exactPath ||
+			!strings.EqualFold(text(id, "filesystem_type"), "NTFS") ||
+			!isHex(text(id, "volume_serial"), 8) || !isHex(text(id, "file_id"), 16) ||
+			!strings.HasPrefix(strings.ToUpper(text(id, "owner_sid")), "S-") ||
+			!isHex(text(id, "security_descriptor_sha256"), 64) || id["non_reparse"] != true {
+			return fail("EXECUTION_PARENT_PROVISIONING_IDENTITY_UNBOUND")
+		}
 	}
 	auth, ok := get(p, "owner_final_execution_authorization").(object)
 	if !ok || auth["present"] != true || text(auth, "owner_message") == "" {

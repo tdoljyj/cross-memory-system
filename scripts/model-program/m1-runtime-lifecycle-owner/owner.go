@@ -294,6 +294,9 @@ func (c *controller) authorize(p object) (ctx *executionContext, err error) {
 	if e != nil {
 		return nil, e
 	}
+	if e = c.verifyExecutionParents(p); e != nil {
+		return nil, e
+	}
 	if e = c.requireAbsent(c.paths.guard, "ATTEMPT_GUARD_ALREADY_EXISTS"); e != nil {
 		return nil, e
 	}
@@ -390,6 +393,46 @@ func (c *controller) verifyGuardParent(p object) (directoryIdentity, error) {
 		return directoryIdentity{}, fail("ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE")
 	}
 	return live, nil
+}
+
+func (c *controller) verifyExecutionParents(p object) error {
+	type parentBinding struct{ path, field, errorCode string }
+	bindings := []parentBinding{
+		{filepath.Dir(c.paths.evidence), "trusted_execution_bindings/evidence_parent_provisioning_identity", "EVIDENCE_PARENT_MISSING_OR_UNSAFE"},
+		{filepath.Dir(c.paths.testRoot), "trusted_execution_bindings/runtime_lifecycle_parent_provisioning_identity", "RUNTIME_LIFECYCLE_PARENT_MISSING_OR_UNSAFE"},
+	}
+	for _, binding := range bindings {
+		st, e := os.Lstat(binding.path)
+		if e != nil || !st.IsDir() {
+			return fail(binding.errorCode)
+		}
+		if e = c.verifySafeExistingPath(binding.path); e != nil {
+			return fail(binding.errorCode)
+		}
+		h, e := c.pinDirectory(binding.path)
+		if e != nil {
+			return fail(binding.errorCode)
+		}
+		fs, e := c.filesystem()
+		if e != nil {
+			return e
+		}
+		live, e := fs.directoryIdentityHandle(h)
+		if e != nil {
+			return fail(binding.errorCode)
+		}
+		bound, ok := get(p, binding.field).(object)
+		if !ok || !samePath(live.canonicalPath, binding.path) || !samePath(live.canonicalPath, text(bound, "canonical_path")) ||
+			!strings.EqualFold(live.filesystemType, text(bound, "filesystem_type")) ||
+			!strings.EqualFold(live.volumeSerial, text(bound, "volume_serial")) ||
+			!strings.EqualFold(live.fileID, text(bound, "file_id")) ||
+			!strings.EqualFold(live.ownerSID, text(bound, "owner_sid")) ||
+			!strings.EqualFold(live.securityDescriptorSHA256, text(bound, "security_descriptor_sha256")) ||
+			bound["non_reparse"] != true {
+			return fail("EXECUTION_PARENT_IDENTITY_DRIFT")
+		}
+	}
+	return nil
 }
 
 func (c *controller) createOwnedDirs(ctx *executionContext) error {

@@ -1,15 +1,15 @@
 {
   "candidate_profile_git_blob_sha1": "51b0083f74dd12318b7cdcdf3b939d31723de787",
   "candidate_profile_raw_sha256": "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3",
-  "contract_git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
-  "contract_raw_sha256": "b40040a1302620b965bdf6dbe2283d0d6d5f9413c8c784e4b65d9cd030ac7ee3",
+  "contract_git_blob_sha1": "5db350700e831a0423dd1e6f568d6f24f0c956ef",
+  "contract_raw_sha256": "e932449cf290edbd654fe6960f4a20205ea756c4db3db724db6349a783aefe27",
   "effectful_authority_issued": false,
   "files": [
     {
-      "bytes": 9050,
-      "git_blob_sha1": "3c9a96e32ee819ca7a36febd29401871aebc2e37",
+      "bytes": 9266,
+      "git_blob_sha1": "8fd9c893dd397c32d2a9e2f6ea10026af5b3180f",
       "path": "README.md",
-      "sha256": "e9ffd8823b5a3e78e1d7e54ad0a91b706d18db0ad9265ffc1dad14e383cc09fb"
+      "sha256": "dc04769f7e78c5e738a24af09f10ace149adda7e87dce9c02eb2a26dbf803526"
     },
     {
       "bytes": 814,
@@ -24,10 +24,10 @@
       "sha256": "8650b9901d8a7944a80a86fcb25826b4255aa3fc2f56f1a79a2b1a15f555fbdf"
     },
     {
-      "bytes": 21884,
-      "git_blob_sha1": "5c8f3ae2a988a77eb4cf4fcd2f0f25dd410d3428",
+      "bytes": 21906,
+      "git_blob_sha1": "bbf25b9dbdd5cf7cc40872957ba3f54ae7abbab4",
       "path": "build.py",
-      "sha256": "63eeef7b2396e27036837ee349d4e2613d929be3331811dcd07f4e5ae2813a94"
+      "sha256": "2bad350cf1ef6b1c312fd9f498697b87e8432edef34ad9cf4443f397c1e1daae"
     },
     {
       "bytes": 1620,
@@ -96,16 +96,16 @@
       "sha256": "dab032fe2c7a6d6b845d266ead695673e93a72c138a63d0097be27704f129b1a"
     },
     {
-      "bytes": 26228,
-      "git_blob_sha1": "4152a5f3dfd2b3b665e4aae0d05a497a7df94c46",
+      "bytes": 27889,
+      "git_blob_sha1": "adaf8b47b0d84b70aa70e8b34b830284f2aaf77a",
       "path": "owner.go",
-      "sha256": "a8abe9e33425f98925d5239d38c095e18d6c1b496136ffd0fcac90c9e03e6a87"
+      "sha256": "6709be6c4ec31002cda889f122b770a47e3e49333d90ee71f01e660979579eb8"
     },
     {
-      "bytes": 21062,
-      "git_blob_sha1": "57e352f52a9f3fad6bce79a85785d7523fec86e3",
+      "bytes": 23562,
+      "git_blob_sha1": "5d64475ba58d71ed55aafc74ae6dc7113c16fa1e",
       "path": "owner_test.go",
-      "sha256": "fe14009753743824b33dcda578c29fdc5f45fe97163c18988546b8e50c5fee30"
+      "sha256": "abef939d6b75c06c7b04fa0fbf28685aa4112d8b8d3d36f4a606896f8c462570"
     },
     {
       "bytes": 669,
@@ -132,10 +132,10 @@
       "sha256": "c95817814b382d7b3341a8cc7b32323d78650a256919c9cad6a64914045a2474"
     },
     {
-      "bytes": 30103,
-      "git_blob_sha1": "25dfa6e31e18571f6bec12e6cbb696c9e580756f",
+      "bytes": 31384,
+      "git_blob_sha1": "7b714837fe5d168c3751b27032739ad3a5b0d55b",
       "path": "policy.go",
-      "sha256": "9254ef2e73ed634b65aeda9f0470a9e780db2e1529f73e0dbbb001b690f10f04"
+      "sha256": "c78cf7d7d878123043519f81970730ca6cbb4e26076f8b716ba794feac97db62"
     },
     {
       "bytes": 2958,
@@ -201,33 +201,28 @@
     "version": "go version go1.27.1 windows/amd64"
   },
   "owner_binary_execution_authorized": false,
-  "qualification_semantics": "STATIC_NEGATIVE_FAULT_AND_WINDOWS_NATIVE_TESTS_ONLY / TEST_OWNED_TEMP_PATHS / HANDLE_RESOLVED_WRITE_BOUNDARIES / NO_PRODUCTION_GUARD_OR_RUNTIME_ROOT / OWNER_BINARY_NOT_EXECUTED",
+  "qualification_semantics": "STATIC_NEGATIVE_FAULT_AND_WINDOWS_NATIVE_TESTS_ONLY / PC002 EXECUTION-PARENT PRE-GUARD GATE / NO PRODUCTION GUARD OR RUNTIME ROOT / OWNER_BINARY_NOT_EXECUTED",
   "remediation": {
-    "exact_windows_toolchain_qualification_repeated": false,
-    "finding_ids": [
-      "MAJOR-08"
-    ],
-    "independent_review_pass": false,
-    "repair_base_head": "0433d9e89080433d66f9c9a19b7f93669b6c0cd0",
-    "repair_base_source_manifest_sha256": "40eaa69913ade714d2e717a94a317d1b2ecce9b73b9ef0824b9aeeff345dc801",
-    "repository_successor_commit": null,
-    "revision": "MAJOR-08-r5-capture-linearization",
-    "status": "OWNER_ROOT_PINNED_SUCCESSOR_PREPARATION / EXACT_WINDOWS_REQUALIFICATION_REQUIRED / NO_FINAL_ISSUANCE",
-    "validation_boundary": "STATIC_NEGATIVE_FAULT_AND_WINDOWS_QUALIFICATION_ONLY / NO_OWNER_EFFECTFUL_EXECUTION / NOT_INDEPENDENT_REVIEW"
+    "revision": "ATTEMPT2-PARENT-GATE",
+    "repair_base_head": "283bd8eccab6a15cca8278d5835251d7efad76e6",
+    "failed_attempt_profile_id": "M1-LIFE-QWEN35-08B-PC-001-ISSUED",
+    "failed_attempt_guard_sha256": "9e0b95cf7e8cbb16608c73318b6c39b54dd5c1b2ae26daa63e822420cbce14bb",
+    "failure_observation_sha256": "5d5b637110de1564d637a061c8dddb7839d2c6127ceb07db9bc97211cd2cf13e",
+    "pc001_retry_allowed": false,
+    "pc001_guard_preservation_required": true,
+    "status": "ATTEMPT2_SUCCESSOR_PREPARATION / EXECUTION_PARENT_GATE_ADDED / EXACT_WINDOWS_REQUALIFICATION_REQUIRED / NO_FINAL_ISSUANCE",
+    "validation_boundary": "NO PC002 PARENT PROVISIONING / NO ATTEMPT_GUARD / NO OWNER EFFECTFUL EXECUTION / NOT_INDEPENDENT_REVIEW"
   },
-  "role": "EFFECTFUL_OWNER_OWNER_ROOT_PINNED_SUCCESSOR_PREPARATION / NO_FINAL_ISSUANCE / NO_EXECUTION",
+  "role": "EFFECTFUL_OWNER_ATTEMPT2_PARENT_GATE_REMEDIATION_PREPARATION / NO_FINAL_ISSUANCE / NO_EXECUTION",
   "schema_version": "clued.m1-08-native-owner-source-manifest/1",
   "owner_root_successor_preparation": {
-    "predecessor_exact_head": "4574c472d17cd20f32dc3b7b0ca75243e731dda7",
+    "predecessor_exact_head": "283bd8eccab6a15cca8278d5835251d7efad76e6",
     "accepted_effectful_owner_final_head": "faaf0ff85d73e5be7615a4dc7426997e29cc80d2",
     "accepted_r5_source_freeze": "96312735a2341c145e360f19a6f3a08ec222d64a",
-    "predecessor_source_tree": "ebfb3db331e5fa817e0cc7bf9ea979fe1b33f964",
+    "predecessor_source_tree": "968b8cedb9e8c854968436a1482d534bc774b481",
     "owner_root_reuse": "EXPLICITLY_AUTHORIZED",
     "guard_parent_preissuance_evidence": {
-      "path": "development/contracts/model-program/m1/evidence/M1RuntimeLifecycleGuardParentPreIssuancePreparation_20260920/M1RuntimeLifecycleGuardParentProvisioningReceipt_20260920.json",
-      "git_blob_sha1": "abfb06e517f67b95f5d6824173b4235da894c7ef",
-      "raw_sha256": "dcd914376d2bbd8fd8112104861200cf1f103aee567ea6d6f5500d9632a9349a",
-      "independent_review_verdict": "PASS / M1_08_GUARD_PARENT_PRE_ISSUANCE_PREPARATION_ACCEPTABLE_FOR_OWNER_ROOT_DECISION_AND_FINAL_ISSUANCE_PREPARATION",
+      "status": "PENDING_SEPARATE_PC002_PARENT_PROVISIONING_REVIEW",
       "point_in_time_only": true,
       "revalidation_required_at_final_issuance_and_execution": true
     },
@@ -235,11 +230,11 @@
     "final_issuance_performed": false,
     "attempt_guard_created": false,
     "real_lifecycle_executed": false,
-    "build_helper_semantics": "OWNER_ROOT_PINNED_SUCCESSOR_QUALIFICATION / EXACT APPROVED PUBLIC ROOT REQUIRED / EXACT SUCCESSOR PROFILE STATIC SOURCE BINDINGS VALIDATED / EFFECTFUL_AUTHORITY_FALSE / OWNER_BINARY_NOT_EXECUTED",
+    "build_helper_semantics": "ATTEMPT2 OWNER_ROOT_PINNED SUCCESSOR QUALIFICATION / EXACT PC002 PROFILE + SOURCE BINDINGS / EXECUTION-PARENT PRE-GUARD GATE / EFFECTFUL_AUTHORITY_FALSE / OWNER_BINARY_NOT_EXECUTED",
     "documentation_semantics": "OWNER_ROOT_PINNED SUCCESSOR / NON-ISSUED / REVISION-SPECIFIC QUALIFICATION / NO STALE UNBOUND-ROOT CLAIMS",
-    "test_semantics": "EMPTY ISSUER INPUT FAILS CLOSED; PRODUCTION PINNED ROOT IS ENFORCED BY EXACT SUCCESSOR BINDINGS AND BUILD HELPER"
+    "test_semantics": "PC002 EXECUTION-PARENT MISSING/IDENTITY-DRIFT FAILS BEFORE GUARD CLAIM; EMPTY ISSUER INPUT FAILS CLOSED; PINNED OWNER ROOT REMAINS EXACT"
   },
   "candidate_profile_binding_semantics": "IMPLEMENTATION_BASE_CANDIDATE_ONLY / NOT_SUCCESSOR_QUALIFICATION_TARGET",
-  "successor_profile_path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.owner-root-pinned.candidate.json",
-  "successor_profile_qualification_semantics": "BUILD_HELPER_VALIDATES_NON_ISSUED SUCCESSOR PROFILE SOURCE_PATH + MANIFEST_SHA256 + MANIFEST_GIT_BLOB + SOURCE_TREE + PINNED_OWNER_ROOT + AUTHORITY_CLOSED"
+  "successor_profile_path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-002.owner-root-pinned.candidate.json",
+  "successor_profile_qualification_semantics": "BUILD_HELPER_VALIDATES NON-ISSUED PC002 SUCCESSOR PROFILE SOURCE PATH/MANIFEST/TREE + PINNED OWNER ROOT + AUTHORITY CLOSED; EXECUTION-PARENT BINDINGS REMAIN PENDING SEPARATE PROVISIONING REVIEW"
 }

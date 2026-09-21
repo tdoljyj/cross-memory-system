@@ -15,7 +15,7 @@ builds. No finding is formally closed solely by this source change.
 ## Authority state
 
 - Implementation base: `3d8a4c88373f5a54831b40d34c0ad89281d02ac1`
-- Contract blob: `f422d4da73deb1cafb6c00468602c8309d896786`
+- Contract blob: `5db350700e831a0423dd1e6f568d6f24f0c956ef`
 - Candidate profile blob reviewed at the base: `51b0083f74dd12318b7cdcdf3b939d31723de787`
 - This source tree grants **no effectful authority**.
 - The Owner explicitly selected reuse of the existing M1-07 Ed25519 Owner Root for M1-08. `issuerPublicKeyHex` and `issuerPublicKeySHA256` are pinned to that exact reviewed public root in this successor. Root pinning alone grants **no effectful authority**: this candidate remains non-issued, the private key remains Owner-only, and Final Issuance plus the signed issued profile are still required before execution.
@@ -31,7 +31,7 @@ The child launch envelope is derived internally from the verified active slot. T
 
 The fixed production sequence is:
 
-1. verify exact issued profile, whole-profile Owner signature, source/binary bindings, device identity, source payload, the separately provisioned guard-parent evidence hash plus signed live directory identity (handle-resolved canonical path, NTFS volume, file ID, owner/ACL digest), absence preconditions, and free loopback port;
+1. verify exact issued profile, whole-profile Owner signature, source/binary bindings, device identity, source payload, the separately provisioned guard-parent evidence hash plus signed live directory identity, AND the separately provisioned shared evidence/runtime-lifecycle parent evidence hashes plus their signed live directory identities; all three parent gates are revalidated before any Attempt Guard write, followed by absence preconditions and the free loopback port;
 2. atomically `CREATE_NEW` the persistent one-shot Attempt Guard as the first profile-owned filesystem write;
 3. create only exact test/evidence directories;
 4. materialize and verify revision A, publish transition 1, probe A;
@@ -53,7 +53,7 @@ forensic capacity. Test constructors are compiled only into test binaries.
 bind the private attestation values. `canonical-vectors.json` contains Python
 standard-library golden bytes checked independently by Go.
 
-`owner_test.go` exercises fixed CLI rejection, candidate non-execution, fail-closed empty issuer input handling, exact pinned-root production binding through the successor build helper, environment-pollution resistance, exact launch derivation, transition-graph rejection, exact temp names, current-manifest fault points (old-or-new complete bytes), handle-resolved path escape/reparse rejection, guard-parent live-identity drift, append-target substitution, process ownership anti-forgery, reviewed-candidate semantic binding, strict JSON, and loopback-only request construction.
+`owner_test.go` exercises fixed CLI rejection, candidate non-execution, fail-closed empty issuer input handling, exact pinned-root production binding through the successor build helper, environment-pollution resistance, exact launch derivation, transition-graph rejection, exact temp names, current-manifest fault points (old-or-new complete bytes), handle-resolved path escape/reparse rejection, guard-parent live-identity drift, execution-parent missing/identity-drift rejection before Guard claim, append-target substitution, process ownership anti-forgery, reviewed-candidate semantic binding, strict JSON, and loopback-only request construction.
 
 `platform_windows_test.go` adds Windows-only checks for exact launch-envelope validation, native current replacement, NTFS named ADS rejection, hardlink detection, reparse-point rejection, trusted Windows-directory resolution, and handle-resolved directory identity. These tests use only test-owned temporary paths and never use the M1-08 production guard/test/source paths.
 

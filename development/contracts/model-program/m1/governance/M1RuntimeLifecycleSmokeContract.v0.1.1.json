@@ -1,0 +1,827 @@
+{
+  "schema_version": "clued.model-m1-runtime-lifecycle-smoke-contract/1",
+  "contract_id": "M1-08-RUNTIME-LIFECYCLE-SMOKE-PC-v0.1.1",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-08",
+  "status": "ATTEMPT2_SUCCESSOR_PREPARATION_CANDIDATE / NO_EFFECTFUL_AUTHORITY / FRESH_CONTEXT_REVIEW_REQUIRED",
+  "objective": "Define a fail-closed, non-production Runtime Lifecycle Smoke for the exact Qwen3.5-0.8B Q8_0 + llama.cpp b11033 local payload on DESK-W-591. The smoke validates isolated clean install, governed lifecycle-revision upgrade, rollback to the prior verified revision, usability after each activated state, and final machine cleanup. It does not claim a binary-version migration because lifecycle revisions A and B intentionally bind the same immutable payload bytes.",
+  "authority": {
+    "owner_instruction": "好 进入下一步",
+    "interpretation": "ATTEMPT1_FAIL_CLOSED_REMEDIATION_PREPARATION_ONLY / NO_RETRY_PC001 / NO_EFFECTFUL_ATTEMPT2_EXECUTION",
+    "stage_successor_ref": "M1StageEntryAuthorization.v1.0.3.json",
+    "stage_successor_git_blob_sha1": "d9df0260d62f7cbc99b251036c00abb485f666bc",
+    "stage_successor_merge_commit": "324a1f96d60c5e374a6275b0bd382e6f7be1ee89",
+    "effectful_authority_issued": false
+  },
+  "prerequisites": {
+    "m1_06a_status": "CLOSED_SUCCESS",
+    "m1_07_status": "CLOSED / COMPLETED",
+    "m1_07_reviewed_exact_head": "d91b7a6418afa811530ca39bb1fe43f322ccc375",
+    "m1_07_formal_baseline_merge_commit": "0e31b8a3b7da55bf9723a3d0650081ef98b5e85b",
+    "m1_07_closeout_ref": "../evidence/M1RuntimeStabilityExecutionCloseout_20260920.json",
+    "m1_07_closeout_git_blob_sha1": "b609845dd472501ac5a3c7ce7ce1730a4b8ae106",
+    "m1_07_closeout_sha256": "1896a9af5a73136cd1f99619eb1296394f261f049271bff5108f0bb3f4090080",
+    "m1_07_issued_profile_ref": "ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.issued.json",
+    "m1_07_issued_profile_git_blob_sha1": "533661197b30a39202ac5776a4cee9f6d743b29d",
+    "m1_07_issued_profile_sha256": "04890ac27ca176711d51c930ed055bb318cf2b0d57adcdfaf228b4734a6f2aec",
+    "package_variant_matrix_ref": "../package/PackageVariantMatrix.v1.0.2.json",
+    "package_variant_matrix_git_blob_sha1": "f5e94be1befe99526cbd9f0cbb74ec500fc17622",
+    "runtime_package_selection_ref": "../package/RuntimePackageSelection.v1.0.1.json",
+    "runtime_package_selection_git_blob_sha1": "4aa482c5a6b8dbe50441efa496d8f19f3cd5405b",
+    "device_runtime_matrix_ref": "../registries/DeviceRuntimeMatrix.v1.0.2.json",
+    "device_runtime_matrix_git_blob_sha1": "e1642041ec164fd836e07091b59e5db3e0a356e2",
+    "license_review_ref": "../evidence/LicenseTermsCompatibilityReview.v1.0.1.json",
+    "license_review_git_blob_sha1": "3f3e7913faca595c5ccc3ca53b02265bd5493307"
+  },
+  "test_semantics": {
+    "lifecycle_scope": "VERSIONED_LOCAL_PACKAGE_SLOT_LIFECYCLE / NOT_OS_INSTALLER / NOT_SYSTEM_SERVICE / NOT_BINARY_VERSION_MIGRATION",
+    "install_meaning": "Materialize exact immutable payload into an isolated test-owned revision-A slot and atomically activate A through a test-owned current manifest.",
+    "upgrade_meaning": "Materialize the same exact immutable payload into a distinct revision-B slot with a distinct signed/governed lifecycle manifest, verify B completely, then atomically switch the test-owned current manifest from A to B.",
+    "rollback_meaning": "Atomically switch the test-owned current manifest from B back to previously verified A, verify exact A identity and usability, then perform final cleanup of the entire test-owned lifecycle root.",
+    "binary_upgrade_claim_allowed": false,
+    "reason_same_payload_revisions": "No second independently qualified Windows runtime payload exists in current M1 evidence. Using the same immutable payload with distinct lifecycle revisions tests install/activation/upgrade/rollback mechanics without fabricating a runtime-binary migration claim."
+  },
+  "exact_payload": {
+    "source_package_root": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002",
+    "source_is_read_only": true,
+    "source_mutation_allowed": false,
+    "model": {
+      "provider": "LOCAL_EXACT_PACKAGE",
+      "upstream_model_id": "Qwen/Qwen3.5-0.8B",
+      "upstream_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+      "variant_id": "q8_0",
+      "filename": "Qwen3.5-0.8B-Q8_0.gguf",
+      "bytes": 833592320,
+      "sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
+    },
+    "runtime": {
+      "runtime_id": "llama.cpp",
+      "release_tag": "b11033",
+      "commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+      "asset_name": "llama-b11033-bin-win-vulkan-x64.zip",
+      "asset_bytes": 31766410,
+      "asset_sha256": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2",
+      "extracted_tree_semantics": "EXACT_RELEASE_ZIP_AND_EXTRACTED_TREE_MATCH / NO_EXTRA_MISSING_OR_MUTATED_FILES",
+      "server_executable": "llama-server.exe",
+      "server_executable_bytes": 9216,
+      "server_executable_sha256": "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba"
+    }
+  },
+  "device_binding": {
+    "device_name": "DESK-W-591",
+    "device_class": "PC",
+    "os": "Windows",
+    "cpu": "Intel(R) Core(TM) i7-14700K",
+    "physical_cores": 20,
+    "logical_processors": 28,
+    "machine_identity": {
+      "source": "WINDOWS_HKLM_MACHINEGUID",
+      "canonicalization": "SHA256_UTF8_PREFIX_windows-machineguid_COLON_TRIM_LOWERCASE",
+      "sha256": "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522"
+    }
+  },
+  "isolated_test_root": {
+    "root": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-002",
+    "must_not_exist_before_first_effectful_attempt": true,
+    "allowed_children": [
+      "state\\current.json",
+      "state\\current.transition-1.tmp",
+      "state\\current.transition-2.tmp",
+      "state\\current.transition-3.tmp",
+      "state\\current.transition-4.tmp",
+      "revisions\\A\\manifest.json",
+      "revisions\\A\\payload\\**",
+      "revisions\\B\\manifest.json",
+      "revisions\\B\\payload\\**",
+      "state\\temp\\**"
+    ],
+    "system_path_mutation": false,
+    "registry_mutation": false,
+    "service_installation": false,
+    "firewall_mutation": false,
+    "environment_persistence_mutation": false
+  },
+  "lifecycle_revisions": {
+    "A": {
+      "revision_id": "M1-LIFE-A",
+      "role": "INSTALL_BASELINE_AND_ROLLBACK_TARGET",
+      "payload_identity": "EXACT_PAYLOAD_ABOVE",
+      "manifest_semantics": "IMMUTABLE / HASHED / REVISION_ID_A"
+    },
+    "B": {
+      "revision_id": "M1-LIFE-B",
+      "role": "UPGRADE_TARGET",
+      "payload_identity": "EXACT_PAYLOAD_ABOVE",
+      "manifest_semantics": "IMMUTABLE / HASHED / REVISION_ID_B / PREDECESSOR_A",
+      "predecessor_revision_id": "M1-LIFE-A"
+    }
+  },
+  "activation_protocol": {
+    "current_manifest_path": "state\\current.json",
+    "update_method": "SAME_DIRECTORY_TEMP_FILE / CREATE_NEW / WRITE_CANONICAL_JSON / FLUSH_FILE_BUFFERS / CLOSE / REOPEN_AND_HASH_VERIFY / ONE_NATIVE_SAME_VOLUME_RENAME_OR_REPLACE_PRIMITIVE / NEVER_DELETE_CURRENT_THEN_RENAME",
+    "active_revision_must_reference_verified_slot_only": true,
+    "partial_slot_activation_forbidden": true,
+    "current_manifest_fields": [
+      "profile_id",
+      "active_revision_id",
+      "previous_active_revision_id",
+      "transition_index",
+      "slot_manifest_sha256",
+      "payload_model_sha256",
+      "payload_runtime_asset_sha256",
+      "activated_at_utc",
+      "transition_kind",
+      "recovery_of_transition_index"
+    ],
+    "rollback_source": "PREVIOUSLY_VERIFIED_REVISION_A_ONLY",
+    "initial_publish": "ABSENT_TO_A: DESTINATION_MUST_BE_ABSENT_AT_LAST_CHECK; USE_SINGLE_SAME_VOLUME_NATIVE_RENAME_WITH_NO_OVERWRITE; UNEXPECTED_EXISTENCE_FAILS_CLOSED",
+    "replacement_publish": "ANY_REPLACEMENT_WITH_EXISTING_CURRENT, INCLUDING NORMAL_A_TO_B, NORMAL_B_TO_A, RECOVERY_B_TO_A, AND RECOVERY_A_TO_B: USE_SINGLE_SAME_VOLUME_NATIVE_REPLACE_PRIMITIVE; OLD_OR_NEW_COMPLETE_CURRENT MAY EXIST ACROSS CRASH, BUT PARTIAL_JSON OR DELETE_THEN_GAP IS FORBIDDEN",
+    "post_publish_verification": "REOPEN_CURRENT_WITH_NO_REPARSE_FOLLOW / PARSE_STRICT_JSON / RECOMPUTE_SHA256 / RESOLVE_REFERENCED_SLOT / REVERIFY_SLOT_MANIFEST_BEFORE_SERVER_START",
+    "fault_injection_requirement_before_final_issuance": "STATIC_NEGATIVE_AND_FAULT_INJECTION_TESTS_MUST_PROVE EVERY NORMAL_OR_RECOVERY CURRENT PUBLICATION IS OLD_OR_NEW_COMPLETE_JSON, NEVER PARTIAL, NEVER DELETE_THEN_GAP, AND ONLY THE EXACT SUCCESS_OR FAILURE-BRANCH TRANSITION GRAPH IS ACCEPTED",
+    "temp_manifest_paths": {
+      "1": "state\\current.transition-1.tmp",
+      "2": "state\\current.transition-2.tmp",
+      "3": "state\\current.transition-3.tmp",
+      "4": "state\\current.transition-4.tmp"
+    },
+    "temp_file_rule": "EXACT_TRANSITION_INDEX_SELECTS_THE_EXACT_SAME_DIRECTORY_TEMP_PATH / CREATE_NEW_ONLY / NO_CALLER_CONTROLLED_TEMP_NAME / ANY_PREEXISTING_TEMP_FAILS_CLOSED",
+    "successful_path_transitions": [
+      {
+        "transition_index": 1,
+        "from": null,
+        "to": "M1-LIFE-A",
+        "transition_kind": "NORMAL",
+        "recovery_of_transition_index": null
+      },
+      {
+        "transition_index": 2,
+        "from": "M1-LIFE-A",
+        "to": "M1-LIFE-B",
+        "transition_kind": "NORMAL",
+        "recovery_of_transition_index": null
+      },
+      {
+        "transition_index": 3,
+        "from": "M1-LIFE-B",
+        "to": "M1-LIFE-A",
+        "transition_kind": "NORMAL",
+        "recovery_of_transition_index": null
+      }
+    ],
+    "failure_recovery_transitions": [
+      {
+        "trigger": "UPGRADE_B_ACTIVATED_BUT_PROBE_FAILED",
+        "required_reverification": "M1-LIFE-A_EXACT",
+        "transition_index": 3,
+        "from": "M1-LIFE-B",
+        "to": "M1-LIFE-A",
+        "transition_kind": "RECOVERY",
+        "recovery_of_transition_index": 2,
+        "terminal_after_publish": "PROFILE_FAILED / NO_FURTHER_LIFECYCLE_TRANSITIONS"
+      },
+      {
+        "trigger": "ROLLBACK_A_ACTIVATED_BUT_PROBE_FAILED",
+        "required_reverification": "M1-LIFE-B_EXACT",
+        "transition_index": 4,
+        "from": "M1-LIFE-A",
+        "to": "M1-LIFE-B",
+        "transition_kind": "RECOVERY",
+        "recovery_of_transition_index": 3,
+        "terminal_after_publish": "PROFILE_FAILED / NO_FURTHER_LIFECYCLE_TRANSITIONS"
+      }
+    ],
+    "transition_branch_rule": "SUCCESS_PATH_IS_EXACTLY 1:NORMAL_ABSENT_TO_A,2:NORMAL_A_TO_B,3:NORMAL_B_TO_A. UPGRADE_FAILURE_BRANCH_IS 1:NORMAL,2:NORMAL,3:RECOVERY_B_TO_A_LINKED_TO_2_THEN_TERMINAL_FAILURE. ROLLBACK_FAILURE_BRANCH_IS 1:NORMAL,2:NORMAL,3:NORMAL,4:RECOVERY_A_TO_B_LINKED_TO_3_THEN_TERMINAL_FAILURE. NO_OTHER_INDEX_KIND_OR_RECOVERY_LINKAGE_IS LEGAL.",
+    "successful_path_expected_transition_indices": [
+      {
+        "transition_index": 1,
+        "from": null,
+        "to": "M1-LIFE-A"
+      },
+      {
+        "transition_index": 2,
+        "from": "M1-LIFE-A",
+        "to": "M1-LIFE-B"
+      },
+      {
+        "transition_index": 3,
+        "from": "M1-LIFE-B",
+        "to": "M1-LIFE-A"
+      }
+    ],
+    "successful_path_expected_transition_indices_semantics": "SUCCESS_PATH_ONLY / FAILURE_RECOVERY_BRANCHES_USE THE SEPARATELY BOUND RECOVERY TRANSITIONS"
+  },
+  "scenario_contract": [
+    {
+      "scenario_id": "M1-08-PC-INSTALL-001",
+      "name": "Clean isolated install and activation of revision A",
+      "repetitions": 1,
+      "steps": [
+        "VERIFY_ISSUED_PROFILE_AND_EXACT_BINDINGS",
+        "VERIFY_PHYSICAL_DEVICE_IDENTITY",
+        "VERIFY_TEST_ROOT_ABSENT",
+        "VERIFY_SOURCE_PACKAGE_EXACT_AND_READ_ONLY",
+        "ATOMICALLY_CLAIM_ONE_SHOT_ATTEMPT_GUARD",
+        "CREATE_REVISION_A_STAGING_SLOT",
+        "COPY_EXACT_MODEL_AND_RUNTIME_PAYLOAD_FROM_SOURCE",
+        "VERIFY_A_MODEL_RUNTIME_ASSET_AND_EXTRACTED_TREE",
+        "WRITE_IMMUTABLE_A_MANIFEST",
+        "ATOMICALLY_ACTIVATE_A_VIA_CURRENT_MANIFEST",
+        "START_TEST_OWNED_LOOPBACK_SERVER_FROM_ACTIVE_A",
+        "VERIFY_HEALTH_AND_MINIMAL_PROBE",
+        "GRACEFULLY_STOP_TEST_OWNED_SERVER",
+        "VERIFY_NO_LISTENER_OR_ORPHAN"
+      ],
+      "pass_criteria": [
+        "A_SLOT_EXACT_BYTES_VERIFIED",
+        "CURRENT_POINTS_TO_A_ONLY_AFTER_FULL_VERIFICATION",
+        "ACTIVE_A_HEALTH_AND_PROBE_PASS",
+        "BOUND_SOURCE_PAYLOAD_SET_UNCHANGED",
+        "NO_SYSTEM_LEVEL_INSTALL_EFFECT"
+      ]
+    },
+    {
+      "scenario_id": "M1-08-PC-UPGRADE-001",
+      "name": "Governed upgrade A to lifecycle revision B",
+      "repetitions": 1,
+      "steps": [
+        "VERIFY_CURRENT_IS_EXACT_A",
+        "CREATE_REVISION_B_STAGING_SLOT",
+        "COPY_EXACT_SAME_PAYLOAD_FROM_SOURCE",
+        "VERIFY_B_MODEL_RUNTIME_ASSET_AND_EXTRACTED_TREE",
+        "WRITE_IMMUTABLE_B_MANIFEST_WITH_PREDECESSOR_A",
+        "ATOMICALLY_SWITCH_CURRENT_A_TO_B",
+        "VERIFY_CURRENT_IS_EXACT_B",
+        "START_TEST_OWNED_LOOPBACK_SERVER_FROM_ACTIVE_B",
+        "VERIFY_HEALTH_AND_MINIMAL_PROBE",
+        "GRACEFULLY_STOP_TEST_OWNED_SERVER",
+        "VERIFY_A_REMAINS_UNMODIFIED_AND_ROLLBACK_ELIGIBLE"
+      ],
+      "pass_criteria": [
+        "B_SLOT_EXACT_BYTES_VERIFIED_BEFORE_ACTIVATION",
+        "CURRENT_ATOMICALLY_POINTS_TO_B",
+        "ACTIVE_B_HEALTH_AND_PROBE_PASS",
+        "A_REMAINS_EXACT_AND_AVAILABLE",
+        "NO_BINARY_VERSION_MIGRATION_CLAIM"
+      ]
+    },
+    {
+      "scenario_id": "M1-08-PC-ROLLBACK-001",
+      "name": "Rollback B to previously verified revision A",
+      "repetitions": 1,
+      "steps": [
+        "VERIFY_CURRENT_IS_EXACT_B",
+        "REVERIFY_A_MANIFEST_AND_PAYLOAD_DIGESTS",
+        "ATOMICALLY_SWITCH_CURRENT_B_TO_A",
+        "VERIFY_CURRENT_IS_EXACT_A",
+        "START_TEST_OWNED_LOOPBACK_SERVER_FROM_ACTIVE_A",
+        "VERIFY_HEALTH_AND_MINIMAL_PROBE",
+        "GRACEFULLY_STOP_TEST_OWNED_SERVER",
+        "CAPTURE_ROLLBACK_EVIDENCE",
+        "REMOVE_TEST_OWNED_REVISION_B",
+        "REMOVE_TEST_OWNED_REVISION_A_AND_CURRENT_AFTER_EVIDENCE_CAPTURE",
+        "VERIFY_TEST_ROOT_RUNTIME_STATE_CLEAN",
+        "VERIFY_BOUND_SOURCE_PAYLOAD_SET_UNCHANGED"
+      ],
+      "pass_criteria": [
+        "ROLLBACK_RETURNS_TO_EXACT_PREVIOUSLY_VERIFIED_A",
+        "POST_ROLLBACK_HEALTH_AND_PROBE_PASS",
+        "NO_ORPHAN_SERVER_OR_PORT_LISTENER",
+        "FINAL_TEST_OWNED_RUNTIME_STATE_REMOVED",
+        "BOUND_SOURCE_PAYLOAD_SET_UNCHANGED"
+      ]
+    }
+  ],
+  "runtime_probe_contract": {
+    "host": "127.0.0.1",
+    "port": 18088,
+    "offline": true,
+    "webui": false,
+    "threads": 2,
+    "threads_batch": 2,
+    "ctx_size": 2048,
+    "parallel": 1,
+    "n_gpu_layers": 0,
+    "device": "none",
+    "op_offload": false,
+    "hosted_provider_allowed": false,
+    "external_network_allowed": false,
+    "max_server_starts": 3,
+    "minimal_probe": {
+      "endpoint": "/completion",
+      "prompt": "Reply with exactly: OK",
+      "n_predict": 8,
+      "temperature": 0,
+      "stream": false
+    },
+    "exact_server_argv_semantics": [
+      "ABSOLUTE_SLOT_LLAMA_SERVER_EXE",
+      "--model ABSOLUTE_ACTIVE_SLOT_Q8_0_MODEL",
+      "--offline",
+      "--host 127.0.0.1",
+      "--port 18088",
+      "--no-webui",
+      "--threads 2",
+      "--threads-batch 2",
+      "--ctx-size 2048",
+      "--parallel 1",
+      "--n-gpu-layers 0",
+      "--device none",
+      "--no-op-offload"
+    ],
+    "configuration_sources": "PROFILE_BOUND_ARGV_AND_EXACT_LAUNCH_ENVELOPE_ONLY / CHILD_ENV_REBUILT_FROM_EMPTY_EXACT_ALLOWLIST / NO_LLAMA_ARG / NO_PROGRAMDATA_APPDATA_CONFIG / NO_CALLER_OR_PARENT_ENVIRONMENT_INHERITANCE",
+    "launch_envelope": {
+      "envelope_semantics": "IMMUTABLE_PROFILE_DERIVED_LAUNCH_ENVELOPE / CALLER_CANNOT_OVERRIDE_EXECUTABLE_ARGV_ENVIRONMENT_CWD_ENDPOINT_OR_PROCESS_OWNERSHIP",
+      "caller_supplied_launch_material_allowed": false,
+      "caller_supplied_command_allowed": false,
+      "caller_supplied_process_factory_allowed": false,
+      "caller_supplied_callback_allowed": false,
+      "executable": {
+        "source": "VERIFIED_ACTIVE_SLOT_ONLY",
+        "exact_relative_path": "payload\\runtime\\b11033-vulkan\\llama-server.exe",
+        "resolution": "ABSOLUTE_PATH_DERIVED_ONLY_FROM_EXACT_VERIFIED_ACTIVE_SLOT / NO_CALLER_PATH / NO_PATH_SEARCH",
+        "sha256": "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba",
+        "caller_override_allowed": false
+      },
+      "argv": {
+        "source": "PROFILE_BOUND_CONSTANTS_PLUS_ABSOLUTE_VERIFIED_ACTIVE_SLOT_MODEL_PATH_ONLY",
+        "exact_semantics": [
+          "ABSOLUTE_SLOT_LLAMA_SERVER_EXE",
+          "--model ABSOLUTE_ACTIVE_SLOT_Q8_0_MODEL",
+          "--offline",
+          "--host 127.0.0.1",
+          "--port 18088",
+          "--no-webui",
+          "--threads 2",
+          "--threads-batch 2",
+          "--ctx-size 2048",
+          "--parallel 1",
+          "--n-gpu-layers 0",
+          "--device none",
+          "--no-op-offload"
+        ],
+        "caller_supplied_args_allowed": false,
+        "caller_override_or_append_allowed": false,
+        "dynamic_injection_allowed": false
+      },
+      "child_environment": {
+        "construction": "START_FROM_EMPTY_ENVIRONMENT_MAP / DO_NOT_INHERIT_PARENT_OR_CALLER_ENVIRONMENT / EMIT_ONLY_EXACT_ALLOWLIST",
+        "windows_name_comparison": "CASE_INSENSITIVE",
+        "caller_supplied_environment_map_allowed": false,
+        "caller_environment_override_allowed": false,
+        "callback_or_dynamic_environment_injection_allowed": false,
+        "allowed_names_exact": [
+          "SystemRoot",
+          "WINDIR",
+          "TEMP",
+          "TMP"
+        ],
+        "system_root_and_windir": {
+          "source": "TRUSTED_WINDOWS_OS_API_GetWindowsDirectoryW_ONLY",
+          "value_semantics": "CANONICAL_ABSOLUTE_WINDOWS_DIRECTORY_RETURNED_BY_OS_API / SET BOTH SystemRoot AND WINDIR FROM THAT RESULT",
+          "parent_or_caller_environment_read_allowed": false,
+          "caller_value_allowed": false
+        },
+        "temp_and_tmp": {
+          "exact_value": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-002\\state\\temp",
+          "value_semantics": "BOTH TEMP AND TMP EQUAL THE EXACT PROFILE_OWNED_TEST_PATH / DIRECTORY MUST REMAIN UNDER EXACT TEST ROOT",
+          "parent_or_caller_environment_read_allowed": false,
+          "caller_value_allowed": false
+        },
+        "path_variable": {
+          "allowed": false,
+          "semantics": "PATH MUST BE ABSENT / NEVER INHERIT OR ACCEPT CALLER PATH"
+        },
+        "forbidden_names_exact": [
+          "PATH",
+          "PATHEXT",
+          "LLAMA_ARG",
+          "HTTP_PROXY",
+          "HTTPS_PROXY",
+          "ALL_PROXY",
+          "NO_PROXY",
+          "http_proxy",
+          "https_proxy",
+          "all_proxy",
+          "no_proxy",
+          "CUDA_VISIBLE_DEVICES",
+          "CUDA_DEVICE_ORDER",
+          "VK_ICD_FILENAMES",
+          "VK_LAYER_PATH",
+          "VULKAN_SDK",
+          "APPDATA",
+          "LOCALAPPDATA",
+          "PROGRAMDATA",
+          "USERPROFILE",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "PYTHONPATH",
+          "PYTHONHOME",
+          "LD_LIBRARY_PATH",
+          "LIB",
+          "LIBPATH",
+          "INCLUDE",
+          "TMPDIR"
+        ],
+        "forbidden_name_prefixes": [
+          "LLAMA_",
+          "GGML_",
+          "CUDA_",
+          "NVIDIA_",
+          "VK_",
+          "VULKAN_",
+          "HIP_",
+          "ROCR_",
+          "SYCL_",
+          "ONEAPI_",
+          "OMP_",
+          "KMP_"
+        ],
+        "unlisted_variable_policy": "OMIT / FAIL_CLOSED_IF EFFECTFUL OWNER ATTEMPTS TO PROPAGATE OR ADD ANY UNLISTED ENVIRONMENT VARIABLE",
+        "semantic_invariant": "ENVIRONMENT INPUT MUST NOT CHANGE EXECUTABLE_ARGV_DLL_RUNTIME_RESOLUTION_CONFIGURATION_NETWORK_ENDPOINT_CPU_ONLY_DEVICE_SEMANTICS_OR_CWD"
+      },
+      "dll_and_runtime_resolution": {
+        "semantics": "NO_ENVIRONMENT_OR_CALLER_CONTROL / EXACT ACTIVE SLOT EXECUTABLE DIRECTORY AND EXACT ACTIVE SLOT CWD PLUS TRUSTED WINDOWS SYSTEM DIRECTORIES ONLY",
+        "PATH_search_allowed": false,
+        "caller_dll_directory_allowed": false,
+        "caller_runtime_search_path_allowed": false,
+        "environment_search_path_allowed": false,
+        "caller_preload_or_backend_override_allowed": false
+      },
+      "cwd": {
+        "source": "VERIFIED_ACTIVE_SLOT_ONLY",
+        "exact_relative_path": "payload\\runtime\\b11033-vulkan",
+        "resolution": "ABSOLUTE_PATH_DERIVED_ONLY_FROM_EXACT_VERIFIED_ACTIVE_SLOT ROOT",
+        "caller_supplied_cwd_allowed": false,
+        "caller_override_allowed": false
+      },
+      "endpoint": {
+        "bind_host": "127.0.0.1",
+        "bind_port": 18088,
+        "probe_path": "/completion",
+        "caller_override_allowed": false,
+        "external_bind_allowed": false,
+        "external_network_allowed": false
+      },
+      "process_ownership": {
+        "source": "EFFECTFUL_OWNER_DIRECT_CHILD_CREATE_ONLY",
+        "semantics": "ORIGINAL_OS_PROCESS_HANDLE_RETURNED_BY_THE_EXACT_LAUNCH_ONLY / CALLER_CANNOT_SUPPLY_PID_HANDLE_PROCESS_OBJECT_FACTORY_CALLBACK_OR_REPLACEMENT",
+        "caller_supplied_pid_allowed": false,
+        "caller_supplied_handle_allowed": false,
+        "caller_supplied_process_object_allowed": false,
+        "caller_supplied_factory_or_callback_allowed": false
+      }
+    }
+  },
+  "one_shot_execution": {
+    "max_attempts": 1,
+    "attempt_guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-002\\M1RuntimeLifecycleAttemptGuard.json",
+    "claim_semantics": "ATOMIC_CREATE_ON_FIRST_EFFECTFUL_ATTEMPT / NO_REUSE_AFTER_SUCCESS_OR_FAILURE",
+    "retry_same_profile_allowed": false,
+    "guard_parent_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-002",
+    "guard_parent_precondition": "MUST_ALREADY_EXIST_BEFORE_FINAL_ISSUANCE_AS_VERIFIED_REAL_DIRECTORY / MUST_BE_EMPTY_EXCEPT_FOR_NO_GUARD / NO_REPARSE_JUNCTION_SYMLINK_MOUNTPOINT / CREATION_IS_NOT_AUTHORIZED_BY_THIS PROFILE",
+    "first_profile_owned_write_rule": "THE_FIRST_PROFILE_OWNED_EFFECTFUL_FILESYSTEM_WRITE MUST BE CREATE_NEW OF M1RuntimeLifecycleAttemptGuard.json AT THE EXACT PERSISTENT PATH / IF GUARD_PARENT_IS_ABSENT_OR_UNSAFE FAIL_CLOSED_WITHOUT_CREATING_ANY_PROFILE_PATH",
+    "guard_parent_provisioning_rule": "GUARD_PARENT_PROVISIONING_IS OUTSIDE THIS PROFILE AND REQUIRES A SEPARATELY REVIEWED OWNER-AUTHORIZED PREPARATION STEP WITH CANONICAL PATH, FILESYSTEM TYPE, ACL/OWNER, NON-REPARSE IDENTITY, AND EMPTY-PARENT EVIDENCE BOUND BEFORE FINAL ISSUANCE",
+    "prior_failed_attempt_guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-001\\M1RuntimeLifecycleAttemptGuard.json",
+    "prior_failed_attempt_guard_must_remain": true,
+    "execution_parent_precondition": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence AND C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke MUST PREEXIST AS SEPARATELY PROVISIONED VERIFIED REAL NON-REPARSE DIRECTORIES; LIVE IDENTITIES MUST MATCH SIGNED PROFILE BINDINGS BEFORE ATTEMPT GUARD CREATE_NEW."
+  },
+  "failure_and_cleanup": {
+    "fail_closed": true,
+    "on_partial_install": "BEFORE_A_ACTIVATION: DO_NOT_ACTIVATE_PARTIAL_A / REMOVE_PARTIAL_A_IF_SAFE / PRESERVE_EVIDENCE. AFTER_A_ACTIVATION_BUT_BEFORE_INSTALL_PROBE_PASS: STOP_PROFILE_SERVER, REMOVE_CURRENT_IF_AND_ONLY_IF_IT_STILL_REFERENCES_UNVERIFIED_A, PRESERVE_RUNTIME_ROOT_FOR_FORENSICS_UNLESS_SAFE_CLEANUP_IS_EXACTLY_PROVEN, PRESERVE_EVIDENCE, DO_NOT_CLAIM_INSTALL_SUCCESS.",
+    "on_partial_upgrade": "BEFORE_B_ACTIVATION: KEEP_VERIFIED_A_ACTIVE / NEVER_POINT_CURRENT_TO_PARTIAL_B. AFTER_TRANSITION_2_ACTIVATES_B_BUT_BEFORE_UPGRADE_PROBE_PASS: STOP_PROFILE_SERVER; REVERIFY_A_EXACT; IF_VALID, PUBLISH EXACT RECOVERY_TRANSITION_3 B_TO_A WITH transition_kind=RECOVERY AND recovery_of_transition_index=2, POST_VERIFY CURRENT_AND_A, RECORD RECOVERY, THEN TERMINATE PROFILE AS FAILED WITH NO FURTHER TRANSITIONS; OTHERWISE FAIL_CLOSED WITH NO SUCCESS CLAIM. PRESERVE EVIDENCE.",
+    "on_rollback_failure": "BEFORE_A_REACTIVATION: KEEP_VERIFIED_B_ACTIVE. AFTER_NORMAL_TRANSITION_3 ACTIVATES_A_BUT_BEFORE_ROLLBACK_PROBE_PASS: STOP_PROFILE_SERVER; REVERIFY_B_EXACT; IF_VALID, PUBLISH EXACT RECOVERY_TRANSITION_4 A_TO_B WITH transition_kind=RECOVERY AND recovery_of_transition_index=3, POST_VERIFY CURRENT_AND_B, RECORD RECOVERY, THEN TERMINATE PROFILE AS FAILED WITH NO FURTHER TRANSITIONS; OTHERWISE FAIL_CLOSED. DO_NOT_CLAIM_ROLLBACK_SUCCESS / PRESERVE EVIDENCE.",
+    "always": [
+      "TERMINATE_ONLY_PROFILE_OWNED_SERVER",
+      "VERIFY_PORT_18088_NOT_LISTENING",
+      "NEVER_TOUCH_SOURCE_PACKAGE",
+      "NEVER_TOUCH_NON_TEST_OWNED_PROCESS_OR_PATH",
+      "PRESERVE_PERSISTENT_ATTEMPT_GUARD",
+      "PRESERVE_EVIDENCE_OUTPUT"
+    ],
+    "successful_closeout_final_machine_state": "TEST_OWNED_LIFECYCLE_RUNTIME_ROOT_REMOVED / PERSISTENT_ATTEMPT_GUARD_RETAINED / EVIDENCE_OUTPUT_RETAINED / BOUND_SOURCE_PAYLOAD_SET_UNCHANGED / NO_SERVER / NO_PORT_18088_LISTENER",
+    "failure_closeout_rule": "ON_ANY_FAILURE THE ATTEMPT_GUARD_REMAINS CONSUMED. DO NOT REQUIRE DELETION OF THE RUNTIME TEST ROOT IF THAT WOULD DESTROY FORENSIC STATE; INSTEAD REQUIRE NO_PROFILE_OWNED_SERVER_AND_NO_PORT_18088_LISTENER_AND_EXACT_EVIDENCE_OF_REMAINING_TEST_OWNED_STATE."
+  },
+  "allowed_operations_if_separately_issued": [
+    "READ_EXACT_LOCAL_M1PKG002_SOURCE",
+    "COMPUTE_SOURCE_AND_SLOT_SHA256",
+    "CREATE_TEST_OWNED_ISOLATED_LIFECYCLE_ROOT",
+    "COPY_EXACT_Q8_0_MODEL_TO_TEST_OWNED_SLOT",
+    "COPY_EXACT_B11033_RUNTIME_PAYLOAD_TO_TEST_OWNED_SLOT",
+    "WRITE_TEST_OWNED_REVISION_MANIFESTS",
+    "ATOMICALLY_REPLACE_TEST_OWNED_CURRENT_MANIFEST",
+    "START_TEST_OWNED_LLAMA_SERVER_BOUND_TO_127_0_0_1_PORT_18088_ONLY",
+    "LOAD_EXACT_Q8_0_MODEL_FROM_ACTIVE_TEST_SLOT",
+    "SEND_LOOPBACK_ONLY_HEALTH_AND_MINIMAL_COMPLETION_PROBES",
+    "GRACEFULLY_TERMINATE_PROFILE_OWNED_LLAMA_SERVER",
+    "REMOVE_ONLY_TEST_OWNED_LIFECYCLE_SLOTS_AND_STATE",
+    "WRITE_NON_PRODUCTION_M1_08_EVIDENCE_ONLY_TO_EXACT_PERSISTENT_EVIDENCE_PATH",
+    "WRITE_PERSISTENT_M1_08_ATTEMPT_GUARD_TO_EXACT_RUNTIME_STATE_PATH"
+  ],
+  "prohibited_operations": [
+    "ANY_EFFECTFUL_EXECUTION_WHILE_PROFILE_IS_CANDIDATE",
+    "NON_LOOPBACK_BIND",
+    "ANY_EXTERNAL_NETWORK_ACCESS",
+    "MODEL_DOWNLOAD",
+    "RUNTIME_DOWNLOAD",
+    "HOSTED_PROVIDER_CALL",
+    "GPU_OR_DEVICE_OFFLOAD",
+    "MODEL_OR_SOURCE_PACKAGE_MUTATION",
+    "SYSTEM_PATH_MUTATION",
+    "REGISTRY_MUTATION",
+    "WINDOWS_SERVICE_INSTALL_OR_MUTATION",
+    "FIREWALL_MUTATION",
+    "REBOOT_SLEEP_HIBERNATE_TEST",
+    "TERMINATE_NON_TEST_OWNED_PROCESS",
+    "WRITE_OUTSIDE_EXACT_TEST_ROOT_EXCEPT_EXACT_GUARD_AND_EVIDENCE_PATHS_AND_READ_ONLY_SOURCE_ACCESS",
+    "BINARY_VERSION_UPGRADE_CLAIM",
+    "QUALITY_RANKING",
+    "QUALITY_WINNER_SELECTION",
+    "TEACHER_SELECTION",
+    "TRAINING",
+    "CONTINUED_PRETRAINING",
+    "SFT",
+    "DISTILLATION",
+    "PREFERENCE_TRAINING",
+    "LORA_OR_ADAPTER_TRAINING",
+    "MODEL_MERGE",
+    "PROMOTION",
+    "MODEL_PROMOTION_OR_RELEASE_ACTIVATION",
+    "RELEASE",
+    "PRODUCTION_DEPLOYMENT",
+    "PRODUCTION_TRAFFIC",
+    "PRODUCTION_DATABASE_MUTATION",
+    "PRODUCTION_SECRET_MUTATION",
+    "PROCUREMENT",
+    "BUDGET_SPEND",
+    "M1_09_EXECUTION",
+    "INHERIT_CALLER_OR_PARENT_CHILD_PROCESS_ENVIRONMENT",
+    "ACCEPT_CALLER_SUPPLIED_ENVIRONMENT_MAP_OVERRIDE_OR_DYNAMIC_INJECTION",
+    "ACCEPT_CALLER_SUPPLIED_EXECUTABLE_ARGV_COMMAND_CWD_ENDPOINT_PROCESS_PID_HANDLE_FACTORY_OR_CALLBACK",
+    "PATH_OR_DLL_RUNTIME_SEARCH_ENVIRONMENT_INFLUENCE",
+    "ENVIRONMENT_DRIVEN_LLAMA_PROXY_CUDA_VULKAN_BACKEND_DEVICE_OR_CPU_SEMANTICS_OVERRIDE"
+  ],
+  "budgets": {
+    "max_wall_seconds": 1800,
+    "max_output_storage_bytes": 4294967296,
+    "max_cost_microunits": 0,
+    "currency": "USD",
+    "max_attempts": 1,
+    "max_parallel_server_processes": 1,
+    "max_server_starts": 3
+  },
+  "allowed_outputs": [
+    "M1RuntimeLifecyclePreflight.json",
+    "M1RuntimeLifecycleEvents.jsonl",
+    "M1RuntimeLifecycleInstall.json",
+    "M1RuntimeLifecycleUpgrade.json",
+    "M1RuntimeLifecycleRollback.json",
+    "M1RuntimeLifecycleDigests.json",
+    "M1RuntimeLifecycleCleanup.json",
+    "M1RuntimeLifecycleCloseout.json",
+    "M1RuntimeLifecycleAttemptGuard.snapshot.json",
+    "sanitized stdout/stderr logs for profile-owned llama-server processes"
+  ],
+  "evidence_requirements": [
+    "PROFILE_ID_AND_FINAL_ISSUED_COMMIT",
+    "CONTRACT_ID_AND_EXACT_CONTRACT_GIT_BLOB_SHA1",
+    "M1_07_FORMAL_CLOSEOUT_EXACT_BINDING",
+    "DEVICE_IDENTITY",
+    "BOUND_SOURCE_PAYLOAD_SET_PRE_POST_ATTESTATION",
+    "MODEL_BYTES_AND_SHA256_FOR_SOURCE_A_B_AND_ROLLBACK_A",
+    "RUNTIME_ASSET_BYTES_AND_SHA256_FOR_SOURCE_A_B_AND_ROLLBACK_A",
+    "EXTRACTED_RUNTIME_TREE_EXACT_MATCH_FOR_A_AND_B",
+    "REVISION_A_AND_B_MANIFEST_BYTES_AND_SHA256",
+    "ATOMIC_CURRENT_MANIFEST_TRANSITIONS_NONE_TO_A_TO_B_TO_A_ON_SUCCESS_PATH",
+    "CURRENT_MANIFEST_NEVER_REFERENCES_PARTIAL_SLOT",
+    "SERVER_COMMAND_LINE_AND_PID_FOR_A_INSTALL_B_UPGRADE_A_ROLLBACK",
+    "LOOPBACK_ONLY_BIND_PORT_18088",
+    "HEALTH_AND_MINIMAL_PROBE_AFTER_INSTALL_UPGRADE_AND_ROLLBACK",
+    "NO_EXTERNAL_NETWORK_AND_NO_HOSTED_PROVIDER",
+    "NO_BOUND_SOURCE_PAYLOAD_MUTATION",
+    "NO_SYSTEM_PATH_REGISTRY_SERVICE_FIREWALL_MUTATION",
+    "ATTEMPT_GUARD_PATH_AND_ATOMIC_CLAIM_EVENT",
+    "NO_NON_TEST_OWNED_PROCESS_TERMINATION",
+    "FINAL_CLEANUP_NO_ORPHAN_SERVER_AND_NO_PORT_LISTENER",
+    "FINAL_TEST_ROOT_RUNTIME_STATE_REMOVED",
+    "EXPLICIT_NO_BINARY_VERSION_MIGRATION_CLAIM",
+    "NO_M1_09_TRAINING_PROMOTION_ACTIVATION_RELEASE_OR_PRODUCTION_AUTHORITY",
+    "PERSISTENT_ATTEMPT_GUARD_SURVIVES_SUCCESSFUL_RUNTIME_ROOT_CLEANUP",
+    "PERSISTENT_EVIDENCE_OUTPUT_SURVIVES_SUCCESSFUL_RUNTIME_ROOT_CLEANUP",
+    "WINDOWS_PATH_COMPONENT_REPARSE_POINT_JUNCTION_SYMLINK_MOUNTPOINT_REJECTION_FOR_EFFECTFUL_WRITE_ROOTS",
+    "RECURSIVE_CLEANUP_NEVER_FOLLOWS_REPARSE_POINTS",
+    "EXACT_SLOT_LAYOUT_AND_PER_FILE_POST_COPY_VERIFICATION",
+    "ATOMIC_CURRENT_PUBLISH_INITIAL_AND_REPLACEMENT_SEMANTICS",
+    "CURRENT_TRANSITION_INDEX_SEQUENCE_1_2_3_ON_SUCCESS_PATH",
+    "FAILURE_RECOVERY_AFTER_POST_ACTIVATION_PROBE_FAILURE",
+    "BOUND_SOURCE_PAYLOAD_SET_PRE_POST_ATTESTATION_WITHOUT_WHOLE_PACKAGE_ROOT_OVERCLAIM",
+    "ATTEMPT_GUARD_PARENT_PREEXISTED_AND_WAS_VERIFIED_SAFE_BEFORE_FIRST_PROFILE_OWNED_WRITE",
+    "FIRST_PROFILE_OWNED_WRITE_WAS_ATOMIC_CREATE_NEW_OF_EXACT_ATTEMPT_GUARD_FILE",
+    "CURRENT_TRANSITION_KIND_AND_RECOVERY_OF_LINKAGE_FOR_EVERY_CURRENT_PUBLICATION",
+    "FAILURE_BRANCH_TRANSITION_GRAPH_MATCHES_EXACT_AUTHORIZED_RECOVERY_SEQUENCE",
+    "NO_NAMED_NTFS_ALTERNATE_DATA_STREAMS_ON_BOUND_SOURCE_OR_SLOT_REGULAR_FILES",
+    "GUARD_PARENT_PROVISIONING_EVIDENCE_BOUND_BEFORE_FINAL_ISSUANCE",
+    "EXACT_LAUNCH_ENVELOPE_EXECUTABLE_ARGV_ENVIRONMENT_CWD_ENDPOINT_AND_PROCESS_OWNERSHIP_ATTESTATION",
+    "CHILD_ENVIRONMENT_REBUILT_FROM_EMPTY_WITH_ONLY_EXACT_ALLOWLIST_AND_NO_PARENT_OR_CALLER_INHERITANCE",
+    "SYSTEMROOT_WINDIR_FROM_TRUSTED_WINDOWS_OS_API_AND_TEMP_TMP_AT_EXACT_PROFILE_OWNED_TEST_PATH",
+    "NO_PATH_LLAMA_PROXY_CUDA_VULKAN_BACKEND_DEVICE_OR_DLL_RUNTIME_SEARCH_ENVIRONMENT_INFLUENCE",
+    "CHILD_CWD_WAS_EXACT_VERIFIED_ACTIVE_SLOT_RUNTIME_DIRECTORY"
+  ],
+  "stop_conditions": [
+    "PROFILE_NOT_ISSUED",
+    "PROFILE_EXPIRED_OR_REVOKED",
+    "EFFECTFUL_OWNER_CODE_BINDING_UNRESOLVED",
+    "M1_STAGE_SUCCESSOR_DRIFT",
+    "M1_07_CLOSEOUT_BINDING_DRIFT",
+    "DEVICE_IDENTITY_DRIFT",
+    "BOUND_SOURCE_PAYLOAD_SET_MISSING_OR_MUTATED",
+    "MODEL_BYTES_OR_SHA256_DRIFT",
+    "RUNTIME_ASSET_BYTES_OR_SHA256_DRIFT",
+    "RUNTIME_TREE_DRIFT",
+    "TEST_ROOT_ALREADY_EXISTS_BEFORE_FIRST_ATTEMPT",
+    "ATTEMPT_GUARD_ALREADY_EXISTS",
+    "EVIDENCE_OUTPUT_DIR_ALREADY_EXISTS",
+    "PARTIAL_SLOT_WOULD_BECOME_ACTIVE",
+    "CURRENT_MANIFEST_ATOMICITY_UNPROVEN",
+    "PORT_18088_ALREADY_IN_USE_BY_NON_PROFILE_PROCESS",
+    "SERVER_BINDS_NON_LOOPBACK",
+    "ANY_EXTERNAL_NETWORK_REQUIREMENT_OR_ATTEMPT",
+    "UNEXPECTED_SYSTEM_MUTATION",
+    "UNEXPECTED_SOURCE_PACKAGE_MUTATION",
+    "UNEXPECTED_CHILD_PROCESS",
+    "ATTEMPT_TO_TERMINATE_NON_PROFILE_PROCESS",
+    "SCENARIO_TIMEOUT",
+    "OUTPUT_STORAGE_BUDGET_EXCEEDED",
+    "COST_NONZERO",
+    "ORPHAN_PROFILE_OWNED_SERVER_AFTER_CLEANUP",
+    "FINAL_TEST_RUNTIME_STATE_NOT_REMOVED",
+    "MAX_ATTEMPTS_EXCEEDED",
+    "MAX_WALL_TIME_EXCEEDED",
+    "REPARSE_POINT_OR_PATH_ESCAPE_DETECTED",
+    "UNEXPECTED_PREEXISTING_SLOT_OR_EVIDENCE_ENTRY",
+    "SOURCE_BOUND_PAYLOAD_REPARSE_OR_IDENTITY_DRIFT",
+    "CURRENT_TRANSITION_INDEX_OR_PREVIOUS_REVISION_MISMATCH",
+    "POST_ACTIVATION_FAILURE_RECOVERY_CANNOT_RESTORE_LAST_VERIFIED_REVISION",
+    "ATTEMPT_GUARD_PARENT_MISSING_OR_UNSAFE",
+    "PROFILE_ATTEMPT_TO_CREATE_OR_RECREATE_GUARD_PARENT",
+    "UNAUTHORIZED_CURRENT_TRANSITION_INDEX_KIND_OR_RECOVERY_LINKAGE",
+    "NAMED_NTFS_ALTERNATE_DATA_STREAM_DETECTED_ON_BOUND_SOURCE_OR_SLOT_FILE",
+    "CALLER_OR_PARENT_CHILD_PROCESS_ENVIRONMENT_INHERITANCE_DETECTED",
+    "UNAUTHORIZED_LAUNCH_ENVELOPE_OVERRIDE_OR_DYNAMIC_INJECTION",
+    "PATH_DLL_RUNTIME_SEARCH_OR_BACKEND_DEVICE_ENVIRONMENT_INFLUENCE_DETECTED",
+    "CHILD_CWD_NOT_EXACT_VERIFIED_ACTIVE_SLOT_RUNTIME_DIRECTORY",
+    "EXECUTABLE_ARGV_ENDPOINT_OR_PROCESS_OWNERSHIP_DRIFT",
+    "EVIDENCE_PARENT_MISSING_OR_UNSAFE",
+    "RUNTIME_LIFECYCLE_PARENT_MISSING_OR_UNSAFE",
+    "EXECUTION_PARENT_IDENTITY_DRIFT"
+  ],
+  "release_ceiling": "M1_08_PC_RUNTIME_LIFECYCLE_SMOKE_EVIDENCE_ONLY / LIFECYCLE_MECHANICS_ONLY / NO_BINARY_MIGRATION_CLAIM / NO_M1_09 / NO_TRAINING / NO_PROMOTION / NO_MODEL_PROMOTION_OR_RELEASE_ACTIVATION / NO_RELEASE / NO_PRODUCTION",
+  "final_issuance_gate": {
+    "candidate_may_execute": false,
+    "required_before_issuance": [
+      "FRESH_CONTEXT_READ_ONLY_CONTRACT_AND_PROFILE_REVIEW_PASS",
+      "EXACT_EFFECTFUL_OWNER_SOURCE_AND_BINARY_BINDING",
+      "WHOLE_PROFILE_OWNER_SIGNATURE_WITH_PINNED_OWNER_ROOT",
+      "STATIC_AND_NEGATIVE_TESTS_FOR_PATH_OWNERSHIP_ATOMIC_ACTIVATION_AND_CLEANUP",
+      "OWNER_EXPLICIT_M1_08_EFFECTFUL_EXECUTION_AUTHORIZATION",
+      "BIND_FINAL_ISSUED_PROFILE_ID",
+      "BIND_FINAL_EXPIRY",
+      "BIND_OWNER_AUTHORIZATION_ID_AND_CANONICAL_SHA256",
+      "CONFIRM_TEST_ROOT_AND_EVIDENCE_OUTPUT_DIR_ABSENT_AND_PORT_18088_FREE_IMMEDIATELY_BEFORE_ATTEMPT",
+      "NEGATIVE_TESTS_REJECT_REPARSE_POINT_JUNCTION_SYMLINK_AND_PATH_ESCAPE_CASES",
+      "NEGATIVE_TESTS_PROVE_RECURSIVE_CLEANUP_NEVER_TRAVERSES_REPARSE_POINT",
+      "FAULT_INJECTION_TESTS_PROVE_CURRENT_PUBLISH_IS_OLD_OR_NEW_COMPLETE_JSON_NEVER_PARTIAL_OR_MISSING_DUE_TO_DELETE_THEN_RENAME",
+      "FAULT_INJECTION_TESTS_PROVE_POST_ACTIVATION_PROBE_FAILURE_RECOVERS_LAST_VERIFIED_REVISION_OR_FAILS_CLOSED",
+      "OWNER_EXPLICIT_M1_08_ISSUER_ROOT_DECISION_REUSE_EXISTING_OR_ENROLL_NEW",
+      "BIND_CHOSEN_M1_08_ISSUER_PUBLIC_KEY_FINGERPRINT_IN_REVIEWED_EFFECTFUL_OWNER_BEFORE_FINAL_ISSUANCE",
+      "CONFIRM_EXACT_GUARD_PARENT_ALREADY_EXISTS_AS_VERIFIED_REAL_NON_REPARSE_DIRECTORY_AND PROFILE_WILL_NOT_CREATE_IT",
+      "NEGATIVE_TEST_PROVES_ABSENT_OR_UNSAFE_GUARD_PARENT_FAILS_BEFORE_ANY_PROFILE_OWNED_WRITE",
+      "FAULT_INJECTION_TESTS_PROVE_EXACT_RECOVERY_TRANSITION_3_AND_4_PUBLICATION_AND_TERMINAL_FAILURE_SEMANTICS",
+      "NEGATIVE_TESTS_ENUMERATE_AND_REJECT_NTFS_NAMED_ALTERNATE_DATA_STREAMS_ON_SOURCE_AND_SLOT_FILES",
+      "BIND_SEPARATELY_REVIEWED_OWNER_AUTHORIZED_GUARD_PARENT_PROVISIONING_EVIDENCE",
+      "STATIC_AND_NEGATIVE_TESTS_PROVE_CHILD_ENVIRONMENT_IS_REBUILT_FROM_EMPTY_WITH_ONLY_SYSTEMROOT_WINDIR_FROM_TRUSTED_WINDOWS_OS_API_AND_TEMP_TMP_AT_THE_EXACT_PROFILE_OWNED_TEST_PATH_AND_WITHOUT_INHERITED_PATH_PROXY_LLAMA_CUDA_VULKAN_BACKEND_DEVICE_OR_DLL_RUNTIME_SEARCH_VARIABLES",
+      "STATIC_AND_NEGATIVE_TESTS_PROVE_CALLER_ENVIRONMENT_POLLUTION_CANNOT_CHANGE_EXECUTABLE_ARGV_DLL_RUNTIME_RESOLUTION_CONFIGURATION_LOOPBACK_ENDPOINT_CPU_ONLY_DEVICE_SEMANTICS_OR_EXACT_ACTIVE_SLOT_CWD",
+      "STATIC_AND_NEGATIVE_TESTS_PROVE_CALLER_CANNOT_SUPPLY_OR_OVERRIDE_PROCESS_PID_HANDLE_FACTORY_CALLBACK_COMMAND_EXECUTABLE_PATH_ARGV_ENVIRONMENT_CWD_OR_NETWORK_ENDPOINT",
+      "BIND_SEPARATELY_REVIEWED_OWNER_AUTHORIZED EVIDENCE_PARENT PROVISIONING EVIDENCE + LIVE DIRECTORY IDENTITY",
+      "BIND_SEPARATELY_REVIEWED OWNER_AUTHORIZED RUNTIME_LIFECYCLE_PARENT PROVISIONING EVIDENCE + LIVE DIRECTORY IDENTITY",
+      "NEGATIVE TEST PROVES EITHER REQUIRED EXECUTION PARENT ABSENT OR IDENTITY-DRIFTED FAILS BEFORE ATTEMPT_GUARD CREATE_NEW"
+    ]
+  },
+  "authority_effect": "NONE / CONTRACT_PREPARATION_ONLY",
+  "persistent_paths": {
+    "attempt_guard_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-002\\M1RuntimeLifecycleAttemptGuard.json",
+    "attempt_guard_must_survive_runtime_cleanup": true,
+    "evidence_output_dir": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-002",
+    "evidence_output_dir_must_not_exist_before_first_effectful_attempt": true,
+    "evidence_must_survive_runtime_cleanup": true,
+    "exact_write_roots": [
+      "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-002",
+      "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-002",
+      "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-002"
+    ],
+    "guard_parent_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-002",
+    "guard_parent_must_preexist_before_final_issuance": true,
+    "guard_parent_creation_authorized_by_profile": false,
+    "guard_parent_provisioning_authority": "SEPARATE_REVIEWED_OWNER_AUTHORIZED_PREPARATION_ONLY / NOT_THIS_PROFILE",
+    "evidence_parent_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence",
+    "runtime_lifecycle_parent_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke",
+    "execution_parent_creation_authorized_by_profile": false,
+    "execution_parent_provisioning_authority": "SEPARATE_REVIEWED_OWNER_AUTHORIZED_PREPARATION_ONLY / NOT_THIS_PROFILE"
+  },
+  "path_safety": {
+    "canonical_root_policy": "ALL_EFFECTFUL_WRITES_MUST_REMAIN_UNDER_ONE_OF_THE_THREE_EXACT_WRITE_ROOTS / COMPONENT_AWARE_CASE_INSENSITIVE_WINDOWS_CANONICAL_PATH_CONTAINMENT_AFTER_HANDLE_RESOLUTION / NO_CALLER_SUPPLIED_UNC_DEVICE_NAMESPACE_OR_ALTERNATE_DATA_STREAM_PATH / NO_NAMED_NTFS_DATA_STREAMS_ON_BOUND_SOURCE_OR_SLOT_REGULAR_FILES",
+    "exact_write_roots": [
+      "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke\\M1-LIFE-QWEN35-08B-PC-002",
+      "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-002",
+      "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence\\M1-LIFE-QWEN35-08B-PC-002"
+    ],
+    "writable_ancestor_rule": "FROM_C:\\Users\\Public\\Clued\\ModelProgram\\M1_DOWN_TO_EACH_EXACT_WRITE_ROOT, EVERY_EXISTING_COMPONENT_MUST_BE_A_REAL_DIRECTORY_AND_MUST_NOT_BE_A_REPARSE_POINT_OR_JUNCTION_OR_SYMLINK_OR_MOUNT_POINT",
+    "created_entry_rule": "CREATE_NEW_ONLY_FOR_NEW_FILES_AND_DIRECTORIES / REJECT_PREEXISTING_UNEXPECTED_ENTRIES / REJECT_REPARSE_POINTS / NO_CALLER_SUPPLIED_PATHS",
+    "slot_file_rule": "COPIED_PAYLOAD_FILES_MUST_BE NEW REGULAR FILES / NO_HARDLINKS / NO_SYMLINKS / NO_REPARSE_POINTS / COPY ONLY THE UNNAMED DEFAULT DATA STREAM / DO NOT PRESERVE NAMED ALTERNATE DATA STREAMS / AFTER CLOSE ENUMERATE STREAMS AND REQUIRE ONLY THE UNNAMED ::$DATA STREAM / VERIFY SIZE AND SHA256 AFTER CLOSE",
+    "recursive_delete_rule": "DELETE_ONLY_ENTRIES_ENUMERATED_BENEATH_EXACT_TEST_ROOT / NEVER_FOLLOW_OR_RECURSE_THROUGH_REPARSE_POINTS / ABORT_ON_ANY_UNEXPECTED_ENTRY_OR_PATH_ESCAPE",
+    "source_rule": "SOURCE_ROOT IS READ_ONLY INPUT / NEVER OPEN SOURCE PAYLOAD WITH WRITE OR DELETE ACCESS / REJECT SOURCE REPARSE DRIFT WITHIN BOUND PAYLOAD SET / ENUMERATE NTFS STREAMS FOR EVERY BOUND SOURCE REGULAR FILE AND FAIL CLOSED IF ANY NAMED ALTERNATE DATA STREAM EXISTS",
+    "evidence_rule": "EVIDENCE_DIR_MUST_BE_NEW / EVIDENCE_FILES_CREATE_NEW_ONLY / EVIDENCE_IS_NEVER_PART_OF_RUNTIME_ROOT_CLEANUP",
+    "guard_rule": "GUARD_PARENT_MUST_PREEXIST_AND_REVERIFY_AS_REAL_NON_REPARSE_DIRECTORY / ISSUED_PROFILE_MUST_NOT_CREATE_OR RECREATE_GUARD_PARENT / FIRST_PROFILE_OWNED_WRITE_IS CREATE_NEW OF EXACT ATTEMPT_GUARD_FILE / NEVER_DELETE_OR_OVERWRITE_GUARD",
+    "ads_rule": "FOR EVERY BOUND SOURCE REGULAR FILE AND EVERY MATERIALIZED SLOT REGULAR FILE, ENUMERATE NTFS STREAMS USING A NATIVE STREAM-ENUMERATION PRIMITIVE OR SEMANTICALLY EQUIVALENT HANDLE-BASED METHOD; ONLY THE UNNAMED DEFAULT DATA STREAM IS PERMITTED. ANY NAMED STREAM INCLUDING Zone.Identifier FAILS CLOSED. COPY IMPLEMENTATION MUST STREAM ONLY DEFAULT DATA OR EXPLICITLY SKIP ALTERNATE STREAMS."
+  },
+  "source_payload_attestation": {
+    "semantics": "BOUND_PAYLOAD_SET_ONLY / NOT_WHOLE_M1PKG002_DIRECTORY_CLAIM",
+    "exact_entries": [
+      {
+        "role": "MODEL",
+        "relative_path": "packages\\Qwen3.5-0.8B-Q8_0.gguf",
+        "bytes": 833592320,
+        "sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
+      },
+      {
+        "role": "RUNTIME_ARCHIVE",
+        "relative_path": "runtime\\llama-b11033-bin-win-vulkan-x64.zip",
+        "bytes": 31766410,
+        "sha256": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2"
+      },
+      {
+        "role": "RUNTIME_EXTRACTED_TREE",
+        "relative_path": "runtime\\b11033-vulkan",
+        "tree_semantics": "EXACT_ARCHIVE_ENTRY_FILE_SET_AND_PER_FILE_SIZE_SHA256_MATCH / NO_EXTRA_MISSING_OR_MUTATED_FILES"
+      }
+    ],
+    "required_checks": [
+      "PRE_ATTEMPT_BOUND_PAYLOAD_ATTESTATION",
+      "BEFORE_EACH_SLOT_COPY_SOURCE_ENTRY_RECHECK_IF_PREVIOUS_CHECK_CAN_BE_STALE",
+      "POST_SCENARIO_BOUND_PAYLOAD_ATTESTATION",
+      "FINAL_POST_CLEANUP_BOUND_PAYLOAD_ATTESTATION",
+      "ENUMERATE_NTFS_STREAMS_FOR_EVERY_BOUND_SOURCE_REGULAR_FILE_AND_REJECT_ANY_NAMED_STREAM",
+      "ENUMERATE_NTFS_STREAMS_FOR_EVERY_SLOT_REGULAR_FILE_AFTER_COPY_AND_REQUIRE_ONLY_UNNAMED_DEFAULT_STREAM"
+    ],
+    "whole_package_root_unchanged_claim": false
+  },
+  "slot_layout": {
+    "A": {
+      "manifest": "revisions\\A\\manifest.json",
+      "model": "revisions\\A\\payload\\model\\Qwen3.5-0.8B-Q8_0.gguf",
+      "runtime_archive": "revisions\\A\\payload\\runtime\\llama-b11033-bin-win-vulkan-x64.zip",
+      "runtime_tree": "revisions\\A\\payload\\runtime\\b11033-vulkan\\**",
+      "server_executable": "revisions\\A\\payload\\runtime\\b11033-vulkan\\llama-server.exe"
+    },
+    "B": {
+      "manifest": "revisions\\B\\manifest.json",
+      "model": "revisions\\B\\payload\\model\\Qwen3.5-0.8B-Q8_0.gguf",
+      "runtime_archive": "revisions\\B\\payload\\runtime\\llama-b11033-bin-win-vulkan-x64.zip",
+      "runtime_tree": "revisions\\B\\payload\\runtime\\b11033-vulkan\\**",
+      "server_executable": "revisions\\B\\payload\\runtime\\b11033-vulkan\\llama-server.exe"
+    },
+    "slot_manifest_required_fields": [
+      "profile_id",
+      "contract_id",
+      "revision_id",
+      "predecessor_revision_id",
+      "model_relative_path",
+      "model_bytes",
+      "model_sha256",
+      "runtime_archive_relative_path",
+      "runtime_archive_bytes",
+      "runtime_archive_sha256",
+      "runtime_tree_attestation",
+      "server_executable_relative_path",
+      "server_executable_bytes",
+      "server_executable_sha256",
+      "created_at_utc"
+    ]
+  },
+  "issuer_root_policy": {
+    "inherited_m1_07_root_automatically_authorized": false,
+    "preparation_binding": "UNRESOLVED / NO_M1_08_ISSUER_FINGERPRINT_BOUND_BY_THIS CONTRACT",
+    "final_issuance_requirement": "OWNER_MUST_EXPLICITLY_CHOOSE_AND_AUTHORIZE_EITHER_REUSE_OF_AN_EXISTING_OWNER_ROOT_OR_ENROLLMENT_OF_A_NEW_M1_08_ROOT; CHOSEN PUBLIC KEY FINGERPRINT MUST THEN BE PINNED_IN_REVIEWED_EFFECTFUL_OWNER_AND_WHOLE_ISSUED_PROFILE_SIGNATURE"
+  },
+  "remediation_successor": {
+    "reason": "PC-001 consumed its one-shot guard then failed before evidence/test-root leaf creation because required parent containers were absent and not prevalidated before guard claim.",
+    "failed_final_issuance_head": "283bd8eccab6a15cca8278d5835251d7efad76e6",
+    "failed_issued_profile_sha256": "56bb22bce8f4afcc53e4fa5b08ae5d972d36f1706b651d7603b50907a2277279",
+    "failed_attempt_guard_sha256": "9e0b95cf7e8cbb16608c73318b6c39b54dd5c1b2ae26daa63e822420cbce14bb",
+    "failure_observation_sha256": "5d5b637110de1564d637a061c8dddb7839d2c6127ceb07db9bc97211cd2cf13e",
+    "failed_profile_retry_allowed": false,
+    "pc001_guard_must_be_preserved": true,
+    "successor_profile_id": "M1-LIFE-QWEN35-08B-PC-002-CANDIDATE",
+    "scope_change": "NONE / SAME_M1_08_LIFECYCLE_SMOKE_SCOPE / NEW_ONE_SHOT_ATTEMPT_IDENTITY_ONLY"
+  }
+}

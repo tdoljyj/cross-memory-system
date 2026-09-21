@@ -213,7 +213,7 @@ func TestFixedCLIRejectsCallerAuthoritySurfaces(t *testing.T) {
 func TestCandidateCannotExecuteAndEmptyIssuerInputFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "candidate.json")
-	if e := os.WriteFile(p, []byte(`{"status":"BLOCKED_PENDING_FRESH_CONTEXT_REVIEW_AND_REVIEWED_EFFECTFUL_OWNER_IMPLEMENTATION_AND_FINAL_ISSUANCE","profile_id":"M1-LIFE-QWEN35-08B-PC-001-CANDIDATE"}`), 0600); e != nil {
+	if e := os.WriteFile(p, []byte(`{"status":"BLOCKED_PENDING_FRESH_CONTEXT_REVIEW_AND_REVIEWED_EFFECTFUL_OWNER_IMPLEMENTATION_AND_FINAL_ISSUANCE","profile_id":"M1-LIFE-QWEN35-08B-PC-002-CANDIDATE"}`), 0600); e != nil {
 		t.Fatal(e)
 	}
 	var out, er bytes.Buffer
@@ -451,7 +451,7 @@ func TestLoopbackRequestIsFixed(t *testing.T) {
 }
 
 func TestImplementationPolicyMatchesReviewedCandidateProfile(t *testing.T) {
-	p := filepath.Join("..", "..", "..", "development", "contracts", "model-program", "m1", "governance", "ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json")
+	p := filepath.Join("..", "..", "..", "development", "contracts", "model-program", "m1", "governance", "ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-002.owner-root-pinned.candidate.json")
 	raw, e := os.ReadFile(p)
 	if e != nil {
 		t.Fatal(e)
@@ -509,6 +509,57 @@ func TestHandleResolvedPathMismatchFailsClosed(t *testing.T) {
 	t.Cleanup(func() { _ = c.closeFilesystem() })
 	if e := c.verifySafeExistingPath(target); codeOf(e) != "REPARSE_POINT_OR_PATH_ESCAPE_DETECTED" {
 		t.Fatalf("resolved path escape accepted: %v", e)
+	}
+}
+
+func TestExecutionParentsMissingFailsBeforeGuardClaim(t *testing.T) {
+	l := testLayout(t)
+	l.evidence = filepath.Join(filepath.Dir(l.evidence), "missing-evidence-parent", "leaf")
+	f := &fakePlatform{}
+	c := newController(f, admission{}, l)
+	t.Cleanup(func() { _ = c.closeFilesystem() })
+	e := c.verifyExecutionParents(object{})
+	if codeOf(e) != "EVIDENCE_PARENT_MISSING_OR_UNSAFE" {
+		t.Fatalf("missing parent not rejected: %v", e)
+	}
+	if _, statErr := os.Lstat(l.guard); !os.IsNotExist(statErr) {
+		t.Fatalf("guard changed before parent gate: %v", statErr)
+	}
+}
+
+func TestExecutionParentsRequireSignedLiveIdentity(t *testing.T) {
+	root := t.TempDir()
+	evidenceParent := filepath.Join(root, "evidence-parent")
+	runtimeParent := filepath.Join(root, "runtime-parent")
+	for _, dir := range []string{evidenceParent, runtimeParent} {
+		if e := os.Mkdir(dir, 0700); e != nil {
+			t.Fatal(e)
+		}
+	}
+	l := testLayout(t)
+	l.evidence = filepath.Join(evidenceParent, "leaf")
+	l.testRoot = filepath.Join(runtimeParent, "test-root")
+	l.tempRoot = filepath.Join(l.testRoot, "state", "temp")
+	id1 := directoryIdentity{canonicalPath: filepath.Clean(evidenceParent), filesystemType: "NTFS", volumeSerial: "1234abcd", fileID: "0000000000000001", ownerSID: "S-1-5-18", securityDescriptorSHA256: strings.Repeat("a", 64)}
+	id2 := directoryIdentity{canonicalPath: filepath.Clean(runtimeParent), filesystemType: "NTFS", volumeSerial: "1234abcd", fileID: "0000000000000002", ownerSID: "S-1-5-18", securityDescriptorSHA256: strings.Repeat("b", 64)}
+	f := &fakePlatform{identityOverride: map[string]directoryIdentity{filepath.Clean(evidenceParent): id1, filepath.Clean(runtimeParent): id2}}
+	c := newController(f, admission{}, l)
+	t.Cleanup(func() { _ = c.closeFilesystem() })
+	profile := object{"trusted_execution_bindings": object{
+		"evidence_parent_provisioning_identity":          guardIdentityObject(id1),
+		"runtime_lifecycle_parent_provisioning_identity": guardIdentityObject(id2),
+	}}
+	if e := c.verifyExecutionParents(profile); e != nil {
+		t.Fatalf("matching parents rejected: %v", e)
+	}
+	bad := guardIdentityObject(id2)
+	bad["file_id"] = "0000000000000003"
+	profile = object{"trusted_execution_bindings": object{
+		"evidence_parent_provisioning_identity":          guardIdentityObject(id1),
+		"runtime_lifecycle_parent_provisioning_identity": bad,
+	}}
+	if e := c.verifyExecutionParents(profile); codeOf(e) != "EXECUTION_PARENT_IDENTITY_DRIFT" {
+		t.Fatalf("identity drift accepted: %v", e)
 	}
 }
 

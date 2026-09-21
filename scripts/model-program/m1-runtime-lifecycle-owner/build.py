@@ -20,15 +20,15 @@ from pathlib import Path, PurePosixPath
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 MANIFEST = HERE / "source-manifest.json"
-CONTRACT = ROOT / "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.json"
+CONTRACT = ROOT / "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.1.json"
 BASE_CANDIDATE = ROOT / "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json"
-SUCCESSOR_PROFILE_REPO_PATH = "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.owner-root-pinned.candidate.json"
+SUCCESSOR_PROFILE_REPO_PATH = "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-002.owner-root-pinned.candidate.json"
 SUCCESSOR_CANDIDATE = ROOT / SUCCESSOR_PROFILE_REPO_PATH
 
 IMPLEMENTATION_BASE = "3d8a4c88373f5a54831b40d34c0ad89281d02ac1"
-CONTRACT_BLOB = "f422d4da73deb1cafb6c00468602c8309d896786"
-CONTRACT_BYTES = 42486
-CONTRACT_SHA256 = "b40040a1302620b965bdf6dbe2283d0d6d5f9413c8c784e4b65d9cd030ac7ee3"
+CONTRACT_BLOB = "5db350700e831a0423dd1e6f568d6f24f0c956ef"
+CONTRACT_BYTES = 44741
+CONTRACT_SHA256 = "e932449cf290edbd654fe6960f4a20205ea756c4db3db724db6349a783aefe27"
 BASE_CANDIDATE_BLOB = "51b0083f74dd12318b7cdcdf3b939d31723de787"
 BASE_CANDIDATE_BYTES = 37761
 BASE_CANDIDATE_SHA256 = "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3"
@@ -80,7 +80,7 @@ def verify_successor_profile(manifest: dict, manifest_raw: bytes, manifest_sha: 
     prep = p.get("successor_preparation")
     if not isinstance(code, dict) or not isinstance(execution, dict) or not isinstance(prep, dict):
         raise RuntimeError("successor profile required binding objects missing")
-    if p.get("status") != "BLOCKED_PENDING_FRESH_CONTEXT_REVIEW_AND_FINAL_ISSUANCE":
+    if p.get("status") != "BLOCKED_PENDING_FRESH_CONTEXT_REVIEW_PARENT_PROVISIONING_AND_FINAL_ISSUANCE":
         raise RuntimeError("successor profile stage drift")
     if p.get("effectful_authority_issued") is not False or p.get("authority_effect") != "NONE / PROFILE_PREPARATION_ONLY":
         raise RuntimeError("successor profile unexpectedly grants effectful authority")
