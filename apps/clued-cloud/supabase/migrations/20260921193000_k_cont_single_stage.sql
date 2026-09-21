@@ -123,7 +123,9 @@ begin
           '(^|\\n)### Next action',E'\\1### Imported next-action snapshot','g')) || E'\n' end;
 end $$;
 
-create or replace function public.clued_mcp_restore(p_token_hash text,p_input jsonb default '{}'::jsonb)
+-- Preserve the v1.3 public restore router. Canonical grants delegate here;
+-- context-only project grants must continue returning scoped_context_ready.
+create or replace function public.clued_mcp_restore_before_project_access_v13(p_token_hash text,p_input jsonb default '{}'::jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare
   v_binding public.clued_agent_bindings%rowtype;
@@ -459,11 +461,12 @@ begin
 end $$;
 
 revoke all on function clued_private.render_log(uuid,text) from public,anon,authenticated;
+revoke all on function public.clued_mcp_restore_before_project_access_v13(text,jsonb) from public,anon,authenticated;
 revoke all on function public.clued_mcp_restore(text,jsonb) from public;
 revoke all on function public.clued_mcp_commit_checkpoint(text,jsonb) from public;
 revoke all on function public.clued_mcp_search_context(text,jsonb) from public;
 revoke all on function public.clued_mcp_audit_receipts(text,jsonb) from public;
-grant execute on function public.clued_mcp_restore(text,jsonb) to anon;
+grant execute on function public.clued_mcp_restore(text,jsonb) to anon,authenticated;
 grant execute on function public.clued_mcp_commit_checkpoint(text,jsonb) to anon;
 grant execute on function public.clued_mcp_search_context(text,jsonb) to anon;
 grant execute on function public.clued_mcp_audit_receipts(text,jsonb) to anon;
