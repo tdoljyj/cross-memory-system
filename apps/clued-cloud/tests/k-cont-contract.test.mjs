@@ -8,6 +8,10 @@ const migration = readFileSync(
 );
 const continuity = readFileSync(new URL("../worker/continuity.ts", import.meta.url), "utf8");
 const records = readFileSync(new URL("../worker/records.ts", import.meta.url), "utf8");
+const resumeImportBudgetDelta = readFileSync(
+  new URL("../supabase/migrations/20260921204000_k_cont_resume_import_budget_delta.sql", import.meta.url),
+  "utf8",
+);
 
 test("K-CONT-07 requires explicit checkpoint coverage", () => {
   assert.match(migration, /checkpoint_coverage jsonb/);
@@ -63,6 +67,12 @@ test("K-CONT-01 avoids duplicate log plus event payloads", () => {
   assert.match(migration, /if v_response_view='work_log' then/);
   assert.match(migration, /return v_result\|\|jsonb_build_object\('events_after_checkpoint',v_events\)/);
   assert.doesNotMatch(migration, /'events_after_checkpoint',v_events,[\s\S]{0,200}'work_log'/);
+});
+
+test("K-CONT-01 keeps imported history outside the resume response budget", () => {
+  assert.match(resumeImportBudgetDelta, /available through the explicit \`clued_read_log\` history surface/);
+  assert.doesNotMatch(resumeImportBudgetDelta, /pg_catalog\.rtrim/);
+  assert.doesNotMatch(resumeImportBudgetDelta, /Imported checkpoint snapshot/);
 });
 
 test("K-CONT-01 budgets and paginates search", () => {
