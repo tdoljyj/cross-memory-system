@@ -1,0 +1,74 @@
+
+> clued-cloud@0.1.0 test:authorization:database
+> node --test --test-force-exit tests/connection-authorization-db.test.mjs tests/authorization-closeout.test.mjs tests/project-list-authorization-db.test.mjs tests/checkpoint-idempotency-db.test.mjs tests/checkpoint-replay-receipt-db.test.mjs
+
+▶ Authorization closeout: new resources and interrupted multi-step work
+  ✔ A11: a project created after consent requires a new grant and cannot expand the old binding (174.3495ms)
+  ✔ A15: revoking between steps rejects the next write and preserves the first record event and receipt (81.8755ms)
+✔ Authorization closeout: new resources and interrupted multi-step work (10842.8686ms)
+▶ checkpoint replay binds effective payload and context inside the existing binding namespace
+  ✔ pre-fix counterexample: changed payload and context falsely return duplicate (19.0094ms)
+  ✔ pre-fix counterexample: null base version bypasses the CAS comparison (13.608ms)
+  ✔ same effective payload replays a legacy checkpoint with a fresh session (18.3977ms)
+  ✔ changed snapshot, summary, next action, base version and context conflict without writes (36.4951ms)
+  ✔ null and negative base versions reject; bigint maximum conflicts without overflow (65.8843ms)
+  ✔ a legacy null-base commit cannot be replayed by inventing version minus one (13.3542ms)
+  ✔ foreign binding session is denied; legitimate bindings retain separate key namespaces (38.1345ms)
+  ✔ concurrent same-key same-payload has one commit and one replay (80.0703ms)
+  ✔ concurrent same key across authorized contexts cannot commit twice (17.6363ms)
+  ✔ revoked binding and ended or expired sessions cannot replay (143.0304ms)
+  ✔ forward migration is repeatable and preserves legacy checkpoint, receipt and grants (38.6872ms)
+✖ checkpoint replay binds effective payload and context inside the existing binding namespace (10669.201ms)
+▶ checkpoint replay returns its unique original Receipt without changing stored history
+  ✔ deployed predecessor counterexample: duplicate omits the persisted original Receipt id (23.3274ms)
+  ✔ legacy result replays with its exact original Receipt through each new valid session (34.6938ms)
+  ✔ fresh post-patch commit and replay have the same Receipt without a second write (52.9137ms)
+  ✔ changed effective fields remain conflict and cannot disclose a Receipt reference (59.2016ms)
+  ✔ synthetic legacy checkpoints without one unique Receipt fail closed (41.1458ms)
+  ✔ repeatable forward migration leaves old checkpoint, original Receipt and grants unchanged (60.3038ms)
+✔ checkpoint replay returns its unique original Receipt without changing stored history (9454.6176ms)
+▶ Connection authorization v1.2: real PostgreSQL permission and transaction boundaries
+  ✔ trusted issuer and direct subject required; no forged client request (33.1287ms)
+  ✔ selected permissions intersect requested scopes and current ownership (108.3202ms)
+  ✔ same client creates independent bindings; partial consent never forms Cartesian product (164.1949ms)
+  ✔ approval retries preserve exact binding and cannot reuse request for broader consent (6.2795ms)
+  ✔ legacy JWT, tables, private helpers and whole-account exports cannot bypass selection (12.6713ms)
+  ✔ global aggregation filters actual source scopes (19.2127ms)
+  ✔ reduce is CAS protected and cannot grow; other same-client binding remains valid (23.6746ms)
+  ✔ business commit before revocation is ordered; all operations after revocation commit fail (221.1239ms)
+  ✔ revocation commit first blocks a queued business operation before side effect (202.0184ms)
+  ✔ status/self-revoke are minimal and idempotent; expiry is live (33.8271ms)
+  ✔ deny and approve serialize on the same request; denied/approved state cannot be reversed (182.1751ms)
+  ✔ issuer callback is revoke-only, bound to exact issuing authority, and idempotent (25.8536ms)
+  ✔ reclassification requires source and destination, not only target write permission (12.8293ms)
+  ✔ private helper privileges stay closed and profile consent is independent (12.3821ms)
+  ✔ account suspension is checked live and serialized against the business transaction (160.289ms)
+  ✔ current project qualification is locked, with no stale owner grant after commit (130.7338ms)
+  ✔ decision replacement cannot smuggle project sources through missing or forged global scope (33.5994ms)
+  ✔ canonical close/archive and restore are explicit permissions independent of write (38.2728ms)
+  ✔ context record revocation needs close; it never follows from write (23.0575ms)
+✔ Connection authorization v1.2: real PostgreSQL permission and transaction boundaries (12115.8969ms)
+▶ project list uses current explicit Canonical project consent in real PostgreSQL
+  ✔ explicit project read works without system grant and filters before limit (60.7342ms)
+  ✔ global/profile and write-only project consent reveal no project metadata (35.5092ms)
+  ✔ legacy broad grants stay owner-scoped and narrow raw grants stay exact (20.866ms)
+  ✔ same connection reduction takes effect without changing its token or stale keys (27.2465ms)
+  ✔ binding and authorization revocation, expiry, disabled account fail closed (57.8058ms)
+  ✔ current ownership and lifecycle/query filters remain effective (20.7151ms)
+  ✔ v13 development membership never confers Canonical project consent, even before revoke (97.2895ms)
+  ✔ migration is repeatable and retains RPC/table privilege boundary (13.1476ms)
+✔ project list uses current explicit Canonical project consent in real PostgreSQL (11389.4015ms)
+ℹ tests 51
+ℹ suites 0
+ℹ pass 50
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12433.5478
+
+✖ failing tests:
+
+test at tests\checkpoint-idempotency-db.test.mjs:16:1
+✖ checkpoint replay binds effective payload and context inside the existing binding namespace (10669.201ms)
+  [Error: EBUSY: resource busy or locked, rmdir 'C:\Users\17531\AppData\Local\Temp\clued-checkpoint-idempotency-fIkaVl'] { errno: -4082, code: 'EBUSY', syscall: 'rmdir', path: 'C:\\Users\\17531\\AppData\\Local\\Temp\\clued-checkpoint-idempotency-fIkaVl' }

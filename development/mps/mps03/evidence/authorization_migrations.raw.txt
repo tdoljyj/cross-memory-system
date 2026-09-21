@@ -1,0 +1,14 @@
+
+> clued-cloud@0.1.0 test:authorization:migrations
+> node --test --test-force-exit tests/authorization-migration-chain.test.mjs
+
+✔ complete-repository: retired baseline upgrades to successor without reviving old surfaces (4028.6734ms)
+✔ production-installed-shape: retired baseline upgrades to successor without reviving old surfaces (3862.1859ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8020.2153

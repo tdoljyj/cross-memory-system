@@ -40,7 +40,7 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/repo" -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
             ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-            fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo
+            fs --db-repository ghcr.io/aquasecurity/trivy-db:2 --db-repository mirror.gcr.io/aquasec/trivy-db:2 --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo
       - name: Secrets
         run: |
           docker run --rm -v "$PWD:/repo" -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
@@ -50,7 +50,7 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/repo" -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
             ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-            fs --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo
+            fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo
 
   trivy-untrusted-hosted:
     name: >-
@@ -74,7 +74,7 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/repo" \
             ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-            fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo
+            fs --db-repository ghcr.io/aquasecurity/trivy-db:2 --db-repository mirror.gcr.io/aquasec/trivy-db:2 --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo
       - name: Secrets
         run: |
           docker run --rm -v "$PWD:/repo" \
@@ -84,4 +84,4 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/repo" \
             ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-            fs --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo
+            fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo

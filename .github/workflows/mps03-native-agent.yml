@@ -1,0 +1,38 @@
+name: MPS-03 Native Agent
+
+on:
+  pull_request:
+    paths:
+      - "development/mps/mps03/**"
+      - "tests/mps03/**"
+      - "scripts/mps03/**"
+      - ".github/workflows/mps03-native-agent.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mps03-local-reference-and-static:
+    # Untrusted PR code must not execute on an internal self-hosted runner.
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.actor == github.repository_owner)
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: MPS-03 bounded entry tests
+        run: python scripts/mps03/run_acceptance.py
+      - name: MPS-03 cross-entry process evidence
+        run: python scripts/mps03/capture_cross_entry_evidence.py
+      - name: Compile MPS-03 Python
+        run: python -m compileall -q development/mps/mps03 tests/mps03 scripts/mps03

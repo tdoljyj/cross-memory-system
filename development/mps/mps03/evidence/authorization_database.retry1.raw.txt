@@ -1,0 +1,68 @@
+
+> clued-cloud@0.1.0 test:authorization:database
+> node --test --test-force-exit tests/connection-authorization-db.test.mjs tests/authorization-closeout.test.mjs tests/project-list-authorization-db.test.mjs tests/checkpoint-idempotency-db.test.mjs tests/checkpoint-replay-receipt-db.test.mjs
+
+▶ Authorization closeout: new resources and interrupted multi-step work
+  ✔ A11: a project created after consent requires a new grant and cannot expand the old binding (94.6127ms)
+  ✔ A15: revoking between steps rejects the next write and preserves the first record event and receipt (61.1394ms)
+✔ Authorization closeout: new resources and interrupted multi-step work (10962.6295ms)
+▶ checkpoint replay binds effective payload and context inside the existing binding namespace
+  ✔ pre-fix counterexample: changed payload and context falsely return duplicate (48.5659ms)
+  ✔ pre-fix counterexample: null base version bypasses the CAS comparison (9.3916ms)
+  ✔ same effective payload replays a legacy checkpoint with a fresh session (10.861ms)
+  ✔ changed snapshot, summary, next action, base version and context conflict without writes (20.7868ms)
+  ✔ null and negative base versions reject; bigint maximum conflicts without overflow (33.1186ms)
+  ✔ a legacy null-base commit cannot be replayed by inventing version minus one (22.0215ms)
+  ✔ foreign binding session is denied; legitimate bindings retain separate key namespaces (37.8108ms)
+  ✔ concurrent same-key same-payload has one commit and one replay (29.8274ms)
+  ✔ concurrent same key across authorized contexts cannot commit twice (12.4219ms)
+  ✔ revoked binding and ended or expired sessions cannot replay (12.5372ms)
+  ✔ forward migration is repeatable and preserves legacy checkpoint, receipt and grants (4.0363ms)
+✔ checkpoint replay binds effective payload and context inside the existing binding namespace (10209.9731ms)
+▶ checkpoint replay returns its unique original Receipt without changing stored history
+  ✔ deployed predecessor counterexample: duplicate omits the persisted original Receipt id (12.2028ms)
+  ✔ legacy result replays with its exact original Receipt through each new valid session (26.8636ms)
+  ✔ fresh post-patch commit and replay have the same Receipt without a second write (21.9052ms)
+  ✔ changed effective fields remain conflict and cannot disclose a Receipt reference (46.6444ms)
+  ✔ synthetic legacy checkpoints without one unique Receipt fail closed (23.8555ms)
+  ✔ repeatable forward migration leaves old checkpoint, original Receipt and grants unchanged (3.99ms)
+✔ checkpoint replay returns its unique original Receipt without changing stored history (10712.8063ms)
+▶ Connection authorization v1.2: real PostgreSQL permission and transaction boundaries
+  ✔ trusted issuer and direct subject required; no forged client request (53.9663ms)
+  ✔ selected permissions intersect requested scopes and current ownership (37.4661ms)
+  ✔ same client creates independent bindings; partial consent never forms Cartesian product (103.243ms)
+  ✔ approval retries preserve exact binding and cannot reuse request for broader consent (6.5141ms)
+  ✔ legacy JWT, tables, private helpers and whole-account exports cannot bypass selection (14.1712ms)
+  ✔ global aggregation filters actual source scopes (16.6006ms)
+  ✔ reduce is CAS protected and cannot grow; other same-client binding remains valid (14.0128ms)
+  ✔ business commit before revocation is ordered; all operations after revocation commit fail (137.6856ms)
+  ✔ revocation commit first blocks a queued business operation before side effect (149.2394ms)
+  ✔ status/self-revoke are minimal and idempotent; expiry is live (14.1611ms)
+  ✔ deny and approve serialize on the same request; denied/approved state cannot be reversed (125.7325ms)
+  ✔ issuer callback is revoke-only, bound to exact issuing authority, and idempotent (14.1758ms)
+  ✔ reclassification requires source and destination, not only target write permission (8.8549ms)
+  ✔ private helper privileges stay closed and profile consent is independent (10.0245ms)
+  ✔ account suspension is checked live and serialized against the business transaction (126.2506ms)
+  ✔ current project qualification is locked, with no stale owner grant after commit (117.9585ms)
+  ✔ decision replacement cannot smuggle project sources through missing or forged global scope (28.9545ms)
+  ✔ canonical close/archive and restore are explicit permissions independent of write (53.3251ms)
+  ✔ context record revocation needs close; it never follows from write (30.1615ms)
+✔ Connection authorization v1.2: real PostgreSQL permission and transaction boundaries (12164.5851ms)
+▶ project list uses current explicit Canonical project consent in real PostgreSQL
+  ✔ explicit project read works without system grant and filters before limit (54.7358ms)
+  ✔ global/profile and write-only project consent reveal no project metadata (29.2682ms)
+  ✔ legacy broad grants stay owner-scoped and narrow raw grants stay exact (17.2699ms)
+  ✔ same connection reduction takes effect without changing its token or stale keys (24.2668ms)
+  ✔ binding and authorization revocation, expiry, disabled account fail closed (48.0187ms)
+  ✔ current ownership and lifecycle/query filters remain effective (15.4158ms)
+  ✔ v13 development membership never confers Canonical project consent, even before revoke (67.6005ms)
+  ✔ migration is repeatable and retains RPC/table privilege boundary (17.0957ms)
+✔ project list uses current explicit Canonical project consent in real PostgreSQL (11212.7595ms)
+ℹ tests 51
+ℹ suites 0
+ℹ pass 51
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12427.3126

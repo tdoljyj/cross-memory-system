@@ -1,0 +1,24 @@
+{
+  "qualification": "ISOLATED_LOCAL_POSTGRES_WITH_MPS02B_COMPAT_SHIM",
+  "source_sha256": {
+    "20260916020000_mps_02a_state_stamp_intent.sql": "d9a64c43dcd1529a7a0f26bb61df68b5cb9d881dedb4ee21b5b0bd6e43eabea7",
+    "20260916022851_mps_02b_atomic_mutation.sql": "9f2b23349075aecac474300420e7a9dd02749bf8ddfd3751047876ae448296af"
+  },
+  "all_pass": true,
+  "normalized_create_key_replays_exact_receipt": true,
+  "changed_confirmation_target_rejected_without_outcome": true,
+  "same_create_outcome_after_later_current": true,
+  "same_confirm_outcome_after_later_current": true,
+  "different_payload_conflict": true,
+  "agent_sees_new_current": true,
+  "stale_agent_proposal_rejected": true,
+  "altered_agent_stamp_rejected": true,
+  "distinct_allowed_action_generations": true,
+  "cross_user_object_operations_rejected": true,
+  "interleaved_read_keeps_stamp_and_body_together": true,
+  "identical_pending_suggestion_reuses_change_set": true,
+  "previously_proposed_body_can_be_readopted": true,
+  "foreign_intent_excluded_from_list_and_confirm": true,
+  "noncommitted_create_rolled_back": true,
+  "container_removed_on_exit": true
+}

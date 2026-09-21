@@ -1,0 +1,301 @@
+{
+  "schema": "clued.ci-runner-budget-policy/v2",
+  "status": "PASS",
+  "hosted_only_allowlist": {
+    "clued-connection-authorization.yml": "Intentional clean-room Ubuntu candidate validation; installs a system ICU compatibility package.",
+    "phase2-naming-surface-inventory.yml": "Frozen historical exact-byte inventory workflow; modifying its execution contract would invalidate bound evidence.",
+    "phase2-v027-validation.yml": "Frozen historical exact-source validation lane with self-referential accepted-source bindings."
+  },
+  "concurrency_exemptions": {
+    "model-program-m0.yml": "M0 SHA256SUMS binds this workflow as an exact candidate input; changing its bytes invalidates the formal M0 manifest."
+  },
+  "workflows": [
+    {
+      "workflow": "clued-connection-authorization.yml",
+      "runs_on": [
+        "ubuntu-24.04"
+      ],
+      "hosted": true,
+      "self_hosted": false,
+      "hosted_only_allowlisted": true,
+      "allowlist_reason": "Intentional clean-room Ubuntu candidate validation; installs a system ICU compatibility package.",
+      "pr_triggered": true,
+      "has_concurrency": false,
+      "has_cancel_in_progress": false,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "clued-g4-database.yml",
+      "runs_on": [
+        "[self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]",
+        "ubuntu-24.04"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "gitleaks.yml",
+      "runs_on": [
+        "[self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "memory-publication-gate.yml",
+      "runs_on": [
+        "[self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24]",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "model-program-m0.yml",
+      "runs_on": [
+        "[self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": false,
+      "has_cancel_in_progress": false,
+      "concurrency_exempt": true,
+      "concurrency_exemption_reason": "M0 SHA256SUMS binds this workflow as an exact candidate input; changing its bytes invalidates the formal M0 manifest."
+    },
+    {
+      "workflow": "model-program-m1-entry.yml",
+      "runs_on": [
+        "- self-hosted - Windows - X64 - clued - pool-general - trust-internal - cap-python312",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "model-program-m1-harness.yml",
+      "runs_on": [
+        "[self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "model-program-m1-package.yml",
+      "runs_on": [
+        "[self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "mps03-native-agent.yml",
+      "runs_on": [
+        "[self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]"
+      ],
+      "hosted": false,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "multitrack-governance-projection.yml",
+      "runs_on": [
+        "[self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "node-profile-policy.yml",
+      "runs_on": [
+        "[self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]",
+        "[self-hosted, Linux, X64, clued, pool-general, trust-internal]",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "phase2-naming-surface-inventory.yml",
+      "runs_on": [
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": false,
+      "hosted_only_allowlisted": true,
+      "allowlist_reason": "Frozen historical exact-byte inventory workflow; modifying its execution contract would invalidate bound evidence.",
+      "pr_triggered": false,
+      "has_concurrency": false,
+      "has_cancel_in_progress": false,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "phase2-v027-validation.yml",
+      "runs_on": [
+        "ubuntu-latest",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": false,
+      "hosted_only_allowlisted": true,
+      "allowlist_reason": "Frozen historical exact-source validation lane with self-referential accepted-source bindings.",
+      "pr_triggered": false,
+      "has_concurrency": false,
+      "has_cancel_in_progress": false,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "public-mcp-behavior.yml",
+      "runs_on": [
+        "[self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, site-company]",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "public-mcp-gate-receipt.yml",
+      "runs_on": [
+        "[self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24]",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "public-mcp-protocol.yml",
+      "runs_on": [
+        "[self-hosted, Linux, X64, clued, pool-general, trust-internal]",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "runner-budget-policy.yml",
+      "runs_on": [
+        "[self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    },
+    {
+      "workflow": "trivy.yml",
+      "runs_on": [
+        "[self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]",
+        "ubuntu-latest"
+      ],
+      "hosted": true,
+      "self_hosted": true,
+      "hosted_only_allowlisted": false,
+      "allowlist_reason": null,
+      "pr_triggered": true,
+      "has_concurrency": true,
+      "has_cancel_in_progress": true,
+      "concurrency_exempt": false,
+      "concurrency_exemption_reason": null
+    }
+  ],
+  "violations": []
+}

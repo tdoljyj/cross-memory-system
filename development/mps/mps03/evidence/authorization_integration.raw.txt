@@ -1,0 +1,14 @@
+
+> clued-cloud@0.1.0 test:authorization:integration
+> node --test --test-force-exit tests/authorization-end-to-end.test.mjs
+
+CIMD (Client ID Metadata Document) is disabled: add '"compatibility_flags": ["global_fetch_strictly_public"]' to your wrangler.jsonc to enable. See: https://developers.cloudflare.com/workers/configuration/compatibility-flags/#global-fetch-strictly-public
+✔ OAuth consent, MCP record receipt, replay and revoke use the real database together (4533.5301ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4696.2576
