@@ -217,6 +217,11 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     // Simulate a malformed row written before the new append guard existed.
     await admin.query("update public.clued_context_events set target_refs='{}'::jsonb where user_id=$1 and canonical_event_type='extension:kcont:invalid_id'", [userId]);
 
+    const auditOnly = await rpc("clued_event_append", {
+      event_schema_version: 1, event_type: "extension:kcont:audit_secret", event_scope: projectContext,
+      target_refs: [{ kind: "record", id: projectRecordId }], audit_visibility: "audit_only", idempotency_key: uuid(),
+    });
+    assert.equal(auditOnly.status, "committed");
     const reducedTokenHash = hash();
     const reducedBinding = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'OAuth','reduced project reader',$2,array['context:read'],array['global',$3]) returning id`,
@@ -236,6 +241,17 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
       values($1,'scope',$2,'canonical',array['read'])`, [reducedBinding, projectContext]);
     const reducedRpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`, [reducedTokenHash, input])).rows[0].value;
     const reduced = await reducedRpc("clued_mcp_restore", { context_key: projectContext, response_view: "structured" });
+    const auditSearch = await reducedRpc("clued_mcp_search_context", {
+      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:audit_secret",
+    });
+    const auditWorkLog = await reducedRpc("clued_mcp_restore", { context_key: projectContext, response_view: "work_log" });
+    const auditReadLog = await reducedRpc("clued_mcp_read_log", { context_key: projectContext, session_token: reduced.session_token });
+    assert.deepEqual({
+      search: auditSearch.results.some((item) => item.payload?.canonical_event_type === "extension:kcont:audit_secret"),
+      structured: reduced.events_after_checkpoint.some((item) => item.canonical_event_type === "extension:kcont:audit_secret"),
+      workLog: auditWorkLog.work_log.includes("extension:kcont:audit_secret"),
+      readLog: auditReadLog.markdown.includes("extension:kcont:audit_secret"),
+    }, { search: false, structured: false, workLog: false, readLog: false });
     assert.deepEqual(reduced.active_constraints.map((item) => item.title), ["Project constraint"]);
     assert.equal(reduced.authority_conflicts.some((item) => item.title === "Resident constraint"), false);
     const globalEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:global_target");
