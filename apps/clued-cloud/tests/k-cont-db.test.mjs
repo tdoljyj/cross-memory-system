@@ -54,6 +54,8 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     const tokenHash = hash();
     const projectContext = `project:${uuid()}`;
     await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'k-cont@example.invalid',now())", [userId]);
+    await admin.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at) values($1,$2,'K-CONT project','k-cont project',$3,'confirmed',now())",
+      [projectContext.slice(8), userId, projectContext]);
     await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','K-CONT database test',$2,array['context:read','context:write','audit:read'],array['global',$3])`,
       [userId, tokenHash, projectContext]);
@@ -80,6 +82,15 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
         coverage: { contexts: ["global"], tracks: ["k-cont"], event_ids: [first.event_id] },
       }),
       /checkpoint_coverage_required/,
+    );
+    await assert.rejects(
+      rpc("clued_mcp_commit_checkpoint", {
+        context_key: "global", session_token: restored.session_token, base_version: second.version,
+        snapshot: { stage: "K-CONT" }, summary: "Reject an empty track.",
+        next_action: "Keep both events pending.", idempotency_key: uuid(),
+        coverage: { mode: "explicit", contexts: ["global"], tracks: [null], event_ids: [first.event_id] },
+      }),
+      /invalid_checkpoint_track/,
     );
     const checkpoint = await rpc("clued_mcp_commit_checkpoint", {
       context_key: "global", session_token: restored.session_token, base_version: second.version,
@@ -150,6 +161,63 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     const audit = await rpc("clued_mcp_audit_receipts", { context_key: "global" });
     assert.equal(Array.isArray(audit.session_compliance), true);
     assert.equal(typeof audit.checkpoint_reminder, "boolean");
+
+    const projectDecision = await rpc("clued_record_mutate", {
+      operation: "create", record_type: "decision", record_schema_version: 1, lifecycle_status: "active", scope: projectContext,
+      idempotency_key: uuid(), authority: "user_explicit", user_confirmed: true, confidence_reason: "K-CONT project fixture",
+      source_refs: [], source_unavailable_reason: null,
+      mutation: { title: "Project constraint", content: "Keep project scope visible.",
+        type_fields: { rationale: "fixture", constraint: true }, relations: {} },
+    });
+    assert.equal(projectDecision.status, "committed");
+    const globalRecordId = (await admin.query("select id from public.clued_memories where user_id=$1 and title='Resident constraint'", [userId])).rows[0].id;
+    const projectRecordId = (await admin.query("select id from public.clued_memories where user_id=$1 and title='Project constraint'", [userId])).rows[0].id;
+    const appendTarget = (targetId, name) => rpc("clued_event_append", {
+      event_schema_version: 1, event_type: `extension:kcont:${name}`, event_scope: projectContext,
+      target_refs: [{ kind: "record", id: targetId }], audit_visibility: "work_log", idempotency_key: uuid(),
+    });
+    assert.equal((await appendTarget(globalRecordId, "global_target")).status, "committed");
+    assert.equal((await appendTarget(projectRecordId, "project_target")).status, "committed");
+    const malformed = await rpc("clued_event_append", {
+      event_schema_version: 1, event_type: "extension:kcont:invalid_target", event_scope: projectContext,
+      target_refs: { kind: "record", id: globalRecordId }, audit_visibility: "work_log", idempotency_key: uuid(),
+    });
+    assert.equal(malformed.status, "rejected");
+    assert.equal((await admin.query("select count(*)::int as count from public.clued_context_events where user_id=$1 and canonical_event_type='extension:kcont:invalid_target'", [userId])).rows[0].count, 0);
+    assert.equal((await appendTarget("------------------------------------", "invalid_id")).status, "committed");
+    // Simulate a malformed row written before the new append guard existed.
+    await admin.query("update public.clued_context_events set target_refs='{}'::jsonb where user_id=$1 and canonical_event_type='extension:kcont:invalid_id'", [userId]);
+
+    const reducedTokenHash = hash();
+    const reducedBinding = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'OAuth','reduced project reader',$2,array['context:read'],array['global',$3]) returning id`,
+      [userId, reducedTokenHash, projectContext])).rows[0].id;
+    const issuerHash = hash();
+    await admin.query("insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,'https://mcp.example.invalid/mcp','K-CONT issuer')", [issuerHash]);
+    const requestId = (await admin.query(`insert into clued_private.authorization_requests_v12
+      (owner_id,issuer_hash,request_digest,client_id,client_name,redirect_uri,resource,requested_scopes,eligible,status)
+      values($1,$2,$3,'k-cont-client','K-CONT client','https://client.example.invalid/callback',
+      'https://mcp.example.invalid/mcp',array['context:read'],'[]'::jsonb,'approved') returning id`,
+      [userId, issuerHash, hash()])).rows[0].id;
+    await admin.query(`insert into clued_private.authorizations_v12
+      (binding_id,request_id,owner_id,client_id,client_name,resource,expires_at)
+      values($1,$2,$3,'k-cont-client','K-CONT client','https://mcp.example.invalid/mcp',now()+interval '1 hour')`,
+      [reducedBinding, requestId, userId]);
+    await admin.query(`insert into clued_private.authorization_entries_v12(binding_id,resource_kind,resource_id,environment,actions)
+      values($1,'scope',$2,'canonical',array['read'])`, [reducedBinding, projectContext]);
+    const reducedRpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`, [reducedTokenHash, input])).rows[0].value;
+    const reduced = await reducedRpc("clued_mcp_restore", { context_key: projectContext, response_view: "structured" });
+    assert.deepEqual(reduced.active_constraints.map((item) => item.title), ["Project constraint"]);
+    assert.equal(reduced.authority_conflicts.some((item) => item.title === "Resident constraint"), false);
+    const globalEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:global_target");
+    const projectEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:project_target");
+    const historicalMalformedEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:invalid_id");
+    assert.deepEqual(globalEvent.record_targets, []);
+    assert.deepEqual(projectEvent.record_targets.map((item) => item.title), ["Project constraint"]);
+    assert.deepEqual(historicalMalformedEvent.record_targets, []);
+    const reducedLog = await reducedRpc("clued_mcp_restore", { context_key: projectContext, response_view: "work_log" });
+    assert.doesNotMatch(reducedLog.work_log, /Remain visible during resume\./);
+    assert.match(reducedLog.work_log, /Keep project scope visible\./);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
