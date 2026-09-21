@@ -1,0 +1,132 @@
+{
+  "schema_version": "clued.m1-08-pc002-profile-binding-recheck/1",
+  "binding_commit": "751456ac496c017a00a67e4a91029eb90168415e",
+  "profile_sha256": "c0c9cf9d5f16ab8979893b0c5f2845864f14867a5df96b98869e0aa086a88585",
+  "profile_git_blob_sha1": "17deb9bf07749488fa10fb4f6b8dab5c179e6705",
+  "profile_bytes": 43853,
+  "parent_provisioning_reviewed_exact_head": "5afb1d5f75432bdef2c8a7b5d0a5eb603f527ff9",
+  "parent_provisioning_receipt_sha256": "34e0e3b3540bec04563870d54bf538b11894b59051c4e9036f23723f7225e6a9",
+  "source_manifest_sha256": "817bbed1b907d69a186157e2f7a8604a3c6f32841fdd5e5ef9bb0b031104dd43",
+  "source_tree_git_sha1": "78413820ee6ee174535f7055b2072f6ffc2e9753",
+  "live_identity_read_a": {
+    "evidence_parent": {
+      "canonical_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence",
+      "empty_at_observation": true,
+      "file_id": "005100000009757b",
+      "filesystem_type": "NTFS",
+      "non_reparse": true,
+      "owner_sid": "S-1-5-21-858977881-4031698862-3006450925-1000",
+      "security_descriptor_sha256": "f9a26120ad42e5b810fa72ecbd2713b82ca9f5f5c7c1932e339b08d17b6e6f85",
+      "volume_serial": "9686166e"
+    },
+    "guard_parent": {
+      "canonical_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-002",
+      "empty_at_observation": true,
+      "file_id": "000f00000004473b",
+      "filesystem_type": "NTFS",
+      "non_reparse": true,
+      "owner_sid": "S-1-5-21-858977881-4031698862-3006450925-1000",
+      "security_descriptor_sha256": "f9a26120ad42e5b810fa72ecbd2713b82ca9f5f5c7c1932e339b08d17b6e6f85",
+      "volume_serial": "9686166e"
+    },
+    "pc001_guard_preserved": true,
+    "pc001_guard_sha256": "9e0b95cf7e8cbb16608c73318b6c39b54dd5c1b2ae26daa63e822420cbce14bb",
+    "pc002_attempt_guard_absent": true,
+    "runtime_lifecycle_parent": {
+      "canonical_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke",
+      "empty_at_observation": true,
+      "file_id": "00250000000a06ea",
+      "filesystem_type": "NTFS",
+      "non_reparse": true,
+      "owner_sid": "S-1-5-21-858977881-4031698862-3006450925-1000",
+      "security_descriptor_sha256": "f9a26120ad42e5b810fa72ecbd2713b82ca9f5f5c7c1932e339b08d17b6e6f85",
+      "volume_serial": "9686166e"
+    }
+  },
+  "live_identity_read_b": {
+    "evidence_parent": {
+      "canonical_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence",
+      "empty_at_observation": true,
+      "file_id": "005100000009757b",
+      "filesystem_type": "NTFS",
+      "non_reparse": true,
+      "owner_sid": "S-1-5-21-858977881-4031698862-3006450925-1000",
+      "security_descriptor_sha256": "f9a26120ad42e5b810fa72ecbd2713b82ca9f5f5c7c1932e339b08d17b6e6f85",
+      "volume_serial": "9686166e"
+    },
+    "guard_parent": {
+      "canonical_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-002",
+      "empty_at_observation": true,
+      "file_id": "000f00000004473b",
+      "filesystem_type": "NTFS",
+      "non_reparse": true,
+      "owner_sid": "S-1-5-21-858977881-4031698862-3006450925-1000",
+      "security_descriptor_sha256": "f9a26120ad42e5b810fa72ecbd2713b82ca9f5f5c7c1932e339b08d17b6e6f85",
+      "volume_serial": "9686166e"
+    },
+    "pc001_guard_preserved": true,
+    "pc001_guard_sha256": "9e0b95cf7e8cbb16608c73318b6c39b54dd5c1b2ae26daa63e822420cbce14bb",
+    "pc002_attempt_guard_absent": true,
+    "runtime_lifecycle_parent": {
+      "canonical_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke",
+      "empty_at_observation": true,
+      "file_id": "00250000000a06ea",
+      "filesystem_type": "NTFS",
+      "non_reparse": true,
+      "owner_sid": "S-1-5-21-858977881-4031698862-3006450925-1000",
+      "security_descriptor_sha256": "f9a26120ad42e5b810fa72ecbd2713b82ca9f5f5c7c1932e339b08d17b6e6f85",
+      "volume_serial": "9686166e"
+    }
+  },
+  "checks": {
+    "receipt_sha_matches_reviewed": true,
+    "profile_receipt_binding_guard": true,
+    "profile_receipt_binding_evidence": true,
+    "profile_receipt_binding_runtime": true,
+    "live_reads_equal": true,
+    "guard_identity_matches_live": true,
+    "evidence_identity_matches_live": true,
+    "runtime_identity_matches_live": true,
+    "pc001_guard_preserved": true,
+    "pc002_guard_absent": true,
+    "authority_closed": true,
+    "binary_binding_unissued": true,
+    "build_profile_sha_matches": true,
+    "build_profile_blob_matches": true,
+    "build_source_manifest_exact": true,
+    "build_source_tree_exact": true,
+    "build_tests_pass": true,
+    "owner_binary_not_executed": true,
+    "worktree_clean": true
+  },
+  "evidence_sha256": {
+    "build-receipt.json": "a9a95da1ea4f61c8e79250dbaaa101daf4d4ec924056dde393b0f53cf9fcf29c",
+    "go-test.log": "2d05a66486ae35cb2c231b3758549589b0f612d635b7b9abf1acc6918aab15a8",
+    "python-qualification-scope.log": "67ad9aaad495dd15dcebc6f17ede51cecdea9c562b613ad46ebe79de8ece2ddb",
+    "go-vet.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "go-build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "go-test-compile.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "m1-08-owner.exe": "2af7d5e5176697c181dab70e620f0035543a5655915e4087ec8229d3a6b2a510",
+    "m1-08-owner.tests.exe": "bda7770d9ed1434bcb4ae3f658385dfd16b406154abef251291dff468fcf64eb",
+    "live-identity-a.log": "ee8a0e28f58646f0a63e369bc43a3bdd27e90a0b602fc526e0d190d2168b4ebf",
+    "live-identity-b.log": "8b37bb265e0e3e692562e9ab2e2ad54d3acf296f9af2b4db89f2db31a7ccd1c1"
+  },
+  "qualification": {
+    "top_level_pass": 72,
+    "subtest_pass": 24,
+    "fail": 0,
+    "skip": 0,
+    "go_vet_pass": true,
+    "qualification_scope_tests_pass": true,
+    "owner_binary_sha256": "2af7d5e5176697c181dab70e620f0035543a5655915e4087ec8229d3a6b2a510",
+    "windows_test_binary_sha256": "bda7770d9ed1434bcb4ae3f658385dfd16b406154abef251291dff468fcf64eb",
+    "owner_binary_executed": false
+  },
+  "authority": {
+    "effectful_authority_issued": false,
+    "final_issuance_performed": false,
+    "pc002_attempt_guard_created": false,
+    "lifecycle_or_model_execution": false
+  },
+  "pass": true
+}
