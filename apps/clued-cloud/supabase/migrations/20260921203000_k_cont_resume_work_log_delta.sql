@@ -15,7 +15,7 @@ create or replace function clued_private.render_resume_log(
   p_conflicts jsonb,
   p_event_page jsonb
 )
-returns text language plpgsql security definer set search_path='' as $
+returns text language plpgsql security definer set search_path='' as $$
 declare
   v_checkpoint public.clued_context_checkpoints%rowtype;
   v_version bigint:=0;
@@ -80,7 +80,7 @@ begin
           v_imported_markdown,
           '(^|\\n)## Latest checkpoint',E'\\1## Imported checkpoint snapshot','g'),
           '(^|\\n)### Next action',E'\\1### Imported next-action snapshot','g')) || E'\n' end;
-end $;
+end $$;
 
 create or replace function public.clued_mcp_restore_before_project_access_v13(p_token_hash text,p_input jsonb default '{}'::jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
