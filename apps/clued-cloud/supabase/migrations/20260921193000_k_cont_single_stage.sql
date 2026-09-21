@@ -291,7 +291,7 @@ begin
     where value!~'^[0-9]+$') then raise exception 'invalid_checkpoint_event_id' using errcode='22023'; end if;
   select coalesce(array_agg(value::bigint order by value::bigint),'{}') into v_event_ids
     from jsonb_array_elements_text(v_coverage->'event_ids') t(value);
-  if cardinality(v_event_ids)<>cardinality(array(select distinct event_id from unnest(v_event_ids) event_id)) then
+  if cardinality(v_event_ids)<>cardinality(array(select distinct covered.event_id from unnest(v_event_ids) as covered(event_id))) then
     raise exception 'duplicate_checkpoint_event_id' using errcode='22023';
   end if;
   if v_idempotency_key is not null and char_length(v_idempotency_key) not between 8 and 160 then raise exception 'invalid_idempotency_key' using errcode='22023'; end if;
@@ -323,13 +323,13 @@ begin
     from public.clued_context_heads h join public.clued_context_checkpoints c on c.id=h.checkpoint_id
    where h.user_id=v_binding.user_id and h.context_key=v_context_key;
   v_legacy_boundary:=coalesce(v_legacy_boundary,0);
-  if exists(select 1 from unnest(v_event_ids) event_id where not exists(
-    select 1 from public.clued_context_events e where e.id=event_id and e.user_id=v_binding.user_id
+  if exists(select 1 from unnest(v_event_ids) as covered(event_id) where not exists(
+    select 1 from public.clued_context_events e where e.id=covered.event_id and e.user_id=v_binding.user_id
       and e.context_key=v_context_key and e.id>v_legacy_boundary)) then
     raise exception 'checkpoint_event_not_authorized' using errcode='42501';
   end if;
-  if exists(select 1 from unnest(v_event_ids) event_id join public.clued_checkpoint_event_absorptions a
-    on a.user_id=v_binding.user_id and a.context_key=v_context_key and a.event_id=event_id) then
+  if exists(select 1 from unnest(v_event_ids) as covered(event_id) join public.clued_checkpoint_event_absorptions a
+    on a.user_id=v_binding.user_id and a.context_key=v_context_key and a.event_id=covered.event_id) then
     raise exception 'checkpoint_event_already_absorbed' using errcode='22023';
   end if;
   v_new_version:=v_current_version+1;
@@ -340,7 +340,7 @@ begin
   values(v_binding.user_id,v_binding.id,v_context_key,v_new_version,v_snapshot,v_summary,v_next_action,v_last_event_id,
     v_previous_id,v_session.id,v_idempotency_key,v_coverage,v_legacy_boundary) returning id into v_checkpoint_id;
   insert into public.clued_checkpoint_event_absorptions(user_id,context_key,checkpoint_id,event_id)
-    select v_binding.user_id,v_context_key,v_checkpoint_id,event_id from unnest(v_event_ids) event_id;
+    select v_binding.user_id,v_context_key,v_checkpoint_id,covered.event_id from unnest(v_event_ids) as covered(event_id);
   insert into public.clued_context_heads(user_id,context_key,checkpoint_id,version,updated_at)
     values(v_binding.user_id,v_context_key,v_checkpoint_id,v_new_version,now())
     on conflict(user_id,context_key) do update set checkpoint_id=excluded.checkpoint_id,version=excluded.version,updated_at=excluded.updated_at;
