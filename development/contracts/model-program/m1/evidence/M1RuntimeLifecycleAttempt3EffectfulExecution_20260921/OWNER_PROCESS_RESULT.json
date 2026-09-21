@@ -1,0 +1,14 @@
+{
+  "profile_id": "M1-LIFE-QWEN35-08B-PC-003-ISSUED",
+  "issued_commit": "bf8244b5d3503215f17a5c5471d5d3c364dac0a2",
+  "native_pid": 51428,
+  "started_at_utc": "2026-09-21T09:38:55.250055+00:00",
+  "ended_at_utc": "2026-09-21T09:40:01.179528+00:00",
+  "exit_code": 0,
+  "native_attempt_guard_exists": true,
+  "native_attempt_guard_sha256": "e1c7ea100787025724a8be19cb01f9e05bc27d29c0f43e53cf06ff9a4c3ec462",
+  "stdout_sha256": "d776349255456d98b54610b2ece78dc205a04c3a5fdcecefeea3f259920cd1f1",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "retry_permitted": false,
+  "wrapper_spawn_count": 1
+}
