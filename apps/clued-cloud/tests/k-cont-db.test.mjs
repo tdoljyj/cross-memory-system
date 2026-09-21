@@ -96,6 +96,7 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     const constrained = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
     assert.equal(constrained.active_constraints.length, 1);
     assert.equal(constrained.active_constraints[0].title, "Resident constraint");
+    assert.equal(constrained.active_constraints[0].content, "Remain visible during resume.");
     assert.ok(constrained.authority_conflicts.some((item) => item.title === "Resident constraint" && item.status === "review_required"));
 
     const boundedSession = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
@@ -123,6 +124,8 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     });
     assert.match(projectWorkLog.work_log, /Resident constraint/);
     assert.match(projectWorkLog.work_log, /scope=global/);
+    assert.match(projectWorkLog.work_log, /Remain visible during resume\./);
+    assert.equal(projectWorkLog.active_constraints[0].content, "Remain visible during resume.");
 
     const exactCoverageSession = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
     await assert.rejects(
