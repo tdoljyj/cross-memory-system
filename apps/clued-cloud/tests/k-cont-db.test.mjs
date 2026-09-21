@@ -324,6 +324,49 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
       context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:linked_evidence",
     });
     assert.deepEqual(mergedEvidenceSearch.results[0].target_refs.map((item) => item.id), [projectRecordId]);
+    const auditOnlyEventId = (await admin.query(
+      "select id from public.clued_context_events where user_id=$1 and canonical_event_type='extension:kcont:audit_secret'",
+      [userId],
+    )).rows[0].id;
+    const projectWorkEventId = (await admin.query(
+      "select id from public.clued_context_events where user_id=$1 and canonical_event_type='extension:kcont:project_target'",
+      [userId],
+    )).rows[0].id;
+    const noAuditTokenHash = hash();
+    const noAuditBindingId = (await admin.query(`insert into public.clued_agent_bindings
+      (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic','K-CONT no-audit checkpoint reader',$2,array['context:read','context:write'],array[$3]) returning id`,
+      [userId, noAuditTokenHash, projectContext])).rows[0].id;
+    const noAuditRpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`,
+      [noAuditTokenHash, input])).rows[0].value;
+    const noAuditRestore = await noAuditRpc("clued_mcp_restore", { context_key: projectContext, response_view: "structured" });
+    assert.equal(noAuditRestore.events_after_checkpoint.some((event) => Number(event.id) === Number(auditOnlyEventId)), false);
+    const checkpointInput = (eventId, key) => ({
+      context_key: projectContext, session_token: noAuditRestore.session_token,
+      base_version: noAuditRestore.version, snapshot: { stage: "K-CONT" },
+      summary: "Cover a readable work event.", next_action: "Continue from the checkpoint.",
+      idempotency_key: key,
+      coverage: { mode: "explicit", contexts: [projectContext], tracks: ["k-cont"], event_ids: [Number(eventId)] },
+    });
+    await assert.rejects(noAuditRpc("clued_mcp_commit_checkpoint", checkpointInput(auditOnlyEventId, uuid())),
+      /checkpoint_event_not_authorized/);
+    await assert.rejects(noAuditRpc("clued_mcp_commit_checkpoint", checkpointInput(Number.MAX_SAFE_INTEGER, uuid())),
+      /checkpoint_event_not_authorized/);
+    assert.equal((await admin.query("select count(*)::int as count from public.clued_checkpoint_event_absorptions where event_id=$1",
+      [auditOnlyEventId])).rows[0].count, 0);
+    assert.equal((await admin.query("select count(*)::int as count from public.clued_context_checkpoints where binding_id=$1",
+      [noAuditBindingId])).rows[0].count, 0);
+    const readableCheckpoint = await noAuditRpc("clued_mcp_commit_checkpoint", checkpointInput(projectWorkEventId, uuid()));
+    assert.equal(readableCheckpoint.status, "committed");
+    assert.equal((await admin.query("select count(*)::int as count from public.clued_checkpoint_event_absorptions where event_id=$1",
+      [projectWorkEventId])).rows[0].count, 1);
+    const visiblePendingCount = (await admin.query(`select count(*)::int as count from public.clued_context_events e
+      where e.user_id=$1 and e.context_key=$2
+        and (e.audit_visibility='work_log' or (e.event_schema_version is null and e.audit_visibility is null))
+        and not exists(select 1 from public.clued_checkpoint_event_absorptions a
+          where a.user_id=e.user_id and a.context_key=e.context_key and a.event_id=e.id)`,
+      [userId, projectContext])).rows[0].count;
+    assert.equal(Number(readableCheckpoint.pending_event_count_after), visiblePendingCount);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
