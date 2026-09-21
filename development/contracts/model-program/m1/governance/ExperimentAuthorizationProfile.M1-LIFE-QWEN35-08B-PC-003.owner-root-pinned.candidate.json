@@ -127,21 +127,21 @@
     "code_revision":  {
                           "status":  "EXACT_EFFECTFUL_OWNER_SOURCE_BOUND / OWNER_ROOT_PINNED / PC003_EXECUTION_PARENT_GATE_PENDING / BINARY_PENDING_FINAL_ISSUANCE",
                           "repository":  "tdoljyj/cross-memory-system",
-                          "preparation_base_commit":  "c572d6ec8f40984adb2700c9c6612d81bcdc8ccf",
+                          "preparation_base_commit":  "830bb7e406e909fee4e1d4f3e84aaaf01906e88d",
                           "lifecycle_contract_path":  "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.2.json",
                           "lifecycle_contract_git_blob_sha1":  "2a11bc4fa3d56d58547e11024cd0bfb5f8ba45e7",
                           "required_effectful_owner_source_path":  "scripts/model-program/m1-runtime-lifecycle-owner/source-manifest.json",
-                          "required_effectful_owner_source_manifest_sha256":  "bc78ef18443e165aad844c2abbe2040924cd6d160b4ebf77ce43f0df8acdc824",
+                          "required_effectful_owner_source_manifest_sha256":  "637fc894b2388b130ed9d11dd4c6a06b3d5feada8775cf926fcd39a5f83a39ac",
                           "required_effectful_owner_binary_sha256":  "TO_BE_BOUND_AT_FINAL_ISSUANCE",
                           "execution_allowed_while_candidate":  false,
                           "implementation_authorized_by_this_profile":  false,
                           "implementation_requirement":  "REVIEWED_FAIL_CLOSED_EFFECTFUL_OWNER / OWNER_ROOT_PINNED SUCCESSOR / NO EFFECTFUL EXECUTION DURING PREPARATION",
-                          "required_effectful_owner_source_tree_git_sha1":  "3e30fdc937670eeec6a820180ff574b874143714",
-                          "required_effectful_owner_source_manifest_git_blob_sha1":  "9e5a463b1cdac7f5bba2685d6eb92a6a70217b85",
+                          "required_effectful_owner_source_tree_git_sha1":  "69006920787464adf70a2bf33bfbfe83396c199e",
+                          "required_effectful_owner_source_manifest_git_blob_sha1":  "d1ce0a66a803eb10c94aaf76d41abc2ee5b602f9",
                           "implementation_reviewed_exact_head":  "TO_BE_INDEPENDENTLY_REVIEWED",
                           "accepted_r5_source_freeze":  "96312735a2341c145e360f19a6f3a08ec222d64a",
                           "owner_root_successor_predecessor_exact_head":  "ab234beb9c5143a35a7c4e98e1bc9f65d64c507c",
-                          "source_freeze_exact_head":  "c572d6ec8f40984adb2700c9c6612d81bcdc8ccf"
+                          "source_freeze_exact_head":  "830bb7e406e909fee4e1d4f3e84aaaf01906e88d"
                       },
     "config_revision":  {
                             "profile_config_id":  "M1-LIFE-PC-QWEN35-Q8_0-v1",
@@ -715,9 +715,9 @@
                                   "owner_public_key_sha256_fingerprint":  "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
                                   "private_key_storage_locator":  "windows-local-owner-key://DESK-W-591/Clued/M1-07/Owner-Ed25519-Root",
                                   "private_key_material_present_in_repository":  false,
-                                  "effectful_owner_source_tree_git_sha1":  "3e30fdc937670eeec6a820180ff574b874143714",
-                                  "effectful_owner_source_manifest_git_blob_sha1":  "9e5a463b1cdac7f5bba2685d6eb92a6a70217b85",
-                                  "effectful_owner_source_manifest_sha256":  "bc78ef18443e165aad844c2abbe2040924cd6d160b4ebf77ce43f0df8acdc824",
+                                  "effectful_owner_source_tree_git_sha1":  "69006920787464adf70a2bf33bfbfe83396c199e",
+                                  "effectful_owner_source_manifest_git_blob_sha1":  "d1ce0a66a803eb10c94aaf76d41abc2ee5b602f9",
+                                  "effectful_owner_source_manifest_sha256":  "637fc894b2388b130ed9d11dd4c6a06b3d5feada8775cf926fcd39a5f83a39ac",
                                   "guard_parent_preissuance_evidence":  {
                                                                             "status":  "INDEPENDENT_REVIEW_PASS / REVIEWED_EVIDENCE_AND_IDENTITY_BOUND",
                                                                             "continuous_monitoring_claim":  false,
@@ -754,5 +754,5 @@
                                                                    "diagnosis":  "MODEL_AND_SERVER_LOADED_AND_COMPLETION_EXECUTED / EXACT_TEXT_OK_PROBE_REJECTED / STRUCTURAL_PROBE_REMEDIATION_REQUIRED"
                                                                }
                               },
-    "status_detail":  "PC003_PARENT_PROVISIONING_REVIEW_ACCEPTED / HARDENED_PREDECESSOR_GUARD_SOURCE_BOUND / REVIEWED_PARENT_IDENTITIES_BOUND / EXACT_WINDOWS_REQUALIFICATION_REQUIRED / FRESH_CONTEXT_PROFILE_REVIEW_REQUIRED / NOT_ISSUED / NO_EXECUTION"
+    "status_detail":  "PC003_PARENT_PROVISIONING_REVIEW_ACCEPTED / PREDECESSOR_GUARD_PATH_HARDENED + TEST_HANDLE_LIFECYCLE_CLOSED / REVIEWED_PARENT_IDENTITIES_BOUND / EXACT_WINDOWS_REQUALIFICATION_REQUIRED / FRESH_CONTEXT_PROFILE_REVIEW_REQUIRED / NOT_ISSUED / NO_EXECUTION"
 }
