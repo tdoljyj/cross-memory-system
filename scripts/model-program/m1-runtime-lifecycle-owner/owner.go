@@ -290,6 +290,9 @@ func (c *controller) authorize(p object) (ctx *executionContext, err error) {
 	}
 	// All checks below are read-only until the exact guard CREATE_NEW. The
 	// guard is the first profile-owned filesystem write by construction.
+	if e := c.verifyPredecessorGuards(); e != nil {
+		return nil, e
+	}
 	guardIdentity, e := c.verifyGuardParent(p)
 	if e != nil {
 		return nil, e
@@ -340,6 +343,34 @@ func (c *controller) authorize(p object) (ctx *executionContext, err error) {
 		return ctx, e
 	}
 	return ctx, nil
+}
+
+func (c *controller) verifyPredecessorGuard(path, expected string) error {
+	st, e := os.Lstat(path)
+	if e != nil || !st.Mode().IsRegular() || st.Mode()&os.ModeSymlink != 0 || st.Size() <= 0 || st.Size() > 65536 {
+		return fail("PREDECESSOR_ATTEMPT_GUARD_MISSING_OR_DRIFTED")
+	}
+	reparse, e := c.sys.pathIsReparse(path)
+	if e != nil || reparse {
+		return fail("PREDECESSOR_ATTEMPT_GUARD_MISSING_OR_DRIFTED")
+	}
+	raw, e := os.ReadFile(path)
+	if e != nil || sha(raw) != expected {
+		return fail("PREDECESSOR_ATTEMPT_GUARD_MISSING_OR_DRIFTED")
+	}
+	return nil
+}
+
+func (c *controller) verifyPredecessorGuards() error {
+	for _, item := range []struct{ path, expected string }{
+		{pc001GuardPath, pc001GuardSHA},
+		{pc002GuardPath, pc002GuardSHA},
+	} {
+		if e := c.verifyPredecessorGuard(item.path, item.expected); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 
 func (c *controller) requireAbsent(path, code string) error {

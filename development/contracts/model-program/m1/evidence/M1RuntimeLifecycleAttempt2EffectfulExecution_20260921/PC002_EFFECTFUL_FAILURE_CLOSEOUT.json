@@ -1,0 +1,49 @@
+﻿{
+    "schema_version":  "clued.m1-08-pc002-effectful-failure-closeout/1",
+    "profile_id":  "M1-LIFE-QWEN35-08B-PC-002-ISSUED",
+    "final_issuance_exact_head":  "ab234beb9c5143a35a7c4e98e1bc9f65d64c507c",
+    "outcome":  "FAIL_CLOSED / ONE_SHOT_CONSUMED / NO_RETRY",
+    "failure_code":  "MINIMAL_PROBE_SEMANTICS_FAILED",
+    "observed_at_utc":  "2026-09-21T05:59:59.7869640Z",
+    "guard_sha256":  "4d6a230560fea05a4488ccd3eab1b3054e8906e0360a947409dd04313e4d7863",
+    "pc001_guard_sha256":  "9e0b95cf7e8cbb16608c73318b6c39b54dd5c1b2ae26daa63e822420cbce14bb",
+    "evidence_files":  [
+                           {
+                               "name":  "install-a.stderr.txt",
+                               "bytes":  3370,
+                               "sha256":  "23216257127cc4c9e878491d12c946922919c21f016da7121bc1587dd616b282"
+                           },
+                           {
+                               "name":  "install-a.stdout.txt",
+                               "bytes":  0,
+                               "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                           },
+                           {
+                               "name":  "M1RuntimeLifecycleAttemptGuard.snapshot.json",
+                               "bytes":  257,
+                               "sha256":  "7e18a64549e0d1bb655cea305b0b8cb20f4a4fd41f5455f2de86233a8458838b"
+                           },
+                           {
+                               "name":  "M1RuntimeLifecycleEvents.jsonl",
+                               "bytes":  47829,
+                               "sha256":  "489d80d6a15f9bffcc0c1ac09c00abf0a3bc09d3e8839dc611976f626b9bf872"
+                           },
+                           {
+                               "name":  "M1RuntimeLifecycleInstall.json",
+                               "bytes":  196,
+                               "sha256":  "0fb4f51bda747302354339172bc592ba23f3eedd21b5de9f8e697918c1f1f270"
+                           },
+                           {
+                               "name":  "M1RuntimeLifecyclePreflight.json",
+                               "bytes":  714,
+                               "sha256":  "cd36e48a7f0da57d2325cdaa9d15f300117b862c257436123bc0bbb33e5db257"
+                           }
+                       ],
+    "runtime_root_preserved":  true,
+    "current_manifest_exists":  false,
+    "llama_server_count":  0,
+    "port_18088_listeners":  0,
+    "no_retry":  true,
+    "successor_required":  true,
+    "diagnosis":  "MODEL_AND_SERVER_LOADED_AND_COMPLETION_EXECUTED / EXACT_TEXT_OK_PROBE_REJECTED / PROBE_CONTRACT_REMEDIATION_REQUIRED"
+}

@@ -1,240 +1,254 @@
 {
-  "candidate_profile_git_blob_sha1": "51b0083f74dd12318b7cdcdf3b939d31723de787",
-  "candidate_profile_raw_sha256": "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3",
-  "contract_git_blob_sha1": "5db350700e831a0423dd1e6f568d6f24f0c956ef",
-  "contract_raw_sha256": "e932449cf290edbd654fe6960f4a20205ea756c4db3db724db6349a783aefe27",
-  "effectful_authority_issued": false,
-  "files": [
-    {
-      "bytes": 9266,
-      "git_blob_sha1": "8fd9c893dd397c32d2a9e2f6ea10026af5b3180f",
-      "path": "README.md",
-      "sha256": "dc04769f7e78c5e738a24af09f10ace149adda7e87dce9c02eb2a26dbf803526"
-    },
-    {
-      "bytes": 814,
-      "git_blob_sha1": "d86018cc44f829247481aab3c0054286e5e6ff8b",
-      "path": "bindings.go",
-      "sha256": "a1841505a59d802ee3afab4abdd4ca4b718ff0e530a84d139e3f8932fa2f4d8e"
-    },
-    {
-      "bytes": 733,
-      "git_blob_sha1": "35b1caa3f426022a60f39435c1abd14cab6f608a",
-      "path": "bounded_io.go",
-      "sha256": "8650b9901d8a7944a80a86fcb25826b4255aa3fc2f56f1a79a2b1a15f555fbdf"
-    },
-    {
-      "bytes": 21906,
-      "git_blob_sha1": "bbf25b9dbdd5cf7cc40872957ba3f54ae7abbab4",
-      "path": "build.py",
-      "sha256": "2bad350cf1ef6b1c312fd9f498697b87e8432edef34ad9cf4443f397c1e1daae"
-    },
-    {
-      "bytes": 1620,
-      "git_blob_sha1": "5373e0b8b27cedace6704ce00bef825589b0c179",
-      "path": "canonical-vectors.json",
-      "sha256": "26376507c8089a893c7c48dd5140d77235588a6d1afdd62faac4950ba0b03c74"
-    },
-    {
-      "bytes": 10627,
-      "git_blob_sha1": "5be32f15eaae3261af88ea8b1448f2d6fa4cc819",
-      "path": "filesystem.go",
-      "sha256": "ea0903d4be2bf6332c1e29f4da306c60fde0046a9634231828b23c9169a12b03"
-    },
-    {
-      "bytes": 863,
-      "git_blob_sha1": "5db634432b1f90f5b261eea3fbf31a6c1768aae8",
-      "path": "filesystem_fixture_other_test.go",
-      "sha256": "1ab0c080401ff6f180649c35161623cf6edb7ee2189ac2d0b8979e2cc373ddf9"
-    },
-    {
-      "bytes": 2220,
-      "git_blob_sha1": "8993abf4f6833359a9cabf6744256cbb8edaabcf",
-      "path": "filesystem_fixture_test.go",
-      "sha256": "97402e33a957c7efb7e5087f5ee6261ee884581c2869700bcd1de832bc3c5cb3"
-    },
-    {
-      "bytes": 624,
-      "git_blob_sha1": "8f93dd7d395e17423fd4992d6611f4d7b66dad56",
-      "path": "filesystem_fixture_windows_test.go",
-      "sha256": "68658ffae1925f9d155fe549d1e40a367473a34efaaa6b94dca7739218d4f11f"
-    },
-    {
-      "bytes": 11520,
-      "git_blob_sha1": "2d6e9a550c60ada1b57f7cec8c6ef099b4086577",
-      "path": "filesystem_windows.go",
-      "sha256": "0e2bac3f004a2999aaf7bb05c57efc068031d505577ca4ee68f0ee4cca628028"
-    },
-    {
-      "bytes": 14821,
-      "git_blob_sha1": "34f2484791af30f7edd9fcc733a9f8e48ddd9fcf",
-      "path": "finalization.go",
-      "sha256": "f407698814abe6206d95eabaf21726906115716f81d06102af0aaa78295a7753"
-    },
-    {
-      "bytes": 49,
-      "git_blob_sha1": "ed7c8e4ee4bc05642f288b397173d3060ea8d29d",
-      "path": "go.mod",
-      "sha256": "02c76ba9ab8985de38b41978005c47739cad67a8fb26f195a66369548dcf785b"
-    },
-    {
-      "bytes": 34338,
-      "git_blob_sha1": "a4ae20a842e5784e82f34ec057462bef216cac54",
-      "path": "lifecycle.go",
-      "sha256": "0a51eaa7cf7be81420a3c94b8246dbd8bc7e0f13002a365299f43294b2319ae1"
-    },
-    {
-      "bytes": 3488,
-      "git_blob_sha1": "187d4ea4998a98a5a37fe305b45c64a255bb1279",
-      "path": "main.go",
-      "sha256": "aff2ce9448d03eceedf70a6d045b1a98bf2129b516ba98b49beb6b3af3ce8b98"
-    },
-    {
-      "bytes": 894,
-      "git_blob_sha1": "14b7af46c1e157ae49e6f1f983f2b2873087dbef",
-      "path": "network_windows.go",
-      "sha256": "dab032fe2c7a6d6b845d266ead695673e93a72c138a63d0097be27704f129b1a"
-    },
-    {
-      "bytes": 27889,
-      "git_blob_sha1": "adaf8b47b0d84b70aa70e8b34b830284f2aaf77a",
-      "path": "owner.go",
-      "sha256": "6709be6c4ec31002cda889f122b770a47e3e49333d90ee71f01e660979579eb8"
-    },
-    {
-      "bytes": 23562,
-      "git_blob_sha1": "5d64475ba58d71ed55aafc74ae6dc7113c16fa1e",
-      "path": "owner_test.go",
-      "sha256": "abef939d6b75c06c7b04fa0fbf28685aa4112d8b8d3d36f4a606896f8c462570"
-    },
-    {
-      "bytes": 669,
-      "git_blob_sha1": "f58301d55c0e6e79929e484cbc629781748cbc1c",
-      "path": "payload_policy.go",
-      "sha256": "9bb1eadfbdeafcf1cd80b90c99bf93cd96660edb319680398a307bf51aed28a0"
-    },
-    {
-      "bytes": 1304,
-      "git_blob_sha1": "a61d115b7b106012e54911cc120f0789665eaf7e",
-      "path": "platform_other.go",
-      "sha256": "7b42b1232e97a0c6c7d9d0e50e76677dad24d209d1869fa7833aaa52dcc77d95"
-    },
-    {
-      "bytes": 17114,
-      "git_blob_sha1": "6f5460c274e6c118d6f9d9c310f8e72a7b10a86f",
-      "path": "platform_windows.go",
-      "sha256": "b518c531c194603d67177eb4ace440ed9a96dd72a98a853a2dcc40b653d44d6a"
-    },
-    {
-      "bytes": 6797,
-      "git_blob_sha1": "a52008d7e7650c8f7f0f247464582f6c5f110603",
-      "path": "platform_windows_test.go",
-      "sha256": "c95817814b382d7b3341a8cc7b32323d78650a256919c9cad6a64914045a2474"
-    },
-    {
-      "bytes": 31384,
-      "git_blob_sha1": "7b714837fe5d168c3751b27032739ad3a5b0d55b",
-      "path": "policy.go",
-      "sha256": "c78cf7d7d878123043519f81970730ca6cbb4e26076f8b716ba794feac97db62"
-    },
-    {
-      "bytes": 2958,
-      "git_blob_sha1": "f07088810e75dd83f78c957234151b48e8c808e4",
-      "path": "publication.go",
-      "sha256": "f967c5ddcdb3dbae56ca76b2e4258fdf97601ea3be3219470834656a6e5edf67"
-    },
-    {
-      "bytes": 7751,
-      "git_blob_sha1": "2f20d334703284b0d440b95e5b00abb40587d3e0",
-      "path": "qualification_scope.py",
-      "sha256": "7038de1e8c14a4cfbfc3bfa74cbb48d61915615510c77ab5ce2b64ac5be6832c"
-    },
-    {
-      "bytes": 3509,
-      "git_blob_sha1": "e5fb2fc76ec1c38071e6462d4617bff79e56ecc8",
-      "path": "qualification_scope_test.py",
-      "sha256": "31e9566693b42c0fb9820b8aeb6d2fa009e72caeec8ed9de5029b4c748adb07c"
-    },
-    {
-      "bytes": 40477,
-      "git_blob_sha1": "f4289520f2902f44b5c93cee913580810922c1ef",
-      "path": "remediation_test.go",
-      "sha256": "31c9c04c3b48c234f6be4bdcf4c62b98c04d09fce74492e23d5d196b84a49055"
-    },
-    {
-      "bytes": 4823,
-      "git_blob_sha1": "f8676ea300873fcf42be037564257508286dea86",
-      "path": "remediation_windows_test.go",
-      "sha256": "1a15c13016395077676ac1f29c2a7f0923d75dba4ea013fdfe436eaa9a524b49"
-    },
-    {
-      "bytes": 13962,
-      "git_blob_sha1": "dd52d7dca0db6647c27ceab7b4d76f8e028ebadb",
-      "path": "scenarios.go",
-      "sha256": "84b26ab4ff455835d5e1f29890822824694c5f568e9241993b946a6b1abd9af3"
-    }
-  ],
-  "implementation_base": "3d8a4c88373f5a54831b40d34c0ad89281d02ac1",
-  "issuer_root": {
-    "public_key_hex": "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03",
-    "public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
-    "status": "OWNER_EXPLICITLY_SELECTED_REUSE_EXISTING_M1_07_ROOT / PINNED_IN_SUCCESSOR_SOURCE / NOT_ISSUED",
-    "decision_source": "CURRENT_CONVERSATION",
-    "decision_instruction": "批准 M1-08 复用现有 M1-07 Owner Root。",
-    "private_key_storage_locator": "windows-local-owner-key://DESK-W-591/Clued/M1-07/Owner-Ed25519-Root",
-    "private_key_material_in_repository": false
-  },
-  "native_build_toolchain": {
-    "archive_bytes": 78931360,
-    "archive_name": "go1.27.1.windows-amd64.zip",
-    "archive_sha256": "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
-    "compile_exe_sha256": "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
-    "go_exe_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
-    "link_exe_sha256": "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
-    "target": {
-      "goamd64": "v1",
-      "goarch": "amd64",
-      "goos": "windows"
-    },
-    "tree_file_count": 15639,
-    "tree_sha256": "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
-    "version": "go version go1.27.1 windows/amd64"
-  },
-  "owner_binary_execution_authorized": false,
-  "qualification_semantics": "STATIC_NEGATIVE_FAULT_AND_WINDOWS_NATIVE_TESTS_ONLY / PC002 EXECUTION-PARENT PRE-GUARD GATE / NO PRODUCTION GUARD OR RUNTIME ROOT / OWNER_BINARY_NOT_EXECUTED",
-  "remediation": {
-    "revision": "ATTEMPT2-PARENT-GATE",
-    "repair_base_head": "283bd8eccab6a15cca8278d5835251d7efad76e6",
-    "failed_attempt_profile_id": "M1-LIFE-QWEN35-08B-PC-001-ISSUED",
-    "failed_attempt_guard_sha256": "9e0b95cf7e8cbb16608c73318b6c39b54dd5c1b2ae26daa63e822420cbce14bb",
-    "failure_observation_sha256": "5d5b637110de1564d637a061c8dddb7839d2c6127ceb07db9bc97211cd2cf13e",
-    "pc001_retry_allowed": false,
-    "pc001_guard_preservation_required": true,
-    "status": "ATTEMPT2_SUCCESSOR_PREPARATION / EXECUTION_PARENT_GATE_ADDED / EXACT_WINDOWS_REQUALIFICATION_REQUIRED / NO_FINAL_ISSUANCE",
-    "validation_boundary": "NO PC002 PARENT PROVISIONING / NO ATTEMPT_GUARD / NO OWNER EFFECTFUL EXECUTION / NOT_INDEPENDENT_REVIEW"
-  },
-  "role": "EFFECTFUL_OWNER_ATTEMPT2_PARENT_GATE_REMEDIATION_PREPARATION / NO_FINAL_ISSUANCE / NO_EXECUTION",
-  "schema_version": "clued.m1-08-native-owner-source-manifest/1",
-  "owner_root_successor_preparation": {
-    "predecessor_exact_head": "283bd8eccab6a15cca8278d5835251d7efad76e6",
-    "accepted_effectful_owner_final_head": "faaf0ff85d73e5be7615a4dc7426997e29cc80d2",
-    "accepted_r5_source_freeze": "96312735a2341c145e360f19a6f3a08ec222d64a",
-    "predecessor_source_tree": "968b8cedb9e8c854968436a1482d534bc774b481",
-    "owner_root_reuse": "EXPLICITLY_AUTHORIZED",
-    "guard_parent_preissuance_evidence": {
-      "status": "PENDING_SEPARATE_PC002_PARENT_PROVISIONING_REVIEW",
-      "point_in_time_only": true,
-      "revalidation_required_at_final_issuance_and_execution": true
-    },
-    "effectful_authority_issued": false,
-    "final_issuance_performed": false,
-    "attempt_guard_created": false,
-    "real_lifecycle_executed": false,
-    "build_helper_semantics": "ATTEMPT2 OWNER_ROOT_PINNED SUCCESSOR QUALIFICATION / EXACT PC002 PROFILE + SOURCE BINDINGS / EXECUTION-PARENT PRE-GUARD GATE / EFFECTFUL_AUTHORITY_FALSE / OWNER_BINARY_NOT_EXECUTED",
-    "documentation_semantics": "OWNER_ROOT_PINNED SUCCESSOR / NON-ISSUED / REVISION-SPECIFIC QUALIFICATION / NO STALE UNBOUND-ROOT CLAIMS",
-    "test_semantics": "PC002 EXECUTION-PARENT MISSING/IDENTITY-DRIFT FAILS BEFORE GUARD CLAIM; EMPTY ISSUER INPUT FAILS CLOSED; PINNED OWNER ROOT REMAINS EXACT"
-  },
-  "candidate_profile_binding_semantics": "IMPLEMENTATION_BASE_CANDIDATE_ONLY / NOT_SUCCESSOR_QUALIFICATION_TARGET",
-  "successor_profile_path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-002.owner-root-pinned.candidate.json",
-  "successor_profile_qualification_semantics": "BUILD_HELPER_VALIDATES NON-ISSUED PC002 SUCCESSOR PROFILE SOURCE PATH/MANIFEST/TREE + PINNED OWNER ROOT + AUTHORITY CLOSED; EXECUTION-PARENT BINDINGS REMAIN PENDING SEPARATE PROVISIONING REVIEW"
+    "candidate_profile_git_blob_sha1":  "51b0083f74dd12318b7cdcdf3b939d31723de787",
+    "candidate_profile_raw_sha256":  "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3",
+    "contract_git_blob_sha1":  "2a11bc4fa3d56d58547e11024cd0bfb5f8ba45e7",
+    "contract_raw_sha256":  "0310b230f0194c7bb02fdf6ee7d3a8724cc50622dfcb148ceb2cc4585fdf07c4",
+    "effectful_authority_issued":  false,
+    "files":  [
+                  {
+                      "path":  "bindings.go",
+                      "bytes":  814,
+                      "sha256":  "a1841505a59d802ee3afab4abdd4ca4b718ff0e530a84d139e3f8932fa2f4d8e",
+                      "git_blob_sha1":  "d86018cc44f829247481aab3c0054286e5e6ff8b"
+                  },
+                  {
+                      "path":  "bounded_io.go",
+                      "bytes":  733,
+                      "sha256":  "8650b9901d8a7944a80a86fcb25826b4255aa3fc2f56f1a79a2b1a15f555fbdf",
+                      "git_blob_sha1":  "35b1caa3f426022a60f39435c1abd14cab6f608a"
+                  },
+                  {
+                      "path":  "build.py",
+                      "bytes":  21906,
+                      "sha256":  "c18b6a173b13342b01d6a4e90f796138256db2904073034ce7a95635f5484382",
+                      "git_blob_sha1":  "98f6bc67858b9003fb84d733a2ba841348532fc2"
+                  },
+                  {
+                      "path":  "canonical-vectors.json",
+                      "bytes":  1620,
+                      "sha256":  "26376507c8089a893c7c48dd5140d77235588a6d1afdd62faac4950ba0b03c74",
+                      "git_blob_sha1":  "5373e0b8b27cedace6704ce00bef825589b0c179"
+                  },
+                  {
+                      "path":  "filesystem.go",
+                      "bytes":  10627,
+                      "sha256":  "ea0903d4be2bf6332c1e29f4da306c60fde0046a9634231828b23c9169a12b03",
+                      "git_blob_sha1":  "5be32f15eaae3261af88ea8b1448f2d6fa4cc819"
+                  },
+                  {
+                      "path":  "filesystem_fixture_other_test.go",
+                      "bytes":  863,
+                      "sha256":  "1ab0c080401ff6f180649c35161623cf6edb7ee2189ac2d0b8979e2cc373ddf9",
+                      "git_blob_sha1":  "5db634432b1f90f5b261eea3fbf31a6c1768aae8"
+                  },
+                  {
+                      "path":  "filesystem_fixture_test.go",
+                      "bytes":  2220,
+                      "sha256":  "97402e33a957c7efb7e5087f5ee6261ee884581c2869700bcd1de832bc3c5cb3",
+                      "git_blob_sha1":  "8993abf4f6833359a9cabf6744256cbb8edaabcf"
+                  },
+                  {
+                      "path":  "filesystem_fixture_windows_test.go",
+                      "bytes":  624,
+                      "sha256":  "68658ffae1925f9d155fe549d1e40a367473a34efaaa6b94dca7739218d4f11f",
+                      "git_blob_sha1":  "8f93dd7d395e17423fd4992d6611f4d7b66dad56"
+                  },
+                  {
+                      "path":  "filesystem_windows.go",
+                      "bytes":  11520,
+                      "sha256":  "0e2bac3f004a2999aaf7bb05c57efc068031d505577ca4ee68f0ee4cca628028",
+                      "git_blob_sha1":  "2d6e9a550c60ada1b57f7cec8c6ef099b4086577"
+                  },
+                  {
+                      "path":  "finalization.go",
+                      "bytes":  14821,
+                      "sha256":  "f407698814abe6206d95eabaf21726906115716f81d06102af0aaa78295a7753",
+                      "git_blob_sha1":  "34f2484791af30f7edd9fcc733a9f8e48ddd9fcf"
+                  },
+                  {
+                      "path":  "go.mod",
+                      "bytes":  49,
+                      "sha256":  "02c76ba9ab8985de38b41978005c47739cad67a8fb26f195a66369548dcf785b",
+                      "git_blob_sha1":  "ed7c8e4ee4bc05642f288b397173d3060ea8d29d"
+                  },
+                  {
+                      "path":  "lifecycle.go",
+                      "bytes":  34338,
+                      "sha256":  "0a51eaa7cf7be81420a3c94b8246dbd8bc7e0f13002a365299f43294b2319ae1",
+                      "git_blob_sha1":  "a4ae20a842e5784e82f34ec057462bef216cac54"
+                  },
+                  {
+                      "path":  "main.go",
+                      "bytes":  3488,
+                      "sha256":  "aff2ce9448d03eceedf70a6d045b1a98bf2129b516ba98b49beb6b3af3ce8b98",
+                      "git_blob_sha1":  "187d4ea4998a98a5a37fe305b45c64a255bb1279"
+                  },
+                  {
+                      "path":  "network_windows.go",
+                      "bytes":  894,
+                      "sha256":  "dab032fe2c7a6d6b845d266ead695673e93a72c138a63d0097be27704f129b1a",
+                      "git_blob_sha1":  "14b7af46c1e157ae49e6f1f983f2b2873087dbef"
+                  },
+                  {
+                      "path":  "owner.go",
+                      "bytes":  28809,
+                      "sha256":  "be566194747d1b04a9a13e4334098b2b7afc467d1a041e5782eccac019dd0238",
+                      "git_blob_sha1":  "bade54ce0d222d5075915df73ae9244986f9a9c8"
+                  },
+                  {
+                      "path":  "owner_test.go",
+                      "bytes":  23925,
+                      "sha256":  "7ba7c14927a011afddf37b4b5b49edb80f5f9bdabc47f7823634779fbbe15342",
+                      "git_blob_sha1":  "b1a6a5c59a6eaa57a95d11616a7eb41e7d60acfd"
+                  },
+                  {
+                      "path":  "payload_policy.go",
+                      "bytes":  669,
+                      "sha256":  "9bb1eadfbdeafcf1cd80b90c99bf93cd96660edb319680398a307bf51aed28a0",
+                      "git_blob_sha1":  "f58301d55c0e6e79929e484cbc629781748cbc1c"
+                  },
+                  {
+                      "path":  "platform_other.go",
+                      "bytes":  1304,
+                      "sha256":  "7b42b1232e97a0c6c7d9d0e50e76677dad24d209d1869fa7833aaa52dcc77d95",
+                      "git_blob_sha1":  "a61d115b7b106012e54911cc120f0789665eaf7e"
+                  },
+                  {
+                      "path":  "platform_windows.go",
+                      "bytes":  17114,
+                      "sha256":  "b518c531c194603d67177eb4ace440ed9a96dd72a98a853a2dcc40b653d44d6a",
+                      "git_blob_sha1":  "6f5460c274e6c118d6f9d9c310f8e72a7b10a86f"
+                  },
+                  {
+                      "path":  "platform_windows_test.go",
+                      "bytes":  6797,
+                      "sha256":  "c95817814b382d7b3341a8cc7b32323d78650a256919c9cad6a64914045a2474",
+                      "git_blob_sha1":  "a52008d7e7650c8f7f0f247464582f6c5f110603"
+                  },
+                  {
+                      "path":  "policy.go",
+                      "bytes":  31840,
+                      "sha256":  "9c8ba351c75144b46a34f0e5d22de9a4b6e90f0174364a9ff49f6f09c6fb6e56",
+                      "git_blob_sha1":  "4efa1ff48bec77b1f68b4c664cedb6c4827027c1"
+                  },
+                  {
+                      "path":  "predecessor_guard_test.go",
+                      "bytes":  1259,
+                      "sha256":  "b0325ddc9cbe2c1782fbaa85560f7d719c3261f7ba7d6567f0b6fdc4740ae848",
+                      "git_blob_sha1":  "88f63c2c567af8cd869d9d86f7c0c5c30c42f35c"
+                  },
+                  {
+                      "path":  "probe_structural_test.go",
+                      "bytes":  2280,
+                      "sha256":  "db09c5939fbd59f8d550ae18500833dbbf128cf1044c079c77972ef619066a79",
+                      "git_blob_sha1":  "7d2bcb4559525ae1c4dd10d1d4e5b9bfd3277f1a"
+                  },
+                  {
+                      "path":  "publication.go",
+                      "bytes":  2958,
+                      "sha256":  "f967c5ddcdb3dbae56ca76b2e4258fdf97601ea3be3219470834656a6e5edf67",
+                      "git_blob_sha1":  "f07088810e75dd83f78c957234151b48e8c808e4"
+                  },
+                  {
+                      "path":  "qualification_scope.py",
+                      "bytes":  7751,
+                      "sha256":  "7038de1e8c14a4cfbfc3bfa74cbb48d61915615510c77ab5ce2b64ac5be6832c",
+                      "git_blob_sha1":  "2f20d334703284b0d440b95e5b00abb40587d3e0"
+                  },
+                  {
+                      "path":  "qualification_scope_test.py",
+                      "bytes":  3509,
+                      "sha256":  "31e9566693b42c0fb9820b8aeb6d2fa009e72caeec8ed9de5029b4c748adb07c",
+                      "git_blob_sha1":  "e5fb2fc76ec1c38071e6462d4617bff79e56ecc8"
+                  },
+                  {
+                      "path":  "README.md",
+                      "bytes":  9917,
+                      "sha256":  "108f5745c76ed28243f8ceda4e3a47d7237ccbf4b5df6e051592c788a0b5ae63",
+                      "git_blob_sha1":  "a9b86de670bb8259b0ca3dbe1e3d161ca8cf42b7"
+                  },
+                  {
+                      "path":  "remediation_test.go",
+                      "bytes":  40477,
+                      "sha256":  "31c9c04c3b48c234f6be4bdcf4c62b98c04d09fce74492e23d5d196b84a49055",
+                      "git_blob_sha1":  "f4289520f2902f44b5c93cee913580810922c1ef"
+                  },
+                  {
+                      "path":  "remediation_windows_test.go",
+                      "bytes":  4823,
+                      "sha256":  "1a15c13016395077676ac1f29c2a7f0923d75dba4ea013fdfe436eaa9a524b49",
+                      "git_blob_sha1":  "f8676ea300873fcf42be037564257508286dea86"
+                  },
+                  {
+                      "path":  "scenarios.go",
+                      "bytes":  15706,
+                      "sha256":  "dc0de514abba29354956368311c9260b9311b2002dd1c3a55c15da10c4ef3d81",
+                      "git_blob_sha1":  "891e77093326af9592c971f1042405fca8227919"
+                  }
+              ],
+    "implementation_base":  "ab234beb9c5143a35a7c4e98e1bc9f65d64c507c",
+    "issuer_root":  {
+                        "public_key_hex":  "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03",
+                        "public_key_sha256_fingerprint":  "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
+                        "status":  "OWNER_EXPLICITLY_SELECTED_REUSE_EXISTING_M1_07_ROOT / PINNED_IN_SUCCESSOR_SOURCE / NOT_ISSUED",
+                        "decision_source":  "CURRENT_CONVERSATION",
+                        "decision_instruction":  "批准 M1-08 复用现有 M1-07 Owner Root。",
+                        "private_key_storage_locator":  "windows-local-owner-key://DESK-W-591/Clued/M1-07/Owner-Ed25519-Root",
+                        "private_key_material_in_repository":  false
+                    },
+    "native_build_toolchain":  {
+                                   "archive_bytes":  78931360,
+                                   "archive_name":  "go1.27.1.windows-amd64.zip",
+                                   "archive_sha256":  "a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d",
+                                   "compile_exe_sha256":  "69294d68bcaa3e786f80d23bfb8bed807d5d969e931d5bf92161bdf518778a01",
+                                   "go_exe_sha256":  "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+                                   "link_exe_sha256":  "9146582fd2b0a8cf765831e7ee3127603faaf51697531496584024db96414720",
+                                   "target":  {
+                                                  "goamd64":  "v1",
+                                                  "goarch":  "amd64",
+                                                  "goos":  "windows"
+                                              },
+                                   "tree_file_count":  15639,
+                                   "tree_sha256":  "bf7939c5c947597c3a2bbf56b7ddf943fa06cd10cae421eadc01d44f18a5df79",
+                                   "version":  "go version go1.27.1 windows/amd64"
+                               },
+    "owner_binary_execution_authorized":  false,
+    "qualification_semantics":  "STATIC_NEGATIVE_FAULT_AND_WINDOWS_NATIVE_TESTS_ONLY / PC003 STRUCTURAL PROBE + DUAL PREDECESSOR-GUARD PRE-GUARD GATE / NO PRODUCTION PC003 GUARD OR RUNTIME ROOT / OWNER_BINARY_NOT_EXECUTED",
+    "remediation":  {
+                        "revision":  "ATTEMPT3-PROBE-REMEDIATION",
+                        "repair_base_head":  "ab234beb9c5143a35a7c4e98e1bc9f65d64c507c",
+                        "failed_attempt_profile_id":  "M1-LIFE-QWEN35-08B-PC-002-ISSUED",
+                        "failed_attempt_guard_sha256":  "4d6a230560fea05a4488ccd3eab1b3054e8906e0360a947409dd04313e4d7863",
+                        "pc001_attempt_guard_sha256":  "9e0b95cf7e8cbb16608c73318b6c39b54dd5c1b2ae26daa63e822420cbce14bb",
+                        "pc001_retry_allowed":  false,
+                        "pc002_retry_allowed":  false,
+                        "pc001_guard_preservation_required":  true,
+                        "pc002_guard_preservation_required":  true,
+                        "status":  "ATTEMPT3_SUCCESSOR_PREPARATION / STRUCTURAL_PROBE_REMEDIATION / EXACT_WINDOWS_REQUALIFICATION_REQUIRED / NO_FINAL_ISSUANCE",
+                        "validation_boundary":  "NO PC003 PARENT PROVISIONING / NO PC003 ATTEMPT_GUARD / NO OWNER EFFECTFUL EXECUTION / NOT_INDEPENDENT_REVIEW"
+                    },
+    "role":  "EFFECTFUL_OWNER_ATTEMPT3_PROBE_REMEDIATION_PREPARATION / NO_FINAL_ISSUANCE / NO_EXECUTION",
+    "schema_version":  "clued.m1-08-native-owner-source-manifest/1",
+    "owner_root_successor_preparation":  {
+                                             "predecessor_exact_head":  "ab234beb9c5143a35a7c4e98e1bc9f65d64c507c",
+                                             "accepted_effectful_owner_final_head":  "faaf0ff85d73e5be7615a4dc7426997e29cc80d2",
+                                             "accepted_r5_source_freeze":  "96312735a2341c145e360f19a6f3a08ec222d64a",
+                                             "predecessor_source_tree":  "968b8cedb9e8c854968436a1482d534bc774b481",
+                                             "owner_root_reuse":  "EXPLICITLY_AUTHORIZED",
+                                             "guard_parent_preissuance_evidence":  {
+                                                                                       "status":  "PENDING_SEPARATE_PC003_PARENT_PROVISIONING_REVIEW",
+                                                                                       "point_in_time_only":  true,
+                                                                                       "revalidation_required_at_final_issuance_and_execution":  true
+                                                                                   },
+                                             "effectful_authority_issued":  false,
+                                             "final_issuance_performed":  false,
+                                             "attempt_guard_created":  false,
+                                             "real_lifecycle_executed":  false,
+                                             "build_helper_semantics":  "ATTEMPT3 OWNER_ROOT_PINNED SUCCESSOR QUALIFICATION / EXACT PC003 PROFILE + SOURCE BINDINGS / STRUCTURAL B11033 PROBE / DUAL PREDECESSOR-GUARD PRE-GUARD GATE / EFFECTFUL_AUTHORITY_FALSE / OWNER_BINARY_NOT_EXECUTED",
+                                             "documentation_semantics":  "OWNER_ROOT_PINNED SUCCESSOR / NON-ISSUED / REVISION-SPECIFIC QUALIFICATION / NO STALE UNBOUND-ROOT CLAIMS",
+                                             "test_semantics":  "PC003 STRUCTURAL PROBE NEGATIVE MATRIX + PC001/PC002 GUARD MISSING/DRIFT FAIL CLOSED BEFORE PC003 GUARD CLAIM; PINNED OWNER ROOT REMAINS EXACT"
+                                         },
+    "candidate_profile_binding_semantics":  "IMPLEMENTATION_BASE_CANDIDATE_ONLY / NOT_SUCCESSOR_QUALIFICATION_TARGET",
+    "successor_profile_path":  "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-003.owner-root-pinned.candidate.json",
+    "successor_profile_qualification_semantics":  "BUILD_HELPER_VALIDATES NON-ISSUED PC003 SUCCESSOR PROFILE SOURCE PATH/MANIFEST/TREE + PINNED OWNER ROOT + AUTHORITY CLOSED; PC003 PARENT BINDINGS REMAIN PENDING SEPARATE PROVISIONING REVIEW"
 }

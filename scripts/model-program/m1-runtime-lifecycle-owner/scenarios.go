@@ -78,7 +78,64 @@ func (c *controller) health(ctx *executionContext, timeout time.Duration) error 
 	return fail("HEALTH_TIMEOUT")
 }
 
-func (c *controller) probe(ctx *executionContext) error {
+func validateProbeHTTPStatus(status int) error {
+	if status < 200 || status >= 300 {
+		return fail("PROBE_HTTP_FAILURE")
+	}
+	return nil
+}
+
+func structuralProbeSummary(raw []byte) (object, error) {
+	if len(raw) > 1<<20 {
+		return nil, fail("PROBE_RESPONSE_LIMIT")
+	}
+	result, e := decodeObject(raw)
+	if e != nil {
+		return nil, fail("PROBE_RESPONSE_JSON_INVALID")
+	}
+	content, ok := result["content"].(string)
+	if !ok || strings.TrimSpace(content) == "" {
+		return nil, fail("MINIMAL_PROBE_STRUCTURAL_VALIDATION_FAILED")
+	}
+	stop, ok := result["stop"].(bool)
+	if !ok || !stop {
+		return nil, fail("MINIMAL_PROBE_STRUCTURAL_VALIDATION_FAILED")
+	}
+	predicted, ok := result["tokens_predicted"].(json.Number)
+	if !ok {
+		return nil, fail("MINIMAL_PROBE_STRUCTURAL_VALIDATION_FAILED")
+	}
+	predictedN, e := predicted.Int64()
+	if e != nil || predictedN <= 0 {
+		return nil, fail("MINIMAL_PROBE_STRUCTURAL_VALIDATION_FAILED")
+	}
+	evaluated, ok := result["tokens_evaluated"].(json.Number)
+	if !ok {
+		return nil, fail("MINIMAL_PROBE_STRUCTURAL_VALIDATION_FAILED")
+	}
+	evaluatedN, e := evaluated.Int64()
+	if e != nil || evaluatedN <= 0 {
+		return nil, fail("MINIMAL_PROBE_STRUCTURAL_VALIDATION_FAILED")
+	}
+	stopType := ""
+	if v, exists := result["stop_type"]; exists {
+		var ok bool
+		stopType, ok = v.(string)
+		if !ok {
+			return nil, fail("MINIMAL_PROBE_STRUCTURAL_VALIDATION_FAILED")
+		}
+	}
+	contentRaw := []byte(content)
+	return object{
+		"response_sha256": sha(raw), "response_bytes": json.Number(fmt.Sprintf("%d", len(raw))),
+		"content_sha256": sha(contentRaw), "content_utf8_bytes": json.Number(fmt.Sprintf("%d", len(contentRaw))),
+		"tokens_predicted": json.Number(fmt.Sprintf("%d", predictedN)),
+		"tokens_evaluated": json.Number(fmt.Sprintf("%d", evaluatedN)),
+		"stop":             true, "stop_type": stopType,
+	}, nil
+}
+
+func (c *controller) probe(ctx *executionContext, scenario, label string) error {
 	payload := object{
 		"prompt":      "Reply with exactly: OK",
 		"n_predict":   json.Number("8"),
@@ -90,24 +147,20 @@ func (c *controller) probe(ctx *executionContext) error {
 		return e
 	}
 	defer closeFn()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fail("PROBE_HTTP_FAILURE")
+	if e = validateProbeHTTPStatus(resp.StatusCode); e != nil {
+		return e
 	}
 	raw, e := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 	if e != nil {
 		return e
 	}
-	if len(raw) > 1<<20 {
-		return fail("PROBE_RESPONSE_LIMIT")
-	}
-	var result struct {
-		Content string `json:"content"`
-	}
-	if e = json.Unmarshal(raw, &result); e != nil {
+	summary, e := structuralProbeSummary(raw)
+	if e != nil {
 		return e
 	}
-	if strings.TrimSpace(result.Content) != "OK" {
-		return fail("MINIMAL_PROBE_SEMANTICS_FAILED")
+	summary["label"] = label
+	if e = c.event(ctx, scenario, "probe_summary", summary); e != nil {
+		return e
 	}
 	return c.limits(ctx)
 }
@@ -150,7 +203,7 @@ func (c *controller) probeActiveSlot(ctx *executionContext, revision, scenario, 
 	if !alive {
 		return fail("PROFILE_OWNED_SERVER_EXITED_BEFORE_PROBE")
 	}
-	if e = c.probe(ctx); e != nil {
+	if e = c.probe(ctx, scenario, label); e != nil {
 		return e
 	}
 	alive, e = c.ownedAlive(ctx, w)

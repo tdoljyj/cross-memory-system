@@ -46,6 +46,8 @@ func (p *fakeProcess) close() error {
 
 type fakePlatform struct {
 	completions, completionFailsAt int
+	completionBody                 string
+	completionStatus               int
 	fileIDs                        map[string]os.FileInfo
 	blockedWrites                  map[string]bool
 	writeChecks                    []string
@@ -149,17 +151,24 @@ func (f *fakePlatform) start(l launchEnvelope, out, errOut io.Writer) (process, 
 func (f *fakePlatform) portFree() bool { return !f.portBlocked }
 func (f *fakePlatform) roundTrip(req *http.Request) (*http.Response, error) {
 	f.request = req
-	body := `{"content":"OK"}`
+	body := `{"content":"OK","stop":true,"tokens_predicted":1,"tokens_evaluated":5,"stop_type":"limit"}`
+	status := 200
 	if req.URL.Path == "/completion" {
 		f.completions++
+		if f.completionBody != "" {
+			body = f.completionBody
+		}
+		if f.completionStatus != 0 {
+			status = f.completionStatus
+		}
 		if f.completions == f.completionFailsAt {
-			body = `{"content":"WRONG"}`
+			body = `{"content":"","stop":true,"tokens_predicted":1,"tokens_evaluated":5,"stop_type":"limit"}`
 		}
 	}
 	if req.URL.Path == "/health" {
 		body = `{"status":"ok"}`
 	}
-	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 }
 
 func testLayout(t *testing.T) layout {
@@ -213,7 +222,7 @@ func TestFixedCLIRejectsCallerAuthoritySurfaces(t *testing.T) {
 func TestCandidateCannotExecuteAndEmptyIssuerInputFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "candidate.json")
-	if e := os.WriteFile(p, []byte(`{"status":"BLOCKED_PENDING_FRESH_CONTEXT_REVIEW_AND_REVIEWED_EFFECTFUL_OWNER_IMPLEMENTATION_AND_FINAL_ISSUANCE","profile_id":"M1-LIFE-QWEN35-08B-PC-002-CANDIDATE"}`), 0600); e != nil {
+	if e := os.WriteFile(p, []byte(`{"status":"BLOCKED_PENDING_FRESH_CONTEXT_REVIEW_AND_REVIEWED_EFFECTFUL_OWNER_IMPLEMENTATION_AND_FINAL_ISSUANCE","profile_id":"M1-LIFE-QWEN35-08B-PC-003-CANDIDATE"}`), 0600); e != nil {
 		t.Fatal(e)
 	}
 	var out, er bytes.Buffer
@@ -451,7 +460,7 @@ func TestLoopbackRequestIsFixed(t *testing.T) {
 }
 
 func TestImplementationPolicyMatchesReviewedCandidateProfile(t *testing.T) {
-	p := filepath.Join("..", "..", "..", "development", "contracts", "model-program", "m1", "governance", "ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-002.owner-root-pinned.candidate.json")
+	p := filepath.Join("..", "..", "..", "development", "contracts", "model-program", "m1", "governance", "ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-003.owner-root-pinned.candidate.json")
 	raw, e := os.ReadFile(p)
 	if e != nil {
 		t.Fatal(e)

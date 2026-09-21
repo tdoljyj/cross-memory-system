@@ -1,4 +1,4 @@
-# M1-08 Runtime Lifecycle Native Owner — Implementation Candidate
+# M1-08 Runtime Lifecycle Native Owner — PC-003 Probe-Remediation Successor
 
 This directory is the standalone native Effectful Owner candidate for Clued First-Party Model M1-08 Runtime Lifecycle Smoke.
 
@@ -15,7 +15,7 @@ builds. No finding is formally closed solely by this source change.
 ## Authority state
 
 - Implementation base: `3d8a4c88373f5a54831b40d34c0ad89281d02ac1`
-- Contract blob: `5db350700e831a0423dd1e6f568d6f24f0c956ef`
+- Contract blob: `2a11bc4fa3d56d58547e11024cd0bfb5f8ba45e7`
 - Candidate profile blob reviewed at the base: `51b0083f74dd12318b7cdcdf3b939d31723de787`
 - This source tree grants **no effectful authority**.
 - The Owner explicitly selected reuse of the existing M1-07 Ed25519 Owner Root for M1-08. `issuerPublicKeyHex` and `issuerPublicKeySHA256` are pinned to that exact reviewed public root in this successor. Root pinning alone grants **no effectful authority**: this candidate remains non-issued, the private key remains Owner-only, and Final Issuance plus the signed issued profile are still required before execution.
@@ -96,3 +96,7 @@ The native API and filesystem failure guarantees remain subject to the required
 Windows tests. Cross-compilation and simulated fault injection do not prove
 power-loss consistency, kernel/driver behavior, or immunity to a malicious
 administrator/Owner who changes the reviewed environment.
+
+## PC-003 probe remediation
+
+PC-002 is permanently consumed and is not retried. PC-003 preserves both PC-001 and PC-002 Guard bytes at exact SHA-256 before its own first write. The `/completion` probe validates the exact b11033 non-stream final response structurally: HTTP 2xx, bounded valid JSON, `stop=true`, positive predicted/evaluated token counts, and non-empty content. Evidence stores only bounded response/content digests, lengths, token counts, stop state/type, scenario and label; raw completion content is never persisted. All prior path, process, network, payload, lifecycle, recovery, and cleanup boundaries remain unchanged.

@@ -20,15 +20,15 @@ from pathlib import Path, PurePosixPath
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 MANIFEST = HERE / "source-manifest.json"
-CONTRACT = ROOT / "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.1.json"
+CONTRACT = ROOT / "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.2.json"
 BASE_CANDIDATE = ROOT / "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json"
-SUCCESSOR_PROFILE_REPO_PATH = "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-002.owner-root-pinned.candidate.json"
+SUCCESSOR_PROFILE_REPO_PATH = "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-003.owner-root-pinned.candidate.json"
 SUCCESSOR_CANDIDATE = ROOT / SUCCESSOR_PROFILE_REPO_PATH
 
-IMPLEMENTATION_BASE = "3d8a4c88373f5a54831b40d34c0ad89281d02ac1"
-CONTRACT_BLOB = "5db350700e831a0423dd1e6f568d6f24f0c956ef"
-CONTRACT_BYTES = 44741
-CONTRACT_SHA256 = "e932449cf290edbd654fe6960f4a20205ea756c4db3db724db6349a783aefe27"
+IMPLEMENTATION_BASE = "ab234beb9c5143a35a7c4e98e1bc9f65d64c507c"
+CONTRACT_BLOB = "2a11bc4fa3d56d58547e11024cd0bfb5f8ba45e7"
+CONTRACT_BYTES = 87536
+CONTRACT_SHA256 = "0310b230f0194c7bb02fdf6ee7d3a8724cc50622dfcb148ceb2cc4585fdf07c4"
 BASE_CANDIDATE_BLOB = "51b0083f74dd12318b7cdcdf3b939d31723de787"
 BASE_CANDIDATE_BYTES = 37761
 BASE_CANDIDATE_SHA256 = "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3"

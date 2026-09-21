@@ -1,14 +1,14 @@
 {
   "schema_version": "clued.model-m1-stage-entry-authorization/1",
-  "record_id": "CLUED-MODEL-M1-STAGE-ENTRY-v1.0.3-20260920",
-  "date": "2026-09-20",
-  "status": "OWNER_AUTHORIZED_SUCCESSOR / M1_07_CLOSED / M1_08_PREPARATION_ALLOWED / EFFECTFUL_ACTIONS_PROFILE_GATED",
+  "record_id": "CLUED-MODEL-M1-STAGE-ENTRY-v1.0.3-20260921",
+  "date": "2026-09-21",
+  "status": "OWNER_AUTHORIZED_SUCCESSOR / EFFECTFUL_ACTIONS_PROFILE_GATED",
   "program_id": "CLUED-FIRST-PARTY-MODEL",
   "stage_id": "MODEL-PROGRAM-M1",
   "predecessor": {
     "path": "M1StageEntryAuthorization.v1.0.2.json",
     "git_blob_sha1": "51d00b12935e84b93ce19693e56387b67556ad95",
-    "disposition": "IMMUTABLE_PREDECESSOR / SUPERSEDED_FOR_M1_07_CLOSEOUT_AND_M1_08_FRONTIER_ONLY"
+    "disposition": "IMMUTABLE_PREDECESSOR / SUPERSEDED_FOR_DEVICE_COVERAGE GATING ONLY"
   },
   "bound_plan": {
     "version": "v1.0.1",
@@ -16,32 +16,39 @@
     "scope": "M1 — Runtime 与参考模型基线",
     "plan_semantics_changed": false
   },
+  "prerequisite": {
+    "m0_formal_baseline_commit": "3d3fa2dc0900d19252f3060012f81d1204c9d4c6",
+    "m0_merge_commit": "6c431e72796bcec351bd566bd75c56844c232309",
+    "m0_verdict": "PASS / CLUED_MODEL_M0_PROGRAM_FOUNDATION_ACCEPTED",
+    "satisfied": true
+  },
   "owner_authority": {
     "holder": "OWNER",
-    "source": "CURRENT_CONVERSATION",
-    "owner_message": "正式接受 d91b7a6418afa811530ca39bb1fe43f322ccc375 的独立终审 PASS，将 Clued 第一方模型 M1-07 Runtime Stability 标记为 CLOSED / COMPLETED；随后处理 PR #270 的正式基线合并，并重新计算 Program Frontier，进入 M1-08 Runtime Lifecycle Smoke 的准备阶段。不得由此自动授权训练、蒸馏、promotion、activation、release 或 production deployment。",
-    "interpretation": "ACCEPT_M1_07_FORMAL_CLOSEOUT_AND_ADVANCE_FRONTIER_TO_M1_08_PREPARATION_ONLY"
+    "source": "CLUED_CANONICAL_EVENT_964 / CURRENT_CONVERSATION",
+    "canonical_event_id": 964,
+    "owner_message": "这个先做PC 其他的以后再说吧，不是强制性的所有设备凑齐才放行吧",
+    "interpretation": "ADOPT_PC_AS_THE_MINIMUM_FORMAL_M1_DEVICE_BASELINE_AND_MOVE_PHONE_TABLET_MAC_TO_PLATFORM_SPECIFIC_DEFERRED_QUALIFICATION_GATES"
   },
-  "m1_07_formal_closeout": {
-    "status": "CLOSED / COMPLETED",
-    "independent_review_verdict": "PASS / M1_07_RUNTIME_STABILITY_FORMAL_CLOSEOUT_ACCEPTABLE",
-    "reviewed_exact_head": "d91b7a6418afa811530ca39bb1fe43f322ccc375",
-    "final_issuance_parent": "231c2ec88fff0935ae6e22c060765737946e48ca",
-    "closeout_path": "../evidence/M1RuntimeStabilityExecutionCloseout_20260920.json",
-    "closeout_sha256": "1896a9af5a73136cd1f99619eb1296394f261f049271bff5108f0bb3f4090080",
-    "issued_profile_sha256": "04890ac27ca176711d51c930ed055bb318cf2b0d57adcdfaf228b4734a6f2aec",
-    "native_owner_sha256": "e0956d6d8194acefad85c54750b9802fe7faea648aeba5dd4408f41534e8680c",
-    "native_source_manifest_sha256": "f7bb4e269af3c3457072f68564e944c9813643b8d1bc9ba8295b572bbc8dfc52",
-    "blocker_count": 0,
-    "major_count": 0,
-    "minor_count": 0,
-    "pr": 270,
-    "baseline_merge_commit": "0e31b8a3b7da55bf9723a3d0650081ef98b5e85b",
-    "effectful_attempts_used": 1,
-    "same_profile_retry_allowed": false,
-    "authority_expansion": "NONE"
+  "amendment_scope": {
+    "type": "TARGETED_DEVICE_COVERAGE_GATE_REFRAME_ONLY",
+    "reason": "The accepted real PC baseline is sufficient for the minimum formal M1 runtime-device baseline. Unavailable Phone, Tablet and Mac hardware must remain explicit no-coverage states and must gate only claims, qualification, release or activation for those platforms.",
+    "changed_semantics": [
+      "The accepted real PC baseline on DESK-W-591 is sufficient for the minimum formal M1 runtime-device baseline.",
+      "M1-06B Phone/Tablet and M1-06C Mac are removed as global prerequisites for M1-09 finalization and M1-10 final M1 acceptance.",
+      "Phone/Tablet/Mac remain DEFERRED_NO_BOUND_DEVICE with NO_COVERAGE until real physical-device qualification exists.",
+      "Phone/Tablet qualification is required before any matching mobile-platform support claim, M5A Mobile Candidate final qualification, or mobile release/activation.",
+      "Mac qualification is required before any Mac support claim, Mac qualification, or Mac release/activation."
+    ],
+    "unchanged_semantics": [
+      "No emulator, other device class, or inferred result may substitute for missing real Phone, Tablet, or Mac evidence.",
+      "Untested platforms may not be represented as validated, supported, qualified, covered, releasable, or activatable.",
+      "Every effectful M1-07/M1-08/M1-09 execution still requires its own exact Experiment Authorization Profile.",
+      "This successor does not reopen, downgrade, replace, or alter any M1-07/M1-08 contract, independent review, Owner Root, effectful profile, execution requirement, or closeout evidence.",
+      "No training, distillation, promotion, activation, production, deployment, procurement, budget, or release authority is created.",
+      "M1-10 remains Fresh-Context / Read-Only / Reviewer-Not-Modifier and cannot be self-passed by an author or modifier."
+    ]
   },
-  "objective": "在既有 M1-06A PC baseline 与已正式闭合的 M1-07 Runtime Stability 基础上，进入 M1-08 Runtime Lifecycle Smoke 的非执行准备：定义安装、升级、回滚 smoke 的 exact contract/profile/evidence surface；任何真实 install/upgrade/rollback effectful execution 仍需单独 exact Experiment Authorization Profile 与后续 Owner 授权。",
+  "objective": "建立可比较、可复验的 Runtime、参考模型、设备与性能基线；以已接受的真实 PC（当前 DESK-W-591）作为 M1 最低正式 Runtime Device Baseline，使 M1-09 与 M1-10 不再被未持有的 Phone/Tablet/Mac 全局阻塞，同时把这些未测试平台严格保留为对应平台声明、资格、发布与激活之前的后置 Gate。",
   "tasks": {
     "M1-00": "绑定 Device Profile 与 Runtime 候选",
     "M1-01": "建立 Reference Model Shortlist",
@@ -49,21 +56,21 @@
     "M1-03": "受控下载和完整性验证",
     "M1-04": "建立统一 Model Invocation Harness",
     "M1-05": "建立量化与 Package Variant 对照",
-    "M1-06": "分层设备基线：M1-06A 可用设备推进基线 + M1-06B Phone/Tablet 补验 + M1-06C Mac 补验",
-    "M1-07": "测试加载、取消、后台恢复和崩溃 — CLOSED / COMPLETED",
-    "M1-08": "测试安装、升级和回滚 Smoke — PREPARATION FRONTIER",
-    "M1-09": "形成教师 / 对照选择矩阵；最终化前必须补齐 M1-06 全设备基线",
-    "M1-10": "Fresh-Context / Read-Only Independent Review；M1 最终验收前必须补齐 M1-06 全设备基线"
+    "M1-06": "分层设备基线：M1-06A PC 最低正式基线 + M1-06B Phone/Tablet 平台资格补验 + M1-06C Mac 平台资格补验",
+    "M1-07": "测试加载、取消、后台恢复和崩溃",
+    "M1-08": "测试安装、升级和回滚 Smoke",
+    "M1-09": "形成教师 / 对照选择矩阵；最低正式设备基线使用已接受真实 PC，Phone/Tablet/Mac 仅在对应平台声明、Tier 资格、发布或激活前补验",
+    "M1-10": "Fresh-Context / Read-Only Independent Review；M1 最终验收最低设备覆盖为已接受真实 PC，未测试平台不得据此获得任何覆盖或支持声明"
   },
   "m1_06_progressive_acceptance": {
-    "policy_id": "M1-06-PROGRESSIVE-DEVICE-BASELINE-v1",
+    "policy_id": "M1-06-PROGRESSIVE-DEVICE-BASELINE-v2",
     "anti_substitution_rule": "REAL_PHYSICAL_DEVICE_EVIDENCE_ONLY / NO_EMULATOR_OR_OTHER_DEVICE_CLASS_SUBSTITUTION",
-    "unavailable_device_rule": "DEFERRED_NO_BOUND_DEVICE is an allowed temporary state; it is neither PASS nor FAIL and does not imply coverage.",
-    "procurement_rule": "NO_PURCHASE_OR_PROCUREMENT_REQUIRED_TO_CONTINUE_M1-08_PREPARATION / NO_PROCUREMENT_AUTHORITY_GRANTED",
+    "unavailable_device_rule": "DEFERRED_NO_BOUND_DEVICE is an allowed state for Phone, Tablet and Mac; it is neither PASS nor FAIL, does not imply coverage, and does not globally block M1-09 finalization or M1-10 final acceptance.",
+    "procurement_rule": "NO_PURCHASE_OR_PROCUREMENT_REQUIRED_TO_CONTINUE_OR_CLOSE_M1 / NO_PROCUREMENT_AUTHORITY_GRANTED",
     "M1-06A": {
-      "name": "Available Device Baseline",
-      "purpose": "Allow runtime engineering to continue on hardware that is actually available and exactly bound.",
-      "completion_rule": "At least one real physical device class has exact device/runtime binding, exact package identity, controlled benchmark profile, accepted benchmark evidence, and successful closeout.",
+      "name": "Minimum Formal M1 Device Baseline",
+      "purpose": "Provide the minimum formal M1 runtime-device baseline on real, exactly bound and accepted PC hardware.",
+      "completion_rule": "At least one real physical PC has exact device/runtime binding, exact package identity, controlled benchmark profile, accepted benchmark evidence, and successful closeout.",
       "current_status": "CLOSED_SUCCESS",
       "accepted_device_classes": [
         "PC"
@@ -74,76 +81,135 @@
       ],
       "accepted_device_names": [
         "DESK-W-591"
-      ]
+      ],
+      "note": "Turing may only provide an additional Windows PC baseline; it cannot satisfy Phone, Tablet, or Mac coverage."
     },
     "M1-06B": {
-      "name": "Mobile-class Completion",
+      "name": "Mobile-platform Qualification Completion",
       "required_real_device_classes": [
         "Phone",
         "Tablet"
       ],
       "current_status": "DEFERRED_NO_BOUND_DEVICE",
       "coverage_claim": "NONE",
+      "global_m1_blocking": false,
       "completion_required_before": [
-        "M1-09_FINAL_SELECTION_MATRIX",
-        "M1-10_FINAL_M1_ACCEPTANCE"
-      ]
+        "MATCHING_MOBILE_PLATFORM_SUPPORT_CLAIM",
+        "M5A_MOBILE_CANDIDATE_FINAL_QUALIFICATION",
+        "MATCHING_MOBILE_PLATFORM_RELEASE_OR_ACTIVATION"
+      ],
+      "blocking_scope": "PLATFORM_SPECIFIC_ONLY"
     },
     "M1-06C": {
-      "name": "Mac Completion",
+      "name": "Mac-platform Qualification Completion",
       "required_real_device_classes": [
         "Mac"
       ],
       "current_status": "DEFERRED_NO_BOUND_DEVICE",
       "coverage_claim": "NONE",
+      "global_m1_blocking": false,
       "completion_required_before": [
-        "M1-09_FINAL_SELECTION_MATRIX",
-        "M1-10_FINAL_M1_ACCEPTANCE"
-      ]
+        "MAC_SUPPORT_CLAIM",
+        "MAC_QUALIFICATION",
+        "MAC_RELEASE_OR_ACTIVATION"
+      ],
+      "blocking_scope": "PLATFORM_SPECIFIC_ONLY"
     },
-    "full_m1_06_status": "OPEN / PC_COMPLETE / PHONE_TABLET_MAC_DEFERRED"
+    "full_m1_06_status": "MINIMUM_FORMAL_M1_BASELINE_CLOSED / DEFERRED_PLATFORM_GATES_OPEN_NON_BLOCKING_GLOBALLY",
+    "minimum_formal_m1_device_baseline_status": "CLOSED_SUCCESS / PC_COMPLETE / DESK-W-591_ACCEPTED",
+    "deferred_platform_qualification_status": "OPEN / PHONE_TABLET_MAC_DEFERRED / NO_COVERAGE"
   },
   "progression_policy": {
-    "current_frontier": "M1-08_PREPARATION_ALLOWED / M1-08_EFFECTFUL_EXECUTION_NOT_AUTHORIZED",
+    "current_frontier": "PRESERVE_SEPARATELY_ESTABLISHED_RUNTIME_FRONTIER / DEFERRED_PHONE_TABLET_MAC_GATES_DO_NOT_BLOCK_M1-09_OR_M1-10",
     "m1_07": {
       "progression_gate": "M1-06A_CLOSED_SUCCESS",
       "gate_satisfied": true,
-      "formal_status": "CLOSED / COMPLETED",
-      "accepted_closeout_exact_head": "d91b7a6418afa811530ca39bb1fe43f322ccc375",
-      "baseline_merge_commit": "0e31b8a3b7da55bf9723a3d0650081ef98b5e85b",
       "effectful_execution_authorized_by_stage_successor": false,
-      "profile_state": "CONSUMED / NO_REUSE"
+      "exact_experiment_profile_still_required": true,
+      "preservation_rule": "UNCHANGED / DO_NOT_REOPEN_OR_DOWNGRADE_EXISTING_M1-07_CONTRACT_REVIEW_OWNER_ROOT_PROFILE_EXECUTION_OR_CLOSEOUT",
+      "device_scope_rule": "Effectful stability execution may run only on an exactly bound physical device/runtime/package scope authorized by its M1-07 profile."
     },
     "m1_08": {
       "progression_gate": "M1-06A_CLOSED_SUCCESS + APPLICABLE_M1-07_CLOSEOUT",
-      "gate_satisfied": true,
-      "allowed_next_action": "PREPARE_AND_REVIEW_EXACT_M1-08_RUNTIME_LIFECYCLE_EXPERIMENT_PROFILE",
-      "preparation_scope": [
-        "DEFINE_EXACT_INSTALL_SMOKE",
-        "DEFINE_EXACT_UPGRADE_SMOKE",
-        "DEFINE_EXACT_ROLLBACK_SMOKE",
-        "DEFINE_ALLOWED_OUTPUTS",
-        "DEFINE_EVIDENCE_REQUIREMENTS",
-        "DEFINE_STOP_CONDITIONS",
-        "DEFINE_ONE_SHOT_OR_BOUNDED_ATTEMPT_ACCOUNTING",
-        "FRESH_CONTEXT_REVIEW_BEFORE_EFFECTFUL_EXECUTION"
-      ],
+      "device_baseline_gate_satisfied": true,
+      "applicable_m1_07_closeout_status": "RESOLVE_FROM_SEPARATE_IMMUTABLE_M1-07_EVIDENCE / NOT_ALTERED_HERE",
       "effectful_execution_authorized_by_stage_successor": false,
       "exact_experiment_profile_still_required": true,
-      "real_install_upgrade_rollback_allowed_now": false
+      "preservation_rule": "UNCHANGED / DO_NOT_REOPEN_OR_DOWNGRADE_EXISTING_M1-08_CONTRACT_REVIEW_OWNER_ROOT_PROFILE_EXECUTION_OR_CLOSEOUT"
     },
     "m1_09": {
-      "progression_gate": "FULL_M1-06_DEVICE_BASELINE_COMPLETE + REQUIRED_PRIOR_M1_CLOSEOUTS",
-      "gate_satisfied": false,
-      "final_selection_authorized": false,
+      "progression_gate": "MINIMUM_FORMAL_M1_DEVICE_BASELINE_COMPLETE + REQUIRED_PRIOR_M1_CLOSEOUTS",
+      "device_baseline_gate_satisfied": true,
+      "deferred_platform_completion_required_for_global_finalization": false,
+      "deferred_platform_gate_scope": "MATCHING_PLATFORM_SUPPORT_CLAIM_OR_TIER_QUALIFICATION_OR_RELEASE_OR_ACTIVATION_ONLY",
+      "required_prior_closeouts_status": "RESOLVE_FROM_SEPARATE_IMMUTABLE_M1-07_AND_M1-08_EVIDENCE / NOT_ALTERED_HERE",
+      "final_selection_authorized_by_stage_successor": false,
+      "finalization_rule": "MAY_FINALIZE_AFTER_REQUIRED_PRIOR_M1_CLOSEOUTS_AND_APPLICABLE_M1-09_GATES_WITHOUT_PHONE_TABLET_OR_MAC_COMPLETION",
       "exact_experiment_profile_required_for_any_new_provider_call_or_benchmark": true
     },
     "m1_10": {
-      "progression_gate": "M1-00_TO_M1-09_REQUIRED_SCOPE_COMPLETE + FULL_M1-06_DEVICE_BASELINE_COMPLETE",
-      "gate_satisfied": false,
-      "final_m1_acceptance_allowed": false
+      "progression_gate": "M1-00_TO_M1-09_REQUIRED_SCOPE_COMPLETE + MINIMUM_FORMAL_M1_DEVICE_BASELINE_COMPLETE",
+      "device_baseline_gate_satisfied": true,
+      "deferred_platform_completion_required_for_global_m1_acceptance": false,
+      "final_m1_acceptance_allowed": false,
+      "acceptance_rule": "MAY_ACCEPT_AFTER_ALL_NON_DEVICE_AND_MINIMUM_PC_BASELINE_GATES_PASS; PHONE_TABLET_MAC_REMAIN_PLATFORM_SPECIFIC_DEFERRED_GATES",
+      "independent_review_required": true
     }
   },
+  "required_final_device_coverage": {
+    "policy_id": "M1-MINIMUM-PC-BASELINE-WITH-PLATFORM-SPECIFIC-DEFERRED-GATES-v1",
+    "device_classes": [
+      "PC"
+    ],
+    "accepted_device_names": [
+      "DESK-W-591"
+    ],
+    "status": {
+      "PC": "PASS / DESK-W-591_STRICT_CPU_BASELINE_ACCEPTED"
+    },
+    "all_complete": true,
+    "all_complete_meaning": "REQUIRED_GLOBAL_M1_MINIMUM_DEVICE_BASELINE_ONLY",
+    "all_platforms_complete": false,
+    "all_platforms_complete_required_for_global_m1_acceptance": false,
+    "may_claim_full_cross_device_baseline": false,
+    "deferred_platforms": {
+      "Phone": {
+        "status": "DEFERRED_NO_BOUND_DEVICE",
+        "coverage_claim": "NONE",
+        "gate": "REAL_PHYSICAL_PHONE_QUALIFICATION_REQUIRED_BEFORE_MATCHING_SUPPORT_CLAIM_M5A_FINAL_QUALIFICATION_OR_RELEASE_ACTIVATION"
+      },
+      "Tablet": {
+        "status": "DEFERRED_NO_BOUND_DEVICE",
+        "coverage_claim": "NONE",
+        "gate": "REAL_PHYSICAL_TABLET_QUALIFICATION_REQUIRED_BEFORE_MATCHING_SUPPORT_CLAIM_M5A_FINAL_QUALIFICATION_OR_RELEASE_ACTIVATION"
+      },
+      "Mac": {
+        "status": "DEFERRED_NO_BOUND_DEVICE",
+        "coverage_claim": "NONE",
+        "gate": "REAL_PHYSICAL_MAC_QUALIFICATION_REQUIRED_BEFORE_MAC_SUPPORT_CLAIM_QUALIFICATION_OR_RELEASE_ACTIVATION"
+      }
+    },
+    "anti_substitution_rule": "REAL_PHYSICAL_DEVICE_EVIDENCE_ONLY / NO_EMULATOR_OTHER_DEVICE_CLASS_OR_INFERENCE_SUBSTITUTION",
+    "untested_platform_claim_rule": "NO_VALIDATED_SUPPORTED_QUALIFIED_COVERED_RELEASABLE_OR_ACTIVATABLE_CLAIM_WITHOUT_MATCHING_REAL_DEVICE_EVIDENCE"
+  },
+  "reference_roles": [
+    "Mobile-class Local Reference",
+    "Personal-device Local Reference",
+    "Strong Hosted / Enterprise Reference",
+    "Reproducible From-scratch Reference",
+    "Embedding Reference",
+    "Reranker Reference",
+    "Guard / Classifier Reference"
+  ],
+  "runtime_candidate_classes": [
+    "ExecuTorch",
+    "llama.cpp / GGUF",
+    "ONNX Runtime",
+    "MLX / MLX-LM",
+    "Core ML",
+    "Android / NPU Runtime",
+    "OTHER_EXPLICITLY_QUALIFIED_RUNTIME"
+  ],
   "allowed_without_experiment_profile": [
     "M1-00_DEVICE_AND_RUNTIME_MATRIX_PREPARATION",
     "M1-01_REFERENCE_MODEL_SHORTLIST_PREPARATION",
@@ -151,13 +217,14 @@
     "M1-04_HARNESS_CONTRACT_AND_SCAFFOLD_ONLY_NO_REAL_MODEL_CALL",
     "EXPERIMENT_PROFILE_PREPARATION",
     "QUALIFICATION_EVIDENCE_PREPARATION",
-    "M1-08_EXPERIMENT_PROFILE_PREPARATION_AFTER_M1-07_CLOSEOUT"
+    "M1-07_EXPERIMENT_PROFILE_PREPARATION_AFTER_M1-06A_CLOSEOUT"
   ],
   "exact_experiment_profile_required_before": [
     "M1-03_ANY_MODEL_TOKENIZER_RUNTIME_OR_TOOL_DOWNLOAD",
     "M1-04_ANY_REAL_MODEL_OR_HOSTED_PROVIDER_INVOCATION",
     "M1-05_ANY_REAL_MODEL_QUANTIZATION_OR_PACKAGE_EXECUTION",
     "M1-06_ANY_REAL_MODEL_DEVICE_BENCHMARK_OR_EVALUATION",
+    "M1-07_ANY_REAL_MODEL_RUNTIME_STABILITY_EXECUTION",
     "M1-08_ANY_REAL_MODEL_INSTALL_UPGRADE_ROLLBACK_EXECUTION",
     "M1-09_ANY_NEW_PROVIDER_CALL_OR_BENCHMARK_EXECUTION"
   ],
@@ -194,35 +261,38 @@
     "governed_self_training": false,
     "promotion": false,
     "activation": false,
-    "release": false,
     "production": false,
-    "production_deployment": false,
     "production_database_mutation": false,
     "production_secret_mutation": false,
-    "procurement": false,
-    "budget": false,
     "canonical_authority_creation": false,
     "kernel_gate_authority_creation": false,
     "kernel_rc_authority_creation": false,
     "semantic_recall_release": false,
     "semantic_index_canonical_write": false
   },
-  "required_final_device_coverage": {
-    "device_classes": [
-      "Phone",
-      "Tablet",
-      "PC",
-      "Mac"
+  "embedding_reranker_boundary": "RESEARCH_BENCHMARK_EVIDENCE_ONLY / SEMANTIC_RECALL_UNRELEASED_DISABLED",
+  "independent_review": {
+    "task": "M1-10",
+    "required": true,
+    "mode": [
+      "FRESH_CONTEXT",
+      "READ_ONLY",
+      "REVIEWER_NOT_MODIFIER"
     ],
-    "status": {
-      "Phone": "DEFERRED_NO_BOUND_DEVICE",
-      "Tablet": "DEFERRED_NO_BOUND_DEVICE",
-      "PC": "PASS / DESK-W-591_STRICT_CPU_BASELINE_ACCEPTED",
-      "Mac": "DEFERRED_NO_BOUND_DEVICE"
-    },
-    "all_complete": false,
-    "may_claim_full_cross_device_baseline": false
+    "author_or_modifier_cannot_self_issue_pass": true
   },
-  "authority_effect": "M1_STAGE_SUCCESSOR_DEPENDENCY_ORDER_ONLY / M1_07_FORMALLY_CLOSED / M1_08_PROFILE_PREPARATION_ALLOWED / EFFECTFUL_MODEL_ACTIONS_STILL_REQUIRE_SEPARATE_EXACT_EXPERIMENT_PROFILE",
-  "next_gate": "PREPARE_EXACT_M1-08_RUNTIME_LIFECYCLE_EXPERIMENT_PROFILE / DO_NOT_EXECUTE_WITHOUT_SEPARATE_OWNER_AUTHORIZATION"
+  "verdict_set": [
+    "PASS / CLUED_MODEL_M1_RUNTIME_AND_REFERENCE_BASELINE_ACCEPTED",
+    "BLOCKED / CLUED_MODEL_M1_RUNTIME_OR_LICENSE_BINDING_REQUIRED",
+    "FAIL / CLUED_MODEL_M1_INTEGRITY_LICENSE_OR_DEVICE_BASELINE_FAILED"
+  ],
+  "authority_effect": "M1_STAGE_SUCCESSOR_DEVICE_GATE_REFRAME_ONLY / ACCEPTED_PC_BASELINE_SUFFICIENT_FOR_GLOBAL_M1-09_AND_M1-10_DEVICE_GATE / PHONE_TABLET_MAC_PLATFORM_SPECIFIC_GATES_REMAIN / EFFECTFUL_MODEL_ACTIONS_STILL_REQUIRE_SEPARATE_EXACT_EXPERIMENT_PROFILE",
+  "next_gate": "FRESH_CONTEXT_REVIEW_AND_ACCEPT_M1_STAGE_SUCCESSOR_v1.0.3 / THEN_CONTINUE_SEPARATELY_ESTABLISHED_CURRENT_M1_FRONTIER / DO_NOT_REOPEN_M1-07_OR_M1-08",
+  "canonical_decision_binding": {
+    "context_key": "global",
+    "event_id": 964,
+    "event_occurred_at": "2026-09-21T02:16:48.575152+00:00",
+    "status_at_capture": "OWNER_DECISION / SUCCESSOR_REQUIRED / REPO_ARTIFACT_PENDING",
+    "rule": "THIS_SUCCESSOR_IMPLEMENTATION_CLOSES_ONLY_THE_REPOSITORY_ARTIFACT_GAP; EVENT_964_REMAINS_THE_OWNER_AUTHORITY"
+  }
 }

@@ -17,13 +17,13 @@ import (
 	"unicode/utf8"
 )
 
-const candidateID = "M1-LIFE-QWEN35-08B-PC-002-CANDIDATE"
-const issuedID = "M1-LIFE-QWEN35-08B-PC-002-ISSUED"
+const candidateID = "M1-LIFE-QWEN35-08B-PC-003-CANDIDATE"
+const issuedID = "M1-LIFE-QWEN35-08B-PC-003-ISSUED"
 const authorityEffect = "M1-08_PC_RUNTIME_LIFECYCLE_SMOKE_EXECUTION_ONLY"
-const contractBlobSHA1 = "5db350700e831a0423dd1e6f568d6f24f0c956ef"
-const contractPath = "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.1.json"
+const contractBlobSHA1 = "2a11bc4fa3d56d58547e11024cd0bfb5f8ba45e7"
+const contractPath = "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.2.json"
 const repository = "tdoljyj/cross-memory-system"
-const implementationBase = "3d8a4c88373f5a54831b40d34c0ad89281d02ac1"
+const implementationBase = "ab234beb9c5143a35a7c4e98e1bc9f65d64c507c"
 const machineSHA = "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522"
 const modelSHA = "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
 const runtimeAssetSHA = "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2"
@@ -32,13 +32,17 @@ const sourcePackageRoot = `C:\Users\Public\Clued\ModelProgram\M1\packages\Qwen_Q
 const sourceModelPath = sourcePackageRoot + `\packages\Qwen3.5-0.8B-Q8_0.gguf`
 const sourceRuntimeAssetPath = sourcePackageRoot + `\runtime\llama-b11033-bin-win-vulkan-x64.zip`
 const sourceRuntimeDir = sourcePackageRoot + `\runtime\b11033-vulkan`
-const testRoot = `C:\Users\Public\Clued\ModelProgram\M1\runtime-lifecycle-smoke\M1-LIFE-QWEN35-08B-PC-002`
+const testRoot = `C:\Users\Public\Clued\ModelProgram\M1\runtime-lifecycle-smoke\M1-LIFE-QWEN35-08B-PC-003`
 const tempRoot = testRoot + `\state\temp`
-const attemptGuardPath = `C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-LIFE-QWEN35-08B-PC-002\M1RuntimeLifecycleAttemptGuard.json`
-const guardParentPath = `C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-LIFE-QWEN35-08B-PC-002`
-const evidenceDir = `C:\Users\Public\Clued\ModelProgram\M1\evidence\M1-LIFE-QWEN35-08B-PC-002`
+const attemptGuardPath = `C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-LIFE-QWEN35-08B-PC-003\M1RuntimeLifecycleAttemptGuard.json`
+const guardParentPath = `C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-LIFE-QWEN35-08B-PC-003`
+const evidenceDir = `C:\Users\Public\Clued\ModelProgram\M1\evidence\M1-LIFE-QWEN35-08B-PC-003`
 const evidenceParentPath = `C:\Users\Public\Clued\ModelProgram\M1\evidence`
 const runtimeLifecycleParentPath = `C:\Users\Public\Clued\ModelProgram\M1\runtime-lifecycle-smoke`
+const pc001GuardPath = `C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-LIFE-QWEN35-08B-PC-001\M1RuntimeLifecycleAttemptGuard.json`
+const pc001GuardSHA = "9e0b95cf7e8cbb16608c73318b6c39b54dd5c1b2ae26daa63e822420cbce14bb"
+const pc002GuardPath = `C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-LIFE-QWEN35-08B-PC-002\M1RuntimeLifecycleAttemptGuard.json`
+const pc002GuardSHA = "4d6a230560fea05a4488ccd3eab1b3054e8906e0360a947409dd04313e4d7863"
 const modelBytes int64 = 833592320
 const runtimeAssetBytes int64 = 31766410
 const serverBytes int64 = 9216
@@ -533,7 +537,7 @@ func scopePolicy() object {
 		"lifecycle_safety_binding/ntfs_stream_policy":                   "ENUMERATE STREAMS FOR EVERY BOUND SOURCE AND MATERIALIZED SLOT REGULAR FILE / ONLY UNNAMED DEFAULT ::$DATA ALLOWED / ANY NAMED STREAM INCLUDING Zone.Identifier FAILS CLOSED / COPY ONLY DEFAULT STREAM OR USE EXPLICIT SKIP-ALTERNATE-STREAMS SEMANTICS",
 		"lifecycle_safety_binding/attempt_guard_bootstrap":              "EXACT GUARD PARENT MUST PREEXIST BEFORE FINAL ISSUANCE / PROFILE CANNOT CREATE OR RECREATE IT / PROVISIONING REQUIRES SEPARATELY REVIEWED OWNER-AUTHORIZED PREPARATION EVIDENCE / FIRST PROFILE-OWNED WRITE IS CREATE_NEW OF GUARD FILE",
 		"lifecycle_safety_binding/child_launch_cwd":                     `EXACT VERIFIED ACTIVE SLOT payload\runtime\b11033-vulkan ABSOLUTE DIRECTORY ONLY / NO CALLER CONTROL`,
-		"lifecycle_safety_binding/child_launch_environment":             `EMPTY_BASE_ENVIRONMENT / EXACT ALLOWLIST SystemRoot,WINDIR,TEMP,TMP ONLY / SystemRoot+WINDIR FROM TRUSTED GetWindowsDirectoryW / TEMP+TMP=C:\Users\Public\Clued\ModelProgram\M1\runtime-lifecycle-smoke\M1-LIFE-QWEN35-08B-PC-002\state\temp / PATH ABSENT / ALL OTHER VARIABLES OMITTED / NO CALLER OR PARENT INHERITANCE`,
+		"lifecycle_safety_binding/child_launch_environment":             `EMPTY_BASE_ENVIRONMENT / EXACT ALLOWLIST SystemRoot,WINDIR,TEMP,TMP ONLY / SystemRoot+WINDIR FROM TRUSTED GetWindowsDirectoryW / TEMP+TMP=C:\Users\Public\Clued\ModelProgram\M1\runtime-lifecycle-smoke\M1-LIFE-QWEN35-08B-PC-003\state\temp / PATH ABSENT / ALL OTHER VARIABLES OMITTED / NO CALLER OR PARENT INHERITANCE`,
 		"lifecycle_safety_binding/child_launch_envelope":                "EXECUTABLE + ARGV + ENVIRONMENT + CWD + 127.0.0.1:18088 ENDPOINT + ORIGINAL OS PROCESS HANDLE ARE JOINTLY IMMUTABLE AND PROFILE-DERIVED",
 		"release_ceiling":                                               "M1_08_PC_RUNTIME_LIFECYCLE_SMOKE_EVIDENCE_ONLY / LIFECYCLE_MECHANICS_ONLY / NO_BINARY_MIGRATION_CLAIM / NO_M1_09 / NO_TRAINING / NO_PROMOTION / NO_MODEL_PROMOTION_OR_RELEASE_ACTIVATION / NO_RELEASE / NO_PRODUCTION",
 	}
