@@ -33,6 +33,12 @@ python -m unittest discover -s tests/mps04 -p test_*.py -v
 python scripts/mps03/run_acceptance.py
 ```
 
+The existing owner-origin, same-repository MPS CI job also runs these tests and,
+for PRs only, calls the real private GitHub API with the job's ephemeral
+`contents: read` token. It binds A and B to the PR base/head exact SHAs and
+rejects a branch move during the run. This validates only the provider source
+leg; the CI token is not copied to a local runtime or persisted.
+
 Before any formal gate upgrade, run D-007 against the real non-production
 Canonical Service and private GitHub read-only credential, capture exact
 Revision/Adoption A and provider B, prove Current remains A, and obtain a fresh
