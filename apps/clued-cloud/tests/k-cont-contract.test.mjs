@@ -53,6 +53,12 @@ test("K-CONT-01 budgets and paginates resume events", () => {
   assert.match(migration, /'event_page',jsonb_build_object/);
 });
 
+test("K-CONT-01 preserves the scoped development-context restore router", () => {
+  assert.match(migration, /create or replace function public\.clued_mcp_restore_before_project_access_v13/);
+  assert.doesNotMatch(migration, /create or replace function public\.clued_mcp_restore\(p_token_hash/);
+  assert.match(migration, /grant execute on function public\.clued_mcp_restore\(text,jsonb\) to anon,authenticated/);
+});
+
 test("K-CONT-01 avoids duplicate log plus event payloads", () => {
   assert.match(migration, /if v_response_view='work_log' then/);
   assert.match(migration, /return v_result\|\|jsonb_build_object\('events_after_checkpoint',v_events\)/);
