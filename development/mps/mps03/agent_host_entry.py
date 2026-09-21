@@ -40,6 +40,7 @@ class AgentHandler(BaseHTTPRequestHandler):
                     raise ProtocolError("OBSERVED_STATE_REQUIRED","proposal must carry the state observed by the Agent",400)
                 return self._forward(self.client.propose(b.get("object_id",""),b.get("proposed_body",{}),observed))
             if p=="/agent/continue": return self._forward(self.client.read_object(b.get("object_id","")))
+            if p=="/agent/history": return self._forward(self.client.history(b.get("object_id","")))
             self._send(404,{"ok":False,"error":"NOT_FOUND"})
         except ProtocolError as e:
             self._send(e.status,e.as_dict())

@@ -213,7 +213,10 @@ class CanonicalStore:
         with self._connect() as c:
             s=self._session(c,token); self._require(s,"history")
             rows=c.execute("SELECT a.*, r.revision_digest, r.body_json FROM adoptions a JOIN revisions r ON r.revision_id=a.revision_id WHERE a.object_id=? ORDER BY a.created_ns",(object_id,)).fetchall()
-            return {"ok":True,"history":[{"adoption_id":r['adoption_id'],"revision_id":r['revision_id'],"revision_digest":r['revision_digest'],"proposal_id":r['proposal_id'],"scope":r['scope'],"purpose":r['purpose'],"body":json.loads(r['body_json']),"created_by":r['created_by']} for r in rows]}
+            receipts=c.execute("SELECT receipt_id,request_id,request_fingerprint,proposal_id,result_revision_id,result_adoption_id,outcome_digest,created_ns FROM receipts WHERE object_id=? ORDER BY created_ns",(object_id,)).fetchall()
+            return {"ok":True,
+                    "history":[{"adoption_id":r['adoption_id'],"revision_id":r['revision_id'],"revision_digest":r['revision_digest'],"proposal_id":r['proposal_id'],"scope":r['scope'],"purpose":r['purpose'],"body":json.loads(r['body_json']),"created_by":r['created_by']} for r in rows],
+                    "receipts":[{k:r[k] for k in r.keys()} for r in receipts]}
 
     def _replay(self,c,request_id,fp):
         row=c.execute("SELECT * FROM request_results WHERE request_id=?",(request_id,)).fetchone()

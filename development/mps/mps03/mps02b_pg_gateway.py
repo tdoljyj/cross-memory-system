@@ -538,15 +538,31 @@ select coalesce((select o.outcome from o),jsonb_build_object('status','conflict'
         s=self._session(token); self._require(s,"history")
         self._read_for(s["principal"],object_id,"read")
         sql=f"""
-select jsonb_build_object('ok',true,'history',coalesce(jsonb_agg(jsonb_build_object(
- 'adoption_id',a.adoption_id,'revision_id',a.revision_id,'revision_digest',r.revision_digest,
- 'scope',a.adoption_scope,'purpose',a.adoption_purpose,'body',r.content,'created_at',a.created_at
-) order by a.created_at),'[]'::jsonb))::text
-from clued_private.mps_adoptions a join clued_private.mps_revisions r
-on r.object_id=a.object_id and r.revision_id=a.revision_id
-where a.object_id={_t('oid')} and a.adoption_purpose <> 'mps03_create_bootstrap';
+with h as (
+ select coalesce(jsonb_agg(jsonb_build_object(
+  'adoption_id',a.adoption_id,'revision_id',a.revision_id,'revision_digest',r.revision_digest,
+  'scope',a.adoption_scope,'purpose',a.adoption_purpose,'body',r.content,'created_at',a.created_at
+ ) order by a.created_at),'[]'::jsonb) history
+ from clued_private.mps_adoptions a join clued_private.mps_revisions r
+ on r.object_id=a.object_id and r.revision_id=a.revision_id
+ where a.object_id={_t('oid')} and a.adoption_purpose <> 'mps03_create_bootstrap'
+), receipts as (
+ select coalesce(jsonb_agg(jsonb_build_object(
+  'receipt_id',q.receipt_id,'stable_request_principal_id',q.stable_request_principal_id,
+  'request_id',q.request_id,'request_fingerprint',q.request_fingerprint,
+  'proposal_id',q.intent_id,'intent_id',q.intent_id,'operation',q.operation,
+  'proposal_or_change_id',q.proposal_or_change_id,'result_revision_id',q.result_revision_id,
+  'result_adoption_id',q.result_adoption_id,'adoption_scope',q.adoption_scope,
+  'adoption_purpose',q.adoption_purpose,'outcome_digest',q.outcome_digest,
+  'created_at',q.created_at
+ ) order by q.created_at),'[]'::jsonb) receipts
+ from clued_private.mps_receipts q
+ where q.object_id={_t('oid')} and q.authority_domain_id={_t('domain')}
+)
+select jsonb_build_object('ok',true,'history',h.history,'receipts',receipts.receipts)::text
+from h,receipts;
 """
-        return self._json(sql,{"oid":object_id})
+        return self._json(sql,{"oid":object_id,"domain":self.authority_domain})
 
 def main(argv=None):
     ap=argparse.ArgumentParser()

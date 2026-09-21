@@ -153,6 +153,15 @@ class RealEntries(unittest.TestCase):
         self.assertEqual(continued["adoption_id"],confirmed["adoption_id"])
         self.assertEqual(continued["body"],{"items":["walk","coffee"]})
 
+        # Agent reads the same canonical Receipt/history without gaining a mutation route.
+        agent_history=req("POST",f"http://127.0.0.1:{self.pa}/agent/history",{"object_id":oid})
+        self.assertTrue(agent_history["ok"])
+        matching=[row for row in agent_history["receipts"] if row["receipt_id"] == confirmed["receipt_id"]]
+        self.assertEqual(len(matching),1)
+        self.assertEqual(matching[0]["proposal_id"],proposed["proposal_id"])
+        self.assertEqual(matching[0]["result_revision_id"],confirmed["revision_id"])
+        self.assertEqual(matching[0]["result_adoption_id"],confirmed["adoption_id"])
+
     def test_idempotent_confirm_and_conflict(self):
         c=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"Idem","body":{"v":1},"request_id":"req-create-idem"}); oid=c["object_id"]
         p=self.agent_propose(oid,{"v":2})
@@ -211,6 +220,8 @@ class RealEntries(unittest.TestCase):
         self.assertEqual(status,401); self.assertEqual(native.get("error"),"ENTRY_ACCESS_DENIED")
         status,agent=raw_req("POST",f"http://127.0.0.1:{self.pa}/agent/read",'{"object_id":"obj_unknown"}',authorized=False)
         self.assertEqual(status,401); self.assertEqual(agent.get("error"),"ENTRY_ACCESS_DENIED")
+        status,history=raw_req("POST",f"http://127.0.0.1:{self.pa}/agent/history",'{"object_id":"obj_unknown"}',authorized=False)
+        self.assertEqual(status,401); self.assertEqual(history.get("error"),"ENTRY_ACCESS_DENIED")
         status,wrong=raw_req("POST",f"http://127.0.0.1:{self.pa}/agent/read",'{"object_id":"obj_unknown"}',authorization="Bearer "+self.native_access)
         self.assertEqual(status,401); self.assertEqual(wrong.get("error"),"ENTRY_ACCESS_DENIED")
         status,cross_origin=raw_req("POST",f"http://127.0.0.1:{self.pn}/api/objects",'{"title":"no","request_id":"req-csrf-0001"}',origin="https://other.example")
