@@ -91,9 +91,9 @@
                   },
                   {
                       "path":  "owner.go",
-                      "bytes":  28809,
-                      "sha256":  "be566194747d1b04a9a13e4334098b2b7afc467d1a041e5782eccac019dd0238",
-                      "git_blob_sha1":  "bade54ce0d222d5075915df73ae9244986f9a9c8"
+                      "bytes":  29211,
+                      "sha256":  "6e50dd156b0de25f48f70f0fde97079f7523db698fcb9161bc0bbb6d1531a6aa",
+                      "git_blob_sha1":  "ad20da6b175fe42875b2f87d872eb979e02c9f6d"
                   },
                   {
                       "path":  "owner_test.go",
@@ -133,9 +133,9 @@
                   },
                   {
                       "path":  "predecessor_guard_test.go",
-                      "bytes":  1259,
-                      "sha256":  "b0325ddc9cbe2c1782fbaa85560f7d719c3261f7ba7d6567f0b6fdc4740ae848",
-                      "git_blob_sha1":  "88f63c2c567af8cd869d9d86f7c0c5c30c42f35c"
+                      "bytes":  2198,
+                      "sha256":  "e381cbf7307817200958ad0123f92050622699db8768476be493ab74fc655b0e",
+                      "git_blob_sha1":  "9df0f4a18e8df792bf9f57199260136ddd874085"
                   },
                   {
                       "path":  "probe_structural_test.go",

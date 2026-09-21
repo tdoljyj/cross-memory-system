@@ -38,3 +38,24 @@ func TestPC003PredecessorGuardMissingAndReparseFailClosed(t *testing.T) {
 		t.Fatalf("reparse guard: %v", e)
 	}
 }
+
+func TestPC003PredecessorGuardAncestorAndFinalPathFailClosed(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	if e := os.Mkdir(parent, 0700); e != nil {
+		t.Fatal(e)
+	}
+	p := filepath.Join(parent, "guard.json")
+	raw := []byte("guard-bytes\n")
+	if e := os.WriteFile(p, raw, 0600); e != nil {
+		t.Fatal(e)
+	}
+	f := &fakePlatform{reparse: map[string]bool{filepath.Clean(parent): true}}
+	if e := newController(f, admission{}, testLayout(t)).verifyPredecessorGuard(p, sha(raw)); codeOf(e) != "PREDECESSOR_ATTEMPT_GUARD_MISSING_OR_DRIFTED" {
+		t.Fatalf("ancestor reparse accepted: %v", e)
+	}
+	f = &fakePlatform{finalOverride: map[string]string{filepath.Clean(p): filepath.Join(parent, "redirected.json")}}
+	if e := newController(f, admission{}, testLayout(t)).verifyPredecessorGuard(p, sha(raw)); codeOf(e) != "PREDECESSOR_ATTEMPT_GUARD_MISSING_OR_DRIFTED" {
+		t.Fatalf("final-path redirect accepted: %v", e)
+	}
+}

@@ -346,16 +346,25 @@ func (c *controller) authorize(p object) (ctx *executionContext, err error) {
 }
 
 func (c *controller) verifyPredecessorGuard(path, expected string) error {
+	if !filepath.IsAbs(path) || hasForbiddenWindowsPathSyntax(path) {
+		return fail("PREDECESSOR_ATTEMPT_GUARD_MISSING_OR_DRIFTED")
+	}
+	if e := c.verifySafeExistingPath(path); e != nil {
+		return fail("PREDECESSOR_ATTEMPT_GUARD_MISSING_OR_DRIFTED")
+	}
 	st, e := os.Lstat(path)
 	if e != nil || !st.Mode().IsRegular() || st.Mode()&os.ModeSymlink != 0 || st.Size() <= 0 || st.Size() > 65536 {
 		return fail("PREDECESSOR_ATTEMPT_GUARD_MISSING_OR_DRIFTED")
 	}
-	reparse, e := c.sys.pathIsReparse(path)
-	if e != nil || reparse {
+	f, e := c.pinImmutable(path, false)
+	if e != nil {
 		return fail("PREDECESSOR_ATTEMPT_GUARD_MISSING_OR_DRIFTED")
 	}
-	raw, e := os.ReadFile(path)
-	if e != nil || sha(raw) != expected {
+	if _, e = f.Seek(0, io.SeekStart); e != nil {
+		return fail("PREDECESSOR_ATTEMPT_GUARD_MISSING_OR_DRIFTED")
+	}
+	raw, e := io.ReadAll(io.LimitReader(f, 65537))
+	if e != nil || len(raw) == 0 || len(raw) > 65536 || sha(raw) != expected {
 		return fail("PREDECESSOR_ATTEMPT_GUARD_MISSING_OR_DRIFTED")
 	}
 	return nil
