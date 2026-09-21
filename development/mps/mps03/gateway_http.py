@@ -12,6 +12,10 @@ STORE_ERROR_STATUS = {
     "MPS_AUTHORIZATION_DENIED": 403, "MPS_RESULT_READ_DENIED": 403,
     "OBJECT_NOT_FOUND": 404, "MPS_CONTEXT_BASIS_NOT_FOUND_OR_INCONSISTENT": 404,
     "MPS_INTENT_NOT_FOUND": 404,
+    "MPS04_OBSERVATION_NOT_FOUND": 404,
+    "MPS04_OBSERVATION_NOT_ADOPTABLE": 409,
+    "MPS04_OBSERVATION_ALREADY_ADOPTED": 409,
+    "MPS04_OBSERVATION_HAS_NO_DRIFT": 409,
 }
 
 class Handler(BaseHTTPRequestHandler):
@@ -62,6 +66,19 @@ class Handler(BaseHTTPRequestHandler):
             oid = parts[2]
             if len(parts) == 3 and method == "GET":
                 return 200, self.store.read_object(self._token(), oid)
+            if len(parts) == 4 and parts[3] == "provider-observation" and method == "GET":
+                return 200, self.store.provider_observation(self._token(), oid)
+            if (len(parts) == 6 and parts[3] == "provider-observations"
+                    and parts[5] == "ignore" and method == "POST"):
+                b = self._json()
+                return 200, self.store.ignore_provider_observation(
+                    self._token(), oid, parts[4], b.get("request_id", ""))
+            if (len(parts) == 6 and parts[3] == "provider-observations"
+                    and parts[5] == "adopt" and method == "POST"):
+                b = self._json()
+                return 200, self.store.adopt_provider_observation(
+                    self._token(), oid, parts[4], b.get("state_stamp", {}),
+                    b.get("request_id", ""))
             if len(parts) == 4 and parts[3] == "proposals" and method == "GET":
                 return 200, self.store.list_proposals(self._token(), oid)
             if len(parts) == 4 and parts[3] == "proposals" and method == "POST":

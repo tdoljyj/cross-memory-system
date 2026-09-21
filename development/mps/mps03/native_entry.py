@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, difflib, html, ipaddress, json, os, time
+import argparse, difflib, html, ipaddress, json, os, re, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 try:
     from .client import GatewayClient
-    from .common import strict_json_loads, strict_utf8_decode, ProtocolError, bounded_request_body, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
+    from .common import strict_json_loads, strict_utf8_decode, ProtocolError, bounded_request_body, request_content_length, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
 except ImportError:
     from client import GatewayClient
-    from common import strict_json_loads, strict_utf8_decode, ProtocolError, bounded_request_body, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
+    from common import strict_json_loads, strict_utf8_decode, ProtocolError, bounded_request_body, request_content_length, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
 
 class NativeHandler(BaseHTTPRequestHandler):
     client: GatewayClient = None  # type: ignore
@@ -24,9 +24,11 @@ class NativeHandler(BaseHTTPRequestHandler):
         value=strict_json_loads(strict_utf8_decode(self._raw() or b"{}"))
         if not isinstance(value,dict): raise ProtocolError("JSON_OBJECT_REQUIRED","request body must be a JSON object",400)
         return value
-    def _form(self):
-        try: return {k:v[-1] for k,v in parse_qs(strict_utf8_decode(self._raw(262144)),keep_blank_values=True,errors="strict").items()}
+    def _parse_form(self,raw):
+        try: return {k:v[-1] for k,v in parse_qs(strict_utf8_decode(raw),keep_blank_values=True,errors="strict").items()}
         except UnicodeDecodeError: raise ProtocolError("INVALID_UTF8","request body must be UTF-8",400) from None
+    def _form(self):
+        return self._parse_form(self._raw(262144))
     def _send_json(self,status,obj):
         b=(json.dumps(obj,ensure_ascii=False,separators=(",",":"))+"\n").encode(); self.send_response(status); self.send_header("Content-Type","application/json; charset=utf-8"); self.send_header("Cache-Control","no-store"); self.send_header("Content-Length",str(len(b)));
         if status==401: self.send_header("WWW-Authenticate",'Basic realm="Clued Native"')
@@ -110,6 +112,66 @@ class NativeHandler(BaseHTTPRequestHandler):
         return self._send_html(status,self._page("Request result",body))
     def _obj_nav(self,oid):
         q=html.escape(oid); return f'<nav><a href="/object/{q}">Detail</a><a href="/object/{q}/proposals">Suggestions</a><a href="/object/{q}/history">History</a><a href="/object/{q}/connection">Connection & Context</a></nav>'
+    def _provider_panel(self,oid,current):
+        body=current.get("body")
+        if not isinstance(body,dict) or not isinstance(body.get("repository"),str):
+            return ""
+        adopted=body.get("adopted_exact_commit")
+        if not isinstance(adopted,str):
+            return '<section><h2>External changes</h2><p>No exact Clued adoption is available for comparison.</p></section>'
+        try:
+            observed=self.client.provider_observation(oid)
+        except ProtocolError:
+            observed={"ok":False}
+        if not observed.get("ok"):
+            return ('<section><h2>External changes</h2><p>GitHub changes cannot be verified right now. '
+                    'Clued still uses the adopted commit shown below; no external change has been accepted.</p>'
+                    f'<p>Clued adopted commit: <code>{html.escape(adopted)}</code></p></section>')
+        if (observed.get("clued_adopted_exact_commit") != adopted
+                or observed.get("clued_adoption_id") != current.get("adoption_id")):
+            return '<section><h2>External changes</h2><p>Clued changed while this page loaded. Reload to compare again.</p></section>'
+        provider=html.escape(str(observed.get("provider_exact_commit", "")))
+        adopted_html=html.escape(adopted)
+        source=str(observed.get("source_compare_url", ""))
+        exact_source=(f'https://github.com/{body["repository"]}/compare/'
+                      f'{adopted}...{observed.get("provider_exact_commit", "")}')
+        if (not re.fullmatch(r'[0-9a-f]{40}',str(observed.get("provider_exact_commit", "")))
+                or observed.get("repository") != body["repository"]
+                or source != exact_source):
+            return '<section><h2>External changes</h2><p>GitHub source could not be verified.</p></section>'
+        ancestry=html.escape(str(observed.get("ancestry", "unknown")))
+        if observed.get("drift"):
+            message=f'GitHub now points to <code>{provider}</code>; Clued still uses <code>{adopted_html}</code>. No change was adopted automatically.'
+        else:
+            message=f'GitHub and Clued both point to <code>{adopted_html}</code>.'
+        sample=observed.get("changed_file_sample",[])
+        files=''.join('<li>'+html.escape(path)+'</li>' for path in sample if isinstance(path,str)) if isinstance(sample,list) else ''
+        file_section=f'<h3>Changed file sample</h3><ul>{files}</ul>' if files else ''
+        actions=''
+        observation_id=str(observed.get("observation_id", ""))
+        status=str(observed.get("status", ""))
+        if (observed.get("drift")
+                and observed.get("persistence") == "REGISTERED_CANONICAL_OBSERVATION"
+                and re.fullmatch(r'pob_[0-9a-f]{32}',observation_id)):
+            if status == "IGNORED":
+                actions='<p>This exact external change was ignored. Clued Current was not changed.</p>'
+            elif status == "OPEN":
+                ignore=(f'<form method="post" action="/object/{html.escape(oid,quote=True)}/provider/'
+                        f'{html.escape(observation_id,quote=True)}/ignore">'
+                        f'<input type="hidden" name="request_id" value="{new_id("req")}">'
+                        '<button>Ignore this exact change</button></form>')
+                adopt=''
+                stamp=observed.get("confirmation_state_stamp")
+                if observed.get("adoptable") is True and isinstance(stamp,dict):
+                    adopt=(f'<form method="post" action="/object/{html.escape(oid,quote=True)}/provider/'
+                           f'{html.escape(observation_id,quote=True)}/adopt">'
+                           f'<input type="hidden" name="state_stamp_json" value="{html.escape(json.dumps(stamp,ensure_ascii=False,separators=(",",":")),quote=True)}">'
+                           f'<input type="hidden" name="request_id" value="{new_id("req")}">'
+                           '<button>Adopt this exact GitHub version</button></form>')
+                actions=adopt+ignore
+        return (f'<section><h2>External changes</h2><p>{message}</p><p>GitHub comparison: '
+                f'<a href="{html.escape(source,quote=True)}">View exact source</a> '
+                f'(relationship: {ancestry})</p>{file_section}{actions}</section>')
     def do_GET(self):
         try:
             p=urlparse(self.path).path
@@ -139,7 +201,7 @@ class NativeHandler(BaseHTTPRequestHandler):
                     o=self.client.read_object(oid)
                     if not o.get("ok"): return self._html_error(o)
                     title=o.get("body",{}).get("title") if isinstance(o.get("body"),dict) else None
-                    body=nav+"<h1>"+html.escape(title or "Plan details")+"</h1><h2>Plan content</h2>"+self._content(o.get("body"),omit_title=True)+self._technical(o)
+                    body=nav+"<h1>"+html.escape(title or "Plan details")+"</h1><h2>Plan content</h2>"+self._content(o.get("body"),omit_title=True)+self._provider_panel(oid,o)+self._technical(o)
                     return self._send_html(200,self._page("Plan details",body))
                 if len(parts)==3 and parts[2]=="proposals":
                     cur=self.client.read_object(oid)
@@ -181,9 +243,20 @@ class NativeHandler(BaseHTTPRequestHandler):
             form_content=self.headers.get("Content-Type","").startswith("application/x-www-form-urlencoded")
             create_form=p=="/create" and form_content
             confirm_form=len(parts)==3 and parts[0]=="object" and parts[2]=="confirm" and form_content
+            provider_form=(len(parts)==5 and parts[0]=="object" and parts[2]=="provider"
+                           and parts[4] in ("adopt","ignore") and form_content)
             f=None
+            raw_form=None
+            if create_form or confirm_form or provider_form:
+                # On Windows, closing after a 401/403 with an unread normal-sized POST body
+                # can reset the connection before the client receives the recovery page.
+                # Consume only a strictly framed, bounded form before access checks; oversized
+                # forms still authenticate first and retain the existing 401/403/413 order.
+                if request_content_length(self.headers) <= 262144:
+                    raw_form=self._raw(262144)
             self._authenticate(); self._check_origin()
-            f=self._form() if create_form or confirm_form else None
+            if create_form or confirm_form or provider_form:
+                f=self._parse_form(raw_form) if raw_form is not None else self._form()
             if create_form:
                 try:
                     body=strict_json_loads(f["body_json"]) if "body_json" in f else {"details":f.get("details","")}
@@ -200,6 +273,19 @@ class NativeHandler(BaseHTTPRequestHandler):
                 status=200 if out.get("ok") else out.get("http_status",409)
                 if not out.get("ok"): return self._form_failure(out,f,"confirm",parts[1])
                 return self._send_html(status,self._result(out,"Suggestion confirmed.",parts[1]))
+            if provider_form:
+                try:
+                    if parts[4]=="adopt":
+                        stamp=strict_json_loads(f.get("state_stamp_json","{}"))
+                        out=self.client.adopt_provider_observation(parts[1],parts[3],stamp,f.get("request_id",""))
+                        success="Exact GitHub version adopted."
+                    else:
+                        out=self.client.ignore_provider_observation(parts[1],parts[3],f.get("request_id",""))
+                        success="Exact GitHub change ignored."
+                except ProtocolError as e: out={**e.as_dict(),"http_status":e.status}
+                status=200 if out.get("ok") else out.get("http_status",409)
+                if not out.get("ok"): return self._html_error({**out,"http_status":status})
+                return self._send_html(status,self._result(out,success,parts[1]))
             b=self._body()
             if p=="/api/objects": return self._forward(self.client.create_object(b.get("title","Untitled"),b.get("body",{}),b.get("request_id","")))
             if len(parts)==4 and parts[:2]==["api","objects"] and parts[3]=="confirm": return self._forward(self.client.confirm(parts[2],b.get("proposal_id",""),b.get("state_stamp",{}),b.get("request_id","")))
@@ -207,7 +293,7 @@ class NativeHandler(BaseHTTPRequestHandler):
         except ProtocolError as e:
             if (create_form or confirm_form) and f is not None:
                 self._form_failure({**e.as_dict(),"http_status":e.status},f,"create" if create_form else "confirm",parts[1] if confirm_form else "")
-            elif create_form or confirm_form: self._html_error({**e.as_dict(),"http_status":e.status})
+            elif create_form or confirm_form or provider_form: self._html_error({**e.as_dict(),"http_status":e.status})
             else: self._send_json(e.status,e.as_dict())
 
 def main(argv=None):
