@@ -45,15 +45,27 @@ jobs:
           MPS04_CI_ADOPTED_SHA: ${{ github.event.pull_request.base.sha }}
           MPS04_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python scripts/mps04/check_private_github_readonly.py
+      - name: MPS-03 cross-entry process evidence
+        run: python scripts/mps03/capture_cross_entry_evidence.py
+      - name: Compile MPS-03 Python
+        run: python -m compileall -q development/mps/mps03 development/mps/mps04 tests/mps03 tests/mps04 scripts/mps03 scripts/mps04
+
+  mps04-live-native-nonprod-d007:
+    # This is the exact named credential host, not the interchangeable pool.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 274 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor == github.repository_owner
+    runs-on: [self-hosted, Windows, X64, clued, site-company, trust-internal, cap-python312]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
       - name: MPS-04 live Native D-007 nonproduction read (PR 274 only)
-        if: github.event_name == 'pull_request' && github.event.pull_request.number == 274
         env:
           MPS04_GITHUB_TOKEN: ${{ github.token }}
           MPS04_GITHUB_REF: ${{ github.event.pull_request.head.ref }}
           MPS04_CI_ADOPTED_SHA: ${{ github.event.pull_request.base.sha }}
           MPS04_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python scripts/mps04/check_live_native_nonprod.py
-      - name: MPS-03 cross-entry process evidence
-        run: python scripts/mps03/capture_cross_entry_evidence.py
-      - name: Compile MPS-03 Python
-        run: python -m compileall -q development/mps/mps03 development/mps/mps04 tests/mps03 tests/mps04 scripts/mps03 scripts/mps04
