@@ -127,7 +127,7 @@
     "code_revision":  {
                           "status":  "EXACT_EFFECTFUL_OWNER_SOURCE_BOUND / OWNER_ROOT_PINNED / PC003_EXECUTION_PARENT_GATE_PENDING / BINARY_PENDING_FINAL_ISSUANCE",
                           "repository":  "tdoljyj/cross-memory-system",
-                          "preparation_base_commit":  "830bb7e406e909fee4e1d4f3e84aaaf01906e88d",
+                          "preparation_base_commit":  "22a5ec5f96b972cffd7b9805c952c8308da3fab6",
                           "lifecycle_contract_path":  "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.2.json",
                           "lifecycle_contract_git_blob_sha1":  "2a11bc4fa3d56d58547e11024cd0bfb5f8ba45e7",
                           "required_effectful_owner_source_path":  "scripts/model-program/m1-runtime-lifecycle-owner/source-manifest.json",
@@ -141,7 +141,7 @@
                           "implementation_reviewed_exact_head":  "TO_BE_INDEPENDENTLY_REVIEWED",
                           "accepted_r5_source_freeze":  "96312735a2341c145e360f19a6f3a08ec222d64a",
                           "owner_root_successor_predecessor_exact_head":  "ab234beb9c5143a35a7c4e98e1bc9f65d64c507c",
-                          "source_freeze_exact_head":  "830bb7e406e909fee4e1d4f3e84aaaf01906e88d"
+                          "source_freeze_exact_head":  "22a5ec5f96b972cffd7b9805c952c8308da3fab6"
                       },
     "config_revision":  {
                             "profile_config_id":  "M1-LIFE-PC-QWEN35-Q8_0-v1",
