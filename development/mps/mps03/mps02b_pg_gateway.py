@@ -185,7 +185,10 @@ class PgMPS02BStore:
                 ("STALE_CONTEXT_REQUIRES_REFRESH",409), ("IDEMPOTENCY_CONFLICT",409),
                 ("CONFIRMATION_TARGET_CHANGED",409), ("INTENT_IDENTITY_CONFLICT",409),
                 ("MPS_AUTHORIZATION_DENIED",403), ("MPS_RESULT_READ_DENIED",403),
-                ("OBJECT_NOT_FOUND",404),
+                ("OBJECT_NOT_FOUND",404), ("MPS04_OBSERVATION_NOT_FOUND",404),
+                ("MPS04_OBSERVATION_NOT_ADOPTABLE",409),
+                ("MPS04_OBSERVATION_ALREADY_ADOPTED",409),
+                ("MPS04_OBSERVATION_HAS_NO_DRIFT",409),
                 ("MPS_CONTEXT_BASIS_NOT_FOUND_OR_INCONSISTENT",404), ("MPS_INTENT_NOT_FOUND",404),
             ]
             for code,status in mapping:
@@ -218,8 +221,8 @@ select jsonb_build_object(
 select jsonb_build_object(
  'ok',
  to_regprocedure('clued_private.mps_register_provider_observation(text,text,text,text,jsonb)') is not null
- and to_regprocedure('clued_private.mps_ignore_provider_observation(text,text,text,text)') is not null
- and to_regprocedure('clued_private.mps_adopt_provider_observation(text,text,text,text,jsonb)') is not null
+ and to_regprocedure('clued_private.mps_ignore_provider_observation(text,text,text,text,text)') is not null
+ and to_regprocedure('clued_private.mps_adopt_provider_observation(text,text,text,text,text,jsonb)') is not null
 )::text;
 """)
             if r.get("ok") is not True:
@@ -513,8 +516,8 @@ commit;
         self._assert_object_owner(object_id)
         outcome=self._json(
             f"select clued_private.mps_ignore_provider_observation("
-            f"{_t('observation_id')},{_t('domain')},{_t('principal')},{_t('request_id')})::text;",
-            {"observation_id":observation_id,"domain":self.authority_domain,
+            f"{_t('observation_id')},{_t('oid')},{_t('domain')},{_t('principal')},{_t('request_id')})::text;",
+            {"observation_id":observation_id,"oid":object_id,"domain":self.authority_domain,
              "principal":s["principal"],"request_id":request_id},
         )
         if (outcome.get("observation_id") not in (None,observation_id)
@@ -533,9 +536,9 @@ commit;
         submitted_stamp={k:v for k,v in state_stamp.items() if k!="state_stamp_digest"}
         outcome=self._json(
             f"select clued_private.mps_adopt_provider_observation("
-            f"{_t('observation_id')},{_t('domain')},{_t('principal')},"
+            f"{_t('observation_id')},{_t('oid')},{_t('domain')},{_t('principal')},"
             f"{_t('request_id')},{_j('stamp')})::text;",
-            {"observation_id":observation_id,"domain":self.authority_domain,
+            {"observation_id":observation_id,"oid":object_id,"domain":self.authority_domain,
              "principal":s["principal"],"request_id":request_id,
              "stamp":json.dumps(submitted_stamp,ensure_ascii=False,separators=(",",":"))},
         )

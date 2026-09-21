@@ -221,6 +221,30 @@ class ProviderCandidate(unittest.TestCase):
         self.assertEqual(calls[0], ("ignore", "native-allowed", OID, observation_id, "req_12345678"))
         self.assertEqual(calls[1][0:4], ("adopt", "native-allowed", OID, observation_id))
 
+    def test_store_passes_url_object_into_atomic_decision_call(self):
+        store = PgMPS02BStore.__new__(PgMPS02BStore)
+        store.authority_domain = "test-domain"
+        store._session = lambda token: {"principal": "native-principal"}
+        store._require = lambda session, action: None
+        store._assert_object_owner = lambda oid: None
+        calls = []
+
+        def execute(sql, variables=None):
+            calls.append((sql, variables))
+            return {"ok": True, "object_id": OID,
+                    "observation_id": "pob_" + "1" * 32}
+
+        store._json = execute
+        observation_id = "pob_" + "1" * 32
+        store.ignore_provider_observation(
+            "native-allowed", OID, observation_id, "req_12345678")
+        store.adopt_provider_observation(
+            "native-allowed", OID, observation_id,
+            {"object_id": OID}, "req_12345678")
+        self.assertEqual([call[1]["oid"] for call in calls], [OID, OID])
+        self.assertIn("mps_ignore_provider_observation", calls[0][0])
+        self.assertIn("mps_adopt_provider_observation", calls[1][0])
+
     def test_native_actions_require_registered_open_observation(self):
         current = {"body": {"repository": EXPECTED_PROVIDER_REPOSITORY,
                             "adopted_exact_commit": A}, "adoption_id": "adopt_a"}
@@ -254,6 +278,14 @@ class ProviderCandidate(unittest.TestCase):
         self.assertIn("mps_adopt_provider_observation", sql)
         self.assertIn("mps_commit_mutation", sql)
         self.assertIn("mps04_adopt_github_provider", sql)
+        self.assertEqual(
+            sql.count("where observation_id=p_observation_id and object_id=p_object_id for update;"),
+            2,
+        )
+        self.assertIn(
+            "mps_ignore_provider_observation(text,text,text,text,text)", sql)
+        self.assertIn(
+            "mps_adopt_provider_observation(text,text,text,text,text,jsonb)", sql)
         self.assertIn("revoke all on table", sql.lower())
 
     def test_native_fails_closed_on_unavailable_or_stale_observation(self):

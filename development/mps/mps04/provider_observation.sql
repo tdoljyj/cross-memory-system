@@ -240,8 +240,11 @@ begin
 end;
 $mps04$;
 
+drop function if exists clued_private.mps_ignore_provider_observation(text,text,text,text);
+
 create or replace function clued_private.mps_ignore_provider_observation(
   p_observation_id text,
+  p_object_id text,
   p_authority_domain_id text,
   p_native_principal_id text,
   p_request_id text
@@ -259,7 +262,7 @@ begin
     raise exception 'MPS_INVALID_REQUEST_KEY' using errcode='22023';
   end if;
   select * into v_observation from clued_private.mps_provider_observations
-   where observation_id=p_observation_id for update;
+   where observation_id=p_observation_id and object_id=p_object_id for update;
   if not found then raise exception 'MPS04_OBSERVATION_NOT_FOUND' using errcode='P0002'; end if;
   v_basis := clued_private.mps_read_context_basis(
     v_observation.object_id,p_authority_domain_id,p_native_principal_id,'update');
@@ -282,14 +285,17 @@ begin
   end if;
   update clued_private.mps_provider_observations set status='IGNORED',
     decided_by_principal=p_native_principal_id,decision_request_id=p_request_id,decided_at=now()
-   where observation_id=p_observation_id;
+   where observation_id=p_observation_id and object_id=p_object_id;
   return jsonb_build_object('ok',true,'status','IGNORED','observation_id',p_observation_id,
     'object_id',v_observation.object_id,'request_id',p_request_id,'clued_current_changed',false);
 end;
 $mps04$;
 
+drop function if exists clued_private.mps_adopt_provider_observation(text,text,text,text,jsonb);
+
 create or replace function clued_private.mps_adopt_provider_observation(
   p_observation_id text,
+  p_object_id text,
   p_authority_domain_id text,
   p_native_principal_id text,
   p_request_id text,
@@ -311,7 +317,7 @@ begin
     raise exception 'MPS_MUTATION_REQUEST_FIELD_INVALID' using errcode='22023';
   end if;
   select * into v_observation from clued_private.mps_provider_observations
-   where observation_id=p_observation_id for update;
+   where observation_id=p_observation_id and object_id=p_object_id for update;
   if not found then raise exception 'MPS04_OBSERVATION_NOT_FOUND' using errcode='P0002'; end if;
   if v_observation.adoption_intent_id is null then
     return jsonb_build_object('ok',false,'status','conflict','error','MPS04_OBSERVATION_NOT_ADOPTABLE',
@@ -337,7 +343,7 @@ begin
     update clued_private.mps_provider_observations set status='ADOPTED',
       decided_by_principal=p_native_principal_id,decision_request_id=p_request_id,
       adoption_receipt_id=v_outcome->>'receipt_id',decided_at=now()
-     where observation_id=p_observation_id;
+     where observation_id=p_observation_id and object_id=p_object_id;
     return jsonb_build_object('ok',true,'object_id',v_observation.object_id,
       'observation_id',p_observation_id) || v_outcome;
   end if;
@@ -347,5 +353,5 @@ end;
 $mps04$;
 
 revoke all on function clued_private.mps_register_provider_observation(text,text,text,text,jsonb) from public, anon, authenticated;
-revoke all on function clued_private.mps_ignore_provider_observation(text,text,text,text) from public, anon, authenticated;
-revoke all on function clued_private.mps_adopt_provider_observation(text,text,text,text,jsonb) from public, anon, authenticated;
+revoke all on function clued_private.mps_ignore_provider_observation(text,text,text,text,text) from public, anon, authenticated;
+revoke all on function clued_private.mps_adopt_provider_observation(text,text,text,text,text,jsonb) from public, anon, authenticated;

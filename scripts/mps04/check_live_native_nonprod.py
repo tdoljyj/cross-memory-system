@@ -49,6 +49,16 @@ def _http(url: str, *, body: dict | None = None, token: str = "") -> dict:
         raise RuntimeError(f"NONPROD_GATEWAY_HTTP_{error.code}") from None
 
 
+def _expect_http_error(url: str, *, body: dict, token: str, status: int) -> None:
+    try:
+        _http(url, body=body, token=token)
+    except RuntimeError as error:
+        if str(error) == f"NONPROD_GATEWAY_HTTP_{status}":
+            return
+        raise
+    raise RuntimeError("NONPROD_GATEWAY_EXPECTED_REJECTION_MISSING")
+
+
 def _query(password: str, sql: str) -> list[str]:
     env = os.environ.copy()
     env["PGPASSWORD"] = password
@@ -195,6 +205,45 @@ def main() -> None:
         ignored_observation = _http(
             base + f"/v1/objects/{ignored_id}/provider-observation", token=token)
         _assert_open_observation(ignored_observation, ignored_id, expected_b, ref)
+
+        adopted_object = _create_provider_object(base, token, "adopt_" + run_key)
+        adopted_id = adopted_object["object_id"]
+        adopted_observation = _http(
+            base + f"/v1/objects/{adopted_id}/provider-observation", token=token)
+        _assert_open_observation(adopted_observation, adopted_id, expected_b, ref)
+
+        mismatch_ignore_request = "req_mps04_g6_mismatch_ignore_" + run_key
+        _expect_http_error(
+            base + f"/v1/objects/{adopted_id}/provider-observations/"
+                   f"{ignored_observation['observation_id']}/ignore",
+            token=token, body={"request_id": mismatch_ignore_request}, status=404)
+        mismatch_adopt_request = "req_mps04_g6_mismatch_adopt_" + run_key
+        _expect_http_error(
+            base + f"/v1/objects/{ignored_id}/provider-observations/"
+                   f"{adopted_observation['observation_id']}/adopt",
+            token=token, body={
+                "request_id": mismatch_adopt_request,
+                "state_stamp": adopted_observation["confirmation_state_stamp"],
+            }, status=404)
+        mismatch_currents = (
+            _http(base + f"/v1/objects/{ignored_id}", token=token),
+            _http(base + f"/v1/objects/{adopted_id}", token=token),
+        )
+        mismatch_rows = _query(password,
+            "select observation_id,status from clued_private.mps_provider_observations "
+            "where observation_id in ("
+            f"'{ignored_observation['observation_id']}',"
+            f"'{adopted_observation['observation_id']}') order by observation_id;")
+        if (any(current.get("body", {}).get("adopted_exact_commit") != A
+                for current in mismatch_currents)
+                or any(current.get("revision_id") != created.get("revision_id")
+                       or current.get("adoption_id") != created.get("adoption_id")
+                       for current, created in zip(
+                           mismatch_currents, (ignored_object, adopted_object)))
+                or len(mismatch_rows) != 2
+                or any(not row.endswith("|OPEN") for row in mismatch_rows)):
+            raise RuntimeError("LIVE_G6_OBJECT_OBSERVATION_MISMATCH_CHANGED_STATE")
+
         ignore_request = "req_mps04_g6_ignore_" + run_key
         ignored = _http(
             base + f"/v1/objects/{ignored_id}/provider-observations/"
@@ -214,11 +263,6 @@ def main() -> None:
                 or ignored_current.get("adoption_id") != ignored_object.get("adoption_id")):
             raise RuntimeError("LIVE_G6_IGNORE_OR_RETRY_FAILED")
 
-        adopted_object = _create_provider_object(base, token, "adopt_" + run_key)
-        adopted_id = adopted_object["object_id"]
-        adopted_observation = _http(
-            base + f"/v1/objects/{adopted_id}/provider-observation", token=token)
-        _assert_open_observation(adopted_observation, adopted_id, expected_b, ref)
         adopt_request = "req_mps04_g6_adopt_" + run_key
         adopt_body = {
             "request_id": adopt_request,
@@ -258,6 +302,7 @@ def main() -> None:
               "revision=" + before[1], "adoption=" + before[2],
               "observation_digest=" + observation["observation_digest"],
               "source_Current_unchanged=true",
+              "object_observation_mismatch_rejected=true",
               "ignore_observation=" + ignored_observation["observation_id"],
               "ignore_Current_unchanged=true",
               "adopt_observation=" + adopted_observation["observation_id"],
