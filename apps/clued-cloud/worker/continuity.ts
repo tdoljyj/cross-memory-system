@@ -947,16 +947,16 @@ function validateRecordMutationInput(args: unknown) {
   const fields = typeFields && !Array.isArray(typeFields) && typeof typeFields === "object"
     ? typeFields as Record<string, unknown>
     : null;
-  const requiredTypeField: Record<string, string> = {
-    decision: "rationale",
-    state: "state_kind",
-    task: "execution_bucket",
-    profile_fact: "fact_kind",
-    note: "note_kind",
+  const requiredTypeField: Record<string, { field: string; error: string }> = {
+    decision: { field: "rationale", error: "decision_rationale_required" },
+    state: { field: "state_kind", error: "state_state_kind_required" },
+    task: { field: "execution_bucket", error: "task_execution_bucket_required" },
+    profile_fact: { field: "fact_kind", error: "profile_fact_fact_kind_required" },
+    note: { field: "note_kind", error: "note_note_kind_required" },
   };
   const required = requiredTypeField[typeof input.record_type === "string" ? input.record_type : ""];
-  if (required && fields && !(required in fields)) {
-    invalid.push({ field: `mutation.type_fields.${required}`, error: `${input.record_type}_${required}_required` });
+  if (required && fields && !(required.field in fields)) {
+    invalid.push({ field: `mutation.type_fields.${required.field}`, error: required.error });
   }
   if (input.authority === "user_explicit" && input.user_confirmed !== true) {
     invalid.push({ field: "user_confirmed", error: "authority_escalation_forbidden" });
