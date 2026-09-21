@@ -5,10 +5,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 try:
     from .client import GatewayClient
-    from .common import strict_json_loads, strict_utf8_decode, ProtocolError, bounded_request_body, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
+    from .common import strict_json_loads, strict_utf8_decode, ProtocolError, bounded_request_body, request_content_length, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
 except ImportError:
     from client import GatewayClient
-    from common import strict_json_loads, strict_utf8_decode, ProtocolError, bounded_request_body, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
+    from common import strict_json_loads, strict_utf8_decode, ProtocolError, bounded_request_body, request_content_length, new_id, require_entry_access, require_secret_namespace, NATIVE_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX
 
 class NativeHandler(BaseHTTPRequestHandler):
     client: GatewayClient = None  # type: ignore
@@ -24,9 +24,11 @@ class NativeHandler(BaseHTTPRequestHandler):
         value=strict_json_loads(strict_utf8_decode(self._raw() or b"{}"))
         if not isinstance(value,dict): raise ProtocolError("JSON_OBJECT_REQUIRED","request body must be a JSON object",400)
         return value
-    def _form(self):
-        try: return {k:v[-1] for k,v in parse_qs(strict_utf8_decode(self._raw(262144)),keep_blank_values=True,errors="strict").items()}
+    def _parse_form(self,raw):
+        try: return {k:v[-1] for k,v in parse_qs(strict_utf8_decode(raw),keep_blank_values=True,errors="strict").items()}
         except UnicodeDecodeError: raise ProtocolError("INVALID_UTF8","request body must be UTF-8",400) from None
+    def _form(self):
+        return self._parse_form(self._raw(262144))
     def _send_json(self,status,obj):
         b=(json.dumps(obj,ensure_ascii=False,separators=(",",":"))+"\n").encode(); self.send_response(status); self.send_header("Content-Type","application/json; charset=utf-8"); self.send_header("Cache-Control","no-store"); self.send_header("Content-Length",str(len(b)));
         if status==401: self.send_header("WWW-Authenticate",'Basic realm="Clued Native"')
@@ -220,8 +222,17 @@ class NativeHandler(BaseHTTPRequestHandler):
             create_form=p=="/create" and form_content
             confirm_form=len(parts)==3 and parts[0]=="object" and parts[2]=="confirm" and form_content
             f=None
+            raw_form=None
+            if create_form or confirm_form:
+                # On Windows, closing after a 401/403 with an unread normal-sized POST body
+                # can reset the connection before the client receives the recovery page.
+                # Consume only a strictly framed, bounded form before access checks; oversized
+                # forms still authenticate first and retain the existing 401/403/413 order.
+                if request_content_length(self.headers) <= 262144:
+                    raw_form=self._raw(262144)
             self._authenticate(); self._check_origin()
-            f=self._form() if create_form or confirm_form else None
+            if create_form or confirm_form:
+                f=self._parse_form(raw_form) if raw_form is not None else self._form()
             if create_form:
                 try:
                     body=strict_json_loads(f["body_json"]) if "body_json" in f else {"details":f.get("details","")}
