@@ -41,7 +41,7 @@ const SUPPORTED_MCP_VERSIONS = [
   "2025-03-26",
 ] as const;
 const MAX_JSON_BYTES = 1024 * 1024;
-const KERNEL_VERSION = "0.3.1";
+const KERNEL_VERSION = "0.4.0";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
@@ -163,6 +163,18 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
       read_log: "clued_read_log",
       search_mode: "deterministic-lexical",
       semantic_recall: false,
+      continuity_hardening: {
+        version: "k-cont-v1",
+        checkpoint_coverage: "explicit_context_track_and_event_ids",
+        unabsorbed_events: "remain_pending",
+        constraints: "active_decision_type_fields_constraint_true",
+        conflict_signal: "newer_active_decisions_require_reconciliation",
+        resume_response_views: ["structured", "work_log"],
+        resume_event_budget_bytes: { default: 65536, maximum: 262144 },
+        search_budget_bytes: { default: 65536, maximum: 262144 },
+        checkpoint_thresholds: { pending_events: 20, pending_bytes: 32768 },
+        session_compliance: "audit_receipts_projection",
+      },
       project_lifecycle: {
         certainty: ["unconfirmed", "confirmed"],
         progress: ["not_started", "active", "paused", "completed", "archived"],
@@ -202,7 +214,7 @@ Canonical store: clued-cloud/supabase
 1. Use a dedicated Clued Binding for this vendor/client; never share another vendor's token.
 2. At the start of every authorized session call \`clued_session_resume\`.
 3. Record authoritative decisions, corrections, failures and blockers with \`clued_append_event\`.
-4. Before ending or handing off, call \`clued_session_checkpoint\` with the current base version.
+4. Before ending or handing off, call \`clued_session_checkpoint\` with the current base version and explicit coverage (contexts, tracks and event IDs). Uncovered events remain pending. Respect returned checkpoint thresholds.
 5. Use \`clued_read_log\` for the canonical human-readable 日志.md. Import an authorized baseline only with \`clued_import_log\`.
 6. Treat version conflicts and revoked/expired credentials as hard stops; resume again instead of overwriting.
 7. Use \`clued_project_mutate\` for explicit Project create/update/complete/archive/restore. Project merge writes are disabled.
@@ -633,6 +645,15 @@ const tools = [
           type: "string",
           description: "Optional vendor session id for audit correlation; never a user message.",
         },
+        response_view: {
+          type: "string",
+          enum: ["structured", "work_log"],
+          default: "structured",
+          description: "Choose structured pending events or the rendered work log; the response never duplicates both.",
+        },
+        event_cursor: { type: "integer", minimum: 0, default: 0 },
+        event_limit: { type: "integer", minimum: 1, maximum: 100, default: 25 },
+        event_budget_bytes: { type: "integer", minimum: 4096, maximum: 262144, default: 65536 },
       },
       additionalProperties: false,
     },
@@ -667,7 +688,7 @@ const tools = [
       "Call before ending or handing off an authorized session. Atomically commits a canonical checkpoint using optimistic concurrency and returns an audit receipt or explicit conflict.",
     inputSchema: {
       type: "object",
-      required: ["session_token", "base_version", "snapshot", "summary", "next_action"],
+      required: ["session_token", "base_version", "snapshot", "summary", "next_action", "coverage"],
       properties: {
         context_key: { type: "string" },
         session_token: {
@@ -678,6 +699,17 @@ const tools = [
         snapshot: { type: "object" },
         summary: { type: "string", minLength: 1, maxLength: 4000 },
         next_action: { type: "string", minLength: 1, maxLength: 1000 },
+        coverage: {
+          type: "object",
+          required: ["mode", "contexts", "tracks", "event_ids"],
+          properties: {
+            mode: { type: "string", const: "explicit" },
+            contexts: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 160 } },
+            tracks: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 80 } },
+            event_ids: { type: "array", uniqueItems: true, items: { type: "integer", minimum: 1 } },
+          },
+          additionalProperties: false,
+        },
         idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
       },
       additionalProperties: false,
@@ -696,6 +728,8 @@ const tools = [
         context_key: { type: "string" },
         include_history: { type: "boolean", default: false },
         limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
+        cursor: { type: "integer", minimum: 0, default: 0 },
+        max_bytes: { type: "integer", minimum: 4096, maximum: 262144, default: 65536 },
       },
       additionalProperties: false,
     },
@@ -735,7 +769,7 @@ const tools = [
   {
     name: "clued_audit_receipts",
     description:
-      "Read recent immutable receipts showing which authorized binding restored, changed or checkpointed context and when.",
+      "Read recent immutable receipts plus a server-derived restore → append → checkpoint compliance view and checkpoint reminders.",
     inputSchema: {
       type: "object",
       properties: {
@@ -880,6 +914,66 @@ const rpcByTool = {
   ...p5RpcByTool,
 } as const;
 
+
+function validateRecordMutationInput(args: unknown) {
+  if (!args || Array.isArray(args) || typeof args !== "object") {
+    throw new HttpError(422, "Record mutation must be a JSON object.", {
+      error_code: "INVALID_RECORD_FIELDS",
+      missing_fields: ["operation", "record_type", "mutation", "source_refs", "source_unavailable_reason"],
+      invalid_fields: [],
+    });
+  }
+  const input = args as Record<string, unknown>;
+  if (input.operation !== "create") return;
+  const missing: string[] = [];
+  const invalid: Array<{ field: string; error: string }> = [];
+  for (const field of ["mutation", "source_refs", "source_unavailable_reason"] as const) {
+    if (!(field in input)) missing.push(field);
+  }
+  if ("source_refs" in input && !Array.isArray(input.source_refs)) {
+    invalid.push({ field: "source_refs", error: "must_be_array" });
+  }
+  const mutation = input.mutation;
+  if (mutation !== undefined && (!mutation || Array.isArray(mutation) || typeof mutation !== "object")) {
+    invalid.push({ field: "mutation", error: "must_be_object" });
+  }
+  const mutationObject = mutation && !Array.isArray(mutation) && typeof mutation === "object"
+    ? mutation as Record<string, unknown>
+    : null;
+  const typeFields = mutationObject?.type_fields;
+  if (mutationObject && (!typeFields || Array.isArray(typeFields) || typeof typeFields !== "object")) {
+    invalid.push({ field: "mutation.type_fields", error: "must_be_object" });
+  }
+  const fields = typeFields && !Array.isArray(typeFields) && typeof typeFields === "object"
+    ? typeFields as Record<string, unknown>
+    : null;
+  const requiredTypeField: Record<string, { field: string; error: string }> = {
+    decision: { field: "rationale", error: "decision_rationale_required" },
+    state: { field: "state_kind", error: "state_state_kind_required" },
+    task: { field: "execution_bucket", error: "task_execution_bucket_required" },
+    profile_fact: { field: "fact_kind", error: "profile_fact_fact_kind_required" },
+    note: { field: "note_kind", error: "note_note_kind_required" },
+  };
+  const required = requiredTypeField[typeof input.record_type === "string" ? input.record_type : ""];
+  if (required && fields && !(required.field in fields)) {
+    invalid.push({ field: `mutation.type_fields.${required.field}`, error: required.error });
+  }
+  if (input.authority === "user_explicit" && input.user_confirmed !== true) {
+    invalid.push({ field: "user_confirmed", error: "authority_escalation_forbidden" });
+  }
+  if (missing.length || invalid.length) {
+    throw new HttpError(422, "Record mutation has invalid fields.", {
+      error_code: "INVALID_RECORD_FIELDS",
+      missing_fields: missing,
+      invalid_fields: invalid,
+      create_contract: {
+        required_envelope_fields: ["mutation", "source_refs", "source_unavailable_reason"],
+        type_specific_fields: requiredTypeField,
+      },
+    });
+  }
+}
+
 async function callRpc(
   request: Request,
   env: ContinuityEnv,
@@ -891,6 +985,7 @@ async function callRpc(
     throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
   }
   const payload = typeof args === "object" && args ? args : {};
+  if (name === "clued_record_mutate") validateRecordMutationInput(payload);
 
   if (name in contextRpcByTool) {
     if (!contextsEnabled(env)) throw new HttpError(404, "Development context is disabled.");

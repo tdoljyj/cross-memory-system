@@ -1,10 +1,4 @@
 {
-  "baseline_commit": "81dbef700a95232721261c715a18812e44601ff4",
-  "feature_flags": {
-    "PROJECT_VIEWS_V2": true,
-    "P5_TENANT_WRITES": false
-  },
-  "tool_count": 16,
   "tools": [
     {
       "name": "clued_agent_bootstrap",
@@ -43,6 +37,32 @@
           "client_session_id": {
             "type": "string",
             "description": "Optional vendor session id for audit correlation; never a user message."
+          },
+          "response_view": {
+            "type": "string",
+            "enum": [
+              "structured",
+              "work_log"
+            ],
+            "default": "structured",
+            "description": "Choose structured pending events or the rendered work log; the response never duplicates both."
+          },
+          "event_cursor": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          },
+          "event_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 25
+          },
+          "event_budget_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 262144,
+            "default": 65536
           }
         },
         "additionalProperties": false
@@ -70,12 +90,6 @@
       "description": "Append a durable continuity event for a decision, correction, action, failure, blocker or retracted conclusion. Use during work whenever authoritative context changes. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
-        "required": [
-          "session_token",
-          "base_version",
-          "event_type",
-          "payload"
-        ],
         "properties": {
           "context_key": {
             "type": "string"
@@ -109,6 +123,12 @@
             "maxLength": 160
           }
         },
+        "required": [
+          "session_token",
+          "base_version",
+          "event_type",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {
@@ -134,13 +154,6 @@
       "description": "Call before ending or handing off an authorized session. Atomically commits a canonical checkpoint using optimistic concurrency and returns an audit receipt or explicit conflict. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
-        "required": [
-          "session_token",
-          "base_version",
-          "snapshot",
-          "summary",
-          "next_action"
-        ],
         "properties": {
           "context_key": {
             "type": "string"
@@ -166,12 +179,64 @@
             "minLength": 1,
             "maxLength": 1000
           },
+          "coverage": {
+            "type": "object",
+            "required": [
+              "mode",
+              "contexts",
+              "tracks",
+              "event_ids"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "const": "explicit"
+              },
+              "contexts": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                }
+              },
+              "tracks": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                }
+              },
+              "event_ids": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "additionalProperties": false
+          },
           "idempotency_key": {
             "type": "string",
             "minLength": 8,
             "maxLength": 160
           }
         },
+        "required": [
+          "session_token",
+          "base_version",
+          "snapshot",
+          "summary",
+          "next_action",
+          "coverage"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {
@@ -197,10 +262,6 @@
       "description": "Search authorized current context and events with deterministic lexical matching. Superseded history is excluded unless explicitly requested. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
-        "required": [
-          "session_token",
-          "query"
-        ],
         "properties": {
           "session_token": {
             "type": "string"
@@ -222,8 +283,23 @@
             "minimum": 1,
             "maximum": 50,
             "default": 10
+          },
+          "cursor": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          },
+          "max_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 262144,
+            "default": 65536
           }
         },
+        "required": [
+          "session_token",
+          "query"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {
@@ -249,9 +325,6 @@
       "description": "Read the canonical human-readable 日志.md projection for this authorized context. The projection is generated from the same checkpoints and events used by every vendor. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
-        "required": [
-          "session_token"
-        ],
         "properties": {
           "session_token": {
             "type": "string"
@@ -260,6 +333,9 @@
             "type": "string"
           }
         },
+        "required": [
+          "session_token"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {
@@ -285,12 +361,6 @@
       "description": "Import an authorized # 日志 Markdown baseline into the canonical context. Resume first and supply the exact current base version plus an idempotency key. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
-        "required": [
-          "session_token",
-          "base_version",
-          "markdown",
-          "idempotency_key"
-        ],
         "properties": {
           "session_token": {
             "type": "string"
@@ -318,6 +388,12 @@
             "maxLength": 80
           }
         },
+        "required": [
+          "session_token",
+          "base_version",
+          "markdown",
+          "idempotency_key"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {
@@ -340,7 +416,7 @@
     },
     {
       "name": "clued_audit_receipts",
-      "description": "Read recent immutable receipts showing which authorized binding restored, changed or checkpointed context and when. Required Clued scope: audit:read.",
+      "description": "Read recent immutable receipts plus a server-derived restore → append → checkpoint compliance view and checkpoint reminders. Required Clued scope: audit:read.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -379,11 +455,6 @@
       "description": "Create, update, complete, archive, or restore one v1.6 Canonical Project with CAS, Event, and immutable Receipt. Project merge writes are not enabled. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
-        "required": [
-          "operation",
-          "project_schema_version",
-          "idempotency_key"
-        ],
         "properties": {
           "operation": {
             "type": "string",
@@ -427,6 +498,11 @@
             "type": "object"
           }
         },
+        "required": [
+          "operation",
+          "project_schema_version",
+          "idempotency_key"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {
@@ -510,9 +586,6 @@
       "description": "Read canonical records at the Global level or for one effective project. Read global priority first, then project State, Task and Decision; use Log or Archive only for history. Every view returns the same canonical id. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
-        "required": [
-          "record_type"
-        ],
         "properties": {
           "level": {
             "type": "string",
@@ -547,6 +620,9 @@
             "type": "string"
           }
         },
+        "required": [
+          "record_type"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {
@@ -569,19 +645,9 @@
     },
     {
       "name": "clued_record_mutate",
-      "description": "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Required Clued scope: context:write.",
+      "description": "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). Use decision.type_fields.constraint=true for a resident constraint. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
-        "required": [
-          "operation",
-          "record_type",
-          "record_schema_version",
-          "lifecycle_status",
-          "scope",
-          "idempotency_key",
-          "authority",
-          "confidence_reason"
-        ],
         "properties": {
           "operation": {
             "type": "string",
@@ -665,7 +731,28 @@
             ]
           },
           "mutation": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              },
+              "type_fields": {
+                "type": "object"
+              },
+              "relations": {
+                "type": "object"
+              },
+              "closure_summary": {
+                "type": "string"
+              },
+              "closed_reason": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
           },
           "reclassification_reason": {
             "anyOf": [
@@ -717,6 +804,16 @@
             "minLength": 1
           }
         },
+        "required": [
+          "operation",
+          "record_type",
+          "record_schema_version",
+          "lifecycle_status",
+          "scope",
+          "idempotency_key",
+          "authority",
+          "confidence_reason"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {
@@ -742,12 +839,6 @@
       "description": "Atomically replace one or more active Decisions using multi-target CAS. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
-        "required": [
-          "source_decisions",
-          "replacement",
-          "supersede_reason",
-          "idempotency_key"
-        ],
         "properties": {
           "source_decisions": {
             "type": "array",
@@ -776,6 +867,12 @@
             "type": "boolean"
           }
         },
+        "required": [
+          "source_decisions",
+          "replacement",
+          "supersede_reason",
+          "idempotency_key"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {
@@ -801,13 +898,6 @@
       "description": "Ingest private Evidence and its committed Receipt atomically; standalone ingest emits no work Event. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
-        "required": [
-          "evidence_schema_version",
-          "evidence_type",
-          "storage_ref",
-          "content_hash",
-          "idempotency_key"
-        ],
         "properties": {
           "evidence_id": {
             "type": "string",
@@ -879,6 +969,13 @@
             "pattern": "^[0-9a-f]{64}$"
           }
         },
+        "required": [
+          "evidence_schema_version",
+          "evidence_type",
+          "storage_ref",
+          "content_hash",
+          "idempotency_key"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {
@@ -904,12 +1001,6 @@
       "description": "Append an authorized extension Event without mutating a business entity; built-in business Event types are server-only. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
-        "required": [
-          "event_schema_version",
-          "event_type",
-          "event_scope",
-          "idempotency_key"
-        ],
         "properties": {
           "event_schema_version": {
             "type": "integer",
@@ -963,6 +1054,12 @@
             "pattern": "^[0-9a-f]{64}$"
           }
         },
+        "required": [
+          "event_schema_version",
+          "event_type",
+          "event_scope",
+          "idempotency_key"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {
@@ -988,9 +1085,6 @@
       "description": "Create a Receipt-backed Canonical Export for live recheck; legacy rows remain explicit compatibility envelopes. Required Clued scopes: context:read, audit:read.",
       "inputSchema": {
         "type": "object",
-        "required": [
-          "idempotency_key"
-        ],
         "properties": {
           "idempotency_key": {
             "type": "string",
@@ -1002,6 +1096,9 @@
             "pattern": "^[0-9a-f]{64}$"
           }
         },
+        "required": [
+          "idempotency_key"
+        ],
         "additionalProperties": false
       },
       "outputSchema": {

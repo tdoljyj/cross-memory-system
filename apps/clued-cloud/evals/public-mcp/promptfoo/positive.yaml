@@ -60,7 +60,7 @@ tests:
   - description: Checkpoint atomically closes the isolated session
     options: { runSerially: true }
     vars:
-      prompt: '{"tool":"clued_session_checkpoint","args":{"context_key":"accept-pos-project","session_token":"{{env.MCP_SESSION_TOKEN}}","base_version":1,"snapshot":{"state":"accepted"},"summary":"Positive acceptance checkpoint","next_action":"Verify evidence","idempotency_key":"APOS-checkpoint-0001"}}'
+      prompt: '{"tool":"clued_session_checkpoint","args":{"context_key":"accept-pos-project","session_token":"{{env.MCP_SESSION_TOKEN}}","base_version":1,"snapshot":{"state":"accepted"},"summary":"Positive acceptance checkpoint","next_action":"Verify evidence","idempotency_key":"APOS-checkpoint-0001","coverage":{"mode":"explicit","contexts":["accept-pos-project"],"tracks":["public-mcp-positive"],"event_ids":[]}}}'
     assert:
       - type: is-json
       - type: contains
