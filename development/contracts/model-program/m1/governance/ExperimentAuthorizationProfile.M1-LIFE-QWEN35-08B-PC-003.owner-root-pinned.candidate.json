@@ -125,7 +125,7 @@
                                        "guard_parent_provisioning_rule":  "SEPARATELY REVIEWED OWNER-AUTHORIZED PREPARATION STEP ONLY / NOT AUTHORIZED BY ISSUED PROFILE / CANONICAL PATH + FILESYSTEM TYPE + ACL_OWNER + NON-REPARSE IDENTITY + EMPTY-PARENT EVIDENCE MUST BE BOUND BEFORE FINAL ISSUANCE"
                                    },
     "code_revision":  {
-                          "status":  "EXACT_EFFECTFUL_OWNER_SOURCE_BOUND / OWNER_ROOT_PINNED / PC003_EXECUTION_PARENT_GATE_PENDING / BINARY_PENDING_FINAL_ISSUANCE",
+                          "status":  "EXACT_EFFECTFUL_OWNER_SOURCE_BOUND / OWNER_ROOT_PINNED / PC003_EXECUTION_PARENT_GATE_BOUND / BINARY_PENDING_FINAL_ISSUANCE",
                           "repository":  "tdoljyj/cross-memory-system",
                           "preparation_base_commit":  "22a5ec5f96b972cffd7b9805c952c8308da3fab6",
                           "lifecycle_contract_path":  "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.2.json",
