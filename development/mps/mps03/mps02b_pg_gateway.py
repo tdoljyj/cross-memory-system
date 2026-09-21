@@ -478,6 +478,10 @@ commit;
             observed = self.github_provider.observe(adopted)
         except ProviderUnavailable:
             raise ProtocolError("MPS04_PROVIDER_UNAVAILABLE", "provider observation is unavailable", 503) from None
+        latest = self.read_object(token, object_id)
+        if (latest.get("revision_id") != current.get("revision_id")
+                or latest.get("adoption_id") != current.get("adoption_id")):
+            raise ProtocolError("STALE_CONTEXT_REQUIRES_REFRESH", "Clued Current changed during provider observation", 409)
         observed["object_id"] = object_id
         observed["clued_revision_id"] = current.get("revision_id")
         observed["clued_adoption_id"] = current.get("adoption_id")

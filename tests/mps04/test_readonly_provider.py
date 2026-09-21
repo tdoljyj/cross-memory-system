@@ -148,7 +148,22 @@ class ProviderCandidate(unittest.TestCase):
         observed = store.provider_observation("native-allowed", OID)
         self.assertEqual(observed["clued_revision_id"], "rev_a")
         self.assertEqual(observed["clued_adoption_id"], "adopt_a")
-        self.assertEqual(read_calls, [("other-user", OID), ("native-allowed", OID)])
+        self.assertEqual(read_calls, [("other-user", OID), ("native-allowed", OID),
+                                      ("native-allowed", OID)])
+
+    def test_current_change_during_provider_read_rejects_stale_result(self):
+        store = PgMPS02BStore.__new__(PgMPS02BStore)
+        store.github_provider, _ = self.provider()
+        reads = iter((
+            {"body": {"repository": EXPECTED_PROVIDER_REPOSITORY,
+                      "adopted_exact_commit": A}, "revision_id": "rev_a", "adoption_id": "adopt_a"},
+            {"body": {"repository": EXPECTED_PROVIDER_REPOSITORY,
+                      "adopted_exact_commit": B}, "revision_id": "rev_b", "adoption_id": "adopt_b"},
+        ))
+        store.read_object = lambda token, oid: next(reads)
+        with self.assertRaises(ProtocolError) as stale:
+            store.provider_observation("native-allowed", OID)
+        self.assertEqual(stale.exception.code, "STALE_CONTEXT_REQUIRES_REFRESH")
 
     def test_gateway_route_is_get_only_and_uses_bearer_session(self):
         handler = Handler.__new__(Handler)

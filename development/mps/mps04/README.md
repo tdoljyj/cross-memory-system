@@ -21,7 +21,8 @@ all fail closed.
 For this candidate, the immutable adopted Revision content must include
 `repository` and `adopted_exact_commit`. A read of that Current first passes the
 existing Resource × Action and object-ownership checks. The server then reads
-the bound ref and compares it against that exact adopted commit. The observation
+the bound ref, compares it against that exact adopted commit, and re-reads
+Current before returning so a concurrent adoption is reported as stale. The observation
 includes the exact A/B identities, ancestry, source URL, and a file-name sample;
 it is not persisted. No write route exists in this module.
 
