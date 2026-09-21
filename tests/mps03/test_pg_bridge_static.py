@@ -35,6 +35,8 @@ class PgBridgeStaticBinding(unittest.TestCase):
         self.assertIn("mps03_create_bootstrap",src)
         self.assertIn("v_existing_content is distinct from v_in.content",src)
         self.assertIn("IDEMPOTENCY_CONFLICT",src)
+        self.assertIn("evidence_refs jsonb, provider_commit text",src)
+        self.assertIn("v_in.evidence_refs,v_in.provider_commit",src)
         self.assertNotIn("creation_request_id",src)
 
     def test_provider_context_is_server_bound_for_every_pack_issue(self):

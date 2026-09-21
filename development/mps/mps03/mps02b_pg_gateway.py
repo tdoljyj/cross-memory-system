@@ -302,11 +302,13 @@ select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
   'clued-mps-request:'||{_t('domain')}||':'||{_t('principal')}||':'||{_t('request_id')},0));
 create temp table _mps03_create_input(
   authority_domain_id text, principal text, request_id text, user_id uuid,
-  native_principal text, agent_principal text, content jsonb
+  native_principal text, agent_principal text, content jsonb,
+  evidence_refs jsonb, provider_commit text
 ) on commit drop;
 insert into _mps03_create_input values(
   {_t('domain')},{_t('principal')},{_t('request_id')},({_t('uid')})::uuid,
-  {_t('native')},{_t('agent')},{_j('content')}
+  {_t('native')},{_t('agent')},{_j('content')},
+  {_j('evidence_refs')},nullif({_t('provider_commit')},'')
 );
 create temp table _mps03_create_result(payload jsonb) on commit drop;
 do $mps03$
@@ -398,7 +400,7 @@ begin
 
   v_pack:=clued_private.mps_issue_context_pack(
     v_oid,v_in.authority_domain_id,v_in.principal,'create',
-    {_j('evidence_refs')},nullif({_t('provider_commit')},''));
+    v_in.evidence_refs,v_in.provider_commit);
   v_change_id:=clued_private.mps_new_id('chg');
   v_change:=clued_private.mps_register_change_set(
     v_oid,v_change_id,pg_catalog.jsonb_build_object('mode','REPLACE_JSON_V1','content',v_in.content));
