@@ -11,13 +11,18 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 MATRIX_REL = Path(
     "development/contracts/model-program/m1/registries/"
-    "TeacherComparisonSelectionMatrix.v1.0.1.json"
+    "TeacherComparisonSelectionMatrix.v1.0.2.json"
 )
 
 EXPECTED_BINDINGS = {
+    "device_matrix",
     "stage_entry",
     "shortlist",
     "license_review",
+    "download_closeout",
+    "invocation_harness",
+    "provider_registry",
+    "invocation_closeout",
     "package_matrix",
     "runtime_selection",
     "pc_benchmark",
@@ -25,6 +30,15 @@ EXPECTED_BINDINGS = {
     "runtime_stability",
     "runtime_lifecycle",
 }
+
+MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
+SOURCE_WEIGHT_SHA256 = "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696"
+LLAMA_RELEASE_TAG = "b11033"
+LLAMA_COMMIT = "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
+LLAMA_ASSET_SHA256 = "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2"
+M1_04_PROFILE_ID = "M1-INF-QWEN35-08B-Q8_0-001"
+M1_04_PROFILE_SHA256 = "45211288a98e860f83cf96d3d1684884d96348dda9bc23d3b11061a97c77e6cc"
+M1_04_LIBRARY_RECORD_SHA256 = "6f085b3826fd86dc2e8352828a701bd68a6e6d4fa5286f2989535c210282fcda"
 
 EXPECTED_ROLES = [
     "Mobile-class Local Reference",
@@ -106,11 +120,13 @@ def bound_sources(matrix: dict[str, Any], root: Path) -> dict[str, dict[str, Any
         target = (root / rel).resolve()
         require(target.is_relative_to(root_resolved), f"path escapes root: {name}")
         require(target.is_file(), f"bound source missing: {name}")
+        actual_blob = git_blob_sha1(target)
         require(
-            git_blob_sha1(target) == binding.get("git_blob_sha1"),
+            actual_blob == binding.get("git_blob_sha1"),
             f"bound source blob drift: {name}",
         )
         resolved[name] = load(target)
+        resolved[name]["__bound_git_blob_sha1"] = actual_blob
     return resolved
 
 
@@ -140,10 +156,17 @@ def validate_sources(sources: dict[str, dict[str, Any]]) -> None:
     stage = sources["stage_entry"]
     validate_stage(stage)
 
+    devices = sources["device_matrix"]
+    require(devices.get("schema_version") == "clued.model-m1-device-runtime-matrix/2", "M1-00 device matrix schema drift")
+    require(devices.get("task_id") == "M1-00", "M1-00 task binding drift")
+    require(devices.get("first_tranche_runtime") == "llama.cpp", "M1-00 first-tranche runtime drift")
+    bound_devices = [row for row in devices.get("physical_device_profiles", []) if row.get("binding_state") == "EXACT_BOUND"]
+    require(len(bound_devices) == 1 and bound_devices[0].get("device_name") == "DESK-W-591", "M1-00 exact device binding drift")
+
     shortlist = sources["shortlist"]
     first = shortlist.get("first_tranche", {})
     require(first.get("model_id") == "Qwen/Qwen3.5-0.8B", "first-tranche model drift")
-    require(first.get("revision") == "2fc06364715b967f1860aea9cf38778875588b17", "first-tranche revision drift")
+    require(first.get("revision") == MODEL_REVISION, "first-tranche revision drift")
     require([row.get("role") for row in shortlist.get("roles", [])] == EXPECTED_ROLES, "shortlist role set/order drift")
 
     licenses = {row.get("id"): row for row in sources["license_review"].get("model_reviews", [])}
@@ -152,19 +175,76 @@ def validate_sources(sources: dict[str, dict[str, Any]]) -> None:
     require(qwen.get("training_or_distillation_authority") == "NOT_ISSUED", "training authority unexpectedly issued")
     hosted = licenses.get("Strong Hosted / Enterprise Reference", {})
     require(str(hosted.get("internal_m1_reference", "")).startswith("BLOCKED_PENDING_PROVIDER_TERMS"), "hosted provider terms no longer blocked")
+    runtime_licenses = {row.get("id"): row for row in sources["license_review"].get("runtime_reviews", [])}
+    llama_license = runtime_licenses.get("llama.cpp", {})
+    require(llama_license.get("release_tag") == LLAMA_RELEASE_TAG, "selected llama.cpp license tag drift")
+    require(llama_license.get("revision") == LLAMA_COMMIT, "selected llama.cpp license revision drift")
+    require(llama_license.get("license") == "MIT", "selected llama.cpp license drift")
+    license_runtime_binding = llama_license.get("selected_runtime_binding", {})
+    require(license_runtime_binding.get("path") == "../package/RuntimePackageSelection.v1.0.1.json", "selected runtime license path drift")
+    require(license_runtime_binding.get("git_blob_sha1") == "4aa482c5a6b8dbe50441efa496d8f19f3cd5405b", "selected runtime license selection binding drift")
+    require(license_runtime_binding.get("asset_sha256") == LLAMA_ASSET_SHA256, "selected runtime license asset drift")
+
+    download = sources["download_closeout"]
+    require(download.get("task_id") == "M1-03", "M1-03 task binding drift")
+    require(download.get("result") == "PASS / CLUED_MODEL_M1_PROFILE_003_DOWNLOAD_AND_INTEGRITY_ACCEPTED", "M1-03 closeout not accepted")
+    require(download.get("snapshot", {}).get("revision") == MODEL_REVISION, "M1-03 model revision drift")
+    require(download.get("snapshot", {}).get("weight", {}).get("sha256") == SOURCE_WEIGHT_SHA256, "M1-03 source weight drift")
+    d_attempt = download.get("attempt_accounting", {})
+    require(d_attempt.get("profile_status_after_closeout") == "CLOSED_SUCCESS" and d_attempt.get("retry_under_same_profile_allowed") is False, "M1-03 closeout accounting drift")
+
+    invocation = sources["invocation_closeout"]
+    require(invocation.get("task_id") == "M1-04", "M1-04 closeout task drift")
+    require(invocation.get("status") == "CLOSED_SUCCESS / HISTORICAL_EXECUTION_EVIDENCE_RECOVERED / NO_REEXECUTION", "M1-04 historical closeout not accepted")
+    recovery = invocation.get("recovery_scope", {})
+    require(recovery.get("administrative_recovery_only") is True and recovery.get("effectful_execution_performed") is False, "M1-04 recovery performed an effect")
+    require(all(recovery.get(key) == 0 for key in ("new_model_calls", "new_provider_calls", "new_benchmarks", "new_downloads")), "M1-04 recovery effect count drift")
+    source_record = invocation.get("immutable_source_record", {})
+    require(source_record.get("library_file_id") == "libfile_2082206838948191859c6372100df3eb", "M1-04 source record identity drift")
+    require(source_record.get("bytes") == 2558 and source_record.get("sha256") == M1_04_LIBRARY_RECORD_SHA256, "M1-04 source record content drift")
+    i_profile = invocation.get("execution_profile", {})
+    require(i_profile.get("profile_id") == M1_04_PROFILE_ID and i_profile.get("profile_sha256") == M1_04_PROFILE_SHA256, "M1-04 profile identity drift")
+    require(i_profile.get("status_after_execution") == "CLOSED_SUCCESS" and i_profile.get("attempts_used") == 1 and i_profile.get("same_profile_retry_allowed") is False, "M1-04 one-shot accounting drift")
+    require(invocation.get("execution", {}).get("http_post_count") == 1 and invocation.get("execution", {}).get("real_provider_invocation") is True, "M1-04 real invocation evidence drift")
+    require(invocation.get("model", {}).get("revision") == MODEL_REVISION and invocation.get("model", {}).get("sha256") == EXPECTED_VARIANTS["q8_0"]["sha256"], "M1-04 model binding drift")
+    require(invocation.get("runtime", {}).get("release_tag") == LLAMA_RELEASE_TAG and invocation.get("runtime", {}).get("commit") == LLAMA_COMMIT, "M1-04 runtime binding drift")
+    corroboration = invocation.get("committed_downstream_corroboration", {})
+    require(corroboration.get("m1_04_real_invocation_profile_id") == M1_04_PROFILE_ID and corroboration.get("m1_04_disposition") == "CLOSED_SUCCESS / ONE_SHOT_PROFILE_CONSUMED", "M1-04 downstream corroboration drift")
+
+    provider = sources["provider_registry"]
+    require(provider.get("status") == "HISTORICAL_QUALIFICATION_RECOVERED / EXECUTION_PROFILE_CONSUMED / EXECUTION_DISABLED", "M1-04 provider registry state drift")
+    adapter_rows = provider.get("adapters", [])
+    require(len(adapter_rows) == 1, "M1-04 provider adapter count drift")
+    adapter = adapter_rows[0]
+    require(adapter.get("runtime_revision") == LLAMA_COMMIT, "M1-04 provider runtime drift")
+    require(adapter.get("qualified_capabilities") == ["structured_generate"], "M1-04 provider capability drift")
+    require(adapter.get("execution_allowed") is False, "M1-04 provider execution authority reopened")
+    require("NEW_EFFECTFUL_CALL_REQUIRES_NEW_EXACT_EXPERIMENT_PROFILE" in adapter.get("execution_blockers", []), "M1-04 new-call gate missing")
+
+    harness = sources["invocation_harness"]
+    require(harness.get("status") == "CLOSED_SUCCESS / HISTORICAL_REAL_INVOCATION_BOUND / EXECUTION_PROFILE_CONSUMED", "M1-04 harness not closed")
+    require(harness.get("binding_identity", {}).get("runtime_revision") == LLAMA_COMMIT, "M1-04 harness runtime drift")
+    require(harness.get("local_surfaces", {}).get("adapter_registry") == "ProviderAdapterRegistry.v1.0.2.json", "M1-04 harness adapter successor drift")
+    require(harness.get("current_kernel_model_capability_profile", {}).get("local_provider_execution_allowed_now") is False, "M1-04 harness reopened local execution")
+    require(harness.get("real_inference_gate", {}).get("status") == "CLOSED_SUCCESS / CONSUMED", "M1-04 real inference gate drift")
+    require(harness.get("execution_evidence", {}).get("profile_id") == M1_04_PROFILE_ID, "M1-04 harness evidence profile drift")
+    closeout_blob = invocation.get("__bound_git_blob_sha1")
+    require(harness.get("execution_evidence", {}).get("closeout_git_blob_sha1") == closeout_blob, "M1-04 harness closeout binding drift")
+    require(provider.get("historical_execution_closeout", {}).get("git_blob_sha1") == closeout_blob, "M1-04 provider closeout binding drift")
+    require(str(harness.get("task_effect", "")).startswith("M1-04_COMPLETED"), "M1-04 task remains incomplete")
 
     runtime = sources["runtime_selection"].get("successor_runtime", {})
     require(runtime.get("runtime_id") == "llama.cpp", "runtime id drift")
-    require(runtime.get("release_tag") == "b11033", "runtime tag drift")
-    require(runtime.get("commit") == "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d", "runtime commit drift")
-    require(runtime.get("selected_asset", {}).get("sha256") == "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2", "runtime asset drift")
+    require(runtime.get("release_tag") == LLAMA_RELEASE_TAG, "runtime tag drift")
+    require(runtime.get("commit") == LLAMA_COMMIT, "runtime commit drift")
+    require(runtime.get("selected_asset", {}).get("sha256") == LLAMA_ASSET_SHA256, "runtime asset drift")
 
     package = sources["package_matrix"]
     require(package.get("status") == "GENERATED_AND_INTEGRITY_VERIFIED / QUALITY_UNRANKED", "package matrix is not accepted unranked evidence")
     source = package.get("source_snapshot", {})
     require(source.get("model_id") == "Qwen/Qwen3.5-0.8B", "package model drift")
-    require(source.get("revision") == "2fc06364715b967f1860aea9cf38778875588b17", "package revision drift")
-    require(source.get("weight_sha256") == "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696", "source weight drift")
+    require(source.get("revision") == MODEL_REVISION, "package revision drift")
+    require(source.get("weight_sha256") == SOURCE_WEIGHT_SHA256, "source weight drift")
     package_rows = {row.get("variant_id"): row for row in package.get("variants", [])}
     require(set(package_rows) == set(EXPECTED_VARIANTS), "package variant set drift")
     for variant_id, expected in EXPECTED_VARIANTS.items():
@@ -178,7 +258,7 @@ def validate_sources(sources: dict[str, dict[str, Any]]) -> None:
     benchmark = sources["pc_benchmark"]
     require(benchmark.get("status") == "VALIDATED_EVIDENCE", "PC benchmark not validated")
     require(benchmark.get("device", {}).get("device_name") == "DESK-W-591", "PC device drift")
-    require(benchmark.get("model", {}).get("revision") == "2fc06364715b967f1860aea9cf38778875588b17", "benchmark model drift")
+    require(benchmark.get("model", {}).get("revision") == MODEL_REVISION, "benchmark model drift")
     contract = benchmark.get("benchmark_contract", {})
     require(contract.get("threads") == 2 and contract.get("n_gpu_layers") == 0, "strict CPU contract drift")
     require(contract.get("devices") == "none" and contract.get("no_op_offload") == 1, "strict CPU offload gate drift")
@@ -217,7 +297,7 @@ def validate_sources(sources: dict[str, dict[str, Any]]) -> None:
     require("AUTHOR_SIDE_CLOSEOUT_PASS" in str(lifecycle.get("status")), "M1-08 closeout missing")
     require(all(lifecycle.get("lifecycle_results", {}).get(step) == "PASS" for step in ("install", "upgrade", "rollback", "cleanup")), "M1-08 lifecycle failure")
     require(lifecycle.get("execution", {}).get("model_sha256_post") == EXPECTED_VARIANTS["q8_0"]["sha256"], "M1-08 package drift")
-    require(lifecycle.get("execution", {}).get("runtime_asset_sha256_post") == "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2", "M1-08 runtime asset drift")
+    require(lifecycle.get("execution", {}).get("runtime_asset_sha256_post") == LLAMA_ASSET_SHA256, "M1-08 runtime asset drift")
     l_attempt = lifecycle.get("one_shot_accounting", {})
     require(l_attempt.get("attempts_used") == 1 and l_attempt.get("same_profile_retry_allowed") is False, "M1-08 one-shot accounting drift")
     require(l_attempt.get("profile_effectful_execution_state") == "CONSUMED", "M1-08 profile not consumed")
@@ -229,9 +309,11 @@ def validate_sources(sources: dict[str, dict[str, Any]]) -> None:
 def validate_matrix(matrix: dict[str, Any], sources: dict[str, dict[str, Any]]) -> None:
     require(matrix.get("schema_version") == "clued.model-m1-teacher-comparison-selection-matrix/1", "matrix schema drift")
     require(matrix.get("task_id") == "M1-09", "matrix task drift")
+    require(matrix.get("record_id") == "CLUED-MODEL-M1-TEACHER-COMPARISON-SELECTION-MATRIX-v1.0.2-20260921", "matrix successor drift")
     require(matrix.get("status") == "AUTHOR_SIDE_COMPLETE / STATIC_EVIDENCE_ONLY / M1_10_REVIEW_PENDING", "matrix status drift")
 
     baseline = matrix.get("baseline", {})
+    require(baseline.get("m1_10_blocked_review_exact_target") == "f55237bd8535c812b8279745e84744796c98b69c", "M1-10 blocked target drift")
     expected_anchors = {
         "m1_09_parent_commit": "bbfb9427a6712d9b79038a64e9f5e011ebbfda13",
         "m1_08_accepted_exact_head": "a15ca02439b383b28e9faeddb585e72a65decb02",
@@ -263,14 +345,19 @@ def validate_matrix(matrix: dict[str, Any], sources: dict[str, dict[str, Any]]) 
 
     selected = matrix.get("selected_reference_baseline", {})
     require(selected.get("candidate") == "Qwen/Qwen3.5-0.8B", "selected reference drift")
-    require(selected.get("revision") == "2fc06364715b967f1860aea9cf38778875588b17", "selected revision drift")
-    require(selected.get("source_weight_sha256") == "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696", "selected source weight drift")
-    require(selected.get("runtime", {}).get("commit") == "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d", "selected runtime drift")
+    require(selected.get("revision") == MODEL_REVISION, "selected revision drift")
+    require(selected.get("source_weight_sha256") == SOURCE_WEIGHT_SHA256, "selected source weight drift")
+    require(selected.get("runtime", {}).get("commit") == LLAMA_COMMIT, "selected runtime drift")
+    selected_license = selected.get("runtime_license_binding", {})
+    require(selected_license.get("license") == "MIT", "selected runtime license missing")
+    require(selected_license.get("review_git_blob_sha1") == matrix.get("source_bindings", {}).get("license_review", {}).get("git_blob_sha1"), "selected runtime license review mismatch")
     selected_package = selected.get("package", {})
     require(selected_package.get("variant_id") == "q8_0", "operational reference package drift")
     require(selected_package.get("sha256") == EXPECTED_VARIANTS["q8_0"]["sha256"], "operational reference digest drift")
     require(selected_package.get("quality_winner") is False, "operational reference misrepresented as quality winner")
     require(selected.get("device", {}).get("name") == "DESK-W-591", "selected device drift")
+    expected_selection_tasks = {"M1-00", "M1-01", "M1-02", "M1-03", "M1-04", "M1-05", "M1-06A", "M1-07", "M1-08"}
+    require(set(selected.get("selection_basis_tasks", [])) == expected_selection_tasks, "M1-00 through M1-08 selection basis incomplete")
 
     comparison = matrix.get("package_comparison_set", {})
     require(comparison.get("quality_winner") is None and comparison.get("ranking_performed") is False, "comparison set ranked without quality evidence")

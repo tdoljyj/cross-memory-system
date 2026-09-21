@@ -1,0 +1,80 @@
+{
+  "schema_version": "clued.model-m1-invocation-historical-evidence-recovery-closeout/1",
+  "closeout_id": "CLUED-MODEL-M1-INVOCATION-PROFILE-001-HISTORICAL-EVIDENCE-RECOVERY-CLOSEOUT-20260921",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-04",
+  "status": "CLOSED_SUCCESS / HISTORICAL_EXECUTION_EVIDENCE_RECOVERED / NO_REEXECUTION",
+  "recovery_scope": {
+    "recovered_against_exact_target_commit": "f55237bd8535c812b8279745e84744796c98b69c",
+    "administrative_recovery_only": true,
+    "new_model_calls": 0,
+    "new_provider_calls": 0,
+    "new_benchmarks": 0,
+    "new_downloads": 0,
+    "effectful_execution_performed": false
+  },
+  "immutable_source_record": {
+    "surface": "ChatGPT Library",
+    "library_file_id": "libfile_2082206838948191859c6372100df3eb",
+    "file_id": "file_00000000985c81f5bc480ef4e3a06bd2",
+    "name": "Clued_M1-04_首次真实Qwen调用_验收记录_20260919.md",
+    "created_at": "2026-09-19T08:25:17.990797Z",
+    "modified_at": "2026-09-19T08:25:17.990797Z",
+    "bytes": 2558,
+    "sha256": "6f085b3826fd86dc2e8352828a701bd68a6e6d4fa5286f2989535c210282fcda",
+    "disposition": "HISTORICAL_ACCEPTANCE_RECORD / NOT_REPOSITORY_NARRATIVE"
+  },
+  "execution_profile": {
+    "profile_id": "M1-INF-QWEN35-08B-Q8_0-001",
+    "profile_sha256": "45211288a98e860f83cf96d3d1684884d96348dda9bc23d3b11061a97c77e6cc",
+    "status_after_execution": "CLOSED_SUCCESS",
+    "max_attempts": 1,
+    "attempts_used": 1,
+    "same_profile_retry_allowed": false
+  },
+  "execution": {
+    "device_name": "DESK-W-591",
+    "started_utc": "2026-09-19T08:23:11Z",
+    "completed_utc": "2026-09-19T08:23:13Z",
+    "real_provider_invocation": true,
+    "http_post_count": 1,
+    "input_tokens": 22,
+    "output_tokens": 14,
+    "observed_duration_seconds": 1.531,
+    "executor_sha256": "b9e3d16aa505fff39eec4de4ac2e34858feeacf230f3e85a1d5c1830456b7220",
+    "request_attempt_result_candidate_v2_schema_validation": "PASS",
+    "post_execution_process_cleanup": "PASS",
+    "post_execution_listener_cleanup": "PASS"
+  },
+  "model": {
+    "model_id": "Qwen/Qwen3.5-0.8B",
+    "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "variant_id": "q8_0",
+    "filename": "Qwen3.5-0.8B-Q8_0.gguf",
+    "sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
+  },
+  "runtime": {
+    "runtime_id": "llama.cpp",
+    "release_tag": "b11033",
+    "commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+    "threads": 2,
+    "context_tokens": 1024,
+    "max_output_tokens": 128,
+    "max_wall_time_seconds": 120,
+    "cost": 0
+  },
+  "observed_output": {
+    "utf8_json": "{\"status\":\"ok\",\"value\":\"clued-local-smoke\"}",
+    "sha256": "03686b23e916dbef07524b545b477cc4ce76edd2810431e64f56b0c74d44b377",
+    "authority_class": "NON_AUTHORITATIVE_CANDIDATE / NOT_CANONICAL"
+  },
+  "committed_downstream_corroboration": {
+    "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-BENCH-QWEN35-08B-PC-001.issued.json",
+    "git_blob_sha1": "71df0601d5887d1923d34d100dca864c57d5bed7",
+    "m1_04_real_invocation_profile_id": "M1-INF-QWEN35-08B-Q8_0-001",
+    "m1_04_disposition": "CLOSED_SUCCESS / ONE_SHOT_PROFILE_CONSUMED",
+    "runtime_commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
+  },
+  "claim_boundary": "RECOVERS_MISSING_MACHINE_BINDING_FOR_ALREADY_COMPLETED_M1_04_ONLY / DOES_NOT_AUTHORIZE_RETRY_NEW_INFERENCE_BENCHMARK_TRAINING_DISTILLATION_PROMOTION_ACTIVATION_RELEASE_OR_PRODUCTION",
+  "authority_effect": "HISTORICAL_CLOSEOUT_BINDING_ONLY / NONE"
+}

@@ -1,0 +1,97 @@
+{
+  "schema_version": "clued.model-m1-license-terms-review/1",
+  "record_id": "CLUED-MODEL-M1-LICENSE-TERMS-COMPATIBILITY-REVIEW-v1.0.2-20260921",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-02",
+  "status": "ENGINEERING_COMPATIBILITY_SCREEN_COMPLETE_FOR_SHORTLISTED_OPEN_ARTIFACTS / NOT_LEGAL_ADVICE / RELEASE_TIME_REVIEW_STILL_REQUIRED",
+  "reviewed_at": "2026-09-21",
+  "predecessor": {
+    "path": "LicenseTermsCompatibilityReview.v1.0.1.json",
+    "git_blob_sha1": "3f3e7913faca595c5ccc3ca53b02265bd5493307",
+    "disposition": "IMMUTABLE_PREDECESSOR / SUPERSEDED_FOR_SELECTED_LLAMA_CPP_RUNTIME_BINDING"
+  },
+  "model_reviews": [
+    {
+      "id": "Qwen/Qwen3.5-0.8B",
+      "license": "Apache-2.0",
+      "internal_m1_reference": "PROVISIONALLY_COMPATIBLE",
+      "closed_source_product_redistribution": "REQUIRES_RELEASE_TIME_LICENSE_NOTICE_BOM_AND_ARTIFACT_REVIEW",
+      "training_or_distillation_authority": "NOT_ISSUED"
+    },
+    {
+      "id": "Qwen/Qwen3.5-4B",
+      "license": "Apache-2.0",
+      "internal_m1_reference": "PROVISIONALLY_COMPATIBLE",
+      "closed_source_product_redistribution": "REQUIRES_RELEASE_TIME_LICENSE_NOTICE_BOM_AND_ARTIFACT_REVIEW",
+      "training_or_distillation_authority": "NOT_ISSUED"
+    },
+    {
+      "id": "allenai/OLMo-2-0425-1B",
+      "license": "Apache-2.0",
+      "internal_m1_reference": "PROVISIONALLY_COMPATIBLE",
+      "closed_source_product_redistribution": "REQUIRES_SEPARATE_RELEASE_REVIEW",
+      "training_or_distillation_authority": "NOT_ISSUED",
+      "notes": "Responsible Use Guidelines and data provenance remain separate review inputs."
+    },
+    {
+      "id": "Qwen/Qwen3-Embedding-0.6B",
+      "license": "Apache-2.0",
+      "internal_m1_reference": "PROVISIONALLY_COMPATIBLE_RESEARCH_ONLY",
+      "semantic_recall_release": "FORBIDDEN_BY_CURRENT_BOUNDARY"
+    },
+    {
+      "id": "Qwen/Qwen3-Reranker-0.6B",
+      "license": "Apache-2.0",
+      "internal_m1_reference": "PROVISIONALLY_COMPATIBLE_RESEARCH_ONLY",
+      "semantic_recall_release": "FORBIDDEN_BY_CURRENT_BOUNDARY"
+    },
+    {
+      "id": "Qwen/Qwen3Guard-Gen-0.6B",
+      "license": "Apache-2.0",
+      "internal_m1_reference": "PROVISIONALLY_COMPATIBLE_RESEARCH_ONLY",
+      "production_safety_authority": "NOT_ISSUED"
+    },
+    {
+      "id": "Strong Hosted / Enterprise Reference",
+      "license": "TO_BE_BOUND_PROVIDER_TERMS",
+      "internal_m1_reference": "BLOCKED_PENDING_PROVIDER_TERMS_DATA_RETENTION_BENCHMARK_AND_MODEL_DEVELOPMENT_USE_REVIEW"
+    }
+  ],
+  "runtime_reviews": [
+    {
+      "id": "llama.cpp",
+      "release_tag": "b11033",
+      "revision": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+      "license": "MIT",
+      "internal_m1_use": "PROVISIONALLY_COMPATIBLE",
+      "selected_runtime_binding": {
+        "path": "../package/RuntimePackageSelection.v1.0.1.json",
+        "git_blob_sha1": "4aa482c5a6b8dbe50441efa496d8f19f3cd5405b",
+        "asset_name": "llama-b11033-bin-win-vulkan-x64.zip",
+        "asset_sha256": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2"
+      },
+      "review_scope": "EXACT_SELECTED_M1_RUNTIME_REVISION / INTERNAL_EVIDENCE_USE_ONLY / NOT_REDISTRIBUTION_AUTHORITY"
+    },
+    {
+      "id": "ExecuTorch",
+      "revision": "3a4f0b54d0e25b58874761bb429e0267cde931b7",
+      "license": "BSD",
+      "internal_m1_use": "PROVISIONALLY_COMPATIBLE"
+    },
+    {
+      "id": "ONNX-Runtime-GenAI",
+      "revision": "5d18d6952f45c1e547be3b1bbca5bb96537423bf",
+      "license": "MIT",
+      "internal_m1_use": "PROVISIONALLY_COMPATIBLE",
+      "technical_risk": "GENERATE_API_IS_PREVIEW"
+    },
+    {
+      "id": "MLX-LM",
+      "revision": "28e9ccd9cb52d1d4a6f674b7914bae2de49d9aad",
+      "license": "MIT",
+      "internal_m1_use": "PROVISIONALLY_COMPATIBLE"
+    }
+  ],
+  "release_rule": "M1_LICENSE_SCREEN_DOES_NOT_AUTHORIZE_REDISTRIBUTION_PUBLICATION_OR_PRODUCTION_USE",
+  "authority_effect": "NONE"
+}

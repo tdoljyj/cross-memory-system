@@ -1,0 +1,108 @@
+{
+  "schema_version": "clued.model-m1-invocation-harness-binding/1",
+  "record_id": "CLUED-MODEL-M1-INVOCATION-HARNESS-BINDING-v1.0.2-20260921",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-04",
+  "status": "CLOSED_SUCCESS / HISTORICAL_REAL_INVOCATION_BOUND / EXECUTION_PROFILE_CONSUMED",
+  "predecessor": {
+    "path": "M1InvocationHarnessBinding.v1.0.1.json",
+    "git_blob_sha1": "9cecab96102ed0e30ab566c18f96db5fb90ebcd7",
+    "disposition": "IMMUTABLE_PREDECESSOR / SUPERSEDED_FOR_M1_04_HISTORICAL_CLOSEOUT"
+  },
+  "bound_plan": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "prerequisite": {
+    "m1_03_closeout_ref": "../evidence/M1ExperimentProfile003ExecutionCloseout_20260918.json",
+    "m1_03_closeout_git_blob_sha1": "b3b147eacc78a707b561302676228b68c18c8954",
+    "required_result": "PASS / CLUED_MODEL_M1_PROFILE_003_DOWNLOAD_AND_INTEGRITY_ACCEPTED",
+    "m1_04_historical_closeout_ref": "../evidence/M1InvocationProfile001HistoricalEvidenceRecoveryCloseout_20260921.json",
+    "m1_04_historical_closeout_git_blob_sha1": "30a0004063883c6545bd8fcaa377ca2072013627"
+  },
+  "binding_identity": {
+    "program": "CLUED-FIRST-PARTY-MODEL",
+    "stage": "M1",
+    "task": "M1-04",
+    "revision": "v1.0.2",
+    "mode": "HISTORICAL_REAL_INVOCATION_CLOSEOUT_BOUND",
+    "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "runtime_revision": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
+  },
+  "binding_identity_sha256": "sha256:4976c836b658c82a3d63a74a5be9cffe745e436df18b10727881f978fa3975ec",
+  "upstream_contracts": {
+    "model_invocation_request": {
+      "path": "protocol/continuity/v1/schemas/model/model-invocation-request.schema.json",
+      "git_blob_sha1": "60fc35b058d1bcf1d44ad0d0d6f6b29701508e6d",
+      "sha256": "4fe9f38171a925497631ff4bf59f06d6aed9db2d296a31f159a7e8f9f5f5f642",
+      "schema_id": "urn:clued:schema:model-invocation-request:v2"
+    },
+    "model_invocation_result": {
+      "path": "protocol/continuity/v1/schemas/model/model-invocation-result.schema.json",
+      "git_blob_sha1": "b3fb5de5723ff26d0996db34cd520d7efa2a1950",
+      "sha256": "818f9eac55201fb442e45e7fd4f50b6c00b23b4c0bdea16a4a0e33023c893a1f",
+      "schema_id": "urn:clued:schema:model-invocation-result:v2"
+    },
+    "model_output_candidate": {
+      "path": "protocol/continuity/v1/schemas/model/model-output-candidate.schema.json",
+      "git_blob_sha1": "a51f5357e1f718d2577b0840a721c8f9b7def156",
+      "sha256": "69fdbe65eb86b4af54f5428c85e072df7b91adf2b33a84f5b248429444b569c5",
+      "schema_id": "urn:clued:schema:model-output-candidate:v2"
+    },
+    "provider_descriptor": {
+      "path": "protocol/continuity/v1/schemas/model/provider-descriptor.schema.json",
+      "git_blob_sha1": "67ebfe614d1441787f62c7a47f7bd490f7b08178",
+      "sha256": "9fc150f7682a32799e5ca6e8439c28a0912804c16af70c034a5d080134b3f6b7",
+      "schema_id": "urn:clued:schema:model-provider-descriptor:v2"
+    },
+    "model_capability_profile": {
+      "path": "protocol/continuity/v1/profiles/model-capability.profile.json",
+      "git_blob_sha1": "329e2cf52758617e57308c3ee43c9d44cdceb28d",
+      "sha256": "880060ef06dc497df126b265f90a0265b708ce7172a4c4225c9de926ae13b663"
+    },
+    "complete_call": {
+      "path": "development/contracts/model-program/m0/schemas/CompleteCall.schema.json",
+      "git_blob_sha1": "6a181be353c57a64bc4a24a73b5f99aa8df687f5",
+      "sha256": "511c8478a3f253286f9958af9b5a49e047efa594c3bba2bc6c72f288fb539aeb"
+    }
+  },
+  "local_surfaces": {
+    "request_envelope_schema": "../schemas/M1HarnessRequestEnvelope.schema.json",
+    "result_envelope_schema": "../schemas/M1HarnessResultEnvelope.schema.json",
+    "adapter_registry": "ProviderAdapterRegistry.v1.0.2.json",
+    "prompt_registry": "PromptTemplateRegistry.v1.0.1.json",
+    "policy_snapshot": "InvocationPolicySnapshot.v1.0.1.json",
+    "error_normalization_registry": "ErrorNormalizationRegistry.v1.0.1.json"
+  },
+  "current_kernel_model_capability_profile": {
+    "historically_qualified_provider_types": [
+      "Local"
+    ],
+    "historically_qualified_capabilities": [
+      "structured_generate"
+    ],
+    "runtime_disposition": "M1_04_ONE_SHOT_PROFILE_CONSUMED",
+    "local_provider_execution_allowed_now": false
+  },
+  "real_inference_gate": {
+    "status": "CLOSED_SUCCESS / CONSUMED",
+    "required_before_any_new_real_model_call": [
+      "SEPARATE_EXACT_INFERENCE_EXPERIMENT_PROFILE",
+      "CURRENT_MODEL_CAPABILITY_PROFILE_SUCCESSOR_ALLOWING_LOCAL_AND_REQUESTED_CAPABILITY",
+      "EXACT_PROVIDER_QUALIFICATION_REF",
+      "EXACT_RUNTIME_PACKAGE_AND_LICENSE_BINDING"
+    ],
+    "current_blockers": [
+      "M1_INF_QWEN35_08B_Q8_0_001_CONSUMED",
+      "NO_NEW_EFFECTFUL_PROFILE_ISSUED"
+    ]
+  },
+  "execution_evidence": {
+    "profile_id": "M1-INF-QWEN35-08B-Q8_0-001",
+    "closeout_ref": "../evidence/M1InvocationProfile001HistoricalEvidenceRecoveryCloseout_20260921.json",
+    "closeout_git_blob_sha1": "30a0004063883c6545bd8fcaa377ca2072013627",
+    "result": "PASS / ONE_REAL_PROVIDER_INVOCATION / PROFILE_CONSUMED"
+  },
+  "task_effect": "M1-04_COMPLETED / REAL_INVOCATION_EVIDENCE_BOUND / NO_CURRENT_EXECUTION_AUTHORITY",
+  "authority_effect": "NONE"
+}
