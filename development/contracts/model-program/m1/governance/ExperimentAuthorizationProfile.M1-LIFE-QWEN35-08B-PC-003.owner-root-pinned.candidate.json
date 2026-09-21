@@ -588,30 +588,60 @@
                               "guard_parent_semantics":  "MUST PREEXIST BEFORE FINAL ISSUANCE / VERIFIED REAL DIRECTORY / NO REPARSE JUNCTION SYMLINK MOUNTPOINT / ISSUED PROFILE CANNOT CREATE OR RECREATE / PROVISIONING REQUIRES SEPARATE REVIEWED OWNER AUTHORIZATION AND BOUND EVIDENCE",
                               "launch_envelope_semantics":  "EXACT_EXECUTABLE_ARGV_CHILD_ENVIRONMENT_CWD_LOOPBACK_ENDPOINT_AND_ORIGINAL_OS_PROCESS_HANDLE_FORM_ONE_IMMUTABLE_PROFILE_DERIVED_ENVELOPE / NO_CALLER_OVERRIDE_OR_DYNAMIC_INJECTION",
                               "issuer_public_key_canonical":  "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03",
-                              "guard_parent_preissuance_evidence_path":  "TO_BE_CREATED_BY_SEPARATE_PC003_PARENT_PROVISIONING",
-                              "guard_parent_preissuance_evidence_git_blob_sha1":  "TO_BE_BOUND_AFTER_SEPARATE_PC003_PARENT_PROVISIONING",
-                              "guard_parent_preissuance_evidence_sha256":  "TO_BE_BOUND_AFTER_SEPARATE_PC003_PARENT_PROVISIONING",
-                              "guard_parent_identity_revalidation":  "PC003_PARENT_PROVISIONING_PENDING / LIVE REVALIDATION REQUIRED AT FINAL ISSUANCE AND EXECUTION",
+                              "guard_parent_preissuance_evidence_path":  "development/contracts/model-program/m1/evidence/M1RuntimeLifecycleAttempt3ParentProvisioningPreparation_20260921/M1RuntimeLifecycleAttempt3ParentProvisioningReceipt_20260921.json",
+                              "guard_parent_preissuance_evidence_git_blob_sha1":  "0ca5c2c6b02d1c817892edd30d7b5d82f6407361",
+                              "guard_parent_preissuance_evidence_sha256":  "d98070f9dc05acce448f69d2b75e0fabef8a197ed2eb13fc76ecb0c7cd21c104",
+                              "guard_parent_identity_revalidation":  "REVIEWED_PC003_PARENT_PROVISIONING_IDENTITY_BOUND / REVERIFY_AT_FINAL_ISSUANCE_AND_EXECUTION",
                               "evidence_parent_path":  "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence",
                               "runtime_lifecycle_parent_path":  "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke",
-                              "execution_parent_semantics":  "PC003 GUARD PARENT MUST BE SEPARATELY PROVISIONED AND REVIEWED; SHARED EVIDENCE/RUNTIME-LIFECYCLE PARENTS MUST BE LIVE REVALIDATED; NO PC002 IDENTITY MAY SUBSTITUTE"
+                              "execution_parent_semantics":  "PC003 GUARD PARENT SEPARATELY PROVISIONED + REVIEWED + SIGNED-IDENTITY-BOUND; SHARED EVIDENCE/RUNTIME-LIFECYCLE PARENTS REVIEWED WITH RETAINED PC002 FORENSIC CHILD; LIVE IDENTITY RECHECK REQUIRED AT FINAL ISSUANCE/EXECUTION BEFORE ATTEMPT GUARD CLAIM"
                           },
     "trusted_execution_bindings":  {
                                        "binding_location":  "ISSUED_PROFILE_OUTER_BINDING",
                                        "expected_owner_authorization_id":  "TO_BE_BOUND_AT_FINAL_ISSUANCE",
                                        "expected_owner_authorization_sha256":  "TO_BE_BOUND_AT_FINAL_ISSUANCE",
                                        "rule":  "OWNER_AUTHORIZATION_OBJECT_CANNOT_SELF_DECLARE_EXPECTED_ID_OR_SHA256",
-                                       "guard_parent_provisioning_evidence_sha256":  "TO_BE_BOUND_AFTER_SEPARATE_PC003_PARENT_PROVISIONING",
-                                       "evidence_parent_provisioning_evidence_sha256":  "TO_BE_REVALIDATED_AND_BOUND_FOR_PC003",
-                                       "runtime_lifecycle_parent_provisioning_evidence_sha256":  "TO_BE_REVALIDATED_AND_BOUND_FOR_PC003",
-                                       "guard_parent_provisioning_identity":  null,
-                                       "evidence_parent_provisioning_identity":  null,
-                                       "runtime_lifecycle_parent_provisioning_identity":  null,
-                                       "parent_provisioning_receipt_path":  "TO_BE_CREATED_BY_SEPARATE_PC003_PARENT_PROVISIONING",
-                                       "parent_provisioning_receipt_git_blob_sha1":  "TO_BE_BOUND_AFTER_SEPARATE_PC003_PARENT_PROVISIONING",
-                                       "parent_provisioning_reviewed_exact_head":  "TO_BE_FRESH_CONTEXT_REVIEWED",
-                                       "parent_provisioning_review_verdict":  "PENDING",
-                                       "parent_provisioning_identity_semantics":  "PC003 POINT_IN_TIME REVIEWED PROVISIONING IDENTITY REQUIRED / MUST REVALIDATE LIVE AT FINAL ISSUANCE AND BEFORE ATTEMPT GUARD CLAIM"
+                                       "guard_parent_provisioning_evidence_sha256":  "d98070f9dc05acce448f69d2b75e0fabef8a197ed2eb13fc76ecb0c7cd21c104",
+                                       "evidence_parent_provisioning_evidence_sha256":  "d98070f9dc05acce448f69d2b75e0fabef8a197ed2eb13fc76ecb0c7cd21c104",
+                                       "runtime_lifecycle_parent_provisioning_evidence_sha256":  "d98070f9dc05acce448f69d2b75e0fabef8a197ed2eb13fc76ecb0c7cd21c104",
+                                       "guard_parent_provisioning_identity":  {
+                                                                                  "canonical_path":  "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-state\\M1-LIFE-QWEN35-08B-PC-003",
+                                                                                  "filesystem_type":  "NTFS",
+                                                                                  "volume_serial":  "9686166e",
+                                                                                  "file_id":  "004400000003f131",
+                                                                                  "owner_sid":  "S-1-5-21-858977881-4031698862-3006450925-1000",
+                                                                                  "security_descriptor_sha256":  "f9a26120ad42e5b810fa72ecbd2713b82ca9f5f5c7c1932e339b08d17b6e6f85",
+                                                                                  "empty_parent":  true,
+                                                                                  "non_reparse":  true,
+                                                                                  "attempt_guard_absent_at_reviewed_observation":  true
+                                                                              },
+                                       "evidence_parent_provisioning_identity":  {
+                                                                                     "canonical_path":  "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\evidence",
+                                                                                     "filesystem_type":  "NTFS",
+                                                                                     "volume_serial":  "9686166e",
+                                                                                     "file_id":  "005100000009757b",
+                                                                                     "owner_sid":  "S-1-5-21-858977881-4031698862-3006450925-1000",
+                                                                                     "security_descriptor_sha256":  "f9a26120ad42e5b810fa72ecbd2713b82ca9f5f5c7c1932e339b08d17b6e6f85",
+                                                                                     "empty_at_reviewed_observation":  false,
+                                                                                     "entry_count_at_reviewed_observation":  1,
+                                                                                     "non_reparse":  true
+                                                                                 },
+                                       "runtime_lifecycle_parent_provisioning_identity":  {
+                                                                                              "canonical_path":  "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\runtime-lifecycle-smoke",
+                                                                                              "filesystem_type":  "NTFS",
+                                                                                              "volume_serial":  "9686166e",
+                                                                                              "file_id":  "00250000000a06ea",
+                                                                                              "owner_sid":  "S-1-5-21-858977881-4031698862-3006450925-1000",
+                                                                                              "security_descriptor_sha256":  "f9a26120ad42e5b810fa72ecbd2713b82ca9f5f5c7c1932e339b08d17b6e6f85",
+                                                                                              "empty_at_reviewed_observation":  false,
+                                                                                              "entry_count_at_reviewed_observation":  1,
+                                                                                              "non_reparse":  true
+                                                                                          },
+                                       "parent_provisioning_receipt_path":  "development/contracts/model-program/m1/evidence/M1RuntimeLifecycleAttempt3ParentProvisioningPreparation_20260921/M1RuntimeLifecycleAttempt3ParentProvisioningReceipt_20260921.json",
+                                       "parent_provisioning_receipt_git_blob_sha1":  "0ca5c2c6b02d1c817892edd30d7b5d82f6407361",
+                                       "parent_provisioning_reviewed_exact_head":  "f9cb005bc2ec45cf53c1f7f9fc3b051058b85e00",
+                                       "parent_provisioning_review_verdict":  "PASS / M1_08_PC003_PARENT_PROVISIONING_ACCEPTABLE_FOR_PROFILE_BINDING_PREPARATION",
+                                       "parent_provisioning_identity_semantics":  "PC003 POINT_IN_TIME REVIEWED PROVISIONING IDENTITY / SHARED PARENTS MAY CONTAIN ONLY RETAINED PREDECESSOR FORENSIC CHILDREN AT REVIEWED OBSERVATION / MUST REVALIDATE LIVE AT FINAL ISSUANCE AND BEFORE ATTEMPT GUARD CLAIM"
                                    },
     "lifecycle_safety_binding":  {
                                      "source_payload_attestation_semantics":  "BOUND_PAYLOAD_SET_ONLY / MODEL_Q8_0 + RUNTIME_ARCHIVE + EXTRACTED_RUNTIME_TREE / NO_WHOLE_M1PKG002_DIRECTORY_UNCHANGED_CLAIM",
@@ -689,11 +719,16 @@
                                   "effectful_owner_source_manifest_git_blob_sha1":  "9e5a463b1cdac7f5bba2685d6eb92a6a70217b85",
                                   "effectful_owner_source_manifest_sha256":  "bc78ef18443e165aad844c2abbe2040924cd6d160b4ebf77ce43f0df8acdc824",
                                   "guard_parent_preissuance_evidence":  {
-                                                                            "status":  "PENDING_SEPARATE_PC003_PARENT_PROVISIONING_REVIEW",
+                                                                            "status":  "INDEPENDENT_REVIEW_PASS / REVIEWED_EVIDENCE_AND_IDENTITY_BOUND",
                                                                             "continuous_monitoring_claim":  false,
-                                                                            "revalidation_required":  true
+                                                                            "revalidation_required":  true,
+                                                                            "reviewed_exact_head":  "f9cb005bc2ec45cf53c1f7f9fc3b051058b85e00",
+                                                                            "review_verdict":  "PASS / M1_08_PC003_PARENT_PROVISIONING_ACCEPTABLE_FOR_PROFILE_BINDING_PREPARATION",
+                                                                            "receipt_path":  "development/contracts/model-program/m1/evidence/M1RuntimeLifecycleAttempt3ParentProvisioningPreparation_20260921/M1RuntimeLifecycleAttempt3ParentProvisioningReceipt_20260921.json",
+                                                                            "receipt_git_blob_sha1":  "0ca5c2c6b02d1c817892edd30d7b5d82f6407361",
+                                                                            "receipt_sha256":  "d98070f9dc05acce448f69d2b75e0fabef8a197ed2eb13fc76ecb0c7cd21c104"
                                                                         },
-                                  "successor_state":  "ATTEMPT3_PROBE_REMEDIATION_PREPARATION / PC001_AND_PC002_GUARDS_MUST_BE_PRESERVED / SOURCE_EXACT_BOUND / PC003_EXECUTION_PARENTS_PENDING / EXACT_WINDOWS_REQUALIFICATION_REQUIRED / NOT_ISSUED / NO_EXECUTION / NO_MERGE",
+                                  "successor_state":  "ATTEMPT3_PROBE_REMEDIATION_PREPARATION / PC001_AND_PC002_GUARDS_PRESERVED / HARDENED_SOURCE_EXACT_BOUND / PC003_EXECUTION_PARENTS_PROVISIONED_REVIEWED_AND_BOUND / EXACT_WINDOWS_REQUALIFICATION_REQUIRED / NOT_ISSUED / NO_EXECUTION / NO_MERGE",
                                   "build_helper_semantics":  "OWNER_ROOT_PINNED PC003 SUCCESSOR QUALIFICATION ACCEPTS ONLY EXACT APPROVED ROOT AND VALIDATES NON-ISSUED PC003 PROFILE SOURCE PATH/MANIFEST/TREE WHILE AUTHORITY REMAINS FALSE",
                                   "documentation_consistency":  "OWNER_ROOT_PINNED / NO STALE UNBOUND-ROOT CLAIMS",
                                   "attempt1_failure_binding":  {
@@ -719,5 +754,5 @@
                                                                    "diagnosis":  "MODEL_AND_SERVER_LOADED_AND_COMPLETION_EXECUTED / EXACT_TEXT_OK_PROBE_REJECTED / STRUCTURAL_PROBE_REMEDIATION_REQUIRED"
                                                                }
                               },
-    "status_detail":  "PC003 PROBE-REMEDIATION BOUND SUCCESSOR PREPARATION / SOURCE EXACT BOUND TO f5418f0f / CURRENT M1 DEVICE POLICY BOUND / PC003 PARENT PROVISIONING PENDING / NOT ISSUED / NO EXECUTION"
+    "status_detail":  "PC003_PARENT_PROVISIONING_REVIEW_ACCEPTED / HARDENED_PREDECESSOR_GUARD_SOURCE_BOUND / REVIEWED_PARENT_IDENTITIES_BOUND / EXACT_WINDOWS_REQUALIFICATION_REQUIRED / FRESH_CONTEXT_PROFILE_REVIEW_REQUIRED / NOT_ISSUED / NO_EXECUTION"
 }
