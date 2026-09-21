@@ -317,6 +317,13 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     assert.doesNotMatch(readLog.markdown, new RegExp(otherProjectId));
     assert.doesNotMatch(readLog.markdown, new RegExp(standaloneEvidenceId));
     assert.match(readLog.markdown, new RegExp(projectRecordId));
+    // A merged redirect stops granting Evidence visibility even if its old
+    // source_refs remain for audit history.
+    await admin.query("update public.clued_memories set lifecycle_status='merged' where id=$1", [projectRecordId]);
+    const mergedEvidenceSearch = await reducedRpc("clued_mcp_search_context", {
+      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:linked_evidence",
+    });
+    assert.deepEqual(mergedEvidenceSearch.results[0].target_refs.map((item) => item.id), [projectRecordId]);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

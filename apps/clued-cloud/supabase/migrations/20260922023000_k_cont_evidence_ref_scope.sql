@@ -49,6 +49,8 @@ create or replace function clued_private.k_cont_visible_target_refs_v1(
         join public.clued_memories m on m.user_id=e.user_id
           and m.record_schema_version is not null
           and m.canonical_scope=p_context_key
+          and m.lifecycle_status<>'merged'
+          and m.merged_into_record_id is null
           and e.id=any(m.source_refs)
         join jsonb_array_elements(p_refs) r on jsonb_typeof(r)='object'
           and r->>'kind'='record' and jsonb_typeof(r->'id')='string'
