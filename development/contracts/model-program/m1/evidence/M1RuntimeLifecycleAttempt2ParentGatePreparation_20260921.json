@@ -1,0 +1,75 @@
+{
+  "schema_version": "clued.m1-08-attempt2-parent-gate-successor-preparation/1",
+  "status": "AUTHOR_SIDE_PREPARATION_PASS / EXACT_WINDOWS_REQUALIFIED / NOT_INDEPENDENTLY_REVIEWED / PARENT_PROVISIONING_PENDING / NOT_ISSUED / NOT_EXECUTED",
+  "task_id": "M1-08",
+  "successor_profile_id": "M1-LIFE-QWEN35-08B-PC-002-CANDIDATE",
+  "repair_base_final_issuance_head": "283bd8eccab6a15cca8278d5835251d7efad76e6",
+  "exact_source_commit": "e21f33caea1eaecc557b7d3f8e3d939daedd16a1",
+  "contract": {
+    "path": "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.1.json",
+    "git_blob_sha1": "5db350700e831a0423dd1e6f568d6f24f0c956ef",
+    "sha256": "e932449cf290edbd654fe6960f4a20205ea756c4db3db724db6349a783aefe27"
+  },
+  "candidate_profile": {
+    "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-002.owner-root-pinned.candidate.json",
+    "git_blob_sha1": "d59b61d914913f2b5085835f569738413b600a56",
+    "sha256": "c7ed7e43ddd75a97bb0f5b7e67b30b50d73e1ed324278af652f80770f8bf2a49",
+    "effectful_authority_issued": false,
+    "required_effectful_owner_binary_sha256": "TO_BE_BOUND_AT_FINAL_ISSUANCE"
+  },
+  "source": {
+    "tree_git_sha1": "78413820ee6ee174535f7055b2072f6ffc2e9753",
+    "manifest_git_blob_sha1": "f72987bd83beb68aac1938f1da431797c60e26d7",
+    "manifest_sha256": "817bbed1b907d69a186157e2f7a8604a3c6f32841fdd5e5ef9bb0b031104dd43"
+  },
+  "attempt1_binding": {
+    "failure_closeout_path": "development/contracts/model-program/m1/evidence/M1RuntimeLifecycleAttempt1FailureCloseout_20260921.json",
+    "failed_profile_id": "M1-LIFE-QWEN35-08B-PC-001-ISSUED",
+    "persistent_guard_sha256": "9e0b95cf7e8cbb16608c73318b6c39b54dd5c1b2ae26daa63e822420cbce14bb",
+    "retry_same_profile_allowed": false,
+    "guard_preservation_required": true
+  },
+  "remediation": {
+    "scope_change": "NONE / SAME_M1_08_LIFECYCLE_SMOKE_SCOPE / NEW_ONE_SHOT_ATTEMPT_IDENTITY_ONLY",
+    "new_guard_identity": "M1-LIFE-QWEN35-08B-PC-002",
+    "execution_parent_gate": "GUARD_PARENT + SHARED_EVIDENCE_PARENT + SHARED_RUNTIME_LIFECYCLE_PARENT LIVE IDENTITY MUST MATCH SIGNED BINDINGS BEFORE PC002 GUARD CLAIM",
+    "profile_creates_execution_parents": false
+  },
+  "exact_windows_qualification": {
+    "host": "DESK-W-591",
+    "toolchain": "go version go1.27.1 windows/amd64",
+    "build_receipt_sha256": "b3f49b052b15dadf06d83a9030ee8ec6e37887cfdc3cd50c98f47667a44986bb",
+    "go_test_log_sha256": "6fb5628aec4e75c57d08b26e950379ff48533a1146d3b3debd67ce777c4f5de9",
+    "qualification_scope_log_sha256": "67ad9aaad495dd15dcebc6f17ede51cecdea9c562b613ad46ebe79de8ece2ddb",
+    "go_vet_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "go_build_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "go_test_compile_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "development_owner_binary_sha256": "2af7d5e5176697c181dab70e620f0035543a5655915e4087ec8229d3a6b2a510",
+    "windows_test_binary_sha256": "bda7770d9ed1434bcb4ae3f658385dfd16b406154abef251291dff468fcf64eb",
+    "top_level_pass": 72,
+    "subtest_pass": 24,
+    "fail": 0,
+    "skip": 0,
+    "go_vet": "PASS",
+    "qualification_scope_tests": "PASS",
+    "successor_profile_static_binding_check": true,
+    "owner_binary_executed_by_build_helper": false
+  },
+  "live_effect_boundary": {
+    "pc001_guard_preserved": true,
+    "pc002_guard_parent_created": false,
+    "shared_evidence_parent_created": false,
+    "shared_runtime_lifecycle_parent_created": false,
+    "pc002_attempt_guard_created": false,
+    "llama_server_started": false,
+    "model_loaded": false,
+    "pc002_effectful_execution": false
+  },
+  "remaining_gates": [
+    "Fresh-Context independent review of PC-001 failure closeout + exact PC-002 remediation source/profile/contract/qualification",
+    "Separate reviewed Owner-authorized provisioning of PC-002 Guard Parent + shared evidence parent + shared runtime-lifecycle parent",
+    "Bind provisioning evidence and live identities into PC-002 successor Profile and requalify exact Profile bytes",
+    "Fresh-Context review of the provisioned successor before Final Issuance",
+    "Separate Owner Final Issuance; then separate Owner decision for one-shot PC-002 execution"
+  ]
+}
