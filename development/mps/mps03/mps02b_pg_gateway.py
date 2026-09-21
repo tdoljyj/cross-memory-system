@@ -405,7 +405,9 @@ from clued_private.mps_objects o where o.user_id=({_t('uid')})::uuid;
             try:
                 current=self._read_for(s["principal"],oid,"read")
             except ProtocolError as e:
-                if e.status == 403:
+                # Enumeration is not authority. Omit objects that are no longer
+                # readable or lack a complete Current instead of failing the page.
+                if e.status in (403, 404):
                     continue
                 raise
             visible.append({"object_id":oid,"title":current.get("title","Untitled"),"revision_id":current.get("revision_id"),"adoption_id":current.get("adoption_id")})

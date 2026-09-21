@@ -78,6 +78,23 @@ class PgBridgeGuards(unittest.TestCase):
             with self.assertRaises(ProtocolError) as caught:
                 store._psql("select 1")
         self.assertEqual((caught.exception.code,caught.exception.status),("OBJECT_NOT_FOUND",404))
+    def test_list_omits_unreadable_or_incomplete_objects(self):
+        store=PgMPS02BStore.__new__(PgMPS02BStore)
+        store.sessions={"native-session":{"principal":"native","entry_kind":"NATIVE"}}
+        store.native_principal="native"; store.agent_principal="agent"; store.user_id="user"
+        store._psql=lambda sql,variables: '["stale","hidden","visible"]'
+        def read(principal,object_id,action):
+            if object_id=="stale":
+                raise ProtocolError("OBJECT_NOT_FOUND","object not found",404)
+            if object_id=="hidden":
+                raise ProtocolError("ACTION_NOT_AUTHORIZED","denied",403)
+            return {"title":"Visible","revision_id":"rv_1","adoption_id":"ad_1"}
+        store._read_for=read
+        result=store.list_objects("native-session")
+        self.assertEqual(result,{"ok":True,"objects":[{
+            "object_id":"visible","title":"Visible","revision_id":"rv_1","adoption_id":"ad_1"
+        }]})
+
     def test_malformed_confirmation_stamp_is_client_error(self):
         store=PgMPS02BStore.__new__(PgMPS02BStore)
         store.sessions={"native-session":{"principal":"native","entry_kind":"NATIVE"}}
