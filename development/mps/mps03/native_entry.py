@@ -124,6 +124,9 @@ class NativeHandler(BaseHTTPRequestHandler):
                 obj=self.client.read_object(parts[2])
                 if not obj.get("ok"): return self._forward(obj)
                 return self._forward({"ok":True,"entry":"NATIVE","gateway":self.client.base_url,"state_stamp":obj.get("state_stamp"),"revision_id":obj.get("revision_id"),"adoption_id":obj.get("adoption_id"),"context_pack_digest":obj.get("context_pack_digest")})
+            if p=="/new":
+                body=f'''<h1>Create a plan</h1><form method="post" action="/create"><label>Title <input name="title" required></label><label><br>Plan details<textarea name="details"></textarea></label><input type="hidden" name="request_id" value="{new_id('req')}"><button>Create</button></form>'''
+                return self._send_html(200,self._page("Create a plan",body))
             if p=="/":
                 listing=self.client.list_objects()
                 if not listing.get("ok"): return self._html_error(listing)

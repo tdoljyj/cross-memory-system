@@ -278,7 +278,7 @@ class RealEntries(unittest.TestCase):
         c=req("POST",f"http://127.0.0.1:{self.pn}/api/objects",{"title":"UI","body":{"items":[]},"request_id":"req-ui-create-01"}); oid=c["object_id"]
         # Agent creates an open suggestion so the suggestion/diff/confirm surface has real content.
         self.agent_propose(oid,{"items":["x"]})
-        urls=["/",f"/object/{oid}",f"/object/{oid}/proposals",f"/object/{oid}/history",f"/object/{oid}/connection"]
+        urls=["/new","/",f"/object/{oid}",f"/object/{oid}/proposals",f"/object/{oid}/history",f"/object/{oid}/connection"]
         for path in urls:
             url=f"http://127.0.0.1:{self.pn}{path}"
             with urlopen(Request(url,headers=headers_for(url)),timeout=5) as r:
