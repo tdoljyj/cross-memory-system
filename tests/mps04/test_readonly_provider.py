@@ -1,4 +1,4 @@
-"""Candidate-only D-007 checks; not a live G4/G6 acceptance result."""
+"""MPS-04 provider source, registration, and explicit decision checks."""
 import pathlib
 import sys
 import unittest
@@ -127,11 +127,15 @@ class ProviderCandidate(unittest.TestCase):
         with self.assertRaises(ProviderUnavailable):
             provider.observe(A)
 
-    def test_gateway_checks_canonical_read_before_provider_and_never_writes(self):
+    def test_gateway_registers_only_after_double_current_read(self):
         store = PgMPS02BStore.__new__(PgMPS02BStore)
         provider, calls = self.provider()
         store.github_provider = provider
+        store.authority_domain = "test-domain"
+        store.native_principal = "native-principal"
+        store._session = lambda token: {"principal": "native-principal"}
         read_calls = []
+        registrations = []
 
         def read_object(token, oid):
             read_calls.append((token, oid))
@@ -142,12 +146,24 @@ class ProviderCandidate(unittest.TestCase):
                     "revision_id": "rev_a", "adoption_id": "adopt_a"}
 
         store.read_object = read_object
+        def register(sql, variables=None):
+            registrations.append((sql, variables))
+            return {"ok": True, "observation_id": "pob_" + "1" * 32,
+                    "persistence": "REGISTERED_CANONICAL_OBSERVATION",
+                    "status": "OPEN", "adoptable": True,
+                    "confirmation_state_stamp": {"object_id": OID}}
+        store._json = register
         with self.assertRaises(ProtocolError):
             store.provider_observation("other-user", OID)
         self.assertEqual(calls, [])
+        self.assertEqual(registrations, [])
         observed = store.provider_observation("native-allowed", OID)
         self.assertEqual(observed["clued_revision_id"], "rev_a")
         self.assertEqual(observed["clued_adoption_id"], "adopt_a")
+        self.assertEqual(observed["persistence"], "REGISTERED_CANONICAL_OBSERVATION")
+        self.assertEqual(len(registrations), 1)
+        self.assertEqual(registrations[0][1]["oid"], OID)
+        self.assertIn('"provider_exact_commit":"' + B + '"', registrations[0][1]["observation"])
         self.assertEqual(read_calls, [("other-user", OID), ("native-allowed", OID),
                                       ("native-allowed", OID)])
 
@@ -184,6 +200,61 @@ class ProviderCandidate(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             handler._dispatch()
         self.assertEqual(len(calls), 1)
+
+    def test_gateway_routes_explicit_provider_ignore_and_adopt(self):
+        handler = Handler.__new__(Handler)
+        handler.headers = {"Authorization": "Bearer native-allowed"}
+        handler._json = lambda: {"request_id": "req_12345678", "state_stamp": {"object_id": OID}}
+        calls = []
+        handler.store = type("Store", (), {
+            "ignore_provider_observation": lambda self, token, oid, obs, rid:
+                calls.append(("ignore", token, oid, obs, rid)) or {"ok": True},
+            "adopt_provider_observation": lambda self, token, oid, obs, stamp, rid:
+                calls.append(("adopt", token, oid, obs, stamp, rid)) or {"ok": True},
+        })()
+        observation_id = "pob_" + "1" * 32
+        handler.path = f"/v1/objects/{OID}/provider-observations/{observation_id}/ignore"
+        handler.command = "POST"
+        self.assertEqual(handler._dispatch(), (200, {"ok": True}))
+        handler.path = f"/v1/objects/{OID}/provider-observations/{observation_id}/adopt"
+        self.assertEqual(handler._dispatch(), (200, {"ok": True}))
+        self.assertEqual(calls[0], ("ignore", "native-allowed", OID, observation_id, "req_12345678"))
+        self.assertEqual(calls[1][0:4], ("adopt", "native-allowed", OID, observation_id))
+
+    def test_native_actions_require_registered_open_observation(self):
+        current = {"body": {"repository": EXPECTED_PROVIDER_REPOSITORY,
+                            "adopted_exact_commit": A}, "adoption_id": "adopt_a"}
+        provider, _ = self.provider()
+        observed = provider.observe(A)
+        observed.update({
+            "clued_adoption_id": "adopt_a",
+            "observation_id": "pob_" + "1" * 32,
+            "persistence": "REGISTERED_CANONICAL_OBSERVATION",
+            "status": "OPEN",
+            "adoptable": True,
+            "confirmation_state_stamp": {"object_id": OID},
+        })
+        view = NativeHandler.__new__(NativeHandler)
+        view.client = type("Client", (), {"provider_observation": lambda self, oid: observed})()
+        panel = view._provider_panel(OID, current)
+        self.assertIn("Adopt this exact GitHub version", panel)
+        self.assertIn("Ignore this exact change", panel)
+        candidate_only = dict(observed, persistence="NOT_REGISTERED_CANDIDATE_ONLY",
+                              observation_id="")
+        view.client = type("Client", (), {"provider_observation": lambda self, oid: candidate_only})()
+        panel = view._provider_panel(OID, current)
+        self.assertNotIn("Adopt this exact GitHub version", panel)
+        self.assertNotIn("Ignore this exact change", panel)
+
+    def test_sql_binds_observation_and_reuses_mps02b_commit(self):
+        sql = (REPO / "development" / "mps" / "mps04" / "provider_observation.sql").read_text()
+        self.assertIn("mps_provider_observations", sql)
+        self.assertIn("mps_register_provider_observation", sql)
+        self.assertIn("mps_ignore_provider_observation", sql)
+        self.assertIn("mps_adopt_provider_observation", sql)
+        self.assertIn("mps_commit_mutation", sql)
+        self.assertIn("mps04_adopt_github_provider", sql)
+        self.assertIn("revoke all on table", sql.lower())
 
     def test_native_fails_closed_on_unavailable_or_stale_observation(self):
         current = {"body": {"repository": EXPECTED_PROVIDER_REPOSITORY,

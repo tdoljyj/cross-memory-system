@@ -1,4 +1,4 @@
-"""Bounded same-host D-007 read probe; only clued-auth-test and PR #274.
+"""Bounded same-host MPS-04/G6 probe; only clued-auth-test and PR #274.
 
 The workflow supplies a short-lived contents:read GitHub token. The database
 password stays in the existing Windows credential store and child environments;
@@ -83,16 +83,53 @@ def _current(password: str) -> list[str]:
     return current
 
 
+def _create_provider_object(base: str, token: str, suffix: str) -> dict:
+    created = _http(base + "/v1/objects", token=token, body={
+        "title": "MPS-04 G6 " + suffix,
+        "body": {
+            "details": "Bounded non-production G6 evidence object",
+            "repository": REPOSITORY,
+            "adopted_exact_commit": A,
+        },
+        "request_id": "req_mps04_g6_create_" + suffix,
+    })
+    if created.get("ok") is not True or not created.get("object_id"):
+        raise RuntimeError("LIVE_G6_CREATE_FAILED")
+    return created
+
+
+def _assert_open_observation(observation: dict, object_id: str,
+                             expected_b: str, ref: str) -> None:
+    if (observation.get("ok") is not True
+            or observation.get("object_id") != object_id
+            or observation.get("clued_adopted_exact_commit") != A
+            or observation.get("provider_exact_commit") != expected_b
+            or observation.get("repository") != REPOSITORY
+            or observation.get("ref") != ref
+            or observation.get("ancestry") != "ahead"
+            or observation.get("drift") is not True
+            or observation.get("clued_current_changed") is not False
+            or observation.get("persistence") != "REGISTERED_CANONICAL_OBSERVATION"
+            or observation.get("status") != "OPEN"
+            or observation.get("adoptable") is not True
+            or not str(observation.get("observation_id", "")).startswith("pob_")
+            or not isinstance(observation.get("confirmation_state_stamp"), dict)):
+        raise RuntimeError("LIVE_G6_CANONICAL_OBSERVATION_FAILED")
+
+
 def main() -> None:
     if os.name != "nt" or not CLIENT.is_dir():
         raise RuntimeError("NAMED_WINDOWS_NONPROD_HOST_REQUIRED")
     ref = os.environ.get("MPS04_GITHUB_REF", "")
     expected_b = os.environ.get("MPS04_CI_HEAD_SHA", "")
+    run_key = (os.environ.get("GITHUB_RUN_ID", "") + "_"
+               + os.environ.get("GITHUB_RUN_ATTEMPT", ""))
     if (os.environ.get("GITHUB_REPOSITORY") != REPOSITORY
             or os.environ.get("GITHUB_EVENT_NAME") != "pull_request"
             or os.environ.get("MPS04_CI_ADOPTED_SHA") != A
             or not ref.startswith("codex/mps04-d007-")
-            or len(expected_b) != 40 or not os.environ.get("MPS04_GITHUB_TOKEN")):
+            or len(expected_b) != 40 or not os.environ.get("MPS04_GITHUB_TOKEN")
+            or not run_key.replace("_", "").isdigit()):
         raise RuntimeError("OWNER_PR_AND_EXACT_A_B_REQUIRED")
     sys.path.insert(0, str(CLIENT))
     from mps03_test_db_credential import read_password
@@ -149,13 +186,85 @@ def main() -> None:
                 or observation.get("clued_revision_id") != before[1]
                 or observation.get("clued_adoption_id") != before[2]
                 or observation.get("clued_current_changed") is not False
-                or observation.get("persistence") != "NOT_REGISTERED_CANDIDATE_ONLY"):
+                or observation.get("persistence") != "REGISTERED_CANONICAL_OBSERVATION"):
             raise RuntimeError("LIVE_D007_IDENTITY_OR_CURRENT_GUARD_FAILED")
-        print("LIVE_NONPROD_NATIVE_D007_READ_PASS", "object=" + OBJECT,
+        _assert_open_observation(observation, OBJECT, expected_b, ref)
+
+        ignored_object = _create_provider_object(base, token, "ignore_" + run_key)
+        ignored_id = ignored_object["object_id"]
+        ignored_observation = _http(
+            base + f"/v1/objects/{ignored_id}/provider-observation", token=token)
+        _assert_open_observation(ignored_observation, ignored_id, expected_b, ref)
+        ignore_request = "req_mps04_g6_ignore_" + run_key
+        ignored = _http(
+            base + f"/v1/objects/{ignored_id}/provider-observations/"
+                   f"{ignored_observation['observation_id']}/ignore",
+            token=token, body={"request_id": ignore_request})
+        ignored_retry = _http(
+            base + f"/v1/objects/{ignored_id}/provider-observations/"
+                   f"{ignored_observation['observation_id']}/ignore",
+            token=token, body={"request_id": ignore_request})
+        ignored_current = _http(base + f"/v1/objects/{ignored_id}", token=token)
+        if (ignored.get("ok") is not True or ignored.get("status") != "IGNORED"
+                or ignored.get("object_id") != ignored_id
+                or ignored.get("clued_current_changed") is not False
+                or ignored_retry != ignored
+                or ignored_current.get("body", {}).get("adopted_exact_commit") != A
+                or ignored_current.get("revision_id") != ignored_object.get("revision_id")
+                or ignored_current.get("adoption_id") != ignored_object.get("adoption_id")):
+            raise RuntimeError("LIVE_G6_IGNORE_OR_RETRY_FAILED")
+
+        adopted_object = _create_provider_object(base, token, "adopt_" + run_key)
+        adopted_id = adopted_object["object_id"]
+        adopted_observation = _http(
+            base + f"/v1/objects/{adopted_id}/provider-observation", token=token)
+        _assert_open_observation(adopted_observation, adopted_id, expected_b, ref)
+        adopt_request = "req_mps04_g6_adopt_" + run_key
+        adopt_body = {
+            "request_id": adopt_request,
+            "state_stamp": adopted_observation["confirmation_state_stamp"],
+        }
+        adopted = _http(
+            base + f"/v1/objects/{adopted_id}/provider-observations/"
+                   f"{adopted_observation['observation_id']}/adopt",
+            token=token, body=adopt_body)
+        adopted_retry = _http(
+            base + f"/v1/objects/{adopted_id}/provider-observations/"
+                   f"{adopted_observation['observation_id']}/adopt",
+            token=token, body=adopt_body)
+        adopted_current = _http(base + f"/v1/objects/{adopted_id}", token=token)
+        if (adopted.get("ok") is not True or adopted.get("status") != "committed"
+                or adopted.get("object_id") != adopted_id
+                or not adopted.get("receipt_id")
+                or adopted_retry != adopted
+                or adopted_current.get("body", {}).get("adopted_exact_commit") != expected_b
+                or adopted_current.get("revision_id") != adopted.get("result_revision_id")
+                or adopted_current.get("adoption_id") != adopted.get("result_adoption_id")):
+            raise RuntimeError("LIVE_G6_ADOPT_OR_IDEMPOTENT_RETRY_FAILED")
+
+        decision_rows = _query(password,
+            "select observation_id,status,coalesce(adoption_receipt_id,'') "
+            "from clued_private.mps_provider_observations where observation_id in ("
+            f"'{ignored_observation['observation_id']}',"
+            f"'{adopted_observation['observation_id']}') order by status;")
+        if (len(decision_rows) != 2
+                or not any("|IGNORED|" in row for row in decision_rows)
+                or not any(("|ADOPTED|" in row and row.rsplit("|", 1)[-1])
+                           for row in decision_rows)):
+            raise RuntimeError("LIVE_G6_CANONICAL_DECISION_RECORD_FAILED")
+
+        print("LIVE_NONPROD_MPS04_G6_PASS", "source_object=" + OBJECT,
               "A=" + A, "B=" + expected_b,
               "revision=" + before[1], "adoption=" + before[2],
               "observation_digest=" + observation["observation_digest"],
-              "Current_unchanged=true", "candidate_only=true")
+              "source_Current_unchanged=true",
+              "ignore_observation=" + ignored_observation["observation_id"],
+              "ignore_Current_unchanged=true",
+              "adopt_observation=" + adopted_observation["observation_id"],
+              "adopt_revision=" + adopted["result_revision_id"],
+              "adopt_adoption=" + adopted["result_adoption_id"],
+              "receipt=" + adopted["receipt_id"],
+              "idempotent_retry=true")
     finally:
         if process.poll() is None:
             process.terminate()
@@ -172,7 +281,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        print("LIVE_NONPROD_NATIVE_D007_READ_FAILED", type(error).__name__,
+        print("LIVE_NONPROD_MPS04_G6_FAILED", type(error).__name__,
               # Errors from our guards only; never include the underlying stderr.
               str(error)[:120] if type(error) is RuntimeError else "redacted")
         raise SystemExit(1) from None

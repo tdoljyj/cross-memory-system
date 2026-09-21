@@ -213,6 +213,17 @@ select jsonb_build_object(
 """
         r=self._json(sql)
         if r.get("ok") is not True: raise RuntimeError("required MPS-02B primitives are not installed")
+        if self.github_provider is not None:
+            r=self._json("""
+select jsonb_build_object(
+ 'ok',
+ to_regprocedure('clued_private.mps_register_provider_observation(text,text,text,text,jsonb)') is not null
+ and to_regprocedure('clued_private.mps_ignore_provider_observation(text,text,text,text)') is not null
+ and to_regprocedure('clued_private.mps_adopt_provider_observation(text,text,text,text,jsonb)') is not null
+)::text;
+""")
+            if r.get("ok") is not True:
+                raise RuntimeError("required MPS-04 provider observation primitives are not installed")
 
     def create_session(self, entry_kind: str, entry_secret: str) -> dict:
         mapping={"NATIVE":(self.native_secret,self.native_principal),"THIRD_PARTY_AGENT_HOST":(self.agent_secret,self.agent_principal)}
@@ -482,11 +493,56 @@ commit;
         if (latest.get("revision_id") != current.get("revision_id")
                 or latest.get("adoption_id") != current.get("adoption_id")):
             raise ProtocolError("STALE_CONTEXT_REQUIRES_REFRESH", "Clued Current changed during provider observation", 409)
-        observed["object_id"] = object_id
-        observed["clued_revision_id"] = current.get("revision_id")
-        observed["clued_adoption_id"] = current.get("adoption_id")
-        observed["clued_current_changed"] = False
-        return observed
+        registered=self._json(
+            f"select clued_private.mps_register_provider_observation("
+            f"{_t('oid')},{_t('domain')},{_t('reader')},{_t('native')},{_j('observation')})::text;",
+            {"oid":object_id,"domain":self.authority_domain,"reader":self._session(token)["principal"],
+             "native":self.native_principal,
+             "observation":json.dumps(observed,ensure_ascii=False,separators=(",",":"))},
+        )
+        registered["object_id"] = object_id
+        registered["clued_revision_id"] = current.get("revision_id")
+        registered["clued_adoption_id"] = current.get("adoption_id")
+        registered["clued_current_changed"] = False
+        return registered
+
+    def ignore_provider_observation(self, token: str, object_id: str,
+                                    observation_id: str, request_id: str) -> dict:
+        s=self._session(token); self._require(s,"confirm")
+        request_id=normalize_request_id(request_id)
+        self._assert_object_owner(object_id)
+        outcome=self._json(
+            f"select clued_private.mps_ignore_provider_observation("
+            f"{_t('observation_id')},{_t('domain')},{_t('principal')},{_t('request_id')})::text;",
+            {"observation_id":observation_id,"domain":self.authority_domain,
+             "principal":s["principal"],"request_id":request_id},
+        )
+        if (outcome.get("observation_id") not in (None,observation_id)
+                or outcome.get("object_id") not in (None,object_id)):
+            raise ProtocolError("MPS02B_INCONSISTENT_CONTEXT_READ","observation identity is inconsistent",500)
+        return outcome
+
+    def adopt_provider_observation(self, token: str, object_id: str,
+                                   observation_id: str, state_stamp: dict,
+                                   request_id: str) -> dict:
+        s=self._session(token); self._require(s,"confirm")
+        request_id=normalize_request_id(request_id)
+        if not isinstance(state_stamp,dict):
+            raise ProtocolError("STATE_STAMP_REQUIRED","state_stamp must be an object",400)
+        self._assert_object_owner(object_id)
+        submitted_stamp={k:v for k,v in state_stamp.items() if k!="state_stamp_digest"}
+        outcome=self._json(
+            f"select clued_private.mps_adopt_provider_observation("
+            f"{_t('observation_id')},{_t('domain')},{_t('principal')},"
+            f"{_t('request_id')},{_j('stamp')})::text;",
+            {"observation_id":observation_id,"domain":self.authority_domain,
+             "principal":s["principal"],"request_id":request_id,
+             "stamp":json.dumps(submitted_stamp,ensure_ascii=False,separators=(",",":"))},
+        )
+        if (outcome.get("observation_id") not in (None,observation_id)
+                or outcome.get("object_id") not in (None,object_id)):
+            raise ProtocolError("MPS02B_INCONSISTENT_CONTEXT_READ","observation identity is inconsistent",500)
+        return outcome
 
     def list_objects(self, token: str) -> dict:
         s=self._session(token); self._require(s,"read")

@@ -35,9 +35,9 @@ jobs:
           persist-credentials: false
       - name: MPS-03 bounded entry tests
         run: python scripts/mps03/run_acceptance.py
-      - name: MPS-04 D-007 candidate tests
+      - name: MPS-04 provider tests
         run: python -m unittest discover -s tests/mps04 -p "test_*.py" -v
-      - name: MPS-04 private GitHub source leg (candidate only)
+      - name: MPS-04 private GitHub read-only source leg
         if: github.event_name == 'pull_request'
         env:
           MPS04_GITHUB_TOKEN: ${{ github.token }}
@@ -50,7 +50,7 @@ jobs:
       - name: Compile MPS-03 Python
         run: python -m compileall -q development/mps/mps03 development/mps/mps04 tests/mps03 tests/mps04 scripts/mps03 scripts/mps04
 
-  mps04-live-native-nonprod-d007:
+  mps04-live-native-nonprod-g6:
     # This is the exact named credential host, not the interchangeable pool.
     if: >-
       github.event_name == 'pull_request' &&
@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - name: MPS-04 live Native D-007 nonproduction read (PR 274 only)
+      - name: MPS-04 live nonproduction G6 (PR 274 only)
         env:
           MPS04_GITHUB_TOKEN: ${{ github.token }}
           MPS04_GITHUB_REF: ${{ github.event.pull_request.head.ref }}

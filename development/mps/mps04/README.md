@@ -1,10 +1,13 @@
-# MPS-04 early D-007 candidate (non-production)
+# MPS-04 GitHub Provider (non-production)
 
-Owner authorized this bounded sequencing exception on 2026-09-21 while MPS-03
-remains open. This candidate only observes the bound GitHub repository via GET
-and shows D-007's `Clued Current=A / GitHub head=B` distinction in Native.
-It does not merge PRs, change GitHub, change Clued Current, register a canonical
-Drift record, claim G4/G6 PASS, or start MPS-05.
+Owner authorized this bounded sequencing exception on 2026-09-21. The provider
+only reads the bound GitHub repository via GET, registers an exact canonical
+Observation/Drift record, and shows `Clued Current=A / GitHub head=B` in Native.
+It never changes GitHub or Clued Current automatically. Current can move to B
+only after the user explicitly adopts that exact observation through the
+existing MPS-02B CAS/idempotency/Receipt boundary. Ignore records the exact
+decision without changing Current. This work does not merge a PR, claim G6
+PASS before independent review, or start MPS-05.
 
 The non-production PostgreSQL gateway defaults to provider observation **off**.
 Set `MPS04_PROVIDER_MODE=GITHUB_READ_ONLY` to enable it; the repository is fixed
@@ -18,30 +21,33 @@ No token is accepted from an Agent or Native request. Redirects, invalid exact
 commits, unknown ancestry, missing comparison evidence and unavailable GitHub
 all fail closed.
 
-For this candidate, the immutable adopted Revision content must include
+The immutable adopted Revision content must include
 `repository` and `adopted_exact_commit`. A read of that Current first passes the
 existing Resource × Action and object-ownership checks. The server then reads
 the bound ref, compares it against that exact adopted commit, and re-reads
-Current before returning so a concurrent adoption is reported as stale. The observation
-includes the exact A/B identities, ancestry, source URL, and a file-name sample;
-it is not persisted. No write route exists in this module.
+Current before registration so a concurrent adoption is reported as stale. The
+canonical observation binds object, Revision, Adoption, repository, ref, exact
+A/B commits, ancestry, source digest, and candidate Revision. Native exposes
+separate Adopt and Ignore actions only for an OPEN, canonically registered
+observation. Stale confirmation, replay conflict, or missing source evidence
+fails closed.
 
-Run local candidate checks:
+Run local checks:
 
 ```text
 python -m unittest discover -s tests/mps04 -p test_*.py -v
 python scripts/mps03/run_acceptance.py
 ```
 
-The existing owner-origin, same-repository MPS CI job also runs these tests and,
+The owner-origin, same-repository MPS CI job also runs these tests and,
 for PRs only, calls the real private GitHub API with the job's ephemeral
 `contents: read` token. It binds A and B to the PR base/head exact SHAs and
-rejects a branch move during the run. This validates only the provider source
-leg; the CI token is not copied to a local runtime or persisted.
+rejects a branch move during the run. The CI token is not copied to a local
+runtime or persisted.
 
-Before any formal gate upgrade, run D-007 against the real non-production
-Canonical Service and private GitHub read-only credential, capture exact
-Revision/Adoption A and provider B, prove Current remains A, and obtain a fresh
-independent G4 review. MPS-04/G6 additionally requires the complete frozen
-contract, including canonical Observation/Drift registration and explicit
-Adopt/Ignore behavior. Local mocked tests are not live evidence.
+Before any formal gate result, run the exact PR head against the real
+non-production Canonical Service and private GitHub read-only credential.
+Capture exact A/B identity, canonical Observation/Drift registration, explicit
+Ignore with unchanged Current, explicit Adopt with Revision/Adoption/Receipt,
+and idempotent retry. Local mocked tests are not live evidence; G6 requires a
+fresh independent review of the immutable evidence package.

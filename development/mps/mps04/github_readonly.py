@@ -1,7 +1,8 @@
 """Observe one server-configured GitHub ref without changing Clued Current.
 
-This is a non-production, read-only provider candidate. An observation is not
-an Adoption, a canonical Drift record, or a G6 acceptance result.
+This non-production source leg is read-only. Its returned source observation is
+not itself an Adoption or G6 result; the gateway separately binds and registers
+it before any explicit decision can be offered.
 """
 from __future__ import annotations
 
