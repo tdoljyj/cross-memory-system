@@ -1,0 +1,63 @@
+{
+    "schema_version":  "clued.m1-08-pc003-canonical-parent-bound-requalification/1",
+    "status":  "AUTHOR_SIDE_EXACT_WINDOWS_REQUALIFICATION_PASS / NON_EFFECTFUL / NOT_INDEPENDENT_REVIEW",
+    "task_id":  "M1-08",
+    "review_subject_exact_head":  "d955e8e4b14062e83f898c7aaf4dd79b95aa59e6",
+    "linear_base_exact_head":  "1bd9295ddccf2d359d60366c42a46f1548aa8236",
+    "source_freeze_exact_head":  "22a5ec5f96b972cffd7b9805c952c8308da3fab6",
+    "parent_provisioning_reviewed_exact_head":  "f9cb005bc2ec45cf53c1f7f9fc3b051058b85e00",
+    "parent_provisioning_review_verdict":  "PASS / M1_08_PC003_PARENT_PROVISIONING_ACCEPTABLE_FOR_PROFILE_BINDING_PREPARATION",
+    "candidate_profile_git_blob_sha1":  "51fc8894dfc4f38775cea0d669fcc1a9466a3d71",
+    "candidate_profile_sha256":  "a917f47a27ee731fba408b241f9aff3163ceb29123a7c75d046785b391cebfa4",
+    "contract_git_blob_sha1":  "2a11bc4fa3d56d58547e11024cd0bfb5f8ba45e7",
+    "source_tree_git_sha1":  "69006920787464adf70a2bf33bfbfe83396c199e",
+    "source_manifest_sha256":  "637fc894b2388b130ed9d11dd4c6a06b3d5feada8775cf926fcd39a5f83a39ac",
+    "owner_binary_sha256":  "a527ff09ddfe23dd3b891b82d79cd3a5be5a6023960d24b06d1e2b784a2fe8a6",
+    "owner_binary_bytes":  6930944,
+    "owner_binary_executed":  false,
+    "qualification":  {
+                          "go_test_pass":  true,
+                          "top_level_pass":  79,
+                          "subtest_pass":  30,
+                          "fail":  0,
+                          "skip":  0,
+                          "go_vet_pass":  true,
+                          "qualification_scope_tests_pass":  true,
+                          "windows_test_binary_sha256":  "60618db2662e89b2a8636b9698423dca02c3f9d6acc7766b4a3c3aeee9039c8b",
+                          "windows_test_binary_compiled":  true,
+                          "test_scope":  "TEST_BINARY_ONLY / TEST_OWNED_TEMP_PATHS / NO_REAL_MODEL"
+                      },
+    "no_effect":  {
+                      "pc001_guard_preserved":  true,
+                      "pc002_guard_preserved":  true,
+                      "pc003_guard_parent_empty":  true,
+                      "pc003_attempt_guard_created":  false,
+                      "pc003_test_root_created":  false,
+                      "pc003_evidence_dir_created":  false,
+                      "llama_server_started":  false,
+                      "real_model_loaded":  false,
+                      "lifecycle_execution_performed":  false,
+                      "production_effects_authorized":  false
+                  },
+    "authority":  {
+                      "effectful_authority_issued":  false,
+                      "role":  "OWNER_ROOT_PINNED_SUCCESSOR_BUILD / NO_EFFECTFUL_AUTHORITY / OWNER_BINARY_NOT_EXECUTED",
+                      "production_effects_authorized":  false,
+                      "production_host_observation":  "NOT_PERFORMED / DO_NOT_INFER_FROM_BUILD_SUCCESS"
+                  },
+    "rejected_or_superseded_author_side_attempts":  [
+                                                        {
+                                                            "id":  "pc003-parent-bound-85a349f-build-01",
+                                                            "result":  "REJECTED_NON_EFFECTFUL_QUALIFICATION",
+                                                            "reason":  "Test cleanup retained a predecessor-guard pin until TempDir teardown; repaired test handle lifecycle without weakening production pinning.",
+                                                            "production_effect":  false
+                                                        },
+                                                        {
+                                                            "id":  "pc003-parent-bound-e7fde82-build-02",
+                                                            "result":  "PASS_BUT_SUPERSEDED_FOR_CANONICAL_HISTORY",
+                                                            "reason":  "Qualification passed, but staging ancestry contained an unrelated merge from main; rebuilt as a minimal linear chain and requalified.",
+                                                            "production_effect":  false
+                                                        }
+                                                    ],
+    "next_gate":  "FRESH_CONTEXT_INDEPENDENT_PC003_PARENT_BOUND_SUCCESSOR_FINAL_REVIEW_BEFORE_FINAL_ISSUANCE"
+}

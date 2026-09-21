@@ -1,0 +1,17 @@
+{
+    "schema_version":  "clued.m1-08-pc003-canonical-parent-bound-requalification-no-effect/1",
+    "observed_at_utc":  "2026-09-21T07:42:36.2622667Z",
+    "reviewed_candidate_head":  "d955e8e4b14062e83f898c7aaf4dd79b95aa59e6",
+    "pc001_guard_sha256":  "9e0b95cf7e8cbb16608c73318b6c39b54dd5c1b2ae26daa63e822420cbce14bb",
+    "pc002_guard_sha256":  "4d6a230560fea05a4488ccd3eab1b3054e8906e0360a947409dd04313e4d7863",
+    "pc003_guard_parent_exists":  true,
+    "pc003_guard_parent_entry_count":  0,
+    "pc003_attempt_guard_exists":  false,
+    "pc003_test_root_exists":  false,
+    "pc003_evidence_dir_exists":  false,
+    "llama_server_count":  0,
+    "owner_binary_executed":  false,
+    "real_model_loaded":  false,
+    "lifecycle_execution_performed":  false,
+    "production_effects_authorized":  false
+}
