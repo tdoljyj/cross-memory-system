@@ -62,6 +62,8 @@ class Handler(BaseHTTPRequestHandler):
             oid = parts[2]
             if len(parts) == 3 and method == "GET":
                 return 200, self.store.read_object(self._token(), oid)
+            if len(parts) == 4 and parts[3] == "provider-observation" and method == "GET":
+                return 200, self.store.provider_observation(self._token(), oid)
             if len(parts) == 4 and parts[3] == "proposals" and method == "GET":
                 return 200, self.store.list_proposals(self._token(), oid)
             if len(parts) == 4 and parts[3] == "proposals" and method == "POST":

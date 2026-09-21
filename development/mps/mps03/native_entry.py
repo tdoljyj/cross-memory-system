@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, difflib, html, ipaddress, json, os, time
+import argparse, difflib, html, ipaddress, json, os, re, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 try:
@@ -110,6 +110,44 @@ class NativeHandler(BaseHTTPRequestHandler):
         return self._send_html(status,self._page("Request result",body))
     def _obj_nav(self,oid):
         q=html.escape(oid); return f'<nav><a href="/object/{q}">Detail</a><a href="/object/{q}/proposals">Suggestions</a><a href="/object/{q}/history">History</a><a href="/object/{q}/connection">Connection & Context</a></nav>'
+    def _provider_panel(self,oid,current):
+        body=current.get("body")
+        if not isinstance(body,dict) or not isinstance(body.get("repository"),str):
+            return ""
+        adopted=body.get("adopted_exact_commit")
+        if not isinstance(adopted,str):
+            return '<section><h2>External changes</h2><p>No exact Clued adoption is available for comparison.</p></section>'
+        try:
+            observed=self.client.provider_observation(oid)
+        except ProtocolError:
+            observed={"ok":False}
+        if not observed.get("ok"):
+            return ('<section><h2>External changes</h2><p>GitHub changes cannot be verified right now. '
+                    'Clued still uses the adopted commit shown below; no external change has been accepted.</p>'
+                    f'<p>Clued adopted commit: <code>{html.escape(adopted)}</code></p></section>')
+        if (observed.get("clued_adopted_exact_commit") != adopted
+                or observed.get("clued_adoption_id") != current.get("adoption_id")):
+            return '<section><h2>External changes</h2><p>Clued changed while this page loaded. Reload to compare again.</p></section>'
+        provider=html.escape(str(observed.get("provider_exact_commit", "")))
+        adopted_html=html.escape(adopted)
+        source=str(observed.get("source_compare_url", ""))
+        exact_source=(f'https://github.com/{body["repository"]}/compare/'
+                      f'{adopted}...{observed.get("provider_exact_commit", "")}')
+        if (not re.fullmatch(r'[0-9a-f]{40}',str(observed.get("provider_exact_commit", "")))
+                or observed.get("repository") != body["repository"]
+                or source != exact_source):
+            return '<section><h2>External changes</h2><p>GitHub source could not be verified.</p></section>'
+        ancestry=html.escape(str(observed.get("ancestry", "unknown")))
+        if observed.get("drift"):
+            message=f'GitHub now points to <code>{provider}</code>; Clued still uses <code>{adopted_html}</code>. No change was adopted automatically.'
+        else:
+            message=f'GitHub and Clued both point to <code>{adopted_html}</code>.'
+        sample=observed.get("changed_file_sample",[])
+        files=''.join('<li>'+html.escape(path)+'</li>' for path in sample if isinstance(path,str)) if isinstance(sample,list) else ''
+        file_section=f'<h3>Changed file sample</h3><ul>{files}</ul>' if files else ''
+        return (f'<section><h2>External changes</h2><p>{message}</p><p>GitHub comparison: '
+                f'<a href="{html.escape(source,quote=True)}">View exact source</a> '
+                f'(relationship: {ancestry})</p>{file_section}</section>')
     def do_GET(self):
         try:
             p=urlparse(self.path).path
@@ -139,7 +177,7 @@ class NativeHandler(BaseHTTPRequestHandler):
                     o=self.client.read_object(oid)
                     if not o.get("ok"): return self._html_error(o)
                     title=o.get("body",{}).get("title") if isinstance(o.get("body"),dict) else None
-                    body=nav+"<h1>"+html.escape(title or "Plan details")+"</h1><h2>Plan content</h2>"+self._content(o.get("body"),omit_title=True)+self._technical(o)
+                    body=nav+"<h1>"+html.escape(title or "Plan details")+"</h1><h2>Plan content</h2>"+self._content(o.get("body"),omit_title=True)+self._provider_panel(oid,o)+self._technical(o)
                     return self._send_html(200,self._page("Plan details",body))
                 if len(parts)==3 and parts[2]=="proposals":
                     cur=self.client.read_object(oid)

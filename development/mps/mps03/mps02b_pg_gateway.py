@@ -22,6 +22,11 @@ except ImportError:
     from common import ProtocolError, new_id, sha256_json, validate_create_content, normalize_request_id, require_secret_namespace, NATIVE_GATEWAY_PREFIX, AGENT_GATEWAY_PREFIX
     from gateway_http import Handler
 
+try:
+    from mps04.github_readonly import GitHubReadOnlyProvider, ProviderUnavailable
+except ImportError:
+    from development.mps.mps04.github_readonly import GitHubReadOnlyProvider, ProviderUnavailable
+
 EXPECTED_NONPROD_TARGET = "clued-auth-test/uscrdifznmlvczcekqpw"
 EXPECTED_PROJECT_REF = "uscrdifznmlvczcekqpw"
 EXPECTED_PROVIDER_REPOSITORY = "tdoljyj/cross-memory-system"
@@ -137,7 +142,7 @@ class PgMPS02BStore:
                  native_principal: str, agent_principal: str,
                  native_secret: str, agent_secret: str,
                  target_id: str, allow_nonprod_write: str,
-                 provider_context_mode: str = ""):
+                 provider_context_mode: str = "", github_provider=None):
         if target_id != EXPECTED_NONPROD_TARGET:
             raise RuntimeError(f"target guard failed: expected {EXPECTED_NONPROD_TARGET}")
         if allow_nonprod_write != "MPS03_NONPROD_WRITE_APPROVED":
@@ -150,6 +155,7 @@ class PgMPS02BStore:
         self.native_principal=native_principal; self.agent_principal=agent_principal
         self.native_secret=native_secret; self.agent_secret=agent_secret
         self.provider_evidence_refs,self.provider_exact_commit = _trusted_provider_context(provider_context_mode)
+        self.github_provider = github_provider
         self.sessions={}; self._lock=threading.RLock()
         self._assert_primitives()
 
@@ -457,6 +463,27 @@ commit;
         result["state_stamp_action"]=next_action
         return result
 
+    def provider_observation(self, token: str, object_id: str) -> dict:
+        # Reuse the canonical object read for Resource x Action and ownership checks.
+        current = self.read_object(token, object_id)
+        body = current.get("body")
+        if not isinstance(body, dict) or body.get("repository") != EXPECTED_PROVIDER_REPOSITORY:
+            raise ProtocolError("MPS04_PROVIDER_NOT_APPLICABLE", "object has no bound code repository", 404)
+        adopted = body.get("adopted_exact_commit")
+        if self.github_provider is None:
+            raise ProtocolError("MPS04_PROVIDER_NOT_CONFIGURED", "provider observation is unavailable", 503)
+        if self.github_provider.repository != EXPECTED_PROVIDER_REPOSITORY:
+            raise ProtocolError("MPS04_PROVIDER_BINDING_MISMATCH", "provider repository binding differs", 503)
+        try:
+            observed = self.github_provider.observe(adopted)
+        except ProviderUnavailable:
+            raise ProtocolError("MPS04_PROVIDER_UNAVAILABLE", "provider observation is unavailable", 503) from None
+        observed["object_id"] = object_id
+        observed["clued_revision_id"] = current.get("revision_id")
+        observed["clued_adoption_id"] = current.get("adoption_id")
+        observed["clued_current_changed"] = False
+        return observed
+
     def list_objects(self, token: str) -> dict:
         s=self._session(token); self._require(s,"read")
         # Candidate enumeration is not authority. Every returned object must pass the
@@ -651,12 +678,23 @@ def main(argv=None):
     ap.add_argument("--host",default="127.0.0.1"); ap.add_argument("--port",type=int,required=True)
     args=ap.parse_args(argv)
     _assert_loopback_host(args.host)
+    github_mode=os.environ.get("MPS04_PROVIDER_MODE","")
+    if github_mode not in ("","GITHUB_READ_ONLY"):
+        raise RuntimeError("unsupported MPS-04 provider mode")
+    if github_mode and not os.environ.get("MPS04_GITHUB_TOKEN",""):
+        raise RuntimeError("MPS-04 private repository read-only token required")
+    github_provider=(GitHubReadOnlyProvider(
+        EXPECTED_PROVIDER_REPOSITORY,
+        os.environ.get("MPS04_GITHUB_REF",""),
+        os.environ.get("MPS04_GITHUB_TOKEN",""),
+    ) if github_mode else None)
     Handler.store=PgMPS02BStore(os.environ.get("MPS03_DATABASE_URL",""),user_id=args.user_id,authority_domain=args.authority_domain,
         native_principal=args.native_principal,agent_principal=args.agent_principal,
         native_secret=os.environ.get("MPS03_NATIVE_ENTRY_SECRET",""),
         agent_secret=os.environ.get("MPS03_AGENT_ENTRY_SECRET",""),
         target_id=args.target_id,allow_nonprod_write=args.allow_nonprod_write,
-        provider_context_mode=os.environ.get("MPS03_PROVIDER_CONTEXT_MODE",""))
+        provider_context_mode=os.environ.get("MPS03_PROVIDER_CONTEXT_MODE",""),
+        github_provider=github_provider)
     from http.server import ThreadingHTTPServer
     srv=ThreadingHTTPServer((args.host,args.port),Handler)
     print(json.dumps({"ready":True,"backend":"MPS02B_POSTGRES","target_id":args.target_id,"host":args.host,"port":args.port}),flush=True)
