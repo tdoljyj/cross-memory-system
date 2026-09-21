@@ -37,6 +37,15 @@ class PgBridgeStaticBinding(unittest.TestCase):
         self.assertIn("IDEMPOTENCY_CONFLICT",src)
         self.assertNotIn("creation_request_id",src)
 
+    def test_provider_context_is_server_bound_for_every_pack_issue(self):
+        src=inspect.getsource(pg.PgMPS02BStore)
+        self.assertNotIn("'[]'::jsonb,null",src)
+        self.assertGreaterEqual(src.count("_j('evidence_refs')"),4)
+        self.assertGreaterEqual(src.count("_t('provider_commit')"),4)
+        agent_src=(REPO/"development"/"mps"/"mps03"/"agent_host_entry.py").read_text(encoding="utf-8")
+        self.assertNotIn("provider_exact_commit",agent_src)
+        self.assertNotIn("provenance_evidence_refs",agent_src)
+
     def test_pg_gateway_uses_transport_only_handler(self):
         src=inspect.getsource(pg)
         self.assertIn("gateway_http import Handler",src)

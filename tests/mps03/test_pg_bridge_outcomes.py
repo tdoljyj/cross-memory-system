@@ -12,6 +12,8 @@ class PgBridgeOutcome(unittest.TestCase):
         self.store.authority_domain="test"
         self.store.native_principal="native"
         self.store.agent_principal="agent"
+        self.store.provider_evidence_refs=[]
+        self.store.provider_exact_commit=None
         self.store._session=lambda token:{"principal":"native"}
         self.store._require=lambda session,action:None
         self.store._assert_object_owner=lambda object_id:None

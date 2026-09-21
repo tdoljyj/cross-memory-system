@@ -3,7 +3,11 @@ from unittest.mock import patch
 REPO=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(REPO/"development"/"mps"))
 from mps03.common import ProtocolError, require_secret_namespace, NATIVE_GATEWAY_PREFIX, AGENT_GATEWAY_PREFIX, NATIVE_ACCESS_PREFIX, AGENT_ACCESS_PREFIX
-from mps03.mps02b_pg_gateway import PgMPS02BStore, EXPECTED_NONPROD_TARGET, _assert_loopback_host, _assert_nonprod_dsn
+from mps03.mps02b_pg_gateway import (
+    PgMPS02BStore, EXPECTED_NONPROD_TARGET, EXPECTED_PROVIDER_REPOSITORY,
+    TRUSTED_PROVIDER_CONTEXT_MODE, _assert_loopback_host, _assert_nonprod_dsn,
+    _trusted_provider_context,
+)
 
 KW=dict(dsn="postgresql://invalid",user_id="00000000-0000-0000-0000-000000000001",authority_domain="d",native_principal="n",agent_principal="a",native_secret="ns",agent_secret="as")
 class PgBridgeGuards(unittest.TestCase):
@@ -58,6 +62,45 @@ class PgBridgeGuards(unittest.TestCase):
         for host in ("0.0.0.0","192.0.2.4","example.test"):
             with self.subTest(host=host), self.assertRaisesRegex(RuntimeError,"loopback"):
                 _assert_loopback_host(host)
+    def test_provider_context_is_absent_unless_explicitly_enabled(self):
+        self.assertEqual(_trusted_provider_context(""),([],None))
+        with self.assertRaisesRegex(RuntimeError,"unsupported provider context mode"):
+            _trusted_provider_context("CALLER_SUPPLIED")
+
+    def test_trusted_provider_context_binds_clean_exact_head(self):
+        head="a"*40
+        results=[
+            subprocess.CompletedProcess(["git"],0,"C:\\repo\n",""),
+            subprocess.CompletedProcess(["git"],0,head+"\n",""),
+            subprocess.CompletedProcess(["git"],0,"https://github.com/tdoljyj/cross-memory-system.git\n",""),
+            subprocess.CompletedProcess(["git"],0,"",""),
+        ]
+        with patch("mps03.mps02b_pg_gateway.shutil.which",return_value="git"), \
+             patch("mps03.mps02b_pg_gateway.subprocess.run",side_effect=results), \
+             patch("mps03.mps02b_pg_gateway.os.path.samefile",return_value=True):
+            refs,commit=_trusted_provider_context(TRUSTED_PROVIDER_CONTEXT_MODE)
+        self.assertEqual(commit,head)
+        self.assertEqual(refs,[{
+            "evidence_type":"git_exact_head",
+            "repository":EXPECTED_PROVIDER_REPOSITORY,
+            "remote_url":"https://github.com/tdoljyj/cross-memory-system.git",
+            "exact_commit":head,
+            "verification":"gateway_startup_clean_worktree",
+        }])
+
+    def test_trusted_provider_context_rejects_dirty_worktree(self):
+        results=[
+            subprocess.CompletedProcess(["git"],0,"C:\\repo\n",""),
+            subprocess.CompletedProcess(["git"],0,"a"*40+"\n",""),
+            subprocess.CompletedProcess(["git"],0,"https://github.com/tdoljyj/cross-memory-system.git\n",""),
+            subprocess.CompletedProcess(["git"],0,"M user-file\n",""),
+        ]
+        with patch("mps03.mps02b_pg_gateway.shutil.which",return_value="git"), \
+             patch("mps03.mps02b_pg_gateway.subprocess.run",side_effect=results), \
+             patch("mps03.mps02b_pg_gateway.os.path.samefile",return_value=True), \
+             self.assertRaisesRegex(RuntimeError,"clean worktree"):
+            _trusted_provider_context(TRUSTED_PROVIDER_CONTEXT_MODE)
+
     def test_database_timeout_does_not_expose_connection_secret(self):
         store=PgMPS02BStore.__new__(PgMPS02BStore)
         store.dsn="postgresql://postgres:private-password@db.uscrdifznmlvczcekqpw.supabase.co/postgres"
@@ -94,6 +137,24 @@ class PgBridgeGuards(unittest.TestCase):
         self.assertEqual(result,{"ok":True,"objects":[{
             "object_id":"visible","title":"Visible","revision_id":"rv_1","adoption_id":"ad_1"
         }]})
+
+    def test_context_pack_provider_binding_mismatch_fails_closed(self):
+        store=PgMPS02BStore.__new__(PgMPS02BStore)
+        store.user_id="user"
+        store.authority_domain="domain"
+        store.provider_exact_commit="a"*40
+        store.provider_evidence_refs=[{"exact_commit":"a"*40}]
+        store._assert_object_owner=lambda object_id: None
+        store._json=lambda *args,**kwargs: {
+            "pack_digest":"digest",
+            "context_pack":{
+                "provider_exact_commit":"b"*40,
+                "provenance_evidence_refs":store.provider_evidence_refs,
+            },
+        }
+        with self.assertRaises(ProtocolError) as caught:
+            store._read_for("agent","object","read")
+        self.assertEqual(caught.exception.code,"MPS02B_INCONSISTENT_CONTEXT_READ")
 
     def test_malformed_confirmation_stamp_is_client_error(self):
         store=PgMPS02BStore.__new__(PgMPS02BStore)

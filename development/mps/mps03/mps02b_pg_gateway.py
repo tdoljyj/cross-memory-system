@@ -24,6 +24,9 @@ except ImportError:
 
 EXPECTED_NONPROD_TARGET = "clued-auth-test/uscrdifznmlvczcekqpw"
 EXPECTED_PROJECT_REF = "uscrdifznmlvczcekqpw"
+EXPECTED_PROVIDER_REPOSITORY = "tdoljyj/cross-memory-system"
+EXPECTED_PROVIDER_REMOTE = "https://github.com/tdoljyj/cross-memory-system.git"
+TRUSTED_PROVIDER_CONTEXT_MODE = "TRUSTED_CLEAN_GIT_HEAD"
 MPS03_PROPOSAL_PURPOSE = "mps03_accept_agent_proposal"
 
 
@@ -73,6 +76,52 @@ def _assert_loopback_host(host: str) -> None:
         raise RuntimeError("MPS-03 gateway must bind to loopback")
 
 
+def _trusted_provider_context(mode: str) -> tuple[list[dict[str, str]], str | None]:
+    """Bind optional D-003 provider context to a verified clean Git exact head."""
+    if not mode:
+        return [], None
+    if mode != TRUSTED_PROVIDER_CONTEXT_MODE:
+        raise RuntimeError("unsupported provider context mode")
+    if not shutil.which("git"):
+        raise RuntimeError("git is required for trusted provider context")
+
+    def git(*args: str) -> str:
+        try:
+            completed = subprocess.run(
+                ["git", *args], text=True, capture_output=True, timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise RuntimeError("trusted provider context Git verification failed") from error
+        if completed.returncode:
+            raise RuntimeError("trusted provider context Git verification failed")
+        return completed.stdout.strip()
+
+    root = git("rev-parse", "--show-toplevel")
+    head = git("rev-parse", "HEAD")
+    remote = git("remote", "get-url", "origin")
+    dirty = git("status", "--porcelain")
+    try:
+        same_root = os.path.samefile(root, os.getcwd())
+    except OSError:
+        same_root = False
+    if not same_root:
+        raise RuntimeError("trusted provider context requires the gateway working tree root")
+    if remote != EXPECTED_PROVIDER_REMOTE:
+        raise RuntimeError("trusted provider context repository rejected")
+    if re.fullmatch(r"[0-9a-f]{40}", head) is None:
+        raise RuntimeError("trusted provider context exact commit rejected")
+    if dirty:
+        raise RuntimeError("trusted provider context requires a clean worktree")
+    evidence_refs = [{
+        "evidence_type": "git_exact_head",
+        "repository": EXPECTED_PROVIDER_REPOSITORY,
+        "remote_url": EXPECTED_PROVIDER_REMOTE,
+        "exact_commit": head,
+        "verification": "gateway_startup_clean_worktree",
+    }]
+    return evidence_refs, head
+
+
 def _b64(value: str) -> str:
     return base64.b64encode(value.encode("utf-8")).decode("ascii")
 
@@ -87,7 +136,8 @@ class PgMPS02BStore:
     def __init__(self, dsn: str, *, user_id: str, authority_domain: str,
                  native_principal: str, agent_principal: str,
                  native_secret: str, agent_secret: str,
-                 target_id: str, allow_nonprod_write: str):
+                 target_id: str, allow_nonprod_write: str,
+                 provider_context_mode: str = ""):
         if target_id != EXPECTED_NONPROD_TARGET:
             raise RuntimeError(f"target guard failed: expected {EXPECTED_NONPROD_TARGET}")
         if allow_nonprod_write != "MPS03_NONPROD_WRITE_APPROVED":
@@ -99,6 +149,7 @@ class PgMPS02BStore:
         self.dsn=dsn; self.user_id=user_id; self.authority_domain=authority_domain
         self.native_principal=native_principal; self.agent_principal=agent_principal
         self.native_secret=native_secret; self.agent_secret=agent_secret
+        self.provider_evidence_refs,self.provider_exact_commit = _trusted_provider_context(provider_context_mode)
         self.sessions={}; self._lock=threading.RLock()
         self._assert_primitives()
 
@@ -174,6 +225,14 @@ select jsonb_build_object(
         allowed={self.native_principal:{"read","create","confirm","history"},self.agent_principal:{"read","propose","history"}}
         if action not in allowed.get(s["principal"],set()): raise ProtocolError("ACTION_NOT_AUTHORIZED",f"principal cannot {action}",403)
 
+    def _provider_variables(self) -> dict[str, str]:
+        return {
+            "evidence_refs": json.dumps(
+                self.provider_evidence_refs, ensure_ascii=False, separators=(",", ":"),
+            ),
+            "provider_commit": self.provider_exact_commit or "",
+        }
+
     def _assert_object_owner(self, object_id: str) -> None:
         result=self._json(f"""
 select jsonb_build_object('owned',exists(
@@ -188,10 +247,14 @@ select jsonb_build_object('owned',exists(
         # The pack function is VOLATILE and uses a fresh inner snapshot. Reading
         # Current in the same outer SELECT can pair its stamp with an older body.
         issued=self._json(
-            f"select clued_private.mps_issue_context_pack({_t('oid')},{_t('domain')},{_t('principal')},{_t('action')},'[]'::jsonb,null)::text;",
-            {"oid":object_id,"domain":self.authority_domain,"principal":principal,"action":action},
+            f"select clued_private.mps_issue_context_pack({_t('oid')},{_t('domain')},{_t('principal')},{_t('action')},{_j('evidence_refs')},nullif({_t('provider_commit')},''))::text;",
+            {"oid":object_id,"domain":self.authority_domain,"principal":principal,
+             "action":action,**self._provider_variables()},
         )
         pack=issued.get("context_pack") or {}
+        if (pack.get("provider_exact_commit") != self.provider_exact_commit
+                or pack.get("provenance_evidence_refs") != self.provider_evidence_refs):
+            raise ProtocolError("MPS02B_INCONSISTENT_CONTEXT_READ","provider context is inconsistent",500)
         stamp=pack.get("composite_state_stamp") or {}
         revision=pack.get("exact_revision") or {}
         adoption=pack.get("adoption") or {}
@@ -334,7 +397,8 @@ begin
     (v_in.authority_domain_id,v_in.agent_principal,v_oid,'propose',1,true,'MPS03 Agent propose');
 
   v_pack:=clued_private.mps_issue_context_pack(
-    v_oid,v_in.authority_domain_id,v_in.principal,'create','[]'::jsonb,null);
+    v_oid,v_in.authority_domain_id,v_in.principal,'create',
+    {_j('evidence_refs')},nullif({_t('provider_commit')},''));
   v_change_id:=clued_private.mps_new_id('chg');
   v_change:=clued_private.mps_register_change_set(
     v_oid,v_change_id,pg_catalog.jsonb_build_object('mode','REPLACE_JSON_V1','content',v_in.content));
@@ -362,7 +426,8 @@ commit;
 """
         outcome=self._json(sql,{"uid":self.user_id,"content":json.dumps(content,ensure_ascii=False,separators=(",",":")),
             "domain":self.authority_domain,"principal":s["principal"],"request_id":request_id,
-            "native":self.native_principal,"agent":self.agent_principal})
+            "native":self.native_principal,"agent":self.agent_principal,
+            **self._provider_variables()})
         if outcome.get("status") == "committed":
             return {"ok":True,**outcome,"revision_id":outcome.get("result_revision_id"),
                 "adoption_id":outcome.get("result_adoption_id")}
@@ -426,12 +491,14 @@ from clued_private.mps_objects o where o.user_id=({_t('uid')})::uuid;
         observed_stamp={k:v for k,v in observed_state_stamp.items() if k!="state_stamp_digest"}
         sql=f"""
 with cp as (
- select clued_private.mps_issue_context_pack({_t('oid')},{_t('domain')},{_t('principal')},'propose','[]'::jsonb,null) p
+ select clued_private.mps_issue_context_pack({_t('oid')},{_t('domain')},{_t('principal')},'propose',
+  {_j('evidence_refs')},nullif({_t('provider_commit')},'')) p
 ), guard as (
  select p from cp where p#>>'{{context_pack,state_stamp_digest}}'={_t('observed_digest')}
   and p#>'{{context_pack,composite_state_stamp}}'={_j('observed_stamp')}
 ), native_pack as (
- select clued_private.mps_issue_context_pack({_t('oid')},{_t('domain')},{_t('native')},'update','[]'::jsonb,null) p
+ select clued_private.mps_issue_context_pack({_t('oid')},{_t('domain')},{_t('native')},'update',
+  {_j('evidence_refs')},nullif({_t('provider_commit')},'')) p
  from guard
 ), aligned as (
  select guard.p agent_pack,native_pack.p write_pack from guard,native_pack
@@ -476,7 +543,12 @@ else
   'proposal_context_pack_digest',cp.p->>'pack_digest','context_pack_digest',aligned.write_pack->>'pack_digest',
   'proposed_body',{_j('body')}) end::text from cp left join aligned on true left join mi on true;
 """
-        return self._json(sql,{"oid":object_id,"domain":self.authority_domain,"principal":s["principal"],"native":self.native_principal,"observed_digest":observed_digest,"observed_stamp":json.dumps(observed_stamp,ensure_ascii=False,separators=(",",":")),"body":json.dumps(proposed_body,ensure_ascii=False,separators=(",",":"))})
+        return self._json(sql,{"oid":object_id,"domain":self.authority_domain,
+            "principal":s["principal"],"native":self.native_principal,
+            "observed_digest":observed_digest,
+            "observed_stamp":json.dumps(observed_stamp,ensure_ascii=False,separators=(",",":")),
+            "body":json.dumps(proposed_body,ensure_ascii=False,separators=(",",":")),
+            **self._provider_variables()})
 
     def list_proposals(self, token: str, object_id: str) -> dict:
         s=self._session(token); self._require(s,"read")
@@ -581,7 +653,8 @@ def main(argv=None):
         native_principal=args.native_principal,agent_principal=args.agent_principal,
         native_secret=os.environ.get("MPS03_NATIVE_ENTRY_SECRET",""),
         agent_secret=os.environ.get("MPS03_AGENT_ENTRY_SECRET",""),
-        target_id=args.target_id,allow_nonprod_write=args.allow_nonprod_write)
+        target_id=args.target_id,allow_nonprod_write=args.allow_nonprod_write,
+        provider_context_mode=os.environ.get("MPS03_PROVIDER_CONTEXT_MODE",""))
     from http.server import ThreadingHTTPServer
     srv=ThreadingHTTPServer((args.host,args.port),Handler)
     print(json.dumps({"ready":True,"backend":"MPS02B_POSTGRES","target_id":args.target_id,"host":args.host,"port":args.port}),flush=True)
