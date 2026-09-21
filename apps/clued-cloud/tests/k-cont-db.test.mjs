@@ -178,6 +178,13 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     });
     assert.equal((await appendTarget(globalRecordId, "global_target")).status, "committed");
     assert.equal((await appendTarget(projectRecordId, "project_target")).status, "committed");
+    const otherProjectId = uuid();
+    await admin.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at) values($1,$2,'Other project','other project',$3,'confirmed',now())",
+      [otherProjectId, userId, `project:${otherProjectId}`]);
+    assert.equal((await rpc("clued_event_append", {
+      event_schema_version: 1, event_type: "extension:kcont:other_project_target", event_scope: projectContext,
+      target_refs: [{ kind: "project", id: otherProjectId }], audit_visibility: "work_log", idempotency_key: uuid(),
+    })).status, "committed");
     const malformed = await rpc("clued_event_append", {
       event_schema_version: 1, event_type: "extension:kcont:invalid_target", event_scope: projectContext,
       target_refs: { kind: "record", id: globalRecordId }, audit_visibility: "work_log", idempotency_key: uuid(),
@@ -211,13 +218,23 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     assert.equal(reduced.authority_conflicts.some((item) => item.title === "Resident constraint"), false);
     const globalEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:global_target");
     const projectEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:project_target");
+    const otherProjectEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:other_project_target");
     const historicalMalformedEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:invalid_id");
+    assert.deepEqual(globalEvent.target_refs, []);
     assert.deepEqual(globalEvent.record_targets, []);
+    assert.deepEqual(projectEvent.target_refs.map((item) => item.id), [projectRecordId]);
     assert.deepEqual(projectEvent.record_targets.map((item) => item.title), ["Project constraint"]);
+    assert.deepEqual(otherProjectEvent.target_refs, []);
     assert.deepEqual(historicalMalformedEvent.record_targets, []);
     const reducedLog = await reducedRpc("clued_mcp_restore", { context_key: projectContext, response_view: "work_log" });
     assert.doesNotMatch(reducedLog.work_log, /Remain visible during resume\./);
+    assert.doesNotMatch(reducedLog.work_log, new RegExp(globalRecordId));
+    assert.doesNotMatch(reducedLog.work_log, new RegExp(otherProjectId));
     assert.match(reducedLog.work_log, /Keep project scope visible\./);
+    const readLog = await reducedRpc("clued_mcp_read_log", { context_key: projectContext, session_token: reduced.session_token });
+    assert.doesNotMatch(readLog.markdown, new RegExp(globalRecordId));
+    assert.doesNotMatch(readLog.markdown, new RegExp(otherProjectId));
+    assert.match(readLog.markdown, new RegExp(projectRecordId));
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
