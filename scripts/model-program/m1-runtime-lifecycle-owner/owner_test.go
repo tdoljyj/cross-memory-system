@@ -210,7 +210,7 @@ func TestFixedCLIRejectsCallerAuthoritySurfaces(t *testing.T) {
 	}
 }
 
-func TestCandidateCannotExecuteAndRootIsUnbound(t *testing.T) {
+func TestCandidateCannotExecuteAndEmptyIssuerInputFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "candidate.json")
 	if e := os.WriteFile(p, []byte(`{"status":"BLOCKED_PENDING_FRESH_CONTEXT_REVIEW_AND_REVIEWED_EFFECTFUL_OWNER_IMPLEMENTATION_AND_FINAL_ISSUANCE","profile_id":"M1-LIFE-QWEN35-08B-PC-001-CANDIDATE"}`), 0600); e != nil {

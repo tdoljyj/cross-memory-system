@@ -6,16 +6,16 @@
   "effectful_authority_issued": false,
   "files": [
     {
-      "bytes": 8725,
-      "git_blob_sha1": "81d985648579b276b212723bbceecc1572369867",
+      "bytes": 9050,
+      "git_blob_sha1": "3c9a96e32ee819ca7a36febd29401871aebc2e37",
       "path": "README.md",
-      "sha256": "d1e24a8d11c324419d58d01755da9abf7e8b657808ac9829cf2e23cd7f14b456"
+      "sha256": "e9ffd8823b5a3e78e1d7e54ad0a91b706d18db0ad9265ffc1dad14e383cc09fb"
     },
     {
-      "bytes": 614,
-      "git_blob_sha1": "4c9e4b962d0f7ddbfb16c7e7948e095e3c0176b0",
+      "bytes": 814,
+      "git_blob_sha1": "d86018cc44f829247481aab3c0054286e5e6ff8b",
       "path": "bindings.go",
-      "sha256": "3c94f8d4fd8b1e2bbdc185c9524b984ae3208d86c9094fac754d8849949d8266"
+      "sha256": "a1841505a59d802ee3afab4abdd4ca4b718ff0e530a84d139e3f8932fa2f4d8e"
     },
     {
       "bytes": 733,
@@ -24,10 +24,10 @@
       "sha256": "8650b9901d8a7944a80a86fcb25826b4255aa3fc2f56f1a79a2b1a15f555fbdf"
     },
     {
-      "bytes": 15655,
-      "git_blob_sha1": "490647e6e096a781037d2d6194f88118e8323867",
+      "bytes": 16884,
+      "git_blob_sha1": "83634f0e7d38107f04999985b0afb75b9451285b",
       "path": "build.py",
-      "sha256": "3a955b88c7a483a7f4185dcded7a04ba0ec4ac86137cf771abde790b4f8f8956"
+      "sha256": "302912cc8d8c185c2eef2f38c4f440e1b566e722613735b63383b83cce66e4db"
     },
     {
       "bytes": 1620,
@@ -102,10 +102,10 @@
       "sha256": "a8abe9e33425f98925d5239d38c095e18d6c1b496136ffd0fcac90c9e03e6a87"
     },
     {
-      "bytes": 21048,
-      "git_blob_sha1": "71972a71f75c8a8f0fddd7b4fb36521ddf9ed1d1",
+      "bytes": 21062,
+      "git_blob_sha1": "57e352f52a9f3fad6bce79a85785d7523fec86e3",
       "path": "owner_test.go",
-      "sha256": "080eccd07b4d809bd7fc00a3ed0931fe1c9d3704b53c4cb63b4ddccd8f36be8b"
+      "sha256": "fe14009753743824b33dcda578c29fdc5f45fe97163c18988546b8e50c5fee30"
     },
     {
       "bytes": 669,
@@ -176,9 +176,13 @@
   ],
   "implementation_base": "3d8a4c88373f5a54831b40d34c0ad89281d02ac1",
   "issuer_root": {
-    "public_key_hex": null,
-    "public_key_sha256_fingerprint": null,
-    "status": "UNBOUND_BY_DESIGN / OWNER_DECISION_AND_REVIEWED_SUCCESSOR_REQUIRED_BEFORE_FINAL_ISSUANCE"
+    "public_key_hex": "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03",
+    "public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
+    "status": "OWNER_EXPLICITLY_SELECTED_REUSE_EXISTING_M1_07_ROOT / PINNED_IN_SUCCESSOR_SOURCE / NOT_ISSUED",
+    "decision_source": "CURRENT_CONVERSATION",
+    "decision_instruction": "批准 M1-08 复用现有 M1-07 Owner Root。",
+    "private_key_storage_locator": "windows-local-owner-key://DESK-W-591/Clued/M1-07/Owner-Ed25519-Root",
+    "private_key_material_in_repository": false
   },
   "native_build_toolchain": {
     "archive_bytes": 78931360,
@@ -208,9 +212,31 @@
     "repair_base_source_manifest_sha256": "40eaa69913ade714d2e717a94a317d1b2ecce9b73b9ef0824b9aeeff345dc801",
     "repository_successor_commit": null,
     "revision": "MAJOR-08-r5-capture-linearization",
-    "status": "LOCAL_SOURCE_CANDIDATE / R5_LINEARIZATION_REMEDIATION / EXACT_WINDOWS_REQUALIFICATION_PENDING",
-    "validation_boundary": "NO_OWNER_BINARY_OR_REAL_MODEL_EXECUTION / NOT_INDEPENDENT_REVIEW"
+    "status": "OWNER_ROOT_PINNED_SUCCESSOR_PREPARATION / EXACT_WINDOWS_REQUALIFICATION_REQUIRED / NO_FINAL_ISSUANCE",
+    "validation_boundary": "STATIC_NEGATIVE_FAULT_AND_WINDOWS_QUALIFICATION_ONLY / NO_OWNER_EFFECTFUL_EXECUTION / NOT_INDEPENDENT_REVIEW"
   },
-  "role": "EFFECTFUL_OWNER_IMPLEMENTATION_PREPARATION_CANDIDATE / NO_FINAL_ISSUANCE / NO_EXECUTION",
-  "schema_version": "clued.m1-08-native-owner-source-manifest/1"
+  "role": "EFFECTFUL_OWNER_OWNER_ROOT_PINNED_SUCCESSOR_PREPARATION / NO_FINAL_ISSUANCE / NO_EXECUTION",
+  "schema_version": "clued.m1-08-native-owner-source-manifest/1",
+  "owner_root_successor_preparation": {
+    "predecessor_exact_head": "4574c472d17cd20f32dc3b7b0ca75243e731dda7",
+    "accepted_effectful_owner_final_head": "faaf0ff85d73e5be7615a4dc7426997e29cc80d2",
+    "accepted_r5_source_freeze": "96312735a2341c145e360f19a6f3a08ec222d64a",
+    "predecessor_source_tree": "ebfb3db331e5fa817e0cc7bf9ea979fe1b33f964",
+    "owner_root_reuse": "EXPLICITLY_AUTHORIZED",
+    "guard_parent_preissuance_evidence": {
+      "path": "development/contracts/model-program/m1/evidence/M1RuntimeLifecycleGuardParentPreIssuancePreparation_20260920/M1RuntimeLifecycleGuardParentProvisioningReceipt_20260920.json",
+      "git_blob_sha1": "abfb06e517f67b95f5d6824173b4235da894c7ef",
+      "raw_sha256": "dcd914376d2bbd8fd8112104861200cf1f103aee567ea6d6f5500d9632a9349a",
+      "independent_review_verdict": "PASS / M1_08_GUARD_PARENT_PRE_ISSUANCE_PREPARATION_ACCEPTABLE_FOR_OWNER_ROOT_DECISION_AND_FINAL_ISSUANCE_PREPARATION",
+      "point_in_time_only": true,
+      "revalidation_required_at_final_issuance_and_execution": true
+    },
+    "effectful_authority_issued": false,
+    "final_issuance_performed": false,
+    "attempt_guard_created": false,
+    "real_lifecycle_executed": false,
+    "build_helper_semantics": "OWNER_ROOT_PINNED_SUCCESSOR_QUALIFICATION / EXACT_APPROVED_PUBLIC_ROOT_REQUIRED / EFFECTFUL_AUTHORITY_FALSE / OWNER_BINARY_NOT_EXECUTED",
+    "documentation_semantics": "OWNER_ROOT_PINNED SUCCESSOR / NON-ISSUED / REVISION-SPECIFIC QUALIFICATION / NO STALE UNBOUND-ROOT CLAIMS",
+    "test_semantics": "EMPTY ISSUER INPUT FAILS CLOSED; PRODUCTION PINNED ROOT IS ENFORCED BY EXACT SUCCESSOR BINDINGS AND BUILD HELPER"
+  }
 }

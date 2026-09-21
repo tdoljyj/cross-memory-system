@@ -5,9 +5,7 @@ This directory is the standalone native Effectful Owner candidate for Clued Firs
 ## MAJOR-01 through MAJOR-09 remediation r1
 
 Repair baseline: `015eecb50f86d6ab59228e91b12f7007e88f9387`. This is a
-**source candidate**, not an independently accepted successor. The previous
-Windows qualification hashes and logs apply only to the previous source. They
-must not be reused as qualification for this revision.
+**Owner-root-pinned successor candidate**, not yet independently accepted and not issued. Qualification hashes are revision-specific and MUST NOT be reused across source changes; the exact Windows qualification for the current successor is recorded in the external successor preparation receipt.
 
 The local author-side checks use Go 1.23.2 on Linux and a simulated platform.
 Windows cross-compilation is NOT Windows-native execution evidence. The pinned
@@ -20,8 +18,8 @@ builds. No finding is formally closed solely by this source change.
 - Contract blob: `f422d4da73deb1cafb6c00468602c8309d896786`
 - Candidate profile blob reviewed at the base: `51b0083f74dd12318b7cdcdf3b939d31723de787`
 - This source tree grants **no effectful authority**.
-- `issuerPublicKeyHex` and `issuerPublicKeySHA256` are intentionally empty. Therefore an implementation-preparation binary fails closed before execution. Owner trust-root selection/enrollment and a separately reviewed binding successor are required before Final Issuance.
-- No code in this implementation preparation authorizes creation of the real Attempt Guard, lifecycle test root, model load, llama-server start, install, upgrade, rollback, M1-09, training, promotion, activation, release, production deployment, or PR merge.
+- The Owner explicitly selected reuse of the existing M1-07 Ed25519 Owner Root for M1-08. `issuerPublicKeyHex` and `issuerPublicKeySHA256` are pinned to that exact reviewed public root in this successor. Root pinning alone grants **no effectful authority**: this candidate remains non-issued, the private key remains Owner-only, and Final Issuance plus the signed issued profile are still required before execution.
+- No code in this Owner-root-pinned successor preparation authorizes creation of the real Attempt Guard, lifecycle test root, model load, llama-server start, install, upgrade, rollback, M1-09, training, promotion, activation, release, production deployment, or PR merge.
 
 ## Boundary
 
@@ -55,7 +53,7 @@ forensic capacity. Test constructors are compiled only into test binaries.
 bind the private attestation values. `canonical-vectors.json` contains Python
 standard-library golden bytes checked independently by Go.
 
-`owner_test.go` exercises fixed CLI rejection, candidate non-execution, deliberately unbound trust root, environment-pollution resistance, exact launch derivation, transition-graph rejection, exact temp names, current-manifest fault points (old-or-new complete bytes), handle-resolved path escape/reparse rejection, guard-parent live-identity drift, append-target substitution, process ownership anti-forgery, reviewed-candidate semantic binding, strict JSON, and loopback-only request construction.
+`owner_test.go` exercises fixed CLI rejection, candidate non-execution, fail-closed empty issuer input handling, exact pinned-root production binding through the successor build helper, environment-pollution resistance, exact launch derivation, transition-graph rejection, exact temp names, current-manifest fault points (old-or-new complete bytes), handle-resolved path escape/reparse rejection, guard-parent live-identity drift, append-target substitution, process ownership anti-forgery, reviewed-candidate semantic binding, strict JSON, and loopback-only request construction.
 
 `platform_windows_test.go` adds Windows-only checks for exact launch-envelope validation, native current replacement, NTFS named ADS rejection, hardlink detection, reparse-point rejection, trusted Windows-directory resolution, and handle-resolved directory identity. These tests use only test-owned temporary paths and never use the M1-08 production guard/test/source paths.
 

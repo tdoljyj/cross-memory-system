@@ -30,6 +30,8 @@ CONTRACT_SHA256 = "b40040a1302620b965bdf6dbe2283d0d6d5f9413c8c784e4b65d9cd030ac7
 CANDIDATE_BLOB = "51b0083f74dd12318b7cdcdf3b939d31723de787"
 CANDIDATE_BYTES = 37761
 CANDIDATE_SHA256 = "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3"
+EXPECTED_ISSUER_PUBLIC_KEY_HEX = "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03"
+EXPECTED_ISSUER_PUBLIC_KEY_SHA256 = "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c"
 
 TOOLCHAIN_ARCHIVE_NAME = "go1.27.1.windows-amd64.zip"
 TOOLCHAIN_ARCHIVE_BYTES = 78931360
@@ -233,11 +235,27 @@ def main() -> int:
     verify_exact_file(CANDIDATE, size=CANDIDATE_BYTES, sha256=CANDIDATE_SHA256, blob=CANDIDATE_BLOB)
     manifest, manifest_raw, manifest_sha = verify_source_manifest()
 
-    # The implementation-preparation candidate MUST remain unissued and
-    # intentionally unbound to an Owner root.
+    # Owner-root-pinned successor qualification: the exact Owner-approved
+    # public root MUST be pinned while effectful authority remains closed.
+    if manifest.get("effectful_authority_issued") is not False:
+        raise RuntimeError("owner-root successor unexpectedly issues effectful authority")
+    if manifest.get("owner_binary_execution_authorized") is not False:
+        raise RuntimeError("owner-root successor unexpectedly authorizes owner binary execution")
+    issuer_root = manifest.get("issuer_root")
+    if not isinstance(issuer_root, dict):
+        raise RuntimeError("owner-root successor issuer binding missing")
+    if (
+        issuer_root.get("public_key_hex") != EXPECTED_ISSUER_PUBLIC_KEY_HEX
+        or issuer_root.get("public_key_sha256_fingerprint") != EXPECTED_ISSUER_PUBLIC_KEY_SHA256
+        or issuer_root.get("private_key_material_in_repository") is not False
+    ):
+        raise RuntimeError("owner-root successor issuer binding drift")
     bindings = (HERE / "bindings.go").read_text(encoding="utf-8")
-    if 'const issuerPublicKeyHex = ""' not in bindings or 'const issuerPublicKeySHA256 = ""' not in bindings:
-        raise RuntimeError("implementation preparation unexpectedly binds an issuer root")
+    if (
+        f'const issuerPublicKeyHex = "{EXPECTED_ISSUER_PUBLIC_KEY_HEX}"' not in bindings
+        or f'const issuerPublicKeySHA256 = "{EXPECTED_ISSUER_PUBLIC_KEY_SHA256}"' not in bindings
+    ):
+        raise RuntimeError("owner-root successor compiled issuer binding drift")
 
     with QualificationScope(output, ROOT) as scope:
         with tempfile.TemporaryDirectory(prefix="m108-owner-build-", dir=scope.output) as td:
@@ -287,7 +305,7 @@ def main() -> int:
 
         receipt = {
             "schema_version": "clued.m1-08-native-owner-build-receipt/1",
-            "role": "IMPLEMENTATION_PREPARATION_BUILD / NO_EFFECTFUL_AUTHORITY / OWNER_BINARY_NOT_EXECUTED",
+            "role": "OWNER_ROOT_PINNED_SUCCESSOR_BUILD / NO_EFFECTFUL_AUTHORITY / OWNER_BINARY_NOT_EXECUTED",
             "implementation_base": IMPLEMENTATION_BASE,
             "contract_git_blob_sha1": CONTRACT_BLOB,
             "candidate_profile_git_blob_sha1": CANDIDATE_BLOB,
@@ -323,7 +341,8 @@ def main() -> int:
                 "bytes": test_binary.stat().st_size,
                 "sha256": sha256_file(test_binary),
             },
-            "issuer_root_bound": False,
+            "issuer_root_bound": True,
+            "issuer_public_key_sha256_fingerprint": EXPECTED_ISSUER_PUBLIC_KEY_SHA256,
             "effectful_authority_issued": False,
             "qualification_namespace": scope.evidence(),
             "production_effects_authorized": False,
