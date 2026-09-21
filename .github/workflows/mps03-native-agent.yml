@@ -45,6 +45,14 @@ jobs:
           MPS04_CI_ADOPTED_SHA: ${{ github.event.pull_request.base.sha }}
           MPS04_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python scripts/mps04/check_private_github_readonly.py
+      - name: MPS-04 live Native D-007 nonproduction read (PR 274 only)
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 274
+        env:
+          MPS04_GITHUB_TOKEN: ${{ github.token }}
+          MPS04_GITHUB_REF: ${{ github.event.pull_request.head.ref }}
+          MPS04_CI_ADOPTED_SHA: ${{ github.event.pull_request.base.sha }}
+          MPS04_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/mps04/check_live_native_nonprod.py
       - name: MPS-03 cross-entry process evidence
         run: python scripts/mps03/capture_cross_entry_evidence.py
       - name: Compile MPS-03 Python
