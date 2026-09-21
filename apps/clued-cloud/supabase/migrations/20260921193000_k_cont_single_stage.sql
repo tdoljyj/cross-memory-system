@@ -40,8 +40,10 @@ create policy clued_checkpoint_absorptions_owner_select on public.clued_checkpoi
 revoke all on table public.clued_checkpoint_event_absorptions from public,anon,authenticated;
 grant select on table public.clued_checkpoint_event_absorptions to authenticated;
 
-create index if not exists clued_checkpoint_absorptions_pending_idx
-  on public.clued_checkpoint_event_absorptions(user_id,context_key,event_id);
+-- The UNIQUE(user_id,context_key,event_id) constraint already covers pending-event
+-- lookups. This separate index covers the event_id foreign key for cascades.
+create index if not exists clued_checkpoint_absorptions_event_idx
+  on public.clued_checkpoint_event_absorptions(event_id);
 
 create or replace function clued_private.render_log(p_user_id uuid,p_context_key text)
 returns text language plpgsql security definer set search_path='' as $$
