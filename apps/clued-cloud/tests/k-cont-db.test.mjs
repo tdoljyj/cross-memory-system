@@ -179,12 +179,30 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     assert.equal((await appendTarget(globalRecordId, "global_target")).status, "committed");
     assert.equal((await appendTarget(projectRecordId, "project_target")).status, "committed");
     const evidenceId = uuid();
+    const standaloneEvidenceId = uuid();
     await admin.query(`insert into public.clued_evidence
       (id,user_id,evidence_schema_version,evidence_type,storage_ref,content_hash,receipt_id)
       values($1,$2,1,'test_output','k-cont-fixture',$3,$4)`, [evidenceId, userId, hash(), uuid()]);
+    await admin.query(`insert into public.clued_evidence
+      (id,user_id,evidence_schema_version,evidence_type,storage_ref,content_hash,receipt_id)
+      values($1,$2,1,'test_output','k-cont-standalone-fixture',$3,$4)`, [standaloneEvidenceId, userId, hash(), uuid()]);
+    const projectRecordVersion = (await admin.query("select version from public.clued_memories where id=$1", [projectRecordId])).rows[0].version;
+    const linkedRecord = await rpc("clued_record_mutate", {
+      operation: "update", id: projectRecordId, record_type: "decision", record_schema_version: 1,
+      lifecycle_status: "active", scope: projectContext, base_version: projectRecordVersion,
+      idempotency_key: uuid(), authority: "user_explicit", user_confirmed: true,
+      confidence_reason: "K-CONT evidence link fixture", source_refs: [evidenceId], source_unavailable_reason: null,
+      mutation: {},
+    });
+    assert.equal(linkedRecord.status, "committed");
     assert.equal((await rpc("clued_event_append", {
       event_schema_version: 1, event_type: "extension:kcont:linked_evidence", event_scope: projectContext,
       target_refs: [{ kind: "record", id: projectRecordId }, { kind: "evidence", id: evidenceId }],
+      audit_visibility: "work_log", idempotency_key: uuid(),
+    })).status, "committed");
+    assert.equal((await rpc("clued_event_append", {
+      event_schema_version: 1, event_type: "extension:kcont:false_linked_evidence", event_scope: projectContext,
+      target_refs: [{ kind: "record", id: projectRecordId }, { kind: "evidence", id: standaloneEvidenceId }],
       audit_visibility: "work_log", idempotency_key: uuid(),
     })).status, "committed");
     assert.equal((await rpc("clued_event_append", {
@@ -257,6 +275,7 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     const globalEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:global_target");
     const projectEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:project_target");
     const linkedEvidenceEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:linked_evidence");
+    const falseLinkedEvidenceEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:false_linked_evidence");
     const unscopedEvidenceEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:unscoped_evidence");
     const historicalUnknownEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:historical_unknown_kind");
     const otherProjectEvent = reduced.events_after_checkpoint.find((item) => item.canonical_event_type === "extension:kcont:other_project_target");
@@ -266,6 +285,7 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     assert.deepEqual(projectEvent.target_refs.map((item) => item.id), [projectRecordId]);
     assert.deepEqual(projectEvent.record_targets.map((item) => item.title), ["Project constraint"]);
     assert.deepEqual(linkedEvidenceEvent.target_refs.map((item) => item.id), [projectRecordId, evidenceId]);
+    assert.deepEqual(falseLinkedEvidenceEvent.target_refs.map((item) => item.id), [projectRecordId]);
     assert.deepEqual(unscopedEvidenceEvent.target_refs, []);
     assert.deepEqual(historicalUnknownEvent.target_refs, []);
     assert.deepEqual(otherProjectEvent.target_refs, []);
@@ -282,14 +302,20 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
       context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:project_target",
     });
     assert.deepEqual(visibleSearch.results[0].target_refs.map((item) => item.id), [projectRecordId]);
+    const hiddenEvidenceSearch = await reducedRpc("clued_mcp_search_context", {
+      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:false_linked_evidence",
+    });
+    assert.deepEqual(hiddenEvidenceSearch.results[0].target_refs.map((item) => item.id), [projectRecordId]);
     const reducedLog = await reducedRpc("clued_mcp_restore", { context_key: projectContext, response_view: "work_log" });
     assert.doesNotMatch(reducedLog.work_log, /Remain visible during resume\./);
     assert.doesNotMatch(reducedLog.work_log, new RegExp(globalRecordId));
     assert.doesNotMatch(reducedLog.work_log, new RegExp(otherProjectId));
+    assert.doesNotMatch(reducedLog.work_log, new RegExp(standaloneEvidenceId));
     assert.match(reducedLog.work_log, /Keep project scope visible\./);
     const readLog = await reducedRpc("clued_mcp_read_log", { context_key: projectContext, session_token: reduced.session_token });
     assert.doesNotMatch(readLog.markdown, new RegExp(globalRecordId));
     assert.doesNotMatch(readLog.markdown, new RegExp(otherProjectId));
+    assert.doesNotMatch(readLog.markdown, new RegExp(standaloneEvidenceId));
     assert.match(readLog.markdown, new RegExp(projectRecordId));
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
