@@ -130,14 +130,14 @@
     "preparation_base_commit": "324a1f96d60c5e374a6275b0bd382e6f7be1ee89",
     "lifecycle_contract_path": "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.json",
     "lifecycle_contract_git_blob_sha1": "f422d4da73deb1cafb6c00468602c8309d896786",
-    "required_effectful_owner_source_path": "scripts/model-program/m1-runtime-lifecycle-owner",
-    "required_effectful_owner_source_manifest_sha256": "09680d3ec6b67321a762b0e2f6f22f54850cdc5b11551d8ada2f8e6d805bb1fd",
+    "required_effectful_owner_source_path": "scripts/model-program/m1-runtime-lifecycle-owner/source-manifest.json",
+    "required_effectful_owner_source_manifest_sha256": "67e9f42be2a7933c42c62386c873e113bade3ba365fe89b28f73a4ac982d641e",
     "required_effectful_owner_binary_sha256": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
     "execution_allowed_while_candidate": false,
     "implementation_authorized_by_this_profile": false,
     "implementation_requirement": "REVIEWED_FAIL_CLOSED_EFFECTFUL_OWNER / OWNER_ROOT_PINNED SUCCESSOR / NO EFFECTFUL EXECUTION DURING PREPARATION",
-    "required_effectful_owner_source_tree_git_sha1": "694896e3e1e78458ac1dc6f32e17d862e0561337",
-    "required_effectful_owner_source_manifest_git_blob_sha1": "f7c6d8fafa2d41e59725b47bd6f91793d0b02a55",
+    "required_effectful_owner_source_tree_git_sha1": "968b8cedb9e8c854968436a1482d534bc774b481",
+    "required_effectful_owner_source_manifest_git_blob_sha1": "ed46f7aeb8509d09c60048a09ff68013c257d393",
     "implementation_reviewed_exact_head": "faaf0ff85d73e5be7615a4dc7426997e29cc80d2",
     "accepted_r5_source_freeze": "96312735a2341c145e360f19a6f3a08ec222d64a",
     "owner_root_successor_predecessor_exact_head": "4574c472d17cd20f32dc3b7b0ca75243e731dda7"
@@ -670,9 +670,9 @@
     "owner_public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
     "private_key_storage_locator": "windows-local-owner-key://DESK-W-591/Clued/M1-07/Owner-Ed25519-Root",
     "private_key_material_present_in_repository": false,
-    "effectful_owner_source_tree_git_sha1": "694896e3e1e78458ac1dc6f32e17d862e0561337",
-    "effectful_owner_source_manifest_git_blob_sha1": "f7c6d8fafa2d41e59725b47bd6f91793d0b02a55",
-    "effectful_owner_source_manifest_sha256": "09680d3ec6b67321a762b0e2f6f22f54850cdc5b11551d8ada2f8e6d805bb1fd",
+    "effectful_owner_source_tree_git_sha1": "968b8cedb9e8c854968436a1482d534bc774b481",
+    "effectful_owner_source_manifest_git_blob_sha1": "ed46f7aeb8509d09c60048a09ff68013c257d393",
+    "effectful_owner_source_manifest_sha256": "67e9f42be2a7933c42c62386c873e113bade3ba365fe89b28f73a4ac982d641e",
     "guard_parent_preissuance_evidence": {
       "path": "development/contracts/model-program/m1/evidence/M1RuntimeLifecycleGuardParentPreIssuancePreparation_20260920/M1RuntimeLifecycleGuardParentProvisioningReceipt_20260920.json",
       "git_blob_sha1": "abfb06e517f67b95f5d6824173b4235da894c7ef",
@@ -682,7 +682,7 @@
       "revalidation_required": true
     },
     "successor_state": "OWNER_ROOT_PINNED / GUARD_PARENT_PREISSUANCE_EVIDENCE_BOUND / SOURCE_EXACT_BOUND / BINARY_AND_SIGNATURE_PENDING_FINAL_ISSUANCE / NOT_ISSUED / INDEPENDENT_REVIEW_REQUIRED / NO_MODEL_EXECUTION / NO_MERGE",
-    "build_helper_semantics": "OWNER_ROOT_PINNED SUCCESSOR QUALIFICATION ACCEPTS ONLY EXACT APPROVED ROOT WHILE AUTHORITY REMAINS FALSE",
+    "build_helper_semantics": "OWNER_ROOT_PINNED SUCCESSOR QUALIFICATION ACCEPTS ONLY EXACT APPROVED ROOT AND VALIDATES THIS NON-ISSUED SUCCESSOR PROFILE SOURCE PATH/MANIFEST/TREE WHILE AUTHORITY REMAINS FALSE",
     "documentation_consistency": "OWNER_ROOT_PINNED / NO STALE UNBOUND-ROOT CLAIMS"
   }
 }

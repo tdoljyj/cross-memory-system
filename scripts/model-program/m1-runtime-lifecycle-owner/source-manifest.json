@@ -24,10 +24,10 @@
       "sha256": "8650b9901d8a7944a80a86fcb25826b4255aa3fc2f56f1a79a2b1a15f555fbdf"
     },
     {
-      "bytes": 16884,
-      "git_blob_sha1": "83634f0e7d38107f04999985b0afb75b9451285b",
+      "bytes": 21884,
+      "git_blob_sha1": "5c8f3ae2a988a77eb4cf4fcd2f0f25dd410d3428",
       "path": "build.py",
-      "sha256": "302912cc8d8c185c2eef2f38c4f440e1b566e722613735b63383b83cce66e4db"
+      "sha256": "63eeef7b2396e27036837ee349d4e2613d929be3331811dcd07f4e5ae2813a94"
     },
     {
       "bytes": 1620,
@@ -235,8 +235,11 @@
     "final_issuance_performed": false,
     "attempt_guard_created": false,
     "real_lifecycle_executed": false,
-    "build_helper_semantics": "OWNER_ROOT_PINNED_SUCCESSOR_QUALIFICATION / EXACT_APPROVED_PUBLIC_ROOT_REQUIRED / EFFECTFUL_AUTHORITY_FALSE / OWNER_BINARY_NOT_EXECUTED",
+    "build_helper_semantics": "OWNER_ROOT_PINNED_SUCCESSOR_QUALIFICATION / EXACT APPROVED PUBLIC ROOT REQUIRED / EXACT SUCCESSOR PROFILE STATIC SOURCE BINDINGS VALIDATED / EFFECTFUL_AUTHORITY_FALSE / OWNER_BINARY_NOT_EXECUTED",
     "documentation_semantics": "OWNER_ROOT_PINNED SUCCESSOR / NON-ISSUED / REVISION-SPECIFIC QUALIFICATION / NO STALE UNBOUND-ROOT CLAIMS",
     "test_semantics": "EMPTY ISSUER INPUT FAILS CLOSED; PRODUCTION PINNED ROOT IS ENFORCED BY EXACT SUCCESSOR BINDINGS AND BUILD HELPER"
-  }
+  },
+  "candidate_profile_binding_semantics": "IMPLEMENTATION_BASE_CANDIDATE_ONLY / NOT_SUCCESSOR_QUALIFICATION_TARGET",
+  "successor_profile_path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.owner-root-pinned.candidate.json",
+  "successor_profile_qualification_semantics": "BUILD_HELPER_VALIDATES_NON_ISSUED SUCCESSOR PROFILE SOURCE_PATH + MANIFEST_SHA256 + MANIFEST_GIT_BLOB + SOURCE_TREE + PINNED_OWNER_ROOT + AUTHORITY_CLOSED"
 }

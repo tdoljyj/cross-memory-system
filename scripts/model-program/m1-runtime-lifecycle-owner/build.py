@@ -21,15 +21,17 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 MANIFEST = HERE / "source-manifest.json"
 CONTRACT = ROOT / "development/contracts/model-program/m1/governance/M1RuntimeLifecycleSmokeContract.v0.1.json"
-CANDIDATE = ROOT / "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json"
+BASE_CANDIDATE = ROOT / "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.candidate.json"
+SUCCESSOR_PROFILE_REPO_PATH = "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-LIFE-QWEN35-08B-PC-001.owner-root-pinned.candidate.json"
+SUCCESSOR_CANDIDATE = ROOT / SUCCESSOR_PROFILE_REPO_PATH
 
 IMPLEMENTATION_BASE = "3d8a4c88373f5a54831b40d34c0ad89281d02ac1"
 CONTRACT_BLOB = "f422d4da73deb1cafb6c00468602c8309d896786"
 CONTRACT_BYTES = 42486
 CONTRACT_SHA256 = "b40040a1302620b965bdf6dbe2283d0d6d5f9413c8c784e4b65d9cd030ac7ee3"
-CANDIDATE_BLOB = "51b0083f74dd12318b7cdcdf3b939d31723de787"
-CANDIDATE_BYTES = 37761
-CANDIDATE_SHA256 = "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3"
+BASE_CANDIDATE_BLOB = "51b0083f74dd12318b7cdcdf3b939d31723de787"
+BASE_CANDIDATE_BYTES = 37761
+BASE_CANDIDATE_SHA256 = "c0699d1364cf9bdad7c447edacb5e1702a69fdd893a4937269b55cf00d82ffd3"
 EXPECTED_ISSUER_PUBLIC_KEY_HEX = "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03"
 EXPECTED_ISSUER_PUBLIC_KEY_SHA256 = "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c"
 
@@ -54,6 +56,61 @@ def sha256_file(path: Path) -> str:
 
 def git_blob_sha1(data: bytes) -> str:
     return hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+
+
+def source_tree_git_sha1(manifest: dict, manifest_raw: bytes) -> str:
+    entries = [(row["path"], row["git_blob_sha1"]) for row in manifest["files"]]
+    entries.append(("source-manifest.json", git_blob_sha1(manifest_raw)))
+    body = b"".join(
+        b"100644 " + name.encode("utf-8") + b"\0" + bytes.fromhex(blob)
+        for name, blob in sorted(entries)
+    )
+    return hashlib.sha1(b"tree " + str(len(body)).encode("ascii") + b"\0" + body).hexdigest()
+
+
+def verify_successor_profile(manifest: dict, manifest_raw: bytes, manifest_sha: str) -> tuple[bytes, str, str, str]:
+    st = os.lstat(SUCCESSOR_CANDIDATE)
+    if not stat.S_ISREG(st.st_mode) or SUCCESSOR_CANDIDATE.is_symlink():
+        raise RuntimeError("successor profile must be a non-symlink regular file")
+    raw = SUCCESSOR_CANDIDATE.read_bytes()
+    p = json.loads(raw)
+    tree_sha = source_tree_git_sha1(manifest, manifest_raw)
+    code = p.get("code_revision")
+    execution = p.get("execution_control")
+    prep = p.get("successor_preparation")
+    if not isinstance(code, dict) or not isinstance(execution, dict) or not isinstance(prep, dict):
+        raise RuntimeError("successor profile required binding objects missing")
+    if p.get("status") != "BLOCKED_PENDING_FRESH_CONTEXT_REVIEW_AND_FINAL_ISSUANCE":
+        raise RuntimeError("successor profile stage drift")
+    if p.get("effectful_authority_issued") is not False or p.get("authority_effect") != "NONE / PROFILE_PREPARATION_ONLY":
+        raise RuntimeError("successor profile unexpectedly grants effectful authority")
+    if "owner_signature" in p or "owner_final_execution_authorization" in p:
+        raise RuntimeError("successor profile unexpectedly contains issuance authorization/signature")
+    if code.get("required_effectful_owner_binary_sha256") != "TO_BE_BOUND_AT_FINAL_ISSUANCE":
+        raise RuntimeError("successor profile final binary binding unexpectedly resolved")
+    if code.get("execution_allowed_while_candidate") is not False or code.get("implementation_authorized_by_this_profile") is not False:
+        raise RuntimeError("successor profile unexpectedly authorizes candidate execution/implementation")
+    if code.get("required_effectful_owner_source_path") != "scripts/model-program/m1-runtime-lifecycle-owner/source-manifest.json":
+        raise RuntimeError("successor profile source path does not match production admission")
+    if code.get("required_effectful_owner_source_manifest_sha256") != manifest_sha:
+        raise RuntimeError("successor profile manifest SHA-256 drift")
+    if code.get("required_effectful_owner_source_manifest_git_blob_sha1") != git_blob_sha1(manifest_raw):
+        raise RuntimeError("successor profile manifest Git blob drift")
+    if code.get("required_effectful_owner_source_tree_git_sha1") != tree_sha:
+        raise RuntimeError("successor profile source tree drift")
+    if prep.get("effectful_owner_source_manifest_sha256") != manifest_sha:
+        raise RuntimeError("successor preparation manifest SHA-256 drift")
+    if prep.get("effectful_owner_source_manifest_git_blob_sha1") != git_blob_sha1(manifest_raw):
+        raise RuntimeError("successor preparation manifest Git blob drift")
+    if prep.get("effectful_owner_source_tree_git_sha1") != tree_sha:
+        raise RuntimeError("successor preparation source tree drift")
+    if execution.get("issuer_public_key_canonical") != EXPECTED_ISSUER_PUBLIC_KEY_HEX:
+        raise RuntimeError("successor profile issuer public key drift")
+    if execution.get("issuer_public_key_sha256_fingerprint") != EXPECTED_ISSUER_PUBLIC_KEY_SHA256:
+        raise RuntimeError("successor profile issuer fingerprint drift")
+    if "PINNED_REUSED_EXISTING_M1_07_OWNER_ROOT" not in execution.get("issuer_trust_root_status", ""):
+        raise RuntimeError("successor profile issuer root stage drift")
+    return raw, hashlib.sha256(raw).hexdigest(), git_blob_sha1(raw), tree_sha
 
 
 def verify_exact_file(path: Path, *, size: int, sha256: str, blob: str) -> None:
@@ -184,8 +241,12 @@ def verify_source_manifest() -> tuple[dict, bytes, str]:
         raise RuntimeError("implementation base drift")
     if manifest.get("contract_git_blob_sha1") != CONTRACT_BLOB:
         raise RuntimeError("contract binding drift")
-    if manifest.get("candidate_profile_git_blob_sha1") != CANDIDATE_BLOB:
+    if manifest.get("candidate_profile_git_blob_sha1") != BASE_CANDIDATE_BLOB:
         raise RuntimeError("candidate profile binding drift")
+    if manifest.get("successor_profile_path") != SUCCESSOR_PROFILE_REPO_PATH:
+        raise RuntimeError("successor profile path binding drift")
+    if manifest.get("candidate_profile_binding_semantics") != "IMPLEMENTATION_BASE_CANDIDATE_ONLY / NOT_SUCCESSOR_QUALIFICATION_TARGET":
+        raise RuntimeError("candidate profile binding semantics drift")
 
     rows = manifest.get("files")
     if not isinstance(rows, list) or not rows:
@@ -232,8 +293,9 @@ def main() -> int:
 
     validate_toolchain_archive(archive)
     verify_exact_file(CONTRACT, size=CONTRACT_BYTES, sha256=CONTRACT_SHA256, blob=CONTRACT_BLOB)
-    verify_exact_file(CANDIDATE, size=CANDIDATE_BYTES, sha256=CANDIDATE_SHA256, blob=CANDIDATE_BLOB)
+    verify_exact_file(BASE_CANDIDATE, size=BASE_CANDIDATE_BYTES, sha256=BASE_CANDIDATE_SHA256, blob=BASE_CANDIDATE_BLOB)
     manifest, manifest_raw, manifest_sha = verify_source_manifest()
+    successor_raw, successor_sha, successor_blob, successor_tree = verify_successor_profile(manifest, manifest_raw, manifest_sha)
 
     # Owner-root-pinned successor qualification: the exact Owner-approved
     # public root MUST be pinned while effectful authority remains closed.
@@ -308,7 +370,12 @@ def main() -> int:
             "role": "OWNER_ROOT_PINNED_SUCCESSOR_BUILD / NO_EFFECTFUL_AUTHORITY / OWNER_BINARY_NOT_EXECUTED",
             "implementation_base": IMPLEMENTATION_BASE,
             "contract_git_blob_sha1": CONTRACT_BLOB,
-            "candidate_profile_git_blob_sha1": CANDIDATE_BLOB,
+            "candidate_profile_git_blob_sha1": successor_blob,
+            "candidate_profile_raw_sha256": successor_sha,
+            "candidate_profile_bytes": len(successor_raw),
+            "base_candidate_profile_git_blob_sha1": BASE_CANDIDATE_BLOB,
+            "qualified_successor_source_tree_git_sha1": successor_tree,
+            "successor_profile_static_binding_check": True,
             "native_source_manifest_sha256": manifest_sha,
             "toolchain": {
                 "archive_name": TOOLCHAIN_ARCHIVE_NAME,
