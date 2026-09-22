@@ -297,6 +297,7 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     assert.ok(missingTerminal.missing_requirements.includes('project_terminal_source_receipts'));
     const closedGate = await rpc('clued_mcp_currentness_g6_gate', {
       project_id: projectId,
+      __transport_source_commit: 'a'.repeat(40),
       terminal_receipt_id: terminalReceiptId,
       project_state_receipt_id: projectStateReceiptId,
       project_receipt_id: projectAdmission.currentness_receipt_id,
@@ -304,8 +305,20 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
       project_session_token: freshProject.session_token,
       global_session_token: freshGlobal.session_token,
     });
-    assert.equal(closedGate.status, 'closed');
+    assert.equal(closedGate.status, 'transport_precheck_ready');
     assert.deepEqual(closedGate.missing_requirements, []);
+    const driftedGate = await rpc('clued_mcp_currentness_g6_gate', {
+      project_id: projectId,
+      __transport_source_commit: 'c'.repeat(40),
+      terminal_receipt_id: terminalReceiptId,
+      project_state_receipt_id: projectStateReceiptId,
+      project_receipt_id: projectAdmission.currentness_receipt_id,
+      global_receipt_id: globalAdmission.currentness_receipt_id,
+      project_session_token: freshProject.session_token,
+      global_session_token: freshGlobal.session_token,
+    });
+    assert.equal(driftedGate.status, 'not_ready');
+    assert.ok(driftedGate.missing_requirements.includes('all_path_checkpoint_enforcement'));
     await admin.query(`update clued_private.currentness_transport_attestations
       set evidence=jsonb_set(evidence,'{test_digest}','"unverified"'::jsonb)
       where environment='production'`);

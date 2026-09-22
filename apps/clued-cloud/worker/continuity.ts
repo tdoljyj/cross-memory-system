@@ -1176,18 +1176,28 @@ async function callRpc(
     });
   }
 
+  // Bind G6 to the Worker serving this request. A later deploy or rollback
+  // cannot reuse a previous commit's production transport attestation.
+  const transportPayload = name === "clued_currentness_g6_gate"
+    ? {
+        ...(!Array.isArray(payload) ? payload : {}),
+        __transport_source_commit: typeof __CLUED_BUILD_SHA__ === "string" &&
+          /^[0-9a-f]{40}$/.test(__CLUED_BUILD_SHA__) ? __CLUED_BUILD_SHA__ : null,
+      }
+    : payload;
+
   if (!token.startsWith("clued_bnd_")) {
     return await supabaseRequest(env, "/rest/v1/rpc/clued_oauth_call", {
       method: "POST",
       userToken: token,
-      body: JSON.stringify({ p_tool: name, p_input: payload }),
+      body: JSON.stringify({ p_tool: name, p_input: transportPayload }),
     });
   }
 
   const tokenHash = await sha256(token);
   return await supabaseRequest(env, `/rest/v1/rpc/${rpcByTool[name]}`, {
     method: "POST",
-    body: JSON.stringify({ p_token_hash: tokenHash, p_input: payload }),
+    body: JSON.stringify({ p_token_hash: tokenHash, p_input: transportPayload }),
   });
 }
 
@@ -1215,7 +1225,16 @@ async function callTool(
     throw new HttpError(404, "Unknown Clued continuity tool.");
   }
   const rawResult = await callRpc(request, env, name as keyof typeof rpcByTool, args);
-  const result = name in contextRpcByTool ? sanitizeContextResult(rawResult) : sanitizeCluedResult(rawResult);
+  const sanitized = name in contextRpcByTool ? sanitizeContextResult(rawResult) : sanitizeCluedResult(rawResult);
+  const sourceCommit = typeof __CLUED_BUILD_SHA__ === "string" &&
+    /^[0-9a-f]{40}$/.test(__CLUED_BUILD_SHA__) ? __CLUED_BUILD_SHA__ : null;
+  const result = name === "clued_currentness_g6_gate" &&
+    (sanitized as Record<string, unknown> | null)?.status === "transport_precheck_ready"
+    ? sourceCommit
+      ? { ...(sanitized as Record<string, unknown>), status: "closed" }
+      : { status: "not_ready", gate: "G6_CURRENTNESS",
+          missing_requirements: ["all_path_checkpoint_enforcement"] }
+    : sanitized;
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
     structuredContent: result,

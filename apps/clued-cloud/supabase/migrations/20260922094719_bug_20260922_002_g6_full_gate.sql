@@ -234,6 +234,7 @@ begin
        'public.clued_mcp_commit_checkpoint_pre_currentness(text,jsonb)','EXECUTE') or
      not exists(select 1 from clued_private.currentness_transport_attestations a
        where a.environment='production' and a.all_paths_enforced
+         and a.source_commit=p_input->>'__transport_source_commit'
          and a.verified_at>=now()-interval '24 hours'
          and a.evidence->>'source_commit'=a.source_commit
          and a.evidence->>'deployed_commit'=a.source_commit
@@ -271,7 +272,10 @@ begin
     return jsonb_build_object('status','not_ready','gate','G6_CURRENTNESS',
       'missing_requirements',v_missing);
   end if;
-  return jsonb_build_object('status','closed','gate','G6_CURRENTNESS',
+  -- This public RPC is a database precheck. Only the serving Worker can
+  -- promote it to CLOSED after binding its compiled source commit; direct
+  -- PostgREST callers cannot produce a G6 closure claim.
+  return jsonb_build_object('status','transport_precheck_ready','gate','G6_CURRENTNESS',
     'project_id',v_project_id,'project_receipt_id',v_project_receipt.id,
     'global_receipt_id',v_global_receipt.id,
     'source_vector_digest',v_source_digest,'missing_requirements','[]'::jsonb);

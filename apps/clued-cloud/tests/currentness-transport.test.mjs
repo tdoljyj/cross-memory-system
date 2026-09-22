@@ -74,6 +74,45 @@ test("account HTTP, Binding MCP, and OAuth MCP forward the same history flag to 
   }
 });
 
+test("G6 closure binds the serving Worker commit on Binding and OAuth paths", async () => {
+  const worker = await loadWorker();
+  const previousFetch = globalThis.fetch;
+  const previousSha = globalThis.__CLUED_BUILD_SHA__;
+  const attestedSha = "a".repeat(40);
+  const deployedSha = "b".repeat(40);
+  const seen = [];
+  globalThis.fetch = async (_input, init = {}) => {
+    const body = JSON.parse(init.body);
+    seen.push(body.p_input);
+    return Response.json({
+      gate: "G6_CURRENTNESS",
+      status: body.p_input.__transport_source_commit === attestedSha
+        ? "transport_precheck_ready" : "not_ready",
+      missing_requirements: body.p_input.__transport_source_commit === attestedSha
+        ? [] : ["all_path_checkpoint_enforcement"],
+    });
+  };
+  try {
+    for (const sourceSha of [attestedSha, deployedSha]) {
+      globalThis.__CLUED_BUILD_SHA__ = sourceSha;
+      for (const token of [bindingToken, "oauth-access-token"]) {
+        const response = await worker.fetch(mcpRequest(token, {
+          project_id: "11111111-1111-4111-8111-111111111111",
+          __transport_source_commit: attestedSha,
+        }, "clued_currentness_g6_gate"), env, ctx);
+        assert.equal(response.status, 200);
+        const result = (await response.json()).result.structuredContent;
+        assert.equal(result.status, sourceSha === attestedSha ? "closed" : "not_ready");
+        assert.equal(seen.at(-1).__transport_source_commit, sourceSha);
+      }
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousSha === undefined) delete globalThis.__CLUED_BUILD_SHA__;
+    else globalThis.__CLUED_BUILD_SHA__ = previousSha;
+  }
+});
+
 test("history cannot be activated through ambiguous HTTP or MCP aliases", async () => {
   const worker = await loadWorker();
   const previousFetch = globalThis.fetch;
@@ -235,10 +274,12 @@ test("all currentness MCP tools forward through the exact Binding or OAuth RPC p
       assert.equal(oauth.status, 200, name);
       const fromBinding = calls.at(-2);
       const fromOauth = calls.at(-1);
+      const expectedInput = name === "clued_currentness_g6_gate"
+        ? { ...input, __transport_source_commit: null } : input;
       assert.equal(fromBinding.rpc, rpc);
-      assert.deepEqual(fromBinding.body.p_input, input);
+      assert.deepEqual(fromBinding.body.p_input, expectedInput);
       assert.match(fromBinding.body.p_token_hash, /^[0-9a-f]{64}$/);
-      assert.deepEqual(fromOauth, { rpc: "clued_oauth_call", body: { p_tool: name, p_input: input } });
+      assert.deepEqual(fromOauth, { rpc: "clued_oauth_call", body: { p_tool: name, p_input: expectedInput } });
     }
   } finally {
     globalThis.fetch = previousFetch;
