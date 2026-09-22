@@ -323,7 +323,9 @@ export async function exportUserMemoryBundle({
     },
     boundaries: {
       production_canonical_store: "supabase",
-      bundle_role: "portable_single_user_export_and_import_fixture",
+      bundle_role: "portable_single_user_historical_export",
+      fixture_authority: false,
+      current_truth_authority: false,
       markdown_role: "read_only_stable_id_reference_mirror",
       evidence_role: "read_only_not_imported_as_current_truth",
       direct_git_runtime_writes: false,

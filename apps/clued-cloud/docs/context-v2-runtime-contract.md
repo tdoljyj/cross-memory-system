@@ -15,6 +15,8 @@ Reviewed architecture: draft.4, SHA-256 `cd6a2dc91868d14a38b773c7d6cd29696167845
 | resolver output | Read observation, `execution_authorization=NOT_GRANTED`; actual operation revalidates authorization/CAS/phase |
 | restricted Global reader/builder | Fixed PROJECTION_REQUIRED / explicit source-coverage rejection; target projection grant does not grant source access |
 | archive | Same terminal object identity; no body duplication |
+| Legacy User Memory Bundle CLI | Export, validation and historical dry-run remain; live execution of its retired pre-M1 import payload is rejected before side effects |
+| Public bootstrap / Agent instructions | Durable writes are conditional on authorized changes; M1 already emits Event/Receipt, so an extra append is never a mandatory lifecycle step |
 
 The existing MTPE Universal Intake automation stage remains separately scheduled (Canonical Event 898); this patch does not claim to implement its scoring/arbitration engine. The existing authorized builder selects the candidate under its applicable rules. The source-binding patch verifies its Task rendering and Currentness, and never turns `now`, priority or a cached action into deployment permission. `rule_set_digest` identifies the existing projection dependency registry, not an MTPE policy version. Missing MTPE/phase evidence remains unknown at the actual operation.
 
@@ -46,6 +48,8 @@ Apply only the four reviewed Context v2 incremental migrations, using actual ins
 ## Repository/artifact migration
 
 [Private original archive](https://drive.google.com/file/d/11swRsrWD5jJeh3zKIEoEVijHepzVjAiO/view), SHA-256 `ee43ff590ae33dfe5cc19f856087f8645ddf1e7a3868756fdb2b524779df225b`, contains 686 exact original paths, independently downloaded and verified. Two historical narrative reports become locators; the 684-path historical Bundle source remains under existing M2 retention. current/previous/minimum protected Bundles, memory and active engineering projections remain intact. These copy-verification facts are not an ArtifactCommitReceipt and do not change Canonical business state. No real archived data is classified as a fixture or included in ordinary current search.
+
+Portable export/validation resolve every object, evidence, manifest and payload path against the explicitly authorized root and reject escaping links. A user export is not synthetic merely because an old manifest called it a fixture. The legacy importer uses an obsolete write contract and name-based Project resolution; its execute mode now fails before network or filesystem side effects. Its historical dry-run is not permission or a valid current M1 request. This retirement does not change supported Canonical M1 mutations or implement a new Artifact import platform.
 
 ## Verification
 

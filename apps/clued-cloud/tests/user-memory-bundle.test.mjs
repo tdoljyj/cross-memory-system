@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile, rename, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rename, symlink, readdir } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -100,6 +102,9 @@ test("User Memory Bundle v1 exports one canonical record payload plus read-only 
   assert.equal(result.manifest.counts.projects, 1);
   assert.equal(result.manifest.boundaries.production_canonical_store, "supabase");
   assert.equal(result.manifest.boundaries.direct_git_runtime_writes, false);
+  assert.equal(result.manifest.boundaries.bundle_role, "portable_single_user_historical_export");
+  assert.equal(result.manifest.boundaries.fixture_authority, false);
+  assert.equal(result.manifest.boundaries.current_truth_authority, false);
   assert.ok(result.manifest.evidence_files.includes("evidence/状态.md"));
   assert.ok(result.manifest.evidence_files.includes("evidence/contexts/projects/clued/日志.md"));
   assert.ok(result.manifest.excluded_system_paths.includes("object-index.json"));
@@ -209,97 +214,51 @@ test("an explicitly selected root reached through a junction remains a valid aut
   assert.equal(result.records.length, 5);
 });
 
-function mockCluedApi() {
-  const projects = [];
-  const records = [];
-  const recordIdByKey = new Map();
-  let projectCounter = 1;
-  let recordCounter = 1;
-  const uuid = (kind, number) => `00000000-0000-4000-8000-${kind}${String(number).padStart(11, "0")}`;
-
-  return {
-    projects,
-    records,
-    async fetch(url, init = {}) {
-      const parsed = new URL(url);
-      const body = init.body ? JSON.parse(init.body) : null;
-      if (parsed.pathname === "/v1/records/config") {
-        return Response.json({ enabled: true, semantic_contract: { version: "two-level-five-view-v1" } });
-      }
-      if (parsed.pathname === "/v1/projects" && (!init.method || init.method === "GET")) {
-        return Response.json({ projects });
-      }
-      if (parsed.pathname === "/v1/projects/observe" && init.method === "POST") {
-        let project = projects.find((item) => item.name.toLowerCase() === body.name.toLowerCase());
-        if (!project) {
-          project = {
-            id: uuid("1", projectCounter++),
-            name: body.name,
-            certainty_status: body.intent === "confirmed" ? "confirmed" : "unconfirmed",
-            progress_status: body.progress_status,
-          };
-          projects.push(project);
-        }
-        return Response.json({ status: "written", project });
-      }
-      if (parsed.pathname === "/v1/records" && init.method === "POST") {
-        let id = recordIdByKey.get(body.idempotency_key);
-        let record = records.find((item) => item.id === id);
-        if (!record) {
-          id = uuid("2", recordCounter++);
-          recordIdByKey.set(body.idempotency_key, id);
-          record = {
-            id,
-            ...body,
-            project_id: body.project_id ?? null,
-            version: 1,
-          };
-          records.push(record);
-        }
-        return Response.json({ status: "written", record });
-      }
-      if (parsed.pathname === "/v1/records" && (!init.method || init.method === "GET")) {
-        const level = parsed.searchParams.get("level");
-        const type = parsed.searchParams.get("record_type");
-        const projectId = parsed.searchParams.get("project_id");
-        const expectedType = type === "archive" ? "archive_snapshot" : type;
-        return Response.json({
-          records: records.filter((record) =>
-            record.record_type === expectedType &&
-            (level === "global" ? record.scope === "global" : record.project_id === projectId)),
-        });
-      }
-      return Response.json({ error: "not-found" }, { status: 404 });
-    },
-  };
-}
-
-test("dry-run makes zero network writes and execute uses only authenticated Clued APIs", async () => {
+test("dry-run is explicitly historical mapping with zero network and filesystem writes", async () => {
   const { outputDirectory } = await exportedFixture();
-  let fetchCalls = 0;
-  const dryRun = await importUserMemoryBundle({
-    bundleDirectory: outputDirectory,
-    execute: false,
-    fetchImpl: async () => {
-      fetchCalls += 1;
-      throw new Error("network should not be called");
-    },
-  });
-  assert.equal(dryRun.status, "dry_run");
-  assert.equal(dryRun.network_writes, 0);
-  assert.equal(fetchCalls, 0);
+  const targets = await mkdtemp(path.join(os.tmpdir(), "clued-umb-no-writes-"));
+  let networkCalls = 0;
+  const result = await importUserMemoryBundle({ bundleDirectory: outputDirectory, execute: false,
+    receiptPath: path.join(targets, "receipt.json"), targetMirrorDirectory: path.join(targets, "mirrors"),
+    fetchImpl: async () => { networkCalls += 1; throw new Error("unexpected network"); } });
+  assert.equal(result.status, "dry_run"); assert.equal(result.projects, 1); assert.equal(result.records, 5);
+  assert.equal(result.mapping_status, "historical_contract_only"); assert.equal(result.executable, false);
+  assert.equal(result.fixture_authority, false); assert.equal(result.current_truth_authority, false);
+  assert.equal(result.network_writes, 0); assert.equal(result.filesystem_writes, 0); assert.equal(networkCalls, 0);
+  assert.deepEqual(await readdir(targets), []);
+});
 
-  const api = mockCluedApi();
-  const imported = await importUserMemoryBundle({
-    bundleDirectory: outputDirectory,
-    execute: true,
-    accessToken: "test-user-token",
-    fetchImpl: api.fetch,
-  });
-  assert.equal(imported.receipt.projects.length, 1);
-  assert.equal(imported.receipt.records.length, 5);
-  assert.equal(imported.receipt.verification.verified, 5);
-  assert.equal(api.projects.length, 1);
-  assert.equal(api.records.length, 5);
-  assert.ok(api.records.every((record) => !Object.hasOwn(record, "user_id")));
+test("retired execute rejects before validation, project resolution, network or output writes", async () => {
+  const targets = await mkdtemp(path.join(os.tmpdir(), "clued-umb-execute-retired-"));
+  let networkCalls = 0;
+  await assert.rejects(importUserMemoryBundle({ bundleDirectory: path.join(targets, "does-not-exist"), execute: true,
+    accessToken: "synthetic-test-token", verify: false,
+    receiptPath: path.join(targets, "receipt.json"), targetMirrorDirectory: path.join(targets, "mirrors"),
+    fetchImpl: async () => { networkCalls += 1; throw new Error("unexpected network"); },
+  }), /USER_MEMORY_BUNDLE_EXECUTE_RETIRED/);
+  assert.equal(networkCalls, 0); assert.deepEqual(await readdir(targets), []);
+});
+
+test("CLI --execute is retired even with --no-verify and never creates output files", async () => {
+  const targets = await mkdtemp(path.join(os.tmpdir(), "clued-umb-cli-retired-"));
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/user-memory-bundle-import.mjs', import.meta.url)),
+    '--execute', '--no-verify', '--bundle', path.join(targets, 'missing'),
+    '--receipt', path.join(targets, 'receipt.json'), '--target-mirror', path.join(targets, 'mirrors')], { encoding: 'utf8' });
+  assert.equal(result.status, 1); assert.match(result.stderr, /USER_MEMORY_BUNDLE_EXECUTE_RETIRED/);
+  assert.deepEqual(await readdir(targets), []);
+});
+
+test("historical fixture wording remains readable but grants neither fixture nor current authority", async () => {
+  const { outputDirectory } = await exportedFixture();
+  const manifestPath = path.join(outputDirectory, "manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  manifest.boundaries.bundle_role = "portable_single_user_export_and_import_fixture";
+  delete manifest.boundaries.fixture_authority; delete manifest.boundaries.current_truth_authority;
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  const plan = buildImportPlan(await validateUserMemoryBundle(outputDirectory));
+  assert.equal(plan.executable, false); assert.equal(plan.fixture_authority, false); assert.equal(plan.current_truth_authority, false);
+  assert.equal(plan.mapping_status, "historical_contract_only");
+  assert.doesNotMatch(plan.project_actions[0].request.summary, /fixture/);
+  const preview = await importUserMemoryBundle({ bundleDirectory: outputDirectory });
+  assert.equal(preview.fixture_authority, false); assert.equal(preview.executable, false);
 });
