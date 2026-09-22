@@ -90,7 +90,7 @@ begin
      or v_successor.version is distinct from v_successor_carrier.event_version then
     raise exception 'approved_successor_source_invalid' using errcode='40001';
   end if;
-  execute $sql$
+  execute format($sql$
     select count(*),
       encode(extensions.digest(convert_to(string_agg(
         object_key||'|'||object_source_kind::text||'|'||object_source_id,
@@ -100,22 +100,24 @@ begin
         coalesce(governance_category::text,'')||'|'||coalesce(evidence_ref,'')||'|'||
         coalesce(supersedes_object_key,'')||'|'||coalesce(evidence_note,''),
         E'\n' order by object_key collate "C"),'UTF8'),'sha256'),'hex')
-    from mtpe_m0.verdict_table
-  $sql$ into v_count,v_d1,v_d2;
-  execute $sql$
-    select to_jsonb(a) from mtpe_m0.inventory_activation a
-      join mtpe_m0.verdict_table v on v.activation_id=a.id
+    from %I.%I
+  $sql$,'mtpe_m0','verdict_table') into v_count,v_d1,v_d2;
+  execute format($sql$
+    select to_jsonb(a) from %I.%I a
+      join %I.%I v on v.activation_id=a.id
     where v.object_key=$1 and v.verdict::text='SUPERSEDED'
       and v.classification::text='GOVERNANCE_OBJECT'
       and v.evidence_ref='canonical_event:'||$2::text
       and v.supersedes_object_key='canonical_event:'||$2::text
       and a.diff_digest=$3
-  $sql$ into v_activation using 'canonical_event:'||p_source_event_id::text,
+  $sql$,'mtpe_m0','inventory_activation','mtpe_m0','verdict_table')
+  into v_activation using 'canonical_event:'||p_source_event_id::text,
     p_successor_event_id,v_d2;
-  execute $sql$
-    select to_jsonb(v) from mtpe_m0.verdict_table v
+  execute format($sql$
+    select to_jsonb(v) from %I.%I v
     where v.object_key=$1 and v.activation_id=($2->>'id')::uuid
-  $sql$ into v_verdict using 'canonical_event:'||p_source_event_id::text,v_activation;
+  $sql$,'mtpe_m0','verdict_table') into v_verdict
+    using 'canonical_event:'||p_source_event_id::text,v_activation;
   if v_activation is null or v_verdict is null
      or v_activation->>'id' is distinct from '0d09405e-f918-43c3-b476-6e3c4465eef4'
      or v_activation->>'approval_event' is distinct from 'canonical_event:744'
