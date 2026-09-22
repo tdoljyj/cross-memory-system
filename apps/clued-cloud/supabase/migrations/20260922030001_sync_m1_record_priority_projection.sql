@@ -5,6 +5,13 @@ create or replace function clued_private.m1_sync_record_priority()
 returns trigger language plpgsql set search_path='' as $$
 begin
   if new.type_fields ? 'priority' then
+    if tg_op='UPDATE' and new.type_fields is not distinct from old.type_fields
+       and new.priority is distinct from old.priority
+       and new.priority is distinct from coalesce((new.type_fields->>'priority')::smallint, 0) then
+      -- The legacy RPC is revoked, but privileged/internal SQL can still
+      -- target this compatibility column. Reject conflicting writes.
+      raise exception 'm1_priority_write_requires_record_mutate' using errcode='22023';
+    end if;
     new.priority := coalesce((new.type_fields->>'priority')::smallint, 0);
   elsif tg_op='UPDATE' and old.type_fields ? 'priority' then
     -- Explicitly removing the override returns this Record to the M1 default.
@@ -16,7 +23,7 @@ end $$;
 revoke all on function clued_private.m1_sync_record_priority() from public, anon, authenticated;
 
 create trigger clued_m1_record_priority_sync
-  before insert or update of type_fields on public.clued_memories
+  before insert or update of type_fields, priority on public.clued_memories
   for each row when (new.record_schema_version is not null)
   execute function clued_private.m1_sync_record_priority();
 

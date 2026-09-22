@@ -92,6 +92,15 @@ test("M1 priority updates and legacy list ordering stay aligned after repairing 
     assert.equal((await list())[0].id, secondId, "the repaired list follows the canonical priority");
     assert.equal((await admin.query("select priority from public.clued_memories where id=$1", [importedId])).rows[0].priority, 40);
 
+    await assert.rejects(() => anon.query("select public.clued_record_write($1,$2)", [tokenHash, {
+      action: "update", scope: "global", record_type: "task", record_id: firstId,
+      expected_version: 2, idempotency_key: uuid(), priority: 75,
+    }]), /permission denied for function clued_record_write/);
+    await assert.rejects(() => admin.query("update public.clued_memories set priority=75 where id=$1", [firstId]),
+      /m1_priority_write_requires_record_mutate/);
+    const afterLegacyRejection = (await admin.query("select priority, version from public.clued_memories where id=$1", [firstId])).rows[0];
+    assert.deepEqual([afterLegacyRejection.priority, Number(afterLegacyRejection.version)], [20, 2]);
+
     assert.equal((await mutate({
       operation: "update", id: importedId, record_type: "task", record_schema_version: 1,
       lifecycle_status: "active", scope: "global", base_version: 1, idempotency_key: uuid(),
