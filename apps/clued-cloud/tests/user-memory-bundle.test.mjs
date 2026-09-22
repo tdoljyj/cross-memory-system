@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rename, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -152,6 +152,61 @@ test("validation fails closed when a payload checksum changes", async () => {
     validateUserMemoryBundle(outputDirectory),
     /checksum mismatch/,
   );
+});
+
+async function redirectOutside(root, relative, type = "junction") {
+  // Deliberately share the root's string prefix to defeat startsWith-only guards.
+  const outside = `${root}-outside`;
+  await mkdir(outside, { recursive: true });
+  const target = path.join(outside, path.basename(relative));
+  await rename(path.join(root, relative), target);
+  await symlink(target, path.join(root, relative), type);
+}
+
+for (const relative of ["objects", "contexts", "audit"]) {
+  test(`export refuses an outside ${relative} junction, including prefix-sharing siblings`, async () => {
+    const memoryDirectory = await fixtureMemory();
+    await redirectOutside(memoryDirectory, relative);
+    const parent = await mkdtemp(path.join(os.tmpdir(), "clued-umb-denied-"));
+    await assert.rejects(exportUserMemoryBundle({ memoryDirectory, outputDirectory: path.join(parent, "bundle"),
+      sourceGitCommit: SOURCE_COMMIT, createdAt: CREATED_AT }), /Path escapes authorized root/);
+  });
+}
+
+for (const relative of ["objects/mem_a1.json", "状态.md"]) {
+  test(`export refuses an outside file link at ${relative}`, async t => {
+    const memoryDirectory = await fixtureMemory();
+    try { await redirectOutside(memoryDirectory, relative, "file"); }
+    catch (error) { if (error.code === "EPERM") { t.skip("OS does not grant file symlink creation; directory junction cases still run"); return; } throw error; }
+    const parent = await mkdtemp(path.join(os.tmpdir(), "clued-umb-denied-"));
+    await assert.rejects(exportUserMemoryBundle({ memoryDirectory, outputDirectory: path.join(parent, "bundle"),
+      sourceGitCommit: SOURCE_COMMIT, createdAt: CREATED_AT }), /Path escapes authorized root/);
+  });
+}
+
+test("validator refuses a manifest descriptor whose ancestor is an outside junction despite matching hashes", async () => {
+  const { outputDirectory } = await exportedFixture();
+  await redirectOutside(outputDirectory, "evidence");
+  await assert.rejects(validateUserMemoryBundle(outputDirectory), /Path escapes authorized root/);
+});
+
+for (const relative of ["manifest.json", "records.jsonl", "projects.jsonl"]) {
+  test(`validator refuses outside ${relative} symlink with unchanged content`, async t => {
+    const { outputDirectory } = await exportedFixture();
+    try { await redirectOutside(outputDirectory, relative, "file"); }
+    catch (error) { if (error.code === "EPERM") { t.skip("OS does not grant file symlink creation; ancestor junction case still runs"); return; } throw error; }
+    await assert.rejects(validateUserMemoryBundle(outputDirectory), /Path escapes authorized root/);
+  });
+}
+
+test("an explicitly selected root reached through a junction remains a valid authorized root", async () => {
+  const memoryDirectory = await fixtureMemory();
+  const parent = await mkdtemp(path.join(os.tmpdir(), "clued-umb-root-link-"));
+  const selectedRoot = path.join(parent, "selected-memory");
+  await symlink(memoryDirectory, selectedRoot, "junction");
+  const result = await exportUserMemoryBundle({ memoryDirectory: selectedRoot, outputDirectory: path.join(parent, "bundle"),
+    sourceGitCommit: SOURCE_COMMIT, createdAt: CREATED_AT });
+  assert.equal(result.records.length, 5);
 });
 
 function mockCluedApi() {

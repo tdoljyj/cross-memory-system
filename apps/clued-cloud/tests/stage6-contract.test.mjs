@@ -18,6 +18,11 @@ test("bootstrap and record config publish one M1 semantic contract", async () =>
   assert.deepEqual(bootstrapBody.capabilities.project_views_v2.semantic_contract, configBody.semantic_contract);
   assert.equal(configBody.enabled, true);
   assert.equal(configBody.semantic_contract.double_write, false);
+  assert.equal(bootstrapBody.lifecycle.during, undefined);
+  assert.equal(bootstrapBody.lifecycle.durable_changes.condition, "authorized_business_change_only");
+  assert.equal(bootstrapBody.lifecycle.durable_changes.records, "clued_record_mutate");
+  assert.equal(bootstrapBody.lifecycle.durable_changes.duplicate_event_after_canonical_mutation, false);
+  assert.equal(bootstrapBody.lifecycle.reconcile_when_required, "clued_session_reconcile");
 });
 
 test("agent contract makes stable ids and one transactional write explicit", async () => {
@@ -28,6 +33,10 @@ test("agent contract makes stable ids and one transactional write explicit", asy
   assert.match(contract, /Preserve the returned canonical `id`/);
   assert.match(contract, /Canonical entity \+ Event \+ Receipt/);
   assert.match(contract, /never dual-write Markdown/);
+  assert.match(contract, /do not append a second event/);
+  assert.match(contract, /missing capability or failed admission remains unavailable/);
+  assert.match(contract, /Active Event truth carriers are separate current sources/);
+  assert.match(contract, /never recover current actions from old Markdown/);
 });
 
 test("repository Skill, project rules and root snapshot share the v1.6 authority boundary", async () => {

@@ -154,8 +154,17 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
     lifecycle: {
       required: true,
       start: "clued_session_resume",
-      during: "clued_append_event",
+      reconcile_when_required: "clued_session_reconcile",
+      durable_changes: {
+        condition: "authorized_business_change_only",
+        records: "clued_record_mutate",
+        decisions: "clued_decision_supersede",
+        extension_events: "clued_event_append",
+        legacy_event_adapter: "clued_append_event",
+        duplicate_event_after_canonical_mutation: false,
+      },
       end: "clued_session_checkpoint",
+      checkpoint_condition: "supported_authorized_and_admitted_session",
       session_ttl_seconds: 3600,
       conflict_policy: "optimistic-version-check",
       idempotency: "required for durable writes",
@@ -215,14 +224,15 @@ Canonical store: clued-cloud/supabase
 
 1. Use a dedicated Clued Binding for this vendor/client; never share another vendor's token.
 2. At the start of every authorized session call \`clued_session_resume\`.
-3. Record authoritative decisions, corrections, failures and blockers with \`clued_append_event\`.
-4. Before ending or handing off, call \`clued_session_checkpoint\` with the current base version and explicit coverage (contexts, tracks and event IDs). Uncovered events remain pending. Respect returned checkpoint thresholds.
+3. Persist only authorized durable changes through the applicable Canonical mutation. Its Event and Receipt are emitted in the same transaction; do not append a second event to mirror that write. The legacy \`clued_append_event\` adapter is not a mandatory session step.
+4. Before ending or handing off a supported, authorized and admitted session, call \`clued_session_checkpoint\` with the current base version and explicit coverage (contexts, tracks and event IDs). Uncovered events remain pending. Respect returned checkpoint thresholds. When resume requires \`clued_session_reconcile\`, use that authorized tool first; missing capability or failed admission remains unavailable.
 5. Use \`clued_read_log\` for the canonical human-readable 日志.md. Import an authorized baseline only with \`clued_import_log\`.
 6. Treat version conflicts and revoked/expired credentials as hard stops; resume again instead of overwriting.
 7. Use \`clued_project_mutate\` for explicit Project create/update/complete/archive/restore. Project merge writes are disabled.
-8. For current work, read Global registry and priority first, then Project State, Task and Decision. Read Log or Archive only when history or evidence is needed; they never override current records.
+8. For current work, read Global registry and priority first, then Project State, Task and Decision within authorized scope. Read Log or Archive only when history or evidence is needed. Active Event truth carriers are separate current sources; checkpoint absorption does not retire them.
 9. Preserve the returned canonical \`id\` across API, MCP, UI and Markdown mirrors. Markdown contains query results or stable-ID references, not copied canonical bodies.
 10. Write once with \`clued_record_mutate\`; use \`clued_decision_supersede\` for replacement and \`clued_evidence_ingest\` for sources. The database transaction creates the Canonical entity + Event + Receipt; never dual-write Markdown.
+11. Both Global and Project five views are Standard Work Projection. Task owns executable text; State references Task. A Frontier requires exact Task identity/version/scope/rules and currentness. Unknown, stale, conflicting or incomplete results never mean no work; never recover current actions from old Markdown, pointers or checkpoint prose. Read access and priority do not grant execution permission.
 
 MCP endpoint: ${origin}/mcp
 HTTP bootstrap: ${origin}/v1/continuity/bootstrap
@@ -585,7 +595,7 @@ async function createBinding(request: Request, env: ContinuityEnv) {
       policyUrl: `${new URL(request.url).origin}/.well-known/clued-continuity`,
       bootstrapUrl: `${new URL(request.url).origin}/v1/continuity/bootstrap`,
       agentInstructionsUrl: `${new URL(request.url).origin}/clued-agent.md`,
-      requiredLifecycle: ["resume", "append_event", "checkpoint"],
+      requiredLifecycle: ["resume", "checkpoint"],
       clientConfig: {
         transport: "streamable-http",
         mcp: {
@@ -1526,7 +1536,7 @@ async function handleContinuityRequestInner(
         mcp: "/mcp",
         api: "/v1/continuity",
         workLog: "日志.md",
-        mandatoryLifecycle: ["resume", "append_event", "checkpoint"],
+        mandatoryLifecycle: ["resume", "checkpoint"],
         ...(sourceCommit ? { source_commit: sourceCommit } : {}),
       });
     }
