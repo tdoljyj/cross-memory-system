@@ -1042,6 +1042,83 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       assert.equal(late.status, 'conflict');
       assert.equal(late.error, 'current_truth_changed_since_resume');
     });
+    await t.test('Context v2: forward repair reconnects legacy read entrypoints to Currentness Core', async () => {
+      const f = await fixture();
+      const p = await f.project('Read entrypoint drift');
+      const task = await f.record(p.scope, 'task', 'Completed with stale pending prose',
+        { execution_bucket: 'next' });
+      const closed = await f.rpc('clued_record_mutate', {
+        operation: 'close', id: task, record_type: 'task', record_schema_version: 1,
+        lifecycle_status: 'completed', scope: p.scope, base_version: 1,
+        idempotency_key: uuid(), authority: 'user_explicit', user_confirmed: true,
+        confidence_reason: 'Synthetic read entrypoint regression', mutation: {},
+      });
+      assert.equal(closed.status, 'committed');
+      const input = { level: 'project', project_id: p.id, record_type: 'task' };
+      const user = server.getPgClient();
+      clients.push(user);
+      await user.connect();
+      await user.query('set role authenticated');
+      await user.query("select set_config('request.jwt.claim.sub',$1,false)", [f.userId]);
+      const accountRead = async (value) => (await user.query(
+        'select public.clued_user_record_list($1) value', [value])).rows[0].value;
+      const entrypointMigration = await fs.readFile(path.join(root,
+        'supabase/migrations/20260922150000_context_v2_current_read_entrypoints.sql'), 'utf8');
+      const oldBindingMigration = await fs.readFile(path.join(root,
+        'supabase/migrations/20260907173031_clued_connection_authorization_v12.sql'), 'utf8');
+      const start = oldBindingMigration.indexOf('create or replace function public.clued_record_list(');
+      const end = oldBindingMigration.indexOf('end $$;', start) + 'end $$;'.length;
+      assert.ok(start >= 0 && end > start);
+      try {
+        // Reproduce the observed deployed function definitions, in an isolated
+        // database. The modern three-argument Currentness Core remains present.
+        await admin.query(await fs.readFile(path.join(root,
+          'supabase/migrations/20260829100000_clued_legacy_log_alias_bridge.sql'), 'utf8'));
+        await admin.query(oldBindingMigration.slice(start, end));
+        assert.ok((await f.rpc('clued_record_list', input)).records.some((r) => r.id === task));
+        assert.ok((await accountRead(input)).records.some((r) => r.id === task));
+        await admin.query(entrypointMigration);
+        await admin.query(entrypointMigration); // safe forward repair replay
+        const binding = await f.rpc('clued_record_list', input);
+        const account = await accountRead(input);
+        assert.equal(binding.records.some((r) => r.id === task), false);
+        assert.deepEqual(account, binding);
+        assert.equal(binding.current_projection_unavailable, false);
+        const history = await f.rpc('clued_record_list', { ...input, include_history: true });
+        assert.equal(history.records.find((r) => r.id === task)?.status, 'done');
+        assert.equal(history.records.find((r) => r.id === task)?.authoritative, false);
+        const issuer = hash();
+        const resource = 'https://mcp.example.invalid/mcp';
+        await admin.query(`insert into clued_private.authorization_issuers_v12
+          (token_hash,resource,name) values($1,$2,'Synthetic entrypoint issuer')`, [issuer, resource]);
+        const prepared = (await user.query(
+          'select public.clued_authorization_prepare_v12($1,$2) value', [issuer, {
+            request_digest: hash(), client_id: 'entrypoint-fixture', client_name: 'Synthetic',
+            redirect_uri: 'https://client.example.invalid/callback', resource,
+            requested_scopes: ['context:read'],
+          }])).rows[0].value;
+        const delegatedToken = hash();
+        await user.query('select public.clued_authorization_approve_v12($1,$2,$3,$4,$5,$6)',
+          [issuer, prepared.request_id, prepared.version, JSON.stringify([{
+            resource_kind: 'scope', resource_id: p.scope, environment: 'canonical', actions: ['read'],
+          }]), delegatedToken, new Date(Date.now() + 3600000).toISOString()]);
+        const delegatedRead = async (value) => (await anon.query(
+          'select public.clued_record_list($1,$2) value', [delegatedToken, value])).rows[0].value;
+        assert.deepEqual((await delegatedRead(input)).records, []);
+        assert.equal((await delegatedRead({ ...input, include_history: true })).records[0].id, task);
+        const otherProject = await f.project('Unauthorized project');
+        await f.record(otherProject.scope, 'task', 'Private live task', { execution_bucket: 'next' });
+        await assert.rejects(() => delegatedRead({ ...input, project_id: otherProject.id,
+          authorized_scopes: [otherProject.scope] }), (error) => ['42501', '28000'].includes(error.code));
+        await assert.rejects(() => anon.query(
+          'select clued_private.record_list_core($1,$2)', [f.userId, input]), /permission denied/);
+        await user.query(`select set_config('request.jwt.claims',
+          '{"client_id":"retired-legacy-client"}',false)`);
+        await assert.rejects(() => accountRead(input), /direct_human_session_required/);
+      } finally {
+        await admin.query(entrypointMigration);
+      }
+    });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
