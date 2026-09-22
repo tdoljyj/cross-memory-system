@@ -55,6 +55,7 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
     const userId = uuid();
     const writerToken = hash();
     const builderToken = hash();
+    const limitedBuilderToken = hash();
     const hostAToken = hash();
     const hostBToken = hash();
     await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'projection@example.invalid',now())", [userId]);
@@ -67,6 +68,10 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
       (user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'system','Projection Builder',$2,array['context:read'],array['*']) returning id`,
     [userId, builderToken])).rows[0].id;
+    const limitedBuilderId = (await admin.query(`insert into public.clued_agent_bindings
+      (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'system','Frontier-only Builder',$2,array['context:read'],array['*']) returning id`,
+    [userId, limitedBuilderToken])).rows[0].id;
     for (const [agent, token] of [['Host A', hostAToken], ['Host B', hostBToken]]) {
       await admin.query(`insert into public.clued_agent_bindings
         (user_id,vendor,agent_name,token_hash,scopes,context_keys)
@@ -77,6 +82,10 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
       values($1,$2,'global','global.priority_frontier','owner-approved-test'),
             ($1,$2,'global','global.__aggregate__','owner-approved-test')`,
     [builderId, userId]);
+    await admin.query(`insert into clued_private.projection_builder_grants
+      (binding_id,user_id,target_scope,projection_key,granted_by)
+      values($1,$2,'global','global.priority_frontier','owner-approved-test')`,
+    [limitedBuilderId, userId]);
 
     const anon = server.getPgClient();
     clients.push(anon);
@@ -262,6 +271,50 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
     assert.equal((await admin.query(`select count(*)::int n from clued_private.projection_refresh_jobs
       where user_id=$1 and status='running'`, [userId])).rows[0].n, 0);
     assert.equal(writerId === builderId, false);
+
+    // A Builder granted only Frontier may rebuild Frontier, but must not
+    // diagnose, retry, or terminate an expired Aggregate lease owned by a
+    // different Builder for the same user.
+    const v6 = await writer('clued_record_mutate', {
+      operation: 'update', id: taskId, record_type: 'task', record_schema_version: 1,
+      lifecycle_status: 'active', scope: projectScope, base_version: 5,
+      idempotency_key: uuid(), authority: 'user_explicit', user_confirmed: true,
+      confidence_reason: 'Exact-key lease authorization regression',
+      mutation: { content: 'Task v6' },
+    });
+    assert.equal(v6.status, 'committed');
+    await admin.query(`update clued_private.projection_refresh_jobs set next_attempt_at=now()
+      where user_id=$1`, [userId]);
+    const limitedClaim = await rpc(limitedBuilderToken, 'clued_mcp_projection_refresh_claim', {});
+    assert.equal(limitedClaim.projection_key, 'global.priority_frontier');
+    const limitedApply = await rpc(limitedBuilderToken, 'clued_mcp_projection_refresh_apply', {
+      projection_key: limitedClaim.projection_key, lease_id: limitedClaim.lease_id,
+      expected_invalidation_revision: limitedClaim.expected_invalidation_revision,
+      expected_source_vector_digest: limitedClaim.expected_source_vector_digest,
+    });
+    assert.equal(limitedApply.status, 'rebuilt');
+    await admin.query(`update clued_private.projection_refresh_jobs set next_attempt_at=now()
+      where user_id=$1`, [userId]);
+    const aggregateLease = await builder('clued_mcp_projection_refresh_claim');
+    assert.equal(aggregateLease.projection_key, 'global.__aggregate__');
+    await admin.query(`update clued_private.projection_refresh_jobs
+      set lease_expires_at=now()-interval '1 second' where lease_id=$1`,
+    [aggregateLease.lease_id]);
+    const limitedRecovery = await rpc(limitedBuilderToken,
+      'clued_mcp_projection_refresh_claim', {});
+    assert.equal(limitedRecovery.status, 'idle');
+    const aggregateJob = (await admin.query(`select status,lease_id,last_error_code
+      from clued_private.projection_refresh_jobs where user_id=$1
+      and projection_key='global.__aggregate__'`, [userId])).rows[0];
+    assert.equal(aggregateJob.status, 'running');
+    assert.equal(aggregateJob.lease_id, aggregateLease.lease_id);
+    assert.equal(aggregateJob.last_error_code, null);
+    assert.equal((await admin.query(`select outcome from clued_private.projection_refresh_attempts
+      where lease_id=$1`, [aggregateLease.lease_id])).rows[0].outcome, 'RUNNING');
+    await builder('clued_mcp_projection_refresh_claim');
+    assert.equal((await admin.query(`select status from clued_private.projection_refresh_jobs
+      where user_id=$1 and projection_key='global.__aggregate__'`, [userId])).rows[0].status,
+    'retry_wait');
   } finally {
     await Promise.allSettled(clients.map((client) => client.end()));
     await server.stop().catch(() => {});
