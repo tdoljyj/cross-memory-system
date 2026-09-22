@@ -163,3 +163,38 @@ begin
     then return unavailable; end if;
 $guard$||anchor);
 end $migration$;
+
+-- Search and reconcile have a query Scope and an independently authorized
+-- source-scope set; passing the former as the latter hides valid cross-scope Tasks.
+create function clued_private.binding_read_scopes_v2(p_user_id uuid,p_binding_id uuid)
+returns text[] language plpgsql stable security definer set search_path='' as $$
+declare b public.clued_agent_bindings%rowtype; scopes text[];
+begin
+  select * into b from public.clued_agent_bindings where id=p_binding_id and user_id=p_user_id;
+  if not found then return '{}'::text[]; end if;
+  if exists(select 1 from clued_private.authorizations_v12 where binding_id=b.id) then
+    select coalesce(array_agg(distinct e.resource_id),'{}'::text[]) into scopes
+      from clued_private.authorization_entries_v12 e where e.binding_id=b.id
+        and e.resource_kind='scope' and e.environment='canonical'
+        and 'read'=any(clued_private.authorization_effective_actions_v13(
+          b.id,'scope',e.resource_id,'canonical'));
+    return scopes;
+  end if;
+  if '*'=any(b.context_keys) then return null; end if;
+  return b.context_keys;
+end $$;
+revoke all on function clued_private.binding_read_scopes_v2(uuid,uuid)
+  from public,anon,authenticated,service_role;
+
+do $migration$
+declare body text; target regprocedure;
+begin
+  foreach target in array array['public.clued_mcp_search_context(text,jsonb)'::regprocedure,
+      'public.clued_mcp_session_reconcile(text,jsonb)'::regprocedure] loop
+    body:=pg_get_functiondef(target);
+    if strpos(body,'array[v_context_key]::text[]')=0
+      then raise exception 'execution_intent_consumer_definition_mismatch'; end if;
+    execute replace(body,'array[v_context_key]::text[]',
+      'clued_private.binding_read_scopes_v2(v_binding.user_id,v_binding.id)');
+  end loop;
+end $migration$;

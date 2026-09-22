@@ -1054,6 +1054,9 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       assert.equal((await read()).records[0].id, task);
       const before = await f.restore(taskProject.scope);
       assert.equal(before.authoritative_current_action.status, 'RESOLVED');
+      const currentSearch = await f.rpc('clued_mcp_search_context', { context_key: taskProject.scope,
+        session_token: before.session_token, query: 'Source bound', limit: 20 });
+      assert.ok(currentSearch.results.some(row => row.id === task));
       const sourceSession = await f.restore(sourceProject.scope);
       await f.rpc('clued_mcp_append_event', { context_key: sourceProject.scope,
         session_token: sourceSession.session_token, base_version: sourceSession.version,
