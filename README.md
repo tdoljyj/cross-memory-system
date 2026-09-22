@@ -15,6 +15,59 @@ Clued 是一个围绕「发现与继续」建立的数字平台。
 - 当前根快照：`snap_f6134235591bfcbfe4ba3a674383c3e0 / cv_155`，`live_rechecked`、`views_complete=true`。
 - Git `main`、根 `VERSION`、git tag、M2 指针和 `memory/manifest.json` 共同提供版本真值；不要从历史文档文件名猜版本。
 
+
+## Production Runtime Path / 生产运行路径
+
+普通用户的正式运行链不经过本仓库。当前生产路径为：
+
+```text
+Clued App / Web / Agent / MCP
+        ↓
+Identity
+        ↓
+Authorization
+        ↓
+API
+        ↓
+Workers
+        ↓
+Canonical Store
+(Supabase/PostgreSQL + R2)
+        ↓
+Information / Knowledge Processing
+        ↓
+Context Policy
+        ↓
+Context Compiler
+        ↓
+Minimal Sufficient Context Package
+        ↓
+Agent / Model
+```
+
+Repository 只参与开发、验证、构建、发布与治理，不作为普通用户请求的必经跳、用户 Canonical Store、运行时状态数据库或用户数据写入中转层。发布物通过正式 Distribution / Registry / CDN / Service Runtime 进入运行环境，而不是让用户请求直接依赖 Git/GitHub。
+
+### Data Generations / 数据世代
+
+Clued 的用户数据生命周期按三个独立世代管理：
+
+```text
+Generation 0 — Development / Internal Test
+        ↓
+Generation 1 — Wipe Beta
+        ↓
+Generation 2 — Formal Production
+```
+
+- Development / Internal Test 数据不自动成为 Beta 用户数据。
+- Wipe Beta 用户数据默认不进入 Formal Production；删档边界必须在用户进入测试前明确。
+- Beta Data Genesis 与 Production Data Genesis 是两个独立、可审计的数据起点。
+- Formal Production 默认从隔离、受控、干净的 Production Environment / Production Data Genesis 开始。
+- Development/Beta → Production 只允许白名单迁移，例如正式 Schema/Migration、系统 Registry、Vocabulary、Policy、Capability 定义、正式系统配置、必要 Seed Data 与经批准的发布元数据。
+- 测试用户、测试项目/上下文、测试 Canonical Record、业务 Event/Receipt、OAuth/Agent Binding、对象文件、测试权益、synthetic fixtures 与临时运行状态默认不得迁入 Production。
+- Production Data Genesis 开始并接纳正式用户数据后，不再以“整体清库重来”作为普通维护手段；后续删除、迁移、灾备和恢复按正式生产数据治理执行。
+
+
 ## 先看这些
 
 - `memory/manifest.json`：快照版本、Canonical 版本、完整性计数和所有文件哈希。
