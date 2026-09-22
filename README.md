@@ -6,19 +6,23 @@ Clued 是一个围绕「发现与继续」建立的数字平台。
 
 它让值得发现的内容、应用、作品与能力更容易被找到，也让重要的上下文、状态、决定和正在进行的事情能够跨会话、模型、Agent、设备与时间继续下去。Clued 不以“AI Memory”或单一记忆工具定义自己；模型和工具可以变化，连续性不应随之丢失。
 
-本仓库 `cross-memory-system` 是 Clued 的研发与发布控制面之一，承载协议、Kernel、适配器、Skills/MCP、治理合同、验证与发布证据。它不是普通用户产品运行链的必经组件，也不是用户 Canonical Store；具体运行时权威边界见下文。
+本仓库 `cross-memory-system` 是 Clued 的研发与发布控制面之一，承载 Kernel、协议、运行时、Skills/MCP、治理合同、测试、验证和发布证据。**它不是普通用户产品运行链的必经组件，也不是用户在线 Canonical Store。**
 
-## 当前权威边界
+当前产品版本以根目录 [`VERSION`](./VERSION) 为准。
 
-- 生产 Supabase（经认证 Clued API/MCP）是唯一在线 Canonical Store。
-- `memory/` 是 `artifacts/clued-two-level-snapshots/current.json` 所指版本的只读物化，不接受业务写入。
-- 当前根快照：`snap_f6134235591bfcbfe4ba3a674383c3e0 / cv_155`，`live_rechecked`、`views_complete=true`。
-- Git `main`、根 `VERSION`、git tag、M2 指针和 `memory/manifest.json` 共同提供版本真值；不要从历史文档文件名猜版本。
+## Use Clued / 使用 Clued
 
+普通用户不需要 clone、浏览或直接依赖本仓库。
 
-## Production Runtime Path / 生产运行路径
+- Clued Connect：<https://clued.pixelgrav.com/connect>
+- 产品运行时通过正式的 App / Web / Agent / MCP 入口访问 Clued 服务。
+- Git/GitHub 仅参与开发、验证、构建、发布与治理，不作为普通用户请求中转层或产品可用性的前提。
 
-普通用户的正式运行链不经过本仓库。当前生产路径为：
+## Current Architecture / 当前架构
+
+经认证的 Clued Production Service 是在线 Canonical Authority。结构化 Canonical 数据由 Supabase/PostgreSQL 承载；受治理的对象数据可由 R2 等对象存储承载。所有业务读取与写入都必须经过认证、授权和正式合同边界。
+
+正式生产运行链的逻辑架构边界为：
 
 ```text
 Clued App / Web / Agent / MCP
@@ -32,7 +36,7 @@ API
 Workers
         ↓
 Canonical Store
-(Supabase/PostgreSQL + R2)
+(Supabase/PostgreSQL + governed object storage)
         ↓
 Information / Knowledge Processing
         ↓
@@ -45,9 +49,29 @@ Minimal Sufficient Context Package
 Agent / Model
 ```
 
-Repository 只参与开发、验证、构建、发布与治理，不作为普通用户请求的必经跳、用户 Canonical Store、运行时状态数据库或用户数据写入中转层。发布物通过正式 Distribution / Registry / CDN / Service Runtime 进入运行环境，而不是让用户请求直接依赖 Git/GitHub。
+Repository 不作为普通用户请求的必经跳、运行时状态数据库、用户数据写入中转层或第二套 Canonical Store。发布物通过正式 Distribution / Registry / CDN / Service Runtime 进入运行环境。
 
-### Data Generations / 数据世代
+## Currentness & Projection / 当前性与派生投影
+
+Canonical commit 与派生读取必须严格分离：
+
+```text
+Canonical commit
+      ↓
+invalidate affected projections
+      ↓
+post-commit projection refresh / reconciliation
+      ↓
+CURRENT
+```
+
+- Canonical Record / Project / Event / Evidence / Receipt 是业务事实及其审计载体；Markdown、Snapshot、Checkpoint、索引和 Repository Projection 都是派生读取或连续性载体。
+- 派生视图只有在其来源、版本和 Currentness 条件重新核对完成后才能宣称 `CURRENT`。
+- 如果刷新、重建或 reconciliation 失败，必须 fail closed，标记为 `STALE` / `PROJECTION_REQUIRED` 等非当前状态；不得继续冒充 CURRENT。
+- 读取“现在是什么状态 / 下一步做什么”时，不能仅凭历史 Markdown、旧 Snapshot、旧 Checkpoint 或 source-bound Repository Projection 作答。
+- Repository 中的治理投影位于 `development/projections/`，用于研发、审查、CI 和恢复；它不是在线权威，也不得从 Git 反向写入业务 Canon。
+
+## Data Generations / 数据世代
 
 Clued 的用户数据生命周期按三个独立世代管理：
 
@@ -59,145 +83,72 @@ Generation 1 — Wipe Beta
 Generation 2 — Formal Production
 ```
 
-- Development / Internal Test 数据不自动成为 Beta 用户数据。
-- Wipe Beta 用户数据默认不进入 Formal Production；删档边界必须在用户进入测试前明确。
-- Beta Data Genesis 与 Production Data Genesis 是两个独立、可审计的数据起点。
-- Formal Production 默认从隔离、受控、干净的 Production Environment / Production Data Genesis 开始。
-- Development/Beta → Production 只允许白名单迁移，例如正式 Schema/Migration、系统 Registry、Vocabulary、Policy、Capability 定义、正式系统配置、必要 Seed Data 与经批准的发布元数据。
-- 测试用户、测试项目/上下文、测试 Canonical Record、业务 Event/Receipt、OAuth/Agent Binding、对象文件、测试权益、synthetic fixtures 与临时运行状态默认不得迁入 Production。
-- Production Data Genesis 开始并接纳正式用户数据后，不再以“整体清库重来”作为普通维护手段；后续删除、迁移、灾备和恢复按正式生产数据治理执行。
+核心边界：
 
+- Development / Internal Test、Wipe Beta、Formal Production 是独立数据世代，不默认相互继承用户业务数据。
+- Beta Data Genesis 与 Production Data Genesis 是两个独立、可审计的数据起点；Wipe Beta 用户数据默认不进入 Formal Production。
+- Formal Production 从受控、隔离、干净的 Production Genesis 开始；Development/Beta → Production 仅允许明确批准的白名单迁移。
+- Production 开始接纳正式用户数据后，不再以“整体清库重来”作为普通维护手段。
 
-## 先看这些
+## Repository Map / 仓库地图
 
-- `memory/manifest.json`：快照版本、Canonical 版本、完整性计数和所有文件哈希。
-- `memory/profile.md`：个人级只读视图。
-- `memory/global/{state,task,decision,archive,log}.md`：全局五视图。
-- `memory/projects/{canonical_project_id}/...`：项目级五视图。
-- `docs/clued-two-level-views/20-Memory-v16-Root-Cutover-Report.md`：真实目录迁移与可恢复证据。
-
-## 目录合同
-
-```text
-memory/
-├── profile.md
-├── global/{state,task,decision,archive,log}.md
-├── projects/{canonical_project_id}/{state,task,decision,archive,log}.md
-├── objects/{records,projects,legacy}/
-├── events/raw/
-├── evidence/migration/
-├── index.json
-└── manifest.json
-```
-
-Canonical Record/Project/Event/Evidence 只在其对应导出目录保留一次正文；Markdown 和 `index.json` 均为派生读取。`objects/legacy/` 与 legacy Event 信封是兼容历史，不是当前事实。
-
-## 入口
-
-```powershell
-python memory.py doctor
-python memory.py status
-python memory.py recall "Clued 当前状态" --tier T2 --project-id 0597aa60-9b98-4da6-a4ab-63d7705b632f
-powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Pull -Access PROJECT
-```
-
-`memory.py` 的旧本地写命令以及同步脚本的业务-memory push 路径会 fail closed。Canonical 写入只使用认证的 `clued_record_mutate`、`clued_decision_supersede`、`clued_project_mutate`、`clued_evidence_ingest` 或 `clued_event_append`；成功事务已经生成 Event 与 Receipt，禁止再写一份 Markdown。
-
-## Current Governance Inventory / 多轨治理 Repository Projection
-
-Current Governance Inventory 现在有正式的 **Repository-side read-only projection**，用于研发、审查、CI、Agent 路由与零记忆恢复；它不是第二套 Canonical Store，也不会从 Git 反向写入业务 Canon。
-
-- Manifest：`development/projections/multitrack/CurrentGovernanceInventory.projection.json`
-- 人类可读投影：`development/projections/multitrack/CurrentGovernanceInventory.projection.md`
-- 四轨机器投影：`development/projections/multitrack/tracks/{E,P,R,B}.items.json`
-- 投影合同：`development/contracts/multitrack/RepositoryProjection.contract.json`
-- Fail-closed Validator：`scripts/governance/validate_multitrack_projection.py`
-- CI：`.github/workflows/multitrack-governance-projection.yml`
-
-当前落库来源绑定：
-
-```text
-Snapshot  CLUED-CURRENT-PRIORITY-SNAPSHOT-v0.1.3-SOURCE-BOUND-20260912
-Inventory CLUED-CURRENT-GOVERNANCE-INVENTORY-v0.1.3-SOURCE-BOUND-20260912
-Source SHA bca8fd9244657beabe09a3f815295e09d5207b4709f11ab8722d9a8d58491f5f
-Status    REPOSITORY_PROJECTION_CANDIDATE_NOT_AUTHORITY_NOT_FROZEN
-```
-
-Source-bound Frontier：
-
-| Track | Frontier |
+| 路径 | 主要职责 |
 |---|---|
-| E · 工程与平台 | `E-001`, `E-008` |
-| P · 产品与体验 | `P-006`, `P-004` |
-| R · 基础研究 | `R-002`, `R-004`, `R-005`, `R-006` |
-| B · 商业与增长 | `B-002`, `B-003` |
+| `apps/clued-cloud/` | Clued Cloud、账户与生产 Runtime 实现 |
+| `kernel/` | Clued Kernel 与核心执行/资格/发布能力 |
+| `protocol/` | Vendor-neutral 协议、Schema、FSM 与合同 |
+| `skills/` | Clued Skill 与 Agent 使用/维护入口 |
+| `development/` | 当前工程合同、治理、Schema、设计与只读投影 |
+| `tests/` / `evals/` | 自动化测试、Qualification 与回归 |
+| `memory/` | 单用户、版本化、只读 Repository Snapshot；不是在线 Canon |
+| `artifacts/` | 构建、验证、迁移与发布 Evidence / Snapshot |
+| `docs/` | 仓库仍需保留的工程文档与导航 |
+| `legacy/` | 历史兼容材料；不得作为当前入口或 Current Truth |
 
-验证命令：
+`memory/` 的正式 Repository Snapshot 指针是 [`artifacts/clued-two-level-snapshots/current.json`](./artifacts/clued-two-level-snapshots/current.json)。它只表示**仓库当前发布的只读 Snapshot**，不代表在线 Canonical Current Truth。
 
-```bash
-python scripts/governance/validate_multitrack_projection.py
-```
+## Where to Start / 从哪里开始
 
-Validator PASS 只证明 Repository 投影内部完整；**不等于 Canonical Currentness 已重新裁决、不等于 Inventory 已冻结，也不授予生产/Kernel/数据库/Provider 执行 Authority。**
+按角色进入，不要把根 README 当作完整操作手册：
 
-## 文件放置规则 / Where documents belong
+- **Agent / Coding Agent / 仓库维护** → [`AGENTS.md`](./AGENTS.md)
+- **Cloud / Runtime 开发** → [`apps/clued-cloud/README.md`](./apps/clued-cloud/README.md)
+- **Continuity Protocol** → [`protocol/continuity/v1/README.md`](./protocol/continuity/v1/README.md)
+- **Clued Skill** → [`skills/README.md`](./skills/README.md)
+- **工程文档导航** → [`docs/README.md`](./docs/README.md)
+- **Repository Governance Projection** → [`development/projections/multitrack/CurrentGovernanceInventory.projection.md`](./development/projections/multitrack/CurrentGovernanceInventory.projection.md)
 
-仓库与 Google Drive 的边界如下。提交或生成文件前先按本表判断；**不应进仓库的资料不要提交到仓库。**
+对 `memory/` 的读取必须遵守 [`AGENTS.md`](./AGENTS.md) 中的 Memory Router 与最小必要读取规则。不要把 `memory/profile.md`、Global/Project 五视图或历史 Log 当作进入仓库后的默认全量读取入口。
+
+## Documentation & Release Boundary / 文档与发布边界
+
+仓库与资料中心职责分离：
 
 | 内容 | 存放位置 |
 |---|---|
 | 代码、协议/合同、ADR、Schema/Migration、测试/Fixture、Runbook、Skill、构建/部署配置、当前执行控制、机器可验证 Evidence | 本 Git 仓库 |
 | 产品研究、战略、商业、品牌、视觉、汇报、会议/对话整理、历史评审、验收/Closeout 长报告、图片及办公文档 | Google Drive |
-| 用户与项目的 Canonical 状态、任务、决定和运行记录 | 生产 Canonical Store；Git 与 Drive 都不是运行时权威源 |
+| 用户与项目的在线 Canonical 状态、任务、决定和运行记录 | Clued Production Canonical Store |
 
-当前资料入口：
+资料入口：
 
 - [当前计划与确定基线（Google Drive）](https://drive.google.com/drive/folders/1Owx0Ow4RQY0CbYB5aDQ8RMXLNTA6EyT0)
 - [当前计划与确定基线总索引](https://drive.google.com/file/d/13TE41MmUMnMZ19imQlR5UtrIVEEaGDps/view?usp=drivesdk)
 - [历史外迁资料归档（Google Drive）](https://drive.google.com/drive/folders/1sKZEVQOsEGDMs2b18H3kHp7t0jGq0rGJ)
-- [外迁清单与校验说明](docs/EXTERNAL_DOCUMENT_ARCHIVE.md)
+- [外迁清单与校验说明](./docs/EXTERNAL_DOCUMENT_ARCHIVE.md)
 
-Google Drive 中“有文件”不等于该文件自动成为当前权威版本。状态以总索引中的“冻结 / 固定 / 候选 / 历史”标记、Canonical Decision/Event/Receipt 及对应 Owner 裁决为准。若一份材料同时包含工程合同与长篇叙事，仓库只保留可执行、可验证的短合同或指针，完整叙事放 Google Drive。
+Google Drive 中“存在某个文件”不自动使其成为当前权威；Repository 中“存在某个历史文件或投影”也不自动使其成为 CURRENT。状态必须由对应 Canonical Decision / Event / Receipt、Currentness 与 Owner/Authority 边界共同证明。
 
-## 发布与回滚
+Repository Snapshot 发布遵循：
 
-新快照走 `canonical_export → build → validate → expected-current CAS publish`。`published/{snapshot_version}` 不可原地修改。回滚只切换快照指针和只读根/镜像，不删除或倒退已经提交的 Canonical 历史。
-<!-- BEGIN CLUED PHASE2 GOVERNANCE PROJECTION -->
+```text
+canonical_export
+      ↓
+build
+      ↓
+validate
+      ↓
+expected-current CAS publish
+```
 
-本区块由已绑定的治理来源生成；候选、未定和历史状态保持原含义。它不授予权限，不写入业务 Canon，不宣告接受、冻结或实现。
-
-来源集合摘要：`c7b4bf64ed6a802d3d1461eefcfddca327e494fa23d2e04c7fd2905674d40c02`；事实模型摘要：`cb0accfb9446a91d9fcddd289e1d39334e35081ca95292eda1df5686a259be73`。
-
-| 治理事实 | 来源值 |
-|---|---|
-| 投影性质 | PREPARATION_ONLY_NOT_STEP7_GATE |
-| Step 4 原状态 | PREPARATION_ONLY_NOT_STEP4_ACCEPTANCE |
-| 管理 Owner（仅任务管理） | current Clued project owner in the authenticated user conversation |
-| Namespace 候选组数 | 10 |
-| Step 5 原状态 | PREPARATION_ONLY_NOT_STEP5_ACCEPTANCE |
-| 稳定 Map | CANDIDATE_TARGET_MAP_V0_1_1 |
-| 本候选新增 Alias 数 | 0 |
-| 架构直接前序（原引用对象） | {"axis":"architecture","bytes":168491377,"filename":"Clued_Phase2_三项设计候选_完整审查包_v0.2.4_20260905.zip","members":440,"sha256":"4aae92c37813772e983a14537be52ca8b428af666e644b72d40084ccd592d68b","version":"v0.2.4"} |
-| 历史命名空间不得签发当前状态 | true |
-| Step 6 原状态 | SOURCE_BINDING_CANDIDATE_NOT_ACCEPTANCE |
-| 聚合 ID 不另行发行，见逐消费者绑定 | [null,null,null] |
-| 来源绑定行数（不等于新运行验收数） | 18 |
-| Step 4 / 5 / 6 Decision 来源状态 | ["ACCEPTED_FOR_STEP4_ADMINISTRATIVE_SCOPE","ACCEPTED_FOR_CURRENT_SCOPED_IDENTITY_CONTRACTS","ACCEPTED_FOR_SOURCE_PRESERVING_TYPED_BINDINGS"] |
-| 已选上游引用一致性 | SELECTED_LINEAGE_MATCHES |
-
-| 版本轴 | 来源身份 |
-|---|---|
-| product | Clued-v1.6 |
-| architecture | v0.2.5 |
-| mapping | v0.1.1 |
-| schema | {"core_definition":"1.0.0-local-rc-v15","model_schema_definition":"2.0.0-local-rc-v15-model"} |
-| artifact | per-entry path/bytes/sha256 |
-| skill | v0.1.5 |
-| runtime | null |
-| candidate_revision | v0.2.7.1 |
-| migration_revision | null |
-| protocol | {"definition_version":"1.0.0-local-rc-v15","path_namespace":"protocol/continuity/v1","schema_version":"clued.protocol-manifest/1"} |
-
-未绑定 Decision 不被解释为接受；无实际消费者证据的准备行不被解释为运行接线完成。新增 Alias 为零不证明历史或外部别名已经全量枚举。
-
-<!-- END CLUED PHASE2 GOVERNANCE PROJECTION -->
+`published/{snapshot_version}` 不可原地修改。回滚只切换 Snapshot 指针和只读镜像，不删除、倒退或改写已经提交的 Canonical 历史。
