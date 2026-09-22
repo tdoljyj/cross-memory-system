@@ -21,8 +21,11 @@ export function loadContinuityWorker() {
       format: "esm",
     });
     stop();
-    const { handleContinuityRequest } = await import(pathToFileURL(output).href);
-    return { fetch: (request, env) => handleContinuityRequest(request, env) };
+    const { handleContinuityRequest, runProjectionRefreshPipeline } = await import(pathToFileURL(output).href);
+    return {
+      fetch: (request, env, ctx) => handleContinuityRequest(request, env, ctx),
+      runProjectionRefreshPipeline,
+    };
   })();
   return workerPromise;
 }

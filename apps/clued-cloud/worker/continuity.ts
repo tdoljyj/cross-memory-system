@@ -50,9 +50,14 @@ type Scope = (typeof ALL_SCOPES)[number];
 export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv {
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
+  CLUED_PROJECTION_BUILDER_TOKEN?: string;
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   CLUED_ALLOWED_ORIGINS?: string;
+}
+
+export interface ContinuityExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
 }
 
 type JsonRpcId = string | number | null;
@@ -399,6 +404,125 @@ async function supabaseRequest(
     );
   }
   return payload;
+}
+
+function projectionBuilderToken(env: ContinuityEnv) {
+  const token = env.CLUED_PROJECTION_BUILDER_TOKEN?.trim();
+  return token?.startsWith("clued_bnd_") ? token : null;
+}
+
+async function projectionBuilderRpc(
+  env: ContinuityEnv,
+  rpc: "clued_mcp_projection_refresh_claim" | "clued_mcp_projection_refresh_apply",
+  input: Record<string, unknown>,
+) {
+  const token = projectionBuilderToken(env);
+  if (!token) return { status: "not_configured" } as Record<string, unknown>;
+  const result = await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
+    method: "POST",
+    body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
+  });
+  if (!result || Array.isArray(result) || typeof result !== "object") {
+    throw new HttpError(502, "Projection Builder returned an invalid response.");
+  }
+  return result as Record<string, unknown>;
+}
+
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export async function runProjectionRefreshPipeline(
+  env: ContinuityEnv,
+  options: { maxCycles?: number; maxTransportRetries?: number } = {},
+) {
+  if (!projectionBuilderToken(env)) return { status: "not_configured", processed: 0 };
+  const maxCycles = Math.max(1, Math.min(options.maxCycles ?? 12, 32));
+  const maxTransportRetries = Math.max(0, Math.min(options.maxTransportRetries ?? 2, 5));
+  let processed = 0;
+  let casConflicts = 0;
+  let transportFailures = 0;
+  for (let cycle = 0; cycle < maxCycles; cycle += 1) {
+    let claim: Record<string, unknown>;
+    try {
+      claim = await projectionBuilderRpc(env, "clued_mcp_projection_refresh_claim", {});
+    } catch (error) {
+      transportFailures += 1;
+      if (transportFailures > maxTransportRetries) {
+        console.error(JSON.stringify({
+          event: "projection_refresh_transport_failure",
+          phase: "claim",
+          attempts: transportFailures,
+          error: error instanceof Error ? error.message : "unknown",
+        }));
+        return { status: "transport_unavailable", processed, cas_conflicts: casConflicts };
+      }
+      await delay(100 * (2 ** (transportFailures - 1)));
+      continue;
+    }
+    if (claim.status === "idle" || claim.status === "not_configured") {
+      return { status: claim.status, processed, cas_conflicts: casConflicts };
+    }
+    if (claim.status === "waiting") {
+      const retryAfter = typeof claim.retry_after_ms === "number" ? claim.retry_after_ms : 0;
+      if (retryAfter > 2000) {
+        return { status: "waiting", processed, cas_conflicts: casConflicts,
+          next_attempt_at: claim.next_attempt_at };
+      }
+      await delay(Math.max(25, retryAfter));
+      continue;
+    }
+    if (claim.status === "superseded") continue;
+    if (claim.status !== "claimed") {
+      return { status: "builder_protocol_error", processed, cas_conflicts: casConflicts };
+    }
+    let applied: Record<string, unknown>;
+    try {
+      applied = await projectionBuilderRpc(env, "clued_mcp_projection_refresh_apply", {
+        projection_key: claim.projection_key,
+        lease_id: claim.lease_id,
+        expected_invalidation_revision: claim.expected_invalidation_revision,
+        expected_source_vector_digest: claim.expected_source_vector_digest,
+      });
+    } catch (error) {
+      transportFailures += 1;
+      if (transportFailures > maxTransportRetries) {
+        console.error(JSON.stringify({
+          event: "projection_refresh_transport_failure",
+          phase: "apply",
+          projection_key: claim.projection_key,
+          attempts: transportFailures,
+          error: error instanceof Error ? error.message : "unknown",
+        }));
+        return { status: "transport_unavailable", processed, cas_conflicts: casConflicts };
+      }
+      await delay(100 * (2 ** (transportFailures - 1)));
+      continue;
+    }
+    if (applied.status === "cas_conflict") {
+      casConflicts += 1;
+      continue;
+    }
+    if (applied.status === "rebuilt" || applied.status === "reconciled") {
+      processed += 1;
+      transportFailures = 0;
+      continue;
+    }
+    if (applied.status === "retry_wait" || applied.status === "failed") {
+      continue;
+    }
+    return { status: "builder_protocol_error", processed, cas_conflicts: casConflicts };
+  }
+  return { status: "cycle_limit", processed, cas_conflicts: casConflicts };
+}
+
+function mayInvalidateApprovedProjection(request: Request) {
+  if (!["POST", "PATCH", "DELETE"].includes(request.method)) return false;
+  const path = new URL(request.url).pathname;
+  return path === "/mcp" || path === "/v1/projects" || path.startsWith("/v1/projects/") ||
+    path === "/v1/records" || path === "/v1/decisions/supersede" ||
+    path === "/v1/events" || path === "/v1/continuity/events" ||
+    path === "/v1/continuity/log/import";
 }
 
 function p5GatewayToken(env: ContinuityEnv) {
@@ -1633,8 +1757,13 @@ async function handleContinuityRequestInner(
 export async function handleContinuityRequest(
   request: Request,
   env: ContinuityEnv,
+  ctx?: ContinuityExecutionContext,
 ): Promise<Response | null> {
   const response = await handleContinuityRequestInner(request, env);
+  if (response?.ok && ctx && projectionBuilderToken(env) &&
+    mayInvalidateApprovedProjection(request)) {
+    ctx.waitUntil(runProjectionRefreshPipeline(env));
+  }
   if (!response || !p6ReleaseControlEnabled(env)) return response;
   return decorateP6Response(request, response, env);
 }
