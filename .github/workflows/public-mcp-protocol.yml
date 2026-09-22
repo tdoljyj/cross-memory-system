@@ -41,7 +41,11 @@ jobs:
           cache-dependency-path: apps/clued-cloud/package-lock.json
       - name: Verify gate terminal-state and timeout regressions
         run: npm run mcp:gate-receipt:test
-      - run: npm ci
+      - name: Install dependencies from runner cache
+        run: >-
+          timeout --signal=TERM --kill-after=15s 4m
+          npm ci --cache "$HOME/.npm" --prefer-offline
+          --fetch-retries=2 --fetch-timeout=30000
       - name: Start isolated MCP
         run: |
           printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\n' > evals/public-mcp/.dev.vars.public-mcp
