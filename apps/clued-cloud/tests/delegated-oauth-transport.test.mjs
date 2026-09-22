@@ -28,10 +28,10 @@ const origin = 'https://clued.example';
 const resource = `${origin}/mcp`;
 const originalFetch = globalThis.fetch;
 function fixture() {
-  const bindings = new Map(); const prepared = new Map(); const calls = [];
+  const bindings = new Map(); const prepared = new Map(); const calls = []; const background = [];
   const env = { OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin,
     CLUED_AUTHORIZATION_ISSUER_TOKEN: 'isolated-issuer-test-value', SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'test-public-key', PROJECT_VIEWS_V2: 'true' };
-  const run = (route, options = {}) => handle(new Request(`${origin}${route}`, options), env, { waitUntil() {}, passThroughOnException() {}, props: {} }, async () => new Response('fallback', { status: 404 }));
+  const run = (route, options = {}) => handle(new Request(`${origin}${route}`, options), env, { waitUntil(promise) { background.push(promise); }, passThroughOnException() {}, props: {} }, async () => new Response('fallback', { status: 404 }));
   globalThis.fetch = async (url, options = {}) => {
     const name = new URL(url).pathname.split('/').at(-1); const body = options.body ? JSON.parse(options.body) : {};
     calls.push({ name, body, headers: options.headers });
@@ -60,9 +60,10 @@ function fixture() {
     }
     if (name === 'clued_authorization_status_v12') return Response.json(bindings.get(body.p_token_hash) || { active: false });
     if (name === 'clued_record_list') return Response.json({ status: 'ok', records: [] });
+    if (name === 'clued_mcp_projection_refresh_claim') return Response.json({ status: 'idle' });
     throw new Error(`Unexpected storage route: ${name}`);
   };
-  return { env, run, bindings, calls };
+  return { env, run, bindings, calls, background };
 }
 async function client(f) {
   const response = await f.run('/oauth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_name: 'Isolated client', redirect_uris: ['https://client.example/callback'], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }) });
@@ -127,6 +128,18 @@ test('two consent instances for the same client issue independent simultaneously
     const a = await approve(f, id, first); const b = await approve(f, id, second);
     assert.notEqual(a.access_token, b.access_token); assert.equal(f.bindings.size, 2);
     for (const token of [a.access_token, b.access_token]) assert.equal((await f.run('/mcp', call(token, 'clued_record_list'))).status, 200);
+  } finally { globalThis.fetch = originalFetch; }
+});
+test('OAuth MCP forwards the Worker execution context to the independent projection Builder', async () => {
+  const f = fixture(); try {
+    f.env.CLUED_PROJECTION_BUILDER_TOKEN = `clued_bnd_${'p'.repeat(43)}`;
+    const id = await client(f); const token = await approve(f, id, await begin(f, id));
+    assert.equal((await f.run('/mcp', call(token.access_token, 'clued_record_list'))).status, 200);
+    await Promise.all(f.background);
+    const claims = f.calls.filter(c => c.name === 'clued_mcp_projection_refresh_claim');
+    assert.equal(claims.length, 1);
+    assert.equal(claims[0].body.p_token_hash,
+      createHash('sha256').update(f.env.CLUED_PROJECTION_BUILDER_TOKEN).digest('hex'));
   } finally { globalThis.fetch = originalFetch; }
 });
 test('refresh downscoping cannot retain write capability in encrypted application props', async () => {

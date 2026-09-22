@@ -24,7 +24,8 @@ or procurement.
    into one job per approved projection in that same transaction.
 2. The Worker merely wakes the queue after successful mutation-shaped requests.
    Queue state is durable in Postgres, so request completion is not the work
-   completion boundary.
+   completion boundary. The delegated OAuth MCP path passes the same Worker
+   execution context through to this wakeup.
 3. The Builder uses a separate Binding token supplied only as
    `CLUED_PROJECTION_BUILDER_TOKEN`. Its Binding must have `context:read`, a
    private exact-key Projection Builder grant, wildcard context visibility, and

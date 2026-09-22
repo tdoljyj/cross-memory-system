@@ -242,7 +242,7 @@ export function requiredToolScopes(name: string, args: Json = {}): readonly stri
   }
   return publicToolPolicies[name as keyof typeof publicToolPolicies]?.scopes ?? null;
 }
-async function scopedApi(request: Request, env: DelegatedOAuthEnv, props: AuthProps): Promise<Response> {
+async function scopedApi(request: Request, env: DelegatedOAuthEnv, props: AuthProps, ctx: ExecutionContext): Promise<Response> {
   await checkBinding(env, props);
   if (request.method === 'POST') {
     const payload = await request.clone().json() as Json;
@@ -255,7 +255,7 @@ async function scopedApi(request: Request, env: DelegatedOAuthEnv, props: AuthPr
   }
   const headers = new Headers(request.headers);
   headers.set('Authorization', `Bearer ${props.bindingToken}`);
-  const response = await handleContinuityRequest(new Request(request, { headers }), env);
+  const response = await handleContinuityRequest(new Request(request, { headers }), env, ctx);
   return response || json({ error: 'not_found' }, 404);
 }
 /** The feature remains disabled until its database migration and issuer are configured. */
@@ -270,7 +270,7 @@ export async function handleDelegatedOAuth(request: Request, env: DelegatedOAuth
     if (!env.OAUTH_KV || !env.CLUED_AUTHORIZATION_ISSUER_TOKEN) return json({ error: '授权服务尚未配置。' }, 503);
     const provider = new OAuthProvider<DelegatedOAuthEnv>({
       apiRoute: '/mcp',
-      apiHandler: { async fetch(req, boundEnv, context) { return scopedApi(req, boundEnv, context.props as AuthProps); } },
+      apiHandler: { async fetch(req, boundEnv, context) { return scopedApi(req, boundEnv, context.props as AuthProps, ctx); } },
       defaultHandler: { async fetch(req, boundEnv) { return await consentRoute(req, boundEnv) || await fallback(req); } },
       authorizeEndpoint: '/oauth/authorize', tokenEndpoint: '/oauth/token', clientRegistrationEndpoint: '/oauth/register',
       scopesSupported: SCOPES, clientIdMetadataDocumentEnabled: false, allowPlainPKCE: false, allowImplicitFlow: false,
