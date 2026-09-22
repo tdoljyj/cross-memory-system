@@ -15,6 +15,7 @@ on:
       - 'apps/clued-cloud/tests/consent-account-race.test.mjs'
       - 'apps/clued-cloud/tests/supabase-browser.test.mjs'
       - 'apps/clued-cloud/tests/project-invitations-*.test.mjs'
+      - 'apps/clued-cloud/tests/priority-projection-db.test.mjs'
       - 'apps/clued-cloud/package*.json'
   workflow_dispatch:
 
