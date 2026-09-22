@@ -6,7 +6,7 @@ This repository follows `Clued_单一数据源与两级五视图架构方案_v1.
 
 - The authenticated Clued service backed by Supabase is the only online Canonical Store.
 - Repository `memory/` is a read-only, versioned export of one canonical snapshot. It is never a write target.
-- `memory/manifest.json` and the files it hashes are one atomic publication unit. A snapshot is qualified for its recorded historical/offline boundary only when `baseline_claim=current`, `source_verification=live_rechecked`, `views_complete=true`, and `status=ready`.
+- `memory/manifest.json` and the files it hashes are one atomic publication unit. A snapshot proves only its recorded as-of boundary. A current-claimed snapshot requires `baseline_claim=current`, `source_verification=live_rechecked`, `views_complete=true`, and `status=ready`, but still does not establish online Current Truth. A legitimate historical/offline or incomplete snapshot follows its own manifest, authorization and integrity contract and must retain its historical/incomplete qualification.
 - `memory/index.json` is the only derived lookup index. Canonical Records, Projects, Events, Evidence and Receipts retain their stable service IDs.
 - Never recreate the retired local dual-write model: no Chinese root five-file set, no `memory/objects/*.json` Memory Engine objects, no `object-index.json`, and no Markdown-to-Canonical reverse write.
 
