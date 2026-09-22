@@ -1,16 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { loadContinuityWorker as loadWorker } from "./worker-continuity-loader.mjs";
 import {
   formatCanonicalRecordReference,
   presentCluedRecord,
 } from "../app/record-presentation.ts";
-
-async function loadWorker() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}-${Math.random()}`);
-  return (await import(workerUrl.href)).default;
-}
 
 const baseEnv = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
@@ -26,7 +21,7 @@ const recordFixture = {
   updated_at: "2026-08-24T08:00:00.000Z",
 };
 const semanticContract = {
-  version: "clued-v1.6-m1",
+  version: "clued-v1.6-m1-k-cont",
   read_order: [
     "global_registry_and_priority",
     "project_state_task_decision",
@@ -55,6 +50,9 @@ const semanticContract = {
   project_merge_write_enabled: false,
   canonical_export: "authorized_live_recheck",
   double_write: false,
+  constraint_marker: "decision.type_fields.constraint=true",
+  checkpoint_coverage: "explicit_context_track_and_event_ids",
+  unabsorbed_owner_decisions: "remain_pending_until_explicitly_absorbed",
 };
 
 test("keeps project views v2 off by default in API and MCP discovery", async () => {
@@ -218,6 +216,7 @@ test("REST and MCP writes delegate to the same canonical database core wrappers"
     source_unavailable_reason: null,
     mutation: { title: "Ship G4", content: "Turn the accepted contracts green.", type_fields: { execution_bucket: "now" }, relations: {} },
     authority: "user_explicit",
+    user_confirmed: true,
     confidence: 1,
     confidence_reason: "Explicit test input",
   };

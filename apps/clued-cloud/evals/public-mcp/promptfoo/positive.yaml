@@ -50,7 +50,7 @@ tests:
   - description: Append creates one event and receipt through the canonical RPC
     options: { runSerially: true, repeat: 2 }
     vars:
-      prompt: '{"tool":"clued_append_event","args":{"context_key":"accept-pos-project","session_token":"{{env.MCP_SESSION_TOKEN}}","base_version":0,"event_type":"action","payload":{"title":"acceptance-needle"},"idempotency_key":"APOS-append-0001"}}'
+      prompt: '{"tool":"clued_append_event","args":{"context_key":"accept-pos-project","session_token":"{{env.MCP_SESSION_TOKEN}}","base_version":0,"event_type":"note","payload":{"title":"acceptance-needle"},"idempotency_key":"APOS-append-0001"}}'
     assert:
       - type: is-json
       - type: contains-any

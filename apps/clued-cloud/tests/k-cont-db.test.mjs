@@ -291,19 +291,19 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     assert.deepEqual(otherProjectEvent.target_refs, []);
     assert.deepEqual(historicalMalformedEvent.record_targets, []);
     const hiddenSearch = await reducedRpc("clued_mcp_search_context", {
-      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:global_target",
+      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:global_target", include_history: true,
     });
     assert.deepEqual(hiddenSearch.results[0].target_refs, []);
     const historicalSearch = await reducedRpc("clued_mcp_search_context", {
-      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:historical_unknown_kind",
+      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:historical_unknown_kind", include_history: true,
     });
     assert.deepEqual(historicalSearch.results[0].target_refs, []);
     const visibleSearch = await reducedRpc("clued_mcp_search_context", {
-      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:project_target",
+      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:project_target", include_history: true,
     });
     assert.deepEqual(visibleSearch.results[0].target_refs.map((item) => item.id), [projectRecordId]);
     const hiddenEvidenceSearch = await reducedRpc("clued_mcp_search_context", {
-      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:false_linked_evidence",
+      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:false_linked_evidence", include_history: true,
     });
     assert.deepEqual(hiddenEvidenceSearch.results[0].target_refs.map((item) => item.id), [projectRecordId]);
     const reducedLog = await reducedRpc("clued_mcp_restore", { context_key: projectContext, response_view: "work_log" });
@@ -321,7 +321,7 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     // source_refs remain for audit history.
     await admin.query("update public.clued_memories set lifecycle_status='merged' where id=$1", [projectRecordId]);
     const mergedEvidenceSearch = await reducedRpc("clued_mcp_search_context", {
-      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:linked_evidence",
+      context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:linked_evidence", include_history: true,
     });
     assert.deepEqual(mergedEvidenceSearch.results[0].target_refs.map((item) => item.id), [projectRecordId]);
     const auditOnlyEventId = (await admin.query(

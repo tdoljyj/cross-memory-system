@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 
 HOSTED_ONLY_ALLOWLIST = {
+    "clued-currentness-post-deploy-attestation.yml": (
+        "Owner-triggered post-deploy verification uses a clean Ubuntu worker with the ICU runtime and an isolated production database secret."
+    ),
     "clued-connection-authorization.yml": (
         "Intentional clean-room Ubuntu candidate validation; installs a system ICU compatibility package."
     ),

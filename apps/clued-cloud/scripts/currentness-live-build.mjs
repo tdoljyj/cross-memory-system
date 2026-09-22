@@ -1,0 +1,23 @@
+export const PRODUCTION_HEALTH_URL = 'https://clued.pixelgrav.com/healthz';
+
+export async function verifyLiveSourceCommit(expected, fetchLive = globalThis.fetch) {
+  if (!/^[0-9a-f]{40}$/.test(expected)) throw new Error('Invalid expected source commit');
+  const response = await fetchLive(PRODUCTION_HEALTH_URL, {
+    method: 'GET', redirect: 'error', cache: 'no-store',
+    signal: AbortSignal.timeout(10000),
+    headers: { accept: 'application/json' },
+  });
+  if (!response.ok || response.status !== 200 ||
+      !response.headers.get('content-type')?.toLowerCase().includes('application/json')) {
+    throw new Error('Production health endpoint did not return the expected JSON response');
+  }
+  const body = await response.json();
+  if (body?.status !== 'ok' || body?.service !== 'clued-continuity' ||
+      !/^[0-9a-f]{40}$/.test(body?.source_commit ?? '')) {
+    throw new Error('Production Worker has no trustworthy compiled source commit');
+  }
+  if (body.source_commit !== expected) {
+    throw new Error(`Production Worker source commit differs from tested checkout: ${body.source_commit}`);
+  }
+  return body.source_commit;
+}

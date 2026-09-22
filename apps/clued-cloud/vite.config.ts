@@ -1,5 +1,6 @@
 import vinext from "vinext";
 import { defineConfig, loadEnv } from "vite";
+import { execFileSync } from "node:child_process";
 import { resolveSupabasePublicConfig } from "./app/supabase-public-config";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
@@ -11,6 +12,26 @@ const { d1, r2 } = hostingConfig;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
+
+function sourceCommitForBuild(): string | null {
+  const supplied = process.env.CLUED_BUILD_SHA ?? process.env.GITHUB_SHA ??
+    process.env.CF_PAGES_COMMIT_SHA;
+  if (supplied && !/^[0-9a-f]{40}$/.test(supplied)) return null;
+  try {
+    const current = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const dirty = execFileSync("git", ["status", "--porcelain"], {
+      cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (dirty || !/^[0-9a-f]{40}$/.test(current) || (supplied && supplied !== current)) return null;
+    return current;
+  } catch {
+    // Source archives do not contain .git; their trusted build environment
+    // must supply the exact source commit or production stays unattested.
+    return supplied ?? null;
+  }
+}
 
 const localBindingConfig = {
   main: "./worker/index.ts",
@@ -56,6 +77,7 @@ export default defineConfig(async ({ mode }) => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    define: { __CLUED_BUILD_SHA__: JSON.stringify(sourceCommitForBuild()) },
     server: {
       host: "0.0.0.0",
       allowedHosts: ["terminal.local"],

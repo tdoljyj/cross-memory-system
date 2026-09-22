@@ -136,7 +136,12 @@ test('refresh downscoping cannot retain write capability in encrypted applicatio
     assert.equal(refreshed.status, 200, await refreshed.clone().text());
     const narrowed = await refreshed.json(); assert.equal(narrowed.scope, 'context:read');
     assert.equal((await f.run('/mcp', call(narrowed.access_token, 'clued_record_mutate'))).status, 403);
+    assert.equal((await f.run('/mcp', call(narrowed.access_token, 'clued_event_carrier_transition'))).status, 403);
+    assert.equal((await f.run('/mcp', call(narrowed.access_token, 'clued_projection_rebuild'))).status, 403);
+    assert.equal((await f.run('/mcp', call(narrowed.access_token, 'clued_full_global_reconcile'))).status, 403);
     assert.equal(f.calls.some(c => c.name === 'clued_record_mutate'), false);
+    assert.equal(f.calls.some(c => c.name === 'clued_mcp_event_carrier_transition'), false);
+    assert.equal(f.calls.some(c => c.name === 'clued_mcp_projection_rebuild' || c.name === 'clued_mcp_full_global_reconcile'), false);
   } finally { globalThis.fetch = originalFetch; }
 });
 test('database revocation denies existing access and refresh even when provider KV remains unchanged', async () => {
@@ -152,7 +157,13 @@ test('database revocation denies existing access and refresh even when provider 
 test('context write requires an explicit write scope and unknown tools fail closed', () => {
   assert.deepEqual(requiredToolScopes('clued_context', { op: 'record_put' }), ['context:write']);
   assert.deepEqual(requiredToolScopes('clued_context', { op: 'feedback_list' }), ['context:write']);
+  assert.deepEqual(requiredToolScopes('clued_event_carrier_transition'), ['context:write']);
+  assert.deepEqual(requiredToolScopes('clued_session_reconcile'), ['context:read']);
+  assert.deepEqual(requiredToolScopes('clued_projection_rebuild'), ['context:write']);
+  assert.deepEqual(requiredToolScopes('clued_full_global_reconcile'), ['context:write']);
+  assert.deepEqual(requiredToolScopes('clued_currentness_g6_gate'), ['context:read']);
   assert.equal(requiredToolScopes('clued_context', { op: 'publish' }), null);
+  assert.equal(requiredToolScopes('clued_mcp_event_carrier_transition'), null);
   assert.equal(requiredToolScopes('invented_admin_tool'), null);
 });
 

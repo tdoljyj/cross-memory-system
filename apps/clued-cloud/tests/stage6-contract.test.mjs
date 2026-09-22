@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-
-async function loadWorker() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}-${Math.random()}`);
-  return (await import(workerUrl.href)).default;
-}
+import { loadContinuityWorker as loadWorker } from "./worker-continuity-loader.mjs";
 
 const baseEnv = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
@@ -37,14 +32,14 @@ test("agent contract makes stable ids and one transactional write explicit", asy
 
 test("repository Skill, project rules and root snapshot share the v1.6 authority boundary", async () => {
   const [skill, agents, rootAgents, manifestText] = await Promise.all([
-    readFile(new URL("../../../skills/clued-continuity/SKILL.md", import.meta.url), "utf8"),
+    readFile(new URL("../../../skills/clued/SKILL.md", import.meta.url), "utf8"),
     readFile(new URL("../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../../../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../../../memory/manifest.json", import.meta.url), "utf8"),
   ]);
   const manifest = JSON.parse(manifestText);
   assert.match(skill, /authenticated Clued service/);
-  assert.match(skill, /Never dual-write Markdown/);
+  assert.match(skill, /no local business-memory copies or Markdown reverse writes/);
   assert.match(agents, /only online Canonical Store/);
   assert.match(agents, /Never dual-write Markdown/);
   assert.match(rootAgents, /clued_record_mutate/);

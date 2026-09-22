@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
-async function loadWorker() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}-${Math.random()}`);
-  return (await import(workerUrl.href)).default;
-}
+import { loadContinuityWorker as loadWorker } from "./worker-continuity-loader.mjs";
 
 const env = {
   ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
@@ -19,7 +14,7 @@ test("publishes a continuity health contract", async () => {
   assert.deepEqual(await response.json(), {
     status: "ok",
     service: "clued-continuity",
-    version: "0.3.1",
+    version: "0.4.0",
     canonicalStore: "supabase",
     mcp: "/mcp",
     api: "/v1/continuity",
@@ -61,7 +56,7 @@ test("implements MCP initialization and continuity tool discovery", async () => 
   const initialized = await initialize.json();
   assert.equal(initialized.result.serverInfo.name, "Clued Continuity");
   assert.equal(initialized.result.protocolVersion, "2026-07-28");
-  assert.equal(initialized.result.serverInfo.version, "0.3.1");
+  assert.equal(initialized.result.serverInfo.version, "0.4.0");
 
   const list = await worker.fetch(
     new Request("https://clued.test/mcp", {
@@ -79,6 +74,11 @@ test("implements MCP initialization and continuity tool discovery", async () => 
       "clued_agent_bootstrap",
       "clued_session_resume",
       "clued_append_event",
+      "clued_event_carrier_transition",
+      "clued_session_reconcile",
+      "clued_projection_rebuild",
+      "clued_full_global_reconcile",
+      "clued_currentness_g6_gate",
       "clued_session_checkpoint",
       "clued_search_context",
       "clued_read_log",
@@ -99,7 +99,7 @@ test("publishes a public bootstrap without user context", async () => {
   );
   assert.equal(response.status, 200);
   const result = await response.json();
-  assert.equal(result.kernel_version, "0.3.1");
+  assert.equal(result.kernel_version, "0.4.0");
   assert.equal(result.endpoints.mcp, "https://clued.test/mcp");
   assert.equal(result.lifecycle.required, true);
   assert.equal(result.capabilities.semantic_recall, false);
@@ -134,7 +134,7 @@ test("serves MCP bootstrap without a binding token", async () => {
   );
   assert.equal(response.status, 200);
   const result = await response.json();
-  assert.equal(result.result.structuredContent.kernel_version, "0.3.1");
+  assert.equal(result.result.structuredContent.kernel_version, "0.4.0");
 });
 
 test("publishes OAuth protected resource metadata for MCP clients", async () => {

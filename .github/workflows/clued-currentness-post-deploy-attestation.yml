@@ -1,0 +1,49 @@
+name: Clued currentness production post-deploy attestation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clued-currentness-production-attestation
+  cancel-in-progress: false
+
+jobs:
+  verify-and-attest:
+    # The owner dispatches this only after a production deployment; the live
+    # Worker SHA and the privileged database credential must both verify.
+    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: apps/clued-cloud/package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Install embedded PostgreSQL ICU compatibility runtime
+        run: |
+          curl -fsSLo /tmp/libicu60.deb https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
+          sudo dpkg -i /tmp/libicu60.deb
+          ldconfig -p | grep 'libicuuc.so.60'
+      - name: Verify exact deployed source and install G6 transport attestation
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
+        run: node scripts/verify-currentness-transport.mjs --production --evidence-out currentness-attestation.json
+      - name: Preserve verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clued-currentness-attestation-${{ github.run_id }}
+          path: apps/clued-cloud/currentness-attestation.json
+          if-no-files-found: ignore
+          retention-days: 90
