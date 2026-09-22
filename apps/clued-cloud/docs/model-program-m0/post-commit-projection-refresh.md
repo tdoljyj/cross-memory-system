@@ -50,6 +50,11 @@ configuration includes a one-minute trigger; claim/apply still follows the
 database's per-job delay and retry cap. This source change alone performs no
 deployment.
 
+Production `clued-cloud` uses `wrangler.production.jsonc` for its Cloudflare
+Worker release. This preserves the existing OAuth KV, internal service Binding,
+compatibility flags, assets, images, and observability while adding the trigger.
+Runtime variables and secrets remain in Cloudflare; release uses `--keep-vars`.
+
 ## Validation
 
 Run from `apps/clued-cloud`:
