@@ -69,7 +69,7 @@ export const recordTools = [
   {
     name: "clued_record_mutate",
     description:
-      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). Use decision.type_fields.constraint=true for a resident constraint.",
+      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint.",
     inputSchema: {
       type: "object",
       required: ["operation", "record_type", "record_schema_version", "lifecycle_status", "scope", "idempotency_key", "authority", "confidence_reason"],
@@ -98,6 +98,8 @@ export const recordTools = [
           additionalProperties: false,
         },
         reclassification_reason: { anyOf: [{ type: "string" }, { type: "null" }] },
+        reopen_reason: { type: "string", minLength: 1, maxLength: 1000 },
+        terminal_receipt_id: { type: "string", format: "uuid" },
         authority: { type: "string", enum: ["user_explicit", "observed", "inferred", "imported"] },
         user_confirmed: { type: "boolean" },
         observed_at: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] },

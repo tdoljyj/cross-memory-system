@@ -990,6 +990,58 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       assert.equal(gate.status, 'not_ready');
       assert.ok(gate.missing_requirements.includes('legacy_inventory_or_unbound'));
     });
+
+    await t.test('Context v2 synthetic ADR-06 playback: a fresh Binding does not revive pending review', async () => {
+      const f = await fixture();
+      const p = await f.project('Synthetic ADR-06 continuity');
+      const task = await f.record(p.scope, 'task', 'ADR-06 review pending',
+        { execution_bucket: 'now' });
+      const before = await f.restore(p.scope);
+      assert.equal((await f.checkpoint(p.scope, before, {
+        next_action: 'Review ADR-06',
+      })).status, 'committed');
+      const oldSession = await f.restore(p.scope);
+      await f.record(p.scope, 'decision', 'ADR-06 architecture accepted',
+        { rationale: 'Synthetic exact subject and version accepted' });
+      const closed = await f.rpc('clued_record_mutate', {
+        operation: 'close', id: task, record_type: 'task',
+        record_schema_version: 1, lifecycle_status: 'completed',
+        scope: p.scope, base_version: 1, idempotency_key: uuid(),
+        authority: 'user_explicit', user_confirmed: true,
+        confidence_reason: 'Synthetic accepted result',
+        mutation: { closed_reason: 'Synthetic architecture acceptance' },
+      });
+      assert.equal(closed.status, 'committed');
+      const secondToken = hash();
+      await admin.query(`insert into public.clued_agent_bindings(
+        user_id,vendor,agent_name,token_hash,scopes,context_keys)
+        values($1,'synthetic','Fresh Binding B',$2,
+          array['context:read','context:write'],array[$3])`,
+      [f.userId, secondToken, p.scope]);
+      const secondRpc = async (name, input) => (await anon.query(
+        `select public.${name}($1,$2) value`, [secondToken, input])).rows[0].value;
+      const fresh = await secondRpc('clued_mcp_restore', {
+        context_key: p.scope, response_view: 'structured',
+      });
+      assert.equal(fresh.next_action_authoritative, false);
+      assert.equal(fresh.effective_next_action, null);
+      assert.notEqual(fresh.authoritative_current_action.status, 'RESOLVED');
+      const records = await secondRpc('clued_record_list', {
+        level: 'project', project_id: p.id, record_type: 'task',
+      });
+      assert.equal(records.records.some((row) => row.id === task), false);
+      const history = await secondRpc('clued_record_list', {
+        level: 'project', project_id: p.id, record_type: 'task',
+        include_history: true,
+      });
+      assert.equal(history.records.find((row) => row.id === task)?.status, 'done');
+      assert.equal(history.records.find((row) => row.id === task)?.authoritative, false);
+      const late = await f.checkpoint(p.scope, oldSession, {
+        next_action: 'Review ADR-06',
+      });
+      assert.equal(late.status, 'conflict');
+      assert.equal(late.error, 'current_truth_changed_since_resume');
+    });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
