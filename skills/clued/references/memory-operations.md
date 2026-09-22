@@ -14,6 +14,8 @@ If the actual resume response is `scoped_context_ready` with `session_checkpoint
 
 Use current supported list/search tools. Preserve stable canonical IDs and versions in results; legacy envelopes are history, not current truth. Report `sources_read` for authoritative current-status answers. Cross-client continuity uses the service, not another client's private filesystem or ChatGPT Library.
 
+Before answering a current-status or “what next” question, reconcile the restored checkpoint with the latest authorized Global and Project State/Task/Decision records and any later acceptance or merge evidence already supplied or verified for that exact subject. A checkpoint is a dated continuity snapshot, not a license to repeat its `next_action` after a stage reaches a terminal state. If an old checkpoint or active Task conflicts with later terminal evidence, report the conflict, verify the exact subject, and repair the authorized records before recommending another action. Never recommend repeating a completed review merely because its old Task still has a high priority.
+
 ## Make authorized changes once
 
 A durable change requires explicit intent covering its scope; existing clear instructions can supply that intent. An OAuth write grant alone does not authorize recording every conversation. Project creation/confirmation and destructive actions require their actual explicit intent.
@@ -29,6 +31,8 @@ Supply the minimum supported authority, exact authenticated scope and IDs, stabl
 For `clued_record_mutate` with `operation=create`, explicitly supply `mutation`, `source_refs` (an empty list when no Evidence IDs exist), and a truthful `source_unavailable_reason` or explicit null. Place text in `mutation.title`/`mutation.content`. Required type-specific fields in `mutation.type_fields` include `note_kind`, `state_kind`, `fact_kind`, decision `rationale`, or task `execution_bucket`. Create active without a base version. These are existing create-contract requirements, subject to the current advertised schema; never invent Evidence IDs.
 
 When a business mutation succeeds, retain its canonical ID, version and Receipt/operation ID, and verify by rereading the actual canonical record. Its Event and Receipt already belong to the same transaction: a checkpoint or separate event is not a substitute for the business write and must not duplicate it.
+
+When the user accepts a final review or explicitly closes a stage, reconcile the related Task, State and current Frontier through supported Canonical mutations before reporting the stage as fully recorded. Then checkpoint the resulting next action in every authorized context that the stage actually affected. Preserve the old wording as history; if any write or scope is unavailable, say precisely which projection remains stale rather than silently treating it as current.
 
 ## Recover and finish
 
