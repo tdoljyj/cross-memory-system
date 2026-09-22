@@ -98,16 +98,21 @@ test("terminal restore binds explicit intent to the exact closeout Receipt", { t
       lifecycle_status: "active", idempotency_key: uuid(),
       mutation: {},
     };
-    await assert.rejects(() => rpc(restore),
-      /terminal_restore_requires_explicit_authorization/);
-    await assert.rejects(() => rpc({
+    for (const invalid of [restore, {
       ...restore, idempotency_key: uuid(), reopen_reason: "Reopen synthetic task",
       terminal_receipt_id: uuid(),
-    }), /terminal_restore_requires_explicit_authorization/);
-    await assert.rejects(() => rpc({
+    }, {
       ...restore, idempotency_key: uuid(), authority: "observed",
       reopen_reason: "Reopen synthetic task", terminal_receipt_id: terminalReceipt,
-    }), /terminal_restore_requires_explicit_authorization/);
+    }]) {
+      const rejected = await rpc(invalid);
+      assert.equal(rejected.status, "rejected");
+      assert.equal(rejected.error_code, "terminal_restore_requires_explicit_authorization");
+      assert.ok(rejected.receipt_id);
+      const replay = await rpc(invalid);
+      assert.equal(replay.receipt_id, rejected.receipt_id);
+      assert.equal(replay.replayed, true);
+    }
     const authorized = {
       ...restore, idempotency_key: uuid(), reopen_reason: "Owner authorized a new pass",
       terminal_receipt_id: terminalReceipt,
@@ -147,6 +152,74 @@ test("terminal restore binds explicit intent to the exact closeout Receipt", { t
     assert.equal(current.lifecycle_status, "completed");
     assert.equal(current.version, "4");
     assert.equal(current.receipt_id, newerClose.receipt_id);
+
+    // Three public RPC transactions: close queues before a restore retry.
+    const connections = [];
+    for (let i = 0; i < 3; i++) {
+      const client = server.getPgClient(); clients.push(client);
+      await client.connect(); await client.query('set role anon');
+      await client.query('begin'); connections.push(client);
+    }
+    const [a, c, b] = connections;
+    const invoke = async (client, input) => (await client.query(
+      'select public.clued_record_mutate($1,$2) value', [tokenHash, input])).rows[0].value;
+    const waitLocked = async (client) => {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        const result = await admin.query(
+          "select wait_event_type from pg_stat_activity where pid=$1", [client.processID]);
+        if (result.rows[0]?.wait_event_type === 'Lock') return;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      throw new Error('Expected competing transaction to wait on a database lock');
+    };
+    const concurrentRestore = { ...authorized, base_version: 4, idempotency_key: uuid(),
+      terminal_receipt_id: newerClose.receipt_id };
+    const firstRestore = await invoke(a, concurrentRestore);
+    assert.equal(firstRestore.status, 'committed');
+    const closePromise = invoke(c, { ...base, operation: 'close', id: recordId,
+      base_version: 5, lifecycle_status: 'completed', idempotency_key: uuid(), mutation: {} });
+    await waitLocked(c);
+    const retryPromise = invoke(b, concurrentRestore);
+    await waitLocked(b);
+    await a.query('commit');
+    const concurrentClose = await closePromise;
+    assert.equal(concurrentClose.status, 'committed');
+    await c.query('commit');
+    const concurrentReplay = await retryPromise;
+    assert.equal(concurrentReplay.receipt_id, firstRestore.receipt_id);
+    assert.equal(concurrentReplay.replayed, true);
+    await b.query('commit');
+    const finalRow = (await admin.query(
+      'select version,lifecycle_status,receipt_id from public.clued_memories where id=$1', [recordId])).rows[0];
+    assert.equal(finalRow.version, '6');
+    assert.equal(finalRow.lifecycle_status, 'completed');
+    assert.equal(finalRow.receipt_id, concurrentClose.receipt_id);
+    assert.equal((await admin.query('select count(*) from clued_private.record_reopen_audit where record_id=$1',
+      [recordId])).rows[0].count, '2');
+    const changedRetry = await rpc({ ...concurrentRestore, reopen_reason: 'Changed payload' });
+    assert.equal(changedRetry.error_code, 'IDEMPOTENCY_KEY_CONFLICT');
+
+    const human = server.getPgClient(); clients.push(human); await human.connect();
+    await human.query('set role authenticated');
+    await human.query("select set_config('request.jwt.claim.sub',$1,false)", [userId]);
+    const ownerWrite = async () => (await human.query(
+      'select public.clued_user_record_mutate($1,$2) value', [{ ...base, operation: 'create',
+        idempotency_key: uuid(), source_refs: [], source_unavailable_reason: null,
+        mutation: { title: 'Human fixture', content: 'Human fixture',
+          type_fields: { execution_bucket: 'later' }, relations: {} } }, hash()])).rows[0].value;
+    assert.equal((await ownerWrite()).status, 'committed');
+    const countReceipts = async () => (await admin.query(
+      'select count(*) from public.clued_audit_receipts where user_id=$1', [userId])).rows[0].count;
+    const receiptCount = await countReceipts();
+    await human.query(`select set_config('request.jwt.claims','{"client_id":"legacy-oauth"}',false)`);
+    await assert.rejects(ownerWrite, /direct_human_session_required/);
+    await human.query("select set_config('request.jwt.claims','{}',false)");
+    await admin.query("update auth.users set banned_until=now()+interval '1 day' where id=$1", [userId]);
+    await assert.rejects(ownerWrite, /account/);
+    await admin.query('update auth.users set banned_until=null,deleted_at=now() where id=$1', [userId]);
+    await assert.rejects(ownerWrite, /account/);
+    assert.equal(await countReceipts(), receiptCount);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

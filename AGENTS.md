@@ -6,7 +6,7 @@ This repository follows `Clued_单一数据源与两级五视图架构方案_v1.
 
 - The authenticated Clued service backed by Supabase is the only online Canonical Store.
 - Repository `memory/` is a read-only, versioned export of one canonical snapshot. It is never a write target.
-- `memory/manifest.json` and the files it hashes are one atomic publication unit. A snapshot is authoritative for current work only when `baseline_claim=current`, `source_verification=live_rechecked`, `views_complete=true`, and `status=ready`.
+- `memory/manifest.json` and the files it hashes are one atomic publication unit. A snapshot is qualified for its recorded historical/offline boundary only when `baseline_claim=current`, `source_verification=live_rechecked`, `views_complete=true`, and `status=ready`.
 - `memory/index.json` is the only derived lookup index. Canonical Records, Projects, Events, Evidence and Receipts retain their stable service IDs.
 - Never recreate the retired local dual-write model: no Chinese root five-file set, no `memory/objects/*.json` Memory Engine objects, no `object-index.json`, and no Markdown-to-Canonical reverse write.
 
@@ -30,12 +30,14 @@ Default access is `NONE`. Decide before reading.
 - T3: uncertain relevance. Light-read only State/Task/Decision.
 - T4: explicit “remember this”. Write once through authenticated Clued M1 tools with `authority=user_explicit` and user confirmation; do not edit Markdown.
 
-For current work, resolve the confirmed Project by canonical project ID. Read:
+For online current work, resolve the confirmed Project by canonical project ID through the authenticated service and its Currentness contract. The paths below are read-only snapshot lookup locations, not online Current Truth:
 
 1. `memory/global/state.md`, `task.md`, `decision.md` for cross-project priority.
 2. `memory/projects/{canonical_project_id}/state.md`, `task.md`, `decision.md` for the selected project.
 3. `archive.md` and `log.md` only when historical evidence is required.
 4. `memory/profile.md` only when identity or preferences materially affect the answer.
+
+State/Task/Decision/Archive/Log remain the two-level Standard Work Projection. State references Task IDs; Task owns executable text; active Event truth carriers are evaluated separately from the historical Log view. Checkpoint and snapshot validity never bypass live currentness or action authorization.
 
 Always report `sources_read` for an authoritative current-status answer. Treat `objects/legacy/` and legacy Event envelopes as compatibility history, not current truth.
 

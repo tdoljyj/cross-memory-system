@@ -8,6 +8,7 @@ import pg from 'pg';
 import { PRODUCTION_HEALTH_URL, verifyLiveSourceCommit } from './currentness-live-build.mjs';
 
 const TEST_FILES = Object.freeze([
+  'tests/context-v2-terminal-restore-db.test.mjs',
   'tests/currentness-record-fence-db.test.mjs',
   'tests/currentness-admission-db.test.mjs',
   'tests/currentness-legacy-inventory.test.mjs',

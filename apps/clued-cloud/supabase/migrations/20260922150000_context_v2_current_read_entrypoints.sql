@@ -28,6 +28,8 @@ begin
         and (e.resource_id in ('global','profile') or exists(
           select 1 from public.clued_projects p
           where 'project:'||p.id=e.resource_id and p.user_id=b.user_id));
+  elsif not '*'=any(b.context_keys) then
+    authorized_scopes:=b.context_keys;
   end if;
   -- The server determines scopes before filtering and LIMIT. Never accept
   -- caller-supplied scopes; an empty delegated set remains deny-all.
