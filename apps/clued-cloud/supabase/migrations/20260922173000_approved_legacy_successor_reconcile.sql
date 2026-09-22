@@ -27,6 +27,8 @@ declare
   v_digest text;
   v_transition_id uuid;
   v_existing public.clued_audit_receipts%rowtype;
+  v_verdict_relation regclass;
+  v_activation_relation regclass;
 begin
   if p_execute is null or p_user_id is null or p_source_event_id is null
      or p_successor_event_id is null
@@ -62,8 +64,15 @@ begin
   -- hold table-level read locks until this transaction commits. This makes
   -- the complete digest, selected verdict and activation one consistency
   -- boundary and blocks concurrent INSERT/UPDATE/DELETE of their proof.
-  execute 'lock table mtpe_m0.verdict_table in share mode';
-  execute 'lock table mtpe_m0.inventory_activation in share mode';
+  select to_regclass('mtpe_m0.verdict_table'),
+         to_regclass('mtpe_m0.inventory_activation')
+    into v_verdict_relation,v_activation_relation;
+  if v_verdict_relation is null or v_activation_relation is null then
+    raise exception 'approved_successor_governance_tables_unavailable'
+      using errcode='55000';
+  end if;
+  execute format('lock table %s in share mode',v_verdict_relation);
+  execute format('lock table %s in share mode',v_activation_relation);
   select * into v_source from public.clued_context_events e
     where e.id=p_source_event_id and e.user_id=p_user_id;
   select * into v_successor from public.clued_context_events e
@@ -100,23 +109,23 @@ begin
         coalesce(governance_category::text,'')||'|'||coalesce(evidence_ref,'')||'|'||
         coalesce(supersedes_object_key,'')||'|'||coalesce(evidence_note,''),
         E'\n' order by object_key collate "C"),'UTF8'),'sha256'),'hex')
-    from %I.%I
-  $sql$,'mtpe_m0','verdict_table') into v_count,v_d1,v_d2;
+    from %s
+  $sql$,v_verdict_relation) into v_count,v_d1,v_d2;
   execute format($sql$
-    select to_jsonb(a) from %I.%I a
-      join %I.%I v on v.activation_id=a.id
+    select to_jsonb(a) from %s a
+      join %s v on v.activation_id=a.id
     where v.object_key=$1 and v.verdict::text='SUPERSEDED'
       and v.classification::text='GOVERNANCE_OBJECT'
       and v.evidence_ref='canonical_event:'||$2::text
       and v.supersedes_object_key='canonical_event:'||$2::text
       and a.diff_digest=$3
-  $sql$,'mtpe_m0','inventory_activation','mtpe_m0','verdict_table')
+  $sql$,v_activation_relation,v_verdict_relation)
   into v_activation using 'canonical_event:'||p_source_event_id::text,
     p_successor_event_id,v_d2;
   execute format($sql$
-    select to_jsonb(v) from %I.%I v
+    select to_jsonb(v) from %s v
     where v.object_key=$1 and v.activation_id=($2->>'id')::uuid
-  $sql$,'mtpe_m0','verdict_table') into v_verdict
+  $sql$,v_verdict_relation) into v_verdict
     using 'canonical_event:'||p_source_event_id::text,v_activation;
   if v_activation is null or v_verdict is null
      or v_activation->>'id' is distinct from '0d09405e-f918-43c3-b476-6e3c4465eef4'
