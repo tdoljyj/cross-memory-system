@@ -27,7 +27,7 @@ Default access is `NONE`. Decide before reading.
 - T3: uncertain relevance. Light-read only State/Task/Decision.
 - T4: explicit “remember this”. Write once through authenticated Clued M1 tools with `authority=user_explicit` and user confirmation; do not edit Markdown.
 
-For online current work, resolve the effective Project by canonical project ID through the authenticated service and its Currentness contract. The deployed v1 Project schema may still expose legacy `certainty_status`; treat it as compatibility metadata, not as the product's organization model. The approved successor direction is documented separately and is not production until its migration is reviewed, deployed and attested. The paths below are read-only snapshot lookup locations, not online Current Truth:
+For online current work, resolve the effective Project by canonical project ID through the authenticated service and its Currentness contract. The deployed v1 Project schema may still expose legacy `certainty_status`; treat it as compatibility metadata, not as the product's organization model. The approved successor direction is `development/contracts/project-lifecycle/ProjectLifecycleSuccessor.v0.1.md` and is not production until its migration is reviewed, deployed and attested. The paths below are read-only snapshot lookup locations, not online Current Truth:
 
 1. `memory/global/state.md`, `task.md`, `decision.md` for cross-project priority.
 2. `memory/projects/{canonical_project_id}/state.md`, `task.md`, `decision.md` for the selected project.
