@@ -45,8 +45,10 @@ or procurement.
 8. Derived projection records are excluded from Frontier candidates and their
    updates do not advance the same projection head, preventing recursion.
 
-The optional `scheduled` entry point is a recovery hook only. This change adds
-no cron configuration and performs no deployment.
+The `scheduled` entry point is a recovery hook for due durable jobs. The Worker
+configuration includes a one-minute trigger; claim/apply still follows the
+database's per-job delay and retry cap. This source change alone performs no
+deployment.
 
 ## Validation
 
@@ -72,7 +74,7 @@ conflict draining, hashed credential use, and an inert unconfigured Builder.
 - Apply the migration through the separately authorized production process.
 - Create a dedicated read-only Binding and exact Builder grants for the two
   approved keys; store its raw token only in the Worker secret.
-- Configure a recovery trigger only if separately approved.
+- Verify that the one-minute recovery trigger is active in the deployed Worker.
 - Run production canary/readback and capture deployment receipts under a new
   authorization. None of these actions are authorized by this change.
 
