@@ -43,7 +43,9 @@ test("M1 priority updates and legacy list ordering stay aligned after repairing 
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const migrations = path.join(root, "supabase/migrations");
-    const names = (await fs.readdir(migrations)).filter((name) => name.endsWith(".sql")).sort();
+    // This regression deliberately constructs the state immediately before
+    // its target migration, even when later migrations have been added.
+    const names = (await fs.readdir(migrations)).filter((name) => name.endsWith(".sql") && name <= migrationName).sort();
     assert.equal(names.at(-1), migrationName);
     for (const name of names.filter((name) => name !== migrationName)) {
       try { await admin.query(await fs.readFile(path.join(migrations, name), "utf8")); }

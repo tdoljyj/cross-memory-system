@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
-async function loadWorker() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}-${Math.random()}`);
-  return (await import(workerUrl.href)).default;
-}
+import { loadContinuityWorker as loadWorker } from "./worker-continuity-loader.mjs";
 
 const env = {
   ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },

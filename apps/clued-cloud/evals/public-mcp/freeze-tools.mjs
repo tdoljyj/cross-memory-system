@@ -14,12 +14,7 @@ const envelope = await response.json();
 const tools = envelope.result?.tools;
 if (!Array.isArray(tools)) throw new Error("tools/list returned no tool array.");
 
-const baseline = {
-  baseline_commit: "81dbef700a95232721261c715a18812e44601ff4",
-  feature_flags: { PROJECT_VIEWS_V2: true, P5_TENANT_WRITES: false },
-  tool_count: tools.length,
-  tools,
-};
+const baseline = { tools };
 const target = path.join(here, "tools-list.baseline.json");
 fs.writeFileSync(target, `${JSON.stringify(baseline, null, 2)}\n`);
 console.log(JSON.stringify({ status: "FROZEN", tool_count: tools.length, target }));

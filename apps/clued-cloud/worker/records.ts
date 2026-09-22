@@ -48,7 +48,7 @@ export const recordTools = [
   {
     name: "clued_record_list",
     description:
-      "Read canonical records at the Global level or for one effective project. Read global priority first, then project State, Task and Decision; use Log or Archive only for history. Every view returns the same canonical id.",
+      "Read canonical records at the Global level or for one effective project. By default, only records proven current by the shared server Currentness Core are returned; an active Event remains a separate search_context current source. Set include_history=true explicitly for historical or diagnostic records, which are not authoritative current rows. Read global priority first, then project State, Task and Decision; use Log or Archive only for history. Every view returns the same canonical id.",
     inputSchema: {
       type: "object",
       required: ["record_type"],
@@ -60,6 +60,7 @@ export const recordTools = [
           enum: ["note", "state", "task", "decision", "archive", "log"],
         },
         limit: { type: "integer", minimum: 1, maximum: 200, default: 100 },
+        include_history: { type: "boolean", default: false, description: "Explicit history/diagnostic view; shadowed records are non-authoritative." },
         context_key: { type: "string" },
       },
       additionalProperties: false,

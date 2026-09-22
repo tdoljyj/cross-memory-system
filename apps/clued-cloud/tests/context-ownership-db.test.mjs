@@ -12,6 +12,7 @@ import { build, stop } from 'esbuild';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const migration = '20260907123955_clued_context_ownership_publication_v11.sql';
 const canonicalSearchMigration = '20260907131834_clued_search_canonical_records.sql';
+const retirementMigration = '20260907172309_retire_context_ownership_publication_v11.sql';
 const U = '10000000-0000-4000-8000-000000000001';
 const V = '10000000-0000-4000-8000-000000000002';
 const project = '20000000-0000-4000-8000-000000000001';
@@ -49,6 +50,7 @@ for (const profile of ['production-m1', 'all-repository-migrations']) {
         grant usage on schema auth,extensions to anon,authenticated,service_role;
         grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
       const names = (await fs.readdir(path.join(root, 'supabase/migrations'))).filter((n) => n.endsWith('.sql')
+        && n < retirementMigration
         && (profile !== 'production-m1' || n < '20260826000000' || n === migration || n === canonicalSearchMigration)).sort();
       for (const name of names) {
         try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
@@ -244,42 +246,15 @@ for (const profile of ['production-m1', 'all-repository-migrations']) {
         check((await admin.query('select count(*) from clued_private.context_publications_v11')).rows[0].count==='3','withdrawal preserves immutable publication history');
       });
 
-      await t.test('real Worker REST dispatch → real authenticated PostgreSQL roles', async () => {
+      await t.test('current Worker retires historical Context routes', async () => {
         const modulePath=path.join(directory,'context-worker.mjs');
         await build({entryPoints:[path.join(root,'worker/continuity.ts')],outfile:modulePath,bundle:true,platform:'node',format:'esm'}); stop();
         const {handleContinuityRequest:handle}=await import(pathToFileURL(modulePath));
-        const rawBinding=`clued_bnd_${crypto.randomBytes(32).toString('hex')}`;
-        const rawHash=crypto.createHash('sha256').update(rawBinding).digest('hex');
-        await admin.query('update public.clued_agent_bindings set token_hash=$1 where id=$2',[rawHash,bindings[6]]);
-        const originalFetch=globalThis.fetch;
-        const routed=[];
-        globalThis.fetch=async (url,init) => {
-          if (String(url).endsWith('/auth/v1/user')) return Response.json({id:U});
-          const name=String(url).split('/').at(-1); const input=JSON.parse(init.body);
-          const token=new Headers(init.headers).get('authorization');
-          const db=name==='clued_context_call'?anon:token==='Bearer owner-http-test'?owner:user;
-          const args=name==='clued_context_call'?[input.p_token_hash,input.p_input]:[input.p_input];
-          routed.push({rpc:name,op:input.p_input.op});
-          try { return Response.json(await rpc(db,name,args)); }
-          catch(error) { return Response.json({code:error.code,message:error.message},{status:['42501','28000'].includes(error.code)?403:error.code==='40001'?409:400}); }
-        };
-        async function http(input,token=rawBinding,management=false) {
-          const response=await handle(new Request(`https://clued.example/v1/contexts${management?'/owner':''}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(input)}),
+        for (const pathname of ['/v1/contexts', '/v1/contexts/owner']) {
+          const response=await handle(new Request(`https://clued.example${pathname}`,{method:'POST',headers:{authorization:'Bearer retired-context','content-type':'application/json'},body:JSON.stringify({op:'record_list'})}),
             {CONTEXT_OWNERSHIP_V11:'true',SUPABASE_URL:'https://postgres.test',SUPABASE_PUBLISHABLE_KEY:'test-key'});
-          const value=await response.json();
-          assert.equal(response.status,200,JSON.stringify(value)); return value;
+          check(response===null,`${pathname} remains retired even with historical flag`);
         }
-        try {
-          const space=(await http({op:'context_create',name:'HTTP integration',project_id:project,environment:'test',idempotency_key:key()},'owner-http-test',true)).result;
-          await http({op:'grant_upsert',context_id:space.id,binding_id:bindings[6],actions:['read','write'],history_policy:'EXISTING_AND_FUTURE',version_policy:'LATEST',expires_at:future(),idempotency_key:key()},'owner-http-test',true);
-          const saved=await http({op:'record_put',context_id:space.id,record_type:'state',body:{title:'HTTP exact save',content:'body reaches PostgreSQL'},idempotency_key:key()});
-          check(saved.receipt_id&&saved.result.id,'real Worker developer route commits actual database Receipt');
-          const userGrant=(await http({op:'grant_upsert',context_id:space.id,binding_id:bindings[1],actions:['read'],history_policy:'EXISTING_AND_FUTURE',version_policy:'LATEST',expires_at:future(),idempotency_key:key()},'owner-http-test',true)).result;
-          await http({op:'link_upsert',context_id:space.id,project_id:project,grant_id:userGrant.id,idempotency_key:key()},'owner-http-test',true);
-          const restored=await http({op:'record_list',context_id:space.id,mode:'development_history'},'oauth-http-test');
-          check(restored.records[0].id===saved.result.id&&restored.records[0].body.content==='body reaches PostgreSQL','real Worker late OAuth route restores exact canonical body and ID');
-          check(routed.some((r)=>r.rpc==='clued_context_owner')&&routed.some((r)=>r.rpc==='clued_context_call')&&routed.some((r)=>r.rpc==='clued_context_oauth_call'),'three real RPC paths exercised under actual owner/anon/OAuth roles');
-        } finally {globalThis.fetch=originalFetch;}
       });
 
       await t.test('feedback minimal disclosure, withdrawal, revocation/replay and freshness', async () => {

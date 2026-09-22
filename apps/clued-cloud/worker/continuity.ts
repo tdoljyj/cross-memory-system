@@ -22,6 +22,8 @@ import {
   type UserRecordRpc,
 } from "./records";
 
+declare const __CLUED_BUILD_SHA__: string | null;
+
 const DEFAULT_SUPABASE_URL = "https://ccxsikzwxlolxqlosril.supabase.co";
 const DEFAULT_SUPABASE_KEY =
   "sb_publishable_tVKKh7Ok4FhBhHtHyZfwBA_i2RJD2Fg";
@@ -683,6 +685,88 @@ const tools = [
     },
   },
   {
+    name: "clued_event_carrier_transition",
+    description:
+      "Atomically supersede, retract, or resolve one authorized active continuity Event carrier using its transition version. Supersede and retract append a separate successor Event in the same transaction; resolve requires a verified continuity-only proof receipt. The original Event remains history and never becomes a Record.",
+    inputSchema: {
+      type: "object",
+      required: ["context_key", "source_event_id", "expected_transition_version", "transition", "idempotency_key"],
+      properties: {
+        context_key: { type: "string", minLength: 1, maxLength: 160 },
+        source_event_id: { type: "integer", minimum: 1 },
+        expected_transition_version: { type: "integer", minimum: 1 },
+        transition: { type: "string", enum: ["supersede", "retract", "resolve"] },
+        idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
+        session_token: { type: "string", description: "Required for supersede and retract successor append." },
+        base_version: { type: "integer", minimum: 0, description: "Continuity CAS version for successor append." },
+        event_type: { type: "string", enum: ["decision", "correction", "action", "failure", "blocker"] },
+        payload: { type: "object", description: "Successor Event payload for supersede or retract." },
+        proof_receipt_id: { type: "string", format: "uuid", description: "Required for continuity-only resolve." },
+      },
+      oneOf: [
+        { properties: { transition: { const: "supersede" } }, required: ["session_token", "base_version", "event_type", "payload"] },
+        { properties: { transition: { const: "retract" } }, required: ["session_token", "base_version", "payload"] },
+        { properties: { transition: { const: "resolve" } }, required: ["proof_receipt_id"] },
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "clued_session_reconcile",
+    description:
+      "Compare this authorized session with the server currentness vector and create a typed admission or observation receipt. Only an eligible result updates the session admission state; an observation does not unlock checkpointing.",
+    inputSchema: {
+      type: "object",
+      required: ["session_token"],
+      properties: {
+        session_token: { type: "string" },
+        context_key: { type: "string", minLength: 1, maxLength: 160, default: "global" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "clued_projection_rebuild",
+    description:
+      "Bind an already written active Global Record to one authorized projection generation. Requires a separate projection builder grant, exact invalidation revision and source vector digest; all checks and fence release occur in the database transaction.",
+    inputSchema: {
+      type: "object",
+      required: ["projection_key", "record_id", "expected_invalidation_revision", "expected_source_vector_digest"],
+      properties: {
+        projection_key: { type: "string", minLength: 1, maxLength: 160 },
+        record_id: { type: "string", format: "uuid" },
+        expected_invalidation_revision: { type: "integer", minimum: 0 },
+        expected_source_vector_digest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "clued_full_global_reconcile",
+    description:
+      "Resolve the Global unknown-impact aggregate fence only after an authorized complete source scan and all specific projections are current. Requires a separate aggregate builder grant and exact revision/source digest CAS.",
+    inputSchema: {
+      type: "object",
+      required: ["expected_invalidation_revision", "expected_source_vector_digest"],
+      properties: {
+        expected_invalidation_revision: { type: "integer", minimum: 0 },
+        expected_source_vector_digest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "clued_currentness_g6_gate",
+    description:
+      "Read the server G6 currentness gate for one Project. Requires authorized Global and Project reads; returns a generic not_ready result while any required source remains unresolved.",
+    inputSchema: {
+      type: "object",
+      required: ["project_id"],
+      properties: { project_id: { type: "string", format: "uuid" } },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "clued_session_checkpoint",
     description:
       "Call before ending or handing off an authorized session. Atomically commits a canonical checkpoint using optimistic concurrency and returns an audit receipt or explicit conflict.",
@@ -814,6 +898,21 @@ export const publicToolPolicies = {
   clued_append_event: {
     scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
   },
+  clued_event_carrier_transition: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
+  },
+  clued_session_reconcile: {
+    scopes: ["context:read"], readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
+  },
+  clued_projection_rebuild: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true,
+  },
+  clued_full_global_reconcile: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true,
+  },
+  clued_currentness_g6_gate: {
+    scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
   clued_session_checkpoint: {
     scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
   },
@@ -904,6 +1003,11 @@ const rpcByTool = {
   ...contextRpcByTool,
   clued_session_resume: "clued_mcp_restore",
   clued_append_event: "clued_mcp_append_event",
+  clued_event_carrier_transition: "clued_mcp_event_carrier_transition",
+  clued_session_reconcile: "clued_mcp_session_reconcile",
+  clued_projection_rebuild: "clued_mcp_projection_rebuild",
+  clued_full_global_reconcile: "clued_mcp_full_global_reconcile",
+  clued_currentness_g6_gate: "clued_mcp_currentness_g6_gate",
   clued_session_checkpoint: "clued_mcp_commit_checkpoint",
   clued_search_context: "clued_mcp_search_context",
   clued_read_log: "clued_mcp_read_log",
@@ -974,6 +1078,62 @@ function validateRecordMutationInput(args: unknown) {
   }
 }
 
+function validateRecordListInput(args: unknown) {
+  if (!args || Array.isArray(args) || typeof args !== "object") {
+    throw new HttpError(422, "Record list input must be a JSON object.");
+  }
+  const input = args as Record<string, unknown>;
+  if ("include_history" in input && typeof input.include_history !== "boolean") {
+    throw new HttpError(422, "include_history must be a boolean.");
+  }
+  // Keep the server's default-current view when an older client omits the flag.
+  // History is available only through the explicit, shared DB-core argument.
+  for (const key of ["mode", "history", "diagnostic"]) {
+    if (key in input) throw new HttpError(422, "Use include_history for record history.");
+  }
+}
+
+function validateEventCarrierTransitionInput(args: unknown) {
+  if (!args || Array.isArray(args) || typeof args !== "object") {
+    throw new HttpError(422, "Event carrier transition input must be a JSON object.");
+  }
+  const input = args as Record<string, unknown>;
+  const allowed = new Set([
+    "context_key", "source_event_id", "expected_transition_version", "transition",
+    "idempotency_key", "session_token", "base_version", "event_type", "payload", "proof_receipt_id",
+  ]);
+  if (Object.keys(input).some((key) => !allowed.has(key)) ||
+    typeof input.context_key !== "string" || !input.context_key.trim() || input.context_key.length > 160 ||
+    !Number.isSafeInteger(input.source_event_id) || (input.source_event_id as number) < 1 ||
+    !Number.isSafeInteger(input.expected_transition_version) || (input.expected_transition_version as number) < 1 ||
+    typeof input.idempotency_key !== "string" || input.idempotency_key.length < 8 || input.idempotency_key.length > 160) {
+    throw new HttpError(422, "Invalid event carrier transition input.");
+  }
+  if (input.transition === "resolve") {
+    if (typeof input.proof_receipt_id !== "string" ||
+      ["session_token", "base_version", "event_type", "payload"].some((key) => key in input)) {
+      throw new HttpError(422, "Resolve requires only a verified proof receipt.");
+    }
+    return;
+  }
+  if (input.transition !== "supersede" && input.transition !== "retract") {
+    throw new HttpError(422, "Invalid event carrier transition.");
+  }
+  if (typeof input.session_token !== "string" ||
+    !Number.isSafeInteger(input.base_version) || (input.base_version as number) < 0 ||
+    !input.payload || Array.isArray(input.payload) || typeof input.payload !== "object" ||
+    "proof_receipt_id" in input) {
+    throw new HttpError(422, "A successor Event requires session, version, and payload.");
+  }
+  if (input.transition === "supersede" &&
+    !["decision", "correction", "action", "failure", "blocker"].includes(String(input.event_type))) {
+    throw new HttpError(422, "Invalid successor Event type.");
+  }
+  if (input.transition === "retract" && "event_type" in input) {
+    throw new HttpError(422, "Retraction Event type is set by the server.");
+  }
+}
+
 async function callRpc(
   request: Request,
   env: ContinuityEnv,
@@ -985,6 +1145,8 @@ async function callRpc(
     throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
   }
   const payload = typeof args === "object" && args ? args : {};
+  if (name === "clued_record_list") validateRecordListInput(payload);
+  if (name === "clued_event_carrier_transition") validateEventCarrierTransitionInput(payload);
   if (name === "clued_record_mutate") validateRecordMutationInput(payload);
 
   if (name in contextRpcByTool) {
@@ -1281,10 +1443,24 @@ async function handleRecordApi(request: Request, env: ContinuityEnv) {
   }
   if (url.pathname === "/v1/records" && request.method === "GET") {
     const input: Record<string, unknown> = {};
+    const allowedParameters = new Set(["level", "project_id", "record_type", "limit", "include_history"]);
+    for (const key of url.searchParams.keys()) {
+      if (!allowedParameters.has(key) || url.searchParams.getAll(key).length !== 1) {
+        throw new HttpError(422, "Invalid record list query parameters.");
+      }
+    }
     for (const key of ["level", "project_id", "record_type", "limit"] as const) {
       const value = url.searchParams.get(key);
       if (value !== null) input[key] = key === "limit" ? Number(value) : value;
     }
+    const includeHistory = url.searchParams.get("include_history");
+    if (includeHistory !== null) {
+      if (includeHistory !== "true" && includeHistory !== "false") {
+        throw new HttpError(422, "include_history must be true or false.");
+      }
+      input.include_history = includeHistory === "true";
+    }
+    validateRecordListInput(input);
     return json(
       await callUserRecordRpc(request, env, "clued_user_record_list", input),
       200,
@@ -1321,6 +1497,8 @@ async function handleContinuityRequestInner(
   const url = new URL(request.url);
   try {
     if (url.pathname === "/healthz" && request.method === "GET") {
+      const sourceCommit = typeof __CLUED_BUILD_SHA__ === "string" &&
+        /^[0-9a-f]{40}$/.test(__CLUED_BUILD_SHA__) ? __CLUED_BUILD_SHA__ : null;
       return json({
         status: "ok",
         service: "clued-continuity",
@@ -1330,6 +1508,7 @@ async function handleContinuityRequestInner(
         api: "/v1/continuity",
         workLog: "日志.md",
         mandatoryLifecycle: ["resume", "append_event", "checkpoint"],
+        ...(sourceCommit ? { source_commit: sourceCommit } : {}),
       });
     }
     if (url.pathname === "/.well-known/clued-continuity") {
@@ -1405,7 +1584,7 @@ async function handleContinuityRequestInner(
       if (request.method === "DELETE") return await revokeBinding(request, env);
       return json({ error: "Method not allowed." }, 405, corsHeaders(request));
     }
-    if (url.pathname === "/api/memories" || url.pathname === "/api/memories/audit") {
+    if (url.pathname === "/api/memories" || url.pathname.startsWith("/api/memories/")) {
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: corsHeaders(request) });
       }

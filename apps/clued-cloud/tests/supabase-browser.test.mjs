@@ -154,6 +154,8 @@ async function evaluateBuildConfig(environment) {
       if (name === 'vite') return { defineConfig: callback => callback, loadEnv: (mode, cwd, prefix) => {
         assert.equal(mode, 'fixture'); assert.equal(cwd, '/fixture'); assert.equal(prefix, 'VITE_CLUED_'); return environment;
       } };
+      if (name === 'node:child_process') return { execFileSync: (_bin, args) =>
+        args[0] === 'rev-parse' ? 'a'.repeat(40) : '' };
       if (name === './app/supabase-public-config') return publicConfigExports;
       if (name === 'vinext') return { __esModule: true, default: () => ({ name: 'vinext-fixture' }) };
       if (name === './.openai/hosting.json') return {};

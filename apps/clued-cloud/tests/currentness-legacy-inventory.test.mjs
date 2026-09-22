@@ -1,0 +1,297 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import test from 'node:test';
+import EmbeddedPostgres from 'embedded-postgres';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const migrationDir = path.join(root, 'supabase/migrations');
+const coreName = '20260922092355_bug_20260922_002_currentness_core.sql';
+const inventoryName = '20260922092810_bug_20260922_002_legacy_carrier_inventory.sql';
+const admissionName = '20260922092932_bug_20260922_002_admission_reconcile.sql';
+const uuid = () => crypto.randomUUID();
+
+async function freePort() {
+  const server = net.createServer();
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
+test('raw direct Event inventory is complete, scoped, and CAS transitions are atomic', { timeout: 180000 }, async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-legacy-currentness-'));
+  const server = new EmbeddedPostgres({
+    databaseDir: directory, user: 'postgres', password: crypto.randomBytes(32).toString('hex'),
+    port: await freePort(), persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
+  });
+  let db;
+  try {
+    await server.initialise();
+    await server.start();
+    db = server.getPgClient();
+    await db.connect();
+    await db.query(`create role anon nologin; create role authenticated nologin;
+      create role service_role nologin bypassrls; create role authenticator nologin noinherit;
+      create schema auth; create schema extensions;
+      create extension pgcrypto with schema extensions;
+      create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,
+        banned_until timestamptz,deleted_at timestamptz);
+      create function auth.uid() returns uuid language sql stable as
+        $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+      create function auth.jwt() returns jsonb language sql stable as
+        $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
+      grant usage on schema auth,extensions to anon,authenticated,service_role;
+      grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
+    const names = (await fs.readdir(migrationDir)).filter((name) => name.endsWith('.sql') && name < coreName).sort();
+    for (const name of names) await db.query(await fs.readFile(path.join(migrationDir, name), 'utf8'));
+
+    const owner = uuid();
+    const projectId = uuid();
+    const projectBId = uuid();
+    await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',
+      [owner, 'legacy-inventory@example.invalid']);
+    await db.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key,
+      certainty_status,confirmed_at) values($1,$2,'Alpha','alpha',$3,'confirmed',now())`,
+      [projectId, owner, `project:${projectId}`]);
+    await db.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key,
+      certainty_status,confirmed_at) values($1,$2,'Beta','beta',$3,'confirmed',now())`,
+      [projectBId, owner, `project:${projectBId}`]);
+    const events = (await db.query(`insert into public.clued_context_events
+      (user_id,context_key,event_type,payload,version,audit_visibility)
+      values ($1,'global','decision','{"text":"current decision"}',1,'work_log'),
+             ($1,'project:alpha','blocker','{"text":"open blocker"}',2,'work_log'),
+             ($1,'project:missing','action','{"text":"unknown scope"}',3,'work_log'),
+             ($1,'global','retraction','{"text":"unbound global retraction"}',4,'work_log'),
+             ($1,'project:alpha','retraction','{"text":"unbound project retraction"}',5,'work_log'),
+             ($1,'global','note','{"text":"non-material note"}',6,'work_log')
+      returning id,event_type`, [owner])).rows;
+    const ids = Object.fromEntries(events.map((row) => [row.event_type, row.id]));
+    await db.query(await fs.readFile(path.join(migrationDir, coreName), 'utf8'));
+    await db.query(await fs.readFile(path.join(migrationDir, inventoryName), 'utf8'));
+    const oauthDispatcher = (await db.query(`select pg_get_functiondef(
+      'public.clued_oauth_call(text,jsonb)'::regprocedure) definition`)).rows[0].definition;
+    assert.match(oauthDispatcher, /when 'clued_event_carrier_transition' then/);
+    for (const tool of ['clued_session_reconcile', 'clued_projection_rebuild',
+      'clued_full_global_reconcile', 'clued_currentness_g6_gate']) {
+      assert.ok(oauthDispatcher.includes(`when '${tool}' then`));
+    }
+    assert.match(oauthDispatcher, /clued_private\.resolve_oauth_binding\(\)/);
+    await db.query('set role authenticated');
+    await assert.rejects(db.query(`select public.clued_oauth_call(
+      'clued_event_carrier_transition','{}'::jsonb)`),
+    /legacy_oauth_requires_new_provider_reauthorization/);
+    await db.query('reset role');
+
+    const candidates = (await db.query(`select event_id,canonical_scope,disposition,dimensions
+      from clued_private.legacy_event_candidates order by event_id`)).rows;
+    assert.equal(candidates.length, 5);
+    assert.equal(candidates[0].event_id, ids.decision);
+    assert.equal(candidates[0].disposition, 'LEGACY_ACTIVE_UNSTRUCTURED');
+    assert.equal(candidates[1].canonical_scope, `project:${projectId}`);
+    assert.deepEqual(candidates[1].dimensions, ['state', 'task']);
+    assert.equal(candidates[2].disposition, 'LEGACY_UNBOUND');
+    assert.equal(candidates[2].canonical_scope, `legacy-unbound:${ids.action}`);
+    assert.deepEqual(candidates[2].dimensions, ['state', 'task', 'decision']);
+    assert.equal(candidates[3].canonical_scope, 'global');
+    assert.equal(candidates[3].disposition, 'LEGACY_UNBOUND');
+    assert.equal(candidates[4].canonical_scope, `project:${projectId}`);
+    assert.equal(candidates[4].disposition, 'LEGACY_UNBOUND');
+    const receipts = (await db.query(`select candidate_count,inventory_sha256,
+      scan_completed_revision,append_cutover_revision
+      from clued_private.legacy_carrier_inventory_receipts`)).rows;
+    assert.equal(receipts.reduce((sum, receipt) => sum + Number(receipt.candidate_count), 0), 5);
+    assert.ok(receipts.every((receipt) => /^[0-9a-f]{64}$/.test(receipt.inventory_sha256)));
+    assert.ok(receipts.every((receipt) => receipt.scan_completed_revision === receipt.append_cutover_revision));
+    const aliasProjection = (await db.query(`select projection_key,invalidation_revision
+      from clued_private.projection_invalidation_heads
+      where user_id=$1 and target_scope='global' and projection_key='global.__aggregate__'`,
+      [owner])).rows[0];
+    assert.equal(aliasProjection.projection_key, 'global.__aggregate__');
+    assert.equal(Number(aliasProjection.invalidation_revision), 1);
+    const betaRecordId = uuid();
+    await db.query(`insert into public.clued_memories
+      (id,user_id,title,content,record_type,scope,project_id,canonical_scope,lifecycle_status)
+      values($1,$2,'Beta state','Independent project state','state','project',$3,$4,'active')`,
+      [betaRecordId, owner, projectBId, `project:${projectBId}`]);
+    const betaList = (await db.query(`select clued_private.record_list_core($1,$2,$3) result`,
+      [owner, { level: 'project', project_id: projectBId, record_type: 'state' },
+        [`project:${projectBId}`]])).rows[0].result;
+    assert.equal(betaList.records.length, 1);
+    assert.equal(betaList.records[0].id, betaRecordId);
+
+    // T-CUR-35 successor: the unresolved legacy source precedes this Record,
+    // yet the default list must omit it and history must label it non-current.
+    const recordId = uuid();
+    await db.query(`insert into public.clued_memories
+      (id,user_id,title,content,record_type,scope,canonical_scope,lifecycle_status,
+       updated_at)
+      values($1,$2,'Later state','A later state record','state','global','global',
+        'active',now()+interval '1 second')`, [recordId, owner]);
+    const currentList = (await db.query(`select clued_private.record_list_core($1,$2,$3) result`,
+      [owner, { level: 'global', record_type: 'state' }, ['global']])).rows[0].result;
+    assert.equal(currentList.records.length, 0);
+    const historyList = (await db.query(`select clued_private.record_list_core($1,$2,$3) result`,
+      [owner, { level: 'global', record_type: 'state', include_history: true }, ['global']])).rows[0].result;
+    assert.equal(historyList.records.length, 1);
+    assert.equal(historyList.records[0].id, recordId);
+    assert.equal(historyList.records[0].authoritative, false);
+    assert.equal(historyList.records[0].record_currentness, 'SHADOWED_BY_ACTIVE_EVENT');
+
+    const receiptId = uuid();
+    await assert.rejects(db.query(`select clued_private.transition_event_carrier($1,2,
+      'RESOLVED_CONTINUITY_ONLY',null,$2)`, [ids.decision, receiptId]), /carrier_transition_conflict/);
+    await db.query('begin');
+    await db.query(`insert into public.clued_audit_receipts
+      (id,user_id,context_key,operation,object_type,object_id,version,metadata)
+      values ($1,$2,'global','carrier_transition','event',$3,1,
+        jsonb_build_object('target_state','RESOLVED_CONTINUITY_ONLY',
+          'expected_transition_version','1','continuity_only_proof','verified',
+          'transaction_id',txid_current()::text))`,
+      [receiptId, owner, String(ids.decision)]);
+    const before = (await db.query(`select carrier_state,transition_version from
+      clued_private.event_truth_carriers where event_id=$1`, [ids.decision])).rows[0];
+    assert.equal(before.carrier_state, 'ACTIVE_UNSTRUCTURED');
+    const changed = (await db.query(`select clued_private.transition_event_carrier($1,1,
+      'RESOLVED_CONTINUITY_ONLY',null,$2) as version`, [ids.decision, receiptId])).rows[0];
+    assert.equal(Number(changed.version), 2);
+    await db.query('commit');
+    await assert.rejects(db.query(`select clued_private.transition_event_carrier($1,1,
+      'RESOLVED_CONTINUITY_ONLY',null,$2)`, [ids.decision, receiptId]), /carrier_transition_conflict/);
+    const after = (await db.query(`select carrier_state,transition_version from
+      clued_private.event_truth_carriers where event_id=$1`, [ids.decision])).rows[0];
+    assert.equal(after.carrier_state, 'RESOLVED_CONTINUITY_ONLY');
+    assert.equal(Number(after.transition_version), 2);
+
+    const tokenHash = crypto.randomBytes(32).toString('hex');
+    await db.query(`insert into public.clued_agent_bindings
+      (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic','carrier transition test',$2,
+        array['context:read','context:write','audit:read'],array['global',$3,$4])`,
+      [owner, tokenHash, `project:${projectId}`, `project:${projectBId}`]);
+    const restored = (await db.query(`select public.clued_mcp_restore($1,$2) result`,
+      [tokenHash, { context_key: `project:${projectId}`, response_view: 'structured',
+        event_limit: 1, event_budget_bytes: 4096 }])).rows[0].result;
+    const input = {
+      context_key: `project:${projectId}`, source_event_id: ids.blocker,
+      expected_transition_version: 1, transition: 'supersede', event_type: 'correction',
+      payload: { text: 'replacement correction' }, session_token: restored.session_token,
+      base_version: restored.version, idempotency_key: uuid(),
+    };
+    const readOnlyToken = crypto.randomBytes(32).toString('hex');
+    await db.query(`insert into public.clued_agent_bindings
+      (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic','read-only carrier test',$2,
+        array['context:read'],array[$3])`,
+      [owner, readOnlyToken, `project:${projectId}`]);
+    await assert.rejects(db.query(`select public.clued_mcp_event_carrier_transition($1,$2)`,
+      [readOnlyToken, input]), /binding_not_authorized/);
+    const countBefore = Number((await db.query('select count(*) from public.clued_context_events')).rows[0].count);
+    await assert.rejects(db.query(`select public.clued_mcp_event_carrier_transition($1,$2)`,
+      [tokenHash, { ...input, expected_transition_version: 2 }]), /carrier_transition_conflict/);
+    assert.equal(Number((await db.query('select count(*) from public.clued_context_events')).rows[0].count), countBefore);
+    const replaced = (await db.query(`select public.clued_mcp_event_carrier_transition($1,$2) result`,
+      [tokenHash, input])).rows[0].result;
+    assert.equal(replaced.status, 'transitioned');
+    assert.equal(Number(replaced.transition_version), 2);
+    const duplicate = (await db.query(`select public.clued_mcp_event_carrier_transition($1,$2) result`,
+      [tokenHash, input])).rows[0].result;
+    assert.equal(duplicate.status, 'duplicate');
+    assert.equal(Number((await db.query('select count(*) from public.clued_context_events')).rows[0].count), countBefore + 1);
+    const replacement = (await db.query(`select event_type,payload from public.clued_context_events
+      where id=$1`, [replaced.successor_event_id])).rows[0];
+    assert.equal(replacement.payload.supersedes_event_id, String(ids.blocker));
+    const retracted = (await db.query(`select public.clued_mcp_event_carrier_transition($1,$2) result`,
+      [tokenHash, {
+        context_key: `project:${projectId}`, source_event_id: replaced.successor_event_id,
+        expected_transition_version: 1, transition: 'retract',
+        payload: { text: 'the correction is retracted' },
+        session_token: restored.session_token, base_version: restored.version + 1,
+        idempotency_key: uuid(),
+      }])).rows[0].result;
+    assert.equal(retracted.status, 'transitioned');
+    const retractionEvent = (await db.query(`select event_type,payload from public.clued_context_events
+      where id=$1`, [retracted.successor_event_id])).rows[0];
+    assert.equal(retractionEvent.event_type, 'retraction');
+    assert.equal(retractionEvent.payload.retracts_event_id, String(replaced.successor_event_id));
+    const resolveInput = {
+      context_key: `project:${projectId}`, source_event_id: retracted.successor_event_id,
+      expected_transition_version: 1, transition: 'resolve',
+      proof_receipt_id: uuid(), idempotency_key: uuid(),
+    };
+    await assert.rejects(db.query(`select public.clued_mcp_event_carrier_transition($1,$2)`,
+      [tokenHash, resolveInput]), /continuity_only_proof_required/);
+    const proofState = (await db.query(`select carrier_state from
+      clued_private.event_truth_carriers where event_id=$1`,
+      [retracted.successor_event_id])).rows[0].carrier_state;
+    assert.equal(proofState, 'ACTIVE_UNSTRUCTURED');
+    await db.query(`insert into public.clued_audit_receipts
+      (id,user_id,context_key,operation,object_type,object_id,version,metadata)
+      values($1,$2,$3,'continuity_only_resolution_authorized','event',$4,1,
+        '{"proof":"verified"}')`,
+      [resolveInput.proof_receipt_id, owner, `project:${projectId}`, String(retracted.successor_event_id)]);
+    const resolved = (await db.query(`select public.clued_mcp_event_carrier_transition($1,$2) result`,
+      [tokenHash, resolveInput])).rows[0].result;
+    assert.equal(resolved.status, 'transitioned');
+    assert.equal(Number(resolved.transition_version), 2);
+    const resolvedAgain = (await db.query(`select public.clued_mcp_event_carrier_transition($1,$2) result`,
+      [tokenHash, resolveInput])).rows[0].result;
+    assert.equal(resolvedAgain.status, 'duplicate');
+
+    const hiddenEvent = (await db.query(`insert into public.clued_context_events
+      (user_id,context_key,event_type,payload,audit_visibility)
+      values($1,'global','decision','{"text":"hidden"}','audit_only') returning id`,
+      [owner])).rows[0].id;
+    await db.query(`insert into clued_private.event_truth_carriers
+      (event_id,user_id,canonical_scope,dimensions,visibility,source_kind,carrier_state)
+      values($1,$2,'global',array['decision'],'audit_only','legacy','ACTIVE_UNSTRUCTURED')`,
+      [hiddenEvent, owner]);
+    const revisionBefore = (await db.query(`select snapshot_revision from
+      clued_private.scope_currentness_heads where user_id=$1 and canonical_scope='global'`,
+      [owner])).rows[0].snapshot_revision;
+    const hiddenReceipt = uuid();
+    await db.query('begin');
+    await db.query(`insert into public.clued_audit_receipts
+      (id,user_id,context_key,operation,object_type,object_id,version,metadata)
+      values($1,$2,'global','carrier_transition','event',$3,1,
+        jsonb_build_object('target_state','RESOLVED_CONTINUITY_ONLY',
+          'expected_transition_version','1','continuity_only_proof','verified',
+          'transaction_id',txid_current()::text))`, [hiddenReceipt, owner, String(hiddenEvent)]);
+    await db.query(`select clued_private.transition_event_carrier($1,1,
+      'RESOLVED_CONTINUITY_ONLY',null,$2)`, [hiddenEvent, hiddenReceipt]);
+    await db.query('commit');
+    const revisionAfter = (await db.query(`select snapshot_revision from
+      clued_private.scope_currentness_heads where user_id=$1 and canonical_scope='global'`,
+      [owner])).rows[0].snapshot_revision;
+    assert.equal(revisionAfter, revisionBefore);
+
+    // T-CUR-66: scoped uncertainty blocks Alpha; unknown aliases stale only
+    // Global aggregate. Independent Beta remains eligible for local admission.
+    await db.query(await fs.readFile(path.join(migrationDir, admissionName), 'utf8'));
+    const bindingId = (await db.query(`select id from public.clued_agent_bindings
+      where token_hash=$1`, [tokenHash])).rows[0].id;
+    const alphaVector = (await db.query(`select clued_private.currentness_vector($1,$2,$3) v`,
+      [owner, `project:${projectId}`, bindingId])).rows[0].v;
+    const betaVector = (await db.query(`select clued_private.currentness_vector($1,$2,$3) v`,
+      [owner, `project:${projectBId}`, bindingId])).rows[0].v;
+    const globalVector = (await db.query(`select clued_private.currentness_vector($1,$2,$3) v`,
+      [owner, 'global', bindingId])).rows[0].v;
+    assert.equal(alphaVector.legacy_unbound, true);
+    assert.equal(betaVector.legacy_unbound, false);
+    assert.ok(globalVector.projection.some((item) =>
+      item.key === 'global.__aggregate__' &&
+      Number(item.invalidation_revision) > Number(item.resolved_through_revision)));
+    const betaEligible = (await db.query(`select clued_private.currentness_vector_eligible($1) ok`,
+      [betaVector])).rows[0].ok;
+    assert.equal(betaEligible, true);
+  } finally {
+    if (db) await db.end().catch(() => {});
+    await server.stop().catch(() => {});
+    await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
+  }
+});

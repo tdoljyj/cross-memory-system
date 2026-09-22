@@ -14,21 +14,21 @@ const directory = await mkdtemp(path.join(os.tmpdir(), 'clued-context-independen
 await build({ entryPoints: ['worker/continuity.ts'], outdir: directory, bundle: true, platform: 'node', format: 'esm', outExtension: { '.js': '.mjs' } });
 stop();
 const { handleContinuityRequest: handle } = await import(pathToFileURL(path.join(directory, 'continuity.mjs')));
-const env = { CONTEXT_OWNERSHIP_V11: 'true', SUPABASE_URL: 'https://independent.invalid', SUPABASE_PUBLISHABLE_KEY: 'public-test-key' };
+const env = { CLUED_DEVELOPMENT_CONTEXT_V14: 'true', SUPABASE_URL: 'https://independent.invalid', SUPABASE_PUBLISHABLE_KEY: 'public-test-key' };
 const make = (route, input) => new Request(`https://clued.example${route}`, { method: 'POST', headers: { authorization: 'Bearer clued_bnd_independent_fixture', 'content-type': 'application/json' }, body: JSON.stringify(input) });
 
-for (const route of ['/v1/contexts', '/mcp']) {
-  test(`independent exact publication payload survives ${route}`, async () => {
-    const payload = { title: 'Accepted contract', body: { user_id: 'domain-example', actor_binding_id: 'document-example', nested: [{ binding_id: 'literal-content' }] } };
+for (const route of ['/v1/development', '/mcp']) {
+  test(`independent exact development Record body survives ${route}`, async () => {
+    const payload = { title: 'Accepted contract', user_id: 'domain-example', actor_binding_id: 'document-example', nested: [{ binding_id: 'literal-content' }] };
     const original = globalThis.fetch;
-    globalThis.fetch = async () => Response.json({ status: 'ok', publication: { id: 'publication-reference', payload, payload_hash: 'approved-hash' } });
+    globalThis.fetch = async () => Response.json({ status: 'ok', records: [{ id: 'record-reference', body: payload, content_hash: 'approved-hash' }] });
     try {
-      const input = { op: 'publication_read', context_id: 'context-reference' };
+      const input = { op: 'record_list', mode: 'development_history', context_id: 'context-reference' };
       const response = await handle(make(route, route === '/mcp' ? { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'clued_context', arguments: input } } : input), env);
       assert.equal(response.status, 200);
       const returned = await response.json();
       const result = route === '/mcp' ? returned.result.structuredContent : returned;
-      assert.deepEqual(result.publication.payload, payload, 'The transport must not alter approved domain content while retaining its hash.');
+      assert.deepEqual(result.records[0].body, payload, 'The transport must not alter domain content while retaining its hash.');
       assert.equal(response.headers.get('cache-control'), 'no-store');
     } finally { globalThis.fetch = original; }
   });
@@ -64,7 +64,7 @@ test('independent real PostgreSQL negative access boundaries', { timeout: 120000
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const migrations = 'supabase/migrations';
-    for (const name of (await readdir(migrations)).filter(n => n.endsWith('.sql') && (n < '20260826000000' || n.includes('context_ownership_publication_v11'))).sort()) {
+    for (const name of (await readdir(migrations)).filter(n => n.endsWith('.sql') && (n < '20260826000000' || n === '20260907123955_clued_context_ownership_publication_v11.sql')).sort()) {
       await admin.query(await readFile(path.join(migrations, name), 'utf8'));
     }
     // Exercise production baseline plus a future optional Binding expiry column.
