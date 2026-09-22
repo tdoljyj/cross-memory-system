@@ -107,6 +107,113 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       return { userId, token, bindingId, rpc, project, record, update, restore, checkpoint };
     }
 
+    await t.test('M-LIVE-01: resume constraints/conflicts share the Event fence and work logs never revive checkpoint actions', async () => {
+      const f = await fixture();
+      const p = await f.project('Resume constraint fence');
+      const decision = await f.record(p.scope, 'decision', 'SHADOWED_RESIDENT_CONSTRAINT',
+        { rationale: 'Resident rule', constraint: true });
+      const global = await f.record('global', 'decision', 'AUTHORIZED_GLOBAL_CONSTRAINT',
+        { rationale: 'Global rule', constraint: true });
+      const first = await f.restore(p.scope);
+      assert.ok(first.active_constraints.some(r => r.id === decision));
+      assert.ok(first.active_constraints.some(r => r.id === global));
+      assert.ok(first.authority_conflicts.some(r => r.id === decision));
+      const sessionId = (await admin.query(`select id from public.clued_continuity_sessions
+        where token_hash=encode(extensions.digest($1,'sha256'),'hex')`, [first.session_token])).rows[0].id;
+      await admin.query(`insert into public.clued_context_events
+        (user_id,context_key,session_id,binding_id,event_type,payload,audit_visibility)
+        values($1,$2,$3,$4,'decision','{"marker":"AUDIT_ONLY_PRIVATE"}'::jsonb,'audit_only')`,
+      [f.userId, p.scope, sessionId, f.bindingId]);
+      const afterAudit = await f.restore(p.scope);
+      assert.ok(afterAudit.active_constraints.some(r => r.id === decision), 'audit-only Events must not shadow a resident rule');
+      const event = await f.rpc('clued_mcp_append_event', { context_key: p.scope,
+        session_token: afterAudit.session_token, base_version: afterAudit.version,
+        event_type: 'decision', payload: { marker: 'Visible replacement Event' }, idempotency_key: uuid() });
+      assert.equal(event.status, 'appended');
+      const fresh = await f.restore(p.scope);
+      assert.equal(fresh.currentness_evaluation.overall, 'CURRENT', 'reproduces fresh CURRENT admission independently of individual Record currentness');
+      assert.equal(fresh.authoritative_current_action.status, 'BLOCKED');
+      assert.equal(fresh.active_constraints.some(r => r.id === decision), false);
+      assert.equal(fresh.authority_conflicts.some(r => r.id === decision), false);
+      assert.ok(fresh.active_constraints.some(r => r.id === global), 'unshadowed authorized Global rule is retained');
+      const history = await f.rpc('clued_record_list', { level: 'project', project_id: p.id,
+        record_type: 'decision', include_history: true });
+      assert.equal(history.records.find(r => r.id === decision).record_currentness, 'SHADOWED_BY_ACTIVE_EVENT');
+      assert.equal(history.records.find(r => r.id === decision).authoritative, false);
+      assert.equal((await f.checkpoint(p.scope, fresh)).status, 'committed');
+      const logResume = await f.restore(p.scope, 'work_log');
+      assert.equal(logResume.currentness_evaluation.overall, 'CURRENT');
+      assert.equal(logResume.next_action, 'ACTION_RESOLUTION_REQUIRED');
+      assert.match(logResume.work_log, /### Next action\n\nACTION_RESOLUTION_REQUIRED\n/);
+      assert.doesNotMatch(logResume.work_log.split('## Events not yet absorbed')[0], /SHADOWED_RESIDENT_CONSTRAINT/);
+      assert.doesNotMatch(logResume.work_log, /AUDIT_ONLY_PRIVATE/);
+      const fullLog = await f.rpc('clued_mcp_read_log', { context_key: p.scope, session_token: logResume.session_token });
+      assert.equal(fullLog.authoritative_current, false);
+      assert.equal(fullLog.next_action_authoritative, false);
+      assert.equal(fullLog.source_semantics, 'historical_continuity_log');
+      assert.match(fullLog.markdown, /Historical checkpoint action\n\nOLD_CHECKPOINT/);
+      assert.doesNotMatch(fullLog.markdown, /### Next action|SHADOWED_RESIDENT_CONSTRAINT|AUDIT_ONLY_PRIVATE/);
+      const historyLog = await f.rpc('clued_mcp_read_log', { context_key: p.scope,
+        session_token: logResume.session_token, include_history: true });
+      assert.equal(historyLog.authoritative_current, false);
+      assert.equal(historyLog.markdown, fullLog.markdown);
+
+      const lowToken = hash();
+      await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+        values($1,'synthetic','Project-only resume',$2,array['context:read'],array[$3])`, [f.userId, lowToken, p.scope]);
+      const lowRpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`, [lowToken, input])).rows[0].value;
+      const limited = await lowRpc('clued_mcp_restore', { context_key: p.scope, response_view: 'work_log' });
+      assert.deepEqual(limited.active_constraints, []);
+      assert.doesNotMatch(limited.work_log.split('## Events not yet absorbed')[0], /AUTHORIZED_GLOBAL_CONSTRAINT|SHADOWED_RESIDENT_CONSTRAINT/);
+      const limitedLog = await lowRpc('clued_mcp_read_log', { context_key: p.scope, session_token: limited.session_token });
+      assert.doesNotMatch(limitedLog.markdown, /AUTHORIZED_GLOBAL_CONSTRAINT|SHADOWED_RESIDENT_CONSTRAINT/);
+
+      const user = server.getPgClient(); clients.push(user); await user.connect();
+      await user.query('set role authenticated');
+      await user.query("select set_config('request.jwt.claim.sub',$1,false)", [f.userId]);
+      for (const tool of ['clued_session_resume', 'clued_read_log']) {
+        await assert.rejects(() => user.query('select public.clued_oauth_call($1,$2)', [tool,
+          { context_key: p.scope, session_token: logResume.session_token }]), /legacy_oauth_requires_new_provider_reauthorization/);
+      }
+      await assert.rejects(() => anon.query('select clued_private.render_log($1,$2,$3)', [f.userId,p.scope,f.bindingId]), /permission denied/);
+    });
+
+    await t.test('M-LIVE-01: concurrent Event commit cannot split resume constraints from its admitted vector', async () => {
+      const f = await fixture(); const p = await f.project('Concurrent resume Event');
+      const decision = await f.record(p.scope, 'decision', 'CONCURRENT_OLD_RULE', { rationale: 'rule', constraint: true });
+      const session = await f.restore(p.scope);
+      const sessionId = (await admin.query(`select id from public.clued_continuity_sessions
+        where token_hash=encode(extensions.digest($1,'sha256'),'hex')`, [session.session_token])).rows[0].id;
+      const writer = server.getPgClient(), reader = server.getPgClient(); clients.push(writer, reader);
+      await writer.connect(); await reader.connect(); await reader.query('set role anon');
+      const readerPid = (await reader.query('select pg_backend_pid() pid')).rows[0].pid;
+      let pending;
+      try {
+        await writer.query('begin');
+        await writer.query(`insert into public.clued_context_events
+          (user_id,context_key,session_id,binding_id,event_type,payload,audit_visibility)
+          values($1,$2,$3,$4,'decision','{"marker":"Concurrent new rule"}'::jsonb,'work_log')`,
+        [f.userId, p.scope, sessionId, f.bindingId]);
+        pending = reader.query('select public.clued_mcp_restore($1,$2) value', [f.token, { context_key: p.scope }]);
+        let blocked = false;
+        for (let tries = 0; tries < 100; tries++) {
+          blocked = (await admin.query('select exists(select 1 from pg_locks where pid=$1 and not granted) blocked', [readerPid])).rows[0].blocked;
+          if (blocked) break;
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        assert.equal(blocked, true, 'resume waits for the in-flight Event transaction');
+        await writer.query('commit');
+        const restored = (await pending).rows[0].value;
+        assert.equal(restored.currentness_evaluation.overall, 'CURRENT');
+        assert.equal(restored.active_constraints.some(r => r.id === decision), false);
+        assert.equal(restored.authority_conflicts.some(r => r.id === decision), false);
+        assert.equal(restored.authoritative_current_action.status, 'BLOCKED');
+      } finally {
+        await writer.query('rollback');
+        if (pending) await pending.catch(() => {});
+      }
+    });
+
     await t.test('T-CUR-01/02/09: Task and State changes stale both read views', async () => {
       const f = await fixture();
       const p = await f.project('Local stale project');

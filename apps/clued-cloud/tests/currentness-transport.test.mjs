@@ -9,6 +9,45 @@ const env = {
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 const bindingToken = `clued_bnd_${"x".repeat(43)}`;
 
+test("M-LIVE-01: resume and log transport preserve omitted constraints and separate historical log authority", async () => {
+  const worker = await loadWorker();
+  const previousFetch = globalThis.fetch;
+  const calls = [];
+  const resume = { status: "restored", session_token: "session-test", active_constraints: [], authority_conflicts: [],
+    currentness_evaluation: { overall: "CURRENT", authoritative: true },
+    authoritative_current_action: { status: "BLOCKED" }, next_action: "ACTION_RESOLUTION_REQUIRED",
+    next_action_authoritative: false, effective_next_action: null,
+    work_log: "### Next action\n\nACTION_RESOLUTION_REQUIRED\n\n## Active constraints\n\nNo active constraints in this authorized view." };
+  const log = { status: "ok", currentness_evaluation: { overall: "CURRENT", authoritative: true },
+    source_semantics: "historical_continuity_log", authoritative_current: false, next_action_authoritative: false,
+    markdown: "> Historical continuity log.\n\n### Historical checkpoint action\n\nOLD_CHECKPOINT" };
+  globalThis.fetch = async (input, init = {}) => {
+    const rpc = /\/rpc\/([^/?]+)$/.exec(String(input))?.[1], body = JSON.parse(init.body);
+    calls.push({ rpc, body });
+    return Response.json((rpc === "clued_mcp_read_log" || body.p_tool === "clued_read_log") ? log : resume);
+  };
+  try {
+    for (const [tool, pathname, expected] of [
+      ["clued_session_resume", "/v1/continuity/resume", resume],
+      ["clued_read_log", "/v1/continuity/log", log],
+    ]) {
+      const args = tool === "clued_session_resume" ? { context_key: "global", response_view: "work_log" }
+        : { context_key: "global", session_token: "session-test" };
+      for (const token of [bindingToken, "account-or-legacy-oauth-token"]) {
+        const mcp = await worker.fetch(mcpRequest(token, args, tool), env, ctx);
+        assert.equal(mcp.status, 200); assert.deepEqual((await mcp.json()).result.structuredContent, expected);
+        const rest = await worker.fetch(new Request(`https://clued.test${pathname}`, { method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(args) }), env, ctx);
+        assert.equal(rest.status, 200); assert.deepEqual(await rest.json(), expected);
+        for (const call of calls.slice(-2)) {
+          assert.equal(call.rpc, token === bindingToken ? (tool === "clued_read_log" ? "clued_mcp_read_log" : "clued_mcp_restore") : "clued_oauth_call");
+          assert.deepEqual(call.body.p_input, args);
+        }
+      }
+    }
+  } finally { globalThis.fetch = previousFetch; }
+});
+
 function mcpRequest(token, input, name = "clued_record_list") {
   return new Request("https://clued.test/mcp", {
     method: "POST",
