@@ -76,7 +76,10 @@ test('existing explicit retraction reconciliation is exact, private and does not
     for (const role of ['anon', 'authenticated', 'service_role']) {
       assert.equal((await admin.query("select has_function_privilege($1,'clued_private.reconcile_existing_retraction_v1(uuid,bigint,bigint,text,boolean)','EXECUTE') allowed", [role])).rows[0].allowed, false);
     }
-    await admin.query("update public.clued_audit_receipts set version=version+1 where id=$1", [successor.receipt_id]);
+    await admin.query("update public.clued_audit_receipts set status='failed',error_code='fixture_failure' where id=$1", [successor.receipt_id]);
+    await admin.query("update clued_private.event_truth_carriers set carrier_state='ACTIVE_UNSTRUCTURED',successor_event_id=null,transition_version=1,transition_receipt_id=null where event_id=$1", [source.event_id]);
+    await assert.rejects(() => admin.query('select clued_private.reconcile_existing_retraction_v1($1,$2,$3)', [userId, source.event_id, successor.event_id]), /existing_retraction_successor_receipt_invalid/);
+    await admin.query("update public.clued_audit_receipts set status=null,error_code=null where id=$1", [successor.receipt_id]);
     const laterSource = await append('decision', { status: 'other' });
     const wrongSuccessor = await append('retraction', { retracts_event_id: String(source.event_id), reason: 'Wrong subject' });
     await admin.query(`insert into clued_private.event_truth_carriers(event_id,user_id,canonical_scope,dimensions,visibility,source_kind,carrier_state,event_version)

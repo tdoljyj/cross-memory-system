@@ -83,7 +83,10 @@ begin
       and r.object_id=p_successor_event_id::text
       and r.version=v_successor.version
       and r.created_at=v_successor.occurred_at
-      and r.binding_id is not distinct from v_successor.binding_id;
+      and r.binding_id is not distinct from v_successor.binding_id
+      and coalesce(r.status,'committed')='committed'
+      and r.error_code is null
+      and (v_successor.receipt_id is null or r.id=v_successor.receipt_id);
   if coalesce(array_length(v_receipt_ids,1),0)<>1 then
     raise exception 'existing_retraction_successor_receipt_invalid' using errcode='40001';
   end if;
