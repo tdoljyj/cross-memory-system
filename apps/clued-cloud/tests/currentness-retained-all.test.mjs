@@ -990,6 +990,287 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       assert.equal(gate.status, 'not_ready');
       assert.ok(gate.missing_requirements.includes('legacy_inventory_or_unbound'));
     });
+
+    await t.test('Context v2: stable execution intents deduplicate across Bindings and retain merge identity', async () => {
+      const f = await fixture();
+      const p = await f.project('Execution identity');
+      const intentA = uuid(), intentB = uuid();
+      const source = await f.record(p.scope, 'note', 'Governance source', { note_kind: 'governance',
+        execution_intents: [{ id: intentA, completion_criteria: 'Result A verified' },
+          { id: intentB, completion_criteria: 'Result B verified' }] });
+      const make = intent => ({ operation: 'create', id: uuid(), record_type: 'task',
+        record_schema_version: 1, lifecycle_status: 'active', scope: p.scope,
+        idempotency_key: uuid(), authority: 'user_explicit', user_confirmed: true,
+        confidence_reason: 'Synthetic stable intent', source_refs: [], source_unavailable_reason: null,
+        mutation: { title: 'Intent task', content: 'Intent execution body', relations: {},
+          type_fields: { execution_bucket: 'next', execution_intent: { id: intent,
+            source_id: source, source_version: 1, source_scope: p.scope } } } });
+      const secondToken = hash();
+      await admin.query(`insert into public.clued_agent_bindings
+        (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+        values($1,'synthetic','Second host identity',$2,array['context:read','context:write'],array['*'])`,
+        [f.userId, secondToken]);
+      const firstClient = server.getPgClient(), secondClient = server.getPgClient();
+      clients.push(firstClient, secondClient);
+      await firstClient.connect(); await secondClient.connect();
+      await firstClient.query('set role anon'); await secondClient.query('set role anon');
+      const commandA = make(intentA), competingA = make(intentA);
+      const [first, duplicate] = await Promise.all([
+        firstClient.query('select public.clued_record_mutate($1,$2) value', [f.token, commandA]),
+        secondClient.query('select public.clued_record_mutate($1,$2) value', [secondToken, competingA]) ]);
+      const outcomes = [first.rows[0].value, duplicate.rows[0].value];
+      assert.equal(outcomes.filter(r => r.status === 'committed').length, 1);
+      assert.equal(outcomes.find(r => r.status === 'rejected').error_code, 'execution_intent_identity_conflict');
+      const winnerId = outcomes.find(r => r.status === 'committed').target_refs[0].id;
+      assert.equal((await f.rpc('clued_record_mutate', make(intentB))).status, 'committed');
+      assert.equal((await f.rpc('clued_record_mutate', make(uuid()))).error_code, 'execution_intent_not_registered');
+      const destination = await f.project('Merged destination');
+      await admin.query('update public.clued_projects set merged_into_project_id=$1 where id=$2', [destination.id, p.id]);
+      const afterMerge = { ...make(intentA), scope: destination.scope };
+      assert.equal((await f.rpc('clued_record_mutate', afterMerge)).error_code, 'execution_intent_identity_conflict');
+      const visible = await f.rpc('clued_record_list', { level: 'project', project_id: destination.id,
+        record_type: 'task', include_history: true });
+      assert.ok(visible.records.some(row => row.id === winnerId));
+      const immutable = await f.rpc('clued_record_mutate', { ...make(intentA), operation: 'update',
+        id: winnerId, base_version: 1, scope: p.scope,
+        mutation: { type_fields: { execution_bucket: 'next' } } });
+      assert.equal(immutable.error_code, 'execution_intent_identity_immutable');
+      assert.equal((await admin.query(`select count(*) from public.clued_memories
+        where user_id=$1 and record_type='task'`, [f.userId])).rows[0].count, '2');
+    });
+
+    await t.test('Context v2: cross-scope intent source invalidation fences list, search and session', async () => {
+      const f = await fixture();
+      const sourceProject = await f.project('Intent authority source');
+      const taskProject = await f.project('Intent execution project');
+      const intent = uuid();
+      const source = await f.record(sourceProject.scope, 'decision', 'Accepted execution intent', {
+        rationale: 'Synthetic approved governance source', execution_intents: [
+          { id: intent, completion_criteria: 'Verified executable result' }] });
+      const task = await f.record(taskProject.scope, 'task', 'Source bound executable task', {
+        execution_bucket: 'now', execution_intent: { id: intent, source_id: source,
+          source_scope: sourceProject.scope, source_version: 1 } });
+      const read = () => f.rpc('clued_record_list', { level: 'project', project_id: taskProject.id, record_type: 'task' });
+      assert.equal((await read()).records[0].id, task);
+      const before = await f.restore(taskProject.scope);
+      assert.equal(before.authoritative_current_action.status, 'RESOLVED');
+      const currentSearch = await f.rpc('clued_mcp_search_context', { context_key: taskProject.scope,
+        session_token: before.session_token, query: 'Source bound', limit: 20 });
+      assert.ok(currentSearch.results.some(row => row.id === task));
+      const sourceSession = await f.restore(sourceProject.scope);
+      await f.rpc('clued_mcp_append_event', { context_key: sourceProject.scope,
+        session_token: sourceSession.session_token, base_version: sourceSession.version,
+        event_type: 'decision', payload: { title: 'New governance authority', content: 'Re-evaluate old source' },
+        idempotency_key: uuid() });
+      assert.deepEqual((await read()).records, []);
+      const after = await f.restore(taskProject.scope);
+      assert.equal(after.authoritative_current_action.status, 'PROJECTION_REQUIRED');
+      assert.notEqual(after.currentness_evaluation.overall, 'CURRENT');
+      const search = await f.rpc('clued_mcp_search_context', { context_key: taskProject.scope,
+        session_token: after.session_token, query: 'Source bound', limit: 20 });
+      assert.equal(search.results.some(row => row.id === task), false);
+      const oldCommit = await f.checkpoint(taskProject.scope, before);
+      assert.notEqual(oldCommit.status, 'committed');
+    });
+
+    await t.test('Context v2: Frontier validates Task version, source scope, renderer and Binding', async () => {
+      const f = await fixture();
+      const p = await f.project('Typed Frontier');
+      const task = await f.record(p.scope, 'task', 'Execute canonical task', { execution_bucket: 'now' });
+      const rule = (await admin.query('select clued_private.frontier_rule_digest_v2() value')).rows[0].value;
+      const fields = { state_kind: 'frontier', projection_key: 'global.priority_frontier',
+        source_task: { id: task, version: 1, scope: p.scope },
+        render_rule_version: 'task-body.v1', rule_set_digest: rule,
+        current_action: { title: 'Execute canonical task', content: 'Execute canonical task' } };
+      const validate = async value => (await admin.query(
+        'select clued_private.frontier_task_source_v2($1,$2) value', [f.userId, value])).rows[0].value;
+      assert.equal((await validate(fields)).status, 'RESOLVED');
+      for (const bad of [ {}, { ...fields, source_task: { ...fields.source_task, version: 2 } },
+        { ...fields, source_task: { ...fields.source_task, scope: 'global' } },
+        { ...fields, render_rule_version: 'fake' }, { ...fields, rule_set_digest: hash() },
+        { ...fields, current_action: { ...fields.current_action, content: 'FORGED_ACTION' } } ]) {
+        assert.deepEqual((await validate(bad)), { status: 'PROJECTION_REQUIRED', action: null, source_refs: [] });
+      }
+      const frontier = await f.record('global', 'state', 'Derived Frontier', fields);
+      await admin.query(`insert into clued_private.projection_builder_grants
+        (binding_id,user_id,target_scope,projection_key,granted_by)
+        values($1,$2,'global','global.priority_frontier','synthetic-test')`, [f.bindingId, f.userId]);
+      const rebuildInput = async () => {
+        const values = (await admin.query(`select invalidation_revision,
+          clued_private.currentness_hash(clued_private.projection_source_snapshot($1)) digest
+          from clued_private.projection_invalidation_heads where user_id=$1
+          and target_scope='global' and projection_key='global.priority_frontier'`, [f.userId])).rows[0];
+        return { record_id: frontier, projection_key: 'global.priority_frontier',
+          expected_invalidation_revision: Number(values.invalidation_revision),
+          expected_source_vector_digest: values.digest };
+      };
+      assert.equal((await f.rpc('clued_mcp_projection_rebuild', await rebuildInput())).status, 'rebuilt');
+      const resolved = (await f.restore('global')).authoritative_current_action;
+      assert.equal(resolved.status, 'RESOLVED');
+      assert.equal(resolved.source_refs[0].id, task);
+      assert.equal(resolved.source_refs[0].version, 1);
+      assert.deepEqual(resolved.action, fields.current_action);
+      const restricted = hash();
+      await admin.query(`insert into public.clued_agent_bindings
+        (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+        values($1,'synthetic','Restricted Frontier',$2,array['context:read'],array['global'])`, [f.userId, restricted]);
+      await admin.query(`update public.clued_agent_bindings set scopes=array['context:read','context:write']
+        where token_hash=$1`, [restricted]);
+      await admin.query(`insert into clued_private.projection_builder_grants
+        (binding_id,user_id,target_scope,projection_key,granted_by)
+        select id,user_id,'global','global.priority_frontier','synthetic-negative'
+        from public.clued_agent_bindings where token_hash=$1`, [restricted]);
+      await assert.rejects(async () => anon.query('select public.clued_mcp_projection_rebuild($1,$2)',
+        [restricted, await rebuildInput()]), /frontier_source_coverage_not_authorized/);
+      const readRestricted = async () => (await anon.query('select public.clued_mcp_restore($1,$2) value',
+        [restricted, { context_key: 'global' }])).rows[0].value.authoritative_current_action;
+      const hiddenBefore = await readRestricted();
+      assert.equal(hiddenBefore.status, 'PROJECTION_REQUIRED');
+      assert.deepEqual(hiddenBefore.source_refs, []);
+      await f.update(p.scope, 'task', task, { content: 'New canonical body' });
+      assert.equal((await validate(fields)).status, 'PROJECTION_REQUIRED');
+      assert.notEqual((await f.restore('global')).authoritative_current_action.status, 'RESOLVED');
+      assert.deepEqual(await readRestricted(), hiddenBefore);
+      await f.update('global', 'state', frontier, { type_fields: fields });
+      await assert.rejects(() => rebuildInput().then(input => f.rpc('clued_mcp_projection_rebuild', input)),
+        /frontier_source_contract_required/);
+    });
+
+    await t.test('Context v2 synthetic ADR-06 playback: a fresh Binding does not revive pending review', async () => {
+      const f = await fixture();
+      const p = await f.project('Synthetic ADR-06 continuity');
+      const task = await f.record(p.scope, 'task', 'ADR-06 review pending',
+        { execution_bucket: 'now' });
+      const before = await f.restore(p.scope);
+      assert.equal((await f.checkpoint(p.scope, before, {
+        next_action: 'Review ADR-06',
+      })).status, 'committed');
+      const oldSession = await f.restore(p.scope);
+      await f.record(p.scope, 'decision', 'ADR-06 architecture accepted',
+        { rationale: 'Synthetic exact subject and version accepted' });
+      const closed = await f.rpc('clued_record_mutate', {
+        operation: 'close', id: task, record_type: 'task',
+        record_schema_version: 1, lifecycle_status: 'completed',
+        scope: p.scope, base_version: 1, idempotency_key: uuid(),
+        authority: 'user_explicit', user_confirmed: true,
+        confidence_reason: 'Synthetic accepted result',
+        mutation: { closed_reason: 'Synthetic architecture acceptance' },
+      });
+      assert.equal(closed.status, 'committed');
+      const secondToken = hash();
+      await admin.query(`insert into public.clued_agent_bindings(
+        user_id,vendor,agent_name,token_hash,scopes,context_keys)
+        values($1,'synthetic','Fresh Binding B',$2,
+          array['context:read','context:write'],array[$3])`,
+      [f.userId, secondToken, p.scope]);
+      const secondRpc = async (name, input) => (await anon.query(
+        `select public.${name}($1,$2) value`, [secondToken, input])).rows[0].value;
+      const fresh = await secondRpc('clued_mcp_restore', {
+        context_key: p.scope, response_view: 'structured',
+      });
+      assert.equal(fresh.next_action_authoritative, false);
+      assert.equal(fresh.effective_next_action, null);
+      assert.notEqual(fresh.authoritative_current_action.status, 'RESOLVED');
+      const records = await secondRpc('clued_record_list', {
+        level: 'project', project_id: p.id, record_type: 'task',
+      });
+      assert.equal(records.records.some((row) => row.id === task), false);
+      const history = await secondRpc('clued_record_list', {
+        level: 'project', project_id: p.id, record_type: 'task',
+        include_history: true,
+      });
+      assert.equal(history.records.find((row) => row.id === task)?.status, 'done');
+      assert.equal(history.records.find((row) => row.id === task)?.authoritative, false);
+      const late = await f.checkpoint(p.scope, oldSession, {
+        next_action: 'Review ADR-06',
+      });
+      assert.equal(late.status, 'conflict');
+      assert.equal(late.error, 'current_truth_changed_since_resume');
+    });
+    await t.test('Context v2: forward repair reconnects legacy read entrypoints to Currentness Core', async () => {
+      const f = await fixture();
+      const p = await f.project('Read entrypoint drift');
+      const task = await f.record(p.scope, 'task', 'Completed with stale pending prose',
+        { execution_bucket: 'next' });
+      const closed = await f.rpc('clued_record_mutate', {
+        operation: 'close', id: task, record_type: 'task', record_schema_version: 1,
+        lifecycle_status: 'completed', scope: p.scope, base_version: 1,
+        idempotency_key: uuid(), authority: 'user_explicit', user_confirmed: true,
+        confidence_reason: 'Synthetic read entrypoint regression', mutation: {},
+      });
+      assert.equal(closed.status, 'committed');
+      const input = { level: 'project', project_id: p.id, record_type: 'task' };
+      const user = server.getPgClient();
+      clients.push(user);
+      await user.connect();
+      await user.query('set role authenticated');
+      await user.query("select set_config('request.jwt.claim.sub',$1,false)", [f.userId]);
+      const accountRead = async (value) => (await user.query(
+        'select public.clued_user_record_list($1) value', [value])).rows[0].value;
+      const entrypointMigration = await fs.readFile(path.join(root,
+        'supabase/migrations/20260922150000_context_v2_current_read_entrypoints.sql'), 'utf8');
+      const oldBindingMigration = await fs.readFile(path.join(root,
+        'supabase/migrations/20260907173031_clued_connection_authorization_v12.sql'), 'utf8');
+      const start = oldBindingMigration.indexOf('create or replace function public.clued_record_list(');
+      const end = oldBindingMigration.indexOf('end $$;', start) + 'end $$;'.length;
+      assert.ok(start >= 0 && end > start);
+      try {
+        // Reproduce the observed deployed function definitions, in an isolated
+        // database. The modern three-argument Currentness Core remains present.
+        await admin.query(await fs.readFile(path.join(root,
+          'supabase/migrations/20260829100000_clued_legacy_log_alias_bridge.sql'), 'utf8'));
+        await admin.query(oldBindingMigration.slice(start, end));
+        assert.ok((await f.rpc('clued_record_list', input)).records.some((r) => r.id === task));
+        assert.ok((await accountRead(input)).records.some((r) => r.id === task));
+        await admin.query(entrypointMigration);
+        await admin.query(entrypointMigration); // safe forward repair replay
+        const binding = await f.rpc('clued_record_list', input);
+        const account = await accountRead(input);
+        assert.equal(binding.records.some((r) => r.id === task), false);
+        assert.deepEqual(account, binding);
+        assert.equal(binding.current_projection_unavailable, false);
+        const history = await f.rpc('clued_record_list', { ...input, include_history: true });
+        assert.equal(history.records.find((r) => r.id === task)?.status, 'done');
+        assert.equal(history.records.find((r) => r.id === task)?.authoritative, false);
+        const issuer = hash();
+        const resource = 'https://mcp.example.invalid/mcp';
+        await admin.query(`insert into clued_private.authorization_issuers_v12
+          (token_hash,resource,name) values($1,$2,'Synthetic entrypoint issuer')`, [issuer, resource]);
+        const prepared = (await user.query(
+          'select public.clued_authorization_prepare_v12($1,$2) value', [issuer, {
+            request_digest: hash(), client_id: 'entrypoint-fixture', client_name: 'Synthetic',
+            redirect_uri: 'https://client.example.invalid/callback', resource,
+            requested_scopes: ['context:read'],
+          }])).rows[0].value;
+        const delegatedToken = hash();
+        await user.query('select public.clued_authorization_approve_v12($1,$2,$3,$4,$5,$6)',
+          [issuer, prepared.request_id, prepared.version, JSON.stringify([{
+            resource_kind: 'scope', resource_id: p.scope, environment: 'canonical', actions: ['read'],
+          }]), delegatedToken, new Date(Date.now() + 3600000).toISOString()]);
+        const delegatedRead = async (value) => (await anon.query(
+          'select public.clued_record_list($1,$2) value', [delegatedToken, value])).rows[0].value;
+        assert.deepEqual((await delegatedRead(input)).records, []);
+        assert.equal((await delegatedRead({ ...input, include_history: true })).records[0].id, task);
+        const otherProject = await f.project('Unauthorized project');
+        const hidden = await f.record(otherProject.scope, 'task', 'Private live task',
+          { execution_bucket: 'next', priority: 99 });
+        const allowed = await f.record(p.scope, 'task', 'Allowed live task',
+          { execution_bucket: 'next', priority: 1 });
+        await admin.query('update public.clued_projects set merged_into_project_id=$1 where id=$2',
+          [p.id, otherProject.id]);
+        assert.equal((await f.rpc('clued_record_list', { ...input, limit: 1 })).records[0].id, hidden);
+        assert.deepEqual((await delegatedRead({ ...input, limit: 1 })).records.map(r => r.id), [allowed]);
+        await assert.rejects(() => delegatedRead({ ...input, project_id: otherProject.id,
+          authorized_scopes: [otherProject.scope] }), (error) => ['42501', '28000'].includes(error.code));
+        await assert.rejects(() => anon.query(
+          'select clued_private.record_list_core($1,$2)', [f.userId, input]), /permission denied/);
+        await user.query(`select set_config('request.jwt.claims',
+          '{"client_id":"retired-legacy-client"}',false)`);
+        await assert.rejects(() => accountRead(input), /direct_human_session_required/);
+      } finally {
+        await admin.query(entrypointMigration);
+      }
+    });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

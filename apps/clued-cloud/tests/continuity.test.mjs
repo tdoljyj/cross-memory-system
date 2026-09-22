@@ -19,7 +19,7 @@ test("publishes a continuity health contract", async () => {
     mcp: "/mcp",
     api: "/v1/continuity",
     workLog: "日志.md",
-    mandatoryLifecycle: ["resume", "append_event", "checkpoint"],
+    mandatoryLifecycle: ["resume", "checkpoint"],
   });
 });
 

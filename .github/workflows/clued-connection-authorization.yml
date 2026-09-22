@@ -16,6 +16,8 @@ on:
       - 'apps/clued-cloud/tests/supabase-browser.test.mjs'
       - 'apps/clued-cloud/tests/project-invitations-*.test.mjs'
       - 'apps/clued-cloud/tests/priority-projection-db.test.mjs'
+      - 'apps/clued-cloud/tests/context-v2-*.test.mjs'
+      - 'apps/clued-cloud/tests/currentness-*.test.mjs'
       - 'apps/clued-cloud/package*.json'
   workflow_dispatch:
 
@@ -45,6 +47,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:authorization:transport
       - run: npm run test:authorization:database
+      - run: npm run test:context:v2
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
       - run: npm run test:authorization:integration

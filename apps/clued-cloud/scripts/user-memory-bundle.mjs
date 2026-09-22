@@ -6,6 +6,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rm,
   stat,
   writeFile,
@@ -68,6 +69,19 @@ function safeRelativePath(value) {
     throw new Error(`Unsafe bundle path: ${value}`);
   }
   return value;
+}
+
+// Resolve links before opening a source. Compare path segments, not string prefixes:
+// a sibling named "memory-outside" is not inside an authorized "memory" root.
+async function containedPath(root, relativePath) {
+  safeRelativePath(relativePath);
+  const authorizedRoot = await realpath(root);
+  const resolved = await realpath(path.resolve(authorizedRoot, relativePath));
+  const relative = path.relative(authorizedRoot, resolved);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Path escapes authorized root: ${relativePath}`);
+  }
+  return resolved;
 }
 
 function projectDirectory(sourceProjectId) {
@@ -196,8 +210,9 @@ async function writeMirrors(outputDirectory, records) {
 async function copyEvidence(memoryDirectory, outputDirectory) {
   const copied = [];
   for (const relativePath of [...LEGACY_EVIDENCE, ...CONTEXT_EVIDENCE, ...AUDIT_EVIDENCE]) {
-    const source = path.resolve(memoryDirectory, relativePath);
+    let source;
     try {
+      source = await containedPath(memoryDirectory, relativePath);
       if (!(await stat(source)).isFile()) continue;
     } catch (error) {
       if (error.code === "ENOENT") continue;
@@ -213,11 +228,12 @@ async function copyEvidence(memoryDirectory, outputDirectory) {
 }
 
 async function listBundleFiles(root, relative = "") {
-  const directory = path.resolve(root, relative);
+  const directory = relative ? await containedPath(root, relative) : await realpath(root);
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
     const child = relative ? `${relative}/${entry.name}` : entry.name;
+    await containedPath(root, child);
     if (entry.isDirectory()) files.push(...await listBundleFiles(root, child));
     else if (entry.isFile() && child !== "manifest.json") files.push(child);
   }
@@ -226,7 +242,7 @@ async function listBundleFiles(root, relative = "") {
 
 async function fileDescriptor(root, relativePath) {
   safeRelativePath(relativePath);
-  const bytes = await readFile(path.resolve(root, relativePath));
+  const bytes = await readFile(await containedPath(root, relativePath));
   return { path: relativePath, bytes: bytes.length, sha256: sha256(bytes) };
 }
 
@@ -245,16 +261,18 @@ export async function exportUserMemoryBundle({
     throw new Error("createdAt must be a valid timestamp for reproducible export.");
   }
 
+  memoryDirectory = await realpath(memoryDirectory);
+  outputDirectory = path.resolve(outputDirectory);
+  const objectDirectory = await containedPath(memoryDirectory, "objects");
   if (overwrite) await rm(outputDirectory, { recursive: true, force: true });
   await mkdir(outputDirectory, { recursive: false });
 
-  const objectDirectory = path.resolve(memoryDirectory, "objects");
   const objectFiles = (await readdir(objectDirectory))
     .filter((name) => /^mem_[a-f0-9]+\.json$/.test(name))
     .sort();
   const records = [];
   for (const name of objectFiles) {
-    const object = JSON.parse(await readFile(path.resolve(objectDirectory, name), "utf8"));
+    const object = JSON.parse(await readFile(await containedPath(memoryDirectory, `objects/${name}`), "utf8"));
     records.push(mapMemoryObject(object));
   }
   records.sort((left, right) => left.source_id.localeCompare(right.source_id));
@@ -305,7 +323,9 @@ export async function exportUserMemoryBundle({
     },
     boundaries: {
       production_canonical_store: "supabase",
-      bundle_role: "portable_single_user_export_and_import_fixture",
+      bundle_role: "portable_single_user_historical_export",
+      fixture_authority: false,
+      current_truth_authority: false,
       markdown_role: "read_only_stable_id_reference_mirror",
       evidence_role: "read_only_not_imported_as_current_truth",
       direct_git_runtime_writes: false,
@@ -336,7 +356,8 @@ async function parseJsonLines(filePath) {
 }
 
 export async function validateUserMemoryBundle(bundleDirectory) {
-  const manifest = JSON.parse(await readFile(path.resolve(bundleDirectory, "manifest.json"), "utf8"));
+  bundleDirectory = await realpath(bundleDirectory);
+  const manifest = JSON.parse(await readFile(await containedPath(bundleDirectory, "manifest.json"), "utf8"));
   if (manifest.schema_version !== BUNDLE_SCHEMA_VERSION) throw new Error("Unsupported bundle schema_version.");
   if (manifest.contract !== BUNDLE_CONTRACT) throw new Error("Unsupported bundle contract.");
   if (manifest.contract_version !== BUNDLE_VERSION) throw new Error("Unsupported bundle contract_version.");
@@ -354,8 +375,8 @@ export async function validateUserMemoryBundle(bundleDirectory) {
     }
   }
 
-  const projects = await parseJsonLines(path.resolve(bundleDirectory, "projects.jsonl"));
-  const records = await parseJsonLines(path.resolve(bundleDirectory, "records.jsonl"));
+  const projects = await parseJsonLines(await containedPath(bundleDirectory, "projects.jsonl"));
+  const records = await parseJsonLines(await containedPath(bundleDirectory, "records.jsonl"));
   if (projects.length !== manifest.counts.projects || records.length !== manifest.counts.records) {
     throw new Error("Bundle manifest counts do not match JSONL payloads.");
   }

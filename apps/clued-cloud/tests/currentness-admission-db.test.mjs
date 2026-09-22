@@ -203,6 +203,32 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     const projectOnlyAfter = (await admin.query(`select clued_private.currentness_vector($1,$2,$3) value`,
       [userId, projectScope, projectOnlyBinding])).rows[0].value;
     assert.deepEqual(projectOnlyAfter, projectOnlyBefore);
+    // v2 requires a live Task source and complete source-read capability;
+    // this does not weaken the earlier project-only authorization assertions.
+    await admin.query("update public.clued_agent_bindings set context_keys=array['*'] where id=$1", [primaryBindingId]);
+    const frontierTaskId = uuid();
+    const frontierTask = await rpc('clued_record_mutate', {
+      operation: 'create', id: frontierTaskId, record_type: 'task', record_schema_version: 1,
+      lifecycle_status: 'active', scope: 'global', idempotency_key: uuid(),
+      authority: 'user_explicit', user_confirmed: true, confidence_reason: 'Synthetic Frontier source',
+      source_refs: [], source_unavailable_reason: null,
+      mutation: { title: 'Accepted continuation', content: 'Accepted continuation',
+        type_fields: { execution_bucket: 'now' }, relations: {} },
+    });
+    assert.equal(frontierTask.status, 'committed');
+    const ruleDigest = (await admin.query('select clued_private.frontier_rule_digest_v2() value')).rows[0].value;
+    const frontierVersion = (await admin.query('select version from public.clued_memories where id=$1', [stateId])).rows[0].version;
+    const sourceBinding = await rpc('clued_record_mutate', {
+      operation: 'update', id: stateId, record_type: 'state', record_schema_version: 1,
+      lifecycle_status: 'active', scope: 'global', base_version: frontierVersion,
+      idempotency_key: uuid(), authority: 'user_explicit', user_confirmed: true,
+      confidence_reason: 'Synthetic bound Frontier', mutation: { type_fields: {
+        state_kind: 'frontier', projection_key: 'global.priority_frontier',
+        source_task: { id: frontierTaskId, version: 1, scope: 'global' },
+        render_rule_version: 'task-body.v1', rule_set_digest: ruleDigest,
+      } },
+    });
+    assert.equal(sourceBinding.status, 'committed');
     const bindingId = primaryBindingId;
     await admin.query(`insert into clued_private.projection_builder_grants
       (binding_id,user_id,target_scope,projection_key,granted_by)

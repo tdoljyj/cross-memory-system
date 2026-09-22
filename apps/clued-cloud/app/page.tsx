@@ -40,6 +40,12 @@ type Project = {
 };
 type RecordView = "state" | "task" | "decision" | "archive" | "log";
 type RecordLevel = "global" | "project";
+type RecordListState = {
+  key: string;
+  epoch: number;
+  status: "idle" | "loading" | "ready" | "unknown" | "error";
+  records: CluedRecord[];
+};
 type NoticeKey =
   | "invalidLink"
   | "invalidCredentials"
@@ -165,6 +171,9 @@ const copy = {
     archiveView: "Archive",
     logView: "Log",
     noWorkRecords: "No records in this view.",
+    workRecordsLoading: "Checking this view…",
+    workRecordsUnknown: "Current information could not be confirmed. Please refresh after reconciliation.",
+    workRecordsSelectProject: "Select a project to view its records.",
     workRecordTitle: "Title",
     workRecordContent: "Detail",
     canonicalIdLabel: "Canonical ID",
@@ -304,6 +313,9 @@ const copy = {
     archiveView: "归档",
     logView: "日志",
     noWorkRecords: "此视图暂无记录。",
+    workRecordsLoading: "正在核对当前视图…",
+    workRecordsUnknown: "当前信息尚未核实，请在完成对账后刷新。",
+    workRecordsSelectProject: "请选择要查看的项目。",
     workRecordTitle: "标题",
     workRecordContent: "详细内容",
     canonicalIdLabel: "Canonical ID",
@@ -413,11 +425,24 @@ export default function Home() {
   const [recordView, setRecordView] = useState<RecordView>("state");
   const [recordLevel, setRecordLevel] = useState<RecordLevel>("global");
   const [recordProjectId, setRecordProjectId] = useState("");
-  const [records, setRecords] = useState<CluedRecord[]>([]);
+  const [recordList, setRecordList] = useState<RecordListState>({ key: "", epoch: 0, status: "idle", records: [] });
   const [recordTitle, setRecordTitle] = useState("");
   const [recordContent, setRecordContent] = useState("");
   const [recordBusy, setRecordBusy] = useState(false);
   const [recordError, setRecordError] = useState(false);
+  const recordSelectionKey = JSON.stringify([session?.user.id, session?.access_token, view, recordsEnabled,
+    recordLevel, recordProjectId, recordView]);
+  const recordSelection = useRef(recordSelectionKey);
+  const recordSelectionEpoch = useRef(0);
+  if (recordSelection.current !== recordSelectionKey) ++recordSelectionEpoch.current;
+  recordSelection.current = recordSelectionKey;
+  const recordReadGeneration = useRef(0);
+  const recordCreateKey = JSON.stringify([session?.user.id, recordLevel, recordProjectId, recordView,
+    recordTitle.trim(), recordContent.trim()]);
+  const pendingRecordCreate = useRef<{ key: string; body: string } | null>(null);
+  useEffect(function clearChangedRecordCreate() {
+    if (pendingRecordCreate.current?.key !== recordCreateKey) pendingRecordCreate.current = null;
+  }, [recordCreateKey]);
   const t = copy[locale];
 
   useEffect(() => {
@@ -521,35 +546,43 @@ export default function Home() {
     };
   }, [session, view]);
 
-  useEffect(() => {
-    if (!session || view !== "account" || !recordsEnabled) return;
-    if (recordLevel === "project" && !recordProjectId) {
+  async function refreshRecordList(key: string, token: string, level: RecordLevel,
+    projectId: string, type: RecordView, signal?: AbortSignal) {
+    const generation = ++recordReadGeneration.current;
+    const epoch = recordSelectionEpoch.current;
+    setRecordList({ key, epoch, status: "loading", records: [] });
+    const current = () => recordSelection.current === key && recordSelectionEpoch.current === epoch
+      && recordReadGeneration.current === generation && !signal?.aborted;
+    const query = new URLSearchParams({ level, record_type: type });
+    if (level === "project") query.set("project_id", projectId);
+    try {
+      const response = await fetch(`/v1/records?${query}`, {
+        headers: { authorization: `Bearer ${token}` }, cache: "no-store", signal,
+      });
+      if (!response.ok) throw new Error("record-list-failed");
+      const result = await response.json() as { records?: CluedRecord[];
+        current_projection_unavailable?: boolean; projection_rebuild_required?: boolean };
+      if (!Array.isArray(result.records)) throw new Error("invalid-record-list");
+      if (!current()) return;
+      const unknown = result.current_projection_unavailable === true || result.projection_rebuild_required === true;
+      setRecordList({ key, epoch, status: unknown ? "unknown" : "ready", records: unknown ? [] : result.records });
+    } catch {
+      if (current()) setRecordList({ key, epoch, status: "error", records: [] });
+    }
+  }
+
+  useEffect(function loadRecordView() {
+    setRecordError(false);
+    setRecordBusy(false);
+    if (!session || view !== "account" || !recordsEnabled || (recordLevel === "project" && !recordProjectId)) {
+      ++recordReadGeneration.current;
+      setRecordList({ key: recordSelectionKey, epoch: recordSelectionEpoch.current, status: "idle", records: [] });
       return;
     }
-    let cancelled = false;
-    const query = new URLSearchParams({ level: recordLevel, record_type: recordView });
-    if (recordLevel === "project") query.set("project_id", recordProjectId);
-    fetch(`/v1/records?${query}`, {
-      headers: { authorization: `Bearer ${session.access_token}` },
-      cache: "no-store",
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("record-list-failed");
-        return response.json() as Promise<{ records: CluedRecord[] }>;
-      })
-      .then((result) => {
-        if (!cancelled) {
-          setRecords(result.records);
-          setRecordError(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setRecordError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [recordLevel, recordProjectId, recordView, recordsEnabled, session, view]);
+    const controller = new AbortController();
+    void refreshRecordList(recordSelectionKey, session.access_token, recordLevel, recordProjectId, recordView, controller.signal);
+    return () => { controller.abort(); };
+  }, [recordSelectionKey]);
 
   function resetNotices() {
     setError("");
@@ -820,30 +853,44 @@ export default function Home() {
 
   async function handleCreateRecord(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!session || recordView === "archive" || recordView === "log") return;
+    if (!session || recordBusy || recordView === "archive" || recordView === "log") return;
     if (recordLevel === "project" && !recordProjectId) return;
+    if (!recordTitle.trim() || !recordContent.trim()) return;
+    const submissionKey = recordSelectionKey;
+    const submissionEpoch = recordSelectionEpoch.current;
+    const current = () => recordSelection.current === submissionKey && recordSelectionEpoch.current === submissionEpoch;
     setRecordBusy(true);
     setRecordError(false);
+    ++recordReadGeneration.current;
+    setRecordList({ key: submissionKey, epoch: submissionEpoch, status: "loading", records: [] });
     const idempotencyKey = crypto.randomUUID();
     const input: Record<string, unknown> = {
-      action: "create",
+      operation: "create",
+      id: crypto.randomUUID(),
       idempotency_key: idempotencyKey,
-      scope: recordLevel,
+      record_schema_version: 1,
+      lifecycle_status: "active",
+      base_version: null,
+      scope: recordLevel === "project" ? `project:${recordProjectId}` : "global",
       record_type: recordView,
-      title: recordTitle,
-      content: recordContent,
-      source_ref: "clued-work-ui",
+      source_refs: [],
+      source_unavailable_reason: "Direct user entry in Clued",
+      mutation: {
+        title: recordTitle.trim(),
+        content: recordContent.trim(),
+        type_fields: recordView === "task" ? { execution_bucket: "later" }
+          : recordView === "decision" ? { rationale: recordContent.trim() } : { state_kind: "manual" },
+        relations: {},
+      },
+      authority: "user_explicit",
+      user_confirmed: true,
+      confidence: 1,
+      confidence_reason: "Direct user entry in Clued",
     };
-    if (recordLevel === "project") input.project_id = recordProjectId;
-    if (recordView === "state") {
-      input.status = "current";
-      input.record_key = "current-work";
-    } else if (recordView === "task") {
-      input.status = "backlog";
-    } else if (recordView === "decision") {
-      input.status = "active";
-      input.record_key = `decision:${idempotencyKey}`;
+    if (pendingRecordCreate.current?.key !== recordCreateKey) {
+      pendingRecordCreate.current = { key: recordCreateKey, body: JSON.stringify(input) };
     }
+    const pending = pendingRecordCreate.current;
     try {
       const response = await fetch("/v1/records", {
         method: "POST",
@@ -851,17 +898,23 @@ export default function Home() {
           authorization: `Bearer ${session.access_token}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify(input),
+        body: pending.body,
       });
       if (!response.ok) throw new Error("record-write-failed");
-      const result = (await response.json()) as { record: CluedRecord };
-      setRecords((current) => [result.record, ...current.filter((item) => item.id !== result.record.id)]);
+      const result = (await response.json()) as { status?: string; receipt_id?: string };
+      if (result.status !== "committed" || !result.receipt_id) throw new Error("record-write-not-committed");
+      if (!current() || pendingRecordCreate.current !== pending) return;
+      pendingRecordCreate.current = null;
       setRecordTitle("");
       setRecordContent("");
+      await refreshRecordList(submissionKey, session.access_token, recordLevel, recordProjectId, recordView);
     } catch {
-      setRecordError(true);
+      if (current()) {
+        setRecordError(true);
+        setRecordList({ key: submissionKey, epoch: submissionEpoch, status: "error", records: [] });
+      }
     } finally {
-      setRecordBusy(false);
+      if (current()) setRecordBusy(false);
     }
   }
 
@@ -874,7 +927,9 @@ export default function Home() {
   };
   const unconfirmedProjects = projects.filter((project) => project.certainty_status === "unconfirmed");
   const confirmedProjects = projects.filter((project) => project.certainty_status === "confirmed");
-  const visibleRecords = recordLevel === "project" && !recordProjectId ? [] : records;
+  const recordStatus = !session || view !== "account" || !recordsEnabled || (recordLevel === "project" && !recordProjectId)
+    ? "idle" : recordList.key === recordSelectionKey && recordList.epoch === recordSelectionEpoch.current ? recordList.status : "loading";
+  const visibleRecords = recordStatus === "ready" ? recordList.records : [];
   const recordViewLabels: Record<RecordView, string> = {
     state: t.stateView,
     task: t.taskView,
@@ -1196,9 +1251,12 @@ export default function Home() {
                       </button>
                     </form>
                   )}
-                  {recordError && <p className="notice error">{t.workViewsError}</p>}
+                  {(recordError || recordStatus === "error") && <p className="notice error" role="alert">{t.workViewsError}</p>}
+                  {recordStatus === "loading" && <p className="notice" role="status">{t.workRecordsLoading}</p>}
+                  {recordStatus === "unknown" && <p className="notice" role="status">{t.workRecordsUnknown}</p>}
+                  {recordStatus === "idle" && recordLevel === "project" && <p className="notice">{t.workRecordsSelectProject}</p>}
                   <div className="record-list">
-                    {visibleRecords.length === 0 ? (
+                    {recordStatus === "ready" && visibleRecords.length === 0 ? (
                       <p className="empty-bindings">{t.noWorkRecords}</p>
                     ) : visibleRecords.map((record) => {
                       const item = presentCluedRecord(record, recordViewLabels[recordView]);
