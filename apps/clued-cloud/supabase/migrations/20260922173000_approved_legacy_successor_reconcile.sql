@@ -15,6 +15,7 @@ declare
   v_successor_carrier clued_private.event_truth_carriers%rowtype;
   v_successor_receipt public.clued_audit_receipts%rowtype;
   v_approval_event public.clued_context_events%rowtype;
+  v_approval_carrier clued_private.event_truth_carriers%rowtype;
   v_approval_receipt public.clued_audit_receipts%rowtype;
   v_receipt_ids uuid[];
   v_activation jsonb;
@@ -57,6 +58,12 @@ begin
         'manifest_digest',p_expected_manifest_digest,'currentness_claim',false);
     end if;
   end if;
+  -- MTPE governance writes do not participate in currentness_user_lock, so
+  -- hold table-level read locks until this transaction commits. This makes
+  -- the complete digest, selected verdict and activation one consistency
+  -- boundary and blocks concurrent INSERT/UPDATE/DELETE of their proof.
+  execute 'lock table mtpe_m0.verdict_table in share mode';
+  execute 'lock table mtpe_m0.inventory_activation in share mode';
   select * into v_source from public.clued_context_events e
     where e.id=p_source_event_id and e.user_id=p_user_id;
   select * into v_successor from public.clued_context_events e
@@ -110,6 +117,9 @@ begin
     where v.object_key=$1 and v.activation_id=($2->>'id')::uuid
   $sql$ into v_verdict using 'canonical_event:'||p_source_event_id::text,v_activation;
   if v_activation is null or v_verdict is null
+     or v_activation->>'id' is distinct from '0d09405e-f918-43c3-b476-6e3c4465eef4'
+     or v_activation->>'approval_event' is distinct from 'canonical_event:744'
+     or v_activation->>'approval_receipt' is distinct from '58d4dce0-92c1-4245-ab1b-af3712a4009f'
      or v_activation->>'approval_event' !~ '^canonical_event:[1-9][0-9]*$'
      or coalesce(v_activation->>'approval_receipt','') !~ '^[0-9a-f-]{36}$' then
     raise exception 'approved_successor_adjudication_invalid' using errcode='40001';
@@ -117,19 +127,33 @@ begin
   select * into v_approval_event from public.clued_context_events e
     where e.id=substring(v_activation->>'approval_event' from '[1-9][0-9]*$')::bigint
       and e.user_id=p_user_id and e.event_type='decision';
+  select * into v_approval_carrier from clued_private.event_truth_carriers c
+    where c.event_id=v_approval_event.id and c.user_id=p_user_id;
   select * into v_approval_receipt from public.clued_audit_receipts r
     where r.id=(v_activation->>'approval_receipt')::uuid and r.user_id=p_user_id
       and r.operation='append' and r.object_type='event'
       and r.object_id=v_approval_event.id::text and r.version=v_approval_event.version
       and r.created_at=v_approval_event.occurred_at
+      and r.context_key=v_source_carrier.canonical_scope
+      and r.binding_id is not distinct from v_approval_event.binding_id
+      and (v_approval_event.receipt_id is null or r.id=v_approval_event.receipt_id)
       and coalesce(r.status,'committed')='committed' and r.error_code is null;
-  if v_approval_event.id is null or v_approval_receipt.id is null
-     or v_approval_event.payload#>>'{digest_verification_at_approval,D1_live}'<>v_d1
-     or v_approval_event.payload#>>'{digest_verification_at_approval,D2_v3_live}'<>v_d2
-     or v_approval_event.payload#>>'{digest_verification_at_approval,rows_total}'<>v_count::text
-     or v_approval_event.payload#>>'{digest_verification_at_approval,echo_matches_live}'<>'true'
-     or v_approval_event.payload#>>'{ar_section12_compliance,d1_referenced}'<>'true'
-     or v_approval_event.payload#>>'{ar_section12_compliance,d2_echoed_by_owner}'<>'true' then
+  if v_approval_event.id is null or v_approval_carrier.event_id is null
+     or v_approval_receipt.id is null
+     or v_approval_event.id is distinct from 744
+     or v_approval_event.context_key is distinct from v_source_carrier.canonical_scope
+     or v_approval_event.version is distinct from 201
+     or v_approval_carrier.canonical_scope is distinct from v_source_carrier.canonical_scope
+     or v_approval_carrier.carrier_state is distinct from 'ACTIVE_UNSTRUCTURED'
+     or v_approval_carrier.visibility is distinct from 'work_log'
+     or v_approval_carrier.source_kind is distinct from 'legacy'
+     or v_approval_carrier.event_version is distinct from v_approval_event.version
+     or v_approval_event.payload#>>'{digest_verification_at_approval,D1_live}' is distinct from v_d1
+     or v_approval_event.payload#>>'{digest_verification_at_approval,D2_v3_live}' is distinct from v_d2
+     or v_approval_event.payload#>>'{digest_verification_at_approval,rows_total}' is distinct from v_count::text
+     or v_approval_event.payload#>>'{digest_verification_at_approval,echo_matches_live}' is distinct from 'true'
+     or v_approval_event.payload#>>'{ar_section12_compliance,d1_referenced}' is distinct from 'true'
+     or v_approval_event.payload#>>'{ar_section12_compliance,d2_echoed_by_owner}' is distinct from 'true' then
     raise exception 'approved_successor_owner_proof_invalid' using errcode='40001';
   end if;
   select array_agg(r.id) into v_receipt_ids from public.clued_audit_receipts r
@@ -159,6 +183,7 @@ begin
     'activation',v_activation,'verdict',v_verdict,'row_count',v_count,
     'd1',v_d1,'d2_v3',v_d2,'approval_event_id',v_approval_event.id,
     'approval_event_hash',clued_private.currentness_hash(to_jsonb(v_approval_event)),
+    'approval_carrier_hash',clued_private.currentness_hash(to_jsonb(v_approval_carrier)),
     'approval_receipt_id',v_approval_receipt.id,
     'approval_receipt_hash',clued_private.currentness_hash(to_jsonb(v_approval_receipt)));
   v_digest:=clued_private.currentness_hash(v_manifest);
