@@ -105,6 +105,22 @@ test("T-CUR-35/67 successor: Event fence, materialization, hidden equivalence, a
     });
     assert.equal(unstructuredSearch.results[0].kind, "event");
     assert.equal(unstructuredSearch.results[0].structured_action_usable, false);
+    // A routine Record edit can move updated_at past the Event. It must not
+    // release the fence without the Event's materialization or transition CAS.
+    const ordinaryEdit = await rpc("clued_record_mutate", {
+      operation: "update", id: beforeBinding.records[0].id,
+      record_type: "decision", record_schema_version: 1,
+      lifecycle_status: "active", scope: "global", base_version: 1,
+      idempotency_key: uuid(), authority: "user_explicit", user_confirmed: true,
+      confidence_reason: "Currentness fixture",
+      mutation: { title: "Old decision edited", content: "old decision marker edited" },
+    });
+    assert.equal(ordinaryEdit.status, "committed");
+    await admin.query(`update public.clued_memories set updated_at=(
+      select occurred_at+interval '1 second' from public.clued_context_events where id=$2
+    ) where id=$1`, [beforeBinding.records[0].id, event.event_id]);
+    assert.deepEqual((await list()).records, [], "ordinary edit cannot release an active Event fence");
+    assert.deepEqual((await userList()).records, []);
     const latestCarrier = (await admin.query(`select event_id from clued_private.event_truth_carriers
       where user_id=$1 and carrier_state='ACTIVE_UNSTRUCTURED' and visibility='work_log'
       order by event_id desc limit 1`, [userId])).rows[0].event_id;
@@ -131,7 +147,7 @@ test("T-CUR-35/67 successor: Event fence, materialization, hidden equivalence, a
 
     const sourceId = beforeBinding.records[0].id;
     const supersede = await rpc("clued_decision_supersede", {
-      idempotency_key: uuid(), source_decisions: [{ id: sourceId, base_version: 1 }],
+      idempotency_key: uuid(), source_decisions: [{ id: sourceId, base_version: 2 }],
       supersede_reason: "New event materialized to a successor", user_confirmed: true,
       replacement: {
         scope: "global", title: "Current decision", content: "current decision marker",
@@ -265,6 +281,64 @@ test("T-CUR-35/67 successor: Event fence, materialization, hidden equivalence, a
     assert.equal(typedSearch.results.length, 1);
     assert.equal(typedSearch.results[0].kind, "event");
     assert.equal(typedSearch.results[0].structured_action_usable, true);
+
+    // A post-cutover direct Event written through an authorized legacy
+    // project alias must fence the canonical project Record and remain a
+    // current Event source on the canonical search path.
+    const aliasUser = uuid();
+    const aliasToken = hash();
+    const projectId = uuid();
+    const projectScope = `project:${projectId}`;
+    await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'alias-currentness@example.invalid',now())", [aliasUser]);
+    await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key,
+      certainty_status,confirmed_at) values($1,$2,'Alpha','alpha',$3,'confirmed',now())`,
+      [projectId, aliasUser, projectScope]);
+    await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic','Alias currentness test',$2,
+        array['context:read','context:write'],array['project:alpha',$3])`,
+      [aliasUser, aliasToken, projectScope]);
+    const aliasRpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`,
+      [aliasToken, input])).rows[0].value;
+    const aliasRecord = await aliasRpc("clued_record_mutate", {
+      operation: "create", record_type: "decision", record_schema_version: 1,
+      lifecycle_status: "active", scope: projectScope, idempotency_key: uuid(),
+      authority: "user_explicit", user_confirmed: true, confidence_reason: "Alias fixture",
+      source_refs: [], source_unavailable_reason: null,
+      mutation: { title: "Project D1", content: "old project decision",
+        type_fields: { rationale: "Alias fixture" }, relations: {} },
+    });
+    assert.equal(aliasRecord.status, "committed", JSON.stringify(aliasRecord));
+    const projectList = () => aliasRpc("clued_record_list", {
+      level: "project", project_id: projectId, record_type: "decision",
+    });
+    assert.equal((await projectList()).records.length, 1);
+    const aliasSession = await aliasRpc("clued_mcp_restore", {
+      context_key: "project:alpha", response_view: "structured",
+    });
+    const aliasEvent = await aliasRpc("clued_mcp_append_event", {
+      context_key: "project:alpha", session_token: aliasSession.session_token,
+      base_version: aliasSession.version, event_type: "decision",
+      payload: { marker: "alias E2 current" }, idempotency_key: uuid(),
+    });
+    assert.equal(aliasEvent.status, "appended");
+    assert.equal((await admin.query(`select canonical_scope from clued_private.event_truth_carriers
+      where event_id=$1`, [aliasEvent.event_id])).rows[0].canonical_scope, projectScope);
+    assert.deepEqual((await projectList()).records, []);
+    const canonicalSession = await aliasRpc("clued_mcp_restore", {
+      context_key: projectScope, response_view: "structured",
+    });
+    const aliasSearch = await aliasRpc("clued_mcp_search_context", {
+      context_key: projectScope, session_token: canonicalSession.session_token,
+      query: "alias E2 current",
+    });
+    assert.equal(aliasSearch.results.length, 1);
+    assert.equal(aliasSearch.results[0].kind, "event");
+    await assert.rejects(admin.query(`insert into public.clued_context_events
+      (user_id,context_key,session_id,binding_id,version,event_type,payload,audit_visibility)
+      select $1,'project:missing',e.session_id,e.binding_id,e.version+1,'decision',
+        '{"marker":"unresolved alias"}'::jsonb,'work_log'
+      from public.clued_context_events e where e.id=$2`,
+    [aliasUser, aliasEvent.event_id]), /material_event_project_scope_unresolved/);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

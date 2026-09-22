@@ -59,8 +59,20 @@ create table clued_private.legacy_inventory_epoch (
   cutover_event_id bigint not null,
   created_at timestamptz not null default now()
 );
-insert into clued_private.legacy_inventory_epoch(id,cutover_event_id)
-select true,coalesce(max(e.id),0) from public.clued_context_events e;
+-- Freeze the inventory transaction's source watermark, not the Event maximum
+-- at this later migration. Appends in between already have core carriers and
+-- must not be retroactively required to have legacy candidate receipts.
+do $$
+declare v_min bigint; v_max bigint;
+begin
+  select min(r.scan_completed_revision),max(r.scan_completed_revision)
+    into v_min,v_max from clued_private.legacy_carrier_inventory_receipts r;
+  if v_min is distinct from v_max then
+    raise exception 'legacy_inventory_watermark_inconsistent' using errcode='23514';
+  end if;
+  insert into clued_private.legacy_inventory_epoch(id,cutover_event_id)
+    values(true,coalesce(v_min,0));
+end $$;
 alter table clued_private.legacy_inventory_epoch enable row level security;
 revoke all on clued_private.legacy_inventory_epoch
   from public,anon,authenticated,service_role;
@@ -132,6 +144,13 @@ begin
   if p_authorized_scopes is not null and not v_scope=any(p_authorized_scopes) then
     return 'NOT_AUTHORIZED';
   end if;
+  if exists(select 1 from clued_private.legacy_event_project_impacts i
+    join clued_private.event_truth_carriers c on c.event_id=i.event_id
+    where i.user_id=p_user_id and i.project_scope=v_scope
+      and c.carrier_state='LEGACY_UNBOUND' and c.visibility='work_log'
+      and v_record.record_type=any(c.dimensions)) then
+    return 'UNKNOWN';
+  end if;
   select * into v_binding from clued_private.projection_record_bindings b
     where b.record_id=p_record_id and b.user_id=p_user_id;
   v_projection_key:=coalesce(nullif(v_record.type_fields->>'projection_key',''),
@@ -162,14 +181,11 @@ begin
   end if;
   if exists(
     select 1 from clued_private.event_truth_carriers c
-    join public.clued_context_events e on e.id=c.event_id
     where c.user_id=p_user_id and c.canonical_scope=v_scope
       and c.visibility='work_log'
       and (p_authorized_scopes is null or c.canonical_scope=any(p_authorized_scopes))
       and v_record.record_type=any(c.dimensions)
-      and (c.carrier_state='LEGACY_UNBOUND' or
-        (c.carrier_state in ('ACTIVE_UNSTRUCTURED','ACTIVE_TYPED')
-         and e.occurred_at>=v_record.updated_at))
+      and c.carrier_state in ('LEGACY_UNBOUND','ACTIVE_UNSTRUCTURED','ACTIVE_TYPED')
   ) then return 'SHADOWED_BY_ACTIVE_EVENT'; end if;
   return 'CURRENT';
 end $$;
@@ -324,7 +340,11 @@ begin
             'event_type',c.event_type,'event_version',c.event_version,
             'source_receipt',c.source_receipt_id,'visibility',c.visibility,
             'dimensions',c.dimensions,'occurred_at',c.occurred_at,
-            'disposition',c.disposition)::text,',' order by c.event_id),'sha256'),'hex')
+            'disposition',c.disposition,
+            'candidate_project_scopes',coalesce((select jsonb_agg(i.project_scope order by i.project_scope)
+              from clued_private.legacy_event_project_impacts i
+              where i.event_id=c.event_id),'[]'::jsonb))::text,
+            ',' order by c.event_id),'sha256'),'hex')
         from clued_private.legacy_event_candidates c
         where c.inventory_batch_id=r.batch_id and c.user_id=r.user_id
           and c.raw_context_key=r.raw_context_key))) then return false; end if;

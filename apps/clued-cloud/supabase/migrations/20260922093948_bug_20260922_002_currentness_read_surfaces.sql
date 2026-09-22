@@ -19,6 +19,7 @@ begin
     join public.clued_context_checkpoints c on c.id=h.checkpoint_id
     where h.user_id=v_session.user_id and h.context_key=v_session.context_key;
   v_status:=case
+    when coalesce((v_current->>'legacy_alias_unknown')::boolean,false) then 'UNKNOWN'
     when not clued_private.currentness_vector_eligible(v_current) then 'STALE'
     when v_checkpoint.id is null then 'CURRENT'
     when v_checkpoint.committed_currentness_vector is null then 'UNKNOWN'
@@ -66,7 +67,13 @@ begin
         and c.visibility='work_log'
         and c.carrier_state in ('ACTIVE_UNSTRUCTURED','LEGACY_UNBOUND')
         and c.dimensions && array['state','task','decision']::text[]) into v_blocked;
-    if v_blocked then v_status:='BLOCKED';
+    if exists(select 1 from clued_private.legacy_event_project_impacts i
+      join clued_private.event_truth_carriers c on c.event_id=i.event_id
+      where i.user_id=p_user_id and i.project_scope=p_context_key
+        and c.carrier_state='LEGACY_UNBOUND' and c.visibility='work_log'
+        and c.dimensions && array['state','task','decision']::text[]) then
+      v_status:='UNKNOWN';
+    elsif v_blocked then v_status:='BLOCKED';
     else
       select count(*)::integer into v_count from public.clued_memories m
         where m.user_id=p_user_id and m.canonical_scope=p_context_key

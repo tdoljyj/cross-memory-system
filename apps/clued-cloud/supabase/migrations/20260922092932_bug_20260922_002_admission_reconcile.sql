@@ -147,7 +147,8 @@ create or replace function clued_private.currentness_vector(
 ) returns jsonb language plpgsql stable security definer set search_path='' as $$
 declare v_local jsonb; v_global bigint:=0; v_global_control jsonb:='{}'::jsonb;
   v_projections jsonb; v_dependency_sources jsonb:='[]'::jsonb;
-  v_legacy boolean:=false; v_authority_unknown boolean:=false;
+  v_legacy boolean:=false; v_legacy_alias_unknown boolean:=false;
+  v_authority_unknown boolean:=false;
   v_dependency_unknown boolean:=false; v_dep record;
   v_target public.clued_memories%rowtype; v_dep_scope text;
   v_dep_head clued_private.visible_scope_currentness_heads%rowtype;
@@ -191,6 +192,12 @@ begin
   select exists(select 1 from clued_private.event_truth_carriers c
     where c.user_id=p_user_id and c.canonical_scope=p_context_key
       and c.carrier_state='LEGACY_UNBOUND' and c.visibility='work_log') into v_legacy;
+  select exists(select 1 from clued_private.legacy_event_project_impacts i
+    join clued_private.event_truth_carriers c on c.event_id=i.event_id
+    where i.user_id=p_user_id and i.project_scope=p_context_key
+      and c.carrier_state='LEGACY_UNBOUND' and c.visibility='work_log')
+    into v_legacy_alias_unknown;
+  v_legacy:=v_legacy or v_legacy_alias_unknown;
   if p_context_key like 'project:%' then
     if exists(select 1 from public.clued_memories m
       where m.user_id=p_user_id and m.canonical_scope=p_context_key
@@ -242,12 +249,14 @@ begin
     'authority_unknown',v_authority_unknown,
     'dependency_sources',v_dependency_sources,
     'dependency_unknown',v_dependency_unknown,
-    'projection',v_projections,'legacy_unbound',v_legacy);
+    'projection',v_projections,'legacy_unbound',v_legacy,
+    'legacy_alias_unknown',v_legacy_alias_unknown);
 end $$;
 
 create or replace function clued_private.currentness_vector_eligible(p_vector jsonb)
 returns boolean language sql immutable set search_path='' as $$
   select coalesce((p_vector->>'legacy_unbound')::boolean,false)=false
+    and coalesce((p_vector->>'legacy_alias_unknown')::boolean,false)=false
     and coalesce((p_vector->>'authority_unknown')::boolean,false)=false
     and coalesce((p_vector->>'dependency_unknown')::boolean,false)=false
     and not exists(select 1 from jsonb_array_elements(coalesce(p_vector->'projection','[]'::jsonb)) p
@@ -281,6 +290,7 @@ declare v_binding public.clued_agent_bindings%rowtype;
   v_context_key text:=coalesce(nullif(pg_catalog.btrim(p_input->>'context_key'),''),'global');
   v_vector jsonb; v_digest text; v_eligible boolean; v_receipt_id uuid;
   v_view jsonb; v_view_digest text; v_evaluation_digest text; v_projection_keys jsonb;
+  v_currentness_state text;
 begin
   v_binding:=clued_private.resolve_binding(p_token_hash,'context:read',v_context_key);
   v_session:=clued_private.resolve_session(v_binding.user_id,v_binding.id,v_context_key,
@@ -291,6 +301,9 @@ begin
   v_vector:=clued_private.currentness_vector(v_binding.user_id,v_context_key,v_binding.id);
   v_digest:=clued_private.currentness_hash(v_vector);
   v_eligible:=clued_private.currentness_vector_eligible(v_vector);
+  v_currentness_state:=case
+    when coalesce((v_vector->>'legacy_alias_unknown')::boolean,false) then 'UNKNOWN'
+    when v_eligible then 'CURRENT' else 'STALE' end;
   select coalesce(jsonb_agg(jsonb_build_object('id',m.id,'version',m.version,
     'record_type',m.record_type,'lifecycle_status',m.lifecycle_status,
     'content_hash',m.content_hash) order by m.id),'[]'::jsonb) into v_view
@@ -313,6 +326,7 @@ begin
       else 'CURRENTNESS_OBSERVATION' end,'admission_eligible',v_eligible,
       'session_id',v_session.id,'binding_id',v_binding.id,'context_key',v_context_key,
       'currentness_vector',v_vector,'currentness_vector_digest',v_digest,
+      'currentness_state',v_currentness_state,
       'current_view_digest',v_view_digest,'evaluation_digest',v_evaluation_digest,
       'required_reads_satisfied',v_eligible,'projection_keys',v_projection_keys,
       'admission_dimensions',jsonb_build_array('snapshot','next_action','authority','projection'),
@@ -329,7 +343,8 @@ begin
   end if;
   return jsonb_build_object('status',case when v_eligible then 'current' else 'reconciliation_required' end,
     'receipt_kind',case when v_eligible then 'CURRENTNESS_ADMISSION' else 'CURRENTNESS_OBSERVATION' end,
-    'admission_eligible',v_eligible,'currentness_receipt_id',v_receipt_id,
+    'admission_eligible',v_eligible,'currentness_state',v_currentness_state,
+    'currentness_receipt_id',v_receipt_id,
     'currentness_vector_digest',v_digest,'evaluation_digest',v_evaluation_digest);
 end $$;
 

@@ -13,6 +13,8 @@ const migrationDir = path.join(root, 'supabase/migrations');
 const coreName = '20260922092355_bug_20260922_002_currentness_core.sql';
 const inventoryName = '20260922092810_bug_20260922_002_legacy_carrier_inventory.sql';
 const admissionName = '20260922092932_bug_20260922_002_admission_reconcile.sql';
+const projectionName = '20260922093621_bug_20260922_002_projection_rebuild_gate.sql';
+const readSurfacesName = '20260922093948_bug_20260922_002_currentness_read_surfaces.sql';
 const uuid = () => crypto.randomUUID();
 
 async function freePort() {
@@ -54,6 +56,7 @@ test('raw direct Event inventory is complete, scoped, and CAS transitions are at
     const owner = uuid();
     const projectId = uuid();
     const projectBId = uuid();
+    const projectGammaId = uuid();
     await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',
       [owner, 'legacy-inventory@example.invalid']);
     await db.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key,
@@ -62,6 +65,12 @@ test('raw direct Event inventory is complete, scoped, and CAS transitions are at
     await db.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key,
       certainty_status,confirmed_at) values($1,$2,'Beta','beta',$3,'confirmed',now())`,
       [projectBId, owner, `project:${projectBId}`]);
+    await db.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key,
+      aliases,certainty_status,confirmed_at)
+      values($1,$2,'Gamma','gamma',$3,array['shared'],'confirmed',now())`,
+      [projectGammaId, owner, `project:${projectGammaId}`]);
+    await db.query(`update public.clued_projects set aliases=array['shared'] where id=$1`,
+      [projectId]);
     const events = (await db.query(`insert into public.clued_context_events
       (user_id,context_key,event_type,payload,version,audit_visibility)
       values ($1,'global','decision','{"text":"current decision"}',1,'work_log'),
@@ -69,7 +78,8 @@ test('raw direct Event inventory is complete, scoped, and CAS transitions are at
              ($1,'project:missing','action','{"text":"unknown scope"}',3,'work_log'),
              ($1,'global','retraction','{"text":"unbound global retraction"}',4,'work_log'),
              ($1,'project:alpha','retraction','{"text":"unbound project retraction"}',5,'work_log'),
-             ($1,'global','note','{"text":"non-material note"}',6,'work_log')
+             ($1,'project:shared','correction','{"text":"ambiguous legacy alias"}',6,'work_log'),
+             ($1,'global','note','{"text":"non-material note"}',7,'work_log')
       returning id,event_type`, [owner])).rows;
     const ids = Object.fromEntries(events.map((row) => [row.event_type, row.id]));
     await db.query(await fs.readFile(path.join(migrationDir, coreName), 'utf8'));
@@ -90,7 +100,7 @@ test('raw direct Event inventory is complete, scoped, and CAS transitions are at
 
     const candidates = (await db.query(`select event_id,canonical_scope,disposition,dimensions
       from clued_private.legacy_event_candidates order by event_id`)).rows;
-    assert.equal(candidates.length, 5);
+    assert.equal(candidates.length, 6);
     assert.equal(candidates[0].event_id, ids.decision);
     assert.equal(candidates[0].disposition, 'LEGACY_ACTIVE_UNSTRUCTURED');
     assert.equal(candidates[1].canonical_scope, `project:${projectId}`);
@@ -102,10 +112,16 @@ test('raw direct Event inventory is complete, scoped, and CAS transitions are at
     assert.equal(candidates[3].disposition, 'LEGACY_UNBOUND');
     assert.equal(candidates[4].canonical_scope, `project:${projectId}`);
     assert.equal(candidates[4].disposition, 'LEGACY_UNBOUND');
+    assert.equal(candidates[5].canonical_scope, `legacy-unbound:${ids.correction}`);
+    const ambiguousImpacts = (await db.query(`select project_scope from
+      clued_private.legacy_event_project_impacts where event_id=$1 order by project_scope`,
+      [ids.correction])).rows.map((row) => row.project_scope);
+    assert.deepEqual(ambiguousImpacts,
+      [`project:${projectId}`, `project:${projectGammaId}`].sort());
     const receipts = (await db.query(`select candidate_count,inventory_sha256,
       scan_completed_revision,append_cutover_revision
       from clued_private.legacy_carrier_inventory_receipts`)).rows;
-    assert.equal(receipts.reduce((sum, receipt) => sum + Number(receipt.candidate_count), 0), 5);
+    assert.equal(receipts.reduce((sum, receipt) => sum + Number(receipt.candidate_count), 0), 6);
     assert.ok(receipts.every((receipt) => /^[0-9a-f]{64}$/.test(receipt.inventory_sha256)));
     assert.ok(receipts.every((receipt) => receipt.scan_completed_revision === receipt.append_cutover_revision));
     const aliasProjection = (await db.query(`select projection_key,invalidation_revision
@@ -113,7 +129,7 @@ test('raw direct Event inventory is complete, scoped, and CAS transitions are at
       where user_id=$1 and target_scope='global' and projection_key='global.__aggregate__'`,
       [owner])).rows[0];
     assert.equal(aliasProjection.projection_key, 'global.__aggregate__');
-    assert.equal(Number(aliasProjection.invalidation_revision), 1);
+    assert.equal(Number(aliasProjection.invalidation_revision), 2);
     const betaRecordId = uuid();
     await db.query(`insert into public.clued_memories
       (id,user_id,title,content,record_type,scope,project_id,canonical_scope,lifecycle_status)
@@ -172,8 +188,9 @@ test('raw direct Event inventory is complete, scoped, and CAS transitions are at
     await db.query(`insert into public.clued_agent_bindings
       (user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','carrier transition test',$2,
-        array['context:read','context:write','audit:read'],array['global',$3,$4])`,
-      [owner, tokenHash, `project:${projectId}`, `project:${projectBId}`]);
+        array['context:read','context:write','audit:read'],array['global',$3,$4,$5])`,
+      [owner, tokenHash, `project:${projectId}`, `project:${projectBId}`,
+        `project:${projectGammaId}`]);
     const restored = (await db.query(`select public.clued_mcp_restore($1,$2) result`,
       [tokenHash, { context_key: `project:${projectId}`, response_view: 'structured',
         event_limit: 1, event_budget_bytes: 4096 }])).rows[0].result;
@@ -283,12 +300,81 @@ test('raw direct Event inventory is complete, scoped, and CAS transitions are at
       [owner, 'global', bindingId])).rows[0].v;
     assert.equal(alphaVector.legacy_unbound, true);
     assert.equal(betaVector.legacy_unbound, false);
+    const gammaVector = (await db.query(`select clued_private.currentness_vector($1,$2,$3) v`,
+      [owner, `project:${projectGammaId}`, bindingId])).rows[0].v;
+    assert.equal(alphaVector.legacy_alias_unknown, true);
+    assert.equal(gammaVector.legacy_alias_unknown, true);
+    assert.equal(gammaVector.legacy_unbound, true);
+    assert.equal(betaVector.legacy_alias_unknown, false);
     assert.ok(globalVector.projection.some((item) =>
       item.key === 'global.__aggregate__' &&
       Number(item.invalidation_revision) > Number(item.resolved_through_revision)));
     const betaEligible = (await db.query(`select clued_private.currentness_vector_eligible($1) ok`,
       [betaVector])).rows[0].ok;
     assert.equal(betaEligible, true);
+    const activeSessionId = (await db.query(`select id from public.clued_continuity_sessions
+      where user_id=$1 and binding_id=$2 and context_key=$3 limit 1`,
+      [owner, bindingId, `project:${projectId}`])).rows[0].id;
+    const postCutoverEventId = (await db.query(`insert into public.clued_context_events
+      (user_id,context_key,event_type,payload,audit_visibility,session_id)
+      values($1,$2,'decision','{"text":"between migrations"}','work_log',$3) returning id`,
+      [owner, `project:${projectId}`, activeSessionId])).rows[0].id;
+    assert.equal((await db.query(`select count(*) from clued_private.legacy_event_candidates
+      where event_id=$1`, [postCutoverEventId])).rows[0].count, '0');
+    await db.query(await fs.readFile(path.join(migrationDir, projectionName), 'utf8'));
+    await db.query(await fs.readFile(path.join(migrationDir, readSurfacesName), 'utf8'));
+    const inventoryWatermark = Number((await db.query(`select cutover_event_id from
+      clued_private.legacy_inventory_epoch`)).rows[0].cutover_event_id);
+    assert.ok(inventoryWatermark < Number(postCutoverEventId));
+    assert.equal((await db.query(`select carrier_state from
+      clued_private.event_truth_carriers where event_id=$1`,
+      [postCutoverEventId])).rows[0].carrier_state, 'ACTIVE_UNSTRUCTURED');
+    assert.equal((await db.query(`select clued_private.legacy_inventory_complete($1) ok`,
+      [owner])).rows[0].ok, true);
+    const gammaRecordId = uuid();
+    const alphaRecordId = uuid();
+    await db.query(`insert into public.clued_memories
+      (id,user_id,title,content,record_type,scope,project_id,canonical_scope,lifecycle_status)
+      values($1,$2,'Alpha state','Old Alpha truth','state','project',$3,$4,'active'),
+            ($5,$2,'Gamma state','Old Gamma truth','state','project',$6,$7,'active')`,
+      [alphaRecordId, owner, projectId, `project:${projectId}`,
+        gammaRecordId, projectGammaId, `project:${projectGammaId}`]);
+    for (const candidateId of [projectId, projectGammaId]) {
+      const scope = `project:${candidateId}`;
+      const result = (await db.query(`select clued_private.record_list_core($1,$2,$3) result`,
+        [owner, { level: 'project', project_id: candidateId, record_type: 'state' },
+          [scope]])).rows[0].result;
+      assert.deepEqual(result.records, []);
+    }
+    assert.equal((await db.query(`select clued_private.record_currentness_fence(
+      $1,$2,array[$3]::text[]) status`, [owner, gammaRecordId,
+      `project:${projectGammaId}`])).rows[0].status, 'UNKNOWN');
+    const betaStillCurrent = (await db.query(`select clued_private.record_list_core($1,$2,$3) result`,
+      [owner, { level: 'project', project_id: projectBId, record_type: 'state' },
+        [`project:${projectBId}`]])).rows[0].result;
+    assert.equal(betaStillCurrent.records.length, 1);
+    assert.equal(betaStillCurrent.records[0].id, betaRecordId);
+    assert.equal((await db.query(`select clued_private.authoritative_current_action_v1($1,$2) result`,
+      [owner, `project:${projectGammaId}`])).rows[0].result.status, 'UNKNOWN');
+    assert.equal((await db.query(`select clued_private.currentness_vector_eligible($1) ok`,
+      [gammaVector])).rows[0].ok, false);
+    const gammaRestored = (await db.query(`select public.clued_mcp_restore($1,$2) result`,
+      [tokenHash, { context_key: `project:${projectGammaId}`, response_view: 'structured' }]))
+      .rows[0].result;
+    const gammaAdmission = (await db.query(`select public.clued_mcp_session_reconcile($1,$2) result`,
+      [tokenHash, { context_key: `project:${projectGammaId}`,
+        session_token: gammaRestored.session_token }])).rows[0].result;
+    assert.equal(gammaAdmission.currentness_state, 'UNKNOWN');
+    assert.equal(gammaAdmission.admission_eligible, false);
+    assert.equal(gammaAdmission.receipt_kind, 'CURRENTNESS_OBSERVATION');
+    await db.query('begin');
+    await db.query('savepoint inventory_tamper');
+    await db.query(`delete from clued_private.legacy_event_project_impacts where event_id=$1`,
+      [ids.correction]);
+    assert.equal((await db.query(`select clued_private.legacy_inventory_complete($1) ok`,
+      [owner])).rows[0].ok, false);
+    await db.query('rollback to savepoint inventory_tamper');
+    await db.query('commit');
   } finally {
     if (db) await db.end().catch(() => {});
     await server.stop().catch(() => {});

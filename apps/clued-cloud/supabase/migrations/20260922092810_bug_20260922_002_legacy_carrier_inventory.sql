@@ -24,6 +24,38 @@ create index legacy_event_candidates_scope_idx on clued_private.legacy_event_can
 alter table clued_private.legacy_event_candidates enable row level security;
 revoke all on clued_private.legacy_event_candidates from public,anon,authenticated,service_role;
 
+-- Preserve every concrete Project that an ambiguous pre-cutover alias could
+-- mean. The sentinel remains the Event identity; this relation is an impact
+-- boundary, never an authorization to expose the Event in another scope.
+create table clued_private.legacy_event_project_impacts (
+  event_id bigint not null references clued_private.legacy_event_candidates(event_id) on delete restrict,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  project_scope text not null,
+  primary key(event_id,project_scope)
+);
+create index legacy_event_project_impacts_scope_idx on
+  clued_private.legacy_event_project_impacts(user_id,project_scope,event_id);
+alter table clued_private.legacy_event_project_impacts enable row level security;
+revoke all on clued_private.legacy_event_project_impacts
+  from public,anon,authenticated,service_role;
+
+create or replace function clued_private.legacy_event_project_matches(
+  p_user_id uuid,p_context_key text
+) returns table(project_scope text) language sql stable security definer set search_path='' as $$
+  select distinct 'project:'||r.effective_project_id::text
+    from public.clued_project_resolution_v2 r
+    join public.clued_projects p on p.id=r.source_project_id and p.user_id=r.user_id
+   where r.user_id=p_user_id and r.effective_project_id is not null
+     and p_context_key ~ '^project:.+$' and (
+     lower('project:'||p.id::text)=lower(p_context_key) or
+     lower('project:'||p.name)=lower(p_context_key) or
+     lower('project:'||p.normalized_name)=lower(p_context_key) or
+     exists (select 1 from pg_catalog.unnest(coalesce(p.aliases,'{}'::text[])) a
+              where lower('project:'||a)=lower(p_context_key)))
+$$;
+revoke all on function clued_private.legacy_event_project_matches(uuid,text)
+  from public,anon,authenticated,service_role;
+
 create table clued_private.legacy_carrier_inventory_receipts (
   batch_id uuid not null,
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -51,20 +83,10 @@ revoke all on clued_private.legacy_carrier_inventory_receipts
 create or replace function clued_private.legacy_event_scope(
   p_user_id uuid,p_context_key text
 ) returns text language plpgsql stable security definer set search_path='' as $$
-declare v_id uuid; v_count integer;
 begin
   if p_context_key='global' then return 'global'; end if;
   if p_context_key !~ '^project:.+$' then return null; end if;
-  select count(distinct p.id),(array_agg(p.id order by p.id))[1] into v_count,v_id
-    from public.clued_projects p
-   where p.user_id=p_user_id and (
-     lower('project:'||p.id::text)=lower(p_context_key) or
-     lower('project:'||p.name)=lower(p_context_key) or
-     lower('project:'||p.normalized_name)=lower(p_context_key) or
-     exists (select 1 from unnest(coalesce(p.aliases,'{}'::text[])) a
-              where lower('project:'||a)=lower(p_context_key)));
-  if v_count=1 then return 'project:'||v_id::text; end if;
-  return null;
+  return clued_private.event_canonical_scope(p_user_id,p_context_key);
 end $$;
 revoke all on function clued_private.legacy_event_scope(uuid,text)
   from public,anon,authenticated,service_role;
@@ -120,6 +142,14 @@ begin
     and e.canonical_event_type is null
     and e.event_type in ('decision','correction','action','failure','blocker','retraction');
 
+  insert into clued_private.legacy_event_project_impacts(event_id,user_id,project_scope)
+  select c.event_id,c.user_id,m.project_scope
+    from clued_private.legacy_event_candidates c
+    cross join lateral clued_private.legacy_event_project_matches(
+      c.user_id,c.raw_context_key) m
+   where c.inventory_batch_id=v_batch
+     and c.canonical_scope like 'legacy-unbound:%';
+
   insert into clued_private.event_truth_carriers (
     event_id,user_id,canonical_scope,dimensions,visibility,source_kind,
     carrier_state,event_version)
@@ -145,8 +175,8 @@ begin
 
   -- Unresolved project aliases are not global Canonical Record sources.
   -- Their work-log visibility may affect a Global aggregate, so invalidate
-  -- that projection only. Local Project A/B revisions and Record fences stay
-  -- independent unless a verified scope relation identifies an impact.
+  -- that projection. The verified candidate mapping above fences each
+  -- plausible Project, while unrelated Projects remain independent.
   insert into clued_private.projection_invalidation_heads (
     user_id,target_scope,projection_key,invalidation_revision,
     latest_source_ref,stale_since)
@@ -175,14 +205,20 @@ begin
     coalesce(jsonb_agg(distinct jsonb_build_object('scope',c.canonical_scope,
       'dimensions',c.dimensions,
       'aggregate_projection',case when c.canonical_scope like 'legacy-unbound:%'
-        then 'global.__aggregate__' else null end))
+        then 'global.__aggregate__' else null end,
+      'candidate_project_scopes',coalesce((select jsonb_agg(i.project_scope order by i.project_scope)
+        from clued_private.legacy_event_project_impacts i
+        where i.event_id=c.event_id),'[]'::jsonb)))
       filter(where c.disposition='LEGACY_UNBOUND'),'[]'::jsonb),
     encode(extensions.digest(string_agg(jsonb_build_object(
       'event_id',c.event_id,'owner',c.user_id,'raw_context',c.raw_context_key,
       'canonical_scope',c.canonical_scope,'event_type',c.event_type,
       'event_version',c.event_version,'source_receipt',c.source_receipt_id,
       'visibility',c.visibility,'dimensions',c.dimensions,
-      'occurred_at',c.occurred_at,'disposition',c.disposition)::text,
+      'occurred_at',c.occurred_at,'disposition',c.disposition,
+      'candidate_project_scopes',coalesce((select jsonb_agg(i.project_scope order by i.project_scope)
+        from clued_private.legacy_event_project_impacts i
+        where i.event_id=c.event_id),'[]'::jsonb))::text,
       ',' order by c.event_id),'sha256'),'hex'),
     v_watermark,v_watermark
   from (

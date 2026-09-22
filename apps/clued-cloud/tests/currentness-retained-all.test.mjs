@@ -975,7 +975,8 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
           'canonical_scope',c.canonical_scope,'event_type',c.event_type,
           'event_version',c.event_version,'source_receipt',c.source_receipt_id,
           'visibility',c.visibility,'dimensions',c.dimensions,
-          'occurred_at',c.occurred_at,'disposition',c.disposition)::text,'sha256'),'hex'),
+          'occurred_at',c.occurred_at,'disposition',c.disposition,
+          'candidate_project_scopes','[]'::jsonb)::text,'sha256'),'hex'),
           c.event_id,c.event_id
         from clued_private.legacy_event_candidates c where c.event_id=$1`,
       [source, batch]);

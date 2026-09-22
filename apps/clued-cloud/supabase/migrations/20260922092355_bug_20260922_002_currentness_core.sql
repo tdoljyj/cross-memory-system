@@ -99,6 +99,32 @@ returns text[] language sql immutable set search_path='' as $$
     else '{}'::text[] end
 $$;
 
+-- Resolve a project alias to exactly one effective canonical Project. New
+-- material Events with an unresolved project alias fail before commit.
+create or replace function clued_private.event_canonical_scope(
+  p_user_id uuid,p_context_key text
+) returns text language plpgsql stable security definer set search_path='' as $$
+declare v_count integer; v_effective_id uuid;
+begin
+  if p_context_key is null then return null; end if;
+  if p_context_key not like 'project:%' then return p_context_key; end if;
+  select count(distinct r.effective_project_id),
+         (array_agg(distinct r.effective_project_id))[1]
+    into v_count,v_effective_id
+    from public.clued_project_resolution_v2 r
+    join public.clued_projects p on p.id=r.source_project_id and p.user_id=r.user_id
+   where r.user_id=p_user_id and r.effective_project_id is not null
+     and (lower('project:'||p.id::text)=lower(p_context_key)
+       or lower('project:'||p.name)=lower(p_context_key)
+       or lower('project:'||p.normalized_name)=lower(p_context_key)
+       or exists(select 1 from unnest(coalesce(p.aliases,'{}'::text[])) alias_name
+         where lower('project:'||alias_name)=lower(p_context_key)));
+  if v_count=1 then return 'project:'||v_effective_id::text; end if;
+  return null;
+end $$;
+revoke all on function clued_private.event_canonical_scope(uuid,text)
+  from public,anon,authenticated,service_role;
+
 create or replace function clued_private.touch_currentness(
   p_user_id uuid,p_scope text,p_kind text,p_source_id text,p_dimensions text[]
 ) returns void language plpgsql security definer set search_path='' as $$
@@ -149,13 +175,18 @@ begin
     if new.event_scope is null then
       raise exception 'registered_typed_event_scope_required' using errcode='22023';
     end if;
-    v_kind:='typed_extension'; v_state:='ACTIVE_TYPED'; v_scope:=new.event_scope;
+    v_kind:='typed_extension'; v_state:='ACTIVE_TYPED';
+    v_scope:=clued_private.event_canonical_scope(new.user_id,new.event_scope);
   else
     if new.session_id is null then return new; end if;
     v_dimensions:=clued_private.event_currentness_dimensions(new.event_type);
-    v_kind:='direct'; v_state:='ACTIVE_UNSTRUCTURED'; v_scope:=new.context_key;
+    v_kind:='direct'; v_state:='ACTIVE_UNSTRUCTURED';
+    v_scope:=clued_private.event_canonical_scope(new.user_id,new.context_key);
   end if;
   if cardinality(v_dimensions)=0 then return new; end if;
+  if v_scope is null then
+    raise exception 'material_event_project_scope_unresolved' using errcode='22023';
+  end if;
   insert into clued_private.event_truth_carriers(
     event_id,user_id,canonical_scope,dimensions,visibility,source_kind,
     carrier_state,event_version)
@@ -337,14 +368,11 @@ begin
   ) then return 'STALE'; end if;
   if exists(
     select 1 from clued_private.event_truth_carriers c
-    join public.clued_context_events e on e.id=c.event_id
     where c.user_id=p_user_id and c.canonical_scope=v_scope
       and c.visibility='work_log'
       and (p_authorized_scopes is null or c.canonical_scope=any(p_authorized_scopes))
       and v_record.record_type=any(c.dimensions)
-      and (c.carrier_state='LEGACY_UNBOUND' or
-        (c.carrier_state in ('ACTIVE_UNSTRUCTURED','ACTIVE_TYPED')
-         and e.occurred_at>=v_record.updated_at))
+      and c.carrier_state in ('LEGACY_UNBOUND','ACTIVE_UNSTRUCTURED','ACTIVE_TYPED')
   ) then return 'SHADOWED_BY_ACTIVE_EVENT'; end if;
   return 'CURRENT';
 end $$;
@@ -506,6 +534,7 @@ returns jsonb language plpgsql security definer set search_path='' as $$
 declare
   v_binding public.clued_agent_bindings%rowtype; v_session public.clued_continuity_sessions%rowtype;
   v_context_key text:=coalesce(nullif(btrim(p_input->>'context_key'),''),'global');
+  v_canonical_scope text;
   v_query text:=btrim(coalesce(p_input->>'query',''));
   v_include_history boolean:=coalesce((p_input->>'include_history')::boolean,false);
   v_limit integer:=least(greatest(coalesce((p_input->>'limit')::integer,10),1),50);
@@ -516,6 +545,8 @@ declare
 begin
   v_binding:=clued_private.resolve_binding(p_token_hash,'context:read',v_context_key);
   v_session:=clued_private.resolve_session(v_binding.user_id,v_binding.id,v_context_key,p_input->>'session_token');
+  v_canonical_scope:=clued_private.event_canonical_scope(v_binding.user_id,v_context_key);
+  if v_canonical_scope is null then raise exception 'project_scope_unresolved' using errcode='22023'; end if;
   if char_length(v_query) not between 1 and 500 then raise exception 'invalid_query_length' using errcode='22023'; end if;
   with matches as (
     select jsonb_build_object('kind','record','id',m.id,'version',m.version,'record_type',m.record_type,
@@ -551,7 +582,10 @@ begin
       'target_refs',clued_private.k_cont_visible_target_refs_v1(v_binding.user_id,v_binding.id,v_context_key,e.target_refs),'occurred_at',e.occurred_at),
       2,e.occurred_at,e.id::text from public.clued_context_events e
     left join clued_private.event_truth_carriers tc on tc.event_id=e.id and tc.user_id=e.user_id
-    where e.user_id=v_binding.user_id and e.context_key=v_context_key and (e.audit_visibility='work_log' or (e.event_schema_version is null and e.audit_visibility is null)) and (v_include_history or (tc.visibility='work_log' and
+    where e.user_id=v_binding.user_id
+      and ((v_include_history and (e.context_key=v_context_key or tc.canonical_scope=v_canonical_scope))
+        or (not v_include_history and tc.canonical_scope=v_canonical_scope))
+      and (e.audit_visibility='work_log' or (e.event_schema_version is null and e.audit_visibility is null)) and (v_include_history or (tc.visibility='work_log' and
         tc.carrier_state in ('ACTIVE_UNSTRUCTURED','ACTIVE_TYPED')))
       and e.payload::text ilike '%'||v_query||'%'
   ), ordered as (
