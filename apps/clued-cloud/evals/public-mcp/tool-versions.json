@@ -11,13 +11,29 @@
     "production_equivalent": {
       "PROJECT_VIEWS_V2": true,
       "P5_TENANT_WRITES": false,
-      "expected_tool_count": 16
+      "expected_tool_count": 21
     },
     "full_matrix": [
-      { "PROJECT_VIEWS_V2": false, "P5_TENANT_WRITES": false, "expected_tool_count": 10 },
-      { "PROJECT_VIEWS_V2": true, "P5_TENANT_WRITES": false, "expected_tool_count": 16 },
-      { "PROJECT_VIEWS_V2": false, "P5_TENANT_WRITES": true, "expected_tool_count": 15 },
-      { "PROJECT_VIEWS_V2": true, "P5_TENANT_WRITES": true, "expected_tool_count": 21 }
+      {
+        "PROJECT_VIEWS_V2": false,
+        "P5_TENANT_WRITES": false,
+        "expected_tool_count": 15
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": false,
+        "expected_tool_count": 21
+      },
+      {
+        "PROJECT_VIEWS_V2": false,
+        "P5_TENANT_WRITES": true,
+        "expected_tool_count": 20
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": true,
+        "expected_tool_count": 26
+      }
     ]
   }
 }
