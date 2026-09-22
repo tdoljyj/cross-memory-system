@@ -2,6 +2,10 @@ name: public-mcp-gate-receipt
 
 on:
   pull_request_target:
+    paths:
+      - '.github/workflows/public-mcp-*.yml'
+      - 'apps/clued-cloud/**'
+      - 'protocol/continuity/v1/**'
 
 permissions:
   actions: read
