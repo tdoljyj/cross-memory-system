@@ -1,11 +1,36 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-const [actualPath, baselinePath] = process.argv.slice(2);
-if (!actualPath) throw new Error("usage: node verify-tools.mjs <actual.json> [baseline.json]");
+async function liveTools() {
+  const url = process.env.MCP_ISOLATED_URL ?? "http://127.0.0.1:8787/mcp";
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer clued_bnd_${"a".repeat(43)}`,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+  });
+  assert.equal(response.status, 200, `live tools/list failed with HTTP ${response.status}`);
+  const envelope = await response.json();
+  return envelope.result?.tools;
+}
 
-const envelope = JSON.parse(fs.readFileSync(actualPath, "utf8"));
-const tools = envelope.result?.tools ?? envelope.tools ?? envelope;
+const args = process.argv.slice(2);
+let tools;
+let baselinePath = null;
+
+if (args[0] === "--live") {
+  baselinePath = args[1] ?? null;
+  tools = await liveTools();
+} else {
+  const [actualPath, suppliedBaseline] = args;
+  if (!actualPath) throw new Error("usage: node verify-tools.mjs <actual.json> [baseline.json] | --live <baseline.json>");
+  const envelope = JSON.parse(fs.readFileSync(actualPath, "utf8"));
+  tools = envelope.result?.tools ?? envelope.tools ?? envelope;
+  baselinePath = suppliedBaseline ?? null;
+}
+
 assert.ok(Array.isArray(tools), "tools/list result must contain an array");
 assert.equal(new Set(tools.map((tool) => tool.name)).size, tools.length, "tool names must be unique");
 
@@ -29,4 +54,4 @@ if (baselinePath) {
   assert.deepEqual(tools, baseline.tools, "tools/list differs from the frozen feature-flag baseline");
 }
 
-console.log(JSON.stringify({ status: "PASS", tool_count: tools.length, metadata_coverage: "100%" }));
+console.log(JSON.stringify({ status: "PASS", tool_count: tools.length, metadata_coverage: "100%", source: args[0] === "--live" ? "live" : "file" }));
