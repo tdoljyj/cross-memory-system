@@ -17,6 +17,7 @@ on:
       - apps/clued-cloud/package.json
       - apps/clued-cloud/package-lock.json
       - apps/clued-cloud/supabase/**
+      - apps/clued-cloud/tests/projection-refresh-*.test.mjs
 
 permissions:
   contents: read
