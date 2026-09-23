@@ -1,0 +1,119 @@
+{
+  "schema": "clued.ci-health-report/v1",
+  "repository": "tdoljyj/cross-memory-system",
+  "observed_at": "2026-09-23T03:46:30.178614Z",
+  "status": "ANOMALY",
+  "notify_model": true,
+  "fingerprint": "847ff914f90e93d07cbeeb46492f9ad788bb62a7ecceac2b2e60e0283668e0ab",
+  "thresholds": {
+    "startup_delay_seconds": 300,
+    "minimum_repeats": 2,
+    "lookback_hours": 24
+  },
+  "anomalies": [
+    {
+      "code": "REPEATED_STARTUP_DELAY",
+      "key": "pool:linux-docker-wsl2-v1:startup-delay-repeated",
+      "message": "linux-docker-wsl2-v1 exceeded the startup-delay threshold at least 2 times.",
+      "details": {
+        "pool": "linux-docker-wsl2-v1",
+        "threshold_seconds": 300,
+        "minimum_repeats": 2,
+        "occurrences": 2,
+        "jobs": [
+          {
+            "job_id": "107017234755",
+            "run_id": 35809370060,
+            "name": "public-mcp-behavior",
+            "created_at": "2026-09-23T02:11:38Z",
+            "started_at": "2026-09-23T02:22:58Z",
+            "delay_seconds": 680,
+            "kind": "started"
+          },
+          {
+            "job_id": "107017234907",
+            "run_id": 35809370035,
+            "name": "trivy",
+            "created_at": "2026-09-23T02:11:38Z",
+            "started_at": "2026-09-23T02:22:34Z",
+            "delay_seconds": 656,
+            "kind": "started"
+          }
+        ]
+      }
+    }
+  ],
+  "observations": {
+    "runners": {
+      "expected_runner_count": 4,
+      "registered_runner_count": 4,
+      "expected_runners": {
+        "clued-ci-company-linux-01": {
+          "status": "online",
+          "busy": false,
+          "pool": "linux-docker-wsl2-v1"
+        },
+        "clued-ci-company-win-01": {
+          "status": "online",
+          "busy": false,
+          "pool": "windows-general-v1"
+        },
+        "clued-ci-home-linux-01": {
+          "status": "online",
+          "busy": false,
+          "pool": "linux-docker-wsl2-v1"
+        },
+        "clued-ci-home-win-01": {
+          "status": "online",
+          "busy": false,
+          "pool": "windows-general-v1"
+        }
+      },
+      "capability_pools": {
+        "linux-docker-wsl2-v1": {
+          "online": [
+            "clued-ci-company-linux-01",
+            "clued-ci-home-linux-01"
+          ],
+          "busy": [],
+          "offline_or_missing": []
+        },
+        "windows-general-v1": {
+          "online": [
+            "clued-ci-company-win-01",
+            "clued-ci-home-win-01"
+          ],
+          "busy": [],
+          "offline_or_missing": []
+        }
+      }
+    },
+    "startup_delays": {
+      "lookback_hours": 24,
+      "threshold_seconds": 300,
+      "minimum_repeats": 2,
+      "slow_occurrences_by_pool": {
+        "linux-docker-wsl2-v1": [
+          {
+            "job_id": "107017234755",
+            "run_id": 35809370060,
+            "name": "public-mcp-behavior",
+            "created_at": "2026-09-23T02:11:38Z",
+            "started_at": "2026-09-23T02:22:58Z",
+            "delay_seconds": 680,
+            "kind": "started"
+          },
+          {
+            "job_id": "107017234907",
+            "run_id": 35809370035,
+            "name": "trivy",
+            "created_at": "2026-09-23T02:11:38Z",
+            "started_at": "2026-09-23T02:22:34Z",
+            "delay_seconds": 656,
+            "kind": "started"
+          }
+        ]
+      }
+    }
+  }
+}
