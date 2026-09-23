@@ -76,6 +76,7 @@ Version truth is the remote commit plus root `VERSION`, git tags, `memory/manife
 - Use stable idempotency keys, CAS base versions for mutation, authenticated scope, exact canonical IDs, and the minimum authority supported by evidence.
 - Successful Canonical writes already emit Event and immutable Receipt in the same contract. Never perform a second Markdown or Git business write.
 - Refresh a repository snapshot only through Receipt-backed `clued_canonical_export`, deterministic build/validate, expected-current CAS publish, then the root cutover pipeline.
+- Information Flow candidates (`development/contracts/information-flow/M0DCloseout.v0.1.md`): `clued_intake_submit` / `clued_user_intake_submit` and `clued_intake_withdraw` / `clued_user_intake_withdraw` write only isolated `clued_private` candidate rows through the M1 receipt/idempotency core (`intake_submit`, `intake_withdraw`; candidate rows use row-version CAS). A candidate is never a Canonical Record or current truth. Later slices add candidate promote/reject, knowledge propose/promote, Context Policy acceptance and Evidence withdrawal as the same kind of receipt-core families; any Record they create or change goes through `record_mutation_with_terminal_guard` with the M1 `base_version`, and promotion always requires the two-step Native confirmation token.
 
 Superseded and archived facts remain in Canonical history. Do not delete them to express a correction. Failed business mutations must not be represented as successful state.
 

@@ -1,0 +1,8 @@
+{
+  "fixture_id": "SMK-CAN-002",
+  "fixture_type": "candidate",
+  "expected_schema_valid": true,
+  "expected_semantic_valid": true,
+  "expected_error_codes": [],
+  "assertions": []
+}

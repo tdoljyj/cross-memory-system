@@ -1,0 +1,70 @@
+{
+  "schema_version": "candidate_information.v1",
+  "segment_id": "seg_can_002",
+  "items": [
+    {
+      "candidate_local_id": "item_task_aurora",
+      "item_type": "task",
+      "claim": "需要在 Friday 前完成 Project Aurora 的 launch checklist。",
+      "summary": "完成 Aurora launch checklist",
+      "action_level": "needs_action",
+      "priority": "medium",
+      "entity_mentions": [
+        {
+          "type": "project",
+          "mention": "Project Aurora",
+          "role": "target"
+        }
+      ],
+      "topics": [
+        "launch checklist"
+      ],
+      "temporal_mentions": [
+        {
+          "kind": "due_at",
+          "source_text": "Friday 前",
+          "source_message_id": "msg_can_002_a"
+        }
+      ],
+      "source_anchors": [
+        {
+          "message_id": "msg_can_002_a",
+          "exact_quote": "For Project Aurora，请在 Friday 前完成 launch checklist。"
+        }
+      ],
+      "confidence": 0.95,
+      "uncertainties": [
+        "Friday 尚未规范化为日期"
+      ],
+      "sensitivity_hint": "none"
+    },
+    {
+      "candidate_local_id": "item_decision_review",
+      "item_type": "decision",
+      "claim": "审核必须由虚构成员林岚完成。",
+      "summary": "由林岚完成审核",
+      "action_level": "reference",
+      "priority": null,
+      "entity_mentions": [
+        {
+          "type": "person",
+          "mention": "虚构成员林岚",
+          "role": "actor"
+        }
+      ],
+      "topics": [
+        "审核安排"
+      ],
+      "temporal_mentions": [],
+      "source_anchors": [
+        {
+          "message_id": "msg_can_002_b",
+          "exact_quote": "决定：审核必须由虚构成员林岚完成。"
+        }
+      ],
+      "confidence": 0.97,
+      "uncertainties": [],
+      "sensitivity_hint": "none"
+    }
+  ]
+}
