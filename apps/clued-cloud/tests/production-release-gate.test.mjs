@@ -118,6 +118,7 @@ test('post-deploy readback requires a heartbeat from the newly deployed cycle', 
 test('production backup mode encrypts and verifies the dump before removing plaintext', () => {
   assert.match(productionWorkflow, /backup_only:/);
   assert.match(productionWorkflow, /CLUED_PRODUCTION_BACKUP_KEY/);
+  assert.match(productionWorkflow, /--user \"\$\(id -u\):\$\(id -g\)\"/);
   assert.match(productionWorkflow, /pg_restore --list/);
   assert.match(productionWorkflow, /openssl enc -aes-256-cbc -pbkdf2/);
   assert.match(productionWorkflow, /openssl enc -d -aes-256-cbc -pbkdf2/);
