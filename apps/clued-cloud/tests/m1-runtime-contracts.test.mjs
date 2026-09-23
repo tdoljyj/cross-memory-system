@@ -59,3 +59,20 @@ test("authorized export is Receipt-backed and legacy rows remain explicit", () =
   assert.match(sql, /kind','legacy_event'/);
   assert.match(sql, /views_complete/);
 });
+
+
+test("project certainty successor v2 removes certainty from public eligibility semantics", async () => {
+  const successor = (await readFile(
+    new URL("../supabase/migrations/20260923220000_project_certainty_successor_v2.sql", import.meta.url),
+    "utf8",
+  )).toLowerCase();
+  assert.match(projects, /project_schema_version:\s*\{\s*type:\s*"integer",\s*const:\s*2\s*\}/);
+  assert.doesNotMatch(projects, /certainty_status:\s*\{\s*type:\s*"string"/);
+  assert.match(successor, /certainty_status_retired/);
+  assert.match(successor, /recognition_confidence/);
+  assert.match(successor, /project_unavailable/);
+  assert.doesNotMatch(
+    successor.slice(successor.indexOf("function clued_private.record_mutation_core")),
+    /certainty_status\s*=\s*'confirmed'/,
+  );
+});
