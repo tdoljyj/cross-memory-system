@@ -1,0 +1,14 @@
+{
+  "contract": "clued.production-release-baseline.v1",
+  "source_commit": "5394a69803bcd6d5c2bea3d0c9af6efb694f55a9",
+  "source_migration": "20260924110000_mtpe_universal_intake_auto_priority.sql",
+  "source_sha256": "100677bc76e8dfe01e3eff76bf3906b7ae5ec89251f0e2318a9048fa6d48fd4c",
+  "production_history_version": "20260923050444",
+  "production_history_name": "mtpe_universal_intake_auto_priority",
+  "production_statement_suffix": "\r\n",
+  "required_predecessors": [
+    ["20260922230231", "post_commit_projection_refresh_pipeline_20260923"],
+    ["20260922233250", "projection_refresh_exact_key_lease_20260923"],
+    ["20260923021931", "projection_refresh_watchdog_20260923"]
+  ]
+}

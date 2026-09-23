@@ -79,3 +79,46 @@ test("scheduled refresh records a bounded Builder heartbeat around the cycle", a
     globalThis.fetch = previousFetch;
   }
 });
+
+test("terminal projection failure is reported directly by the Worker heartbeat", async () => {
+  const worker = await loadContinuityWorker();
+  const previousFetch = globalThis.fetch;
+  const responses = [
+    { status: "recorded" },
+    { status: "claimed", projection_key: "global.priority_frontier", lease_id: "11111111-1111-4111-8111-111111111111", expected_invalidation_revision: 94, expected_source_vector_digest: "a".repeat(64) },
+    { status: "failed", projection_key: "global.priority_frontier", error_code: "frontier_candidate_not_unique" },
+    { status: "recorded" },
+  ];
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    calls.push({ input: String(input), body: JSON.parse(init.body) });
+    return Response.json(responses.shift());
+  };
+  try {
+    const result = await worker.runProjectionRefreshScheduled(env);
+    assert.equal(result.status, "failed");
+    assert.equal(result.error_code, "frontier_candidate_not_unique");
+    assert.equal(calls.length, 4);
+    assert.equal(calls[3].body.p_input.result, "failed");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("dependency-blocked aggregate does not consume the full heartbeat cycle limit", async () => {
+  const worker = await loadContinuityWorker();
+  const previousFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({ status: "waiting", retry_after_ms: 0,
+      next_attempt_at: "2026-09-23T04:18:00Z" });
+  };
+  try {
+    const result = await worker.runProjectionRefreshPipeline(env);
+    assert.equal(result.status, "waiting");
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
