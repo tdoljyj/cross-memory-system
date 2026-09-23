@@ -59,9 +59,10 @@ jobs:
           encrypted_path="$dump_path.enc"
           verified_path="$dump_path.verified"
           mkdir -p "$evidence_dir"
+          database_url=$(node -e 'const url = new URL(process.env.CLUED_ATTESTATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); process.stdout.write(url.toString())')
           docker run --rm \
             --user "$(id -u):$(id -g)" \
-            -e DATABASE_URL="$CLUED_ATTESTATION_DATABASE_URL" \
+            -e DATABASE_URL="$database_url" \
             -v "$PWD/$evidence_dir:/backup" \
             postgres:17-alpine \
             sh -ceu 'pg_dump --dbname="$DATABASE_URL" --format=custom --no-owner --no-privileges --schema=public --schema=clued_private --schema=clued_watchdog --table=supabase_migrations.schema_migrations --file=/backup/clued-production-pre-migration.dump && pg_restore --list /backup/clued-production-pre-migration.dump >/dev/null'
