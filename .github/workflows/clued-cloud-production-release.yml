@@ -1,0 +1,109 @@
+name: Clued Cloud production release
+
+on:
+  workflow_dispatch:
+    inputs:
+      preflight_only:
+        description: Run the read-only production gate without deploying
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clued-cloud-production-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: apps/clued-cloud/package-lock.json
+      - name: Check production database credential
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
+        run: |
+          test -n "$CLUED_ATTESTATION_DATABASE_URL"
+      - run: npm ci --ignore-scripts
+      - name: Install embedded PostgreSQL ICU compatibility runtime
+        run: |
+          curl -fsSLo /tmp/libicu60.deb https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
+          sudo dpkg -i /tmp/libicu60.deb
+      - name: Verify projection and MTPE behavior
+        run: |
+          node --test tests/production-release-gate.test.mjs
+          npm run test:projection:refresh
+          npm run test:mtpe:intake
+          npm run typecheck
+      - name: Build exact Worker source
+        run: npm run build
+      - name: Block release unless database and Worker heartbeat are ready
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
+        run: |
+          mkdir -p .sites-runtime/release-evidence
+          node scripts/production-release-gate.mjs --pre-deploy \
+            --evidence-out .sites-runtime/release-evidence/production-preflight.json
+      - name: Check Cloudflare deployment credential
+        if: ${{ !inputs.preflight_only }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+      - name: Deploy Clued production Worker
+        if: ${{ !inputs.preflight_only }}
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy --config wrangler.production.jsonc --keep-vars
+      - name: Record deployment completion time
+        if: ${{ !inputs.preflight_only }}
+        id: deployment_completion
+        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$GITHUB_OUTPUT"
+      - name: Verify exact live commit and currentness transport
+        if: ${{ !inputs.preflight_only }}
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
+        run: node scripts/verify-currentness-transport.mjs --production --evidence-out .sites-runtime/release-evidence/currentness-attestation.json
+      - name: Verify projection currentness after deployment
+        if: ${{ !inputs.preflight_only }}
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if node scripts/production-release-gate.mjs --pre-deploy \
+              --min-heartbeat-at '${{ steps.deployment_completion.outputs.timestamp }}' \
+              --evidence-out .sites-runtime/release-evidence/production-postflight.json; then
+              exit 0
+            fi
+            sleep 30
+          done
+          exit 1
+      - name: Preserve release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clued-cloud-production-release-${{ github.run_id }}
+          path: |
+            apps/clued-cloud/.sites-runtime/release-evidence/production-preflight.json
+            apps/clued-cloud/.sites-runtime/release-evidence/currentness-attestation.json
+            apps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json
+          if-no-files-found: ignore
+          retention-days: 90

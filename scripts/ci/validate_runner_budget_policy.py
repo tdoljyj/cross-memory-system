@@ -18,8 +18,14 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-currentness-post-deploy-attestation.yml": (
         "Owner-triggered post-deploy verification uses a clean Ubuntu worker with the ICU runtime and an isolated production database secret."
     ),
+    "clued-cloud-production-release.yml": (
+        "Owner-dispatched production release uses a clean Ubuntu worker with ICU and isolated database and Cloudflare deployment credentials; it does not run on pull requests."
+    ),
     "clued-connection-authorization.yml": (
         "Intentional clean-room Ubuntu candidate validation; installs a system ICU compatibility package."
+    ),
+    "clued-ci-health.yml": (
+        "The lightweight monitor must remain independent of the self-hosted pool so it can detect complete Windows/Linux capability-pool loss."
     ),
     "phase2-naming-surface-inventory.yml": (
         "Frozen historical exact-byte inventory workflow; modifying its execution contract would invalidate bound evidence."

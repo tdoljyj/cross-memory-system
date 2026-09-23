@@ -2,6 +2,9 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "clued-cloud",
   "main": "./dist/server/index.js",
+  "build": {
+    "command": "node scripts/production-release-gate.mjs --pre-deploy"
+  },
   "no_bundle": true,
   "rules": [
     { "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }

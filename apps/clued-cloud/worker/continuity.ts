@@ -467,13 +467,8 @@ export async function runProjectionRefreshPipeline(
       return { status: claim.status, processed, cas_conflicts: casConflicts };
     }
     if (claim.status === "waiting") {
-      const retryAfter = typeof claim.retry_after_ms === "number" ? claim.retry_after_ms : 0;
-      if (retryAfter > 2000) {
-        return { status: "waiting", processed, cas_conflicts: casConflicts,
-          next_attempt_at: claim.next_attempt_at };
-      }
-      await delay(Math.max(25, retryAfter));
-      continue;
+      return { status: "waiting", processed, cas_conflicts: casConflicts,
+        next_attempt_at: claim.next_attempt_at };
     }
     if (claim.status === "superseded") continue;
     if (claim.status !== "claimed") {
@@ -511,8 +506,10 @@ export async function runProjectionRefreshPipeline(
       transportFailures = 0;
       continue;
     }
-    if (applied.status === "retry_wait" || applied.status === "failed") {
-      continue;
+    if (applied.status === "retry_wait") continue;
+    if (applied.status === "failed") {
+      return { status: "failed", processed, cas_conflicts: casConflicts,
+        projection_key: applied.projection_key, error_code: applied.error_code };
     }
     return { status: "builder_protocol_error", processed, cas_conflicts: casConflicts };
   }
