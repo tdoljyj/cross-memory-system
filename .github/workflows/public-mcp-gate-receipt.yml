@@ -24,7 +24,10 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor == github.repository_owner
     runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24]
-    timeout-minutes: 20
+    # The four required checks run on the self-hosted Linux pool and can queue
+    # well past 15 minutes; the gate polls from Windows, so waiting longer does
+    # not hold capacity they need.
+    timeout-minutes: 70
     steps:
       - name: Check out trusted gate implementation from the base revision
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -43,6 +46,7 @@ jobs:
           GATE_REPOSITORY: ${{ github.repository }}
           GATE_PR_NUMBER: ${{ github.event.pull_request.number }}
           GATE_RECEIPT_OUTPUT: ${{ runner.temp }}\public-mcp-gate-receipt.json
+          GATE_TIMEOUT_SECONDS: '3600'
           GH_TOKEN: ${{ github.token }}
         shell: powershell
         run: node trusted-gate/apps/clued-cloud/evals/public-mcp/gate-receipt.mjs
