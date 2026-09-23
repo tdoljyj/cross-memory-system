@@ -2,8 +2,34 @@ name: public-mcp-behavior
 
 on:
   pull_request:
+    paths:
+      - '.github/workflows/public-mcp-behavior.yml'
+      - 'apps/clued-cloud/worker/**'
+      - 'apps/clued-cloud/evals/public-mcp/**'
+      - 'apps/clued-cloud/supabase/**'
+      - 'apps/clued-cloud/scripts/**'
+      - 'apps/clued-cloud/package.json'
+      - 'apps/clued-cloud/package-lock.json'
+      - 'apps/clued-cloud/vite.config.ts'
+      - 'apps/clued-cloud/tests/p5-real-postgres.test.mjs'
+      - 'apps/clued-cloud/tests/continuity.test.mjs'
+      - 'apps/clued-cloud/tests/currentness-*.test.mjs'
+      - 'apps/clued-cloud/tests/mcp-*.test.mjs'
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/public-mcp-behavior.yml'
+      - 'apps/clued-cloud/worker/**'
+      - 'apps/clued-cloud/evals/public-mcp/**'
+      - 'apps/clued-cloud/supabase/**'
+      - 'apps/clued-cloud/scripts/**'
+      - 'apps/clued-cloud/package.json'
+      - 'apps/clued-cloud/package-lock.json'
+      - 'apps/clued-cloud/vite.config.ts'
+      - 'apps/clued-cloud/tests/p5-real-postgres.test.mjs'
+      - 'apps/clued-cloud/tests/continuity.test.mjs'
+      - 'apps/clued-cloud/tests/currentness-*.test.mjs'
+      - 'apps/clued-cloud/tests/mcp-*.test.mjs'
 
 permissions:
   contents: read
