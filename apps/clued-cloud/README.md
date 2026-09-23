@@ -1,232 +1,160 @@
 # Clued Cloud
 
-Clued's vendor-neutral continuity kernel and account portal, running on Cloudflare Workers with Supabase as the canonical store.
+Clued Cloud is the production-facing continuity service and account/runtime implementation for Clued. The production Worker runs at `https://clued.pixelgrav.com`; the authenticated Clued service backed by Supabase/PostgreSQL is the online Canonical Authority.
 
-## Project lifecycle v1
+This README is the **current engineering entry point** for `apps/clued-cloud/`. Historical migration files and old acceptance documents retain their original evidence value but do not override the current contracts described by code, tests, Canonical Currentness, and accepted successor decisions.
 
-Project certainty and work progress are deliberately independent:
+## Start here
 
-- `unconfirmed` is the default when an authorized AI observes a possible project mention.
-- `confirmed` is used for explicit intent or material work; promotion updates the same project id and `project:<id>` context key.
-- Progress is one of `not_started`, `active`, `paused`, `completed`, or `archived`.
-- Exact normalized names and aliases deduplicate automatically. Probable lexical duplicates are returned for review; merge remains explicit.
-- Dismiss, restore, rename, status updates and merge are idempotent, audited and serialized in Postgres.
+- Repository architecture and boundaries: [root README](../../README.md)
+- Repository-wide Agent rules: [root AGENTS.md](../../AGENTS.md)
+- Rules specific to this app: [AGENTS.md](./AGENTS.md)
+- Unified Clued Skill: [skills/README.md](../../skills/README.md)
+- Continuity protocol: [protocol/continuity/v1/README.md](../../protocol/continuity/v1/README.md)
+- Connection / authorization rollout notes: [docs/connection-authorization-rollout.md](./docs/connection-authorization-rollout.md)
 
-The additive migration `supabase/migrations/202608240003_project_lifecycle_v1.sql`
-is applied in formal production. It creates only `clued_projects` and
-`clued_project_mentions`, reuses `clued_audit_receipts`, enables RLS, and keeps
-private transaction helpers outside the exposed schema.
+## Runtime boundary
 
-MCP adds exactly three tools: `clued_project_observe`, `clued_project_list`, and `clued_project_update`. Existing Binding scopes are reused against `system:projects`; no additional setup is required for wildcard bindings.
-
-The signed-in account API has four operations:
-
-- `GET /v1/projects`
-- `POST /v1/projects/observe`
-- `PATCH /v1/projects/:id`
-- `POST /v1/projects/:id/merge`
-
-## Unified Record v2
-
-`supabase/migrations/20260824014005_unified_record_v2.sql` additively extends
-`clued_memories` into the single canonical record table. Global and Project are
-query levels over the same IDs; State, Task, Decision and Archive are record
-filters, while Log remains the append-only `clued_context_events` stream.
-
-REST and MCP both delegate writes to `clued_private.record_write_core`. The
-core validates confirmed effective projects, optimistic versions and request
-hashes, then commits Record + Event + Receipt in one database transaction.
-Legacy `/api/memories` and `/api/memories/audit` are retired. Non-`OPTIONS`
-requests return HTTP `410 Gone` with `/v1/records` as the replacement; the
-underlying legacy rows and audit evidence remain preserved and are not exposed
-as a second write path.
-
-The Worker flag `PROJECT_VIEWS_V2` is disabled when absent. Only `true`, `1`,
-`on`, or `enabled` exposes `/v1/records`, the two MCP record tools and the
-account-page five-view panel. The approved production migration and formal V2
-gate are complete; production currently publishes the enabled
-`two-level-five-view-v1` contract.
-
-### Two-level five-view semantic contract
-
-All consumers use the `two-level-five-view-v1` contract exposed by
-`GET /v1/records/config` and the continuity bootstrap:
-
-1. Read Global registry and priority.
-2. Read the selected Project's current State, Tasks and Decisions.
-3. Read Log or Archive only when history or evidence is needed; neither can
-   override current records.
-
-REST `GET /v1/records`, MCP `clued_record_list`, the account UI and the
-`clued-continuity` Skill preserve the database `id` as the canonical record ID.
-Markdown mirrors contain query results or stable-ID references, never a second
-canonical body.
-
-The readable mirror layout is fixed and does not create another store:
+The logical production path is:
 
 ```text
-Global/{State,Task,Decision,Archive,Log}.md
-Projects/{canonical-project-id}/{State,Task,Decision,Archive,Log}.md
+App / Web / Agent / MCP
+        ↓
+Identity / Authorization
+        ↓
+Cloudflare Worker API / MCP
+        ↓
+Supabase/PostgreSQL Canonical Store
+        ↓
+Canonical Record / Project / Event / Evidence / Receipt
+        ↓
+Currentness + derived projections
+        ↓
+Context Policy / Compiler
+        ↓
+Agent / Model
 ```
 
-Every entry includes the canonical `id` and only a query conclusion or stable-ID
-reference in one deterministic form:
+Repository files, Markdown, Snapshot bundles, CI artifacts and Google Drive documents are not a second online Canonical Store.
+
+## Canonical write model
+
+Business mutations use the authenticated v1.6 mutation contracts. A successful business transaction commits the Canonical entity together with its Event and immutable Receipt. Clients must not duplicate that write into Markdown or Git.
+
+Current public contracts include Record, Decision, Project, Evidence and Event mutation/read operations plus session continuity and Currentness operations. **Do not hardcode the MCP tool count in prose.** The production-equivalent frozen tool surface is tracked by:
+
+- [`evals/public-mcp/tools-list.baseline.json`](./evals/public-mcp/tools-list.baseline.json)
+- [`evals/public-mcp/verify-flag-matrix.ts`](./evals/public-mcp/verify-flag-matrix.ts)
+- `npm run mcp:tools:verify`, which reads the live isolated MCP surface and compares it with the frozen baseline.
+
+The retired `clued-developer`, `clued-user` and `clued-continuity` Skill entry points are historical only. The active Skill entry is `skills/clued/SKILL.md`.
+
+## Currentness and projection refresh
+
+Current State/Task/Decision answers cannot be recovered from old checkpoint prose, Markdown, a repository snapshot or a source-bound projection alone.
+
+The required shape is:
 
 ```text
-- `{id}` — {title}: {conclusion} [status={status}; version={version}]
+Canonical commit
+      ↓
+invalidate affected projections
+      ↓
+post-commit projection refresh / reconciliation
+      ↓
+CURRENT
 ```
 
-The account UI uses the same record-presentation mapping for ID, title,
-conclusion, status and version. The directory and file names are views, not
-writable business records.
+If rebuild/reconciliation does not complete, the affected projection remains `STALE` / `PROJECTION_REQUIRED` and must not masquerade as CURRENT.
 
-Writes follow one path: canonical Record → Event + Receipt in the same database
-transaction → derived Global/Project views. REST and MCP already delegate to the
-same write core; clients must not dual-write Markdown. A merely mentioned project
-remains unconfirmed, and no Skill or client may invent or auto-confirm a project.
+The minimal post-commit projection-refresh implementation and its validation contract are documented in [post-commit-projection-refresh.md](./docs/model-program-m0/post-commit-projection-refresh.md). That document currently records **implementation/local validation complete, production deployment separate**; repository presence does not itself prove deployment.
 
-When `PROJECT_VIEWS_V2` is disabled, the contract remains discoverable while the
-record endpoints/tools/panel remain unavailable and fail closed.
-
-### User Memory Bundle v1
-
-The repository `memory/` directory may be exported as a complete, portable
-single-user bundle. It is not an online production data directory and never
-replaces the Supabase `user_id + RLS` data plane.
-
-- `memory/objects/*.json` is the only importable business-body source.
-- Legacy Markdown and audit logs are checksum-protected read-only evidence.
-- Generated Global/Project Markdown contains stable-ID references only.
-- The importer defaults to a zero-network dry-run and executes only through an
-  authenticated user's `/v1/projects*` and `/v1/records` APIs.
-- Tokens, tenant IDs, service-role credentials, direct table writes and runtime
-  Git writes are forbidden by the bundle contract.
-
-See `docs/clued-two-level-views/19-User-Memory-Bundle-v1合同与导入验收.md` for
-the complete contract and acceptance record.
-
-Local database verification requires Docker and the pinned Supabase CLI entry:
+Focused regression:
 
 ```bash
-npm run db:start
-npm run db:reset
-npm run db:lint
-npm run db:test:m1
+npm run test:projection:refresh
 ```
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+## Project compatibility boundary
+
+The current database/runtime implementation still carries the legacy `certainty_status` values `unconfirmed` / `confirmed` and uses them in existing Project/five-view admission contracts.
+
+Treat this as a **current compatibility constraint, not a permanent product taxonomy**. Any successor that removes or reinterprets Project certainty must be versioned across schema, migration, API/MCP contracts, UI, Bundle/Snapshot formats and tests. Do not silently change the meaning of existing rows or historical receipts.
+
+Progress remains separately represented by the implemented lifecycle states such as `active`, `paused`, `completed` and `archived`.
+
+## Repository Snapshot / Bundle boundary
+
+Repository `memory/` is a single-user, versioned, read-only snapshot of a published Canonical export. It is not a production data directory and is never a business-write target.
+
+- Snapshot identity and contents come from `memory/manifest.json` and the formal M2 pointer under `artifacts/clued-two-level-snapshots/current.json`.
+- The snapshot proves only its recorded as-of boundary; it does not establish online Current Truth.
+- Import/export behavior is defined by the versioned Bundle schemas and scripts, not by treating Markdown as writable business data.
+- Direct table writes, runtime Git writes, tokens/service-role credentials in bundles, and Markdown-to-Canonical reverse sync are forbidden.
+
+See [the two-level view engineering materials](../../docs/clued-two-level-views/) for migration/rollback evidence and historical contract detail.
+
+## Deployment targets
+
+Keep these targets separate:
+
+- **Production Worker:** `clued-cloud` at `https://clued.pixelgrav.com`.
+- **ChatGPT Sites / workspace publishing:** a separate publishing target and not a substitute for the production Worker.
+- **Local/isolated acceptance runtime:** test-only infrastructure; passing it does not itself authorize or prove production deployment.
+
+Deployment, DNS, Binding, Secret, Schema, purge, release and production-data actions require their own authority/gate.
 
 ## Prerequisites
 
 - Node.js `>=22.13.0`
-- Linux with `flock`, `curl`, and GNU `timeout`
+- npm lockfile install
+- Docker for local Supabase workflows
+- Linux utilities such as `flock`, `curl` and GNU `timeout` for the CI-oriented shell helpers
 
-## Sites Lifecycle
+Install dependencies from this directory:
 
-The Sites lifecycle CLI runs the locked dependency install before returning this checkout. Edit the source under `app/`, then checkpoint when a coherent milestone is ready to inspect or share. The remote Sites builder runs `npm run build` against the pushed commit. Do not repeat install or build as a normal pre-checkpoint step.
-
-This starter does not use `wrangler.jsonc`.
-
-`install:ci` is intentionally a single, non-retrying `npm ci`. It refuses a concurrent install for the same project, consumes a matching image-seeded npm cache with `--prefer-offline` while retaining registry fallback for a missing cache object, otherwise downloads and verifies the complete vinext tarball recorded in `package-lock.json`, limits npm to one socket, and terminates a stalled install. `build` applies a short timeout. These helpers target Linux and use GNU `timeout`; they are not native macOS scripts.
-
-Scripts that need writable project-scoped home, npm, XDG, and temporary paths use `scripts/sites-env.sh`. The `dev` and `start` scripts honor the caller's runtime environment and keep Wrangler logs inside the checkout. The generated `.sites-runtime/` directory is disposable and ignored by Git.
-
-## Included Shape
-
-- edit site code under `app/`
-- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+npm ci
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+## Common development commands
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+```bash
+npm run typecheck
+npm run lint
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+npm run db:start
+npm run db:reset
+npm run db:lint
+npm run db:test:m1
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+npm run test:context:v2
+npm run test:projection:refresh
+npm run test:authorization:transport
+npm run test:authorization:database
+npm run test:authorization:migrations
+npm run test:authorization:integration
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+npm run mcp:protocol:verify
+npm run mcp:tools:verify
+npm run mcp:flags:verify
+```
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+The database and integration suites have different runtime requirements; see the corresponding tests/workflows before assuming one green command covers all gates.
 
-## Diagnostic Commands
+## Feature flags and public surface
 
-- `npm run install:ci`: perform the one bounded lockfile install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build the deployable Sites artifact
-- `npm run start`: start the built Vinext application
-- `npm test`: build and verify the rendered development-preview metadata
-- `npm run typecheck`: run the independent TypeScript gate
-- `npm run test:v2:red`: run the frozen V2 contracts (green after Stage 4)
-- `npm run db:start`: start the isolated Supabase stack (Docker required)
-- `npm run db:reset`: recreate only the local database from migrations
-- `npm run db:lint`: lint the local public and private schemas
-- `npm run db:test:m1`: replay and verify the v1.6 M1 Record/Project/Event/Evidence/Receipt/Export contracts, RLS, CAS, failure and replay paths, plus deterministic audited promotion of authorized non-terminal legacy Records
-- `npm run snapshot:m2:enable -- --export-root <path> --at <iso>`: enable the threshold-triggered M2 persistent snapshot store after at least two ready versions exist
-- `npm run snapshot:m2:reconcile -- --export-root <path> --at <iso>`: validate the formal pointer and every registered version, repair registry drift, and raise a bounded file alert after repeated failures
-- `npm run snapshot:m2:sweep -- --export-root <path> --at <iso> [--apply]`: report retention candidates by default; delete only versions outside current/previous/minimum retention when explicitly applied
-- `npm run snapshot:m2:publish -- --snapshot <path> --export-root <path> --expected-current <version> --at <iso>`: publish under an exclusive lock and current-pointer CAS
-- `npm run db:test:v2`: historical pre-M1 suite; its retired write wrapper is intentionally revoked after the M1 migration
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+Feature flags such as `PROJECT_VIEWS_V2`, `P5_TENANT_WRITES` and development-context flags are tested as an explicit matrix. Do not infer the public MCP/API surface from one flag name or an old README paragraph.
 
-Use build commands for targeted diagnosis after a remote failure, not as part of the normal checkpoint path.
+The authoritative engineering checks for the public MCP surface live under `evals/public-mcp/` and the associated GitHub Actions workflows.
 
-The timeout defaults can be overridden for a controlled canary with `SITES_INSTALL_TIMEOUT`, `SITES_INSTALL_KILL_AFTER`, `SITES_BUILD_TIMEOUT`, and `SITES_BUILD_KILL_AFTER`. A timeout fails the command; the helpers never retry an unchanged install or build.
+## Evidence and maturity language
 
-## Learn More
+Use scoped statements:
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+- “migration present” does not mean “production deployed”;
+- “local/CI PASS” does not mean “production accepted”;
+- “snapshot current-claimed” does not mean “online Current Truth”;
+- “candidate/frozen historical artifact exists” does not grant present execution authority.
+
+For current production claims, use live service/receipt/currentness evidence appropriate to the claim.
