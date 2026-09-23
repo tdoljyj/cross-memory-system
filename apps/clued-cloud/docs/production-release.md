@@ -9,6 +9,8 @@ stops before `wrangler deploy`.
 The production Wrangler configuration also runs the read-only preflight as its
 build command, so a direct Wrangler deployment using that configuration fails
 when the database credential or required production state is missing.
+Use the workflow's `preflight_only` option to verify the live database and
+store evidence without needing a Cloudflare token or changing production.
 
 The workflow needs the existing `CLUED_ATTESTATION_DATABASE_URL` secret, a
 `CLUED_CLOUDFLARE_DEPLOY_TOKEN` secret scoped to edit the existing `clued-cloud`
