@@ -173,15 +173,29 @@ function recordIsCanonical(record) {
 }
 
 function projectIsCanonical(project) {
-  return Boolean(
-    project &&
-    typeof project.canonical_project_id === "string" &&
-    Number.isInteger(project.project_schema_version) && project.project_schema_version > 0 &&
-    Number.isInteger(project.version) && project.version > 0 &&
-    ["unconfirmed", "confirmed"].includes(project.certainty_status) &&
-    ["active", "paused", "completed", "archived"].includes(project.progress_status) &&
-    ["active", "merged"].includes(project.lifecycle_status),
-  );
+  if (
+    !project ||
+    typeof project.canonical_project_id !== "string" ||
+    !Number.isInteger(project.project_schema_version) ||
+    !Number.isInteger(project.version) ||
+    project.version <= 0 ||
+    !["active", "paused", "completed", "archived"].includes(project.progress_status) ||
+    !["active", "merged"].includes(project.lifecycle_status)
+  ) return false;
+
+  if (project.project_schema_version === 1) {
+    return ["unconfirmed", "confirmed"].includes(project.certainty_status);
+  }
+  if (project.project_schema_version === 2) {
+    return (
+      !Object.hasOwn(project, "certainty_status") &&
+      !Object.hasOwn(project, "confirmed_at") &&
+      project.recognition_metadata &&
+      typeof project.recognition_metadata === "object" &&
+      !Array.isArray(project.recognition_metadata)
+    );
+  }
+  return false;
 }
 
 function eventIsCanonical(event) {
@@ -326,13 +340,18 @@ export async function readLegacyMemorySource({ memoryDirectory, canonicalVersion
 }
 
 function validateSource(source) {
-  if (!source || source.schema_version !== 1) throw new Error("Unsupported source snapshot schema.");
+  if (!source || ![1, 2].includes(source.schema_version)) throw new Error("Unsupported source snapshot schema.");
   if (typeof source.canonical_version !== "string" || !source.canonical_version) throw new Error("source.canonical_version is required.");
   if (!['live_rechecked', 'bundle_only'].includes(source.source_verification)) throw new Error("Invalid source_verification.");
   if (source.source_verification === "live_rechecked" && source.views_complete !== true) {
     throw new Error("A live-rechecked current source must have views_complete=true.");
   }
-  for (const project of source.projects ?? []) if (!projectIsCanonical(project)) throw new Error("Source contains a non-canonical Project outside a legacy envelope.");
+  for (const project of source.projects ?? []) {
+    if (!projectIsCanonical(project)) throw new Error("Source contains a non-canonical Project outside a legacy envelope.");
+    if (source.schema_version === 2 && project.project_schema_version !== 2) {
+      throw new Error("Source schema v2 requires Project schema v2; legacy Projects belong in legacy_projects.");
+    }
+  }
   for (const record of source.records ?? []) if (!recordIsCanonical(record)) throw new Error("Source contains a non-canonical Record outside a legacy envelope.");
   for (const event of source.events ?? []) if (!eventIsCanonical(event)) throw new Error("Source contains a non-canonical Event outside a legacy envelope.");
   for (const evidence of source.evidence ?? []) if (!evidenceIsCanonical(evidence)) throw new Error("Source contains non-canonical Evidence outside a legacy envelope.");
