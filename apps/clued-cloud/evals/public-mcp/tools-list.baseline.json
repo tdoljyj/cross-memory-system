@@ -739,7 +739,7 @@
     },
     {
       "name": "clued_project_mutate",
-      "description": "Create, update, complete, archive, or restore one v1.6 Canonical Project with CAS, Event, and immutable Receipt. Project merge writes are not enabled. Required Clued scope: context:write.",
+      "description": "Create, update, complete, archive, or restore one v2 Canonical Project with CAS, Event, and immutable Receipt. Project certainty is retired as an eligibility gate; optional recognition_confidence is metadata only. Project merge writes are not enabled. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -764,7 +764,7 @@
           },
           "project_schema_version": {
             "type": "integer",
-            "const": 1
+            "const": 2
           },
           "base_version": {
             "anyOf": [
@@ -812,17 +812,10 @@
     },
     {
       "name": "clued_project_list",
-      "description": "List the user's canonical projects, independently filtering certainty and work progress. Dismissed and merged records are hidden by default. Required Clued scope: context:read.",
+      "description": "List the user's canonical projects by work progress and query. Recognition confidence is metadata only; legacy certainty is not a public filter. Dismissed and merged records are hidden by default. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "certainty_status": {
-            "type": "string",
-            "enum": [
-              "unconfirmed",
-              "confirmed"
-            ]
-          },
           "progress_status": {
             "type": "string",
             "enum": [
