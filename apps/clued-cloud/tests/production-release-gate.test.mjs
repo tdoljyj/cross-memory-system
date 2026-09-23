@@ -119,6 +119,8 @@ test('production backup mode encrypts and verifies the dump before removing plai
   assert.match(productionWorkflow, /backup_only:/);
   assert.match(productionWorkflow, /CLUED_PRODUCTION_BACKUP_KEY/);
   assert.match(productionWorkflow, /--user \"\$\(id -u\):\$\(id -g\)\"/);
+  assert.match(productionWorkflow, /searchParams\.delete\(\"uselibpqcompat\"\)/);
+  assert.match(productionWorkflow, /-e DATABASE_URL=\"\$database_url\"/);
   assert.match(productionWorkflow, /pg_restore --list/);
   assert.match(productionWorkflow, /openssl enc -aes-256-cbc -pbkdf2/);
   assert.match(productionWorkflow, /openssl enc -d -aes-256-cbc -pbkdf2/);
