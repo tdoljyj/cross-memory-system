@@ -60,6 +60,22 @@ test("GET /v1/projects forwards account filters to the list RPC", async () => {
   } finally { mock.restore(); }
 });
 
+test("GET /v1/projects rejects the retired certainty filter without widening the result", async () => {
+  const worker = await loadWorker();
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; throw new Error("unexpected network call"); };
+  try {
+    const response = await worker.fetch(new Request(
+      "https://clued.test/v1/projects?certainty_status=confirmed",
+      { headers: { authorization: "Bearer account-jwt" } },
+    ), env, ctx);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, "legacy_project_certainty_forbidden");
+    assert.equal(calls, 0);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("POST /v1/projects creates through the authenticated v2 atomic RPC", async () => {
   const worker = await loadWorker();
   const input = { operation: "create", canonical_project_id: projectId, project_schema_version: 2, base_version: null, idempotency_key: "project-0002", mutation: { name: "Clued", progress_status: "active", aliases: [] } };

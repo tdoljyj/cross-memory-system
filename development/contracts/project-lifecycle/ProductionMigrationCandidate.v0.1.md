@@ -21,7 +21,7 @@ This candidate contains no production schema apply, Worker deployment, release, 
 - Project Lifecycle v2 Worker REST/MCP routing and frozen tools baseline
 - one-list account UI with independent Project progress
 - Canonical Export v2, User Memory Bundle v2 and Snapshot v6
-- backward reader support for Project v1 / Snapshot v5
+- backward reader support for Project v1 / Bundle v1 / Snapshot v5
 - database, authorization, Currentness, UI/API, Bundle/Snapshot and MCP tests
 
 Historical migrations are unchanged.

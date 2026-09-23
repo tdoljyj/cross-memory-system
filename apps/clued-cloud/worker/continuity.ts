@@ -1600,6 +1600,9 @@ async function handleProjectApi(request: Request, env: ContinuityEnv) {
   }
   const url = new URL(request.url);
   if (url.pathname === "/v1/projects" && request.method === "GET") {
+    if (url.searchParams.has("certainty_status")) {
+      return json({ error: "legacy_project_certainty_forbidden" }, 400, corsHeaders(request));
+    }
     const input: Record<string, unknown> = {};
     for (const key of ["progress_status", "query", "limit"] as const) {
       const value = url.searchParams.get(key);

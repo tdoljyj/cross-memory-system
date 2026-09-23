@@ -10,6 +10,7 @@ import {
   BUNDLE_CONTRACT,
   exportUserMemoryBundle,
   mapMemoryObject,
+  sha256,
   validateUserMemoryBundle,
 } from "../scripts/user-memory-bundle.mjs";
 import {
@@ -95,6 +96,49 @@ async function exportedFixture() {
   return { memoryDirectory, outputDirectory, result };
 }
 
+async function rewriteAsHistoricalV1Bundle(outputDirectory) {
+  const manifestPath = path.join(outputDirectory, "manifest.json");
+  const projectsPath = path.join(outputDirectory, "projects.jsonl");
+  const recordsPath = path.join(outputDirectory, "records.jsonl");
+  const projects = (await readFile(projectsPath, "utf8")).trim().split("\n").map(JSON.parse).map((project) => ({
+    source_project_id: project.source_project_id,
+    name: project.name,
+    certainty_status: "confirmed",
+    progress_status: project.progress_status,
+    evidence: project.recognition_evidence,
+    record_count: project.record_count,
+  }));
+  const projectsJsonl = projects.map((project) => `${JSON.stringify(project)}\n`).join("");
+  const recordsJsonl = await readFile(recordsPath, "utf8");
+  await writeFile(projectsPath, projectsJsonl, "utf8");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  manifest.schema_version = 1;
+  manifest.contract_version = "1.0.0";
+  manifest.bundle_digest = sha256(`${BUNDLE_CONTRACT}\n1.0.0\n${projectsJsonl}${recordsJsonl}`);
+  manifest.bundle_id = `umb_${manifest.bundle_digest.slice(0, 24)}`;
+  const descriptor = manifest.files.find((file) => file.path === "projects.jsonl");
+  descriptor.bytes = Buffer.byteLength(projectsJsonl);
+  descriptor.sha256 = sha256(projectsJsonl);
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return { manifest, projects };
+}
+
+async function rewriteProjectsWithValidEnvelope(outputDirectory, transform) {
+  const manifestPath = path.join(outputDirectory, "manifest.json");
+  const projectsPath = path.join(outputDirectory, "projects.jsonl");
+  const recordsJsonl = await readFile(path.join(outputDirectory, "records.jsonl"), "utf8");
+  const projects = (await readFile(projectsPath, "utf8")).trim().split("\n").map(JSON.parse).map(transform);
+  const projectsJsonl = projects.map((project) => `${JSON.stringify(project)}\n`).join("");
+  await writeFile(projectsPath, projectsJsonl, "utf8");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  manifest.bundle_digest = sha256(`${BUNDLE_CONTRACT}\n${manifest.contract_version}\n${projectsJsonl}${recordsJsonl}`);
+  manifest.bundle_id = `umb_${manifest.bundle_digest.slice(0, 24)}`;
+  const descriptor = manifest.files.find((file) => file.path === "projects.jsonl");
+  descriptor.bytes = Buffer.byteLength(projectsJsonl);
+  descriptor.sha256 = sha256(projectsJsonl);
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
 test("User Memory Bundle v2 exports one canonical record payload plus read-only evidence", async () => {
   const { outputDirectory, result } = await exportedFixture();
   assert.equal(result.manifest.contract, BUNDLE_CONTRACT);
@@ -119,6 +163,44 @@ test("User Memory Bundle v2 exports one canonical record payload plus read-only 
   assert.match(mirror, /`mem_a1`/);
   assert.doesNotMatch(mirror, /Current global state body/);
   await validateUserMemoryBundle(outputDirectory);
+});
+
+test("historical User Memory Bundle v1 remains readable without rewriting its certainty payload", async () => {
+  const { outputDirectory } = await exportedFixture();
+  const historical = await rewriteAsHistoricalV1Bundle(outputDirectory);
+  const validated = await validateUserMemoryBundle(outputDirectory);
+  assert.equal(validated.manifest.schema_version, 1);
+  assert.equal(validated.manifest.contract_version, "1.0.0");
+  assert.equal(validated.projects[0].certainty_status, "confirmed");
+  assert.equal(validated.projects[0].evidence, historical.projects[0].evidence);
+  const plan = buildImportPlan(validated);
+  assert.equal(plan.project_actions[0].request.evidence_summary, historical.projects[0].evidence);
+});
+
+test("Bundle version pairs fail closed instead of accepting mixed v1/v2 identities", async () => {
+  const { outputDirectory } = await exportedFixture();
+  const manifestPath = path.join(outputDirectory, "manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  manifest.contract_version = "1.0.0";
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  await assert.rejects(validateUserMemoryBundle(outputDirectory), /Unsupported bundle contract_version/);
+});
+
+test("Bundle v2 validator rejects checksum-consistent Project payloads with retired or missing fields", async () => {
+  const retired = await exportedFixture();
+  await rewriteProjectsWithValidEnvelope(retired.outputDirectory, (project) => ({
+    ...project,
+    certainty_status: "confirmed",
+  }));
+  await assert.rejects(validateUserMemoryBundle(retired.outputDirectory), /retired certainty axis/);
+
+  const missing = await exportedFixture();
+  await rewriteProjectsWithValidEnvelope(missing.outputDirectory, (project) => {
+    const copy = { ...project };
+    delete copy.recognition_evidence;
+    return copy;
+  });
+  await assert.rejects(validateUserMemoryBundle(missing.outputDirectory), /recognition_evidence must be a string/);
 });
 
 test("mapping is conservative, deterministic, and preserves source IDs for idempotency", async () => {
@@ -150,6 +232,7 @@ test("mapping is conservative, deterministic, and preserves source IDs for idemp
   const first = buildImportPlan(await validateUserMemoryBundle(outputDirectory));
   const second = buildImportPlan(await validateUserMemoryBundle(outputDirectory));
   assert.deepEqual(first, second);
+  assert.match(first.project_actions[0].request.evidence_summary, /material-work evidence/);
   assert.equal(new Set(first.record_actions.map((action) => action.request.idempotency_key)).size, 5);
   assert.ok(first.record_actions.every((action) => !Object.hasOwn(action.request, "user_id")));
 });
