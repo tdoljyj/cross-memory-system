@@ -23,7 +23,7 @@
     "mcp:isolated:fixture": "node evals/public-mcp/fixtures.mjs",
     "mcp:isolated:start": "node evals/public-mcp/start-isolated.mjs",
     "mcp:tools:freeze": "node evals/public-mcp/freeze-tools.mjs",
-    "mcp:tools:verify": "node evals/public-mcp/verify-tools.mjs evals/public-mcp/tools-list.baseline.json evals/public-mcp/tools-list.baseline.json",
+    "mcp:tools:verify": "node evals/public-mcp/verify-tools.mjs --live evals/public-mcp/tools-list.baseline.json",
     "mcp:flags:verify": "tsx evals/public-mcp/verify-flag-matrix.ts",
     "mcp:gate-receipt:test": "node --test evals/public-mcp/gate-receipt.test.mjs",
     "mcp:protocol:verify": "node evals/public-mcp/protocol-check.mjs",

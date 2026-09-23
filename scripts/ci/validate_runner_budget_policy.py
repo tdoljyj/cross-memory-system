@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 
 HOSTED_ONLY_ALLOWLIST = {
+    "active-doc-links.yml": (
+        "Lightweight stdlib-only link validation intentionally uses hosted Ubuntu so documentation checks do not consume scarce self-hosted CI capacity."
+    ),
     "clued-currentness-post-deploy-attestation.yml": (
         "Owner-triggered post-deploy verification uses a clean Ubuntu worker with the ICU runtime and an isolated production database secret."
     ),

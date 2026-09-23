@@ -4,11 +4,11 @@ Use this workflow for personal and project context, including project records ma
 
 ## Read the necessary context
 
-After the applicable prerequisites and `clued_session_resume`, read authorized Global priority/registry, then the selected confirmed canonical Project's State, Task and Decision. Use Archive/Log views only when history is needed. Active Event truth carriers returned by current search/reconciliation remain current sources until their explicit lifecycle transition; checkpoint absorption does not retire them. Read profile facts only when identity or preference matters; generic tasks use no private memory.
+After the applicable prerequisites and `clued_session_resume`, read authorized Global priority/registry, then the selected effective canonical Project's State, Task and Decision. Use Archive/Log views only when history is needed. Active Event truth carriers returned by current search/reconciliation remain current sources until their explicit lifecycle transition; checkpoint absorption does not retire them. Read profile facts only when identity or preference matters; generic tasks use no private memory.
 
 For `clued_session_resume`, `context_key` is `global` (also the default) or `project:<canonical_project_id>`. A development resource UUID is a `context_id`, not a session key. When only that resource ID is known, resume `global` to obtain the authorized development projection, then select the exact returned `context_id`; this does not request additional permissions.
 
-Resolve the project by its actual canonical ID. Do not create or confirm a project from a mention or an ambiguous name. A developer-only Binding may receive only its authorized Global projection; it must not read private personal Global data to satisfy the read order. Missing Global capability is a scoped limitation, not a reason to request unrestricted access.
+Resolve the project by its actual canonical ID. A mere or ambiguous mention is not enough to invent a Project; creation follows an actual Project-recognition decision or explicit user creation. The deployed v1 API may still expose legacy `certainty_status`; treat it as compatibility metadata, not as product organization semantics, and do not build new workflows around “confirming” a Project. A developer-only Binding may receive only its authorized Global projection; it must not read private personal Global data to satisfy the read order. Missing Global capability is a scoped limitation, not a reason to request unrestricted access.
 
 If the actual resume response is `scoped_context_ready` with `session_checkpoint_supported=false`, it is an authorized development-context projection, not a restored M1 checkpoint. Read only its returned authorized context IDs through the supported `clued_context` record-list operation in `development_history` mode, selecting relevant State/Task/Decision records by their returned `record_type`. The current development `record_list` does not filter by `record_type` or `record_id`; list once, follow pagination as needed, and select locally instead of repeating nominally filtered calls. Do not infer access to personal Global records or another project from a shared name, and do not invent a session token. A missing or denied scope remains unavailable.
 
@@ -28,7 +28,7 @@ Read access, priority and `now` are separate from permission to act. At the actu
 
 ## Make authorized changes once
 
-A durable change requires explicit intent covering its scope; existing clear instructions can supply that intent. An OAuth write grant alone does not authorize recording every conversation. Project creation/confirmation and destructive actions require their actual explicit intent.
+A durable change requires explicit intent covering its scope; existing clear instructions can supply that intent. An OAuth write grant alone does not authorize recording every conversation. Explicit user creation and destructive Project actions require their actual explicit intent; automatic Project creation requires a qualified Project-recognition decision under the current product contract, not a bare mention. Legacy v1 confirmation remains compatibility behavior until its successor migration lands.
 
 Use current canonical operations:
 - Record create/update/close/restore/reclassification: `clued_record_mutate`.

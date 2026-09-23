@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - feat/clued-two-level-views-v1
     paths:
       - .github/workflows/clued-g4-database.yml

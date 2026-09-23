@@ -101,7 +101,8 @@ Generation 2 — Formal Production
 | `development/` | 当前工程合同、治理、Schema、设计与只读投影 |
 | `tests/` / `evals/` | 自动化测试、Qualification 与回归 |
 | `memory/` | 单用户、版本化、只读 Repository Snapshot；不是在线 Canon |
-| `artifacts/` | 构建、验证、迁移与发布 Evidence / Snapshot |
+| `artifacts/` | 构建、验证、迁移与发布 Evidence / Snapshot；不是在线 Current Truth |
+| `work/` | 有边界的工程暂存；非权威，Closeout 后应归位或不保留 |
 | `docs/` | 仓库仍需保留的工程文档与导航 |
 | `legacy/` | 历史兼容材料；不得作为当前入口或 Current Truth |
 
@@ -113,7 +114,7 @@ Generation 2 — Formal Production
 
 - **Agent / Coding Agent / 仓库维护** → [`AGENTS.md`](./AGENTS.md)
 - **Cloud / Runtime 开发** → [`apps/clued-cloud/README.md`](./apps/clued-cloud/README.md)
-- **Continuity Protocol** → [`protocol/continuity/v1/README.md`](./protocol/continuity/v1/README.md)
+- **跨厂商导入/导出协议（Future Capability）** → [`protocol/continuity/v1/README.md`](./protocol/continuity/v1/README.md)
 - **Clued Skill** → [`skills/README.md`](./skills/README.md)
 - **工程文档导航** → [`docs/README.md`](./docs/README.md)
 - **Repository Governance Projection** → [`development/projections/multitrack/CurrentGovernanceInventory.projection.md`](./development/projections/multitrack/CurrentGovernanceInventory.projection.md)
@@ -138,6 +139,12 @@ Generation 2 — Formal Production
 - [外迁清单与校验说明](./docs/EXTERNAL_DOCUMENT_ARCHIVE.md)
 
 Google Drive 中“存在某个文件”不自动使其成为当前权威；Repository 中“存在某个历史文件或投影”也不自动使其成为 CURRENT。状态必须由对应 Canonical Decision / Event / Receipt、Currentness 与 Owner/Authority 边界共同证明。
+
+Repository 写入与存储治理：
+
+- [Git Connector Write Contract v0.1](./development/contracts/repository/GitConnectorWriteContract.v0.1.md)
+- [Repository Artifact Retention Contract v0.1](./development/contracts/repository/ArtifactRetention.v0.1.md)
+- [Project Lifecycle Successor v0.1](./development/contracts/project-lifecycle/ProjectLifecycleSuccessor.v0.1.md)
 
 Repository Snapshot 发布遵循：
 

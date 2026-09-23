@@ -2,8 +2,16 @@ name: public-mcp-behavior
 
 on:
   pull_request:
+    paths:
+      - '.github/workflows/public-mcp-*.yml'
+      - 'apps/clued-cloud/**'
+      - 'protocol/continuity/v1/**'
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/public-mcp-*.yml'
+      - 'apps/clued-cloud/**'
+      - 'protocol/continuity/v1/**'
 
 permissions:
   contents: read
