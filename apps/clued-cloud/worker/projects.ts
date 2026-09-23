@@ -4,14 +4,14 @@ export const projectTools = [
   {
     name: "clued_project_mutate",
     description:
-      "Create, update, complete, archive, or restore one v1.6 Canonical Project with CAS, Event, and immutable Receipt. Project merge writes are not enabled.",
+      "Create, update, complete, archive, or restore one v2 Canonical Project with CAS, Event, and immutable Receipt. Project certainty is retired as an eligibility gate; optional recognition_confidence is metadata only. Project merge writes are not enabled.",
     inputSchema: {
       type: "object",
       required: ["operation", "project_schema_version", "idempotency_key"],
       properties: {
         operation: { type: "string", enum: ["create", "update", "complete", "archive", "restore"] },
         canonical_project_id: { type: "string", format: "uuid" },
-        project_schema_version: { type: "integer", const: 1 },
+        project_schema_version: { type: "integer", const: 2 },
         base_version: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] },
         idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
         request_hash: { type: "string", pattern: "^[0-9a-f]{64}$" },
@@ -23,11 +23,10 @@ export const projectTools = [
   {
     name: "clued_project_list",
     description:
-      "List the user's canonical projects, independently filtering certainty and work progress. Dismissed and merged records are hidden by default.",
+      "List the user's canonical projects by work progress and query. Recognition confidence is metadata only; legacy certainty is not a public filter. Dismissed and merged records are hidden by default.",
     inputSchema: {
       type: "object",
       properties: {
-        certainty_status: { type: "string", enum: ["unconfirmed", "confirmed"] },
         progress_status: {
           type: "string",
           enum: ["not_started", "active", "paused", "completed", "archived"],
