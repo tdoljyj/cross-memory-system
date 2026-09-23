@@ -99,9 +99,9 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
     const projectId = uuid();
     const projectScope = `project:${projectId}`;
     const project = await writer('clued_project_mutate', {
-      operation: 'create', canonical_project_id: projectId, project_schema_version: 1,
+      operation: 'create', canonical_project_id: projectId, project_schema_version: 2,
       idempotency_key: uuid(),
-      mutation: { name: 'Projection Pipeline', certainty_status: 'confirmed', progress_status: 'active' },
+      mutation: { name: 'Projection Pipeline', progress_status: 'active' },
     });
     assert.equal(project.status, 'committed');
     const taskId = uuid();
