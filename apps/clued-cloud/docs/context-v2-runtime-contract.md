@@ -18,18 +18,22 @@ Reviewed architecture: draft.4, SHA-256 `cd6a2dc91868d14a38b773c7d6cd29696167845
 | Legacy User Memory Bundle CLI | Export, validation and historical dry-run remain; live execution of its retired pre-M1 import payload is rejected before side effects |
 | Public bootstrap / Agent instructions | Durable writes are conditional on authorized changes; M1 already emits Event/Receipt, so an extra append is never a mandatory lifecycle step |
 
-The existing MTPE Universal Intake automation stage remains separately scheduled (Canonical Event 898); this patch does not claim to implement its scoring/arbitration engine. The existing authorized builder selects the candidate under its applicable rules. The source-binding patch verifies its Task rendering and Currentness, and never turns `now`, priority or a cached action into deployment permission. `rule_set_digest` identifies the existing projection dependency registry, not an MTPE policy version. Missing MTPE/phase evidence remains unknown at the actual operation.
+MTPE Universal Intake & Auto-Priority M0 is implemented by the additive `mtpe-universal-intake.v1` derived projection. Canonical Records remain the work authority; the runtime deterministically routes and scores actionable objects, keeps priority separate from executability, applies explicit Owner focus, validates coverage, and supplies the authorized Frontier Builder. The source-binding contract verifies the selected Task/version, Candidate Universe digest, selection source, Task rendering and Currentness. None of those fields turns priority, an Owner Pin or a cached action into deployment permission; missing phase/operation authority remains unknown at the actual operation.
 
 ## Global source binding
 
 An authorized builder must have complete source-read coverage. A global.priority_frontier projection uses these `type_fields`:
 
-- `source_task`: exact `{id, version, scope}` of an active, current, unique-now Canonical Task; never another projection.
+- `source_task`: exact `{id, version, scope}` of the active, current Task selected by the bound MTPE snapshot; never another projection.
 - `render_rule_version`: `task-body.v1` (exact title/content rendering).
 - `rule_set_digest`: server-computed digest of active dependency rules.
+- `mtpe_rule_set`: `mtpe-universal-intake.v1`.
+- `mtpe_candidate_universe_digest`: server-computed digest of the complete eligible Candidate Universe.
+- `selection_source`: `SYSTEM_RECOMMENDED` or `OWNER_PIN`.
+- System recommendation, Owner-selected focus, algorithm priority and executability are separate fields.
 - Optional legacy `current_action`: must equal the derived title/content exactly.
 
-Missing/wrong version/scope/rule, stale source, mismatched cached body or missing stable intent relationship yields PROJECTION_REQUIRED. Rebuild checks these before publishing an existing projection generation. Old projection bytes remain history until explicitly rebound; migrations do not invent a source Task or rebuild business priority.
+Missing/wrong version/scope/rule/digest, stale source, mismatched cached body or missing stable intent relationship yields PROJECTION_REQUIRED. Pre-MTPE projections retain their former exact unique-now proof only until the next automatic rebuild; they cannot opt into Owner Pin or automatic arbitration without the new digest fields. Rebuild checks these before publishing a generation.
 
 ## Stable execution identity
 
