@@ -360,7 +360,8 @@ test('Information Flow S1 candidate store: isolation, validation, idempotency, p
         has_function_privilege('service_role',p.oid,'execute') service_role
       from pg_proc p join pg_namespace n on n.oid=p.pronamespace
       where n.nspname='clued_private' and p.proname like 'intake\\_%'`)).rows;
-    assert.equal(privileges.length, 8);
+    // Eight S1 functions plus the S2 payload cap (intake_payload_cap_v1).
+    assert.equal(privileges.length, 9);
     for (const row of privileges) {
       assert.deepEqual([row.anon, row.authenticated, row.service_role], [false, false, false], row.fn);
     }

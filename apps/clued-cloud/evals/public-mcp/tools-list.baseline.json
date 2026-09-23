@@ -1563,6 +1563,310 @@
         ],
         "clued/scopeEnforcement": "server-side"
       }
+    },
+    {
+      "name": "clued_intake_submit",
+      "description": "Submit Candidate Information by deterministic capture: an M0-A segment plus an explicit candidate document. The server validates both, computes the Evidence hash over the submitted segment, and stores pending candidates with authority=none. Candidates are never current truth and cannot be promoted by an Agent; promotion needs the Owner's Native two-step confirmation. The route fixes tier, source and Binding; payload fields cannot choose them. Required Clued scope: context:write.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "scope",
+          "segment",
+          "candidates"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 160
+          },
+          "request_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "scope": {
+            "type": "string",
+            "pattern": "^(profile|global|project:[0-9a-fA-F-]{36})$"
+          },
+          "segment": {
+            "type": "object",
+            "description": "M0-A segment-input.v1 document."
+          },
+          "candidates": {
+            "type": "object",
+            "description": "M0-A candidate-information.v1 document for the same segment_id."
+          },
+          "client_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:write"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_intake_list",
+      "description": "List this Binding's own candidates in one scope (tier=information by default, or tier=knowledge). Every row is returned with authority=none and authoritative=false. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "pattern": "^(profile|global|project:[0-9a-fA-F-]{36})$"
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "information",
+              "knowledge"
+            ],
+            "default": "information"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "promoted",
+              "rejected",
+              "conflict",
+              "withdrawn",
+              "expired"
+            ]
+          },
+          "submission_id": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_intake_withdraw",
+      "description": "Withdraw one of this Binding's own pending Candidate Information rows (pending -> withdrawn) with row-version CAS and a Receipt. Required Clued scope: context:write.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "candidate_id",
+          "base_version"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 160
+          },
+          "request_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "candidate_id": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "base_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "scope": {
+            "type": "string",
+            "pattern": "^(profile|global|project:[0-9a-fA-F-]{36})$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:write"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_knowledge_propose",
+      "description": "Propose Candidate Knowledge over explicit source Record versions with a closed rule id. Every source must be human-confirmed Authority Information the caller can read, at exactly the cited version, CURRENT or active; otherwise the proposal is rejected with a Receipt. No rule engine or model runs. The candidate has authority=none until the Owner promotes it natively. Required Clued scope: context:write.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "scope",
+          "rule_id",
+          "assertion",
+          "sources"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 160
+          },
+          "request_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "scope": {
+            "type": "string",
+            "pattern": "^(profile|global|project:[0-9a-fA-F-]{36})$"
+          },
+          "rule_id": {
+            "type": "string",
+            "enum": [
+              "knowledge.consolidate.v1",
+              "knowledge.dedup.v1",
+              "knowledge.cross_record_fact.v1"
+            ]
+          },
+          "assertion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "version"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "evidence_ids": {
+            "type": "array",
+            "maxItems": 20,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:write"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_context_pack",
+      "description": "Compile or read a Minimum Sufficient Context Pack under an accepted Context Policy. Compiling without an accepted policy fails closed with CONTEXT_POLICY_REQUIRED. A pack never grants execution authorization. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "pattern": "^(profile|global|project:[0-9a-fA-F-]{36})$"
+          },
+          "policy_id": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "task_class": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
     }
   ]
 }

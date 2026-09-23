@@ -21,6 +21,13 @@ import {
   type RecordFeatureEnv,
   type UserRecordRpc,
 } from "./records";
+import {
+  informationFlowListParameters,
+  informationFlowRpcByTool,
+  informationFlowTools,
+  isInformationFlowPath,
+  type UserInformationFlowRpc,
+} from "./information-flow";
 
 declare const __CLUED_BUILD_SHA__: string | null;
 
@@ -548,7 +555,11 @@ function mayInvalidateApprovedProjection(request: Request) {
   return path === "/mcp" || path === "/v1/projects" || path.startsWith("/v1/projects/") ||
     path === "/v1/records" || path === "/v1/decisions/supersede" ||
     path === "/v1/events" || path === "/v1/continuity/events" ||
-    path === "/v1/continuity/log/import";
+    path === "/v1/continuity/log/import" ||
+    path === "/v1/intake" || path.startsWith("/v1/intake/") ||
+    path === "/v1/knowledge" || path.startsWith("/v1/knowledge/") ||
+    path === "/v1/context/policies" || path.startsWith("/v1/context/policies/") ||
+    /^\/v1\/evidence\/[^/]+\/withdrawal(\/|$)/.test(path);
 }
 
 function p5GatewayToken(env: ContinuityEnv) {
@@ -1064,6 +1075,7 @@ const tools = [
   },
   ...projectTools,
   ...recordTools,
+  ...informationFlowTools,
   ...p5Tools,
   ...contextTools,
 ] as const;
@@ -1160,6 +1172,21 @@ export const publicToolPolicies = {
   clued_canonical_export: {
     scopes: ["context:read", "audit:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
   },
+  clued_intake_submit: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_intake_list: {
+    scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_intake_withdraw: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_knowledge_propose: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_context_pack: {
+    scopes: ["context:read"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
   clued_p5_session_open: {
     scopes: ["context:read"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
   },
@@ -1201,7 +1228,7 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {
 
 export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_DEVELOPMENT_CONTEXT_V14">) {
   return tools.filter((tool) =>
-    (!(tool.name in recordRpcByTool) || recordsV2Enabled(env))
+    (!(tool.name in recordRpcByTool || tool.name in informationFlowRpcByTool) || recordsV2Enabled(env))
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
     && (!(tool.name in contextRpcByTool) || contextsEnabled(env))
   ).map(publishTool);
@@ -1226,6 +1253,7 @@ const rpcByTool = {
   clued_audit_receipts: "clued_mcp_audit_receipts",
   ...projectRpcByTool,
   ...recordRpcByTool,
+  ...informationFlowRpcByTool,
   ...p5RpcByTool,
 } as const;
 
@@ -1426,7 +1454,8 @@ async function callTool(
       isError: false,
     };
   }
-  if (typeof name === "string" && name in recordRpcByTool && !recordsV2Enabled(env)) {
+  if (typeof name === "string" && (name in recordRpcByTool || name in informationFlowRpcByTool) &&
+    !recordsV2Enabled(env)) {
     throw new HttpError(404, "Clued project views v2 are disabled.");
   }
   if (typeof name === "string" && name in p5RpcByTool && !p5TenantWritesEnabled(env)) {
@@ -1637,7 +1666,7 @@ async function handleProjectApi(request: Request, env: ContinuityEnv) {
 async function callUserRecordRpc(
   request: Request,
   env: ContinuityEnv,
-  rpc: UserRecordRpc,
+  rpc: UserRecordRpc | UserInformationFlowRpc,
   input: Record<string, unknown>,
   receivedPayloadHash?: string,
 ) {
@@ -1716,6 +1745,80 @@ async function handleRecordApi(request: Request, env: ContinuityEnv) {
     const { input, receivedPayloadHash } = await parseCanonicalBody(request);
     const result = await callUserRecordRpc(request, env, rpc, input, receivedPayloadHash);
     return json(result, m1HttpStatus(result), corsHeaders(request));
+  }
+  return json({ error: "Method not allowed." }, 405, {
+    ...corsHeaders(request),
+    allow: "GET, POST, OPTIONS",
+  });
+}
+
+// Candidate CAS failures are raised with lower-case codes; everything else
+// follows the M1 mapping.
+function informationFlowHttpStatus(result: unknown) {
+  const value = result as { status?: string; error_code?: string } | null;
+  if (value?.status === "rejected" &&
+    /^(candidate_version_conflict|knowledge_source_version_mismatch)$/.test(value.error_code ?? "")) return 409;
+  return m1HttpStatus(result);
+}
+
+const candidatePathPattern =
+  /^\/v1\/intake\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/withdraw$/i;
+
+async function handleInformationFlowApi(request: Request, env: ContinuityEnv) {
+  validateOrigin(request, env);
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders(request) });
+  }
+  if (!recordsV2Enabled(env)) {
+    throw new HttpError(404, "Clued project views v2 are disabled.");
+  }
+  const url = new URL(request.url);
+  if (url.pathname === "/v1/intake" && request.method === "GET") {
+    const input: Record<string, unknown> = {};
+    const allowed = new Set<string>(informationFlowListParameters);
+    for (const key of url.searchParams.keys()) {
+      if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) {
+        throw new HttpError(422, "Invalid intake list query parameters.");
+      }
+    }
+    for (const key of informationFlowListParameters) {
+      const value = url.searchParams.get(key);
+      if (value === null) continue;
+      if (key === "limit") {
+        if (!/^[1-9][0-9]{0,2}$/.test(value)) throw new HttpError(422, "limit must be an integer from 1 to 200.");
+        input.limit = Number(value);
+      } else {
+        input[key] = value;
+      }
+    }
+    const result = await callUserRecordRpc(request, env, "clued_user_intake_list", input);
+    return json(result, 200, corsHeaders(request));
+  }
+  const routes: Record<string, UserInformationFlowRpc> = {
+    "/v1/intake": "clued_user_intake_submit",
+    "/v1/knowledge/candidates": "clued_user_knowledge_propose",
+  };
+  const rpc = routes[url.pathname];
+  if (rpc && request.method === "POST") {
+    const { input, receivedPayloadHash } = await parseCanonicalBody(request);
+    const result = await callUserRecordRpc(request, env, rpc, input, receivedPayloadHash);
+    return json(result, informationFlowHttpStatus(result), corsHeaders(request));
+  }
+  const withdraw = candidatePathPattern.exec(url.pathname);
+  if (withdraw && request.method === "POST") {
+    const { input, receivedPayloadHash } = await parseCanonicalBody(request);
+    if ("candidate_id" in input && String(input.candidate_id).toLowerCase() !== withdraw[1].toLowerCase()) {
+      throw new HttpError(422, "candidate_id does not match the request path.");
+    }
+    // The path binds the candidate; the idempotency hash covers it server-side.
+    const result = await callUserRecordRpc(request, env, "clued_user_intake_withdraw",
+      { ...input, candidate_id: withdraw[1].toLowerCase() }, receivedPayloadHash);
+    return json(result, informationFlowHttpStatus(result), corsHeaders(request));
+  }
+  if (url.pathname === "/v1/context/pack" && request.method === "POST") {
+    const { input } = await parseCanonicalBody(request);
+    const result = await callUserRecordRpc(request, env, "clued_user_context_pack", input);
+    return json(result, informationFlowHttpStatus(result), corsHeaders(request));
   }
   return json({ error: "Method not allowed." }, 405, {
     ...corsHeaders(request),
@@ -1808,6 +1911,7 @@ async function handleContinuityRequestInner(
       ["/v1/decisions/supersede", "/v1/evidence", "/v1/events", "/v1/export"].includes(url.pathname)) {
       return await handleRecordApi(request, env);
     }
+    if (isInformationFlowPath(url.pathname)) return await handleInformationFlowApi(request, env);
     if (url.pathname === "/api/bindings") {
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: corsHeaders(request) });
