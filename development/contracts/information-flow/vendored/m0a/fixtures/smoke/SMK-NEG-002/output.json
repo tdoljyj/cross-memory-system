@@ -1,0 +1,38 @@
+{
+  "schema_version": "candidate_information.v1",
+  "segment_id": "seg_neg_002",
+  "items": [
+    {
+      "candidate_local_id": "item_status_synthetic",
+      "item_type": "status",
+      "claim": "合成项目今天进入测试阶段。",
+      "summary": "合成项目进入测试",
+      "action_level": "reference",
+      "priority": null,
+      "entity_mentions": [
+        {
+          "type": "project",
+          "mention": "合成项目",
+          "role": "subject"
+        }
+      ],
+      "topics": ["测试阶段"],
+      "temporal_mentions": [
+        {
+          "kind": "event_at",
+          "source_text": "今天",
+          "source_message_id": "msg_neg_002_a"
+        }
+      ],
+      "source_anchors": [
+        {
+          "message_id": "msg_neg_002_a",
+          "exact_quote": "合成项目已经上线。"
+        }
+      ],
+      "confidence": 0.96,
+      "uncertainties": [],
+      "sensitivity_hint": "none"
+    }
+  ]
+}

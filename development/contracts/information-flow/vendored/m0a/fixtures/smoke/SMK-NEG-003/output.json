@@ -1,0 +1,33 @@
+{
+  "schema_version": "candidate_information.v1",
+  "segment_id": "seg_neg_003",
+  "items": [
+    {
+      "candidate_local_id": "item_decision_cover",
+      "item_type": "decision",
+      "claim": "采用蓝色封面。",
+      "summary": "采用蓝色封面",
+      "action_level": "reference",
+      "priority": null,
+      "entity_mentions": [
+        {
+          "type": "artifact",
+          "mention": "蓝色封面",
+          "role": "target"
+        }
+      ],
+      "topics": ["封面设计"],
+      "temporal_mentions": [],
+      "source_anchors": [
+        {
+          "message_id": "msg_neg_003_a",
+          "exact_quote": "决定采用蓝色封面。"
+        }
+      ],
+      "confidence": 0.99,
+      "uncertainties": [],
+      "sensitivity_hint": "none",
+      "canonical_id": "canon_synthetic_001"
+    }
+  ]
+}

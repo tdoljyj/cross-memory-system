@@ -15,6 +15,7 @@
     "test:projection:refresh": "node --test --test-force-exit tests/projection-refresh-pipeline-db.test.mjs tests/global-scope-projection-invalidation-db.test.mjs tests/projection-refresh-transport.test.mjs tests/projection-watchdog.test.mjs",
     "test:project:lifecycle:v2": "node --test --test-force-exit tests/project-lifecycle-successor-v2-db.test.mjs tests/project-api.test.mjs tests/home-project-create.test.mjs tests/rendered-html.test.mjs tests/user-memory-bundle.test.mjs tests/two-level-snapshot.test.mjs",
     "test:production:release-gate": "node --test tests/production-release-gate.test.mjs",
+    "test:information-flow:candidates": "node --test --test-force-exit tests/information-flow-candidate-store-db.test.mjs",
     "test:mtpe:intake": "node --test --test-force-exit tests/mtpe-universal-intake-db.test.mjs tests/mtpe-frontier-eligibility-v2-db.test.mjs tests/mtpe-frontier-eligibility-v2-1-db.test.mjs tests/mtpe-universal-intake-transport.test.mjs",
     "test:v2:red": "node --test tests/v2-red/*.test.mjs",
     "db:start": "npx --yes supabase@2.115.0 start",

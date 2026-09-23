@@ -1,0 +1,8 @@
+{
+  "fixture_id": "SMK-NEG-002",
+  "fixture_type": "candidate",
+  "expected_schema_valid": true,
+  "expected_semantic_valid": false,
+  "expected_error_codes": ["SOURCE_QUOTE_MISMATCH"],
+  "assertions": []
+}
