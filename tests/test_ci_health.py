@@ -70,6 +70,21 @@ class CluedCiHealthTests(unittest.TestCase):
             "started_at": health.isoformat(created + timedelta(minutes=minutes)),
         }
 
+    def heartbeat_job(self, job_id: int, runner_name: str, queued: bool = True):
+        contract = self.expected[runner_name]
+        created = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc) + timedelta(minutes=job_id)
+        return {
+            "id": job_id,
+            "run_id": 500 + job_id,
+            "name": f"{health.HEARTBEAT_PREFIX}{runner_name}",
+            "status": "queued" if queued else "completed",
+            "conclusion": None if queued else "success",
+            "runner_name": "" if queued else runner_name,
+            "labels": contract["required_labels"],
+            "created_at": health.isoformat(created),
+            "started_at": health.isoformat(created),
+        }
+
     def test_healthy_four_runner_pool_is_model_free(self):
         report = self.report()
         self.assertEqual(report["status"], "HEALTHY")
@@ -97,6 +112,36 @@ class CluedCiHealthTests(unittest.TestCase):
         ]
         report = self.report(runners=runners)
         self.assertIn("RUNNER_LABEL_DRIFT", [item["code"] for item in report["anomalies"]])
+
+    def test_secretless_heartbeat_route_can_be_healthy(self):
+        jobs = [
+            self.heartbeat_job(index, name, queued=False)
+            for index, name in enumerate(self.expected, start=1)
+        ]
+        report = health.build_report(
+            "tdoljyj/cross-memory-system",
+            self.inventory,
+            None,
+            jobs,
+            datetime(2026, 9, 23, 4, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(report["status"], "HEALTHY")
+        self.assertFalse(report["notify_model"])
+        self.assertEqual(report["observations"]["runners"]["mode"], "exact-label-heartbeat")
+
+    def test_two_slow_exact_route_probes_notify(self):
+        name = "clued-ci-home-linux-01"
+        jobs = [self.heartbeat_job(1, name), self.heartbeat_job(2, name)]
+        report = health.build_report(
+            "tdoljyj/cross-memory-system",
+            self.inventory,
+            None,
+            jobs,
+            datetime(2026, 9, 23, 4, 0, tzinfo=timezone.utc),
+        )
+        codes = [item["code"] for item in report["anomalies"]]
+        self.assertIn("RUNNER_ROUTE_UNAVAILABLE", codes)
+        self.assertIn("REPEATED_STARTUP_DELAY", codes)
 
     def test_single_slow_start_does_not_notify(self):
         report = self.report(jobs=[self.slow_job(1, "windows-general-v1")])

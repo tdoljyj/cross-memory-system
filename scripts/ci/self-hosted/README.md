@@ -50,15 +50,17 @@ Runtime online/busy state is intentionally **not** stored in Git. The inventory 
 
 ## Low-cost CI health monitor
 
-`.github/workflows/clued-ci-health.yml` checks this inventory against GitHub's runtime runner state every five minutes on a small GitHub-hosted runner. The hosted runner is deliberate: a monitor scheduled on the pool it watches could not report a total pool outage. The healthy path performs deterministic API comparisons only and never invokes a model.
+`.github/workflows/clued-ci-health.yml` checks the pool every five minutes on a small GitHub-hosted runner. The hosted runner is deliberate: a monitor scheduled on the pool it watches could not report a total pool outage. `.github/workflows/clued-ci-runner-heartbeat.yml` separately sends a no-checkout, exact-label route probe to each of the four declared runners every 15 minutes. A successful probe proves that the named runner can accept its complete required-label contract. The healthy path is entirely deterministic and never invokes a model.
+
+The default path needs no extra secret. GitHub's workflow token can read workflow/job state but cannot list repository runner registrations, so the monitor falls back to the four exact-label heartbeat routes. If a deliberately scoped `CI_HEALTH_GITHUB_TOKEN` secret with repository Administration read access is later supplied, the same script also uses the direct runner API for registered name, OS, labels, online, and busy state. The secretless heartbeat path remains the default and treats inability to call the administrative endpoint as an observation-mode choice, not as an anomaly.
 
 The monitor preserves the current alert thresholds:
 
-- all four active inventory runners must remain registered with their required labels and OS;
-- each Windows and Linux capability pool must retain at least one online runner (a single offline redundant runner is recorded but is not itself a pool failure);
+- all four active inventory routes retain their exact required labels; with the optional read token, registered name and OS drift are checked directly as well;
+- Windows and Linux capability-pool degradation is inferred from routability and queue delay; with the optional read token, current online/busy state is added and a single offline redundant runner is recorded without becoming a pool failure;
 - startup delay must exceed five minutes at least twice in the same capability pool during the 24-hour lookback before it becomes an anomaly.
 
-Startup latency is evaluated by the deterministic five-minute schedule. Each scheduled run reads at most the 20 most recent workflow runs and applies the two-occurrence rule; pull-request validation does not scan job history. GitHub exposes `workflow_job` as a webhook event but not as a GitHub Actions workflow trigger, so the schedule is the smallest repository-local transport that covers all workflows without adding external infrastructure.
+Startup latency is evaluated by the deterministic five-minute schedule. Each scheduled run reads at most the 20 most recent general workflow runs plus the 20 most recent heartbeat runs and applies the two-occurrence rule; pull-request validation does not scan job history. An exact runner route becomes unavailable only after two probes for that route each exceed five minutes. GitHub exposes `workflow_job` as a webhook event but not as a GitHub Actions workflow trigger, so the schedule plus repository-local heartbeat is the smallest secretless transport that covers every workflow and all four exact routes without external infrastructure.
 
 Threshold-reaching anomalies are published to the dedicated draft PR head `automation/clued-ci-health-event`, with title `[Clued CI Health] anomaly event transport` and label `ci-health-anomaly-event`. The evidence lives at `.github/ci-health-events/latest.json`. Identical anomaly fingerprints are a no-op; recovery closes the PR; a later anomaly reopens it. Transport commits use `[skip ci]` so the alert path does not add load to the unhealthy pool.
 

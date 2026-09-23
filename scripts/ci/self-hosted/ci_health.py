@@ -21,6 +21,8 @@ DEFAULT_REPOSITORY = "tdoljyj/cross-memory-system"
 DEFAULT_STARTUP_DELAY_SECONDS = 300
 DEFAULT_MINIMUM_REPEATS = 2
 DEFAULT_LOOKBACK_HOURS = 24
+HEARTBEAT_WORKFLOW = "clued-ci-runner-heartbeat.yml"
+HEARTBEAT_PREFIX = "runner-heartbeat / "
 
 
 def parse_time(value: str | None) -> datetime | None:
@@ -187,6 +189,101 @@ def evaluate_runners(
     return anomalies, observations
 
 
+def heartbeat_runner_name(job: dict[str, Any]) -> str | None:
+    name = str(job.get("name") or "")
+    if not name.startswith(HEARTBEAT_PREFIX):
+        return None
+    return name[len(HEARTBEAT_PREFIX):].strip() or None
+
+
+def evaluate_runner_routes(
+    expected: dict[str, dict[str, Any]],
+    jobs: list[dict[str, Any]],
+    now: datetime,
+    threshold_seconds: int,
+    minimum_repeats: int,
+    lookback_hours: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Infer runner health from secretless exact-label heartbeat routes."""
+    since = now - timedelta(hours=lookback_hours)
+    by_runner: dict[str, list[dict[str, Any]]] = {name: [] for name in expected}
+    anomalies: list[dict[str, Any]] = []
+
+    for job in jobs:
+        expected_name = heartbeat_runner_name(job)
+        created = parse_time(job.get("created_at"))
+        if expected_name not in by_runner or created is None or created < since:
+            continue
+        by_runner[expected_name].append(job)
+        routed_name = str(job.get("runner_name") or "")
+        if routed_name and routed_name != expected_name:
+            anomalies.append(anomaly(
+                "RUNNER_ROUTE_DRIFT",
+                f"runner:{expected_name}:routed-to:{routed_name}",
+                f"Heartbeat for {expected_name} was routed to a different runner.",
+                expected_runner=expected_name,
+                actual_runner=routed_name,
+                job_id=job.get("id"),
+            ))
+
+    route_status: dict[str, Any] = {}
+    for name, route_jobs in sorted(by_runner.items()):
+        route_jobs.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        slow_queued: list[dict[str, Any]] = []
+        last_verified: str | None = None
+        for job in route_jobs:
+            created = parse_time(job.get("created_at"))
+            if created is None:
+                continue
+            routed_name = str(job.get("runner_name") or "")
+            if (
+                routed_name == name
+                and job.get("status") in {"in_progress", "completed"}
+                and job.get("conclusion") not in {"cancelled", "failure", "timed_out"}
+            ):
+                last_verified = isoformat(created)
+                break
+            if job.get("status") == "queued":
+                delay_seconds = int((now - created).total_seconds())
+                if delay_seconds > threshold_seconds:
+                    slow_queued.append({
+                        "job_id": job.get("id"),
+                        "run_id": job.get("run_id"),
+                        "created_at": isoformat(created),
+                        "delay_seconds": delay_seconds,
+                    })
+
+        route_status[name] = {
+            "pool": expected[name]["pool"],
+            "required_labels": expected[name]["required_labels"],
+            "last_verified_at": last_verified,
+            "slow_queued_probes": slow_queued[:10],
+            "state": (
+                "routable" if last_verified
+                else "delayed" if slow_queued
+                else "awaiting-probe"
+            ),
+        }
+        if len(slow_queued) >= minimum_repeats:
+            anomalies.append(anomaly(
+                "RUNNER_ROUTE_UNAVAILABLE",
+                f"runner:{name}:route-unavailable",
+                f"Exact-label heartbeat for {name} exceeded the startup-delay threshold at least {minimum_repeats} times.",
+                runner=name,
+                pool=expected[name]["pool"],
+                threshold_seconds=threshold_seconds,
+                minimum_repeats=minimum_repeats,
+                probes=slow_queued[:10],
+            ))
+
+    return anomalies, {
+        "mode": "exact-label-heartbeat",
+        "expected_runner_count": len(expected),
+        "registered_runner_count": None,
+        "routes": route_status,
+    }
+
+
 def job_pool(job: dict[str, Any]) -> str | None:
     labels = label_names(job)
     if {"self-hosted", "Windows", "cap-python312"}.issubset(labels):
@@ -274,7 +371,7 @@ def anomaly_fingerprint(anomalies: list[dict[str, Any]]) -> str:
 def build_report(
     repository: str,
     inventory: dict[str, Any],
-    runners: list[dict[str, Any]],
+    runners: list[dict[str, Any]] | None,
     jobs: list[dict[str, Any]],
     now: datetime,
     threshold_seconds: int = DEFAULT_STARTUP_DELAY_SECONDS,
@@ -282,7 +379,13 @@ def build_report(
     lookback_hours: int = DEFAULT_LOOKBACK_HOURS,
 ) -> dict[str, Any]:
     expected, pools = build_expectations(inventory)
-    runner_anomalies, runner_observations = evaluate_runners(expected, pools, runners)
+    if runners is None:
+        runner_anomalies, runner_observations = evaluate_runner_routes(
+            expected, jobs, now, threshold_seconds, minimum_repeats, lookback_hours
+        )
+    else:
+        runner_anomalies, runner_observations = evaluate_runners(expected, pools, runners)
+        runner_observations["mode"] = "repository-runner-api"
     delay_anomalies, delay_observations = evaluate_startup_delays(
         jobs, now, threshold_seconds, minimum_repeats, lookback_hours
     )
@@ -318,6 +421,34 @@ def collect_recent_jobs(
         f"/repos/{repository}/actions/runs",
         {"created": f">={isoformat(since)}", "per_page": max_runs},
     ).get("workflow_runs", [])
+    jobs: list[dict[str, Any]] = []
+    for run in runs[:max_runs]:
+        page = client.get(
+            f"/repos/{repository}/actions/runs/{run['id']}/jobs",
+            {"filter": "all", "per_page": 100},
+        )
+        for job in page.get("jobs", []):
+            job.setdefault("run_id", run["id"])
+            jobs.append(job)
+    return jobs
+
+
+def collect_workflow_jobs(
+    client: GitHubClient,
+    repository: str,
+    workflow: str,
+    since: datetime,
+    max_runs: int,
+) -> list[dict[str, Any]]:
+    try:
+        runs = client.get(
+            f"/repos/{repository}/actions/workflows/{workflow}/runs",
+            {"created": f">={isoformat(since)}", "per_page": max_runs},
+        ).get("workflow_runs", [])
+    except RuntimeError as exc:
+        if "failed (404)" in str(exc):
+            return []
+        raise
     jobs: list[dict[str, Any]] = []
     for run in runs[:max_runs]:
         page = client.get(
@@ -395,10 +526,17 @@ def main() -> int:
         token = os.environ.get("GITHUB_TOKEN")
         if not token:
             raise RuntimeError("GITHUB_TOKEN is required for live collection")
-        client = GitHubClient(token, os.environ.get("GITHUB_API_URL", "https://api.github.com"))
-        runners = client.get(
-            f"/repos/{args.repository}/actions/runners", {"per_page": 100}
-        ).get("runners", [])
+        api_url = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+        client = GitHubClient(token, api_url)
+        runner_token = os.environ.get("CI_HEALTH_GITHUB_TOKEN") or token
+        try:
+            runners = GitHubClient(runner_token, api_url).get(
+                f"/repos/{args.repository}/actions/runners", {"per_page": 100}
+            ).get("runners", [])
+        except RuntimeError as exc:
+            if "failed (403)" not in str(exc):
+                raise
+            runners = None
         scan_history = args.scan_job_history or should_scan_history(
             event_job, now, args.startup_delay_seconds
         )
@@ -409,6 +547,18 @@ def main() -> int:
                 args.repository,
                 now - timedelta(hours=args.lookback_hours),
                 args.max_runs,
+            )
+            heartbeat_jobs = collect_workflow_jobs(
+                client,
+                args.repository,
+                HEARTBEAT_WORKFLOW,
+                now - timedelta(hours=args.lookback_hours),
+                args.max_runs,
+            )
+            known_job_ids = {str(job.get("id")) for job in jobs}
+            jobs.extend(
+                job for job in heartbeat_jobs
+                if str(job.get("id")) not in known_job_ids
             )
         if event_job is not None:
             jobs.append(event_job)

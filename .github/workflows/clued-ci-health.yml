@@ -39,6 +39,7 @@ jobs:
         id: health
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          CI_HEALTH_GITHUB_TOKEN: ${{ secrets.CI_HEALTH_GITHUB_TOKEN }}
         run: >-
           python3 scripts/ci/self-hosted/ci_health.py
           --output "$RUNNER_TEMP/clued-ci-health.json"
