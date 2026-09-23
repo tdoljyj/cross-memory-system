@@ -14,7 +14,7 @@ function sourceRef(bundleId, sourceId) {
 }
 
 export function buildImportPlan(bundle) {
-  // Preserve the retired v1 mapping for inspection only; these are not current M1 requests.
+  // Preserve the retired mapping for inspection only; these are not current M1 requests.
   const { manifest, projects, records } = bundle;
   const projectActions = projects.map((project) => ({
     source_project_id: project.source_project_id,
@@ -23,7 +23,7 @@ export function buildImportPlan(bundle) {
       intent: "confirmed",
       idempotency_key: deterministicKey("umbv1-project", manifest.bundle_id, project.source_project_id),
       summary: `Historical mapping from portable single-user export ${manifest.bundle_id}.`,
-      evidence_summary: project.evidence,
+      evidence_summary: project.recognition_evidence ?? project.evidence,
       source_ref: `umbv1:${manifest.bundle_id}`,
       confidence: 1,
       progress_status: project.progress_status,

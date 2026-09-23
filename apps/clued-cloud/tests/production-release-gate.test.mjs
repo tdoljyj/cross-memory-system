@@ -9,16 +9,29 @@ const sourceSql = await readFile(new URL(
   `../supabase/migrations/${baseline.source_migration}`, import.meta.url), 'utf8');
 const migrationFiles = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
   .filter((name) => name.endsWith('.sql'));
+const postBaselineMigrationFiles = migrationFiles.filter((name) =>
+  name.slice(0, 14) > baseline.source_migration.slice(0, 14));
+const postBaselineMigrationSources = Object.fromEntries(await Promise.all(
+  postBaselineMigrationFiles.map(async (name) => [name, await readFile(new URL(
+    `../supabase/migrations/${name}`, import.meta.url), 'utf8')])));
+const productionWorkflow = await readFile(new URL(
+  '../../../.github/workflows/clued-cloud-production-release.yml', import.meta.url), 'utf8');
 const now = new Date('2026-09-23T05:12:49Z');
 
 function healthy() {
   return {
-    baseline, sourceSql, migrationFiles, changedPaths: [], now,
+    baseline, sourceSql, migrationFiles,
+    migrationSources: { ...postBaselineMigrationSources }, changedPaths: [], now,
     history: [
       ...baseline.required_predecessors.map(([version, name]) => ({ version, name })),
       { version: baseline.production_history_version,
         name: baseline.production_history_name,
         statements: [sourceSql + baseline.production_statement_suffix] },
+      ...postBaselineMigrationFiles.map((filename) => ({
+        version: filename.slice(0, 14),
+        name: filename.slice(15, -4),
+        statements: [postBaselineMigrationSources[filename]],
+      })),
     ],
     frontierDefinition: 'select clued_private.mtpe_snapshot(p_binding.user_id)',
     watchdog: {
@@ -42,10 +55,12 @@ test('production release accepts the verified 2026-09-23 migration alias and cur
 
 test('release refuses an alias with different SQL or a second migration with missing history', () => {
   const state = healthy();
-  state.history.at(-1).statements = ['-- unrelated SQL'];
+  state.history.find((row) => row.version === baseline.production_history_version)
+    .statements = ['-- unrelated SQL'];
   state.migrationFiles = [...state.migrationFiles,
     '20260925120000_followup.sql'];
-  state.migrationSources = { '20260925120000_followup.sql': 'select 1;' };
+  state.migrationSources = { ...state.migrationSources,
+    '20260925120000_followup.sql': 'select 1;' };
   assert.deepEqual(verifyReleaseState(state), [
     'production_baseline_sql_mismatch',
     'unapplied_or_mismatched_migration:20260925120000_followup.sql',
@@ -55,7 +70,8 @@ test('release refuses an alias with different SQL or a second migration with mis
 test('a newly applied migration may have a generated production version only when name and SQL match', () => {
   const state = healthy();
   state.migrationFiles = [...state.migrationFiles, '20260925120000_followup.sql'];
-  state.migrationSources = { '20260925120000_followup.sql': 'select 1;' };
+  state.migrationSources = { ...state.migrationSources,
+    '20260925120000_followup.sql': 'select 1;' };
   state.changedPaths = [{ status: 'A', path:
     'apps/clued-cloud/supabase/migrations/20260925120000_followup.sql' }];
   state.history.push({ version: '20260923060000', name: 'followup',
@@ -97,4 +113,17 @@ test('post-deploy readback requires a heartbeat from the newly deployed cycle', 
   assert.deepEqual(verifyReleaseState(state), [
     'worker_has_not_run_after_deployment',
   ]);
+});
+
+test('production backup mode encrypts and verifies the dump before removing plaintext', () => {
+  assert.match(productionWorkflow, /backup_only:/);
+  assert.match(productionWorkflow, /CLUED_PRODUCTION_BACKUP_KEY/);
+  assert.match(productionWorkflow, /--user \"\$\(id -u\):\$\(id -g\)\"/);
+  assert.match(productionWorkflow, /pg_restore --list/);
+  assert.match(productionWorkflow, /openssl enc -aes-256-cbc -pbkdf2/);
+  assert.match(productionWorkflow, /openssl enc -d -aes-256-cbc -pbkdf2/);
+  assert.match(productionWorkflow, /shred -u \"\$dump_path\" \"\$verified_path\"/);
+  assert.match(productionWorkflow, /clued-production-pre-migration\.dump\.enc/);
+  assert.doesNotMatch(productionWorkflow,
+    /release-evidence\/clued-production-pre-migration\.dump\s*$/m);
 });

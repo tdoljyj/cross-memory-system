@@ -25,13 +25,16 @@ const response = (body, ok = true) => ({ ok, json: async () => body });
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
 function fixture(network = async url => response(url.includes('?') ? { records: [] } : { status: 'committed', receipt_id: 'receipt-1', supplemental: { record: oldRecord } })) {
   const calls = [], state = { error: false, busy: false, title: ' Task ', content: ' Content ' }; let uuidCount = 0;
+  const selectionToken = { key: 'A' };
   const context = {
     session: { user: { id: 'account-A' }, access_token: 'fixture-token' }, view: 'account', recordsEnabled: true,
-    recordLevel: 'global', recordProjectId: '', recordView: 'task', recordSelectionKey: 'A', recordSelection: { current: 'A' }, recordReadGeneration: { current: 0 },
-    recordSelectionEpoch: { current: 0 }, recordCreateKey: 'create-A', pendingRecordCreate: { current: null },
+    recordLevel: 'global', recordProjectId: '', recordView: 'task', recordSelectionKey: 'A',
+    recordSelectionToken: selectionToken, activeRecordSelection: { current: selectionToken }, recordReadGeneration: { current: 0 },
+    recordCreateKey: 'create-A', pendingRecordCreate: { current: null },
     recordBusy: false, recordTitle: state.title, recordContent: state.content,
-    recordList: { key: 'A', epoch: 0, status: 'ready', records: [oldRecord] },
+    recordList: { key: 'A', selectionToken, status: 'ready', records: [oldRecord] },
     URLSearchParams, AbortController, crypto: { randomUUID: () => `11111111-1111-4111-8111-${String(++uuidCount).padStart(12, '0')}` },
+    window: { setTimeout: callback => { callback(); return 1; }, clearTimeout() {} },
     setRecordList: value => { context.recordList = value; },
     setRecordBusy: value => { context.recordBusy = state.busy = value; },
     setRecordError: value => { state.error = value; },
@@ -40,8 +43,13 @@ function fixture(network = async url => response(url.includes('?') ? { records: 
     fetch: async (url, options) => { calls.push({ url, options }); return network(url, options); },
   };
   vm.runInNewContext(compiled, context);
-  return { context, state, calls, read: signal => context.read(context.recordSelectionKey, context.session.access_token, context.recordLevel, context.recordProjectId, context.recordView, signal),
-    submit: () => context.submit({ preventDefault() {} }), change: key => { ++context.recordSelectionEpoch.current; context.recordSelectionKey = context.recordSelection.current = key; } };
+  return { context, state, calls, read: signal => context.read(context.recordSelectionKey, context.recordSelectionToken,
+    context.session.access_token, context.recordLevel, context.recordProjectId, context.recordView, signal),
+    submit: () => context.submit({ preventDefault() {} }), change: key => {
+      context.recordSelectionKey = key;
+      context.recordSelectionToken = { key };
+      context.activeRecordSelection.current = context.recordSelectionToken;
+    } };
 }
 
 for (const flag of ['current_projection_unavailable', 'projection_rebuild_required']) {
@@ -147,7 +155,7 @@ test('scope A to B to A cannot accept the original mutation completion', async (
 });
 test('scope A to B to A cannot resurrect cached rows or accept its original read', async () => {
   const wait = deferred(); const f = fixture(() => wait.promise); const read = f.read();
-  f.context.recordList = { key: 'A', epoch: 0, status: 'ready', records: [oldRecord] };
+  f.context.recordList = { key: 'A', selectionToken: f.context.recordSelectionToken, status: 'ready', records: [oldRecord] };
   f.change('B'); f.change('A');
   assert.equal(f.context.renderState().recordStatus, 'loading'); assert.equal(f.context.renderState().visibleRecords.length, 0);
   wait.resolve(response({ records: [oldRecord] })); await read;

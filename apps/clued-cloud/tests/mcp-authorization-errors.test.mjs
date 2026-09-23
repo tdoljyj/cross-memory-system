@@ -24,7 +24,7 @@ test('resource denials stay denied without triggering an OAuth challenge', async
       let calls = 0;
       globalThis.fetch = async url => {
         calls++;
-        assert.equal(new URL(url).pathname, '/rest/v1/rpc/clued_project_list');
+        assert.equal(new URL(url).pathname, '/rest/v1/rpc/clued_project_list_v2');
         return Response.json({ code: '42501', message }, { status: 401 });
       };
       const response = await handle(request('clued_bnd_isolated-fixture'), env);

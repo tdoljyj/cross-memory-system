@@ -235,10 +235,11 @@ def _validate_project_object(
         raise P4ReadError("PROJECT_OBJECT_INVALID", "data")
     if data.get("canonical_project_id") != project_id:
         raise P4ReadError("PROJECT_OBJECT_IDENTITY_MISMATCH", "data.canonical_project_id")
-    required_strings = ("name", "certainty_status", "progress_status", "lifecycle_status", "recorded_at", "updated_at")
+    project_schema_version = data.get("project_schema_version")
+    required_strings = ("name", "progress_status", "lifecycle_status", "recorded_at", "updated_at")
     if any(not isinstance(data.get(field), str) or not data[field] for field in required_strings):
         raise P4ReadError("PROJECT_OBJECT_INVALID", "required data string")
-    if not _is_positive_int(data.get("project_schema_version")) or not _is_positive_int(data.get("version")):
+    if not _is_positive_int(project_schema_version) or not _is_positive_int(data.get("version")):
         raise P4ReadError("PROJECT_OBJECT_INVALID", "data version")
     merge_generation = data.get("merge_generation")
     if not isinstance(merge_generation, int) or isinstance(merge_generation, bool) or merge_generation < 0:
@@ -251,9 +252,12 @@ def _validate_project_object(
             raise P4ReadError("PROJECT_OBJECT_INVALID", field)
     if "merged_into_project_id" not in data:
         raise P4ReadError("PROJECT_OBJECT_INVALID", "merged_into_project_id")
+    if project_schema_version == 1 and data.get("certainty_status") != "confirmed":
+        raise P4ReadError("PROJECT_OBJECT_LIFECYCLE_INVALID", project_id)
+    if project_schema_version >= 2 and "certainty_status" in data:
+        raise P4ReadError("PROJECT_OBJECT_INVALID", "legacy certainty_status in v2")
     if (
-        data["certainty_status"] != "confirmed"
-        or data["lifecycle_status"] != "active"
+        data["lifecycle_status"] != "active"
         or data["progress_status"] not in PROJECT_PROGRESS_STATUSES
         or data.get("merged_into_project_id") is not None
     ):

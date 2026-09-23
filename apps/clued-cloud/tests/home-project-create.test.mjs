@@ -20,7 +20,7 @@ assert.ok(clearHandler, 'pending creation clears on account/name changes');
 const compiled = ts.transpileModule(handler.getText(ast) + '\n' + updateHandler.getText(ast) + '\n' + clearHandler.getText(ast) + '\nthis.submit = handleCreateProject; this.update = updateProject; this.syncPending = clearChangedProjectCreate;', {
   compilerOptions: { target: ts.ScriptTarget.ES2020 },
 }).outputText;
-const project = { id: '11111111-1111-4111-8111-111111111111', name: 'Test project', certainty_status: 'unconfirmed', progress_status: 'paused', version: 1 };
+const project = { id: '11111111-1111-4111-8111-111111111111', name: 'Test project', progress_status: 'not_started', version: 1 };
 function fixture({ response = { status: 'committed', supplemental: { project } }, status = 200, fail = false, session = { user: { id: 'fixture-subject-A' }, access_token: 'fixture-human' }, name = '  Test project  ' } = {}) {
   const state = { projects: [{ id: 'existing', name: 'Existing' }], name, busy: false, error: false };
   const calls = [];
@@ -46,16 +46,17 @@ function fixture({ response = { status: 'committed', supplemental: { project } }
     changeSession: value => { context.session = value; context.syncPending(); },
     submit: () => context.submit({ preventDefault() {} }), update: (...args) => context.update(...args) };
 }
-test('home creates an unconfirmed project through the current authenticated Canonical contract', async () => {
+test('home creates a recognized project through the Project Lifecycle v2 contract', async () => {
   const f = fixture(); await f.submit();
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].url, '/v1/projects');
   assert.equal(f.calls[0].options.method, 'POST');
   assert.equal(f.calls[0].options.headers.authorization, 'Bearer fixture-human');
   assert.deepEqual(JSON.parse(f.calls[0].options.body), {
-    operation: 'create', project_schema_version: 1, base_version: null,
+    operation: 'create', project_schema_version: 2, base_version: null,
     idempotency_key: '33333333-3333-4333-8333-333333333333',
-    mutation: { name: 'Test project', certainty_status: 'unconfirmed', progress_status: 'paused', aliases: [] },
+    mutation: { name: 'Test project', progress_status: 'not_started', aliases: [] },
+    recognition: { confidence: 1, reason: 'The account owner explicitly created this Project.', source: 'v2_explicit_create', source_refs: [] },
   });
   assert.equal(f.state.projects[0].id, project.id);
   assert.equal(f.state.projects[1].id, 'existing');
@@ -80,7 +81,6 @@ test('missing login or empty project name sends no request', async () => {
 });
 
 for (const [label, current, action, extra, operation, mutation, nextProgress] of [
-  ['confirm', project, 'confirm', {}, 'update', { certainty_status: 'confirmed' }, 'paused'],
   ['start', project, 'set_progress', { progress_status: 'active' }, 'update', { progress_status: 'active' }, 'active'],
   ['pause', { ...project, progress_status: 'active' }, 'set_progress', { progress_status: 'paused' }, 'update', { progress_status: 'paused' }, 'paused'],
   ['complete', project, 'set_progress', { progress_status: 'completed' }, 'complete', {}, 'completed'],
@@ -88,7 +88,7 @@ for (const [label, current, action, extra, operation, mutation, nextProgress] of
   ['archive button', project, 'archive', {}, 'archive', {}, 'archived'],
   ['restore completed', { ...project, progress_status: 'completed' }, 'set_progress', { progress_status: 'active' }, 'restore', {}, 'active'],
   ['restore archived', { ...project, progress_status: 'archived' }, 'set_progress', { progress_status: 'active' }, 'restore', {}, 'active'],
-]) test(label + ' uses the current M1 PATCH operation and CAS version', async () => {
+]) test(label + ' uses the current v2 PATCH operation and CAS version', async () => {
   const updated = { ...current, ...mutation, progress_status: nextProgress, version: 2 };
   const f = fixture({ response: { status: 'committed', supplemental: { project: updated } } });
   f.state.projects = [current]; await f.update(current, action, extra);
@@ -96,7 +96,7 @@ for (const [label, current, action, extra, operation, mutation, nextProgress] of
   assert.equal(f.calls[0].url, '/v1/projects/' + project.id);
   assert.equal(f.calls[0].options.method, 'PATCH');
   assert.deepEqual(JSON.parse(f.calls[0].options.body), {
-    operation, project_schema_version: 1, base_version: current.version,
+    operation, project_schema_version: 2, base_version: current.version,
     idempotency_key: '33333333-3333-4333-8333-333333333333', mutation,
   });
   assert.equal(f.state.projects.length, 1, 'archive preserves the project in history');
@@ -108,12 +108,12 @@ test('HTTP 200 rejection or mismatched/stale project never replaces the displaye
     { status: 'committed', supplemental: { project: { ...project, id: 'another-project', version: 2 } } },
     { status: 'committed', supplemental: { project } },
   ]) {
-    const f = fixture({ response }); f.state.projects = [project]; await f.update(project, 'confirm');
+    const f = fixture({ response }); f.state.projects = [project]; await f.update(project, 'set_progress', { progress_status: 'active' });
     assert.equal(f.state.projects[0], project); assert.equal(f.state.error, true); assert.equal(f.state.busy, false);
   }
 });
 test('unsupported progress and terminal direct pause never send a write', async () => {
-  for (const [current, progress] of [[project, 'not_started'], [{ ...project, progress_status: 'completed' }, 'paused']]) {
+  for (const [current, progress] of [[project, 'impossible'], [{ ...project, progress_status: 'completed' }, 'paused']]) {
     const f = fixture(); await f.update(current, 'set_progress', { progress_status: progress });
     assert.equal(f.calls.length, 0); assert.equal(f.state.error, true);
   }
