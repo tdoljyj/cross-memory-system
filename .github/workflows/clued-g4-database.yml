@@ -55,6 +55,12 @@ jobs:
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
 
+      - name: Install application dependencies
+        run: npm ci --cache "$HOME/.npm" --prefer-offline
+
+      - name: Build the application surfaces used by lifecycle tests
+        run: npm run build
+
       - name: Isolate local Supabase ports
         env:
           CLUED_G4_RUN_ID: ${{ github.run_id }}
@@ -136,6 +142,12 @@ jobs:
           node-version: 22.19.0
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
+
+      - name: Install application dependencies
+        run: npm ci
+
+      - name: Build the application surfaces used by lifecycle tests
+        run: npm run build
 
       - name: Start isolated Supabase runtime
         run: npm run db:start
