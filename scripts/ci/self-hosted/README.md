@@ -48,6 +48,28 @@ home-primary / Turing
 
 Runtime online/busy state is intentionally **not** stored in Git. The inventory records desired identity and capabilities; GitHub remains the runtime status surface.
 
+## Low-cost CI health monitor
+
+`.github/workflows/clued-ci-health.yml` checks this inventory against GitHub's runtime runner state every five minutes on a small GitHub-hosted runner. The hosted runner is deliberate: a monitor scheduled on the pool it watches could not report a total pool outage. The healthy path performs deterministic API comparisons only and never invokes a model.
+
+The monitor preserves the current alert thresholds:
+
+- all four active inventory runners must remain registered with their required labels and OS;
+- each Windows and Linux capability pool must retain at least one online runner (a single offline redundant runner is recorded but is not itself a pool failure);
+- startup delay must exceed five minutes at least twice in the same capability pool during the 24-hour lookback before it becomes an anomaly.
+
+Startup latency is evaluated from `workflow_job` `in_progress` events. A normal job needs no history scan. Only a job already over the five-minute threshold causes the checker to read recent job history and test the two-occurrence rule.
+
+Threshold-reaching anomalies are published to the dedicated draft PR head `automation/clued-ci-health-event`, with title `[Clued CI Health] anomaly event transport` and label `ci-health-anomaly-event`. The evidence lives at `.github/ci-health-events/latest.json`. Identical anomaly fingerprints are a no-op; recovery closes the PR; a later anomaly reopens it. Transport commits use `[skip ci]` so the alert path does not add load to the unhealthy pool.
+
+For ChatGPT Work, create an event-triggered task on the web or supported mobile app and restrict its GitHub PR trigger to this repository plus the exact head branch, title, label, bot actor, and only `opened`, `reopened`, or `synchronize` activity. The task must re-read the structured evidence and require `status=ANOMALY` and `notify_model=true` before analysis. Ordinary PR activity, transport closure/recovery, and unchanged fingerprints must not enter analysis.
+
+Scheduled Task configuration does not provide a universally available API field that this repository can use to pin a ChatGPT model. If the Work task UI exposes an eligible model choice, select the low-cost option there and verify the saved task. Do not claim a model is fixed when the task does not expose it.
+
+An explicit OpenAI API fallback is included but disabled by default. Set repository variable `CLUED_CI_HEALTH_ANALYSIS_MODE=openai_api` and add an `OPENAI_API_KEY` secret only after deliberately choosing API billing. That path calls `gpt-6-luna` with low reasoning, and it still runs only for `notify_model=true`. The repository does not create, infer, or require an API key for the default ChatGPT Work transport.
+
+Do not leave the ChatGPT Work path active when deliberately switching to `openai_api`; one anomaly should have one analysis owner.
+
 
 ## Current qualification status
 

@@ -21,6 +21,9 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-connection-authorization.yml": (
         "Intentional clean-room Ubuntu candidate validation; installs a system ICU compatibility package."
     ),
+    "clued-ci-health.yml": (
+        "The lightweight monitor must remain independent of the self-hosted pool so it can detect complete Windows/Linux capability-pool loss."
+    ),
     "phase2-naming-surface-inventory.yml": (
         "Frozen historical exact-byte inventory workflow; modifying its execution contract would invalidate bound evidence."
     ),
