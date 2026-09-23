@@ -1,9 +1,9 @@
 # Information Flow MVP-0 M0-D Closeout Contract v0.1
 
-Status: **PROPOSAL / NOT FROZEN / NO IMPLEMENTATION, DEPLOYMENT OR BUDGET AUTHORIZATION**
+Status: **FROZEN v0.1 (Owner freeze 2026-09-23) / IMPLEMENTATION OF SLICES S1–S6 ON LOCAL/CI ONLY / NO PRODUCTION, DEPLOYMENT, RELEASE OR BUDGET AUTHORIZATION**
 Owner task: Canonical Task `45fb2ae7-e698-4ec0-8107-7b2a7fea4d35`
 Writer: AGENT_WRITTEN
-Canonical Event / Receipt: PENDING. A freeze Decision is written only after the Owner rules on §3 and the Fresh-Context review passes. The Owner writes it through the Native account session, or an Agent writes it only after explicit in-conversation Owner confirmation that is quoted in the Decision. The implementing Agent never freezes on its own initiative. The same standard applies to the OD-1…OD-5 Decisions, to an OD-4 record that accepts local qualification as closure, and to any amendment of the M0-C plan. Where an Agent writes one, the Decision records the writing Receipt's `binding_id` and the quoted confirmation, and it is disclosed as Agent-written under the `OPEN_BY_OD-5` limitation. OD-1(a) additionally requires the Owner to state the budget in their own words. Once S3 is available, the OD-4 local-closure acceptance and any M0-C amendment (the decisions that complete the Task) must additionally be `human_confirmed=true` through a Native marker.
+Canonical Event / Receipt: the freeze is recorded by a Canonical Decision that cites this file's commit and SHA-256 (the digest is deliberately not written inside the file). OD decisions: Decision `ef229e68-bff5-4dca-9b7f-159a08096748` / Receipt `dc4f356f-1653-4345-8c42-dabd2807e1ad`. Freeze rule: the freeze Decision is written only after the Owner rules on §3 and the Fresh-Context review passes. The Owner writes it through the Native account session, or an Agent writes it only after explicit in-conversation Owner confirmation that is quoted in the Decision. The implementing Agent never freezes on its own initiative. The same standard applies to the OD-1…OD-5 Decisions, to an OD-4 record that accepts local qualification as closure, and to any amendment of the M0-C plan. Where an Agent writes one, the Decision records the writing Receipt's `binding_id` and the quoted confirmation, and it is disclosed as Agent-written under the `OPEN_BY_OD-5` limitation. OD-1(a) additionally requires the Owner to state the budget in their own words. Once S3 is available, the OD-4 local-closure acceptance and any M0-C amendment (the decisions that complete the Task) must additionally be `human_confirmed=true` through a Native marker.
 Supersedes: nothing. This extends the M0-D interface in the M0-C plan §24 and records the extra scope that Task 45fb2ae7 adds.
 
 ## 1. Purpose
@@ -52,7 +52,7 @@ Nothing is implemented until the Owner records the decisions below as a Canonica
 - OD-5: general M1 **unchanged**, registered `OPEN_BY_OD-5`
 - OD-4: stands as written.
 
-The Decision was written by an Agent with the Owner's popup answers quoted, which is within the `OPEN_BY_OD-5` disclosure. The contract itself is **not frozen** until a separate Owner freeze.
+The Decision was written by an Agent with the Owner's popup answers quoted, which is within the `OPEN_BY_OD-5` disclosure. The Owner then froze the contract in a separate confirmation (see header).
 
 - **OD-1 — model evaluation path.**
   - (a) Separately authorize M0-C Window B: Provider, exact model ID, parameters, No-Training/Retention facts, and `max_total_usd`. Part A then waits for Primary Model PASS.
