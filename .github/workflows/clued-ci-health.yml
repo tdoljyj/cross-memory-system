@@ -1,6 +1,11 @@
 name: clued-ci-health
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/clued-ci-health.yml"
+      - "scripts/ci/self-hosted/**"
+      - "tests/test_ci_health.py"
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
@@ -20,7 +25,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: clued-ci-health-${{ github.event_name == 'workflow_job' && github.event.workflow_job.id || 'pool-snapshot' }}
+  group: clued-ci-health-${{ github.event_name }}-${{ github.event.workflow_job.id || github.event.pull_request.number || 'pool-snapshot' }}
   cancel-in-progress: false
 
 jobs:
@@ -45,6 +50,7 @@ jobs:
           ${{ github.event_name == 'workflow_dispatch' && inputs.scan_job_history && '--scan-job-history' || '' }}
 
       - name: Publish or recover the dedicated anomaly transport
+        if: github.event_name != 'pull_request'
         id: transport
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -54,6 +60,7 @@ jobs:
 
       - name: Optional explicit-model API fallback
         if: >-
+          github.event_name != 'pull_request' &&
           steps.health.outputs.notify_model == 'true' &&
           vars.CLUED_CI_HEALTH_ANALYSIS_MODE == 'openai_api'
         env:
@@ -66,6 +73,7 @@ jobs:
 
       - name: Attach API fallback analysis to anomaly PR
         if: >-
+          github.event_name != 'pull_request' &&
           steps.health.outputs.notify_model == 'true' &&
           vars.CLUED_CI_HEALTH_ANALYSIS_MODE == 'openai_api' &&
           steps.transport.outputs.pr_number != ''
