@@ -192,10 +192,11 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
         session_compliance: "audit_receipts_projection",
       },
       project_lifecycle: {
-        certainty: ["unconfirmed", "confirmed"],
+        schema_version: 2,
+        project_identity: "created_project_is_canonical_and_usable",
+        recognition_confidence: "metadata_only_never_eligibility_gate",
+        legacy_certainty_status: "compatibility_only",
         progress: ["not_started", "active", "paused", "completed", "archived"],
-        default_on_mention: "unconfirmed",
-        promotion_preserves_identity: true,
       },
       project_views_v2: {
         enabled: env ? recordsV2Enabled(env) : false,
@@ -1521,7 +1522,7 @@ async function handleProjectApi(request: Request, env: ContinuityEnv) {
   const url = new URL(request.url);
   if (url.pathname === "/v1/projects" && request.method === "GET") {
     const input: Record<string, unknown> = {};
-    for (const key of ["certainty_status", "progress_status", "query", "limit"] as const) {
+    for (const key of ["progress_status", "query", "limit"] as const) {
       const value = url.searchParams.get(key);
       if (value !== null) input[key] = key === "limit" ? Number(value) : value;
     }
