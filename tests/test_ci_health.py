@@ -130,6 +130,7 @@ class CluedCiHealthTests(unittest.TestCase):
     def test_transport_deduplicates_same_open_anomaly(self):
         report = self.report(jobs=[self.slow_job(1, "windows-general-v1"), self.slow_job(2, "windows-general-v1")])
         self.assertEqual(transport.decide_transport(report, report, "open"), "NOOP")
+        self.assertEqual(transport.decide_transport(report, report, "open", True), "UPSERT")
 
     def test_transport_closes_on_recovery_and_reopens_later(self):
         healthy = self.report()

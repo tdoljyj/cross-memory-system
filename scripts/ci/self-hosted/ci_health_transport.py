@@ -22,7 +22,7 @@ TRANSPORT_LABEL = "ci-health-anomaly-event"
 PR_BODY = """<!-- clued-ci-health-event:v1 -->
 This draft pull request is a machine-owned anomaly transport for Clued CI Health.
 
-Only `opened`, `reopened`, and `synchronize` activity on this exact head branch, title, and label may enter the ChatGPT Work analysis path. Ordinary pull requests must be ignored. The structured evidence is stored at `.github/ci-health-events/latest.json` on the PR head.
+Only commit-update activity on this exact pull request, head branch, title, and label may enter the ChatGPT Work analysis path. Ordinary pull requests, reviews, comments, merges, and close/recovery activity must be ignored. The structured evidence is stored at `.github/ci-health-events/latest.json` on the PR head.
 
 Do not merge this PR. It is closed automatically when the anomaly clears and reopened on a later anomaly episode.
 """
@@ -69,9 +69,16 @@ class GitHubClient:
             raise RuntimeError(f"GitHub API {method} {path} failed ({exc.code}): {detail}") from exc
 
 
-def decide_transport(report: dict[str, Any], current_report: dict[str, Any] | None, pr_state: str | None) -> str:
+def decide_transport(
+    report: dict[str, Any],
+    current_report: dict[str, Any] | None,
+    pr_state: str | None,
+    force_event: bool = False,
+) -> str:
     if report["status"] == "HEALTHY":
         return "RECOVER" if pr_state == "open" else "NOOP"
+    if force_event:
+        return "UPSERT"
     if (
         pr_state == "open"
         and current_report is not None
@@ -192,6 +199,11 @@ def main() -> int:
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", "tdoljyj/cross-memory-system"))
     parser.add_argument("--base-branch", default="main")
     parser.add_argument("--branch", default=TRANSPORT_BRANCH)
+    parser.add_argument(
+        "--force-event",
+        action="store_true",
+        help="Publish one commit update even when the current anomaly fingerprint is unchanged.",
+    )
     args = parser.parse_args()
 
     token = os.environ.get("GITHUB_TOKEN")
@@ -205,7 +217,8 @@ def main() -> int:
     client = GitHubClient(token, os.environ.get("GITHUB_API_URL", "https://api.github.com"))
     pr = get_pr(client, args.repository, owner, args.branch)
     current_report = read_current_report(client, args.repository, args.branch)
-    action = decide_transport(report, current_report, pr.get("state") if pr else None)
+    previous_pr_state = pr.get("state") if pr else None
+    action = decide_transport(report, current_report, previous_pr_state, args.force_event)
 
     if action == "NOOP":
         write_outputs(action, pr.get("number") if pr else None)
@@ -218,7 +231,19 @@ def main() -> int:
         print(json.dumps({"action": action, "pr_number": pr["number"]}))
         return 0
 
-    if current_report is None or current_report.get("fingerprint") != report.get("fingerprint"):
+    if pr is not None and pr["state"] != "open":
+        pr = client.request("PATCH", f"/repos/{args.repository}/pulls/{pr['number']}", {
+            "state": "open",
+            "body": PR_BODY,
+        })
+
+    should_commit = (
+        args.force_event
+        or previous_pr_state == "closed"
+        or current_report is None
+        or current_report.get("fingerprint") != report.get("fingerprint")
+    )
+    if should_commit:
         commit_report(client, args.repository, args.base_branch, args.branch, report)
 
     if pr is None:
@@ -230,11 +255,6 @@ def main() -> int:
             "draft": True,
         })
         pr = created
-    elif pr["state"] != "open":
-        pr = client.request("PATCH", f"/repos/{args.repository}/pulls/{pr['number']}", {
-            "state": "open",
-            "body": PR_BODY,
-        })
 
     ensure_label(client, args.repository)
     client.request("POST", f"/repos/{args.repository}/issues/{pr['number']}/labels", {
