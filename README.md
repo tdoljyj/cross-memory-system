@@ -101,8 +101,9 @@ Generation 2 — Formal Production
 | `development/` | 当前工程合同、治理、Schema、设计与只读投影 |
 | `tests/` / `evals/` | 自动化测试、Qualification 与回归 |
 | `memory/` | 单用户、版本化、只读 Repository Snapshot；不是在线 Canon |
-| `artifacts/` | 构建、验证、迁移与发布 Evidence / Snapshot |
+| [`artifacts/`](./artifacts/README.md) | 构建、验证、迁移与发布 Evidence / Snapshot；大型新原始证据遵守 Retention Boundary |
 | `docs/` | 仓库仍需保留的工程文档与导航 |
+| [`work/`](./work/README.md) | 历史执行 staging / recovery；不是当前任务队列或权威源，新临时工作默认不入库 |
 | `legacy/` | 历史兼容材料；不得作为当前入口或 Current Truth |
 
 `memory/` 的正式 Repository Snapshot 指针是 [`artifacts/clued-two-level-snapshots/current.json`](./artifacts/clued-two-level-snapshots/current.json)。它只表示**仓库当前发布的只读 Snapshot**，不代表在线 Canonical Current Truth。
