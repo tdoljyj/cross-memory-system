@@ -1,7 +1,7 @@
 {
   "schema": "clued.ci-health-report/v1",
   "repository": "tdoljyj/cross-memory-system",
-  "observed_at": "2026-09-23T03:46:30.178614Z",
+  "observed_at": "2026-09-23T04:23:12.434391Z",
   "status": "ANOMALY",
   "notify_model": true,
   "fingerprint": "847ff914f90e93d07cbeeb46492f9ad788bb62a7ecceac2b2e60e0283668e0ab",
@@ -45,46 +45,77 @@
   ],
   "observations": {
     "runners": {
+      "mode": "exact-label-heartbeat",
       "expected_runner_count": 4,
-      "registered_runner_count": 4,
-      "expected_runners": {
+      "registered_runner_count": null,
+      "routes": {
         "clued-ci-company-linux-01": {
-          "status": "online",
-          "busy": false,
-          "pool": "linux-docker-wsl2-v1"
+          "pool": "linux-docker-wsl2-v1",
+          "required_labels": [
+            "Linux",
+            "X64",
+            "cap-docker-linux",
+            "clued",
+            "pool-general",
+            "runtime-wsl2",
+            "self-hosted",
+            "site-company",
+            "trust-internal"
+          ],
+          "last_verified_at": null,
+          "slow_queued_probes": [],
+          "state": "awaiting-probe"
         },
         "clued-ci-company-win-01": {
-          "status": "online",
-          "busy": false,
-          "pool": "windows-general-v1"
+          "pool": "windows-general-v1",
+          "required_labels": [
+            "Windows",
+            "X64",
+            "cap-node24",
+            "cap-python312",
+            "clued",
+            "pool-general",
+            "self-hosted",
+            "site-company",
+            "trust-internal"
+          ],
+          "last_verified_at": null,
+          "slow_queued_probes": [],
+          "state": "awaiting-probe"
         },
         "clued-ci-home-linux-01": {
-          "status": "online",
-          "busy": false,
-          "pool": "linux-docker-wsl2-v1"
+          "pool": "linux-docker-wsl2-v1",
+          "required_labels": [
+            "Linux",
+            "X64",
+            "cap-docker-linux",
+            "clued",
+            "pool-general",
+            "runtime-wsl2",
+            "self-hosted",
+            "site-home",
+            "trust-internal"
+          ],
+          "last_verified_at": null,
+          "slow_queued_probes": [],
+          "state": "awaiting-probe"
         },
         "clued-ci-home-win-01": {
-          "status": "online",
-          "busy": false,
-          "pool": "windows-general-v1"
-        }
-      },
-      "capability_pools": {
-        "linux-docker-wsl2-v1": {
-          "online": [
-            "clued-ci-company-linux-01",
-            "clued-ci-home-linux-01"
+          "pool": "windows-general-v1",
+          "required_labels": [
+            "Windows",
+            "X64",
+            "cap-node24",
+            "cap-python312",
+            "clued",
+            "pool-general",
+            "self-hosted",
+            "site-home",
+            "trust-internal"
           ],
-          "busy": [],
-          "offline_or_missing": []
-        },
-        "windows-general-v1": {
-          "online": [
-            "clued-ci-company-win-01",
-            "clued-ci-home-win-01"
-          ],
-          "busy": [],
-          "offline_or_missing": []
+          "last_verified_at": null,
+          "slow_queued_probes": [],
+          "state": "awaiting-probe"
         }
       }
     },
