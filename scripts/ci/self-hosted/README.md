@@ -58,7 +58,7 @@ The monitor preserves the current alert thresholds:
 - each Windows and Linux capability pool must retain at least one online runner (a single offline redundant runner is recorded but is not itself a pool failure);
 - startup delay must exceed five minutes at least twice in the same capability pool during the 24-hour lookback before it becomes an anomaly.
 
-Startup latency is evaluated from `workflow_job` `in_progress` events. A normal job needs no history scan. Only a job already over the five-minute threshold causes the checker to read recent job history and test the two-occurrence rule.
+Startup latency is evaluated by the deterministic five-minute schedule. Each scheduled run reads at most the 20 most recent workflow runs and applies the two-occurrence rule; pull-request validation does not scan job history. GitHub exposes `workflow_job` as a webhook event but not as a GitHub Actions workflow trigger, so the schedule is the smallest repository-local transport that covers all workflows without adding external infrastructure.
 
 Threshold-reaching anomalies are published to the dedicated draft PR head `automation/clued-ci-health-event`, with title `[Clued CI Health] anomaly event transport` and label `ci-health-anomaly-event`. The evidence lives at `.github/ci-health-events/latest.json`. Identical anomaly fingerprints are a no-op; recovery closes the PR; a later anomaly reopens it. Transport commits use `[skip ci]` so the alert path does not add load to the unhealthy pool.
 

@@ -15,8 +15,6 @@ on:
         required: false
         default: true
         type: boolean
-  workflow_job:
-    types: [in_progress]
 
 permissions:
   actions: read
@@ -25,14 +23,11 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: clued-ci-health-${{ github.event_name }}-${{ github.event.workflow_job.id || github.event.pull_request.number || 'pool-snapshot' }}
+  group: clued-ci-health-${{ github.event_name }}-${{ github.event.pull_request.number || 'pool-snapshot' }}
   cancel-in-progress: false
 
 jobs:
   deterministic-health-check:
-    if: >-
-      github.event_name != 'workflow_job' ||
-      contains(github.event.workflow_job.labels, 'self-hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -47,7 +42,8 @@ jobs:
         run: >-
           python3 scripts/ci/self-hosted/ci_health.py
           --output "$RUNNER_TEMP/clued-ci-health.json"
-          ${{ github.event_name == 'workflow_dispatch' && inputs.scan_job_history && '--scan-job-history' || '' }}
+          --max-runs 20
+          ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scan_job_history)) && '--scan-job-history' || '' }}
 
       - name: Publish or recover the dedicated anomaly transport
         if: github.event_name != 'pull_request'
