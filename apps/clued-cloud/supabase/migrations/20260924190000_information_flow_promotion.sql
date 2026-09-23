@@ -142,7 +142,7 @@ create trigger native_write_markers_immutable before update
 -- timestamp that Supabase GoTrue carries. NULL when neither is present or the
 -- value is more than 60 seconds in the future, so callers fail closed.
 create function clued_private.native_auth_time_v1()
-returns timestamptz language plpgsql stable security definer set search_path='' as $$
+returns timestamptz language plpgsql volatile security definer set search_path='' as $$
 declare v_claims jsonb:=auth.jwt(); v_epoch numeric;
 begin
   if jsonb_typeof(v_claims->'auth_time')='number' then
@@ -159,7 +159,7 @@ begin
 end $$;
 
 create function clued_private.native_session_fresh_v1()
-returns boolean language sql stable security definer set search_path='' as $$
+returns boolean language sql volatile security definer set search_path='' as $$
   select coalesce(clued_private.native_auth_time_v1()>=clock_timestamp()-interval '15 minutes',false)
 $$;
 
@@ -560,7 +560,20 @@ declare v_receipt public.clued_audit_receipts%rowtype; v_tier text:=p_input->>'t
   v_code text;
 begin
   v_receipt:=clued_private.m1_begin_receipt(p_user_id,null,'candidate_promote',p_input,p_received_payload_hash);
-  if v_receipt.status<>'pending' then return coalesce(v_receipt.canonical_result,clued_private.m1_result_envelope(v_receipt))
+  if v_receipt.status<>'pending' then
+    -- Single use (D4) also covers an idempotency rejection: a live token
+    -- presented with a conflicting key or request hash is burned against the
+    -- new rejected Receipt. Replays of a stored result present a token that
+    -- the original attempt already consumed or burned.
+    if v_receipt.status='rejected' and v_receipt.error_code in ('IDEMPOTENCY_KEY_CONFLICT','REQUEST_HASH_MISMATCH')
+        and jsonb_typeof(p_input->'confirmation_token')='string' then
+      update clued_private.candidate_confirmation_tokens set consumed_at=clock_timestamp(),
+          consumed_receipt_id=v_receipt.id,consume_outcome='rejected'
+        where user_id=p_user_id
+          and token_hash=encode(extensions.digest(convert_to(p_input->>'confirmation_token','UTF8'),'sha256'),'hex')
+          and consumed_at is null and revoked_at is null;
+    end if;
+    return coalesce(v_receipt.canonical_result,clued_private.m1_result_envelope(v_receipt))
     ||jsonb_build_object('replayed',v_receipt.related_receipt_id is null); end if;
   begin
     -- Authority, record type, Evidence and confirmation flags are never

@@ -599,6 +599,17 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
       // Same key, different body: idempotency conflict.
       const keyConflict = await post(`/v1/intake/${e02Id}/promote`, { ...validInput, view_digest: 'f'.repeat(64) });
       assert.equal(keyConflict.body.error_code, 'IDEMPOTENCY_KEY_CONFLICT');
+      // A live token presented under a conflicting idempotency key is burned too (D4).
+      const burnId = (await submit([item('burn', 'fact')])).ids.item_burn;
+      const burnIssued = await post(`/v1/intake/${burnId}/confirmation`, { base_version: 1, authority: 'user_explicit' });
+      assert.equal(burnIssued.body.status, 'issued', JSON.stringify(burnIssued.body));
+      const burnConflict = await post(`/v1/intake/${burnId}/promote`,
+        { ...promoteInput('information', burnId, burnIssued.body), idempotency_key: validInput.idempotency_key });
+      assert.equal(burnConflict.body.error_code, 'IDEMPOTENCY_KEY_CONFLICT');
+      const burnedToken = await tokenRow(burnIssued.body.token_id);
+      assert.deepEqual([burnedToken.consume_outcome, burnedToken.consumed_receipt_id],
+        ['rejected', burnConflict.body.receipt_id]);
+      assert.equal((await candidate('information', burnId)).status, 'pending');
 
       // ---- E2E-15: direct PostgREST calls with a valid user JWT; each is a
       // rejected Receipt, the candidate stays pending, no Record changes.
