@@ -928,6 +928,45 @@ const tools = [
     },
   },
   {
+    name: "clued_mtpe_snapshot",
+    description:
+      "Read the deterministic Universal Intake candidate universe, system recommendations, Owner-selected focus, executability, and selected Frontier. Requires complete authorized source coverage.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "clued_mtpe_validate",
+    description:
+      "Validate Universal Intake coverage, priority/executability completeness, and successor bindings without mutating Canonical work.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "clued_mtpe_owner_pin",
+    description:
+      "Set or cancel the Owner-selected current focus for one eligible Universal Intake Task using explicit user confirmation, exact Task-version CAS, Event, Receipt, and projection invalidation.",
+    inputSchema: {
+      type: "object",
+      required: ["operation", "record_id", "base_version", "idempotency_key", "user_confirmed"],
+      properties: {
+        operation: { type: "string", enum: ["set", "cancel"] },
+        record_id: { type: "string", format: "uuid" },
+        base_version: { type: "integer", minimum: 1 },
+        idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
+        user_confirmed: { type: "boolean", const: true },
+        reason: { type: "string", minLength: 1, maxLength: 1000 },
+        request_hash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "clued_session_checkpoint",
     description:
       "Call before ending or handing off an authorized session. Atomically commits a canonical checkpoint using optimistic concurrency and returns an audit receipt or explicit conflict.",
@@ -1074,6 +1113,15 @@ export const publicToolPolicies = {
   clued_currentness_g6_gate: {
     scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
   },
+  clued_mtpe_snapshot: {
+    scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_mtpe_validate: {
+    scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_mtpe_owner_pin: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
   clued_session_checkpoint: {
     scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
   },
@@ -1169,6 +1217,9 @@ const rpcByTool = {
   clued_projection_rebuild: "clued_mcp_projection_rebuild",
   clued_full_global_reconcile: "clued_mcp_full_global_reconcile",
   clued_currentness_g6_gate: "clued_mcp_currentness_g6_gate",
+  clued_mtpe_snapshot: "clued_mcp_mtpe_snapshot",
+  clued_mtpe_validate: "clued_mcp_mtpe_validate",
+  clued_mtpe_owner_pin: "clued_mcp_mtpe_owner_pin",
   clued_session_checkpoint: "clued_mcp_commit_checkpoint",
   clued_search_context: "clued_mcp_search_context",
   clued_read_log: "clued_mcp_read_log",
