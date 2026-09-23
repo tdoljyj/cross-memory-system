@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -23,6 +24,8 @@ DEFAULT_MINIMUM_REPEATS = 2
 DEFAULT_LOOKBACK_HOURS = 24
 HEARTBEAT_WORKFLOW = "clued-ci-runner-heartbeat.yml"
 HEARTBEAT_PREFIX = "runner-heartbeat / "
+TRANSPORT_REF = "automation/clued-ci-health-event"
+TRANSPORT_REPORT_PATH = ".github/ci-health-events/latest.json"
 
 
 def parse_time(value: str | None) -> datetime | None:
@@ -461,6 +464,57 @@ def collect_workflow_jobs(
     return jobs
 
 
+def previous_delay_jobs(report: dict[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    delays = (
+        report.get("observations", {})
+        .get("startup_delays", {})
+        .get("slow_occurrences_by_pool", {})
+    )
+    for pool, entries in delays.items():
+        if pool == "windows-general-v1":
+            labels = ["self-hosted", "Windows", "X64", "clued", "pool-general", "trust-internal", "cap-python312"]
+        elif pool == "linux-docker-wsl2-v1":
+            labels = ["self-hosted", "Linux", "X64", "clued", "pool-general", "trust-internal", "cap-docker-linux"]
+        else:
+            continue
+        for entry in entries:
+            created = parse_time(entry.get("created_at"))
+            if created is None:
+                continue
+            started_at = entry.get("started_at")
+            if not started_at:
+                started_at = isoformat(created + timedelta(seconds=int(entry.get("delay_seconds") or 0)))
+            result.append({
+                "id": entry.get("job_id"),
+                "run_id": entry.get("run_id"),
+                "name": entry.get("name"),
+                "status": "completed",
+                "conclusion": "success",
+                "labels": labels,
+                "created_at": entry.get("created_at"),
+                "started_at": started_at,
+            })
+    return result
+
+
+def collect_previous_delay_jobs(client: GitHubClient, repository: str) -> list[dict[str, Any]]:
+    try:
+        response = client.get(
+            f"/repos/{repository}/contents/{TRANSPORT_REPORT_PATH}",
+            {"ref": TRANSPORT_REF},
+        )
+    except RuntimeError as exc:
+        if "failed (404)" in str(exc):
+            return []
+        raise
+    encoded = str(response.get("content") or "").replace("\n", "")
+    if not encoded:
+        return []
+    report = json.loads(base64.b64decode(encoded).decode("utf-8"))
+    return previous_delay_jobs(report)
+
+
 def load_event_job(event_path: str | None) -> dict[str, Any] | None:
     if not event_path:
         return None
@@ -558,6 +612,12 @@ def main() -> int:
             known_job_ids = {str(job.get("id")) for job in jobs}
             jobs.extend(
                 job for job in heartbeat_jobs
+                if str(job.get("id")) not in known_job_ids
+            )
+            known_job_ids.update(str(job.get("id")) for job in heartbeat_jobs)
+            prior_jobs = collect_previous_delay_jobs(client, args.repository)
+            jobs.extend(
+                job for job in prior_jobs
                 if str(job.get("id")) not in known_job_ids
             )
         if event_job is not None:

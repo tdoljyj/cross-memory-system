@@ -155,6 +155,16 @@ class CluedCiHealthTests(unittest.TestCase):
         self.assertEqual(report["status"], "ANOMALY")
         self.assertIn("REPEATED_STARTUP_DELAY", [item["code"] for item in report["anomalies"]])
 
+    def test_previous_report_preserves_delay_occurrences(self):
+        original = self.report(jobs=[
+            self.slow_job(1, "windows-general-v1"),
+            self.slow_job(2, "windows-general-v1"),
+        ])
+        restored_jobs = health.previous_delay_jobs(original)
+        restored = self.report(jobs=restored_jobs)
+        self.assertEqual(restored["status"], "ANOMALY")
+        self.assertIn("REPEATED_STARTUP_DELAY", [item["code"] for item in restored["anomalies"]])
+
     def test_queued_jobs_ignore_prefilled_started_at(self):
         jobs = [
             self.slow_job(1, "windows-general-v1"),
