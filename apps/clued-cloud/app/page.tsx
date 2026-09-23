@@ -31,7 +31,7 @@ type IssuedBinding = { token: string; mcpUrl: string; binding: Binding };
 type Project = {
   id: string;
   name: string;
-  certainty_status: "unconfirmed" | "confirmed";
+  recognition_confidence?: number | null;
   progress_status: "not_started" | "active" | "paused" | "completed" | "archived";
   summary: string | null;
   confidence: number;
@@ -143,18 +143,18 @@ const copy = {
     bindingError: "Clued could not update AI connections. The continuity database may still need its migration.",
     continuityProtocol: "Automatic protocol: restore → work events → checkpoint",
     projectsTitle: "Projects",
-    projectsCopy: "A mention starts as unconfirmed. Explicit intent or real work promotes the same project without losing its history.",
+    projectsCopy: "Projects are created directly when you add one or Clued recognizes real project work. Recognition confidence stays in the background and never blocks the project.",
     newProject: "Project name",
     newProjectPlaceholder: "Mention or add a project",
-    addUnconfirmed: "Add as unconfirmed",
+    addUnconfirmed: "Add project",
     addingProject: "Adding…",
-    unconfirmedProjects: "Unconfirmed projects",
-    confirmedProjects: "Confirmed projects",
-    noUnconfirmedProjects: "No unconfirmed projects.",
-    noConfirmedProjects: "No confirmed projects.",
-    confirmProject: "Confirm",
+    unconfirmedProjects: "Projects",
+    confirmedProjects: "Projects",
+    noUnconfirmedProjects: "No projects yet.",
+    noConfirmedProjects: "No projects yet.",
+    confirmProject: "Project ready",
     archiveProject: "Archive",
-    projectError: "The project change was not confirmed. Your input is kept; please try again.",
+    projectError: "The project change was not committed. Your input is kept; please try again.",
     progressNotStarted: "Not started",
     progressActive: "Active",
     progressPaused: "Paused",
@@ -164,7 +164,7 @@ const copy = {
     workViewsCopy: "Read global priority first, then project State, Tasks and Decisions. Log and Archive are evidence on demand; every view keeps the same canonical ID.",
     globalLevel: "Global",
     projectLevel: "Project",
-    chooseProject: "Choose a confirmed project",
+    chooseProject: "Choose a project",
     stateView: "State",
     taskView: "Tasks",
     decisionView: "Decisions",
@@ -285,18 +285,18 @@ const copy = {
     bindingError: "Clued 暂时无法更新 AI 连接；连续性数据库迁移可能尚未生效。",
     continuityProtocol: "自动协议：恢复 → 工作事件 → 检查点",
     projectsTitle: "项目",
-    projectsCopy: "提到项目时先进入未确定；明确意图或开始实质工作后，原项目会直接晋级，历史不会丢失。",
+    projectsCopy: "手动添加项目或 Clued 识别到真实项目工作时，项目会直接建立。识别置信度只作为后台元数据，不会阻止项目使用。",
     newProject: "项目名称",
     newProjectPlaceholder: "提到或添加一个项目",
-    addUnconfirmed: "加入未确定项目",
+    addUnconfirmed: "添加项目",
     addingProject: "正在添加…",
-    unconfirmedProjects: "未确定项目",
-    confirmedProjects: "已确定项目",
-    noUnconfirmedProjects: "暂无未确定项目。",
-    noConfirmedProjects: "暂无已确定项目。",
-    confirmProject: "确定",
+    unconfirmedProjects: "项目",
+    confirmedProjects: "项目",
+    noUnconfirmedProjects: "暂无项目。",
+    noConfirmedProjects: "暂无项目。",
+    confirmProject: "项目可用",
     archiveProject: "归档",
-    projectError: "项目变更尚未确认，已保留输入，请重试。",
+    projectError: "项目变更未提交成功，已保留输入，请重试。",
     progressNotStarted: "未开始",
     progressActive: "进行中",
     progressPaused: "已暂停",
@@ -306,7 +306,7 @@ const copy = {
     workViewsCopy: "先读全局优先级，再读项目状态、任务和决策；日志与归档仅按需作证据，每个视图保留同一个 canonical ID。",
     globalLevel: "全局",
     projectLevel: "项目",
-    chooseProject: "选择一个已确定项目",
+    chooseProject: "选择一个项目",
     stateView: "状态",
     taskView: "任务",
     decisionView: "决策",
@@ -740,10 +740,10 @@ export default function Home() {
         name,
         body: JSON.stringify({
           operation: "create",
-          project_schema_version: 1,
+          project_schema_version: 2,
           base_version: null,
           idempotency_key: crypto.randomUUID(),
-          mutation: { name, certainty_status: "unconfirmed", progress_status: "paused", aliases: [] },
+          mutation: { name, progress_status: "paused", aliases: [] },
         }),
       };
     }
@@ -780,7 +780,7 @@ export default function Home() {
         if (pendingProjectCreate.current !== pending) return;
         project = data.projects?.find((item) => item.id === projectId);
       }
-      if (!project?.id) throw new Error("project-create-not-confirmed");
+      if (!project?.id) throw new Error("project-create-missing");
       const created = project;
       setProjects((current) => [created, ...current.filter((item) => item.id !== created.id)]);
       pendingProjectCreate.current = null;
@@ -792,7 +792,7 @@ export default function Home() {
     }
   }
 
-  async function updateProject(project: Project, action: "confirm" | "set_progress" | "archive", extra: Record<string, unknown> = {}) {
+  async function updateProject(project: Project, action: "set_progress" | "archive", extra: Record<string, unknown> = {}) {
     if (!session) return;
     setProjectBusy(true);
     setProjectError(false);
@@ -800,11 +800,7 @@ export default function Home() {
       const terminal = project.progress_status === "completed" || project.progress_status === "archived";
       let operation: "update" | "complete" | "archive" | "restore";
       const mutation: Record<string, unknown> = {};
-      if (action === "confirm") {
-        if (terminal) throw new Error("project-restore-required");
-        operation = "update";
-        mutation.certainty_status = "confirmed";
-      } else if (action === "archive") {
+      if (action === "archive") {
         operation = "archive";
       } else {
         const progress = extra.progress_status;
@@ -831,7 +827,7 @@ export default function Home() {
         },
         body: JSON.stringify({
           operation,
-          project_schema_version: 1,
+          project_schema_version: 2,
           base_version: project.version,
           idempotency_key: crypto.randomUUID(),
           mutation,
@@ -925,8 +921,8 @@ export default function Home() {
     completed: t.progressCompleted,
     archived: t.progressArchived,
   };
-  const unconfirmedProjects = projects.filter((project) => project.certainty_status === "unconfirmed");
-  const confirmedProjects = projects.filter((project) => project.certainty_status === "confirmed");
+  const visibleProjects = projects;
+  const recordProjects = projects.filter((project) => project.progress_status !== "archived");
   const recordStatus = !session || view !== "account" || !recordsEnabled || (recordLevel === "project" && !recordProjectId)
     ? "idle" : recordList.key === recordSelectionKey && recordList.epoch === recordSelectionEpoch.current ? recordList.status : "loading";
   const visibleRecords = recordStatus === "ready" ? recordList.records : [];
@@ -1141,43 +1137,33 @@ export default function Home() {
                 </form>
                 {projectError && <p className="notice error">{t.projectError}</p>}
                 <div className="project-columns">
-                  {([
-                    ["unconfirmed", t.unconfirmedProjects, t.noUnconfirmedProjects, unconfirmedProjects],
-                    ["confirmed", t.confirmedProjects, t.noConfirmedProjects, confirmedProjects],
-                  ] as const).map(([certainty, title, empty, items]) => (
-                    <section className="project-group" key={certainty}>
-                      <h4>{title}<span>{items.length}</span></h4>
-                      {items.length === 0 ? <p className="empty-bindings">{empty}</p> : items.map((project) => (
-                        <article className="project-item" key={project.id}>
-                          <div>
-                            <strong>{project.name}</strong>
-                            <span>{projectProgressLabels[project.progress_status]}</span>
-                          </div>
-                          <div className="project-actions">
-                            {certainty === "unconfirmed" && ["active", "paused"].includes(project.progress_status) && (
-                              <button type="button" onClick={() => updateProject(project, "confirm")} disabled={projectBusy}>
-                                {t.confirmProject}
-                              </button>
-                            )}
-                            <select
-                              aria-label={`${project.name} progress`}
-                              value={project.progress_status}
-                              onChange={(event) => updateProject(project, "set_progress", { progress_status: event.target.value })}
-                              disabled={projectBusy}
-                            >
-                              {Object.entries(projectProgressLabels)
-                                .filter(([value]) => value !== "not_started" || value === project.progress_status)
-                                .filter(([value]) => !["completed", "archived"].includes(project.progress_status) || value === "active" || value === project.progress_status)
-                                .map(([value, label]) => <option value={value} key={value} disabled={value === "not_started"}>{label}</option>)}
-                            </select>
-                            {project.progress_status !== "archived" && <button type="button" onClick={() => updateProject(project, "archive")} disabled={projectBusy}>
-                              {t.archiveProject}
-                            </button>}
-                          </div>
-                        </article>
-                      ))}
-                    </section>
-                  ))}
+                  <section className="project-group">
+                    <h4>{t.unconfirmedProjects}<span>{visibleProjects.length}</span></h4>
+                    {visibleProjects.length === 0 ? <p className="empty-bindings">{t.noUnconfirmedProjects}</p> : visibleProjects.map((project) => (
+                      <article className="project-item" key={project.id}>
+                        <div>
+                          <strong>{project.name}</strong>
+                          <span>{projectProgressLabels[project.progress_status]}</span>
+                        </div>
+                        <div className="project-actions">
+                          <select
+                            aria-label={`${project.name} progress`}
+                            value={project.progress_status}
+                            onChange={(event) => updateProject(project, "set_progress", { progress_status: event.target.value })}
+                            disabled={projectBusy}
+                          >
+                            {Object.entries(projectProgressLabels)
+                              .filter(([value]) => value !== "not_started" || value === project.progress_status)
+                              .filter(([value]) => !["completed", "archived"].includes(project.progress_status) || value === "active" || value === project.progress_status)
+                              .map(([value, label]) => <option value={value} key={value} disabled={value === "not_started"}>{label}</option>)}
+                          </select>
+                          {project.progress_status !== "archived" && <button type="button" onClick={() => updateProject(project, "archive")} disabled={projectBusy}>
+                            {t.archiveProject}
+                          </button>}
+                        </div>
+                      </article>
+                    ))}
+                  </section>
                 </div>
               </div>
               {recordsEnabled && (
@@ -1208,7 +1194,7 @@ export default function Home() {
                       onChange={(event) => setRecordProjectId(event.target.value)}
                     >
                       <option value="">{t.chooseProject}</option>
-                      {confirmedProjects.map((project) => (
+                      {recordProjects.map((project) => (
                         <option value={project.id} key={project.id}>{project.name}</option>
                       ))}
                     </select>
