@@ -1587,7 +1587,7 @@
           },
           "scope": {
             "type": "string",
-            "pattern": "^(profile|global|project:[0-9a-fA-F-]{36})$"
+            "pattern": "^(profile|global|project:[0-9a-f-]{36})$"
           },
           "segment": {
             "type": "object",
@@ -1631,7 +1631,7 @@
         "properties": {
           "scope": {
             "type": "string",
-            "pattern": "^(profile|global|project:[0-9a-fA-F-]{36})$"
+            "pattern": "^(profile|global|project:[0-9a-f-]{36})$"
           },
           "tier": {
             "type": "string",
@@ -1713,7 +1713,7 @@
           },
           "scope": {
             "type": "string",
-            "pattern": "^(profile|global|project:[0-9a-fA-F-]{36})$"
+            "pattern": "^(profile|global|project:[0-9a-f-]{36})$"
           }
         },
         "additionalProperties": false
@@ -1760,7 +1760,7 @@
           },
           "scope": {
             "type": "string",
-            "pattern": "^(profile|global|project:[0-9a-fA-F-]{36})$"
+            "pattern": "^(profile|global|project:[0-9a-f-]{36})$"
           },
           "rule_id": {
             "type": "string",
@@ -1836,7 +1836,7 @@
         "properties": {
           "scope": {
             "type": "string",
-            "pattern": "^(profile|global|project:[0-9a-fA-F-]{36})$"
+            "pattern": "^(profile|global|project:[0-9a-f-]{36})$"
           },
           "policy_id": {
             "type": "string",

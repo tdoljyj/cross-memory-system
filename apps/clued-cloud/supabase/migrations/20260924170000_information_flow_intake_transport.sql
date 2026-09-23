@@ -16,12 +16,17 @@ returns boolean language sql stable security definer set search_path='' as $$
   select false
 $$;
 
--- Same ceiling as the Worker transport (MAX_JSON_BYTES), enforced again here
--- because the Binding entries are also reachable through PostgREST directly.
+-- Backstop for callers that reach the Binding entries through PostgREST
+-- directly. jsonb::text re-serializes (it adds ": " / ", " spacing and decodes
+-- escapes), so it is not the wire size the Worker's 1 MiB MAX_JSON_BYTES
+-- measures. Ordinary JSON re-serializes to at most 1.5x its wire size, so the
+-- 2 MiB ceiling does not reject an ordinary Worker-accepted request. Numbers in
+-- exponent notation expand to all their digits; such crafted bodies are
+-- rejected here before any Receipt is opened.
 create function clued_private.intake_payload_cap_v1(p_input jsonb)
 returns void language plpgsql immutable security definer set search_path='' as $$
 begin
-  if octet_length(convert_to(coalesce(p_input,'null'::jsonb)::text,'UTF8'))>1048576 then
+  if octet_length(convert_to(coalesce(p_input,'null'::jsonb)::text,'UTF8'))>2097152 then
     raise exception 'intake_payload_too_large' using errcode='54000';
   end if;
 end $$;
@@ -35,7 +40,7 @@ declare v_receipt public.clued_audit_receipts%rowtype; v_scope text:=p_input->>'
   v_rule text:=p_input->>'rule_id'; v_sources jsonb:=p_input->'sources';
   v_evidence jsonb:=coalesce(p_input->'evidence_ids','[]'::jsonb);
   v_kind text:=case when p_binding_id is null then 'native_ui' else 'agent_binding' end;
-  v_read_scopes text[]; v_src jsonb; v_rec public.clued_memories%rowtype; v_seen uuid[]:='{}';
+  v_read_scopes text[]; v_src jsonb; v_rec public.clued_memories%rowtype; v_seen uuid[]:='{}'; v_src_scope text;
   v_normalized jsonb:='[]'; v_ev uuid[]:='{}'; v_x jsonb; v_digest text; v_id uuid; v_refs jsonb;
   v_event_id text; v_result jsonb; v_error text; v_state text;
 begin
@@ -90,18 +95,25 @@ begin
       if (v_src->>'id')::uuid=any(v_seen) then raise exception 'invalid_sources' using errcode='22023'; end if;
       v_seen:=array_append(v_seen,(v_src->>'id')::uuid);
       select * into v_rec from public.clued_memories m where m.user_id=p_user_id and m.id=(v_src->>'id')::uuid;
-      if not found or (v_read_scopes is not null and not (v_rec.canonical_scope=any(v_read_scopes))) then
+      -- Legacy rows may lack canonical_scope; resolve it as the other readers
+      -- do. Every check below fails closed on NULL.
+      v_src_scope:=coalesce(v_rec.canonical_scope,
+        case when v_rec.project_id is not null then 'project:'||v_rec.project_id::text else v_rec.scope end);
+      if not found or v_src_scope is null
+        or (v_read_scopes is not null and (v_src_scope=any(v_read_scopes)) is not true) then
         raise exception 'knowledge_source_not_found' using errcode='P0002';
       end if;
-      if v_rec.version<>(v_src->>'version')::integer then
+      if v_rec.version is distinct from (v_src->>'version')::bigint then
         raise exception 'knowledge_source_version_mismatch' using errcode='40001';
       end if;
-      if (v_rec.record_type in ('state','task','decision')
-          and clued_private.record_currentness_fence(p_user_id,v_rec.id,v_read_scopes)<>'CURRENT')
-        or (v_rec.record_type not in ('state','task','decision') and v_rec.lifecycle_status<>'active') then
+      if v_rec.record_type in ('state','task','decision') then
+        if clued_private.record_currentness_fence(p_user_id,v_rec.id,v_read_scopes) is distinct from 'CURRENT' then
+          raise exception 'knowledge_source_not_current' using errcode='55000';
+        end if;
+      elsif v_rec.lifecycle_status is distinct from 'active' then
         raise exception 'knowledge_source_not_current' using errcode='55000';
       end if;
-      if not clued_private.record_human_confirmed_v1(p_user_id,v_rec.id,v_rec.version) then
+      if clued_private.record_human_confirmed_v1(p_user_id,v_rec.id,v_rec.version) is not true then
         raise exception 'knowledge_source_not_human_confirmed' using errcode='42501';
       end if;
       v_normalized:=v_normalized||jsonb_build_object('id',v_rec.id,'version',v_rec.version);
@@ -139,7 +151,9 @@ begin
   exception when others then
     get stacked diagnostics v_error=message_text,v_state=returned_sqlstate;
     v_result:=clued_private.m1_finish_receipt(v_receipt.id,
-      case when v_state in ('22023','23505','40001','42501','P0002','55000') then 'rejected' else 'failed' end,
+      -- 23514 covers m1_effective_project's project_redirect_cycle: bad input,
+      -- not a server fault.
+      case when v_state in ('22023','23505','23514','40001','42501','P0002','55000') then 'rejected' else 'failed' end,
       '[]','{}','{}','{}','{}',v_error);
     return v_result||jsonb_build_object('replayed',false);
   end;

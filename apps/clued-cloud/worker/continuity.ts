@@ -1785,7 +1785,9 @@ async function handleInformationFlowApi(request: Request, env: ContinuityEnv) {
       const value = url.searchParams.get(key);
       if (value === null) continue;
       if (key === "limit") {
-        if (!/^[1-9][0-9]{0,2}$/.test(value)) throw new HttpError(422, "limit must be an integer from 1 to 200.");
+        if (!/^[1-9][0-9]{0,2}$/.test(value) || Number(value) > 200) {
+          throw new HttpError(422, "limit must be an integer from 1 to 200.");
+        }
         input.limit = Number(value);
       } else {
         input[key] = value;
@@ -1820,10 +1822,11 @@ async function handleInformationFlowApi(request: Request, env: ContinuityEnv) {
     const result = await callUserRecordRpc(request, env, "clued_user_context_pack", input);
     return json(result, informationFlowHttpStatus(result), corsHeaders(request));
   }
-  return json({ error: "Method not allowed." }, 405, {
-    ...corsHeaders(request),
-    allow: "GET, POST, OPTIONS",
-  });
+  const known = url.pathname === "/v1/intake" ? "GET, POST, OPTIONS"
+    : url.pathname in routes || withdraw || url.pathname === "/v1/context/pack" ? "POST, OPTIONS" : null;
+  // Confirmation, promotion, policy and withdrawal routes arrive in later slices.
+  if (!known) return json({ error: "Not found." }, 404, corsHeaders(request));
+  return json({ error: "Method not allowed." }, 405, { ...corsHeaders(request), allow: known });
 }
 
 async function handleContinuityRequestInner(

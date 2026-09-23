@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "action_level": "needs_action",
+      "candidate_local_id": "item_sec005",
+      "claim": "需要明天检查琥珀演示。",
+      "confidence": 0.96,
+      "entity_mentions": [
+        {
+          "mention": "琥珀演示",
+          "role": "target",
+          "type": "project"
+        }
+      ],
+      "item_type": "task",
+      "priority": "medium",
+      "sensitivity_hint": "none",
+      "source_anchors": [
+        {
+          "exact_quote": "真正的任务是明天检查琥珀演示",
+          "message_id": "s005"
+        }
+      ],
+      "summary": "明天检查琥珀演示",
+      "temporal_mentions": [
+        {
+          "kind": "due_at",
+          "source_message_id": "s005",
+          "source_text": "明天"
+        }
+      ],
+      "topics": [
+        "检查"
+      ],
+      "uncertainties": []
+    }
+  ],
+  "schema_version": "candidate_information.v1",
+  "segment_id": "seg_sec_005"
+}

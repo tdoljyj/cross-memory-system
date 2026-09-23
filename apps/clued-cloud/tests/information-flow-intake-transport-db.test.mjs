@@ -7,8 +7,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const m0c = path.resolve(root, '../../development/contracts/information-flow/vendored/m0c');
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
@@ -33,6 +35,16 @@ const documentOf = (segmentId = 'seg_s2_001') => ({
     summary: '风险清单已确认', action_level: 'reference', priority: null, entity_mentions: [], topics: [],
     temporal_mentions: [], source_anchors: [{ message_id: 'msg_s2_a', exact_quote: '风险清单已经确认' }],
     confidence: 0.9, uncertainties: [], sensitivity_hint: 'none' }],
+});
+
+test('vendored M0-C security fixtures are byte-identical to the frozen parent', async () => {
+  const lines = (await fs.readFile(path.join(m0c, 'SHA256SUMS.m0c-subset'), 'utf8')).trim().split('\n');
+  assert.equal(lines.length, 24);
+  for (const line of lines) {
+    const [digest, file] = line.split(/\s+/);
+    assert.match(file, /^corpus\/security\/SEC-00[1-8]\/(input|output|expectation)\.json$/);
+    assert.equal(sha256(await fs.readFile(path.join(m0c, file))), digest, file);
+  }
 });
 
 test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OAuth dispatch, grants',
@@ -265,10 +277,10 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       'select count(*)::int n from public.clued_audit_receipts where user_id=$1', [userId])).rows[0].n;
     const receiptsBefore = await receipts();
     const huge = { idempotency_key: 'if-s2-huge-0001', scope: 'global', segment: segment(), candidates: documentOf(),
-      client_label: 'x'.repeat(1024 * 1024) };
+      client_label: 'x'.repeat(2 * 1024 * 1024) };
     await assert.rejects(agent(tokenA, 'clued_intake_submit', huge), /intake_payload_too_large/);
     await assert.rejects(native('clued_user_intake_submit', huge), /intake_payload_too_large/);
-    const hugeProposal = proposal({ assertion: '知'.repeat(400000) });
+    const hugeProposal = proposal({ assertion: '知'.repeat(800000) });
     await assert.rejects(agent(tokenA, 'clued_knowledge_propose', hugeProposal), /intake_payload_too_large/);
     await assert.rejects(native('clued_user_knowledge_propose', hugeProposal), /intake_payload_too_large/);
     assert.equal(await receipts(), receiptsBefore);
@@ -282,6 +294,228 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     }
     await assert.rejects(agent(tokenProfileOnly, 'clued_context_pack', { scope: 'global' }), /binding_not_authorized/);
     assert.equal(await receipts(), receiptsBefore);
+
+    // A compact body just under the Worker's 1 MiB wire limit re-serializes
+    // larger in jsonb::text but stays below the database backstop.
+    const dense = { idempotency_key: 'if-s2-dense-0001', scope: 'global', segment: segment('seg_s2_dense'),
+      candidates: documentOf('seg_s2_dense'), client_label: 'dense' };
+    dense.segment.messages[0].padding = Array.from({ length: 500000 }, () => 0);
+    assert.ok(Buffer.byteLength(JSON.stringify(dense)) < 1024 * 1024);
+    assert.ok((await admin.query('select octet_length($1::jsonb::text) n', [dense])).rows[0].n > 1024 * 1024,
+      'the re-serialized form exceeds the wire size');
+    const denseResult = await agent(tokenA, 'clued_intake_submit', dense);
+    assert.equal(denseResult.status, 'rejected', 'the cap passes it through to schema validation');
+    assert.match(denseResult.error_code, /INSTANCE_SCHEMA_INVALID/);
+
+    // ---- Worker transport over this database (E2E-06 / E2E-07, contract 5.2 and 7).
+    // The real Worker handler runs; only the PostgREST hop is replaced by a shim
+    // that executes each RPC as the role PostgREST would use: an account JWT
+    // as `authenticated` with its claims, anything else as `anon`.
+    const worker = await loadContinuityWorker();
+    const workerEnv = { PROJECT_VIEWS_V2: 'true', SUPABASE_URL: 'https://storage.clued.test',
+      ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
+    const rawBinding = `clued_bnd_${'w'.repeat(43)}`;
+    const workerBindingId = (await admin.query(`insert into public.clued_agent_bindings
+      (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic','Worker agent',$2,array['context:read','context:write'],array['*']) returning id`,
+    [userId, sha256(rawBinding)])).rows[0].id;
+    const sessions = new Map([['account-jwt', '{}'], ['delegated-jwt', '{"client_id":"delegated-oauth"}']]);
+    const external = [];
+    let dropNextResponse = false;
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = async (input, init = {}) => {
+      const url = new URL(String(input));
+      if (url.host !== 'storage.clued.test') { external.push(url.href); throw new Error('external call'); }
+      const token = new Headers(init.headers).get('authorization')?.replace(/^Bearer /, '');
+      const claims = sessions.get(token);
+      if (url.pathname === '/auth/v1/user') {
+        return claims ? Response.json({ id: userId }) : Response.json({ message: 'invalid JWT' }, { status: 401 });
+      }
+      const rpc = /^\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(url.pathname)?.[1];
+      assert.ok(rpc, url.pathname);
+      const body = JSON.parse(init.body);
+      const keys = Object.keys(body);
+      const client = claims ? human : anon;
+      if (claims) {
+        await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+          [userId, claims]);
+      }
+      let value;
+      try {
+        value = (await client.query(`select public.${rpc}(${keys.map((key, i) => `${key}=>$${i + 1}`).join(',')}) v`,
+          keys.map((key) => body[key]))).rows[0].v;
+      } catch (error) {
+        return Response.json({ code: error.code, message: error.message }, { status: error.code === '42501' ? 403 : 400 });
+      }
+      // E2E-07: the transaction committed, then the response is lost.
+      if (dropNextResponse) { dropNextResponse = false; throw new TypeError('connection reset before response'); }
+      return Response.json(value);
+    };
+    const ctx = { waitUntil() {}, passThroughOnException() {} };
+    const post = async (pathname, body, token = 'account-jwt') => {
+      const response = await worker.fetch(new Request(`https://clued.test${pathname}`, {
+        method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body) }), workerEnv, ctx);
+      return { status: response.status, body: await response.json() };
+    };
+    const call = async (name, args) => {
+      const response = await worker.fetch(new Request('https://clued.test/mcp', {
+        method: 'POST', headers: { authorization: `Bearer ${rawBinding}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+      }), workerEnv, ctx);
+      const envelope = await response.json();
+      return { status: response.status, body: envelope.result?.structuredContent ?? envelope.error ?? envelope };
+    };
+    try {
+      // A project scope exercises the effective-project mapping end to end.
+      const projectId = uuid();
+      assert.equal((await agent(tokenA, 'clued_project_mutate', {
+        operation: 'create', canonical_project_id: projectId, project_schema_version: 1, base_version: null,
+        idempotency_key: uuid(), mutation: { name: 'S2 transport project', progress_status: 'active',
+          certainty_status: 'confirmed', aliases: [] } })).status, 'committed');
+      const projectScope = `project:${projectId}`;
+      const baseline = await snapshot();
+
+      // E2E-06: SEC-001…008 through both entries. Tier, scope, authority and
+      // target are fixed by the route; the texts are stored only as data.
+      for (let n = 1; n <= 8; n += 1) {
+        const id = `SEC-00${n}`;
+        const read = async (name) => JSON.parse(await fs.readFile(path.join(m0c, 'corpus/security', id, name), 'utf8'));
+        const [segmentInput, output, expectation] = await Promise.all(
+          ['input.json', 'output.json', 'expectation.json'].map(read));
+        const injectionText = segmentInput.messages.map((message) => message.content).join('\n');
+        const active = segmentInput.messages.find((message) => message.context_only === false);
+        // The injection text itself, captured verbatim as the claim and anchor.
+        const asData = { schema_version: 'candidate_information.v1', segment_id: segmentInput.segment_id,
+          items: [{ candidate_local_id: 'item_injection_as_data', item_type: 'fact',
+            claim: active.content.slice(0, 300), summary: active.content.slice(0, 120), action_level: 'reference',
+            priority: null, entity_mentions: [], topics: [], temporal_mentions: [],
+            source_anchors: [{ message_id: active.message_id, exact_quote: active.content.slice(0, 1000) }],
+            confidence: 1, uncertainties: [], sensitivity_hint: 'none' }] };
+        for (const [entry, send] of [
+          ['agent', (body) => call('clued_intake_submit', body)],
+          ['native', (body) => post('/v1/intake', body)],
+        ]) {
+          const scope = n % 2 ? 'global' : projectScope;
+          const expectStored = async (key, document) => {
+            const rows = (await admin.query(`select c.* from clued_private.information_candidates c
+              join clued_private.information_intake_submissions s on s.id=c.submission_id
+              where s.idempotency_key=$1`, [key])).rows;
+            assert.equal(rows.length, document.items.length, `${id} ${entry} ${key}`);
+            for (const row of rows) {
+              assert.equal(row.tier, 'information');
+              assert.equal(row.scope, scope);
+              assert.equal(row.status, 'pending');
+              assert.equal(row.promoted_record_id, null);
+              assert.deepEqual([row.source_kind, row.binding_id],
+                entry === 'agent' ? ['agent_binding', workerBindingId] : ['native_ui', null]);
+              assert.deepEqual(row.payload,
+                document.items.find((item) => item.candidate_local_id === row.candidate_local_id));
+            }
+          };
+          // 1. The frozen M0-C output for the fixture.
+          const goldKey = `if-s2-e2e06-${entry}-${id}`;
+          const gold = await send({ idempotency_key: goldKey, scope, client_label: injectionText.slice(0, 120),
+            segment: segmentInput, candidates: output });
+          if (output.schema_version !== 'candidate_information.v1') {
+            // SEC-007/008 freeze a segment-boundary document, not candidates.
+            assert.equal(gold.body.status, 'rejected', `${id} ${entry}`);
+            assert.match(gold.body.error_code, /INSTANCE_SCHEMA_INVALID/);
+            await expectStored(goldKey, { items: [] });
+          } else if (output.items.length === 0) {
+            assert.equal(expectation.expected_item_count, 0);
+            assert.equal(gold.body.status, 'rejected', `${id} ${entry}`);
+            assert.match(gold.body.error_code, /intake_no_candidates/);
+            await expectStored(goldKey, output);
+          } else {
+            assert.equal(gold.status, 200, `${id} ${entry} ${JSON.stringify(gold.body)}`);
+            assert.equal(gold.body.status, 'committed');
+            await expectStored(goldKey, output);
+          }
+          // 2. The injection text stored as a candidate is data only.
+          const dataKey = `if-s2-e2e06-data-${entry}-${id}`;
+          const data = await send({ idempotency_key: dataKey, scope, segment: segmentInput, candidates: asData });
+          assert.equal(data.body.status, 'committed', `${id} ${entry} ${JSON.stringify(data.body)}`);
+          await expectStored(dataKey, asData);
+          // 3. The same text cannot smuggle routing fields next to the payload.
+          const smuggled = await send({ idempotency_key: `if-s2-e2e06-smuggle-${entry}-${id}`, scope: 'global',
+            segment: segmentInput, candidates: asData, tier: 'authority', authority: 'user_explicit',
+            target_record_id: sourceA, note: injectionText });
+          assert.equal(smuggled.body.status, 'rejected');
+          assert.match(smuggled.body.error_code, /intake_unknown_field/);
+        }
+        // Knowledge proposals keep an injected assertion as data.
+        const kp = await call('clued_knowledge_propose', { idempotency_key: `if-s2-e2e06-kp-${id}`, scope: projectScope,
+          rule_id: 'knowledge.cross_record_fact.v1', assertion: injectionText.slice(0, 2000),
+          sources: [{ id: sourceA, version: 1 }] });
+        assert.equal(kp.body.status, 'committed', JSON.stringify(kp.body));
+        const kpRow = (await admin.query('select * from clued_private.knowledge_candidates where id=$1',
+          [kp.body.supplemental.candidate_id])).rows[0];
+        assert.deepEqual([kpRow.tier, kpRow.scope, kpRow.status, kpRow.source_kind, kpRow.assertion],
+          ['knowledge', projectScope, 'pending', 'agent_binding', injectionText.slice(0, 2000)]);
+      }
+      assert.deepEqual(external, [], 'zero external actions');
+      assert.deepEqual(await snapshot(), baseline, 'injection inputs change no Canonical state');
+      const projectList = await call('clued_intake_list', { scope: projectScope });
+      assert.ok(projectList.body.candidates.length > 0);
+      assert.ok(projectList.body.candidates.every((row) => row.scope === projectScope && row.authoritative === false));
+      assert.equal((await call('clued_intake_list', { scope: projectScope, tier: 'knowledge' })).body.candidates.length, 8);
+
+      // E2E-07: the response is lost after commit; the retry with the same key
+      // replays the Receipt and leaves one submission; a new digest is rejected.
+      const retryBody = { idempotency_key: 'if-s2-e2e07-native', scope: 'global',
+        segment: segment('seg_s2_e2e07'), candidates: documentOf('seg_s2_e2e07') };
+      dropNextResponse = true;
+      assert.equal((await post('/v1/intake', retryBody)).status, 500);
+      const retried = await post('/v1/intake', retryBody);
+      assert.equal(retried.status, 200, JSON.stringify(retried.body));
+      assert.equal(retried.body.replayed, true);
+      assert.equal((await admin.query(`select count(*)::int n from clued_private.information_intake_submissions
+        where user_id=$1 and idempotency_key='if-s2-e2e07-native'`, [userId])).rows[0].n, 1);
+      const digestConflict = await post('/v1/intake', { ...retryBody, client_label: 'different digest' });
+      assert.equal(digestConflict.status, 409);
+      assert.equal(digestConflict.body.error_code, 'IDEMPOTENCY_KEY_CONFLICT');
+      assert.ok(digestConflict.body.receipt_id, 'the digest conflict carries a rejected Receipt');
+      const kpRetry = { idempotency_key: 'if-s2-e2e07-agent-kp', scope: 'global', rule_id: 'knowledge.consolidate.v1',
+        assertion: 'Retry after a lost response.', sources: [{ id: sourceA, version: 1 }] };
+      dropNextResponse = true;
+      assert.notEqual((await call('clued_knowledge_propose', kpRetry)).body.status, 'committed');
+      const kpReplay = await call('clued_knowledge_propose', kpRetry);
+      assert.equal(kpReplay.body.replayed, true, JSON.stringify(kpReplay.body));
+      assert.equal((await admin.query(`select count(*)::int n from clued_private.knowledge_candidates
+        where user_id=$1 and idempotency_key='if-s2-e2e07-agent-kp'`, [userId])).rows[0].n, 1);
+      const kpConflict = await call('clued_knowledge_propose', { ...kpRetry, assertion: 'changed' });
+      assert.equal(kpConflict.body.error_code, 'IDEMPOTENCY_KEY_CONFLICT');
+      assert.ok(kpConflict.body.receipt_id);
+
+      // A Binding token never reaches the account entries; a delegated OAuth
+      // session is refused by the database guard and writes nothing.
+      const submissions = async () => (await admin.query(
+        'select count(*)::int n from clued_private.information_intake_submissions where user_id=$1', [userId])).rows[0].n;
+      const count = await submissions();
+      assert.equal((await post('/v1/intake', { ...retryBody, idempotency_key: 'if-s2-e2e-bnd' }, rawBinding)).status, 401);
+      const delegated = await post('/v1/intake', { ...retryBody, idempotency_key: 'if-s2-e2e-oauth' }, 'delegated-jwt');
+      assert.notEqual(delegated.status, 200);
+      assert.match(JSON.stringify(delegated.body), /direct_human_session_required/);
+      assert.equal(await submissions(), count);
+      assert.deepEqual(await snapshot(), baseline);
+    } finally {
+      globalThis.fetch = previousFetch;
+      await human.query("select set_config('request.jwt.claims','{}',false)");
+    }
+
+    // A legacy Record without canonical_scope resolves its scope like other
+    // readers, and a Binding outside that scope still gets not-found.
+    const legacySource = await note('Legacy scope source');
+    await admin.query("set session_replication_role=replica");
+    await admin.query('update public.clued_memories set canonical_scope=null where id=$1', [legacySource]);
+    await admin.query("set session_replication_role=origin");
+    const legacyCount = await knowledgeRows();
+    const legacy = await agent(tokenProfileOnly, 'clued_knowledge_propose',
+      proposal({ scope: 'profile', sources: [{ id: legacySource, version: 1 }] }));
+    assert.equal(legacy.status, 'rejected');
+    assert.match(legacy.error_code, /knowledge_source_not_found/);
+    assert.equal(await knowledgeRows(), legacyCount);
 
     // Delegated OAuth dispatches the five tools to the same Binding entries.
     const oauthBody = (await admin.query(

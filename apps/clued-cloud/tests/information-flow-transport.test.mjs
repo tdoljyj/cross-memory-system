@@ -115,6 +115,7 @@ test('Native Information Flow routes reject Binding tokens before any RPC and va
     assert.equal((await worker.fetch(rest('/v1/intake?scope=global&authority=user_explicit', { method: 'GET' }),
       env, {})).status, 422);
     assert.equal((await worker.fetch(rest('/v1/intake?limit=0', { method: 'GET' }), env, {})).status, 422);
+    assert.equal((await worker.fetch(rest('/v1/intake?limit=201', { method: 'GET' }), env, {})).status, 422);
     assert.equal((await worker.fetch(rest('/v1/intake?scope=global&scope=profile', { method: 'GET' }), env, {})).status, 422);
     assert.equal((await worker.fetch(rest(`/v1/intake/${candidateId}/withdraw`, {
       body: { idempotency_key: 'rest-wd-0002', candidate_id: '55555555-5555-4555-8555-555555555555', base_version: 1 },
@@ -122,8 +123,11 @@ test('Native Information Flow routes reject Binding tokens before any RPC and va
     // Promotion, confirmation, policy and withdrawal routes are not served before their slices.
     for (const pathname of [`/v1/intake/${candidateId}/promote`, `/v1/intake/${candidateId}/confirmation`,
       `/v1/knowledge/candidates/${candidateId}/promote`]) {
-      assert.equal((await worker.fetch(rest(pathname, { body: {} }), env, {})).status, 405, pathname);
+      assert.equal((await worker.fetch(rest(pathname, { body: {} }), env, {})).status, 404, pathname);
     }
+    const wrongMethod = await worker.fetch(rest('/v1/knowledge/candidates', { method: 'GET' }), env, {});
+    assert.equal(wrongMethod.status, 405);
+    assert.equal(wrongMethod.headers.get('allow'), 'POST, OPTIONS');
     assert.equal((await worker.fetch(rest('/v1/intake', { body: {} }), { ...env, PROJECT_VIEWS_V2: 'false' }, {}))
       .status, 404);
     assert.equal(calls.length, 0, 'no storage RPC ran');

@@ -4,7 +4,8 @@
 // Candidate Knowledge and read packs; confirmation and promotion stay Native.
 
 const uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
-const scopeSchema = { type: "string", pattern: "^(profile|global|project:[0-9a-fA-F-]{36})$" } as const;
+// Lower-case only: the store accepts no other project scope spelling.
+const scopeSchema = { type: "string", pattern: "^(profile|global|project:[0-9a-f-]{36})$" } as const;
 const idempotencyKeySchema = { type: "string", minLength: 8, maxLength: 160 } as const;
 const requestHashSchema = { type: "string", pattern: "^[0-9a-f]{64}$" } as const;
 const candidateStatusSchema = {
