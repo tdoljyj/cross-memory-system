@@ -182,6 +182,42 @@ test("M0 emits profile/global/projects, canonical objects, raw Events, evidence,
   await validateSnapshot(snapshot);
 });
 
+test("Project schema v2 snapshot omits legacy certainty and preserves recognition metadata", async () => {
+  const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
+  source.schema_version = 2;
+  source.projects = source.projects.map((project) => {
+    const { certainty_status: _certainty, ...rest } = project;
+    return {
+      ...rest,
+      project_schema_version: 2,
+      recognition_metadata: {
+        confidence: 0.92,
+        reason: "fixture-recognized-project",
+        source_ref: "fixture",
+      },
+    };
+  });
+  const { snapshot, result } = await buildFixture(source, BUILD_EPOCH, "run_project_v2");
+  assert.equal(result.manifest.status, "ready");
+  await validateSnapshot(snapshot);
+  const projectObject = JSON.parse(await readFile(
+    path.join(snapshot, "memory", "objects", "projects", "00000000-0000-4000-8000-000000000001.json"),
+    "utf8",
+  ));
+  assert.equal(projectObject.data.project_schema_version, 2);
+  assert.equal(projectObject.data.recognition_metadata.confidence, 0.92);
+  assert.equal(Object.hasOwn(projectObject.data, "certainty_status"), false);
+});
+
+test("source schema v2 rejects a legacy Project in the active projects array", async () => {
+  const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
+  source.schema_version = 2;
+  await assert.rejects(
+    buildFixture(source, BUILD_EPOCH, "run_project_v2_legacy_reject"),
+    /Source schema v2 requires Project schema v2/,
+  );
+});
+
 test("fixed source, build epoch and migration run are byte deterministic", async () => {
   const first = await buildFixture();
   const second = await buildFixture();
