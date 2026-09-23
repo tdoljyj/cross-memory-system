@@ -44,6 +44,12 @@ class CluedCiHealthTests(unittest.TestCase):
             })
         return result
 
+    def test_transport_is_permanently_marked_do_not_merge(self):
+        self.assertEqual(transport.DO_NOT_MERGE_LABEL, "do-not-merge")
+        self.assertIn("DO NOT MERGE", transport.PR_BODY)
+        self.assertIn(transport.TRANSPORT_LABEL, transport.LABEL_SPECS)
+        self.assertIn(transport.DO_NOT_MERGE_LABEL, transport.LABEL_SPECS)
+
     def report(self, runners=None, jobs=None):
         return health.build_report(
             "tdoljyj/cross-memory-system",

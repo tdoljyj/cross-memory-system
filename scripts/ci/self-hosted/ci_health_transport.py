@@ -19,12 +19,26 @@ TRANSPORT_BRANCH = "automation/clued-ci-health-event"
 TRANSPORT_PATH = ".github/ci-health-events/latest.json"
 TRANSPORT_TITLE = "[Clued CI Health] anomaly event transport"
 TRANSPORT_LABEL = "ci-health-anomaly-event"
+DO_NOT_MERGE_LABEL = "do-not-merge"
+LABEL_SPECS = {
+    TRANSPORT_LABEL: {
+        "color": "b60205",
+        "description": "Machine-owned Clued CI health anomaly transport",
+    },
+    DO_NOT_MERGE_LABEL: {
+        "color": "b60205",
+        "description": "Long-lived machine transport; never merge",
+    },
+}
 PR_BODY = """<!-- clued-ci-health-event:v1 -->
-This draft pull request is a machine-owned anomaly transport for Clued CI Health.
+> [!CAUTION]
+> **DO NOT MERGE.** This is a long-lived, machine-owned event transport—not a code-change PR. Keep it open as Draft while the Clued CI Health event architecture is active. When the architecture is retired, close this PR and delete its branch without merging.
 
-Only commit-update activity on this exact pull request, head branch, title, and label may enter the ChatGPT Work analysis path. Ordinary pull requests, reviews, comments, merges, and close/recovery activity must be ignored. The structured evidence is stored at `.github/ci-health-events/latest.json` on the PR head.
+This draft pull request is the dedicated anomaly transport for Clued CI Health.
 
-Do not merge this PR. It is closed automatically when the anomaly clears and reopened on a later anomaly episode.
+Only commit-update activity on this exact pull request, head branch, title, and labels may enter the ChatGPT Work analysis path. Ordinary pull requests, reviews, comments, merges, and close/recovery activity must be ignored. Structured evidence is stored at `.github/ci-health-events/latest.json` on the PR head.
+
+The transport may update this PR for a new anomaly fingerprint. Never merge its payload into `main`.
 """
 
 
@@ -119,19 +133,19 @@ def read_current_report(client: GitHubClient, repository: str, branch: str) -> d
     return json.loads(raw.decode("utf-8"))
 
 
-def ensure_label(client: GitHubClient, repository: str) -> None:
-    encoded = urllib.parse.quote(TRANSPORT_LABEL, safe="")
-    existing = client.request(
-        "GET",
-        f"/repos/{repository}/labels/{encoded}",
-        allow_404=True,
-    )
-    if existing is None:
-        client.request("POST", f"/repos/{repository}/labels", {
-            "name": TRANSPORT_LABEL,
-            "color": "b60205",
-            "description": "Machine-owned Clued CI health anomaly transport",
-        })
+def ensure_labels(client: GitHubClient, repository: str) -> None:
+    for label, spec in LABEL_SPECS.items():
+        encoded = urllib.parse.quote(label, safe="")
+        existing = client.request(
+            "GET",
+            f"/repos/{repository}/labels/{encoded}",
+            allow_404=True,
+        )
+        if existing is None:
+            client.request("POST", f"/repos/{repository}/labels", {
+                "name": label,
+                **spec,
+            })
 
 
 def commit_report(
@@ -256,9 +270,9 @@ def main() -> int:
         })
         pr = created
 
-    ensure_label(client, args.repository)
+    ensure_labels(client, args.repository)
     client.request("POST", f"/repos/{args.repository}/issues/{pr['number']}/labels", {
-        "labels": [TRANSPORT_LABEL],
+        "labels": [TRANSPORT_LABEL, DO_NOT_MERGE_LABEL],
     })
     write_outputs(action, pr["number"])
     print(json.dumps({"action": action, "pr_number": pr["number"]}))
