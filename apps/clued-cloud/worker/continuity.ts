@@ -1412,6 +1412,54 @@ async function callRpc(
   });
 }
 
+// Storage raises insufficient_privilege (42501) both for authorization denials
+// and for requests whose shape or state breaks a contract rule. Hosts render an
+// HTTP 403 as "blocked" or "reconnect", which never helps with the latter, so
+// the listed rule rejections become tool errors that name the rule. Anything
+// not listed, including every authorization denial, keeps the HTTP 403.
+const REQUEST_RULE_REJECTIONS: Readonly<Record<string, string | null>> = {
+  lifecycle_action_cannot_edit_record_content:
+    "close and restore may only carry mutation.closure_summary and mutation.closed_reason; omit source_refs, source_unavailable_reason, observed_at, confidence and other content fields.",
+  resume_required: "Call clued_session_resume and retry with the returned session_token.",
+  resume_required_or_session_expired: "Call clued_session_resume and retry with the returned session_token.",
+  session_not_found: "Call clued_session_resume and retry with the returned session_token.",
+  authority_escalation_forbidden: null,
+  authorized_exact_annotation_source_required: null,
+  carrier_transition_receipt_invalid: null,
+  continuity_only_proof_required: null,
+  cross_project_next_task: null,
+  cross_project_state: null,
+  currentness_subject_required: null,
+  delegated_whole_account_export_not_supported: null,
+  development_owner_operation_not_supported: null,
+  feedback_submitter_required: null,
+  materialization_receipt_required: null,
+  membership_expansion_requires_new_invitation: null,
+  project_lifecycle_v2_confirmation_receipt_invalid: null,
+  project_not_active: null,
+  project_not_confirmed: null,
+  project_scope_mismatch: null,
+  terminal_receipt_not_verified: null,
+  terminal_restore_requires_explicit_authorization: null,
+};
+
+function requestRuleRejection(error: unknown) {
+  if (!(error instanceof HttpError) || error.status !== 403) return null;
+  const details = error.details as Record<string, unknown> | null | undefined;
+  if (details?.code !== "42501") return null;
+  if (!Object.prototype.hasOwnProperty.call(REQUEST_RULE_REJECTIONS, error.message)) return null;
+  const hint = REQUEST_RULE_REJECTIONS[error.message];
+  return {
+    status: "rejected",
+    error: {
+      code: error.message,
+      category: "request_rule",
+      message: "The request was refused by a Clued contract rule; reconnecting will not change the outcome.",
+      ...(hint ? { hint } : {}),
+    },
+  };
+}
+
 async function callTool(
   request: Request,
   env: ContinuityEnv,
@@ -1435,7 +1483,15 @@ async function callTool(
   if (typeof name !== "string" || !(name in rpcByTool)) {
     throw new HttpError(404, "Unknown Clued continuity tool.");
   }
-  const rawResult = await callRpc(request, env, name as keyof typeof rpcByTool, args);
+  let rawResult: unknown;
+  try {
+    rawResult = await callRpc(request, env, name as keyof typeof rpcByTool, args);
+  } catch (error) {
+    const rejection = requestRuleRejection(error);
+    if (!rejection) throw error;
+    return { content: [{ type: "text", text: JSON.stringify(rejection) }],
+      structuredContent: rejection, isError: true };
+  }
   const sanitized = name in contextRpcByTool ? sanitizeContextResult(rawResult) : sanitizeCluedResult(rawResult);
   const sourceCommit = typeof __CLUED_BUILD_SHA__ === "string" &&
     /^[0-9a-f]{40}$/.test(__CLUED_BUILD_SHA__) ? __CLUED_BUILD_SHA__ : null;
