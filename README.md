@@ -114,7 +114,7 @@ Generation 2 — Formal Production
 
 - **Agent / Coding Agent / 仓库维护** → [`AGENTS.md`](./AGENTS.md)
 - **Cloud / Runtime 开发** → [`apps/clued-cloud/README.md`](./apps/clued-cloud/README.md)
-- **Continuity Protocol** → [`protocol/continuity/v1/README.md`](./protocol/continuity/v1/README.md)
+- **跨厂商导入/导出协议（Future Capability）** → [`protocol/continuity/v1/README.md`](./protocol/continuity/v1/README.md)
 - **Clued Skill** → [`skills/README.md`](./skills/README.md)
 - **工程文档导航** → [`docs/README.md`](./docs/README.md)
 - **Repository Governance Projection** → [`development/projections/multitrack/CurrentGovernanceInventory.projection.md`](./development/projections/multitrack/CurrentGovernanceInventory.projection.md)
