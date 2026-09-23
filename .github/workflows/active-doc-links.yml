@@ -1,0 +1,41 @@
+name: active-doc-links
+
+on:
+  pull_request:
+    paths:
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'docs/README.md'
+      - 'skills/README.md'
+      - 'apps/clued-cloud/README.md'
+      - 'apps/clued-cloud/AGENTS.md'
+      - 'protocol/continuity/v1/README.md'
+      - 'scripts/ci/self-hosted/README.md'
+      - 'scripts/ci/check_active_doc_links.py'
+      - '.github/workflows/active-doc-links.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'docs/README.md'
+      - 'skills/README.md'
+      - 'apps/clued-cloud/README.md'
+      - 'apps/clued-cloud/AGENTS.md'
+      - 'protocol/continuity/v1/README.md'
+      - 'scripts/ci/self-hosted/README.md'
+      - 'scripts/ci/check_active_doc_links.py'
+      - '.github/workflows/active-doc-links.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  links:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 scripts/ci/check_active_doc_links.py
