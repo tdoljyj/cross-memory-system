@@ -149,6 +149,17 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       base_version: 1, mutation: { closure_summary: 'Archived fixture', closed_reason: 'Test' },
     });
     assert.equal(closed.status, 'committed', JSON.stringify(closed));
+    // An Agent-authored source (Binding write, even with user_confirmed) has no
+    // Native marker, so it never reads human_confirmed (contract 6.3).
+    const agentSource = uuid();
+    const agentWrite = (await anon.query('select public.clued_record_mutate($1,$2) v', [tokenA, {
+      operation: 'create', id: agentSource, record_type: 'note', record_schema_version: 1, lifecycle_status: 'active',
+      scope: 'global', idempotency_key: `if-s2-agent-note-${agentSource}`, authority: 'user_explicit', user_confirmed: true,
+      confidence: 1, confidence_reason: 'S2 fixture', source_refs: [], source_unavailable_reason: 'Synthetic fixture',
+      mutation: { title: 'Agent-authored source', content: 'Agent-authored source', type_fields: { note_kind: 'general' },
+        relations: {} },
+    }])).rows[0].v;
+    assert.equal(agentWrite.status, 'committed', JSON.stringify(agentWrite));
 
     const snapshot = async () => (await admin.query(`select
         (select count(*)::int from public.clued_memories where user_id=$1) memories,
@@ -167,21 +178,23 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       sources: [{ id: sourceA, version: 1 }, { id: sourceB, version: 1 }], ...overrides,
     });
 
-    // Before S3 no Record carries a positive Native marker, so every proposal
-    // fails closed with a rejected Receipt and no candidate row.
-    const unconfirmed = await agent(tokenA, 'clued_knowledge_propose', proposal());
+    // A source without a positive Native marker fails closed with a rejected
+    // Receipt and no candidate row, for either entry.
+    const unconfirmedSources = [{ id: sourceA, version: 1 }, { id: agentSource, version: 1 }];
+    const unconfirmed = await agent(tokenA, 'clued_knowledge_propose', proposal({ sources: unconfirmedSources }));
     assert.equal(unconfirmed.status, 'rejected', JSON.stringify(unconfirmed));
     assert.match(unconfirmed.error_code, /knowledge_source_not_human_confirmed/);
     assert.ok(unconfirmed.receipt_id);
-    const nativeUnconfirmed = await native('clued_user_knowledge_propose', proposal());
+    const nativeUnconfirmed = await native('clued_user_knowledge_propose', proposal({ sources: unconfirmedSources }));
     assert.match(nativeUnconfirmed.error_code, /knowledge_source_not_human_confirmed/);
     assert.equal(await knowledgeRows(), 0);
 
-    // Simulate S3's positive marker on this disposable database only, to cover
-    // the accepted path. S3 replaces this function with the marker lookup.
-    await admin.query(`create or replace function clued_private.record_human_confirmed_v1(
-      p_user_id uuid,p_record_id uuid,p_version bigint) returns boolean language sql stable
-      security definer set search_path='' as $$ select true $$`);
+    // Sources written through Native /v1/records carry the S3 marker, so the
+    // accepted path runs on real markers (no override).
+    for (const id of [sourceA, sourceB]) {
+      assert.equal((await admin.query('select clued_private.record_human_confirmed_v1($1,$2,1) v', [userId, id]))
+        .rows[0].v, true);
+    }
 
     // Agent proposal: route fixes tier/source; audit-only Event; no Canonical effect.
     const evidenceOwn = (await agent(tokenA, 'clued_intake_submit', { idempotency_key: 'if-s2-submit-0001',
