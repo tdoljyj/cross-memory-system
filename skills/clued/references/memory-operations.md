@@ -4,7 +4,7 @@ Use this workflow for personal and project context, including project records ma
 
 ## Read the necessary context
 
-After the applicable prerequisites and `clued_session_resume`, read authorized Global priority/registry, then the selected confirmed canonical Project's State, Task and Decision. Use Archive/Log views only when history is needed. Active Event truth carriers returned by current search/reconciliation remain current sources until their explicit lifecycle transition; checkpoint absorption does not retire them. Read profile facts only when identity or preference matters; generic tasks use no private memory.
+After the applicable prerequisites and `clued_session_resume`, read authorized Global priority/registry, then the selected effective canonical Project's State, Task and Decision. Use Archive/Log views only when history is needed. Active Event truth carriers returned by current search/reconciliation remain current sources until their explicit lifecycle transition; checkpoint absorption does not retire them. Read profile facts only when identity or preference matters; generic tasks use no private memory.
 
 For `clued_session_resume`, `context_key` is `global` (also the default) or `project:<canonical_project_id>`. A development resource UUID is a `context_id`, not a session key. When only that resource ID is known, resume `global` to obtain the authorized development projection, then select the exact returned `context_id`; this does not request additional permissions.
 
@@ -28,7 +28,7 @@ Read access, priority and `now` are separate from permission to act. At the actu
 
 ## Make authorized changes once
 
-A durable change requires explicit intent covering its scope; existing clear instructions can supply that intent. An OAuth write grant alone does not authorize recording every conversation. Project creation/confirmation and destructive actions require their actual explicit intent.
+A durable change requires explicit intent covering its scope; existing clear instructions can supply that intent. An OAuth write grant alone does not authorize recording every conversation. Explicit user creation and destructive Project actions require their actual explicit intent; automatic Project creation requires a qualified Project-recognition decision under the current product contract, not a bare mention. Legacy v1 confirmation remains compatibility behavior until its successor migration lands.
 
 Use current canonical operations:
 - Record create/update/close/restore/reclassification: `clued_record_mutate`.
