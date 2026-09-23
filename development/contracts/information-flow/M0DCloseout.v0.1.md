@@ -3,7 +3,7 @@
 Status: **PROPOSAL / NOT FROZEN / NO IMPLEMENTATION, DEPLOYMENT OR BUDGET AUTHORIZATION**
 Owner task: Canonical Task `45fb2ae7-e698-4ec0-8107-7b2a7fea4d35`
 Writer: AGENT_WRITTEN
-Canonical Event / Receipt: PENDING. A freeze Decision is written only after the Owner rules on §3 and the Fresh-Context review passes.
+Canonical Event / Receipt: PENDING. A freeze Decision is written only after the Owner rules on §3 and the Fresh-Context review passes. The Owner writes it through the Native account session, or an Agent writes it only after explicit in-conversation Owner confirmation that is quoted in the Decision. The implementing Agent never freezes on its own initiative.
 Supersedes: nothing. This extends the M0-D interface in the M0-C plan §24 and records the extra scope that Task 45fb2ae7 adds.
 
 ## 1. Purpose
@@ -47,20 +47,21 @@ Nothing is implemented until the Owner records the decisions below as a Canonica
 
 - **OD-1 — model evaluation path.**
   - (a) Separately authorize M0-C Window B: Provider, exact model ID, parameters, No-Training/Retention facts, and `max_total_usd`. Part A then waits for Primary Model PASS.
-  - (b) Go **model-free**. Part B runs with the M0-B extractor disabled. Candidate Information comes only from the deterministic capture in §5.1, and every claim excludes model quality. In Part A only A02 becomes `NOT_APPLICABLE_MODEL_FREE`; A01, A03 and A04 (parent regression, closure, seal) still have to pass. The closeout uses the model-free label in §10. Model extraction becomes a later successor gated by Window B.
+  - (b) Go **model-free**. Part B runs with the M0-B extractor disabled. Candidate Information comes only from the deterministic capture in §5.1, and every claim excludes model quality. A01, A03 and A04 (parent regression, closure, seal) still run, but A02 stays **unmet**: the frozen M0-C §21 precondition is not rewritten. MVP-0 therefore stays open, and the result is `PART_B_RUNTIME_ACCEPTED_MODEL_FREE` (§10). Only a separate, Receipt-backed Owner amendment of the M0-C plan could allow MVP-0 to close without Primary Model PASS. Model extraction becomes a later successor gated by Window B.
   - (c) Defer M0-D. The verdict is `DEFERRED`, never a pass.
 - **OD-2 — closeout shape.**
-  - Either close MVP-0 only on Part A + Part B together, or accept a Part-B-only closeout (§10 label) while Part A waits for OD-1(a).
+  - Either close MVP-0 only on Part A + Part B together, or accept a Part-B-only result (§10 label) while Part A waits for OD-1(a).
 - **OD-3 — candidate storage.**
   - Recommended: a new isolated private candidate store (§4.2).
   - The alternative, reusing M1 Records with `authority=inferred`, is **not eligible** until an admission guard exists and passes its own gate. Inferred `state`/`task` Records are `active` and currently advance Currentness, so candidates would leak into current truth.
 - **OD-4 — environment.**
   - Part B qualifies on local/embedded PostgreSQL with the full migration chain and non-production principals only.
   - Any clued-prod apply is a separate, explicitly authorized step with its own pre-apply backup and read-back. Until that read-back exists, verdicts carry `_LOCAL_QUALIFIED`.
+  - Task 45fb2ae7's criterion "truly connected to the Canonical Store" is **not** met by a `_LOCAL_QUALIFIED` verdict. The Task can be completed only after an authorized production apply and read-back, or if the Owner explicitly records that local qualification is accepted as closure.
 - **OD-5 — human confirmation for promotion.**
   - Today, M1 lets any Agent Binding write `authority=user_explicit` if it sends `user_confirmed=true`. The flag is self-attested (`20260825171129_clued_m1_runtime_contracts.sql:246,327`).
   - For Part B promotion this contract requires a **new** guard (§4.3.2). Whether the same guard should also tighten general M1 writes is a separate Owner decision; this contract does not change existing M1 behavior.
-  - Consequence while OD-5 stays open: a bound Agent can still write Authority Information directly through the public `clued_record_mutate`, bypassing Candidate, promotion and the token. This bypass is registered as known limitation `OPEN_BY_OD-5` (A03), recorded as observed by E2E-11, and every PASS label in §10 carries the qualifier "Agent authority confined only on the Information Flow path".
+  - Consequence while OD-5 stays open: a bound Agent can still write Authority Information directly through the public `clued_record_mutate`, bypassing Candidate, promotion and the token. It could also write a Decision that appears to accept a Context Policy; §6.1 therefore requires the Native token for policy acceptance. This bypass is registered as known limitation `OPEN_BY_OD-5` (A03), recorded as observed by E2E-11, and every PASS label in §10 carries the qualifier "Agent authority confined only on the Information Flow path".
 
 ## 4. Object model
 
@@ -69,9 +70,9 @@ Nothing is implemented until the Owner records the decisions below as a Canonica
 | Tier | Carrier | Authority | Can enter an MSCP? |
 |---|---|---|---|
 | Candidate Information | Candidate store row (§4.2) conforming to M0-A `candidate-information.v1` | none | Only when the Context Policy explicitly allows `candidate` and the item carries a visible `CANDIDATE` label. Default: no. |
-| Authority Information | Existing M1 Canonical Record created through the internal M1 mutation (§4.3) | `state/task/decision`: only with the §4.3.2 Native token (any authority). `note`: a Binding may self-promote as `observed` (with Evidence) or `inferred` (with `confidence`) | Yes. For `state/task/decision` this goes through the Currentness fence; other types go through the lineage check in §6.4. |
+| Authority Information | Existing M1 Canonical Record created through the M1 mutation wrapper (§4.3) | Only with the §4.3.2 Native token, for every record type; authority no higher than the Evidence supports | Yes. `state/task/decision` pass the Currentness fence; `note`/`profile_fact` must be `active` with no withdrawn `source_refs` Evidence (§6.4). |
 | Candidate Knowledge | Derived assertion over ≥1 Authority Information record (consolidation, dedup, cross-record fact); a store row with lineage | none | Same rule as Candidate Information |
-| Authority Knowledge | M1 `note` Record whose `type_fields.knowledge` carries lineage: source Record IDs + versions, rule id, Evidence IDs | Rule-derived knowledge is `inferred` with a `confidence`; `user_explicit` only through the §4.3.2 token | Yes, only while every lineage source still passes §6.4 |
+| Authority Knowledge | M1 `note` Record whose `type_fields.knowledge` carries lineage: source Record IDs + versions, rule id, Evidence IDs | Only with the §4.3.2 Native token; rule-derived knowledge is `inferred` with a `confidence` | Yes, only while every lineage source still passes §6.4 |
 
 - No new Canonical Record type and no second Canonical Store. The Authority tiers reuse the M1 mutation, Event and Receipt contract.
 - Currentness triggers only cover `state`, `task` and `decision` (`20260922092355_bug_20260922_002_currentness_core.sql:223`). So Authority Knowledge (`note`) is **not** Currentness-tracked, and its validity comes only from the lineage mechanism in §6.4 (slice S5).
@@ -96,17 +97,16 @@ Nothing is implemented until the Owner records the decisions below as a Canonica
 
 ### 4.3 Promotion rules
 
-1. **One definer RPC per promotion.** `clued_candidate_promote_v1` calls `clued_private.record_mutation_core` directly, with CAS/idempotency, `authority` no higher than the Evidence supports, and the candidate's `evidence_ids` as `source_refs`.
+1. **One definer RPC per promotion.** `clued_candidate_promote_v1` calls `clued_private.record_mutation_with_terminal_guard`, the same wrapper every public mutation uses. The wrapper takes `currentness_user_lock` before the Receipt and row locks (`20260922140000_context_v2_terminal_restore_guard.sql:46-53`). The call uses CAS/idempotency, `authority` no higher than the Evidence supports, and the candidate's `evidence_ids` as `source_refs`.
    - The candidate transition and the Record write commit in one transaction; a failure leaves the candidate `pending`.
-   - `record_mutation_core` and `clued_private.evidence_ingest_core` must not be re-implemented or forked.
-   - Provenance: the Receipt records both the originating binding (the candidate's `binding_id`, or `native_ui`) and the confirming principal. An Agent-originated candidate is never promoted as if it had no origin.
+   - Neither the wrapper, `record_mutation_core` nor `clued_private.evidence_ingest_core` may be re-implemented or forked.
+   - Provenance: the M1 Receipt holds a single `binding_id`, and a Native-confirmed promotion writes it as null. So a new additive side table, `clued_private.candidate_promotions`, keyed by Receipt ID, stores the originating principal (the candidate's `binding_id` or `native_ui`), the confirming principal and the token ID. An Agent-originated candidate is never promoted as if it had no origin.
 2. **Human confirmation guard (new; OD-5).** Promotion with `authority=user_explicit` is accepted only with a single-use confirmation token.
    - The Native account-session route issues the token.
    - The token is bound to user, candidate id, input digest and expiry.
    - A Binding principal is rejected for `user_explicit` promotion regardless of `user_confirmed`.
-   - Promotion into `state`, `task` or `decision` (types that advance Currentness) always requires the Native token, whatever the authority. A Binding can never turn its own capture into current truth without a human.
-   - A Binding may self-promote only into `note`, and only as `observed` (at least one Evidence ID in the candidate) or `inferred` (with a `confidence`). Anything else is rejected.
-3. **Knowledge promotion.** Candidate Knowledge → Authority Knowledge follows the same path. At promotion time, every lineage source must be CURRENT (`state/task/decision`) or pass the lineage check (other types).
+   - **Every** promotion requires the Native token, whatever the record type or authority. A Binding can submit candidates and read packs, but cannot promote anything. So Agent input never becomes Authority Information or Authority Knowledge without a human.
+3. **Knowledge promotion.** Candidate Knowledge → Authority Knowledge follows the same path, including the Native token. At promotion time, every lineage source must be CURRENT (`state/task/decision`) or pass the lineage check (other types).
 4. **Terminal transitions.** Reject, conflict and expiry are explicit transitions with a Receipt. A rejected Candidate is never silently re-proposed with the same digest.
 5. **Untrusted content is data.** Agent output, pasted text and tool output cannot choose their own tier, authority, scope or target Record ID.
 
@@ -117,19 +117,32 @@ Nothing is implemented until the Owner records the decisions below as a Canonica
 | Entry | Transport | Identity |
 |---|---|---|
 | Native UI | Account-session REST route (new `/v1/intake`) | Authenticated human; may obtain a confirmation token |
-| Third-party Agent | MCP tool `clued_intake_submit` on an Agent Binding with `context:write` | Binding principal; can never confirm |
+| Third-party Agent | MCP tool `clued_intake_submit` on an Agent Binding with `context:write` | Binding principal; can never confirm or promote |
+
+The complete new transport surface. B02 freezes the MCP baseline against exactly this list:
+
+| Surface | Native account session (REST) | Agent Binding (MCP) |
+|---|---|---|
+| Submit candidate | `POST /v1/intake` | `clued_intake_submit` |
+| List own candidates | `GET /v1/intake` | `clued_intake_list` (own binding's candidates only) |
+| Issue confirmation token + promote / reject | `POST /v1/intake/{id}/promote`, `POST /v1/intake/{id}/reject` | none |
+| Compile / read MSCP | `POST /v1/context/pack` | `clued_context_pack` |
+| Accept Context Policy | `POST /v1/context/policies` (token-confirmed) | none |
+
+`/v1/intake/*` and `/v1/context/policies` are added to the Worker post-commit refresh list (`mayInvalidateApprovedProjection`, `worker/continuity.ts:545-551`), so promotions that invalidate Global projections are rebuilt. `/mcp` is already on that list.
 
 Both entries call one definer RPC, `clued_intake_submit_v1`. It:
 
 - validates scope against the Binding's `context_keys`;
 - records Evidence by calling `clued_private.evidence_ingest_core` (hash + size), never a second implementation;
 - writes Candidate rows by deterministic capture only (OD-1b), using the envelope fields the caller supplied explicitly;
-- emits `extension:information_flow:candidate_submitted` with `audit_visibility=audit_only` and a set `event_schema_version`.
+- emits `extension:information_flow:candidate_submitted` with `audit_visibility=audit_only`, written only through `clued_private.append_event_core` / `m1_append_event_row`.
 
-Why that Event cannot shadow State/Task (`20260922092355_bug_20260922_002_currentness_core.sql`):
-- On the typed path (schema version set), an event type with no active `typed_event_currentness_registry` entry returns before any truth carrier is created (:170-174).
-- On the untyped path, the trigger returns when there is no session (:181), or because `event_currentness_dimensions` yields no dimensions for `extension:*` types (:90-99, :186).
-- Even a registered audit-only carrier would stay outside the `visibility='work_log'` shadow check. A regression test asserts the event type stays unregistered unless a reviewed change adds it.
+Why that Event cannot shadow State/Task:
+- `m1_append_event_row` stores `event_type='action'` and puts the extension name only in `canonical_event_type` (`20260825171129_clued_m1_runtime_contracts.sql:522-524`), with `event_schema_version=1`.
+- The typed branch then looks up the registry by `event_type='action'`. Registry keys must match `^extension:` (`20260922092355_bug_20260922_002_currentness_core.sql:68`), so the lookup never matches and the trigger returns before any truth carrier is created (:170-174).
+- Audit-only carriers would in any case stay outside the `visibility='work_log'` shadow check (:194, :372).
+- The regression test asserts both stored columns (`event_type`, `canonical_event_type`) **and** that no `event_truth_carriers` row exists for the Event. A regression test asserts the event type stays unregistered unless a reviewed change adds it.
 
 Model extraction (the M0-B prompts) attaches only after OD-1(a) reaches PASS, behind a separate flag and gate.
 
@@ -156,6 +169,8 @@ Model extraction (the M0-B prompts) attaches only after OD-1(a) reaches PASS, be
 Storage rules:
 
 - An accepted policy is stored in a `clued_private.context_policies` row. The row is referenced by the approving Canonical Decision ID and carries its digest.
+- Acceptance happens only through `POST /v1/context/policies` with a Native confirmation token. A Decision written by a Binding cannot activate a policy.
+- The default policy excludes any item whose promotion lacks a Native confirmation. (Under §4.3.2 no such Authority item can exist, but the Compiler still checks it.)
 - Policies are never Markdown or repository files.
 - Compiling without an accepted policy fails closed.
 
@@ -174,7 +189,7 @@ The Compiler builds on `scripts/phase2-qualification/minimum-context-compiler`, 
 `clued.context-pack.v1` contains:
 
 - policy id and digest;
-- the complete Source Envelope: for each item, Canonical ID, version, scope, type, tier, Evidence IDs/hashes, and currentness or lineage status;
+- the complete Source Envelope: for each item, Canonical ID, version, scope, type, tier, `writer_principal`, `human_confirmed`, Evidence IDs/hashes, and currentness or lineage status;
 - the compile-inputs digest;
 - token count and tokenizer id/status;
 - a pack digest;
@@ -193,19 +208,24 @@ Storage and determinism:
   - a scope or binding reduction;
   - a policy version change.
   A consumer that revalidates a stale manifest gets `STALE`/`PROJECTION_REQUIRED`. A pack is never an online fallback.
+- **Plain Authority notes** (`note`/`profile_fact` without `type_fields.knowledge`) are valid for compiles while `active` and not flagged `evidence_withdrawn`.
 - **Authority Knowledge lineage.** A new additive `clued_private.knowledge_lineage` table holds the lineage edges and a `lineage_stale` flag. A trigger sets that flag when a lineage source changes or is withdrawn. The trigger writes **only** to `knowledge_lineage`; it never modifies the Canonical `note` Record. The Record itself changes only through a Receipt-backed re-promotion or close via `record_mutation_core`. Lineage-stale knowledge is excluded from current compiles until then.
-- **Evidence withdrawal (new; S5).** `public.clued_evidence` has no withdrawal state today (`20260825171129_clued_m1_runtime_contracts.sql:75-89`). S5 adds an additive, Receipt-backed Evidence withdrawal transition, owner-only and via a definer RPC, that fans out to candidates, lineage and pack manifests. Evidence rows are never deleted.
+- **Evidence withdrawal (new; S5).** `public.clued_evidence` has no withdrawal state today (`20260825171129_clued_m1_runtime_contracts.sql:75-89`). S5 adds an additive, Receipt-backed Evidence withdrawal transition, owner-only and via a definer RPC. Evidence rows are never deleted. It fans out to:
+  - candidates;
+  - lineage;
+  - pack manifests;
+  - promoted Records whose `source_refs` cite the withdrawn Evidence. These get an `evidence_withdrawn` flag in the additive `clued_private.record_evidence_status` table; the Canonical Record itself is not modified. Flagged Records are excluded from current compiles until they are re-promoted or re-sourced through the M1 wrapper.
 
 ## 7. Runtime E2E scenarios (Part B)
 
-Every scenario runs against local PostgreSQL with the full migration chain and two real principals: an account session and an Agent Binding. Each scenario produces machine evidence.
+Every scenario runs through the **local Worker transport** (`/mcp` and the `/v1/*` routes in §5.1), backed by local PostgreSQL with the full migration chain. It uses two real principals with real tokens: an account session and an Agent Binding. Direct database calls do not count as passing evidence. Each scenario produces machine evidence.
 
 | ID | Scenario | Pass condition |
 |---|---|---|
 | E2E-01 | Native capture → Candidate → human token confirm → Authority Information → MSCP consumed by the third-party Agent | The pack contains the promoted Record at its exact version, with the Evidence hash |
-| E2E-02 | Agent capture → Candidate → Agent promotes with `authority=user_explicit` **and `user_confirmed=true`**; Agent promotes to `observed` with no Evidence; Agent promotes its own candidate into a `task` as `inferred` | All rejected with a Receipt; Candidate stays `pending`; a later Native token confirmation succeeds; a replayed or foreign token is rejected |
+| E2E-02 | Agent capture → Candidate → the Binding tries to promote: (i) via `POST /v1/intake/{id}/promote` with its Binding token and `authority=user_explicit` + `user_confirmed=true`; (ii) the same route to `note` as `observed`; (iii) a direct call to `clued_candidate_promote_v1` | All rejected with a Receipt; MCP exposes no promotion tool; Candidate stays `pending`; a later Native token confirmation succeeds; a replayed or foreign token is rejected |
 | E2E-03 | Candidate Knowledge over two Authority Records → promotion → one source updated | Its `knowledge_lineage` row is flagged `lineage_stale` (the Record itself is unchanged), dependent manifests become stale, and a recompile excludes it |
-| E2E-04 | Evidence withdrawal | The dependent Candidate, knowledge lineage and pack manifest are invalidated; the Evidence row still exists |
+| E2E-04 | Evidence withdrawal | The dependent Candidate, knowledge lineage, pack manifest and promoted Record (flagged `evidence_withdrawn`) are invalidated, and a recompile excludes them; the Evidence row and the Record body are unchanged |
 | E2E-05 | Binding scope reduction | The next compile omits the reduced scope, and the existing manifest fails revalidation |
 | E2E-06 | Injection payloads (SEC-001…008 texts) through both entries | Tier, scope, authority and target unchanged; zero external actions |
 | E2E-07 | Submit, kill the process before the response, retry with the same key; then retry with a different digest | A single Candidate; the digest conflict is rejected with a Receipt |
@@ -220,8 +240,8 @@ Every scenario runs against local PostgreSQL with the full migration chain and t
 
 | Gate | Requirement |
 |---|---|
-| M0D-A01 PARENTS | All three delivery roots re-verified on Node 24.19.0 through the adapter, and each parent's own entry exits zero |
-| M0D-A02 MODEL PRECONDITION | Passes **only** with Primary Model PASS (OD-1a). OD-1(b) makes A02 `NOT_APPLICABLE_MODEL_FREE` while A01/A03/A04 are still required; OD-1(c) makes it `DEFERRED` |
+| M0D-A01 PARENTS | All three delivery roots re-verified on Node 24.19.0 through the adapter, and each parent's own entry exits zero. Dependencies are installed outside each parent root, which the parents' README permits and M0-C verify requires |
+| M0D-A02 MODEL PRECONDITION | Passes **only** with Primary Model PASS (OD-1a). Under OD-1(b) it stays `UNMET` and MVP-0 stays open; under OD-1(c) it is `DEFERRED` |
 | M0D-A03 CLOSURE | Dependency locks, digests and the known-limitations register (including `OPEN_BY_OD-5`) are complete; zero parent bytes modified |
 | M0D-A04 SEAL | MVP-0 manifest + SHA256SUMS over the closeout evidence |
 
@@ -229,23 +249,23 @@ Every scenario runs against local PostgreSQL with the full migration chain and t
 
 | Gate | Requirement |
 |---|---|
-| M0D-B01 SCHEMA | Only additive migrations, covering every new table (`information_candidates`, `knowledge_candidates`, `context_policies`, `context_pack_manifests`, `knowledge_lineage`, Evidence withdrawal). On local PostgreSQL: RLS and grants verified, `db:lint`, `test:authorization:migrations`, and `test:production:release-gate` (the offline unit test only; `apps/clued-cloud/scripts/production-release-gate.mjs --pre-deploy` reads production and belongs to the separately authorized apply) |
-| M0D-B02 INTAKE | Both entries satisfy §5.2, including E2E-06 and E2E-07. The new MCP tool lands with a reviewed `mcp:tools:freeze` baseline diff showing exactly one added tool, approved in the S2 PR |
+| M0D-B01 SCHEMA | Only additive migrations, covering every new table (`information_candidates`, `knowledge_candidates`, `context_policies`, `context_pack_manifests`, `knowledge_lineage`, `candidate_promotions`, `record_evidence_status`, Evidence withdrawal). On local PostgreSQL: RLS and grants verified, `db:lint`, `test:authorization:migrations`, and `test:production:release-gate` (the offline unit test only; `apps/clued-cloud/scripts/production-release-gate.mjs --pre-deploy` reads production and belongs to the separately authorized apply) |
+| M0D-B02 INTAKE | Both entries satisfy §5.2, including E2E-06 and E2E-07. The `mcp:tools:freeze` baseline diff adds exactly the three MCP tools listed in §5.1 and changes nothing else, and is approved in the S2 PR. The REST routes match the same table |
 | M0D-B03 PROMOTION | §4.3 proven by E2E-01, 02 and 03, including the new confirmation guard; E2E-11 observation filed |
 | M0D-B04 CONTEXT | Policy, compiler and MSCP determinism and fail-closed cases; E2E-01 and 05; token counts labeled per §6.2 |
 | M0D-B05 INVALIDATION | E2E-03, 04 and 05, with the lineage and Evidence-withdrawal migrations |
 | M0D-B06 CONTINUITY | E2E-08 |
 | M0D-B07 REGRESSION | These pass: `test:context:v2`, `test:projection:refresh`, `test:mtpe:intake`, `db:test:m1`, `test:authorization:*`, `mcp:tools:verify` against the refrozen baseline, and the parent adapter. Environmental baseline failures are listed with proof that they fail identically on main |
 | M0D-B08 ISOLATION | Zero production writes, zero model/provider calls (unless OD-1a), zero cost |
-| M0D-B09 REVIEW | A Fresh-Context, read-only final review reports 0 BLOCKER / 0 MAJOR |
+| M0D-B09 REVIEW | A Fresh-Context, read-only final review reports 0 BLOCKER / 0 MAJOR. It runs in a session distinct from the implementer that has not seen earlier review rounds, and the review report records the input commit and file digests |
 
 ## 9. Implementation slices (after freeze)
 
 1. **S1** Candidate store migration, RPC and tests (B01).
-2. **S2** Intake entries: REST and MCP tool, plus the tools baseline refreeze (B02).
-3. **S3** Promotion RPC and the human confirmation token guard (B03).
+2. **S2** Intake entries: REST routes and MCP tools per §5.1, refresh-list update, and tools baseline refreeze (B02).
+3. **S3** Promotion RPC, `candidate_promotions` provenance table, and the confirmation token guard (B03).
 4. **S4** Migration for `context_policies` and `context_pack_manifests`, service Compiler (B01, B04).
-5. **S5** Lineage, Evidence withdrawal and invalidation fan-out (B05).
+5. **S5** Lineage, Evidence withdrawal, `record_evidence_status`, and invalidation fan-out (B05).
 6. **S6** E2E harness, continuity, regression and final review (B06–B09).
 
 Part A runs alongside the slices once OD-1 is recorded. Each slice is its own PR with CI and review, and no slice merges before its gate passes.
@@ -255,8 +275,8 @@ Part A runs alongside the slices once OD-1 is recorded. Each slice is its own PR
 `<env>` is `_LOCAL_QUALIFIED` until a separately authorized production apply has been read back. After that it is omitted. While OD-5 is open, every PASS label also carries the qualifier "Agent authority confined only on the Information Flow path".
 
 - `PASS / CLUED_INFORMATION_FLOW_M0D_MVP0_CLOSED<env>` — Part A + Part B, with Primary Model PASS.
-- `PASS / CLUED_INFORMATION_FLOW_M0D_MVP0_CLOSED_RUNTIME_WITHOUT_MODEL_EXTRACTION<env>` — OD-1(b): Part A A01/A03/A04 pass (A02 N/A) and Part B complete.
-- `PASS / CLUED_INFORMATION_FLOW_M0D_PART_B_RUNTIME_ACCEPTED<env>` — the OD-2 Part-B-only closeout; MVP-0 stays open.
+- `PASS / CLUED_INFORMATION_FLOW_M0D_PART_B_RUNTIME_ACCEPTED_MODEL_FREE<env>` — OD-1(b): Part B complete, and A01/A03/A04 pass; A02 unmet, so MVP-0 stays open.
+- `PASS / CLUED_INFORMATION_FLOW_M0D_PART_B_RUNTIME_ACCEPTED<env>` — the OD-2 Part-B-only result while Part A waits for OD-1(a); MVP-0 stays open.
 - `DEFERRED / CLUED_INFORMATION_FLOW_M0D_MODEL_PRECONDITION_UNMET` — OD-1(c).
 - `BLOCKED / CLUED_INFORMATION_FLOW_M0D_GAPS_FOUND`
 - `FAIL / CLUED_INFORMATION_FLOW_M0D_AUTHORITY_OR_ISOLATION_VIOLATION`
