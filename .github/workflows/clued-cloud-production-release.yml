@@ -7,6 +7,10 @@ on:
         description: Run the read-only production gate without deploying
         type: boolean
         default: false
+      backup_only:
+        description: Create an encrypted pre-migration database backup without deploying
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,20 +42,61 @@ jobs:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: |
           test -n "$CLUED_ATTESTATION_DATABASE_URL"
-      - run: npm ci --ignore-scripts
+      - name: Check production backup encryption credential
+        if: ${{ inputs.backup_only }}
+        env:
+          CLUED_PRODUCTION_BACKUP_KEY: ${{ secrets.CLUED_PRODUCTION_BACKUP_KEY }}
+        run: test -n "$CLUED_PRODUCTION_BACKUP_KEY"
+      - name: Create and verify encrypted pre-migration backup
+        if: ${{ inputs.backup_only }}
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
+          CLUED_PRODUCTION_BACKUP_KEY: ${{ secrets.CLUED_PRODUCTION_BACKUP_KEY }}
+        run: |
+          set -euo pipefail
+          evidence_dir=.sites-runtime/release-evidence
+          dump_path="$evidence_dir/clued-production-pre-migration.dump"
+          encrypted_path="$dump_path.enc"
+          verified_path="$dump_path.verified"
+          mkdir -p "$evidence_dir"
+          docker run --rm \
+            -e DATABASE_URL="$CLUED_ATTESTATION_DATABASE_URL" \
+            -v "$PWD/$evidence_dir:/backup" \
+            postgres:17-alpine \
+            sh -ceu 'pg_dump --dbname="$DATABASE_URL" --format=custom --no-owner --no-privileges --schema=public --schema=clued_private --schema=clued_watchdog --table=supabase_migrations.schema_migrations --file=/backup/clued-production-pre-migration.dump && pg_restore --list /backup/clued-production-pre-migration.dump >/dev/null'
+          dump_sha256=$(sha256sum "$dump_path" | cut -d' ' -f1)
+          dump_bytes=$(wc -c < "$dump_path" | tr -d ' ')
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+            -in "$dump_path" -out "$encrypted_path" \
+            -pass env:CLUED_PRODUCTION_BACKUP_KEY
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -in "$encrypted_path" -out "$verified_path" \
+            -pass env:CLUED_PRODUCTION_BACKUP_KEY
+          test "$(sha256sum "$verified_path" | cut -d' ' -f1)" = "$dump_sha256"
+          encrypted_sha256=$(sha256sum "$encrypted_path" | cut -d' ' -f1)
+          printf '{\n  "contract": "clued.production-pre-migration-backup.v1",\n  "source_commit": "%s",\n  "database_project": "clued-prod",\n  "scope": ["public", "clued_private", "clued_watchdog", "supabase_migrations.schema_migrations"],\n  "dump_sha256": "%s",\n  "dump_bytes": %s,\n  "encrypted_sha256": "%s",\n  "created_at": "%s"\n}\n' \
+            "$GITHUB_SHA" "$dump_sha256" "$dump_bytes" "$encrypted_sha256" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$evidence_dir/production-backup-manifest.json"
+          shred -u "$dump_path" "$verified_path"
+      - if: ${{ !inputs.backup_only }}
+        run: npm ci --ignore-scripts
       - name: Install embedded PostgreSQL ICU compatibility runtime
+        if: ${{ !inputs.backup_only }}
         run: |
           curl -fsSLo /tmp/libicu60.deb https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
           sudo dpkg -i /tmp/libicu60.deb
       - name: Verify projection and MTPE behavior
+        if: ${{ !inputs.backup_only }}
         run: |
           node --test tests/production-release-gate.test.mjs
           npm run test:projection:refresh
           npm run test:mtpe:intake
           npm run typecheck
       - name: Build exact Worker source
+        if: ${{ !inputs.backup_only }}
         run: npm run build
       - name: Block release unless database and Worker heartbeat are ready
+        if: ${{ !inputs.backup_only }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: |
@@ -59,7 +104,7 @@ jobs:
           node scripts/production-release-gate.mjs --pre-deploy \
             --evidence-out .sites-runtime/release-evidence/production-preflight.json
       - name: Check Cloudflare deployment credential
-        if: ${{ !inputs.preflight_only }}
+        if: ${{ !inputs.preflight_only && !inputs.backup_only }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
@@ -67,23 +112,23 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
       - name: Deploy Clued production Worker
-        if: ${{ !inputs.preflight_only }}
+        if: ${{ !inputs.preflight_only && !inputs.backup_only }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --config wrangler.production.jsonc --keep-vars
       - name: Record deployment completion time
-        if: ${{ !inputs.preflight_only }}
+        if: ${{ !inputs.preflight_only && !inputs.backup_only }}
         id: deployment_completion
         run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$GITHUB_OUTPUT"
       - name: Verify exact live commit and currentness transport
-        if: ${{ !inputs.preflight_only }}
+        if: ${{ !inputs.preflight_only && !inputs.backup_only }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: node scripts/verify-currentness-transport.mjs --production --evidence-out .sites-runtime/release-evidence/currentness-attestation.json
       - name: Verify projection currentness after deployment
-        if: ${{ !inputs.preflight_only }}
+        if: ${{ !inputs.preflight_only && !inputs.backup_only }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: |
@@ -105,5 +150,7 @@ jobs:
             apps/clued-cloud/.sites-runtime/release-evidence/production-preflight.json
             apps/clued-cloud/.sites-runtime/release-evidence/currentness-attestation.json
             apps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json
+            apps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc
+            apps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json
           if-no-files-found: ignore
           retention-days: 90

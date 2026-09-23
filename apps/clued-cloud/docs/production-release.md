@@ -11,12 +11,19 @@ build command, so a direct Wrangler deployment using that configuration fails
 when the database credential or required production state is missing.
 Use the workflow's `preflight_only` option to verify the live database and
 store evidence without needing a Cloudflare token or changing production.
+Use `backup_only` before an authorized schema migration when the target has no
+confirmed managed backup/PITR restore point. It creates a custom-format dump of
+the schemas affected by Clued migrations, validates the dump and encrypted
+round-trip, destroys runner plaintext, and uploads only the encrypted dump plus
+a checksum manifest.
 
 The workflow needs the existing `CLUED_ATTESTATION_DATABASE_URL` secret, a
 `CLUED_CLOUDFLARE_DEPLOY_TOKEN` secret scoped to edit the existing `clued-cloud`
 Worker, and the `CLUED_CLOUDFLARE_ACCOUNT_ID` repository variable. The token
 belongs in GitHub secret storage; never put it in Git, logs, an artifact, or a
-command argument. Keep the one-minute Cron and existing Worker bindings in
+command argument. Backup mode additionally requires a high-entropy
+`CLUED_PRODUCTION_BACKUP_KEY` GitHub secret; retain it while any encrypted
+backup artifact may be needed. Keep the one-minute Cron and existing Worker bindings in
 `wrangler.production.jsonc`; deployment uses `--keep-vars`.
 
 ## Database sequence

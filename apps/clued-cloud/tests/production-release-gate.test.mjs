@@ -14,6 +14,8 @@ const postBaselineMigrationFiles = migrationFiles.filter((name) =>
 const postBaselineMigrationSources = Object.fromEntries(await Promise.all(
   postBaselineMigrationFiles.map(async (name) => [name, await readFile(new URL(
     `../supabase/migrations/${name}`, import.meta.url), 'utf8')])));
+const productionWorkflow = await readFile(new URL(
+  '../../../.github/workflows/clued-cloud-production-release.yml', import.meta.url), 'utf8');
 const now = new Date('2026-09-23T05:12:49Z');
 
 function healthy() {
@@ -111,4 +113,16 @@ test('post-deploy readback requires a heartbeat from the newly deployed cycle', 
   assert.deepEqual(verifyReleaseState(state), [
     'worker_has_not_run_after_deployment',
   ]);
+});
+
+test('production backup mode encrypts and verifies the dump before removing plaintext', () => {
+  assert.match(productionWorkflow, /backup_only:/);
+  assert.match(productionWorkflow, /CLUED_PRODUCTION_BACKUP_KEY/);
+  assert.match(productionWorkflow, /pg_restore --list/);
+  assert.match(productionWorkflow, /openssl enc -aes-256-cbc -pbkdf2/);
+  assert.match(productionWorkflow, /openssl enc -d -aes-256-cbc -pbkdf2/);
+  assert.match(productionWorkflow, /shred -u \"\$dump_path\" \"\$verified_path\"/);
+  assert.match(productionWorkflow, /clued-production-pre-migration\.dump\.enc/);
+  assert.doesNotMatch(productionWorkflow,
+    /release-evidence\/clued-production-pre-migration\.dump\s*$/m);
 });
