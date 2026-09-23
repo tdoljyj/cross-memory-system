@@ -245,6 +245,8 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       where id=$1`, [(await agent(tokenOther, 'clued_intake_submit', { idempotency_key: 'if-s2-other-0001',
       scope: 'global', segment: segment(), candidates: documentOf() })).supplemental.submission_id])).rows[0].evidence_id;
     await rejected(tokenA, { evidence_ids: [foreignEvidence] }, /knowledge_evidence_not_found/);
+    // A Binding cites only Evidence it ingested itself, not another Binding's.
+    await rejected(tokenB, { evidence_ids: [ownEvidenceId] }, /knowledge_evidence_not_found/);
     // A Binding cites only Records its read authorization covers.
     await rejected(tokenProfileOnly, { scope: 'profile' }, /knowledge_source_not_found/);
     // context:write alone grants no read: an existing source reads as not found.
@@ -271,13 +273,17 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     assert.equal(nativeProposed.status, 'committed', JSON.stringify(nativeProposed));
     assert.deepEqual((await admin.query('select source_kind,binding_id from clued_private.knowledge_candidates where id=$1',
       [nativeProposed.supplemental.candidate_id])).rows[0], { source_kind: 'native_ui', binding_id: null });
+    // The Native owner may cite any of its own Evidence, including a Binding's.
+    const nativeWithEvidence = await native('clued_user_knowledge_propose',
+      proposal({ assertion: 'Native citation of Agent A evidence.', evidence_ids: [ownEvidenceId] }));
+    assert.equal(nativeWithEvidence.status, 'committed', JSON.stringify(nativeWithEvidence));
 
     // Knowledge listing: own Binding only; the owner sees all; never authoritative.
     const listA = await agent(tokenA, 'clued_intake_list', { scope: 'global', tier: 'knowledge' });
     assert.deepEqual(listA.candidates.map((item) => item.id), [proposed.supplemental.candidate_id]);
     assert.ok(listA.candidates.every((item) => item.authority === 'none' && item.authoritative === false));
     const listOwner = await nativeRead('clued_user_intake_list', { scope: 'global', tier: 'knowledge' });
-    assert.equal(listOwner.candidates.length, 3);
+    assert.equal(listOwner.candidates.length, 4);
     assert.equal((await nativeRead('clued_user_intake_list', { scope: 'global', tier: 'knowledge', status: 'rejected' }))
       .candidates.length, 1);
     assert.equal((await agent(tokenOther, 'clued_intake_list', { scope: 'global', tier: 'knowledge' })).candidates.length, 0);
@@ -305,8 +311,28 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     assert.equal(await receipts(), receiptsBefore);
     // The cap runs after Binding resolution: an unknown token never reaches it.
     await assert.rejects(agent(hash(), 'clued_knowledge_propose', hugeProposal), /binding/);
-    // Exponent-notation numbers are measured in stored form, not expanded.
-    assert.ok((await admin.query('select pg_column_size($1::jsonb) n', ['{"n":[1e100000]}'])).rows[0].n < 1024);
+    // Exponent-notation numbers are measured in stored form, not expanded: a
+    // body of about 10 MB as text but a few KB stored passes the cap and
+    // reaches schema validation (a text-length cap would refuse it).
+    const exponentBody = JSON.stringify({ idempotency_key: 'if-s2-exponent-0001', scope: 'global',
+      segment: { ...segment('seg_s2_exp'), padding: '__EXP__' }, candidates: documentOf('seg_s2_exp') })
+      .replace('"__EXP__"', `[${Array(100).fill('1e100000').join(',')}]`);
+    assert.ok((await admin.query('select pg_column_size($1::jsonb) n', [exponentBody])).rows[0].n < 64 * 1024);
+    const exponent = (await anon.query('select public.clued_intake_submit($1,$2::jsonb) v', [tokenA, exponentBody])).rows[0].v;
+    assert.equal(exponent.status, 'rejected');
+    assert.match(exponent.error_code, /INSTANCE_SCHEMA_INVALID/);
+    const receiptsAfterExponent = await receipts();
+    // A non-string scope is refused before the token is even looked up, so it
+    // is never rendered as text for an unauthenticated caller.
+    const numericScope = `{"idempotency_key":"if-s2-numscope-01","scope":[${Array(1000).fill('1e100000').join(',')}]}`;
+    for (const name of ['clued_intake_submit', 'clued_intake_list', 'clued_intake_withdraw',
+      'clued_knowledge_propose', 'clued_context_pack']) {
+      for (const token of [hash(), tokenA]) {
+        await assert.rejects(anon.query(`select public.${name}($1,$2::jsonb)`, [token, numericScope]),
+          /invalid_binding_or_context/, name);
+      }
+    }
+    await assert.rejects(agent(tokenA, 'clued_intake_list', { scope: 7 }), /invalid_binding_or_context/);
 
     // Context pack fails closed until S4 accepts a policy; it reads no source.
     for (const result of [await agent(tokenA, 'clued_context_pack', { scope: 'global' }),
@@ -316,7 +342,7 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
         execution_authorization: 'NOT_GRANTED', model_extraction: 'NOT_EVALUATED' });
     }
     await assert.rejects(agent(tokenProfileOnly, 'clued_context_pack', { scope: 'global' }), /binding_not_authorized/);
-    assert.equal(await receipts(), receiptsBefore);
+    assert.equal(await receipts(), receiptsAfterExponent, 'scope refusals and the pack open no Receipt');
 
     // A compact body just under the Worker's 1 MiB wire limit re-serializes
     // larger in jsonb::text but stays below the database backstop.
@@ -559,7 +585,7 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
 
     // Grants: new core functions are private; each entry is callable only by its own principal kind.
     for (const fn of ['record_human_confirmed_v1(uuid,uuid,bigint)', 'record_evidence_unflagged_v1(uuid,uuid,bigint)',
-      'intake_payload_cap_v1(jsonb)',
+      'intake_payload_cap_v1(jsonb)', 'intake_context_key_v1(jsonb)',
       'knowledge_propose_core_v1(uuid,uuid,jsonb,text)', 'intake_list_core_v1(uuid,uuid,jsonb)',
       'context_pack_core_v1(uuid,uuid,jsonb)']) {
       const grants = (await admin.query(`select has_function_privilege('anon',$1::regprocedure,'execute') anon,

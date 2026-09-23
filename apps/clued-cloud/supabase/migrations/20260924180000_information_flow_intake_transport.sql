@@ -24,6 +24,17 @@ returns boolean language sql stable security definer set search_path='' as $$
   select true
 $$;
 
+-- The Binding context key, derived before authentication without rendering
+-- the input: only a JSON string scope is passed through. A number, array,
+-- object, boolean or null scope becomes '' and resolve_binding refuses it, so
+-- an unauthenticated caller cannot make `->>` render a large value as text.
+create function clued_private.intake_context_key_v1(p_input jsonb)
+returns text language sql immutable security definer set search_path='' as $$
+  select case when p_input->'scope' is null then 'global'
+    when jsonb_typeof(p_input->'scope')='string' then p_input->>'scope'
+    else '' end
+$$;
+
 -- Backstop for callers that reach the entries through PostgREST directly; the
 -- Worker already caps the wire body at 1 MiB (MAX_JSON_BYTES). It measures the
 -- stored jsonb size, which never renders the value as text: exponent-notation
@@ -85,7 +96,10 @@ begin
         raise exception 'invalid_evidence_ids' using errcode='22023';
       end if;
       if (v_x#>>'{}')::uuid=any(v_ev) then raise exception 'invalid_evidence_ids' using errcode='22023'; end if;
-      if not exists(select 1 from public.clued_evidence e where e.user_id=p_user_id and e.id=(v_x#>>'{}')::uuid) then
+      -- A Binding may cite only Evidence it ingested itself; the Native owner
+      -- may cite any of its own Evidence.
+      if not exists(select 1 from public.clued_evidence e where e.user_id=p_user_id and e.id=(v_x#>>'{}')::uuid
+          and (p_binding_id is null or e.binding_id=p_binding_id)) then
         raise exception 'knowledge_evidence_not_found' using errcode='P0002';
       end if;
       v_ev:=array_append(v_ev,(v_x#>>'{}')::uuid);
@@ -251,6 +265,7 @@ begin
 end $$;
 
 revoke all on function clued_private.record_human_confirmed_v1(uuid,uuid,bigint),
+  clued_private.intake_context_key_v1(jsonb),
   clued_private.record_evidence_unflagged_v1(uuid,uuid,bigint),
   clued_private.intake_payload_cap_v1(jsonb),
   clued_private.knowledge_propose_core_v1(uuid,uuid,jsonb,text),
@@ -263,7 +278,7 @@ create or replace function public.clued_intake_submit(p_token_hash text,p_input 
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare b public.clued_agent_bindings%rowtype;
 begin
-  b:=clued_private.resolve_binding(p_token_hash,'context:write',coalesce(p_input->>'scope','global'));
+  b:=clued_private.resolve_binding(p_token_hash,'context:write',clued_private.intake_context_key_v1(p_input));
   perform clued_private.intake_payload_cap_v1(p_input);
   return clued_private.intake_submit_core_v1(b.user_id,b.id,p_input,
     clued_private.m1_sha256(jsonb_build_object('operation','intake_submit','payload',p_input)));
@@ -276,11 +291,29 @@ begin
   return clued_private.intake_submit_core_v1(v_owner,null,p_input,p_received_payload_hash);
 end $$;
 
+-- The S1 list and withdraw entries take the same context key; bodies are
+-- otherwise unchanged and CREATE OR REPLACE keeps their grants.
+create or replace function public.clued_intake_list(p_token_hash text,p_input jsonb default '{}'::jsonb)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare b public.clued_agent_bindings%rowtype;
+begin
+  b:=clued_private.resolve_binding(p_token_hash,'context:read',clued_private.intake_context_key_v1(p_input));
+  return clued_private.intake_list_core_v1(b.user_id,b.id,coalesce(p_input,'{}'::jsonb));
+end $$;
+create or replace function public.clued_intake_withdraw(p_token_hash text,p_input jsonb)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare b public.clued_agent_bindings%rowtype;
+begin
+  b:=clued_private.resolve_binding(p_token_hash,'context:write',clued_private.intake_context_key_v1(p_input));
+  return clued_private.intake_withdraw_core_v1(b.user_id,b.id,p_input,
+    clued_private.m1_sha256(jsonb_build_object('operation','intake_withdraw','payload',p_input)));
+end $$;
+
 create function public.clued_knowledge_propose(p_token_hash text,p_input jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare b public.clued_agent_bindings%rowtype;
 begin
-  b:=clued_private.resolve_binding(p_token_hash,'context:write',coalesce(p_input->>'scope','global'));
+  b:=clued_private.resolve_binding(p_token_hash,'context:write',clued_private.intake_context_key_v1(p_input));
   perform clued_private.intake_payload_cap_v1(p_input);
   return clued_private.knowledge_propose_core_v1(b.user_id,b.id,p_input,
     clued_private.m1_sha256(jsonb_build_object('operation','knowledge_propose','payload',p_input)));
@@ -289,7 +322,7 @@ create function public.clued_context_pack(p_token_hash text,p_input jsonb defaul
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare b public.clued_agent_bindings%rowtype;
 begin
-  b:=clued_private.resolve_binding(p_token_hash,'context:read',coalesce(p_input->>'scope','global'));
+  b:=clued_private.resolve_binding(p_token_hash,'context:read',clued_private.intake_context_key_v1(p_input));
   return clued_private.context_pack_core_v1(b.user_id,b.id,coalesce(p_input,'{}'::jsonb));
 end $$;
 revoke all on function public.clued_knowledge_propose(text,jsonb),public.clued_context_pack(text,jsonb)
