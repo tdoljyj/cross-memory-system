@@ -4,9 +4,14 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const url = process.env.MCP_ISOLATED_URL ?? "http://127.0.0.1:8787/mcp";
+const token = process.env.MCP_BEARER_TOKEN ?? `clued_bnd_${"a".repeat(43)}`;
+
 const response = await fetch(url, {
   method: "POST",
-  headers: { "content-type": "application/json" },
+  headers: {
+    "content-type": "application/json",
+    authorization: `Bearer ${token}`,
+  },
   body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
 });
 if (!response.ok) throw new Error(`tools/list failed with HTTP ${response.status}`);
