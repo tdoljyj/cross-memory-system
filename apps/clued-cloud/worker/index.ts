@@ -3,7 +3,7 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import {
   handleContinuityRequest,
-  runProjectionRefreshPipeline,
+  runProjectionRefreshScheduled,
   type ContinuityEnv,
 } from "./continuity";
 
@@ -62,7 +62,7 @@ const worker = {
     return legacyWorker.fetch(request, env, ctx);
   },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(runProjectionRefreshPipeline(env));
+    ctx.waitUntil(runProjectionRefreshScheduled(env));
   },
 };
 

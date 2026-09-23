@@ -272,6 +272,60 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
       where user_id=$1 and status='running'`, [userId])).rows[0].n, 0);
     assert.equal(writerId === builderId, false);
 
+    // The independent watchdog observes bounded status only, with its own role.
+    const runId = uuid();
+    await assert.rejects(() => rpc(writerToken, 'clued_mcp_projection_refresh_heartbeat',
+      { run_id: runId, phase: 'start' }), /projection_builder_not_authorized/);
+    await assert.rejects(() => rpc(limitedBuilderToken, 'clued_mcp_projection_refresh_heartbeat',
+      { run_id: runId, phase: 'start' }), /projection_builder_not_authorized/);
+    await assert.rejects(() => builder('clued_mcp_projection_refresh_heartbeat',
+      { run_id: runId }), /invalid_projection_heartbeat/);
+    assert.equal((await builder('clued_mcp_projection_refresh_heartbeat',
+      { run_id: runId, phase: 'start' })).status, 'recorded');
+    assert.equal((await builder('clued_mcp_projection_refresh_heartbeat',
+      { run_id: runId, phase: 'finish', result: 'idle' })).status, 'recorded');
+    await assert.rejects(() => anon.query(
+      'select clued_watchdog.projection_watchdog_snapshot()'), /permission denied/);
+    const watchdog = server.getPgClient();
+    clients.push(watchdog);
+    await watchdog.connect();
+    await watchdog.query('set role clued_projection_watchdog');
+    const healthySnapshot = (await watchdog.query(
+      'select clued_watchdog.projection_watchdog_snapshot() as snapshot')).rows[0].snapshot;
+    assert.equal(healthySnapshot.heartbeat.last_result, 'idle');
+    assert.deepEqual(healthySnapshot.projections.map((row) => row.projection_key),
+      ['global.__aggregate__', 'global.priority_frontier']);
+    assert.ok(healthySnapshot.projections.every((row) => row.source_digest_status === 'match'));
+    assert.ok(healthySnapshot.projections.every((row) => /^[0-9a-f]{64}$/.test(row.tenant_key)));
+    await admin.query(`insert into public.clued_audit_receipts
+      (user_id,binding_id,context_key,operation,object_type,object_id,version,metadata,created_at)
+      values($1,$2,'global','projection_refresh','projection','global.__aggregate__',999,
+        $3,now()+interval '1 hour')`,
+    [userId, builderId, { source_vector_digest: '0'.repeat(64) }]);
+    const exactReceiptSnapshot = (await watchdog.query(
+      'select clued_watchdog.projection_watchdog_snapshot() as snapshot')).rows[0].snapshot;
+    assert.equal(exactReceiptSnapshot.projections.find((row) =>
+      row.projection_key === 'global.__aggregate__').source_digest_status, 'match');
+    await admin.query(`update clued_private.projection_heads
+      set source_vector_digest=$1 where user_id=$2 and target_scope='global'
+      and projection_key='global.priority_frontier'`, ['0'.repeat(64), userId]);
+    const mismatchSnapshot = (await watchdog.query(
+      'select clued_watchdog.projection_watchdog_snapshot() as snapshot')).rows[0].snapshot;
+    assert.equal(mismatchSnapshot.projections.find((row) =>
+      row.projection_key === 'global.priority_frontier').source_digest_status, 'mismatch');
+    await admin.query(`update clued_private.projection_heads
+      set source_vector_digest=$1 where user_id=$2 and target_scope='global'
+      and projection_key='global.priority_frontier'`,
+    [(await admin.query(`select clued_private.currentness_hash(
+      clued_private.projection_source_snapshot($1)) as digest`, [userId])).rows[0].digest, userId]);
+    await assert.rejects(() => watchdog.query(
+      'select * from clued_private.projection_refresh_jobs'), /permission denied/);
+    assert.equal((await watchdog.query(`select has_schema_privilege(
+      'clued_private','USAGE') as allowed`)).rows[0].allowed, false);
+    await assert.rejects(() => watchdog.query(
+      "select public.clued_mcp_projection_refresh_claim('token', '{}'::jsonb)"),
+    /permission denied/);
+
     // A Builder granted only Frontier may rebuild Frontier, but must not
     // diagnose, retry, or terminate an expired Aggregate lease owned by a
     // different Builder for the same user.
@@ -283,6 +337,11 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
       mutation: { content: 'Task v6' },
     });
     assert.equal(v6.status, 'committed');
+    const staleSnapshot = (await watchdog.query(
+      'select clued_watchdog.projection_watchdog_snapshot() as snapshot')).rows[0].snapshot;
+    assert.ok(staleSnapshot.projections.every((row) =>
+      row.invalidation_revision > row.resolved_through_revision &&
+      row.source_digest_status === 'not_applicable'));
     await admin.query(`update clued_private.projection_refresh_jobs set next_attempt_at=now()
       where user_id=$1`, [userId]);
     const limitedClaim = await rpc(limitedBuilderToken, 'clued_mcp_projection_refresh_claim', {});
@@ -315,6 +374,10 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
     assert.equal((await admin.query(`select status from clued_private.projection_refresh_jobs
       where user_id=$1 and projection_key='global.__aggregate__'`, [userId])).rows[0].status,
     'retry_wait');
+    await admin.query('delete from public.clued_agent_bindings where id=$1', [builderId]);
+    assert.equal((await admin.query(`select builder_binding_id from
+      clued_private.projection_refresh_heartbeat where id=true`)).rows[0].builder_binding_id,
+    null, 'a diagnostic heartbeat must not block binding/account deletion');
   } finally {
     await Promise.allSettled(clients.map((client) => client.end()));
     await server.stop().catch(() => {});

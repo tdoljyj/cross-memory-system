@@ -413,7 +413,8 @@ function projectionBuilderToken(env: ContinuityEnv) {
 
 async function projectionBuilderRpc(
   env: ContinuityEnv,
-  rpc: "clued_mcp_projection_refresh_claim" | "clued_mcp_projection_refresh_apply",
+  rpc: "clued_mcp_projection_refresh_claim" | "clued_mcp_projection_refresh_apply" |
+    "clued_mcp_projection_refresh_heartbeat",
   input: Record<string, unknown>,
 ) {
   const token = projectionBuilderToken(env);
@@ -514,6 +515,32 @@ export async function runProjectionRefreshPipeline(
     return { status: "builder_protocol_error", processed, cas_conflicts: casConflicts };
   }
   return { status: "cycle_limit", processed, cas_conflicts: casConflicts };
+}
+
+export async function runProjectionRefreshScheduled(env: ContinuityEnv) {
+  if (!projectionBuilderToken(env)) return runProjectionRefreshPipeline(env);
+  const runId = crypto.randomUUID();
+  try {
+    await projectionBuilderRpc(env, "clued_mcp_projection_refresh_heartbeat", {
+      run_id: runId, phase: "start",
+    });
+  } catch {
+    console.error(JSON.stringify({ event: "projection_refresh_heartbeat_failure", phase: "start" }));
+  }
+  let result = "exception";
+  try {
+    const outcome = await runProjectionRefreshPipeline(env);
+    result = outcome.status;
+    return outcome;
+  } finally {
+    try {
+      await projectionBuilderRpc(env, "clued_mcp_projection_refresh_heartbeat", {
+        run_id: runId, phase: "finish", result,
+      });
+    } catch {
+      console.error(JSON.stringify({ event: "projection_refresh_heartbeat_failure", phase: "finish" }));
+    }
+  }
 }
 
 function mayInvalidateApprovedProjection(request: Request) {

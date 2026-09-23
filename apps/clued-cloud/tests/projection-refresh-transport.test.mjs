@@ -53,3 +53,29 @@ test("Projection refresh remains inert without the independent Builder binding",
     globalThis.fetch = previousFetch;
   }
 });
+
+test("scheduled refresh records a bounded Builder heartbeat around the cycle", async () => {
+  const worker = await loadContinuityWorker();
+  const previousFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const body = JSON.parse(init.body);
+    calls.push({ url: String(input), body });
+    return Response.json(calls.length === 2 ? { status: "idle" } : { status: "recorded" });
+  };
+  try {
+    assert.deepEqual(await worker.runProjectionRefreshScheduled(env), {
+      status: "idle", processed: 0, cas_conflicts: 0,
+    });
+    assert.deepEqual(calls.map((call) => new URL(call.url).pathname.split('/').at(-1)),
+      ["clued_mcp_projection_refresh_heartbeat", "clued_mcp_projection_refresh_claim",
+        "clued_mcp_projection_refresh_heartbeat"]);
+    assert.equal(calls[0].body.p_input.phase, "start");
+    assert.equal(calls[2].body.p_input.phase, "finish");
+    assert.equal(calls[2].body.p_input.result, "idle");
+    assert.equal(calls[0].body.p_input.run_id, calls[2].body.p_input.run_id);
+    assert.ok(calls.every(({ body }) => !JSON.stringify(body).includes(env.CLUED_PROJECTION_BUILDER_TOKEN)));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
