@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(48);
+select plan(52);
 
 select has_table('public','clued_evidence','Evidence has an independent canonical table');
 select has_view('public','clued_records_m1','M1 record projection exists');
@@ -23,16 +23,25 @@ select set_config('request.jwt.claims','{"sub":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa
 
 create temporary table m1_results(name text primary key,payload jsonb);
 insert into m1_results values ('project',public.clued_user_project_mutate(
-  '{"operation":"create","canonical_project_id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","project_schema_version":1,"base_version":null,"idempotency_key":"m1-project-create","mutation":{"name":"M1 Project","certainty_status":"confirmed","progress_status":"active","aliases":[]}}',repeat('1',64)));
+  '{"operation":"create","canonical_project_id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","project_schema_version":2,"base_version":null,"idempotency_key":"m1-project-create","mutation":{"name":"M1 Project","progress_status":"active","aliases":[],"recognition_metadata":{"confidence":0.9,"reason":"fixture","source_ref":"test"}}}',repeat('1',64)));
 select is((select payload->>'status' from m1_results where name='project'),'committed','Project create commits');
 select is((select count(*) from public.clued_context_events where canonical_event_type='project_created'),1::bigint,'Project create emits one Event');
+select ok(not ((select payload from m1_results where name='project')->'supplemental'->'project' ? 'certainty_status'),'Project v2 response does not expose legacy certainty');
+select is((select payload->'supplemental'->'project'->'recognition_metadata'->>'confidence' from m1_results where name='project'),'0.9','Project v2 response preserves recognition metadata');
 insert into m1_results values ('project_replay',public.clued_user_project_mutate(
-  '{"operation":"create","canonical_project_id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","project_schema_version":1,"base_version":null,"idempotency_key":"m1-project-create","mutation":{"name":"M1 Project","certainty_status":"confirmed","progress_status":"active","aliases":[]}}',repeat('1',64)));
+  '{"operation":"create","canonical_project_id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","project_schema_version":2,"base_version":null,"idempotency_key":"m1-project-create","mutation":{"name":"M1 Project","progress_status":"active","aliases":[],"recognition_metadata":{"confidence":0.9,"reason":"fixture","source_ref":"test"}}}',repeat('1',64)));
 select is((select payload->>'replayed' from m1_results where name='project_replay'),'true','Project exact replay returns original result');
 insert into m1_results values ('project_stale',public.clued_user_project_mutate(
-  '{"operation":"update","canonical_project_id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","project_schema_version":1,"base_version":99,"idempotency_key":"m1-project-stale","mutation":{"name":"Must not win"}}',repeat('c',64)));
+  '{"operation":"update","canonical_project_id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","project_schema_version":2,"base_version":99,"idempotency_key":"m1-project-stale","mutation":{"name":"Must not win"}}',repeat('c',64)));
 select is((select payload->>'status' from m1_results where name='project_stale'),'rejected','Project stale CAS is rejected');
 select is((select version from public.clued_projects where id='cccccccc-cccc-4ccc-8ccc-cccccccccccc'),1::bigint,'Project stale CAS preserves version');
+
+insert into m1_results values ('project_v1_new_reject',public.clued_user_project_mutate(
+  '{"operation":"create","canonical_project_id":"abababab-abab-4aba-8aba-abababababab","project_schema_version":1,"base_version":null,"idempotency_key":"m1-project-v1-new","mutation":{"name":"Legacy Shape","progress_status":"active","aliases":[]}}',repeat('d',64)));
+select is((select payload->>'status' from m1_results where name='project_v1_new_reject'),'rejected','New Project writes require schema v2');
+insert into m1_results values ('project_certainty_reject',public.clued_user_project_mutate(
+  '{"operation":"update","canonical_project_id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","project_schema_version":2,"base_version":1,"idempotency_key":"m1-project-certainty-retired","mutation":{"certainty_status":"confirmed"}}',repeat('e',64)));
+select is((select payload->>'status' from m1_results where name='project_certainty_reject'),'rejected','Schema v2 rejects certainty_status as retired input');
 
 insert into m1_results values ('evidence',public.clued_user_evidence_ingest(
   '{"evidence_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","evidence_schema_version":1,"evidence_type":"test_output","storage_ref":"protected://m1/test","content_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mime_type":"text/plain","size_bytes":4,"captured_at":null,"idempotency_key":"m1-evidence-ingest"}',repeat('2',64)));
