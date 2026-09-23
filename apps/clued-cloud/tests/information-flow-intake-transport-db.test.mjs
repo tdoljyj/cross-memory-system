@@ -314,7 +314,7 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     // Exponent-notation numbers are small when stored but render to all their
     // digits in the M1 request hash; the cap refuses outsized magnitudes
     // before any render or Receipt.
-    const exponentBody = JSON.stringify({ idempotency_key: 'if-s2-exponent-0001', scope: 'global',
+    const exponentBody = JSON.stringify({ idempotency_key: 'if-s2-submit-0101', scope: 'global',
       segment: { ...segment('seg_s2_exp'), padding: '__EXP__' }, candidates: documentOf('seg_s2_exp') })
       .replace('"__EXP__"', `[${Array(100).fill('1e100000').join(',')}]`);
     assert.ok((await admin.query('select pg_column_size($1::jsonb) n', [exponentBody])).rows[0].n < 64 * 1024);
@@ -326,7 +326,7 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     const receiptsAfterExponent = await receipts();
     // A non-string scope is refused before the token is even looked up, so it
     // is never rendered as text for an unauthenticated caller.
-    const numericScope = `{"idempotency_key":"if-s2-numscope-01","scope":[${Array(1000).fill('1e100000').join(',')}]}`;
+    const numericScope = `{"idempotency_key":"if-s2-submit-0102","scope":[${Array(1000).fill('1e100000').join(',')}]}`;
     for (const name of ['clued_intake_submit', 'clued_intake_list', 'clued_intake_withdraw',
       'clued_knowledge_propose', 'clued_context_pack']) {
       for (const token of [hash(), tokenA]) {
@@ -338,7 +338,7 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     // A short non-string scope that S1's ->> would have turned into a key.
     for (const name of ['clued_intake_submit', 'clued_intake_list', 'clued_intake_withdraw',
       'clued_knowledge_propose', 'clued_context_pack']) {
-      await assert.rejects(agent(tokenA, name, { idempotency_key: 'if-s2-arrscope-01', scope: ['global'] }),
+      await assert.rejects(agent(tokenA, name, { idempotency_key: 'if-s2-submit-0103', scope: ['global'] }),
         /invalid_binding_or_context/, name);
     }
     // A JSON null scope keeps S1's meaning: the global default.
