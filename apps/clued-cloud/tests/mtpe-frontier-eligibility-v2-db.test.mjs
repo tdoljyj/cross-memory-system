@@ -252,17 +252,45 @@ test('frontier eligibility v2 keeps backlog / later / 暂缓 / do-not-recommend 
     assert.equal(emptyValidation.frontier_status, 'NO_ELIGIBLE_CANDIDATE');
     assert.equal(emptyValidation.frontier_projection_drift, 0);
 
-    // 5. The in-database regression suite passes and leaves no fixtures behind.
+    // 5. The in-database regression suite passes and leaves no side effects behind.
+    const sideEffects = async () => (await admin.query(`select
+        (select jsonb_agg(to_jsonb(i) order by projection_key)
+          from clued_private.projection_invalidation_heads i where user_id=$1) heads,
+        (select jsonb_agg(jsonb_build_object('key',projection_key,'status',status)
+          order by projection_key) from clued_private.projection_refresh_jobs where user_id=$1) jobs,
+        (select jsonb_agg(to_jsonb(f)) from clued_private.mtpe_owner_focus f where user_id=$1) focus,
+        (select count(*) from public.clued_memories where user_id=$1) records`, [userId])).rows[0];
+    const beforeSuite = await sideEffects();
     const suite = (await admin.query('select clued_private.mtpe_frontier_regression_suite($1) value',
       [userId])).rows[0].value;
     assert.equal(suite.status, 'pass', JSON.stringify(suite));
     assert.equal(suite.failures, 0);
     assert.equal(suite.classification.length, 14);
     assert.ok(suite.end_to_end.length >= 10);
-    assert.equal((await admin.query(`select count(*)::int n from public.clued_memories
-      where user_id=$1 and title like 'MTPE-REG%'`, [userId])).rows[0].n, 0);
-    await assert.rejects(() => anon.query(
-      'select clued_private.mtpe_frontier_regression_suite($1)', [userId]));
+    assert.deepEqual(await sideEffects(), beforeSuite);
+    for (const role of ['anon', 'authenticated']) {
+      for (const signature of ['clued_private.mtpe_frontier_regression_suite(uuid)',
+        'clued_private.mtpe_recommendation_hold(jsonb,text)']) {
+        assert.equal((await admin.query('select has_function_privilege($1,$2,\'execute\') ok',
+          [role, signature])).rows[0].ok, false, `${role} ${signature}`);
+      }
+    }
+
+    // 6. A held Owner Pin can still be cancelled, and the explicit empty frontier
+    //    stops being current as soon as an eligible Task appears.
+    assert.equal((await pin('cancel', pinnedId, 2)).status, 'committed');
+    assert.equal((await snapshot()).owner_selected_current_focus, null);
+    const revivedId = await createTask('Newly eligible task', { execution_bucket: 'next' });
+    const revived = await snapshot();
+    assert.equal(revived.frontier_status, 'SELECTED');
+    assert.equal(revived.selected_frontier.record_id, revivedId);
+    const staleEmpty = (await admin.query('select clued_private.frontier_task_source_v2($1,$2) value',
+      [userId, emptyProjection])).rows[0].value;
+    assert.equal(staleEmpty.status, 'PROJECTION_REQUIRED');
+    assert.equal(staleEmpty.reason, undefined, 'a stale empty frontier must not claim to be current');
+    const revivedRebuild = await rebuildFrontier();
+    assert.equal(revivedRebuild.frontier_status, 'SELECTED', JSON.stringify(revivedRebuild));
+    assert.equal((await frontierProjection()).source_task.id, revivedId);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
