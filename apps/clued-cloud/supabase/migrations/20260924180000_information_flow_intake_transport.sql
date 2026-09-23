@@ -16,6 +16,14 @@ returns boolean language sql stable security definer set search_path='' as $$
   select false
 $$;
 
+-- Contract 5.1 also requires sources to be unflagged in record_evidence_status
+-- (Evidence withdrawal). That table arrives in S5, which replaces this
+-- function; before S5 no withdrawal exists, so no source can be flagged.
+create function clued_private.record_evidence_unflagged_v1(p_user_id uuid,p_record_id uuid,p_version bigint)
+returns boolean language sql stable security definer set search_path='' as $$
+  select true
+$$;
+
 -- Backstop for callers that reach the Binding entries through PostgREST
 -- directly. jsonb::text re-serializes (it adds ": " / ", " spacing and decodes
 -- escapes), so it is not the wire size the Worker's 1 MiB MAX_JSON_BYTES
@@ -116,8 +124,14 @@ begin
       if clued_private.record_human_confirmed_v1(p_user_id,v_rec.id,v_rec.version) is not true then
         raise exception 'knowledge_source_not_human_confirmed' using errcode='42501';
       end if;
+      if clued_private.record_evidence_unflagged_v1(p_user_id,v_rec.id,v_rec.version) is not true then
+        raise exception 'knowledge_source_evidence_withdrawn' using errcode='55000';
+      end if;
       v_normalized:=v_normalized||jsonb_build_object('id',v_rec.id,'version',v_rec.version);
     end loop;
+    -- Canonical order, so a reordered re-proposal has the same digest (4.3.4).
+    v_normalized:=(select jsonb_agg(x order by (x->>'id')::uuid) from jsonb_array_elements(v_normalized) x);
+    v_ev:=coalesce((select array_agg(e order by e) from unnest(v_ev) e),'{}');
     v_digest:=clued_private.m1_sha256(jsonb_build_object('scope',v_scope,'rule_id',v_rule,
       'assertion',p_input->'assertion','sources',v_normalized,'evidence_ids',to_jsonb(v_ev)));
     -- Contract 4.3.4: a rejected Candidate is never silently re-proposed.
@@ -228,6 +242,7 @@ begin
 end $$;
 
 revoke all on function clued_private.record_human_confirmed_v1(uuid,uuid,bigint),
+  clued_private.record_evidence_unflagged_v1(uuid,uuid,bigint),
   clued_private.intake_payload_cap_v1(jsonb),
   clued_private.knowledge_propose_core_v1(uuid,uuid,jsonb,text),
   clued_private.intake_list_core_v1(uuid,uuid,jsonb),

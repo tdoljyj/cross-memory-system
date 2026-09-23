@@ -37,6 +37,14 @@ const documentOf = (segmentId = 'seg_s2_001') => ({
     confidence: 0.9, uncertainties: [], sensitivity_hint: 'none' }],
 });
 
+test('migration versions are unique', async () => {
+  // Supabase keys schema_migrations by the version prefix; filename sorting in
+  // the embedded tests would hide a duplicate.
+  const versions = (await fs.readdir(path.join(root, 'supabase/migrations')))
+    .filter((name) => name.endsWith('.sql')).map((name) => name.split('_')[0]);
+  assert.deepEqual(versions.filter((version, index) => versions.indexOf(version) !== index), []);
+});
+
 test('vendored M0-C security fixtures are byte-identical to the frozen parent', async () => {
   const lines = (await fs.readFile(path.join(m0c, 'SHA256SUMS.m0c-subset'), 'utf8')).trim().split('\n');
   assert.equal(lines.length, 24);
@@ -188,7 +196,9 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       [proposed.supplemental.candidate_id])).rows[0];
     assert.deepEqual([row.tier, row.status, row.version, row.source_kind, row.binding_id],
       ['knowledge', 'pending', 1, 'agent_binding', bindingA]);
-    assert.deepEqual(row.sources, [{ id: sourceA, version: 1 }, { id: sourceB, version: 1 }]);
+    // Stored in canonical (uuid) order, whatever order the caller sent.
+    assert.deepEqual(row.sources, [{ id: sourceA, version: 1 }, { id: sourceB, version: 1 }]
+      .sort((a, b) => (a.id < b.id ? -1 : 1)));
     assert.deepEqual(row.evidence_ids, [ownEvidenceId]);
     const event = (await admin.query('select * from public.clued_context_events where id=$1::bigint',
       [proposed.event_ids[0]])).rows[0];
@@ -247,6 +257,9 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     await admin.query("update clued_private.knowledge_candidates set status='rejected' where id=$1",
       [toReject.supplemental.candidate_id]);
     await rejected(tokenA, { rule_id: 'knowledge.dedup.v1' }, /knowledge_previously_rejected/);
+    // Reordering the sources does not produce a fresh digest.
+    await rejected(tokenA, { rule_id: 'knowledge.dedup.v1',
+      sources: [{ id: sourceB, version: 1 }, { id: sourceA, version: 1 }] }, /knowledge_previously_rejected/);
 
     // Native proposal records the account session and no Binding.
     const nativeProposed = await native('clued_user_knowledge_propose',
@@ -345,7 +358,12 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
         value = (await client.query(`select public.${rpc}(${keys.map((key, i) => `${key}=>$${i + 1}`).join(',')}) v`,
           keys.map((key) => body[key]))).rows[0].v;
       } catch (error) {
-        return Response.json({ code: error.code, message: error.message }, { status: error.code === '42501' ? 403 : 400 });
+        // PostgREST's SQLSTATE -> HTTP mapping for the codes these entries raise.
+        const status = error.code === '42501' ? (claims ? 403 : 401)
+          : /^54/.test(error.code) ? 413
+            : /^(P0|XX|55|40|25)/.test(error.code) && error.code !== 'P0001' ? 500
+              : ['23503', '23505'].includes(error.code) ? 409 : 400;
+        return Response.json({ code: error.code, message: error.message }, { status });
       }
       // E2E-07: the transaction committed, then the response is lost.
       if (dropNextResponse) { dropNextResponse = false; throw new TypeError('connection reset before response'); }
@@ -495,7 +513,7 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       const count = await submissions();
       assert.equal((await post('/v1/intake', { ...retryBody, idempotency_key: 'if-s2-e2e-bnd' }, rawBinding)).status, 401);
       const delegated = await post('/v1/intake', { ...retryBody, idempotency_key: 'if-s2-e2e-oauth' }, 'delegated-jwt');
-      assert.notEqual(delegated.status, 200);
+      assert.equal(delegated.status, 403);
       assert.match(JSON.stringify(delegated.body), /direct_human_session_required/);
       assert.equal(await submissions(), count);
       assert.deepEqual(await snapshot(), baseline);
@@ -528,7 +546,8 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     assert.ok(!/promote|confirmation/.test(oauthBody), 'no promotion or confirmation surface is reachable by OAuth');
 
     // Grants: new core functions are private; each entry is callable only by its own principal kind.
-    for (const fn of ['record_human_confirmed_v1(uuid,uuid,bigint)', 'intake_payload_cap_v1(jsonb)',
+    for (const fn of ['record_human_confirmed_v1(uuid,uuid,bigint)', 'record_evidence_unflagged_v1(uuid,uuid,bigint)',
+      'intake_payload_cap_v1(jsonb)',
       'knowledge_propose_core_v1(uuid,uuid,jsonb,text)', 'intake_list_core_v1(uuid,uuid,jsonb)',
       'context_pack_core_v1(uuid,uuid,jsonb)']) {
       const grants = (await admin.query(`select has_function_privilege('anon',$1::regprocedure,'execute') anon,
