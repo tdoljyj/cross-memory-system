@@ -151,9 +151,9 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     await admin.query(`update public.clued_agent_bindings set context_keys=array['global','system:projects']
       where user_id=$1`, [userId]);
     const createdProject = await rpc('clued_project_mutate', {
-      operation: 'create', canonical_project_id: projectId, project_schema_version: 1,
+      operation: 'create', canonical_project_id: projectId, project_schema_version: 2,
       idempotency_key: uuid(),
-      mutation: { name: 'Released project', certainty_status: 'confirmed', progress_status: 'active' },
+      mutation: { name: 'Released project', progress_status: 'active' },
     });
     assert.equal(createdProject.status, 'committed');
     await admin.query(`update public.clued_agent_bindings set context_keys=array['global','system:projects',$2]
@@ -171,7 +171,7 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     const projectStateReceiptId = (await admin.query('select receipt_id from public.clued_memories where id=$1',
       [projectStateId])).rows[0].receipt_id;
     const completedProject = await rpc('clued_project_mutate', {
-      operation: 'complete', canonical_project_id: projectId, project_schema_version: 1,
+      operation: 'complete', canonical_project_id: projectId, project_schema_version: 2,
       base_version: 1, idempotency_key: uuid(),
       mutation: { closure_summary: 'Production deployed', closed_reason: 'Release complete' },
     });
