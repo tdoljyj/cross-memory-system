@@ -1,6 +1,8 @@
 # Minimal post-commit projection refresh
 
-Status: implementation and local validation complete; not deployed.
+Status: this is the original implementation note. The pipeline and one-minute
+recovery Worker were observed running in production on 2026-09-23; use
+[`../production-release.md`](../production-release.md) for current release checks.
 
 ## Authority and scope
 
@@ -75,12 +77,9 @@ reconciliation, lease-expiry failure, bounded retry, and consistent current
 reads through two independent host Bindings. The transport scenarios verify
 conflict draining, hashed credential use, and an inert unconfigured Builder.
 
-## Deployment prerequisites intentionally left undone
+## Original deployment prerequisites (historical)
 
-- Apply the migration through the separately authorized production process.
-- Create a dedicated read-only Binding and exact Builder grants for the two
-  approved keys; store its raw token only in the Worker secret.
-- Verify that the one-minute recovery trigger is active in the deployed Worker.
-- Run production canary/readback and capture deployment receipts under a new
-  authorization. None of these actions are authorized by this change.
+These were prerequisites when this note was written. Their historical wording
+does not establish today's deployment state; use live release evidence and the
+current production gate for that determination.
 
