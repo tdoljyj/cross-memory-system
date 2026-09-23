@@ -437,6 +437,125 @@
       }
     },
     {
+      "name": "clued_mtpe_snapshot",
+      "description": "Read the deterministic Universal Intake candidate universe, system recommendations, Owner-selected focus, executability, and selected Frontier. Requires complete authorized source coverage. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_mtpe_validate",
+      "description": "Validate Universal Intake coverage, priority/executability completeness, and successor bindings without mutating Canonical work. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_mtpe_owner_pin",
+      "description": "Set or cancel the Owner-selected current focus for one eligible Universal Intake Task using explicit user confirmation, exact Task-version CAS, Event, Receipt, and projection invalidation. Required Clued scope: context:write.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "operation",
+          "record_id",
+          "base_version",
+          "idempotency_key",
+          "user_confirmed"
+        ],
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "set",
+              "cancel"
+            ]
+          },
+          "record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "base_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 160
+          },
+          "user_confirmed": {
+            "type": "boolean",
+            "const": true
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "request_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:write"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
       "name": "clued_session_checkpoint",
       "description": "Call before ending or handing off an authorized session. Atomically commits a canonical checkpoint using optimistic concurrency and returns an audit receipt or explicit conflict. Required Clued scope: context:write.",
       "inputSchema": {

@@ -3,10 +3,10 @@ import fs from "node:fs";
 import { publicMcpTools } from "../../worker/continuity";
 
 const cases = [
-  { PROJECT_VIEWS_V2: "false", P5_TENANT_WRITES: "false", expected: 15 },
-  { PROJECT_VIEWS_V2: "true", P5_TENANT_WRITES: "false", expected: 21, productionEquivalent: true },
-  { PROJECT_VIEWS_V2: "false", P5_TENANT_WRITES: "true", expected: 20 },
-  { PROJECT_VIEWS_V2: "true", P5_TENANT_WRITES: "true", expected: 26 },
+  { PROJECT_VIEWS_V2: "false", P5_TENANT_WRITES: "false", expected: 18 },
+  { PROJECT_VIEWS_V2: "true", P5_TENANT_WRITES: "false", expected: 24, productionEquivalent: true },
+  { PROJECT_VIEWS_V2: "false", P5_TENANT_WRITES: "true", expected: 23 },
+  { PROJECT_VIEWS_V2: "true", P5_TENANT_WRITES: "true", expected: 29 },
 ] as const;
 
 const results = cases.map((item) => {
