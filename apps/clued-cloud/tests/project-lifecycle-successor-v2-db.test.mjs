@@ -10,6 +10,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const migration = '20260924120000_project_lifecycle_successor_v2.sql';
+const currentnessMigration = '20260924121000_project_lifecycle_successor_v2_frontier_invalidation.sql';
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 
@@ -46,7 +47,8 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
-    for (const name of migrationNames.filter((name) => name !== migration)) {
+    for (const name of migrationNames.filter((name) =>
+      name !== migration && name !== currentnessMigration)) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -70,7 +72,30 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
 
     const preflight = (await admin.query(await fs.readFile(
       path.join(root, 'supabase/preflight/project_lifecycle_v2_inventory.sql'), 'utf8'))).rows;
+    const priorFrontierState = (await admin.query(`select coalesce(max(invalidation_revision),0) as revision,
+        coalesce(max(resolved_through_revision),0) as resolved
+      from clued_private.projection_invalidation_heads where user_id=$1 and target_scope='global'
+        and projection_key='global.priority_frontier'`, [userId])).rows[0];
+    const priorFrontierRevision = Number(priorFrontierState.revision);
+    const priorFrontierResolved = Number(priorFrontierState.resolved);
     await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', migration), 'utf8'));
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', currentnessMigration), 'utf8'));
+
+    await t.test('cutover advances and enqueues the dedicated Frontier currentness revision', async () => {
+      const state = (await admin.query(`select h.invalidation_revision,h.resolved_through_revision,
+        h.latest_source_ref,j.target_invalidation_revision,j.status
+        from clued_private.projection_invalidation_heads h
+        join clued_private.projection_refresh_jobs j using(user_id,target_scope,projection_key)
+        where h.user_id=$1 and h.target_scope='global'
+          and h.projection_key='global.priority_frontier'`, [userId])).rows[0];
+      assert.equal(Number(state.invalidation_revision), priorFrontierRevision + 1);
+      assert.equal(Number(state.resolved_through_revision), priorFrontierResolved);
+      assert.equal(Number(state.target_invalidation_revision), priorFrontierRevision + 1);
+      assert.equal(state.status, 'queued');
+      assert.deepEqual(state.latest_source_ref, {
+        id: 'migration:20260924121000', kind: 'project_lifecycle_v2_cutover', scope: 'global',
+      });
+    });
 
     await t.test('legacy rows receive one immutable, deterministic disposition without bulk promotion', async () => {
       const rows = (await admin.query(`select project_id,disposition,disposition_reason,recognition_source,
