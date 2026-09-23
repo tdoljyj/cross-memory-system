@@ -120,5 +120,6 @@
     "m0b": "node tests/validate-prompts.mjs --m0a-root <a>",
     "m0c": "M0A_ROOT=<a> M0B_ROOT=<b>: npm run -s verify; npm run -s validate; node --test tests/*.test.mjs (dependencies installed in the parent directory of the package copy)"
   },
-  "independence": "Performed by the implementing agent; not an independent qualification."
+  "independence": "Performed by the implementing agent; not an independent qualification.",
+  "repository_commit_at_run": "d732cb2 (origin/main at the time of the re-run; adapter and tests read from this checkout)"
 }
