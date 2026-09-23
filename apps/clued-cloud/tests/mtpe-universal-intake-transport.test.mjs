@@ -72,3 +72,23 @@ test('MTPE inspection tools are read-only and route Binding/OAuth calls to the s
   }
 });
 
+test('MTPE coverage denial is a tool error, not an HTTP authorization failure', async () => {
+  const worker = await loadContinuityWorker();
+  const denial = { status: 'denied', rule: 'mtpe-read-set-coverage.v1',
+    error: { code: 'INSUFFICIENT_CONTEXT_COVERAGE', message: 'coverage required',
+      missing_context_keys: ['project:22222222-2222-4222-8222-222222222222'], unscoped_sources: 0 } };
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json(denial);
+  try {
+    for (const name of ['clued_mtpe_snapshot', 'clued_mtpe_validate']) {
+      const response = await worker.fetch(request(bindingToken, name), env, ctx);
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.equal(response.headers.get('www-authenticate'), null);
+      const result = (await response.json()).result;
+      assert.equal(result.isError, true);
+      assert.deepEqual(result.structuredContent, denial);
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
