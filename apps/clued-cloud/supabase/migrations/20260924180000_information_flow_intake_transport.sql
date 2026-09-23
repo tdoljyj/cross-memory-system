@@ -30,7 +30,7 @@ $$;
 -- an unauthenticated caller cannot make `->>` render a large value as text.
 create function clued_private.intake_context_key_v1(p_input jsonb)
 returns text language sql immutable security definer set search_path='' as $$
-  select case when p_input->'scope' is null then 'global'
+  select case when p_input->'scope' is null or jsonb_typeof(p_input->'scope')='null' then 'global'
     when jsonb_typeof(p_input->'scope')='string' then p_input->>'scope'
     else '' end
 $$;
@@ -47,6 +47,12 @@ create function clued_private.intake_payload_cap_v1(p_input jsonb)
 returns void language plpgsql immutable security definer set search_path='' as $$
 begin
   if coalesce(pg_column_size(p_input),0)>8388608 then
+    raise exception 'intake_payload_too_large' using errcode='54000';
+  end if;
+  -- The M1 request hash renders p_input as text after this check. Numbers
+  -- far outside any legitimate intake value (e.g. 1e100000) render to all
+  -- their digits, so refuse them here instead of amplifying that render.
+  if jsonb_path_exists(p_input,'strict $.** ? (@.type() == "number" && (@.abs() >= 1e21 || (@ != 0 && @.abs() < 1e-21)))') then
     raise exception 'intake_payload_too_large' using errcode='54000';
   end if;
 end $$;
@@ -305,6 +311,7 @@ returns jsonb language plpgsql security definer set search_path='' as $$
 declare b public.clued_agent_bindings%rowtype;
 begin
   b:=clued_private.resolve_binding(p_token_hash,'context:write',clued_private.intake_context_key_v1(p_input));
+  perform clued_private.intake_payload_cap_v1(p_input);
   return clued_private.intake_withdraw_core_v1(b.user_id,b.id,p_input,
     clued_private.m1_sha256(jsonb_build_object('operation','intake_withdraw','payload',p_input)));
 end $$;

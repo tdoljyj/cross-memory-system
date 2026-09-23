@@ -311,16 +311,18 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     assert.equal(await receipts(), receiptsBefore);
     // The cap runs after Binding resolution: an unknown token never reaches it.
     await assert.rejects(agent(hash(), 'clued_knowledge_propose', hugeProposal), /binding/);
-    // Exponent-notation numbers are measured in stored form, not expanded: a
-    // body of about 10 MB as text but a few KB stored passes the cap and
-    // reaches schema validation (a text-length cap would refuse it).
+    // Exponent-notation numbers are small when stored but render to all their
+    // digits in the M1 request hash; the cap refuses outsized magnitudes
+    // before any render or Receipt.
     const exponentBody = JSON.stringify({ idempotency_key: 'if-s2-exponent-0001', scope: 'global',
       segment: { ...segment('seg_s2_exp'), padding: '__EXP__' }, candidates: documentOf('seg_s2_exp') })
       .replace('"__EXP__"', `[${Array(100).fill('1e100000').join(',')}]`);
     assert.ok((await admin.query('select pg_column_size($1::jsonb) n', [exponentBody])).rows[0].n < 64 * 1024);
-    const exponent = (await anon.query('select public.clued_intake_submit($1,$2::jsonb) v', [tokenA, exponentBody])).rows[0].v;
-    assert.equal(exponent.status, 'rejected');
-    assert.match(exponent.error_code, /INSTANCE_SCHEMA_INVALID/);
+    await assert.rejects(anon.query('select public.clued_intake_submit($1,$2::jsonb) v', [tokenA, exponentBody]),
+      /intake_payload_too_large/);
+    await assert.rejects(anon.query('select public.clued_intake_withdraw($1,$2::jsonb) v', [tokenA,
+      '{"idempotency_key":"if-s2-exp-wd-01","candidate_id":"00000000-0000-4000-8000-000000000000","base_version":1e-16000}']),
+    /intake_payload_too_large/);
     const receiptsAfterExponent = await receipts();
     // A non-string scope is refused before the token is even looked up, so it
     // is never rendered as text for an unauthenticated caller.
@@ -333,6 +335,14 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       }
     }
     await assert.rejects(agent(tokenA, 'clued_intake_list', { scope: 7 }), /invalid_binding_or_context/);
+    // A short non-string scope that S1's ->> would have turned into a key.
+    for (const name of ['clued_intake_submit', 'clued_intake_list', 'clued_intake_withdraw',
+      'clued_knowledge_propose', 'clued_context_pack']) {
+      await assert.rejects(agent(tokenA, name, { idempotency_key: 'if-s2-arrscope-01', scope: ['global'] }),
+        /invalid_binding_or_context/, name);
+    }
+    // A JSON null scope keeps S1's meaning: the global default.
+    assert.equal((await agent(tokenA, 'clued_intake_list', { scope: null })).status, 'ok');
 
     // Context pack fails closed until S4 accepts a policy; it reads no source.
     for (const result of [await agent(tokenA, 'clued_context_pack', { scope: 'global' }),
