@@ -4,12 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - feat/clued-two-level-views-v1
+      - main
     paths:
       - .github/workflows/clued-g4-database.yml
       - apps/clued-cloud/package.json
       - apps/clued-cloud/package-lock.json
       - apps/clued-cloud/supabase/**
+      - apps/clued-cloud/tests/projection-refresh-*.test.mjs
   pull_request:
     paths:
       - .github/workflows/clued-g4-database.yml
