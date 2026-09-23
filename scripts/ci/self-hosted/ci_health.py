@@ -217,12 +217,14 @@ def evaluate_startup_delays(
         if pool is None or created is None or created < since:
             continue
         started = parse_time(job.get("started_at"))
-        if started is not None:
-            delay_seconds = int((started - created).total_seconds())
-            delay_kind = "started"
-        elif job.get("status") == "queued":
+        # GitHub may prefill started_at with created_at while a job is still queued.
+        # Queue status therefore takes precedence over the timestamp field.
+        if job.get("status") == "queued":
             delay_seconds = int((now - created).total_seconds())
             delay_kind = "queued"
+        elif started is not None:
+            delay_seconds = int((started - created).total_seconds())
+            delay_kind = "started"
         else:
             continue
         if delay_seconds <= threshold_seconds:

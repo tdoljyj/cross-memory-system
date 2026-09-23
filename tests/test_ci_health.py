@@ -110,6 +110,22 @@ class CluedCiHealthTests(unittest.TestCase):
         self.assertEqual(report["status"], "ANOMALY")
         self.assertIn("REPEATED_STARTUP_DELAY", [item["code"] for item in report["anomalies"]])
 
+    def test_queued_jobs_ignore_prefilled_started_at(self):
+        jobs = [
+            self.slow_job(1, "windows-general-v1"),
+            self.slow_job(2, "windows-general-v1"),
+        ]
+        for job in jobs:
+            job["status"] = "queued"
+            job["started_at"] = job["created_at"]
+        report = self.report(jobs=jobs)
+        anomaly_details = next(
+            item["details"]
+            for item in report["anomalies"]
+            if item["code"] == "REPEATED_STARTUP_DELAY"
+        )
+        self.assertTrue(all(item["kind"] == "queued" for item in anomaly_details["jobs"]))
+
     def test_slow_starts_in_different_pools_do_not_combine(self):
         report = self.report(jobs=[
             self.slow_job(1, "windows-general-v1"),
