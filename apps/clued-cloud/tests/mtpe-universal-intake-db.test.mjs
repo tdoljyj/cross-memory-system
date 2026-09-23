@@ -434,7 +434,97 @@ test('Universal Intake routes every actionable kind and preserves priority, Owne
     const hostBView = await snapshot(hostBToken);
     assert.equal(hostAView.candidate_universe_digest, hostBView.candidate_universe_digest);
     assert.deepEqual(hostAView.candidate_universe, hostBView.candidate_universe);
-    await assert.rejects(() => snapshot(limitedToken), /mtpe_complete_source_scope_required/);
+
+    // Read-set coverage: a Binding may inspect MTPE only when its effective read
+    // scopes cover every Canonical source scope the operation reads. Denial is a
+    // structured tool result naming the missing scopes, not an HTTP auth failure.
+    const assertCoverageDenied = (result, missing) => {
+      assert.equal(result.status, 'denied');
+      assert.equal(result.rule, 'mtpe-read-set-coverage.v1');
+      assert.equal(result.error.code, 'INSUFFICIENT_CONTEXT_COVERAGE');
+      assert.deepEqual(result.error.missing_context_keys, missing);
+      assert.equal(result.candidate_universe, undefined);
+    };
+    assertCoverageDenied(await snapshot(limitedToken), [projectScope]);
+    assertCoverageDenied(await validate(limitedToken), [projectScope]);
+
+    const coveringToken = hash();
+    await admin.query(`insert into public.clued_agent_bindings
+      (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic','Explicit covering Host',$2,array['context:read'],$3)`,
+    [userId, coveringToken, ['global', projectScope]]);
+    const coveringView = await snapshot(coveringToken);
+    assert.equal(coveringView.status, 'ok');
+    assert.equal(coveringView.candidate_universe_digest, hostAView.candidate_universe_digest);
+    assert.deepEqual(coveringView.candidate_universe, hostAView.candidate_universe);
+    assert.deepEqual(await validate(coveringToken), await validate(hostAToken));
+
+    // OAuth consent Bindings are judged by their effective per-entry read actions.
+    const oauthToken = hash();
+    const oauthBinding = (await admin.query(`insert into public.clued_agent_bindings
+      (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'OAuth','Consent Host',$2,array['context:read'],$3) returning id`,
+    [userId, oauthToken, ['global', projectScope]])).rows[0].id;
+    const issuerHash = hash();
+    await admin.query(`insert into clued_private.authorization_issuers_v12(token_hash,resource,name)
+      values($1,'https://mcp.example.invalid/mcp','MTPE issuer')`, [issuerHash]);
+    const requestId = (await admin.query(`insert into clued_private.authorization_requests_v12
+      (owner_id,issuer_hash,request_digest,client_id,client_name,redirect_uri,resource,requested_scopes,eligible,status)
+      values($1,$2,$3,'mtpe-client','MTPE client','https://client.example.invalid/callback',
+      'https://mcp.example.invalid/mcp',array['context:read'],'[]'::jsonb,'approved') returning id`,
+    [userId, issuerHash, hash()])).rows[0].id;
+    await admin.query(`insert into clued_private.authorizations_v12
+      (binding_id,request_id,owner_id,client_id,client_name,resource,expires_at)
+      values($1,$2,$3,'mtpe-client','MTPE client','https://mcp.example.invalid/mcp',now()+interval '1 hour')`,
+    [oauthBinding, requestId, userId]);
+    await admin.query(`insert into clued_private.authorization_entries_v12(binding_id,resource_kind,resource_id,environment,actions)
+      values($1,'scope','global','canonical',array['read']),($1,'scope',$2,'canonical',array['read'])`,
+    [oauthBinding, projectScope]);
+    assert.equal((await snapshot(oauthToken)).candidate_universe_digest, hostAView.candidate_universe_digest);
+    await admin.query(`delete from clued_private.authorization_entries_v12
+      where binding_id=$1 and resource_id=$2`, [oauthBinding, projectScope]);
+    assertCoverageDenied(await snapshot(oauthToken), [projectScope]);
+
+    // A new Project is never inherited by an explicit grant; '*' keeps its meaning.
+    const laterProjectId = uuid();
+    const laterScope = `project:${laterProjectId}`;
+    assert.equal((await rpc(hostAToken, 'clued_project_mutate', {
+      operation: 'create', canonical_project_id: laterProjectId, project_schema_version: 1,
+      idempotency_key: uuid(),
+      mutation: { name: 'MTPE Later', certainty_status: 'confirmed', progress_status: 'active' },
+    })).status, 'committed');
+    assert.equal((await write(hostAToken, {
+      operation: 'create', id: uuid(), record_type: 'task', record_schema_version: 1,
+      lifecycle_status: 'active', scope: laterScope, idempotency_key: uuid(),
+      authority: 'user_explicit', user_confirmed: true,
+      confidence_reason: 'Synthetic MTPE acceptance input', source_refs: [],
+      source_unavailable_reason: null,
+      mutation: { title: 'Later project task', content: 'Later project task',
+        type_fields: { execution_bucket: 'next', owner_track: '产品与体验', priority: 10 },
+        relations: {} },
+    })).status, 'committed');
+    assertCoverageDenied(await snapshot(coveringToken), [laterScope]);
+    assertCoverageDenied(await validate(coveringToken), [laterScope]);
+    assert.equal((await snapshot(hostAToken)).status, 'ok');
+    assert.ok((await snapshot(hostAToken)).candidate_universe.some((item) => item.scope === laterScope));
+
+    // Unknown scope kinds and unscoped sources fail closed unless unrestricted.
+    const denial = async (granted, readSet, returned = []) => (await admin.query(
+      'select clued_private.mtpe_read_coverage_denial_v1($1,$2,$3) value',
+      [granted, readSet, JSON.stringify(returned)])).rows[0].value;
+    assert.equal(await denial(['global'], { scopes: ['global'], unscoped_sources: 0 }), null);
+    assert.equal(await denial(null, { scopes: ['workspace:x'], unscoped_sources: 3 }), null);
+    assert.deepEqual((await denial(['global'], { scopes: ['global', 'workspace:x'], unscoped_sources: 0 }))
+      .error.missing_context_keys, ['workspace:x']);
+    const unscoped = await denial(['global'], { scopes: ['global'], unscoped_sources: 1 });
+    assert.equal(unscoped.error.code, 'INSUFFICIENT_CONTEXT_COVERAGE');
+    assert.equal(unscoped.error.unscoped_sources, 1);
+    assert.deepEqual((await denial(['global'], { scopes: ['global'], unscoped_sources: 0 }, [projectScope]))
+      .error.missing_context_keys, [projectScope]);
+    assert.equal((await denial(['global'], { scopes: ['global'], unscoped_sources: 0 }, [null]))
+      .error.unscoped_sources, 1);
+    await assert.rejects(anon.query('select clued_private.mtpe_read_set_v1($1,$2)', [userId, 'snapshot']),
+      /permission denied/);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
