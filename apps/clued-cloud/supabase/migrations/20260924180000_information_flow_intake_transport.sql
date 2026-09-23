@@ -24,17 +24,18 @@ returns boolean language sql stable security definer set search_path='' as $$
   select true
 $$;
 
--- Backstop for callers that reach the Binding entries through PostgREST
--- directly. jsonb::text re-serializes (it adds ": " / ", " spacing and decodes
--- escapes), so it is not the wire size the Worker's 1 MiB MAX_JSON_BYTES
--- measures. Ordinary JSON re-serializes to at most 1.5x its wire size, so the
--- 2 MiB ceiling does not reject an ordinary Worker-accepted request. Numbers in
--- exponent notation expand to all their digits; such crafted bodies are
--- rejected here before any Receipt is opened.
+-- Backstop for callers that reach the entries through PostgREST directly; the
+-- Worker already caps the wire body at 1 MiB (MAX_JSON_BYTES). It measures the
+-- stored jsonb size, which never renders the value as text: exponent-notation
+-- numbers such as 1e100000 stay compact here, so an oversized or crafted body
+-- is refused without an amplified allocation. Binary jsonb is larger than
+-- compact JSON text (per-element headers), so the 8 MiB ceiling leaves room
+-- for any body the Worker accepts. Binding entries check it after
+-- resolve_binding, so unauthenticated callers never reach it.
 create function clued_private.intake_payload_cap_v1(p_input jsonb)
 returns void language plpgsql immutable security definer set search_path='' as $$
 begin
-  if octet_length(convert_to(coalesce(p_input,'null'::jsonb)::text,'UTF8'))>2097152 then
+  if coalesce(pg_column_size(p_input),0)>8388608 then
     raise exception 'intake_payload_too_large' using errcode='54000';
   end if;
 end $$;
@@ -91,8 +92,13 @@ begin
     end loop;
     -- A Binding may cite only Records its read authorization covers; the
     -- Native owner reads every scope (null = unrestricted, as in Currentness).
+    -- The entry only proves context:write. A Binding without context:read
+    -- may cite nothing, so every source reads as not found.
     v_read_scopes:=case when p_binding_id is null then null
-      else clued_private.binding_read_scopes_v2(p_user_id,p_binding_id) end;
+      when exists(select 1 from public.clued_agent_bindings b where b.id=p_binding_id and b.user_id=p_user_id
+        and 'context:read'=any(b.scopes))
+        then clued_private.binding_read_scopes_v2(p_user_id,p_binding_id)
+      else '{}'::text[] end;
     for v_src in select value from jsonb_array_elements(v_sources) loop
       if not clued_private.intake_keys_exact_v1(v_src,'["id","version"]')
         or jsonb_typeof(v_src->'id')<>'string'
@@ -194,6 +200,9 @@ begin
     end if;
     v_submission:=(p_input->>'submission_id')::uuid;
   end if;
+  if not (v_scope in ('profile','global') or v_scope ~ '^project:[0-9a-f-]{36}$') then
+    raise exception 'invalid_scope' using errcode='22023';
+  end if;
   if v_scope like 'project:%' then
     v_scope:='project:'||clued_private.m1_effective_project(p_user_id,clued_private.m1_scope_project_id(v_scope));
   end if;
@@ -254,24 +263,25 @@ create or replace function public.clued_intake_submit(p_token_hash text,p_input 
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare b public.clued_agent_bindings%rowtype;
 begin
-  perform clued_private.intake_payload_cap_v1(p_input);
   b:=clued_private.resolve_binding(p_token_hash,'context:write',coalesce(p_input->>'scope','global'));
+  perform clued_private.intake_payload_cap_v1(p_input);
   return clued_private.intake_submit_core_v1(b.user_id,b.id,p_input,
     clued_private.m1_sha256(jsonb_build_object('operation','intake_submit','payload',p_input)));
 end $$;
 create or replace function public.clued_user_intake_submit(p_input jsonb,p_received_payload_hash text)
 returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_owner uuid:=clued_private.authorization_owner_v12();
 begin
   perform clued_private.intake_payload_cap_v1(p_input);
-  return clued_private.intake_submit_core_v1(clued_private.authorization_owner_v12(),null,p_input,p_received_payload_hash);
+  return clued_private.intake_submit_core_v1(v_owner,null,p_input,p_received_payload_hash);
 end $$;
 
 create function public.clued_knowledge_propose(p_token_hash text,p_input jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare b public.clued_agent_bindings%rowtype;
 begin
-  perform clued_private.intake_payload_cap_v1(p_input);
   b:=clued_private.resolve_binding(p_token_hash,'context:write',coalesce(p_input->>'scope','global'));
+  perform clued_private.intake_payload_cap_v1(p_input);
   return clued_private.knowledge_propose_core_v1(b.user_id,b.id,p_input,
     clued_private.m1_sha256(jsonb_build_object('operation','knowledge_propose','payload',p_input)));
 end $$;
@@ -288,9 +298,10 @@ grant execute on function public.clued_knowledge_propose(text,jsonb),public.clue
 
 create function public.clued_user_knowledge_propose(p_input jsonb,p_received_payload_hash text)
 returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_owner uuid:=clued_private.authorization_owner_v12();
 begin
   perform clued_private.intake_payload_cap_v1(p_input);
-  return clued_private.knowledge_propose_core_v1(clued_private.authorization_owner_v12(),null,p_input,p_received_payload_hash);
+  return clued_private.knowledge_propose_core_v1(v_owner,null,p_input,p_received_payload_hash);
 end $$;
 create function public.clued_user_context_pack(p_input jsonb default '{}'::jsonb)
 returns jsonb language sql security definer set search_path='' as $$

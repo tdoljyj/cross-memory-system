@@ -96,6 +96,7 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     const tokenProfileOnly = hash();
     const tokenReadOnly = hash();
     const tokenOther = hash();
+    const tokenWriteOnly = hash();
     const bindingA = (await admin.query(`insert into public.clued_agent_bindings
       (user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','Agent A',$2,array['context:read','context:write'],array['*']) returning id`,
@@ -105,8 +106,9 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       ($1,'synthetic','Agent B',$2,array['context:read','context:write'],array['*']),
       ($1,'synthetic','Profile only',$3,array['context:read','context:write'],array['profile']),
       ($1,'synthetic','Read only',$4,array['context:read'],array['*']),
-      ($5,'synthetic','Other user',$6,array['context:read','context:write'],array['*'])`,
-    [userId, tokenB, tokenProfileOnly, tokenReadOnly, otherUser, tokenOther]);
+      ($5,'synthetic','Other user',$6,array['context:read','context:write'],array['*']),
+      ($1,'synthetic','Write only',$7,array['context:write'],array['*'])`,
+    [userId, tokenB, tokenProfileOnly, tokenReadOnly, otherUser, tokenOther, tokenWriteOnly]);
 
     const anon = server.getPgClient();
     clients.push(anon);
@@ -245,6 +247,8 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     await rejected(tokenA, { evidence_ids: [foreignEvidence] }, /knowledge_evidence_not_found/);
     // A Binding cites only Records its read authorization covers.
     await rejected(tokenProfileOnly, { scope: 'profile' }, /knowledge_source_not_found/);
+    // context:write alone grants no read: an existing source reads as not found.
+    await rejected(tokenWriteOnly, {}, /knowledge_source_not_found/);
     // Another user's Binding cannot cite this user's Records.
     await rejected(tokenOther, {}, /knowledge_source_not_found/);
     // Binding scope and capability are enforced before the core runs.
@@ -280,6 +284,8 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     assert.equal((await agent(tokenA, 'clued_intake_list', { scope: 'global' })).candidates.length, 1,
       'the default tier stays Candidate Information');
     await assert.rejects(agent(tokenA, 'clued_intake_list', { scope: 'global', tier: 'authority' }), /invalid_tier/);
+    await assert.rejects(agent(tokenA, 'clued_intake_list', { scope: 'foo' }), /invalid_scope/);
+    await assert.rejects(agent(tokenA, 'clued_intake_list', { scope: 'project:not-a-uuid' }), /invalid_scope/);
     await assert.rejects(agent(tokenA, 'clued_intake_list', { scope: 'global', include_all: true }),
       /intake_list_unknown_field/);
     await assert.rejects(agent(tokenA, 'clued_intake_list', { scope: 'global', tier: 'knowledge',
@@ -290,13 +296,17 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       'select count(*)::int n from public.clued_audit_receipts where user_id=$1', [userId])).rows[0].n;
     const receiptsBefore = await receipts();
     const huge = { idempotency_key: 'if-s2-huge-0001', scope: 'global', segment: segment(), candidates: documentOf(),
-      client_label: 'x'.repeat(2 * 1024 * 1024) };
+      client_label: 'x'.repeat(9 * 1024 * 1024) };
     await assert.rejects(agent(tokenA, 'clued_intake_submit', huge), /intake_payload_too_large/);
     await assert.rejects(native('clued_user_intake_submit', huge), /intake_payload_too_large/);
-    const hugeProposal = proposal({ assertion: '知'.repeat(800000) });
+    const hugeProposal = proposal({ assertion: '知'.repeat(3200000) });
     await assert.rejects(agent(tokenA, 'clued_knowledge_propose', hugeProposal), /intake_payload_too_large/);
     await assert.rejects(native('clued_user_knowledge_propose', hugeProposal), /intake_payload_too_large/);
     assert.equal(await receipts(), receiptsBefore);
+    // The cap runs after Binding resolution: an unknown token never reaches it.
+    await assert.rejects(agent(hash(), 'clued_knowledge_propose', hugeProposal), /binding/);
+    // Exponent-notation numbers are measured in stored form, not expanded.
+    assert.ok((await admin.query('select pg_column_size($1::jsonb) n', ['{"n":[1e100000]}'])).rows[0].n < 1024);
 
     // Context pack fails closed until S4 accepts a policy; it reads no source.
     for (const result of [await agent(tokenA, 'clued_context_pack', { scope: 'global' }),
@@ -314,6 +324,8 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       candidates: documentOf('seg_s2_dense'), client_label: 'dense' };
     dense.segment.messages[0].padding = Array.from({ length: 500000 }, () => 0);
     assert.ok(Buffer.byteLength(JSON.stringify(dense)) < 1024 * 1024);
+    assert.ok((await admin.query('select pg_column_size($1::jsonb) n', [dense])).rows[0].n < 8 * 1024 * 1024,
+      'a Worker-accepted body stays under the stored-size cap');
     assert.ok((await admin.query('select octet_length($1::jsonb::text) n', [dense])).rows[0].n > 1024 * 1024,
       'the re-serialized form exceeds the wire size');
     const denseResult = await agent(tokenA, 'clued_intake_submit', dense);
