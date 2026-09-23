@@ -192,10 +192,12 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
         session_compliance: "audit_receipts_projection",
       },
       project_lifecycle: {
-        certainty: ["unconfirmed", "confirmed"],
+        contract_version: 2,
+        recognition: "decision_then_create",
+        recognition_metadata: ["confidence", "reason", "source", "source_refs"],
         progress: ["not_started", "active", "paused", "completed", "archived"],
-        default_on_mention: "unconfirmed",
-        promotion_preserves_identity: true,
+        low_confidence_mentions: "evidence_only_until_recognized",
+        stable_project_identity: true,
       },
       project_views_v2: {
         enabled: env ? recordsV2Enabled(env) : false,
@@ -1526,7 +1528,7 @@ async function handleRestContinuity(request: Request, env: ContinuityEnv) {
 async function callUserProjectRpc(
   request: Request,
   env: ContinuityEnv,
-  rpc: "clued_user_project_list" | "clued_user_project_mutate",
+  rpc: "clued_user_project_list_v2" | "clued_user_project_mutate_v2",
   input: Record<string, unknown>,
   receivedPayloadHash?: string,
 ) {
@@ -1548,17 +1550,17 @@ async function handleProjectApi(request: Request, env: ContinuityEnv) {
   const url = new URL(request.url);
   if (url.pathname === "/v1/projects" && request.method === "GET") {
     const input: Record<string, unknown> = {};
-    for (const key of ["certainty_status", "progress_status", "query", "limit"] as const) {
+    for (const key of ["progress_status", "query", "limit"] as const) {
       const value = url.searchParams.get(key);
       if (value !== null) input[key] = key === "limit" ? Number(value) : value;
     }
     if (url.searchParams.get("include_dismissed") === "true") input.include_dismissed = true;
-    return json(await callUserProjectRpc(request, env, "clued_user_project_list", input), 200, corsHeaders(request));
+    return json(await callUserProjectRpc(request, env, "clued_user_project_list_v2", input), 200, corsHeaders(request));
   }
   if (url.pathname === "/v1/projects" && request.method === "POST") {
     const { input, receivedPayloadHash } = await parseCanonicalBody(request);
     return json(
-      await callUserProjectRpc(request, env, "clued_user_project_mutate", input, receivedPayloadHash),
+      await callUserProjectRpc(request, env, "clued_user_project_mutate_v2", input, receivedPayloadHash),
       200,
       corsHeaders(request),
     );
@@ -1567,7 +1569,7 @@ async function handleProjectApi(request: Request, env: ContinuityEnv) {
   if (match && request.method === "PATCH") {
     const { input, receivedPayloadHash } = await parseCanonicalBody(request);
     return json(
-      await callUserProjectRpc(request, env, "clued_user_project_mutate", {
+      await callUserProjectRpc(request, env, "clued_user_project_mutate_v2", {
         ...input,
         canonical_project_id: match[1],
       }, receivedPayloadHash),
@@ -1656,7 +1658,7 @@ async function handleRecordApi(request: Request, env: ContinuityEnv) {
     "/v1/decisions/supersede": "clued_user_decision_supersede",
     "/v1/evidence": "clued_user_evidence_ingest",
     "/v1/events": "clued_user_event_append",
-    "/v1/export": "clued_user_canonical_export",
+    "/v1/export": "clued_user_canonical_export_v2",
   };
   const rpc = mutationRoutes[url.pathname];
   if (rpc && request.method === "POST") {

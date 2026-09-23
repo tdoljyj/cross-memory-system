@@ -85,16 +85,15 @@ function event(overrides) {
 function canonicalSource({ verification = "bundle_only", viewsComplete = true } = {}) {
   const projectId = "00000000-0000-4000-8000-000000000001";
   return {
-    schema_version: 1,
+    schema_version: 2,
     canonical_version: "cv_1",
     source_verification: verification,
     views_complete: viewsComplete,
     owner_ref: "owner_fixture",
     projects: [{
       canonical_project_id: projectId,
-      project_schema_version: 1,
+      project_schema_version: 2,
       name: "Clued",
-      certainty_status: "confirmed",
       progress_status: "active",
       lifecycle_status: "active",
       merged_into_project_id: null,
@@ -151,10 +150,10 @@ async function activateFixture(fixture, exportRoot, expectedCurrentSnapshotVersi
   });
 }
 
-test("M0 emits profile/global/projects, canonical objects, raw Events, evidence, one index and Manifest v5", async () => {
+test("M0 emits profile/global/projects, canonical objects, raw Events, evidence, one index and Manifest v6", async () => {
   const { snapshot, result } = await buildFixture();
   const root = path.join(snapshot, "memory");
-  assert.equal(result.manifest.schema_version, 5);
+  assert.equal(result.manifest.schema_version, 6);
   assert.equal(result.manifest.baseline_claim, "historical_offline");
   assert.equal(result.manifest.source_verification, "bundle_only");
   assert.equal(result.manifest.event_rollups_enabled, false);

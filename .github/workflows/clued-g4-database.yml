@@ -95,6 +95,9 @@ jobs:
       - name: Run Unified Record V2 RLS and transaction tests
         run: npm run db:test:m1
 
+      - name: Run Project Lifecycle Successor v2 database and surface tests
+        run: npm run test:project:lifecycle:v2
+
       - name: Capture safe failure diagnostics
         if: failure()
         run: |
@@ -145,6 +148,9 @@ jobs:
 
       - name: Run Unified Record V2 RLS and transaction tests
         run: npm run db:test:m1
+
+      - name: Run Project Lifecycle Successor v2 database and surface tests
+        run: npm run test:project:lifecycle:v2
 
       - name: Capture safe failure diagnostics
         if: failure()

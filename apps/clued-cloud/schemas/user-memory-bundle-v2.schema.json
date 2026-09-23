@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clued.pixelgrav.com/schemas/user-memory-bundle-v2.schema.json",
+  "title": "Clued User Memory Bundle v2",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "contract",
+    "contract_version",
+    "bundle_id",
+    "bundle_digest",
+    "created_at",
+    "source",
+    "boundaries",
+    "counts",
+    "files"
+  ],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "contract": { "const": "clued.user-memory-bundle" },
+    "contract_version": { "const": "2.0.0" },
+    "bundle_id": { "type": "string", "pattern": "^umb_[a-f0-9]{24}$" },
+    "bundle_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object",
+      "required": ["kind", "git_commit", "canonical_path"],
+      "properties": {
+        "kind": { "const": "cross-memory-system" },
+        "git_commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "canonical_path": { "const": "memory/objects" }
+      },
+      "additionalProperties": false
+    },
+    "boundaries": {
+      "type": "object",
+      "required": [
+        "production_canonical_store",
+        "bundle_role",
+        "fixture_authority",
+        "current_truth_authority",
+        "markdown_role",
+        "evidence_role",
+        "direct_git_runtime_writes",
+        "multi_tenant_data_plane"
+      ],
+      "properties": {
+        "production_canonical_store": { "const": "supabase" },
+        "bundle_role": { "const": "portable_single_user_historical_export" },
+        "fixture_authority": { "const": false },
+        "current_truth_authority": { "const": false },
+        "markdown_role": { "const": "read_only_stable_id_reference_mirror" },
+        "evidence_role": { "const": "read_only_not_imported_as_current_truth" },
+        "direct_git_runtime_writes": { "const": false },
+        "multi_tenant_data_plane": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "excluded_system_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "evidence_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "counts": { "type": "object" },
+    "files": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/file" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "file": {
+      "type": "object",
+      "required": ["path", "bytes", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "source_project_id",
+        "name",
+        "progress_status",
+        "recognition_evidence",
+        "record_count"
+      ],
+      "properties": {
+        "source_project_id": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "progress_status": {
+          "enum": ["not_started", "active", "paused", "completed", "archived"]
+        },
+        "recognition_evidence": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "record_count": { "type": "integer", "minimum": 1 }
+      },
+      "not": { "required": ["certainty_status"] },
+      "additionalProperties": false
+    },
+    "record": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "source_type",
+        "source_status",
+        "scope",
+        "record_type",
+        "record_key",
+        "title",
+        "content",
+        "status",
+        "priority",
+        "version"
+      ],
+      "properties": {
+        "source_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "source_schema_version": { "type": ["integer", "null"] },
+        "source_type": { "type": "string" },
+        "source_category": { "type": ["string", "null"] },
+        "source_status": { "type": "string" },
+        "scope": { "enum": ["global", "project"] },
+        "source_project_id": { "type": ["string", "null"], "maxLength": 120 },
+        "record_type": {
+          "enum": ["note", "state", "task", "decision", "archive_snapshot"]
+        },
+        "record_key": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "content": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "status": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "priority": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "source_ref": { "type": ["string", "null"] },
+        "source_updated_at": { "type": ["string", "null"] },
+        "version": { "const": 1 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

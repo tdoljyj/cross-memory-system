@@ -14,7 +14,7 @@ export const P6_AUTHORITY_CONFLICT_POLICY = {
 } as const;
 
 export const currentWorkContract = {
-  version: "clued-v1.6-m1-k-cont",
+  version: "clued-v1.6-m1-k-cont-project-v2",
   read_order: [
     "global_registry_and_priority",
     "project_state_task_decision",
@@ -46,7 +46,7 @@ export const currentWorkContract = {
     entry_mode: "query_conclusion_or_stable_id_reference",
     entry_template: "- `{id}` — {title}: {conclusion} [status={status}; version={version}]",
   },
-  project_creation: "explicit_confirmation_required",
+  project_creation: "recognition_decision_then_create",
   idempotency_boundary: "verified_user_and_operation_family",
   event_stream_ordering_enabled: false,
   record_merge_write_enabled: false,
@@ -168,9 +168,9 @@ export const recordRpcByTool = {
   clued_decision_supersede: "clued_decision_supersede",
   clued_evidence_ingest: "clued_evidence_ingest",
   clued_event_append: "clued_event_append",
-  clued_canonical_export: "clued_canonical_export",
+  clued_canonical_export: "clued_canonical_export_v2",
 } as const;
 
 export type UserRecordRpc = "clued_user_record_list" | "clued_user_record_mutate" |
   "clued_user_decision_supersede" | "clued_user_evidence_ingest" | "clued_user_event_append" |
-  "clued_user_canonical_export";
+  "clued_user_canonical_export_v2";

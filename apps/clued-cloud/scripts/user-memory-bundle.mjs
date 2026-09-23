@@ -15,8 +15,8 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 export const BUNDLE_CONTRACT = "clued.user-memory-bundle";
-export const BUNDLE_VERSION = "1.0.0";
-export const BUNDLE_SCHEMA_VERSION = 1;
+export const BUNDLE_VERSION = "2.0.0";
+export const BUNDLE_SCHEMA_VERSION = 2;
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const LEGACY_EVIDENCE = [
@@ -158,9 +158,8 @@ function projectFromRecords(sourceProjectId, records) {
   return {
     source_project_id: sourceProjectId,
     name: sourceProjectId,
-    certainty_status: "confirmed",
     progress_status: "active",
-    evidence: "Existing structured project memories are material-work evidence.",
+    recognition_evidence: "Existing structured project memories are material-work evidence.",
     record_count: records.filter((record) => record.source_project_id === sourceProjectId).length,
   };
 }

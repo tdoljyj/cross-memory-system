@@ -11,6 +11,7 @@ This directory is an engineering source tree. Repository source, tests and docum
 - Root architecture/navigation: [`../../README.md`](../../README.md)
 - Currentness/projection implementation note: [`docs/model-program-m0/post-commit-projection-refresh.md`](./docs/model-program-m0/post-commit-projection-refresh.md)
 - Project lifecycle successor: [`../../development/contracts/project-lifecycle/ProjectLifecycleSuccessor.v0.1.md`](../../development/contracts/project-lifecycle/ProjectLifecycleSuccessor.v0.1.md)
+- Project lifecycle production candidate: [`../../development/contracts/project-lifecycle/ProductionMigrationCandidate.v0.1.md`](../../development/contracts/project-lifecycle/ProductionMigrationCandidate.v0.1.md)
 
 ## Runtime authority boundary
 
@@ -59,15 +60,15 @@ The deployed v1 Project schema still contains legacy `certainty_status = unconfi
 
 Do **not** treat that physical compatibility field as the long-term product organization model.
 
-The accepted successor direction is:
+The accepted successor direction is implemented in a reviewable v2 candidate:
 
 - Clued creates a Project when it determines the item is a Project.
 - Recognition confidence/reason remain backend metadata/evidence.
 - Project progress remains separate from recognition.
-- The public/product Project contract will remove certainty as a lifecycle/filter axis through a versioned successor.
+- The v2 public/product Project contract removes certainty as a lifecycle/filter axis.
 - Legacy `unconfirmed` rows require explicit migration disposition; they are not silently bulk-promoted.
 
-See [Project Lifecycle Successor v0.1](../../development/contracts/project-lifecycle/ProjectLifecycleSuccessor.v0.1.md). It is a successor design/implementation boundary, **not a deployed migration**.
+The candidate adds versioned v2 RPCs/views, an immutable private disposition ledger, a read-only production inventory query, Bundle v2 and Snapshot v6. The old v1 RPCs and physical compatibility fields remain only for the bounded rollout/rollback window. See [Project Lifecycle Successor v0.1](../../development/contracts/project-lifecycle/ProjectLifecycleSuccessor.v0.1.md) and the [Production Migration Candidate](../../development/contracts/project-lifecycle/ProductionMigrationCandidate.v0.1.md). Source presence remains **not a deployed migration**.
 
 ## Canonical Records and two-level views
 
@@ -105,7 +106,7 @@ Formal repository readers follow:
 
 and validate the pointed bundle/Manifest according to the repository trust policy. Snapshot `baseline_claim=current` means “current-claimed at its recorded export boundary”; it never replaces online Currentness.
 
-Bundle/import compatibility contracts remain versioned. Historical Bundle v1 semantics are preserved rather than silently rewritten when a successor is introduced.
+Bundle/import compatibility contracts remain versioned. Bundle v2 and Snapshot v6 remove the Project certainty axis; historical Bundle v1 and Snapshot v5 remain readable rather than being rewritten in place.
 
 ## Production Worker vs Sites
 

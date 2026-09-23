@@ -21,7 +21,7 @@ const recordFixture = {
   updated_at: "2026-08-24T08:00:00.000Z",
 };
 const semanticContract = {
-  version: "clued-v1.6-m1-k-cont",
+  version: "clued-v1.6-m1-k-cont-project-v2",
   read_order: [
     "global_registry_and_priority",
     "project_state_task_decision",
@@ -57,7 +57,7 @@ const semanticContract = {
     entry_mode: "query_conclusion_or_stable_id_reference",
     entry_template: "- `{id}` — {title}: {conclusion} [status={status}; version={version}]",
   },
-  project_creation: "explicit_confirmation_required",
+  project_creation: "recognition_decision_then_create",
   idempotency_boundary: "verified_user_and_operation_family",
   event_stream_ordering_enabled: false,
   record_merge_write_enabled: false,

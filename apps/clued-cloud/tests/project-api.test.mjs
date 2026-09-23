@@ -21,11 +21,11 @@ function mockAccountRpc(expectedRpc, expectedInput, result = { status: "ok", pro
   return { calls, restore: () => { globalThis.fetch = originalFetch; } };
 }
 
-test("exposes the M1 Project Mutation tool and hashes binding credentials", async () => {
+test("exposes the Project Lifecycle v2 mutation tool and hashes binding credentials", async () => {
   const worker = await loadWorker();
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init = {}) => {
-    assert.match(String(input), /\/rest\/v1\/rpc\/clued_project_mutate$/);
+    assert.match(String(input), /\/rest\/v1\/rpc\/clued_project_mutate_v2$/);
     const body = JSON.parse(init.body);
     assert.match(body.p_token_hash, /^[0-9a-f]{64}$/);
     assert.equal(body.p_input.operation, "create");
@@ -37,7 +37,7 @@ test("exposes the M1 Project Mutation tool and hashes binding credentials", asyn
       headers: { authorization: `Bearer clued_bnd_${"x".repeat(43)}`, "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: {
         name: "clued_project_mutate",
-        arguments: { operation: "create", project_schema_version: 1, base_version: null, idempotency_key: "project-0001", mutation: { name: "Clued", certainty_status: "unconfirmed", progress_status: "paused", aliases: [] } },
+        arguments: { operation: "create", project_schema_version: 2, base_version: null, idempotency_key: "project-0001", mutation: { name: "Clued", progress_status: "not_started", aliases: [] } },
       } }),
     }), env, ctx);
     assert.equal(response.status, 200);
@@ -47,12 +47,12 @@ test("exposes the M1 Project Mutation tool and hashes binding credentials", asyn
 
 test("GET /v1/projects forwards account filters to the list RPC", async () => {
   const worker = await loadWorker();
-  const mock = mockAccountRpc("clued_user_project_list", {
-    certainty_status: "confirmed", limit: 25, include_dismissed: true,
+  const mock = mockAccountRpc("clued_user_project_list_v2", {
+    progress_status: "active", limit: 25, include_dismissed: true,
   });
   try {
     const response = await worker.fetch(new Request(
-      "https://clued.test/v1/projects?certainty_status=confirmed&limit=25&include_dismissed=true",
+      "https://clued.test/v1/projects?progress_status=active&limit=25&include_dismissed=true",
       { headers: { authorization: "Bearer account-jwt" } },
     ), env, ctx);
     assert.equal(response.status, 200);
@@ -60,10 +60,10 @@ test("GET /v1/projects forwards account filters to the list RPC", async () => {
   } finally { mock.restore(); }
 });
 
-test("POST /v1/projects creates through the authenticated M1 atomic RPC", async () => {
+test("POST /v1/projects creates through the authenticated v2 atomic RPC", async () => {
   const worker = await loadWorker();
-  const input = { operation: "create", canonical_project_id: projectId, project_schema_version: 1, base_version: null, idempotency_key: "project-0002", mutation: { name: "Clued", certainty_status: "confirmed", progress_status: "active", aliases: [] } };
-  const mock = mockAccountRpc("clued_user_project_mutate", input, { status: "committed", supplemental: { project: { id: projectId } } });
+  const input = { operation: "create", canonical_project_id: projectId, project_schema_version: 2, base_version: null, idempotency_key: "project-0002", mutation: { name: "Clued", progress_status: "active", aliases: [] } };
+  const mock = mockAccountRpc("clued_user_project_mutate_v2", input, { status: "committed", supplemental: { project: { id: projectId } } });
   try {
     const response = await worker.fetch(new Request("https://clued.test/v1/projects", {
       method: "POST", headers: { authorization: "Bearer account-jwt", "content-type": "application/json" }, body: JSON.stringify(input),
@@ -75,12 +75,12 @@ test("POST /v1/projects creates through the authenticated M1 atomic RPC", async 
 
 test("PATCH /v1/projects/:id preserves path identity and optimistic version", async () => {
   const worker = await loadWorker();
-  const expected = { operation: "update", project_schema_version: 1, base_version: 3, idempotency_key: "update-0001", mutation: { certainty_status: "confirmed" }, canonical_project_id: projectId };
-  const mock = mockAccountRpc("clued_user_project_mutate", expected, { status: "committed", supplemental: { project: { id: projectId, version: 4 } } });
+  const expected = { operation: "update", project_schema_version: 2, base_version: 3, idempotency_key: "update-0001", mutation: { progress_status: "paused" }, canonical_project_id: projectId };
+  const mock = mockAccountRpc("clued_user_project_mutate_v2", expected, { status: "committed", supplemental: { project: { id: projectId, version: 4 } } });
   try {
     const response = await worker.fetch(new Request(`https://clued.test/v1/projects/${projectId}`, {
       method: "PATCH", headers: { authorization: "Bearer account-jwt", "content-type": "application/json" },
-      body: JSON.stringify({ operation: "update", project_schema_version: 1, base_version: 3, idempotency_key: "update-0001", mutation: { certainty_status: "confirmed" } }),
+      body: JSON.stringify({ operation: "update", project_schema_version: 2, base_version: 3, idempotency_key: "update-0001", mutation: { progress_status: "paused" } }),
     }), env, ctx);
     assert.equal(response.status, 200);
     assert.equal((await response.json()).supplemental.project.id, projectId);

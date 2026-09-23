@@ -37,8 +37,9 @@ test("ships bilingual copy and an eight-character password rule", async () => {
   assert.doesNotMatch(source, /\/api\/memories/);
   assert.match(source, /\/v1\/records/);
   assert.doesNotMatch(source, /setError\(result\.error\.message\)/);
-  assert.match(source, /unconfirmedProjects: "未确定项目"/);
-  assert.match(source, /confirmedProjects: "已确定项目"/);
+  assert.match(source, /projectList: "你的项目"/);
+  assert.match(source, /project_schema_version: 2/);
+  assert.doesNotMatch(source, /certainty_status/);
   assert.doesNotMatch(source, /\/v1\/projects\/observe/);
   assert.match(source, /base_version: project\.version/);
 });

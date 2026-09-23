@@ -95,9 +95,11 @@ async function exportedFixture() {
   return { memoryDirectory, outputDirectory, result };
 }
 
-test("User Memory Bundle v1 exports one canonical record payload plus read-only evidence", async () => {
+test("User Memory Bundle v2 exports one canonical record payload plus read-only evidence", async () => {
   const { outputDirectory, result } = await exportedFixture();
   assert.equal(result.manifest.contract, BUNDLE_CONTRACT);
+  assert.equal(result.manifest.schema_version, 2);
+  assert.equal(result.manifest.contract_version, "2.0.0");
   assert.equal(result.manifest.counts.records, 5);
   assert.equal(result.manifest.counts.projects, 1);
   assert.equal(result.manifest.boundaries.production_canonical_store, "supabase");
@@ -110,6 +112,8 @@ test("User Memory Bundle v1 exports one canonical record payload plus read-only 
   assert.ok(result.manifest.excluded_system_paths.includes("object-index.json"));
   assert.ok(!result.manifest.files.some((file) => file.path.endsWith("object-index.json")));
   assert.ok(!result.manifest.files.some((file) => file.path.endsWith("routes.json")));
+  assert.equal("certainty_status" in result.projects[0], false);
+  assert.match(result.projects[0].recognition_evidence, /material-work evidence/);
 
   const mirror = await readFile(path.join(outputDirectory, "Global", "State.md"), "utf8");
   assert.match(mirror, /`mem_a1`/);
