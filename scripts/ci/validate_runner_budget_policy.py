@@ -18,6 +18,9 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-currentness-post-deploy-attestation.yml": (
         "Owner-triggered post-deploy verification uses a clean Ubuntu worker with the ICU runtime and an isolated production database secret."
     ),
+    "clued-cloud-production-release.yml": (
+        "Owner-dispatched production release uses a clean Ubuntu worker with ICU and isolated database and Cloudflare deployment credentials; it does not run on pull requests."
+    ),
     "clued-connection-authorization.yml": (
         "Intentional clean-room Ubuntu candidate validation; installs a system ICU compatibility package."
     ),
