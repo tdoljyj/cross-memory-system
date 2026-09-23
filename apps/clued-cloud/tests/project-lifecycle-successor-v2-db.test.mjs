@@ -9,7 +9,7 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const migration = '20260924090000_project_lifecycle_successor_v2.sql';
+const migration = '20260924120000_project_lifecycle_successor_v2.sql';
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 
@@ -126,6 +126,124 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       assert.equal(privileges.authenticated_rpc, true);
     });
 
+    const compatId = uuid();
+    await t.test('bounded v1 compatibility never promotes an unconfirmed create and appends a later explicit recognition', async () => {
+      const created = await rpc('clued_project_mutate', {
+        operation: 'create', canonical_project_id: compatId, project_schema_version: 1,
+        base_version: null, idempotency_key: uuid(),
+        mutation: { name: 'Compat recognition', progress_status: 'active', certainty_status: 'unconfirmed', aliases: [] },
+      });
+      assert.equal(created.status, 'committed');
+      const before = (await admin.query(`select p.id,p.version,p.certainty_status,p.project_recognized_v2,
+        d.disposition,d.recognition_source from public.clued_projects p
+        join clued_private.project_lifecycle_v2_dispositions d on d.project_id=p.id
+        where p.id=$1`, [compatId])).rows[0];
+      assert.equal(before.id, compatId);
+      assert.equal(Number(before.version), 1);
+      assert.equal(before.certainty_status, 'unconfirmed');
+      assert.equal(before.project_recognized_v2, false);
+      assert.equal(before.disposition, 'evidence_only');
+      assert.equal(before.recognition_source, 'legacy_mention_only');
+      assert.equal((await rpc('clued_project_list_v2', { limit: 200 })).projects.some((project) => project.id === compatId), false);
+      const revisionBefore = Number((await admin.query(`select snapshot_revision
+        from clued_private.scope_currentness_heads where user_id=$1 and canonical_scope=$2`,
+      [userId, `project:${compatId}`])).rows[0].snapshot_revision);
+
+      const confirmKey = uuid();
+      const confirmInput = {
+        operation: 'update', canonical_project_id: compatId, project_schema_version: 1,
+        base_version: 1, idempotency_key: confirmKey, mutation: { certainty_status: 'confirmed' },
+      };
+      const confirmed = await rpc('clued_project_mutate', confirmInput);
+      assert.equal(confirmed.status, 'committed');
+      const replay = await rpc('clued_project_mutate', confirmInput);
+      assert.equal(replay.status, 'committed');
+      assert.equal(replay.receipt_id, confirmed.receipt_id);
+      const after = (await admin.query(`select p.id,p.version,p.certainty_status,p.project_recognized_v2,
+        d.disposition,r.recognition_source,r.source_receipt_id,r.basis
+        from public.clued_projects p
+        join clued_private.project_lifecycle_v2_dispositions d on d.project_id=p.id
+        join clued_private.project_lifecycle_v2_recognitions r on r.project_id=p.id
+        where p.id=$1`, [compatId])).rows[0];
+      assert.equal(after.id, compatId);
+      assert.equal(Number(after.version), 2);
+      assert.equal(after.certainty_status, 'confirmed');
+      assert.equal(after.project_recognized_v2, true);
+      assert.equal(after.disposition, 'evidence_only');
+      assert.equal(after.recognition_source, 'v1_confirmed');
+      assert.equal(after.basis.operation, 'v1_compat_confirm');
+      assert.ok(after.source_receipt_id);
+      assert.equal((await rpc('clued_project_list_v2', { limit: 200 })).projects.some((project) => project.id === compatId), true);
+      assert.equal(Number((await admin.query(`select count(*) count from clued_private.project_lifecycle_v2_recognitions
+        where project_id=$1`, [compatId])).rows[0].count), 1);
+      const receipt = (await admin.query(`select status,operation,operation_family,user_id,event_ids
+        from public.clued_audit_receipts where id=$1`, [after.source_receipt_id])).rows[0];
+      assert.equal(receipt.status, 'committed');
+      assert.equal(receipt.operation, 'project_mutation');
+      assert.equal(receipt.operation_family, 'project_mutation');
+      assert.equal(receipt.user_id, userId);
+      assert.equal(receipt.event_ids.length, 1);
+      const event = (await admin.query(`select canonical_event_type from public.clued_context_events
+        where id=$1::bigint`, [receipt.event_ids[0]])).rows[0];
+      assert.equal(event.canonical_event_type, 'project_updated');
+      const revisionAfter = Number((await admin.query(`select snapshot_revision
+        from clued_private.scope_currentness_heads where user_id=$1 and canonical_scope=$2`,
+      [userId, `project:${compatId}`])).rows[0].snapshot_revision);
+      assert.ok(revisionAfter > revisionBefore);
+      const privileges = (await admin.query(`select
+        has_table_privilege('anon','clued_private.project_lifecycle_v2_recognitions','select') anon_select,
+        has_table_privilege('authenticated','clued_private.project_lifecycle_v2_recognitions','select') authenticated_select,
+        has_table_privilege('service_role','clued_private.project_lifecycle_v2_recognitions','select') service_select`)).rows[0];
+      assert.equal(privileges.anon_select, false);
+      assert.equal(privileges.authenticated_select, false);
+      assert.equal(privileges.service_select, false);
+      await assert.rejects(admin.query(`update clued_private.project_lifecycle_v2_recognitions
+        set recognition_reason='rewrite' where project_id=$1`, [compatId]), /immutable/);
+    });
+
+    await t.test('v1 confirmed create is recognized atomically without a transition row', async () => {
+      const projectId = uuid();
+      const result = await rpc('clued_project_mutate', {
+        operation: 'create', canonical_project_id: projectId, project_schema_version: 1,
+        base_version: null, idempotency_key: uuid(),
+        mutation: { name: 'Compat confirmed create', progress_status: 'active', certainty_status: 'confirmed', aliases: [] },
+      });
+      assert.equal(result.status, 'committed');
+      const stored = (await admin.query(`select p.project_recognized_v2,d.disposition,
+        (select count(*) from clued_private.project_lifecycle_v2_recognitions r where r.project_id=p.id) transition_count
+        from public.clued_projects p join clued_private.project_lifecycle_v2_dispositions d on d.project_id=p.id
+        where p.id=$1`, [projectId])).rows[0];
+      assert.equal(stored.project_recognized_v2, true);
+      assert.equal(stored.disposition, 'recognized_project');
+      assert.equal(Number(stored.transition_count), 0);
+    });
+
+    await t.test('v1 confirmation fails closed when a recognized Project already owns the normalized name', async () => {
+      const legacyId = uuid();
+      const recognizedId = uuid();
+      assert.equal((await rpc('clued_project_mutate', {
+        operation: 'create', canonical_project_id: legacyId, project_schema_version: 1,
+        base_version: null, idempotency_key: uuid(),
+        mutation: { name: 'Compat name conflict', progress_status: 'paused', certainty_status: 'unconfirmed', aliases: [] },
+      })).status, 'committed');
+      assert.equal((await rpc('clued_project_mutate_v2', {
+        operation: 'create', canonical_project_id: recognizedId, project_schema_version: 2,
+        base_version: null, idempotency_key: uuid(),
+        mutation: { name: 'Compat name conflict', progress_status: 'not_started', aliases: [] },
+        recognition: { confidence: 1, reason: 'Explicit duplicate-name conflict fixture.', source: 'v2_agent_recognition', source_refs: [] },
+      })).status, 'committed');
+      const rejected = await rpc('clued_project_mutate', {
+        operation: 'update', canonical_project_id: legacyId, project_schema_version: 1,
+        base_version: 1, idempotency_key: uuid(), mutation: { certainty_status: 'confirmed' },
+      });
+      assert.equal(rejected.status, 'rejected');
+      const state = (await admin.query(`select project_recognized_v2,
+        (select count(*) from clued_private.project_lifecycle_v2_recognitions where project_id=$1) transition_count
+        from public.clued_projects where id=$1`, [legacyId])).rows[0];
+      assert.equal(state.project_recognized_v2, false);
+      assert.equal(Number(state.transition_count), 0);
+    });
+
     const createdId = uuid();
     await t.test('v2 create preserves caller-selected identity and records private recognition evidence', async () => {
       const result = await rpc('clued_project_mutate_v2', {
@@ -181,6 +299,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
         mutation: { title: 'Project note', content: 'Project note', type_fields: { note_kind: 'fixture' }, relations: {} },
       });
       assert.equal((await rpc('clued_record_mutate', recordInput(`project:${confirmedId}`))).status, 'committed');
+      assert.equal((await rpc('clued_record_mutate', recordInput(`project:${compatId}`))).status, 'committed');
       const deniedRecord = await rpc('clued_record_mutate', recordInput(`project:${evidenceOnlyId}`));
       assert.equal(deniedRecord.status, 'rejected');
       assert.match(deniedRecord.error_code, /project_not_active/i);
@@ -199,6 +318,8 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       assert.equal(exported.snapshot.project_contract_version, 2);
       assert.equal(exported.snapshot.projects.some((project) => project.canonical_project_id === evidenceOnlyId), false);
       assert.equal(exported.snapshot.legacy_projects.some((project) => project.legacy_id === evidenceOnlyId && project.migration_status === 'evidence_only'), true);
+      assert.equal(exported.snapshot.projects.some((project) => project.canonical_project_id === compatId), true);
+      assert.equal(exported.snapshot.legacy_projects.some((project) => project.legacy_id === compatId), false);
       const revisions = (await admin.query(`select canonical_scope,snapshot_revision from clued_private.scope_currentness_heads
         where user_id=$1 and canonical_scope like 'project:%'`, [userId])).rows;
       assert.ok(revisions.every((row) => Number(row.snapshot_revision) > 0));

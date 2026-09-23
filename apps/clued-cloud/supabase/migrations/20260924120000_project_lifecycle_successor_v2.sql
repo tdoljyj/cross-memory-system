@@ -26,6 +26,25 @@ alter table clued_private.project_lifecycle_v2_dispositions enable row level sec
 revoke all on table clued_private.project_lifecycle_v2_dispositions
   from public,anon,authenticated,service_role;
 
+-- The initial disposition remains immutable. A post-cutover v1 client can
+-- later make an explicit confirmation decision; that decision is recorded as
+-- a separate immutable recognition fact rather than rewriting history.
+create table clued_private.project_lifecycle_v2_recognitions (
+  project_id uuid primary key references public.clued_projects(id) on delete restrict,
+  user_id uuid not null,
+  recognition_reason text not null check (length(btrim(recognition_reason)) between 1 and 500),
+  recognition_confidence numeric(4,3) not null check (recognition_confidence between 0 and 1),
+  recognition_source text not null check (recognition_source='v1_confirmed'),
+  source_receipt_id uuid not null references public.clued_audit_receipts(id) on delete restrict,
+  basis jsonb not null check (jsonb_typeof(basis)='object'),
+  recognition_hash text not null check (recognition_hash ~ '^[0-9a-f]{64}$'),
+  recorded_at timestamptz not null default now(),
+  unique(user_id,project_id)
+);
+alter table clued_private.project_lifecycle_v2_recognitions enable row level security;
+revoke all on table clued_private.project_lifecycle_v2_recognitions
+  from public,anon,authenticated,service_role;
+
 -- This private physical flag exists only to make the successor uniqueness
 -- invariant enforceable by PostgreSQL. Evidence-only legacy rows must not
 -- reserve a Product Project name, while two recognized Projects for one owner
@@ -41,7 +60,38 @@ end $$;
 create trigger project_lifecycle_v2_disposition_immutable
   before update or delete on clued_private.project_lifecycle_v2_dispositions
   for each row execute function clued_private.project_lifecycle_v2_disposition_immutable();
+create trigger project_lifecycle_v2_recognition_immutable
+  before update or delete on clued_private.project_lifecycle_v2_recognitions
+  for each row execute function clued_private.project_lifecycle_v2_disposition_immutable();
 
+create function clued_private.project_is_recognized_v2(p_user_id uuid,p_project_id uuid)
+returns boolean language sql stable security definer set search_path='' as $$
+  select exists(
+    select 1 from clued_private.project_lifecycle_v2_dispositions d
+     where d.user_id=p_user_id and d.project_id=p_project_id
+       and d.disposition='recognized_project'
+  ) or exists(
+    select 1 from clued_private.project_lifecycle_v2_recognitions r
+     where r.user_id=p_user_id and r.project_id=p_project_id
+  )
+$$;
+
+-- project_recognized_v2 is an index/cache only. Deferred checks bind it to
+-- immutable recognition truth after every atomic create or transition.
+create function clued_private.project_lifecycle_v2_flag_consistent()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare v_row jsonb:=to_jsonb(new); v_project_id uuid; v_user_id uuid;
+  v_actual boolean;
+begin
+  v_project_id:=coalesce((v_row->>'project_id')::uuid,(v_row->>'id')::uuid);
+  v_user_id:=(v_row->>'user_id')::uuid;
+  select p.project_recognized_v2 into v_actual from public.clued_projects p
+   where p.id=v_project_id and p.user_id=v_user_id;
+  if found and v_actual is distinct from clued_private.project_is_recognized_v2(v_user_id,v_project_id) then
+    raise exception 'project_lifecycle_v2_flag_mismatch' using errcode='23514';
+  end if;
+  return new;
+end $$;
 -- A cutover changes the authority-visible active Project set. Invalidate the
 -- corresponding Project scope in the same transaction so no pre-v2 admission
 -- or projection can be reused as current.
@@ -171,26 +221,48 @@ set project_recognized_v2=(d.disposition='recognized_project')
 from clued_private.project_lifecycle_v2_dispositions d
 where d.project_id=p.id and d.user_id=p.user_id;
 
+do $$
+begin
+  if exists(select 1 from public.clued_projects p
+    where p.project_recognized_v2 is distinct from
+      clued_private.project_is_recognized_v2(p.user_id,p.id)) then
+    raise exception 'project_lifecycle_v2_initial_flag_mismatch';
+  end if;
+end $$;
+
 drop index public.clued_projects_user_name_active_uidx;
 create unique index clued_projects_user_recognized_name_v2_uidx
   on public.clued_projects(user_id,normalized_name)
   where project_recognized_v2 and merged_into_project_id is null;
 
+create constraint trigger project_lifecycle_v2_project_flag_consistent
+  after insert or update of project_recognized_v2 on public.clued_projects
+  deferrable initially deferred for each row
+  execute function clued_private.project_lifecycle_v2_flag_consistent();
+create constraint trigger project_lifecycle_v2_disposition_flag_consistent
+  after insert on clued_private.project_lifecycle_v2_dispositions
+  deferrable initially deferred for each row
+  execute function clued_private.project_lifecycle_v2_flag_consistent();
+create constraint trigger project_lifecycle_v2_recognition_flag_consistent
+  after insert on clued_private.project_lifecycle_v2_recognitions
+  deferrable initially deferred for each row
+  execute function clued_private.project_lifecycle_v2_flag_consistent();
+
 -- During the bounded compatibility window, a legacy v1 M1 client may still
--- create through the retained RPC. A non-null Receipt proves an explicit
--- canonical Project mutation; raw/observe-style inserts remain evidence-only.
+-- create through the retained RPC. Only its explicit confirmed state crosses
+-- the recognition decision; an unconfirmed create remains evidence-only even
+-- though the atomic v1 mutation necessarily has a Receipt.
 create function clued_private.project_lifecycle_v2_compat_insert()
 returns trigger language plpgsql security definer set search_path='' as $$
 declare v_recognized boolean; v_source text; v_reason text; v_basis jsonb; v_hash text;
 begin
   if new.project_schema_version=2 then return new; end if;
-  v_recognized:=new.certainty_status='confirmed' or new.confirmed_at is not null or new.receipt_id is not null;
+  v_recognized:=new.certainty_status='confirmed' or new.confirmed_at is not null;
   v_source:=case when new.certainty_status='confirmed' then 'v1_confirmed'
     when new.confirmed_at is not null then 'confirmed_timestamp'
-    when new.receipt_id is not null then 'explicit_project_event'
     else 'legacy_mention_only' end;
   v_reason:=case when v_recognized
-    then 'A bounded-compatibility v1 canonical mutation explicitly created this Project.'
+    then 'A bounded-compatibility v1 client explicitly created a confirmed Project.'
     else 'A post-cutover legacy mention did not cross the Project-recognition decision.' end;
   v_basis:=jsonb_build_object('operation','v1_compat_insert','receipt_id',new.receipt_id,
     'legacy_certainty_status',new.certainty_status,'legacy_confirmed_at',new.confirmed_at);
@@ -212,6 +284,59 @@ create trigger project_lifecycle_v2_compat_insert
   after insert on public.clued_projects
   for each row execute function clued_private.project_lifecycle_v2_compat_insert();
 
+-- A later v1 confirmation is a new append-only recognition fact. It preserves
+-- the stable Project ID and the original evidence-only disposition, and it
+-- requires the v1 mutation to carry a new atomic Receipt.
+create function clued_private.project_lifecycle_v2_compat_confirm()
+returns trigger language plpgsql security definer set search_path='' as $$
+declare v_disposition clued_private.project_lifecycle_v2_dispositions%rowtype;
+  v_reason text:='A bounded-compatibility v1 confirmation explicitly recognized this Project.';
+  v_basis jsonb; v_hash text;
+begin
+  if old.project_recognized_v2 or new.project_recognized_v2
+    or new.project_schema_version<>1
+    or old.certainty_status='confirmed'
+    or new.certainty_status<>'confirmed'
+    or new.confirmed_at is null
+    or new.receipt_id is null
+    or new.receipt_id is not distinct from old.receipt_id then
+    return new;
+  end if;
+  if not exists(select 1 from public.clued_audit_receipts r
+    where r.id=new.receipt_id and r.user_id=new.user_id
+      and r.operation='project_mutation' and r.operation_family='project_mutation'
+      and r.object_type='request' and r.status='pending'
+      and r.related_receipt_id is null and r.owns_idempotency_key) then
+    raise exception 'project_lifecycle_v2_confirmation_receipt_invalid' using errcode='42501';
+  end if;
+  select * into v_disposition
+    from clued_private.project_lifecycle_v2_dispositions
+   where project_id=new.id and user_id=new.user_id for share;
+  if not found or v_disposition.disposition<>'evidence_only' then
+    raise exception 'project_lifecycle_v2_compat_confirmation_invalid' using errcode='55000';
+  end if;
+  v_basis:=jsonb_build_object(
+    'operation','v1_compat_confirm','source_receipt_id',new.receipt_id,
+    'initial_disposition_hash',v_disposition.disposition_hash,
+    'legacy_certainty_status_before',old.certainty_status,
+    'legacy_certainty_status_after',new.certainty_status);
+  v_hash:=clued_private.m1_sha256(jsonb_build_object(
+    'project_id',new.id,'user_id',new.user_id,'recognition_source','v1_confirmed',
+    'recognition_confidence',1.000,'reason',v_reason,
+    'source_receipt_id',new.receipt_id,'basis',v_basis,'migration_version',2));
+  insert into clued_private.project_lifecycle_v2_recognitions(
+    project_id,user_id,recognition_reason,recognition_confidence,
+    recognition_source,source_receipt_id,basis,recognition_hash)
+  values(new.id,new.user_id,v_reason,1.000,'v1_confirmed',new.receipt_id,v_basis,v_hash);
+  update public.clued_projects
+     set project_recognized_v2=true
+   where id=new.id and user_id=new.user_id and not project_recognized_v2;
+  return new;
+end $$;
+create trigger project_lifecycle_v2_compat_confirm
+  after update of certainty_status,confirmed_at on public.clued_projects
+  for each row execute function clued_private.project_lifecycle_v2_compat_confirm();
+
 create view public.clued_projects_v2 with (security_invoker=true) as
 select p.id as canonical_project_id,p.user_id,2 as project_schema_version,
   p.name,p.aliases,p.summary,p.progress_status,
@@ -220,8 +345,7 @@ select p.id as canonical_project_id,p.user_id,2 as project_schema_version,
   coalesce(p.merge_generation,0) as merge_generation,p.version,
   p.created_at as recorded_at,p.updated_at,p.receipt_id
 from public.clued_projects p
-join clued_private.project_lifecycle_v2_dispositions d
-  on d.project_id=p.id and d.user_id=p.user_id and d.disposition='recognized_project';
+where clued_private.project_is_recognized_v2(p.user_id,p.id);
 revoke all on table public.clued_projects_v2 from public,anon,authenticated;
 revoke all on table public.clued_projects_v2 from service_role;
 
@@ -246,9 +370,8 @@ declare v_effective uuid;
 begin
   v_effective:=clued_private.m1_effective_project(p_user_id,p_project_id);
   if not exists(select 1 from public.clued_projects p
-    join clued_private.project_lifecycle_v2_dispositions d
-      on d.project_id=p.id and d.user_id=p.user_id and d.disposition='recognized_project'
     where p.id=v_effective and p.user_id=p_user_id and p.dismissed_at is null
+      and clued_private.project_is_recognized_v2(p.user_id,p.id)
       and p.merged_into_project_id is null
       and coalesce(p.lifecycle_status,'active')='active') then
     raise exception 'project_not_active' using errcode='42501';
@@ -335,8 +458,7 @@ begin
       v_base:=(p_input->>'base_version')::bigint;
       select * into v_project from public.clued_projects where id=v_id and user_id=p_user_id for update;
       if not found then raise exception 'project_not_found' using errcode='P0002'; end if;
-      if not exists(select 1 from clued_private.project_lifecycle_v2_dispositions d
-        where d.project_id=v_id and d.user_id=p_user_id and d.disposition='recognized_project') then
+      if not clued_private.project_is_recognized_v2(p_user_id,v_id) then
         raise exception 'project_not_active' using errcode='42501';
       end if;
       if v_project.version<>v_base then raise exception 'project_version_conflict' using errcode='40001'; end if;
@@ -398,9 +520,8 @@ begin
     order by (project_row.p).updated_at desc,(project_row.p).id),'[]'::jsonb)
   into projects from (
     select p from public.clued_projects p
-    join clued_private.project_lifecycle_v2_dispositions d
-      on d.project_id=p.id and d.user_id=p.user_id and d.disposition='recognized_project'
     where p.user_id=p_user_id and p.merged_into_project_id is null
+      and clued_private.project_is_recognized_v2(p.user_id,p.id)
       and (coalesce((p_input->>'include_dismissed')::boolean,false) or p.dismissed_at is null)
       and (not (p_input ? 'progress_status') or p.progress_status=p_input->>'progress_status')
       and (not (p_input ? 'query') or p.name ilike '%'||replace(p_input->>'query','%','\%')||'%' escape '\')
@@ -436,9 +557,8 @@ begin
     order by (project_row.p).updated_at desc,(project_row.p).id),'[]'::jsonb)
   into projects from (
     select p from public.clued_projects p
-    join clued_private.project_lifecycle_v2_dispositions d
-      on d.project_id=p.id and d.user_id=p.user_id and d.disposition='recognized_project'
     where p.user_id=b.user_id and p.merged_into_project_id is null
+      and clued_private.project_is_recognized_v2(p.user_id,p.id)
       and (case when migrated then
         'read'=any(clued_private.authorization_effective_actions_v13(b.id,'scope','project:'||p.id,'canonical'))
         else broad or ('project:'||p.id)=any(b.context_keys) end)
@@ -530,7 +650,7 @@ begin
     order by p.id),'[]') into v_legacy_projects
     from public.clued_projects p join clued_private.project_lifecycle_v2_dispositions d
       on d.project_id=p.id and d.user_id=p.user_id and d.disposition='evidence_only'
-    where p.user_id=p_user_id;
+    where p.user_id=p_user_id and not clued_private.project_is_recognized_v2(p.user_id,p.id);
   select coalesce(jsonb_agg(to_jsonb(r)-'user_id' order by r.id),'[]') into v_records
     from public.clued_records_m1 r where r.user_id=p_user_id;
   select coalesce(jsonb_agg((to_jsonb(e)-'user_id'-'actor_user_id')||jsonb_build_object(
@@ -598,8 +718,11 @@ $$;
 
 revoke all on function
   clued_private.project_lifecycle_v2_disposition_immutable(),
+  clued_private.project_is_recognized_v2(uuid,uuid),
+  clued_private.project_lifecycle_v2_flag_consistent(),
   clued_private.project_lifecycle_v2_disposition_currentness(),
   clued_private.project_lifecycle_v2_compat_insert(),
+  clued_private.project_lifecycle_v2_compat_confirm(),
   clued_private.project_public_v2(public.clued_projects),
   clued_private.project_effective_active_v2(uuid,uuid),
   clued_private.project_mutation_core_v2(uuid,uuid,jsonb,text),
