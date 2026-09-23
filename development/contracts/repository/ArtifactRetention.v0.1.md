@@ -50,3 +50,7 @@ No file under `work/` may be cited as Current Truth solely because it remains on
 ## Cleanup safety
 
 Existing artifacts are removed only after proving they have no live fixed-path consumer, contract/test dependency, rollback/audit duty or required historical role. Large size or age alone is not a deletion criterion.
+
+## Initial audit
+
+The 2026-09-23 read-only inventory and large-archive reference probe is recorded in [`ArtifactRetentionAudit.20260923.md`](./ArtifactRetentionAudit.20260923.md). It found live references to the largest archives, so this policy intentionally does not perform retroactive deletion.
