@@ -55,9 +55,15 @@ const item = (overrides = {}) => ({
 const documentOf = (items, segmentId = 'seg_s1_001') =>
   ({ schema_version: 'candidate_information.v1', segment_id: segmentId, items });
 
-test('vendored M0-A schemas are byte-identical to the frozen parent', async () => {
+test('vendored M0-A files are byte-identical to the frozen parent', async () => {
   for (const [name, digest] of Object.entries(PINNED)) {
     assert.equal(sha256(await fs.readFile(path.join(vendored, name))), digest, name);
+  }
+  const lines = (await fs.readFile(path.join(vendored, 'SHA256SUMS.m0a-subset'), 'utf8')).trim().split('\n');
+  assert.equal(lines.length, 20);
+  for (const line of lines) {
+    const [digest, file] = line.split(/\s+/);
+    assert.equal(sha256(await fs.readFile(path.join(vendored, file))), digest, file);
   }
 });
 
@@ -137,10 +143,12 @@ test('Information Flow S1 candidate store: isolation, validation, idempotency, p
     assert.deepEqual(await validate(segment(), documentOf([item({ temporal_mentions: [
       { kind: 'due_at', source_text: '9 月 30 日', source_message_id: 'msg_x' }] })])), ['TEMPORAL_SOURCE_NOT_FOUND']);
 
-    // The recovered M0-A smoke fixtures, when available, must reproduce their frozen expectations.
-    if (process.env.M0A_ROOT) {
-      const smoke = path.join(process.env.M0A_ROOT, 'fixtures/smoke');
-      for (const id of (await fs.readdir(smoke)).filter((name) => /^SMK-(CAN|NEG)-/.test(name))) {
+    // The frozen M0-A candidate smoke fixtures (vendored, digest-checked) reproduce their expectations.
+    {
+      const smoke = path.join(vendored, 'fixtures/smoke');
+      const ids = (await fs.readdir(smoke)).filter((name) => /^SMK-(CAN|NEG)-/.test(name));
+      assert.equal(ids.length, 6);
+      for (const id of ids) {
         const read = async (file) => JSON.parse(await fs.readFile(path.join(smoke, id, file), 'utf8'));
         const expectation = await read('expectation.json');
         if (expectation.fixture_type !== 'candidate') continue;
@@ -154,6 +162,13 @@ test('Information Flow S1 candidate store: isolation, validation, idempotency, p
     const tokenB = hash();
     const tokenGlobalOnly = hash();
     await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'if-s1@example.invalid',now())", [userId]);
+    const otherUser = uuid();
+    const tokenOther = hash();
+    await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'if-s1-other@example.invalid',now())", [otherUser]);
+    await admin.query(`insert into public.clued_agent_bindings
+      (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic','Other user agent',$2,array['context:read','context:write'],array['*'])`,
+    [otherUser, tokenOther]);
     const bindingA = (await admin.query(`insert into public.clued_agent_bindings
       (user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','Agent A',$2,array['context:read','context:write'],array['*']) returning id`,
@@ -298,12 +313,67 @@ test('Information Flow S1 candidate store: isolation, validation, idempotency, p
     [[null, 'pending', submitted.receipt_id], ['pending', 'withdrawn', withdrawn.receipt_id]]);
     assert.deepEqual(await snapshot(), before, 'withdrawal also leaves Canonical state untouched');
 
+    // A forged Event with the same extension name changes no candidate state, and the
+    // extension names stay out of the typed currentness registry.
+    const stateBefore = (await admin.query(`select id,status,version from clued_private.information_candidates
+      where user_id=$1 order by id`, [userId])).rows;
+    const forged = await agent(tokenA, 'clued_event_append', { idempotency_key: 'if-s1-forged-01',
+      event_schema_version: 1, event_type: 'extension:information_flow:candidate_withdrawn', event_scope: 'global',
+      audit_visibility: 'work_log', target_refs: [{ kind: 'system', id: `information_candidate:${candidates[1].id}` }],
+      change_summary: { candidate_id: candidates[1].id } });
+    assert.equal(forged.status, 'committed', JSON.stringify(forged));
+    assert.deepEqual((await admin.query(`select id,status,version from clued_private.information_candidates
+      where user_id=$1 order by id`, [userId])).rows, stateBefore);
+    assert.equal((await admin.query(`select count(*)::int n from clued_private.typed_event_currentness_registry
+      where event_type like 'extension:information_flow:%'`)).rows[0].n, 0);
+
+    // Cross-user isolation: another user's Binding can neither see nor withdraw these candidates.
+    assert.equal((await agent(tokenOther, 'clued_intake_list', { scope: 'global' })).candidates.length, 0);
+    const foreign = await agent(tokenOther, 'clued_intake_withdraw',
+      { idempotency_key: 'if-s1-foreign-01', scope: 'global', candidate_id: candidates[1].id, base_version: 1 });
+    assert.equal(foreign.status, 'rejected');
+    assert.match(foreign.error_code, /candidate_not_found/);
+    const malformed = await agent(tokenA, 'clued_intake_withdraw',
+      { idempotency_key: 'if-s1-malformed-01', scope: 'global', candidate_id: 'not-a-uuid', base_version: 1 });
+    assert.equal(malformed.status, 'rejected', 'malformed input is a rejection, not a failure');
+
+    // The same client key reused across operations does not collide on the Event key.
+    const reusedKey = await agent(tokenA, 'clued_intake_withdraw',
+      { idempotency_key: 'if-s1-submit-0001', scope: 'global', candidate_id: candidates[1].id, base_version: 1 });
+    assert.equal(reusedKey.status, 'committed', JSON.stringify(reusedKey));
+
+    // Submission lookup after an unknown outcome.
+    const bySubmission = await agent(tokenA, 'clued_intake_list',
+      { scope: 'global', submission_id: submitted.supplemental.submission_id });
+    assert.deepEqual(bySubmission.candidates.map((row) => row.submission_id),
+      [submitted.supplemental.submission_id, submitted.supplemental.submission_id]);
+
     // Grants: tables are private; each entry is callable only by its own principal kind.
     for (const table of ['information_intake_submissions', 'information_candidates',
       'knowledge_candidates', 'candidate_transitions']) {
       await assert.rejects(anon.query(`select 1 from clued_private.${table}`), /permission denied/);
       await assert.rejects(human.query(`select 1 from clued_private.${table}`), /permission denied/);
     }
+    const privileges = (await admin.query(`select p.oid::regprocedure::text fn,
+        has_function_privilege('anon',p.oid,'execute') anon,
+        has_function_privilege('authenticated',p.oid,'execute') authenticated,
+        has_function_privilege('service_role',p.oid,'execute') service_role
+      from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='clued_private' and p.proname like 'intake\\_%'`)).rows;
+    assert.equal(privileges.length, 8);
+    for (const row of privileges) {
+      assert.deepEqual([row.anon, row.authenticated, row.service_role], [false, false, false], row.fn);
+    }
+    const entries = (await admin.query(`select p.proname,
+        has_function_privilege('anon',p.oid,'execute') anon,
+        has_function_privilege('authenticated',p.oid,'execute') authenticated,
+        has_function_privilege('service_role',p.oid,'execute') service_role
+      from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.proname like 'clued\\_%intake\\_%' order by 1`)).rows;
+    assert.deepEqual(entries.map((row) => [row.proname, row.anon, row.authenticated, row.service_role]), [
+      ['clued_intake_list', true, false, false], ['clued_intake_submit', true, false, false],
+      ['clued_intake_withdraw', true, false, false], ['clued_user_intake_list', false, true, false],
+      ['clued_user_intake_submit', false, true, false], ['clued_user_intake_withdraw', false, true, false]]);
     await assert.rejects(human.query('select public.clued_intake_submit($1,$2)', [tokenA, submitInput]), /permission denied/);
     await assert.rejects(anon.query('select public.clued_user_intake_submit($1,$2)', [submitInput, hash()]), /permission denied/);
     await assert.rejects(anon.query('select clued_private.intake_submit_core_v1($1,null,$2,$3)',

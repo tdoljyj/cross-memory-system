@@ -1,0 +1,32 @@
+{
+  "schema_version": "candidate_information.v1",
+  "segment_id": "seg_neg_001",
+  "items": [
+    {
+      "candidate_local_id": "item_fact_office",
+      "item_type": "fact",
+      "claim": "虚构的北桥办公室在三楼。",
+      "summary": "北桥办公室位于三楼",
+      "action_level": "reference",
+      "priority": "high",
+      "entity_mentions": [
+        {
+          "type": "place",
+          "mention": "虚构的北桥办公室",
+          "role": "subject"
+        }
+      ],
+      "topics": ["办公地点"],
+      "temporal_mentions": [],
+      "source_anchors": [
+        {
+          "message_id": "msg_neg_001_a",
+          "exact_quote": "虚构的北桥办公室在三楼。"
+        }
+      ],
+      "confidence": 0.99,
+      "uncertainties": [],
+      "sensitivity_hint": "none"
+    }
+  ]
+}

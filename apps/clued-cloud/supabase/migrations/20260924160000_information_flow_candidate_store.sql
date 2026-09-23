@@ -320,7 +320,8 @@ begin
       raise exception 'invalid_scope' using errcode='22023';
     end if;
     if v_scope like 'project:%' then
-      perform clued_private.m1_effective_project(p_user_id,clued_private.m1_scope_project_id(v_scope));
+      -- Store the effective (merge-resolved) project, like M1 Record writes.
+      v_scope:='project:'||clued_private.m1_effective_project(p_user_id,clued_private.m1_scope_project_id(v_scope));
     end if;
     if p_input ? 'client_label' and not clued_private.intake_is_str_v1(p_input->'client_label',1,120) then
       raise exception 'invalid_client_label' using errcode='22023';
@@ -342,7 +343,8 @@ begin
       'size_bytes',octet_length(convert_to(v_segment::text,'UTF8'))),
       clued_private.m1_sha256(jsonb_build_object('operation','evidence_ingest','intake_receipt',v_receipt.id)));
     if v_evidence->>'status'<>'committed' then
-      raise exception 'intake_evidence_failed:%',coalesce(v_evidence->>'error_code','unknown') using errcode='22023';
+      raise exception 'intake_evidence_%:%',v_evidence->>'status',coalesce(v_evidence->>'error_code','unknown')
+        using errcode=case when v_evidence->>'status'='rejected' then '22023' else 'XX000' end;
     end if;
     v_evidence_id:=(v_evidence->'evidence_ids'->>0)::uuid;
     insert into clued_private.information_intake_submissions(
@@ -373,7 +375,7 @@ begin
       'extension:information_flow:candidate_submitted',v_refs,v_scope,null,
       jsonb_build_object('submission_id',v_submission_id,'candidate_count',jsonb_array_length(v_candidates),
         'source_kind',v_kind,'input_digest',v_input_digest),
-      p_input->>'idempotency_key',v_receipt.request_sha256,'success','audit_only',array[v_evidence_id],'[]',null);
+      'intake_submit:'||(p_input->>'idempotency_key'),v_receipt.request_sha256,'success','audit_only',array[v_evidence_id],'[]',null);
     v_result:=clued_private.m1_finish_receipt(v_receipt.id,'committed',v_refs,'{}','{}',array[v_event_id],
       array[v_evidence_id],null);
     -- Supplemental data rides on the response only; the sealed Receipt result
@@ -393,16 +395,27 @@ end $$;
 -- A Binding sees only its own Binding's candidates; the Native owner sees all.
 create function clued_private.intake_list_core_v1(p_user_id uuid,p_binding_id uuid,p_input jsonb)
 returns jsonb language plpgsql stable security definer set search_path='' as $$
-declare v_status text:=p_input->>'status'; v_limit integer:=coalesce((p_input->>'limit')::integer,50);
-  v_scope text:=coalesce(p_input->>'scope','global');
+declare v_status text:=p_input->>'status'; v_limit integer; v_scope text:=coalesce(p_input->>'scope','global');
+  v_submission uuid;
 begin
+  if coalesce(p_input->>'limit','50') !~ '^[0-9]{1,3}$' then raise exception 'invalid_limit' using errcode='22023'; end if;
+  v_limit:=coalesce(p_input->>'limit','50')::integer;
+  if p_input ? 'submission_id' then
+    if coalesce(p_input->>'submission_id','') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+      raise exception 'invalid_submission_id' using errcode='22023';
+    end if;
+    v_submission:=(p_input->>'submission_id')::uuid;
+  end if;
+  if v_scope like 'project:%' then
+    v_scope:='project:'||clued_private.m1_effective_project(p_user_id,clued_private.m1_scope_project_id(v_scope));
+  end if;
   if v_status is not null and v_status not in ('pending','promoted','rejected','conflict','withdrawn','expired') then
     raise exception 'invalid_status' using errcode='22023';
   end if;
   if v_limit not between 1 and 200 then raise exception 'invalid_limit' using errcode='22023'; end if;
   return jsonb_build_object('status','ok','candidates',coalesce((
     select jsonb_agg(jsonb_build_object(
-      'id',c.id,'scope',c.scope,'tier',c.tier,'candidate_local_id',c.candidate_local_id,'payload',c.payload,
+      'id',c.id,'submission_id',c.submission_id,'scope',c.scope,'tier',c.tier,'candidate_local_id',c.candidate_local_id,'payload',c.payload,
       'source_kind',c.source_kind,'status',c.status,'version',c.version,'evidence_ids',to_jsonb(c.evidence_ids),
       'input_digest',c.input_digest,'expires_at',c.expires_at,'created_at',c.created_at,
       -- Always explicit: a candidate is never current truth.
@@ -411,6 +424,7 @@ begin
       where c.user_id=p_user_id
         and (p_binding_id is null or c.binding_id=p_binding_id)
         and c.scope=v_scope
+        and (v_submission is null or c.submission_id=v_submission)
         and (v_status is null or c.status=v_status)
       order by c.created_at desc,c.id limit v_limit) c),'[]'::jsonb));
 end $$;
@@ -428,14 +442,20 @@ begin
   if v_receipt.status<>'pending' then return coalesce(v_receipt.canonical_result,clued_private.m1_result_envelope(v_receipt))
     ||jsonb_build_object('replayed',v_receipt.related_receipt_id is null); end if;
   begin
-    v_id:=nullif(p_input->>'candidate_id','')::uuid;
+    if coalesce(p_input->>'candidate_id','') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      or coalesce(p_input->>'base_version','') !~ '^[1-9][0-9]{0,8}$' then
+      raise exception 'invalid_withdraw_input' using errcode='22023';
+    end if;
+    v_id:=(p_input->>'candidate_id')::uuid;
     select * into v_candidate from clued_private.information_candidates
       where id=v_id and user_id=p_user_id for update;
     if not found or (p_binding_id is not null and v_candidate.binding_id is distinct from p_binding_id)
-      or v_candidate.scope is distinct from coalesce(p_input->>'scope','global') then
+      or v_candidate.scope is distinct from (case when coalesce(p_input->>'scope','global') like 'project:%'
+        then 'project:'||clued_private.m1_effective_project(p_user_id,clued_private.m1_scope_project_id(p_input->>'scope'))
+        else coalesce(p_input->>'scope','global') end) then
       raise exception 'candidate_not_found' using errcode='P0002';
     end if;
-    if v_candidate.version<>coalesce((p_input->>'base_version')::integer,-1) then
+    if v_candidate.version<>(p_input->>'base_version')::integer then
       raise exception 'candidate_version_conflict' using errcode='40001';
     end if;
     if v_candidate.status<>'pending' then raise exception 'candidate_not_pending' using errcode='55000'; end if;
@@ -450,7 +470,7 @@ begin
     v_event_id:=clued_private.m1_append_event_row(p_user_id,p_binding_id,v_receipt.id,v_receipt.canonical_version,
       'extension:information_flow:candidate_withdrawn',v_refs,v_candidate.scope,null,
       jsonb_build_object('candidate_id',v_id,'version',v_candidate.version),
-      p_input->>'idempotency_key',v_receipt.request_sha256,'success','audit_only','{}','[]',null);
+      'intake_withdraw:'||(p_input->>'idempotency_key'),v_receipt.request_sha256,'success','audit_only','{}','[]',null);
     v_result:=clued_private.m1_finish_receipt(v_receipt.id,'committed',v_refs,
       jsonb_build_object(v_id::text,v_candidate.version-1),jsonb_build_object(v_id::text,v_candidate.version),
       array[v_event_id],'{}',null);
