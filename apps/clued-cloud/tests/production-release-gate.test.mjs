@@ -63,6 +63,13 @@ test('a newly applied migration may have a generated production version only whe
   assert.deepEqual(verifyReleaseState(state), []);
 });
 
+test('release refuses a duplicate source-version migration row even with the expected name', () => {
+  const state = healthy();
+  state.history.push({ version: baseline.source_migration.slice(0, 14),
+    name: baseline.production_history_name, statements: ['-- different SQL'] });
+  assert.deepEqual(verifyReleaseState(state), ['source_version_conflict']);
+});
+
 test('release refuses changed historical migrations and the old frontier selector', () => {
   const state = healthy();
   state.changedPaths = [{ status: 'M', path:

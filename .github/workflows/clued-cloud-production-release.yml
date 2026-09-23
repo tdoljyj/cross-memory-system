@@ -60,15 +60,15 @@ jobs:
         run: |
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
-      - name: Record deployment start time
-        id: deployment_start
-        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - name: Deploy Clued production Worker
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --config wrangler.production.jsonc --keep-vars
+      - name: Record deployment completion time
+        id: deployment_completion
+        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$GITHUB_OUTPUT"
       - name: Verify exact live commit and currentness transport
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
@@ -79,7 +79,7 @@ jobs:
         run: |
           for attempt in 1 2 3 4 5 6; do
             if node scripts/production-release-gate.mjs --pre-deploy \
-              --min-heartbeat-at '${{ steps.deployment_start.outputs.timestamp }}' \
+              --min-heartbeat-at '${{ steps.deployment_completion.outputs.timestamp }}' \
               --evidence-out .sites-runtime/release-evidence/production-postflight.json; then
               exit 0
             fi

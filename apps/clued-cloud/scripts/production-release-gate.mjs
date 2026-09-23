@@ -46,7 +46,7 @@ export function verifyReleaseState({ baseline, sourceSql, history, changedPaths,
     errors.push('production_baseline_sql_mismatch');
   }
   const sourceVersionRow = rows.get(migrationVersion);
-  if (sourceVersionRow && sourceVersionRow.name !== baseline.production_history_name) {
+  if (sourceVersionRow && migrationVersion !== baseline.production_history_version) {
     errors.push('source_version_conflict');
   }
 
@@ -83,7 +83,7 @@ export function verifyReleaseState({ baseline, sourceSql, history, changedPaths,
         watchdog.heartbeat?.last_result !== 'idle') {
       errors.push('worker_heartbeat_not_healthy');
     }
-    if (minHeartbeatAt !== null && heartbeatAt < Date.parse(minHeartbeatAt)) {
+    if (minHeartbeatAt !== null && heartbeatAt <= Date.parse(minHeartbeatAt)) {
       errors.push('worker_has_not_run_after_deployment');
     }
     for (const key of requiredKeys) {
