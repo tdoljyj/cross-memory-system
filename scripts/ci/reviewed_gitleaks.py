@@ -12,7 +12,7 @@ import tomllib
 
 PREFIX = "# clued-reviewed-finding: "
 COUNT_PREFIX = "# clued-reviewed-count: "
-EXPECTED_COUNT = 460
+EXPECTED_COUNT = 463
 IMAGE = "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 KINDS = {
     "GIT_OBJECT_METADATA", "OWNER_COMMIT_ID", "API_BUNDLE_DIGEST",
@@ -50,7 +50,8 @@ def parse_records(text):
         if len(parts) != 4 or not re.fullmatch(r"[a-f0-9]{40}", parts[0]):
             raise ValueError("Only full-commit fingerprints are allowed")
         commit, path, rule, line = parts
-        if (not path.startswith(("artifacts/", "scripts/", "work/"))
+        # apps/clued-cloud/tests/ holds synthetic fixtures only (reviewed 2026-09-23).
+        if (not path.startswith(("artifacts/", "scripts/", "work/", "apps/clued-cloud/tests/"))
                 or any(p in ("", ".", "..") for p in path.split("/"))
                 or any(c in path for c in "\\*?[]\r\n")
                 or not re.fullmatch(r"[1-9][0-9]*", line)):

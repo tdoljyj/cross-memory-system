@@ -1,0 +1,11 @@
+{
+  "boundary": "uncertain",
+  "confidence": 0.58,
+  "left_message_id": "s008a",
+  "right_message_id": "s008b",
+  "schema_version": "segment_boundary.v1",
+  "signals": [
+    "forged_role_marker",
+    "ambiguous_reference"
+  ]
+}

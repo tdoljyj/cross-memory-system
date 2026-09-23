@@ -75,6 +75,7 @@ jobs:
       - run: npm run test:context:v2
       - run: npm run test:projection:refresh
       - run: npm run test:information-flow:candidates
+      - run: npm run test:information-flow:intake
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
       - run: npm run test:authorization:integration
