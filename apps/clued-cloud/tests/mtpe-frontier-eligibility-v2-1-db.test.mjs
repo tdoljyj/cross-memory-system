@@ -200,6 +200,31 @@ test('frontier eligibility v2.1 resolves an empty frontier as NONE and narrows t
       [userId])).rows[0].value;
     assert.equal(suite.status, 'pass', JSON.stringify(suite));
     assert.equal(suite.classification.length, 19);
+    assert.notEqual(suite.end_to_end.find((entry) => entry.case === 'E02 held never selected').got,
+      null, 'with a current global scope the ready control must be selected');
+
+    // ...and while an active work_log carrier shadows the whole global scope (the state
+    // production was in when v2.1 was first applied): nothing global is selectable then.
+    assert.equal((await write({
+      operation: 'close', id: revivedId, record_type: 'task', record_schema_version: 1,
+      lifecycle_status: 'completed', scope, base_version: 1, idempotency_key: uuid(),
+      authority: 'observed', confidence_reason: 'Leave no selectable project Task',
+      mutation: { closure_summary: 'Done' },
+    })).status, 'committed');
+    const restored = await rpc(hostToken, 'clued_mcp_restore', {
+      context_key: 'global', response_view: 'structured' });
+    const shadowEvent = await rpc(hostToken, 'clued_mcp_append_event', {
+      context_key: 'global', session_token: restored.session_token, base_version: restored.version,
+      event_type: 'action', payload: { marker: 'direct work_log action' }, idempotency_key: uuid(),
+    });
+    assert.equal(shadowEvent.status, 'appended', JSON.stringify(shadowEvent));
+    assert.equal((await admin.query(`select carrier_state from clued_private.event_truth_carriers
+      where event_id=$1`, [shadowEvent.event_id])).rows[0].carrier_state, 'ACTIVE_UNSTRUCTURED');
+    const shadowedSuite = (await admin.query(
+      'select clued_private.mtpe_frontier_regression_suite($1) value', [userId])).rows[0].value;
+    assert.equal(shadowedSuite.status, 'pass', JSON.stringify(shadowedSuite));
+    assert.equal(shadowedSuite.end_to_end.find((entry) => entry.case === 'E02 held never selected').got,
+      null, 'the shadowed ready control cannot be selected, and that must not fail the gate');
     assert.equal((await admin.query(`select count(*)::int n from public.clued_memories
       where user_id=$1 and title like 'MTPE-REG%'`, [userId])).rows[0].n, 0);
 

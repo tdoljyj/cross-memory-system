@@ -631,10 +631,13 @@ begin
       end if;
 
       -- E02: held fixtures tie the ready control on priority but never become NOW.
+      -- Something must be selected unless the global scope itself is not current
+      -- (an active work_log carrier shadows every global Task, the ready control included).
       s1:=clued_private.mtpe_snapshot(p_user_id);
       v_res:=v_res||jsonb_build_array(jsonb_build_object('case','E02 held never selected',
-        'pass',(s1->'selected_frontier'->>'record_id') is not null
-          and not ((s1->'selected_frontier'->>'record_id')::uuid = any(v_held)),
+        'pass',not coalesce((s1->'selected_frontier'->>'record_id')::uuid = any(v_held),false)
+          and ((s1->'selected_frontier'->>'record_id') is not null
+            or clued_private.record_currentness_fence(p_user_id,v_ready,null::text[])<>'CURRENT'),
         'got',s1->'selected_frontier'->>'record_id'));
       v_res:=v_res||jsonb_build_array(jsonb_build_object('case','E02b ready control',
         'pass',exists(select 1 from clued_private.mtpe_intake_projection p where p.record_id=v_ready
