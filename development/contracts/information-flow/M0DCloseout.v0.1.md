@@ -45,6 +45,15 @@ Two locked parent designs are `ARTIFACT_NOT_AVAILABLE` in both Drive and the rep
 
 Nothing is implemented until the Owner records the decisions below as a Canonical Decision with a Receipt. This PROPOSAL implies none of them.
 
+**Recorded 2026-09-23:** Canonical Decision `ef229e68-bff5-4dca-9b7f-159a08096748`, Event 1240, Receipt `dc4f356f-1653-4345-8c42-dabd2807e1ad`, bound to contract commit `39af780`.
+- OD-1: **(b)** model-free
+- OD-2: Part B separate result **allowed**
+- OD-3: **isolated candidate store**
+- OD-5: general M1 **unchanged**, registered `OPEN_BY_OD-5`
+- OD-4: stands as written.
+
+The Decision was written by an Agent with the Owner's popup answers quoted, which is within the `OPEN_BY_OD-5` disclosure. The contract itself is **not frozen** until a separate Owner freeze.
+
 - **OD-1 — model evaluation path.**
   - (a) Separately authorize M0-C Window B: Provider, exact model ID, parameters, No-Training/Retention facts, and `max_total_usd`. Part A then waits for Primary Model PASS.
   - (b) Go **model-free**. Part B runs with the M0-B extractor disabled. Candidate Information comes only from the deterministic capture in §5.1, and every claim excludes model quality. A01, A03 and A04 (parent regression, closure, seal) still run, but A02 stays **unmet**: the frozen M0-C §21 precondition is not rewritten. MVP-0 therefore stays open, and the result is `PART_B_RUNTIME_ACCEPTED_MODEL_FREE` (§10). Only a separate, Receipt-backed Owner amendment of the M0-C plan could allow MVP-0 to close without Primary Model PASS. Model extraction becomes a later successor gated by Window B.
