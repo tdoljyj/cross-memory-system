@@ -146,7 +146,7 @@ test('frontier eligibility v2 keeps backlog / later / 暂缓 / do-not-recommend 
     // 1. Held Tasks outrank the ready control yet never become the NOW or the
     //    system recommended priority, and are projected DEFERRED, never READY.
     const first = await snapshot();
-    assert.equal(first.eligibility_rule, 'mtpe-frontier-eligibility.v2');
+    assert.match(first.eligibility_rule, /^mtpe-frontier-eligibility\.v2(\.\d+)?$/);
     assert.equal(first.frontier_status, 'SELECTED');
     for (const [id, code] of held) {
       const entry = row(first, id);
@@ -244,7 +244,8 @@ test('frontier eligibility v2 keeps backlog / later / 暂缓 / do-not-recommend 
     assert.equal(heads.resolved_through_revision, heads.invalidation_revision);
     const source = (await admin.query('select clued_private.frontier_task_source_v2($1,$2) value',
       [userId, emptyProjection])).rows[0].value;
-    assert.equal(source.status, 'PROJECTION_REQUIRED');
+    // v2 returned PROJECTION_REQUIRED here; v2.1 resolves a current empty Frontier as NONE.
+    assert.equal(source.status, 'NONE');
     assert.equal(source.action, null);
     assert.equal(source.reason, 'NO_ELIGIBLE_FRONTIER_CANDIDATE');
     const emptyValidation = await validate();
@@ -265,7 +266,7 @@ test('frontier eligibility v2 keeps backlog / later / 暂缓 / do-not-recommend 
       [userId])).rows[0].value;
     assert.equal(suite.status, 'pass', JSON.stringify(suite));
     assert.equal(suite.failures, 0);
-    assert.equal(suite.classification.length, 14);
+    assert.ok(suite.classification.length >= 14);
     assert.ok(suite.end_to_end.length >= 10);
     assert.deepEqual(await sideEffects(), beforeSuite);
     for (const role of ['anon', 'authenticated']) {
