@@ -120,6 +120,18 @@ class CaptureGuardTest(unittest.TestCase):
                        result("b1", "ok")]
         self.assertEqual(self.run_hook(push_branch).returncode, 0)
 
+    def test_command_text_that_only_mentions_merge_or_push_is_not_an_outcome(self):
+        commit = ("git commit -q -F - <<'EOF'\nAdd hook\n\n- a merged PR (merge_pull_request, or gh pr merge),"
+                  " a push to main\nEOF\ngit push -u origin feature")
+        entries = [human("做 hook", "u1"), call("b1", "Bash", {"command": commit}), result("b1", "ok")]
+        self.assertEqual(self.run_hook(entries).returncode, 0)
+        script = "python3 - <<'PY'\ncases = ('cd repo && gh pr merge 5', 'x; git push origin main')\nPY\necho done"
+        entries = [human("做 hook", "u1"), call("b2", "Bash", {"command": script}), result("b2", "ok")]
+        self.assertEqual(self.run_hook(entries).returncode, 0)
+        for command in ("cd repo && gh pr merge 5 --merge", "GH_TOKEN=x gh pr merge 5"):
+            entries = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", "ok")]
+            self.assertEqual(self.run_hook(entries).returncode, 2, command)
+
     def test_sidechain_calls_are_ignored(self):
         entries = [human("看看", "u1"), call("m1", MERGE, sidechain=True), result("m1", MERGED)]
         self.assertEqual(self.run_hook(entries).returncode, 0)

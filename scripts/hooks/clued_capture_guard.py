@@ -43,8 +43,13 @@ DECISION_PATTERN = re.compile(
     r"|\bfrom now on\b|\bdefer(red)?\b|\bcancel(led)?\b)",
     re.IGNORECASE,
 )
-GIT_PUSH_MAIN = re.compile(r"\bgit\s+push\b[^\n;&|]*\b(main|master)\b")
-GH_PR_MERGE = re.compile(r"\bgh\s+pr\s+merge\b")
+# Only an invocation counts: the command must start a line or follow a shell
+# separator, so text such as a commit message that mentions it does not match.
+COMMAND_START = r"(?:^|[;&|(]\s*|&&\s*|\|\|\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
+GIT_PUSH_MAIN = re.compile(COMMAND_START + r"git\s+push\b[^\n;&|]*\b(main|master)\b", re.MULTILINE)
+GH_PR_MERGE = re.compile(COMMAND_START + r"gh\s+pr\s+merge\b", re.MULTILINE)
+# Heredoc bodies (commit messages, inline scripts) are data, not commands.
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.MULTILINE | re.DOTALL)
 
 
 @dataclass
@@ -148,7 +153,7 @@ def analyse(entries: list[dict]) -> list[Finding]:
             elif suffix == "deploy_edge_function" and not failed and '"error"' not in body:
                 outcomes.append((pos, use_id, f"deployed edge function {tool_input.get('name', '')}".strip()))
             elif name == "Bash" and not failed:
-                command = str(tool_input.get("command", ""))
+                command = HEREDOC.sub("", str(tool_input.get("command", "")))
                 if GH_PR_MERGE.search(command):
                     outcomes.append((pos, use_id, "merged a PR with gh pr merge"))
                 elif GIT_PUSH_MAIN.search(command):
