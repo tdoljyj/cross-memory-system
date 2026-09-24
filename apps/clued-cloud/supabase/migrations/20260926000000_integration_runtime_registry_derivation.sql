@@ -16,6 +16,14 @@
 --       and not by the literal §7.3 formulas that also read identity_claim_state;
 --   (c) the two C1 tightenings beyond the literal §7.3 text: a revocation_state / revocation_source
 --       mismatch is C1, and a non-null `mask` on an unmasked value is C1.
+-- Contract authority for two further tightenings: Owner Decision
+-- 793ea908-3281-430d-8bfd-8e0b83bfd226, recorded as ERRATA-002 in the same file. It settles,
+-- normatively:
+--   (d) only the integer spelling of `reauth_marks_open` and of `policy.policy_version` is
+--       accepted; `0.0` / `1.0` are C1, because jsonb keeps the input scale and facts_sha256 must
+--       stay a faithful hash of the submitted document;
+--   (e) an authorization ceiling entry's `actions` array is de-duplicated and sorted in C
+--       collation, exactly as §5.2 already requires of `scopes`.
 -- New objects only: no existing function, table, policy or grant is changed (§2.3, T-S-3).
 -- Nothing is granted to public, anon, authenticated or service_role (§5.13).
 -- READY profiles (§5.1 integration_ready_profiles_v1) belong to PR-3 and are not created here.
@@ -34,8 +42,9 @@ $$;
 -- Authorization ceiling shape (§5.2 CHECK, §10.3 v0.1.2 NIT-2): exactly {scopes, entries};
 -- scopes ⊆ v12 scopes, de-duplicated and sorted; entries = "LEGACY_UNRESTRICTED" or a list of
 -- v12-shaped entries {resource_kind, resource_id, environment, actions} with non-empty actions that
--- are de-duplicated and sorted in C collation, as scopes already were (v0.1.8 review NIT-3), and at
--- most one entry per (resource_kind, resource_id, environment) (the v12 primary key).
+-- are de-duplicated and sorted in C collation, as scopes already were — beyond the literal §5.2
+-- text; authority ERRATA-002 (Owner Decision 793ea908-3281-430d-8bfd-8e0b83bfd226) — and at most
+-- one entry per (resource_kind, resource_id, environment) (the v12 primary key).
 create function clued_private.integration_ceiling_valid_v1(p_ceiling jsonb)
 returns boolean language plpgsql immutable security invoker set search_path='' as $$
 declare
@@ -77,7 +86,8 @@ begin
                       or (e #>> '{}') not in ('read','write','close','restore','audit','feedback_submit')) then
       return false;
     end if;
-    -- actions are de-duplicated and sorted, exactly as scopes are (v0.1.8 review NIT-3)
+    -- actions are de-duplicated and sorted, exactly as scopes are; authority ERRATA-002
+    -- (Decision 793ea908-3281-430d-8bfd-8e0b83bfd226)
     if array(select e from pg_catalog.jsonb_array_elements_text(v_actions) with ordinality t(e, n) order by n)
        is distinct from array(select e from (select distinct e from pg_catalog.jsonb_array_elements_text(v_actions) e) s
                               order by e collate "C") then
@@ -115,13 +125,20 @@ end $$;
 -- first, so the guarded cast below cannot depend on the session TimeZone or DateStyle and the
 -- function is genuinely immutable; the cast is what rejects out-of-range field values such as
 -- 2026-13-99T99:99:99Z, which the regex alone accepts (v0.1.8 review NIT-1).
+-- The hour and second alternations pin 00…23 and 00…59 lexically, because PostgreSQL accepts the
+-- end-of-day hour 24 and the leap second 60 and silently rolls them over to a different instant
+-- (24:00:00Z → the next day, 12:00:60Z → 12:01:00Z). Two spellings of one instant would then hash
+-- differently, and canonical_runtime_verification_facts.valid_until is inside facts_sha256, which
+-- §7.1 rule 1 requires to be a function of the truth alone. Every other out-of-range field is
+-- already a hard error in the cast rather than a rollover (minute 60, offset minute 60, offset hour
+-- 16, 2026-02-30), so the regex only has to remove these two.
 create function clued_private.integration_timestamp_valid_v1(p_text text)
 returns boolean language plpgsql immutable security invoker set search_path='' as $$
 declare
   v_parsed timestamptz;
 begin
   if p_text is null
-     or p_text !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?(Z|[+-][0-9]{2}:[0-9]{2})$' then
+     or p_text !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T(2[0-3]|[01][0-9]):[0-9]{2}:[0-5][0-9](\.[0-9]{1,6})?(Z|[+-][0-9]{2}:[0-9]{2})$' then
     return false;
   end if;
   begin
@@ -357,8 +374,9 @@ begin
   end if;
 
   -- reauth_marks_open: a non-negative integer. Only the integer spelling is accepted: jsonb keeps
-  -- the input scale, so 0.0 would hash differently from 0 (v0.1.8 review NIT-2 — reject, do not
-  -- canonicalize, because facts_sha256 must stay a faithful hash of the submitted document).
+  -- the input scale, so 0.0 would hash differently from 0 — reject, do not canonicalize, because
+  -- facts_sha256 must stay a faithful hash of the submitted document. Stricter than the literal
+  -- §7.2 "整数 ≥ 0"; authority ERRATA-002 (Decision 793ea908-3281-430d-8bfd-8e0b83bfd226).
   v := p_facts->'reauth_marks_open';
   if pg_catalog.jsonb_typeof(v) is distinct from 'number' or (v #>> '{}') !~ '^[0-9]+$' then
     c1 := true;
@@ -441,7 +459,8 @@ begin
     if (v #>> '{}') <> 'clued.integration-derivation.v1' then c9 := true; end if;
   else c1 := true; end if;
   v := p_facts #> '{policy,policy_version}';
-  -- integer spelling only, for the same reason as reauth_marks_open (v0.1.8 review NIT-2)
+  -- integer spelling only, for the same reason as reauth_marks_open; authority ERRATA-002
+  -- (Decision 793ea908-3281-430d-8bfd-8e0b83bfd226)
   if pg_catalog.jsonb_typeof(v) = 'number' and (v #>> '{}') ~ '^[0-9]+$' then
     if (v #>> '{}')::numeric <> 1 then c9 := true; end if;
   else c1 := true; end if;

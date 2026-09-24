@@ -12,15 +12,15 @@ import EmbeddedPostgres from 'embedded-postgres';
 // derivation functions. Covers the pure-function / property layer of G-A3 and G-A7
 // (T-A3-1…6, T-A7-3…9 function layer, P1, P2, P3, P5), T-A7-10 and T-S-1/2/3.
 //
-// Sample counts (§13.2 P2 (c)): 150,000 fixed-seed random facts by default (the CI count, cut from
-// 250,000 by v0.1.8 review MINOR-4 to keep a 2-vCPU runner inside the stated budget);
-// CLUED_INTEGRATION_RUNTIME_PROPERTY_FULL=1 runs the nightly 2,000,000, which is the 250,000+
-// figure of §13.2 P2 (c) and more. The seed is mulberry32(20260924) (§13.0) and is printed with
-// every failing sample.
+// Sample counts. §13.2 P2 (c) states two separate obligations, and both are met verbatim:
+//   CI      — 250,000 fixed-seed random facts, the default of this file;
+//   nightly — 2,000,000, run by CLUED_INTEGRATION_RUNTIME_PROPERTY_FULL=1, which
+//             .github/workflows/clued-integration-runtime-nightly.yml sets once a day.
+// The seed is mulberry32(20260924) (§13.0) and is printed with every failing sample.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATION = '20260926000000_integration_runtime_registry_derivation.sql';
 const FULL = process.env.CLUED_INTEGRATION_RUNTIME_PROPERTY_FULL === '1';
-const RANDOM_SAMPLES = FULL ? 2_000_000 : 150_000;
+const RANDOM_SAMPLES = FULL ? 2_000_000 : 250_000;
 const SEED = 20260924;
 const CHUNK = 5000;
 const golden = JSON.parse(await fs.readFile(path.join(root, 'tests/fixtures/integration-runtime/golden-vectors.v1.json'), 'utf8'));
@@ -98,14 +98,181 @@ function permuted(value, rng) {
 }
 
 // §13.2 P2 semantic oracle (v0.1.8 review MINOR-3). An independent re-derivation of the whole
-// predicate / Candidate / state / Operability layer straight from the facts document, written from
-// the specification text (§7.3, §8.3, §8.4, §9.1, §9.2, §9.4) and never from the SQL output, so a
-// mutation of any single factor in the migration diverges here. It is applied only to documents the
-// migration itself already judged valid; invalid documents stay with the T-A7-9 structural checks.
-const SCOPE_OF = { 'context.read': 'context:read', 'project.read': 'context:read',
+// validation / predicate / Candidate / state / Operability layer straight from the facts document,
+// written from the specification text (§7.1, §7.2, §7.3, §8.3, §8.4, §9.1, §9.2, §9.4) and never
+// from the SQL output, so a mutation of any single factor in the migration diverges here.
+// validateOracle runs on every sample, valid or not; oracle runs on the samples validateOracle and
+// the migration agree are valid (§8/§9 are defined only on valid documents).
+//
+// Caveat (v0.1.8 review NIT-3): this is a transcription of the specification's pseudocode, in the
+// specification's own order, not an independently derived model. It therefore shares the SQL's
+// reading of every place where the specification is ambiguous — notably the C4 / C5 mapping and the
+// two C1 tightenings that ERRATA-001 settles, and the two that ERRATA-002 settles. It is evidence
+// that the SQL implements the reading the authors intended, not evidence that the reading is right;
+// only the golden vectors and the errata carry that.
+const SCOPE_OF ={ 'context.read': 'context:read', 'project.read': 'context:read',
   'development_history.read': 'context:read', 'context.write': 'context:write',
   'project.write': 'context:write', 'evidence.write': 'context:write', 'audit.read': 'audit:read' };
 const has = (list, value) => Array.isArray(list) && list.includes(value);
+
+// ---- §7.1 / §7.2 / §7.3 validation oracle -----------------------------------------------------
+// The expected reason-code set, recomputed from the facts document alone. The §7.1 schema (exact
+// key sets, enumerations, capability sets, masks, lexical instants) and the §7.3 rules C1 … C10,
+// plus the ERRATA-001 tightenings (connection_store as the C7 carrier, claim_store alone driving
+// C4 / C5, the revocation-pair and non-null-mask C1 rules) and the ERRATA-002 ones (integer
+// spellings, which JSON.stringify cannot express from a JavaScript number, so they are exercised by
+// the raw-text vectors in the §7.1 lexical test instead).
+const VOCAB = ALL;
+const OAUTH_SCOPES = ['context:read', 'context:write', 'audit:read'];
+const KEY_SETS = {
+  '': ['schema', 'derivation_contract', 'as_of', 'policy', 'capability_universe', 'identity_state',
+    'identity_completeness', 'identity_claim_state', 'claim_store', 'connection_store', 'authentication_state',
+    'authorization_state', 'reauth_marks_open', 'oauth_scope_facts', 'resource_action_scope_facts', 'environment_state',
+    'qualification_state', 'compatibility_state', 'revocation_state', 'revocation_source', 'host_state', 'adapter_state',
+    'lifecycle_facts', 'installation_facts', 'canonical_runtime_verification_facts'],
+  policy: ['policy_version', 'incomplete_identity_ordinary_runtime', 'qualification_not_evaluated', 'preclusion_rule'],
+  environment_state: ['value', 'mask'],
+  qualification_state: ['value', 'mask'],
+  compatibility_state: ['value', 'mask'],
+  host_state: ['value', 'mask', 'surface_ceiling', 'declared'],
+  adapter_state: ['value', 'mask'],
+  lifecycle_facts: ['ordinary_runtime', 'historical', 'recovery_policy', 'first_authorization_required'],
+  installation_facts: ['install_status', 'ever_authorized'],
+  canonical_runtime_verification_facts: ['status', 'verification_id', 'valid_until'],
+};
+const ENUMS = {
+  identity_state: ['VALID', 'INVALID'],
+  identity_completeness: ['COMPLETE', 'INCOMPLETE'],
+  identity_claim_state: ['INCOMPLETE_UNCLAIMED', 'CURRENT_CLAIM_HOLDER', 'CLAIM_CONFLICT', 'PENDING_RECONCILE', 'SUPERSEDED'],
+  claim_store: ['CONSISTENT', 'MISSING_CURRENT_ROW', 'UNEXPECTED_CURRENT_ROW', 'KEY_MISMATCH'],
+  connection_store: ['CONSISTENT', 'MULTIPLE_CURRENT', 'FOREIGN_BINDING', 'OWNER_ROW_MISSING', 'OWNER_MISMATCH'],
+  authentication_state: ['NONE', 'USABLE', 'EXPIRED', 'INVALIDATED'],
+  authorization_state: ['NOT_GRANTED', 'GRANTED', 'GRANTED_LEGACY', 'EXPIRED', 'REVOKED_CONNECTION'],
+  revocation_state: ['NOT_REVOKED', 'REVOKED'],
+  revocation_source: ['NONE', 'INTEGRATION', 'CONNECTION_USER_REVOKE'],
+  'resource_action_scope_facts.mode': ['ENTRIES', 'LEGACY_UNRESTRICTED', 'NONE'],
+  'environment_state.value': ['AVAILABLE', 'RESTRICTED', 'BLOCKED'],
+  'qualification_state.value': ['NOT_EVALUATED', 'QUALIFIED', 'CONDITIONAL', 'SUSPENDED'],
+  'compatibility_state.value': ['COMPATIBLE', 'DEGRADED', 'HARD_INCOMPATIBLE'],
+  'host_state.value': ['AVAILABLE', 'DEGRADED', 'HARD_UNAVAILABLE'],
+  'adapter_state.value': ['OK', 'DEGRADED', 'BLOCKED'],
+  'lifecycle_facts.ordinary_runtime': ['PERMITTED', 'PAUSED_BY_OWNER', 'PAUSED_BY_POLICY'],
+  'lifecycle_facts.historical': ['NONE', 'SUPERSEDED'],
+  'lifecycle_facts.recovery_policy': ['PERMITS_REAUTH', 'FORBIDS_REAUTH'],
+  'installation_facts.install_status': ['PENDING', 'COMPLETED'],
+  'canonical_runtime_verification_facts.status': ['NONE', 'VALID', 'EXPIRED', 'FAILED', 'INVALIDATED'],
+  'policy.incomplete_identity_ordinary_runtime': ['PERMIT', 'DENY'],
+  'policy.qualification_not_evaluated': ['NON_BLOCKING', 'BLOCKING'],
+  'policy.preclusion_rule': ['ALL_BLOCKING_PREDICATES'],
+};
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// §7.1 instants: the lexical shape the migration pins, then the calendar and the offset range
+// PostgreSQL's cast enforces. Hour 24 and second 60 are excluded because PostgreSQL rolls them over
+// to a different instant, and valid_until is inside facts_sha256 (v0.1.8 delta review MINOR-2).
+const INSTANT_RE = /^(\d{4})-(\d{2})-(\d{2})T(2[0-3]|[01]\d):(\d{2}):([0-5]\d)(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
+function instantValid(text) {
+  const m = typeof text === 'string' ? INSTANT_RE.exec(text) : null;
+  if (!m) return false;
+  const [year, month, day, , minute] = [Number(m[1]), Number(m[2]), Number(m[3]), m[4], Number(m[5])];
+  if (year < 1 || month < 1 || month > 12 || minute > 59) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  if (day < 1 || day > [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]) return false;
+  if (m[8] !== 'Z' && (Number(m[8].slice(1, 3)) > 15 || Number(m[8].slice(4, 6)) > 59)) return false;
+  return true;
+}
+// jsonb reading helpers. `absent` stands for both a missing key and SQL NULL, so the three-valued
+// comparisons below reproduce the SQL's NULL propagation exactly.
+const dig = (node, dotted) => dotted.split('.').reduce((v, k) => (v === null || typeof v !== 'object' ? undefined : v[k]), node);
+const present = (node, key) => Object.prototype.hasOwnProperty.call(node, key) && node[key] !== undefined;
+const isJsonObject = (v) => v !== null && v !== undefined && typeof v === 'object' && !Array.isArray(v);
+// jsonb `->>`: text for any scalar, NULL for a JSON null or an absent key (objects/arrays render,
+// but no rule below compares one).
+const txt = (v) => (v === undefined || v === null ? null : typeof v === 'object' ? JSON.stringify(v) : String(v));
+const eq = (a, b) => (a === null ? null : a === b);
+const xor = (a, b) => (a === null || b === null ? false : a !== b);
+const subset = (v, names) => Array.isArray(v) && v.every((e) => typeof e === 'string' && names.includes(e));
+function validateOracle(f) {
+  if (f === null || typeof f !== 'object' || Array.isArray(f)) return ['C1_SCHEMA_INVALID'];
+  let c1 = false;
+  let c9 = false;
+  // exact key sets of the document and of every nested object
+  for (const [name, keys] of Object.entries(KEY_SETS)) {
+    const v = name === '' ? f : f[name];
+    if (!isJsonObject(v) || !keys.every((k) => present(v, k)) || Object.keys(v).some((k) => !keys.includes(k))) c1 = true;
+  }
+  // enumerations
+  for (const [name, values] of Object.entries(ENUMS)) {
+    const v = dig(f, name);
+    if (typeof v !== 'string' || !values.includes(v)) c1 = true;
+  }
+  // booleans
+  if (typeof dig(f, 'lifecycle_facts.first_authorization_required') !== 'boolean'
+    || typeof dig(f, 'installation_facts.ever_authorized') !== 'boolean') c1 = true;
+  // reauth_marks_open: a non-negative integer (ERRATA-002: the integer spelling only)
+  const marks = f.reauth_marks_open;
+  if (typeof marks !== 'number' || !Number.isInteger(marks) || marks < 0) c1 = true;
+  // as_of, and the canonical runtime verification reference: uuid / instant or JSON null
+  if (typeof f.as_of !== 'string' || !instantValid(f.as_of)) c1 = true;
+  const vid = dig(f, 'canonical_runtime_verification_facts.verification_id');
+  if (!(vid === null || (typeof vid === 'string' && UUID_RE.test(vid)))) c1 = true;
+  const until = dig(f, 'canonical_runtime_verification_facts.valid_until');
+  if (!(until === null || (typeof until === 'string' && instantValid(until)))) c1 = true;
+  // capability sets, and the OAuth scope set
+  for (const name of ['capability_universe', 'host_state.surface_ceiling', 'host_state.declared']) {
+    if (!subset(dig(f, name), VOCAB)) c1 = true;
+  }
+  if (!subset(f.oauth_scope_facts, OAUTH_SCOPES)) c1 = true;
+  // resource/action scope facts: {mode: ENTRIES, capabilities} | {mode: LEGACY_UNRESTRICTED} | {mode: NONE}
+  const ras = f.resource_action_scope_facts;
+  if (!isJsonObject(ras)) c1 = true;
+  else if (txt(ras.mode) === 'ENTRIES') {
+    if (!present(ras, 'mode') || !present(ras, 'capabilities')
+      || Object.keys(ras).some((k) => k !== 'mode' && k !== 'capabilities') || !subset(ras.capabilities, VOCAB)) c1 = true;
+  } else if (Object.keys(ras).some((k) => k !== 'mode')) c1 = true;
+  // masks: a capability array exactly for RESTRICTED / CONDITIONAL / DEGRADED, JSON null otherwise
+  for (const name of ['environment_state', 'qualification_state', 'compatibility_state', 'host_state', 'adapter_state']) {
+    const mask = dig(f, `${name}.mask`);
+    if (['RESTRICTED', 'CONDITIONAL', 'DEGRADED'].includes(txt(dig(f, `${name}.value`)))) {
+      if (!subset(mask, VOCAB)) c1 = true;
+    } else if (mask !== null) c1 = true;
+  }
+  // revocation_state and revocation_source are one truth class (§7.2): REVOKED ⇔ source ≠ NONE
+  if (eq(txt(f.revocation_state), 'REVOKED') !== (txt(f.revocation_source) !== 'NONE')) c1 = true;
+  // C9: schema / derivation contract / policy version unknown (a non-string / non-integer is C1)
+  if (typeof f.schema === 'string') { if (f.schema !== 'clued.integration-facts.v1') c9 = true; } else c1 = true;
+  if (typeof f.derivation_contract === 'string') {
+    if (f.derivation_contract !== 'clued.integration-derivation.v1') c9 = true;
+  } else c1 = true;
+  const version = dig(f, 'policy.policy_version');
+  if (typeof version === 'number' && Number.isInteger(version) && version >= 0) {
+    if (version !== 1) c9 = true;
+  } else c1 = true;
+
+  const ic = txt(f.identity_completeness);
+  const cs = txt(f.identity_claim_state);
+  const store = txt(f.claim_store);
+  const hist = txt(dig(f, 'lifecycle_facts.historical'));
+  const authn = txt(f.authentication_state);
+  const authz = txt(f.authorization_state);
+  const codes = [];
+  if (c1) codes.push('C1_SCHEMA_INVALID');
+  if (eq(ic, 'COMPLETE') && eq(cs, 'INCOMPLETE_UNCLAIMED')) codes.push('C2_COMPLETE_BUT_UNCLAIMED');
+  if (eq(ic, 'INCOMPLETE') && eq(cs, 'INCOMPLETE_UNCLAIMED') === false) codes.push('C3_INCOMPLETE_BUT_CLAIM_STATE');
+  // ERRATA-001: a claim_store value other than CONSISTENT is always C4 or C5, independently of
+  // identity_claim_state
+  if (['MISSING_CURRENT_ROW', 'KEY_MISMATCH'].includes(store)) codes.push('C4_CLAIM_STORE_MISSING');
+  if (store === 'UNEXPECTED_CURRENT_ROW') codes.push('C5_CLAIM_STORE_UNEXPECTED');
+  if (xor(eq(cs, 'SUPERSEDED'), eq(hist, 'SUPERSEDED'))) codes.push('C6_SUPERSEDED_LIFECYCLE_MISMATCH');
+  if (['MULTIPLE_CURRENT', 'FOREIGN_BINDING', 'OWNER_ROW_MISSING', 'OWNER_MISMATCH'].includes(txt(f.connection_store))) {
+    codes.push('C7_CONNECTION_CARDINALITY');
+  }
+  if (eq(authn, 'USABLE') && ['GRANTED', 'GRANTED_LEGACY'].includes(authz)
+    && dig(f, 'installation_facts.ever_authorized') === false) codes.push('C8_AUTH_WITHOUT_EVER_AUTHORIZED');
+  if (c9) codes.push('C9_CONTRACT_UNKNOWN');
+  if (xor(eq(authn, 'NONE'), eq(authz, 'NOT_GRANTED'))) codes.push('C10_AUTHZ_WITHOUT_AUTHN');
+  return codes;
+}
+
 function oracle(f) {
   const complete = f.identity_completeness === 'COMPLETE';
   const cs = f.identity_claim_state;
@@ -586,6 +753,25 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         ['2026-09-24T25:00:00Z', false], ['2026-09-24T12:60:00Z', false], ['2026-09-24T12:00:61Z', false],
         ['2026-09-24T12:00:00', false], ['2026-09-24 12:00:00Z', false], ['now', false], [null, false],
       ]) assert.equal(await valid(value), expected, String(value));
+      // v0.1.8 delta review MINOR-2: PostgreSQL silently rolls the end-of-day hour 24 and the leap
+      // second 60 over to a different instant, so two spellings of one instant would hash
+      // differently and valid_until is inside facts_sha256. Both are rejected.
+      const utc = async (value) => (await admin.query(
+        `select to_char($1::timestamptz at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') t`, [value])).rows[0].t;
+      for (const value of ['2026-09-24T12:00:60Z', '2026-09-24T24:00:00Z']) {
+        assert.notEqual(await utc(value), value.replace('Z', ''), `${value} rolls over in PostgreSQL`);
+        assert.equal(await valid(value), false, value);
+      }
+      // …and every accepted Z-spelling round trips to the very instant it spells
+      for (const value of ['2026-09-24T12:00:00Z', '2026-09-24T23:59:59Z', '2026-09-24T00:00:00Z',
+        '2026-12-31T23:59:59Z', '2028-02-29T12:34:56.123456Z']) {
+        assert.equal(await valid(value), true, value);
+        assert.equal(await utc(value), value.replace(/(\.\d+)?Z$/, ''), `${value} round trip`);
+      }
+      // the offset range PostgreSQL enforces is unchanged by the tighter hour / second alternations
+      for (const [value, expected] of [['2026-09-24T12:00:00+15:59', true], ['2026-09-24T12:00:00+16:00', false],
+        ['2026-09-24T12:00:00+00:60', false], ['2026-09-24T24:00:00.000000Z', false], ['0000-01-01T00:00:00Z', false],
+      ]) assert.equal(await valid(value), expected, String(value));
       // a facts document whose as_of or valid_until is well-shaped but not a real instant is C1
       const codes = async (facts) => (await admin.query('select clued_private.integration_facts_validate_v1($1::jsonb) c',
         [JSON.stringify(facts)])).rows[0].c;
@@ -593,6 +779,9 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       assert.deepEqual(await codes({ ...golden.base, as_of: '2026-13-99T99:99:99Z' }), ['C1_SCHEMA_INVALID']);
       assert.deepEqual(await codes(merge(golden.base, { canonical_runtime_verification_facts: {
         valid_until: '2026-02-31T00:00:00Z' } })), ['C1_SCHEMA_INVALID']);
+      assert.deepEqual(await codes({ ...golden.base, as_of: '2026-09-24T24:00:00Z' }), ['C1_SCHEMA_INVALID']);
+      assert.deepEqual(await codes(merge(golden.base, { canonical_runtime_verification_facts: {
+        valid_until: '2026-09-24T12:00:60Z' } })), ['C1_SCHEMA_INVALID']);
       // NIT-2: jsonb keeps the input scale, so only the integer spelling is accepted
       const baseRaw = JSON.stringify(golden.base);
       for (const [raw, label] of [
@@ -833,6 +1022,12 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       stats.layers[sample.layer] = (stats.layers[sample.layer] ?? 0) + 1;
       const f = sample.facts;
       if (a.digest !== b.digest || a.sha !== b.sha) fail('T-A7-3', sample, { a, b });
+      // ---- §7.3 validation oracle (v0.1.8 delta review MINOR-1): on every sample, valid or not ----
+      const expected = validateOracle(f);
+      if (JSON.stringify(a.codes) !== JSON.stringify(expected)) {
+        fail('P2-VALIDATE', sample, { derived: a.codes, oracle: expected });
+      }
+      if (a.valid !== (expected.length === 0)) fail('P2-VALIDATE', sample, { valid: a.valid, oracle: expected });
       if (!a.valid) {
         for (const code of a.codes) stats.codes[code] = (stats.codes[code] ?? 0) + 1;
         if (a.state !== null || a.operable || a.cand.length || a.effective.length || !a.codes.length || a.predicates !== null) {
@@ -947,6 +1142,7 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       ['T-A7-7', 'VERIFYING ⇒ verification_eligible'],
       ['T-A7-8', 'the VERIFYING / BLOCKED-swapped selector agrees on every sample'],
       ['T-A7-9', 'invalid documents: no state, not operable, empty sets, reason codes present'],
+      ['P2-VALIDATE', 'the §7.3 reason codes equal the set recomputed from the facts, on every sample (§7.1, §7.3)'],
       ['P2-PREDICATES', 'every predicate equals the value recomputed from the facts (§8.3)'],
       ['P2-BLOCKING', 'the B1…B9 list equals the list recomputed from the facts (§8.3)'],
       ['P2-B8', 'B8 ∈ blocking ⇔ installed ∧ auth_ok ∧ Candidate = ∅, recomputed from the facts (OQ-1)'],
