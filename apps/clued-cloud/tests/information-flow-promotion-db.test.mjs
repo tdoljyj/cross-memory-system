@@ -292,18 +292,19 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
     [{ record_id: decisionA, record_version: 2, entry: 'decision_supersede' },
       { record_id: replacementA, record_version: 1, entry: 'decision_supersede' }]
       .sort((a, b) => (a.record_id < b.record_id ? -1 : 1)));
-    // A delegated OAuth JWT still commits a supersede (M1 unchanged, D7) with no
-    // marker, and is refused on /v1/records.
+    // A delegated OAuth JWT is refused on supersede (the v12 guard, restored by
+    // 20260924230000 after S3 dropped it) and on /v1/records; nothing commits.
     const delegated = { ...fresh(userId), client_id: 'delegated-oauth' };
     const decisionB = uuid();
     const replacementB = uuid();
     assert.equal((await native('clued_user_record_mutate', decisionInput(decisionB, 'if-s3-dec-b'))).status, 'committed');
-    const delegatedSupersede = await native('clued_user_decision_supersede',
-      supersedeInput(decisionB, replacementB, 'if-s3-sup-b'), delegated);
-    assert.equal(delegatedSupersede.status, 'committed', JSON.stringify(delegatedSupersede));
-    assert.equal((await admin.query('select count(*)::int n from clued_private.native_write_markers where receipt_id=$1',
-      [delegatedSupersede.receipt_id])).rows[0].n, 0);
-    assert.equal(await confirmed(replacementB, 1), false);
+    const receiptsBeforeDelegated = (await admin.query('select count(*)::int n from public.clued_audit_receipts')).rows[0].n;
+    await assert.rejects(native('clued_user_decision_supersede',
+      supersedeInput(decisionB, replacementB, 'if-s3-sup-b'), delegated), /direct_human_session_required/);
+    assert.equal((await admin.query('select count(*)::int n from public.clued_audit_receipts')).rows[0].n,
+      receiptsBeforeDelegated, 'a refused delegated supersede writes no Receipt');
+    assert.equal((await admin.query('select count(*)::int n from public.clued_memories where id=$1', [replacementB])).rows[0].n, 0);
+    assert.equal(await confirmed(decisionB, 1), true, 'the Decision stays at its Native version');
     await assert.rejects(native('clued_user_record_mutate', noteInput(uuid(), 'Delegated'), delegated),
       /direct_human_session_required/);
 
