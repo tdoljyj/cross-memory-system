@@ -215,7 +215,7 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
     // that vector, the derived projection State must not be shadowed a second
     // time by the same Event. A normal Global Decision/constraint remains
     // authoritative and must be readable after the rebuild.
-    const eventSession = await rpc(hostAToken, 'clued_mcp_restore', {
+    const eventSession = await rpc(writerToken, 'clued_mcp_restore', {
       context_key: 'global', response_view: 'structured', event_limit: 10,
     });
     const constraintId = uuid();
@@ -231,7 +231,7 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
         relations: {} },
     });
     assert.equal(constraint.status, 'committed');
-    const activeGlobalEvent = await rpc(hostAToken, 'clued_mcp_append_event', {
+    const activeGlobalEvent = await rpc(writerToken, 'clued_mcp_append_event', {
       context_key: 'global', session_token: eventSession.session_token,
       base_version: eventSession.version, event_type: 'action',
       payload: { marker: 'projection-head-event-shadow-regression' },
