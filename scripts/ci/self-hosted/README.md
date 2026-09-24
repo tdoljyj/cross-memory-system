@@ -37,7 +37,8 @@ The inventory currently declares two active physical hosts:
 ```text
 company-primary / DESK-W-591
 ├─ clued-ci-company-win-01
-└─ clued-ci-company-linux-01
+├─ clued-ci-company-linux-01
+└─ clued-ci-company-linux-02   (additional Linux slot, enrolling)
    capacity: workstation-v1
 
 home-primary / Turing
@@ -307,6 +308,22 @@ The rendered watchdog is intentionally conservative:
 - suspends Linux CI only after the current Linux job is idle and host memory/disk crosses the profile's danger threshold;
 - resumes Linux CI after the profile's recovery threshold is satisfied;
 - never changes GitHub Secrets, production deployment authority, DNS, database state, or production traffic.
+
+## Add a Linux slot on an existing host
+
+A host with spare WSL capacity can run more than one Linux runner in the same distro. Each extra slot is declared under the host's `additional_linux_runners` with its own `name`, `root`, `service_unit` and a `route_label` of the form `runner-<site>-linux-NN`; it shares the primary runner's `distro`, `user`, watchdog and Docker engine. While its `state` is `enrolling`, the health monitor treats it as known but not required and the watchdog leaves it alone.
+
+Jobs that bind fixed host ports (`public-mcp-protocol` and `public-mcp-behavior` share port 8787 and the default local Supabase ports) take the host-wide `host-port-lock.sh ... public-mcp-ports` lock, so two slots on one host never run them at the same time. Other Linux jobs use free or run-isolated ports and run in parallel.
+
+Enroll the slot inside the host's WSL distro as the runner user, using a fresh registration token from GitHub → Settings → Actions → Runners → New self-hosted runner:
+
+```bash
+bash scripts/ci/self-hosted/bootstrap-linux-runner.sh --site company \
+  --name clued-ci-company-linux-02 --root "$HOME/actions-runner-02" \
+  --extra-labels runner-company-linux-02
+```
+
+Then, in one change: set the slot's `state` to `active`, give the primary runner on the same host its own `route_label` (add that label to the primary runner in GitHub's runner settings first), add both route labels to the heartbeat matrix, and re-render the host watchdog with `render-host-watchdog.ps1 -HostId <host>` so it also supervises the new service.
 
 ## Add a third or fourth device
 

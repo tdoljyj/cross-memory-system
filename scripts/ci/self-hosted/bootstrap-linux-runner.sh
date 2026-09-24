@@ -8,12 +8,19 @@ ROOT="${HOME}/actions-runner"
 RUNNER_VERSION="2.337.0"
 RUNNER_SHA256="70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613"
 REPLACE=0
+EXTRA_LABELS=""
 
 usage() {
   cat <<'EOF'
 Usage:
   bootstrap-linux-runner.sh [--site home|company|other] [--name NAME]
                             [--root PATH] [--repository URL] [--replace]
+                            [--extra-labels LABEL[,LABEL...]]
+
+A second runner on the same host needs its own --name and --root, plus its
+route label from node-profiles.json, for example:
+  bootstrap-linux-runner.sh --site company --name clued-ci-company-linux-02 \
+    --root "$HOME/actions-runner-02" --extra-labels runner-company-linux-02
 
 The script expects a non-root Linux user with sudo, systemd, Git, curl,
 tar, sha256sum, and a working native Docker Engine accessible to the user.
@@ -27,6 +34,7 @@ while [ "$#" -gt 0 ]; do
     --root) ROOT="$2"; shift 2 ;;
     --repository) REPOSITORY_URL="$2"; shift 2 ;;
     --replace) REPLACE=1; shift ;;
+    --extra-labels) EXTRA_LABELS="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -34,6 +42,10 @@ done
 
 case "$SITE" in home|company|other) ;; *) echo "Invalid site: $SITE" >&2; exit 2 ;; esac
 [ -n "$RUNNER_NAME" ] || RUNNER_NAME="clued-ci-${SITE}-linux-01"
+if [ -n "$EXTRA_LABELS" ] && ! printf '%s' "$EXTRA_LABELS" | grep -Eqx '[a-z0-9-]+(,[a-z0-9-]+)*'; then
+  echo "Invalid --extra-labels: $EXTRA_LABELS" >&2
+  exit 2
+fi
 
 if [ "$(id -u)" -eq 0 ]; then
   echo "Run this bootstrap as the intended runner user, not root." >&2
@@ -78,6 +90,7 @@ printf '\n'
 [ -n "$token" ] || { echo "Registration token was empty." >&2; exit 1; }
 
 labels="clued,pool-general,trust-internal,site-${SITE},cap-docker-linux,runtime-wsl2"
+[ -z "$EXTRA_LABELS" ] || labels="${labels},${EXTRA_LABELS}"
 args=(--unattended --url "$REPOSITORY_URL" --token "$token" --name "$RUNNER_NAME" --labels "$labels" --work _work)
 [ "$REPLACE" -eq 1 ] && args+=(--replace)
 

@@ -69,17 +69,30 @@ def load_inventory(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def host_runners(host: dict[str, Any]) -> list[dict[str, Any]]:
+    runners = [host[key] for key in ("windows_runner", "linux_runner") if host.get(key)]
+    return runners + list(host.get("additional_linux_runners", []))
+
+
+def runner_state(host: dict[str, Any], runner: dict[str, Any]) -> str:
+    return runner.get("state", host["state"])
+
+
+def declared_runner_names(inventory: dict[str, Any]) -> set[str]:
+    """Every runner the inventory knows about, including ones still enrolling."""
+    return {runner["name"] for host in inventory["hosts"] for runner in host_runners(host)}
+
+
 def build_expectations(inventory: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]]]:
     profiles = inventory["runner_profiles"]
     expected: dict[str, dict[str, Any]] = {}
     pools: dict[str, set[str]] = {}
 
     for host in inventory["hosts"]:
-        if host["state"] != "active":
-            continue
         site_label = f"site-{host['site']}"
-        for runner_key in ("windows_runner", "linux_runner"):
-            runner = host[runner_key]
+        for runner in host_runners(host):
+            if runner_state(host, runner) != "active":
+                continue
             profile_name = runner["profile"]
             profile = profiles[profile_name]
             labels = {
@@ -89,6 +102,7 @@ def build_expectations(inventory: dict[str, Any]) -> tuple[dict[str, dict[str, A
                 site_label,
                 *profile["required_custom_labels"],
                 *runner.get("capabilities", []),
+                *([runner["route_label"]] if runner.get("route_label") else []),
             }
             expected[runner["name"]] = {
                 "name": runner["name"],
@@ -116,9 +130,11 @@ def evaluate_runners(
     expected: dict[str, dict[str, Any]],
     pools: dict[str, set[str]],
     actual_runners: list[dict[str, Any]],
+    declared: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     anomalies: list[dict[str, Any]] = []
     actual_by_name = {runner["name"]: runner for runner in actual_runners}
+    known = set(expected) | (declared or set())
 
     for name, contract in sorted(expected.items()):
         runner = actual_by_name.get(name)
@@ -150,7 +166,7 @@ def evaluate_runners(
             ))
 
     for runner in sorted(actual_runners, key=lambda item: item["name"]):
-        if "clued" in label_names(runner) and runner["name"] not in expected:
+        if "clued" in label_names(runner) and runner["name"] not in known:
             anomalies.append(anomaly(
                 "UNEXPECTED_MANAGED_RUNNER",
                 f"runner:{runner['name']}:unexpected",
@@ -387,7 +403,9 @@ def build_report(
             expected, jobs, now, threshold_seconds, minimum_repeats, lookback_hours
         )
     else:
-        runner_anomalies, runner_observations = evaluate_runners(expected, pools, runners)
+        runner_anomalies, runner_observations = evaluate_runners(
+            expected, pools, runners, declared_runner_names(inventory)
+        )
         runner_observations["mode"] = "repository-runner-api"
     delay_anomalies, delay_observations = evaluate_startup_delays(
         jobs, now, threshold_seconds, minimum_repeats, lookback_hours
