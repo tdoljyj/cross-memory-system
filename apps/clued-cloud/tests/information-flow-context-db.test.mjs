@@ -476,6 +476,15 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       assert.equal((await tokenRow(digestIssued.token_id)).consume_outcome, 'rejected', 'a failed attempt burns the token');
       assert.equal((await post('/v1/context/policies', acceptInput(digestIssued))).body.error_code,
         'confirmation_token_reused');
+      // A live token presented with a malformed request is burned too.
+      for (const overrides of [{ surprise: 1 }, { view_digest: 'Z' }, { task_class: 'Bad Class' }]) {
+        const shapeIssued = (await issuePolicy(guardDoc, 0)).body;
+        const shapeRefused = await post('/v1/context/policies', acceptInput(shapeIssued, overrides));
+        assert.equal(shapeRefused.body.status, 'rejected', JSON.stringify(overrides));
+        assert.equal((await tokenRow(shapeIssued.token_id)).consume_outcome, 'rejected', JSON.stringify(overrides));
+        assert.equal((await post('/v1/context/policies', acceptInput(shapeIssued))).body.error_code,
+          'confirmation_token_reused');
+      }
       const staleAccept = await post('/v1/context/policies', acceptInput((await issuePolicy(guardDoc, 0)).body), 'stale-jwt');
       assert.deepEqual([staleAccept.status, staleAccept.body.error_code], [401, 'reauthentication_required']);
       // A foreign user's token is invisible.
@@ -783,6 +792,24 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
         confidence: 1, confidence_reason: 'S4 fixture', base_version: 1, mutation: { title: 'Knowledge source one v2' } }))
         .body.status, 'committed');
       await insufficient('know.check', pCand, 'no_eligible_sources');
+      // Candidate Knowledge visibility across Bindings.
+      const nativeK = (await post('/v1/knowledge/candidates', { idempotency_key: key('kcn'), scope: pCand,
+        rule_id: 'knowledge.dedup.v1', assertion: 'Native knowledge candidate', sources: [{ id: candNote, version: 1 }] }))
+        .body.supplemental.candidate_id;
+      const ownK = (await call('clued_knowledge_propose', { idempotency_key: key('kcw'), scope: pCand,
+        rule_id: 'knowledge.dedup.v1', assertion: 'Own Binding knowledge candidate',
+        sources: [{ id: candNote, version: 1 }] })).supplemental.candidate_id;
+      const otherK = (await call('clued_knowledge_propose', { idempotency_key: key('kcb'), scope: pCand,
+        rule_id: 'knowledge.dedup.v1', assertion: 'Other Binding knowledge candidate',
+        sources: [{ id: candNote, version: 1 }] }, rawBindingB)).supplemental.candidate_id;
+      assert.ok(nativeK && ownK && otherK);
+      await accept(policyDoc('know.cand', [pCand], { allowed_tiers: ['candidate_knowledge'],
+        allowed_record_types: ['note'], allow_agent_authored: true }), 0);
+      const kcBinding = packOk(await call('clued_context_pack', { scope: pCand, task_class: 'know.cand' }), 'know.cand');
+      assert.deepEqual(kcBinding.pack.items.map((row) => [row.canonical_id, row.labels, row.writer_principal]).sort(),
+        [[nativeK, ['CANDIDATE'], 'native_ui'], [ownK, ['AGENT_AUTHORED', 'CANDIDATE'], 'agent_binding']].sort());
+      const kcNative = packOk((await post('/v1/context/pack', { scope: pCand, task_class: 'know.cand' })).body, 'kc native');
+      assert.deepEqual(kcNative.pack.items.map((row) => row.canonical_id).sort(), [nativeK, ownK, otherK].sort());
       // degraded freshness is never authoritative; historical with a reason may be.
       await accept(policyDoc('fresh.degraded', [p1], { freshness: { mode: 'degraded', reason: 'Offline audit' } }), 0);
       const degraded = packOk(await call('clued_context_pack', { scope: p1, task_class: 'fresh.degraded' }), 'degraded');
@@ -931,6 +958,59 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
         assert.deepEqual(pack.pack.items.map((row) => row.canonical_id), [p13Native], taskClass);
       }
 
+      // ---- Review m2: malformed agent knowledge lineage excludes the item,
+      // never fails the compile (default and opt-in policies).
+      const pMal = await project('malformed');
+      const malNative = await nativeNote('Malformed scope note', { scope: pMal });
+      for (const [label, knowledge] of [['uuid', { sources: [{ id: 'not-a-uuid', version: 1 }] }],
+        ['version', { sources: [{ id: malNative, version: 'x' }] }], ['shape', { sources: ['x'] }]]) {
+        const written = await call('clued_record_mutate', { operation: 'create', id: uuid(), record_type: 'note',
+          record_schema_version: 1, lifecycle_status: 'active', scope: pMal, idempotency_key: key('mal'),
+          authority: 'inferred', confidence: 0.5, confidence_reason: 'agent', source_refs: [],
+          source_unavailable_reason: 'Synthetic fixture', mutation: { title: `Agent knowledge ${label}`, content: 'y',
+            type_fields: { note_kind: 'knowledge', knowledge }, relations: {} } });
+        assert.equal(written.status, 'committed', JSON.stringify(written));
+        assert.equal((await admin.query('select clued_private.context_knowledge_lineage_v1($1,$2) v',
+          [userId, JSON.stringify(knowledge.sources)])).rows[0].v, 'knowledge_source_malformed', label);
+      }
+      await accept(policyDoc('mal.default', [pMal]), 0);
+      await accept(policyDoc('mal.optin', [pMal], { allow_agent_authored: true }), 0);
+      for (const taskClass of ['mal.default', 'mal.optin']) {
+        const viaMcp = packOk(await call('clued_context_pack', { scope: pMal, task_class: taskClass }), taskClass);
+        assert.deepEqual(viaMcp.pack.items.map((row) => row.canonical_id), [malNative], taskClass);
+        const viaRest = await post('/v1/context/pack', { scope: pMal, task_class: taskClass });
+        assert.equal(viaRest.status, 200, JSON.stringify(viaRest.body));
+        assert.deepEqual(viaRest.body.pack.items.map((row) => row.canonical_id), [malNative], taskClass);
+      }
+
+      // ---- historical mode admits HISTORY-fenced decisions; current does not.
+      const pHistory = await project('history-fence');
+      const oldDecision = uuid();
+      const newDecision = uuid();
+      assert.equal((await post('/v1/records', { operation: 'create', id: oldDecision, record_type: 'decision',
+        record_schema_version: 1, lifecycle_status: 'active', scope: pHistory, idempotency_key: key('hdec'),
+        authority: 'user_explicit', confidence: 1, confidence_reason: 'S4 fixture', source_refs: [],
+        source_unavailable_reason: 'Synthetic fixture', mutation: { title: 'Old decision', content: 'Old',
+          type_fields: { rationale: 'Then' }, relations: {} } })).body.status, 'committed');
+      assert.equal((await post('/v1/decisions/supersede', { idempotency_key: key('hsup'), supersede_reason: 'Replaced',
+        source_decisions: [{ id: oldDecision, base_version: 1 }],
+        replacement: { id: newDecision, scope: pHistory, record_schema_version: 1, title: 'New decision', content: 'New',
+          type_fields: { rationale: 'Now' }, relations: { supersedes: [oldDecision] }, authority: 'user_explicit',
+          source_refs: [], source_unavailable_reason: 'Synthetic fixture', confidence_reason: 'S4 fixture' } }))
+        .body.status, 'committed');
+      await accept(policyDoc('history.fence', [pHistory], { allowed_record_types: ['decision'],
+        freshness: { mode: 'historical', reason: 'Decision history' } }), 0);
+      await accept(policyDoc('history.current', [pHistory], { allowed_record_types: ['decision'] }), 0);
+      const historyPack = packOk(await call('clued_context_pack', { scope: pHistory, task_class: 'history.fence' }),
+        'history');
+      assert.deepEqual(historyPack.pack.items.map((row) => [row.canonical_id, row.status.currentness,
+        row.status.lifecycle_status]).sort(), [[oldDecision, 'HISTORY', 'superseded'],
+        [newDecision, 'CURRENT', 'active']].sort());
+      assert.equal(historyPack.pack.authoritative, true);
+      const currentPack = packOk(await call('clued_context_pack', { scope: pHistory, task_class: 'history.current' }),
+        'current');
+      assert.deepEqual(currentPack.pack.items.map((row) => row.canonical_id), [newDecision]);
+
       // ---- E2E-05: Binding scope reduction; the manifest fails revalidation.
       const p5a = await project('e2e-05-a');
       const p5b = await project('e2e-05-b');
@@ -1066,13 +1146,25 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       // (d) Binding update (DoS, never a policy change).
       dosDecision = await decisionOf(dos.policyId);
       const bindingEdit = await call('clued_record_mutate', decisionUpdate(dosDecision.id, Number(dosDecision.version),
-        { mutation: { title: 'Agent edit', type_fields: { rationale: 'x', context_policy: { schema: 'clued.context-policy.v1',
-          task_class: 'dos.check', policy_version: 99, policy_digest: 'e'.repeat(64) } } } }));
+        { observed_at: '2020-01-01T00:00:00Z', mutation: { title: 'Agent edit', closure_summary: 'AGENT-INJECTED summary',
+          closed_reason: 'AGENT-INJECTED reason', type_fields: { rationale: 'x', context_policy: {
+            schema: 'clued.context-policy.v1', task_class: 'dos.check', policy_version: 99,
+            policy_digest: 'e'.repeat(64) } } } }));
       assert.equal(bindingEdit.status, 'committed', JSON.stringify(bindingEdit));
       await refusedWith('policy_decision_changed');
       assert.equal(await count('clued_private.context_policies', "task_class='dos.check' and status='active'"), 1);
       dos = await accept(dosDoc, 4);
       assert.equal(dos.issued.decision_operation, 'update');
+      // Review m1: fields the agent injected are cleared by the confirmed body.
+      assert.deepEqual([dos.issued.confirmation_view.decision_body.observed_at,
+        dos.issued.confirmation_view.decision_body.mutation.closure_summary,
+        dos.issued.confirmation_view.decision_body.mutation.closed_reason], [null, null, null]);
+      assert.ok(!JSON.stringify(dos.issued.confirmation_view).includes('AGENT-INJECTED'));
+      const reaccepted = (await admin.query(`select version,closure_summary,closed_reason,observed_at from public.clued_memories
+        where id=$1`, [dos.accepted.supplemental.decision_record_id])).rows[0];
+      assert.deepEqual([reaccepted.closure_summary, reaccepted.closed_reason, reaccepted.observed_at], [null, null, null],
+        'no agent text reaches the human-confirmed Decision version');
+      assert.equal(await confirmed(dos.accepted.supplemental.decision_record_id, Number(reaccepted.version)), true);
       packOk(await compileDos(), 'dos v5');
       // (e) Binding supersede.
       dosDecision = await decisionOf(dos.policyId);

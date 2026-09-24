@@ -448,6 +448,16 @@ begin
   if jsonb_typeof(p_sources) is distinct from 'array' or jsonb_array_length(p_sources)=0 then
     return 'knowledge_source_not_found';
   end if;
+  -- Agent-written Records can carry any type_fields: validate every source
+  -- shape before a cast, so a malformed source excludes the item instead of
+  -- failing the whole compile.
+  if exists(select 1 from jsonb_array_elements(p_sources) x
+      where jsonb_typeof(x) is distinct from 'object' or jsonb_typeof(x->'id') is distinct from 'string'
+        or (x->>'id') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        or jsonb_typeof(x->'version') not in ('number','string')
+        or (x->>'version') !~ '^[1-9][0-9]{0,17}$') then
+    return 'knowledge_source_malformed';
+  end if;
   for v_src in select x from jsonb_array_elements(p_sources) x order by (x->>'id')::uuid loop
     select * into v_rec from public.clued_memories m where m.user_id=p_user_id and m.id=(v_src->>'id')::uuid;
     if not found then return 'knowledge_source_not_found'; end if;
@@ -513,7 +523,7 @@ declare v_policy clued_private.context_policies%rowtype; v_doc jsonb; v_reason t
   v_info clued_private.information_candidates%rowtype; v_know clued_private.knowledge_candidates%rowtype;
   v_ev jsonb; v_missing uuid; v_fields jsonb; v_field text; v_value text; v_labels jsonb;
   v_required text[]; v_selected text[]; v_c jsonb; v_body jsonb; v_text text; v_inputs jsonb;
-  v_sources jsonb:='[]'; v_authoritative boolean; v_writer jsonb; v_lineage text;
+  v_sources jsonb:='[]'; v_authoritative boolean; v_writer jsonb; v_lineage text; v_try integer; v_changed text;
 begin
   -- 1. Resolve the policy: the caller never supplies it. A foreign or unknown
   -- id resolves to nothing, exactly like no policy (no existence oracle).
@@ -562,6 +572,12 @@ begin
   select coalesce(array_agg(s order by s collate "C"),'{}'::text[]) into v_effective from unnest(v_allowed) s
     where p_read_scopes is null or s=any(p_read_scopes);
 
+  -- Steps 4-5 run at most twice: a candidate can change state concurrently
+  -- (withdrawal does not take the currentness lock), so every item is
+  -- re-checked against the eligible version; a second change fails closed.
+  <<attempt>>
+  for v_try in 1..2 loop
+  v_items:='[]'; v_sources:='[]'; v_changed:=null;
   -- 4. Authorize before retrieval: one statement, every predicate before the
   -- ORDER BY ... LIMIT max_items+1. The cheap owner/schema/type/scope
   -- predicates prune the base scan first (materialized), so the per-row
@@ -603,9 +619,11 @@ begin
           else v_mode='historical' or (m.lifecycle_status='active' and m.archived_at is null
               and m.merged_into_record_id is null) end
         and clued_private.record_evidence_unflagged_v1(p_user_id,m.id,m.version)
-        and (d.tier<>'authority_knowledge'
-          or clued_private.context_knowledge_lineage_v1(p_user_id,m.type_fields->'knowledge'->'sources') is null)
-        and (c.human_confirmed or (v_agent and c.writer->>'writer_principal'='agent_binding'))
+        -- Confirmation (or the agent opt-in) is decided before lineage.
+        and case when not (c.human_confirmed or (v_agent and c.writer->>'writer_principal'='agent_binding')) then false
+          when d.tier='authority_knowledge'
+            then clued_private.context_knowledge_lineage_v1(p_user_id,m.type_fields->'knowledge'->'sources') is null
+          else true end
       union all
       select 'candidate_information',ci.id,ci.version::bigint,ci.scope,'candidate_information',3,
         clued_private.context_candidate_record_type_v1(ci.payload->>'item_type'),'NOT_APPLICABLE',false,
@@ -645,6 +663,7 @@ begin
     v_fields:='{}'; v_lineage:=null;
     if v_row->>'kind'='record' then
       select * into v_rec from public.clued_memories where id=(v_row->>'id')::uuid and user_id=p_user_id;
+      if not found or v_rec.version<>(v_row->>'version')::bigint then v_changed:=v_row->>'id'; exit; end if;
       select e.p_evidence,e.p_missing into v_ev,v_missing from clued_private.context_evidence_v1(p_user_id,v_rec.source_refs) e;
       if v_row->>'tier'='authority_knowledge' then v_lineage:='OK'; end if;
       foreach v_field in array v_selected loop
@@ -662,6 +681,8 @@ begin
           'lineage',v_lineage));
     elsif v_row->>'kind'='candidate_information' then
       select * into v_info from clued_private.information_candidates where id=(v_row->>'id')::uuid and user_id=p_user_id;
+      if not found or v_info.status<>'pending' or v_info.version<>(v_row->>'version')::bigint
+        or v_info.expires_at<=now() then v_changed:=v_row->>'id'; exit; end if;
       select e.p_evidence,e.p_missing into v_ev,v_missing from clued_private.context_evidence_v1(p_user_id,v_info.evidence_ids) e;
       foreach v_field in array v_selected loop
         v_value:=case v_field when 'title' then v_info.payload->>'summary' when 'content' then v_info.payload->>'claim' end;
@@ -676,6 +697,8 @@ begin
         'status',jsonb_build_object('currentness','NOT_APPLICABLE','lifecycle_status',v_info.status,'lineage',null));
     else
       select * into v_know from clued_private.knowledge_candidates where id=(v_row->>'id')::uuid and user_id=p_user_id;
+      if not found or v_know.status<>'pending' or v_know.version<>(v_row->>'version')::bigint
+        or v_know.expires_at<=now() then v_changed:=v_row->>'id'; exit; end if;
       select e.p_evidence,e.p_missing into v_ev,v_missing from clued_private.context_evidence_v1(p_user_id,v_know.evidence_ids) e;
       v_lineage:=coalesce(clued_private.context_knowledge_lineage_v1(p_user_id,v_know.sources),'OK');
       foreach v_field in array v_selected loop
@@ -711,6 +734,11 @@ begin
       'version',(v_row->>'version')::bigint,'envelope',v_item||jsonb_build_object('evidence',v_ev,
         'archived',case when v_row->>'kind'='record'
           then v_rec.archived_at is not null or v_rec.merged_into_record_id is not null else false end)));
+  end loop;
+  exit attempt when v_changed is null;
+  if v_try=2 then
+    return clued_private.context_pack_rejection_v1('CONTEXT_INSUFFICIENT','source_changed_during_compile:'||v_changed);
+  end if;
   end loop;
 
   -- Verbatim constraints must be grounded in a packed field, exactly.
@@ -864,6 +892,12 @@ begin
   -- ever differ (e.g. an out-of-band edit without a version bump), the old
   -- live manifest is marked stale ('pack_changed') and a new one is stored;
   -- the caller never receives an error for it.
+  -- One upsert at a time per principal, policy and request, so at most one
+  -- live manifest exists for that key. Lock order: shared currentness lock
+  -- (above) -> this key -> manifest rows; no writer takes this key.
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('clued-context-manifest:'||p_user_id::text
+    ||':'||v_principal||':'||coalesce(p_binding_id::text,'-')||':'||(v_result->'_policy'->>'id')
+    ||':'||clued_private.m1_sha256(v_result->'_request'),0));
   for v_attempt in 1..5 loop
     insert into clued_private.context_pack_manifests(user_id,principal_kind,binding_id,policy_id,policy_digest,request,
       effective_scopes,inputs_digest,pack_digest,sources)
@@ -940,10 +974,16 @@ begin
     'lifecycle_status','active','scope','global','authority','user_explicit','confidence',null,
     'confidence_reason','Native two-step Context Policy acceptance','source_refs','[]'::jsonb,
     'source_unavailable_reason','Context Policy acceptance; policy stored in clued_private.context_policies',
+    'observed_at',null,
     'mutation',jsonb_build_object('title','Accept Context Policy '||v_task_class||' v'||v_version,'content',v_text,
       'type_fields',jsonb_build_object('rationale',p_choices->>'rationale','context_policy',jsonb_build_object(
         'schema','clued.context-policy.v1','task_class',v_task_class,'policy_version',v_version,'policy_digest',v_digest)),
-      'relations','{}'::jsonb))
+      'relations','{}'::jsonb)
+      -- An update keeps any field it omits (M1). Every other content field an
+      -- earlier writer (possibly a Binding) could set is cleared explicitly,
+      -- so the confirmed view digest covers the final Decision body.
+      ||case when v_operation='update' then jsonb_build_object('closure_summary',null,'closed_reason',null)
+        else '{}'::jsonb end)
     ||case when v_operation='update' then jsonb_build_object('base_version',v_base) else '{}'::jsonb end;
   return jsonb_build_object('action','context_policy_accept','task_class',v_task_class,'policy_version',v_version,
     'policy',v_policy,'policy_digest',v_digest,'decision_operation',v_operation,'decision_base_version',v_base,
@@ -1041,6 +1081,13 @@ begin
       ||jsonb_build_object('replayed',v_receipt.related_receipt_id is null);
   end if;
   begin
+    -- Single use: locate a presented live token before any shape check, so
+    -- a malformed request also burns it (the handler below).
+    if jsonb_typeof(p_input->'confirmation_token')='string' then
+      select t.id into v_token_id from clued_private.native_confirmation_tokens t
+        where t.user_id=p_user_id and t.action='context_policy_accept'
+          and t.token_hash=encode(extensions.digest(convert_to(p_input->>'confirmation_token','UTF8'),'sha256'),'hex');
+    end if;
     if exists(select 1 from jsonb_object_keys(p_input) k where k not in
         ('idempotency_key','request_hash','task_class','base_policy_version','confirmation_token','view_digest')) then
       raise exception 'context_policy_accept_unknown_field' using errcode='22023';
