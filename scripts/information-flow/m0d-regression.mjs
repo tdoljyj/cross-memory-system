@@ -75,8 +75,11 @@ function tapTotals(text) {
   };
   const ok = (text.match(/^\s*ok \d+/gm) ?? []).length;
   const notOk = (text.match(/^\s*not ok \d+/gm) ?? []).length;
+  const prove = /Files=(\d+), Tests=(\d+)/.exec(text);
+  const planned = [...text.matchAll(/^1\.\.(\d+)$/gm)].reduce((sum, m) => sum + Number(m[1]), 0);
   return { tests: pick('tests'), pass: pick('pass'), fail: pick('fail'), cancelled: pick('cancelled'),
-    skipped: pick('skipped'), tap_ok_lines: ok, tap_not_ok_lines: notOk };
+    skipped: pick('skipped'), tap_ok_lines: ok, tap_not_ok_lines: notOk,
+    pgtap: prove ? { files: Number(prove[1]), tests: Number(prove[2]) } : planned ? { planned } : null };
 }
 
 function normalizeLine(line) {
@@ -88,11 +91,15 @@ function normalizeLine(line) {
 }
 
 function failureSignature(text) {
-  const failing = [...text.matchAll(/^\s*not ok \d+ - (.+)$/gm)].map((m) => normalizeLine(m[1]));
-  const errorLine = text.split('\n').find((line) => /ERROR:|error:|Error:|permission denied|AssertionError|failed/i.test(line)
-    && !/^\s*#\s*(fail|pass)/.test(line));
-  const sqlstate = /SQLSTATE[: ]+([0-9A-Z]{5})/.exec(text)?.[1] ?? /\(SQLSTATE ([0-9A-Z]{5})\)/.exec(text)?.[1] ?? null;
-  return { failing_tests: [...new Set(failing)].slice(0, 20), first_error_line: normalizeLine(errorLine), sqlstate };
+  const failing = [...text.matchAll(/^\s*not ok \d+ - (.+)$/gm), ...text.matchAll(/^# Failed test \d+: "(.+)"$/gm)]
+    .map((m) => normalizeLine(m[1]));
+  // pgTAP: "#     died: 42501: permission denied ..." / "caught: ..."
+  const pgError = /^#\s+(?:died|caught):\s+([0-9A-Z]{5}):\s+(.+)$/m.exec(text);
+  const errorLine = pgError ? `${pgError[1]}: ${pgError[2]}` : text.split('\n').find((line) =>
+    /ERROR:|error:|Error:|permission denied|AssertionError|failed/i.test(line) && !/^\s*#\s*(fail|pass)/.test(line));
+  const sqlstate = pgError?.[1] ?? /SQLSTATE[: ]+([0-9A-Z]{5})/.exec(text)?.[1] ?? null;
+  return { failing_tests: [...new Set(failing)].slice(0, 40), failing_test_count: new Set(failing).size,
+    first_error_line: normalizeLine(errorLine), sqlstate };
 }
 
 function run(suite, cwd = cloudRoot) {
@@ -104,7 +111,9 @@ function run(suite, cwd = cloudRoot) {
   else if (suite.as === 'pg' && args['pg-user']) {
     command = 'su';
     const inner = `cd ${cwd} && export PATH=${nodeBin}:$PATH HOME=/tmp/${args['pg-user']}-home TMPDIR=/tmp `
-      + `npm_config_cache=/tmp/${args['pg-user']}-home/.npm npm_config_update_notifier=false && mkdir -p $HOME && `
+      + `npm_config_cache=/tmp/${args['pg-user']}-home/.npm npm_config_prefer_offline=true npm_config_update_notifier=false `
+      // The root-only proxy CA bundle is unreadable for the unprivileged user.
+      + '&& unset NODE_EXTRA_CA_CERTS && mkdir -p $HOME && '
       + `npm run -s ${suite.name}`;
     argv = [args['pg-user'], '-s', '/bin/bash', '-c', inner];
   } else {
