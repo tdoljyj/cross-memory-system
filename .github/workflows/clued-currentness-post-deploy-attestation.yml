@@ -46,4 +46,4 @@ jobs:
           name: clued-currentness-attestation-${{ github.run_id }}
           path: apps/clued-cloud/currentness-attestation.json
           if-no-files-found: ignore
-          retention-days: 90
+          retention-days: 30
