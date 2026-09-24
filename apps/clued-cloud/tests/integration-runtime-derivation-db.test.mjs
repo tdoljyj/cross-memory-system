@@ -12,13 +12,15 @@ import EmbeddedPostgres from 'embedded-postgres';
 // derivation functions. Covers the pure-function / property layer of G-A3 and G-A7
 // (T-A3-1…6, T-A7-3…9 function layer, P1, P2, P3, P5), T-A7-10 and T-S-1/2/3.
 //
-// Sample counts (§13.2 P2 (c)): 250,000 fixed-seed random facts by default (the CI count);
-// CLUED_INTEGRATION_RUNTIME_PROPERTY_FULL=1 runs the nightly 2,000,000. The seed is
-// mulberry32(20260924) (§13.0) and is printed with every failing sample.
+// Sample counts (§13.2 P2 (c)): 150,000 fixed-seed random facts by default (the CI count, cut from
+// 250,000 by v0.1.8 review MINOR-4 to keep a 2-vCPU runner inside the stated budget);
+// CLUED_INTEGRATION_RUNTIME_PROPERTY_FULL=1 runs the nightly 2,000,000, which is the 250,000+
+// figure of §13.2 P2 (c) and more. The seed is mulberry32(20260924) (§13.0) and is printed with
+// every failing sample.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATION = '20260926000000_integration_runtime_registry_derivation.sql';
 const FULL = process.env.CLUED_INTEGRATION_RUNTIME_PROPERTY_FULL === '1';
-const RANDOM_SAMPLES = FULL ? 2_000_000 : 250_000;
+const RANDOM_SAMPLES = FULL ? 2_000_000 : 150_000;
 const SEED = 20260924;
 const CHUNK = 5000;
 const golden = JSON.parse(await fs.readFile(path.join(root, 'tests/fixtures/integration-runtime/golden-vectors.v1.json'), 'utf8'));
@@ -33,7 +35,8 @@ const CODES = ['C1_SCHEMA_INVALID', 'C2_COMPLETE_BUT_UNCLAIMED', 'C3_INCOMPLETE_
 const ALL = ['audit.read', 'context.read', 'context.write', 'development_history.read', 'evidence.write', 'project.read',
   'project.write'];
 const PURE = ['integration_capabilities_valid_v1(text[])', 'integration_ceiling_valid_v1(jsonb)',
-  'integration_version_cmp_v1(text,text)', 'integration_facts_validate_v1(jsonb)',
+  'integration_version_cmp_v1(text,text)', 'integration_timestamp_valid_v1(text)',
+  'integration_facts_validate_v1(jsonb)',
   'integration_candidate_v1(jsonb,boolean,boolean,boolean)', 'integration_predicates_v1(jsonb)',
   'integration_select_state_v1(jsonb)', 'integration_derive_v1(jsonb)'];
 const TABLES = ['integration_binding_domains_v1', 'integration_capability_vocabulary_v1',
@@ -92,6 +95,91 @@ function permuted(value, rng) {
     [keys[i], keys[j]] = [keys[j], keys[i]];
   }
   return Object.fromEntries(keys.map((key) => [key, permuted(value[key], rng)]));
+}
+
+// §13.2 P2 semantic oracle (v0.1.8 review MINOR-3). An independent re-derivation of the whole
+// predicate / Candidate / state / Operability layer straight from the facts document, written from
+// the specification text (§7.3, §8.3, §8.4, §9.1, §9.2, §9.4) and never from the SQL output, so a
+// mutation of any single factor in the migration diverges here. It is applied only to documents the
+// migration itself already judged valid; invalid documents stay with the T-A7-9 structural checks.
+const SCOPE_OF = { 'context.read': 'context:read', 'project.read': 'context:read',
+  'development_history.read': 'context:read', 'context.write': 'context:write',
+  'project.write': 'context:write', 'evidence.write': 'context:write', 'audit.read': 'audit:read' };
+const has = (list, value) => Array.isArray(list) && list.includes(value);
+function oracle(f) {
+  const complete = f.identity_completeness === 'COMPLETE';
+  const cs = f.identity_claim_state;
+  const claim_block = ['CLAIM_CONFLICT', 'PENDING_RECONCILE', 'SUPERSEDED'].includes(cs)
+    || (complete && cs !== 'CURRENT_CLAIM_HOLDER');
+  const claim_permits = !claim_block && (complete ? cs === 'CURRENT_CLAIM_HOLDER'
+    : f.policy.incomplete_identity_ordinary_runtime === 'PERMIT');
+  const authn_ok = f.authentication_state === 'USABLE';
+  const authz_ok = ['GRANTED', 'GRANTED_LEGACY'].includes(f.authorization_state) && f.reauth_marks_open === 0;
+  const auth_ok = authn_ok && authz_ok;
+  const installed = f.installation_facts.install_status === 'COMPLETED';
+  const ever_authorized = f.installation_facts.ever_authorized === true;
+  const credential_lost = ever_authorized && !auth_ok;
+  const lifecycle_ok = f.lifecycle_facts.ordinary_runtime === 'PERMITTED' && f.lifecycle_facts.historical === 'NONE';
+  const reauth_recoverable = f.lifecycle_facts.recovery_policy === 'PERMITS_REAUTH'
+    && f.lifecycle_facts.historical === 'NONE';
+  const env = f.environment_state; const qual = f.qualification_state; const comp = f.compatibility_state;
+  const host = f.host_state; const adapter = f.adapter_state; const ras = f.resource_action_scope_facts;
+  const qualification_blocks = qual.value === 'SUSPENDED'
+    || (qual.value === 'NOT_EVALUATED' && f.policy.qualification_not_evaluated === 'BLOCKING');
+  // §9.2 whole-set ("→ ∅") factors
+  const empty_set = f.identity_state !== 'VALID' || !claim_permits || !authn_ok || !authz_ok
+    || f.revocation_state !== 'NOT_REVOKED' || f.lifecycle_facts.ordinary_runtime === 'PAUSED_BY_POLICY'
+    || ras.mode === 'NONE' || env.value === 'BLOCKED' || host.value === 'HARD_UNAVAILABLE'
+    || adapter.value === 'BLOCKED' || qualification_blocks || comp.value === 'HARD_INCOMPATIBLE';
+  // §9.1 / §9.2 per-capability factors; ALL is the vocabulary in byte order, so the result is sorted
+  const cand = empty_set ? [] : ALL.filter((c) => has(f.capability_universe, c)
+    && has(f.oauth_scope_facts, SCOPE_OF[c])
+    && (ras.mode === 'LEGACY_UNRESTRICTED' || has(ras.capabilities, c))
+    && (env.value === 'AVAILABLE' || has(env.mask, c))
+    && has(host.surface_ceiling, c) && has(host.declared, c)
+    && (host.value === 'AVAILABLE' || has(host.mask, c))
+    && (adapter.value === 'OK' || has(adapter.mask, c))
+    && (qual.value !== 'CONDITIONAL' || has(qual.mask, c))
+    && (comp.value === 'COMPATIBLE' || has(comp.mask, c)));
+  const blocking = [];
+  if (claim_block) blocking.push('B1_identity_claim');
+  if (f.identity_state === 'INVALID') blocking.push('B2_identity_invalid');
+  if (!lifecycle_ok) blocking.push('B3_lifecycle');
+  if (qualification_blocks) blocking.push('B4_qualification');
+  if (host.value === 'HARD_UNAVAILABLE') blocking.push('B5_host');
+  if (adapter.value === 'BLOCKED') blocking.push('B6_adapter');
+  if (env.value === 'BLOCKED') blocking.push('B7_environment');
+  if (installed && auth_ok && cand.length === 0) blocking.push('B8_candidate_empty');   // OQ-1 phase
+  if (credential_lost && !reauth_recoverable) blocking.push('B9_unrecoverable_auth');
+  const blocked = blocking.length > 0;
+  const verification_eligible = installed && auth_ok && !claim_block && !blocked && lifecycle_ok
+    && host.value !== 'HARD_UNAVAILABLE' && adapter.value !== 'BLOCKED';
+  const crv_valid = f.canonical_runtime_verification_facts.status === 'VALID';
+  const degradation = [];
+  if (adapter.value === 'DEGRADED') degradation.push('adapter_state');
+  if (comp.value === 'DEGRADED') degradation.push('compatibility_state');
+  if (env.value === 'RESTRICTED') degradation.push('environment_state');
+  if (host.value === 'DEGRADED') degradation.push('host_state');
+  if (qual.value === 'CONDITIONAL') degradation.push('qualification_state');
+  const degraded = degradation.length > 0;
+  const first_authorization_required = f.lifecycle_facts.first_authorization_required === true;
+  const state = f.revocation_state === 'REVOKED' ? 'REVOKED'
+    : comp.value === 'HARD_INCOMPATIBLE' ? 'INCOMPATIBLE'
+      : credential_lost && reauth_recoverable ? 'REAUTH_REQUIRED'
+        : installed && first_authorization_required && !ever_authorized ? 'AUTH_PENDING'
+          : verification_eligible && !crv_valid ? 'VERIFYING'
+            : blocked ? 'BLOCKED'
+              : installed && cand.length > 0 && lifecycle_ok && crv_valid && degraded ? 'DEGRADED'
+                : installed && cand.length > 0 && lifecycle_ok && crv_valid ? 'ACTIVE'
+                  : installed ? 'INSTALLED' : 'INSTALL_PENDING';
+  const operable = cand.length > 0 && lifecycle_ok && crv_valid && ['ACTIVE', 'DEGRADED'].includes(state);
+  return { predicates: { identity_claim_blocks_ordinary_runtime: claim_block,
+    verification_precluded_by_blocking_fact: blocked, verification_eligible, credential_lost,
+    reauth_recoverable, complete, claim_permits, authn_ok, authz_ok, auth_ok, installed, ever_authorized,
+    first_authorization_required, lifecycle_ok, revoked: f.revocation_state === 'REVOKED',
+    hard_incompatible: comp.value === 'HARD_INCOMPATIBLE', blocked, crv_valid, degraded,
+    candidate_empty: cand.length === 0 },
+  blocking, degradation, cand, state, operable, effective: operable ? cand : [] };
 }
 
 // §13.2 P2: each truth class (dimension) with its value domain, expressed as patches on a base.
@@ -250,6 +338,8 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       'relations', (select jsonb_object_agg(c.oid::regclass::text, jsonb_build_object('kind', c.relkind,
           'acl', coalesce(c.relacl::text, ''), 'rls', c.relrowsecurity, 'force_rls', c.relforcerowsecurity,
           'owner', pg_get_userbyid(c.relowner),
+          -- v0.1.8 review NIT-4: views and materialized views are snapshotted by definition too
+          'viewdef', (case when c.relkind in ('v', 'm') then pg_get_viewdef(c.oid) end),
           'columns', (select jsonb_agg(jsonb_build_array(a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull,
               coalesce(pg_get_expr(d.adbin, d.adrelid), ''), coalesce(a.attacl::text, '')) order by a.attnum)
             from pg_attribute a left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
@@ -470,6 +560,10 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         [{ scopes: [], entries: 'UNRESTRICTED' }, false, 'unknown entries string'],
         [{ scopes: [], entries: [{ ...entry, actions: [] }] }, false, 'empty actions'],
         [{ scopes: [], entries: [{ ...entry, actions: ['delete'] }] }, false, 'unknown action'],
+        [{ scopes: [], entries: [{ ...entry, actions: ['write', 'read'] }] }, false, 'unsorted actions'],
+        [{ scopes: [], entries: [{ ...entry, actions: ['read', 'read'] }] }, false, 'duplicate action'],
+        [{ scopes: [], entries: [{ ...entry, actions: ['audit', 'close', 'feedback_submit', 'read', 'restore', 'write'] }] },
+          true, 'all six actions sorted'],
         [{ scopes: [], entries: [{ ...entry, resource_kind: 'project' }] }, false, 'resource_kind'],
         [{ scopes: [], entries: [{ ...entry, environment: 'staging' }] }, false, 'environment'],
         [{ scopes: [], entries: [{ ...entry, resource_id: '' }] }, false, 'empty resource_id'],
@@ -480,6 +574,39 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         [[], false, 'not an object'],
         [undefined, false, 'null'],
       ]) assert.equal(await valid(value), expected, label);
+    });
+
+    await t.test('§7.1 lexical validation: timestamps are real instants, integers are integers (NIT-1, NIT-2)', async () => {
+      const valid = async (value) => (await admin.query('select clued_private.integration_timestamp_valid_v1($1) v',
+        [value])).rows[0].v;
+      for (const [value, expected] of [
+        ['2026-09-24T12:00:00Z', true], ['2026-09-24T12:00:00.123456+08:00', true],
+        ['2028-02-29T00:00:00Z', true], ['2026-02-29T00:00:00Z', false], ['2026-12-31T23:59:59-05:00', true],
+        ['2026-13-99T99:99:99Z', false], ['2026-02-30T00:00:00Z', false], ['2026-00-10T00:00:00Z', false],
+        ['2026-09-24T25:00:00Z', false], ['2026-09-24T12:60:00Z', false], ['2026-09-24T12:00:61Z', false],
+        ['2026-09-24T12:00:00', false], ['2026-09-24 12:00:00Z', false], ['now', false], [null, false],
+      ]) assert.equal(await valid(value), expected, String(value));
+      // a facts document whose as_of or valid_until is well-shaped but not a real instant is C1
+      const codes = async (facts) => (await admin.query('select clued_private.integration_facts_validate_v1($1::jsonb) c',
+        [JSON.stringify(facts)])).rows[0].c;
+      assert.deepEqual(await codes(golden.base), []);
+      assert.deepEqual(await codes({ ...golden.base, as_of: '2026-13-99T99:99:99Z' }), ['C1_SCHEMA_INVALID']);
+      assert.deepEqual(await codes(merge(golden.base, { canonical_runtime_verification_facts: {
+        valid_until: '2026-02-31T00:00:00Z' } })), ['C1_SCHEMA_INVALID']);
+      // NIT-2: jsonb keeps the input scale, so only the integer spelling is accepted
+      const baseRaw = JSON.stringify(golden.base);
+      for (const [raw, label] of [
+        [baseRaw.replace('"reauth_marks_open":0,', '"reauth_marks_open":0.0,'), 'reauth_marks_open 0.0'],
+        [baseRaw.replace('"reauth_marks_open":0,', '"reauth_marks_open":1.5,'), 'reauth_marks_open 1.5'],
+        [baseRaw.replace('"reauth_marks_open":0,', '"reauth_marks_open":-1,'), 'reauth_marks_open -1'],
+        [baseRaw.replace('"policy_version":1,', '"policy_version":1.0,'), 'policy_version 1.0'],
+      ]) {
+        assert.notEqual(raw, baseRaw, label);
+        const c = (await admin.query('select clued_private.integration_facts_validate_v1($1::jsonb) c', [raw])).rows[0].c;
+        assert.deepEqual(c, ['C1_SCHEMA_INVALID'], label);
+      }
+      // …and the integer spelling still hashes and derives as before
+      assert.deepEqual(await codes(merge(golden.base, { reauth_marks_open: 2 })), []);
     });
 
     await t.test('P5 golden vectors (§13.2): at least 60 hand-checked vectors', async () => {
@@ -565,6 +692,7 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       await admin.query(`grant usage on schema clued_private to ${probe};
         grant execute on function clued_private.integration_derive_v1(jsonb), clued_private.integration_facts_validate_v1(jsonb),
           clued_private.integration_predicates_v1(jsonb), clued_private.integration_select_state_v1(jsonb),
+          clued_private.integration_timestamp_valid_v1(text),
           clued_private.integration_candidate_v1(jsonb, boolean, boolean, boolean) to ${probe}`);
       const probeClient = await connect();
       await probeClient.query(`set role ${probe}`);
@@ -735,6 +863,48 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         && (a.state === 'VERIFYING' || !AT_LEAST_BLOCKED.includes(a.state))) fail('T-A7-6', sample, a);
       if (a.state === 'VERIFYING' && p.verification_eligible !== true) fail('T-A7-7', sample, a);
       if (a.mutant !== a.state) fail('T-A7-8', sample, a);
+
+      // ---- semantic layer (v0.1.8 review MINOR-2 / MINOR-3): recomputed from the facts ----
+      const o = oracle(f);
+      for (const [key, value] of Object.entries(o.predicates)) {
+        if (p[key] !== value) fail('P2-PREDICATES', sample, { key, derived: p[key], oracle: value });
+      }
+      if (JSON.stringify(p.blocking) !== JSON.stringify(o.blocking)) {
+        fail('P2-BLOCKING', sample, { derived: p.blocking, oracle: o.blocking });
+      }
+      if (JSON.stringify(p.degradation) !== JSON.stringify(o.degradation)) {
+        fail('P2-DEGRADATION', sample, { derived: p.degradation, oracle: o.degradation });
+      }
+      if (JSON.stringify(a.cand) !== JSON.stringify(o.cand)) {
+        fail('P2-CANDIDATE', sample, { derived: a.cand, oracle: o.cand });
+      }
+      // B8 is phase-qualified (OQ-1): it needs `installed`, not only auth_ok ∧ cand = ∅
+      const b8 = o.predicates.installed && o.predicates.auth_ok && o.cand.length === 0;
+      if (p.blocking.includes('B8_candidate_empty') !== b8) fail('P2-B8', sample, { derived: p.blocking, b8 });
+      // every Candidate capability is inside every mask that applies (§9.2)
+      for (const [name, node, unmasked] of [['environment_state', f.environment_state, 'AVAILABLE'],
+        ['qualification_state', f.qualification_state, null], ['compatibility_state', f.compatibility_state, 'COMPATIBLE'],
+        ['host_state', f.host_state, 'AVAILABLE'], ['adapter_state', f.adapter_state, 'OK']]) {
+        const masked = name === 'qualification_state' ? node.value === 'CONDITIONAL' : node.value !== unmasked;
+        if (masked && Array.isArray(node.mask) && !a.cand.every((c) => node.mask.includes(c))) {
+          fail('P2-MASKS', sample, { name, mask: node.mask, cand: a.cand });
+        }
+      }
+      if (!a.cand.every((c) => f.host_state.surface_ceiling.includes(c) && f.host_state.declared.includes(c)
+        && f.capability_universe.includes(c))) fail('P2-MASKS', sample, { cand: a.cand });
+      // REAUTH_REQUIRED vs BLOCKED (§8.3 B9, §8.4 precedence)
+      if (o.predicates.credential_lost && o.predicates.reauth_recoverable && f.revocation_state !== 'REVOKED'
+        && f.compatibility_state.value !== 'HARD_INCOMPATIBLE' && a.state !== 'REAUTH_REQUIRED') {
+        fail('P2-REAUTH', sample, a);
+      }
+      if (o.predicates.credential_lost && !o.predicates.reauth_recoverable
+        && (!p.blocking.includes('B9_unrecoverable_auth')
+          || !['REVOKED', 'INCOMPATIBLE', 'BLOCKED'].includes(a.state))) fail('P2-REAUTH', sample, a);
+      if (a.state !== o.state) fail('P2-STATE', sample, { derived: a.state, oracle: o.state });
+      if (a.operable !== o.operable) fail('P2-STATE', sample, { derived: a.operable, oracle: o.operable });
+      if (JSON.stringify(a.effective) !== JSON.stringify(o.effective)) {
+        fail('P2-STATE', sample, { derived: a.effective, oracle: o.effective });
+      }
     };
     let batch = [];
     const flush = async () => {
@@ -756,7 +926,7 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       assert.equal(v?.count ?? 0, 0, v ? `${id}: ${v.count} violations, e.g. ${JSON.stringify(v.examples, null, 1)}` : id);
     };
 
-    await t.test('P2 coverage: single-factor, pairwise and 250,000+ fixed-seed random facts', () => {
+    await t.test(`P2 coverage: single-factor, pairwise and ${RANDOM_SAMPLES.toLocaleString('en-US')} fixed-seed random facts`, () => {
       assert.ok(stats.layers.single >= 100, JSON.stringify(stats.layers));
       assert.ok(stats.layers.pairwise >= 10000, JSON.stringify(stats.layers));
       assert.equal(stats.layers.random, RANDOM_SAMPLES);
@@ -777,6 +947,14 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       ['T-A7-7', 'VERIFYING ⇒ verification_eligible'],
       ['T-A7-8', 'the VERIFYING / BLOCKED-swapped selector agrees on every sample'],
       ['T-A7-9', 'invalid documents: no state, not operable, empty sets, reason codes present'],
+      ['P2-PREDICATES', 'every predicate equals the value recomputed from the facts (§8.3)'],
+      ['P2-BLOCKING', 'the B1…B9 list equals the list recomputed from the facts (§8.3)'],
+      ['P2-B8', 'B8 ∈ blocking ⇔ installed ∧ auth_ok ∧ Candidate = ∅, recomputed from the facts (OQ-1)'],
+      ['P2-DEGRADATION', 'the degradation source list equals the list recomputed from the facts (§8.3)'],
+      ['P2-CANDIDATE', 'Candidate equals the set recomputed from the facts (§9.1, §9.2)'],
+      ['P2-MASKS', 'Candidate ⊆ every applicable mask, ceiling, declaration and universe (§9.2)'],
+      ['P2-REAUTH', 'credential_lost splits into REAUTH_REQUIRED and B9 / BLOCKED by reauth_recoverable'],
+      ['P2-STATE', 'state, Operability and Effective equal the values recomputed from the facts (§8.4, §9.4)'],
     ];
     for (const [id, title] of properties) await t.test(`${id} (P2 facts layer) ${title}`, () => report(id));
 

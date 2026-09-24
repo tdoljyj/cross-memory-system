@@ -1687,6 +1687,36 @@
    }
   },
   {
+   "id": "GV-B8-PHASE-INSTALL-PENDING",
+   "basis": "§8.3 B8 phase qualification (OQ-1: B8 requires installed); §8.4 INSTALL_PENDING; §9.2",
+   "patch": {
+    "installation_facts": {
+     "install_status": "PENDING"
+    },
+    "oauth_scope_facts": [
+     "audit:read"
+    ]
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "INSTALL_PENDING",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": [],
+    "predicates": {
+     "installed": false,
+     "auth_ok": true,
+     "candidate_empty": true,
+     "blocked": false,
+     "verification_eligible": false,
+     "verification_precluded_by_blocking_fact": false,
+     "credential_lost": false
+    }
+   }
+  },
+  {
    "id": "GV-INVALID-C1-READY-KEY",
    "basis": "§7.1 rule 2: READY fields are unknown keys → C1",
    "patch": {
