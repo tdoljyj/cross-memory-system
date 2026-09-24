@@ -99,6 +99,11 @@
     "vite": "8.2.2",
     "wrangler": "4.125.0"
   },
+  "overrides": {
+    "mongodb": {
+      "gcp-metadata": "^9.0.3"
+    }
+  },
   "type": "module",
   "displayName": "Clued"
 }

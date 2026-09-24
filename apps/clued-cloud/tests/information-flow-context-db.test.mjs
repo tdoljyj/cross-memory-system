@@ -96,9 +96,8 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       .filter((name) => name.endsWith('.sql')).sort();
     // Later slices (S5+) sort after S4 and are applied in the same chain.
     const s4Index = migrations.indexOf(S4_MIGRATION);
-    assert.ok(s4Index > 0, 'the S4 migration is in the chain');
-    assert.ok(migrations.slice(0, s4Index).every((name) => name < S4_MIGRATION),
-      'the S4 migration sorts after every earlier migration');
+    assert.equal(migrations[s4Index - 1], '20260924190000_information_flow_promotion.sql',
+      'the S4 migration directly follows S3');
     const versions = migrations.map((name) => name.split('_')[0]);
     assert.equal(new Set(versions).size, versions.length, 'migration versions are unique');
     for (const name of migrations) {

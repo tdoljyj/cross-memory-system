@@ -28,7 +28,9 @@ test("M-LIVE-01: resume and log transport preserve omitted constraints and separ
   };
   try {
     for (const [tool, pathname, expected] of [
-      ["clued_session_resume", "/v1/continuity/resume", resume],
+      // BUG-20260924-001 L1: resume reports capture completeness next to currentness.
+      ["clued_session_resume", "/v1/continuity/resume", { ...resume, authority_capture_completeness: {
+        state: "unknown", basis: "server_observes_only_writes_that_reached_clued", independent_of: "currentness" } }],
       ["clued_read_log", "/v1/continuity/log", log],
     ]) {
       const args = tool === "clued_session_resume" ? { context_key: "global", response_view: "work_log" }

@@ -203,6 +203,7 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
         search_budget_bytes: { default: 65536, maximum: 262144 },
         checkpoint_thresholds: { pending_events: 20, pending_bytes: 32768 },
         session_compliance: "audit_receipts_projection",
+        authority_capture_completeness: "unknown_or_incomplete_never_complete",
       },
       project_lifecycle: {
         contract_version: 2,
@@ -253,6 +254,7 @@ Canonical store: clued-cloud/supabase
 9. Preserve the returned canonical \`id\` across API, MCP, UI and Markdown mirrors. Markdown contains query results or stable-ID references, not copied canonical bodies.
 10. Write once with \`clued_record_mutate\`; use \`clued_decision_supersede\` for replacement and \`clued_evidence_ingest\` for sources. The database transaction creates the Canonical entity + Event + Receipt; never dual-write Markdown.
 11. Both Global and Project five views are Standard Work Projection. Task owns executable text; State references Task. A Frontier requires exact Task identity/version/scope/rules and currentness. Unknown, stale, conflicting or incomplete results never mean no work; never recover current actions from old Markdown, pointers or checkpoint prose. Read access and priority do not grant execution permission.
+12. Currentness CURRENT covers only writes that reached Clued. It never means every authoritative decision from a Host conversation was captured; \`authority_capture_completeness\` is reported separately and is never \`complete\`.
 
 MCP endpoint: ${origin}/mcp
 HTTP bootstrap: ${origin}/v1/continuity/bootstrap
@@ -1541,18 +1543,36 @@ async function callTool(
   const sanitized = name in contextRpcByTool ? sanitizeContextResult(rawResult) : sanitizeCluedResult(rawResult);
   const sourceCommit = typeof __CLUED_BUILD_SHA__ === "string" &&
     /^[0-9a-f]{40}$/.test(__CLUED_BUILD_SHA__) ? __CLUED_BUILD_SHA__ : null;
-  const result = name === "clued_currentness_g6_gate" &&
+  const gated = name === "clued_currentness_g6_gate" &&
     (sanitized as Record<string, unknown> | null)?.status === "transport_precheck_ready"
     ? sourceCommit
       ? { ...(sanitized as Record<string, unknown>), status: "closed" }
       : { status: "not_ready", gate: "G6_CURRENTNESS",
           missing_requirements: ["all_path_checkpoint_enforcement"] }
     : sanitized;
+  const result = withAuthorityCapture(name, gated);
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
     structuredContent: result,
     isError: measurementRefused || Boolean((result as Record<string, unknown> | null)?.error),
   };
+}
+
+// BUG-20260924-001 L1: Currentness only covers writes that reached Clued. The
+// server never sees Host conversations, so it cannot claim that every
+// authoritative decision was captured; say so next to the currentness result.
+const authorityCaptureUnknown = {
+  state: "unknown",
+  basis: "server_observes_only_writes_that_reached_clued",
+  independent_of: "currentness",
+} as const;
+
+function withAuthorityCapture(name: string, value: unknown): unknown {
+  if (name !== "clued_session_resume" && name !== "clued_session_reconcile") return value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  if (record.error || "authority_capture_completeness" in record) return value;
+  return { ...record, authority_capture_completeness: authorityCaptureUnknown };
 }
 
 function rpcResult(id: JsonRpcId | undefined, result: unknown) {
@@ -1671,7 +1691,7 @@ async function handleRestContinuity(request: Request, env: ContinuityEnv) {
   const path = new URL(request.url).pathname as keyof typeof restToolByPath;
   const tool = restToolByPath[path];
   const input = await parseBody(request);
-  const result = await callRpc(request, env, tool, input);
+  const result = withAuthorityCapture(tool, await callRpc(request, env, tool, input));
   return json(result, 200, corsHeaders(request));
 }
 
