@@ -8,7 +8,8 @@
 --     state, source kind, dimensions and transition version still matches it;
 --   * every Event names at least one Canonical Record that carries its effective
 --     meaning, pinned by id, version and content hash, and each is still that exact
---     active, unmerged version (those Records are only checked, never changed);
+--     active, unmerged version with no withdrawn Evidence (those Records are only
+--     checked, never changed);
 --   * an active user_explicit Owner Decision, written through one of the owner's
 --     Bindings, carries this manifest's digest, event count and target state in its
 --     relations.
@@ -72,6 +73,7 @@ begin
        or coalesce(v_item->>'event_id','') !~ v_id
        or jsonb_typeof(v_item->'expected_transition_version') is distinct from 'number'
        or coalesce(v_item->>'expected_transition_version','') !~ v_id
+       or jsonb_typeof(v_item->'expected_carrier_state') is distinct from 'string'
        or v_item->>'expected_carrier_state' not in ('ACTIVE_UNSTRUCTURED','ACTIVE_TYPED')
        or coalesce(v_item->>'scope','') !~ '^(global|project:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$'
        or coalesce(v_item->>'payload_sha256','') !~ '^[0-9a-f]{64}$'
@@ -122,6 +124,8 @@ begin
       and exists(select 1 from public.clued_audit_receipts r
         where r.user_id=p_user_id and r.operation='continuity_only_resolution_authorized'
           and r.object_type='event' and r.object_id=c.event_id::text
+          and r.metadata->>'proof'='owner_approved_exact_manifest'
+          and r.metadata->>'proof_contract'=v_contract
           and r.metadata->>'manifest_digest'=v_digest);
   if v_resolved=v_count then
     return jsonb_build_object('status','already_reconciled','manifest_digest',v_digest,
@@ -137,7 +141,7 @@ begin
   for v_item in select value from jsonb_array_elements(p_manifest->'events') loop
     v_event:=null; v_carrier:=null;
     select * into v_event from public.clued_context_events e
-      where e.id=(v_item->>'event_id')::bigint and e.user_id=p_user_id;
+      where e.id=(v_item->>'event_id')::bigint and e.user_id=p_user_id for share;
     select * into v_carrier from clued_private.event_truth_carriers c
       where c.event_id=(v_item->>'event_id')::bigint and c.user_id=p_user_id for update;
     if v_event.id is null or v_carrier.event_id is null
@@ -164,7 +168,10 @@ begin
          or v_record.archived_at is not null
          or v_record.merged_into_record_id is not null
          or v_record.version is distinct from (v_pin->>'version')::bigint
-         or v_record.content_hash is distinct from v_pin->>'content_hash' then
+         or v_record.content_hash is distinct from v_pin->>'content_hash'
+         -- A version whose Evidence was withdrawn no longer carries meaning.
+         or exists(select 1 from clued_private.record_evidence_status s
+            where s.record_id=v_record.id and s.record_version=v_record.version) then
         raise exception 'continuity_manifest_carrying_record_changed event=% record=%',
           v_item->>'event_id',v_pin->>'id' using errcode='P0001';
       end if;

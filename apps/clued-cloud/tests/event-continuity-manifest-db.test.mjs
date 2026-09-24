@@ -137,6 +137,7 @@ test('event continuity manifest resolves only an exact, Owner-approved, unchange
       { ...manifest, events: [{ ...manifest.events[0], event_id: '9270' }] },
       { ...manifest, events: [{ ...manifest.events[0], event_id: 99999999999999999999 }] },
       { ...manifest, events: [{ ...manifest.events[0], expected_carrier_state: 'LEGACY_UNBOUND' }] },
+      { ...manifest, events: [{ ...manifest.events[0], expected_carrier_state: null }] },
       { ...manifest, user_id: '-'.repeat(36) },
       { ...manifest, user_id: otherUser },
     ]) {
@@ -188,6 +189,18 @@ test('event continuity manifest resolves only an exact, Owner-approved, unchange
       mutation: { closed_reason: 'fixture' } });
     assert.equal(closeResult.status, 'committed', JSON.stringify(closeResult));
     await assert.rejects(() => run({ ...manifest, events: [{ ...manifest.events[0], carried_by_records: [closedPin] }] }),
+      /continuity_manifest_carrying_record_changed event=9270/);
+
+    // A carrying version whose Evidence was withdrawn no longer carries the meaning.
+    const withdrawnRecord = await decision('Carrying record whose Evidence is withdrawn');
+    const withdrawnPin = await pinOf(withdrawnRecord.id);
+    // Throwaway database: a flag row stands in for a full Native withdrawal.
+    await admin.query('alter table clued_private.record_evidence_status drop constraint record_evidence_status_withdrawal_id_fkey');
+    await admin.query('alter table clued_private.record_evidence_status disable trigger user');
+    await admin.query(`insert into clued_private.record_evidence_status(user_id,record_id,record_version,evidence_id,withdrawal_id,flagged_by)
+      values($1,$2,$3,$4,$5,'withdrawal')`, [userId, withdrawnRecord.id, withdrawnPin.version, uuid(), uuid()]);
+    await admin.query('alter table clued_private.record_evidence_status enable trigger user');
+    await assert.rejects(() => run({ ...manifest, events: [{ ...manifest.events[0], carried_by_records: [withdrawnPin] }] }),
       /continuity_manifest_carrying_record_changed event=9270/);
 
     // 4. Execution needs the exact digest and an Owner Decision that names it.
@@ -279,8 +292,15 @@ test('event continuity manifest resolves only an exact, Owner-approved, unchange
     const invalidationAfter = (await admin.query(`select invalidation_revision::int n
       from clued_private.projection_invalidation_heads where user_id=$1 and target_scope='global'
         and projection_key='global.__aggregate__'`, [userId])).rows[0].n;
-    // Carrier transitions also touch currentness, so the revision may move more than once.
+    // Carrier transitions also touch currentness, so the revision may move more than once;
+    // the function's own invalidation is the last writer of both Global heads.
     assert.ok(invalidationAfter > invalidationBefore, `${invalidationBefore} -> ${invalidationAfter}`);
+    for (const key of ['global.priority_frontier', 'global.__aggregate__']) {
+      const head = (await admin.query(`select latest_source_ref r from clued_private.projection_invalidation_heads
+        where user_id=$1 and target_scope='global' and projection_key=$2`, [userId, key])).rows[0].r;
+      assert.equal(head.kind, 'continuity_resolution', key);
+      assert.equal(head.manifest_digest, dry.manifest_digest, key);
+    }
 
     // 7. Replay is a no-op; the resolved Events cannot enter a new batch.
     assert.equal((await run(manifest, dry.manifest_digest, approval.id, approval.receipt, true)).rows[0].r.status,
