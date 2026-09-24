@@ -122,8 +122,9 @@ if (dnsPromises) {
   if (typeof dnsPromises.Resolver === 'function') denyPromiseQueries(dnsPromises.Resolver.prototype);
   const originalPromiseLookup = dnsPromises.lookup;
   dnsPromises.lookup = function guardedPromiseLookup(hostname, ...rest) {
-    ledger.dns.push(String(hostname));
+    // dnsViolation records the refused name itself: one ledger entry per call.
     if (!loopback(hostname)) return Promise.reject(dnsViolation('dns', hostname));
+    ledger.dns.push(String(hostname));
     flush();
     return originalPromiseLookup.call(this, hostname, ...rest);
   };

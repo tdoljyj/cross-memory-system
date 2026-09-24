@@ -103,8 +103,9 @@ test('Information Flow token hardening: F01 burn order, L29 session binding, L30
     for (const name of migrations.slice(0, hIndex)) await apply(name);
 
     const userId = uuid();
-    await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'if-th@example.invalid',now())`,
-      [userId]);
+    const otherUser = uuid();
+    await admin.query(`insert into auth.users(id,email,email_confirmed_at)
+      values($1,'if-th@example.invalid',now()),($2,'if-th-other@example.invalid',now())`, [userId, otherUser]);
 
     const human = server.getPgClient();
     clients.push(human);
@@ -182,6 +183,35 @@ test('Information Flow token hardening: F01 burn order, L29 session binding, L30
     assert.equal((await nativeToken(preL30.token_id)).consume_outcome, 'rejected',
       'reproduced L30: a token for another action was burned');
 
+    // ---- Anchor drift: one anchor's whitespace changed in a patched function
+    // (the last one patched, S4 accept) makes the migration fail with a
+    // definition mismatch and leave nothing behind (the file is one implicit
+    // transaction): no helper and no partially patched function.
+    const def = async (signature) => (await admin.query('select pg_get_functiondef($1::regprocedure) d', [signature]))
+      .rows[0].d;
+    const ACCEPT = 'clued_private.context_policy_accept_core_v1(uuid,jsonb,text)';
+    const PATCHED = ['clued_private.candidate_confirmation_issue_core_v1(uuid,jsonb)',
+      'clued_private.context_policy_confirmation_issue_core_v1(uuid,jsonb)',
+      'clued_private.evidence_withdrawal_confirmation_issue_core_v1(uuid,jsonb)',
+      'clued_private.candidate_promote_core_v1(uuid,jsonb,text)', ACCEPT,
+      'clued_private.evidence_withdraw_core_v1(uuid,jsonb,text)'];
+    const definitionsBefore = Object.fromEntries(await Promise.all(PATCHED.map(async (sig) => [sig, await def(sig)])));
+    const acceptOriginal = definitionsBefore[ACCEPT];
+    const drifted = acceptOriginal.replace(
+      '    select * into v_token from clued_private.native_confirmation_tokens t\n      where t.user_id=p_user_id\n',
+      '    select * into v_token from clued_private.native_confirmation_tokens t\n      where  t.user_id=p_user_id\n');
+    assert.notEqual(drifted, acceptOriginal, 'the drift probe changes the anchor');
+    await admin.query(drifted);
+    await assert.rejects(apply(HARDENING_MIGRATION), /token_hardening_accept_definition_mismatch/);
+    assert.equal((await admin.query("select to_regprocedure('clued_private.native_session_id_v1()') r")).rows[0].r, null,
+      'no helper is left behind');
+    for (const sig of PATCHED.filter((sig) => sig !== ACCEPT)) {
+      assert.equal(await def(sig), definitionsBefore[sig], `no partial patch: ${sig}`);
+    }
+    assert.equal(await def(ACCEPT), drifted);
+    await admin.query(acceptOriginal);
+    assert.equal(await def(ACCEPT), acceptOriginal, 'the drift probe is undone');
+
     // ---- Apply the hardening migration and every later migration.
     await apply(HARDENING_MIGRATION);
     for (const name of migrations.slice(hIndex + 1)) await apply(name);
@@ -189,8 +219,6 @@ test('Information Flow token hardening: F01 burn order, L29 session binding, L30
       'the migration cannot be applied twice');
 
     // Effective definitions carry each patch; grants are unchanged.
-    const def = async (signature) => (await admin.query('select pg_get_functiondef($1::regprocedure) d', [signature]))
-      .rows[0].d;
     for (const signature of ['clued_private.candidate_confirmation_issue_core_v1(uuid,jsonb)',
       'clued_private.context_policy_confirmation_issue_core_v1(uuid,jsonb)',
       'clued_private.evidence_withdrawal_confirmation_issue_core_v1(uuid,jsonb)']) {
@@ -199,7 +227,7 @@ test('Information Flow token hardening: F01 burn order, L29 session binding, L30
     for (const signature of ['clued_private.candidate_promote_core_v1(uuid,jsonb,text)',
       'clued_private.context_policy_accept_core_v1(uuid,jsonb,text)',
       'clued_private.evidence_withdraw_core_v1(uuid,jsonb,text)']) {
-      assert.match(await def(signature), /v_token\.session_id is null or/, signature);
+      assert.match(await def(signature), /v_token\.session_id is null or clued_private\.native_session_id_v1\(\) is null\n\s+or v_token\.session_id<>clued_private\.native_session_id_v1\(\) then/, signature);
     }
     assert.match(await def('clued_private.candidate_promote_core_v1(uuid,jsonb,text)'), /Single use \(F01\)/);
     assert.match(await def('clued_private.context_policy_accept_core_v1(uuid,jsonb,text)'),
@@ -329,6 +357,36 @@ test('Information Flow token hardening: F01 burn order, L29 session binding, L30
     assert.equal(withdrawn.status, 'committed', JSON.stringify(withdrawn));
     assert.equal((await nativeToken(s4Token.token_id)).consume_outcome, 'committed');
     assert.equal((await nativeToken(s5Token.token_id)).consume_outcome, 'committed');
+    // ---- Cross-user: another user presenting A's live tokens (malformed and
+    // well-formed) to S3, S4 and S5 cannot see or burn them; A still consumes them.
+    const [crossCandidate] = await submitCandidates(1);
+    const crossEvidence = await ingestEvidence('cross-user');
+    const aS3 = issued(await issueCandidate(crossCandidate));
+    const aS4 = issued(await issuePolicy('cross.policy'));
+    const aS5 = issued(await issueWithdrawal(crossEvidence));
+    const B = fresh(otherUser, 'sess-b');
+    for (const [label, name, input, code] of [
+      ['S3 malformed', 'clued_candidate_promote_v1', promoteInput(crossCandidate, aS3, { surprise: 1 }),
+        'candidate_promote_unknown_field'],
+      ['S3', 'clued_candidate_promote_v1', promoteInput(crossCandidate, aS3), 'confirmation_token_invalid'],
+      ['S4 malformed', 'clued_context_policy_accept_v1', acceptInput('cross.policy', aS4, { surprise: 1 }),
+        'context_policy_accept_unknown_field'],
+      ['S4', 'clued_context_policy_accept_v1', acceptInput('cross.policy', aS4), 'confirmation_token_invalid'],
+      ['S5 malformed', 'clued_evidence_withdraw_v1', withdrawInput(crossEvidence, aS5, { surprise: 1 }),
+        'evidence_withdraw_unknown_field'],
+      ['S5', 'clued_evidence_withdraw_v1', withdrawInput(crossEvidence, aS5), 'confirmation_token_invalid']]) {
+      const refused = await native(name, input, B);
+      assert.deepEqual([refused.status, refused.error_code], ['rejected', code], label);
+    }
+    assert.deepEqual([(await candidateToken(aS3.token_id)).consumed_at, (await nativeToken(aS4.token_id)).consumed_at,
+      (await nativeToken(aS5.token_id)).consumed_at], [null, null, null], 'A\'s tokens stay live');
+    const aPromoted = await native('clued_candidate_promote_v1', promoteInput(crossCandidate, aS3));
+    assert.equal(aPromoted.supplemental?.outcome, 'promoted', JSON.stringify(aPromoted));
+    const aAccepted = await native('clued_context_policy_accept_v1', acceptInput('cross.policy', aS4));
+    assert.equal(aAccepted.status, 'committed', JSON.stringify(aAccepted));
+    const aWithdrawn = await native('clued_evidence_withdraw_v1', withdrawInput(crossEvidence, aS5));
+    assert.equal(aWithdrawn.status, 'committed', JSON.stringify(aWithdrawn));
+
     // A same-action token presented for another subject is still a burned
     // binding mismatch (single use, as S3 does for another candidate).
     const [evA, evB] = [await ingestEvidence('l30-a'), await ingestEvidence('l30-b')];

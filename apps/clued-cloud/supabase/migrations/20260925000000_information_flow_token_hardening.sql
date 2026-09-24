@@ -13,7 +13,7 @@
 -- L29 (S3/S4/S5 issue and consume): a token is issued only to a JWT with a
 --   non-empty string session_id claim (confirmation_token_session_id_required,
 --   42501, returned as a rejection); consume requires a non-null token
---   session_id equal to the JWT's.
+--   session_id equal to the JWT's, normalized by the same helper as issue.
 -- L30 (S4 accept, S5 withdraw): the locking token lookup filters by action,
 --   so a token issued for one action is invisible to (and never burned by)
 --   the other action's RPC. A same-action token presented for another subject
@@ -21,7 +21,7 @@
 --   same single-use rule S3 applies to a token for another candidate.
 
 -- The session_id claim of the current JWT when it is a non-blank string;
--- NULL otherwise. Read-only; used by the token issue cores.
+-- NULL otherwise. Read-only; used by the token issue and consume cores.
 create function clued_private.native_session_id_v1()
 returns text language sql stable set search_path='' as $$
   select case when jsonb_typeof(auth.jwt()->'session_id')='string' and btrim(auth.jwt()->>'session_id')<>''
@@ -44,8 +44,8 @@ $a$;
 $a$;
   -- Consume cores (S3, S4, S5): the session binding clause.
   consume_anchor text:=$a$      or v_token.session_id is distinct from nullif(auth.jwt()->>'session_id','') then$a$;
-  consume_new text:=$a$      or v_token.session_id is null or nullif(auth.jwt()->>'session_id','') is null
-      or v_token.session_id<>nullif(auth.jwt()->>'session_id','') then$a$;
+  consume_new text:=$a$      or v_token.session_id is null or clued_private.native_session_id_v1() is null
+      or v_token.session_id<>clued_private.native_session_id_v1() then$a$;
   -- F01: S3 promote pre-lookup before the shape checks.
   promote_anchor text:=$a$    -- Authority, record type, Evidence and confirmation flags are never
     -- caller input here: they come only from the token-bound confirmation.

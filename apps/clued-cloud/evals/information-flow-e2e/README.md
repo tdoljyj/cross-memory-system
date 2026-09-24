@@ -80,6 +80,14 @@ it takes about 8–12 minutes. `--ttl-wait-ms` shortens the wait for debugging o
 such a run is not evidence. E2E-08 restarts the db, PostgREST, GoTrue and Kong
 containers and runs phase B in a new process (`continuity-phase-b.mjs`).
 
+## Pending full run
+
+The E2E-02 foreign-token check (B09 round 3 F07), the E2E-07 transport list
+checks (F03) and the DNS rules of `isolation-guard.cjs` (F06) changed after the
+sealed `c101f1ea3299` evidence and have not yet run against the Docker stack.
+A full S6 run with every row PASS is required before the next evidence seal;
+until then the sealed evidence describes the earlier harness code.
+
 ## Reproducibility
 
 Run the harness twice at the same commit, then
