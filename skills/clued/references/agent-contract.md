@@ -57,6 +57,7 @@ Rules for every capture:
 | `record_version_conflict` | Someone changed the record | Re-read and reconcile meaning; never overwrite a newer decision |
 | `stale_base_version` (checkpoint) | Wrong counter | Use the session version from resume or the last checkpoint |
 | `resume_required_or_session_expired` | The token expired or was used by a checkpoint | Resume, reconcile if asked, retry with the new token (§5) |
+| `current_truth_changed_since_resume` (checkpoint) | A write changed current state after resume or the last reconcile | Reconcile with the same token, then retry the checkpoint (§5) |
 | `lifecycle_action_cannot_edit_record_content` | A close or restore carried content fields | Send only `closure_summary` / `closed_reason` |
 | `INVALID_RECORD_FIELDS` | Missing or malformed fields | Add the named fields |
 
@@ -65,9 +66,10 @@ Rules for every capture:
 ## 5. End
 
 1. Before ending or handing off a supported, authorized and admitted session, call `clued_session_checkpoint` with the session version, explicit coverage (contexts, tracks and the event IDs your writes created), a summary and one next action. Uncovered events remain pending. Respect returned checkpoint thresholds. When resume requires `clued_session_reconcile`, use that authorized tool first.
-2. A committed checkpoint ends that session token. To checkpoint again later in the same conversation, resume again, reconcile when the resume asks for it (your own writes since the last checkpoint usually make it ask), then checkpoint with the new token and the new session version.
-3. A checkpoint never replaces a §3 write, and a §3 write never needs a separate event to mirror it.
-4. Hosts with end-of-session hooks should enforce §3 and §5 there. Hosts without hooks rely on this text; the next resume reports capture state as unknown.
+2. The session remembers the current state it saw at resume or at its last reconcile. Any write since then, including your own §3 writes, makes the checkpoint fail with `current_truth_changed_since_resume`. So when you have written anything since resume or the last reconcile, call `clued_session_reconcile` with the same token before the checkpoint.
+3. A committed checkpoint ends that session token. To checkpoint again later in the same conversation, resume again, reconcile if the resume asks for it or you have written since, then checkpoint with the new token and the new session version.
+4. A checkpoint never replaces a §3 write, and a §3 write never needs a separate event to mirror it.
+5. Hosts with end-of-session hooks should enforce §3 and §5 there. Hosts without hooks rely on this text; the next resume reports capture state as unknown.
 
 ## 6. Boundaries
 
