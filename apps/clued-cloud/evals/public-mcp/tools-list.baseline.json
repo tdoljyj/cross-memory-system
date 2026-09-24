@@ -665,7 +665,7 @@
     },
     {
       "name": "clued_search_context",
-      "description": "Search authorized current context and events with deterministic lexical matching. Superseded history is excluded unless explicitly requested. Required Clued scope: context:read.",
+      "description": "Search authorized current context and events with deterministic term matching (whole query first, then at least 60% of its terms; Chinese is split into two-character terms). Without context_key, or with scope=all, every readable project and Global are searched; a context_key alone searches that scope only. No match is not evidence that a record does not exist. Superseded history is excluded unless explicitly requested. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -683,6 +683,13 @@
           },
           "context_key": {
             "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "all",
+              "context"
+            ]
           },
           "include_history": {
             "type": "boolean",

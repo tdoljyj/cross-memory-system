@@ -168,7 +168,9 @@ test("T-CUR-35/67 successor: Event fence, materialization, hidden equivalence, a
     const postMaterialSearch = await rpc("clued_mcp_search_context", {
       context_key: "global", session_token: afterAppendResume.session_token, query: "new decision carrier",
     });
-    assert.deepEqual(postMaterialSearch.results, []);
+    // The materialized Event is gone; term matching may surface the successor Record itself.
+    assert.deepEqual(postMaterialSearch.results.filter((row) => row.kind !== "record"), []);
+    assert.ok(postMaterialSearch.results.every((row) => row.title === "Current decision" && row.authoritative));
 
     // T-CUR-67 successor: a hidden carrier has no low-permission observable effect.
     const beforeHidden = await list();

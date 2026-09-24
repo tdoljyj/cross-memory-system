@@ -1010,7 +1010,7 @@ const tools = [
   {
     name: "clued_search_context",
     description:
-      "Search authorized current context and events with deterministic lexical matching. Superseded history is excluded unless explicitly requested.",
+      "Search authorized current context and events with deterministic term matching (whole query first, then at least 60% of its terms; Chinese is split into two-character terms). Without context_key, or with scope=all, every readable project and Global are searched; a context_key alone searches that scope only. No match is not evidence that a record does not exist. Superseded history is excluded unless explicitly requested.",
     inputSchema: {
       type: "object",
       required: ["session_token", "query"],
@@ -1018,6 +1018,7 @@ const tools = [
         session_token: { type: "string" },
         query: { type: "string", minLength: 1, maxLength: 500 },
         context_key: { type: "string" },
+        scope: { type: "string", enum: ["all", "context"] },
         include_history: { type: "boolean", default: false },
         limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
         cursor: { type: "integer", minimum: 0, default: 0 },
