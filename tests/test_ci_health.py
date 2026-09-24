@@ -264,8 +264,9 @@ class CluedCiHealthTests(unittest.TestCase):
         self.assertIn(extra["route_label"], expected[extra["name"]]["required_labels"])
         self.assertIn("site-company", expected[extra["name"]]["required_labels"])
         self.assertIn(extra["name"], pools["linux-docker-wsl2-v1"])
+        without_extra = [runner for runner in self.runners() if runner["name"] != extra["name"]]
         report = health.build_report(
-            "tdoljyj/cross-memory-system", inventory, self.runners(), [],
+            "tdoljyj/cross-memory-system", inventory, without_extra, [],
             datetime(2026, 9, 23, 4, 0, tzinfo=timezone.utc),
         )
         self.assertIn("RUNNER_MISSING", [item["code"] for item in report["anomalies"]])

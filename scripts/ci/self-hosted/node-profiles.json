@@ -111,6 +111,7 @@
       "linux_runner": {
         "profile": "linux-docker-wsl2-v1",
         "name": "clued-ci-company-linux-01",
+        "route_label": "runner-company-linux-01",
         "distro": "CluedCI-Linux",
         "user": "runner",
         "root": "/home/runner/actions-runner",
@@ -125,7 +126,7 @@
         {
           "profile": "linux-docker-wsl2-v1",
           "name": "clued-ci-company-linux-02",
-          "state": "enrolling",
+          "state": "active",
           "route_label": "runner-company-linux-02",
           "distro": "CluedCI-Linux",
           "user": "runner",
