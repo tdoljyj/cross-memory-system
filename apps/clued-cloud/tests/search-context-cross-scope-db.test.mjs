@@ -62,10 +62,18 @@ test('context search covers readable scopes and non-literal queries', { timeout:
     // Term splitting: punctuation and whitespace split; CJK runs become bigrams.
     assert.deepEqual((await admin.query(`select clued_private.search_terms_v1('字段合并，BUG-002') t`)).rows[0].t,
       ['002', 'bug', '合并', '字段', '段合']);
+    // One-letter Latin runs are dropped; the first 64 distinct terms in query order are kept.
+    assert.deepEqual((await admin.query(`select clued_private.search_terms_v1('z_bra a cd') t`)).rows[0].t, ['bra', 'cd']);
+    const many = Array.from({ length: 70 }, (_, i) => `t${String(i).padStart(2, '0')}`);
+    const kept = (await admin.query('select clued_private.search_terms_v1($1) t', [many.reverse().join(' ')])).rows[0].t;
+    assert.equal(kept.length, 64);
+    assert.ok(!kept.includes('t00') && kept.includes('t69'), 'terms beyond the first 64 are the ones dropped');
 
     const userId = uuid();
     const allToken = hash();
     const globalToken = hash();
+    const projectToken = hash();
+    const profileToken = hash();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'owner@example.invalid',now())`, [userId]);
     await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','All scopes',$2,array['context:read','context:write'],array['*']),
@@ -76,6 +84,10 @@ test('context search covers readable scopes and non-literal queries', { timeout:
     await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key,
       certainty_status,confirmed_at,lifecycle_status) values($1,$2,'Plugin','plugin',$3,'confirmed',now(),'active')`,
       [projectId, userId, projectScope]);
+    await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic','Project only',$2,array['context:read','context:write'],array[$4]),
+            ($1,'synthetic','Global and profile',$3,array['context:read','context:write'],array['global','profile'])`,
+      [userId, projectToken, profileToken, projectScope]);
     const anon = server.getPgClient();
     clients.push(anon);
     await anon.connect();
@@ -95,7 +107,8 @@ test('context search covers readable scopes and non-literal queries', { timeout:
     await create('global', 'note', '天气', '与检索无关的全局记录', { note_kind: 'log' });
     await create('profile', 'profile_fact', '字段合并偏好', '个人偏好：字段合并缺陷。', { fact_kind: 'preference' });
 
-    const session = async (token) => (await rpc(token, 'clued_mcp_restore', { context_key: 'global' })).session_token;
+    const session = async (token, contextKey = 'global') =>
+      (await rpc(token, 'clued_mcp_restore', { context_key: contextKey })).session_token;
     const allSession = await session(allToken);
     const search = (input, token = allToken, sess = allSession) =>
       rpc(token, 'clued_mcp_search_context', { session_token: sess, ...input });
@@ -106,6 +119,7 @@ test('context search covers readable scopes and non-literal queries', { timeout:
     assert.equal(result.scope, 'all');
     assert.ok(recordIds(result).includes(bugTask), JSON.stringify(result));
     assert.equal(result.absence_claim, false);
+    assert.equal(result.record_candidates_capped, false);
 
     // An explicit context_key keeps the single-scope search, and an empty result says it is not absence.
     result = await search({ context_key: 'global', query: 'BUG-20260924-002' });
@@ -138,6 +152,39 @@ test('context search covers readable scopes and non-literal queries', { timeout:
     result = await search({ query: 'BUG-20260924-002' }, globalToken, globalSession);
     assert.deepEqual(recordIds(result), []);
     assert.deepEqual(result.scopes_searched, ['global']);
+
+    // A default search uses the session's own context for authorization: a session
+    // resumed in a project, and a project-only Binding, both search without context_key.
+    const projectSession = await session(allToken, projectScope);
+    result = await search({ query: 'BUG-20260924-002' }, allToken, projectSession);
+    assert.equal(result.context_key, projectScope);
+    assert.ok(recordIds(result).includes(bugTask), JSON.stringify(result));
+    const projectOnlySession = await session(projectToken, projectScope);
+    result = await search({ query: 'BUG-20260924-002' }, projectToken, projectOnlySession);
+    assert.ok(recordIds(result).includes(bugTask), JSON.stringify(result));
+    assert.deepEqual(result.scopes_searched, [projectScope]);
+    // A session token cannot pick a context its Binding may not use.
+    await assert.rejects(() => search({ query: 'x' }, globalToken, projectSession), /binding_not_authorized|resume_required/);
+
+    // scopes_searched never lists profile, which is not searched.
+    const profileSession = await session(profileToken);
+    result = await search({ query: '字段合并' }, profileToken, profileSession);
+    assert.deepEqual(result.scopes_searched, ['global']);
+    assert.ok(!result.results.some((r) => r.scope === 'profile'));
+    result = await search({ query: '字段合并' });
+    assert.equal(result.scopes_searched, 'all_owned_except_profile');
+
+    // A one-term query with punctuation still matches the term.
+    result = await search({ query: '缺陷！' });
+    assert.ok(recordIds(result).includes(bugTask), JSON.stringify(result));
+    assert.ok(recordIds(result).includes(literalNote));
+
+    // Paging walks the ordered result without repeats.
+    const first = await search({ query: '字段合并缺陷', limit: 1 });
+    assert.equal(first.page.returned, 1);
+    assert.equal(first.page.next_cursor, 1);
+    const second = await search({ query: '字段合并缺陷', limit: 1, cursor: 1 });
+    assert.notEqual(second.results[0].id, first.results[0].id);
 
     // An unknown scope mode is rejected.
     await assert.rejects(() => search({ query: 'x', scope: 'everything' }), /invalid_search_scope/);
