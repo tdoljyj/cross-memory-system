@@ -173,6 +173,12 @@
       "status": "OPEN",
       "evidence_refs": [
         "bundle-observation.json"
+      ],
+      "history": [
+        {
+          "change": "On 2026-09-24 the production Worker was released at main 51a4fa9c on the Cloudflare Workers Free plan (Note 2d6540a4-4df8-4d2f-9717-538fabe3fd4d). A local Node measurement of js-tiktoken 1.0.21 o200k_base took 800-1556 ms CPU to construct the encoder on first use and 5-11 ms to count about 6k characters once cached, against a Free-plan limit of about 10 ms CPU per request, so the Worker measurement step of clued_context_pack is expected to exceed the limit on the Free plan. clued-prod held 0 Context Policies and 0 pack manifests, so no caller can reach the step. Owner Decision f220294c-0693-4583-a5eb-7d9eeca6d34f: upgrade to the Workers Paid plan before the first Context Policy is accepted, then observe first-pack CPU in production. No production CPU observation exists yet, so the entry stays OPEN.",
+          "previous_status": "OPEN"
+        }
       ]
     },
     {
@@ -320,6 +326,10 @@
       "history": [
         {
           "change": "S2 was applied to clued-prod earlier; on 2026-09-24 S3, 20260924230000, S4, S5 and 20260925000000 were applied under Owner Decision 6ebcfb73 with statement and function read-back (Note bd11736c). No separate backup was taken before the apply, and the Worker that exposes the S3-S5 Native routes is not released, so the entry stays OPEN; verdicts keep _LOCAL_QUALIFIED.",
+          "previous_status": "OPEN"
+        },
+        {
+          "change": "On 2026-09-24 the production Worker exposing the S1-S5 Native routes was released at main 51a4fa9c under Owner Decision 42e98d90-2dc5-4722-9e57-5af07cd383f4 (Receipt 35be25a6-9909-4829-821a-a24d6a6a890e); the post-deploy attestation run 36005493986 and the read-only preflight run 36005497777 passed (Note 2d6540a4-4df8-4d2f-9717-538fabe3fd4d). No separate backup was taken before the S3-S5 apply, and no end-to-end qualification has been run against production, so the entry stays OPEN; verdicts keep _LOCAL_QUALIFIED.",
           "previous_status": "OPEN"
         }
       ]
@@ -584,6 +594,22 @@
       "items": {
         "L29": "closed: fix applied to clued-prod",
         "L30": "closed: fix applied to clued-prod"
+      }
+    },
+    {
+      "decision_id": "42e98d90-2dc5-4722-9e57-5af07cd383f4",
+      "receipt_id": "35be25a6-9909-4829-821a-a24d6a6a890e",
+      "kind": "Canonical Decision",
+      "items": {
+        "worker_release": "re-apply the repository version of the BUG-20260924-003 migration to align the release gate, then release the production Worker at main 51a4fa9c once preflight passes"
+      }
+    },
+    {
+      "decision_id": "f220294c-0693-4583-a5eb-7d9eeca6d34f",
+      "receipt_id": "73dd8bff-d1c1-49d5-bb41-a7de9de96a6b",
+      "kind": "Canonical Decision",
+      "items": {
+        "L14": "keep OPEN; upgrade to the Cloudflare Workers Paid plan before the first Context Policy is accepted, then observe first-pack CPU in production"
       }
     }
   ],
