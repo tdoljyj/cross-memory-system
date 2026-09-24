@@ -323,6 +323,19 @@ test('event continuity manifest resolves only an exact, Owner-approved, unchange
     const typedDone = (await run(typed, await digestOf(typed), typedApproval.id, typedApproval.receipt, true)).rows[0].r;
     assert.equal(typedDone.status, 'reconciled', JSON.stringify(typedDone));
     assert.deepEqual(await carrier(9290), { carrier_state: 'RESOLVED_CONTINUITY_ONLY', v: 2 });
+
+    // 9. A database without the Evidence status table (before Information Flow S5) still reconciles.
+    await admin.query(`insert into public.clued_context_events(id,user_id,binding_id,context_key,event_type,payload,version,audit_visibility,occurred_at)
+      values(9295,$1,null,'global','decision','{"pre_s5":true}',4,'work_log',now())`, [userId]);
+    await admin.query(`insert into clued_private.event_truth_carriers(event_id,user_id,canonical_scope,dimensions,visibility,source_kind,carrier_state,event_version)
+      values(9295,$1,'global',array['decision'],'work_log','legacy','ACTIVE_UNSTRUCTURED',4)`, [userId]);
+    const preS5 = await manifestOf([await entry(9295)]);
+    const preS5Approval = await approve(preS5);
+    await admin.query('alter table clued_private.record_evidence_status rename to record_evidence_status_absent');
+    assert.equal((await run(preS5)).rows[0].r.status, 'dry_run_ok');
+    const preS5Done = (await run(preS5, await digestOf(preS5), preS5Approval.id, preS5Approval.receipt, true)).rows[0].r;
+    assert.equal(preS5Done.status, 'reconciled', JSON.stringify(preS5Done));
+    assert.deepEqual(await carrier(9295), { carrier_state: 'RESOLVED_CONTINUITY_ONLY', v: 2 });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
