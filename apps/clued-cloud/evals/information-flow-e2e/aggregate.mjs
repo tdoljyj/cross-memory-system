@@ -123,7 +123,9 @@ export async function aggregate(state) {
     pass: deniedEgress.length === 0 && productionEgress.length === 0 && hostsContacted.length <= 1 },
     harness_egress: { processes_expected: expectedProcesses.length, ledgers_found: Object.keys(ledgers).length,
       missing_ledgers: missingLedgers, wrangler_processes: wranglerLedgers.length,
-      unguarded_children: 'supabase and docker CLIs (Go binaries; allowlisted env, local stack only; register L31)', deny_ports: process.env.IFE2E_DENY_PORTS || 'none',
+      unguarded_children: ['supabase and docker CLIs (Go binaries; allowlisted env, local stack only; register L31)',
+        'workerd, the native child of each Miniflare Worker host (not a Node process; its Worker fetch egress is bounded by '
+          + 'Miniflare outboundService, see worker_egress; register L31)'], deny_ports: process.env.IFE2E_DENY_PORTS || 'none',
       ledger_write: 'on every connection (survives SIGKILL)', denied: guardDenied.length,
       pass: guardDenied.length === 0 && missingLedgers.length === 0 && wranglerLedgers.length > 0 },
     credentials_absent: { orchestrator_scan: environmentScan(), child_env_allowlist: childEnvNames,

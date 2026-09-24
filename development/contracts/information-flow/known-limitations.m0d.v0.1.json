@@ -3,7 +3,7 @@
   "contract": "development/contracts/information-flow/M0DCloseout.v0.1.md",
   "gate": "M0D-A03",
   "status": "REGISTER_OPEN",
-  "note": "Machine register of known limitations carried by the M0-D closeout. Every entry stays OPEN until a separate, Receipt-backed Owner Decision or a reviewed successor change closes it. The register grants no authorization (contract section 11).",
+  "note": "Machine register of known limitations carried by the M0-D closeout. Every entry stays OPEN until a separate, Receipt-backed Owner Decision or a reviewed successor change closes it. The register grants no authorization (contract section 11). Entries are never deleted; an entry fixed in the repository keeps its original text and status OPEN and gains a resolution block (state FIXED_IN_REPO_PENDING_PROD_APPLY) and a history entry until it is closed as above. review_dispositions records how each B09 finding was handled; B09 round 3 F09 and F10 are Owner-acceptance items and are not dispositioned here.",
   "entries": [
     {
       "id": "L01",
@@ -284,14 +284,20 @@
     {
       "id": "L25",
       "title": "S6 harness residuals",
-      "source": "S6 plan 14 items 2-6, 16-19, 25, 26",
-      "statement": "Bindings are minted and reduced through the v12 RPCs over PostgREST with a fixture issuer row; the Worker consent API, the delegated-OAuth scopedApi/checkBinding wrapper and KV are not exercised (successor L27); issue+consume in one request is structurally impossible over HTTP (DB-level test); the kill is a SIGKILL of the workerd host group after the committed upstream response; E2E-08 restarts db/PostgREST/GoTrue/Kong and a new process; token expiry uses the real clock; the 15-minute re-authentication case stays DB-level; the harness Worker config omits global_fetch_strictly_public; the harness Worker entry is the continuity handler, not the full vinext entry; E2E-05 reduction is a PostgREST call with the owner JWT; E2E-15(b) needs a DB fixture re-point; the observer is read-only and used only for internal state with no read route; E2E-10 reads the Record body through the Native export route.",
+      "source": "S6 plan 14 items 2-6, 16-19, 25, 26; B09 round 3 F02, F03, F04",
+      "statement": "Bindings are minted and reduced through the v12 RPCs over PostgREST with a fixture issuer row; the Worker consent API, the delegated-OAuth scopedApi/checkBinding wrapper and KV are not exercised (successor L27); issue+consume in one request is structurally impossible over HTTP (DB-level test); the kill is a SIGKILL of the workerd host group after the committed upstream response; E2E-08 restarts db/PostgREST/GoTrue/Kong and a new process; token expiry uses the real clock; the 15-minute re-authentication case stays DB-level; the harness Worker config omits global_fetch_strictly_public; the harness Worker entry is the continuity handler, not the full vinext entry; E2E-05 reduction is a PostgREST call with the owner JWT; E2E-15 (d) and (d2) need a DB fixture re-point of candidate evidence_ids and (d3) an Evidence content_hash tamper (tamperEvidenceHash, session_replication_role=replica for that one statement); the observer is read-only: where a transport read route exists (GET /v1/intake with scope/submission_id/tier, MCP clued_intake_list, the Native export route) the pass observation is the transport read and observer reads only corroborate it (E2E-07 one-row-per-key, E2E-02/E2E-15 candidate status), while the stored status of a rejected Receipt and Receipt counts (E2E-02 iii, E2E-07, E2E-15) remain observer reads because /v1/continuity/audit needs a Binding with audit:read, is keyed by context_key and returns no Receipt status; the E2E-10 Currentness/MTPE deltas and E2E-13 human_confirmed=false are internal-state observer observations, corroborated over transport by pack exclusion; E2E-10 reads the Record body through the Native export route.",
       "consequence": "Evidence is local transport qualification with these disclosed substitutions.",
       "successor": "None planned; disclosed.",
       "status": "OPEN",
       "evidence_refs": [
         "run.json",
         "isolation.json"
+      ],
+      "history": [
+        {
+          "change": "B09 round 3 F02/F03/F04 correction",
+          "previous_statement": "Bindings are minted and reduced through the v12 RPCs over PostgREST with a fixture issuer row; the Worker consent API, the delegated-OAuth scopedApi/checkBinding wrapper and KV are not exercised (successor L27); issue+consume in one request is structurally impossible over HTTP (DB-level test); the kill is a SIGKILL of the workerd host group after the committed upstream response; E2E-08 restarts db/PostgREST/GoTrue/Kong and a new process; token expiry uses the real clock; the 15-minute re-authentication case stays DB-level; the harness Worker config omits global_fetch_strictly_public; the harness Worker entry is the continuity handler, not the full vinext entry; E2E-05 reduction is a PostgREST call with the owner JWT; E2E-15(b) needs a DB fixture re-point; the observer is read-only and used only for internal state with no read route; E2E-10 reads the Record body through the Native export route."
+        }
       ]
     },
     {
@@ -354,6 +360,23 @@
       "status": "OPEN",
       "evidence_refs": [
         "setup.json"
+      ],
+      "resolution": {
+        "state": "FIXED_IN_REPO_PENDING_PROD_APPLY",
+        "change": "apps/clued-cloud/supabase/migrations/20260925000000_information_flow_token_hardening.sql",
+        "migration_sha256": "2217537e0073fb4cdcb49ceaea131857cc40dcddaed7181935bdd0c761a3c9f6",
+        "commit": "0d4e0db9676c723228162da09b5f03cc702e8e87",
+        "commit_note": "Introduced in 0d4e0db9; the consume check was revised (same helper normalizes issue and consume) in the follow-up review-minors commit on the same branch, which records this migration_sha256.",
+        "fix": "The S3, S4 and S5 confirmation-issue cores reject a JWT without a non-empty string session_id claim with confirmation_token_session_id_required (no token row is written); every consume requires a non-null token session_id equal to the JWT's (both normalized by clued_private.native_session_id_v1), otherwise confirmation_token_binding_mismatch. A NULL-session token issued before the migration can no longer be consumed.",
+        "tests": "apps/clued-cloud/tests/information-flow-token-hardening-db.test.mjs (npm run test:information-flow:hardening; reproduces the defect on the chain before the migration, asserts the fix after it); also covers cross-user presentation and anchor drift (no helper, no partial patch)",
+        "scope": "Effective only where 20260925000000 is applied after S3-S5; an environment with S3-S5 but without it still carries the limitation. Not applied to clued-prod (L26).",
+        "review": "Independent review of the hotfix branch: PASS_WITH_MINORS (0 BLOCKER, 0 MAJOR); the entry stays OPEN until the change is merged, applied where S3-S5 are applied (clued-prod has S1 only, L26) and closed by a reviewed successor change or a Receipt-backed Owner Decision."
+      },
+      "history": [
+        {
+          "change": "Fix landed in the repository (migration 20260925000000_information_flow_token_hardening.sql); status kept OPEN pending production apply and closure",
+          "previous_status": "OPEN"
+        }
       ]
     },
     {
@@ -365,31 +388,62 @@
       "successor": "Additive hotfix migration adding the action filter before burn.",
       "reason_not_fixed_in_s6": "Same as L29: a separate reviewed schema hotfix, not an S6 migration.",
       "status": "OPEN",
-      "evidence_refs": []
+      "evidence_refs": [],
+      "resolution": {
+        "state": "FIXED_IN_REPO_PENDING_PROD_APPLY",
+        "change": "apps/clued-cloud/supabase/migrations/20260925000000_information_flow_token_hardening.sql",
+        "migration_sha256": "2217537e0073fb4cdcb49ceaea131857cc40dcddaed7181935bdd0c761a3c9f6",
+        "commit": "0d4e0db9676c723228162da09b5f03cc702e8e87",
+        "commit_note": "Introduced in 0d4e0db9; the consume check was revised (same helper normalizes issue and consume) in the follow-up review-minors commit on the same branch, which records this migration_sha256.",
+        "fix": "The locking token lookups in clued_private.context_policy_accept_core_v1 and clued_private.evidence_withdraw_core_v1 filter by action (context_policy_accept, evidence_withdraw), matching their pre-shape-check lookups; a token for one action reads confirmation_token_invalid at the other action's RPC and is not burned. The subject key is deliberately not added: a same-action token presented for another subject is still burned as confirmation_token_binding_mismatch, the single-use rule S3 applies to a token for another candidate (E2E-15).",
+        "tests": "apps/clued-cloud/tests/information-flow-token-hardening-db.test.mjs (npm run test:information-flow:hardening; reproduces the defect on the chain before the migration, asserts the fix after it); also covers cross-user presentation and anchor drift (no helper, no partial patch)",
+        "scope": "Effective only where 20260925000000 is applied after S3-S5; an environment with S3-S5 but without it still carries the limitation. Not applied to clued-prod (L26).",
+        "review": "Independent review of the hotfix branch: PASS_WITH_MINORS (0 BLOCKER, 0 MAJOR); the entry stays OPEN until the change is merged, applied where S3-S5 are applied (clued-prod has S1 only, L26) and closed by a reviewed successor change or a Receipt-backed Owner Decision."
+      },
+      "history": [
+        {
+          "change": "Fix landed in the repository (migration 20260925000000_information_flow_token_hardening.sql); status kept OPEN pending production apply and closure",
+          "previous_status": "OPEN"
+        }
+      ]
     },
     {
       "id": "L31",
-      "title": "Go CLI children of the harness are not under the Node isolation guard",
-      "source": "B09 round 2 F08",
-      "statement": "The Supabase CLI (a Go binary) and Docker CLI calls made by the harness cannot load the Node guard; they run with an allowlisted environment without proxy variables or cloud credentials, and only against the local stack. Wrangler dry-run runs under the guard.",
-      "consequence": "Their egress is bounded by the scrubbed environment, not by an in-process ledger.",
+      "title": "Go CLI children and Miniflare's workerd child are not under the Node isolation guard",
+      "source": "B09 round 2 F08; B09 round 3 F05",
+      "statement": "The Supabase CLI (a Go binary) and Docker CLI calls made by the harness cannot load the Node guard; they run with an allowlisted environment without proxy variables or cloud credentials, and only against the local stack. Wrangler dry-run runs under the guard. Each Worker host's Miniflare also starts a native workerd child, which is not a Node process and cannot load the guard; its Worker fetch() egress is bounded by the Miniflare outboundService ledger (only the loopback Supabase gateway is forwarded, anything else is answered 599 and recorded; isolation.json worker_egress), and isolation.json harness_egress.unguarded_children lists it.",
+      "consequence": "Their egress is bounded by the scrubbed environment (CLIs) or by outboundService (workerd fetch), not by an in-process ledger.",
       "successor": "None planned; disclosed.",
       "status": "OPEN",
       "evidence_refs": [
         "run.json",
         "isolation.json"
+      ],
+      "history": [
+        {
+          "change": "B09 round 3 F05: workerd added",
+          "previous_title": "Go CLI children of the harness are not under the Node isolation guard",
+          "previous_statement": "The Supabase CLI (a Go binary) and Docker CLI calls made by the harness cannot load the Node guard; they run with an allowlisted environment without proxy variables or cloud credentials, and only against the local stack. Wrangler dry-run runs under the guard.",
+          "previous_consequence": "Their egress is bounded by the scrubbed environment, not by an in-process ledger."
+        }
       ]
     },
     {
       "id": "L32",
       "title": "Normalized digests are a reproducibility aid, not a byte seal",
-      "source": "B09 round 2 F10",
+      "source": "B09 round 2 F10; B09 round 3 F08",
       "statement": "The per-scenario normalized digest covers channel, method, target template, HTTP status, extracted values, assertion ids/expected values/pass and the result, with ids, digests, timestamps, PIDs and durations replaced and arrays sorted. It drops step ledgers, assertion observed values and notes.",
-      "consequence": "Byte integrity of each evidence file comes from SHA256SUMS; the normalized digest shows that two runs at the same code tree made the same observations.",
+      "consequence": "Byte integrity of each evidence file comes from SHA256SUMS; equal normalized digests at the same code tree show that two runs produced the same pattern of steps, statuses, extracted values and assertion pass/fail results, not that every observed value was identical (assertion observed values are dropped).",
       "successor": "None planned; documented in the harness README.",
       "status": "OPEN",
       "evidence_refs": [
         "reproducibility.json"
+      ],
+      "history": [
+        {
+          "change": "B09 round 3 F08 rewording",
+          "previous_consequence": "Byte integrity of each evidence file comes from SHA256SUMS; the normalized digest shows that two runs at the same code tree made the same observations."
+        }
       ]
     }
   ],
@@ -412,6 +466,90 @@
       "items": {
         "decision_supersede_v12_guard": "hotfix PR #322 (20260924230000_decision_supersede_v12_guard.sql) restores the v12 guard regressed by S3; merged to main as 982bcb3a"
       }
+    }
+  ],
+  "review_dispositions": [
+    {
+      "review": "B09 round 3",
+      "source": "artifacts/clued-validation/information-flow-m0d/c101f1ea3299/b09-review.json",
+      "finding": "F01",
+      "severity": "MINOR",
+      "disposition": "FIXED",
+      "change": "apps/clued-cloud/supabase/migrations/20260925000000_information_flow_token_hardening.sql",
+      "commit": "0d4e0db9676c723228162da09b5f03cc702e8e87",
+      "detail": "candidate_promote_core_v1 now looks up a presented confirmation_token by hash for this user before the unknown-field and shape checks, so the existing handler burns it; m1_begin_receipt failures still abort without burning (S3 D4, L11). Register L29/L30 resolution blocks carry the migration sha256.",
+      "tests": "test:information-flow:hardening"
+    },
+    {
+      "review": "B09 round 3",
+      "source": "artifacts/clued-validation/information-flow-m0d/c101f1ea3299/b09-review.json",
+      "finding": "F02",
+      "severity": "MINOR",
+      "disposition": "DOCUMENTED",
+      "detail": "README and fixtures.mjs list every DB fixture: v12 issuer, E2E-13 maintenance write and Binding delete, E2E-15 (d)/(d2) re-point and (d3) tamperEvidenceHash (replica role for one statement); L25 corrected.",
+      "register_refs": [
+        "L25"
+      ]
+    },
+    {
+      "review": "B09 round 3",
+      "source": "artifacts/clued-validation/information-flow-m0d/c101f1ea3299/b09-review.json",
+      "finding": "F03",
+      "severity": "MINOR",
+      "disposition": "FIXED_AND_REGISTERED",
+      "detail": "E2E-07 one-row-per-key checks now use the transport list routes (GET /v1/intake with submission_id, MCP clued_intake_list, tier=knowledge) with the observer counts kept as corroboration; E2E-02 iii and E2E-15 stored Receipt status and counts stay observer reads (no transport read of that fact: the audit route needs audit:read and returns no status), disclosed in the README and L25. Scenario code changed; not yet run against the Docker stack. A full S6 E2E run against the Docker stack (all rows PASS) is required before the next evidence seal; the sealed c101f1ea3299 evidence predates this change.",
+      "register_refs": [
+        "L25"
+      ]
+    },
+    {
+      "review": "B09 round 3",
+      "source": "artifacts/clued-validation/information-flow-m0d/c101f1ea3299/b09-review.json",
+      "finding": "F04",
+      "severity": "MINOR",
+      "disposition": "REGISTERED",
+      "detail": "L25 and the README state that the E2E-10 Currentness/MTPE deltas and E2E-13 human_confirmed=false are internal-state observations corroborated by pack exclusion.",
+      "register_refs": [
+        "L25"
+      ]
+    },
+    {
+      "review": "B09 round 3",
+      "source": "artifacts/clued-validation/information-flow-m0d/c101f1ea3299/b09-review.json",
+      "finding": "F05",
+      "severity": "MINOR",
+      "disposition": "REGISTERED",
+      "detail": "Miniflare's native workerd child added to L31, the README and isolation.json harness_egress.unguarded_children (aggregate.mjs); its egress is bounded by outboundService.",
+      "register_refs": [
+        "L31"
+      ]
+    },
+    {
+      "review": "B09 round 3",
+      "source": "artifacts/clued-validation/information-flow-m0d/c101f1ea3299/b09-review.json",
+      "finding": "F06",
+      "severity": "MINOR",
+      "disposition": "FIXED",
+      "detail": "isolation-guard.cjs refuses and records dns.resolve*, dns.reverse and dns.lookupService in callback, dns.promises and Resolver forms; dns.promises.lookup follows dns.lookup (loopback only). Each refused query is recorded once. Guard code changed; checked with a local DNS probe, not yet run in the Docker harness. A full S6 E2E run against the Docker stack (all rows PASS) is required before the next evidence seal; the sealed c101f1ea3299 evidence predates this change."
+    },
+    {
+      "review": "B09 round 3",
+      "source": "artifacts/clued-validation/information-flow-m0d/c101f1ea3299/b09-review.json",
+      "finding": "F07",
+      "severity": "MINOR",
+      "disposition": "FIXED",
+      "detail": "E2E-02 presents the owner's token on a candidate the foreign user V owns and lists, and asserts [403, confirmation_token_invalid], V's candidate pending and the owner's token not burned; the owner-candidate presentation is kept as a separate check. Scenario code changed; not yet run against the Docker stack. A full S6 E2E run against the Docker stack (all rows PASS) is required before the next evidence seal; the sealed c101f1ea3299 evidence predates this change."
+    },
+    {
+      "review": "B09 round 3",
+      "source": "artifacts/clued-validation/information-flow-m0d/c101f1ea3299/b09-review.json",
+      "finding": "F08",
+      "severity": "MINOR",
+      "disposition": "DOCUMENTED",
+      "detail": "L32 reworded: equal normalized digests show the same pattern of steps, statuses, extracts and pass/fail results, not identical observed values.",
+      "register_refs": [
+        "L32"
+      ]
     }
   ]
 }

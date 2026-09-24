@@ -1,7 +1,7 @@
 // E2E-02: an Agent-captured candidate cannot be promoted by the Binding;
 // token single use, binding, foreign session and real-clock expiry; a later
 // Native confirmation succeeds.
-import { issueCandidate, item, key, promoteCandidate, submitAgent } from './common.mjs';
+import { issueCandidate, item, key, promoteCandidate, submitAgent, submitNative } from './common.mjs';
 
 export const id = 'E2E-02';
 export const TTL_WAIT_MS = 301 * 1000;
@@ -78,12 +78,33 @@ export async function run(ctx, r) {
   const replay = await promoteCandidate(r, U, 'information', c2, t2.body ?? {});
   r.check('02.t2_replay', 'replaying T2 is rejected as reused', [403, 'confirmation_token_reused'],
     [replay.status, replay.body?.error_code]);
-  // Foreign session: V presents U's token for U's candidate.
+  // Foreign session: V presents U's token. Against a candidate V can see (V's
+  // own pending candidate) the only possible refusal is the token-to-account
+  // binding (another user's token is invisible: confirmation_token_invalid),
+  // not candidate-not-found. U's token is not burned by V.
   const t3 = await issueCandidate(r, U, 'information', c2);
-  const foreign = await promoteCandidate(r, V, 'information', c2, t3.body ?? {});
-  r.check('02.foreign', 'a foreign account presenting the owner\'s token is rejected', true,
-    [403, 422].includes(foreign.status) && foreign.body?.status === 'rejected');
-  r.note(`E2E-02 foreign presentation error_code=${foreign.body?.error_code ?? foreign.body?.error}`);
+  const vSub = await submitNative(r, V, 'global', 'seg_s6_e02v', [item('e02v', 'fact')]);
+  const cv = r.alias('C2_V', vSub.ids.item_e02v);
+  const vListed = await r.rest(V, 'GET', `/v1/intake?scope=global&submission_id=${encodeURIComponent(vSub.submissionId)}`
+    + '&limit=200', undefined, { extract: (b) => ({ statuses: b?.candidates?.map((c) => c.status) ?? null }) });
+  r.check('02.foreign_visible', 'V lists its own pending candidate', [[cv], ['pending']],
+    [(vListed.body?.candidates ?? []).map((c) => c.id), (vListed.body?.candidates ?? []).map((c) => c.status)]);
+  const foreign = await promoteCandidate(r, V, 'information', cv, t3.body ?? {});
+  r.check('02.foreign', 'V presenting the owner\'s token on V\'s own candidate is refused as an invalid token',
+    [403, 'rejected', 'confirmation_token_invalid'], [foreign.status, foreign.body?.status, foreign.body?.error_code]);
+  const foreignListed = await r.rest(V, 'GET', `/v1/intake?scope=global&submission_id=${encodeURIComponent(vSub.submissionId)}`
+    + '&limit=200', undefined, { extract: (b) => ({ statuses: b?.candidates?.map((c) => c.status) ?? null }) });
+  r.check('02.foreign_pending', 'V\'s candidate stays pending', ['pending'],
+    (foreignListed.body?.candidates ?? []).map((c) => c.status));
+  const t3Row = await r.observe('token row', 'select consumed_at is null live from clued_private.candidate_confirmation_tokens where id=$1',
+    [t3.body?.token_id ?? '00000000-0000-0000-0000-000000000000']);
+  r.check('02.foreign_not_burned', 'the owner\'s token is not burned by the foreign presentation (observer)', [true],
+    t3Row.map((row) => row.live));
+  // V presenting U's token on U's candidate (invisible to V) is refused too.
+  const foreignOwner = await promoteCandidate(r, V, 'information', c2, t3.body ?? {});
+  r.check('02.foreign_owner_candidate', 'V presenting the owner\'s token on the owner\'s candidate is refused', true,
+    [403, 404, 422].includes(foreignOwner.status) && foreignOwner.body?.status === 'rejected');
+  r.note(`E2E-02 foreign presentation on the owner's candidate error_code=${foreignOwner.body?.error_code ?? foreignOwner.body?.error}`);
   // Token issued for another candidate.
   const tOther = await issueCandidate(r, U, 'information', other);
   const wrong = await promoteCandidate(r, U, 'information', c2, tOther.body ?? {});
