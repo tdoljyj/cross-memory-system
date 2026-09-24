@@ -9,12 +9,28 @@ permissions:
   contents: read
 
 jobs:
-  install:
-    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, site-home, cap-python312]
-    timeout-minutes: 10
+  linux-busy-probe:
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, site-home, cap-docker-linux, runtime-wsl2]
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - name: Install and launch corrected watchdog
+      - name: Hold an exact home Linux job open for busy-state observation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = "clued-ci-home-linux-01"
+          marker=/mnt/c/clued-ci/validation/home-linux-busy-probe.ready
+          mkdir -p "$(dirname "$marker")"
+          trap 'rm -f "$marker"' EXIT
+          printf '%s\n' "$$" > "$marker"
+          echo "BUSY_PROBE_READY runner=$RUNNER_NAME"
+          sleep 45
+          echo "BUSY_PROBE_DONE"
+
+  windows-busy-observer:
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, site-home, cap-python312]
+    timeout-minutes: 5
+    steps:
+      - name: Verify watchdog busy detection against a live Linux job
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -22,81 +38,35 @@ jobs:
             throw "Unexpected runner: $env:RUNNER_NAME"
           }
 
-          $watchdog = 'C:\clued-ci\watchdog-home-runner.ps1'
-          $backup = 'C:\clued-ci\watchdog-home-runner.ps1.pre-p13-fix'
-          if (Test-Path $watchdog) { Copy-Item $watchdog $backup -Force }
-
-          powershell -ExecutionPolicy Bypass -File scripts/ci/self-hosted/render-host-watchdog.ps1 -HostId home-primary -OutputPath $watchdog -InstallStartup
-
-          Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object {
-              $_.Name -eq 'powershell.exe' -and
-              $_.CommandLine -like '*watchdog-home-runner.ps1*'
-            } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-          Start-Sleep -Seconds 2
-
-          $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-          Remove-ItemProperty -Path $runKey -Name 'CluedCIHomeLinuxRecovery' -ErrorAction SilentlyContinue
-
-          # GitHub Runner cleans up descendants carrying RUNNER_TRACKING_ID at job end.
-          # Remove the marker before launching the long-lived host watchdog.
-          Remove-Item Env:RUNNER_TRACKING_ID -ErrorAction SilentlyContinue
-          Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$watchdog -WindowStyle Hidden
-          Start-Sleep -Seconds 5
-
-          $new = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object {
-              $_.Name -eq 'powershell.exe' -and
-              $_.CommandLine -like '*watchdog-home-runner.ps1*'
-            })
-          if ($new.Count -ne 1) {
-            throw "Expected exactly one watchdog process before cleanup, found $($new.Count)"
-          }
-          Write-Output ("LAUNCHED_WATCHDOG_PID=" + $new[0].ProcessId)
-
-  verify-after-cleanup:
-    needs: install
-    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, site-home, cap-python312]
-    timeout-minutes: 10
-    steps:
-      - name: Verify persistent watchdog and Linux services
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ($env:RUNNER_NAME -ne 'clued-ci-home-win-01') {
-            throw "Unexpected runner: $env:RUNNER_NAME"
+          $marker = 'C:\clued-ci\validation\home-linux-busy-probe.ready'
+          $deadline = (Get-Date).AddSeconds(90)
+          while (-not (Test-Path $marker)) {
+            if ((Get-Date) -gt $deadline) { throw 'Timed out waiting for Linux busy probe marker' }
+            Start-Sleep -Seconds 2
           }
 
-          Start-Sleep -Seconds 3
+          $unit = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-linux-01.service'
+          wsl.exe -d Ubuntu-24.04 -u chase -e bash -lc 'pgrep -f "[R]unner.Worker" >/dev/null'
+          $workerBusy = ($LASTEXITCODE -eq 0)
+
+          $events = @(wsl.exe -d Ubuntu-24.04 -u root -e journalctl -u $unit -n 200 --no-pager -o cat)
+          $lastRunnerEvent = $events |
+            Where-Object { $_ -match 'Listening for Jobs|Running job:|Job .* completed with result:' } |
+            Select-Object -Last 1
+
+          Write-Output "WORKER_BUSY=$workerBusy"
+          Write-Output "LAST_RUNNER_EVENT=$lastRunnerEvent"
+
+          $busy = $workerBusy -or ($lastRunnerEvent -match 'Running job:')
+          if (-not $busy) {
+            throw 'Corrected watchdog logic would not classify the live Linux job as busy'
+          }
+
           $watchdogs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             Where-Object {
               $_.Name -eq 'powershell.exe' -and
               $_.CommandLine -like '*watchdog-home-runner.ps1*'
             })
-          $watchdogs | Select-Object ProcessId, CreationDate, CommandLine | Format-List
-          if ($watchdogs.Count -ne 1) {
-            throw "Expected one persistent watchdog after previous job cleanup, found $($watchdogs.Count)"
-          }
+          if ($watchdogs.Count -ne 1) { throw "Expected one persistent watchdog, found $($watchdogs.Count)" }
 
-          $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'Clued-CI-Watchdog-home-primary.cmd'
-          if (-not (Test-Path $startup)) { throw "Canonical startup file missing" }
-
-          $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-          $canonicalRun = (Get-ItemProperty $runKey -Name 'CluedCIWatchdog-home-primary' -ErrorAction Stop).'CluedCIWatchdog-home-primary'
-          Write-Output "CANONICAL_RUN_KEY=$canonicalRun"
-
-          $unit = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-linux-01.service'
-          wsl.exe -d Ubuntu-24.04 -u root -e systemctl is-active docker
-          if ($LASTEXITCODE -ne 0) { throw "Docker is not active" }
-          wsl.exe -d Ubuntu-24.04 -u root -e systemctl is-active $unit
-          if ($LASTEXITCODE -ne 0) { throw "Linux runner is not active" }
-
-          $log = 'C:\clued-ci\logs\watchdog-home-primary.log'
-          if (-not (Test-Path $log)) { throw "Canonical watchdog log missing" }
-          Get-Content $log -Tail 40
-          if (-not ((Get-Content $log -Raw).Contains('Clued P13 host watchdog started.'))) {
-            throw "P13 watchdog marker missing"
-          }
-
-          Write-Output 'TURING_HOME_WATCHDOG_PERSISTENT'
+          Write-Output 'LIVE_BUSY_STATE_GUARD_PASS'
