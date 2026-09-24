@@ -103,6 +103,7 @@ jobs:
       - run: npm run test:information-flow:intake
       - run: npm run test:information-flow:promotion
       - run: npm run test:information-flow:context
+      - run: npm run test:information-flow:invalidation
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
       - run: npm run test:authorization:integration
