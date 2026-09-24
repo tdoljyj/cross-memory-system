@@ -17,6 +17,7 @@
     "test:production:release-gate": "node --test tests/production-release-gate.test.mjs",
     "test:information-flow:candidates": "node --test --test-force-exit tests/information-flow-candidate-store-db.test.mjs",
     "test:information-flow:intake": "node --test --test-force-exit tests/information-flow-intake-transport-db.test.mjs tests/information-flow-transport.test.mjs",
+    "test:information-flow:promotion": "node --test --test-force-exit tests/information-flow-promotion-db.test.mjs tests/information-flow-transport.test.mjs",
     "test:mtpe:intake": "node --test --test-force-exit tests/mtpe-universal-intake-db.test.mjs tests/mtpe-frontier-eligibility-v2-db.test.mjs tests/mtpe-frontier-eligibility-v2-1-db.test.mjs tests/mtpe-universal-intake-transport.test.mjs",
     "test:v2:red": "node --test tests/v2-red/*.test.mjs",
     "db:start": "npx --yes supabase@2.115.0 start",

@@ -1,7 +1,8 @@
 // Information Flow M0-D transport surface (contract
 // development/contracts/information-flow/M0DCloseout.v0.1.md section 5.1).
 // A Binding can submit, list and withdraw its own candidates, propose
-// Candidate Knowledge and read packs; confirmation and promotion stay Native.
+// Candidate Knowledge and read packs; confirmation, promotion and reject stay
+// Native (account-session REST only, never an MCP tool).
 
 const uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 // Lower-case only: the store accepts no other project scope spelling.
@@ -118,7 +119,8 @@ export const informationFlowRpcByTool = {
 } as const;
 
 export type UserInformationFlowRpc = "clued_user_intake_submit" | "clued_user_intake_list" |
-  "clued_user_intake_withdraw" | "clued_user_knowledge_propose" | "clued_user_context_pack";
+  "clued_user_intake_withdraw" | "clued_user_knowledge_propose" | "clued_user_context_pack" |
+  "clued_candidate_confirmation_issue_v1" | "clued_candidate_promote_v1" | "clued_candidate_reject_v1";
 
 export const informationFlowListParameters = ["scope", "tier", "status", "submission_id", "limit"] as const;
 
@@ -127,3 +129,32 @@ const informationFlowPaths = /^\/v1\/(intake|knowledge|context\/pack)(\/|$)/;
 export function isInformationFlowPath(pathname: string) {
   return informationFlowPaths.test(pathname);
 }
+
+// Per-candidate actions (contract 5.1). The route, not the body, fixes the
+// tier: /v1/intake is Candidate Information, /v1/knowledge/candidates is
+// Candidate Knowledge. Withdraw exists only for Candidate Information.
+export const candidateActionPattern =
+  /^\/v1\/(intake|knowledge\/candidates)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(withdraw|confirmation|promote|reject)$/i;
+
+export type CandidateAction = {
+  tier: "information" | "knowledge";
+  candidateId: string;
+  action: "withdraw" | "confirmation" | "promote" | "reject";
+};
+
+export function parseCandidateAction(pathname: string): CandidateAction | null {
+  const match = candidateActionPattern.exec(pathname);
+  if (!match) return null;
+  const tier = match[1].toLowerCase() === "intake" ? "information" : "knowledge";
+  const action = match[3].toLowerCase() as CandidateAction["action"];
+  if (action === "withdraw" && tier !== "information") return null;
+  return { tier, candidateId: match[2].toLowerCase(), action };
+}
+
+// Native-only actions: authenticated as an account session before any body
+// parsing or RPC, and each request runs exactly one RPC.
+export const nativeCandidateRpcByAction = {
+  confirmation: "clued_candidate_confirmation_issue_v1",
+  promote: "clued_candidate_promote_v1",
+  reject: "clued_candidate_reject_v1",
+} as const;

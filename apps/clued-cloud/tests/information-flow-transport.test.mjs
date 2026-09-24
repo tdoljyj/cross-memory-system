@@ -120,9 +120,9 @@ test('Native Information Flow routes reject Binding tokens before any RPC and va
     assert.equal((await worker.fetch(rest(`/v1/intake/${candidateId}/withdraw`, {
       body: { idempotency_key: 'rest-wd-0002', candidate_id: '55555555-5555-4555-8555-555555555555', base_version: 1 },
     }), env, {})).status, 422, 'a body candidate_id cannot redirect the path-bound candidate');
-    // Promotion, confirmation, policy and withdrawal routes are not served before their slices.
-    for (const pathname of [`/v1/intake/${candidateId}/promote`, `/v1/intake/${candidateId}/confirmation`,
-      `/v1/knowledge/candidates/${candidateId}/promote`]) {
+    // Candidate Knowledge has no withdraw route; unknown actions and ids are not served.
+    for (const pathname of [`/v1/knowledge/candidates/${candidateId}/withdraw`, `/v1/intake/${candidateId}/approve`,
+      `/v1/intake/not-a-uuid/promote`]) {
       assert.equal((await worker.fetch(rest(pathname, { body: {} }), env, {})).status, 404, pathname);
     }
     const wrongMethod = await worker.fetch(rest('/v1/knowledge/candidates', { method: 'GET' }), env, {});
@@ -170,4 +170,175 @@ test('Information Flow writes schedule the post-commit projection refresh', asyn
       assert.equal(scheduled.length, before, 'reads do not schedule a refresh');
       await Promise.allSettled(scheduled);
     });
+});
+
+const nativeActions = [
+  ['information', `/v1/intake/${candidateId}`],
+  ['knowledge', `/v1/knowledge/candidates/${candidateId}`],
+];
+
+async function captureWarnings(run) {
+  const previous = console.warn;
+  const lines = [];
+  console.warn = (line) => { lines.push(String(line)); };
+  try {
+    return await run(lines);
+  } finally {
+    console.warn = previous;
+  }
+}
+
+test('E2E-02 (i)/(ii): Binding or missing tokens are refused before any RPC on confirmation, promote and reject',
+  async () => {
+    const worker = await loadContinuityWorker();
+    await withStorage(() => ({ status: 'committed' }), async (calls) => captureWarnings(async (lines) => {
+      for (const [tier, base] of nativeActions) {
+        for (const action of ['confirmation', 'promote', 'reject']) {
+          for (const token of [bindingToken, null]) {
+            // (i) user_explicit + user_confirmed; (ii) note as observed.
+            for (const body of [{ idempotency_key: 'bnd-promote-0001', authority: 'user_explicit', user_confirmed: true },
+              { idempotency_key: 'bnd-promote-0002', record_type: 'note', authority: 'observed' }]) {
+              const request = new Request(`https://clued.test${base}/${action}`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+                body: JSON.stringify(body),
+              });
+              const response = await worker.fetch(request, env, {});
+              assert.equal(response.status, 401, `${tier} ${action}`);
+            }
+          }
+        }
+      }
+      assert.equal(calls.length, 0, 'no storage call ran, not even /auth/v1/user');
+      assert.equal(lines.length, 2 * 3 * 2 * 2);
+      for (const line of lines) {
+        const entry = JSON.parse(line);
+        assert.equal(entry.event, 'information_flow_native_route_denied');
+        assert.equal(entry.reason, 'binding_or_missing_token');
+        assert.ok(['confirmation', 'promote', 'reject'].includes(entry.route));
+        assert.ok(['information', 'knowledge'].includes(entry.tier));
+        assert.ok(!line.includes(bindingToken), 'the token is never logged');
+      }
+    }));
+  });
+
+test('Native confirmation, promote and reject bind tier and candidate from the path and run exactly one RPC',
+  async () => {
+    const worker = await loadContinuityWorker();
+    await withStorage((rpc) => rpc === 'clued_candidate_confirmation_issue_v1'
+      ? { status: 'issued', confirmation_token: 'clued_cft_x', view_digest: 'a'.repeat(64) }
+      : { status: 'committed', supplemental: { outcome: rpc === 'clued_candidate_reject_v1' ? 'rejected' : 'promoted' } },
+    async (calls) => {
+      for (const [tier, base] of nativeActions) {
+        calls.length = 0;
+        const confirmation = await worker.fetch(rest(`${base}/confirmation`, { body: { base_version: 1,
+          authority: 'inferred', confidence: 0.8 } }), env, {});
+        assert.equal(confirmation.status, 200);
+        assert.equal(confirmation.headers.get('cache-control'), 'no-store');
+        assert.equal(confirmation.headers.get('pragma'), 'no-cache');
+        const promote = await worker.fetch(rest(`${base}/promote`, { body: { idempotency_key: 'native-promote-0001',
+          base_version: 1, confirmation_token: 'clued_cft_x', view_digest: 'a'.repeat(64) } }), env, {});
+        assert.equal(promote.status, 200);
+        const reject = await worker.fetch(rest(`${base}/reject`.replace(candidateId, candidateId.toUpperCase()),
+          { body: { idempotency_key: 'native-reject-0001', base_version: 1 } }), env, {});
+        assert.equal(reject.status, 200);
+        assert.deepEqual(calls.map(({ rpc }) => rpc), ['clued_candidate_confirmation_issue_v1',
+          'clued_candidate_promote_v1', 'clued_candidate_reject_v1']);
+        for (const { body } of calls) {
+          assert.equal(body.p_input.tier, tier);
+          assert.equal(body.p_input.candidate_id, candidateId, 'the path binds a lower-case candidate id');
+        }
+        assert.deepEqual(Object.keys(calls[0].body), ['p_input'], 'issuing carries no payload hash');
+        assert.ok(!('confirmation_token' in calls[0].body.p_input));
+        assert.match(calls[1].body.p_received_payload_hash, /^[0-9a-f]{64}$/);
+        assert.match(calls[2].body.p_received_payload_hash, /^[0-9a-f]{64}$/);
+      }
+
+      calls.length = 0;
+      const refused = [
+        [`/v1/intake/${candidateId}/confirmation`, { base_version: 1, confirmation_token: 'clued_cft_x' }],
+        [`/v1/intake/${candidateId}/promote`, { idempotency_key: 'native-promote-0002', tier: 'knowledge' }],
+        [`/v1/knowledge/candidates/${candidateId}/reject`, { idempotency_key: 'native-reject-0002', tier: 'information' }],
+        [`/v1/intake/${candidateId}/reject`, { idempotency_key: 'native-reject-0003',
+          candidate_id: '55555555-5555-4555-8555-555555555555' }],
+      ];
+      for (const [pathname, body] of refused) {
+        assert.equal((await worker.fetch(rest(pathname, { body }), env, {})).status, 422, pathname);
+      }
+      assert.equal(calls.length, 0, 'refused bodies run no RPC');
+      for (const pathname of [`/v1/intake/${candidateId}/promote`, `/v1/knowledge/candidates/${candidateId}/confirmation`]) {
+        const wrong = await worker.fetch(rest(pathname, { method: 'GET' }), env, {});
+        assert.equal(wrong.status, 405, pathname);
+        assert.equal(wrong.headers.get('allow'), 'POST, OPTIONS');
+      }
+      assert.equal((await worker.fetch(rest(`/v1/intake/${candidateId}/promote`, { body: {} }),
+        { ...env, PROJECT_VIEWS_V2: 'false' }, {})).status, 404);
+    });
+  });
+
+test('promotion results map to HTTP status, including the RFC 9470 step-up challenge', async () => {
+  const worker = await loadContinuityWorker();
+  const cases = [
+    [{ status: 'rejected', error_code: 'reauthentication_required', authoritative: false }, 401],
+    [{ status: 'rejected', error_code: 'confirmation_token_reused' }, 403],
+    [{ status: 'rejected', error_code: 'confirmation_token_same_request' }, 403],
+    [{ status: 'rejected', error_code: 'confirmation_view_stale' }, 409],
+    [{ status: 'rejected', error_code: 'candidate_not_pending' }, 409],
+    [{ status: 'rejected', error_code: 'candidate_expired' }, 409],
+    [{ status: 'rejected', error_code: 'promotion_record_rejected:NOW_CONFLICT' }, 409],
+    [{ status: 'rejected', error_code: 'candidate_promote_unknown_field' }, 422],
+    [{ status: 'committed', supplemental: { outcome: 'conflict' } }, 409],
+    [{ status: 'committed', supplemental: { outcome: 'expired' } }, 409],
+    [{ status: 'committed', supplemental: { outcome: 'promoted' } }, 200],
+    [{ status: 'failed', error_code: 'promotion_record_failed:x' }, 500],
+  ];
+  for (const [result, status] of cases) {
+    await withStorage(() => result, async () => {
+      for (const action of ['confirmation', 'promote']) {
+        const response = await worker.fetch(rest(`/v1/intake/${candidateId}/${action}`,
+          { body: { idempotency_key: 'status-map-0001', base_version: 1 } }), env, {});
+        assert.equal(response.status, status, `${action} ${JSON.stringify(result)}`);
+        const challenge = response.headers.get('www-authenticate');
+        if (result.error_code === 'reauthentication_required') {
+          assert.match(challenge, /^Bearer error="insufficient_user_authentication".*max_age="900"$/);
+        } else {
+          assert.equal(challenge, null);
+        }
+      }
+    });
+  }
+});
+
+test('promotion routes schedule the post-commit projection refresh', async () => {
+  const worker = await loadContinuityWorker();
+  const refreshEnv = { ...env, CLUED_PROJECTION_BUILDER_TOKEN: `clued_bnd_${'p'.repeat(43)}` };
+  await withStorage((rpc) => rpc?.startsWith('clued_mcp_projection_refresh') ? { status: 'idle' }
+    : { status: 'committed', supplemental: { outcome: 'promoted' } }, async () => {
+    const scheduled = [];
+    const ctx = { waitUntil(promise) { scheduled.push(promise); }, passThroughOnException() {} };
+    for (const [, base] of nativeActions) {
+      for (const action of ['promote', 'reject']) {
+        const before = scheduled.length;
+        const response = await worker.fetch(rest(`${base}/${action}`,
+          { body: { idempotency_key: 'refresh-promote-01', base_version: 1 } }), refreshEnv, ctx);
+        assert.equal(response.status, 200);
+        assert.equal(scheduled.length, before + 1, `${base}/${action}`);
+      }
+    }
+    await Promise.allSettled(scheduled);
+  });
+});
+
+test('MCP exposes no confirmation, promotion or reject tool', async () => {
+  const worker = await loadContinuityWorker();
+  await withStorage(() => ({ status: 'committed' }), async (calls) => {
+    for (const name of ['clued_candidate_promote_v1', 'clued_candidate_confirmation_issue_v1', 'clued_candidate_reject_v1',
+      'clued_intake_promote', 'clued_intake_confirm']) {
+      const response = await worker.fetch(mcp(bindingToken, name, { idempotency_key: 'mcp-promote-0001' }), env, {});
+      const envelope = await response.json();
+      assert.ok(!envelope.result?.structuredContent || envelope.result.isError, name);
+      assert.match(JSON.stringify(envelope), /unknown|not found|Unknown/i, name);
+    }
+    assert.ok(!calls.some(({ rpc }) => /promote|confirmation|reject/.test(rpc ?? '')), 'no promotion RPC ran');
+  });
 });
