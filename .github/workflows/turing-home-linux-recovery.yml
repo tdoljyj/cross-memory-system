@@ -9,56 +9,82 @@ permissions:
   contents: read
 
 jobs:
-  validate-watchdog-fix:
-    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, site-company, cap-python312]
+  apply-home-watchdog:
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, site-home, cap-python312]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Validate watchdog fix
+      - name: Install corrected Turing watchdog
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           Write-Output "RUNNER_NAME=$env:RUNNER_NAME"
-          if ($env:RUNNER_NAME -ne 'clued-ci-company-win-01') {
-            throw "Refusing to validate on unexpected runner: $env:RUNNER_NAME"
+          if ($env:RUNNER_NAME -ne 'clued-ci-home-win-01') {
+            throw "Refusing to run on unexpected runner: $env:RUNNER_NAME"
           }
 
-          python scripts/ci/self-hosted/validate_node_profiles.py
-
-          $errors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path 'scripts/ci/self-hosted/render-host-watchdog.ps1'),
-            [ref]$null,
-            [ref]$errors
-          )
-          if ($errors.Count -gt 0) {
-            $errors | Format-List
-            throw 'render-host-watchdog.ps1 parse failed'
+          $watchdog = 'C:\clued-ci\watchdog-home-runner.ps1'
+          $backup = 'C:\clued-ci\watchdog-home-runner.ps1.pre-p13-fix'
+          if (Test-Path $watchdog) {
+            Copy-Item $watchdog $backup -Force
+            Write-Output "BACKUP=$backup"
           }
 
-          $candidate = Join-Path $env:RUNNER_TEMP 'watchdog-home-primary-candidate.ps1'
-          powershell -ExecutionPolicy Bypass -File scripts/ci/self-hosted/render-host-watchdog.ps1 -HostId home-primary -OutputPath $candidate
+          powershell -ExecutionPolicy Bypass -File scripts/ci/self-hosted/render-host-watchdog.ps1 -HostId home-primary -OutputPath $watchdog -InstallStartup
 
-          $candidateErrors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile(
-            $candidate,
-            [ref]$null,
-            [ref]$candidateErrors
-          )
-          if ($candidateErrors.Count -gt 0) {
-            $candidateErrors | Format-List
-            throw 'rendered watchdog parse failed'
-          }
-
-          $rendered = Get-Content $candidate -Raw
-          foreach ($needle in @(
-            'function Test-LinuxBusy',
-            'journalctl -u $linuxUnit -n 200',
-            'Capacity suspend deferred:',
-            '$linuxBusy=Test-LinuxBusy'
-          )) {
-            if (-not $rendered.Contains($needle)) {
-              throw "Rendered watchdog missing expected guard: $needle"
+          $old = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+              $_.Name -eq 'powershell.exe' -and
+              $_.CommandLine -like '*watchdog-home-runner.ps1*'
             }
+          foreach ($p in @($old)) {
+            Write-Output ("Stopping old watchdog PID=" + $p.ProcessId)
+            Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
           }
-          Write-Output 'WATCHDOG_FIX_VALIDATED'
+          Start-Sleep -Seconds 2
+
+          $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          Remove-ItemProperty -Path $runKey -Name 'CluedCIHomeLinuxRecovery' -ErrorAction SilentlyContinue
+
+          Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$watchdog -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+
+          Write-Output "=== VERIFY WATCHDOG ==="
+          $new = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+              $_.Name -eq 'powershell.exe' -and
+              $_.CommandLine -like '*watchdog-home-runner.ps1*'
+            }
+          $new | Select-Object ProcessId, CreationDate, CommandLine | Format-List
+          if (@($new).Count -ne 1) {
+            throw "Expected exactly one watchdog process, found $(@($new).Count)"
+          }
+
+          $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'Clued-CI-Watchdog-home-primary.cmd'
+          if (-not (Test-Path $startup)) {
+            throw "Canonical watchdog startup file missing: $startup"
+          }
+          $canonicalRun = (Get-ItemProperty $runKey -Name 'CluedCIWatchdog-home-primary' -ErrorAction Stop).'CluedCIWatchdog-home-primary'
+          Write-Output "CANONICAL_RUN_KEY=$canonicalRun"
+
+          Write-Output "=== VERIFY WSL SERVICES ==="
+          $unit = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-linux-01.service'
+          wsl.exe -d Ubuntu-24.04 -u root -e systemctl is-active docker
+          $dockerState = $LASTEXITCODE
+          wsl.exe -d Ubuntu-24.04 -u root -e systemctl is-active $unit
+          $runnerState = $LASTEXITCODE
+          if ($dockerState -ne 0 -or $runnerState -ne 0) {
+            throw "Docker or Linux runner is not active after watchdog replacement."
+          }
+
+          Write-Output "=== NEW WATCHDOG LOG ==="
+          $log = 'C:\clued-ci\logs\watchdog-home-primary.log'
+          if (-not (Test-Path $log)) {
+            throw "Canonical watchdog log missing: $log"
+          }
+          Get-Content $log -Tail 40
+          if (-not ((Get-Content $log -Raw).Contains('Clued P13 host watchdog started.'))) {
+            throw "Canonical P13 watchdog start marker not found."
+          }
+
+          Write-Output 'TURING_HOME_WATCHDOG_REPAIRED'
