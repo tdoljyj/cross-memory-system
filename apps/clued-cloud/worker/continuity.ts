@@ -1689,7 +1689,7 @@ async function handleRestContinuity(request: Request, env: ContinuityEnv) {
   const path = new URL(request.url).pathname as keyof typeof restToolByPath;
   const tool = restToolByPath[path];
   const input = await parseBody(request);
-  const result = await callRpc(request, env, tool, input);
+  const result = withAuthorityCapture(tool, await callRpc(request, env, tool, input));
   return json(result, 200, corsHeaders(request));
 }
 

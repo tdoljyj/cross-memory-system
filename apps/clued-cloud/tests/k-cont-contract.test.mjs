@@ -51,7 +51,7 @@ test("K-CONT-06 returns session compliance and reminders", () => {
 
 test("BUG-20260924-001 L1 never reports a write-free session as having no material changes", () => {
   const captureMigration = readFileSync(
-    new URL("../supabase/migrations/20260924200000_bug_20260924_001_capture_unknown.sql", import.meta.url),
+    new URL("../supabase/migrations/20260924210000_bug_20260924_001_capture_unknown.sql", import.meta.url),
     "utf8",
   );
   const body = captureMigration.replace(/^--.*$/gm, "");
