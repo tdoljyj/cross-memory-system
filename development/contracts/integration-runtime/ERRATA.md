@@ -1,0 +1,84 @@
+# Integration Runtime contract — errata
+
+`IntegrationRuntime.v0.1.8.md` is immutable: its bytes are never edited, and its
+SHA-256 stays `ec96275cafa2bf0b09ba5abc18e4728b1d385fb63fc6dd9d5bf76d6f570c234d`.
+A defect found in the frozen text is recorded here as a numbered erratum, with an
+Owner Decision as its authority. An erratum amends the contract's semantics; it
+never rewrites the frozen file, and no implementation may "explain away" a gap in
+place instead of raising one.
+
+Each erratum states what the frozen text says, why it is wrong or incomplete, and
+what replaces it. Implementations follow the frozen file as amended by every
+erratum below.
+
+---
+
+## ERRATA-001 — `§7.1` facts document: `connection_store`; C4/C5 by `§7.2`
+
+- **Authority:** Owner Decision `9d6fa6c2-65fd-405a-89c4-e81a435374ef` (2026-09-24).
+- **Raised by:** the Fresh-Context review of PR #338 (S2c PR-1), findings MAJOR-1 and MINOR-1.
+- **Status:** in force. Implemented by PR-1 (migration `20260926000000`).
+
+### 1. `clued.integration-facts.v1` gains a required key `connection_store`
+
+**What the frozen text says.** `§7.3` defines `C7_CONNECTION_STORE_INCONSISTENT`
+with four conditions: more than one CURRENT connection row, a connection pointing
+at another owner's Binding, a missing ownership row, and an ownership row naming a
+different Integration. The `§7.1` facts document carries no field from which any
+of those four can be read, and `§7.1` rule 2 makes an unknown key `C1`.
+
+**Why that is a defect.** `§8.6` makes the derivation a pure function that reads
+no table, so it cannot inspect the connection store itself. With no carrier in the
+facts, `C7` is unreachable: an inconsistent connection store would derive a normal
+state instead of `DERIVATION_INPUT_INVALID`. That is fail-open, against `§7.3`.
+
+**What replaces it.** `clued.integration-facts.v1` has one more required top-level
+key:
+
+| Key | Domain |
+|---|---|
+| `connection_store` | `CONSISTENT` \| `MULTIPLE_CURRENT` \| `FOREIGN_BINDING` \| `OWNER_ROW_MISSING` \| `OWNER_MISMATCH` |
+
+Any value other than `CONSISTENT` yields `C7`, mapping one-to-one onto the four
+conditions `§7.3` already lists. The key is required, so a document that omits it
+is `C1`, and it takes part in `facts_sha256` like every other key.
+
+**Consequence for later PRs.** The PR-2 normalizer must emit `connection_store`,
+derived from the connection rows and the Binding ownership rows it reads.
+
+### 2. C4 and C5 follow `§7.2`, not the literal `§7.3` formulas
+
+**What the frozen text says.** `§7.2` states that any `identity_claim_facts` value
+other than `CONSISTENT` is `C4` or `C5`. The `§7.3` formulas for `C4` and `C5`
+additionally condition on `identity_claim_state`, which makes some non-`CONSISTENT`
+values valid: `CURRENT_CLAIM_HOLDER` with `UNEXPECTED_CURRENT_ROW`, and
+`CLAIM_CONFLICT` with `MISSING_CURRENT_ROW`.
+
+**Why that is a defect.** The two sections contradict each other for those cases.
+
+**What replaces it.** `§7.2` governs. The mapping does not depend on
+`identity_claim_state`:
+
+| Claim-store value | Code |
+|---|---|
+| `MISSING_CURRENT_ROW` | `C4` |
+| `KEY_MISMATCH` | `C4` |
+| `UNEXPECTED_CURRENT_ROW` | `C5` |
+
+This resolves the conflict on the fail-closed side.
+
+### 3. Two schema tightenings, both `C1`
+
+Both are fail-closed refinements of `§7.1` rule 2 and `§5.6`:
+
+- A `revocation_state` that disagrees with its `revocation_source` is `C1`. The two
+  are one truth class in `§7.2`, so an inconsistent pair is a malformed document.
+- A non-null `mask` on a value that `§5.6` does not mask is `C1`. `mask` is present
+  on every truth class; it is an array only for `RESTRICTED`, `CONDITIONAL` and
+  `DEGRADED` values, and JSON null otherwise.
+
+### Boundary
+
+This erratum changes contract semantics only. It grants no production migration,
+Worker release, flag enablement, public RPC EXECUTE, public visibility, budget or
+procurement.
