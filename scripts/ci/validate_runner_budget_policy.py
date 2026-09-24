@@ -12,17 +12,11 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 
 HOSTED_ONLY_ALLOWLIST = {
-    "active-doc-links.yml": (
-        "Lightweight stdlib-only link validation intentionally uses hosted Ubuntu so documentation checks do not consume scarce self-hosted CI capacity."
-    ),
     "clued-currentness-post-deploy-attestation.yml": (
         "Owner-triggered post-deploy verification uses a clean Ubuntu worker with the ICU runtime and an isolated production database secret."
     ),
     "clued-cloud-production-release.yml": (
         "Owner-dispatched production release uses a clean Ubuntu worker with ICU and isolated database and Cloudflare deployment credentials; it does not run on pull requests."
-    ),
-    "clued-connection-authorization.yml": (
-        "Intentional clean-room Ubuntu candidate validation; installs a system ICU compatibility package."
     ),
     "clued-ci-health.yml": (
         "The lightweight monitor must remain independent of the self-hosted pool so it can detect complete Windows/Linux capability-pool loss."

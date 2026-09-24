@@ -155,4 +155,4 @@ jobs:
             apps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc
             apps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json
           if-no-files-found: ignore
-          retention-days: 90
+          retention-days: 30
