@@ -1,0 +1,2168 @@
+{
+ "schema": "clued.integration-golden-vectors.v1",
+ "derivation_contract": "clued.integration-derivation.v1",
+ "specification": "IntegrationRuntime v0.1.8 (§7.3, §8, §9; §13.2 P5)",
+ "method": "Each vector's facts = base deep-merged with patch (objects merge, arrays and scalars replace; the tagged union resource_action_scope_facts is replaced whole), then the dotted paths in remove are deleted; `facts` replaces the whole document. Expectations were derived by hand from the cited sections. `blocking` and `degradation` are the exact predicate lists; `predicates` lists a subset of predicate values that must match.",
+ "base": {
+  "schema": "clued.integration-facts.v1",
+  "derivation_contract": "clued.integration-derivation.v1",
+  "as_of": "2026-09-24T12:00:00Z",
+  "policy": {
+   "policy_version": 1,
+   "incomplete_identity_ordinary_runtime": "PERMIT",
+   "qualification_not_evaluated": "NON_BLOCKING",
+   "preclusion_rule": "ALL_BLOCKING_PREDICATES"
+  },
+  "capability_universe": [
+   "audit.read",
+   "context.read",
+   "context.write",
+   "development_history.read",
+   "evidence.write",
+   "project.read",
+   "project.write"
+  ],
+  "identity_state": "VALID",
+  "identity_completeness": "COMPLETE",
+  "identity_claim_state": "CURRENT_CLAIM_HOLDER",
+  "claim_store": "CONSISTENT",
+  "connection_store": "CONSISTENT",
+  "authentication_state": "USABLE",
+  "authorization_state": "GRANTED",
+  "reauth_marks_open": 0,
+  "oauth_scope_facts": [
+   "context:read",
+   "context:write"
+  ],
+  "resource_action_scope_facts": {
+   "mode": "ENTRIES",
+   "capabilities": [
+    "context.read",
+    "context.write",
+    "project.read"
+   ]
+  },
+  "environment_state": {
+   "value": "AVAILABLE",
+   "mask": null
+  },
+  "qualification_state": {
+   "value": "NOT_EVALUATED",
+   "mask": null
+  },
+  "compatibility_state": {
+   "value": "COMPATIBLE",
+   "mask": null
+  },
+  "revocation_state": "NOT_REVOKED",
+  "revocation_source": "NONE",
+  "host_state": {
+   "value": "AVAILABLE",
+   "mask": null,
+   "surface_ceiling": [
+    "audit.read",
+    "context.read",
+    "context.write",
+    "development_history.read",
+    "evidence.write",
+    "project.read",
+    "project.write"
+   ],
+   "declared": [
+    "audit.read",
+    "context.read",
+    "context.write",
+    "development_history.read",
+    "evidence.write",
+    "project.read",
+    "project.write"
+   ]
+  },
+  "adapter_state": {
+   "value": "OK",
+   "mask": null
+  },
+  "lifecycle_facts": {
+   "ordinary_runtime": "PERMITTED",
+   "historical": "NONE",
+   "recovery_policy": "PERMITS_REAUTH",
+   "first_authorization_required": true
+  },
+  "installation_facts": {
+   "install_status": "COMPLETED",
+   "ever_authorized": true
+  },
+  "canonical_runtime_verification_facts": {
+   "status": "VALID",
+   "verification_id": "00000000-0000-4000-8000-000000000001",
+   "valid_until": "2026-10-24T12:00:00Z"
+  }
+ },
+ "vectors": [
+  {
+   "id": "GV-ACTIVE-BASE",
+   "basis": "§8.4 ACTIVE; §9.2; §9.4; §7.1 example",
+   "patch": {},
+   "expect": {
+    "valid": true,
+    "integration_state": "ACTIVE",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "blocking": [],
+    "degradation": [],
+    "predicates": {
+     "verification_eligible": true,
+     "verification_precluded_by_blocking_fact": false,
+     "identity_claim_blocks_ordinary_runtime": false,
+     "credential_lost": false,
+     "reauth_recoverable": true
+    }
+   }
+  },
+  {
+   "id": "GV-ACTIVE-RAW-BINDING-LEGACY",
+   "basis": "§7.2 authorization_state GRANTED_LEGACY, resource LEGACY_UNRESTRICTED → U; §9.2",
+   "patch": {
+    "authorization_state": "GRANTED_LEGACY",
+    "resource_action_scope_facts": {
+     "mode": "LEGACY_UNRESTRICTED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "ACTIVE",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "development_history.read",
+     "evidence.write",
+     "project.read",
+     "project.write"
+    ],
+    "effective_capabilities": [
+     "context.read",
+     "context.write",
+     "development_history.read",
+     "evidence.write",
+     "project.read",
+     "project.write"
+    ],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-ACTIVE-AUDIT-ONLY",
+   "basis": "§9.1 audit:read → audit.read; §9.2",
+   "patch": {
+    "oauth_scope_facts": [
+     "audit:read"
+    ],
+    "resource_action_scope_facts": {
+     "mode": "ENTRIES",
+     "capabilities": [
+      "audit.read"
+     ]
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "ACTIVE",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "audit.read"
+    ],
+    "effective_capabilities": [
+     "audit.read"
+    ],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-ACTIVE-QUALIFIED",
+   "basis": "§9.2 QualCaps QUALIFIED → U",
+   "patch": {
+    "qualification_state": {
+     "value": "QUALIFIED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "ACTIVE",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-ACTIVE-INCOMPLETE-IDENTITY-POLICY-PERMIT",
+   "basis": "§8.3 claim_permits (incomplete → policy PERMIT, OQ-3); §6.2 real hosts are INCOMPLETE",
+   "patch": {
+    "identity_completeness": "INCOMPLETE",
+    "identity_claim_state": "INCOMPLETE_UNCLAIMED"
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "ACTIVE",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "blocking": [],
+    "degradation": [],
+    "predicates": {
+     "complete": false,
+     "claim_permits": true,
+     "identity_claim_blocks_ordinary_runtime": false
+    }
+   }
+  },
+  {
+   "id": "GV-ACTIVE-DECLARATION-NARROWS",
+   "basis": "§5.10 / §9.2 HostCaps = surface_ceiling ∩ declared (Preserve or Narrow)",
+   "patch": {
+    "host_state": {
+     "declared": [
+      "audit.read",
+      "context.read"
+     ]
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "ACTIVE",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read"
+    ],
+    "effective_capabilities": [
+     "context.read"
+    ],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-ACTIVE-CEILING-NARROWS",
+   "basis": "§9.3 surface capability_ceiling is the upper bound",
+   "patch": {
+    "host_state": {
+     "surface_ceiling": [
+      "context.write",
+      "project.read"
+     ]
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "ACTIVE",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [
+     "context.write",
+     "project.read"
+    ],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-ACTIVE-NO-FIRST-AUTH-REQUIRED",
+   "basis": "§8.4 ACTIVE independent of first_authorization_required once authorized",
+   "patch": {
+    "lifecycle_facts": {
+     "first_authorization_required": false
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "ACTIVE",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-ACTIVE-UNIVERSE-NARROWS",
+   "basis": "§9.2 Candidate starts from capability_universe U",
+   "patch": {
+    "capability_universe": [
+     "context.read",
+     "evidence.write"
+    ]
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "ACTIVE",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read"
+    ],
+    "effective_capabilities": [
+     "context.read"
+    ],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-DEGRADED-HOST",
+   "basis": "§8.3 degraded (host DEGRADED); §9.2 HostCaps ∩ mask",
+   "patch": {
+    "host_state": {
+     "value": "DEGRADED",
+     "mask": [
+      "context.read",
+      "project.read"
+     ]
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "DEGRADED",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "project.read"
+    ],
+    "effective_capabilities": [
+     "context.read",
+     "project.read"
+    ],
+    "blocking": [],
+    "degradation": [
+     "host_state"
+    ]
+   }
+  },
+  {
+   "id": "GV-DEGRADED-ADAPTER",
+   "basis": "§8.3 degraded (adapter DEGRADED); §9.2 AdapterCaps",
+   "patch": {
+    "adapter_state": {
+     "value": "DEGRADED",
+     "mask": [
+      "context.read"
+     ]
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "DEGRADED",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read"
+    ],
+    "effective_capabilities": [
+     "context.read"
+    ],
+    "blocking": [],
+    "degradation": [
+     "adapter_state"
+    ]
+   }
+  },
+  {
+   "id": "GV-DEGRADED-COMPATIBILITY",
+   "basis": "§8.3 degraded (compatibility DEGRADED); §9.2 CompatCaps",
+   "patch": {
+    "compatibility_state": {
+     "value": "DEGRADED",
+     "mask": [
+      "context.read",
+      "context.write"
+     ]
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "DEGRADED",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write"
+    ],
+    "effective_capabilities": [
+     "context.read",
+     "context.write"
+    ],
+    "blocking": [],
+    "degradation": [
+     "compatibility_state"
+    ]
+   }
+  },
+  {
+   "id": "GV-DEGRADED-QUALIFICATION-CONDITIONAL",
+   "basis": "§8.3 degraded (qualification CONDITIONAL); §9.2 QualCaps",
+   "patch": {
+    "qualification_state": {
+     "value": "CONDITIONAL",
+     "mask": [
+      "project.read"
+     ]
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "DEGRADED",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "project.read"
+    ],
+    "effective_capabilities": [
+     "project.read"
+    ],
+    "blocking": [],
+    "degradation": [
+     "qualification_state"
+    ]
+   }
+  },
+  {
+   "id": "GV-DEGRADED-ENVIRONMENT-RESTRICTED",
+   "basis": "§8.3 degraded (environment RESTRICTED); §9.2 EnvCaps",
+   "patch": {
+    "environment_state": {
+     "value": "RESTRICTED",
+     "mask": [
+      "context.read",
+      "context.write"
+     ]
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "DEGRADED",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write"
+    ],
+    "effective_capabilities": [
+     "context.read",
+     "context.write"
+    ],
+    "blocking": [],
+    "degradation": [
+     "environment_state"
+    ]
+   }
+  },
+  {
+   "id": "GV-DEGRADED-WIDE-MASK",
+   "basis": "§8.3 degradation predicate follows the value even when the mask does not narrow",
+   "patch": {
+    "host_state": {
+     "value": "DEGRADED",
+     "mask": [
+      "audit.read",
+      "context.read",
+      "context.write",
+      "development_history.read",
+      "evidence.write",
+      "project.read",
+      "project.write"
+     ]
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "DEGRADED",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "blocking": [],
+    "degradation": [
+     "host_state"
+    ]
+   }
+  },
+  {
+   "id": "GV-DEGRADED-MULTIPLE-SOURCES",
+   "basis": "§8.3 degraded; §9.2 masks intersect",
+   "patch": {
+    "host_state": {
+     "value": "DEGRADED",
+     "mask": [
+      "context.read",
+      "context.write",
+      "project.read"
+     ]
+    },
+    "adapter_state": {
+     "value": "DEGRADED",
+     "mask": [
+      "audit.read",
+      "context.read"
+     ]
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "DEGRADED",
+    "integration_operable": true,
+    "candidate_ordinary_capabilities": [
+     "context.read"
+    ],
+    "effective_capabilities": [
+     "context.read"
+    ],
+    "blocking": [],
+    "degradation": [
+     "adapter_state",
+     "host_state"
+    ]
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B1-CLAIM-CONFLICT",
+   "basis": "§8.3 B1; §9.2 note 2; baseline §16.3 item 6 (identity claim)",
+   "patch": {
+    "identity_claim_state": "CLAIM_CONFLICT"
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B1_identity_claim",
+     "B8_candidate_empty"
+    ],
+    "degradation": [],
+    "predicates": {
+     "identity_claim_blocks_ordinary_runtime": true,
+     "verification_eligible": false,
+     "verification_precluded_by_blocking_fact": true
+    }
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B1-PENDING-RECONCILE",
+   "basis": "§8.3 B1; baseline §16.3 item 6",
+   "patch": {
+    "identity_claim_state": "PENDING_RECONCILE"
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B1_identity_claim",
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-SUPERSEDED-CREDENTIAL-LOST",
+   "basis": "§13.2 P5 (v0.1.1 MAJOR-2); §8.3 reauth_recoverable requires historical = NONE; T-A9-9",
+   "patch": {
+    "identity_claim_state": "SUPERSEDED",
+    "lifecycle_facts": {
+     "historical": "SUPERSEDED"
+    },
+    "authentication_state": "NONE",
+    "authorization_state": "NOT_GRANTED",
+    "oauth_scope_facts": [],
+    "resource_action_scope_facts": {
+     "mode": "NONE"
+    },
+    "canonical_runtime_verification_facts": {
+     "status": "INVALIDATED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B1_identity_claim",
+     "B3_lifecycle",
+     "B9_unrecoverable_auth"
+    ],
+    "degradation": [],
+    "predicates": {
+     "credential_lost": true,
+     "reauth_recoverable": false,
+     "identity_claim_blocks_ordinary_runtime": true
+    }
+   }
+  },
+  {
+   "id": "GV-SUPERSEDED-CREDENTIAL-LOST-CONTROL",
+   "basis": "§13.2 P5 control vector: same facts with historical NONE and CURRENT_CLAIM_HOLDER",
+   "patch": {
+    "authentication_state": "NONE",
+    "authorization_state": "NOT_GRANTED",
+    "oauth_scope_facts": [],
+    "resource_action_scope_facts": {
+     "mode": "NONE"
+    },
+    "canonical_runtime_verification_facts": {
+     "status": "INVALIDATED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "REAUTH_REQUIRED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": [],
+    "predicates": {
+     "credential_lost": true,
+     "reauth_recoverable": true
+    }
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B2-IDENTITY-INVALID",
+   "basis": "§8.3 B2; §9.2 Clued Identity validity",
+   "patch": {
+    "identity_state": "INVALID"
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B2_identity_invalid",
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B3-PAUSED-BY-OWNER",
+   "basis": "§8.3 B3; §9.2 note 4 (owner pause is not a Candidate factor); §9.4 Operable needs lifecycle_ok",
+   "patch": {
+    "lifecycle_facts": {
+     "ordinary_runtime": "PAUSED_BY_OWNER"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [],
+    "blocking": [
+     "B3_lifecycle"
+    ],
+    "degradation": [],
+    "predicates": {
+     "lifecycle_ok": false,
+     "verification_eligible": false
+    }
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B3-PAUSED-BY-POLICY",
+   "basis": "§8.3 B3; §9.2 PolicyCaps PAUSED_BY_POLICY → ∅",
+   "patch": {
+    "lifecycle_facts": {
+     "ordinary_runtime": "PAUSED_BY_POLICY"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B3_lifecycle",
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B4-QUALIFICATION-SUSPENDED",
+   "basis": "§8.3 B4; baseline §16.3 item 6 (qualification blocks all)",
+   "patch": {
+    "qualification_state": {
+     "value": "SUSPENDED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B4_qualification",
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B4-NOT-EVALUATED-POLICY-BLOCKING",
+   "basis": "§8.3 B4 (NOT_EVALUATED ∧ policy BLOCKING, OQ-7)",
+   "patch": {
+    "policy": {
+     "qualification_not_evaluated": "BLOCKING"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B4_qualification",
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B5-HOST-HARD-UNAVAILABLE",
+   "basis": "§8.3 B5; baseline §16.3 item 6 (host)",
+   "patch": {
+    "host_state": {
+     "value": "HARD_UNAVAILABLE"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B5_host",
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B6-ADAPTER-BLOCKED",
+   "basis": "§8.3 B6; baseline §16.3 item 6 (adapter)",
+   "patch": {
+    "adapter_state": {
+     "value": "BLOCKED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B6_adapter",
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B7-ENVIRONMENT-BLOCKED",
+   "basis": "§8.3 B7",
+   "patch": {
+    "environment_state": {
+     "value": "BLOCKED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B7_environment",
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B8-SCOPE-RESOURCE-DISJOINT",
+   "basis": "§8.3 B8; baseline §16.3 item 6 (authorization intersection is empty)",
+   "patch": {
+    "oauth_scope_facts": [
+     "audit:read"
+    ]
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B8-RESOURCE-NONE",
+   "basis": "§8.3 B8; §9.2 ResourceCaps NONE → ∅",
+   "patch": {
+    "resource_action_scope_facts": {
+     "mode": "NONE"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B8-ENVIRONMENT-MASK-DISJOINT",
+   "basis": "§8.3 B8; baseline §16.3 item 6 (environment intersection is empty)",
+   "patch": {
+    "environment_state": {
+     "value": "RESTRICTED",
+     "mask": [
+      "audit.read"
+     ]
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B8_candidate_empty"
+    ],
+    "degradation": [
+     "environment_state"
+    ]
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B8-DECLARED-EMPTY",
+   "basis": "§8.3 B8; §5.10 declaration narrows to ∅",
+   "patch": {
+    "host_state": {
+     "declared": []
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B8-UNIVERSE-EMPTY",
+   "basis": "§8.3 B8; §9.2 U = ∅",
+   "patch": {
+    "capability_universe": []
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B8-INCOMPLETE-POLICY-DENY",
+   "basis": "§8.3 claim_permits (incomplete ∧ policy DENY) → Candidate ∅ → B8",
+   "patch": {
+    "identity_completeness": "INCOMPLETE",
+    "identity_claim_state": "INCOMPLETE_UNCLAIMED",
+    "policy": {
+     "incomplete_identity_ordinary_runtime": "DENY"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B8_candidate_empty"
+    ],
+    "degradation": [],
+    "predicates": {
+     "identity_claim_blocks_ordinary_runtime": false,
+     "claim_permits": false
+    }
+   }
+  },
+  {
+   "id": "GV-BLOCKED-B9-FORBIDS-REAUTH",
+   "basis": "§8.3 B9; §8.4 REAUTH_REQUIRED requires recovery_policy PERMITS_REAUTH",
+   "patch": {
+    "authentication_state": "EXPIRED",
+    "authorization_state": "EXPIRED",
+    "lifecycle_facts": {
+     "recovery_policy": "FORBIDS_REAUTH"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B9_unrecoverable_auth"
+    ],
+    "degradation": [],
+    "predicates": {
+     "credential_lost": true,
+     "reauth_recoverable": false
+    }
+   }
+  },
+  {
+   "id": "GV-BLOCKED-PRECLUDES-VERIFYING-HOST",
+   "basis": "§8.3 preclusion ⇒ ¬eligible; §8.5 item 2; T-A7-6",
+   "patch": {
+    "host_state": {
+     "value": "HARD_UNAVAILABLE"
+    },
+    "canonical_runtime_verification_facts": {
+     "status": "NONE",
+     "verification_id": null,
+     "valid_until": null
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B5_host",
+     "B8_candidate_empty"
+    ],
+    "degradation": [],
+    "predicates": {
+     "verification_precluded_by_blocking_fact": true,
+     "verification_eligible": false
+    }
+   }
+  },
+  {
+   "id": "GV-BLOCKED-PRECLUDES-VERIFYING-CLAIM",
+   "basis": "§8.3 claim_block ⇒ ¬eligible; T-A7-6",
+   "patch": {
+    "identity_claim_state": "CLAIM_CONFLICT",
+    "canonical_runtime_verification_facts": {
+     "status": "EXPIRED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B1_identity_claim",
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-PRECLUDES-VERIFYING-PAUSED",
+   "basis": "§8.3 eligible requires lifecycle_ok; T-A7-6",
+   "patch": {
+    "lifecycle_facts": {
+     "ordinary_runtime": "PAUSED_BY_OWNER"
+    },
+    "canonical_runtime_verification_facts": {
+     "status": "NONE",
+     "verification_id": null,
+     "valid_until": null
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [],
+    "blocking": [
+     "B3_lifecycle"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-BLOCKED-BEFORE-INSTALL-PENDING",
+   "basis": "§8.4 BLOCKED precedes INSTALLED / INSTALL_PENDING; §8.5 item 4",
+   "patch": {
+    "authentication_state": "NONE",
+    "authorization_state": "NOT_GRANTED",
+    "oauth_scope_facts": [],
+    "resource_action_scope_facts": {
+     "mode": "NONE"
+    },
+    "canonical_runtime_verification_facts": {
+     "status": "NONE",
+     "verification_id": null,
+     "valid_until": null
+    },
+    "installation_facts": {
+     "ever_authorized": false,
+     "install_status": "PENDING"
+    },
+    "adapter_state": {
+     "value": "BLOCKED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "BLOCKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B6_adapter"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-VERIFYING-CRV-NONE",
+   "basis": "§8.4 VERIFYING (eligible ∧ verification not complete)",
+   "patch": {
+    "canonical_runtime_verification_facts": {
+     "status": "NONE",
+     "verification_id": null,
+     "valid_until": null
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "VERIFYING",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": [],
+    "predicates": {
+     "verification_eligible": true,
+     "crv_valid": false
+    }
+   }
+  },
+  {
+   "id": "GV-VERIFYING-CRV-EXPIRED",
+   "basis": "§8.4 VERIFYING (verification expired)",
+   "patch": {
+    "canonical_runtime_verification_facts": {
+     "status": "EXPIRED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "VERIFYING",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-VERIFYING-CRV-FAILED",
+   "basis": "§8.4 VERIFYING (FAILED counts as incomplete, OQ-9)",
+   "patch": {
+    "canonical_runtime_verification_facts": {
+     "status": "FAILED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "VERIFYING",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-VERIFYING-CRV-INVALIDATED",
+   "basis": "§7.4 subject digest change → INVALIDATED → VERIFYING, not INSTALL_PENDING",
+   "patch": {
+    "canonical_runtime_verification_facts": {
+     "status": "INVALIDATED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "VERIFYING",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-VERIFYING-WITH-DEGRADATION",
+   "basis": "§8.4 VERIFYING precedes DEGRADED; degradation is not blocking",
+   "patch": {
+    "host_state": {
+     "value": "DEGRADED",
+     "mask": [
+      "context.read"
+     ]
+    },
+    "canonical_runtime_verification_facts": {
+     "status": "NONE",
+     "verification_id": null,
+     "valid_until": null
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "VERIFYING",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [
+     "context.read"
+    ],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": [
+     "host_state"
+    ]
+   }
+  },
+  {
+   "id": "GV-VERIFYING-INCOMPLETE-IDENTITY",
+   "basis": "§8.3 eligible with incomplete identity under policy PERMIT",
+   "patch": {
+    "identity_completeness": "INCOMPLETE",
+    "identity_claim_state": "INCOMPLETE_UNCLAIMED",
+    "canonical_runtime_verification_facts": {
+     "status": "NONE",
+     "verification_id": null,
+     "valid_until": null
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "VERIFYING",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-AUTH-PENDING-FRESH",
+   "basis": "§8.4 AUTH_PENDING (installed ∧ first_authorization_required ∧ ¬ever_auth)",
+   "patch": {
+    "authentication_state": "NONE",
+    "authorization_state": "NOT_GRANTED",
+    "oauth_scope_facts": [],
+    "resource_action_scope_facts": {
+     "mode": "NONE"
+    },
+    "canonical_runtime_verification_facts": {
+     "status": "NONE",
+     "verification_id": null,
+     "valid_until": null
+    },
+    "installation_facts": {
+     "ever_authorized": false
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "AUTH_PENDING",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": [],
+    "predicates": {
+     "credential_lost": false,
+     "verification_eligible": false
+    }
+   }
+  },
+  {
+   "id": "GV-AUTH-PENDING-OVER-BLOCKED",
+   "basis": "§8.4 AUTH_PENDING precedes BLOCKED",
+   "patch": {
+    "authentication_state": "NONE",
+    "authorization_state": "NOT_GRANTED",
+    "oauth_scope_facts": [],
+    "resource_action_scope_facts": {
+     "mode": "NONE"
+    },
+    "canonical_runtime_verification_facts": {
+     "status": "NONE",
+     "verification_id": null,
+     "valid_until": null
+    },
+    "installation_facts": {
+     "ever_authorized": false
+    },
+    "host_state": {
+     "value": "HARD_UNAVAILABLE"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "AUTH_PENDING",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B5_host"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-AUTH-PENDING-CLAIM-CONFLICT",
+   "basis": "§8.4 AUTH_PENDING precedes BLOCKED (claim conflict before first authorization)",
+   "patch": {
+    "authentication_state": "NONE",
+    "authorization_state": "NOT_GRANTED",
+    "oauth_scope_facts": [],
+    "resource_action_scope_facts": {
+     "mode": "NONE"
+    },
+    "canonical_runtime_verification_facts": {
+     "status": "NONE",
+     "verification_id": null,
+     "valid_until": null
+    },
+    "installation_facts": {
+     "ever_authorized": false
+    },
+    "identity_claim_state": "CLAIM_CONFLICT"
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "AUTH_PENDING",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B1_identity_claim"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-REAUTH-EXPIRED",
+   "basis": "§8.4 REAUTH_REQUIRED (credential_lost ∧ reauth_recoverable)",
+   "patch": {
+    "authentication_state": "EXPIRED",
+    "authorization_state": "EXPIRED"
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "REAUTH_REQUIRED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": [],
+    "predicates": {
+     "credential_lost": true,
+     "reauth_recoverable": true
+    }
+   }
+  },
+  {
+   "id": "GV-REAUTH-OPEN-MARK",
+   "basis": "§8.3 authz_ok requires reauth_marks_open = 0",
+   "patch": {
+    "reauth_marks_open": 1
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "REAUTH_REQUIRED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": [],
+    "predicates": {
+     "authz_ok": false,
+     "credential_lost": true
+    }
+   }
+  },
+  {
+   "id": "GV-REAUTH-AUTHN-EXPIRED-ONLY",
+   "basis": "§8.3 authn_ok; §7.2 Authentication and Authorization are separate",
+   "patch": {
+    "authentication_state": "EXPIRED"
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "REAUTH_REQUIRED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-REAUTH-OVER-BLOCKED",
+   "basis": "§8.4 REAUTH_REQUIRED precedes BLOCKED",
+   "patch": {
+    "authentication_state": "EXPIRED",
+    "authorization_state": "EXPIRED",
+    "adapter_state": {
+     "value": "BLOCKED"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "REAUTH_REQUIRED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B6_adapter"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-REAUTH-OVER-AUTH-PENDING-FACTS",
+   "basis": "§8.5: credential_lost excludes AUTH_PENDING (requires ¬ever_auth)",
+   "patch": {
+    "authentication_state": "NONE",
+    "authorization_state": "NOT_GRANTED",
+    "oauth_scope_facts": [],
+    "resource_action_scope_facts": {
+     "mode": "NONE"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "REAUTH_REQUIRED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-INCOMPATIBLE-HARD",
+   "basis": "§8.4 INCOMPATIBLE; §9.2 CompatCaps HARD_INCOMPATIBLE → ∅",
+   "patch": {
+    "compatibility_state": {
+     "value": "HARD_INCOMPATIBLE"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "INCOMPATIBLE",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-INCOMPATIBLE-OVER-REAUTH",
+   "basis": "§8.4 INCOMPATIBLE precedes REAUTH_REQUIRED",
+   "patch": {
+    "compatibility_state": {
+     "value": "HARD_INCOMPATIBLE"
+    },
+    "authentication_state": "EXPIRED",
+    "authorization_state": "EXPIRED"
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "INCOMPATIBLE",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-REVOKED-INTEGRATION",
+   "basis": "§8.4 REVOKED (open revocation row, §5.9)",
+   "patch": {
+    "revocation_state": "REVOKED",
+    "revocation_source": "INTEGRATION"
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "REVOKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-REVOKED-CONNECTION-USER-REVOKE",
+   "basis": "§7.2 OQ-2 (A): a revoked current connection → REVOKED, never REAUTH_REQUIRED",
+   "patch": {
+    "revocation_state": "REVOKED",
+    "revocation_source": "CONNECTION_USER_REVOKE",
+    "authentication_state": "INVALIDATED",
+    "authorization_state": "REVOKED_CONNECTION"
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "REVOKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": [],
+    "predicates": {
+     "credential_lost": true
+    }
+   }
+  },
+  {
+   "id": "GV-REVOKED-OVER-INCOMPATIBLE",
+   "basis": "§8.4 REVOKED precedes INCOMPATIBLE",
+   "patch": {
+    "revocation_state": "REVOKED",
+    "revocation_source": "INTEGRATION",
+    "compatibility_state": {
+     "value": "HARD_INCOMPATIBLE"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "REVOKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [
+     "B8_candidate_empty"
+    ],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-REVOKED-BEFORE-FIRST-AUTH",
+   "basis": "§8.4 REVOKED precedes AUTH_PENDING",
+   "patch": {
+    "authentication_state": "NONE",
+    "authorization_state": "NOT_GRANTED",
+    "oauth_scope_facts": [],
+    "resource_action_scope_facts": {
+     "mode": "NONE"
+    },
+    "canonical_runtime_verification_facts": {
+     "status": "NONE",
+     "verification_id": null,
+     "valid_until": null
+    },
+    "installation_facts": {
+     "ever_authorized": false
+    },
+    "revocation_state": "REVOKED",
+    "revocation_source": "INTEGRATION"
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "REVOKED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-INSTALLED-NO-FIRST-AUTH-REQUIRED",
+   "basis": "§8.4 INSTALLED; §8.5 (reachable only when first_authorization_required = false)",
+   "patch": {
+    "authentication_state": "NONE",
+    "authorization_state": "NOT_GRANTED",
+    "oauth_scope_facts": [],
+    "resource_action_scope_facts": {
+     "mode": "NONE"
+    },
+    "canonical_runtime_verification_facts": {
+     "status": "NONE",
+     "verification_id": null,
+     "valid_until": null
+    },
+    "installation_facts": {
+     "ever_authorized": false
+    },
+    "lifecycle_facts": {
+     "first_authorization_required": false
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "INSTALLED",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-INSTALL-PENDING-FRESH",
+   "basis": "§8.4 INSTALL_PENDING (fallback)",
+   "patch": {
+    "authentication_state": "NONE",
+    "authorization_state": "NOT_GRANTED",
+    "oauth_scope_facts": [],
+    "resource_action_scope_facts": {
+     "mode": "NONE"
+    },
+    "canonical_runtime_verification_facts": {
+     "status": "NONE",
+     "verification_id": null,
+     "valid_until": null
+    },
+    "installation_facts": {
+     "ever_authorized": false,
+     "install_status": "PENDING"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "INSTALL_PENDING",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": []
+   }
+  },
+  {
+   "id": "GV-INSTALL-PENDING-AUTHORIZED",
+   "basis": "§8.4 ACTIVE / DEGRADED / INSTALLED require installed; §9.4 Operable = false",
+   "patch": {
+    "installation_facts": {
+     "install_status": "PENDING"
+    }
+   },
+   "expect": {
+    "valid": true,
+    "integration_state": "INSTALL_PENDING",
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [
+     "context.read",
+     "context.write",
+     "project.read"
+    ],
+    "effective_capabilities": [],
+    "blocking": [],
+    "degradation": [],
+    "predicates": {
+     "verification_eligible": false
+    }
+   }
+  },
+  {
+   "id": "GV-INVALID-C1-READY-KEY",
+   "basis": "§7.1 rule 2: READY fields are unknown keys → C1",
+   "patch": {
+    "ready_profile_verification_facts": {
+     "status": "PASS"
+    }
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C1_SCHEMA_INVALID"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C1-MISSING-KEY",
+   "basis": "§7.3 C1 missing required key",
+   "patch": {},
+   "remove": [
+    "host_state"
+   ],
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C1_SCHEMA_INVALID"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C1-MISSING-NESTED-KEY",
+   "basis": "§7.3 C1 missing nested key",
+   "patch": {},
+   "remove": [
+    "canonical_runtime_verification_facts.valid_until"
+   ],
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C1_SCHEMA_INVALID"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C1-ENUM",
+   "basis": "§7.3 C1 enum value outside its domain",
+   "patch": {
+    "authentication_state": "ACTIVE"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C1_SCHEMA_INVALID"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C1-MASK-MISSING",
+   "basis": "§7.3 C1 mask requirement missing",
+   "patch": {
+    "environment_state": {
+     "value": "RESTRICTED"
+    }
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C1_SCHEMA_INVALID"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C1-MASK-UNEXPECTED",
+   "basis": "§5.6 mask only for RESTRICTED / CONDITIONAL / DEGRADED",
+   "patch": {
+    "adapter_state": {
+     "mask": [
+      "context.read"
+     ]
+    }
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C1_SCHEMA_INVALID"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C1-UNKNOWN-CAPABILITY",
+   "basis": "§7.3 C1 set element outside the vocabulary",
+   "patch": {
+    "capability_universe": [
+     "audit.read",
+     "context.read",
+     "context.write",
+     "development_history.read",
+     "evidence.write",
+     "project.read",
+     "project.write",
+     "admin.write"
+    ]
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C1_SCHEMA_INVALID"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C1-NOT-AN-OBJECT",
+   "basis": "§7.3 C1 document is not an object",
+   "facts": [],
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C1_SCHEMA_INVALID"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C1-REVOCATION-SOURCE-MISMATCH",
+   "basis": "§7.2 revocation_state / revocation_source are one truth class",
+   "patch": {
+    "revocation_state": "REVOKED"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C1_SCHEMA_INVALID"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C2",
+   "basis": "§7.3 C2 complete but unclaimed",
+   "patch": {
+    "identity_claim_state": "INCOMPLETE_UNCLAIMED"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C2_COMPLETE_BUT_UNCLAIMED"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C3",
+   "basis": "§7.3 C3 incomplete with a claim state",
+   "patch": {
+    "identity_completeness": "INCOMPLETE"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C3_INCOMPLETE_BUT_CLAIM_STATE"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C4-MISSING-ROW",
+   "basis": "§7.3 C4 holder without its CURRENT claim row",
+   "patch": {
+    "claim_store": "MISSING_CURRENT_ROW"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C4_CLAIM_STORE_MISSING"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C4-KEY-MISMATCH",
+   "basis": "§7.3 C4 claim row key mismatch",
+   "patch": {
+    "claim_store": "KEY_MISMATCH"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C4_CLAIM_STORE_MISSING"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C5",
+   "basis": "§7.3 C5 non-holder with a CURRENT claim row",
+   "patch": {
+    "identity_claim_state": "CLAIM_CONFLICT",
+    "claim_store": "UNEXPECTED_CURRENT_ROW"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C5_CLAIM_STORE_UNEXPECTED"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C6",
+   "basis": "§7.3 C6 SUPERSEDED claim without historical SUPERSEDED",
+   "patch": {
+    "identity_claim_state": "SUPERSEDED"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C6_SUPERSEDED_LIFECYCLE_MISMATCH"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C6-REVERSE",
+   "basis": "§7.3 C6 historical SUPERSEDED without SUPERSEDED claim",
+   "patch": {
+    "lifecycle_facts": {
+     "historical": "SUPERSEDED"
+    }
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C6_SUPERSEDED_LIFECYCLE_MISMATCH"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C7-MULTIPLE-CURRENT",
+   "basis": "§7.3 C7 more than one current connection",
+   "patch": {
+    "connection_store": "MULTIPLE_CURRENT"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C7_CONNECTION_CARDINALITY"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C7-OWNER-MISMATCH",
+   "basis": "§7.3 C7 (v0.1.4) Binding owner is not this Integration",
+   "patch": {
+    "connection_store": "OWNER_MISMATCH"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C7_CONNECTION_CARDINALITY"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C8",
+   "basis": "§7.3 C8 usable authorization without ever_authorized",
+   "patch": {
+    "installation_facts": {
+     "ever_authorized": false
+    }
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C8_AUTH_WITHOUT_EVER_AUTHORIZED"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C9-CONTRACT",
+   "basis": "§7.3 C9 unknown derivation contract",
+   "patch": {
+    "derivation_contract": "clued.integration-derivation.v2"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C9_CONTRACT_UNKNOWN"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C9-POLICY",
+   "basis": "§7.3 C9 unknown policy version",
+   "patch": {
+    "policy": {
+     "policy_version": 2
+    }
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C9_CONTRACT_UNKNOWN"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C9-SCHEMA",
+   "basis": "§7.3 C9 unknown facts schema",
+   "patch": {
+    "schema": "clued.integration-facts.v2"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C9_CONTRACT_UNKNOWN"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C10",
+   "basis": "§7.3 C10 authorization without authentication",
+   "patch": {
+    "authentication_state": "NONE"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C10_AUTHZ_WITHOUT_AUTHN"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-C10-REVERSE",
+   "basis": "§7.3 C10 authentication without authorization",
+   "patch": {
+    "authorization_state": "NOT_GRANTED"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C10_AUTHZ_WITHOUT_AUTHN"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  },
+  {
+   "id": "GV-INVALID-MULTIPLE",
+   "basis": "§8.2 reason_codes is the ordered set of all failing codes",
+   "patch": {
+    "identity_claim_state": "INCOMPLETE_UNCLAIMED",
+    "connection_store": "FOREIGN_BINDING",
+    "authentication_state": "NONE"
+   },
+   "expect": {
+    "valid": false,
+    "reason_codes": [
+     "C2_COMPLETE_BUT_UNCLAIMED",
+     "C7_CONNECTION_CARDINALITY",
+     "C10_AUTHZ_WITHOUT_AUTHN"
+    ],
+    "integration_state": null,
+    "integration_operable": false,
+    "candidate_ordinary_capabilities": [],
+    "effective_capabilities": [],
+    "predicates": null
+   }
+  }
+ ]
+}
