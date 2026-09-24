@@ -36,6 +36,18 @@ end $$;
 
 revoke all on function clued_private.m1_merge_record_object(jsonb,jsonb) from public,anon,authenticated,service_role;
 
+-- The lineage guard compares supersedes as a set: absent, JSON null and [] are the
+-- same empty set, and element order does not matter.
+create or replace function clued_private.m1_supersedes_set(p_value jsonb)
+returns text language sql immutable set search_path='' as $$
+  select case when p_value is null or p_value='null'::jsonb then '[]'
+    when jsonb_typeof(p_value)='array' then
+      (select coalesce(jsonb_agg(distinct e order by e),'[]'::jsonb) from jsonb_array_elements(p_value) e)::text
+    else p_value::text end
+$$;
+
+revoke all on function clued_private.m1_supersedes_set(jsonb) from public,anon,authenticated,service_role;
+
 do $migration$
 declare body text;
   anchor text:=$anchor$      v_type_fields:=case when v_mutation ? 'type_fields' then v_mutation->'type_fields' else v_record.type_fields end;
@@ -44,7 +56,8 @@ $anchor$;
   merged text:=$merged$      -- BUG-20260924-002: an update merges the top-level keys it names into the
       -- stored object (null removes a key); field_mode='replace' keeps the old
       -- wholesale replacement for callers that need it.
-      if coalesce(p_input->>'field_mode','merge') not in ('merge','replace') then
+      if (p_input ? 'field_mode' and jsonb_typeof(p_input->'field_mode') is distinct from 'string')
+         or coalesce(p_input->>'field_mode','merge') not in ('merge','replace') then
         raise exception 'invalid_field_mode' using errcode='22023';
       end if;
       v_type_fields:=case when not (v_mutation ? 'type_fields') then v_record.type_fields
@@ -63,12 +76,14 @@ begin
   anchor:=$anchor$      if v_record_type='decision' and jsonb_array_length(coalesce(v_relations->'supersedes','[]'))>0 and v_relations is distinct from v_record.relations then$anchor$;
   if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1
     then raise exception 'record_update_field_merge_lineage_definition_mismatch'; end if;
-  body:=replace(body,anchor,$lineage$      if v_record_type='decision' and v_relations->'supersedes' is distinct from v_record.relations->'supersedes' then$lineage$);
+  body:=replace(body,anchor,$lineage$      if v_record_type='decision' and clued_private.m1_supersedes_set(v_relations->'supersedes')
+        is distinct from clued_private.m1_supersedes_set(v_record.relations->'supersedes') then$lineage$);
   -- field_mode is validated on create as well, where it has no effect.
   anchor:=$anchor$      v_type_fields:=coalesce(v_mutation->'type_fields','{}');$anchor$;
   if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1
     then raise exception 'record_update_field_merge_create_definition_mismatch'; end if;
-  body:=replace(body,anchor,$create$      if coalesce(p_input->>'field_mode','merge') not in ('merge','replace') then
+  body:=replace(body,anchor,$create$      if (p_input ? 'field_mode' and jsonb_typeof(p_input->'field_mode') is distinct from 'string')
+         or coalesce(p_input->>'field_mode','merge') not in ('merge','replace') then
         raise exception 'invalid_field_mode' using errcode='22023';
       end if;
 $create$||anchor);

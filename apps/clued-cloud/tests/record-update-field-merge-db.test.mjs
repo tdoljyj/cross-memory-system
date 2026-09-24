@@ -55,6 +55,8 @@ test('record updates merge type_fields and relations instead of replacing them',
     for (const role of ['anon', 'authenticated', 'service_role']) {
       assert.equal((await admin.query('select has_function_privilege($1,$2,\'execute\') ok',
         [role, 'clued_private.m1_merge_record_object(jsonb,jsonb)'])).rows[0].ok, false, role);
+      assert.equal((await admin.query('select has_function_privilege($1,$2,\'execute\') ok',
+        [role, 'clued_private.m1_supersedes_set(jsonb)'])).rows[0].ok, false, role);
     }
 
     // The IF S4 Context Policy acceptance keeps wholesale replacement, explicitly.
@@ -176,10 +178,37 @@ test('record updates merge type_fields and relations instead of replacing them',
       assert.match(JSON.stringify(result), /decision_supersede_command_required/);
     }
     assert.deepEqual((await row(decId)).relations, { supersedes: [predecessor], see_also: ['x'] });
+    // Resending the same set (any order, or the full M1 relations shape) is not a lineage change.
+    result = await decUpdate(2, { mutation: { relations: { supersedes: [predecessor], depends_on: [] } } });
+    assert.equal(result.status, 'committed', JSON.stringify(result));
+    const plain = await mutate({ ...base, operation: 'create', record_type: 'decision', idempotency_key: uuid(),
+      source_refs: [], source_unavailable_reason: 'fixture',
+      mutation: { title: 'Plain', content: 'd', type_fields: { rationale: 'r' }, relations: {} } });
+    const plainId = plain.target_refs[0].id;
+    result = await mutate({ ...base, operation: 'update', record_type: 'decision', id: plainId, base_version: 1,
+      idempotency_key: uuid(), mutation: { relations: { depends_on: [], supersedes: [], related_records: [] } } });
+    assert.equal(result.status, 'committed', JSON.stringify(result));
+    result = await mutate({ ...base, operation: 'update', record_type: 'decision', id: plainId, base_version: 2,
+      idempotency_key: uuid(), field_mode: 'replace', mutation: { relations: {} } });
+    assert.equal(result.status, 'committed', JSON.stringify(result));
+    const twoParents = [uuid(), uuid()].sort();
+    await admin.query(`update public.clued_memories set relations=jsonb_build_object('supersedes',$2::jsonb) where id=$1`,
+      [plainId, JSON.stringify(twoParents)]);
+    result = await mutate({ ...base, operation: 'update', record_type: 'decision', id: plainId, base_version: 3,
+      idempotency_key: uuid(), mutation: { relations: { supersedes: [...twoParents].reverse() } } });
+    assert.equal(result.status, 'committed', JSON.stringify(result));
+
+    // field_mode must be a string when present.
+    result = await update(id, 7, { type_fields: { criticality: 'LOW' } });
+    assert.equal(result.status, 'committed', JSON.stringify(result));
+    result = await mutate({ ...base, operation: 'update', record_type: 'task', id, base_version: 8,
+      idempotency_key: uuid(), field_mode: null, mutation: { type_fields: { criticality: 'MID' } } });
+    assert.equal(result.status, 'rejected', JSON.stringify(result));
+    assert.match(JSON.stringify(result), /invalid_field_mode/);
 
     // 7. Close still carries only closure fields and keeps the merged type_fields.
     result = await mutate({ ...base, operation: 'close', record_type: 'task', lifecycle_status: 'completed', id,
-      base_version: 7, idempotency_key: uuid(), mutation: { closure_summary: 'done', closed_reason: 'fixture' } });
+      base_version: 8, idempotency_key: uuid(), mutation: { closure_summary: 'done', closed_reason: 'fixture' } });
     assert.equal(result.status, 'committed', JSON.stringify(result));
     assert.deepEqual((await row(id)).type_fields, { execution_bucket: "later", criticality: "LOW" });
   } finally {
