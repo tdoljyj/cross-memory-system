@@ -1,0 +1,980 @@
+{
+  "aliases": {
+    "C2": "75ecd65d-97d4-4555-be49-37ebbbedcccf",
+    "C2_OTHER": "f54953bd-3d30-4485-b3d9-1a8156580a6a",
+    "C2_PARKED": "e7c4600b-184a-4ebd-8eb3-eb8380f10ad9",
+    "P02": "b767f228-9a84-4b28-b7e6-33c452f3f04f",
+    "R2": "bf22bf37-b638-4c74-a764-7627c23e72a7"
+  },
+  "assertions": [
+    {
+      "expected": "issued",
+      "id": "02.t1_issued",
+      "observed": "issued",
+      "pass": true,
+      "text": "T1 is issued for the parked candidate"
+    },
+    {
+      "expected": 401,
+      "id": "02.i.status",
+      "observed": 401,
+      "pass": true,
+      "text": "(i) the Binding is refused at Worker authentication"
+    },
+    {
+      "expected": [],
+      "id": "02.i.no_rpc",
+      "observed": [],
+      "pass": true,
+      "text": "(i) no request left the Worker (no RPC ran)"
+    },
+    {
+      "expected": true,
+      "id": "02.i.logged",
+      "observed": true,
+      "pass": true,
+      "text": "(i) the refusal is logged"
+    },
+    {
+      "expected": "pending",
+      "id": "02.i.pending",
+      "observed": "pending",
+      "pass": true,
+      "text": "(i) the candidate stays pending"
+    },
+    {
+      "expected": 401,
+      "id": "02.ii.status",
+      "observed": 401,
+      "pass": true,
+      "text": "(ii) the Binding is refused at Worker authentication"
+    },
+    {
+      "expected": [],
+      "id": "02.ii.no_rpc",
+      "observed": [],
+      "pass": true,
+      "text": "(ii) no request left the Worker (no RPC ran)"
+    },
+    {
+      "expected": true,
+      "id": "02.ii.logged",
+      "observed": true,
+      "pass": true,
+      "text": "(ii) the refusal is logged"
+    },
+    {
+      "expected": "pending",
+      "id": "02.ii.pending",
+      "observed": "pending",
+      "pass": true,
+      "text": "(ii) the candidate stays pending"
+    },
+    {
+      "expected": [
+        401,
+        []
+      ],
+      "id": "02.binding_confirmation",
+      "observed": [
+        401,
+        []
+      ],
+      "pass": true,
+      "text": "the Binding is refused on /confirmation before any RPC"
+    },
+    {
+      "expected": [
+        401,
+        []
+      ],
+      "id": "02.binding_reject",
+      "observed": [
+        401,
+        []
+      ],
+      "pass": true,
+      "text": "the Binding is refused on /reject before any RPC"
+    },
+    {
+      "expected": [
+        401,
+        "42501"
+      ],
+      "id": "02.iii.status",
+      "observed": [
+        401,
+        "42501"
+      ],
+      "pass": true,
+      "text": "(iii) a direct Binding-role call is a permission error"
+    },
+    {
+      "expected": 23,
+      "id": "02.iii.no_receipt",
+      "observed": 23,
+      "pass": true,
+      "text": "(iii) no Receipt was written"
+    },
+    {
+      "expected": "pending",
+      "id": "02.iii.pending",
+      "observed": "pending",
+      "pass": true,
+      "text": "(iii) the candidate stays pending"
+    },
+    {
+      "expected": [],
+      "id": "02.no_promotion_tool",
+      "observed": [],
+      "pass": true,
+      "text": "tools/list has no promotion-like tool"
+    },
+    {
+      "expected": 404,
+      "id": "02.unknown_tool",
+      "observed": 404,
+      "pass": true,
+      "text": "calling a promotion tool name over MCP fails"
+    },
+    {
+      "expected": [
+        403,
+        "confirmation_token_binding_mismatch"
+      ],
+      "id": "02.t2_first_use",
+      "observed": [
+        403,
+        "confirmation_token_binding_mismatch"
+      ],
+      "pass": true,
+      "text": "T2 first use with a mismatched view digest is rejected and burns the token"
+    },
+    {
+      "expected": [
+        403,
+        "confirmation_token_reused"
+      ],
+      "id": "02.t2_replay",
+      "observed": [
+        403,
+        "confirmation_token_reused"
+      ],
+      "pass": true,
+      "text": "replaying T2 is rejected as reused"
+    },
+    {
+      "expected": true,
+      "id": "02.foreign",
+      "observed": true,
+      "pass": true,
+      "text": "a foreign account presenting the owner's token is rejected"
+    },
+    {
+      "expected": [
+        403,
+        "confirmation_token_binding_mismatch"
+      ],
+      "id": "02.other_candidate",
+      "observed": [
+        403,
+        "confirmation_token_binding_mismatch"
+      ],
+      "pass": true,
+      "text": "a token issued for another candidate is rejected"
+    },
+    {
+      "expected": "pending",
+      "id": "02.pending_after_negatives",
+      "observed": "pending",
+      "pass": true,
+      "text": "the candidate is still pending after every negative"
+    },
+    {
+      "expected": "structurally_impossible_over_transport",
+      "id": "02.same_request",
+      "observed": "structurally_impossible_over_transport",
+      "pass": true,
+      "text": "issue and consume in one request"
+    },
+    {
+      "expected": true,
+      "id": "02.ttl_waited",
+      "observed": true,
+      "pass": true,
+      "text": "at least 301 s of real clock passed since T1 was issued"
+    },
+    {
+      "expected": [
+        403,
+        "confirmation_token_expired"
+      ],
+      "id": "02.expired",
+      "observed": [
+        403,
+        "confirmation_token_expired"
+      ],
+      "pass": true,
+      "text": "the expired token is rejected"
+    },
+    {
+      "expected": true,
+      "id": "02.expired_receipt",
+      "observed": true,
+      "pass": true,
+      "text": "the rejection carries a Receipt"
+    },
+    {
+      "expected": "pending",
+      "id": "02.parked_pending",
+      "observed": "pending",
+      "pass": true,
+      "text": "the parked candidate stays pending"
+    },
+    {
+      "expected": [
+        200,
+        "promoted"
+      ],
+      "id": "02.final_promoted",
+      "observed": [
+        200,
+        "promoted"
+      ],
+      "pass": true,
+      "text": "a later Native confirmation promotes the candidate"
+    },
+    {
+      "expected": "promoted",
+      "id": "02.final_status",
+      "observed": "promoted",
+      "pass": true,
+      "text": "the candidate reads promoted"
+    }
+  ],
+  "claims": {
+    "model_extraction": "NOT_EVALUATED",
+    "od5_qualifier": "Agent authority confined only on the Information Flow path",
+    "verdict_env": "_LOCAL_QUALIFIED"
+  },
+  "code_binding": {
+    "code_tree": "876a80be8657a27884c52e88ca09be10902e50db",
+    "harness_tree": "e1c0f1b28d5b71e686c0b6a0b53383e0ac4bdfe4",
+    "input_commit": "3d5a6cae73d8116988b2688545ab9e95ed9da3eb",
+    "migrations_chain": {
+      "count": 72,
+      "latest": "20260924220000_information_flow_invalidation.sql",
+      "sha256": "2f4525d01fb43417e9bae8f789375b76239ac4a067a73fdd207eed9d17651c29"
+    },
+    "worker_tree": "521d4341f7f4a6008a757ec7e584ed57236544a3",
+    "worktree_clean": true
+  },
+  "contract": {
+    "path": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+    "sha256": "5c6371cf22b078cbd1fb0f61f3f6eb20b51a162a28e8942f04b81561bbb8c9ff"
+  },
+  "environment": {
+    "db_database_oid": "5",
+    "db_system_identifier": "7688959234737786916",
+    "docker": "29.3.1",
+    "images": {
+      "auth": "sha256:362659ca70eaa75ba05bbaf963caa84c1c5afe5e8fbf0777e17b830dd5f0f60a",
+      "db": "sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5fb408d051909b230f",
+      "kong": "sha256:1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d",
+      "rest": "sha256:5922bde07147b82b1c9d8f749e48c1e5b99ebb233f3888bb7ab65f07cf4ac82d"
+    },
+    "js_tiktoken": "1.0.21",
+    "migrations_applied": {
+      "latest": "20260924220000",
+      "n": 72
+    },
+    "miniflare": "5.20260820.0-alpha",
+    "node": "v24.19.0",
+    "qualification": "LOCAL",
+    "supabase_cli": "2.115.0",
+    "transport_tier": "T1",
+    "workerd": "1.20260820.1",
+    "wrangler": "4.125.0"
+  },
+  "error": null,
+  "normalized_digest": "e3d165d41fd3c41fadc25a49a088ef7a57bb510309676f69e5cad28db60a628b",
+  "notes": [
+    "E2E-02 foreign presentation error_code=confirmation_token_invalid",
+    "Issue+consume in one request cannot be expressed over HTTP (one PostgREST transaction per request); covered at DB level by tests/information-flow-promotion-db.test.mjs (confirmation_token_same_request)."
+  ],
+  "principals": {
+    "account_user": "<synthetic>",
+    "bindings": [
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:aa6d811a2afa",
+        "name": "B_main",
+        "scopes_count": 16
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:6a841bddc92c",
+        "name": "B_reduce",
+        "scopes_count": 2
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:11836b4d3b3f",
+        "name": "B_del",
+        "scopes_count": 1
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:ea45402f1124",
+        "name": "B_V",
+        "scopes_count": 1
+      }
+    ],
+    "token_labels": {
+      "U": "sha256:b6e3f3c8a72d",
+      "V": "sha256:18af6ffb0264"
+    }
+  },
+  "result": "PASS",
+  "scenario_id": "E2E-02",
+  "schema": "clued.information-flow.m0d.e2e-evidence/1",
+  "steps": [
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 26,
+      "extracted": {
+        "candidates": [
+          {
+            "local": "item_e02",
+            "status": "pending",
+            "version": 1
+          },
+          {
+            "local": "item_e02_parked",
+            "status": "pending",
+            "version": 1
+          },
+          {
+            "local": "item_e02_other",
+            "status": "pending",
+            "version": 1
+          }
+        ],
+        "error_code": null,
+        "replayed": false,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 1,
+      "request_sha256": "d777b8df77a584d4b22e0297037b1281a4d57985a8219e9f19950ae37c902d89",
+      "response_sha256": "df0f13e97b6884fd904ca713b2130cf28b428fcdb6c3509dda9d984e63a3bc99",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 97,
+      "extracted": {
+        "authority": "user_explicit",
+        "error_code": null,
+        "record_type": "note",
+        "status": "issued"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_confirmation_issue_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 2,
+      "request_sha256": "20cd62cb2030ec60a543356fb4f0f5b0fe4df535197f5da12af6a3245d7f98ed",
+      "response_sha256": "146323eba431dc044f676e81c2e6c034f1d7edd02072a951cc45737c66faecc1",
+      "target": "/v1/intake/{id}/confirmation"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 4,
+      "extracted": {
+        "error": "A signed-in Clued account is required."
+      },
+      "http_status": 401,
+      "ledger": [],
+      "method": "POST",
+      "n": 3,
+      "request_sha256": "35efb7636fdd7ecfa14d4749e1bcd9b7344e63fd7752f997cf10c1cd9ac77b42",
+      "response_sha256": "221faae7f5fbca9db2c45a9f3632692b56c69111c80d26bdad7bff07208c9253",
+      "target": "/v1/intake/{id}/promote"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 78,
+      "extracted": {
+        "status": "pending"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_list",
+          "status": 200
+        }
+      ],
+      "method": "GET",
+      "n": 4,
+      "request_sha256": null,
+      "response_sha256": "00b3e062fe74352c2cfbae0e650355d67a66d5315927cf19a0608fd9c5ff1f56",
+      "target": "/v1/intake?scope=project%3A{id}&limit=200"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 4,
+      "extracted": {
+        "error": "A signed-in Clued account is required."
+      },
+      "http_status": 401,
+      "ledger": [],
+      "method": "POST",
+      "n": 5,
+      "request_sha256": "e91040b0748d89aea52e09cf84f0af013b125d37749e7ca23e6690ba56d0e16d",
+      "response_sha256": "221faae7f5fbca9db2c45a9f3632692b56c69111c80d26bdad7bff07208c9253",
+      "target": "/v1/intake/{id}/promote"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 80,
+      "extracted": {
+        "status": "pending"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_list",
+          "status": 200
+        }
+      ],
+      "method": "GET",
+      "n": 6,
+      "request_sha256": null,
+      "response_sha256": "00b3e062fe74352c2cfbae0e650355d67a66d5315927cf19a0608fd9c5ff1f56",
+      "target": "/v1/intake?scope=project%3A{id}&limit=200"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 6,
+      "extracted": null,
+      "http_status": 401,
+      "ledger": [],
+      "method": "POST",
+      "n": 7,
+      "request_sha256": "20cd62cb2030ec60a543356fb4f0f5b0fe4df535197f5da12af6a3245d7f98ed",
+      "response_sha256": "221faae7f5fbca9db2c45a9f3632692b56c69111c80d26bdad7bff07208c9253",
+      "target": "/v1/intake/{id}/confirmation"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 5,
+      "extracted": null,
+      "http_status": 401,
+      "ledger": [],
+      "method": "POST",
+      "n": 8,
+      "request_sha256": "03ca2e2b7560ae9311653332c2e354415d17c5d4ae434e494237405c895487fd",
+      "response_sha256": "221faae7f5fbca9db2c45a9f3632692b56c69111c80d26bdad7bff07208c9253",
+      "target": "/v1/intake/{id}/reject"
+    },
+    {
+      "channel": "db_observer_readonly",
+      "duration_ms": 3,
+      "extracted": null,
+      "http_status": null,
+      "ledger": [],
+      "method": "SELECT",
+      "n": 9,
+      "request_sha256": "711ec066f2a05b68355aa14fd8cbd82578cc6dcb50fb941fc29e05614b3ebd95",
+      "response_sha256": "98340b0f0e2992596f1b06a912d256355dd7020b9caa55c7dbcbac73a0c5a726",
+      "target": "receipt count"
+    },
+    {
+      "channel": "postgrest_direct",
+      "duration_ms": 6,
+      "extracted": {
+        "code": "42501"
+      },
+      "http_status": 401,
+      "ledger": [],
+      "method": "POST",
+      "n": 10,
+      "request_sha256": "32663efc849cec55e43d5f3ff4ab4ec2ddaa62e31de089441dd421ee4f942da6",
+      "response_sha256": "05d54b16f45900bd1e7a46f7bc41c7dfd39b862a03cfc6b60f2cea5abd75b835",
+      "target": "/rest/v1/rpc/clued_candidate_promote_v1 (anon_apikey)"
+    },
+    {
+      "channel": "db_observer_readonly",
+      "duration_ms": 2,
+      "extracted": null,
+      "http_status": null,
+      "ledger": [],
+      "method": "SELECT",
+      "n": 11,
+      "request_sha256": "711ec066f2a05b68355aa14fd8cbd82578cc6dcb50fb941fc29e05614b3ebd95",
+      "response_sha256": "98340b0f0e2992596f1b06a912d256355dd7020b9caa55c7dbcbac73a0c5a726",
+      "target": "receipt count"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 78,
+      "extracted": {
+        "status": "pending"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_list",
+          "status": 200
+        }
+      ],
+      "method": "GET",
+      "n": 12,
+      "request_sha256": null,
+      "response_sha256": "00b3e062fe74352c2cfbae0e650355d67a66d5315927cf19a0608fd9c5ff1f56",
+      "target": "/v1/intake?scope=project%3A{id}&limit=200"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 6,
+      "extracted": {
+        "count": 29
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 13,
+      "request_sha256": "57cb35b97e7a9446278d718d1134736e84fe8cfa1c9d7b215a6cc7572a4e8a02",
+      "response_sha256": "a16eac6611352baeba9330d79e8d5329582f5463d0412e5fb90ca2dd18c28079",
+      "target": "/mcp tools/list"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 4,
+      "extracted": {
+        "code": -32000
+      },
+      "http_status": 404,
+      "ledger": [],
+      "method": "POST",
+      "n": 14,
+      "request_sha256": "cb848fe6fa7c81c2b8ba0014b6dcd423fcc35f77531ef631394c64581cd7c9d4",
+      "response_sha256": "36ea25d300e8679d3d83e92f6505b2d610b66909ea6302656ba5e2fb9a7e6a9a",
+      "target": "/mcp tools/call clued_candidate_promote_v1"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 78,
+      "extracted": {
+        "authority": "user_explicit",
+        "error_code": null,
+        "record_type": "note",
+        "status": "issued"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_confirmation_issue_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 15,
+      "request_sha256": "20cd62cb2030ec60a543356fb4f0f5b0fe4df535197f5da12af6a3245d7f98ed",
+      "response_sha256": "074dd74c42a5ec2e935215923d1a4ded888535cf0d84886a3bfa3dc64839e26d",
+      "target": "/v1/intake/{id}/confirmation"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 84,
+      "extracted": {
+        "error_code": "confirmation_token_binding_mismatch",
+        "outcome": null,
+        "record_version": null,
+        "replayed": false,
+        "status": "rejected"
+      },
+      "http_status": 403,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_promote_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 16,
+      "request_sha256": "67422fedd856c3b0f07f2bee8641f88fc751db17b4f3206c34331ef8935c904d",
+      "response_sha256": "a2dea976de230aee9c6b0066358fb7fd716904d08b73bb824c84fc0e7d0dd6ea",
+      "target": "/v1/intake/{id}/promote"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 81,
+      "extracted": {
+        "error_code": "confirmation_token_reused",
+        "outcome": null,
+        "record_version": null,
+        "replayed": false,
+        "status": "rejected"
+      },
+      "http_status": 403,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_promote_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 17,
+      "request_sha256": "9f3261f165760475ebd8a0a1b5fac89f95e519760336f709f210d18b015185e0",
+      "response_sha256": "19e15402101983b46ff4f80645a278d3d48089ccf6b9a3e7db7077e09514671b",
+      "target": "/v1/intake/{id}/promote"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 79,
+      "extracted": {
+        "authority": "user_explicit",
+        "error_code": null,
+        "record_type": "note",
+        "status": "issued"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_confirmation_issue_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 18,
+      "request_sha256": "20cd62cb2030ec60a543356fb4f0f5b0fe4df535197f5da12af6a3245d7f98ed",
+      "response_sha256": "c64dcbb21c24e97b499dd5c05ba1c60acea728370fc073a0c41bc374a1e1c5e6",
+      "target": "/v1/intake/{id}/confirmation"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 76,
+      "extracted": {
+        "error_code": "confirmation_token_invalid",
+        "outcome": null,
+        "record_version": null,
+        "replayed": false,
+        "status": "rejected"
+      },
+      "http_status": 403,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_promote_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 19,
+      "request_sha256": "485fb6190b7279e4818ca05d8a4b741738b2273e8e7f5fabc9365bbbeca72162",
+      "response_sha256": "f9529489d3d47c94e43993c8e768baed89b45b13262ab4e91cd47b6ed9d6e1a7",
+      "target": "/v1/intake/{id}/promote"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 85,
+      "extracted": {
+        "authority": "user_explicit",
+        "error_code": null,
+        "record_type": "note",
+        "status": "issued"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_confirmation_issue_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 20,
+      "request_sha256": "20cd62cb2030ec60a543356fb4f0f5b0fe4df535197f5da12af6a3245d7f98ed",
+      "response_sha256": "8e930df6f367a6888e74156f7c3de938a7cb7b4642b59d5723cbf9a2579c4db4",
+      "target": "/v1/intake/{id}/confirmation"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 85,
+      "extracted": {
+        "error_code": "confirmation_token_binding_mismatch",
+        "outcome": null,
+        "record_version": null,
+        "replayed": false,
+        "status": "rejected"
+      },
+      "http_status": 403,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_promote_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 21,
+      "request_sha256": "9217292663b9c600f32a9d00639af2118153ee83c113c24e2ec1a67d5382ae35",
+      "response_sha256": "30a9a5d0bc87bc024ebfe861251aa01b94d5aabfd98044560333eef6b2237302",
+      "target": "/v1/intake/{id}/promote"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 82,
+      "extracted": {
+        "status": "pending"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_list",
+          "status": 200
+        }
+      ],
+      "method": "GET",
+      "n": 22,
+      "request_sha256": null,
+      "response_sha256": "00b3e062fe74352c2cfbae0e650355d67a66d5315927cf19a0608fd9c5ff1f56",
+      "target": "/v1/intake?scope=project%3A{id}&limit=200"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 111,
+      "extracted": {
+        "error_code": "confirmation_token_expired",
+        "outcome": null,
+        "record_version": null,
+        "replayed": false,
+        "status": "rejected"
+      },
+      "http_status": 403,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_promote_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 23,
+      "request_sha256": "bfa4f32ac2a91863d6c6666917de2477c2a6c5d398e8df04b45d38cbc0290925",
+      "response_sha256": "0471f5dcc7872b2fa7242a0bf99cf3aa7f9ededde4b02248917fb35196320023",
+      "target": "/v1/intake/{id}/promote"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 74,
+      "extracted": {
+        "status": "pending"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_list",
+          "status": 200
+        }
+      ],
+      "method": "GET",
+      "n": 24,
+      "request_sha256": null,
+      "response_sha256": "00b3e062fe74352c2cfbae0e650355d67a66d5315927cf19a0608fd9c5ff1f56",
+      "target": "/v1/intake?scope=project%3A{id}&limit=200"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 79,
+      "extracted": {
+        "authority": "user_explicit",
+        "error_code": null,
+        "record_type": "note",
+        "status": "issued"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_confirmation_issue_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 25,
+      "request_sha256": "20cd62cb2030ec60a543356fb4f0f5b0fe4df535197f5da12af6a3245d7f98ed",
+      "response_sha256": "23f853fd26c748652c84836fe51c7a5292b28249408d631e9fcb7ff9a0359719",
+      "target": "/v1/intake/{id}/confirmation"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 91,
+      "extracted": {
+        "error_code": null,
+        "outcome": "promoted",
+        "record_version": 1,
+        "replayed": false,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_promote_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 26,
+      "request_sha256": "8937c2b3f00feb4f50e88e19d6bdc55ca11454c3d39125b9a6d482a0ede77b57",
+      "response_sha256": "5de797d883b75ee0168a22645e06ab31f43e142b83e2fa8589929483d772aa2e",
+      "target": "/v1/intake/{id}/promote"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 80,
+      "extracted": {
+        "status": "promoted"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_list",
+          "status": 200
+        }
+      ],
+      "method": "GET",
+      "n": 27,
+      "request_sha256": null,
+      "response_sha256": "2561654acd4aed07f06d789203def8b5365e9d4c91b99a9834d8667230de8cf6",
+      "target": "/v1/intake?scope=project%3A{id}&limit=200"
+    }
+  ]
+}

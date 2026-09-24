@@ -1,0 +1,2308 @@
+{
+  "aliases": {
+    "P06": "c340c916-8047-4c59-93cd-95376ca8a5f3",
+    "SRC": "b123f64b-ea52-459b-a426-a45757dcbce8"
+  },
+  "assertions": [
+    {
+      "expected": true,
+      "id": "06.SEC-001.agent.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-001 agent: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-001.agent.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-001 agent: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-001.agent.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-001 agent: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-001.native.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-001 native: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-001.native.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-001 native: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-001.native.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-001 native: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "id": "06.SEC-001.knowledge",
+      "observed": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "pass": true,
+      "text": "SEC-001: the assertion is stored as Candidate Knowledge (authority none)"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-002.agent.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-002 agent: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-002.agent.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-002 agent: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-002.agent.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-002 agent: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-002.native.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-002 native: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-002.native.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-002 native: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-002.native.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-002 native: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "id": "06.SEC-002.knowledge",
+      "observed": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "pass": true,
+      "text": "SEC-002: the assertion is stored as Candidate Knowledge (authority none)"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-003.agent.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-003 agent: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-003.agent.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-003 agent: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-003.agent.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-003 agent: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-003.native.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-003 native: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-003.native.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-003 native: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-003.native.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-003 native: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "id": "06.SEC-003.knowledge",
+      "observed": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "pass": true,
+      "text": "SEC-003: the assertion is stored as Candidate Knowledge (authority none)"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-004.agent.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-004 agent: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-004.agent.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-004 agent: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-004.agent.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-004 agent: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-004.native.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-004 native: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-004.native.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-004 native: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-004.native.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-004 native: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "id": "06.SEC-004.knowledge",
+      "observed": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "pass": true,
+      "text": "SEC-004: the assertion is stored as Candidate Knowledge (authority none)"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-005.agent.gold",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-005 agent: the frozen output is stored as candidates"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-005.agent.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-005 agent: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-005.agent.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-005 agent: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-005.native.gold",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-005 native: the frozen output is stored as candidates"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-005.native.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-005 native: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-005.native.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-005 native: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "id": "06.SEC-005.knowledge",
+      "observed": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "pass": true,
+      "text": "SEC-005: the assertion is stored as Candidate Knowledge (authority none)"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-006.agent.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-006 agent: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-006.agent.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-006 agent: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-006.agent.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-006 agent: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-006.native.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-006 native: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-006.native.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-006 native: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-006.native.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-006 native: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "id": "06.SEC-006.knowledge",
+      "observed": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "pass": true,
+      "text": "SEC-006: the assertion is stored as Candidate Knowledge (authority none)"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-007.agent.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-007 agent: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-007.agent.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-007 agent: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-007.agent.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-007 agent: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-007.native.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-007 native: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-007.native.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-007 native: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-007.native.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-007 native: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "id": "06.SEC-007.knowledge",
+      "observed": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "pass": true,
+      "text": "SEC-007: the assertion is stored as Candidate Knowledge (authority none)"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-008.agent.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-008 agent: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-008.agent.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-008 agent: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-008.agent.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-008 agent: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-008.native.gold",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-008 native: the frozen output is rejected by validation"
+    },
+    {
+      "expected": "committed",
+      "id": "06.SEC-008.native.data",
+      "observed": "committed",
+      "pass": true,
+      "text": "SEC-008 native: the injection text is stored as data"
+    },
+    {
+      "expected": true,
+      "id": "06.SEC-008.native.smuggled",
+      "observed": true,
+      "pass": true,
+      "text": "SEC-008 native: smuggled tier/authority/target/record_type are rejected"
+    },
+    {
+      "expected": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "id": "06.SEC-008.knowledge",
+      "observed": [
+        "committed",
+        "knowledge",
+        "none"
+      ],
+      "pass": true,
+      "text": "SEC-008: the assertion is stored as Candidate Knowledge (authority none)"
+    },
+    {
+      "expected": [
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ]
+      ],
+      "id": "06.native_rows",
+      "observed": [
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "native_ui"
+        ]
+      ],
+      "pass": true,
+      "text": "Native data candidates: tier information, route scope, pending, authority none, native_ui"
+    },
+    {
+      "expected": [
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ]
+      ],
+      "id": "06.agent_rows_native_view",
+      "observed": [
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ],
+        [
+          "information",
+          "project:<P06>",
+          "pending",
+          "none",
+          false,
+          "agent_binding"
+        ]
+      ],
+      "pass": true,
+      "text": "Agent data candidates: agent_binding source"
+    },
+    {
+      "expected": [
+        true,
+        false
+      ],
+      "id": "06.agent_list_own",
+      "observed": [
+        true,
+        false
+      ],
+      "pass": true,
+      "text": "the Binding lists its own data candidates and none of the Native ones"
+    },
+    {
+      "expected": 8,
+      "id": "06.knowledge_rows",
+      "observed": 8,
+      "pass": true,
+      "text": "eight pending Candidate Knowledge rows with authority none"
+    },
+    {
+      "expected": [],
+      "id": "06.egress_gateway_only",
+      "observed": [],
+      "pass": true,
+      "text": "Worker egress during E2E-06 reached only the gateway"
+    },
+    {
+      "expected": {
+        "carriers": 0,
+        "currentness": 36,
+        "memories": 15,
+        "mtpe": 1,
+        "mtpe_digest": "1d0fc85c48b9296aa510b8ee0699db36",
+        "projection_inv": 57,
+        "record_versions": 16
+      },
+      "id": "06.canonical_unchanged",
+      "observed": {
+        "carriers": 0,
+        "currentness": 36,
+        "memories": 15,
+        "mtpe": 1,
+        "mtpe_digest": "1d0fc85c48b9296aa510b8ee0699db36",
+        "projection_inv": 57,
+        "record_versions": 16
+      },
+      "pass": true,
+      "text": "the Canonical/MTPE/projection/currentness/carrier snapshot is unchanged"
+    }
+  ],
+  "claims": {
+    "model_extraction": "NOT_EVALUATED",
+    "od5_qualifier": "Agent authority confined only on the Information Flow path",
+    "verdict_env": "_LOCAL_QUALIFIED"
+  },
+  "code_binding": {
+    "code_tree": "876a80be8657a27884c52e88ca09be10902e50db",
+    "harness_tree": "e1c0f1b28d5b71e686c0b6a0b53383e0ac4bdfe4",
+    "input_commit": "3d5a6cae73d8116988b2688545ab9e95ed9da3eb",
+    "migrations_chain": {
+      "count": 72,
+      "latest": "20260924220000_information_flow_invalidation.sql",
+      "sha256": "2f4525d01fb43417e9bae8f789375b76239ac4a067a73fdd207eed9d17651c29"
+    },
+    "worker_tree": "521d4341f7f4a6008a757ec7e584ed57236544a3",
+    "worktree_clean": true
+  },
+  "contract": {
+    "path": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+    "sha256": "5c6371cf22b078cbd1fb0f61f3f6eb20b51a162a28e8942f04b81561bbb8c9ff"
+  },
+  "environment": {
+    "db_database_oid": "5",
+    "db_system_identifier": "7688959234737786916",
+    "docker": "29.3.1",
+    "images": {
+      "auth": "sha256:362659ca70eaa75ba05bbaf963caa84c1c5afe5e8fbf0777e17b830dd5f0f60a",
+      "db": "sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5fb408d051909b230f",
+      "kong": "sha256:1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d",
+      "rest": "sha256:5922bde07147b82b1c9d8f749e48c1e5b99ebb233f3888bb7ab65f07cf4ac82d"
+    },
+    "js_tiktoken": "1.0.21",
+    "migrations_applied": {
+      "latest": "20260924220000",
+      "n": 72
+    },
+    "miniflare": "5.20260820.0-alpha",
+    "node": "v24.19.0",
+    "qualification": "LOCAL",
+    "supabase_cli": "2.115.0",
+    "transport_tier": "T1",
+    "workerd": "1.20260820.1",
+    "wrangler": "4.125.0"
+  },
+  "error": null,
+  "normalized_digest": "b0651054e89c82eb1fb9b32265fae8b8723437b40c9d622b3bb11f8392b25e11",
+  "notes": [],
+  "principals": {
+    "account_user": "<synthetic>",
+    "bindings": [
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:aa6d811a2afa",
+        "name": "B_main",
+        "scopes_count": 16
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:6a841bddc92c",
+        "name": "B_reduce",
+        "scopes_count": 2
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:11836b4d3b3f",
+        "name": "B_del",
+        "scopes_count": 1
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:ea45402f1124",
+        "name": "B_V",
+        "scopes_count": 1
+      }
+    ],
+    "token_labels": {
+      "U": "sha256:b6e3f3c8a72d",
+      "V": "sha256:18af6ffb0264"
+    }
+  },
+  "result": "PASS",
+  "scenario_id": "E2E-06",
+  "schema": "clued.information-flow.m0d.e2e-evidence/1",
+  "steps": [
+    {
+      "channel": "worker_rest",
+      "duration_ms": 75,
+      "extracted": {
+        "replayed": false,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_record_mutate",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 1,
+      "request_sha256": "88079cc28a60899e05c4973808d9e2ddf89dace02f5819f6b57ededc6338227d",
+      "response_sha256": "4bb5a7f84632c66f3ea78fd28b9d483dcbc727842d18da2c94d8b3fcc8a98a5a",
+      "target": "/v1/records"
+    },
+    {
+      "channel": "db_observer_readonly",
+      "duration_ms": 4,
+      "extracted": null,
+      "http_status": null,
+      "ledger": [],
+      "method": "SELECT",
+      "n": 2,
+      "request_sha256": "042b6d972ad5266ec0cc5980b2e8a2769d8a69e55fea5252addce1e5894ec3ee",
+      "response_sha256": "cd26818a1baf1569788dd9d2f1f3e9e96ff3c691214d53b9b234899943b9c4ba",
+      "target": "canonical snapshot"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 15,
+      "extracted": {
+        "error_code": "intake_no_candidates",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 3,
+      "request_sha256": "86e3490ed765b9942449d66d48cfb4026779b228809160a9f109df0833aca4fc",
+      "response_sha256": "6e34e0e640ebc7f36f41acd090b1604cb051903f3ecb498c0bc3935ed21f2ccf",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 16,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 4,
+      "request_sha256": "538ca6d59300f253d669b601e31a8741a3550bc6dce84a0b61dfd8185679ecfb",
+      "response_sha256": "0cd245a86391b93255f85bdece84e587e01a27b2fd2045a69a1f8ba9b05f3a64",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 13,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 5,
+      "request_sha256": "0d34383b5919299f233134ac5537ba86d6715e33d1ef68d7de7a01f183e81b9e",
+      "response_sha256": "f86641ee81382c2cd777cb89a9163b20cbdb502239c23acc7ad3c80d343404c1",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 74,
+      "extracted": {
+        "error_code": "intake_no_candidates",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 6,
+      "request_sha256": "d1baf70752d65a8fcdcafd85869e93b21c5e99c7d0174846d45188e9c5a680f0",
+      "response_sha256": "2ea1ade292db61e8c109168bb013dd15ba99820a4136d4eb94d61bb7c3bb7336",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 79,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 7,
+      "request_sha256": "0b3f5f3e108c24f43fd59eb340aa26c4fd8b5d711454294156d8743147c8985c",
+      "response_sha256": "649260fbac113765e7dfb9dae5ba9f19c3c2508bbe6423962c660cb1c5577ab2",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 74,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 8,
+      "request_sha256": "750e0cd4265415993274f3b29730bdd19a03fde26b06495820f7c3b5ec9a9eda",
+      "response_sha256": "a81db26e2949b8cf83a9bae58aed0827041340fef06fb87b784a03c8e7a74a98",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 22,
+      "extracted": {
+        "authority": "none",
+        "status": "committed",
+        "tier": "knowledge"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_knowledge_propose",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 9,
+      "request_sha256": "8ed54e99263e0d7ac156d31fa0f78ac74c61a2cc7eca9d1819da3f8bda2eeb85",
+      "response_sha256": "8517f56f8759d8c2d9304ee68cd0af7698590840ee91312b1da07f80bb6f9992",
+      "target": "/mcp tools/call clued_knowledge_propose"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 17,
+      "extracted": {
+        "error_code": "intake_no_candidates",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 10,
+      "request_sha256": "0e2cebc2f608d59615f70b000559d867ec294a27f7dfaf39fdb0a6ad4b1aed37",
+      "response_sha256": "12a09fb90625d418e70acafc1417d3760c0a49c84c9a65591d41ad4c0637a1b1",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 20,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 11,
+      "request_sha256": "1dbb1012f951964aa09bbaf96f7b57bba1478e81543e02f407e48471224e173c",
+      "response_sha256": "7e034541adfb2fcdb3f9292c1d62bd01773da06b6132d6fcfd9a3488b043c095",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 13,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 12,
+      "request_sha256": "8cabd717a38bd042577f02c7c9052970ff314f1c42a521f93d6a278d1072c820",
+      "response_sha256": "6d1bed8a7170c33736a15eef18f50c1db168018e11aa91edd3aa1c0051165b96",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 74,
+      "extracted": {
+        "error_code": "intake_no_candidates",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 13,
+      "request_sha256": "da1497a219029facc6cd27cd42336625da36edf6e26ae01a23820ce6caad18ad",
+      "response_sha256": "5df3d54626837d27b507829a722636c395e905b725c55e37cc48b3072159367f",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 78,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 14,
+      "request_sha256": "ca7dbcb31c82add9487af04e70e0eebb40fbecbac23796b27378f6e67c624cec",
+      "response_sha256": "c09857ebd64e2a5bc1a19b1b5e1a5c06e7e04476a92a82893a7420d203c08f56",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 70,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 15,
+      "request_sha256": "6d3e9d616cad943b09288b00ee1367f98b6c88f52014543fa989fab3c77ed08f",
+      "response_sha256": "afdd69928d96426abd5e76655b713a42dce5a6d92f55ffb5bad9a4f301bc11f8",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 21,
+      "extracted": {
+        "authority": "none",
+        "status": "committed",
+        "tier": "knowledge"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_knowledge_propose",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 16,
+      "request_sha256": "f183649a7135d880cf664eb9622b16640a546347c86d835e4d5f5c8ec49c5f2a",
+      "response_sha256": "fa907ff924ea3217ff9e315d964021541017f44a98dcfe2509250bc51a3338ff",
+      "target": "/mcp tools/call clued_knowledge_propose"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 13,
+      "extracted": {
+        "error_code": "intake_no_candidates",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 17,
+      "request_sha256": "f53b52682ed1f6613eb50f493a1470d794665c31b4d03a0270145cca4684410f",
+      "response_sha256": "2620e3ae2deeb2da5ed29c1b5a3303aff897f133ab4ff73345c7ac422f1bdf73",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 16,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 18,
+      "request_sha256": "db82eb44b9c85d21618087dfc398c82fa55cd6ee7c5e2a2cf972a4898009f903",
+      "response_sha256": "6c3f26e79ff72d9baed6df02a23aa69f6f63dcab73d457243e3cb6b9cbbc1a9a",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 13,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 19,
+      "request_sha256": "ccc3f43dfd70e278a449407ce751747f37489158f6b4adadc13de93da0c38e56",
+      "response_sha256": "216b924c5c5156f9952172aa8e3b4d00a05608a3e98a482344e236f4c9e3163a",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 74,
+      "extracted": {
+        "error_code": "intake_no_candidates",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 20,
+      "request_sha256": "d52f2e482af792330fc8a02bc7a87128099546613a2c629b3408e6a0fb21c719",
+      "response_sha256": "5d27a04a7bb5afbfe0d4c484b3ed38b5da8cd769e50497febce9a8c6f0e01da6",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 92,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 21,
+      "request_sha256": "67e0bf1cb517e5c1f356cc77d05572738086e01834f132f46cd0cfeb18873d51",
+      "response_sha256": "9ca4c13f6fb815fea36264a4e8b7666afbbded6ac4153b145b5e412ad6450ff8",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 85,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 22,
+      "request_sha256": "1676f7eed92553fe3a5c6237a1c3936d9761e83bd83c3348d26959116e7d53a8",
+      "response_sha256": "3275c38250e11ce800ad49a201cfd212cd9d28e86eb6fc1fefb53f76fd785e8e",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 21,
+      "extracted": {
+        "authority": "none",
+        "status": "committed",
+        "tier": "knowledge"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_knowledge_propose",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 23,
+      "request_sha256": "97b1483801fa3ca80de5f007a13e8cd09e19b254d50e3673aa6930b65ce1a90b",
+      "response_sha256": "c0768f9c6ca9043d7169d6138418317b584fef7b41e5dc0694345fc1e6169cb2",
+      "target": "/mcp tools/call clued_knowledge_propose"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 14,
+      "extracted": {
+        "error_code": "intake_no_candidates",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 24,
+      "request_sha256": "28391ddf3968ffc208564426d9956160431c355d60eb5ef30150e09c9a8a621d",
+      "response_sha256": "7602bea6b0f1f915d38859eb5523be6f138c584b2fbf526ffe35bdc4769863bc",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 17,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 25,
+      "request_sha256": "349b0746b136d2daab6e1e98c11b1eee30f6d54b6362ef8a7526d0f0298fa96d",
+      "response_sha256": "c1bb532e1f1e0b0cde6fa78a816569abaf10aaa138f8c9e33e3268f9b4543117",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 13,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 26,
+      "request_sha256": "c0809f66e40e8eedd6ce01111997f7f44784a72c6e5e3c5f550d97e732672d61",
+      "response_sha256": "3eec6dc8775403a104f48d5e05e65db431a4e57b2fe325732b78f7b2583b9d63",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 73,
+      "extracted": {
+        "error_code": "intake_no_candidates",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 27,
+      "request_sha256": "3c054b4eab465f1fb6bde44dc147e2cdd43ea566ac360453395fdc1b1fc382a9",
+      "response_sha256": "196ae40d1ef3554e046007992db1fe95076738984939ab017fae86bd791fc0a3",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 78,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 28,
+      "request_sha256": "298cdbb591b4435d522a2f65926d5a65c360e8f8a110b1d7c0497d9f2fba7f48",
+      "response_sha256": "64ff875f2ee1cbecd3cc74ec6130c946ce9aa3ea5409d6ab64492b4b75b213c2",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 78,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 29,
+      "request_sha256": "5ca7f9a090ede0b763d575ae30dcfbf4c1f0ddc2bc07471cb2cfaacba5df085a",
+      "response_sha256": "53af3c4efe00f4c76d9e920e7b1745d2cc38161d408596400968237934c96615",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 26,
+      "extracted": {
+        "authority": "none",
+        "status": "committed",
+        "tier": "knowledge"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_knowledge_propose",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 30,
+      "request_sha256": "0dafc7d5610ebef3a7d5e2cec5361be41913cfbbd7b73cddb76a90c48afc5a52",
+      "response_sha256": "cb0fb57f690bef2f227aed2936d62ce4db38fa4586e17524292915e00087c9e5",
+      "target": "/mcp tools/call clued_knowledge_propose"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 22,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 31,
+      "request_sha256": "b7453598ac1ad55355d89555bf06aef5a6187a2facd1fb6929882faf11426438",
+      "response_sha256": "e3853b720b59121a922303f35f1df03f1e55a18402cfc4a150d73fbac0b6b8a8",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 20,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 32,
+      "request_sha256": "c7195ce020b796b29f6d50e42641da86e758ae4fc2f7cfa05e90ba9afbf8c654",
+      "response_sha256": "a0d440e504df2e523f378a03cef7d11420865d3fcc82b7c7290538a02e214402",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 13,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 33,
+      "request_sha256": "317b56b6dea79418deded0c976832f9114314418cb334a5e098aca984ab9db3d",
+      "response_sha256": "2e2e1a37492d436c1e44ba4ffa3b644e328d5a9e51cc50e0a8459f70045a059c",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 83,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 34,
+      "request_sha256": "9e56a993caf1e3d1c96c027154cb65b078d6d80c43f3393f03dc392c96736cb0",
+      "response_sha256": "83a06372e77f62028dd9fa8a070350ff77c43a5b5400270c6b321b4dac92ded2",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 75,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 35,
+      "request_sha256": "3300379c2519573d9db056a45d1e5c17034be8cf3ee92a386b4dce159f1f5e53",
+      "response_sha256": "27465c3c4bef48470f1011dee339291a51efd7eb81f0c2cda5bc0379e7845cf6",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 73,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 36,
+      "request_sha256": "8e5393430e3f28fc7bd364f5ad89d6220c108853986060d47968794114b65146",
+      "response_sha256": "1cc1fac78061d99231bbf774cfceb6c96139e6e39230cc6696d20b3d331adb2a",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 20,
+      "extracted": {
+        "authority": "none",
+        "status": "committed",
+        "tier": "knowledge"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_knowledge_propose",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 37,
+      "request_sha256": "2b5541a751b061bd1bb51a043c6689a98c86196c8d4737f3fe089081fc07a1cf",
+      "response_sha256": "cde4595c2646e1fc7751597df0fdfbf523e61375e8ce0ba2d8b81eaca1a0f5a9",
+      "target": "/mcp tools/call clued_knowledge_propose"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 13,
+      "extracted": {
+        "error_code": "intake_no_candidates",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 38,
+      "request_sha256": "790945215ec2f6d275da0aae08dd2d6a0e19e55fb455243b9bc55bb69bc63d7a",
+      "response_sha256": "78156eeb9c25bb20469f1a6d88f133e2d4f2332fe6e41e4d578839e91daa649f",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 15,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 39,
+      "request_sha256": "dc2085bbb9ad8c211704f39725e683ae4638395258e398eb333ddbbf7a47ab59",
+      "response_sha256": "b675f977a2a82d3907499245e942f5e7a1396e2a1fbe0a3e0c1a52eae1a6fb92",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 12,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 40,
+      "request_sha256": "4add424053a253aaf26de375931d86493f177f79915b2fe91b36a9e80aac3fa7",
+      "response_sha256": "446703927793a90a62158311f830a02dde18bb202cf541cf1cdf6a41d7a338dc",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 75,
+      "extracted": {
+        "error_code": "intake_no_candidates",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 41,
+      "request_sha256": "c6b34fbfd57cec6949f12f945a834b6900d357bea74788fe95f6281cad69fa71",
+      "response_sha256": "e235ea21ab324f04895b903f3810f9d6756bb775687c46a15df2fd831aa58674",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 77,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 42,
+      "request_sha256": "d7e9dd9b476a2ca97dc2b2e188a89082ef50d267ec2762def4e1a6067edebc1e",
+      "response_sha256": "089ede3cfe08a42f6f0d762ea32391f26c55821bc0b3d19f6e2b1728f8da3e32",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 76,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 43,
+      "request_sha256": "35dabea626d2e21173c098169b68da3787cbcce20112933780cf3463a72ea3e9",
+      "response_sha256": "d0ea0c6815c0aa8ebf2cc47f8d7bc225ba8e576bda0ae75b0946e1643311b015",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 19,
+      "extracted": {
+        "authority": "none",
+        "status": "committed",
+        "tier": "knowledge"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_knowledge_propose",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 44,
+      "request_sha256": "8c50bf2f4b2e26b511676efa7e629da728b2378c9d35bb23eec7454edbf61b64",
+      "response_sha256": "9de4c2c59b1a5289561263d687dba999d809604ebcb6ba6758d992eb08a12c63",
+      "target": "/mcp tools/call clued_knowledge_propose"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 14,
+      "extracted": {
+        "error_code": "intake_invalid:INSTANCE_SCHEMA_INVALID",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 45,
+      "request_sha256": "1b1aed51301bc8c0e41edb588cdfbcc05f435fc0b4d5d9c856d019dd75101ee6",
+      "response_sha256": "748a678144983b40002541dd2ad7bf8e204040352ab2c43286ba9500c32d9e11",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 22,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 46,
+      "request_sha256": "a7509438f229a0d6c65c15e892e1b8a1eb2058122d1f41b6f6682643befe0b71",
+      "response_sha256": "5aa3edcb84e5830be6c546e4b8ce07b197a59b31ddf5f85188e3432147dd70d4",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 13,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 47,
+      "request_sha256": "b4f72aa8b0c6e625968dd4aeb3fdeac8aa37288b92760dfe164845d32cdc96da",
+      "response_sha256": "cd376463aa94c18330eceb3a11776ea8f226814d74a91cb0d5f2d826c3ce92af",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 83,
+      "extracted": {
+        "error_code": "intake_invalid:INSTANCE_SCHEMA_INVALID",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 48,
+      "request_sha256": "8a548c69bdd6cd9f2ceb3ac2221790f173d9b72312f764cd6f30fa3d108f59e2",
+      "response_sha256": "7bba3b46c28041ef7e447c180362a908f0545dd7d2f0af046e90b6075ba403cb",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 85,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 49,
+      "request_sha256": "6eea9d673bab5959ef7200b44ae9382b9ceaf0ac1f6b711b3806da89642fd8eb",
+      "response_sha256": "dec11ee742afea373193516f80249ca3bea962faca620df1597ae64a61b67030",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 78,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 50,
+      "request_sha256": "748ad1ac97a86cce804092ab9f67f682f0d35b434f07465068fff420f17e0617",
+      "response_sha256": "24cc6b3e4661e9bb9a67c3544b9c734f82b7ec2acce7f9fcbdb37195b82c3bfe",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 20,
+      "extracted": {
+        "authority": "none",
+        "status": "committed",
+        "tier": "knowledge"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_knowledge_propose",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 51,
+      "request_sha256": "fb4c6761ee4193228636a65b29588d01577e3dbf0dc9497d12d523a4b954c93c",
+      "response_sha256": "d0eeaf6e47eb1079b0e3cd18cb6bb1e1fc0c8ccd1201e4d37e94771922bb7581",
+      "target": "/mcp tools/call clued_knowledge_propose"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 15,
+      "extracted": {
+        "error_code": "intake_invalid:INSTANCE_SCHEMA_INVALID",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 52,
+      "request_sha256": "a1114d5dd30bf613ba185fdab3cd27484604711b5fea2909d5be9bd5fc53f1c3",
+      "response_sha256": "5726207b173294050cc930821397f87556070523f1d3448eba517939f103e164",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 17,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 53,
+      "request_sha256": "b21e87803e2036825fffd47afc809afec6ab29045b561aadcdb5b90991582dc9",
+      "response_sha256": "1363821f6b107b5180c760f07d12a47b1a32f19a7343eaf97406152e2655ae1a",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 13,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 54,
+      "request_sha256": "e7be67d7d99e2ef0d2dc2d5e715fab22b5848c394ad108d8fa0771abc5b6dd7d",
+      "response_sha256": "f8be7fcc3ac992fddddd38084af5ac95c2d39c6b42e807263a2495e1c907eaf8",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 79,
+      "extracted": {
+        "error_code": "intake_invalid:INSTANCE_SCHEMA_INVALID",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 55,
+      "request_sha256": "03c918a6bf00e2c01cb15602c33809baea6fdaff713796487daee451ce17c2c0",
+      "response_sha256": "8a18c743061ff716b5d116928301530003b795184f5de1a0bbc28468c4849c45",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 85,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 56,
+      "request_sha256": "c0dafc3b83418c758052c35d0427c9ab92b2f7db910d9a494d117cd191ba34aa",
+      "response_sha256": "6c068f5b6742f6f987817b5d0b324ce26ad59fcc93763160494dd21417187050",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 90,
+      "extracted": {
+        "error_code": "intake_unknown_field",
+        "status": "rejected"
+      },
+      "http_status": 422,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 57,
+      "request_sha256": "e9e745cf472f985b5c7cc7a2a67d57b5982cc9ed873713a2534339e624885306",
+      "response_sha256": "7bfab66aa1c81595ddaebb7a3f2a271ad657c33a3c4f306ce6583992a2daf3c1",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 19,
+      "extracted": {
+        "authority": "none",
+        "status": "committed",
+        "tier": "knowledge"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_knowledge_propose",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 58,
+      "request_sha256": "4ce2868a64b2b8c5fd0f54e9982f79a20b73b24e723a61e70c8d8cf37eaac3c3",
+      "response_sha256": "335a7528685d14cc4e247e8b9a82071ce027dbe2f2f1c9d51bfbb901794254dc",
+      "target": "/mcp tools/call clued_knowledge_propose"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 84,
+      "extracted": {
+        "count": 18
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_list",
+          "status": 200
+        }
+      ],
+      "method": "GET",
+      "n": 59,
+      "request_sha256": null,
+      "response_sha256": "3148fd0577da6f19e548e580814c3b0ef51b021150cae88019ab369876e4e8d4",
+      "target": "/v1/intake?scope=project%3A{id}&limit=200"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 13,
+      "extracted": {
+        "count": 9
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_list",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 60,
+      "request_sha256": "9a430b271de8da944f892b34bb83f5d4f393d84079a50c679baf857b6c3dab21",
+      "response_sha256": "283806fa209e90b78d8f0e7c3aed616e3bfcda34018f9181798159e7886a1895",
+      "target": "/mcp tools/call clued_intake_list"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 13,
+      "extracted": {
+        "count": 8
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_list",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 61,
+      "request_sha256": "4bed299e16cbc0b2ab5046f7f850182ad745628e6679e8fb3683e7d11b05521a",
+      "response_sha256": "b9566501a6ae479f609dbe62db70a1fbc659b73c4c7ad88265c48390b75b3ecf",
+      "target": "/mcp tools/call clued_intake_list"
+    },
+    {
+      "channel": "db_observer_readonly",
+      "duration_ms": 3,
+      "extracted": null,
+      "http_status": null,
+      "ledger": [],
+      "method": "SELECT",
+      "n": 62,
+      "request_sha256": "042b6d972ad5266ec0cc5980b2e8a2769d8a69e55fea5252addce1e5894ec3ee",
+      "response_sha256": "cd26818a1baf1569788dd9d2f1f3e9e96ff3c691214d53b9b234899943b9c4ba",
+      "target": "canonical snapshot"
+    }
+  ]
+}

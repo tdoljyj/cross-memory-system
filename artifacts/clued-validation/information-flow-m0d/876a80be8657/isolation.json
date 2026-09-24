@@ -1,0 +1,101 @@
+{
+  "points": {
+    "credentials_absent": {
+      "child_env_allowlist": [
+        "DO_NOT_TRACK",
+        "HOME",
+        "IFE2E_DENY_PORTS",
+        "IFE2E_SUPABASE_BIN",
+        "PATH",
+        "SHELL",
+        "SUPABASE_INTERNAL_IMAGE_REGISTRY",
+        "SUPABASE_TELEMETRY_DISABLED",
+        "TERM",
+        "WRANGLER_SEND_METRICS",
+        "npm_config_cache"
+      ],
+      "child_forbidden": [],
+      "orchestrator_scan": {
+        "checked_patterns": [
+          "/^SUPABASE_ACCESS_TOKEN$/",
+          "/^SUPABASE_DB_PASSWORD$/",
+          "/^CLOUDFLARE_API_TOKEN$/",
+          "/^CLOUDFLARE_ACCOUNT_ID$/",
+          "/^ANTHROPIC_API_KEY$/",
+          "/^OPENAI_API_KEY$/",
+          "/^GOOGLE_API_KEY$/",
+          "/^AZURE_OPENAI_/",
+          "/^AWS_/",
+          "/^PROMPTFOO_/",
+          "/^GEMINI_API_KEY$/",
+          "/^MISTRAL_API_KEY$/",
+          "/^COHERE_API_KEY$/",
+          "*DATABASE_URL non-loopback",
+          "*SUPABASE_DB_URL non-loopback"
+        ],
+        "forbidden": [],
+        "project_ref_linked": false
+      },
+      "pass": true
+    },
+    "database_identity": {
+      "database": "postgres",
+      "database_oid": "5",
+      "pass": true,
+      "rule": "every observer/fixture connection asserted this identity; phase B asserted it again",
+      "server_addr": "172.18.0.2",
+      "system_identifier": "7688959234737786916"
+    },
+    "harness_egress": {
+      "denied": 0,
+      "pass": true,
+      "processes": 4
+    },
+    "historical": {
+      "pre_existing_production_state": "PR #307 states S1 was applied to clued-prod; that apply is outside this S6 run. The Owner confirmed the authorization retroactively (recorded by the caller). B08 claims only the S6 qualification runs.",
+      "scope": "S6 qualification runs only"
+    },
+    "no_deploy_no_production_read": {
+      "pass": true,
+      "production_release_gate_pre_deploy_invoked": false,
+      "worker_bindings": [
+        "CLUED_ALLOWED_ORIGINS",
+        "P5_TENANT_WRITES",
+        "PROJECT_VIEWS_V2",
+        "SUPABASE_PUBLISHABLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "wrangler_argv": [
+        "wrangler",
+        "deploy",
+        "--dry-run",
+        "--outdir",
+        "/tmp/ife2e-g2LrOh/bundle",
+        "--config",
+        "evals/information-flow-e2e/wrangler.jsonc"
+      ]
+    },
+    "worker_egress": {
+      "denied": 0,
+      "hosts_contacted": [
+        "127.0.0.1:54321"
+      ],
+      "pass": true,
+      "production_host_requests": 0,
+      "supabase_url_binding_is_gateway": true
+    },
+    "zero_cost": {
+      "deploy": false,
+      "paid_credentials_present": false,
+      "pass": true,
+      "residual": "Image and CLI pulls and CLI update/telemetry checks happen in preflight, outside the qualification window; they are not writes, reach no model provider and cost nothing."
+    },
+    "zero_model_provider_calls": {
+      "bundle_provider_hosts": [],
+      "pass": true,
+      "provider_egress": 0
+    }
+  },
+  "result": "PASS",
+  "schema": "clued.information-flow.m0d.isolation/1"
+}
