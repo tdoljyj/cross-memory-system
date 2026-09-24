@@ -25,6 +25,9 @@ on:
       - 'apps/clued-cloud/tests/record-update-field-merge-db.test.mjs'
       - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'
       - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'
+      - 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql'
+      - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'
+      - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'
       - 'apps/clued-cloud/package*.json'
   push:
     branches: [main]
@@ -51,6 +54,9 @@ on:
       - 'apps/clued-cloud/tests/record-update-field-merge-db.test.mjs'
       - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'
       - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'
+      - 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql'
+      - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'
+      - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'
       - 'apps/clued-cloud/package*.json'
   workflow_dispatch:
 
@@ -112,6 +118,7 @@ jobs:
       - run: npm run test:information-flow:invalidation
       - run: npm run test:information-flow:hardening
       - run: npm run test:records:db
+      - run: npm run test:integration-runtime:db
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
       - run: npm run test:authorization:integration
@@ -165,6 +172,7 @@ jobs:
       - run: npm run test:information-flow:invalidation
       - run: npm run test:information-flow:hardening
       - run: npm run test:records:db
+      - run: npm run test:integration-runtime:db
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
       - run: npm run test:authorization:integration
