@@ -1178,10 +1178,17 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       const visible = await f.rpc('clued_record_list', { level: 'project', project_id: destination.id,
         record_type: 'task', include_history: true });
       assert.ok(visible.records.some(row => row.id === winnerId));
+      // Removing the intent is rejected; omitting it keeps it (field-level merge).
       const immutable = await f.rpc('clued_record_mutate', { ...make(intentA), operation: 'update',
         id: winnerId, base_version: 1, scope: p.scope,
-        mutation: { type_fields: { execution_bucket: 'next' } } });
+        mutation: { type_fields: { execution_bucket: 'next', execution_intent: null } } });
       assert.equal(immutable.error_code, 'execution_intent_identity_immutable');
+      const kept = await f.rpc('clued_record_mutate', { ...make(intentA), operation: 'update',
+        id: winnerId, base_version: 1, scope: p.scope,
+        mutation: { type_fields: { execution_bucket: 'next' } } });
+      assert.equal(kept.status, 'committed', JSON.stringify(kept));
+      assert.equal((await admin.query(`select type_fields->'execution_intent'->>'id' v
+        from public.clued_memories where id=$1`, [winnerId])).rows[0].v, intentA);
       assert.equal((await admin.query(`select count(*) from public.clued_memories
         where user_id=$1 and record_type='task'`, [f.userId])).rows[0].count, '2');
     });

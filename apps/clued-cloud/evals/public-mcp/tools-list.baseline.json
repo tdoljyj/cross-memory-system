@@ -1080,7 +1080,7 @@
     },
     {
       "name": "clued_record_mutate",
-      "description": "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). On update, mutation.type_fields and mutation.relations merge into the stored top-level keys: omitted keys are kept and a key sent as null is removed; send field_mode=replace to replace them whole. Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint. Required Clued scope: context:write.",
+      "description": "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). On an existing record, mutation.type_fields and mutation.relations merge into the stored top-level keys: omitted keys are kept and a key sent as null is removed; field_mode=replace replaces each object sent whole. Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
         "required": [

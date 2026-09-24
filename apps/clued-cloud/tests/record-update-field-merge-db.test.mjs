@@ -136,11 +136,46 @@ test('record updates merge type_fields and relations instead of replacing them',
     assert.equal(result.status, 'committed', JSON.stringify(result));
     current = await row(id);
 
+    // 5c. A null object is rejected rather than read as "clear everything".
+    result = await update(id, 7, { type_fields: null });
+    assert.equal(result.status, 'rejected', JSON.stringify(result));
+    assert.match(JSON.stringify(result), /invalid_record_shape/);
+
     // 6. The stored content hash covers the merged object.
     const expected = (await admin.query(`select clued_private.m1_record_content_hash(record_type,canonical_scope,
       lifecycle_status,title,content,type_fields,relations,source_refs,source_unavailable_reason,authority,
       observed_at,closed_at,confidence,confidence_reason) h from public.clued_memories where id=$1`, [id])).rows[0].h;
     assert.equal(current.content_hash, expected);
+
+    // 8. field_mode is validated on create too.
+    result = await mutate({ ...base, operation: 'create', record_type: 'note', idempotency_key: uuid(),
+      field_mode: 'patch', source_refs: [], source_unavailable_reason: 'fixture',
+      mutation: { title: 'n', content: 'n', type_fields: { note_kind: 'log' } } });
+    assert.equal(result.status, 'rejected', JSON.stringify(result));
+    assert.match(JSON.stringify(result), /invalid_field_mode/);
+
+    // 9. Decision lineage: relations.supersedes changes only through clued_decision_supersede.
+    const dec = await mutate({ ...base, operation: 'create', record_type: 'decision', idempotency_key: uuid(),
+      source_refs: [], source_unavailable_reason: 'fixture',
+      mutation: { title: 'Successor', content: 'd', type_fields: { rationale: 'r' }, relations: {} } });
+    assert.equal(dec.status, 'committed', JSON.stringify(dec));
+    const decId = dec.target_refs[0].id;
+    const predecessor = uuid();
+    await admin.query(`update public.clued_memories set relations=jsonb_build_object('supersedes',jsonb_build_array($2::text))
+      where id=$1`, [decId, predecessor]);
+    const decUpdate = (version, extra) => mutate({ ...base, operation: 'update', record_type: 'decision', id: decId,
+      base_version: version, idempotency_key: uuid(), ...extra });
+    result = await decUpdate(1, { mutation: { relations: { see_also: ['x'] } } });
+    assert.equal(result.status, 'committed', JSON.stringify(result));
+    assert.deepEqual((await row(decId)).relations, { supersedes: [predecessor], see_also: ['x'] });
+    for (const extra of [{ mutation: { relations: { supersedes: null } } },
+      { mutation: { relations: { supersedes: [uuid()] } } },
+      { field_mode: 'replace', mutation: { relations: {} } }]) {
+      result = await decUpdate(2, extra);
+      assert.equal(result.status, 'rejected', JSON.stringify(result));
+      assert.match(JSON.stringify(result), /decision_supersede_command_required/);
+    }
+    assert.deepEqual((await row(decId)).relations, { supersedes: [predecessor], see_also: ['x'] });
 
     // 7. Close still carries only closure fields and keeps the merged type_fields.
     result = await mutate({ ...base, operation: 'close', record_type: 'task', lifecycle_status: 'completed', id,

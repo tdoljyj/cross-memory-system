@@ -3,11 +3,18 @@
 -- wholesale on update, so an update naming one key silently dropped every optional
 -- key it did not repeat (and was rejected when it omitted a required one).
 --
--- An update now merges the top-level keys it sends into the stored object: keys
--- it does not name are kept, a key sent as JSON null is removed, and nested values
--- are replaced as a whole. Required keys are still enforced by
--- m1_validate_record_shape on the merged object. A caller that needs the previous
--- behaviour sends field_mode='replace'. Create, close and restore are unchanged.
+-- Every operation on an existing record (update, close, restore, reclassify_scope)
+-- now merges the top-level keys it sends into the stored object: keys it does not
+-- name are kept, a key sent as JSON null is removed, and nested values are replaced
+-- as a whole. Required keys are still enforced by m1_validate_record_shape on the
+-- merged object. A caller that needs the previous behaviour sends
+-- field_mode='replace', which replaces each object it sends and keeps one it omits.
+-- Create stores what it is given; field_mode is validated there too.
+--
+-- The Decision lineage guard is tightened with it: an operation on an existing
+-- Decision may no longer change or remove relations.supersedes. Before, any
+-- relations edit on a superseding Decision was rejected (and, with merging, would
+-- still be), while sending supersedes as null silently dropped the lineage.
 --
 -- The Information Flow Context Policy acceptance (IF S4) relies on replacement so
 -- that the confirmed view digest covers the whole Decision body; its body now
@@ -51,7 +58,21 @@ begin
   body:=pg_get_functiondef('clued_private.record_mutation_core(uuid,uuid,jsonb,text)'::regprocedure);
   if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1
     then raise exception 'record_update_field_merge_core_definition_mismatch'; end if;
-  execute replace(body,anchor,merged);
+  body:=replace(body,anchor,merged);
+  -- Lineage: only clued_decision_supersede may set relations.supersedes.
+  anchor:=$anchor$      if v_record_type='decision' and jsonb_array_length(coalesce(v_relations->'supersedes','[]'))>0 and v_relations is distinct from v_record.relations then$anchor$;
+  if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1
+    then raise exception 'record_update_field_merge_lineage_definition_mismatch'; end if;
+  body:=replace(body,anchor,$lineage$      if v_record_type='decision' and v_relations->'supersedes' is distinct from v_record.relations->'supersedes' then$lineage$);
+  -- field_mode is validated on create as well, where it has no effect.
+  anchor:=$anchor$      v_type_fields:=coalesce(v_mutation->'type_fields','{}');$anchor$;
+  if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1
+    then raise exception 'record_update_field_merge_create_definition_mismatch'; end if;
+  body:=replace(body,anchor,$create$      if coalesce(p_input->>'field_mode','merge') not in ('merge','replace') then
+        raise exception 'invalid_field_mode' using errcode='22023';
+      end if;
+$create$||anchor);
+  execute body;
 end $migration$;
 
 do $migration$
