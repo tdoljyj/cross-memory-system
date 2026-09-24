@@ -33,6 +33,14 @@
 --   scopes and marks the manifest inputs_changed) or by an exclusive
 --   currentness writer (which marks it itself); a holder that rolls back
 --   leaves the row live, and revalidation still returns STALE (disclosed).
+-- * Maintenance DML hazard (A03): the S5 triggers on public.clued_memories
+--   take currentness_user_lock inside the row write, including for
+--   note/profile_fact rows whose writers otherwise never take it. Any
+--   maintenance DML on public.clued_memories outside the M1 wrapper (for
+--   example a service_role or admin direct UPDATE/DELETE) must first call
+--   clued_private.currentness_user_lock(<user_id>) for every affected user;
+--   otherwise it can lock a Record row and then wait on the currentness lock
+--   while an M1 writer holds currentness and waits on that row (deadlock).
 -- Additive only: no column of an existing table is altered.
 
 -- ---------------------------------------------------------------------------
@@ -54,7 +62,7 @@ create table clued_private.evidence_withdrawals (
   token_id uuid not null unique references clued_private.native_confirmation_tokens(id),
   withdrawn_session_id text,
   withdrawn_at timestamptz not null default now(),
-  -- Counts only.
+  -- Counts and sha256 digests of the sorted dependent lists (no id lists).
   fanout jsonb not null check (jsonb_typeof(fanout)='object'),
   foreign key (user_id,evidence_id) references public.clued_evidence(user_id,id) on delete cascade,
   unique (user_id,evidence_id)
@@ -669,7 +677,12 @@ begin
       'expires_at',v_expires,'evidence_id',v_evidence,'base_version',v_base,'confirmation_view',v_view,
       'view_digest',v_digest,'authoritative',false,
       -- Informational only; not digested. The fan-out is computed at consume.
-      'effects_preview',clued_private.evidence_withdrawal_effects_v1(p_user_id,v_evidence));
+      -- Each list is capped at 100 entries; counts are always complete.
+      'effects_preview',(select jsonb_object_agg(e.k,(select coalesce(jsonb_agg(v order by o),'[]'::jsonb)
+          from jsonb_array_elements(e.v) with ordinality a(v,o) where o<=100))
+        ||jsonb_build_object('counts',jsonb_object_agg(e.k,jsonb_array_length(e.v)),
+          'truncated',bool_or(jsonb_array_length(e.v)>100))
+        from jsonb_each(clued_private.evidence_withdrawal_effects_v1(p_user_id,v_evidence)) e(k,v)));
   exception when sqlstate '22023' or sqlstate '23514' or sqlstate '40001' or sqlstate '42501'
       or sqlstate 'P0002' or sqlstate '55000' then
     get stacked diagnostics v_error=message_text;
@@ -689,6 +702,7 @@ declare v_receipt public.clued_audit_receipts%rowtype; v_token clued_private.nat
   v_ev public.clued_evidence%rowtype; v_view jsonb; v_effects jsonb; v_withdrawal_id uuid:=gen_random_uuid();
   v_record_ids text[]; v_candidates jsonb:='[]'; v_x record; v_version integer;
   v_base_versions jsonb; v_committed jsonb; v_stale integer; v_ids text[]; v_refs jsonb; v_event_id text;
+  v_cand_base jsonb; v_fanout jsonb; v_cap integer:=100;
   v_result jsonb; v_error text; v_state text;
 begin
   v_receipt:=clued_private.m1_begin_receipt(p_user_id,null,'evidence_withdraw',p_input,p_received_payload_hash);
@@ -785,14 +799,29 @@ begin
       order by k.id for update;
     v_effects:=clued_private.evidence_withdrawal_effects_v1(p_user_id,v_evidence);
 
+    -- The fan-out itself is uncapped. Audit surfaces (the withdrawal row, the
+    -- Event and the Receipt) carry only counts and sha256 digests of each
+    -- sorted list; only the caller's supplemental echoes (capped) lists.
+    select coalesce(jsonb_agg(c order by c->>'tier',c->>'id'),'[]'::jsonb) into v_cand_base from (
+      select jsonb_build_object('tier','information','id',x->>'id','version',(x->>'version')::integer) c
+        from jsonb_array_elements(v_effects->'information_candidates') x
+      union all select jsonb_build_object('tier','knowledge','id',x->>'id','version',(x->>'version')::integer)
+        from jsonb_array_elements(v_effects->'knowledge_candidates') x) y;
+    v_fanout:=jsonb_build_object(
+      'records',jsonb_build_object('count',jsonb_array_length(v_effects->'records'),
+        'digest',clued_private.m1_sha256(v_effects->'records')),
+      'candidates',jsonb_build_object('count',jsonb_array_length(v_cand_base),
+        'information',jsonb_array_length(v_effects->'information_candidates'),
+        'knowledge',jsonb_array_length(v_effects->'knowledge_candidates'),
+        'digest',clued_private.m1_sha256(v_cand_base)),
+      'knowledge',jsonb_build_object('count',jsonb_array_length(v_effects->'knowledge'),
+        'digest',clued_private.m1_sha256(v_effects->'knowledge')));
     insert into clued_private.evidence_withdrawals(id,user_id,evidence_id,reason,evidence_content_hash,
       withdrawn_receipt_id,token_id,withdrawn_session_id,fanout)
     values(v_withdrawal_id,p_user_id,v_evidence,v_token.native_choices->>'reason',v_ev.content_hash,v_receipt.id,
-      v_token.id,nullif(auth.jwt()->>'session_id',''),jsonb_build_object(
-        'records',jsonb_array_length(v_effects->'records'),
-        'information_candidates',jsonb_array_length(v_effects->'information_candidates'),
-        'knowledge_candidates',jsonb_array_length(v_effects->'knowledge_candidates'),
-        'knowledge',jsonb_array_length(v_effects->'knowledge')));
+      v_token.id,nullif(auth.jwt()->>'session_id',''),v_fanout);
+    -- The Receipt carries the withdrawal-row CAS only; each candidate's
+    -- row-version CAS is its candidate_transitions row bound to this Receipt.
     v_base_versions:=jsonb_build_object('evidence_withdrawal:'||v_evidence::text,0);
     v_committed:=jsonb_build_object('evidence_withdrawal:'||v_evidence::text,1);
 
@@ -807,8 +836,6 @@ begin
       update clued_private.candidate_confirmation_tokens set revoked_at=clock_timestamp()
         where candidate_tier=v_x.tier and candidate_id=v_x.id and consumed_at is null and revoked_at is null;
       v_candidates:=v_candidates||jsonb_build_array(jsonb_build_object('tier',v_x.tier,'id',v_x.id,'version',v_version));
-      v_base_versions:=v_base_versions||jsonb_build_object(v_x.tier||'_candidate:'||v_x.id::text,v_version-1);
-      v_committed:=v_committed||jsonb_build_object(v_x.tier||'_candidate:'||v_x.id::text,v_version);
     end loop;
 
     -- Manifests first, so the stale reason is deterministic.
@@ -829,22 +856,35 @@ begin
       consumed_receipt_id=v_receipt.id,consume_outcome='committed' where id=v_token.id;
     -- System and Evidence refs only: Record refs on an audit Event could
     -- reach Currentness.
+    v_fanout:=v_fanout||jsonb_build_object('stale_manifests',v_stale);
     v_refs:=jsonb_build_array(
       jsonb_build_object('role','primary','kind','system','id','evidence_withdrawal:'||v_withdrawal_id::text),
-      jsonb_build_object('role','evidence','kind','evidence','id',v_evidence::text));
+      jsonb_build_object('role','evidence','kind','evidence','id',v_evidence::text),
+      -- Binds the Receipt to the Event's fan-out summary.
+      jsonb_build_object('role','target','kind','system',
+        'id','evidence_withdrawal_fanout:'||clued_private.m1_sha256(v_fanout)));
     v_event_id:=clued_private.m1_append_event_row(p_user_id,null,v_receipt.id,v_receipt.canonical_version,
       'extension:information_flow:evidence_withdrawn',v_refs,'global',null,
       jsonb_build_object('evidence_id',v_evidence,'withdrawal_id',v_withdrawal_id,'token_id',v_token.id,
-        'candidates',v_candidates,'records',v_effects->'records','knowledge',v_effects->'knowledge',
-        'stale_manifests',v_stale),
+        'fanout',v_fanout),
       'evidence_withdraw:'||(p_input->>'idempotency_key'),v_receipt.request_sha256,'success','audit_only',
       array[v_evidence],'[]',null);
     v_result:=clued_private.m1_finish_receipt(v_receipt.id,'committed',v_refs,v_base_versions,v_committed,
       array[v_event_id],array[v_evidence],null);
     return v_result||jsonb_build_object('replayed',false,'supplemental',jsonb_build_object(
       'outcome','withdrawn','evidence_id',v_evidence,'withdrawal_id',v_withdrawal_id,'withdrawal_version',1,
-      'conflicted_candidates',v_candidates,'flagged_records',v_effects->'records',
-      'stale_lineage',v_effects->'knowledge','stale_manifests',v_stale));
+      'fanout',v_fanout,
+      -- Echoed lists are capped; the totals and digests are in fanout.
+      'conflicted_candidates',(select coalesce(jsonb_agg(c order by o),'[]'::jsonb)
+        from jsonb_array_elements(v_candidates) with ordinality a(c,o) where o<=v_cap),
+      'flagged_records',(select coalesce(jsonb_agg(c order by o),'[]'::jsonb)
+        from jsonb_array_elements(v_effects->'records') with ordinality a(c,o) where o<=v_cap),
+      'stale_lineage',(select coalesce(jsonb_agg(c order by o),'[]'::jsonb)
+        from jsonb_array_elements(v_effects->'knowledge') with ordinality a(c,o) where o<=v_cap),
+      'list_cap',v_cap,
+      'truncated',greatest(jsonb_array_length(v_candidates),jsonb_array_length(v_effects->'records'),
+        jsonb_array_length(v_effects->'knowledge'))>v_cap,
+      'stale_manifests',v_stale));
   exception when others then
     get stacked diagnostics v_error=message_text,v_state=returned_sqlstate;
     -- Single use: any attempt that presented a live token burns it. The

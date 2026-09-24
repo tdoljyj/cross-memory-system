@@ -584,6 +584,7 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
           storage_ref: snapshot.evidence.storage_ref, recorded_at: snapshot.evidence.recorded_at } });
       assert.equal(issued4.body.view_digest, (await tokenRow(issued4.body.token_id)).view_digest);
       assert.deepEqual(issued4.body.effects_preview.records, [{ id: recordR, version: 1 }]);
+      assert.deepEqual([issued4.body.effects_preview.counts.records, issued4.body.effects_preview.truncated], [1, false]);
       assert.equal(await count('public.clued_audit_receipts', "operation_family='evidence_withdraw'"), 0,
         'issuing writes no Receipt');
       const withdrawn4 = await withdraw(evidenceE, withdrawInput(issued4.body));
@@ -602,7 +603,16 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
         withdrawalRow.token_id, withdrawalRow.withdrawn_session_id, withdrawalRow.evidence_content_hash],
       ['withdrawn', 1, 'The capture was pasted into the wrong chat', withdrawn4.body.receipt_id, issued4.body.token_id,
         'sess-main', snapshot.evidence.content_hash]);
-      assert.deepEqual(withdrawalRow.fanout, { records: 1, information_candidates: 1, knowledge_candidates: 1, knowledge: 1 });
+      const m1sha = async (value) => (await admin.query('select clued_private.m1_sha256($1::jsonb) v',
+        [JSON.stringify(value)])).rows[0].v;
+      assert.deepEqual(withdrawalRow.fanout, {
+        records: { count: 1, digest: await m1sha([{ id: recordR, version: 1 }]) },
+        candidates: { count: 2, information: 1, knowledge: 1, digest: await m1sha([
+          { tier: 'information', id: cand2, version: 1 }, { tier: 'knowledge', id: kc4, version: 1 }]) },
+        knowledge: { count: 1, digest: await m1sha([{ knowledge_record_id: k4, knowledge_version: 1 }]) },
+      }, 'the withdrawal row stores counts and digests, not id lists');
+      assert.deepEqual(out4.fanout, { ...withdrawalRow.fanout, stale_manifests: 1 });
+      assert.deepEqual([out4.list_cap, out4.truncated], [100, false]);
       for (const [table, id] of [['information_candidates', cand2], ['knowledge_candidates', kc4]]) {
         const row = (await admin.query(`select status,version,decided_by,last_receipt_id from clued_private.${table}
           where id=$1`, [id])).rows[0];
@@ -632,15 +642,21 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
         [withdrawn4.body.receipt_id])).rows[0];
       assert.deepEqual([wdReceipt.operation_family, wdReceipt.status, wdReceipt.binding_id, wdReceipt.evidence_ids],
         ['evidence_withdraw', 'committed', null, [evidenceE]]);
-      assert.deepEqual(wdReceipt.base_versions, { [`evidence_withdrawal:${evidenceE}`]: 0,
-        [`information_candidate:${cand2}`]: 1, [`knowledge_candidate:${kc4}`]: 1 });
-      assert.deepEqual(wdReceipt.committed_versions, { [`evidence_withdrawal:${evidenceE}`]: 1,
-        [`information_candidate:${cand2}`]: 2, [`knowledge_candidate:${kc4}`]: 2 }, 'no Record keys: no Record changes');
+      assert.deepEqual(wdReceipt.base_versions, { [`evidence_withdrawal:${evidenceE}`]: 0 });
+      assert.deepEqual(wdReceipt.committed_versions, { [`evidence_withdrawal:${evidenceE}`]: 1 },
+        'no Record keys and no per-candidate keys: the Receipt size is bounded');
+      const fanoutRef = `evidence_withdrawal_fanout:${await m1sha(out4.fanout)}`;
+      assert.ok(wdReceipt.target_refs.some((ref) => ref.id === fanoutRef),
+        'the Receipt binds the fan-out summary digest');
+      assert.ok(!JSON.stringify(wdReceipt.canonical_result).includes(cand2), 'no candidate id in the Receipt');
       const wdEvent = (await admin.query('select * from public.clued_context_events where id=$1::bigint',
         [withdrawn4.body.event_ids[0]])).rows[0];
       assert.deepEqual([wdEvent.canonical_event_type, wdEvent.event_type, wdEvent.audit_visibility, wdEvent.event_scope],
         ['extension:information_flow:evidence_withdrawn', 'action', 'audit_only', 'global']);
       assert.ok(wdEvent.target_refs.every((ref) => ['system', 'evidence'].includes(ref.kind)), 'no Record refs');
+      assert.deepEqual(Object.keys(wdEvent.change_summary).sort(), ['evidence_id', 'fanout', 'token_id', 'withdrawal_id']);
+      assert.deepEqual(wdEvent.change_summary.fanout, out4.fanout, 'the Event carries counts and digests only');
+      assert.ok(!JSON.stringify(wdEvent.change_summary).includes(recordR));
       assert.equal(await count('clued_private.event_truth_carriers', 'event_id=$1', [wdEvent.id]), 0, 'no carrier');
       assert.ok(!JSON.stringify(wdEvent).includes(issued4.body.confirmation_token), 'the token never reaches an Event');
       assert.equal((await tokenRow(issued4.body.token_id)).consume_outcome, 'committed');
@@ -680,6 +696,32 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
       const e04Resourced = packOk((await post('/v1/context/pack', { scope: p4, task_class: 'e04.all' })).body, 'e04 v3');
       assert.deepEqual(e04Resourced.pack.items.map((row) => [row.canonical_id, row.version, row.human_confirmed]).sort(),
         [[noteS, 1, true], [recordR, 3, true]].sort());
+
+      // ---- Output cap: the fan-out is uncapped, the echoed lists are not.
+      const pCap = await project('cap');
+      const eCap = await nativeEvidence('s5-cap-evidence');
+      const capIds = [];
+      for (let i = 0; i < 101; i += 1) {
+        const id = uuid();
+        capIds.push(id);
+        const written = (await admin.query('select clued_private.record_mutation_with_terminal_guard($1,null,$2,$3) v',
+          [userId, noteInput(id, `Cap note ${i}`, { scope: pCap, sources: [eCap] }), hash()])).rows[0].v;
+        assert.equal(written.status, 'committed', JSON.stringify(written));
+      }
+      const capIssued = (await issueWithdrawal(eCap, 0)).body;
+      assert.deepEqual([capIssued.effects_preview.records.length, capIssued.effects_preview.counts.records,
+        capIssued.effects_preview.truncated], [100, 101, true]);
+      const capWithdrawn = await withdraw(eCap, withdrawInput(capIssued));
+      assert.equal(capWithdrawn.body.status, 'committed', JSON.stringify(capWithdrawn.body).slice(0, 400));
+      const capOut = capWithdrawn.body.supplemental;
+      assert.deepEqual([capOut.flagged_records.length, capOut.fanout.records.count, capOut.truncated, capOut.list_cap],
+        [100, 101, true, 100]);
+      assert.equal(await count('clued_private.record_evidence_status', 'evidence_id=$1', [eCap]), 101,
+        'every dependent Record is flagged');
+      const capEvent = (await admin.query('select change_summary from public.clued_context_events where id=$1::bigint',
+        [capWithdrawn.body.event_ids[0]])).rows[0].change_summary;
+      assert.equal(capEvent.fanout.records.count, 101);
+      assert.ok(JSON.stringify(capEvent).length < 1000, 'the Event size does not grow with the fan-out');
 
       // ---- Withdrawal guard matrix.
       const eg = await nativeEvidence('s5-guard-evidence');
@@ -785,7 +827,7 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
       assert.equal(agentEvidence.status, 'committed', JSON.stringify(agentEvidence));
       const agentIssued = (await issueWithdrawal(agentEvidence.evidence_ids[0], 0)).body;
       assert.equal((await withdraw(agentEvidence.evidence_ids[0], withdrawInput(agentIssued))).body.status, 'committed');
-      assert.equal(await count('clued_private.evidence_withdrawals', 'user_id=$1', [userId]), 3);
+      assert.equal(await count('clued_private.evidence_withdrawals', 'user_id=$1', [userId]), 4);
 
       // ---- E2E-05 (B05 half): proactive stale on Binding scope reduction.
       const p5a = await project('e2e-05-a');
