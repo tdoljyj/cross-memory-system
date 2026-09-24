@@ -42,11 +42,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # site-company matches both company Linux slots, so company routes use
+          # each runner's own route label; home has a single Linux runner.
           - runner_name: clued-ci-company-linux-01
-            site_label: site-company
+            route_label: runner-company-linux-01
+          - runner_name: clued-ci-company-linux-02
+            route_label: runner-company-linux-02
           - runner_name: clued-ci-home-linux-01
-            site_label: site-home
-    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, runtime-wsl2, "${{ matrix.site_label }}"]
+            route_label: site-home
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, runtime-wsl2, "${{ matrix.route_label }}"]
     timeout-minutes: 10
     steps:
       - name: Verify exact runner route

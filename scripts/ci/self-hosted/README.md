@@ -37,7 +37,8 @@ The inventory currently declares two active physical hosts:
 ```text
 company-primary / DESK-W-591
 ├─ clued-ci-company-win-01
-└─ clued-ci-company-linux-01
+├─ clued-ci-company-linux-01
+└─ clued-ci-company-linux-02   (additional Linux slot)
    capacity: workstation-v1
 
 home-primary / Turing
@@ -50,7 +51,7 @@ Runtime online/busy state is intentionally **not** stored in Git. The inventory 
 
 ## Low-cost CI health monitor
 
-`.github/workflows/clued-ci-health.yml` checks the pool once an hour on a small GitHub-hosted runner (hourly bounds the hosted-minute cost). The hosted runner is deliberate: a monitor scheduled on the pool it watches could not report a total pool outage. `.github/workflows/clued-ci-runner-heartbeat.yml` separately sends a no-checkout, exact-label route probe to each of the four declared runners every 15 minutes. A successful probe proves that the named runner can accept its complete required-label contract. The healthy path is entirely deterministic and never invokes a model.
+`.github/workflows/clued-ci-health.yml` checks the pool once an hour on a small GitHub-hosted runner (hourly bounds the hosted-minute cost). The hosted runner is deliberate: a monitor scheduled on the pool it watches could not report a total pool outage. `.github/workflows/clued-ci-runner-heartbeat.yml` separately sends a no-checkout, exact-label route probe to each of the five declared runners every 15 minutes (company Linux slots route by their own `runner-company-linux-NN` label). A successful probe proves that the named runner can accept its complete required-label contract. The healthy path is entirely deterministic and never invokes a model.
 
 The default path needs no extra secret. GitHub's workflow token can read workflow/job state but cannot list repository runner registrations, so the monitor falls back to the four exact-label heartbeat routes. If a deliberately scoped `CI_HEALTH_GITHUB_TOKEN` secret with repository Administration read access is later supplied, the same script also uses the direct runner API for registered name, OS, labels, online, and busy state. The secretless heartbeat path remains the default and treats inability to call the administrative endpoint as an observation-mode choice, not as an anomaly.
 
@@ -307,6 +308,22 @@ The rendered watchdog is intentionally conservative:
 - suspends Linux CI only after the current Linux job is idle and host memory/disk crosses the profile's danger threshold;
 - resumes Linux CI after the profile's recovery threshold is satisfied;
 - never changes GitHub Secrets, production deployment authority, DNS, database state, or production traffic.
+
+## Add a Linux slot on an existing host
+
+A host with spare WSL capacity can run more than one Linux runner in the same distro. Each extra slot is declared under the host's `additional_linux_runners` with its own `name`, `root`, `service_unit` and a `route_label` of the form `runner-<site>-linux-NN`; it shares the primary runner's `distro`, `user`, watchdog and Docker engine. While its `state` is `enrolling`, the health monitor treats it as known but not required and the watchdog leaves it alone.
+
+Jobs that bind fixed host ports (`public-mcp-protocol` and `public-mcp-behavior` share port 8787 and the default local Supabase ports) take the host-wide `host-port-lock.sh ... public-mcp-ports` lock, so two slots on one host never run them at the same time. Other Linux jobs use free or run-isolated ports and run in parallel.
+
+Enroll the slot inside the host's WSL distro as the runner user, using a fresh registration token from GitHub → Settings → Actions → Runners → New self-hosted runner:
+
+```bash
+bash scripts/ci/self-hosted/bootstrap-linux-runner.sh --site company \
+  --name clued-ci-company-linux-02 --root "$HOME/actions-runner-02" \
+  --extra-labels runner-company-linux-02
+```
+
+Then, in one change: set the slot's `state` to `active`, give the primary runner on the same host its own `route_label` (add that label to the primary runner in GitHub's runner settings first), add both route labels to the heartbeat matrix, and re-render the host watchdog with `render-host-watchdog.ps1 -HostId <host>` so it also supervises the new service.
 
 ## Add a third or fourth device
 

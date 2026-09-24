@@ -57,6 +57,8 @@ test("implements MCP initialization and continuity tool discovery", async () => 
   assert.equal(initialized.result.serverInfo.name, "Clued Continuity");
   assert.equal(initialized.result.protocolVersion, "2026-07-28");
   assert.equal(initialized.result.serverInfo.version, "0.4.0");
+  assert.match(initialized.result.instructions, /https:\/\/clued\.test\/clued-agent\.md/);
+  assert.match(initialized.result.instructions, /in the same turn, before reporting it done/);
 
   const list = await worker.fetch(
     new Request("https://clued.test/mcp", {
