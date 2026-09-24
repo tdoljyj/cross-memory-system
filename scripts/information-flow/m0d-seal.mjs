@@ -86,7 +86,9 @@ if (command === 'closure') {
     vendored_subsets: { m0a: vendoredA, m0c: vendoredC },
     contract: { path: CONTRACT, sha256: fileSha(CONTRACT) },
     parents: { original_bytes_modified: a01 ? a01.adapter?.original_bytes_modified : null,
-      a01_result: a01?.result ?? 'NOT_EXECUTED' },
+      a01_result: a01?.result ?? 'NOT_EXECUTED',
+      a01_m0c_test_attempts: a01?.parent_entries?.m0c?.tests?.attempts?.map((a) => ({ attempt: a.attempt,
+        exit_code: a.exit_code, failing_tests: a.failing_tests })) ?? null },
     register: { path: REGISTER, sha256: fileSha(REGISTER), entries: ids.length,
       contract_mandated_present: required.every((id) => ids.includes(id)), all_open: register.entries.every((e) => e.status === 'OPEN') },
   };
@@ -108,7 +110,8 @@ if (command === 'closure') {
     ...listFiles(path.join(repoRoot, 'scripts/information-flow')).map((f) => `scripts/information-flow/${f}`),
     '.github/workflows/information-flow-e2e.yml',
   ];
-  const evidence = listFiles(dir, new Set(['review-input.json', 'b09-review.json', 'manifest.json', 'SHA256SUMS']));
+  const evidence = listFiles(dir, new Set(['review-input.json', 'b09-review.json', 'manifest.json', 'SHA256SUMS',
+    'b09-review-brief.md']));
   const rel = path.relative(repoRoot, dir).split(path.sep).join('/');
   write(path.join(dir, 'review-input.json'), {
     schema: 'clued.information-flow.m0d.review-input/1', gate: 'M0D-B09',
@@ -166,11 +169,25 @@ if (command === 'closure') {
     parents: a01 ? { transport_zip_sha256: a01.source.transport_zip_sha256, result: a01.result } : null,
     part_a: partA,
     part_b: partB,
+    supporting_db_evidence: {
+      'E2E-02 issue+consume in one transaction': (() => {
+        const suite = regression?.suites?.find((s) => s.suite === 'test:information-flow:promotion');
+        return { suite: 'test:information-flow:promotion', file: 'apps/clued-cloud/tests/information-flow-promotion-db.test.mjs',
+          assertion: 'confirmation_token_same_request', result: suite?.result ?? 'MISSING',
+          output_sha256: suite?.output_sha256 ?? null, role: 'supporting evidence only' };
+      })(),
+    },
+    review_rounds: fs.existsSync(path.join(dir, 'b09-review.rounds'))
+      ? fs.readdirSync(path.join(dir, 'b09-review.rounds')).sort().map((name) => {
+        const round = readJson(path.join(dir, 'b09-review.rounds', name));
+        return { file: `b09-review.rounds/${name}`, input_commit: round.input_commit, verdict: round.verdict,
+          counts: round.counts, sha256: sha(fs.readFileSync(path.join(dir, 'b09-review.rounds', name))) };
+      }) : [],
     observations: { 'E2E-11': { result: results['E2E-11']?.result ?? 'MISSING', register_entry: 'L01', limitation_id: 'OPEN_BY_OD-5' } },
     proposed_verdict_labels: {
       part_a: `A01 ${partA['M0D-A01']}, A02 UNMET (OD-1b), A03 ${partA['M0D-A03']}, A04 PASS; MVP-0 stays open`,
-      part_b: allB && partA['M0D-A01'] === 'PASS' && partA['M0D-A03'] === 'PASS'
-        ? 'PASS / CLUED_INFORMATION_FLOW_M0D_PART_B_RUNTIME_ACCEPTED_MODEL_FREE_LOCAL_QUALIFIED (Agent authority confined only on the Information Flow path)'
+      part_b: allB && /^PASS/.test(partA['M0D-A01']) && partA['M0D-A03'] === 'PASS'
+        ? `PASS / CLUED_INFORMATION_FLOW_M0D_PART_B_RUNTIME_ACCEPTED_MODEL_FREE_LOCAL_QUALIFIED (Agent authority confined only on the Information Flow path)${partA['M0D-A01'] === 'PASS' ? '' : '; conditional on Owner acceptance of the disclosed A01 nondeterminism'}`
         : 'BLOCKED / CLUED_INFORMATION_FLOW_M0D_GAPS_FOUND',
       never_combined: true,
       recorded_by: 'proposal only; a Canonical verdict Decision needs the Owner (contract header rule); Task 45fb2ae7 stays open',

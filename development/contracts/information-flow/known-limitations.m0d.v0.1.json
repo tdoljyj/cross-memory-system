@@ -13,7 +13,10 @@
       "consequence": "Agent authority is confined only on the Information Flow path; every PASS label carries that qualifier. Such Records are Agent-authored and excluded from the default policy (E2E-12).",
       "successor": "A separate Owner decision on OD-5 (tighten general M1 writes); E2E-11 expectation then flips to rejection.",
       "status": "OPEN",
-      "evidence_refs": ["e2e/E2E-11.json", "e2e/E2E-12.json"]
+      "evidence_refs": [
+        "e2e/E2E-11.json",
+        "e2e/E2E-12.json"
+      ]
     },
     {
       "id": "L02",
@@ -23,7 +26,10 @@
       "consequence": "Contract text says human only in this sense.",
       "successor": "Stronger user-presence evidence (for example WebAuthn step-up) in a later contract.",
       "status": "OPEN",
-      "evidence_refs": ["e2e/E2E-02.json", "e2e/E2E-15.json"]
+      "evidence_refs": [
+        "e2e/E2E-02.json",
+        "e2e/E2E-15.json"
+      ]
     },
     {
       "id": "L03",
@@ -33,7 +39,10 @@
       "consequence": "Readers outside the Context Compiler do not see the invalidation.",
       "successor": "A reviewed propagation of invalidation to other read surfaces.",
       "status": "OPEN",
-      "evidence_refs": ["e2e/E2E-03.json", "e2e/E2E-04.json"]
+      "evidence_refs": [
+        "e2e/E2E-03.json",
+        "e2e/E2E-04.json"
+      ]
     },
     {
       "id": "L04",
@@ -43,7 +52,9 @@
       "consequence": "Older Native Records are excluded from default packs until re-confirmed through a Native write.",
       "successor": "An Owner-authorized, Receipt-backed re-confirmation flow.",
       "status": "OPEN",
-      "evidence_refs": ["e2e/E2E-13.json"]
+      "evidence_refs": [
+        "e2e/E2E-13.json"
+      ]
     },
     {
       "id": "L05",
@@ -53,7 +64,9 @@
       "consequence": "Denial of service, not a policy change.",
       "successor": "OD-5 decision; per-policy Decision write protection.",
       "status": "OPEN",
-      "evidence_refs": ["e2e/E2E-14.json"]
+      "evidence_refs": [
+        "e2e/E2E-14.json"
+      ]
     },
     {
       "id": "L06",
@@ -63,7 +76,10 @@
       "consequence": "Both read human_confirmed=true in packs although their confirmation strength differs.",
       "successor": "A marker strength field or a two-step option for direct Native writes.",
       "status": "OPEN",
-      "evidence_refs": ["e2e/E2E-14.json", "e2e/E2E-01.json"]
+      "evidence_refs": [
+        "e2e/E2E-14.json",
+        "e2e/E2E-01.json"
+      ]
     },
     {
       "id": "L07",
@@ -103,7 +119,9 @@
       "consequence": "Production behaviour must be read back before any authorized apply.",
       "successor": "Production read-back under a separately authorized apply.",
       "status": "OPEN",
-      "evidence_refs": ["setup.json"]
+      "evidence_refs": [
+        "setup.json"
+      ]
     },
     {
       "id": "L11",
@@ -133,7 +151,9 @@
       "consequence": "A direct PostgREST caller can obtain an unmeasured pack.",
       "successor": "Server-side token counting if the tokenizer is accepted.",
       "status": "OPEN",
-      "evidence_refs": ["e2e/E2E-01.json"]
+      "evidence_refs": [
+        "e2e/E2E-01.json"
+      ]
     },
     {
       "id": "L14",
@@ -143,7 +163,9 @@
       "consequence": "The Cloudflare plan-limit check and a production CPU observation are a precondition of any authorized production apply (Owner decision).",
       "successor": "Tokenizer acceptance; production limits check before apply.",
       "status": "OPEN",
-      "evidence_refs": ["bundle-observation.json"]
+      "evidence_refs": [
+        "bundle-observation.json"
+      ]
     },
     {
       "id": "L15",
@@ -153,7 +175,9 @@
       "consequence": "Re-sourcing needs a new Evidence and a Receipt-backed Record write.",
       "successor": "A reinstatement transition in a later contract.",
       "status": "OPEN",
-      "evidence_refs": ["e2e/E2E-04.json"]
+      "evidence_refs": [
+        "e2e/E2E-04.json"
+      ]
     },
     {
       "id": "L16",
@@ -163,7 +187,9 @@
       "consequence": "A manifest can read stale=false until revalidated; revalidation is the backstop.",
       "successor": "None planned; disclosed.",
       "status": "OPEN",
-      "evidence_refs": ["e2e/E2E-05.json"]
+      "evidence_refs": [
+        "e2e/E2E-05.json"
+      ]
     },
     {
       "id": "L17",
@@ -173,7 +199,9 @@
       "consequence": "Raw maintenance DML can deadlock with withdrawal fan-out.",
       "successor": "Runbook rule; no code change.",
       "status": "OPEN",
-      "evidence_refs": ["e2e/E2E-13.json"]
+      "evidence_refs": [
+        "e2e/E2E-13.json"
+      ]
     },
     {
       "id": "L18",
@@ -249,21 +277,63 @@
       "id": "L25",
       "title": "S6 harness residuals",
       "source": "S6 plan 14 items 2-6, 16-19, 25, 26",
-      "statement": "Bindings are minted through v12 RPCs with a fixture issuer row (the OAuth consent wrapper and KV are not exercised); issue+consume in one request is structurally impossible over HTTP (DB-level test); the kill is a SIGKILL of the workerd host group after the committed upstream response; E2E-08 restarts db/PostgREST/GoTrue/Kong and a new process; token expiry uses the real clock; the 15-minute re-authentication case stays DB-level; the harness Worker config omits global_fetch_strictly_public; the harness Worker entry is the continuity handler, not the full vinext entry; E2E-05 reduction is a PostgREST call with the owner JWT; E2E-15(b) needs a DB fixture re-point; the observer is read-only and used only for internal state with no read route; E2E-10 reads the Record body through the Native export route.",
+      "statement": "Bindings are minted and reduced through the v12 RPCs over PostgREST with a fixture issuer row; the Worker consent API, the delegated-OAuth scopedApi/checkBinding wrapper and KV are not exercised (successor L27); issue+consume in one request is structurally impossible over HTTP (DB-level test); the kill is a SIGKILL of the workerd host group after the committed upstream response; E2E-08 restarts db/PostgREST/GoTrue/Kong and a new process; token expiry uses the real clock; the 15-minute re-authentication case stays DB-level; the harness Worker config omits global_fetch_strictly_public; the harness Worker entry is the continuity handler, not the full vinext entry; E2E-05 reduction is a PostgREST call with the owner JWT; E2E-15(b) needs a DB fixture re-point; the observer is read-only and used only for internal state with no read route; E2E-10 reads the Record body through the Native export route.",
       "consequence": "Evidence is local transport qualification with these disclosed substitutions.",
       "successor": "None planned; disclosed.",
       "status": "OPEN",
-      "evidence_refs": ["run.json", "isolation.json"]
+      "evidence_refs": [
+        "run.json",
+        "isolation.json"
+      ]
     },
     {
       "id": "L26",
       "title": "Production state",
       "source": "PR #307; contract OD-4",
-      "statement": "S1 was applied to clued-prod per PR #307 (authorization confirmed retroactively by the Owner); S2-S5 were not applied; the production release gate blocks releases. No full apply has been read back.",
-      "consequence": "Every verdict keeps _LOCAL_QUALIFIED; the Task criterion 'truly connected to the Canonical Store' is not met.",
+      "statement": "S1 was applied to clued-prod per PR #307. The Owner authorized that apply retroactively in Canonical Decision 7040b127-2a42-4ff6-ba46-060a594a9c1d (Receipt cef0f0dd-c89e-4eac-b805-18c0816b4449), Agent-written and disclosed under OPEN_BY_OD-5, quoting the Owner: “补记授权，结论保持“本地验证” (推荐)”. S2-S5 were not applied; the production release gate blocks releases. No full apply has been read back.",
+      "consequence": "Every verdict keeps _LOCAL_QUALIFIED; B08 is scoped to the S6 qualification runs as the Decision states; the Task criterion 'truly connected to the Canonical Store' is not met.",
       "successor": "A separately authorized production apply with backup and read-back.",
       "status": "OPEN",
-      "evidence_refs": ["isolation.json"]
+      "evidence_refs": [
+        "isolation.json"
+      ],
+      "authorization": {
+        "decision_id": "7040b127-2a42-4ff6-ba46-060a594a9c1d",
+        "receipt_id": "cef0f0dd-c89e-4eac-b805-18c0816b4449",
+        "writer": "Agent-written, disclosed under OPEN_BY_OD-5",
+        "quoted_owner_confirmation": "补记授权，结论保持“本地验证” (推荐)"
+      }
+    },
+    {
+      "id": "L27",
+      "title": "Delegated-OAuth end-to-end run is a post-M0-D successor",
+      "source": "B09 round 1 F08; S6 plan 14 items 2, 19, 25",
+      "statement": "The S6 harness mints and reduces Bindings through the v12 RPCs and serves /mcp from the continuity handler; the production MCP entry path (Worker consent API, delegated-OAuth scopedApi/checkBinding wrapper, KV) is not exercised end to end.",
+      "consequence": "No production claim may rest on the S6 run for the delegated-OAuth entry path.",
+      "successor": "Before any production claim: a delegated-OAuth end-to-end run through the Worker consent API and the scopedApi/checkBinding wrapper, including a scope reduction through the consent API.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-05.json",
+        "setup.json"
+      ]
+    },
+    {
+      "id": "L28",
+      "title": "S1 production apply has no pre-apply backup or read-back record",
+      "source": "B09 round 1 F01; contract 3 OD-4; Decision 7040b127-2a42-4ff6-ba46-060a594a9c1d",
+      "statement": "OD-4 requires every clued-prod apply to have its own pre-apply backup and read-back. For the S1 apply (PR #307) neither a pre-apply backup nor a read-back record exists; the authorization was recorded retroactively.",
+      "consequence": "The S1 production state is unverified; verdicts keep _LOCAL_QUALIFIED and B08 excludes the S1 apply as a referenced exception.",
+      "successor": "A separately authorized read-back of the S1 objects in clued-prod (and a backup before any further apply).",
+      "status": "OPEN",
+      "authorization": {
+        "decision_id": "7040b127-2a42-4ff6-ba46-060a594a9c1d",
+        "receipt_id": "cef0f0dd-c89e-4eac-b805-18c0816b4449",
+        "writer": "Agent-written, disclosed under OPEN_BY_OD-5",
+        "quoted_owner_confirmation": "补记授权，结论保持“本地验证” (推荐)"
+      },
+      "evidence_refs": [
+        "isolation.json"
+      ]
     }
   ]
 }

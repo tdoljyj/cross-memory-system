@@ -24,8 +24,10 @@ let ledger = null;
 async function start(config) {
   const bundle = path.join(config.bundleDir, 'worker.js');
   if (!fs.existsSync(bundle)) throw new Error(`missing bundle ${bundle}`);
+  const persistDirNew = !fs.existsSync(config.persistDir);
   fs.mkdirSync(config.persistDir, { recursive: true });
-  if (fs.readdirSync(config.persistDir).length !== 0) throw new Error('persist directory must start empty');
+  const persistEmptyAtStart = fs.readdirSync(config.persistDir).length === 0;
+  if (!persistEmptyAtStart) throw new Error('persist directory must start empty');
   ledger = createGatewayLedger({ gatewayOrigin: config.gatewayOrigin, report: send });
   const started = performance.now();
   mf = new Miniflare({
@@ -63,7 +65,8 @@ async function start(config) {
   });
   const url = await mf.ready;
   send({ type: 'ready', url: url.href, pid: process.pid, pgid: process.pid,
-    startup_ms: Math.round(performance.now() - started),
+    startup_ms: Math.round(performance.now() - started), persist_dir_new: persistDirNew,
+    persist_empty_at_start: persistEmptyAtStart,
     binding_names: Object.keys(await mf.getBindings('clued-information-flow-e2e')).sort() });
 }
 

@@ -24,14 +24,16 @@ export async function run(ctx, r) {
   r.check('13.b.written', '(b) the B_del Binding write committed', 'committed', agentWrite.structured?.status);
   const deleted = await r.fixture('delete the B_del Binding row', (f) => f.deleteBinding(D.bindingId));
   r.check('13.b.deleted', '(b) the Binding row was deleted', 1, deleted);
-  const confirmed = await r.observe('human_confirmed and writer binding', `select m.id::text id,
+  // Internal-state observation (read-only observer): human_confirmed has no
+  // transport read route for Records that are excluded from every pack.
+  const confirmed = await r.observe('internal-state observation: human_confirmed and writer binding', `select m.id::text id,
     clued_private.record_human_confirmed_v1(m.user_id,m.id,m.version) human_confirmed, rc.binding_id::text binding
     from public.clued_memories m left join public.clued_audit_receipts rc on rc.id=m.receipt_id where m.id=any($1::uuid[])`,
   [[maintenance, doomed]]);
   const byId = Object.fromEntries(confirmed.map((row) => [row.id, row]));
-  r.check('13.a.not_confirmed', '(a) the null-binding maintenance Record is human_confirmed=false', [false, null],
+  r.check('13.a.not_confirmed', '(a) internal-state observation: the null-binding maintenance Record is human_confirmed=false', [false, null],
     [byId[maintenance]?.human_confirmed, byId[maintenance]?.binding]);
-  r.check('13.b.not_confirmed', '(b) after the Binding delete the Record has a null binding and is still not confirmed',
+  r.check('13.b.not_confirmed', '(b) internal-state observation: after the Binding delete the Record has a null binding and is still not confirmed',
     [false, null], [byId[doomed]?.human_confirmed, byId[doomed]?.binding]);
   await acceptPolicy(r, U, policyDoc('e13.default', [scope]));
   await acceptPolicy(r, U, policyDoc('e13.optin', [scope], { allow_agent_authored: true }));
@@ -40,9 +42,8 @@ export async function run(ctx, r) {
   r.checkSet('13.default_items', 'both are excluded from the default pack', [native], ids(def));
   const opt = (await r.tool(B, 'clued_context_pack', { scope, task_class: 'e13.optin' }, { extract: packExtract })).structured;
   checkPack(r, '13.optin', opt);
-  const optItems = Object.fromEntries((opt?.pack?.items ?? []).map((row) => [row.canonical_id, row]));
-  r.check('13.optin_never_confirmed', 'opt-in: neither appears as human-confirmed', [true, true],
-    [maintenance, doomed].map((rid) => !optItems[rid] || optItems[rid].human_confirmed === false));
-  r.note(`opt-in pack items: ${JSON.stringify(r.named(Object.keys(optItems).sort()))}`);
+  // Opt-in admits Agent-authored Records, but neither case has a known writer
+  // principal (null binding), so both stay excluded (same behaviour as S4).
+  r.checkSet('13.optin_items', 'the opt-in pack is exactly the Native note (both cases excluded)', [native], ids(opt));
   return {};
 }

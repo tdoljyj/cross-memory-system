@@ -84,6 +84,20 @@ export function imageDigests() {
   return out;
 }
 
+// The Docker bridge subnets the local db container is attached to, read at
+// runtime (F09): the observer accepts only loopback or these subnets.
+export function dbNetworkCidrs() {
+  const name = containers().db;
+  if (!name) return [];
+  const networks = Object.keys(JSON.parse(docker(['inspect', '--format', '{{json .NetworkSettings.Networks}}', name])));
+  const cidrs = [];
+  for (const network of networks) {
+    const config = JSON.parse(docker(['network', 'inspect', '--format', '{{json .IPAM.Config}}', network]) || '[]') ?? [];
+    for (const row of config) if (row?.Subnet) cidrs.push(row.Subnet);
+  }
+  return [...new Set(cidrs)].sort();
+}
+
 export function containerStartedAt() {
   const out = {};
   for (const [service, name] of Object.entries(containers())) {

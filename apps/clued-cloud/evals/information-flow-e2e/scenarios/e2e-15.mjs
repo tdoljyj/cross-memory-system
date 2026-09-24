@@ -12,10 +12,12 @@ export async function run(ctx, r) {
   const { U, projects } = ctx;
   const scope = projects.p15;
   r.alias('P15', scope.slice(8));
-  const sub = await submitNative(r, U, scope, 'seg_s6_e15', [item('a', 'fact'), item('parked', 'fact'), item('b', 'fact')]);
+  const sub = await submitNative(r, U, scope, 'seg_s6_e15', [item('a', 'fact'), item('parked', 'fact'), item('b', 'fact'),
+    item('c', 'fact')]);
   const ca = r.alias('C15A', sub.ids.item_a);
   const cp = r.alias('C15P', sub.ids.item_parked);
   const cb = r.alias('C15B', sub.ids.item_b);
+  const cc = r.alias('C15C', sub.ids.item_c);
   const parkSession = await U.current(0);
   const parked = await issueCandidate(r, U, 'information', cp, {}, { session: parkSession });
   const parkedAt = Date.now();
@@ -26,7 +28,7 @@ export async function run(ctx, r) {
       { extract: (b) => ({ count: b?.candidates?.length }) });
     return listed.body?.candidates?.find((c) => c.id === cid)?.status ?? null;
   };
-  const direct = async (tag, input, options = {}) => {
+  const direct = async (tag, input, options = {}, accept = null) => {
     const res = await r.postgrest('owner_jwt', 'clued_candidate_promote_v1', { p_input: input,
       p_received_payload_hash: sha256(JSON.stringify(input)) }, { ...options,
       extract: (b) => ({ status: b?.status, error_code: b?.error_code ?? null }) });
@@ -34,6 +36,10 @@ export async function run(ctx, r) {
       [res.body?.receipt_id ?? '00000000-0000-0000-0000-000000000000']);
     r.check(`15.${tag}.receipt`, `${tag}: rejected with a rejected Receipt`, ['rejected', ['rejected']],
       [res.body?.status, receipt.map((row) => row.status)]);
+    if (accept) {
+      r.check(`15.${tag}.code`, `${tag}: rejected with one of ${accept.join(' / ')}`, true,
+        accept.includes(res.body?.error_code));
+    }
     return res.body?.error_code ?? null;
   };
   const base = (cid, extra = {}) => ({ idempotency_key: key('e15'), tier: 'information', candidate_id: cid, base_version: 1,
@@ -77,6 +83,20 @@ export async function run(ctx, r) {
   r.check('15.d.observed', '(d) observed with caller-asserted Evidence is refused',
     ['rejected', 'observed_requires_server_computed_evidence'], [observedIssue.body?.status, observedIssue.body?.error_code]);
   r.check('15.d.pending', '(d) the candidates stay pending', ['pending', 'pending'], [await statusOf(ca), await statusOf(cb)]);
+  // (d) promote-RPC path: an observed-authority token is issued legitimately,
+  // then the candidate's Evidence is re-pointed (disclosed fixture) to the
+  // caller-hash Evidence, then clued_candidate_promote_v1 is called directly.
+  const observedToken = await issueCandidate(r, U, 'information', cc, { authority: 'observed' });
+  r.check('15.d2.issued', '(d2) an observed-authority token is issued over server-computed Evidence', 'issued',
+    observedToken.body?.status);
+  const repointedC = await r.fixture('re-point candidate C15C evidence_ids to the caller-hash Evidence after issue',
+    (f) => f.repointCandidateEvidence(cc, assertedId));
+  r.check('15.d2.repointed', '(d2) fixture re-point applied after issue', 1, repointedC);
+  const d2 = await direct('d2', base(cc, { confirmation_token: observedToken.body?.confirmation_token,
+    view_digest: observedToken.body?.view_digest }), {},
+  ['confirmation_view_stale', 'observed_requires_server_computed_evidence']);
+  r.note(`E2E-15 (d2) promote-RPC error_code=${d2}`);
+  r.check('15.d2.pending', '(d2) the candidate stays pending', 'pending', await statusOf(cc));
 
   return {
     deferred: {

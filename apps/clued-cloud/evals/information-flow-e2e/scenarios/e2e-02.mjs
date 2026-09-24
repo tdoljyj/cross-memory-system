@@ -91,11 +91,27 @@ export async function run(ctx, r) {
     [403, 'confirmation_token_binding_mismatch'], [wrong.status, wrong.body?.error_code]);
   r.check('02.pending_after_negatives', 'the candidate is still pending after every negative', 'pending',
     await status(r, U, scope, c2));
-  r.check('02.same_request', 'issue and consume in one request', 'structurally_impossible_over_transport',
-    'structurally_impossible_over_transport');
-  r.note('Issue+consume in one request cannot be expressed over HTTP (one PostgREST transaction per request); '
-    + 'covered at DB level by tests/information-flow-promotion-db.test.mjs (confirmation_token_same_request).');
-
+  // Contract E2E-02 "a token issued and consumed in one request is rejected".
+  // Over transport one request can carry only one step: the Worker refuses a
+  // confirmation request that already carries a token before any RPC, and the
+  // issue RPC itself refuses a token field. Composing both RPCs inside one
+  // database transaction is covered at DB level (supporting evidence below).
+  const carried = await r.rest(U, 'POST', `/v1/intake/${c2}/confirmation`, { base_version: 1, authority: 'user_explicit',
+    confirmation_token: t3.body?.confirmation_token ?? 'clued_cft_placeholder', view_digest: 'c'.repeat(64) },
+  { extract: (b) => ({ error: b?.error ?? null }) });
+  r.check('02.same_request.worker', 'a confirmation request carrying a token is refused with 422 before any RPC',
+    [422, []], [carried.status, carried.ledger.filter((row) => row.path_class.startsWith('rpc:'))]);
+  const directIssue = await r.postgrest('owner_jwt', 'clued_candidate_confirmation_issue_v1', { p_input: {
+    tier: 'information', candidate_id: c2, base_version: 1, authority: 'user_explicit',
+    confirmation_token: t3.body?.confirmation_token ?? 'clued_cft_placeholder' } },
+  { extract: (b) => ({ status: b?.status ?? null, error_code: b?.error_code ?? null }) });
+  r.check('02.same_request.rpc', 'the issue RPC called directly with the owner JWT refuses a token field',
+    ['rejected', 'candidate_confirmation_unknown_field'], [directIssue.body?.status, directIssue.body?.error_code]);
+  r.check('02.same_request.pending', 'the candidate stays pending', 'pending', await status(r, U, scope, c2));
+  r.extra = { supporting_db_evidence: { clause: 'issue and consume in one transaction',
+    suite: 'test:information-flow:promotion', file: 'apps/clued-cloud/tests/information-flow-promotion-db.test.mjs',
+    assertion: 'confirmation_token_same_request', where: 'regression.json suites[test:information-flow:promotion]',
+    role: 'supporting evidence only; not a transport observation' } };
   return {
     deferred: {
       dueAt: t1IssuedAt + TTL_WAIT_MS,

@@ -26,7 +26,7 @@ const work = fs.mkdtempSync(path.join(os.tmpdir(), 'ife2e-phase-b-'));
 const h = { stack: { apiUrl: secrets.apiUrl, publishableKey: secrets.publishableKey }, worker: null };
 let out = { steps: [], assertions: [], aliases: {}, egress: [], p2_pid: process.pid, w2_pid: null };
 try {
-  h.observer = await connectObserver(secrets.dbUrl, secrets.dbIdentity);
+  h.observer = await connectObserver(secrets.dbUrl, secrets.dbIdentity, secrets.bridgeCidrs ?? []);
   const r = new Recorder(h, 'E2E-08');
   r.check('08.B.db_identity', 'phase B reached the same local database (system identifier and database oid)',
     [secrets.dbIdentity.system_identifier, secrets.dbIdentity.database_oid],
@@ -72,8 +72,8 @@ try {
     [expected.pack_digest, expected.manifest_id, true], [pack?.pack_digest, pack?.manifest?.id, pack?.manifest?.reused]);
   r.check('08.c.text_digest', '(c) sha256(pack_text) equals D8', expected.pack_digest,
     typeof pack?.pack_text === 'string' ? sha256(pack.pack_text) : null);
-  r.check('08.d.fresh_persist', '(d) the W2 persist directory started empty (asserted by the host)', true,
-    Boolean(h.worker.ready));
+  r.check('08.d.fresh_persist', '(d) W2 created a new persist directory that was empty when the host started',
+    [true, true], [h.worker.ready.persist_dir_new, h.worker.ready.persist_empty_at_start]);
   out = { ...out, steps: r.steps, assertions: r.assertions, aliases: r.aliases };
 } catch (error) {
   out.error = String(error.stack ?? error).split('\n').slice(0, 3).join(' | ');

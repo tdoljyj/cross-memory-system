@@ -221,7 +221,10 @@ const report = {
   excluded: EXCLUDED,
   baseline_classification: {
     'db:test:v2': {
-      classification: 'pre_existing_stale_test (Owner accepted as a disclosed baseline failure; not modified in S6)',
+      classification: 'pre-existing stale-test baseline failure (not an environmental failure); not modified in S6',
+      owner_acceptance: { decision_id: '7040b127-2a42-4ff6-ba46-060a594a9c1d',
+        receipt_id: 'cef0f0dd-c89e-4eac-b805-18c0816b4449', item: 7,
+        note: 'The Owner accepted this suite as a disclosed pre-existing baseline failure with the identical-failure proof.' },
       root_cause: 'apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql:763 revokes '
         + 'clued_user_record_write from authenticated; apps/clued-cloud/supabase/tests/unified_record_v2.test.sql:36 '
         + 'still calls it. No CI workflow runs db:test:v2.',

@@ -103,6 +103,12 @@ export async function aggregate(state) {
   const childEnvNames = Object.keys(childEnv()).sort();
   const childForbidden = childEnvNames.filter((name) => FORBIDDEN_ENV.some((pattern) => pattern.test(name)));
   const bindingsSeen = hosts.map((host) => host.ready?.binding_names ?? []);
+  const e08File = path.join(evidenceDir, 'continuity', 'E2E-08.json');
+  const phaseBIdentity = fs.existsSync(e08File)
+    ? JSON.parse(fs.readFileSync(e08File, 'utf8')).assertions.find((a) => a.id === '08.B.db_identity') ?? null : null;
+  const identityChecks = state.identityChecks ?? [];
+  const identityPass = identityChecks.length === 2 && identityChecks.every((c) => c.system_identifier_equal
+    && c.database_oid_equal && c.database_equal && c.server_addr_local) && phaseBIdentity?.pass === true;
   const points = {
     worker_egress: { hosts_contacted: hostsContacted, denied: deniedEgress.length, production_host_requests:
       productionEgress.length, supabase_url_binding_is_gateway: hosts.every((host) => host.config.gatewayOrigin === status.apiUrl),
@@ -113,7 +119,10 @@ export async function aggregate(state) {
         && !scan.project_ref_linked },
     database_identity: { system_identifier: state.dbIdentity.system_identifier, database_oid: state.dbIdentity.database_oid,
       server_addr: state.dbIdentity.server_addr, database: state.dbIdentity.database,
-      rule: 'every observer/fixture connection asserted this identity; phase B asserted it again', pass: true },
+      docker_bridge_cidrs: state.bridgeCidrs ?? [], connection_checks: identityChecks,
+      phase_b_check: phaseBIdentity ? { id: phaseBIdentity.id, pass: phaseBIdentity.pass } : null,
+      rule: 'local = loopback, Unix socket or the Docker bridge subnet(s) of the local db container read at runtime; '
+        + 'every connection must match the identity recorded right after db reset', pass: identityPass },
     no_deploy_no_production_read: { wrangler_argv: wranglerArgv, production_release_gate_pre_deploy_invoked: false,
       worker_bindings: bindingsSeen[0] ?? [], pass: wranglerArgv.includes('--dry-run') },
     zero_model_provider_calls: { provider_egress: providerEgress.length, bundle_provider_hosts: bundle.provider_hosts,
@@ -121,9 +130,18 @@ export async function aggregate(state) {
     zero_cost: { paid_credentials_present: scan.forbidden.length > 0, deploy: false,
       residual: 'Image and CLI pulls and CLI update/telemetry checks happen in preflight, outside the qualification '
         + 'window; they are not writes, reach no model provider and cost nothing.', pass: scan.forbidden.length === 0 },
-    historical: { pre_existing_production_state: 'PR #307 states S1 was applied to clued-prod; that apply is outside '
-      + 'this S6 run. The Owner confirmed the authorization retroactively (recorded by the caller). B08 claims only '
-      + 'the S6 qualification runs.', scope: 'S6 qualification runs only' },
+    historical: {
+      referenced_exception: 'S1 production apply (PR #307)',
+      statement: 'PR #307 states migration S1 was applied to clued-prod before S6. That apply is outside every S6 '
+        + 'qualification run and is the only known production write of the Information Flow slices.',
+      authorization: { decision_id: '7040b127-2a42-4ff6-ba46-060a594a9c1d',
+        receipt_id: 'cef0f0dd-c89e-4eac-b805-18c0816b4449', kind: 'retroactive Owner authorization',
+        writer: 'Agent-written, disclosed under OPEN_BY_OD-5',
+        quoted_owner_confirmation: '补记授权，结论保持“本地验证” (推荐)' },
+      backup_and_read_back: 'none recorded for the S1 apply (register L28)',
+      scope: 'B08 claims only the S6 qualification runs, as the Decision states; every verdict keeps _LOCAL_QUALIFIED',
+      register_entries: ['L26', 'L28'],
+    },
   };
   const isolation = { schema: 'clued.information-flow.m0d.isolation/1', points,
     result: Object.values(points).every((point) => point.pass !== false) ? 'PASS' : 'FAIL' };

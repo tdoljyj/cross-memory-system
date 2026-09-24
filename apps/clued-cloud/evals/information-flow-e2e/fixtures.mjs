@@ -7,7 +7,7 @@
 import pg from 'pg';
 import { identity, loopbackOrBridge } from './observer.mjs';
 
-export async function connectFixtures(dbUrl, expected) {
+export async function connectFixtures(dbUrl, expected, bridgeCidrs = []) {
   const client = new pg.Client({ connectionString: dbUrl });
   await client.connect();
   const id = await identity(client);
@@ -15,7 +15,7 @@ export async function connectFixtures(dbUrl, expected) {
     await client.end();
     throw new Error('fixture connection reached an unexpected database');
   }
-  if (!loopbackOrBridge(id.server_addr)) throw new Error(`fixture server address ${id.server_addr} is not local`);
+  if (!loopbackOrBridge(id.server_addr, bridgeCidrs)) throw new Error(`fixture server address ${id.server_addr} is not local`);
   return {
     identity: id,
     registerIssuer: async (issuerHash, resource) => client.query(

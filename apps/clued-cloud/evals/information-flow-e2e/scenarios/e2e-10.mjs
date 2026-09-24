@@ -89,6 +89,18 @@ export async function run(ctx, r) {
     c.counts.currentness > beforeTask.counts.currentness);
   r.check('10.task_mtpe', 'task promotion syncs one row into mtpe_intake_projection', beforeTask.counts.mtpe + 1,
     c.counts.mtpe);
+  // State and decision promotions touch Currentness too.
+  const sd = await submitNative(r, U, scope, 'seg_s6_e10sd', [item('state', 'status'), item('dec', 'decision')]);
+  for (const [local, label, recordType] of [['item_state', 'state', 'state'], ['item_dec', 'decision', 'decision']]) {
+    const before = await snap(`before ${label}`);
+    const promotedSd = await promote(r, U, 'information', sd.ids[local]);
+    r.alias(`R_${label.toUpperCase()}`, promotedSd.recordId);
+    r.check(`10.${label}_record_type`, `the ${label} candidate maps to a ${recordType} Record`, recordType,
+      promotedSd.issued.confirmation_view?.record_type);
+    const after = await snap(`after ${label}`);
+    r.check(`10.${label}_currentness`, `${label} promotion advances scope Currentness (touch_currentness)`, true,
+      after.counts.currentness > before.counts.currentness);
+  }
   // Note promotion does not.
   const noteSub = await submitNative(r, U, scope, 'seg_s6_e10q', [item('note', 'fact')]);
   const beforeNote = await snap('before note');

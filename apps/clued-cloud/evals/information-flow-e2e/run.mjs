@@ -14,7 +14,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { connectFixtures } from './fixtures.mjs';
-import { connectObserver } from './observer.mjs';
+import { connectObserver, loopbackOrBridge } from './observer.mjs';
 import { normalizedDigest, redact, sha256, writeJson } from './evidence.mjs';
 import { Recorder, WorkerHost } from './harness.mjs';
 import { AccountPrincipal, mintBinding, newBindingToken } from './principals.mjs';
@@ -56,11 +56,17 @@ const bundle = bundleScan(bundleDir);
 const status = stack.status();
 if (!args['skip-reset']) { log('db reset (full migration chain)'); stack.resetDatabase(); }
 await stack.waitHealthy(status.apiUrl, status.publishableKey);
-const firstObserver = await connectObserver(status.dbUrl);
+const bridgeCidrs = stack.dbNetworkCidrs();
+const firstObserver = await connectObserver(status.dbUrl, null, bridgeCidrs);
 const dbIdentity = firstObserver.identity;
 await firstObserver.close();
-const observer = await connectObserver(status.dbUrl, dbIdentity);
-const fixtures = await connectFixtures(status.dbUrl, dbIdentity);
+const observer = await connectObserver(status.dbUrl, dbIdentity, bridgeCidrs);
+const fixtures = await connectFixtures(status.dbUrl, dbIdentity, bridgeCidrs);
+// B08 point 4: each connection's own identity, compared field by field.
+const identityChecks = [['observer', observer.identity], ['fixtures', fixtures.identity]].map(([connection, id]) => ({
+  connection, system_identifier_equal: id.system_identifier === dbIdentity.system_identifier,
+  database_oid_equal: id.database_oid === dbIdentity.database_oid, database_equal: id.database === dbIdentity.database,
+  server_addr: id.server_addr, server_addr_local: loopbackOrBridge(id.server_addr, bridgeCidrs) }));
 const migrationsApplied = (await observer.query(
   'select count(*)::int n, max(version) latest from supabase_migrations.schema_migrations'))[0];
 const images = stack.imageDigests();
@@ -216,7 +222,7 @@ try {
   }
 
   // ---- E2E-09 and the isolation report are written after phase B (below).
-  state = { ctx, results, finish, environment, binding, bundle, scan, images, status, dbIdentity,
+  state = { ctx, results, finish, environment, binding, bundle, scan, images, status, dbIdentity, identityChecks, bridgeCidrs,
     principalsEvidence, runStarted, wranglerArgv, versions };
 } catch (error) {
   log(`run aborted: ${error.stack ?? error}`);
@@ -241,7 +247,7 @@ if (state && phaseA) {
     child.on('message', (message) => { received = message; });
     child.on('exit', (code) => resolve({ code, received }));
     child.send({ apiUrl: status.apiUrl, publishableKey: status.publishableKey, dbUrl: status.dbUrl,
-      dbIdentity: state.dbIdentity, email: ctx.U.email, password: ctx.U.password, userId: ctx.U.userId,
+      dbIdentity: state.dbIdentity, bridgeCidrs, email: ctx.U.email, password: ctx.U.password, userId: ctx.U.userId,
       bindingRaw: ctx.B_main.raw, bundleDir: path.join(work, 'bundle'),
       workerGuardLedger: path.join(guardDir, 'worker-host-phase-b.json') });
   });
