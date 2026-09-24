@@ -393,14 +393,29 @@
             "receipt_id": "0532261b-143d-49a0-89b0-20f066c747a9",
             "method": "supabase_migrations.schema_migrations statements[1] md5 equal to the repository file for every applied migration; function sources checked for each patch"
           },
-          "migrations_md5": {
-            "20260924190000_information_flow_promotion.sql": "4a3537f0b638b1aefd0deb27d0c967b6",
-            "20260924230000_decision_supersede_v12_guard.sql": "48b49e381624adf0f6c4aa4ee63c9865",
-            "20260924200000_information_flow_context_policy.sql": "76ad3ce7a7b2e5842904dadb0e684013",
-            "20260924220000_information_flow_invalidation.sql": "8f0830340a8553423a9839465ac1e5c3",
-            "20260925000000_information_flow_token_hardening.sql": "ea920df274bc5c9cf752c3b7e9fb6200"
-          },
-          "worker_deployed": false
+          "worker_deployed": false,
+          "migrations": [
+            {
+              "file": "20260924190000_information_flow_promotion.sql",
+              "statement_md5": "4a3537f0b638b1aefd0deb27d0c967b6"
+            },
+            {
+              "file": "20260924230000_decision_supersede_v12_guard.sql",
+              "statement_md5": "48b49e381624adf0f6c4aa4ee63c9865"
+            },
+            {
+              "file": "20260924200000_information_flow_context_policy.sql",
+              "statement_md5": "76ad3ce7a7b2e5842904dadb0e684013"
+            },
+            {
+              "file": "20260924220000_information_flow_invalidation.sql",
+              "statement_md5": "8f0830340a8553423a9839465ac1e5c3"
+            },
+            {
+              "file": "20260925000000_information_flow_token_hardening.sql",
+              "statement_md5": "ea920df274bc5c9cf752c3b7e9fb6200"
+            }
+          ]
         },
         "closure": {
           "decision_id": "5180d68e-d335-46dd-aa44-485b4365d32b",
@@ -454,14 +469,29 @@
             "receipt_id": "0532261b-143d-49a0-89b0-20f066c747a9",
             "method": "supabase_migrations.schema_migrations statements[1] md5 equal to the repository file for every applied migration; function sources checked for each patch"
           },
-          "migrations_md5": {
-            "20260924190000_information_flow_promotion.sql": "4a3537f0b638b1aefd0deb27d0c967b6",
-            "20260924230000_decision_supersede_v12_guard.sql": "48b49e381624adf0f6c4aa4ee63c9865",
-            "20260924200000_information_flow_context_policy.sql": "76ad3ce7a7b2e5842904dadb0e684013",
-            "20260924220000_information_flow_invalidation.sql": "8f0830340a8553423a9839465ac1e5c3",
-            "20260925000000_information_flow_token_hardening.sql": "ea920df274bc5c9cf752c3b7e9fb6200"
-          },
-          "worker_deployed": false
+          "worker_deployed": false,
+          "migrations": [
+            {
+              "file": "20260924190000_information_flow_promotion.sql",
+              "statement_md5": "4a3537f0b638b1aefd0deb27d0c967b6"
+            },
+            {
+              "file": "20260924230000_decision_supersede_v12_guard.sql",
+              "statement_md5": "48b49e381624adf0f6c4aa4ee63c9865"
+            },
+            {
+              "file": "20260924200000_information_flow_context_policy.sql",
+              "statement_md5": "76ad3ce7a7b2e5842904dadb0e684013"
+            },
+            {
+              "file": "20260924220000_information_flow_invalidation.sql",
+              "statement_md5": "8f0830340a8553423a9839465ac1e5c3"
+            },
+            {
+              "file": "20260925000000_information_flow_token_hardening.sql",
+              "statement_md5": "ea920df274bc5c9cf752c3b7e9fb6200"
+            }
+          ]
         },
         "closure": {
           "decision_id": "5180d68e-d335-46dd-aa44-485b4365d32b",
