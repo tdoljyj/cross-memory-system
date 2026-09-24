@@ -49,6 +49,21 @@ test("K-CONT-06 returns session compliance and reminders", () => {
   assert.match(migration, /'checkpoint_reminder',v_reminder/);
 });
 
+test("BUG-20260924-001 L1 never reports a write-free session as having no material changes", () => {
+  const captureMigration = readFileSync(
+    new URL("../supabase/migrations/20260924200000_bug_20260924_001_capture_unknown.sql", import.meta.url),
+    "utf8",
+  );
+  const body = captureMigration.replace(/^--.*$/gm, "");
+  assert.doesNotMatch(body, /no_material_changes/);
+  assert.match(body, /else 'capture_unknown' end/);
+  assert.match(body, /'authority_capture',case when x\.append_count>0 and x\.checkpoint_count=0 then 'incomplete' else 'unknown' end/);
+  assert.match(body, /'authority_capture_completeness',jsonb_build_object\(/);
+  assert.match(body, /'independent_of','currentness'/);
+  assert.doesNotMatch(body, /'complete'/);
+  assert.match(continuity, /authority_capture_completeness: "unknown_or_incomplete_never_complete"/);
+});
+
 test("K-CONT-01 budgets and paginates resume events", () => {
   assert.match(continuity, /event_budget_bytes/);
   assert.match(continuity, /event_cursor/);
