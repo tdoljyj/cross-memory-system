@@ -161,6 +161,22 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     const audit = await rpc("clued_mcp_audit_receipts", { context_key: "global" });
     assert.equal(Array.isArray(audit.session_compliance), true);
     assert.equal(typeof audit.checkpoint_reminder, "boolean");
+    // BUG-20260924-001 L1: zero writes proves only that nothing reached Clued.
+    const states = audit.session_compliance.map((session) => session.state);
+    assert.equal(states.includes("no_material_changes"), false);
+    assert.equal(states.includes("capture_unknown"), true);
+    assert.equal(states.includes("checkpointed"), true);
+    for (const session of audit.session_compliance) {
+      assert.equal(session.authority_capture,
+        session.append_count > 0 && session.checkpoint_count === 0 ? "incomplete" : "unknown");
+    }
+    assert.equal(audit.session_compliance.some((session) =>
+      session.state === "checkpoint_required_before_handoff" && session.authority_capture === "incomplete"), true);
+    assert.deepEqual(audit.authority_capture_completeness, {
+      state: "incomplete",
+      basis: "server_observes_only_writes_that_reached_clued",
+      independent_of: "currentness",
+    });
 
     const projectDecision = await rpc("clued_record_mutate", {
       operation: "create", record_type: "decision", record_schema_version: 1, lifecycle_status: "active", scope: projectContext,

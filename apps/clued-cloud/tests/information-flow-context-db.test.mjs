@@ -94,7 +94,8 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const migrations = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
-    assert.equal(migrations.at(-1), S4_MIGRATION, 'the S4 migration sorts after every existing migration');
+    assert.ok(migrations.indexOf(S4_MIGRATION) > migrations.indexOf('20260924190000_information_flow_promotion.sql'),
+      'the S4 migration sorts after every migration that preceded it');
     const versions = migrations.map((name) => name.split('_')[0]);
     assert.equal(new Set(versions).size, versions.length, 'migration versions are unique');
     for (const name of migrations) {
