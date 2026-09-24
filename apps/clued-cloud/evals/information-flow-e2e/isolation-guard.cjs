@@ -15,7 +15,7 @@ const fs = require('node:fs');
 
 const denyPorts = new Set(String(process.env.IFE2E_DENY_PORTS ?? '')
   .split(',').map((value) => Number(value.trim())).filter((value) => Number.isInteger(value) && value > 0));
-const ledger = { pid: process.pid, argv1: require('node:path').basename(process.argv[1] ?? ''),
+const ledger = { pid: process.pid, deny_ports: [...denyPorts].sort((a, b) => a - b), argv1: require('node:path').basename(process.argv[1] ?? ''),
   allowed: {}, denied: [], dns: [] };
 
 function loopback(host) {
@@ -27,6 +27,7 @@ function loopback(host) {
 function record(kind, options) {
   if (options && typeof options.path === 'string') {
     ledger.allowed[`unix:${kind}`] = (ledger.allowed[`unix:${kind}`] ?? 0) + 1;
+    flush();
     return;
   }
   const host = options?.host ?? options?.hostname;
@@ -40,6 +41,8 @@ function record(kind, options) {
   }
   const label = `${kind}:loopback:${port}`;
   ledger.allowed[label] = (ledger.allowed[label] ?? 0) + 1;
+  // Written on every connection, so a SIGKILLed process still leaves its ledger.
+  flush();
 }
 
 function normalize(args) {
@@ -77,12 +80,13 @@ dns.lookup = function guardedLookup(hostname, ...rest) {
 };
 
 function flush() {
-  const target = process.env.IFE2E_GUARD_LEDGER;
+  const target = process.env.IFE2E_GUARD_LEDGER?.replace('{pid}', String(process.pid));
   if (!target) return;
   try {
     const summary = { ...ledger, dns: [...new Set(ledger.dns)].sort() };
     fs.writeFileSync(target, `${JSON.stringify(summary)}\n`);
   } catch { /* the ledger directory may be gone during teardown */ }
 }
+flush();
 process.on('exit', flush);
 module.exports = { ledger, flush };

@@ -32,6 +32,10 @@ fs.mkdirSync(path.join(evidenceDir, 'e2e'), { recursive: true });
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'ife2e-'));
 const guardDir = path.join(work, 'guard');
 fs.mkdirSync(guardDir);
+const runFlags = { evidence_dir: '<evidence dir>', tier: args.tier, skip_reset: Boolean(args['skip-reset']),
+  only: args.only ?? null, ttl_wait_ms_override: args['ttl-wait-ms'] ?? null,
+  deny_ports: process.env.IFE2E_DENY_PORTS || 'none' };
+const ttlWaits = [];
 const SCENARIOS = ['01', '02', '15', '03', '04', '05', '06', '07', '10', '11', '12', '13', '14'];
 const runStarted = Date.now();
 
@@ -47,8 +51,13 @@ log(`code tree ${binding.code_tree} node ${process.version}`);
 const bundleDir = path.join(work, 'bundle');
 const wranglerArgv = ['wrangler', 'deploy', '--dry-run', '--outdir', bundleDir, '--config',
   'evals/information-flow-e2e/wrangler.jsonc'];
-const wrangler = spawnSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', wranglerArgv, { cwd: stack.cloudRoot,
-  env: stack.childEnv({ WRANGLER_LOG_PATH: path.join(work, 'wrangler-logs') }), encoding: 'utf8' });
+// Wrangler (a Node program) runs under the isolation guard; NODE_OPTIONS
+// carries the guard into any Node child it spawns (one ledger per process).
+const wrangler = spawnSync(process.execPath, [path.join(stack.cloudRoot, 'node_modules/wrangler/bin/wrangler.js'),
+  ...wranglerArgv.slice(1)], { cwd: stack.cloudRoot, encoding: 'utf8',
+  env: stack.childEnv({ WRANGLER_LOG_PATH: path.join(work, 'wrangler-logs'),
+    NODE_OPTIONS: `--require ${path.join(here, 'isolation-guard.cjs')}`,
+    IFE2E_GUARD_LEDGER: path.join(guardDir, 'wrangler-{pid}.json') }) });
 if (wrangler.status !== 0) throw new Error(`wrangler dry-run failed: ${wrangler.stderr}`);
 const bundle = bundleScan(bundleDir);
 
@@ -172,7 +181,9 @@ try {
         od5_qualifier: 'Agent authority confined only on the Information Flow path' } };
     evidence.normalized_digest = normalizedDigest(evidence);
     writeJson(path.join(evidenceDir, 'e2e', `${scenario.id}.json`), evidence);
-    results[scenario.id] = { result: verdict, assertions: rec.assertions.length,
+    results[scenario.id] = { result: verdict,
+      ...(verdict === 'PASS' ? { qualifier: 'Agent authority confined only on the Information Flow path' } : {}),
+      assertions: rec.assertions.length,
       failed: rec.assertions.filter((a) => !a.pass).map((a) => a.id), normalized_digest: evidence.normalized_digest,
       error: evidence.error };
     log(`${scenario.id}: ${verdict}${evidence.error ? ` (${evidence.error})` : ''} ${results[scenario.id].failed.join(',')}`);
@@ -183,6 +194,8 @@ try {
       const wait = task.dueAt - Date.now();
       if (wait > 0) { log(`waiting ${Math.ceil(wait / 1000)} s for the real-clock TTL`); await new Promise((r) => setTimeout(r, wait)); }
       deferred.splice(deferred.indexOf(task), 1);
+      ttlWaits.push({ scenario: task.scenario.id, waited_ms_since_token_issue: Date.now() - task.issuedAt,
+        required_ms: task.requiredMs });
       try { await task.run(); finish(task.scenario, task.rec, task.result); } catch (error) {
         finish(task.scenario, task.rec, null, error);
       }
@@ -196,7 +209,8 @@ try {
       const out = await scenario.run(ctx, rec);
       if (out?.deferred) {
         const dueAt = args['ttl-wait-ms'] ? Date.now() + Number(args['ttl-wait-ms']) : out.deferred.dueAt;
-        deferred.push({ scenario, rec, dueAt, run: out.deferred.run, result: out.result });
+        deferred.push({ scenario, rec, dueAt, run: out.deferred.run, result: out.result,
+          issuedAt: out.deferred.dueAt - (out.deferred.requiredMs ?? 301000), requiredMs: out.deferred.requiredMs ?? 301000 });
       } else finish(scenario, rec, out?.result);
     } catch (error) {
       finish(scenario, rec, null, error);
@@ -222,7 +236,7 @@ try {
   }
 
   // ---- E2E-09 and the isolation report are written after phase B (below).
-  state = { ctx, results, finish, environment, binding, bundle, scan, images, status, dbIdentity, identityChecks, bridgeCidrs,
+  state = { runFlags, ttlWaits, ctx, results, finish, environment, binding, bundle, scan, images, status, dbIdentity, identityChecks, bridgeCidrs,
     principalsEvidence, runStarted, wranglerArgv, versions };
 } catch (error) {
   log(`run aborted: ${error.stack ?? error}`);

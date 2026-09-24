@@ -196,9 +196,10 @@ export class Recorder {
 
   // Direct PostgREST through the gateway: 'owner_jwt' (Authorization: Bearer
   // <GoTrue JWT>) or 'anon_apikey' (apikey only, the Binding-callable role).
-  async postgrest(auth, rpc, body, { extract, session, principal } = {}) {
+  async postgrest(auth, rpc, body, { extract, session, principal, bearer } = {}) {
     const headers = { 'content-type': 'application/json', apikey: this.h.stack.publishableKey };
-    if (auth === 'owner_jwt') {
+    if (bearer) headers.authorization = `Bearer ${bearer}`;
+    else if (auth === 'owner_jwt') {
       const s = session ?? await (principal ?? this.h.U).current();
       headers.authorization = `Bearer ${s.accessToken}`;
     }

@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { normalizedDigest } from './evidence.mjs';
+import { NORMALIZATION, normalizedDigest } from './evidence.mjs';
 
 const { values: args } = parseArgs({ options: { dir: { type: 'string' }, against: { type: 'string' } } });
 if (!args.dir) throw new Error('--dir <evidence dir> is required');
@@ -25,7 +25,8 @@ function scenarios(dir) {
 }
 
 const mine = scenarios(path.resolve(args.dir));
-const report = { recomputed: {}, mismatched_self: [], compared: {}, differing: [] };
+const report = { normalization: NORMALIZATION, recomputed: {}, mismatched_self: [], compared: {}, differing: [],
+  code_tree_mismatch: [] };
 for (const [id, evidence] of Object.entries(mine)) {
   const digest = normalizedDigest(evidence);
   report.recomputed[id] = { stored: evidence.normalized_digest, recomputed: digest, result: evidence.result };
@@ -40,7 +41,8 @@ if (args.against) {
     report.compared[id] = { this_run: a, against: b, equal: a !== null && a === b,
       code_tree_equal: mine[id]?.code_binding?.code_tree === theirs[id]?.code_binding?.code_tree };
     if (a === null || a !== b) report.differing.push(id);
+    if (!report.compared[id].code_tree_equal) report.code_tree_mismatch.push(id);
   }
 }
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-process.exitCode = report.mismatched_self.length || report.differing.length ? 1 : 0;
+process.exitCode = report.mismatched_self.length || report.differing.length || report.code_tree_mismatch.length ? 1 : 0;

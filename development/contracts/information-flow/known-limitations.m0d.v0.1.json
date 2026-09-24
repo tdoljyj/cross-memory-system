@@ -135,13 +135,16 @@
     },
     {
       "id": "L12",
-      "title": "Delegated OAuth writes",
-      "source": "S3 D7; S2",
-      "statement": "Delegated-OAuth decision supersede writes no Native marker; a delegated-OAuth JWT on Native REST passes the Worker and is refused by the database guard.",
-      "consequence": "Delegated OAuth never yields human_confirmed=true.",
-      "successor": "None planned; disclosed.",
+      "title": "Delegated OAuth and Native write surfaces",
+      "source": "S3 D7 (premise corrected); B09 round 2; migrations 20260907173031, 20260924190000, 20260924230000 (PR #322)",
+      "statement": "public.clued_user_decision_supersede has been guarded by authorization_owner_v12 (direct human session; a delegated-OAuth JWT with client_id is refused) since 20260907173031. S3 (20260924190000) regressed it by redefining the entry with auth.uid(), so a delegated-OAuth JWT could supersede Decisions through PostgREST and /v1/decisions/supersede; 20260924230000_decision_supersede_v12_guard.sql (PR #322) restores the guard. Every other Native account-session RPC keeps the v12 guard, so a delegated-OAuth JWT on Native REST passes the Worker and is refused by the database.",
+      "consequence": "Delegated OAuth never yields a committed Native write or human_confirmed=true once 20260924230000 is applied; any environment with S3 applied but not 20260924230000 carries the regression.",
+      "successor": "Apply 20260924230000 wherever S3 is applied (clued-prod has S1 only per L26); a regression test pins the guard (information-flow-promotion-db.test.mjs, E2E-14 delegated block).",
       "status": "OPEN",
-      "evidence_refs": []
+      "evidence_refs": [
+        "e2e/E2E-14.json",
+        "regression.json"
+      ]
     },
     {
       "id": "L13",
@@ -334,6 +337,68 @@
       "evidence_refs": [
         "isolation.json"
       ]
+    },
+    {
+      "id": "L29",
+      "title": "Token session binding tolerates a JWT without session_id",
+      "source": "B09 round 2 F11; 20260924190000:614 and the S4/S5 token cores",
+      "statement": "The confirmation-token session check compares nullif(session_id) with 'is distinct from'; a JWT without a session_id claim stores NULL and the binding is then conditional on that NULL.",
+      "consequence": "Only an account session JWT without session_id is affected; local and hosted GoTrue password sessions carry session_id (setup.json has_session_id=true). Not changed in S6.",
+      "successor": "Additive hotfix migration (like PR #322) requiring a non-null session_id at token issue in S3/S4/S5.",
+      "reason_not_fixed_in_s6": "The fix redefines large SECURITY DEFINER token functions from three slices; S6 adds no migration and schema fixes go through a separate reviewed hotfix PR, as for PR #322.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "setup.json"
+      ]
+    },
+    {
+      "id": "L30",
+      "title": "Native token lookup is not filtered by action before burn",
+      "source": "B09 round 2 F12; 20260924200000:1109, 20260924220000:751",
+      "statement": "The native_confirmation_tokens lookup in the consume path does not filter by action before burning, so a user's own token issued for one action can be burned by presenting it to another action's RPC.",
+      "consequence": "Same-user self denial of service only; a burned token is never accepted for the other action.",
+      "successor": "Additive hotfix migration adding the action filter before burn.",
+      "reason_not_fixed_in_s6": "Same as L29: a separate reviewed schema hotfix, not an S6 migration.",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L31",
+      "title": "Go CLI children of the harness are not under the Node isolation guard",
+      "source": "B09 round 2 F08",
+      "statement": "The Supabase CLI (a Go binary) and Docker CLI calls made by the harness cannot load the Node guard; they run with an allowlisted environment without proxy variables or cloud credentials, and only against the local stack. Wrangler dry-run runs under the guard.",
+      "consequence": "Their egress is bounded by the scrubbed environment, not by an in-process ledger.",
+      "successor": "None planned; disclosed.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "run.json",
+        "isolation.json"
+      ]
+    },
+    {
+      "id": "L32",
+      "title": "Normalized digests are a reproducibility aid, not a byte seal",
+      "source": "B09 round 2 F10",
+      "statement": "The per-scenario normalized digest covers channel, method, target template, HTTP status, extracted values, assertion ids/expected values/pass and the result, with ids, digests, timestamps, PIDs and durations replaced and arrays sorted. It drops step ledgers, assertion observed values and notes.",
+      "consequence": "Byte integrity of each evidence file comes from SHA256SUMS; the normalized digest shows that two runs at the same code tree made the same observations.",
+      "successor": "None planned; documented in the harness README.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "reproducibility.json"
+      ]
+    }
+  ],
+  "owner_decisions": [
+    {
+      "decision_id": "7040b127-2a42-4ff6-ba46-060a594a9c1d",
+      "receipt_id": "cef0f0dd-c89e-4eac-b805-18c0816b4449",
+      "kind": "Canonical Decision",
+      "writer": "Agent-written, disclosed under OPEN_BY_OD-5",
+      "quoted_owner_confirmation": "补记授权，结论保持“本地验证” (推荐)",
+      "items": {
+        "S1_production_apply": "retroactive authorization of the S1 clued-prod apply (PR #307); verdicts keep _LOCAL_QUALIFIED; B08 scoped to the S6 qualification runs",
+        "7": "db:test:v2 accepted as a disclosed pre-existing stale-test baseline failure with the identical-failure proof"
+      }
     }
   ]
 }

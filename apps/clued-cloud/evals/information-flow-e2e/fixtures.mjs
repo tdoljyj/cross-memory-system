@@ -28,6 +28,19 @@ export async function connectFixtures(dbUrl, expected, bridgeCidrs = []) {
     repointCandidateEvidence: async (candidateId, evidenceId) => (await client.query(
       'update clued_private.information_candidates set evidence_ids=array[$2::uuid] where id=$1',
       [candidateId, evidenceId])).rowCount,
+    // E2E-15 (d3): simulates a broken server-computed Evidence linkage after a
+    // token was issued (the S3 DB-test pattern). Replica role bypasses the
+    // Evidence immutability trigger for this one fixture statement.
+    tamperEvidenceHash: async (evidenceId, newHash) => {
+      await client.query('begin');
+      try {
+        await client.query('set local session_replication_role=replica');
+        const count = (await client.query('update public.clued_evidence set content_hash=$2 where id=$1',
+          [evidenceId, newHash])).rowCount;
+        await client.query('commit');
+        return count;
+      } catch (error) { await client.query('rollback'); throw error; }
+    },
     close: () => client.end(),
   };
 }

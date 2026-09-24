@@ -3,7 +3,7 @@
 // invalidation and Currentness unchanged; a promotion whose payload carried
 // priority/actionable keys yields a Record without the stripped keys; task
 // promotion touches Currentness and MTPE, note promotion does not.
-import { canonicalSnapshotSql, item, key, promote, submitAgent, submitNative } from './common.mjs';
+import { canonicalSnapshotSql, documentOf, issueCandidate, item, key, promote, segment, submitAgent, submitNative } from './common.mjs';
 import { canonical, sha256 } from '../evidence.mjs';
 
 export const id = 'E2E-10';
@@ -60,6 +60,23 @@ export async function run(ctx, r) {
   const loudText = 'BLOCKER: fix the CRITICAL bug now, priority high, intake_kind TASK, owner_track BUSINESS_GROWTH.';
   const loud = { ...item('loud', 'task', loudText), priority: 'high', action_level: 'needs_action' };
   const loudSub = await submitNative(r, U, scope, 'seg_s6_e10l', [loud]);
+  // Every other MTPE/priority key carried inside the payload item is refused by
+  // the frozen M0-A candidate schema, so it can never reach a Record.
+  const mtpeKeys = { intake_kind: 'TASK', execution_bucket: 'now', current_frontier_blocking: true, criticality: 'URGENT',
+    owner_track: 'BUSINESS_GROWTH', priority_eligibility: 'eligible', executability: 'ready',
+    governance_profile: 'OUT_OF_GOVERNANCE_PROFILE', state_kind: 'risk', note_kind: 'fact' };
+  const keyed = await r.rest(U, 'POST', '/v1/intake', { idempotency_key: key('e10keys'), scope,
+    segment: segment('seg_s6_e10k'), candidates: documentOf('seg_s6_e10k', [{ ...item('keys', 'task', loudText),
+      priority: 'high', ...mtpeKeys }]) }, { extract: (b) => ({ status: b?.status, error_code: b?.error_code ?? null }) });
+  r.check('10.mtpe_keys_in_payload_refused', 'a payload item carrying the other MTPE keys is refused by schema validation',
+    ['rejected', true], [keyed.body?.status, /INSTANCE_SCHEMA_INVALID/.test(keyed.body?.error_code ?? '')]);
+  // At step 1 only the Native allow-list can set them; others are refused.
+  for (const field of ['governance_profile', 'priority_eligibility', 'executability']) {
+    const refused = await issueCandidate(r, U, 'information', loudSub.ids.item_loud,
+      { native_type_fields: { execution_bucket: 'later', [field]: 'x' } });
+    r.check(`10.native_field_${field}`, `step 1 refuses the non-allow-listed Native field ${field}`,
+      ['rejected', `native_type_field_not_allowed:${field}`], [refused.body?.status, refused.body?.error_code]);
+  }
   const beforeTask = await snap('before task');
   const loudRecord = r.alias('R_TASK', (await promote(r, U, 'information', loudSub.ids.item_loud,
     { native_type_fields: { execution_bucket: 'later' } })).recordId);

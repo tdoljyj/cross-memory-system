@@ -90,9 +90,13 @@ if (command === 'closure') {
       a01_m0c_test_attempts: a01?.parent_entries?.m0c?.tests?.attempts?.map((a) => ({ attempt: a.attempt,
         exit_code: a.exit_code, failing_tests: a.failing_tests })) ?? null },
     register: { path: REGISTER, sha256: fileSha(REGISTER), entries: ids.length,
-      contract_mandated_present: required.every((id) => ids.includes(id)), all_open: register.entries.every((e) => e.status === 'OPEN') },
+      ids,
+      contract_mandated_present: required.every((id) => ids.includes(id)),
+      contiguous: ids.every((id, i) => id === `L${String(i + 1).padStart(2, '0')}`),
+      all_open: register.entries.every((e) => e.status === 'OPEN') },
   };
   closure.result = vendoredA.mismatched === 0 && vendoredC.mismatched === 0 && closure.register.contract_mandated_present
+    && closure.register.contiguous
     && closure.parents.original_bytes_modified === false ? 'PASS' : 'FAIL';
   write(path.join(dir, 'part-a/a03-closure.json'), closure);
   process.stdout.write(`${closure.result}\n`);
@@ -104,6 +108,8 @@ if (command === 'closure') {
     'apps/clued-cloud/supabase/migrations/20260924190000_information_flow_promotion.sql',
     'apps/clued-cloud/supabase/migrations/20260924200000_information_flow_context_policy.sql',
     'apps/clued-cloud/supabase/migrations/20260924220000_information_flow_invalidation.sql',
+    'apps/clued-cloud/supabase/migrations/20260924230000_decision_supersede_v12_guard.sql',
+    'development/contracts/information-flow/NativeWriteSurfaces.v0.1.md',
     'apps/clued-cloud/worker/information-flow.ts', 'apps/clued-cloud/worker/context-pack.ts',
     'apps/clued-cloud/worker/continuity.ts', CONTRACT, REGISTER, 'AGENTS.md',
     ...listFiles(path.join(cloudRoot, 'evals/information-flow-e2e')).map((f) => `apps/clued-cloud/evals/information-flow-e2e/${f}`),
@@ -148,17 +154,34 @@ if (command === 'closure') {
     'M0D-B06': { status: e2ePass(['E2E-08']) ? 'PASS' : 'FAIL', e2e: rows(['E2E-08']) },
     'M0D-B07': { status: regression && regression.summary.unexplained_failures.length === 0 ? 'PASS_WITH_DISCLOSED_BASELINE'
       : 'FAIL', evidence: digests(['regression.json']) },
-    'M0D-B08': { status: isolation?.result ?? 'MISSING', e2e: rows(['E2E-09']), evidence: digests(['isolation.json', 'egress-summary.json']) },
+    'M0D-B08': { status: isolation?.result === 'PASS' ? 'PASS_WITH_REFERENCED_EXCEPTION' : (isolation?.result ?? 'MISSING'),
+      qualifier: 'Scoped to the S6 qualification runs. The S1 clued-prod apply (PR #307) is a referenced exception: '
+        + 'retroactive authorization by Agent-written Decision '
+        + `${isolation?.points?.historical?.authorization?.decision_id ?? '?'} under OPEN_BY_OD-5, no backup or read-back (register L26, L28).`,
+      e2e: rows(['E2E-09']), evidence: digests(['isolation.json', 'egress-summary.json']) },
     'M0D-B09': { status: review ? (review.counts?.blocker === 0 && review.counts?.major === 0 ? 'PASS' : 'FAIL') : 'PENDING',
       evidence: digests(['b09-review.json']) },
   };
   partB['M0D-B01'].status = regression && ['db:lint', 'test:authorization:migrations', 'test:production:release-gate']
     .every((name) => regression.suites.find((s) => s.suite === name)?.result === 'PASS') ? 'PASS' : 'FAIL';
+  // A03 at seal time: the register bytes must still match the closure, and
+  // every register id (contiguous L01..Lnn) must be present.
+  const registerNow = readJson(path.join(repoRoot, REGISTER));
+  const registerIds = registerNow.entries.map((e) => e.id);
+  const a03Check = { closure_result: a03?.result ?? 'MISSING',
+    register_sha256_at_closure: a03?.register?.sha256 ?? null, register_sha256_now: fileSha(REGISTER),
+    ids_at_closure: a03?.register?.ids ?? null, ids_now: registerIds };
+  a03Check.pass = a03Check.closure_result === 'PASS' && a03Check.register_sha256_at_closure === a03Check.register_sha256_now
+    && JSON.stringify(a03Check.ids_at_closure) === JSON.stringify(registerIds)
+    && registerIds.every((id, i) => id === `L${String(i + 1).padStart(2, '0')}`);
+  const a01Result = a01?.result ?? 'NOT_EXECUTED';
   const partA = {
-    'M0D-A01': a01?.result ?? 'NOT_EXECUTED', 'M0D-A02': 'UNMET_OD-1b', 'M0D-A03': a03?.result ?? 'MISSING',
+    'M0D-A01': a01Result === 'PASS' ? 'PASS' : a01Result === 'PASS_WITH_DISCLOSED_NONDETERMINISM'
+      ? 'CONDITIONAL_ON_OWNER_ACCEPTANCE (PASS_WITH_DISCLOSED_NONDETERMINISM)' : a01Result,
+    'M0D-A02': 'UNMET_OD-1b', 'M0D-A03': a03Check.pass ? 'PASS' : 'FAIL',
     'M0D-A04': 'THIS_MANIFEST',
   };
-  const allB = Object.values(partB).every((gate) => /^PASS/.test(gate.status));
+  const allB = Object.values(partB).every((gate) => /^PASS/.test(gate.status));  // B08 PASS_WITH_REFERENCED_EXCEPTION counts, qualified
   const commit = args['input-commit'] ?? review?.input_commit ?? null;
   const manifest = {
     schema: 'clued.information-flow.m0d.closeout-manifest/1',
@@ -168,6 +191,7 @@ if (command === 'closure') {
     contract: { path: CONTRACT, sha256: fileSha(CONTRACT), freeze_decision: '825aa822', od_decision: 'ef229e68-bff5-4dca-9b7f-159a08096748' },
     parents: a01 ? { transport_zip_sha256: a01.source.transport_zip_sha256, result: a01.result } : null,
     part_a: partA,
+    a03_seal_check: a03Check,
     part_b: partB,
     supporting_db_evidence: {
       'E2E-02 issue+consume in one transaction': (() => {
@@ -186,9 +210,11 @@ if (command === 'closure') {
     observations: { 'E2E-11': { result: results['E2E-11']?.result ?? 'MISSING', register_entry: 'L01', limitation_id: 'OPEN_BY_OD-5' } },
     proposed_verdict_labels: {
       part_a: `A01 ${partA['M0D-A01']}, A02 UNMET (OD-1b), A03 ${partA['M0D-A03']}, A04 PASS; MVP-0 stays open`,
-      part_b: allB && /^PASS/.test(partA['M0D-A01']) && partA['M0D-A03'] === 'PASS'
-        ? `PASS / CLUED_INFORMATION_FLOW_M0D_PART_B_RUNTIME_ACCEPTED_MODEL_FREE_LOCAL_QUALIFIED (Agent authority confined only on the Information Flow path)${partA['M0D-A01'] === 'PASS' ? '' : '; conditional on Owner acceptance of the disclosed A01 nondeterminism'}`
-        : 'BLOCKED / CLUED_INFORMATION_FLOW_M0D_GAPS_FOUND',
+      part_b: !(allB && partA['M0D-A03'] === 'PASS' && /^(PASS|CONDITIONAL)/.test(partA['M0D-A01']))
+        ? 'BLOCKED / CLUED_INFORMATION_FLOW_M0D_GAPS_FOUND'
+        : partA['M0D-A01'] === 'PASS'
+          ? 'PASS / CLUED_INFORMATION_FLOW_M0D_PART_B_RUNTIME_ACCEPTED_MODEL_FREE_LOCAL_QUALIFIED (Agent authority confined only on the Information Flow path)'
+          : 'CONDITIONAL: PASS / CLUED_INFORMATION_FLOW_M0D_PART_B_RUNTIME_ACCEPTED_MODEL_FREE_LOCAL_QUALIFIED (Agent authority confined only on the Information Flow path) only if the Owner accepts the disclosed A01 nondeterminism; otherwise BLOCKED / CLUED_INFORMATION_FLOW_M0D_GAPS_FOUND',
       never_combined: true,
       recorded_by: 'proposal only; a Canonical verdict Decision needs the Owner (contract header rule); Task 45fb2ae7 stays open',
     },

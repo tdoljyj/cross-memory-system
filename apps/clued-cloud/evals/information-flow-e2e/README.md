@@ -24,9 +24,17 @@ production access, no deploy, no model or provider calls.
   `postgrest_direct`, `gotrue`, `db_fixture_setup`, `db_observer_readonly` or
   `process_control`. Fixtures are setup only; the observer is read-only and used
   only for internal state with no transport read route.
-- **Isolation:** every harness Node process is started with
-  `--require ./evals/information-flow-e2e/isolation-guard.cjs`, which refuses any
-  non-loopback connection and any loopback port listed in `IFE2E_DENY_PORTS`.
+- **Isolation:** every harness Node process (the orchestrator, each Worker host,
+  the phase-B process and its host, and `wrangler` through `NODE_OPTIONS`) loads
+  `isolation-guard.cjs`, which refuses any non-loopback connection and any
+  loopback port listed in `IFE2E_DENY_PORTS` (for example a local egress proxy;
+  `none` if there is none). Each process writes its ledger on every connection,
+  so a SIGKILLed Worker host still leaves one. The Supabase and Docker CLIs are
+  Go binaries and cannot load the guard; they get an allowlisted environment
+  without proxy variables or credentials and talk only to the local stack.
+- **Database locality:** the observer and fixture connections accept only
+  loopback, a Unix socket or the db container's Docker bridge subnet read at
+  runtime, and must match the identity recorded right after `db reset`.
 
 ## Run locally
 
@@ -34,7 +42,7 @@ production access, no deploy, no model or provider calls.
 cd apps/clued-cloud
 npx --yes supabase@2.115.0 start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 # Node 24.19.0; no provider/cloud credentials in the environment (the run fails closed otherwise).
-npm run test:information-flow:e2e -- --evidence-dir /tmp/ife2e
+IFE2E_DENY_PORTS=none npm run test:information-flow:e2e -- --evidence-dir /tmp/ife2e
 npm run information-flow:e2e:verify -- --dir /tmp/ife2e [--against <committed evidence dir>]
 npx --yes supabase@2.115.0 stop --no-backup
 ```
@@ -43,6 +51,20 @@ The run waits for the real 5-minute confirmation-token TTL (E2E-02, E2E-15), so
 it takes about 8–12 minutes. `--ttl-wait-ms` shortens the wait for debugging only;
 such a run is not evidence. E2E-08 restarts the db, PostgREST, GoTrue and Kong
 containers and runs phase B in a new process (`continuity-phase-b.mjs`).
+
+## Reproducibility
+
+Run the harness twice at the same commit, then
+`node evals/information-flow-e2e/reproducibility.mjs --committed <evidence dir> --cross-check <second run dir>`.
+It writes `reproducibility.json` with both runs' per-row normalized digests.
+`verify-evidence.mjs --against` fails when digests or code trees differ.
+
+The normalized digest keeps channel, method, target template, HTTP status,
+extracted values, assertion ids/expected values/pass and the result. It drops
+step ledgers, request/response hashes, durations, assertion observed values,
+notes and the environment; it replaces ids, digests, timestamps, PIDs and
+PostgreSQL system identifiers and sorts arrays. Byte integrity of each file
+comes from `SHA256SUMS` (the seal), not from the normalized digest.
 
 ## Evidence
 

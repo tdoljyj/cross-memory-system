@@ -105,6 +105,25 @@ jobs:
       - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)
         run: npx --yes supabase@2.115.0 start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 
+      - name: Deny loopback proxy ports to the harness isolation guard
+        run: |
+          # Any loopback HTTP(S) proxy port is refused by the guard; "none" when
+          # the runner has no loopback proxy (IFE2E_DENY_PORTS is recorded in run.json).
+          ports=$(python3 - <<'PY'
+          import os, urllib.parse
+          out = set()
+          for name in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'):
+              value = os.environ.get(name)
+              if not value:
+                  continue
+              url = urllib.parse.urlparse(value if '://' in value else 'http://' + value)
+              if url.hostname in ('127.0.0.1', 'localhost', '::1') and url.port:
+                  out.add(str(url.port))
+          print(','.join(sorted(out)) or 'none')
+          PY
+          )
+          echo "IFE2E_DENY_PORTS=$ports" >> "$GITHUB_ENV"
+
       - name: Run the Information Flow E2E harness
         run: npm run test:information-flow:e2e -- --evidence-dir "$RUNNER_TEMP/ife2e"
 
@@ -114,7 +133,7 @@ jobs:
 
       - name: Upload E2E evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: information-flow-e2e-evidence
           path: ${{ runner.temp }}/ife2e
@@ -166,6 +185,25 @@ jobs:
       - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)
         run: npx --yes supabase@2.115.0 start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 
+      - name: Deny loopback proxy ports to the harness isolation guard
+        run: |
+          # Any loopback HTTP(S) proxy port is refused by the guard; "none" when
+          # the runner has no loopback proxy (IFE2E_DENY_PORTS is recorded in run.json).
+          ports=$(python3 - <<'PY'
+          import os, urllib.parse
+          out = set()
+          for name in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'):
+              value = os.environ.get(name)
+              if not value:
+                  continue
+              url = urllib.parse.urlparse(value if '://' in value else 'http://' + value)
+              if url.hostname in ('127.0.0.1', 'localhost', '::1') and url.port:
+                  out.add(str(url.port))
+          print(','.join(sorted(out)) or 'none')
+          PY
+          )
+          echo "IFE2E_DENY_PORTS=$ports" >> "$GITHUB_ENV"
+
       - name: Run the Information Flow E2E harness
         run: npm run test:information-flow:e2e -- --evidence-dir "$RUNNER_TEMP/ife2e"
 
@@ -175,7 +213,7 @@ jobs:
 
       - name: Upload E2E evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: information-flow-e2e-evidence
           path: ${{ runner.temp }}/ife2e

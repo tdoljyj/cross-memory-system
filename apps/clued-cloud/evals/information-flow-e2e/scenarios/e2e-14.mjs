@@ -5,6 +5,7 @@
 import { acceptPolicy, checkPack, item, key, noteInput, packExtract, packRest, policyDoc, submitNative,
   uuid } from './common.mjs';
 import { sha256 } from '../evidence.mjs';
+import { delegatedShapedJwt } from '../principals.mjs';
 
 export const id = 'E2E-14';
 
@@ -68,5 +69,53 @@ export async function run(ctx, r) {
   checkPack(r, '14.after', again);
   r.check('14.policy_usable', 'the policy is still usable: same digest, manifest reused', [before?.pack_digest, true],
     [again?.pack_digest, again?.manifest?.reused]);
+  // Decision supersede is a Native write surface guarded by the v12
+  // direct-human check (20260907173031; regressed by S3; restored by
+  // 20260924230000, PR #322). A direct session supersedes; a
+  // delegated-OAuth-shaped JWT and a Binding are refused.
+  const decisionInput = (id, title) => ({ operation: 'create', id, record_type: 'decision', record_schema_version: 1,
+    lifecycle_status: 'active', scope, idempotency_key: key('dec'), authority: 'user_explicit', confidence: 1,
+    confidence_reason: 'S6 synthetic fixture', source_refs: [], source_unavailable_reason: 'Synthetic fixture',
+    mutation: { title, content: title, type_fields: { rationale: 'Synthetic rationale' }, relations: {} } });
+  const supersedeInput = (sourceId, replacementId) => ({ idempotency_key: key('sup'), supersede_reason: 'Replaced (synthetic)',
+    source_decisions: [{ id: sourceId, base_version: 1 }],
+    replacement: { id: replacementId, scope, record_schema_version: 1, title: 'Replacement decision', content: 'New',
+      type_fields: { rationale: 'Now' }, relations: { supersedes: [sourceId] }, authority: 'user_explicit', source_refs: [],
+      source_unavailable_reason: 'Synthetic fixture', confidence_reason: 'S6 synthetic fixture' } });
+  const d1 = r.alias('D14A', uuid());
+  const d2 = r.alias('D14B', uuid());
+  for (const [id, title] of [[d1, 'Decision A (synthetic)'], [d2, 'Decision B (synthetic)']]) {
+    const created = await r.rest(U, 'POST', '/v1/records', decisionInput(id, title), { extract: (b) => ({ status: b?.status }) });
+    if (created.body?.status !== 'committed') throw new Error(`decision create failed: ${JSON.stringify(created.body)}`);
+  }
+  const direct = await r.rest(U, 'POST', '/v1/decisions/supersede', supersedeInput(d1, r.alias('D14A2', uuid())),
+    { extract: (b) => ({ status: b?.status }) });
+  r.check('14.supersede.direct', 'a direct account session supersedes a Decision', [200, 'committed'],
+    [direct.status, direct.body?.status]);
+  const delegatedJwt = delegatedShapedJwt((await U.current()).accessToken, ctx.h.stack.jwtSecret);
+  r.check('14.delegated.minted', 'a delegated-OAuth-shaped JWT (real session claims + client_id) was built locally', true,
+    typeof delegatedJwt === 'string');
+  const input = supersedeInput(d2, uuid());
+  const viaRpc = await r.postgrest('delegated_shaped_jwt', 'clued_user_decision_supersede',
+    { p_input: input, p_received_payload_hash: sha256(JSON.stringify(input)) },
+    { bearer: delegatedJwt, extract: (b) => ({ code: b?.code ?? null, message: b?.message ?? null, status: b?.status ?? null }) });
+  r.check('14.delegated.rpc', 'PostgREST: the supersede RPC refuses a delegated-OAuth JWT (v12 direct-human guard)',
+    [403, '42501', 'direct_human_session_required'], [viaRpc.status, viaRpc.body?.code, viaRpc.body?.message]);
+  const viaWorker = await r.rest(null, 'POST', '/v1/decisions/supersede', supersedeInput(d2, uuid()), { bearer: delegatedJwt,
+    extract: (b) => ({ error: b?.error ?? null, status: b?.status ?? null }) });
+  r.check('14.delegated.worker', 'Worker: /v1/decisions/supersede with a delegated-OAuth JWT is refused by the database guard',
+    [403, 'direct_human_session_required'], [viaWorker.status, viaWorker.body?.error]);
+  const viaBinding = await r.rest(null, 'POST', '/v1/decisions/supersede', supersedeInput(d2, uuid()), { bearer: B.raw,
+    extract: (b) => ({ error: b?.error ?? null }) });
+  r.check('14.binding.worker', 'Worker: a Binding bearer on /v1/decisions/supersede is refused before any RPC', [401, []],
+    [viaBinding.status, viaBinding.ledger.filter((row) => row.path_class.startsWith('rpc:'))]);
+  const decisions = await r.rest(U, 'GET', `/v1/records?level=project&project_id=${scope.slice(8)}&record_type=decision&include_history=true`,
+    undefined, { extract: (b) => ({ count: b?.records?.length }) });
+  const rowB = decisions.body?.records?.find((row) => row.id === d2);
+  const rowA = decisions.body?.records?.find((row) => row.id === d1);
+  r.check('14.delegated.unchanged', 'Decision B is unchanged (version 1, not superseded); Decision A was superseded',
+    [1, true], [Number(rowB?.version), rowA ? rowA.status !== rowB?.status : false]);
+  r.note('The delegated-OAuth-shaped JWT is locally signed with the local stack\'s demo JWT secret from '
+    + 'supabase status (kept in memory, never written); it is not issued by an OAuth server.');
   return {};
 }

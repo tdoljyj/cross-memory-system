@@ -33,6 +33,12 @@ export async function aggregate(state) {
   const ledgers = { orchestrator: { ...own, pid: '<volatile>' }, ...readLedgers(guardDir) };
   for (const value of Object.values(ledgers)) delete value.pid;
   const guardDenied = Object.values(ledgers).flatMap((row) => row.denied ?? []);
+  // Every harness Node process: the orchestrator, each Worker host (including
+  // SIGKILLed ones), the phase-B process and its Worker host.
+  const wranglerLedgers = Object.keys(ledgers).filter((name) => name.startsWith('wrangler-'));
+  const expectedProcesses = ['orchestrator', ...wranglerLedgers, ...hosts.map((_, i) => `worker-host-${i + 1}`),
+    ...(state.phaseBEgress ? ['phase-b', 'worker-host-phase-b'] : [])];
+  const missingLedgers = expectedProcesses.filter((name) => !(name in ledgers));
   const egress = [...hosts.flatMap((host) => host.egress), ...(state.phaseBEgress ?? [])];
   const byClass = {};
   for (const row of egress) {
@@ -96,7 +102,9 @@ export async function aggregate(state) {
     od5_qualifier: 'Agent authority confined only on the Information Flow path' };
   e09.normalized_digest = normalizedDigest(e09);
   writeJson(path.join(evidenceDir, 'e2e', 'E2E-09.json'), e09);
-  results['E2E-09'] = { result: e09.result, assertions: e09.assertions.length,
+  results['E2E-09'] = { result: e09.result,
+    ...(e09.result === 'PASS' ? { qualifier: 'Agent authority confined only on the Information Flow path' } : {}),
+    assertions: e09.assertions.length,
     failed: e09.assertions.filter((a) => !a.pass).map((a) => a.id), normalized_digest: e09.normalized_digest };
 
   // B08 isolation proof.
@@ -113,7 +121,11 @@ export async function aggregate(state) {
     worker_egress: { hosts_contacted: hostsContacted, denied: deniedEgress.length, production_host_requests:
       productionEgress.length, supabase_url_binding_is_gateway: hosts.every((host) => host.config.gatewayOrigin === status.apiUrl),
     pass: deniedEgress.length === 0 && productionEgress.length === 0 && hostsContacted.length <= 1 },
-    harness_egress: { processes: Object.keys(ledgers).length, denied: guardDenied.length, pass: guardDenied.length === 0 },
+    harness_egress: { processes_expected: expectedProcesses.length, ledgers_found: Object.keys(ledgers).length,
+      missing_ledgers: missingLedgers, wrangler_processes: wranglerLedgers.length,
+      unguarded_children: 'supabase and docker CLIs (Go binaries; allowlisted env, local stack only; register L31)', deny_ports: process.env.IFE2E_DENY_PORTS || 'none',
+      ledger_write: 'on every connection (survives SIGKILL)', denied: guardDenied.length,
+      pass: guardDenied.length === 0 && missingLedgers.length === 0 && wranglerLedgers.length > 0 },
     credentials_absent: { orchestrator_scan: environmentScan(), child_env_allowlist: childEnvNames,
       child_forbidden: childForbidden, pass: scan.forbidden.length === 0 && childForbidden.length === 0
         && !scan.project_ref_linked },
@@ -149,6 +161,8 @@ export async function aggregate(state) {
 
   writeJson(path.join(evidenceDir, 'run.json'), { schema: 'clued.information-flow.m0d.e2e-run/1', environment,
     code_binding: binding.code, contract: binding.contract, bundle, preflight_env_scan: scan,
+    run_flags: state.runFlags, ttl_waits: state.ttlWaits,
+    evidence_eligible: !state.runFlags?.skip_reset && !state.runFlags?.only && !state.runFlags?.ttl_wait_ms_override,
     results: Object.fromEntries(Object.entries(results).sort()), duration_class: Date.now() - state.runStarted > 20 * 60000
       ? 'over_20_min' : 'under_20_min' });
   return { isolation: isolation.result, e09: e09.result };

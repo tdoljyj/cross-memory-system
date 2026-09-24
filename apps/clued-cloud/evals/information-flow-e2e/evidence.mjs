@@ -95,6 +95,19 @@ export function normalizer(aliases = {}) {
   return norm;
 }
 
+// What the normalized digest keeps and drops (documented for reviewers).
+export const NORMALIZATION = {
+  keeps: ['scenario_id', 'steps[].n', 'steps[].channel', 'steps[].method', 'steps[].target (template)',
+    'steps[].http_status (network errors collapsed)', 'steps[].extracted', 'assertions[].id', 'assertions[].expected',
+    'assertions[].pass', 'result'],
+  drops: ['steps[].ledger', 'steps[].request_sha256', 'steps[].response_sha256', 'steps[].duration_ms',
+    'assertions[].text', 'assertions[].observed', 'notes', 'aliases (used only to name ids)', 'environment', 'code_binding'],
+  replaces: ['aliased uuids -> <alias>', 'other uuids -> <uuid>', '64-hex -> <hex64>', '32-hex -> <hex32>',
+    'ISO timestamps -> <ts>', 'PostgreSQL system identifiers', 'volatile keys (pids, ports, durations, event ids)'],
+  arrays: 'sorted by canonical form after normalization',
+  byte_integrity: 'SHA256SUMS over every evidence file (the seal)',
+};
+
 export function normalizedDigest(evidence) {
   const norm = normalizer(evidence.aliases ?? {});
   const core = {

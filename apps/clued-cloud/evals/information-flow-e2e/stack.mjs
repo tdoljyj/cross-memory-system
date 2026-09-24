@@ -52,6 +52,8 @@ export function status() {
     apiUrl: parsed.API_URL.replace(/\/$/, ''),
     dbUrl: parsed.DB_URL,
     publishableKey: parsed.PUBLISHABLE_KEY ?? parsed.ANON_KEY,
+    // Local demo signing secret; kept in memory only, never written to evidence.
+    jwtSecret: parsed.JWT_SECRET ?? null,
     jwtAlgorithm: parsed.JWT_SECRET ? 'HS256_shared_secret_local' : 'asymmetric',
   };
 }

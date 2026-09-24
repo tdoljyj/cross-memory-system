@@ -13,6 +13,19 @@ export function decodeJwtClaims(token) {
   return JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
 }
 
+// A delegated-OAuth-shaped JWT: the claims of a real GoTrue access token plus a
+// client_id claim, signed HS256 with the local stack's demo secret (local
+// only; the token is never written anywhere).
+export function delegatedShapedJwt(accessToken, secret, clientId = 'ife2e-delegated-client') {
+  if (!secret) return null;
+  const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const claims = { ...decodeJwtClaims(accessToken), client_id: clientId };
+  const head = b64({ alg: 'HS256', typ: 'JWT' });
+  const body = b64(claims);
+  const signature = crypto.createHmac('sha256', secret).update(`${head}.${body}`).digest('base64url');
+  return `${head}.${body}.${signature}`;
+}
+
 export async function signUp(gateway, publishableKey, email, password) {
   const response = await fetch(`${gateway}/auth/v1/signup`, {
     method: 'POST', headers: { apikey: publishableKey, 'content-type': 'application/json' },

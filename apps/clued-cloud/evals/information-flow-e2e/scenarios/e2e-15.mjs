@@ -92,11 +92,24 @@ export async function run(ctx, r) {
   const repointedC = await r.fixture('re-point candidate C15C evidence_ids to the caller-hash Evidence after issue',
     (f) => f.repointCandidateEvidence(cc, assertedId));
   r.check('15.d2.repointed', '(d2) fixture re-point applied after issue', 1, repointedC);
-  const d2 = await direct('d2', base(cc, { confirmation_token: observedToken.body?.confirmation_token,
-    view_digest: observedToken.body?.view_digest }), {},
-  ['confirmation_view_stale', 'observed_requires_server_computed_evidence']);
-  r.note(`E2E-15 (d2) promote-RPC error_code=${d2}`);
+  // The re-point changes the confirmed view, so the view-digest check refuses first.
+  await direct('d2', base(cc, { confirmation_token: observedToken.body?.confirmation_token,
+    view_digest: observedToken.body?.view_digest }), {}, ['confirmation_view_stale']);
   r.check('15.d2.pending', '(d2) the candidate stays pending', 'pending', await statusOf(cc));
+  // (d3) the view digest still matches but the Evidence check fails: a token is
+  // issued for observed authority, then the candidate's own server-computed
+  // Evidence hash is broken by a disclosed fixture (candidate row untouched).
+  const sub3 = await submitNative(r, U, scope, 'seg_s6_e15d3', [item('d3', 'fact')]);
+  const cd = r.alias('C15D', sub3.ids.item_d3);
+  r.alias('E15D', sub3.evidenceId);
+  const d3Token = await issueCandidate(r, U, 'information', cd, { authority: 'observed' });
+  r.check('15.d3.issued', '(d3) an observed-authority token is issued', 'issued', d3Token.body?.status);
+  const tampered = await r.fixture('break the server-computed Evidence hash of C15D after issue (defence-in-depth setup)',
+    (f) => f.tamperEvidenceHash(sub3.evidenceId, sha256('ife2e-e15-d3-caller-asserted')));
+  r.check('15.d3.tampered', '(d3) fixture applied to exactly one Evidence row', 1, tampered);
+  await direct('d3', base(cd, { confirmation_token: d3Token.body?.confirmation_token,
+    view_digest: d3Token.body?.view_digest }), {}, ['observed_requires_server_computed_evidence']);
+  r.check('15.d3.pending', '(d3) the candidate stays pending', 'pending', await statusOf(cd));
 
   return {
     deferred: {

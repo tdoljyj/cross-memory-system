@@ -177,6 +177,26 @@ async function withHarnessWorker(fn) {
   }
 }
 
+// The Owner acceptance comes from the A03 register (owner_decisions), not
+// from this script.
+function ownerAcceptance() {
+  const register = JSON.parse(fs.readFileSync(path.join(repoRoot,
+    'development/contracts/information-flow/known-limitations.m0d.v0.1.json'), 'utf8'));
+  const decision = (register.owner_decisions ?? []).find((d) => d.items?.['7']);
+  return decision ? { source: 'known-limitations.m0d.v0.1.json owner_decisions', decision_id: decision.decision_id,
+    receipt_id: decision.receipt_id, item: 7, text: decision.items['7'] } : null;
+}
+
+// Each baseline ref must be an ancestor of origin/main (the proof is on main).
+function baselineAncestry() {
+  const main = spawnSync('git', ['rev-parse', 'origin/main'], { cwd: repoRoot, encoding: 'utf8' }).stdout.trim() || null;
+  return { origin_main: main, refs: args['baseline-refs'].split(',').map((ref) => {
+    const commit = spawnSync('git', ['rev-parse', `${ref}^{commit}`], { cwd: repoRoot, encoding: 'utf8' }).stdout.trim();
+    const check = spawnSync('git', ['merge-base', '--is-ancestor', commit, 'origin/main'], { cwd: repoRoot });
+    return { ref, commit, is_ancestor_of_origin_main: check.status === 0 };
+  }) };
+}
+
 const only = args.only ? new Set(args.only.split(',')) : null;
 const results = [];
 for (const suite of SUITES) {
@@ -222,9 +242,8 @@ const report = {
   baseline_classification: {
     'db:test:v2': {
       classification: 'pre-existing stale-test baseline failure (not an environmental failure); not modified in S6',
-      owner_acceptance: { decision_id: '7040b127-2a42-4ff6-ba46-060a594a9c1d',
-        receipt_id: 'cef0f0dd-c89e-4eac-b805-18c0816b4449', item: 7,
-        note: 'The Owner accepted this suite as a disclosed pre-existing baseline failure with the identical-failure proof.' },
+      owner_acceptance: ownerAcceptance(),
+      baseline_refs_on_main: baselineAncestry(),
       root_cause: 'apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql:763 revokes '
         + 'clued_user_record_write from authenticated; apps/clued-cloud/supabase/tests/unified_record_v2.test.sql:36 '
         + 'still calls it. No CI workflow runs db:test:v2.',
