@@ -23,6 +23,7 @@ on:
       - 'apps/clued-cloud/tests/currentness-*.test.mjs'
       - 'apps/clued-cloud/tests/projection-refresh-*.test.mjs'
       - 'apps/clued-cloud/tests/record-update-field-merge-db.test.mjs'
+      - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'
       - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'
       - 'apps/clued-cloud/package*.json'
   push:
@@ -48,6 +49,7 @@ on:
       - 'apps/clued-cloud/tests/currentness-*.test.mjs'
       - 'apps/clued-cloud/tests/projection-refresh-*.test.mjs'
       - 'apps/clued-cloud/tests/record-update-field-merge-db.test.mjs'
+      - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'
       - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'
       - 'apps/clued-cloud/package*.json'
   workflow_dispatch:
