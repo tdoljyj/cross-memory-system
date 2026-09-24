@@ -1157,9 +1157,10 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       dosDecision = await decisionOf(dos.policyId);
       const bindingEdit = await call('clued_record_mutate', decisionUpdate(dosDecision.id, Number(dosDecision.version),
         { observed_at: '2020-01-01T00:00:00Z', mutation: { title: 'Agent edit', closure_summary: 'AGENT-INJECTED summary',
-          closed_reason: 'AGENT-INJECTED reason', type_fields: { rationale: 'x', context_policy: {
+          closed_reason: 'AGENT-INJECTED reason', type_fields: { rationale: 'x', constraint: true,
+            agent_injected: 'AGENT-INJECTED key', context_policy: {
             schema: 'clued.context-policy.v1', task_class: 'dos.check', policy_version: 99,
-            policy_digest: 'e'.repeat(64) } } } }));
+            policy_digest: 'e'.repeat(64) } }, relations: { agent_injected: ['AGENT-INJECTED relation'] } } }));
       assert.equal(bindingEdit.status, 'committed', JSON.stringify(bindingEdit));
       await refusedWith('policy_decision_changed');
       assert.equal(await count('clued_private.context_policies', "task_class='dos.check' and status='active'"), 1);
@@ -1175,6 +1176,13 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       assert.deepEqual([reaccepted.closure_summary, reaccepted.closed_reason, reaccepted.observed_at], [null, null, null],
         'no agent text reaches the human-confirmed Decision version');
       assert.equal(await confirmed(dos.accepted.supplemental.decision_record_id, Number(reaccepted.version)), true);
+      // field_mode='replace': keys the Binding injected into type_fields and relations do not survive
+      // into the confirmed version (record updates otherwise merge field by field).
+      const reacceptedFields = (await admin.query('select type_fields,relations from public.clued_memories where id=$1',
+        [dos.accepted.supplemental.decision_record_id])).rows[0];
+      assert.deepEqual(reacceptedFields.type_fields, dos.issued.confirmation_view.decision_body.mutation.type_fields);
+      assert.deepEqual(reacceptedFields.relations, dos.issued.confirmation_view.decision_body.mutation.relations);
+      assert.equal(dos.issued.confirmation_view.decision_body.field_mode, 'replace');
       packOk(await compileDos(), 'dos v5');
       // (e) Binding supersede.
       dosDecision = await decisionOf(dos.policyId);
