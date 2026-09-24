@@ -1,8 +1,9 @@
 // Information Flow M0-D transport surface (contract
 // development/contracts/information-flow/M0DCloseout.v0.1.md section 5.1).
 // A Binding can submit, list and withdraw its own candidates, propose
-// Candidate Knowledge and read packs; confirmation, promotion and reject stay
-// Native (account-session REST only, never an MCP tool).
+// Candidate Knowledge and read packs; confirmation, promotion, reject and
+// Context Policy acceptance stay Native (account-session REST only, never an
+// MCP tool).
 
 const uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 // Lower-case only: the store accepts no other project scope spelling.
@@ -120,11 +121,12 @@ export const informationFlowRpcByTool = {
 
 export type UserInformationFlowRpc = "clued_user_intake_submit" | "clued_user_intake_list" |
   "clued_user_intake_withdraw" | "clued_user_knowledge_propose" | "clued_user_context_pack" |
-  "clued_candidate_confirmation_issue_v1" | "clued_candidate_promote_v1" | "clued_candidate_reject_v1";
+  "clued_candidate_confirmation_issue_v1" | "clued_candidate_promote_v1" | "clued_candidate_reject_v1" |
+  "clued_context_policy_confirmation_issue_v1" | "clued_context_policy_accept_v1";
 
 export const informationFlowListParameters = ["scope", "tier", "status", "submission_id", "limit"] as const;
 
-const informationFlowPaths = /^\/v1\/(intake|knowledge|context\/pack)(\/|$)/;
+const informationFlowPaths = /^\/v1\/(intake|knowledge|context\/(pack|policies))(\/|$)/;
 
 export function isInformationFlowPath(pathname: string) {
   return informationFlowPaths.test(pathname);
@@ -157,4 +159,11 @@ export const nativeCandidateRpcByAction = {
   confirmation: "clued_candidate_confirmation_issue_v1",
   promote: "clued_candidate_promote_v1",
   reject: "clued_candidate_reject_v1",
+} as const;
+
+// Context Policy acceptance (contract 6.1): step 1 issues the confirmation
+// token, step 2 consumes it. Both are Native account-session routes.
+export const nativeContextPolicyRpcByPath = {
+  "/v1/context/policies/confirmation": "clued_context_policy_confirmation_issue_v1",
+  "/v1/context/policies": "clued_context_policy_accept_v1",
 } as const;

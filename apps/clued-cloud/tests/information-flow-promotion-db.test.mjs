@@ -89,12 +89,16 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const migrations = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
-    assert.equal(migrations.at(-1), S3_MIGRATION, 'the S3 migration sorts after every existing migration');
+    // Later slices sort after S3; the chain before S3 is applied first, S3
+    // itself after the pre-S3 fixture, and every later migration right after.
+    const s3Index = migrations.indexOf(S3_MIGRATION);
+    assert.ok(s3Index > 0, 'the S3 migration is in the chain');
+    assert.ok(migrations.slice(0, s3Index).every((name) => name < S3_MIGRATION));
     const apply = async (name) => {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     };
-    for (const name of migrations.slice(0, -1)) await apply(name);
+    for (const name of migrations.slice(0, s3Index)) await apply(name);
 
     const userId = uuid();
     const otherUser = uuid();
@@ -143,6 +147,7 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
     const preS3Input = noteInput(preS3Record, 'Written before S3');
     assert.equal((await native('clued_user_record_mutate', preS3Input)).status, 'committed');
     await apply(S3_MIGRATION);
+    for (const name of migrations.slice(s3Index + 1)) await apply(name);
     assert.equal(await confirmed(preS3Record, 1), false, 'pre-S3 Native writes are not backfilled');
     const preS3Replay = await native('clued_user_record_mutate', preS3Input);
     assert.equal(preS3Replay.replayed, true);
@@ -463,7 +468,7 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
       const listed = findById(await call('clued_record_list', { record_type: 'note' }), view.record_id);
       assert.ok(listed, 'the promoted Record is visible to the Agent');
       assert.equal(Number(listed.version), 1);
-      // The pack is S4: it still fails closed (residual, disclosed).
+      // No Context Policy is accepted in this test, so the pack fails closed.
       assert.equal((await call('clued_context_pack', { scope: 'global' })).error_code, 'CONTEXT_POLICY_REQUIRED');
       // Idempotent replay of the same key and body.
       const e01Replay = await post(`/v1/intake/${e01Id}/promote`, { idempotency_key: 'if-s3-promo-0101',

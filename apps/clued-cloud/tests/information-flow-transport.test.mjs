@@ -93,8 +93,13 @@ test('Binding and OAuth MCP calls reach the Binding entries; REST reaches the ac
     assert.equal((await worker.fetch(rest('/v1/context/pack', { body: { scope: 'global' } }), env, {})).status, 200);
     assert.equal((await worker.fetch(rest('/v1/intake?scope=global&tier=knowledge&limit=5', { method: 'GET' }),
       env, {})).status, 200);
+    assert.equal((await worker.fetch(rest('/v1/context/policies/confirmation', { body: { policy: {}, rationale: 'r',
+      base_policy_version: 0 } }), env, {})).status, 200);
+    assert.equal((await worker.fetch(rest('/v1/context/policies', { body: { idempotency_key: 'rest-policy-0001' } }),
+      env, {})).status, 200);
     assert.deepEqual(calls.map(({ rpc }) => rpc), ['clued_user_intake_submit', 'clued_user_knowledge_propose',
-      'clued_user_intake_withdraw', 'clued_user_context_pack', 'clued_user_intake_list']);
+      'clued_user_intake_withdraw', 'clued_user_context_pack', 'clued_user_intake_list',
+      'clued_context_policy_confirmation_issue_v1', 'clued_context_policy_accept_v1']);
     assert.match(calls[0].body.p_received_payload_hash, /^[0-9a-f]{64}$/);
     assert.deepEqual(calls[0].body.p_input, submit);
     assert.equal(calls[2].body.p_input.candidate_id, candidateId, 'the path binds the candidate');
@@ -104,9 +109,9 @@ test('Binding and OAuth MCP calls reach the Binding entries; REST reaches the ac
 
 test('Native Information Flow routes reject Binding tokens before any RPC and validate input', async () => {
   const worker = await loadContinuityWorker();
-  await withStorage(() => ({ status: 'committed' }), async (calls) => {
+  await withStorage(() => ({ status: 'committed' }), async (calls) => captureWarnings(async () => {
     for (const pathname of ['/v1/intake', '/v1/knowledge/candidates', `/v1/intake/${candidateId}/withdraw`,
-      '/v1/context/pack']) {
+      '/v1/context/pack', '/v1/context/policies/confirmation', '/v1/context/policies']) {
       const response = await worker.fetch(rest(pathname, { token: bindingToken, body: { idempotency_key: 'x'.repeat(8) } }),
         env, {});
       assert.equal(response.status, 401, pathname);
@@ -131,7 +136,7 @@ test('Native Information Flow routes reject Binding tokens before any RPC and va
     assert.equal((await worker.fetch(rest('/v1/intake', { body: {} }), { ...env, PROJECT_VIEWS_V2: 'false' }, {}))
       .status, 404);
     assert.equal(calls.length, 0, 'no storage RPC ran');
-  });
+  }));
 });
 
 test('rejected Receipts map to HTTP status, and oversize bodies stop at the transport', async () => {
@@ -158,7 +163,8 @@ test('Information Flow writes schedule the post-commit projection refresh', asyn
     async () => {
       const scheduled = [];
       const ctx = { waitUntil(promise) { scheduled.push(promise); }, passThroughOnException() {} };
-      for (const pathname of ['/v1/intake', '/v1/knowledge/candidates', `/v1/intake/${candidateId}/withdraw`]) {
+      for (const pathname of ['/v1/intake', '/v1/knowledge/candidates', `/v1/intake/${candidateId}/withdraw`,
+        '/v1/context/policies']) {
         const before = scheduled.length;
         const response = await worker.fetch(rest(pathname, { body: { idempotency_key: 'refresh-0001', base_version: 1 } }),
           refreshEnv, ctx);
