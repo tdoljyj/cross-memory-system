@@ -9,33 +9,16 @@ permissions:
   contents: read
 
 jobs:
-  relaunch-home-watchdog:
+  verify-home-watchdog:
     runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, site-home, cap-python312]
     timeout-minutes: 10
     steps:
-      - name: Relaunch Turing watchdog outside Actions tracking
+      - name: Verify Turing watchdog survived prior Actions cleanup
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:RUNNER_NAME -ne 'clued-ci-home-win-01') {
             throw "Refusing to run on unexpected runner: $env:RUNNER_NAME"
-          }
-
-          $watchdog = 'C:\clued-ci\watchdog-home-runner.ps1'
-          if (-not (Test-Path $watchdog)) {
-            throw "Watchdog file missing: $watchdog"
-          }
-
-          $existing = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object {
-              $_.Name -eq 'powershell.exe' -and
-              $_.CommandLine -like '*watchdog-home-runner.ps1*'
-            }
-
-          if (@($existing).Count -eq 0) {
-            Remove-Item Env:RUNNER_TRACKING_ID -ErrorAction SilentlyContinue
-            Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$watchdog -WindowStyle Hidden
-            Start-Sleep -Seconds 5
           }
 
           $running = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
@@ -45,7 +28,16 @@ jobs:
             }
           $running | Select-Object ProcessId, CreationDate, CommandLine | Format-List
           if (@($running).Count -ne 1) {
-            throw "Expected exactly one watchdog process, found $(@($running).Count)"
+            throw "Expected exactly one persistent watchdog process, found $(@($running).Count)"
+          }
+
+          $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $canonicalRun = (Get-ItemProperty $runKey -Name 'CluedCIWatchdog-home-primary' -ErrorAction Stop).'CluedCIWatchdog-home-primary'
+          Write-Output "CANONICAL_RUN_KEY=$canonicalRun"
+
+          $stale = (Get-ItemProperty $runKey -Name 'CluedCIHomeLinuxRecovery' -ErrorAction SilentlyContinue).'CluedCIHomeLinuxRecovery'
+          if ($stale) {
+            throw "Stale CluedCIHomeLinuxRecovery run key still present: $stale"
           }
 
           $unit = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-linux-01.service'
@@ -54,4 +46,6 @@ jobs:
           wsl.exe -d Ubuntu-24.04 -u root -e systemctl is-active $unit
           if ($LASTEXITCODE -ne 0) { throw 'home-linux-01 service is not active' }
 
-          Write-Output 'TURING_HOME_WATCHDOG_RELAUNCHED'
+          $log = 'C:\clued-ci\logs\watchdog-home-primary.log'
+          Get-Content $log -Tail 40
+          Write-Output 'TURING_HOME_WATCHDOG_PERSISTENCE_VERIFIED'
