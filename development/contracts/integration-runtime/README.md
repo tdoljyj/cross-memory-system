@@ -19,5 +19,7 @@ Integration runtime under Cross-Host v0.2.6 (frozen baseline, Clued Decision
 The file is immutable. A change is a new version file with its own review and
 Owner freeze. A defect found in the frozen text is recorded in `ERRATA.md`
 instead, with an Owner Decision as its authority; the frozen bytes are never
-edited. Implementations follow the frozen file as amended by every erratum. The contract grants no production migration, Worker release, flag
-enablement, public RPC EXECUTE grant, public visibility, budget or procurement.
+edited. Implementations follow the frozen file as amended by every erratum.
+
+The contract grants no production migration, Worker release, flag enablement,
+public RPC EXECUTE grant, public visibility, budget or procurement.

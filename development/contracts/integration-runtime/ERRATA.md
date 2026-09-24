@@ -35,9 +35,9 @@ state instead of `DERIVATION_INPUT_INVALID`. That is fail-open, against `§7.3`.
 **What replaces it.** `clued.integration-facts.v1` has one more required top-level
 key:
 
-| Key | Domain |
-|---|---|
-| `connection_store` | `CONSISTENT` \| `MULTIPLE_CURRENT` \| `FOREIGN_BINDING` \| `OWNER_ROW_MISSING` \| `OWNER_MISMATCH` |
+- Key: `connection_store`
+- Domain: `CONSISTENT`, `MULTIPLE_CURRENT`, `FOREIGN_BINDING`,
+  `OWNER_ROW_MISSING`, `OWNER_MISMATCH`
 
 Any value other than `CONSISTENT` yields `C7`, mapping one-to-one onto the four
 conditions `§7.3` already lists. The key is required, so a document that omits it
@@ -82,3 +82,64 @@ Both are fail-closed refinements of `§7.1` rule 2 and `§5.6`:
 This erratum changes contract semantics only. It grants no production migration,
 Worker release, flag enablement, public RPC EXECUTE, public visibility, budget or
 procurement.
+
+---
+
+## ERRATA-002 — canonical spellings: integer fields, and ceiling `actions`
+
+- **Authority:** Owner Decision `793ea908-3281-430d-8bfd-8e0b83bfd226` (2026-09-24).
+- **Raised by:** the Fresh-Context delta review of PR #338, finding MAJOR-1.
+- **Status:** in force. Implemented by PR-1 (migration `20260926000000`).
+
+Both items exist for the same reason: the frozen contract requires a canonical
+byte representation in places where it specifies only a value, and JSON admits
+several spellings of one value. Rather than rewrite a document before hashing or
+comparing it, the validator refuses the ambiguous spellings.
+
+### 1. Integer-valued fields accept only the integer spelling
+
+**What the frozen text says.** `§7.2` gives `reauth_marks_open` the domain
+"整数 ≥ 0", and `§5.12` gives `policy.policy_version` an integer version. JSON
+does not distinguish `0` from `0.0`, so both documents satisfy those domains.
+
+**Why that is a defect.** `§7.1` rule 1 requires that the same truth always
+yields the same `facts_sha256`. `jsonb` preserves the submitted spelling, so
+`{"reauth_marks_open": 0}` and `{"reauth_marks_open": 0.0}` are the same truth
+with two different hashes. Canonicalising the document before hashing would make
+`facts_sha256` a hash of something the caller did not submit.
+
+**What replaces it.** `reauth_marks_open` and `policy.policy_version` are `C1`
+unless their `jsonb` text form matches `^[0-9]+$`. `0.0` and `1.0` are therefore
+`C1_SCHEMA_INVALID`. (`1e2` needs no rule: `jsonb` already stores it as `100`.)
+
+### 2. Ceiling entry `actions` is de-duplicated and sorted
+
+**What the frozen text says.** `§5.2` states the rule asymmetrically: `scopes`
+must be a subset of the three v12 scopes, de-duplicated and sorted, while an
+entry's `actions` must only take v12 values and be non-empty.
+
+**Why that is a defect.** `§10.12` has restore record `ceiling_before` and
+`ceiling_after` in its Receipt, which requires one ceiling to have one `jsonb`
+representation. Without a canonical order, `["read","write"]` and
+`["write","read"]` are the same ceiling with different bytes, and a Receipt
+cannot show whether authority changed.
+
+**What replaces it.** An entry's `actions` must be de-duplicated and sorted in
+`C` collation, exactly as `scopes` already is. This does not change containment:
+`§10.11` compares `actions ⊆ C.actions` as sets, which is order-insensitive.
+
+### Boundary
+
+As ERRATA-001: semantics only, no production, release, flag, grant, visibility,
+budget or procurement authority.
+
+---
+
+## Note — `§13.2` P2 (c) sample counts are two obligations
+
+Not an erratum: the frozen text is correct and is restated here because PR-1
+briefly under-ran it. `§13.2` P2 (c) requires **250,000** fixed-seed random facts
+in CI **and** 2,000,000 nightly. They are separate obligations. Neither may be
+reduced to meet a self-imposed runtime budget; the contract sets no CI runtime
+budget. Owner Decision `793ea908-3281-430d-8bfd-8e0b83bfd226` restores the CI
+count to 250,000 and has PR-1 wire the nightly run rather than defer it.
