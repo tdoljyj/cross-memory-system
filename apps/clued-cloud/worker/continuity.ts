@@ -977,7 +977,7 @@ const tools = [
   {
     name: "clued_session_checkpoint",
     description:
-      "Call before ending or handing off an authorized session. Atomically commits a canonical checkpoint using optimistic concurrency and returns an audit receipt or explicit conflict.",
+      "Call before ending or handing off an authorized session. Atomically commits a canonical checkpoint using optimistic concurrency and returns an audit receipt or explicit conflict. A checkpoint covers only events of its own context_key: checkpoint project-scope writes in a session resumed with that project's context_key, and global writes in a global session.",
     inputSchema: {
       type: "object",
       required: ["session_token", "base_version", "snapshot", "summary", "next_action", "coverage"],
@@ -1449,6 +1449,8 @@ const REQUEST_RULE_REJECTIONS: Readonly<Record<string, string | null>> = {
   resume_required: "Call clued_session_resume and retry with the returned session_token.",
   resume_required_or_session_expired: "Call clued_session_resume and retry with the returned session_token.",
   session_not_found: "Call clued_session_resume and retry with the returned session_token.",
+  checkpoint_event_not_authorized:
+    "coverage.event_ids may list only events of this checkpoint's context_key. Checkpoint each context separately: resume with that context's context_key (for example project:<id> for project-scope writes), reconcile, then checkpoint with the same context_key and its own event ids.",
   authority_escalation_forbidden: null,
   authorized_exact_annotation_source_required: null,
   carrier_transition_receipt_invalid: null,
