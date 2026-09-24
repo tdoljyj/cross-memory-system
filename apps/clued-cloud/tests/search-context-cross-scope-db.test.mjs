@@ -21,7 +21,7 @@ async function freePort() {
   return port;
 }
 
-test('context search covers readable scopes and non-literal queries', { timeout: 240000 }, async () => {
+test('context search covers readable scopes and non-literal queries', { timeout: 600000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-search-scope-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
@@ -61,13 +61,18 @@ test('context search covers readable scopes and non-literal queries', { timeout:
 
     // Term splitting: punctuation and whitespace split; CJK runs become bigrams.
     assert.deepEqual((await admin.query(`select clued_private.search_terms_v1('字段合并，BUG-002') t`)).rows[0].t,
-      ['002', 'bug', '合并', '字段', '段合']);
+      ['002', 'bug', 'bug-002', '合并', '字段', '段合']);
+    const terms = async (q) => (await admin.query('select clued_private.search_terms_v1($1) t', [q])).rows[0].t;
+    assert.deepEqual(await terms('v1.6 event 3'), ['3', 'event', 'v1', 'v1.6']);
+    assert.deepEqual(await terms('記録を更新する'), ['する', '新す', '更新', '記録']);
+    assert.deepEqual(await terms('我'), ['我']);
+    assert.deepEqual(await terms('我 部署'), ['部署']);
     // One-letter Latin runs are dropped; the first 64 distinct terms in query order are kept.
-    assert.deepEqual((await admin.query(`select clued_private.search_terms_v1('z_bra a cd') t`)).rows[0].t, ['bra', 'cd']);
-    const many = Array.from({ length: 70 }, (_, i) => `t${String(i).padStart(2, '0')}`);
-    const kept = (await admin.query('select clued_private.search_terms_v1($1) t', [many.reverse().join(' ')])).rows[0].t;
-    assert.equal(kept.length, 64);
-    assert.ok(!kept.includes('t00') && kept.includes('t69'), 'terms beyond the first 64 are the ones dropped');
+    assert.deepEqual(await terms('z_bra a cd'), ['bra', 'cd', 'z_bra']);
+    const many = Array.from({ length: 30 }, (_, i) => `t${String(i).padStart(2, '0')}`);
+    const kept = await terms(many.reverse().join(' '));
+    assert.equal(kept.length, 24);
+    assert.ok(!kept.includes('t00') && kept.includes('t29'), 'terms beyond the first 24 are the ones dropped');
 
     const userId = uuid();
     const allToken = hash();
@@ -163,8 +168,10 @@ test('context search covers readable scopes and non-literal queries', { timeout:
     result = await search({ query: 'BUG-20260924-002' }, projectToken, projectOnlySession);
     assert.ok(recordIds(result).includes(bugTask), JSON.stringify(result));
     assert.deepEqual(result.scopes_searched, [projectScope]);
-    // A session token cannot pick a context its Binding may not use.
-    await assert.rejects(() => search({ query: 'x' }, globalToken, projectSession), /binding_not_authorized|resume_required/);
+    // A session token of another Binding is not found, and a missing one asks to resume.
+    await assert.rejects(() => search({ query: 'x' }, globalToken, projectSession), /resume_required/);
+    await assert.rejects(() => search({ query: 'x' }, projectToken, undefined), /resume_required/);
+    await assert.rejects(() => search({ query: 'x' }, projectToken, 'clued_ses_' + '0'.repeat(64)), /resume_required/);
 
     // scopes_searched never lists profile, which is not searched.
     const profileSession = await session(profileToken);
@@ -185,6 +192,27 @@ test('context search covers readable scopes and non-literal queries', { timeout:
     assert.equal(first.page.next_cursor, 1);
     const second = await search({ query: '字段合并缺陷', limit: 1, cursor: 1 });
     assert.notEqual(second.results[0].id, first.results[0].id);
+
+    // An unusable bearer keeps its authorization error without a context_key.
+    await assert.rejects(() => search({ query: 'x' }, hash(), allSession), /binding_not_authorized/);
+    await assert.rejects(() => search({ query: 'x', cursor: 10001 }), /search_cursor_too_deep/);
+
+    // Paging past the 2000 cap stays exact when the fence drops rows: the 20
+    // best-ranked of 2010 tasks are done (HISTORY), 1990 remain current.
+    for (let i = 0; i < 2010; i += 1) {
+      await create('global', 'task', `Bulk paging task ${i}`, 'pagingbulk marker', { execution_bucket: 'later' });
+    }
+    await admin.query(`update public.clued_memories set status='done' where id in (
+      select id from public.clued_memories where user_id=$1 and title like 'Bulk paging task %'
+      order by updated_at desc,id limit 20)`, [userId]);
+    result = await search({ query: 'pagingbulk', context_key: 'global', limit: 10, cursor: 1975 });
+    assert.equal(result.page.returned, 10, JSON.stringify(result.page));
+    assert.equal(result.page.next_cursor, 1985);
+    result = await search({ query: 'pagingbulk', context_key: 'global', limit: 10, cursor: 1985 });
+    assert.equal(result.page.returned, 5, JSON.stringify(result.page));
+    assert.equal(result.page.next_cursor, null);
+    assert.equal(result.record_candidates_capped, false);
+    assert.ok(result.results.every((r) => r.authoritative), 'only current records are returned');
 
     // An unknown scope mode is rejected.
     await assert.rejects(() => search({ query: 'x', scope: 'everything' }), /invalid_search_scope/);
