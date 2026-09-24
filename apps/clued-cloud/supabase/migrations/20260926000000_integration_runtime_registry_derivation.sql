@@ -2,9 +2,20 @@
 -- (§5.1: hosts, surfaces, providers, binding domains, capability vocabulary, scope map v1,
 -- policy v1, compatibility rules) and the pure derivation functions (§7.3, §8, §9):
 --   integration_capabilities_valid_v1, integration_ceiling_valid_v1, integration_version_cmp_v1,
---   integration_facts_validate_v1, integration_candidate_v1, integration_predicates_v1,
---   integration_select_state_v1, integration_derive_v1.
+--   integration_timestamp_valid_v1, integration_facts_validate_v1, integration_candidate_v1,
+--   integration_predicates_v1, integration_select_state_v1, integration_derive_v1.
 -- SQL is the only authoritative implementation (§8.6); there is no TypeScript mirror.
+--
+-- Contract authority for the three places where this migration goes beyond the literal text of the
+-- frozen v0.1.8 file: Owner Decision 9d6fa6c2-65fd-405a-89c4-e81a435374ef, recorded as ERRATA-001
+-- in development/contracts/integration-runtime/ERRATA.md. It settles, normatively:
+--   (a) `connection_store` is a required top-level key of clued.integration-facts.v1 with the domain
+--       CONSISTENT / MULTIPLE_CURRENT / FOREIGN_BINDING / OWNER_ROW_MISSING / OWNER_MISMATCH, and is
+--       the facts-level carrier of §7.3 C7 (the §7.1 example does not show it);
+--   (b) the C4 / C5 mapping is driven by `claim_store` alone, per §7.2 ("非 CONSISTENT 即 C4/C5"),
+--       and not by the literal §7.3 formulas that also read identity_claim_state;
+--   (c) the two C1 tightenings beyond the literal §7.3 text: a revocation_state / revocation_source
+--       mismatch is C1, and a non-null `mask` on an unmasked value is C1.
 -- New objects only: no existing function, table, policy or grant is changed (§2.3, T-S-3).
 -- Nothing is granted to public, anon, authenticated or service_role (§5.13).
 -- READY profiles (§5.1 integration_ready_profiles_v1) belong to PR-3 and are not created here.
@@ -22,8 +33,9 @@ $$;
 
 -- Authorization ceiling shape (§5.2 CHECK, §10.3 v0.1.2 NIT-2): exactly {scopes, entries};
 -- scopes ⊆ v12 scopes, de-duplicated and sorted; entries = "LEGACY_UNRESTRICTED" or a list of
--- v12-shaped entries {resource_kind, resource_id, environment, actions} with non-empty actions
--- and at most one entry per (resource_kind, resource_id, environment) (the v12 primary key).
+-- v12-shaped entries {resource_kind, resource_id, environment, actions} with non-empty actions that
+-- are de-duplicated and sorted in C collation, as scopes already were (v0.1.8 review NIT-3), and at
+-- most one entry per (resource_kind, resource_id, environment) (the v12 primary key).
 create function clued_private.integration_ceiling_valid_v1(p_ceiling jsonb)
 returns boolean language plpgsql immutable security invoker set search_path='' as $$
 declare
@@ -65,6 +77,12 @@ begin
                       or (e #>> '{}') not in ('read','write','close','restore','audit','feedback_submit')) then
       return false;
     end if;
+    -- actions are de-duplicated and sorted, exactly as scopes are (v0.1.8 review NIT-3)
+    if array(select e from pg_catalog.jsonb_array_elements_text(v_actions) with ordinality t(e, n) order by n)
+       is distinct from array(select e from (select distinct e from pg_catalog.jsonb_array_elements_text(v_actions) e) s
+                              order by e collate "C") then
+      return false;
+    end if;
     v_keys := v_keys || ((v_entry->>'resource_kind') || E'\x1f' || (v_entry->>'resource_id') || E'\x1f' || (v_entry->>'environment'));
   end loop;
   return pg_catalog.cardinality(v_keys) = (select count(distinct k) from pg_catalog.unnest(v_keys) k);
@@ -91,6 +109,27 @@ begin
     if v_a < v_b then return -1; elsif v_a > v_b then return 1; end if;
   end loop;
   return 0;
+end $$;
+
+-- ISO-8601 instant with an explicit offset (§7.1 as_of / valid_until). The lexical shape is pinned
+-- first, so the guarded cast below cannot depend on the session TimeZone or DateStyle and the
+-- function is genuinely immutable; the cast is what rejects out-of-range field values such as
+-- 2026-13-99T99:99:99Z, which the regex alone accepts (v0.1.8 review NIT-1).
+create function clued_private.integration_timestamp_valid_v1(p_text text)
+returns boolean language plpgsql immutable security invoker set search_path='' as $$
+declare
+  v_parsed timestamptz;
+begin
+  if p_text is null
+     or p_text !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?(Z|[+-][0-9]{2}:[0-9]{2})$' then
+    return false;
+  end if;
+  begin
+    v_parsed := p_text::timestamptz;
+  exception when others then
+    return false;
+  end;
+  return v_parsed is not null;
 end $$;
 
 -- ---------------------------------------------------------------------------------------------
@@ -236,7 +275,9 @@ revoke all on table clued_private.integration_hosts_v1, clued_private.integratio
 -- exactly their listed keys, upper-case enumerations, capability sets of vocabulary names only
 -- (element order and duplicates are not errors; integration_derive_v1 canonicalizes sets), masks
 -- present exactly for RESTRICTED / CONDITIONAL / DEGRADED. `connection_store` is the facts-level
--- carrier of C7 (§7.3), which the §7.1 example does not show.
+-- carrier of C7 (§7.3), which the §7.1 example does not show; it is a required key by ERRATA-001
+-- (Owner Decision 9d6fa6c2-65fd-405a-89c4-e81a435374ef), as are the C4 / C5 mapping below and the
+-- two C1 tightenings (revocation mismatch, non-null mask on an unmasked value).
 create function clued_private.integration_facts_validate_v1(p_facts jsonb)
 returns text[] language plpgsql immutable security invoker set search_path='' as $$
 declare
@@ -246,7 +287,6 @@ declare
   v_ic text; v_cs text; v_store text; v_hist text; v_authn text; v_authz text;
   v_vocabulary constant jsonb := '["audit.read","context.read","context.write","development_history.read",
     "evidence.write","project.read","project.write"]';
-  v_timestamp constant text := '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?(Z|[+-][0-9]{2}:[0-9]{2})$';
   v_enums constant jsonb := '{
     "identity_state": ["VALID","INVALID"],
     "identity_completeness": ["COMPLETE","INCOMPLETE"],
@@ -316,16 +356,18 @@ begin
     c1 := true;
   end if;
 
-  -- reauth_marks_open: a non-negative integer
+  -- reauth_marks_open: a non-negative integer. Only the integer spelling is accepted: jsonb keeps
+  -- the input scale, so 0.0 would hash differently from 0 (v0.1.8 review NIT-2 — reject, do not
+  -- canonicalize, because facts_sha256 must stay a faithful hash of the submitted document).
   v := p_facts->'reauth_marks_open';
-  if pg_catalog.jsonb_typeof(v) is distinct from 'number'
-     or (v #>> '{}')::numeric < 0 or (v #>> '{}')::numeric <> pg_catalog.trunc((v #>> '{}')::numeric) then
+  if pg_catalog.jsonb_typeof(v) is distinct from 'number' or (v #>> '{}') !~ '^[0-9]+$' then
     c1 := true;
   end if;
 
   -- as_of: an ISO-8601 timestamp with an explicit offset (audit only; excluded from facts_sha256)
   v := p_facts->'as_of';
-  if pg_catalog.jsonb_typeof(v) is distinct from 'string' or (v #>> '{}') !~ v_timestamp then
+  if pg_catalog.jsonb_typeof(v) is distinct from 'string'
+     or not clued_private.integration_timestamp_valid_v1(v #>> '{}') then
     c1 := true;
   end if;
 
@@ -336,7 +378,8 @@ begin
     c1 := true;
   end if;
   v := p_facts #> '{canonical_runtime_verification_facts,valid_until}';
-  if not (v = 'null'::jsonb or (pg_catalog.jsonb_typeof(v) = 'string' and (v #>> '{}') ~ v_timestamp)) or v is null then
+  if not (v = 'null'::jsonb or (pg_catalog.jsonb_typeof(v) = 'string'
+       and clued_private.integration_timestamp_valid_v1(v #>> '{}'))) or v is null then
     c1 := true;
   end if;
 
@@ -367,7 +410,9 @@ begin
     c1 := true;
   end if;
 
-  -- masks: a capability array exactly for RESTRICTED / CONDITIONAL / DEGRADED, JSON null otherwise
+  -- masks: a capability array exactly for RESTRICTED / CONDITIONAL / DEGRADED, JSON null otherwise.
+  -- A non-null mask on an unmasked value is C1 beyond the literal §7.3 text; authority ERRATA-001
+  -- (Decision 9d6fa6c2-65fd-405a-89c4-e81a435374ef).
   foreach v_name in array array['environment_state', 'qualification_state', 'compatibility_state', 'host_state',
       'adapter_state'] loop
     v := p_facts #> array[v_name, 'mask'];
@@ -380,7 +425,8 @@ begin
     end if;
   end loop;
 
-  -- revocation_state and revocation_source are one truth class (§7.2): REVOKED ⇔ source ≠ NONE
+  -- revocation_state and revocation_source are one truth class (§7.2): REVOKED ⇔ source ≠ NONE.
+  -- C1 beyond the literal §7.3 text; authority ERRATA-001 (Decision 9d6fa6c2-65fd-405a-89c4-e81a435374ef).
   if (p_facts->>'revocation_state' = 'REVOKED') is distinct from (p_facts->>'revocation_source' <> 'NONE') then
     c1 := true;
   end if;
@@ -395,7 +441,8 @@ begin
     if (v #>> '{}') <> 'clued.integration-derivation.v1' then c9 := true; end if;
   else c1 := true; end if;
   v := p_facts #> '{policy,policy_version}';
-  if pg_catalog.jsonb_typeof(v) = 'number' and (v #>> '{}')::numeric = pg_catalog.trunc((v #>> '{}')::numeric) then
+  -- integer spelling only, for the same reason as reauth_marks_open (v0.1.8 review NIT-2)
+  if pg_catalog.jsonb_typeof(v) = 'number' and (v #>> '{}') ~ '^[0-9]+$' then
     if (v #>> '{}')::numeric <> 1 then c9 := true; end if;
   else c1 := true; end if;
 
@@ -413,7 +460,8 @@ begin
   if v_ic = 'INCOMPLETE' and v_cs <> 'INCOMPLETE_UNCLAIMED' then
     v_codes := v_codes || 'C3_INCOMPLETE_BUT_CLAIM_STATE'::text;
   end if;
-  -- §7.2: a claim_store value other than CONSISTENT is always C4 or C5
+  -- §7.2: a claim_store value other than CONSISTENT is always C4 or C5, independently of
+  -- identity_claim_state; authority ERRATA-001 (Decision 9d6fa6c2-65fd-405a-89c4-e81a435374ef).
   if v_store in ('MISSING_CURRENT_ROW','KEY_MISMATCH') then
     v_codes := v_codes || 'C4_CLAIM_STORE_MISSING'::text;
   end if;
@@ -698,6 +746,7 @@ end $$;
 revoke all on function clued_private.integration_capabilities_valid_v1(text[]),
   clued_private.integration_ceiling_valid_v1(jsonb),
   clued_private.integration_version_cmp_v1(text, text),
+  clued_private.integration_timestamp_valid_v1(text),
   clued_private.integration_facts_validate_v1(jsonb),
   clued_private.integration_candidate_v1(jsonb, boolean, boolean, boolean),
   clued_private.integration_predicates_v1(jsonb),
