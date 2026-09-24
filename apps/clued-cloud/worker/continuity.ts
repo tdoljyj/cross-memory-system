@@ -34,6 +34,7 @@ import {
   type UserInformationFlowRpc,
 } from "./information-flow";
 import { measurePack } from "./context-pack";
+import { AGENT_CONTRACT_MARKDOWN } from "./generated/agent-contract";
 
 declare const __CLUED_BUILD_SHA__: string | null;
 
@@ -173,8 +174,10 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
       required: true,
       start: "clued_session_resume",
       reconcile_when_required: "clued_session_reconcile",
+      contract: { version: 2, url: `${origin}/clued-agent.md` },
       durable_changes: {
         condition: "authorized_business_change_only",
+        capture: "material_outcomes_in_same_turn_before_reporting",
         records: "clued_record_mutate",
         decisions: "clued_decision_supersede",
         extension_events: "clued_event_append",
@@ -238,24 +241,11 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
 }
 
 function agentInstructions(origin: string) {
-  return `# Clued Continuity Agent Contract
+  return `${AGENT_CONTRACT_MARKDOWN}
+---
 
 Kernel: ${KERNEL_VERSION}
 Canonical store: clued-cloud/supabase
-
-1. Use a dedicated Clued Binding for this vendor/client; never share another vendor's token.
-2. At the start of every authorized session call \`clued_session_resume\`.
-3. Persist only authorized durable changes through the applicable Canonical mutation. Its Event and Receipt are emitted in the same transaction; do not append a second event to mirror that write. The legacy \`clued_append_event\` adapter is not a mandatory session step.
-4. Before ending or handing off a supported, authorized and admitted session, call \`clued_session_checkpoint\` with the current base version and explicit coverage (contexts, tracks and event IDs). Uncovered events remain pending. Respect returned checkpoint thresholds. When resume requires \`clued_session_reconcile\`, use that authorized tool first; missing capability or failed admission remains unavailable.
-5. Use \`clued_read_log\` for the canonical human-readable 日志.md. Import an authorized baseline only with \`clued_import_log\`.
-6. Treat version conflicts and revoked/expired credentials as hard stops; resume again instead of overwriting.
-7. Use \`clued_project_mutate\` for explicit Project create/update/complete/archive/restore. Project merge writes are disabled.
-8. For current work, read Global registry and priority first, then Project State, Task and Decision within authorized scope. Read Log or Archive only when history or evidence is needed. Active Event truth carriers are separate current sources; checkpoint absorption does not retire them.
-9. Preserve the returned canonical \`id\` across API, MCP, UI and Markdown mirrors. Markdown contains query results or stable-ID references, not copied canonical bodies.
-10. Write once with \`clued_record_mutate\`; use \`clued_decision_supersede\` for replacement and \`clued_evidence_ingest\` for sources. The database transaction creates the Canonical entity + Event + Receipt; never dual-write Markdown.
-11. Both Global and Project five views are Standard Work Projection. Task owns executable text; State references Task. A Frontier requires exact Task identity/version/scope/rules and currentness. Unknown, stale, conflicting or incomplete results never mean no work; never recover current actions from old Markdown, pointers or checkpoint prose. Read access and priority do not grant execution permission.
-12. Currentness CURRENT covers only writes that reached Clued. It never means every authoritative decision from a Host conversation was captured; \`authority_capture_completeness\` is reported separately and is never \`complete\`.
-
 MCP endpoint: ${origin}/mcp
 HTTP bootstrap: ${origin}/v1/continuity/bootstrap
 Binding portal: ${origin}/
@@ -1629,7 +1619,7 @@ async function handleMcp(request: Request, env: ContinuityEnv) {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "Clued Continuity", version: KERNEL_VERSION },
           instructions:
-            "Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown.",
+            `Follow the Clued Agent Contract at ${new URL(request.url).origin}/clued-agent.md. Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. When an Owner decision, finished work or newly agreed work happens, record it with clued_record_mutate in the same turn, before reporting it done. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown. Checkpoint before ending.`,
         }),
         200,
         corsHeaders(request),

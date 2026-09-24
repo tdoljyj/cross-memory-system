@@ -2,11 +2,13 @@
 
 Use this workflow for the Clued implementation, architecture, CI and governance. When the task also maintains project memory, load the memory workflow for that operation. Engineering qualification and personal-data permissions remain separate.
 
+Engineering outcomes are material outcomes under [agent-contract.md](agent-contract.md) §3: a merged PR, an applied migration, a release, a closed or newly agreed bug. Record each one in Clued in the same turn it happens, before reporting it to the user.
+
 ## Locate and align the real endpoint
 
 Resolve the authorized checkout and its current endpoint configuration; preserve the user's selected feature branch and unrelated working changes. Machine-specific checkout, runtime and trusted-launcher paths must come from that endpoint, not a portable Skill's hardcoded path.
 
-Read applicable AGENTS.md. The current repository entry is `sync-memory.ps1 -AlignAndVerify -Access <required-scope>`; `-Pull` routes through that same unified verification. Invoke it once for the current request before relying on repository content. It resolves `origin/main` with one real `git ls-remote`, validates an isolated source and local mirror, and completes doctor in the same Python process and RequestVerificationContext. Do not add a separate `python memory.py doctor` or duplicate the remote probe after a successful unified invocation. Independent requests, retries, processes and Agents require their own invocation; never reuse another Agent's PASS.
+Read applicable AGENTS.md. The unified repository entry is `sync-memory.ps1 -AlignAndVerify -Access <required-scope>` on Windows/Codex endpoints (`-Pull` routes through the same verification) and `python3 sync-memory.py align-and-verify <required-scope>` on Linux and macOS. Invoke it once for the current request before relying on repository content. It resolves `origin/main` with one real `git ls-remote`, validates an isolated source and local mirror, and completes doctor in the same Python process and RequestVerificationContext. Do not add a separate `python memory.py doctor` or duplicate the remote probe after a successful unified invocation. Independent requests, retries, processes and Agents require their own invocation; never reuse another Agent's PASS.
 
 The isolated read path does not move the development HEAD, Index or files and never merges, rebases or overwrites them. Repository implementation and write paths still require their dirty-worktree and branch-alignment gates; resolve a Remote Ahead checkout under the applicable Git discipline before editing. True divergence produces a Git Conflict Packet and stops the affected path for semantic resolution. Never reset, force, rebase or silently choose a side.
 
@@ -29,7 +31,7 @@ Locate current accepted successors through the trusted source; do not copy priva
 
 ## Change and validate efficiently
 
-Use existing explicit authorization for scoped reversible changes, normal commits and ordinary reviewed pushes. The endpoint edits only its own consumer configuration. Use AI@machine authorship, fetch+merge before push, and verify the required post-push ancestry. Do not alter another endpoint's configuration.
+Use existing explicit authorization for scoped reversible changes, normal commits and ordinary reviewed pushes. The endpoint edits only its own consumer configuration. Commit authorship follows the endpoint: local endpoints use `AI@machine`; hosted agents and connectors are identified by their authenticated host identity and attribution trailers. Fetch+merge before push, and verify the required post-push ancestry. Do not alter another endpoint's configuration.
 
 Map each change to its affected acceptance requirements. Reuse reliable evidence for unchanged scope, run meaningful checks once, and broaden checks only for an actual gap or new failure. With parallel agents, assign disjoint files/resources and serialize shared state, credentials, integration and publication.
 

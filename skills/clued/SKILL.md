@@ -7,6 +7,8 @@ description: Use Clued to recall or maintain authorized personal and project con
 
 Use one entry point and load only the workflow needed for the requested operation. A Skill, its selected workflow, and an optional mode hint never establish identity, grant permissions, or isolate the privileges of a shared MCP connection.
 
+[references/agent-contract.md](references/agent-contract.md) is the single normative contract for every Clued call: start, read order, capture of material outcomes, write discipline, error handling and checkpoint. Read it whenever this Skill touches Clued context, whichever workflow you select. Where this Skill or a workflow seems to differ from it, the contract wins.
+
 ## Choose the operation
 
 - Read or maintain personal/project records, tasks, state or decisions: read [memory-operations.md](references/memory-operations.md).
@@ -29,6 +31,4 @@ For protected context work, satisfy applicable higher-priority endpoint/reposito
 
 Preserve already explicit user intent and authority; do not request duplicate confirmation for the same authorized action. Scope expansion, protected writes and production changes still require the authority applicable to that operation.
 
-Use the minimum relevant data. Repository `memory/` remains a read-only versioned projection; no local business-memory copies or Markdown reverse writes. Canonical business changes use their supported mutation contracts and produce their existing Event and immutable Receipt. Do not append a duplicate write merely to mirror success.
-
-Report a suggestion as a suggestion and completion only when supported by the operation result. Authentication failure, missing capability, version conflict and uncertain completion are different failures. Preserve existing evidence, do one useful diagnosis or change the failing approach, and continue independent authorized work. Never turn a local failure into a blanket halt or an unsupported PASS.
+Use the minimum relevant data. Authentication failure, missing capability, version conflict and uncertain completion are different failures. Preserve existing evidence, do one useful diagnosis or change the failing approach, and continue independent authorized work. Never turn a local failure into a blanket halt or an unsupported PASS.
