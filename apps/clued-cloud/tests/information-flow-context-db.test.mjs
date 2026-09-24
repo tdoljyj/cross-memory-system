@@ -94,10 +94,14 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const migrations = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
-    // Later slices (S5+) sort after S4 and are applied in the same chain.
+    // Later migrations sort after S4 and are applied in the same chain. Pin
+    // the exact neighbours so a reordering or collision fails loudly; later
+    // slices (S6+) may append after these without breaking the check.
     const s4Index = migrations.indexOf(S4_MIGRATION);
     assert.equal(migrations[s4Index - 1], '20260924190000_information_flow_promotion.sql',
       'the S4 migration directly follows S3');
+    assert.deepEqual(migrations.slice(s4Index + 1, s4Index + 3), ['20260924210000_bug_20260924_001_capture_unknown.sql',
+      '20260924220000_information_flow_invalidation.sql'], 'the migrations right after S4 are #312 and S5');
     const versions = migrations.map((name) => name.split('_')[0]);
     assert.equal(new Set(versions).size, versions.length, 'migration versions are unique');
     for (const name of migrations) {

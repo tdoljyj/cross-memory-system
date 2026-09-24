@@ -17,7 +17,8 @@ import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 // the local Worker transport with an account session and Agent Bindings.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const S5_MIGRATION = '20260924210000_information_flow_invalidation.sql';
+const S5_MIGRATION = '20260924220000_information_flow_invalidation.sql';
+const S5_PREDECESSOR = '20260924210000_bug_20260924_001_capture_unknown.sql';
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
@@ -100,7 +101,7 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
     // itself after the pre-S5 fixture, and every later migration right after.
     const s5Index = migrations.indexOf(S5_MIGRATION);
     assert.ok(s5Index > 0, 'the S5 migration is in the chain');
-    assert.ok(migrations.slice(0, s5Index).every((name) => name < S5_MIGRATION));
+    assert.equal(migrations[s5Index - 1], S5_PREDECESSOR, 'S5 directly follows the #312 migration');
     const versions = migrations.map((name) => name.split('_')[0]);
     assert.equal(new Set(versions).size, versions.length, 'migration versions are unique');
     const apply = async (name) => {
