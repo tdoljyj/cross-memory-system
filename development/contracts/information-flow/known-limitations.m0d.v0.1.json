@@ -1,0 +1,417 @@
+{
+  "schema": "clued.information-flow.m0d.known-limitations/1",
+  "contract": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+  "gate": "M0D-A03",
+  "status": "REGISTER_OPEN",
+  "note": "Machine register of known limitations carried by the M0-D closeout. Every entry stays OPEN until a separate, Receipt-backed Owner Decision or a reviewed successor change closes it. The register grants no authorization (contract section 11).",
+  "entries": [
+    {
+      "id": "L01",
+      "title": "OPEN_BY_OD-5: general M1 user_confirmed is self-attested",
+      "source": "contract 3 OD-5; 7 E2E-11",
+      "statement": "A bound Agent can write authority=user_explicit through the public clued_record_mutate by sending user_confirmed=true, bypassing Candidate, promotion and the Native token.",
+      "consequence": "Agent authority is confined only on the Information Flow path; every PASS label carries that qualifier. Such Records are Agent-authored and excluded from the default policy (E2E-12).",
+      "successor": "A separate Owner decision on OD-5 (tighten general M1 writes); E2E-11 expectation then flips to rejection.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-11.json",
+        "e2e/E2E-12.json"
+      ]
+    },
+    {
+      "id": "L02",
+      "title": "Confirmation proves a session, not a person",
+      "source": "contract 4.3.2",
+      "statement": "The two-step token proves a recently authenticated Native account session that performed a two-step confirmation; it cannot prove that a person rather than a script holding the session pressed the button.",
+      "consequence": "Contract text says human only in this sense.",
+      "successor": "Stronger user-presence evidence (for example WebAuthn step-up) in a later contract.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-02.json",
+        "e2e/E2E-15.json"
+      ]
+    },
+    {
+      "id": "L03",
+      "title": "lineage_stale and evidence_withdrawn are MSCP-only",
+      "source": "contract 6.4; S5 D15",
+      "statement": "The flags affect MSCP compilation only; the Record still reads CURRENT/active in Currentness, search, export and the five views until it is re-promoted, re-sourced or closed.",
+      "consequence": "Readers outside the Context Compiler do not see the invalidation.",
+      "successor": "A reviewed propagation of invalidation to other read surfaces.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-03.json",
+        "e2e/E2E-04.json"
+      ]
+    },
+    {
+      "id": "L04",
+      "title": "No Native-marker backfill",
+      "source": "contract 6.3; S4 D8",
+      "statement": "Records written before S3 (and legacy null-writer Records) read human_confirmed=false until re-confirmed.",
+      "consequence": "Older Native Records are excluded from default packs until re-confirmed through a Native write.",
+      "successor": "An Owner-authorized, Receipt-backed re-confirmation flow.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-13.json"
+      ]
+    },
+    {
+      "id": "L05",
+      "title": "Binding-driven denial of service under OD-5",
+      "source": "contract 6.1, 6.3; S4 D21",
+      "statement": "A Binding can shadow State/Task through Events (a shadow needs a carrier transition) or edit/supersede the approving Decision, excluding pack items or disabling a policy until a new Native acceptance.",
+      "consequence": "Denial of service, not a policy change.",
+      "successor": "OD-5 decision; per-policy Decision write protection.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-14.json"
+      ]
+    },
+    {
+      "id": "L06",
+      "title": "Different confirmation strength: /v1/records marker vs two-step promotion",
+      "source": "contract 8 M0D-A03",
+      "statement": "A direct Native /v1/records write gets a Native marker without a two-step token; promotion requires the two-step token.",
+      "consequence": "Both read human_confirmed=true in packs although their confirmation strength differs.",
+      "successor": "A marker strength field or a two-step option for direct Native writes.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-14.json",
+        "e2e/E2E-01.json"
+      ]
+    },
+    {
+      "id": "L07",
+      "title": "Contract errata carried from S1/S2",
+      "source": "S1/S2 PRs; S6 plan 14 item 13",
+      "statement": "The implementation differs in wording from frozen v0.1: storage_ref=intake:{submission_id} (contract: candidate_id); idempotency_key lives on the submission row; knowledge_candidates has no payload column (assertion + sources); private RPC names are intake_submit_core_v1 / knowledge_propose_core_v1; the intake Evidence hash covers the canonical jsonb text of the segment.",
+      "consequence": "The frozen v0.1 text cannot be edited; readers must apply these errata.",
+      "successor": "An errata or v0.2 Decision after closeout (not in S6).",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L08",
+      "title": "Candidate expiry is lazy (no sweep)",
+      "source": "S3 D10; S5 D5; Owner deferral in S6",
+      "statement": "Expiry is applied only inside promotion; expired-but-pending rows still list as pending. A system sweep needs a non-additive widening of candidate_transitions.actor and a scheduler that does not exist.",
+      "consequence": "Pending lists can include candidates past expires_at; promotion fails closed on them.",
+      "successor": "Post-M0-D retention slice (design in the S6 plan section 6).",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L09",
+      "title": "Pack manifest retention is unbounded",
+      "source": "S4 D34, D27, D12; Owner deferral in S6",
+      "statement": "context_pack_manifests rows are never garbage-collected. A budget-refused pack leaves a manifest that revalidates VALID with token_budget_verified=false, and a context:read Binding causes Receipt-less manifest inserts.",
+      "consequence": "Derived, non-Canonical rows grow without bound.",
+      "successor": "Post-M0-D manifest GC (design in the S6 plan section 6).",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L10",
+      "title": "auth_time semantics verified on local GoTrue only",
+      "source": "S3 D1",
+      "statement": "The 15-minute re-authentication rule reads amr timestamps; local GoTrue v2.195.0 tokens were exercised for real in S6, production GoTrue amr behaviour is unverified.",
+      "consequence": "Production behaviour must be read back before any authorized apply.",
+      "successor": "Production read-back under a separately authorized apply.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "setup.json"
+      ]
+    },
+    {
+      "id": "L11",
+      "title": "Token-burn limits",
+      "source": "S3 D4; S4 D33",
+      "statement": "Failures before the receipt core (malformed transport, authentication) do not burn a live confirmation token.",
+      "consequence": "A token survives some refused requests until its TTL.",
+      "successor": "None planned; disclosed.",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L12",
+      "title": "Delegated OAuth and Native write surfaces",
+      "source": "S3 D7 (premise corrected); B09 round 2; migrations 20260907173031, 20260924190000, 20260924230000 (PR #322); Owner Decision 9feed8c3-7720-4501-8f4f-e5604b9a3793 / Receipt 817cd530-7511-456e-ab14-fcb410471365",
+      "statement": "public.clued_user_decision_supersede has been guarded by authorization_owner_v12 (direct human session; a delegated-OAuth JWT with client_id is refused) since 20260907173031. S3 (20260924190000) regressed it by redefining the entry with auth.uid(), so a delegated-OAuth JWT could supersede Decisions through PostgREST and /v1/decisions/supersede; 20260924230000_decision_supersede_v12_guard.sql (PR #322, merged to main as 982bcb3a008be00d2aaead18aae0185d816ac848; Owner Decision 9feed8c3-7720-4501-8f4f-e5604b9a3793, Receipt 817cd530-7511-456e-ab14-fcb410471365) restores the guard. Every other Native account-session RPC keeps the v12 guard, so a delegated-OAuth JWT on Native REST passes the Worker and is refused by the database.",
+      "consequence": "Delegated OAuth never yields a committed Native write or human_confirmed=true once 20260924230000 is applied; any environment with S3 applied but not 20260924230000 carries the regression.",
+      "successor": "Apply 20260924230000 wherever S3 is applied (clued-prod has S1 only per L26); a regression test pins the guard (information-flow-promotion-db.test.mjs, E2E-14 delegated block).",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-14.json",
+        "regression.json"
+      ],
+      "authorization": {
+        "decision_id": "9feed8c3-7720-4501-8f4f-e5604b9a3793",
+        "receipt_id": "817cd530-7511-456e-ab14-fcb410471365",
+        "merge_commit": "982bcb3a008be00d2aaead18aae0185d816ac848"
+      }
+    },
+    {
+      "id": "L13",
+      "title": "Token budget enforced only on the Worker path",
+      "source": "S4 D1, D27",
+      "statement": "Direct PostgREST compiles are not measured (measurement not_measured); the budget is enforced by the Worker.",
+      "consequence": "A direct PostgREST caller can obtain an unmeasured pack.",
+      "successor": "Server-side token counting if the tokenizer is accepted.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-01.json"
+      ]
+    },
+    {
+      "id": "L14",
+      "title": "Tokenizer offline_target; production bundle and CPU unverified",
+      "source": "contract 6.2; S4 release impact; S6 bundle observation",
+      "statement": "Token counts are labelled tokenizer_status=offline_target. Bundle size and startup/first-pack CPU were observed only locally in workerd.",
+      "consequence": "The Cloudflare plan-limit check and a production CPU observation are a precondition of any authorized production apply (Owner decision).",
+      "successor": "Tokenizer acceptance; production limits check before apply.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "bundle-observation.json"
+      ]
+    },
+    {
+      "id": "L15",
+      "title": "Evidence withdrawal is terminal",
+      "source": "S5",
+      "statement": "A withdrawn Evidence cannot be reinstated in MVP-0.",
+      "consequence": "Re-sourcing needs a new Evidence and a Receipt-backed Record write.",
+      "successor": "A reinstatement transition in a later contract.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-04.json"
+      ]
+    },
+    {
+      "id": "L16",
+      "title": "Proactive staling coverage",
+      "source": "S5 D7, D8",
+      "statement": "Currentness-only changes, Binding time expiry, approving-Decision edits and other candidate transitions are caught on demand at compile/revalidation, not proactively; proactive staling uses SKIP LOCKED and can skip a locked manifest.",
+      "consequence": "A manifest can read stale=false until revalidated; revalidation is the backstop.",
+      "successor": "None planned; disclosed.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-05.json"
+      ]
+    },
+    {
+      "id": "L17",
+      "title": "Maintenance-DML lock order",
+      "source": "S5 D32",
+      "statement": "Maintenance writes must take currentness_user_lock first; the wrapper does, raw DML does not.",
+      "consequence": "Raw maintenance DML can deadlock with withdrawal fan-out.",
+      "successor": "Runbook rule; no code change.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-13.json"
+      ]
+    },
+    {
+      "id": "L18",
+      "title": "Direct M1 writes can cite withdrawn Evidence",
+      "source": "S5 D16",
+      "statement": "A direct M1 write citing a withdrawn Evidence commits; it is flagged at write time in record_evidence_status.",
+      "consequence": "Such Records are excluded from compiles but remain CURRENT elsewhere (see L03).",
+      "successor": "None planned; disclosed.",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L19",
+      "title": "Withdrawal scan without index; uncapped fan-out",
+      "source": "S5 D14",
+      "statement": "The withdrawal fan-out scans source_refs without a dedicated index and is uncapped (echoed lists are capped at 100).",
+      "consequence": "Large accounts may see slow withdrawals.",
+      "successor": "An additive index once production volumes are known.",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L20",
+      "title": "Transient PROJECTION_REQUIRED has no DB test",
+      "source": "S4 D19",
+      "statement": "The PROJECTION_REQUIRED revalidation outcome is not covered by a database test.",
+      "consequence": "Covered only by code review.",
+      "successor": "A targeted test in a later slice.",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L21",
+      "title": "historical freshness can be authoritative; notes at any lifecycle",
+      "source": "S4 D10, D22",
+      "statement": "A pack under explicit historical freshness can be authoritative=true, and notes are admitted regardless of lifecycle under historical mode.",
+      "consequence": "Consumers must read the freshness block.",
+      "successor": "None planned; disclosed.",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L22",
+      "title": "Candidate visibility for a Binding",
+      "source": "S4 D9",
+      "statement": "A Binding sees its own candidates and native_ui candidates in packs that allow candidate tiers.",
+      "consequence": "Native candidates can reach an Agent under an explicit candidate-tier policy.",
+      "successor": "None planned; disclosed.",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L23",
+      "title": "Payload-cap backstop semantics",
+      "source": "S2",
+      "statement": "The database payload cap is a backstop behind the Worker's 1 MiB body limit and reports a generic error.",
+      "consequence": "Oversized payloads are refused with a coarse error.",
+      "successor": "None planned; disclosed.",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L24",
+      "title": "MCP reachable in practice only with Binding tokens",
+      "source": "S2",
+      "statement": "Legacy OAuth tokens are rejected on the Information Flow MCP tools; delegated OAuth dispatches to the same Binding entries.",
+      "consequence": "Agents must hold a Binding.",
+      "successor": "None planned; disclosed.",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L25",
+      "title": "S6 harness residuals",
+      "source": "S6 plan 14 items 2-6, 16-19, 25, 26",
+      "statement": "Bindings are minted and reduced through the v12 RPCs over PostgREST with a fixture issuer row; the Worker consent API, the delegated-OAuth scopedApi/checkBinding wrapper and KV are not exercised (successor L27); issue+consume in one request is structurally impossible over HTTP (DB-level test); the kill is a SIGKILL of the workerd host group after the committed upstream response; E2E-08 restarts db/PostgREST/GoTrue/Kong and a new process; token expiry uses the real clock; the 15-minute re-authentication case stays DB-level; the harness Worker config omits global_fetch_strictly_public; the harness Worker entry is the continuity handler, not the full vinext entry; E2E-05 reduction is a PostgREST call with the owner JWT; E2E-15(b) needs a DB fixture re-point; the observer is read-only and used only for internal state with no read route; E2E-10 reads the Record body through the Native export route.",
+      "consequence": "Evidence is local transport qualification with these disclosed substitutions.",
+      "successor": "None planned; disclosed.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "run.json",
+        "isolation.json"
+      ]
+    },
+    {
+      "id": "L26",
+      "title": "Production state",
+      "source": "PR #307; contract OD-4",
+      "statement": "S1 was applied to clued-prod per PR #307. The Owner authorized that apply retroactively in Canonical Decision 7040b127-2a42-4ff6-ba46-060a594a9c1d (Receipt cef0f0dd-c89e-4eac-b805-18c0816b4449), Agent-written and disclosed under OPEN_BY_OD-5, quoting the Owner: “补记授权，结论保持“本地验证” (推荐)”. S2-S5 were not applied; the production release gate blocks releases. No full apply has been read back.",
+      "consequence": "Every verdict keeps _LOCAL_QUALIFIED; B08 is scoped to the S6 qualification runs as the Decision states; the Task criterion 'truly connected to the Canonical Store' is not met.",
+      "successor": "A separately authorized production apply with backup and read-back.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "isolation.json"
+      ],
+      "authorization": {
+        "decision_id": "7040b127-2a42-4ff6-ba46-060a594a9c1d",
+        "receipt_id": "cef0f0dd-c89e-4eac-b805-18c0816b4449",
+        "writer": "Agent-written, disclosed under OPEN_BY_OD-5",
+        "quoted_owner_confirmation": "补记授权，结论保持“本地验证” (推荐)"
+      }
+    },
+    {
+      "id": "L27",
+      "title": "Delegated-OAuth end-to-end run is a post-M0-D successor",
+      "source": "B09 round 1 F08; S6 plan 14 items 2, 19, 25",
+      "statement": "The S6 harness mints and reduces Bindings through the v12 RPCs and serves /mcp from the continuity handler; the production MCP entry path (Worker consent API, delegated-OAuth scopedApi/checkBinding wrapper, KV) is not exercised end to end.",
+      "consequence": "No production claim may rest on the S6 run for the delegated-OAuth entry path.",
+      "successor": "Before any production claim: a delegated-OAuth end-to-end run through the Worker consent API and the scopedApi/checkBinding wrapper, including a scope reduction through the consent API.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "e2e/E2E-05.json",
+        "setup.json"
+      ]
+    },
+    {
+      "id": "L28",
+      "title": "S1 production apply has no pre-apply backup or read-back record",
+      "source": "B09 round 1 F01; contract 3 OD-4; Decision 7040b127-2a42-4ff6-ba46-060a594a9c1d",
+      "statement": "OD-4 requires every clued-prod apply to have its own pre-apply backup and read-back. For the S1 apply (PR #307) neither a pre-apply backup nor a read-back record exists; the authorization was recorded retroactively.",
+      "consequence": "The S1 production state is unverified; verdicts keep _LOCAL_QUALIFIED and B08 excludes the S1 apply as a referenced exception.",
+      "successor": "A separately authorized read-back of the S1 objects in clued-prod (and a backup before any further apply).",
+      "status": "OPEN",
+      "authorization": {
+        "decision_id": "7040b127-2a42-4ff6-ba46-060a594a9c1d",
+        "receipt_id": "cef0f0dd-c89e-4eac-b805-18c0816b4449",
+        "writer": "Agent-written, disclosed under OPEN_BY_OD-5",
+        "quoted_owner_confirmation": "补记授权，结论保持“本地验证” (推荐)"
+      },
+      "evidence_refs": [
+        "isolation.json"
+      ]
+    },
+    {
+      "id": "L29",
+      "title": "Token session binding tolerates a JWT without session_id",
+      "source": "B09 round 2 F11; 20260924190000:614 and the S4/S5 token cores",
+      "statement": "The confirmation-token session check compares nullif(session_id) with 'is distinct from'; a JWT without a session_id claim stores NULL and the binding is then conditional on that NULL.",
+      "consequence": "Only an account session JWT without session_id is affected; local and hosted GoTrue password sessions carry session_id (setup.json has_session_id=true). Not changed in S6.",
+      "successor": "Additive hotfix migration (like PR #322) requiring a non-null session_id at token issue in S3/S4/S5.",
+      "reason_not_fixed_in_s6": "The fix redefines large SECURITY DEFINER token functions from three slices; S6 adds no migration and schema fixes go through a separate reviewed hotfix PR, as for PR #322.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "setup.json"
+      ]
+    },
+    {
+      "id": "L30",
+      "title": "Native token lookup is not filtered by action before burn",
+      "source": "B09 round 2 F12; 20260924200000:1109, 20260924220000:751",
+      "statement": "The native_confirmation_tokens lookup in the consume path does not filter by action before burning, so a user's own token issued for one action can be burned by presenting it to another action's RPC.",
+      "consequence": "Same-user self denial of service only; a burned token is never accepted for the other action.",
+      "successor": "Additive hotfix migration adding the action filter before burn.",
+      "reason_not_fixed_in_s6": "Same as L29: a separate reviewed schema hotfix, not an S6 migration.",
+      "status": "OPEN",
+      "evidence_refs": []
+    },
+    {
+      "id": "L31",
+      "title": "Go CLI children of the harness are not under the Node isolation guard",
+      "source": "B09 round 2 F08",
+      "statement": "The Supabase CLI (a Go binary) and Docker CLI calls made by the harness cannot load the Node guard; they run with an allowlisted environment without proxy variables or cloud credentials, and only against the local stack. Wrangler dry-run runs under the guard.",
+      "consequence": "Their egress is bounded by the scrubbed environment, not by an in-process ledger.",
+      "successor": "None planned; disclosed.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "run.json",
+        "isolation.json"
+      ]
+    },
+    {
+      "id": "L32",
+      "title": "Normalized digests are a reproducibility aid, not a byte seal",
+      "source": "B09 round 2 F10",
+      "statement": "The per-scenario normalized digest covers channel, method, target template, HTTP status, extracted values, assertion ids/expected values/pass and the result, with ids, digests, timestamps, PIDs and durations replaced and arrays sorted. It drops step ledgers, assertion observed values and notes.",
+      "consequence": "Byte integrity of each evidence file comes from SHA256SUMS; the normalized digest shows that two runs at the same code tree made the same observations.",
+      "successor": "None planned; documented in the harness README.",
+      "status": "OPEN",
+      "evidence_refs": [
+        "reproducibility.json"
+      ]
+    }
+  ],
+  "owner_decisions": [
+    {
+      "decision_id": "7040b127-2a42-4ff6-ba46-060a594a9c1d",
+      "receipt_id": "cef0f0dd-c89e-4eac-b805-18c0816b4449",
+      "kind": "Canonical Decision",
+      "writer": "Agent-written, disclosed under OPEN_BY_OD-5",
+      "quoted_owner_confirmation": "补记授权，结论保持“本地验证” (推荐)",
+      "items": {
+        "S1_production_apply": "retroactive authorization of the S1 clued-prod apply (PR #307); verdicts keep _LOCAL_QUALIFIED; B08 scoped to the S6 qualification runs",
+        "7": "db:test:v2 accepted as a disclosed pre-existing stale-test baseline failure with the identical-failure proof"
+      }
+    },
+    {
+      "decision_id": "9feed8c3-7720-4501-8f4f-e5604b9a3793",
+      "receipt_id": "817cd530-7511-456e-ab14-fcb410471365",
+      "kind": "Canonical Decision",
+      "items": {
+        "decision_supersede_v12_guard": "hotfix PR #322 (20260924230000_decision_supersede_v12_guard.sql) restores the v12 guard regressed by S3; merged to main as 982bcb3a"
+      }
+    }
+  ]
+}

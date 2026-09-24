@@ -1,0 +1,791 @@
+{
+  "schema": "clued.information-flow.m0d.regression/1",
+  "gate": "M0D-B07",
+  "runtime": {
+    "node": "v24.19.0",
+    "pg_user": "pgtest"
+  },
+  "input_commit": "6fb2a98ec4e36bb2cddeb501f8bbfa22f28ab4df",
+  "suites": [
+    {
+      "suite": "test:context:v2",
+      "command": "npm run test:context:v2 (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 3953,
+      "totals": {
+        "tests": 100,
+        "pass": 100,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "a7272bbdf162422a764ebbb9b058c943960f5e6e8079aac3f3e07cc8cde068f5",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:projection:refresh",
+      "command": "npm run test:projection:refresh (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 3625,
+      "totals": {
+        "tests": 10,
+        "pass": 10,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "b8112ff12dad99e3623dc649670a04e78c242346ac3eaba84dbf3deba92d7e2f",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:mtpe:intake",
+      "command": "npm run test:mtpe:intake (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 3131,
+      "totals": {
+        "tests": 5,
+        "pass": 5,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "ee295cdd7c52ff503c3471c48c1de862c57be2b12909429aa601e8ed10f27d45",
+      "result": "PASS"
+    },
+    {
+      "suite": "db:test:m1",
+      "command": "supabase test db supabase/tests/m1_runtime_contracts.test.sql supabase/tests/m1_legacy_mapping.test.sql --local",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 2242,
+      "totals": {
+        "tests": null,
+        "pass": null,
+        "fail": null,
+        "cancelled": null,
+        "skipped": null,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": {
+          "files": 2,
+          "tests": 72
+        }
+      },
+      "output_sha256": "1599244537288b19128d8ddadbee2b878e4879a94a2cd3af16721f73c9f97390",
+      "result": "PASS"
+    },
+    {
+      "suite": "db:test:v2",
+      "command": "supabase test db supabase/tests/unified_record_v2.test.sql --local",
+      "exit_code": 1,
+      "signal": null,
+      "duration_ms": 1952,
+      "totals": {
+        "tests": null,
+        "pass": null,
+        "fail": null,
+        "cancelled": null,
+        "skipped": null,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": {
+          "files": 1,
+          "tests": 28
+        }
+      },
+      "output_sha256": "ae7221762295305e115f3ff81f921ac6c3fe6cde528d85a3e2d4deb4c88ab40b",
+      "result": "FAIL",
+      "failure": {
+        "failing_tests": [
+          "Account wrapper creates a global task",
+          "Same key and payload is idempotent",
+          "Idempotent replay does not duplicate the record",
+          "Same key with different payload conflicts",
+          "Stale expected version is rejected as an API conflict",
+          "Unconfirmed project cannot create records",
+          "Confirmed project creates a canonical task",
+          "Archive snapshot can be created",
+          "Archive snapshot cannot be updated",
+          "Record, Event and Receipt are linked by the same transaction"
+        ],
+        "failing_test_count": 10,
+        "first_error_line": "42501: permission denied for function clued_user_record_write",
+        "sqlstate": "42501"
+      },
+      "baseline_proof": [
+        {
+          "ref": "dea0a61b",
+          "commit": "dea0a61b0d4db248e91b7b9a490be2b0cae147ca",
+          "suite": "db:test:v2",
+          "command": "supabase test db supabase/tests/unified_record_v2.test.sql --local",
+          "exit_code": 1,
+          "signal": null,
+          "duration_ms": 1875,
+          "totals": {
+            "tests": null,
+            "pass": null,
+            "fail": null,
+            "cancelled": null,
+            "skipped": null,
+            "tap_ok_lines": 0,
+            "tap_not_ok_lines": 0,
+            "pgtap": {
+              "files": 1,
+              "tests": 28
+            }
+          },
+          "output_sha256": "8a22a8b935e8c4ccd97d1564046ea7a34b556008d049cddc12381e695d05a3bf",
+          "result": "FAIL",
+          "failure": {
+            "failing_tests": [
+              "Account wrapper creates a global task",
+              "Same key and payload is idempotent",
+              "Idempotent replay does not duplicate the record",
+              "Same key with different payload conflicts",
+              "Stale expected version is rejected as an API conflict",
+              "Unconfirmed project cannot create records",
+              "Confirmed project creates a canonical task",
+              "Archive snapshot can be created",
+              "Archive snapshot cannot be updated",
+              "Record, Event and Receipt are linked by the same transaction"
+            ],
+            "failing_test_count": 10,
+            "first_error_line": "42501: permission denied for function clued_user_record_write",
+            "sqlstate": "42501"
+          }
+        },
+        {
+          "ref": "2aa51246",
+          "commit": "2aa5124664268bea80331b3e4521a57b2e86f5bb",
+          "suite": "db:test:v2",
+          "command": "supabase test db supabase/tests/unified_record_v2.test.sql --local",
+          "exit_code": 1,
+          "signal": null,
+          "duration_ms": 1986,
+          "totals": {
+            "tests": null,
+            "pass": null,
+            "fail": null,
+            "cancelled": null,
+            "skipped": null,
+            "tap_ok_lines": 0,
+            "tap_not_ok_lines": 0,
+            "pgtap": {
+              "files": 1,
+              "tests": 28
+            }
+          },
+          "output_sha256": "965b6f72e6ead077717dc3e492b4a7805b7fd10e1e6ed9f97b8103b73472e675",
+          "result": "FAIL",
+          "failure": {
+            "failing_tests": [
+              "Account wrapper creates a global task",
+              "Same key and payload is idempotent",
+              "Idempotent replay does not duplicate the record",
+              "Same key with different payload conflicts",
+              "Stale expected version is rejected as an API conflict",
+              "Unconfirmed project cannot create records",
+              "Confirmed project creates a canonical task",
+              "Archive snapshot can be created",
+              "Archive snapshot cannot be updated",
+              "Record, Event and Receipt are linked by the same transaction"
+            ],
+            "failing_test_count": 10,
+            "first_error_line": "42501: permission denied for function clued_user_record_write",
+            "sqlstate": "42501"
+          }
+        }
+      ],
+      "identical_failure_on_baselines": true
+    },
+    {
+      "suite": "test:p5:postgres",
+      "command": "npm run test:p5:postgres (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 9626,
+      "totals": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "a96e718631970701afc5c469fe5c92a92d53f2b18e83b91c8cc6f4468aaf43a5",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:project:lifecycle:v2",
+      "command": "npm run test:project:lifecycle:v2 (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 4321,
+      "totals": {
+        "tests": 73,
+        "pass": 73,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "3203a31d15d150b96c3e77ff93a14f264a0510e1ddff457bb1faab16f5734647",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:authorization:transport",
+      "command": "npm run test:authorization:transport (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 705,
+      "totals": {
+        "tests": 28,
+        "pass": 28,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "50cd2020c3a9f669b3757127d5b62373e9476d5172e24369d7ef10f057e2cc81",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:authorization:database",
+      "command": "npm run test:authorization:database (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 5369,
+      "totals": {
+        "tests": 53,
+        "pass": 53,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "0492be029d86ba75da3fff3877ae0879e73dcac7467dc2a7b5380581a357a386",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:authorization:migrations",
+      "command": "npm run test:authorization:migrations (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 4275,
+      "totals": {
+        "tests": 2,
+        "pass": 2,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "4f46107f62eb6b5d6dd3633720529e66ae8e36115e5aa323e8de5b337232334a",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:authorization:integration",
+      "command": "npm run test:authorization:integration (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 2853,
+      "totals": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "fd4bdebb1ebb765de5bd4ab52beb2c68910af412bbed11d0b360e6c71149787c",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:authorization:pages",
+      "command": "npm run test:authorization:pages (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 2202,
+      "totals": {
+        "tests": 54,
+        "pass": 54,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "eb9e9a1c588cdd2be3ed3a47c72147acf08435e24c06d25693ea2e980ab8195a",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:authorization:invitations",
+      "command": "npm run test:authorization:invitations (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 2979,
+      "totals": {
+        "tests": 19,
+        "pass": 19,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "9fc896da10af9ea95b80ffe8664493cd49a699b56a4025ff4c11d873211b74fc",
+      "result": "PASS"
+    },
+    {
+      "suite": "mcp:tools:verify",
+      "command": "npm run mcp:tools:verify",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 270,
+      "totals": {
+        "tests": null,
+        "pass": null,
+        "fail": null,
+        "cancelled": null,
+        "skipped": null,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "231ed365d8a7b59bedf322430901f335f27fb95352d6559838cff7d1d13343da",
+      "result": "PASS",
+      "note": "served by the S6 harness Worker host (workerd); tools/list is static"
+    },
+    {
+      "suite": "mcp:flags:verify",
+      "command": "npm run mcp:flags:verify",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 604,
+      "totals": {
+        "tests": null,
+        "pass": null,
+        "fail": null,
+        "cancelled": null,
+        "skipped": null,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "13f41f97789b64abeb1659d034111b91b5231158bdf38eeda050ddb90d98df7d",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:information-flow:candidates",
+      "command": "npm run test:information-flow:candidates (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 2856,
+      "totals": {
+        "tests": 2,
+        "pass": 2,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "a8de9e4a4727ad166850daed96a2e77e0ea1fc10850802e9dcd125da365aa55d",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:information-flow:intake",
+      "command": "npm run test:information-flow:intake (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 5220,
+      "totals": {
+        "tests": 17,
+        "pass": 17,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "f506f9de8591236aeab78cfbd3b8d24f9062647c519ce5fb20c877ea7406f66f",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:information-flow:promotion",
+      "command": "npm run test:information-flow:promotion (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 3561,
+      "totals": {
+        "tests": 15,
+        "pass": 15,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "063c327ce56fa6b3f373119ca8adb3946f22ed3c3fca9bc51f20289994bca1e4",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:information-flow:context",
+      "command": "npm run test:information-flow:context (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 6710,
+      "totals": {
+        "tests": 20,
+        "pass": 20,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "ff28f1bb51f21246c1934bd2c55241fba8c287a93914fd564b2fe2906c30ae5f",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:information-flow:invalidation",
+      "command": "npm run test:information-flow:invalidation (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 6284,
+      "totals": {
+        "tests": 15,
+        "pass": 15,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "70a932892ab6de3467e27a694ec2281e263d659dcea8115147ad0595c5a7b88a",
+      "result": "PASS"
+    },
+    {
+      "suite": "db:lint",
+      "command": "supabase db lint --local --schema public,clued_private --level error --fail-on error",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 1347,
+      "totals": {
+        "tests": null,
+        "pass": null,
+        "fail": null,
+        "cancelled": null,
+        "skipped": null,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "746c0e036dca7ac31a69dfdf07d5e6f8507d695271d60b191d4de39b5ebe1024",
+      "result": "PASS"
+    },
+    {
+      "suite": "test:production:release-gate",
+      "command": "npm run test:production:release-gate (as pgtest)",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 308,
+      "totals": {
+        "tests": 8,
+        "pass": 8,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "508caf74acd831c4e4834525c32767bc9ffda59c997bdee6929f327338bfae09",
+      "result": "PASS"
+    },
+    {
+      "suite": "typecheck",
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 5424,
+      "totals": {
+        "tests": null,
+        "pass": null,
+        "fail": null,
+        "cancelled": null,
+        "skipped": null,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "result": "PASS"
+    },
+    {
+      "suite": "lint",
+      "command": "npm run lint",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 12215,
+      "totals": {
+        "tests": null,
+        "pass": null,
+        "fail": null,
+        "cancelled": null,
+        "skipped": null,
+        "tap_ok_lines": 0,
+        "tap_not_ok_lines": 0,
+        "pgtap": null
+      },
+      "output_sha256": "508c238f1a01cb0ea8aa95122573c7b7d4979d1e9da0144f6247f30252c14c5b",
+      "result": "PASS"
+    },
+    {
+      "suite": "parent-adapter (root)",
+      "command": "node --test --test-reporter=tap tests/information-flow-parent-adapter.test.mjs",
+      "exit_code": 0,
+      "signal": null,
+      "duration_ms": 156,
+      "totals": {
+        "tests": 5,
+        "pass": 5,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "tap_ok_lines": 5,
+        "tap_not_ok_lines": 0,
+        "pgtap": {
+          "planned": 5
+        }
+      },
+      "output_sha256": "475f9531fb366368985a882df9265b83ace955776d9f5b66f2d05eb1ea02442e",
+      "result": "PASS"
+    }
+  ],
+  "e2e": {
+    "suite": "test:information-flow:e2e",
+    "pointer": "run.json and e2e/*.json in this evidence directory",
+    "results": {
+      "E2E-01": {
+        "assertions": 17,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "10416e6e699cc0369f4792a16f70c421a3c9bbcb759bca44471330de2e044b98",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-02": {
+        "assertions": 30,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "c909f7c2da473d5bb222df1ada6dba77303a7a2db3b0065300e1f387f45fd738",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-03": {
+        "assertions": 17,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "0422122d92ea2a0177c0f0957fc0880c70db10e19a69b8c5e1f73a7b03883823",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-04": {
+        "assertions": 13,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "5d9428bd3c6fee08200c8ecc81e2ecf32cc96d84c992bfd0cbb3b358c34bd5d8",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-05": {
+        "assertions": 10,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "0a975ee44cdfc1970499ce9eda5178b9ef2d083c3fabf62dee1d23261bff2bf5",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-06": {
+        "assertions": 62,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "b0651054e89c82eb1fb9b32265fae8b8723437b40c9d622b3bb11f8392b25e11",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-07": {
+        "assertions": 18,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "5a2bd05418995ffd67b81b5b0a02aff753b25aaed0e3da21bd15576a40767737",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-08": {
+        "assertions": 18,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "f304cfa1cccd5ed6c8e4a87fb22cd9d0745180948e7cdc0346e9070b1054352a",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-09": {
+        "assertions": 11,
+        "failed": [],
+        "normalized_digest": "86ac48c57ddf77b69ce1a72477c4e48b4850bd5ccbe59c52fd69ffbb3599e9de",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-10": {
+        "assertions": 21,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "0192fed0eac56e9815d32017e427c991e8b9f327f7ba282c428c3e4e59f15c4f",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-11": {
+        "assertions": 5,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "371edb8483aedcaac2c69c10284723b7dca8b698079b74f7d727e310b3577d59",
+        "result": "OBSERVED"
+      },
+      "E2E-12": {
+        "assertions": 11,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "702665c3ed467642390d1636c6d3e6dc522b562829d6ad3c94f13ea1db013341",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-13": {
+        "assertions": 11,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "9d294851705b7ac720ffe02dd9374b7a470c3c82f17710468405099c336dbba9",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-14": {
+        "assertions": 17,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "a72b009d6b7b0d3b136fafdbddbe94c86f8eb8ec882db1512b6051047f717e23",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      },
+      "E2E-15": {
+        "assertions": 32,
+        "error": null,
+        "failed": [],
+        "normalized_digest": "6fcf465f401f8ef0aaca491978fae1b69adac4b3a97bffe81bb493d77081fcfa",
+        "qualifier": "Agent authority confined only on the Information Flow path",
+        "result": "PASS"
+      }
+    }
+  },
+  "excluded": [
+    {
+      "name": "mcp:eval:*",
+      "reason": "promptfoo evaluations can call model providers (B08: zero model/provider calls)"
+    },
+    {
+      "name": "test:p6",
+      "reason": "P6 shadow canary is outside the M0D-B07 list and exercises production release control"
+    }
+  ],
+  "baseline_classification": {
+    "db:test:v2": {
+      "classification": "pre-existing stale-test baseline failure (not an environmental failure); not modified in S6",
+      "owner_acceptance": {
+        "source": "known-limitations.m0d.v0.1.json owner_decisions",
+        "decision_id": "7040b127-2a42-4ff6-ba46-060a594a9c1d",
+        "receipt_id": "cef0f0dd-c89e-4eac-b805-18c0816b4449",
+        "item": 7,
+        "text": "db:test:v2 accepted as a disclosed pre-existing stale-test baseline failure with the identical-failure proof"
+      },
+      "baseline_refs_on_main": {
+        "origin_main": "982bcb3a008be00d2aaead18aae0185d816ac848",
+        "refs": [
+          {
+            "ref": "dea0a61b",
+            "commit": "dea0a61b0d4db248e91b7b9a490be2b0cae147ca",
+            "is_ancestor_of_origin_main": true
+          },
+          {
+            "ref": "2aa51246",
+            "commit": "2aa5124664268bea80331b3e4521a57b2e86f5bb",
+            "is_ancestor_of_origin_main": true
+          }
+        ]
+      },
+      "root_cause": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql:763 revokes clued_user_record_write from authenticated; apps/clued-cloud/supabase/tests/unified_record_v2.test.sql:36 still calls it. No CI workflow runs db:test:v2."
+    }
+  },
+  "summary": {
+    "pass": [
+      "test:context:v2",
+      "test:projection:refresh",
+      "test:mtpe:intake",
+      "db:test:m1",
+      "test:p5:postgres",
+      "test:project:lifecycle:v2",
+      "test:authorization:transport",
+      "test:authorization:database",
+      "test:authorization:migrations",
+      "test:authorization:integration",
+      "test:authorization:pages",
+      "test:authorization:invitations",
+      "mcp:tools:verify",
+      "mcp:flags:verify",
+      "test:information-flow:candidates",
+      "test:information-flow:intake",
+      "test:information-flow:promotion",
+      "test:information-flow:context",
+      "test:information-flow:invalidation",
+      "db:lint",
+      "test:production:release-gate",
+      "typecheck",
+      "lint",
+      "parent-adapter (root)"
+    ],
+    "fail": [
+      "db:test:v2"
+    ],
+    "unexplained_failures": []
+  }
+}

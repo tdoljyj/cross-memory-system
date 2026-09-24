@@ -1,0 +1,193 @@
+{
+  "aliases": {
+    "BYPASS": "76f69d87-0554-436e-9dd0-64962b542bc7",
+    "P12": "8b102079-4831-4213-befe-bed6bc93fe1c"
+  },
+  "assertions": [
+    {
+      "expected": "7689002206797361190",
+      "id": "11.pre.fresh_db",
+      "observed": "7689002206797361190",
+      "pass": true,
+      "text": "precondition: the disposable local database recorded right after db reset"
+    },
+    {
+      "expected": true,
+      "id": "11.pre.synthetic",
+      "observed": true,
+      "pass": true,
+      "text": "precondition: the principal is synthetic (@example.invalid)"
+    },
+    {
+      "expected": "committed",
+      "id": "11.observed.committed",
+      "observed": "committed",
+      "pass": true,
+      "text": "observed: the Binding user_explicit write commits while OD-5 is open"
+    },
+    {
+      "expected": "e5ca9849-1df5-485f-a006-78f4918a1a1a",
+      "id": "11.observed.binding",
+      "observed": "e5ca9849-1df5-485f-a006-78f4918a1a1a",
+      "pass": true,
+      "text": "observed: the Receipt carries the Binding id (Agent-authored)"
+    },
+    {
+      "expected": false,
+      "id": "11.observed.not_confirmed",
+      "observed": false,
+      "pass": true,
+      "text": "observed: the Record is not human_confirmed"
+    }
+  ],
+  "claims": {
+    "model_extraction": "NOT_EVALUATED",
+    "od5_qualifier": "Agent authority confined only on the Information Flow path",
+    "verdict_env": "_LOCAL_QUALIFIED"
+  },
+  "code_binding": {
+    "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+    "harness_tree": "004aad442e99860b1c2f587aba0781a750ecfa7f",
+    "input_commit": "6fb2a98ec4e36bb2cddeb501f8bbfa22f28ab4df",
+    "migrations_chain": {
+      "count": 73,
+      "latest": "20260924230000_decision_supersede_v12_guard.sql",
+      "sha256": "68f6c0dc83d69c5b411ee92b2c87371d46139961334c1852c8e413d4fd4d8a9a"
+    },
+    "worker_tree": "e73cb582dea46a84690429ee6c59d0cc54ed3bcc",
+    "worktree_clean": true
+  },
+  "contract": {
+    "path": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+    "sha256": "5c6371cf22b078cbd1fb0f61f3f6eb20b51a162a28e8942f04b81561bbb8c9ff"
+  },
+  "environment": {
+    "db_database_oid": "5",
+    "db_system_identifier": "7689002206797361190",
+    "docker": "29.3.1",
+    "images": {
+      "auth": "sha256:362659ca70eaa75ba05bbaf963caa84c1c5afe5e8fbf0777e17b830dd5f0f60a",
+      "db": "sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5fb408d051909b230f",
+      "kong": "sha256:1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d",
+      "rest": "sha256:5922bde07147b82b1c9d8f749e48c1e5b99ebb233f3888bb7ab65f07cf4ac82d"
+    },
+    "js_tiktoken": "1.0.21",
+    "migrations_applied": {
+      "latest": "20260924230000",
+      "n": 73
+    },
+    "miniflare": "5.20260820.0-alpha",
+    "node": "v24.19.0",
+    "qualification": "LOCAL",
+    "supabase_cli": "2.115.0",
+    "transport_tier": "T1",
+    "workerd": "1.20260820.1",
+    "wrangler": "4.125.0"
+  },
+  "error": null,
+  "expectation_if_OD5_decided": "rejected",
+  "limitation_id": "OPEN_BY_OD-5",
+  "normalized_digest": "371edb8483aedcaac2c69c10284723b7dca8b698079b74f7d727e310b3577d59",
+  "notes": [],
+  "observation": "bypass_write_committed",
+  "principals": {
+    "account_user": "<synthetic>",
+    "bindings": [
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:c85804e704fa",
+        "name": "B_main",
+        "scopes_count": 16
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:95cc7d143812",
+        "name": "B_reduce",
+        "scopes_count": 2
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:d1ec81d0170b",
+        "name": "B_del",
+        "scopes_count": 1
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:37277e05527f",
+        "name": "B_V",
+        "scopes_count": 1
+      }
+    ],
+    "token_labels": {
+      "U": "sha256:716fba5f9918",
+      "V": "sha256:9919da5bd400"
+    }
+  },
+  "register_entry": "L01",
+  "result": "OBSERVED",
+  "scenario_id": "E2E-11",
+  "schema": "clued.information-flow.m0d.e2e-evidence/1",
+  "steps": [
+    {
+      "channel": "db_observer_readonly",
+      "duration_ms": 2,
+      "extracted": null,
+      "http_status": null,
+      "ledger": [],
+      "method": "SELECT",
+      "n": 1,
+      "request_sha256": "22badd6dc863ee64557f883212554678aa7c650a56ec09a84d8712f717414f69",
+      "response_sha256": "6621b4a8c71b591aa251c7f9a4bc4aa2e0f8e937607d567645d2061af14b0904",
+      "target": "database identity"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 19,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_record_mutate",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 2,
+      "request_sha256": "0f6abc403ac624e56145bec81dd1f95834b0305792857d822c7d4c2c4e42b4fb",
+      "response_sha256": "f594d1bc9910c5bc59f9fab7ada6c11bfc212090d6a7038705ec79cfbc4cb78f",
+      "target": "/mcp tools/call clued_record_mutate"
+    },
+    {
+      "channel": "db_observer_readonly",
+      "duration_ms": 4,
+      "extracted": null,
+      "http_status": null,
+      "ledger": [],
+      "method": "SELECT",
+      "n": 3,
+      "request_sha256": "ebe0ae529a7623fe2eb3574a4ad793918c916ffc679faed009b63707adb4a87a",
+      "response_sha256": "f66249b2727f21cd9c07c703b59c085aadda2abfaed3676fb992fb66dd2a3e8e",
+      "target": "writer Receipt"
+    }
+  ]
+}
