@@ -1,0 +1,626 @@
+{
+  "principals": {
+    "account_user": "<synthetic>",
+    "bindings": [
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:c85804e704fa",
+        "name": "B_main",
+        "scopes_count": 16
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:95cc7d143812",
+        "name": "B_reduce",
+        "scopes_count": 2
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:d1ec81d0170b",
+        "name": "B_del",
+        "scopes_count": 1
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:37277e05527f",
+        "name": "B_V",
+        "scopes_count": 1
+      }
+    ],
+    "token_labels": {
+      "U": "sha256:716fba5f9918",
+      "V": "sha256:9919da5bd400"
+    }
+  },
+  "projects_count": 15,
+  "schema": "clued.information-flow.m0d.e2e-setup/1",
+  "steps": [
+    {
+      "channel": "gotrue",
+      "extracted": {
+        "principal": "U"
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 1,
+      "request_sha256": null,
+      "response_sha256": null,
+      "target": "/auth/v1/signup"
+    },
+    {
+      "channel": "gotrue",
+      "extracted": {
+        "claims": {
+          "aal": "aal1",
+          "amr_has_timestamp": true,
+          "amr_methods": [
+            "password"
+          ],
+          "has_client_id": false,
+          "has_session_id": true,
+          "role": "authenticated",
+          "session_label": "sha256:30ef4a858f11",
+          "token_label": "sha256:716fba5f9918"
+        },
+        "principal": "U"
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 2,
+      "request_sha256": null,
+      "response_sha256": null,
+      "target": "/auth/v1/token?grant_type=password"
+    },
+    {
+      "channel": "gotrue",
+      "extracted": {
+        "principal": "V"
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 3,
+      "request_sha256": null,
+      "response_sha256": null,
+      "target": "/auth/v1/signup"
+    },
+    {
+      "channel": "gotrue",
+      "extracted": {
+        "claims": {
+          "aal": "aal1",
+          "amr_has_timestamp": true,
+          "amr_methods": [
+            "password"
+          ],
+          "has_client_id": false,
+          "has_session_id": true,
+          "role": "authenticated",
+          "session_label": "sha256:21dc727ad657",
+          "token_label": "sha256:9919da5bd400"
+        },
+        "principal": "V"
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 4,
+      "request_sha256": null,
+      "response_sha256": null,
+      "target": "/auth/v1/token?grant_type=password"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 5,
+      "request_sha256": "656b50eb5272d450bbfc35856e95d7b240bee8bbdd71257b0edea464f4b9db28",
+      "response_sha256": "608449e6ccdeac7f01fb8ae8b8ac82db2f4e19bf93cc105eef881cfaa31e53d4",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 6,
+      "request_sha256": "212da930b56f22276df35e435aef8c05a1737e8d56152575276133d46d6e9687",
+      "response_sha256": "386ac4eb47ec9d38c651279c9c68c3a1e287866a3d1b70d55f9f420da5642f08",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 7,
+      "request_sha256": "9f736750f798ec8b4ba17f269cf3e9b522f9e9fca808ce5aff39d1d344be8593",
+      "response_sha256": "d9ad3c1b97ad2a56c9e6b32b5a83a984f7eadd4181601c76f79d84bd87c1aaa8",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 8,
+      "request_sha256": "aebc17df41caaedef71ed4b00be984f167729011ec94a597847a9cccc86054ed",
+      "response_sha256": "1885b6c7bc231a9e6ed9231ec42582d2615d5586d32fb064c0be1afd74e62e7f",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 9,
+      "request_sha256": "ddd7fef2c73386884327a76001ab0c11484c2659094b7245dbed1235aea6813d",
+      "response_sha256": "93da3908fe43e0a4cdd9a0c28a10c6f6c5133950578cc571efe4feecf4c55d21",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 10,
+      "request_sha256": "e4c572cb40e69ba10fe1e177278c8e389af20a53f4b35cf60fb5e1b808315c4d",
+      "response_sha256": "71cd58c530fc85f6159c1da17ddacb8f08b7f52ae51a13aa8dab271a23591005",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 11,
+      "request_sha256": "caaf0eaaa78d920b6b493b61b037c5a773c5ea9d06476d1f913aee5c7f615520",
+      "response_sha256": "abc7a5894b0e7b0e5c6bf140a396b3eb8d81a7cf520a19e0a854e188796919a4",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 12,
+      "request_sha256": "d54f75eb811c18af0e3366d096c22a78bcf7eb0f095acbf8e52665afb86681d3",
+      "response_sha256": "73f5208536ff11562f403139d8800e320a9dc42e724e8419773536d8bdc34164",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 13,
+      "request_sha256": "c5d24b524777b0e07f795fa04e7f5adecec2fdc7a37dd5555882adc962828af8",
+      "response_sha256": "b5942642eed073ec4e5c655cfe37cc35efcf0da3ecf8ddc8abd49b5bb9d2c9bd",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 14,
+      "request_sha256": "410839476dedef5959e4cce57dd6bef194cb8ea1fea22d917015e2ee86bc7524",
+      "response_sha256": "9b98a1c4748b02b9b8102060cbdfbff8b90a47de0d9d825f950a90e73a8de843",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 15,
+      "request_sha256": "cd4a9ad40b132023084aabf4af752abb17c804e2f18e755730f27e5bfa6e47c0",
+      "response_sha256": "cfead7ef3bfcadf487b4daadaf708a7c3a77290eaacf250bc31cffb0d312b114",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 16,
+      "request_sha256": "2aa85dbbd8d5985443133636b69f43bf975480c83a42d3661cfa65a3816046ae",
+      "response_sha256": "027bb15bfad17550913a9a147caead4dff1753c3bb6990d0fc6b3eec4b14f385",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 17,
+      "request_sha256": "3266877e82b3d2677ac888d4b4cc30efdd706ff5c0d825b236954790204af26c",
+      "response_sha256": "c978310ff5d95709f550f69aa58c1415e1bc38ede75c4595c11dfc9596087378",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 18,
+      "request_sha256": "10e274faff58ee89fd97fd4342d30f219869193f01b7beaee4af5d7bbac311ca",
+      "response_sha256": "8d10cd129f9c95d4688f4777db41e8a331caa8f5d1951b2f8b5da3aa3e6e0a4f",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "worker_rest",
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_project_mutate_v2",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 19,
+      "request_sha256": "871b330783210ca005f8d58fa458bc408a028f8f92de3e04a14eac3171da5d25",
+      "response_sha256": "27fc588a0def152dc580a126d32bdb6d80f36fffc668776e41df608ca3695ebe",
+      "target": "/v1/projects"
+    },
+    {
+      "channel": "db_fixture_setup",
+      "extracted": null,
+      "http_status": null,
+      "ledger": [],
+      "method": "FIXTURE",
+      "n": 20,
+      "request_sha256": null,
+      "response_sha256": null,
+      "target": "register v12 issuer (configuration, no product transport)"
+    },
+    {
+      "channel": "postgrest_direct",
+      "extracted": {
+        "eligible_count": 17,
+        "version": 1
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 21,
+      "request_sha256": "807091a32726b6b90d7ecf06dd5a856cfc833a40e18a5154c2af48f17281325e",
+      "response_sha256": "dd5ecc8ecad555fb4dfbf0843ee837279cf67235de1479af54817c4dccd24473",
+      "target": "/rest/v1/rpc/clued_authorization_prepare_v12 (owner_jwt)"
+    },
+    {
+      "channel": "postgrest_direct",
+      "extracted": {
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "version": 1
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 22,
+      "request_sha256": "de184fe4e04606eb8c1234713fb90637b27358a34807b99c5445beed15752ca4",
+      "response_sha256": "8a3372ed3406b8c369f91f84e1e5f6ee3c928b3a3044e0e82dfcd8a867af771e",
+      "target": "/rest/v1/rpc/clued_authorization_approve_v12 (owner_jwt)"
+    },
+    {
+      "channel": "postgrest_direct",
+      "extracted": {
+        "eligible_count": 17,
+        "version": 1
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 23,
+      "request_sha256": "6ec3bf07759d8604816bf81d0773c35a0214587fff9f4df63644bf2ebb3865b1",
+      "response_sha256": "7e28f18c78d4efb2b37689e0a6ba521109bac44adba26fa489d1f2cf83cb2fea",
+      "target": "/rest/v1/rpc/clued_authorization_prepare_v12 (owner_jwt)"
+    },
+    {
+      "channel": "postgrest_direct",
+      "extracted": {
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "version": 1
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 24,
+      "request_sha256": "41d5004b292f3770ce1a3052d35a6dbed8b6522d7ee5a3a7c7361ba00647550d",
+      "response_sha256": "e4b5c8603b39a3b2c73f609b568279aa86f616016e6c1ad83b93f62ab52107c9",
+      "target": "/rest/v1/rpc/clued_authorization_approve_v12 (owner_jwt)"
+    },
+    {
+      "channel": "postgrest_direct",
+      "extracted": {
+        "eligible_count": 17,
+        "version": 1
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 25,
+      "request_sha256": "0fb0dd409209adacdaf6f16a6019f1b95adff426708719f5c9c54d361fe28cf7",
+      "response_sha256": "40714fe089f95967fe2b49afbf54ac2a8054fa96e97f36d7895c497c06c740f4",
+      "target": "/rest/v1/rpc/clued_authorization_prepare_v12 (owner_jwt)"
+    },
+    {
+      "channel": "postgrest_direct",
+      "extracted": {
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "version": 1
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 26,
+      "request_sha256": "ed8db4358cc128aad28922e5027f49bc52bde73a8ccf3533faf796c89d9b8bbf",
+      "response_sha256": "24c8eca87b4532271f4f7281b579735f1d27205d3304522c9b89f72f2dcfeaf9",
+      "target": "/rest/v1/rpc/clued_authorization_approve_v12 (owner_jwt)"
+    },
+    {
+      "channel": "postgrest_direct",
+      "extracted": {
+        "eligible_count": 2,
+        "version": 1
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 27,
+      "request_sha256": "bf132ef18614972413aea67fecebd1215fb473ca1087f2482b5d231a8f4e83b3",
+      "response_sha256": "6853a7439938d2947d2e7998bbcb792cbcbef7d40874aa0181e9f1112c2c78ac",
+      "target": "/rest/v1/rpc/clued_authorization_prepare_v12 (owner_jwt)"
+    },
+    {
+      "channel": "postgrest_direct",
+      "extracted": {
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "version": 1
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 28,
+      "request_sha256": "1e784ba8c885b40c859a891623b8a0f9e4893efd48da4ca7fae2a739aa3e1fc7",
+      "response_sha256": "a46cc524c162ce1cf7d2826d3421e22ad4635a768511431a1cc8b68bcabc4891",
+      "target": "/rest/v1/rpc/clued_authorization_approve_v12 (owner_jwt)"
+    }
+  ]
+}

@@ -1,0 +1,122 @@
+{
+  "results": {
+    "E2E-01": {
+      "assertions": 17,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "10416e6e699cc0369f4792a16f70c421a3c9bbcb759bca44471330de2e044b98",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-02": {
+      "assertions": 30,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "c909f7c2da473d5bb222df1ada6dba77303a7a2db3b0065300e1f387f45fd738",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-03": {
+      "assertions": 17,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "0422122d92ea2a0177c0f0957fc0880c70db10e19a69b8c5e1f73a7b03883823",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-04": {
+      "assertions": 13,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "5d9428bd3c6fee08200c8ecc81e2ecf32cc96d84c992bfd0cbb3b358c34bd5d8",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-05": {
+      "assertions": 10,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "0a975ee44cdfc1970499ce9eda5178b9ef2d083c3fabf62dee1d23261bff2bf5",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-06": {
+      "assertions": 62,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "b0651054e89c82eb1fb9b32265fae8b8723437b40c9d622b3bb11f8392b25e11",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-07": {
+      "assertions": 18,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "5a2bd05418995ffd67b81b5b0a02aff753b25aaed0e3da21bd15576a40767737",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-08": {
+      "assertions": 18,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "f304cfa1cccd5ed6c8e4a87fb22cd9d0745180948e7cdc0346e9070b1054352a",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-09": {
+      "assertions": 11,
+      "failed": [],
+      "normalized_digest": "86ac48c57ddf77b69ce1a72477c4e48b4850bd5ccbe59c52fd69ffbb3599e9de",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-10": {
+      "assertions": 21,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "0192fed0eac56e9815d32017e427c991e8b9f327f7ba282c428c3e4e59f15c4f",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-11": {
+      "assertions": 5,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "371edb8483aedcaac2c69c10284723b7dca8b698079b74f7d727e310b3577d59",
+      "result": "OBSERVED"
+    },
+    "E2E-12": {
+      "assertions": 11,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "702665c3ed467642390d1636c6d3e6dc522b562829d6ad3c94f13ea1db013341",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-13": {
+      "assertions": 11,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "9d294851705b7ac720ffe02dd9374b7a470c3c82f17710468405099c336dbba9",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-14": {
+      "assertions": 17,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "a72b009d6b7b0d3b136fafdbddbe94c86f8eb8ec882db1512b6051047f717e23",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    },
+    "E2E-15": {
+      "assertions": 32,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "6fcf465f401f8ef0aaca491978fae1b69adac4b3a97bffe81bb493d77081fcfa",
+      "qualifier": "Agent authority confined only on the Information Flow path",
+      "result": "PASS"
+    }
+  }
+}

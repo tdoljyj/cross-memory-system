@@ -1,0 +1,42 @@
+{
+  "agent_pending": [
+    {
+      "id": "d1a990fb-7ecd-4c18-8570-97d91e27bb25",
+      "input_digest": "c034a9559bbc433707bc472e05b75a64165d4934152090f551a13196ac8be538",
+      "status": "pending",
+      "tier": "information",
+      "version": 1
+    }
+  ],
+  "gotrue_session_label": "sha256:e47b6c5bf892",
+  "manifest_id": "1aa81ca9-4c49-4655-bccb-3ce017cc3a8c",
+  "native_pending": [
+    {
+      "id": "7ae46086-9e93-42c0-b305-1a0057c0e290",
+      "input_digest": "8165e240613fea79ce93fb177e0a03b0e6cee342ac58d769ca374239b16aaf93",
+      "status": "pending",
+      "tier": "information",
+      "version": 1
+    },
+    {
+      "id": "d1a990fb-7ecd-4c18-8570-97d91e27bb25",
+      "input_digest": "c034a9559bbc433707bc472e05b75a64165d4934152090f551a13196ac8be538",
+      "status": "pending",
+      "tier": "information",
+      "version": 1
+    },
+    {
+      "id": "e3e40a06-10f2-4994-b7b6-9a83334f276f",
+      "input_digest": "fa6874d2eafe69a48c9fcded4a04398114fc13863fb2c3edab2dd5472b8a36f6",
+      "status": "pending",
+      "tier": "information",
+      "version": 1
+    }
+  ],
+  "p1_pid": 30304,
+  "pack_digest": "8392080201e804fd585dcd59abb352608188ae87953b656fb5a854ff2bccc563",
+  "schema": "clued.information-flow.m0d.continuity-phase-a/1",
+  "scope": "project:969efc69-df4e-4149-9af7-e7e5f1eca1ea",
+  "task_class": "e2e.08",
+  "w1_pid": 1250
+}

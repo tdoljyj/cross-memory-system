@@ -1,0 +1,115 @@
+{
+  "by_class": {
+    "allowed 127.0.0.1:54321 auth_user": 169,
+    "allowed 127.0.0.1:54321 rpc:clued_candidate_confirmation_issue_v1": 23,
+    "allowed 127.0.0.1:54321 rpc:clued_candidate_promote_v1": 15,
+    "allowed 127.0.0.1:54321 rpc:clued_candidate_reject_v1": 1,
+    "allowed 127.0.0.1:54321 rpc:clued_context_pack": 14,
+    "allowed 127.0.0.1:54321 rpc:clued_context_policy_accept_v1": 11,
+    "allowed 127.0.0.1:54321 rpc:clued_context_policy_confirmation_issue_v1": 11,
+    "allowed 127.0.0.1:54321 rpc:clued_event_append": 1,
+    "allowed 127.0.0.1:54321 rpc:clued_evidence_ingest": 1,
+    "allowed 127.0.0.1:54321 rpc:clued_evidence_withdraw_v1": 1,
+    "allowed 127.0.0.1:54321 rpc:clued_evidence_withdrawal_confirmation_issue_v1": 1,
+    "allowed 127.0.0.1:54321 rpc:clued_intake_list": 4,
+    "allowed 127.0.0.1:54321 rpc:clued_intake_submit": 30,
+    "allowed 127.0.0.1:54321 rpc:clued_intake_withdraw": 1,
+    "allowed 127.0.0.1:54321 rpc:clued_knowledge_propose": 13,
+    "allowed 127.0.0.1:54321 rpc:clued_mcp_mtpe_snapshot": 10,
+    "allowed 127.0.0.1:54321 rpc:clued_record_mutate": 3,
+    "allowed 127.0.0.1:54321 rpc:clued_user_canonical_export_v2": 1,
+    "allowed 127.0.0.1:54321 rpc:clued_user_context_pack": 8,
+    "allowed 127.0.0.1:54321 rpc:clued_user_decision_supersede": 2,
+    "allowed 127.0.0.1:54321 rpc:clued_user_evidence_ingest": 2,
+    "allowed 127.0.0.1:54321 rpc:clued_user_intake_list": 21,
+    "allowed 127.0.0.1:54321 rpc:clued_user_intake_submit": 38,
+    "allowed 127.0.0.1:54321 rpc:clued_user_project_mutate_v2": 15,
+    "allowed 127.0.0.1:54321 rpc:clued_user_record_list": 4,
+    "allowed 127.0.0.1:54321 rpc:clued_user_record_mutate": 14
+  },
+  "denied": 0,
+  "guard": {
+    "orchestrator": {
+      "allowed": {
+        "tcp:loopback:39049": 1,
+        "tcp:loopback:39701": 2,
+        "tcp:loopback:41229": 1,
+        "tcp:loopback:43745": 1,
+        "tcp:loopback:54321": 10,
+        "tcp:loopback:54322": 3
+      },
+      "denied": [],
+      "dns": []
+    },
+    "phase-b": {
+      "allowed": {
+        "tcp:loopback:35357": 1,
+        "tcp:loopback:54321": 1,
+        "tcp:loopback:54322": 1
+      },
+      "denied": [],
+      "dns": []
+    },
+    "worker-host-1": {
+      "allowed": {
+        "tcp:loopback:54321": 3
+      },
+      "denied": [],
+      "dns": [
+        "127.0.0.1"
+      ]
+    },
+    "worker-host-2": {
+      "allowed": {
+        "tcp:loopback:54321": 1
+      },
+      "denied": [],
+      "dns": [
+        "127.0.0.1"
+      ]
+    },
+    "worker-host-3": {
+      "allowed": {
+        "tcp:loopback:54321": 1
+      },
+      "denied": [],
+      "dns": [
+        "127.0.0.1"
+      ]
+    },
+    "worker-host-4": {
+      "allowed": {
+        "tcp:loopback:54321": 3
+      },
+      "denied": [],
+      "dns": [
+        "127.0.0.1"
+      ]
+    },
+    "worker-host-phase-b": {
+      "allowed": {
+        "tcp:loopback:54321": 1
+      },
+      "denied": [],
+      "dns": [
+        "127.0.0.1"
+      ]
+    },
+    "wrangler-30332": {
+      "allowed": {},
+      "denied": [],
+      "dns": []
+    },
+    "wrangler-30340": {
+      "allowed": {},
+      "denied": [],
+      "dns": []
+    }
+  },
+  "hosts_contacted": [
+    "127.0.0.1:54321"
+  ],
+  "requests_total": 414,
+  "schema": "clued.information-flow.m0d.egress-summary/1",
+  "worker_hosts": 5
+}
