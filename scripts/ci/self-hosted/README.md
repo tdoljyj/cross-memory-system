@@ -38,7 +38,7 @@ The inventory currently declares two active physical hosts:
 company-primary / DESK-W-591
 ├─ clued-ci-company-win-01
 ├─ clued-ci-company-linux-01
-└─ clued-ci-company-linux-02   (additional Linux slot, enrolling)
+└─ clued-ci-company-linux-02   (additional Linux slot)
    capacity: workstation-v1
 
 home-primary / Turing
@@ -51,7 +51,7 @@ Runtime online/busy state is intentionally **not** stored in Git. The inventory 
 
 ## Low-cost CI health monitor
 
-`.github/workflows/clued-ci-health.yml` checks the pool once an hour on a small GitHub-hosted runner (hourly bounds the hosted-minute cost). The hosted runner is deliberate: a monitor scheduled on the pool it watches could not report a total pool outage. `.github/workflows/clued-ci-runner-heartbeat.yml` separately sends a no-checkout, exact-label route probe to each of the four declared runners every 15 minutes. A successful probe proves that the named runner can accept its complete required-label contract. The healthy path is entirely deterministic and never invokes a model.
+`.github/workflows/clued-ci-health.yml` checks the pool once an hour on a small GitHub-hosted runner (hourly bounds the hosted-minute cost). The hosted runner is deliberate: a monitor scheduled on the pool it watches could not report a total pool outage. `.github/workflows/clued-ci-runner-heartbeat.yml` separately sends a no-checkout, exact-label route probe to each of the five declared runners every 15 minutes (company Linux slots route by their own `runner-company-linux-NN` label). A successful probe proves that the named runner can accept its complete required-label contract. The healthy path is entirely deterministic and never invokes a model.
 
 The default path needs no extra secret. GitHub's workflow token can read workflow/job state but cannot list repository runner registrations, so the monitor falls back to the four exact-label heartbeat routes. If a deliberately scoped `CI_HEALTH_GITHUB_TOKEN` secret with repository Administration read access is later supplied, the same script also uses the direct runner API for registered name, OS, labels, online, and busy state. The secretless heartbeat path remains the default and treats inability to call the administrative endpoint as an observation-mode choice, not as an anomaly.
 
