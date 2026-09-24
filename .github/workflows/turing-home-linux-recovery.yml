@@ -9,82 +9,49 @@ permissions:
   contents: read
 
 jobs:
-  apply-home-watchdog:
+  relaunch-home-watchdog:
     runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, site-home, cap-python312]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - name: Install corrected Turing watchdog
+      - name: Relaunch Turing watchdog outside Actions tracking
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          Write-Output "RUNNER_NAME=$env:RUNNER_NAME"
           if ($env:RUNNER_NAME -ne 'clued-ci-home-win-01') {
             throw "Refusing to run on unexpected runner: $env:RUNNER_NAME"
           }
 
           $watchdog = 'C:\clued-ci\watchdog-home-runner.ps1'
-          $backup = 'C:\clued-ci\watchdog-home-runner.ps1.pre-p13-fix'
-          if (Test-Path $watchdog) {
-            Copy-Item $watchdog $backup -Force
-            Write-Output "BACKUP=$backup"
+          if (-not (Test-Path $watchdog)) {
+            throw "Watchdog file missing: $watchdog"
           }
 
-          powershell -ExecutionPolicy Bypass -File scripts/ci/self-hosted/render-host-watchdog.ps1 -HostId home-primary -OutputPath $watchdog -InstallStartup
-
-          $old = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+          $existing = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             Where-Object {
               $_.Name -eq 'powershell.exe' -and
               $_.CommandLine -like '*watchdog-home-runner.ps1*'
             }
-          foreach ($p in @($old)) {
-            Write-Output ("Stopping old watchdog PID=" + $p.ProcessId)
-            Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+
+          if (@($existing).Count -eq 0) {
+            Remove-Item Env:RUNNER_TRACKING_ID -ErrorAction SilentlyContinue
+            Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$watchdog -WindowStyle Hidden
+            Start-Sleep -Seconds 5
           }
-          Start-Sleep -Seconds 2
 
-          $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-          Remove-ItemProperty -Path $runKey -Name 'CluedCIHomeLinuxRecovery' -ErrorAction SilentlyContinue
-
-          Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$watchdog -WindowStyle Hidden
-          Start-Sleep -Seconds 5
-
-          Write-Output "=== VERIFY WATCHDOG ==="
-          $new = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+          $running = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             Where-Object {
               $_.Name -eq 'powershell.exe' -and
               $_.CommandLine -like '*watchdog-home-runner.ps1*'
             }
-          $new | Select-Object ProcessId, CreationDate, CommandLine | Format-List
-          if (@($new).Count -ne 1) {
-            throw "Expected exactly one watchdog process, found $(@($new).Count)"
+          $running | Select-Object ProcessId, CreationDate, CommandLine | Format-List
+          if (@($running).Count -ne 1) {
+            throw "Expected exactly one watchdog process, found $(@($running).Count)"
           }
 
-          $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'Clued-CI-Watchdog-home-primary.cmd'
-          if (-not (Test-Path $startup)) {
-            throw "Canonical watchdog startup file missing: $startup"
-          }
-          $canonicalRun = (Get-ItemProperty $runKey -Name 'CluedCIWatchdog-home-primary' -ErrorAction Stop).'CluedCIWatchdog-home-primary'
-          Write-Output "CANONICAL_RUN_KEY=$canonicalRun"
-
-          Write-Output "=== VERIFY WSL SERVICES ==="
           $unit = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-linux-01.service'
           wsl.exe -d Ubuntu-24.04 -u root -e systemctl is-active docker
-          $dockerState = $LASTEXITCODE
+          if ($LASTEXITCODE -ne 0) { throw 'Docker is not active' }
           wsl.exe -d Ubuntu-24.04 -u root -e systemctl is-active $unit
-          $runnerState = $LASTEXITCODE
-          if ($dockerState -ne 0 -or $runnerState -ne 0) {
-            throw "Docker or Linux runner is not active after watchdog replacement."
-          }
+          if ($LASTEXITCODE -ne 0) { throw 'home-linux-01 service is not active' }
 
-          Write-Output "=== NEW WATCHDOG LOG ==="
-          $log = 'C:\clued-ci\logs\watchdog-home-primary.log'
-          if (-not (Test-Path $log)) {
-            throw "Canonical watchdog log missing: $log"
-          }
-          Get-Content $log -Tail 40
-          if (-not ((Get-Content $log -Raw).Contains('Clued P13 host watchdog started.'))) {
-            throw "Canonical P13 watchdog start marker not found."
-          }
-
-          Write-Output 'TURING_HOME_WATCHDOG_REPAIRED'
+          Write-Output 'TURING_HOME_WATCHDOG_RELAUNCHED'
