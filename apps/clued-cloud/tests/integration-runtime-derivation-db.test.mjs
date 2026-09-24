@@ -107,10 +107,10 @@ function permuted(value, rng) {
 // Caveat (v0.1.8 review NIT-3): this is a transcription of the specification's pseudocode, in the
 // specification's own order, not an independently derived model. It therefore shares the SQL's
 // reading of every place where the specification is ambiguous — notably the C4 / C5 mapping and the
-// two C1 tightenings that ERRATA-001 settles, and the two that ERRATA-002 settles. It is evidence
+// two C1 tightenings that ERRATA-001 settles, and the three that ERRATA-002 settles. It is evidence
 // that the SQL implements the reading the authors intended, not evidence that the reading is right;
 // only the golden vectors and the errata carry that.
-const SCOPE_OF ={ 'context.read': 'context:read', 'project.read': 'context:read',
+const SCOPE_OF = { 'context.read': 'context:read', 'project.read': 'context:read',
   'development_history.read': 'context:read', 'context.write': 'context:write',
   'project.write': 'context:write', 'evidence.write': 'context:write', 'audit.read': 'audit:read' };
 const has = (list, value) => Array.isArray(list) && list.includes(value);
@@ -168,7 +168,8 @@ const ENUMS = {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // §7.1 instants: the lexical shape the migration pins, then the calendar and the offset range
 // PostgreSQL's cast enforces. Hour 24 and second 60 are excluded because PostgreSQL rolls them over
-// to a different instant, and valid_until is inside facts_sha256 (v0.1.8 delta review MINOR-2).
+// to a different instant, and valid_until is inside facts_sha256; authority ERRATA-002 item 3
+// (Owner Decision 25edd152-0d95-4cf7-b3eb-0ff32aed74d0).
 const INSTANT_RE = /^(\d{4})-(\d{2})-(\d{2})T(2[0-3]|[01]\d):(\d{2}):([0-5]\d)(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
 function instantValid(text) {
   const m = typeof text === 'string' ? INSTANT_RE.exec(text) : null;
@@ -408,15 +409,49 @@ const DIMENSIONS = [
   ['capability_universe', [ALL, [], ['audit.read', 'context.read']].map((v) => ({ capability_universe: v }))],
 ];
 const KEEP = { claim_store: 0.85, connection_store: 0.85, 'lifecycle_facts.historical': 0.85, identity_completeness: 0.75 };
-// Schema-level corruptions mixed into the random layer (1 %), so C1 / C9 are exercised too.
+// Schema-level corruptions mixed into the random layer (2 %), so C1 / C9 are exercised too.
+// The list is generated from the same tables validateOracle and the migration validate against,
+// instead of being hand-written, so every enumeration, every exact key set and every mask rule has
+// negative coverage (v0.1.8 second delta review MINOR-2): one out-of-domain value per ENUMS entry,
+// one deleted required key and, separately, one unknown key per KEY_SETS entry, and both mask
+// directions per state object, plus the three C9 carriers and the three §7.1 / ERRATA-002 rules no
+// table drives. Each corruption introduces a single independent defect into a freshly cloned
+// document, and the rng it is handed is the sampler's, so the layer stays a function of SEED alone.
+// 2 % of 250,000 is ~82 samples per corruption at the CI count, and leaves 37.3 % of all P2 samples
+// valid (37.6 % before), so the §8 / §9 layers keep the same positive coverage.
+const setDotted = (facts, dotted, value) => {
+  const keys = dotted.split('.');
+  const node = keys.slice(0, -1).reduce((v, k) => (v[k] ??= {}), facts);
+  node[keys[keys.length - 1]] = value;
+};
+const MASKED_VALUES = ['RESTRICTED', 'CONDITIONAL', 'DEGRADED'];
+const STATE_OBJECTS = ['environment_state', 'qualification_state', 'compatibility_state', 'host_state', 'adapter_state'];
 const CORRUPTIONS = [
-  (f) => { delete f.host_state; },
-  (f) => { f.ready_profile_verification_facts = { status: 'PASS' }; },
-  (f) => { f.authentication_state = 'ACTIVE'; },
-  (f) => { f.environment_state = { value: 'RESTRICTED', mask: null }; },
+  // every enumeration of §7.1: a string outside its domain
+  ...Object.keys(ENUMS).map((name) => (f) => setDotted(f, name, '__OUT_OF_DOMAIN__')),
+  // every exact key set of §7.1: one required key deleted, and one unknown key added
+  ...Object.entries(KEY_SETS).flatMap(([name, keys]) => [
+    (f, rng) => { delete (name === '' ? f : f[name])[keys[Math.floor(rng() * keys.length)]]; },
+    (f) => { (name === '' ? f : f[name]).unexpected_key = null; },
+  ]),
+  // every state object: a non-null mask on a value that must not carry one (ERRATA-001), and the
+  // opposite direction, a JSON null mask on a value that must carry one (§7.1)
+  ...STATE_OBJECTS.flatMap((name) => {
+    const masked = ENUMS[`${name}.value`].filter((v) => MASKED_VALUES.includes(v));
+    const unmasked = ENUMS[`${name}.value`].filter((v) => !MASKED_VALUES.includes(v));
+    return [
+      (f, rng) => { f[name] = { ...f[name], value: unmasked[Math.floor(rng() * unmasked.length)], mask: ['context.read'] }; },
+      (f, rng) => { f[name] = { ...f[name], value: masked[Math.floor(rng() * masked.length)], mask: null }; },
+    ];
+  }),
+  // the three C9 carriers: a well-formed but unknown schema, derivation contract or policy version
+  ...[['schema', 'clued.integration-facts.v2'], ['derivation_contract', 'clued.integration-derivation.v2'],
+    ['policy.policy_version', 2]].map(([name, value]) => (f) => setDotted(f, name, value)),
+  // the §7.1 rules that no table above drives: the capability vocabulary, the non-negative domain
+  // of reauth_marks_open, and the revocation pair. ERRATA-002 item 1's integer *spelling* rule is
+  // not reachable from here, because JSON.stringify emits 0.0 as 0; it is covered by the raw-text
+  // cases below instead.
   (f) => { f.capability_universe = [...f.capability_universe, 'admin.write']; },
-  (f) => { f.policy.policy_version = 2; },
-  (f) => { f.derivation_contract = 'clued.integration-derivation.v2'; },
   (f) => { f.reauth_marks_open = -1; },
   (f) => { f.revocation_source = f.revocation_state === 'REVOKED' ? 'NONE' : 'INTEGRATION'; },
 ];
@@ -449,9 +484,9 @@ function* p2Samples() {
       // the whole domain; integrity classes keep more often so that more samples are valid
       if (rng() >= (KEEP[name] ?? 0.5)) facts = merge(facts, values[Math.floor(rng() * values.length)]);
     }
-    if (rng() < 0.01) {
+    if (rng() < 0.02) {
       facts = clone(facts);
-      CORRUPTIONS[Math.floor(rng() * CORRUPTIONS.length)](facts);
+      CORRUPTIONS[Math.floor(rng() * CORRUPTIONS.length)](facts, rng);
     }
     yield { layer: 'random', index: n, facts };
   }

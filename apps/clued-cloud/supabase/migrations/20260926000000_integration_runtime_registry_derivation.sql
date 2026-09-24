@@ -121,10 +121,12 @@ begin
   return 0;
 end $$;
 
--- ISO-8601 instant with an explicit offset (§7.1 as_of / valid_until). The lexical shape is pinned
--- first, so the guarded cast below cannot depend on the session TimeZone or DateStyle and the
--- function is genuinely immutable; the cast is what rejects out-of-range field values such as
--- 2026-13-99T99:99:99Z, which the regex alone accepts (v0.1.8 review NIT-1).
+-- Instant with an explicit offset (§7.1 as_of / valid_until): an instant is C1 unless it is the
+-- single spelling a timestamptz round-trips to; authority ERRATA-002 item 3 (Owner Decision
+-- 25edd152-0d95-4cf7-b3eb-0ff32aed74d0). The lexical shape is pinned first, so the guarded cast
+-- below cannot depend on the session TimeZone or DateStyle and the function is genuinely
+-- immutable; the cast is what rejects out-of-range field values such as 2026-13-99T99:99:99Z,
+-- which the regex alone accepts.
 -- The hour and second alternations pin 00…23 and 00…59 lexically, because PostgreSQL accepts the
 -- end-of-day hour 24 and the leap second 60 and silently rolls them over to a different instant
 -- (24:00:00Z → the next day, 12:00:60Z → 12:01:00Z). Two spellings of one instant would then hash
@@ -382,7 +384,8 @@ begin
     c1 := true;
   end if;
 
-  -- as_of: an ISO-8601 timestamp with an explicit offset (audit only; excluded from facts_sha256)
+  -- as_of: the single timestamptz round-trip spelling, with an explicit offset (audit only;
+  -- excluded from facts_sha256)
   v := p_facts->'as_of';
   if pg_catalog.jsonb_typeof(v) is distinct from 'string'
      or not clued_private.integration_timestamp_valid_v1(v #>> '{}') then
