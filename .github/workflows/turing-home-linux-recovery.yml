@@ -9,62 +9,56 @@ permissions:
   contents: read
 
 jobs:
-  inspect-watchdog:
-    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, site-home, cap-python312]
+  validate-watchdog-fix:
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, site-company, cap-python312]
     timeout-minutes: 10
     steps:
-      - name: Inspect Turing watchdog implementation
+      - uses: actions/checkout@v4
+      - name: Validate watchdog fix
         shell: powershell
         run: |
-          $ErrorActionPreference = 'Continue'
+          $ErrorActionPreference = 'Stop'
           Write-Output "RUNNER_NAME=$env:RUNNER_NAME"
-          if ($env:RUNNER_NAME -ne 'clued-ci-home-win-01') {
-            throw "Refusing to run on unexpected runner: $env:RUNNER_NAME"
+          if ($env:RUNNER_NAME -ne 'clued-ci-company-win-01') {
+            throw "Refusing to validate on unexpected runner: $env:RUNNER_NAME"
           }
 
-          Write-Output "=== WATCHDOG PROCESS ==="
-          $procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -like '*watchdog-home-runner.ps1*' }
-          $procs | Select-Object ProcessId, ParentProcessId, CreationDate, CommandLine | Format-List
+          python scripts/ci/self-hosted/validate_node_profiles.py
 
-          Write-Output "=== WATCHDOG LOCAL FILE ==="
-          if (Test-Path 'C:\clued-ci\watchdog-home-runner.ps1') {
-            Get-Content 'C:\clued-ci\watchdog-home-runner.ps1'
-          } else {
-            Write-Output "WATCHDOG_FILE_MISSING"
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts/ci/self-hosted/render-host-watchdog.ps1'),
+            [ref]$null,
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | Format-List
+            throw 'render-host-watchdog.ps1 parse failed'
           }
 
-          Write-Output "=== CLUED-CI ROOT ==="
-          Get-ChildItem 'C:\clued-ci' -Force -ErrorAction SilentlyContinue |
-            Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
+          $candidate = Join-Path $env:RUNNER_TEMP 'watchdog-home-primary-candidate.ps1'
+          powershell -ExecutionPolicy Bypass -File scripts/ci/self-hosted/render-host-watchdog.ps1 -HostId home-primary -OutputPath $candidate
 
-          Write-Output "=== LOG DIRECTORY ==="
-          Get-ChildItem 'C:\clued-ci\logs' -Force -ErrorAction SilentlyContinue |
-            Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
+          $candidateErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            $candidate,
+            [ref]$null,
+            [ref]$candidateErrors
+          )
+          if ($candidateErrors.Count -gt 0) {
+            $candidateErrors | Format-List
+            throw 'rendered watchdog parse failed'
+          }
 
-          Write-Output "=== WATCHDOG-LIKE LOG TAILS ==="
-          Get-ChildItem 'C:\clued-ci\logs' -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like '*watchdog*' } |
-            ForEach-Object {
-              Write-Output ("--- " + $_.FullName + " ---")
-              Get-Content $_.FullName -Tail 120
+          $rendered = Get-Content $candidate -Raw
+          foreach ($needle in @(
+            'function Test-LinuxBusy',
+            'journalctl -u $linuxUnit -n 200',
+            'Capacity suspend deferred:',
+            '$linuxBusy=Test-LinuxBusy'
+          )) {
+            if (-not $rendered.Contains($needle)) {
+              throw "Rendered watchdog missing expected guard: $needle"
             }
-
-          Write-Output "=== STARTUP ENTRIES ==="
-          $startupDir = [Environment]::GetFolderPath('Startup')
-          Write-Output "STARTUP_DIR=$startupDir"
-          Get-ChildItem $startupDir -Force -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like '*Clued*' -or $_.Name -like '*watchdog*' } |
-            Select-Object Name, FullName, Length, LastWriteTime | Format-List
-
-          Write-Output "=== RUN KEY ==="
-          Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue |
-            Select-Object *Clued* | Format-List
-
-          Write-Output "=== SCHEDULED TASKS ==="
-          Get-ScheduledTask -ErrorAction SilentlyContinue |
-            Where-Object { $_.TaskName -like '*Clued*' -or $_.TaskName -like '*watchdog*' } |
-            Select-Object TaskName, TaskPath, State | Format-Table -AutoSize
-
-          Write-Output "=== CURRENT LINUX JOB PROCESSES ==="
-          wsl.exe -d Ubuntu-24.04 -u root -e bash -lc 'ps -eo pid,ppid,comm,args | grep -E "Runner\.(Listener|Worker)|runsvc" | grep -v grep || true'
+          }
+          Write-Output 'WATCHDOG_FIX_VALIDATED'
