@@ -28,7 +28,9 @@ import {
   isInformationFlowPath,
   nativeCandidateRpcByAction,
   nativeContextPolicyRpcByPath,
+  nativeEvidenceWithdrawalRpcByStep,
   parseCandidateAction,
+  parseEvidenceWithdrawal,
   type UserInformationFlowRpc,
 } from "./information-flow";
 import { measurePack } from "./context-pack";
@@ -1850,7 +1852,7 @@ function informationFlowHttpStatus(result: unknown) {
     const code = value.error_code ?? "";
     if (code === "reauthentication_required") return 401;
     if (/^confirmation_token_/.test(code)) return 403;
-    if (/^(candidate_version_conflict|knowledge_source_version_mismatch|confirmation_view_stale|candidate_not_pending|candidate_previously_rejected|candidate_expired|context_policy_version_conflict)$/
+    if (/^(candidate_version_conflict|knowledge_source_version_mismatch|confirmation_view_stale|candidate_not_pending|candidate_previously_rejected|candidate_expired|context_policy_version_conflict|evidence_withdrawal_version_conflict|evidence_already_withdrawn|knowledge_evidence_withdrawn|knowledge_source_evidence_withdrawn)$/
       .test(code)) return 409;
     if (code === "TOKENIZER_UNAVAILABLE") return 503;
     if (code === "CONTEXT_PACK_INTEGRITY") return 502;
@@ -2001,10 +2003,35 @@ async function handleInformationFlowApi(request: Request, env: ContinuityEnv) {
     const result = await callVerifiedUserRpc(env, token, policyRpc, input, receivedPayloadHash);
     return json(result, informationFlowHttpStatus(result), informationFlowHeaders(request, result));
   }
+  const withdrawal = parseEvidenceWithdrawal(url.pathname);
+  if (withdrawal && request.method === "POST") {
+    // Evidence withdrawal (contract 6.4): Native only, two steps, the path
+    // binds the Evidence id.
+    const { token } = await requireNativeBearer(request, env, {
+      route: withdrawal.step === "confirmation" ? "evidence_withdrawal_confirmation" : "evidence_withdraw",
+    });
+    const { input, receivedPayloadHash } = await parseCanonicalBody(request);
+    if ("evidence_id" in input && String(input.evidence_id).toLowerCase() !== withdrawal.evidenceId) {
+      throw new HttpError(422, "evidence_id does not match the request path.");
+    }
+    const bound = { ...input, evidence_id: withdrawal.evidenceId };
+    const rpc = nativeEvidenceWithdrawalRpcByStep[withdrawal.step];
+    if (withdrawal.step === "confirmation") {
+      // Issue and consume are separate requests; a token never rides along.
+      if ("confirmation_token" in input) {
+        throw new HttpError(422, "Confirmation and withdrawal are separate requests.");
+      }
+      const result = await callVerifiedUserRpc(env, token, rpc, bound);
+      return json(result, informationFlowHttpStatus(result), informationFlowHeaders(request, result, {
+        "cache-control": "no-store", pragma: "no-cache",
+      }));
+    }
+    const result = await callVerifiedUserRpc(env, token, rpc, bound, receivedPayloadHash);
+    return json(result, informationFlowHttpStatus(result), informationFlowHeaders(request, result));
+  }
   const known = url.pathname === "/v1/intake" ? "GET, POST, OPTIONS"
-    : url.pathname in routes || candidateAction || url.pathname === "/v1/context/pack" || policyRpc
+    : url.pathname in routes || candidateAction || url.pathname === "/v1/context/pack" || policyRpc || withdrawal
       ? "POST, OPTIONS" : null;
-  // Evidence withdrawal routes arrive in S5.
   if (!known) return json({ error: "Not found." }, 404, corsHeaders(request));
   return json({ error: "Method not allowed." }, 405, { ...corsHeaders(request), allow: known });
 }

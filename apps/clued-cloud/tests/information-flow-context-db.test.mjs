@@ -94,7 +94,11 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const migrations = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
-    assert.equal(migrations.at(-1), S4_MIGRATION, 'the S4 migration sorts after every existing migration');
+    // Later slices (S5+) sort after S4 and are applied in the same chain.
+    const s4Index = migrations.indexOf(S4_MIGRATION);
+    assert.ok(s4Index > 0, 'the S4 migration is in the chain');
+    assert.ok(migrations.slice(0, s4Index).every((name) => name < S4_MIGRATION),
+      'the S4 migration sorts after every earlier migration');
     const versions = migrations.map((name) => name.split('_')[0]);
     assert.equal(new Set(versions).size, versions.length, 'migration versions are unique');
     for (const name of migrations) {
@@ -895,8 +899,9 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
         mutation: { closure_summary: 'Archived' } })).body.status, 'committed');
       const h2 = packOk(await call('clued_context_pack', { scope: pHist, task_class: 'historical.lifecycle' }), 'hist 2');
       assert.deepEqual(h2.pack.items.map((row) => [row.version, row.status.lifecycle_status]), [[2, 'archived']]);
+      // S5 marks a manifest stale proactively when a listed source closes.
       assert.deepEqual([(await manifest(h1.manifest.id)).stale, (await manifest(h1.manifest.id)).stale_reason],
-        [true, 'inputs_changed']);
+        [true, 'source_closed']);
       // (4) Defense in depth: an out-of-band edit without a version bump
       // changes the bytes under equal inputs; the old manifest goes stale.
       await admin.query('set session_replication_role=replica');
@@ -1055,9 +1060,11 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
         [409, 'stale', 'STALE'], JSON.stringify(revalidated.body));
       assert.ok(!('pack_text' in revalidated.body), 'a pack is never an online fallback');
       const staleRow = await manifest(e05Manifest);
-      assert.deepEqual([staleRow.stale, staleRow.stale_reason, staleRow.version], [true, 'inputs_changed', 2]);
+      // S5 flags the manifest proactively at the reduction (before any
+      // recompile or revalidation); the first stale reason is final.
+      assert.deepEqual([staleRow.stale, staleRow.stale_reason, staleRow.version], [true, 'binding_scope_reduced', 2]);
       const again = await post('/v1/context/pack', { manifest_id: e05Manifest });
-      assert.deepEqual([again.status, again.body.revalidation, again.body.reason], [409, 'STALE', 'inputs_changed']);
+      assert.deepEqual([again.status, again.body.revalidation, again.body.reason], [409, 'STALE', 'binding_scope_reduced']);
       assert.equal((await post('/v1/context/pack', { manifest_id: uuid() })).body.error_code, 'CONTEXT_MANIFEST_NOT_FOUND');
       assert.equal((await post('/v1/context/pack', { manifest_id: e05Manifest }, 'other-jwt')).body.error_code,
         'CONTEXT_MANIFEST_NOT_FOUND', 'a foreign manifest is invisible');

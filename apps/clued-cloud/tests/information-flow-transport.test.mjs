@@ -348,3 +348,119 @@ test('MCP exposes no confirmation, promotion or reject tool', async () => {
     assert.ok(!calls.some(({ rpc }) => /promote|confirmation|reject/.test(rpc ?? '')), 'no promotion RPC ran');
   });
 });
+
+// S5: Evidence withdrawal (contract 5.1, 6.4) is Native-only and REST-only.
+const evidenceId = '66666666-6666-4666-8666-666666666666';
+const withdrawalPaths = [
+  [`/v1/evidence/${evidenceId}/withdrawal/confirmation`, 'evidence_withdrawal_confirmation'],
+  [`/v1/evidence/${evidenceId}/withdrawal`, 'evidence_withdraw'],
+];
+
+test('S5: Evidence withdrawal routes refuse Binding or missing tokens before any RPC', async () => {
+  const worker = await loadContinuityWorker();
+  await withStorage(() => ({ status: 'committed' }), async (calls) => captureWarnings(async (lines) => {
+    for (const [pathname, route] of withdrawalPaths) {
+      for (const token of [bindingToken, null]) {
+        const response = await worker.fetch(new Request(`https://clued.test${pathname}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ idempotency_key: 'bnd-wd-0001', base_version: 0, reason: 'r' }),
+        }), env, {});
+        assert.equal(response.status, 401, pathname);
+        const entry = JSON.parse(lines.at(-1));
+        assert.deepEqual(entry, { event: 'information_flow_native_route_denied', route,
+          reason: 'binding_or_missing_token' });
+        assert.ok(!lines.at(-1).includes(bindingToken), 'the token is never logged');
+      }
+    }
+    assert.equal(calls.length, 0, 'no storage call ran, not even /auth/v1/user');
+  }));
+});
+
+test('S5: Evidence withdrawal binds the Evidence id from the path and runs exactly one RPC', async () => {
+  const worker = await loadContinuityWorker();
+  await withStorage((rpc) => rpc === 'clued_evidence_withdrawal_confirmation_issue_v1'
+    ? { status: 'issued', confirmation_token: 'clued_cwt_x', view_digest: 'a'.repeat(64) }
+    : { status: 'committed', supplemental: { outcome: 'withdrawn' } }, async (calls) => {
+    const confirmation = await worker.fetch(rest(`/v1/evidence/${evidenceId.toUpperCase()}/withdrawal/confirmation`,
+      { body: { base_version: 0, reason: 'Wrong source' } }), env, {});
+    assert.equal(confirmation.status, 200);
+    assert.equal(confirmation.headers.get('cache-control'), 'no-store');
+    assert.equal(confirmation.headers.get('pragma'), 'no-cache');
+    const withdraw = await worker.fetch(rest(`/v1/evidence/${evidenceId}/withdrawal`, { body: {
+      idempotency_key: 'native-wd-0001', base_version: 0, confirmation_token: 'clued_cwt_x', view_digest: 'a'.repeat(64),
+    } }), env, {});
+    assert.equal(withdraw.status, 200);
+    assert.deepEqual(calls.map(({ rpc }) => rpc), ['clued_evidence_withdrawal_confirmation_issue_v1',
+      'clued_evidence_withdraw_v1']);
+    assert.deepEqual(Object.keys(calls[0].body), ['p_input'], 'issuing carries no payload hash');
+    assert.deepEqual(calls[0].body.p_input, { base_version: 0, reason: 'Wrong source', evidence_id: evidenceId },
+      'the path binds a lower-case Evidence id');
+    assert.equal(calls[1].body.p_input.evidence_id, evidenceId);
+    assert.match(calls[1].body.p_received_payload_hash, /^[0-9a-f]{64}$/);
+
+    calls.length = 0;
+    const refused = [
+      [`/v1/evidence/${evidenceId}/withdrawal/confirmation`, { base_version: 0, reason: 'r', confirmation_token: 'x' }],
+      [`/v1/evidence/${evidenceId}/withdrawal/confirmation`, { base_version: 0, reason: 'r',
+        evidence_id: '77777777-7777-4777-8777-777777777777' }],
+      [`/v1/evidence/${evidenceId}/withdrawal`, { idempotency_key: 'native-wd-0002',
+        evidence_id: '77777777-7777-4777-8777-777777777777' }],
+    ];
+    for (const [pathname, body] of refused) {
+      assert.equal((await worker.fetch(rest(pathname, { body }), env, {})).status, 422, JSON.stringify(body));
+    }
+    for (const [pathname] of withdrawalPaths) {
+      const wrong = await worker.fetch(rest(pathname, { method: 'GET' }), env, {});
+      assert.equal(wrong.status, 405, pathname);
+      assert.equal(wrong.headers.get('allow'), 'POST, OPTIONS');
+    }
+    for (const pathname of [`/v1/evidence/${evidenceId}/withdrawal/extra`, `/v1/evidence/${evidenceId}/withdrawal/confirm`]) {
+      assert.equal((await worker.fetch(rest(pathname, { body: {} }), env, {})).status, 404, pathname);
+    }
+    assert.equal(calls.length, 0, 'refused requests run no RPC');
+  });
+});
+
+test('S5: withdrawal and invalidation results map to HTTP status', async () => {
+  const worker = await loadContinuityWorker();
+  const cases = [
+    [{ status: 'rejected', error_code: 'evidence_withdrawal_version_conflict' }, 409],
+    [{ status: 'rejected', error_code: 'evidence_already_withdrawn' }, 409],
+    [{ status: 'rejected', error_code: 'confirmation_token_revoked' }, 403],
+    [{ status: 'rejected', error_code: 'reauthentication_required' }, 401],
+    [{ status: 'rejected', error_code: 'evidence_withdrawal_reason_required' }, 422],
+    [{ status: 'committed', supplemental: { outcome: 'withdrawn' } }, 200],
+  ];
+  for (const [result, status] of cases) {
+    await withStorage(() => result, async () => {
+      for (const [pathname] of withdrawalPaths) {
+        const response = await worker.fetch(rest(pathname, { body: { idempotency_key: 'status-wd-0001',
+          base_version: 0 } }), env, {});
+        assert.equal(response.status, status, `${pathname} ${JSON.stringify(result)}`);
+      }
+    });
+  }
+  for (const code of ['knowledge_evidence_withdrawn', 'knowledge_source_evidence_withdrawn']) {
+    await withStorage(() => ({ status: 'rejected', error_code: code }), async () => {
+      const response = await worker.fetch(rest('/v1/knowledge/candidates', { body: { idempotency_key: 'status-kp-0001' } }),
+        env, {});
+      assert.equal(response.status, 409, code);
+    });
+  }
+});
+
+test('S5: the withdrawal route schedules the post-commit projection refresh', async () => {
+  const worker = await loadContinuityWorker();
+  const refreshEnv = { ...env, CLUED_PROJECTION_BUILDER_TOKEN: `clued_bnd_${'p'.repeat(43)}` };
+  await withStorage((rpc) => rpc?.startsWith('clued_mcp_projection_refresh') ? { status: 'idle' }
+    : { status: 'committed', supplemental: { outcome: 'withdrawn' } }, async () => {
+    const scheduled = [];
+    const ctx = { waitUntil(promise) { scheduled.push(promise); }, passThroughOnException() {} };
+    const response = await worker.fetch(rest(`/v1/evidence/${evidenceId}/withdrawal`,
+      { body: { idempotency_key: 'refresh-wd-0001', base_version: 0 } }), refreshEnv, ctx);
+    assert.equal(response.status, 200);
+    assert.equal(scheduled.length, 1);
+    await Promise.allSettled(scheduled);
+  });
+});
