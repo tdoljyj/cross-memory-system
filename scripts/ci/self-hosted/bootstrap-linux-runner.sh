@@ -100,8 +100,11 @@ args=(--unattended --url "$REPOSITORY_URL" --token "$token" --name "$RUNNER_NAME
 )
 unset token
 
-sudo "$ROOT/svc.sh" install "$(whoami)"
-sudo "$ROOT/svc.sh" start
+(
+  cd "$ROOT"
+  sudo ./svc.sh install "$(whoami)"
+  sudo ./svc.sh start
+)
 unit="$(systemctl list-unit-files 'actions.runner.*.service' --no-legend | awk -v n="$RUNNER_NAME" '$1 ~ n {print $1; exit}')"
 [ -n "$unit" ] || { echo "Unable to resolve the installed runner service." >&2; exit 1; }
 sudo systemctl is-enabled --quiet "$unit"
