@@ -1,6 +1,10 @@
 -- S2a-2 follow-up (review of PR #334, Task f46591b2): search_context fixes.
--- * The record candidate cap is max(2000, cursor+limit+1), so paging past 2000
---   matches is exact (record_candidates_capped still says when more exist).
+-- * The record cap is max(2000, cursor+limit+1) rows that passed the currentness
+--   fence, so paging past 2000 matches is exact even when the fence drops rows
+--   (record_candidates_capped still says when more exist); cursors above 10000
+--   are refused with search_cursor_too_deep.
+-- * Without a context_key and without a usable session, an unusable bearer keeps
+--   its authorization error; a usable one gets resume_required.
 -- * At most 24 query terms, and search_score_v1 stops early once the row can no
 --   longer reach the minimum score, so long queries stay well under the anon
 --   statement timeout.
@@ -8,7 +12,8 @@
 --   Binding's sessions, and a missing or unknown session is resume_required.
 -- * An all-scope search no longer fails when the session's project is gone.
 -- * Term rules: a Latin/digit run joined by . - _ (v1.6, s2a-2) is a term
---   together with its parts; single digits are kept; the Japanese particles をのはがにで separate terms;
+--   together with its parts of two or more characters; a standalone single
+--   digit is kept; the Japanese particles をのはがにで separate terms;
 --   a lone CJK character is only a term when the query has no other term.
 
 create or replace function clued_private.search_terms_v1(p_query text)
@@ -28,7 +33,7 @@ begin
         -- A joined run (v1.6, s2a-2) is a term, and so is each of its parts.
         if v_run ~ '[._-]' then v_terms:=v_terms||v_run; end if;
         v_terms:=v_terms||array(select p from regexp_split_to_table(v_run,'[._-]') p
-          where char_length(p)>1 or p ~ '^[0-9]$');
+          where char_length(p)>1 or (p ~ '^[0-9]$' and v_run !~ '[._-]'));
       end if;
     end loop;
   end loop;
@@ -85,7 +90,9 @@ declare
   v_query_lc text;
   v_include_history boolean:=coalesce((p_input->>'include_history')::boolean,false);
   v_limit integer:=least(greatest(coalesce((p_input->>'limit')::integer,10),1),50);
-  v_cursor integer:=greatest(coalesce((p_input->>'cursor')::integer,0),0);
+  v_cursor_raw bigint:=greatest(coalesce((p_input->>'cursor')::bigint,0),0);
+  v_cursor integer;
+  v_cap integer;
   v_budget integer:=least(greatest(coalesce((p_input->>'max_bytes')::integer,65536),4096),262144);
   v_results jsonb:='[]'::jsonb; v_count integer:=0; v_candidate_count integer:=0;
   v_next_cursor integer; v_truncated boolean:=false; v_oversize boolean:=false;
@@ -102,12 +109,25 @@ begin
         and p_input->>'session_token' ~ '^clued_ses_[0-9a-f]{64}$'
         and s.token_hash=pg_catalog.encode(extensions.digest(
           pg_catalog.convert_to(p_input->>'session_token','UTF8'),'sha256'),'hex')));
-  if v_context_key is null then raise exception 'resume_required' using errcode='42501'; end if;
+  if v_context_key is null then
+    -- An unusable bearer keeps its authorization error; a usable one resumes first.
+    if not exists(select 1 from public.clued_agent_bindings b where b.token_hash=p_token_hash
+        and b.revoked_at is null
+        and coalesce((to_jsonb(b)->>'expires_at')::timestamptz>clock_timestamp(),true)) then
+      perform clued_private.resolve_binding(p_token_hash,'context:read','global');
+      raise exception 'binding_not_authorized' using errcode='42501';
+    end if;
+    raise exception 'resume_required' using errcode='42501';
+  end if;
   v_binding:=clued_private.resolve_binding(p_token_hash,'context:read',v_context_key);
   v_session:=clued_private.resolve_session(v_binding.user_id,v_binding.id,v_context_key,p_input->>'session_token');
   v_canonical_scope:=clued_private.event_canonical_scope(v_binding.user_id,v_context_key);
   if char_length(v_query) not between 1 and 500 then raise exception 'invalid_query_length' using errcode='22023'; end if;
   if v_scope_mode not in ('all','context') then raise exception 'invalid_search_scope' using errcode='22023'; end if;
+  -- Deep paging past 10000 results is refused rather than silently fenced.
+  if v_cursor_raw>10000 then raise exception 'search_cursor_too_deep' using errcode='22023'; end if;
+  v_cursor:=v_cursor_raw::integer;
+  v_cap:=greatest(2000,v_cursor+v_limit+1);
   if v_canonical_scope is null and v_scope_mode='context' then
     raise exception 'project_scope_unresolved' using errcode='22023';
   end if;
@@ -131,16 +151,15 @@ begin
         and m.status not in ('archived','superseded','revoked','cancelled')
         and coalesce(m.lifecycle_status,'active') not in ('archived','revoked','cancelled')))
       and sc.score>=v_min_score
-    -- At most max(2000, the end of the requested page) best-scoring records
-    -- reach the fence, so a page is never cut short; the response flags the cap.
-    order by sc.score desc,m.updated_at desc,m.id limit greatest(2000,v_cursor+v_limit+1)+1
   ), record_matches as materialized (
-    -- The currentness fence runs once, and only on rows whose score passed.
-    select h.*,f.fence from (select * from record_hits order by score desc,updated_at desc,id
-      limit greatest(2000,v_cursor+v_limit+1)) h
+    -- The currentness fence runs once per row, best score first, and stops once
+    -- v_cap+1 rows have passed it: the cap counts fenced rows, so a page is
+    -- never cut short by rows the fence drops.
+    select h.*,f.fence from (select * from record_hits order by score desc,updated_at desc,id) h
     cross join lateral (select clued_private.record_currentness_fence(v_binding.user_id,h.id,v_read_scopes) fence offset 0) f
     where v_include_history or (f.fence='CURRENT'
       and not exists(select 1 from public.clued_memories successor where successor.user_id=h.user_id and successor.supersedes_id=h.id))
+    limit v_cap+1
   ), matches as (
     select jsonb_build_object('kind','record','id',m.id,'version',m.version,'record_type',m.record_type,
       'scope',m.record_scope,
@@ -150,7 +169,7 @@ begin
       'authoritative',not v_include_history and m.fence='CURRENT',
       'match_score',m.score) row_data,0 source_order,m.score,
       m.updated_at sort_time,m.id::text sort_id
-    from record_matches m
+    from (select * from record_matches order by score desc,updated_at desc,id limit v_cap) m
     union all
     select jsonb_build_object('kind','checkpoint','id',c.id,'version',c.version,'summary',c.summary,
       'next_action',c.next_action,'snapshot',c.snapshot,'coverage',c.checkpoint_coverage,
@@ -199,7 +218,7 @@ begin
   )
   select coalesce(jsonb_agg(row_data order by source_order,score desc,sort_time desc,sort_id),'[]'::jsonb),count(*)::integer,
     (select count(*)::integer from ordered),coalesce(bool_or(page_pos=1 and running_bytes>v_budget),false),
-    (select count(*)>greatest(2000,v_cursor+v_limit+1) from record_hits)
+    (select count(*)>v_cap from record_matches)
     into v_results,v_count,v_candidate_count,v_oversize,v_capped from selected;
   v_truncated:=v_candidate_count>v_count;
   v_next_cursor:=case when v_truncated then v_cursor+v_count else null end;
