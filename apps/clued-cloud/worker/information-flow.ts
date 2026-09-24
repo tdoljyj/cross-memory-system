@@ -1,9 +1,9 @@
 // Information Flow M0-D transport surface (contract
 // development/contracts/information-flow/M0DCloseout.v0.1.md section 5.1).
 // A Binding can submit, list and withdraw its own candidates, propose
-// Candidate Knowledge and read packs; confirmation, promotion, reject and
-// Context Policy acceptance stay Native (account-session REST only, never an
-// MCP tool).
+// Candidate Knowledge and read packs; confirmation, promotion, reject,
+// Context Policy acceptance and Evidence withdrawal stay Native
+// (account-session REST only, never an MCP tool).
 
 const uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 // Lower-case only: the store accepts no other project scope spelling.
@@ -122,11 +122,13 @@ export const informationFlowRpcByTool = {
 export type UserInformationFlowRpc = "clued_user_intake_submit" | "clued_user_intake_list" |
   "clued_user_intake_withdraw" | "clued_user_knowledge_propose" | "clued_user_context_pack" |
   "clued_candidate_confirmation_issue_v1" | "clued_candidate_promote_v1" | "clued_candidate_reject_v1" |
-  "clued_context_policy_confirmation_issue_v1" | "clued_context_policy_accept_v1";
+  "clued_context_policy_confirmation_issue_v1" | "clued_context_policy_accept_v1" |
+  "clued_evidence_withdrawal_confirmation_issue_v1" | "clued_evidence_withdraw_v1";
 
 export const informationFlowListParameters = ["scope", "tier", "status", "submission_id", "limit"] as const;
 
-const informationFlowPaths = /^\/v1\/(intake|knowledge|context\/(pack|policies))(\/|$)/;
+const informationFlowPaths =
+  /^\/v1\/(intake|knowledge|context\/(pack|policies)|evidence\/[0-9a-fA-F-]{36}\/withdrawal)(\/|$)/;
 
 export function isInformationFlowPath(pathname: string) {
   return informationFlowPaths.test(pathname);
@@ -166,4 +168,23 @@ export const nativeCandidateRpcByAction = {
 export const nativeContextPolicyRpcByPath = {
   "/v1/context/policies/confirmation": "clued_context_policy_confirmation_issue_v1",
   "/v1/context/policies": "clued_context_policy_accept_v1",
+} as const;
+
+// Evidence withdrawal (contract 5.1, 6.4): step 1 issues the confirmation
+// token, step 2 consumes it. The path binds the Evidence id; both steps are
+// Native account-session routes, even for Evidence a Binding ingested.
+export const evidenceWithdrawalPattern =
+  /^\/v1\/evidence\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/withdrawal(\/confirmation)?$/i;
+
+export type EvidenceWithdrawal = { evidenceId: string; step: "confirmation" | "withdraw" };
+
+export function parseEvidenceWithdrawal(pathname: string): EvidenceWithdrawal | null {
+  const match = evidenceWithdrawalPattern.exec(pathname);
+  if (!match) return null;
+  return { evidenceId: match[1].toLowerCase(), step: match[2] ? "confirmation" : "withdraw" };
+}
+
+export const nativeEvidenceWithdrawalRpcByStep = {
+  confirmation: "clued_evidence_withdrawal_confirmation_issue_v1",
+  withdraw: "clued_evidence_withdraw_v1",
 } as const;
