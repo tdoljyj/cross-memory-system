@@ -210,6 +210,38 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
     });
     assert.equal(reconciled.status, 'reconciled');
 
+    // BUG-20260924-003 regression: an active Global Event is part of the
+    // projection source vector. Once the exact projection head is rebuilt from
+    // that vector, the derived projection State must not be shadowed a second
+    // time by the same Event. A normal Global Decision/constraint remains
+    // authoritative and must be readable after the rebuild.
+    const eventSession = await rpc(writerToken, 'clued_mcp_restore', {
+      context_key: 'global', response_view: 'structured', event_limit: 10,
+    });
+    const constraintId = uuid();
+    const constraint = await writer('clued_record_mutate', {
+      operation: 'create', id: constraintId, record_type: 'decision',
+      record_schema_version: 1, lifecycle_status: 'active', scope: 'global',
+      idempotency_key: uuid(), authority: 'user_explicit', user_confirmed: true,
+      confidence_reason: 'Projection head Event-shadow regression fixture',
+      source_refs: [], source_unavailable_reason: null,
+      mutation: { title: 'Global projection regression constraint',
+        content: 'Remain visible after projection refresh.',
+        type_fields: { constraint: true, rationale: 'BUG-20260924-003 regression' },
+        relations: {} },
+    });
+    assert.equal(constraint.status, 'committed');
+    const activeGlobalEvent = await rpc(writerToken, 'clued_mcp_append_event', {
+      context_key: 'global', session_token: eventSession.session_token,
+      base_version: eventSession.version, event_type: 'action',
+      payload: { marker: 'projection-head-event-shadow-regression' },
+      idempotency_key: uuid(),
+    });
+    assert.equal(activeGlobalEvent.status, 'appended', JSON.stringify(activeGlobalEvent));
+    assert.equal((await admin.query(`select carrier_state from clued_private.event_truth_carriers
+      where event_id=$1`, [activeGlobalEvent.event_id])).rows[0].carrier_state,
+    'ACTIVE_UNSTRUCTURED');
+
     // Temporary Builder loss is visible, bounded, and recoverable.
     const v5 = await writer('clued_record_mutate', {
       operation: 'update', id: taskId, record_type: 'task', record_schema_version: 1,
@@ -251,6 +283,22 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
         where user_id=$1`, [userId]);
     }
 
+    const currentFrontierRecord = (await admin.query(`select record_id
+      from clued_private.projection_heads where user_id=$1 and target_scope='global'
+      and projection_key='global.priority_frontier'`, [userId])).rows[0].record_id;
+    assert.equal((await admin.query(`select clued_private.record_currentness_fence(
+      $1,$2,array['global']::text[]) currentness`,
+    [userId, currentFrontierRecord])).rows[0].currentness, 'CURRENT',
+    'the exact rebuilt projection head must not be re-shadowed by its active Event source');
+
+    const globalDecisions = await writer('clued_record_list', {
+      level: 'global', record_type: 'decision',
+    });
+    assert.equal(globalDecisions.current_projection_unavailable, false);
+    assert.equal(globalDecisions.projection_rebuild_required, false);
+    assert.ok(globalDecisions.records.some((row) => row.id === constraintId),
+      'Global Decision reads recover after the projection rebuild');
+
     // Independent hosts read the same rebuilt Task version and body.
     for (const token of [hostAToken, hostBToken]) {
       const restored = await rpc(token, 'clued_mcp_restore', {
@@ -261,6 +309,8 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
       assert.equal(restored.authoritative_current_action.source_refs[0].version, 5);
       assert.equal(restored.authoritative_current_action.action.content, 'Task v5');
       assert.equal(restored.currentness_evaluation.overall, 'CURRENT');
+      assert.ok(restored.active_constraints.some((row) => row.id === constraintId),
+        'Global constraints are delivered after the projection rebuild');
     }
     const finalHeads = (await admin.query(`select projection_key,
       invalidation_revision,resolved_through_revision from clued_private.projection_invalidation_heads
