@@ -102,6 +102,10 @@ create table clued_private.context_pack_manifests (
   compiled_at timestamptz not null default now(),
   last_compiled_at timestamptz not null default now(),
   last_revalidated_at timestamptz,
+  -- The database never counts tokens: the Worker measures each served pack
+  -- and enforces the budget. A manifest therefore never attests that its pack
+  -- fit the token budget (a Worker budget refusal can leave a manifest behind).
+  token_measurement text not null default 'not_measured' check (token_measurement='not_measured'),
   version integer not null default 1 check (version>=1),
   check ((principal_kind='agent_binding')=(binding_id is not null)),
   check (stale=(stale_reason is not null and stale_at is not null))
@@ -434,6 +438,37 @@ begin
     pg_catalog.hashtextextended('clued-currentness-user:'||p_user_id::text,0));
 end $$;
 
+-- Read-only twin of knowledge_lineage_ok_v1 (S3) for the compile path: the
+-- same checks and reason codes, without FOR SHARE row locks, so a compile
+-- (which holds only the shared currentness lock) never takes row locks.
+create function clued_private.context_knowledge_lineage_v1(p_user_id uuid,p_sources jsonb)
+returns text language plpgsql stable security definer set search_path='' as $$
+declare v_src jsonb; v_rec public.clued_memories%rowtype;
+begin
+  if jsonb_typeof(p_sources) is distinct from 'array' or jsonb_array_length(p_sources)=0 then
+    return 'knowledge_source_not_found';
+  end if;
+  for v_src in select x from jsonb_array_elements(p_sources) x order by (x->>'id')::uuid loop
+    select * into v_rec from public.clued_memories m where m.user_id=p_user_id and m.id=(v_src->>'id')::uuid;
+    if not found then return 'knowledge_source_not_found'; end if;
+    if v_rec.version is distinct from (v_src->>'version')::bigint then return 'knowledge_source_version_mismatch'; end if;
+    if v_rec.record_type in ('state','task','decision') then
+      if clued_private.record_currentness_fence(p_user_id,v_rec.id,null) is distinct from 'CURRENT' then
+        return 'knowledge_source_not_current';
+      end if;
+    elsif v_rec.lifecycle_status is distinct from 'active' then
+      return 'knowledge_source_not_current';
+    end if;
+    if clued_private.record_human_confirmed_v1(p_user_id,v_rec.id,v_rec.version) is not true then
+      return 'knowledge_source_not_human_confirmed';
+    end if;
+    if clued_private.record_evidence_unflagged_v1(p_user_id,v_rec.id,v_rec.version) is not true then
+      return 'knowledge_source_evidence_withdrawn';
+    end if;
+  end loop;
+  return null;
+end $$;
+
 -- The closed S3 item_type -> record_type mapping (candidate_record_body_v1).
 create function clued_private.context_candidate_record_type_v1(p_item_type text)
 returns text language sql immutable set search_path='' as $$
@@ -528,7 +563,19 @@ begin
     where p_read_scopes is null or s=any(p_read_scopes);
 
   -- 4. Authorize before retrieval: one statement, every predicate before the
-  -- ORDER BY ... LIMIT max_items+1.
+  -- ORDER BY ... LIMIT max_items+1. The cheap owner/schema/type/scope
+  -- predicates prune the base scan first (materialized), so the per-row
+  -- currentness, confirmation and writer checks run only on candidates rows.
+  with base as materialized (
+    select m.*,coalesce(m.canonical_scope,case when m.project_id is not null
+        then 'project:'||m.project_id::text else m.scope end) resolved_scope
+      from public.clued_memories m
+      where m.user_id=p_user_id
+        and m.record_schema_version=1
+        and m.record_type=any(v_types)
+        and coalesce(m.canonical_scope,case when m.project_id is not null
+          then 'project:'||m.project_id::text else m.scope end)=any(v_effective)
+        and not (coalesce(m.type_fields,'{}'::jsonb) ? 'context_policy'))
   select coalesce(jsonb_agg(to_jsonb(x) order by x.scope collate "C",x.tier_rank,x.record_type,
       x.id::text collate "C"),'[]'::jsonb) into v_rows
   from (
@@ -536,9 +583,8 @@ begin
       select 'record' kind,m.id,m.version::bigint version,d.scope,d.tier,
         case d.tier when 'authority_information' then 1 else 2 end tier_rank,m.record_type,d.fence,
         c.human_confirmed,c.writer->>'writer_principal' writer_principal,c.writer->>'writer_receipt_id' writer_receipt_id
-      from public.clued_memories m
-      cross join lateral (select coalesce(m.canonical_scope,case when m.project_id is not null
-          then 'project:'||m.project_id::text else m.scope end) scope,
+      from base m
+      cross join lateral (select m.resolved_scope scope,
         case when m.record_type='note' and m.type_fields->>'note_kind'='knowledge' and m.type_fields ? 'knowledge'
           then 'authority_knowledge' else 'authority_information' end tier,
         case when m.record_type in ('state','task','decision')
@@ -558,7 +604,7 @@ begin
               and m.merged_into_record_id is null) end
         and clued_private.record_evidence_unflagged_v1(p_user_id,m.id,m.version)
         and (d.tier<>'authority_knowledge'
-          or clued_private.knowledge_lineage_ok_v1(p_user_id,m.type_fields->'knowledge'->'sources') is null)
+          or clued_private.context_knowledge_lineage_v1(p_user_id,m.type_fields->'knowledge'->'sources') is null)
         and (c.human_confirmed or (v_agent and c.writer->>'writer_principal'='agent_binding'))
       union all
       select 'candidate_information',ci.id,ci.version::bigint,ci.scope,'candidate_information',3,
@@ -631,7 +677,7 @@ begin
     else
       select * into v_know from clued_private.knowledge_candidates where id=(v_row->>'id')::uuid and user_id=p_user_id;
       select e.p_evidence,e.p_missing into v_ev,v_missing from clued_private.context_evidence_v1(p_user_id,v_know.evidence_ids) e;
-      v_lineage:=coalesce(clued_private.knowledge_lineage_ok_v1(p_user_id,v_know.sources),'OK');
+      v_lineage:=coalesce(clued_private.context_knowledge_lineage_v1(p_user_id,v_know.sources),'OK');
       foreach v_field in array v_selected loop
         v_value:=case v_field when 'title' then left(v_know.assertion,120) when 'content' then v_know.assertion end;
         v_fields:=v_fields||jsonb_build_object(v_field,v_value);
@@ -657,10 +703,14 @@ begin
       return clued_private.context_pack_rejection_v1('CONTEXT_INSUFFICIENT','evidence_required:'||(v_row->>'id'));
     end if;
     v_items:=v_items||jsonb_build_array(v_item||jsonb_build_object('evidence',v_ev,'fields',v_fields));
+    -- Every body-affecting per-item state (currentness, lifecycle, archived,
+    -- lineage, writer, confirmation, labels, Evidence) is a compile input,
+    -- so equal inputs always give an equal body. Field text is fixed by the
+    -- Record or candidate version.
     v_sources:=v_sources||jsonb_build_array(jsonb_build_object('tier',v_row->>'tier','id',v_row->>'id',
-      'version',(v_row->>'version')::bigint,'evidence',coalesce((select jsonb_agg(jsonb_build_object(
-        'evidence_id',e->'evidence_id','content_hash',e->'content_hash') order by ord)
-        from jsonb_array_elements(v_ev) with ordinality a(e,ord)),'[]'::jsonb)));
+      'version',(v_row->>'version')::bigint,'envelope',v_item||jsonb_build_object('evidence',v_ev,
+        'archived',case when v_row->>'kind'='record'
+          then v_rec.archived_at is not null or v_rec.merged_into_record_id is not null else false end)));
   end loop;
 
   -- Verbatim constraints must be grounded in a packed field, exactly.
@@ -717,7 +767,7 @@ returns jsonb language plpgsql volatile security definer set search_path='' as $
 declare v_policy_id uuid; v_result jsonb; v_principal text:=case when p_binding_id is null
     then 'native_account_session' else 'agent_binding' end;
   v_read_scopes text[]; v_manifest clued_private.context_pack_manifests%rowtype; v_id uuid; v_reused boolean:=false;
-  v_reason text; v_binding public.clued_agent_bindings%rowtype;
+  v_reason text; v_binding public.clued_agent_bindings%rowtype; v_attempt integer;
 begin
   if jsonb_typeof(p_input) is distinct from 'object' then raise exception 'invalid_context_pack_input' using errcode='22023'; end if;
   if exists(select 1 from jsonb_object_keys(p_input) k where k not in ('scope','policy_id','task_class','manifest_id')) then
@@ -750,13 +800,6 @@ begin
       return jsonb_build_object('status','stale','revalidation','STALE','manifest_id',v_manifest.id,
         'reason',v_manifest.stale_reason,'authoritative',false,'execution_authorization','NOT_GRANTED');
     end if;
-    if exists(select 1 from jsonb_array_elements(v_manifest.sources) s
-        join public.clued_memories m on m.id=(s->>'id')::uuid and m.user_id=p_user_id
-        where s->>'tier' like 'authority_%' and m.record_type in ('state','task','decision')
-          and clued_private.record_currentness_fence(p_user_id,m.id,null) in ('STALE','UNKNOWN')) then
-      return jsonb_build_object('status','stale','revalidation','PROJECTION_REQUIRED','manifest_id',v_manifest.id,
-        'reason','projection_required','authoritative',false,'execution_authorization','NOT_GRANTED');
-    end if;
     if v_manifest.principal_kind='agent_binding' then
       select * into v_binding from public.clued_agent_bindings b
         where b.id=v_manifest.binding_id and b.user_id=p_user_id;
@@ -767,6 +810,18 @@ begin
       else
         v_read_scopes:=clued_private.binding_read_scopes_v2(p_user_id,v_manifest.binding_id);
       end if;
+    end if;
+    -- A projection-backed source that is STALE/UNKNOWN for the recorded
+    -- principal needs a projection refresh, not a new manifest. Degraded
+    -- policies admit those states by design, so they are compiled instead.
+    if v_reason is null and coalesce((select p.policy->'freshness'->>'mode' from clued_private.context_policies p
+          where p.id=v_manifest.policy_id),'current')<>'degraded'
+      and exists(select 1 from jsonb_array_elements(v_manifest.sources) s
+        join public.clued_memories m on m.id=(s->>'id')::uuid and m.user_id=p_user_id
+        where s->>'tier' like 'authority_%' and m.record_type in ('state','task','decision')
+          and clued_private.record_currentness_fence(p_user_id,m.id,v_read_scopes) in ('STALE','UNKNOWN')) then
+      return jsonb_build_object('status','stale','revalidation','PROJECTION_REQUIRED','manifest_id',v_manifest.id,
+        'reason','projection_required','authoritative',false,'execution_authorization','NOT_GRANTED');
     end if;
     if v_reason is null then
       v_result:=clued_private.context_pack_compile_v1(p_user_id,v_manifest.binding_id,v_manifest.policy_id,
@@ -789,8 +844,11 @@ begin
         'reason',left(v_reason,200),'authoritative',false,'execution_authorization','NOT_GRANTED');
     end if;
     update clued_private.context_pack_manifests set last_revalidated_at=clock_timestamp() where id=v_manifest.id;
+    -- VALID proves the inputs and pack bytes are unchanged; it never proves
+    -- the pack fits the token budget (only the Worker measures).
     return jsonb_build_object('status','ok','revalidation','VALID','manifest_id',v_manifest.id,
-      'pack_digest',v_manifest.pack_digest,'authoritative',false,'execution_authorization','NOT_GRANTED');
+      'pack_digest',v_manifest.pack_digest,'authoritative',false,'execution_authorization','NOT_GRANTED',
+      'measurement',jsonb_build_object('status','not_measured','token_budget_verified',false));
   end if;
 
   v_policy_id:=nullif(p_input->>'policy_id','')::uuid;
@@ -802,30 +860,48 @@ begin
       ||case when p_input ? 'task_class' then jsonb_build_object('task_class',p_input->>'task_class') else '{}'::jsonb end,
     v_read_scopes);
   if v_result->>'status'<>'ok' then return v_result; end if;
-  -- Upsert the derived manifest; identical inputs must give identical bytes.
-  insert into clued_private.context_pack_manifests(user_id,principal_kind,binding_id,policy_id,policy_digest,request,
-    effective_scopes,inputs_digest,pack_digest,sources)
-  values(p_user_id,v_principal,p_binding_id,(v_result->'_policy'->>'id')::uuid,v_result->'_policy'->>'digest',
-    v_result->'_request',array(select jsonb_array_elements_text(v_result->'_scopes')),
-    v_result->>'compile_inputs_digest',v_result->>'pack_digest',v_result->'_sources')
-  on conflict (user_id,principal_kind,(coalesce(binding_id,'00000000-0000-0000-0000-000000000000'::uuid)),inputs_digest)
-    where not stale do nothing
-  returning id into v_id;
-  if v_id is null then
+  -- Upsert the derived manifest. Equal inputs give equal bytes; should they
+  -- ever differ (e.g. an out-of-band edit without a version bump), the old
+  -- live manifest is marked stale ('pack_changed') and a new one is stored;
+  -- the caller never receives an error for it.
+  for v_attempt in 1..5 loop
+    insert into clued_private.context_pack_manifests(user_id,principal_kind,binding_id,policy_id,policy_digest,request,
+      effective_scopes,inputs_digest,pack_digest,sources)
+    values(p_user_id,v_principal,p_binding_id,(v_result->'_policy'->>'id')::uuid,v_result->'_policy'->>'digest',
+      v_result->'_request',array(select jsonb_array_elements_text(v_result->'_scopes')),
+      v_result->>'compile_inputs_digest',v_result->>'pack_digest',v_result->'_sources')
+    on conflict (user_id,principal_kind,(coalesce(binding_id,'00000000-0000-0000-0000-000000000000'::uuid)),inputs_digest)
+      where not stale do nothing
+    returning id into v_id;
+    exit when v_id is not null;
     select * into v_manifest from clued_private.context_pack_manifests
       where user_id=p_user_id and principal_kind=v_principal
         and coalesce(binding_id,'00000000-0000-0000-0000-000000000000'::uuid)
           =coalesce(p_binding_id,'00000000-0000-0000-0000-000000000000'::uuid)
         and inputs_digest=v_result->>'compile_inputs_digest' and not stale
       for update;
-    if v_manifest.pack_digest is distinct from v_result->>'pack_digest' then
-      raise exception 'context_pack_nondeterministic' using errcode='XX000';
+    continue when not found;
+    if v_manifest.pack_digest=v_result->>'pack_digest' then
+      update clued_private.context_pack_manifests set last_compiled_at=clock_timestamp() where id=v_manifest.id;
+      v_id:=v_manifest.id; v_reused:=true;
+      exit;
     end if;
-    update clued_private.context_pack_manifests set last_compiled_at=clock_timestamp() where id=v_manifest.id;
-    v_id:=v_manifest.id; v_reused:=true;
-  end if;
+    update clued_private.context_pack_manifests set stale=true,stale_reason='pack_changed',
+        stale_at=clock_timestamp(),version=version+1
+      where id=v_manifest.id and version=v_manifest.version and not stale;
+  end loop;
+  if v_id is null then raise exception 'context_pack_manifest_contention' using errcode='40001'; end if;
+  -- The newest compile supersedes this principal's earlier live manifests for
+  -- the same policy and request whose inputs differ.
+  update clued_private.context_pack_manifests set stale=true,stale_reason='inputs_changed',
+      stale_at=clock_timestamp(),version=version+1
+    where user_id=p_user_id and principal_kind=v_principal
+      and coalesce(binding_id,'00000000-0000-0000-0000-000000000000'::uuid)
+        =coalesce(p_binding_id,'00000000-0000-0000-0000-000000000000'::uuid)
+      and policy_id=(v_result->'_policy'->>'id')::uuid and request=v_result->'_request'
+      and id<>v_id and not stale;
   return (v_result-'_policy'-'_request'-'_scopes'-'_sources')||jsonb_build_object(
-    'manifest',jsonb_build_object('id',v_id,'reused',v_reused,'stale',false),
+    'manifest',jsonb_build_object('id',v_id,'reused',v_reused,'stale',false,'token_measurement','not_measured'),
     'measurement',jsonb_build_object('status','not_measured'));
 end $$;
 
@@ -1096,6 +1172,7 @@ revoke all on function clued_private.context_policy_guard_v1(),
   clued_private.record_writer_principal_v1(uuid,uuid,bigint),
   clued_private.context_pack_read_lock_v1(uuid),
   clued_private.context_candidate_record_type_v1(text),
+  clued_private.context_knowledge_lineage_v1(uuid,jsonb),
   clued_private.context_evidence_v1(uuid,uuid[]),
   clued_private.context_pack_rejection_v1(text,text),
   clued_private.context_pack_compile_v1(uuid,uuid,uuid,jsonb,text[]),

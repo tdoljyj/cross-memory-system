@@ -173,6 +173,7 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       'context_policy_normalize_v1(uuid,jsonb)', 'context_policy_usable_v1(uuid,uuid)',
       'record_writer_principal_v1(uuid,uuid,bigint)', 'context_pack_read_lock_v1(uuid)',
       'context_candidate_record_type_v1(text)', 'context_evidence_v1(uuid,uuid[])',
+      'context_knowledge_lineage_v1(uuid,jsonb)',
       'context_pack_rejection_v1(text,text)', 'context_pack_compile_v1(uuid,uuid,uuid,jsonb,text[])',
       'context_pack_core_v1(uuid,uuid,jsonb)', 'context_policy_view_v1(uuid,jsonb)',
       'context_policy_lineage_lock_v1(uuid,text)', 'context_policy_confirmation_issue_core_v1(uuid,jsonb)',
@@ -662,6 +663,9 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       assert.deepEqual([tiny.status, tiny.error_code, tiny.reason, tiny.token_budget, tiny.authoritative],
         ['rejected', 'CONTEXT_INSUFFICIENT', 'token_budget_exceeded', 1, false]);
       assert.ok(tiny.token_count > 1 && !('pack_text' in tiny), 'no pack body on a budget refusal');
+      const tinyEnvelope = await mcp('tools/call', { name: 'clued_context_pack',
+        arguments: { scope: p1, task_class: 'budget.tiny' } });
+      assert.equal(tinyEnvelope.result.isError, true, 'a budget refusal is an MCP tool error');
       const tinyRest = await post('/v1/context/pack', { scope: p1, task_class: 'budget.tiny' });
       assert.deepEqual([tinyRest.status, tinyRest.body.reason], [422, 'token_budget_exceeded']);
       assert.equal((await agent(tokenA, 'clued_context_pack', { scope: p1, task_class: 'budget.tiny' })).status, 'ok',
@@ -789,6 +793,95 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       const historical = packOk(await call('clued_context_pack', { scope: p1, task_class: 'fresh.historical' }), 'historical');
       assert.equal(historical.pack.authoritative, true);
 
+      // ---- Review M1 regression: per-item state that changes without a
+      // source version bump is a compile input; a recompile succeeds and the
+      // previous manifest becomes stale (never context_pack_nondeterministic).
+      const revalidate = async (id) => (await post('/v1/context/pack', { manifest_id: id })).body;
+      // (1) Candidate Knowledge lineage.
+      const pLin = await project('lineage');
+      const ls1 = await nativeNote('Lineage source one', { scope: pLin });
+      const ls2 = await nativeNote('Lineage source two', { scope: pLin });
+      const linProposed = await post('/v1/knowledge/candidates', { idempotency_key: key('kpn'), scope: pLin,
+        rule_id: 'knowledge.consolidate.v1', assertion: 'Lineage sources agree.',
+        sources: [{ id: ls1, version: 1 }, { id: ls2, version: 1 }] });
+      assert.equal(linProposed.body.status, 'committed', JSON.stringify(linProposed.body));
+      await accept(policyDoc('lineage.change', [pLin], { allowed_tiers: ['candidate_knowledge'],
+        allowed_record_types: ['note'] }), 0);
+      const lin1 = packOk(await call('clued_context_pack', { scope: pLin, task_class: 'lineage.change' }), 'lineage 1');
+      assert.deepEqual(lin1.pack.items.map((row) => row.status.lineage), ['OK']);
+      // Review m1: the compile path takes no row locks.
+      await admin.query('begin');
+      await admin.query('select 1 from public.clued_memories where id=$1 for update', [ls2]);
+      await anon.query("set lock_timeout='2s'");
+      try {
+        assert.equal((await agent(tokenA, 'clued_context_pack', { scope: pLin, task_class: 'lineage.change' })).status,
+          'ok', 'a compile does not wait on source row locks');
+      } finally {
+        await anon.query('reset lock_timeout');
+        await admin.query('rollback');
+      }
+      assert.equal((await post('/v1/records', { operation: 'update', id: ls1, record_type: 'note', record_schema_version: 1,
+        lifecycle_status: 'active', scope: pLin, idempotency_key: key('lup'), authority: 'user_explicit',
+        confidence: 1, confidence_reason: 'S4 fixture', base_version: 1, mutation: { title: 'Lineage source one v2' } }))
+        .body.status, 'committed');
+      const lin2 = packOk(await call('clued_context_pack', { scope: pLin, task_class: 'lineage.change' }), 'lineage 2');
+      assert.deepEqual(lin2.pack.items.map((row) => row.status.lineage), ['knowledge_source_version_mismatch']);
+      assert.notEqual(lin2.compile_inputs_digest, lin1.compile_inputs_digest, 'lineage is a compile input');
+      assert.notEqual(lin2.manifest.id, lin1.manifest.id);
+      assert.deepEqual([(await manifest(lin1.manifest.id)).stale, (await manifest(lin1.manifest.id)).stale_reason],
+        [true, 'inputs_changed']);
+      assert.equal((await revalidate(lin1.manifest.id)).revalidation, 'STALE');
+      assert.equal((await revalidate(lin2.manifest.id)).revalidation, 'VALID');
+      // (2) Degraded currentness changed by a Binding's shadowing Event.
+      const pShadow = await project('shadow');
+      const shadowDecision = uuid();
+      assert.equal((await post('/v1/records', { operation: 'create', id: shadowDecision, record_type: 'decision',
+        record_schema_version: 1, lifecycle_status: 'active', scope: pShadow, idempotency_key: key('sdec'),
+        authority: 'user_explicit', confidence: 1, confidence_reason: 'S4 fixture', source_refs: [],
+        source_unavailable_reason: 'Synthetic fixture', mutation: { title: 'Shadowable decision', content: 'Decide',
+          type_fields: { rationale: 'Because' }, relations: {} } })).body.status, 'committed');
+      await accept(policyDoc('degraded.shadow', [pShadow], { allowed_record_types: ['decision'],
+        freshness: { mode: 'degraded', reason: 'Shadow probe' } }), 0);
+      const sh1 = packOk(await call('clued_context_pack', { scope: pShadow, task_class: 'degraded.shadow' }), 'shadow 1');
+      assert.deepEqual(sh1.pack.items.map((row) => row.status.currentness), ['CURRENT']);
+      const shadowSession = await call('clued_session_resume', { context_key: pShadow });
+      assert.ok(shadowSession.session_token, JSON.stringify(shadowSession));
+      assert.equal((await call('clued_append_event', { context_key: pShadow, session_token: shadowSession.session_token,
+        base_version: shadowSession.version, event_type: 'decision', payload: { note: 'Agent decision event' },
+        idempotency_key: key('pshadow') })).status, 'appended');
+      const sh2 = packOk(await call('clued_context_pack', { scope: pShadow, task_class: 'degraded.shadow' }), 'shadow 2');
+      assert.deepEqual(sh2.pack.items.map((row) => row.status.currentness), ['SHADOWED_BY_ACTIVE_EVENT']);
+      assert.notEqual(sh2.compile_inputs_digest, sh1.compile_inputs_digest, 'currentness is a compile input');
+      assert.deepEqual([(await manifest(sh1.manifest.id)).stale, (await manifest(sh1.manifest.id)).stale_reason],
+        [true, 'inputs_changed']);
+      // Review m2: a degraded manifest can revalidate as VALID.
+      assert.equal((await revalidate(sh2.manifest.id)).revalidation, 'VALID');
+      // (3) Historical lifecycle change.
+      const pHist = await project('historical');
+      const histNote = await nativeNote('Historical note', { scope: pHist });
+      await accept(policyDoc('historical.lifecycle', [pHist], { freshness: { mode: 'historical', reason: 'Audit' } }), 0);
+      const h1 = packOk(await call('clued_context_pack', { scope: pHist, task_class: 'historical.lifecycle' }), 'hist 1');
+      assert.deepEqual(h1.pack.items.map((row) => row.status.lifecycle_status), ['active']);
+      assert.equal((await post('/v1/records', { operation: 'close', id: histNote, record_type: 'note',
+        record_schema_version: 1, lifecycle_status: 'archived', scope: pHist, idempotency_key: key('hclose'),
+        authority: 'user_explicit', confidence_reason: 'S4 fixture', base_version: 1,
+        mutation: { closure_summary: 'Archived' } })).body.status, 'committed');
+      const h2 = packOk(await call('clued_context_pack', { scope: pHist, task_class: 'historical.lifecycle' }), 'hist 2');
+      assert.deepEqual(h2.pack.items.map((row) => [row.version, row.status.lifecycle_status]), [[2, 'archived']]);
+      assert.deepEqual([(await manifest(h1.manifest.id)).stale, (await manifest(h1.manifest.id)).stale_reason],
+        [true, 'inputs_changed']);
+      // (4) Defense in depth: an out-of-band edit without a version bump
+      // changes the bytes under equal inputs; the old manifest goes stale.
+      await admin.query('set session_replication_role=replica');
+      await admin.query("update public.clued_memories set title='Historical note (edited out of band)' where id=$1", [histNote]);
+      await admin.query('set session_replication_role=origin');
+      const h3 = packOk(await call('clued_context_pack', { scope: pHist, task_class: 'historical.lifecycle' }), 'hist 3');
+      assert.equal(h3.compile_inputs_digest, h2.compile_inputs_digest);
+      assert.notEqual(h3.pack_digest, h2.pack_digest);
+      assert.deepEqual([h3.manifest.reused, (await manifest(h2.manifest.id)).stale,
+        (await manifest(h2.manifest.id)).stale_reason], [false, true, 'pack_changed']);
+      assert.equal((await manifest(h3.manifest.id)).pack_digest, h3.pack_digest);
+
       // ---- E2E-12: Agent-authored Records only under an explicit opt-in.
       const p12 = await project('e2e-12');
       const p12Native = await nativeNote('Native in E2E-12', { scope: p12 });
@@ -865,6 +958,9 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       assert.deepEqual([valid.status, valid.body.status, valid.body.revalidation, valid.body.pack_digest],
         [200, 'ok', 'VALID', e05First.pack_digest]);
       assert.ok(!('pack_text' in valid.body));
+      assert.deepEqual(valid.body.measurement, { status: 'not_measured', token_budget_verified: false },
+        'revalidation never attests the token budget');
+      assert.equal((await manifest(e05Manifest)).token_measurement, 'not_measured');
       // The owner reduces the Binding (Native authorization management).
       await as(fresh(userId));
       await human.query('select public.clued_authorization_manage_v12($1)', [{ op: 'reduce',

@@ -141,6 +141,7 @@ test('measurePack counts exact pack_text, enforces the budget and fails closed',
   }
   const tight = fakePack({}, { token_budget: 3 });
   const exceeded = await measurePack(tight);
+  assert.equal(exceeded.httpStatus, 422);
   assert.deepEqual(exceeded.result, { status: 'rejected', error_code: 'CONTEXT_INSUFFICIENT',
     reason: 'token_budget_exceeded', token_count: encoder.encode(tight.pack_text, [], []).length, token_budget: 3,
     pack_digest: tight.pack_digest, authoritative: false, execution_authorization: 'NOT_GRANTED',
@@ -259,6 +260,7 @@ test('the pack route and MCP tool measure compiled packs; revalidation outcomes 
       }), env, {})).json();
       const structured = envelope.result.structuredContent;
       assert.equal(structured.measurement.status, 'measured', token);
+      assert.equal(envelope.result.isError, false);
       assert.equal(structured.pack_text, good.pack_text);
       assert.equal(calls.length, 1);
     });
@@ -268,8 +270,17 @@ test('the pack route and MCP tool measure compiled packs; revalidation outcomes 
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
           params: { name: 'clued_context_pack', arguments: { scope: 'global' } } }),
       }), env, {})).json();
-      assert.deepEqual([envelope.result.structuredContent.error_code, envelope.result.structuredContent.reason],
-        ['CONTEXT_INSUFFICIENT', 'token_budget_exceeded']);
+      assert.deepEqual([envelope.result.structuredContent.error_code, envelope.result.structuredContent.reason,
+        envelope.result.isError], ['CONTEXT_INSUFFICIENT', 'token_budget_exceeded', true]);
+    });
+    await withStorage(() => ({ ...good, pack_digest: 'f'.repeat(64) }), async () => {
+      const envelope = await (await worker.fetch(new Request('https://clued.test/mcp', {
+        method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
+          params: { name: 'clued_context_pack', arguments: { scope: 'global' } } }),
+      }), env, {})).json();
+      assert.deepEqual([envelope.result.structuredContent.error_code, envelope.result.isError],
+        ['CONTEXT_PACK_INTEGRITY', true]);
     });
   }
 });

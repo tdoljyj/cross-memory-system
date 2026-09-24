@@ -108,6 +108,7 @@ export async function measurePack(result: unknown, loader: TokenizerLoader = loa
   if (tokenCount > (budget as number)) {
     // Fail closed: a pack is never truncated or summarized to fit.
     return {
+      httpStatus: 422,
       result: { status: "rejected", error_code: "CONTEXT_INSUFFICIENT", reason: "token_budget_exceeded",
         token_count: tokenCount, token_budget: budget, pack_digest: packDigest, authoritative: false,
         execution_authorization: "NOT_GRANTED", model_extraction: "NOT_EVALUATED" },

@@ -1528,7 +1528,14 @@ async function callTool(
   // MSCP packs (S4): the Worker counts the exact pack_text and enforces the
   // policy budget before the result is sanitized. Covers Binding and
   // delegated OAuth callers alike.
-  if (name === "clued_context_pack") rawResult = (await measurePack(rawResult)).result;
+  // A refusal by the measurement step (tokenizer unavailable, integrity or
+  // budget) is an MCP tool error.
+  let measurementRefused = false;
+  if (name === "clued_context_pack") {
+    const measured = await measurePack(rawResult);
+    rawResult = measured.result;
+    measurementRefused = measured.httpStatus !== undefined;
+  }
   const sanitized = name in contextRpcByTool ? sanitizeContextResult(rawResult) : sanitizeCluedResult(rawResult);
   const sourceCommit = typeof __CLUED_BUILD_SHA__ === "string" &&
     /^[0-9a-f]{40}$/.test(__CLUED_BUILD_SHA__) ? __CLUED_BUILD_SHA__ : null;
@@ -1542,7 +1549,7 @@ async function callTool(
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
     structuredContent: result,
-    isError: Boolean((result as Record<string, unknown> | null)?.error),
+    isError: measurementRefused || Boolean((result as Record<string, unknown> | null)?.error),
   };
 }
 
