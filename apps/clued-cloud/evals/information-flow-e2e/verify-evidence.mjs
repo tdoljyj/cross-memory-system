@@ -34,8 +34,9 @@ for (const [id, evidence] of Object.entries(mine)) {
 if (args.against) {
   const theirs = scenarios(path.resolve(args.against));
   for (const id of new Set([...Object.keys(mine), ...Object.keys(theirs)])) {
-    const a = mine[id]?.normalized_digest ?? null;
-    const b = theirs[id]?.normalized_digest ?? null;
+    // Recomputed on both sides with this checkout's normalizer.
+    const a = mine[id] ? normalizedDigest(mine[id]) : null;
+    const b = theirs[id] ? normalizedDigest(theirs[id]) : null;
     report.compared[id] = { this_run: a, against: b, equal: a !== null && a === b,
       code_tree_equal: mine[id]?.code_binding?.code_tree === theirs[id]?.code_binding?.code_tree };
     if (a === null || a !== b) report.differing.push(id);

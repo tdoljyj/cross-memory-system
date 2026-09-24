@@ -62,9 +62,12 @@ export function assertNoSecrets(text, where) {
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const HEX64 = /\b[0-9a-f]{64}\b/g;
+const HEX32 = /\b[0-9a-f]{32}\b/g; // md5 state-snapshot digests over volatile rows
+const SYSID = /^\d{15,20}$/; // PostgreSQL system_identifier (new cluster per db reset)
 const ISO = /\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}(:?\d{2})?)?\b/g;
 const VOLATILE_KEYS = new Set(['duration_ms', 'pid', 'pgid', 'event_ids', 'event_id', 'at', 'elapsed_ms', 'startup_ms',
-  'request_sha256', 'response_sha256', 'port', 'token_count', 'session_label', 'new_pid', 'killed_pid', 'killed_pgid']);
+  'request_sha256', 'response_sha256', 'port', 'token_count', 'session_label', 'new_pid', 'killed_pid', 'killed_pgid',
+  'w1_pid', 'w2_pid', 'p1_pid', 'p2_pid']);
 
 // Normalizer. A uuid with a scenario alias becomes `<alias>`; any other uuid
 // becomes `<uuid>`. 64-hex digests, ISO timestamps and volatile keys are
@@ -75,9 +78,11 @@ export function normalizer(aliases = {}) {
   const norm = (value, key) => {
     if (key && VOLATILE_KEYS.has(key)) return '<volatile>';
     if (typeof value === 'string') {
+      if (SYSID.test(value)) return '<system_identifier>';
       return value
         .replace(UUID, (match) => (byId.has(match.toLowerCase()) ? `<${byId.get(match.toLowerCase())}>` : '<uuid>'))
         .replace(HEX64, '<hex64>')
+        .replace(HEX32, '<hex32>')
         .replace(ISO, '<ts>')
         .replace(/sha256:[0-9a-f]{12}/g, 'sha256:<label>');
     }
