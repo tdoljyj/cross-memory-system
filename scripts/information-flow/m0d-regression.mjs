@@ -165,7 +165,7 @@ async function withHarnessWorker(fn) {
   const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'm0d-reg-bundle-'));
   const dry = spawnSync('npx', ['wrangler', 'deploy', '--dry-run', '--outdir', bundleDir, '--config',
     'evals/information-flow-e2e/wrangler.jsonc'], { cwd: cloudRoot, encoding: 'utf8',
-    env: { ...process.env, WRANGLER_SEND_METRICS: 'false', PATH: `${nodeBin}:${process.env.PATH}` } });
+    env: { ...process.env, WRANGLER_SEND_METRICS: 'false', WRANGLER_HIDE_BANNER: 'true', PATH: `${nodeBin}:${process.env.PATH}` } });
   if (dry.status !== 0) throw new Error(`wrangler dry-run failed: ${dry.stderr}`);
   const host = new WorkerHost({ bundleDir, persistDir: fs.mkdtempSync(path.join(os.tmpdir(), 'm0d-reg-persist-')),
     gatewayOrigin: 'http://127.0.0.1:9', publishableKey: 'local-tools-list-only',

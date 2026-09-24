@@ -55,7 +55,8 @@ const wranglerArgv = ['wrangler', 'deploy', '--dry-run', '--outdir', bundleDir, 
 // carries the guard into any Node child it spawns (one ledger per process).
 const wrangler = spawnSync(process.execPath, [path.join(stack.cloudRoot, 'node_modules/wrangler/bin/wrangler.js'),
   ...wranglerArgv.slice(1)], { cwd: stack.cloudRoot, encoding: 'utf8',
-  env: stack.childEnv({ WRANGLER_LOG_PATH: path.join(work, 'wrangler-logs'),
+  // WRANGLER_HIDE_BANNER also skips wrangler's npm update check.
+  env: stack.childEnv({ WRANGLER_LOG_PATH: path.join(work, 'wrangler-logs'), WRANGLER_HIDE_BANNER: 'true',
     NODE_OPTIONS: `--require ${path.join(here, 'isolation-guard.cjs')}`,
     IFE2E_GUARD_LEDGER: path.join(guardDir, 'wrangler-{pid}.json') }) });
 if (wrangler.status !== 0) throw new Error(`wrangler dry-run failed: ${wrangler.stderr}`);

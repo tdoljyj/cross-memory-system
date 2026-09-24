@@ -38,7 +38,7 @@ const tokenizerChunks = (serverFiles ?? []).filter((row) => /o200k|tiktoken/i.te
 const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'm0d-bundle-'));
 const dry = spawnSync('npx', ['wrangler', 'deploy', '--dry-run', '--outdir', bundleDir, '--config',
   'evals/information-flow-e2e/wrangler.jsonc'], { cwd: cloudRoot, encoding: 'utf8',
-  env: { ...process.env, WRANGLER_SEND_METRICS: 'false' } });
+  env: { ...process.env, WRANGLER_SEND_METRICS: 'false', WRANGLER_HIDE_BANNER: 'true' } });
 if (dry.status !== 0) throw new Error(`wrangler dry-run failed: ${dry.stderr}`);
 const harnessBundle = sizeOf(path.join(bundleDir, 'worker.js'));
 

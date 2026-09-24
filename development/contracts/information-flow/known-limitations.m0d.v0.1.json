@@ -136,15 +136,20 @@
     {
       "id": "L12",
       "title": "Delegated OAuth and Native write surfaces",
-      "source": "S3 D7 (premise corrected); B09 round 2; migrations 20260907173031, 20260924190000, 20260924230000 (PR #322)",
-      "statement": "public.clued_user_decision_supersede has been guarded by authorization_owner_v12 (direct human session; a delegated-OAuth JWT with client_id is refused) since 20260907173031. S3 (20260924190000) regressed it by redefining the entry with auth.uid(), so a delegated-OAuth JWT could supersede Decisions through PostgREST and /v1/decisions/supersede; 20260924230000_decision_supersede_v12_guard.sql (PR #322) restores the guard. Every other Native account-session RPC keeps the v12 guard, so a delegated-OAuth JWT on Native REST passes the Worker and is refused by the database.",
+      "source": "S3 D7 (premise corrected); B09 round 2; migrations 20260907173031, 20260924190000, 20260924230000 (PR #322); Owner Decision 9feed8c3-7720-4501-8f4f-e5604b9a3793 / Receipt 817cd530-7511-456e-ab14-fcb410471365",
+      "statement": "public.clued_user_decision_supersede has been guarded by authorization_owner_v12 (direct human session; a delegated-OAuth JWT with client_id is refused) since 20260907173031. S3 (20260924190000) regressed it by redefining the entry with auth.uid(), so a delegated-OAuth JWT could supersede Decisions through PostgREST and /v1/decisions/supersede; 20260924230000_decision_supersede_v12_guard.sql (PR #322, merged to main as 982bcb3a008be00d2aaead18aae0185d816ac848; Owner Decision 9feed8c3-7720-4501-8f4f-e5604b9a3793, Receipt 817cd530-7511-456e-ab14-fcb410471365) restores the guard. Every other Native account-session RPC keeps the v12 guard, so a delegated-OAuth JWT on Native REST passes the Worker and is refused by the database.",
       "consequence": "Delegated OAuth never yields a committed Native write or human_confirmed=true once 20260924230000 is applied; any environment with S3 applied but not 20260924230000 carries the regression.",
       "successor": "Apply 20260924230000 wherever S3 is applied (clued-prod has S1 only per L26); a regression test pins the guard (information-flow-promotion-db.test.mjs, E2E-14 delegated block).",
       "status": "OPEN",
       "evidence_refs": [
         "e2e/E2E-14.json",
         "regression.json"
-      ]
+      ],
+      "authorization": {
+        "decision_id": "9feed8c3-7720-4501-8f4f-e5604b9a3793",
+        "receipt_id": "817cd530-7511-456e-ab14-fcb410471365",
+        "merge_commit": "982bcb3a008be00d2aaead18aae0185d816ac848"
+      }
     },
     {
       "id": "L13",
@@ -398,6 +403,14 @@
       "items": {
         "S1_production_apply": "retroactive authorization of the S1 clued-prod apply (PR #307); verdicts keep _LOCAL_QUALIFIED; B08 scoped to the S6 qualification runs",
         "7": "db:test:v2 accepted as a disclosed pre-existing stale-test baseline failure with the identical-failure proof"
+      }
+    },
+    {
+      "decision_id": "9feed8c3-7720-4501-8f4f-e5604b9a3793",
+      "receipt_id": "817cd530-7511-456e-ab14-fcb410471365",
+      "kind": "Canonical Decision",
+      "items": {
+        "decision_supersede_v12_guard": "hotfix PR #322 (20260924230000_decision_supersede_v12_guard.sql) restores the v12 guard regressed by S3; merged to main as 982bcb3a"
       }
     }
   ]
