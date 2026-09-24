@@ -79,7 +79,8 @@ if (command === 'closure') {
       images: run?.environment?.images ?? null,
       js_tiktoken: JSON.parse(fs.readFileSync(path.join(cloudRoot, 'node_modules/js-tiktoken/package.json'), 'utf8')).version,
       o200k_ranks_sha256: /O200K_RANKS_SHA256 = "([0-9a-f]{64})"/.exec(fs.readFileSync(path.join(cloudRoot, 'worker/context-pack.ts'), 'utf8'))?.[1] ?? null,
-      tokenizer_binding_sha256: fs.existsSync(path.join(repoRoot, tokenizerBinding)) ? fileSha(tokenizerBinding) : null,
+      // scripts/phase2-qualification/minimum-context-compiler/TokenizerBinding.json
+      compiler_ranks_binding_file_sha256: fs.existsSync(path.join(repoRoot, tokenizerBinding)) ? fileSha(tokenizerBinding) : null,
       migrations_chain: migrationsChain(),
     },
     vendored_subsets: { m0a: vendoredA, m0c: vendoredC },
