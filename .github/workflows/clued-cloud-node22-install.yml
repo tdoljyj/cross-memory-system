@@ -1,0 +1,92 @@
+name: clued-cloud-node22-install
+
+# apps/clued-cloud declares engines node >=22.22.0, but every other workflow
+# installs on Node 24 (npm 11). npm 10 validates the lockfile more strictly,
+# so a lockfile that npm 11 accepts can still fail `npm ci` on Node 22.
+# This job installs on the declared engines floor to catch that drift.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/clued-cloud-node22-install.yml'
+      - 'apps/clued-cloud/package.json'
+      - 'apps/clued-cloud/package-lock.json'
+      - 'apps/clued-cloud/.npmrc'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/clued-cloud-node22-install.yml'
+      - 'apps/clued-cloud/package.json'
+      - 'apps/clued-cloud/package-lock.json'
+      - 'apps/clued-cloud/.npmrc'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trusted-self-hosted:
+    name: >-
+      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository &&
+              github.actor == github.repository_owner)))
+          && 'clued-cloud-node22-install' || 'clued-cloud-node22-install-self-hosted-skipped' }}
+    if: >-
+      (github.event_name == 'push' &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner)
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+      - run: node --version && npm --version
+      - name: Install from lockfile on the engines floor
+        run: >-
+          timeout --signal=TERM --kill-after=15s 8m
+          npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline
+          --fetch-retries=2 --fetch-timeout=30000
+
+  untrusted-hosted:
+    name: >-
+      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              (github.event.pull_request.head.repo.full_name != github.repository ||
+               github.actor != github.repository_owner))))
+          && 'clued-cloud-node22-install' || 'clued-cloud-node22-install-hosted-skipped' }}
+    if: >-
+      (github.event_name == 'push' &&
+       github.actor != github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       (github.event.pull_request.head.repo.full_name != github.repository ||
+        github.actor != github.repository_owner))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: apps/clued-cloud/package-lock.json
+      - run: node --version && npm --version
+      - name: Install from lockfile on the engines floor
+        run: npm ci --ignore-scripts
