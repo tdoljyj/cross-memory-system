@@ -44,9 +44,9 @@ Always report `sources_read` for an authoritative current-status answer. Treat `
 
 ## Read-before-alignment
 
-For T1–T4, “latest/current”, audit, or implementation work:
+When a request reads repository `memory/` snapshot files (the T1–T3 snapshot lookups above, or a `memory/` audit or doctor), and only then:
 
-1. Run the unified entry exactly once before relying on repository files: `sync-memory.ps1 -AlignAndVerify -Access <scope>` on Windows/Codex endpoints, `python3 sync-memory.py align-and-verify <scope>` on Linux and macOS. The unified request entry resolves `origin/main` to one concrete Commit SHA with one real `git ls-remote`; `-Access NONE` remains a zero-read/no-op path.
+1. Run the unified entry exactly once before reading `memory/`: `sync-memory.ps1 -AlignAndVerify -Access <scope>` on Windows/Codex endpoints, `python3 sync-memory.py align-and-verify <scope>` on Linux and macOS. The unified request entry resolves `origin/main` to one concrete Commit SHA with one real `git ls-remote`; `-Access NONE` remains a zero-read/no-op path.
 2. The same invocation passes that SHA explicitly to an isolated Git-object source. It may fetch that exact object without moving the development worktree HEAD, Index, or files, then classifies equal / Remote Ahead / Local Ahead / true divergence. True divergence emits a Git Conflict Packet and stops; the read path never merges, rebases, or overwrites the development worktree.
 3. Every new request, independent retry, or new process runs `align-and-verify` again. Never cache or reuse PASS evidence across requests, Sessions, processes, devices, or Agents; never substitute mtime, a tracking ref, or an old SHA for the remote query.
 4. `sync-memory.ps1 -AlignAndVerify` 已在同一 Python 进程、同一 RequestVerificationContext 中完成 mirror 与 doctor。成功后不得在同一请求中再次运行 `python memory.py doctor`。独立执行 doctor 属于新的 doctor-only 请求，必须创建新的 Context 并重新校验。
@@ -55,7 +55,7 @@ Version truth is the remote commit plus root `VERSION`, git tags, `memory/manife
 
 ## Request-local verification context
 
-- A T1–T4, audit, status, doctor, or repository implementation request creates exactly one in-memory `RequestVerificationContext` after `align-and-verify`. `NONE`/T0 creates no Context and performs zero Git and zero Memory reads.
+- A request that reads repository `memory/` snapshot files, or a doctor request, creates exactly one in-memory `RequestVerificationContext` after `align-and-verify`. `NONE`/T0 creates no Context and performs zero Git and zero Memory reads.
 - Pass the Context and its resolved Remote Head SHA explicitly through the full `align-and-verify → mirror → doctor` call chain in one Python process. Never serialize it or reuse its PASS across requests, retries, Sessions, processes, devices, or Agents.
 - Reuse is allowed only within the same request and trust boundary after rechecking path identity and ACL, streaming Manifest content identity, the Current Pointer, root `VERSION`, git HEAD/tags/repository identity, owner/scope, authorization evidence, TTL/clock, and validator versions. Any change invalidates the evidence and requires full validation or fails closed.
 - Repository source, copy candidate, and local mirror are separate boundaries. A PASS at one boundary never replaces the independent source or target hash validation at another boundary.
