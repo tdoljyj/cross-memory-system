@@ -17,14 +17,17 @@ export async function verifyLiveSourceCommit(expected, fetchLive = globalThis.fe
     throw new Error('Production Worker has no trustworthy compiled source commit');
   }
   if (body.source_commit !== expected) {
-    throw new Error(`Production Worker source commit differs from tested checkout: ${body.source_commit}`);
+    const error = new Error(`Production Worker source commit differs from tested checkout: ${body.source_commit}`);
+    error.code = 'LIVE_SOURCE_COMMIT_MISMATCH';
+    throw error;
   }
   return body.source_commit;
 }
 
 // Cloudflare may keep serving the previous version for a short while after
-// `wrangler deploy` returns. Poll with a bounded budget; the last failure is
-// rethrown, so a Worker that never converges still fails closed.
+// `wrangler deploy` returns. Only a well-formed response naming a different
+// commit is retried, within a bounded budget; any other failure, and the last
+// mismatch, is rethrown so the check still fails closed.
 export async function waitForLiveSourceCommit(expected, {
   attempts = 12, delayMs = 10000, fetchLive = globalThis.fetch,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {},
@@ -34,7 +37,7 @@ export async function waitForLiveSourceCommit(expected, {
     try {
       return await verifyLiveSourceCommit(expected, fetchLive);
     } catch (error) {
-      if (attempt >= attempts) throw error;
+      if (error?.code !== 'LIVE_SOURCE_COMMIT_MISMATCH' || attempt >= attempts) throw error;
       log(`live source commit not yet ${expected} (attempt ${attempt}/${attempts}): ${error.message}`);
       await sleep(delayMs);
     }

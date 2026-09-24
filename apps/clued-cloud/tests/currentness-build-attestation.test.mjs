@@ -34,7 +34,7 @@ test('live attestation fails closed on missing, mismatched or invalid production
   await assert.rejects(verifyLiveSourceCommit(sha, async () => new Response('ok')));
 });
 
-test('post-deploy wait tolerates propagation lag but fails closed when the Worker never converges', async () => {
+test('post-deploy wait retries only a commit mismatch and fails closed otherwise', async () => {
   const old = { status: 'ok', service: 'clued-continuity', source_commit: 'b'.repeat(40) };
   const fresh = { status: 'ok', service: 'clued-continuity', source_commit: sha };
   const sleeps = [];
@@ -51,6 +51,13 @@ test('post-deploy wait tolerates propagation lag but fails closed when the Worke
     /differs from tested checkout/);
   assert.equal(calls, 4);
   await assert.rejects(waitForLiveSourceCommit(sha, { attempts: 0, sleep }), /Invalid attempt budget/);
+
+  for (const bad of [() => response({}, 503), () => new Response('ok'),
+    () => response({ status: 'ok', service: 'clued-continuity' })]) {
+    calls = 0;
+    await assert.rejects(waitForLiveSourceCommit(sha, { fetchLive: async () => { calls += 1; return bad(); }, sleep }));
+    assert.equal(calls, 1, 'malformed or non-200 health responses fail without retry');
+  }
 });
 
 test('compiled Worker healthz reports only a valid injected source SHA', async () => {
