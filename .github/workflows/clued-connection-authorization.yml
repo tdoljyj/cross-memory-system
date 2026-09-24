@@ -10,6 +10,7 @@ on:
       - 'apps/clued-cloud/supabase/migrations/**'
       - 'apps/clued-cloud/tests/information-flow-*.test.mjs'
       - 'development/contracts/information-flow/vendored/**'
+      - 'scripts/phase2-qualification/minimum-context-compiler/**'
       - 'apps/clued-cloud/tests/*authorization*.test.mjs'
       - 'apps/clued-cloud/tests/delegated-oauth-transport.test.mjs'
       - 'apps/clued-cloud/tests/development-context-api.test.mjs'
@@ -32,6 +33,7 @@ on:
       - 'apps/clued-cloud/supabase/migrations/**'
       - 'apps/clued-cloud/tests/information-flow-*.test.mjs'
       - 'development/contracts/information-flow/vendored/**'
+      - 'scripts/phase2-qualification/minimum-context-compiler/**'
       - 'apps/clued-cloud/tests/*authorization*.test.mjs'
       - 'apps/clued-cloud/tests/delegated-oauth-transport.test.mjs'
       - 'apps/clued-cloud/tests/development-context-api.test.mjs'
@@ -77,6 +79,7 @@ jobs:
       - run: npm run test:information-flow:candidates
       - run: npm run test:information-flow:intake
       - run: npm run test:information-flow:promotion
+      - run: npm run test:information-flow:context
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
       - run: npm run test:authorization:integration

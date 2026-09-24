@@ -27,9 +27,11 @@ import {
   informationFlowTools,
   isInformationFlowPath,
   nativeCandidateRpcByAction,
+  nativeContextPolicyRpcByPath,
   parseCandidateAction,
   type UserInformationFlowRpc,
 } from "./information-flow";
+import { measurePack } from "./context-pack";
 
 declare const __CLUED_BUILD_SHA__: string | null;
 
@@ -1523,6 +1525,17 @@ async function callTool(
     return { content: [{ type: "text", text: JSON.stringify(rejection) }],
       structuredContent: rejection, isError: true };
   }
+  // MSCP packs (S4): the Worker counts the exact pack_text and enforces the
+  // policy budget before the result is sanitized. Covers Binding and
+  // delegated OAuth callers alike.
+  // A refusal by the measurement step (tokenizer unavailable, integrity or
+  // budget) is an MCP tool error.
+  let measurementRefused = false;
+  if (name === "clued_context_pack") {
+    const measured = await measurePack(rawResult);
+    rawResult = measured.result;
+    measurementRefused = measured.httpStatus !== undefined;
+  }
   const sanitized = name in contextRpcByTool ? sanitizeContextResult(rawResult) : sanitizeCluedResult(rawResult);
   const sourceCommit = typeof __CLUED_BUILD_SHA__ === "string" &&
     /^[0-9a-f]{40}$/.test(__CLUED_BUILD_SHA__) ? __CLUED_BUILD_SHA__ : null;
@@ -1536,7 +1549,7 @@ async function callTool(
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
     structuredContent: result,
-    isError: Boolean((result as Record<string, unknown> | null)?.error),
+    isError: measurementRefused || Boolean((result as Record<string, unknown> | null)?.error),
   };
 }
 
@@ -1837,9 +1850,13 @@ function informationFlowHttpStatus(result: unknown) {
     const code = value.error_code ?? "";
     if (code === "reauthentication_required") return 401;
     if (/^confirmation_token_/.test(code)) return 403;
-    if (/^(candidate_version_conflict|knowledge_source_version_mismatch|confirmation_view_stale|candidate_not_pending|candidate_previously_rejected|candidate_expired)$/
+    if (/^(candidate_version_conflict|knowledge_source_version_mismatch|confirmation_view_stale|candidate_not_pending|candidate_previously_rejected|candidate_expired|context_policy_version_conflict)$/
       .test(code)) return 409;
+    if (code === "TOKENIZER_UNAVAILABLE") return 503;
+    if (code === "CONTEXT_PACK_INTEGRITY") return 502;
   }
+  // A manifest that failed revalidation (STALE or PROJECTION_REQUIRED).
+  if (value?.status === "stale") return 409;
   return m1HttpStatus(result);
 }
 
@@ -1853,24 +1870,28 @@ function informationFlowHeaders(request: Request, result: unknown, extra: Record
   return headers;
 }
 
+// Native-only routes: a Binding token, or no token, is refused (and logged)
+// before the body is read or any RPC runs. The Worker does not decode the
+// JWT: auth_time, TTL and single use are enforced by the definer RPCs, which
+// are authoritative.
+async function requireNativeBearer(request: Request, env: ContinuityEnv, denial: Record<string, string>) {
+  const bearer = bearerToken(request);
+  if (!bearer || bearer.startsWith("clued_bnd_")) {
+    console.warn(JSON.stringify({
+      event: "information_flow_native_route_denied", ...denial, reason: "binding_or_missing_token",
+    }));
+    throw new HttpError(401, "A signed-in Clued account is required.");
+  }
+  return await requireSupabaseUser(request, env);
+}
+
 // Confirmation (step 1), promotion (step 2) and reject (contract 4.3.2, 5.1).
-// A Binding token, or no token, is refused before the body is read or any RPC
-// runs. The Worker does not decode the JWT: auth_time, TTL and single use are
-// enforced by the definer RPCs, which are authoritative.
 async function handleNativeCandidateAction(
   request: Request,
   env: ContinuityEnv,
   target: { tier: "information" | "knowledge"; candidateId: string; action: "confirmation" | "promote" | "reject" },
 ) {
-  const bearer = bearerToken(request);
-  if (!bearer || bearer.startsWith("clued_bnd_")) {
-    console.warn(JSON.stringify({
-      event: "information_flow_native_route_denied", route: target.action, tier: target.tier,
-      reason: "binding_or_missing_token",
-    }));
-    throw new HttpError(401, "A signed-in Clued account is required.");
-  }
-  const { token } = await requireSupabaseUser(request, env);
+  const { token } = await requireNativeBearer(request, env, { route: target.action, tier: target.tier });
   const { input, receivedPayloadHash } = await parseCanonicalBody(request);
   if ("candidate_id" in input && String(input.candidate_id).toLowerCase() !== target.candidateId) {
     throw new HttpError(422, "candidate_id does not match the request path.");
@@ -1953,13 +1974,37 @@ async function handleInformationFlowApi(request: Request, env: ContinuityEnv) {
     });
   }
   if (url.pathname === "/v1/context/pack" && request.method === "POST") {
+    // Compile, or (Native only) revalidate a stored manifest with
+    // {manifest_id}. The Worker only measures a compiled pack.
     const { input } = await parseCanonicalBody(request);
-    const result = await callUserRecordRpc(request, env, "clued_user_context_pack", input);
-    return json(result, informationFlowHttpStatus(result), corsHeaders(request));
+    const measured = await measurePack(await callUserRecordRpc(request, env, "clued_user_context_pack", input));
+    return json(measured.result, measured.httpStatus ?? informationFlowHttpStatus(measured.result),
+      corsHeaders(request));
+  }
+  const policyRpc = nativeContextPolicyRpcByPath[url.pathname as keyof typeof nativeContextPolicyRpcByPath];
+  if (policyRpc && request.method === "POST") {
+    const confirmation = url.pathname === "/v1/context/policies/confirmation";
+    const { token } = await requireNativeBearer(request, env, {
+      route: confirmation ? "policy_confirmation" : "policy_accept",
+    });
+    const { input, receivedPayloadHash } = await parseCanonicalBody(request);
+    if (confirmation) {
+      // Issue and consume are separate requests; a token never rides along.
+      if ("confirmation_token" in input) {
+        throw new HttpError(422, "Confirmation and acceptance are separate requests.");
+      }
+      const result = await callVerifiedUserRpc(env, token, policyRpc, input);
+      return json(result, informationFlowHttpStatus(result), informationFlowHeaders(request, result, {
+        "cache-control": "no-store", pragma: "no-cache",
+      }));
+    }
+    const result = await callVerifiedUserRpc(env, token, policyRpc, input, receivedPayloadHash);
+    return json(result, informationFlowHttpStatus(result), informationFlowHeaders(request, result));
   }
   const known = url.pathname === "/v1/intake" ? "GET, POST, OPTIONS"
-    : url.pathname in routes || candidateAction || url.pathname === "/v1/context/pack" ? "POST, OPTIONS" : null;
-  // Context Policy and Evidence withdrawal routes arrive in later slices.
+    : url.pathname in routes || candidateAction || url.pathname === "/v1/context/pack" || policyRpc
+      ? "POST, OPTIONS" : null;
+  // Evidence withdrawal routes arrive in S5.
   if (!known) return json({ error: "Not found." }, 404, corsHeaders(request));
   return json({ error: "Method not allowed." }, 405, { ...corsHeaders(request), allow: known });
 }
