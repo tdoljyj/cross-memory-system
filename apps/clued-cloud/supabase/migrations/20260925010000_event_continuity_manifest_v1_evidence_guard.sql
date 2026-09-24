@@ -3,7 +3,7 @@
 -- IF S2). The withdrawn-Evidence check now runs only when
 -- clued_private.record_evidence_status exists, through dynamic SQL so the plan
 -- never references a missing table. Everything else is unchanged from
--- 20260924235000_event_continuity_manifest_v1.sql.
+-- 20260925005000_event_continuity_manifest_v1.sql.
 create or replace function clued_private.reconcile_event_continuity_manifest_v1(
   p_user_id uuid,
   p_manifest jsonb,
