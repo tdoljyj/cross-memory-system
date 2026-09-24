@@ -225,5 +225,51 @@ class CluedCiHealthTests(unittest.TestCase):
         )
 
 
+    def inventory_with_extra_linux(self, state: str):
+        inventory = json.loads(json.dumps(self.inventory))
+        company = next(host for host in inventory["hosts"] if host["site"] == "company")
+        extra = company.setdefault("additional_linux_runners", [])
+        if not extra:
+            extra.append({
+                "profile": "linux-docker-wsl2-v1",
+                "name": "clued-ci-company-linux-02",
+                "route_label": "runner-company-linux-02",
+                "capabilities": ["cap-docker-linux", "runtime-wsl2"],
+            })
+        extra[0]["state"] = state
+        return inventory, extra[0]
+
+    def test_enrolling_extra_linux_runner_is_known_but_not_required(self):
+        inventory, extra = self.inventory_with_extra_linux("enrolling")
+        expected, _ = health.build_expectations(inventory)
+        self.assertNotIn(extra["name"], expected)
+        registered = self.runners() + [{
+            "id": 99,
+            "name": extra["name"],
+            "os": "Linux",
+            "status": "online",
+            "busy": False,
+            "labels": [{"name": "clued"}],
+        }]
+        report = health.build_report(
+            "tdoljyj/cross-memory-system", inventory, registered, [],
+            datetime(2026, 9, 23, 4, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(report["anomalies"], [])
+
+    def test_active_extra_linux_runner_requires_its_route_label(self):
+        inventory, extra = self.inventory_with_extra_linux("active")
+        expected, pools = health.build_expectations(inventory)
+        self.assertIn(extra["name"], expected)
+        self.assertIn(extra["route_label"], expected[extra["name"]]["required_labels"])
+        self.assertIn("site-company", expected[extra["name"]]["required_labels"])
+        self.assertIn(extra["name"], pools["linux-docker-wsl2-v1"])
+        report = health.build_report(
+            "tdoljyj/cross-memory-system", inventory, self.runners(), [],
+            datetime(2026, 9, 23, 4, 0, tzinfo=timezone.utc),
+        )
+        self.assertIn("RUNNER_MISSING", [item["code"] for item in report["anomalies"]])
+
+
 if __name__ == "__main__":
     unittest.main()

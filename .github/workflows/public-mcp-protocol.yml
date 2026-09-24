@@ -54,6 +54,9 @@ jobs:
           timeout --signal=TERM --kill-after=15s 4m
           npm ci --cache "$HOME/.npm" --prefer-offline
           --fetch-retries=2 --fetch-timeout=30000
+      - name: Serialize fixed public MCP ports with other runners on this host
+        run: |
+          "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" acquire public-mcp-ports
       - name: Start isolated MCP
         run: |
           printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\n' > evals/public-mcp/.dev.vars.public-mcp
@@ -86,6 +89,7 @@ jobs:
             fi
           fi
           rm -f evals/public-mcp/.dev.vars.public-mcp
+          "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" release public-mcp-ports
 
   untrusted-hosted:
     name: >-
