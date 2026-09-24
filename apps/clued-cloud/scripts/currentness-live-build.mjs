@@ -21,3 +21,22 @@ export async function verifyLiveSourceCommit(expected, fetchLive = globalThis.fe
   }
   return body.source_commit;
 }
+
+// Cloudflare may keep serving the previous version for a short while after
+// `wrangler deploy` returns. Poll with a bounded budget; the last failure is
+// rethrown, so a Worker that never converges still fails closed.
+export async function waitForLiveSourceCommit(expected, {
+  attempts = 12, delayMs = 10000, fetchLive = globalThis.fetch,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {},
+} = {}) {
+  if (!Number.isInteger(attempts) || attempts < 1) throw new Error('Invalid attempt budget');
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await verifyLiveSourceCommit(expected, fetchLive);
+    } catch (error) {
+      if (attempt >= attempts) throw error;
+      log(`live source commit not yet ${expected} (attempt ${attempt}/${attempts}): ${error.message}`);
+      await sleep(delayMs);
+    }
+  }
+}
