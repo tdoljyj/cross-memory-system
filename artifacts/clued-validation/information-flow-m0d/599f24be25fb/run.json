@@ -1,0 +1,178 @@
+{
+  "bundle": {
+    "extractor_imported": false,
+    "gzip_bytes": 1168990,
+    "production_host": true,
+    "provider_hosts": [],
+    "raw_bytes": 2463721,
+    "worker_js_sha256": "f1adf08a5e0c22045f6c183d3634f228f3a6dc2a5cb146fb91075972f5c6edae"
+  },
+  "code_binding": {
+    "code_tree": "599f24be25fb4c6e0c2538589e3ec4449453bef4",
+    "harness_tree": "c7471a9ff168ce8d66d4acac785989df49e8b937",
+    "input_commit": "e0d97f533d0e55548e32db05b7fbc72704c646d2",
+    "migrations_chain": {
+      "count": 72,
+      "latest": "20260924220000_information_flow_invalidation.sql",
+      "sha256": "2f4525d01fb43417e9bae8f789375b76239ac4a067a73fdd207eed9d17651c29"
+    },
+    "worker_tree": "521d4341f7f4a6008a757ec7e584ed57236544a3",
+    "worktree_clean": true
+  },
+  "contract": {
+    "path": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+    "sha256": "5c6371cf22b078cbd1fb0f61f3f6eb20b51a162a28e8942f04b81561bbb8c9ff"
+  },
+  "duration_class": "under_20_min",
+  "environment": {
+    "db_database_oid": "5",
+    "db_system_identifier": "7688977307277434918",
+    "docker": "29.3.1",
+    "images": {
+      "auth": "sha256:362659ca70eaa75ba05bbaf963caa84c1c5afe5e8fbf0777e17b830dd5f0f60a",
+      "db": "sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5fb408d051909b230f",
+      "kong": "sha256:1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d",
+      "rest": "sha256:5922bde07147b82b1c9d8f749e48c1e5b99ebb233f3888bb7ab65f07cf4ac82d"
+    },
+    "js_tiktoken": "1.0.21",
+    "migrations_applied": {
+      "latest": "20260924220000",
+      "n": 72
+    },
+    "miniflare": "5.20260820.0-alpha",
+    "node": "v24.19.0",
+    "qualification": "LOCAL",
+    "supabase_cli": "2.115.0",
+    "transport_tier": "T1",
+    "workerd": "1.20260820.1",
+    "wrangler": "4.125.0"
+  },
+  "preflight_env_scan": {
+    "checked_patterns": [
+      "/^SUPABASE_ACCESS_TOKEN$/",
+      "/^SUPABASE_DB_PASSWORD$/",
+      "/^CLOUDFLARE_API_TOKEN$/",
+      "/^CLOUDFLARE_ACCOUNT_ID$/",
+      "/^ANTHROPIC_API_KEY$/",
+      "/^OPENAI_API_KEY$/",
+      "/^GOOGLE_API_KEY$/",
+      "/^AZURE_OPENAI_/",
+      "/^AWS_/",
+      "/^PROMPTFOO_/",
+      "/^GEMINI_API_KEY$/",
+      "/^MISTRAL_API_KEY$/",
+      "/^COHERE_API_KEY$/",
+      "*DATABASE_URL non-loopback",
+      "*SUPABASE_DB_URL non-loopback"
+    ],
+    "forbidden": [],
+    "project_ref_linked": false
+  },
+  "results": {
+    "E2E-01": {
+      "assertions": 17,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "10416e6e699cc0369f4792a16f70c421a3c9bbcb759bca44471330de2e044b98",
+      "result": "PASS"
+    },
+    "E2E-02": {
+      "assertions": 30,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "c909f7c2da473d5bb222df1ada6dba77303a7a2db3b0065300e1f387f45fd738",
+      "result": "PASS"
+    },
+    "E2E-03": {
+      "assertions": 17,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "0422122d92ea2a0177c0f0957fc0880c70db10e19a69b8c5e1f73a7b03883823",
+      "result": "PASS"
+    },
+    "E2E-04": {
+      "assertions": 13,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "5d9428bd3c6fee08200c8ecc81e2ecf32cc96d84c992bfd0cbb3b358c34bd5d8",
+      "result": "PASS"
+    },
+    "E2E-05": {
+      "assertions": 10,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "0a975ee44cdfc1970499ce9eda5178b9ef2d083c3fabf62dee1d23261bff2bf5",
+      "result": "PASS"
+    },
+    "E2E-06": {
+      "assertions": 62,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "b0651054e89c82eb1fb9b32265fae8b8723437b40c9d622b3bb11f8392b25e11",
+      "result": "PASS"
+    },
+    "E2E-07": {
+      "assertions": 18,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "5a2bd05418995ffd67b81b5b0a02aff753b25aaed0e3da21bd15576a40767737",
+      "result": "PASS"
+    },
+    "E2E-08": {
+      "assertions": 18,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "f304cfa1cccd5ed6c8e4a87fb22cd9d0745180948e7cdc0346e9070b1054352a",
+      "result": "PASS"
+    },
+    "E2E-09": {
+      "assertions": 11,
+      "failed": [],
+      "normalized_digest": "86ac48c57ddf77b69ce1a72477c4e48b4850bd5ccbe59c52fd69ffbb3599e9de",
+      "result": "PASS"
+    },
+    "E2E-10": {
+      "assertions": 17,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "4a02fad9d1efde7a2162b0f0fb14b9e4aa5e1e748f35a5b7d8ac77b6b5abb505",
+      "result": "PASS"
+    },
+    "E2E-11": {
+      "assertions": 5,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "371edb8483aedcaac2c69c10284723b7dca8b698079b74f7d727e310b3577d59",
+      "result": "OBSERVED"
+    },
+    "E2E-12": {
+      "assertions": 11,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "702665c3ed467642390d1636c6d3e6dc522b562829d6ad3c94f13ea1db013341",
+      "result": "PASS"
+    },
+    "E2E-13": {
+      "assertions": 11,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "9d294851705b7ac720ffe02dd9374b7a470c3c82f17710468405099c336dbba9",
+      "result": "PASS"
+    },
+    "E2E-14": {
+      "assertions": 11,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "6d6bec48b1824888604aba37ddea973d731bfa07b48e599b280762a1072cfcac",
+      "result": "PASS"
+    },
+    "E2E-15": {
+      "assertions": 27,
+      "error": null,
+      "failed": [],
+      "normalized_digest": "188b66d540dc32335c096cdbf6284dd14c8f1df8daa0d571192a3455274e2f3c",
+      "result": "PASS"
+    }
+  },
+  "schema": "clued.information-flow.m0d.e2e-run/1"
+}

@@ -1,0 +1,59 @@
+{
+  "schema": "clued.information-flow.m0d.bundle-observation/1",
+  "label": "observation_local_workerd_not_production",
+  "runtime": {
+    "node": "v24.19.0"
+  },
+  "dist_server": {
+    "total": {
+      "raw_bytes": 3673241,
+      "gzip_bytes": 1530976
+    },
+    "tokenizer_chunks": [
+      {
+        "file": "dist/server/_next/static/o200k_base-DufpEp7C.js",
+        "raw_bytes": 2325569,
+        "gzip_bytes": 1132629
+      }
+    ],
+    "files": 70
+  },
+  "s4_baseline_reference": {
+    "dist_server_raw_bytes": 3670682,
+    "o200k_chunk_raw_bytes": 2325569,
+    "o200k_chunk_gzip_mb_approx": 1.14
+  },
+  "harness_dry_run_bundle": {
+    "raw_bytes": 2463721,
+    "gzip_bytes": 1165272
+  },
+  "workerd_startup": [
+    {
+      "host_ready_ms": 535,
+      "miniflare_reported_ms": 150,
+      "first_request_ms": 48
+    },
+    {
+      "host_ready_ms": 525,
+      "miniflare_reported_ms": 140,
+      "first_request_ms": 7
+    },
+    {
+      "host_ready_ms": 540,
+      "miniflare_reported_ms": 144,
+      "first_request_ms": 6
+    }
+  ],
+  "pack_timings": {
+    "measured_pack_responses": 16,
+    "first_in_run_ms_note": "The first measured compile of each Worker host includes tokenizer initialisation.",
+    "min_ms": 20,
+    "p50_ms": 37,
+    "max_ms": 682
+  },
+  "cloudflare_limits": {
+    "status": "NOT_RETRIEVED",
+    "reason": "developers.cloudflare.com is blocked by the egress proxy of this environment; limits are not hardcoded from memory.",
+    "consequence": "The plan-limit comparison (compressed size, startup CPU) and a production CPU observation are a precondition of any authorized production apply (register L14)."
+  }
+}

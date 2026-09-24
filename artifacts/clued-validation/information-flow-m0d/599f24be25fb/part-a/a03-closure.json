@@ -1,0 +1,68 @@
+{
+  "schema": "clued.information-flow.m0d.a03-closure/1",
+  "gate": "M0D-A03",
+  "dependency_locks": {
+    "apps/clued-cloud/package-lock.json": "00a58132cfdd39b561ec970ddb9dee6943261354c0b2c3f5f30688996412f582",
+    "package-lock.json (root)": null,
+    "supabase_cli": "2.115.0",
+    "images": {
+      "auth": "sha256:362659ca70eaa75ba05bbaf963caa84c1c5afe5e8fbf0777e17b830dd5f0f60a",
+      "db": "sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5fb408d051909b230f",
+      "kong": "sha256:1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d",
+      "rest": "sha256:5922bde07147b82b1c9d8f749e48c1e5b99ebb233f3888bb7ab65f07cf4ac82d"
+    },
+    "js_tiktoken": "1.0.21",
+    "o200k_ranks_sha256": "de7eb511338b0e23589a3cae2dceb8dd66c2a9fd70dbf7ea778fd9df9f175d45",
+    "compiler_ranks_binding_file_sha256": "b7350be2f38f9d28aa6377670f0e72636c9ea9675cff4f0b1a60cec7f6c2fefd",
+    "migrations_chain": {
+      "count": 72,
+      "latest": "20260924220000_information_flow_invalidation.sql",
+      "sha256": "2f4525d01fb43417e9bae8f789375b76239ac4a067a73fdd207eed9d17651c29"
+    }
+  },
+  "vendored_subsets": {
+    "m0a": {
+      "lines": 20,
+      "mismatched": 0
+    },
+    "m0c": {
+      "lines": 24,
+      "mismatched": 0
+    }
+  },
+  "contract": {
+    "path": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+    "sha256": "5c6371cf22b078cbd1fb0f61f3f6eb20b51a162a28e8942f04b81561bbb8c9ff"
+  },
+  "parents": {
+    "original_bytes_modified": false,
+    "a01_result": "PASS_WITH_DISCLOSED_NONDETERMINISM",
+    "a01_m0c_test_attempts": [
+      {
+        "attempt": 1,
+        "exit_code": 0,
+        "failing_tests": []
+      },
+      {
+        "attempt": 2,
+        "exit_code": 0,
+        "failing_tests": []
+      },
+      {
+        "attempt": 3,
+        "exit_code": 1,
+        "failing_tests": [
+          "normal mock run binds all preflight digests and records every attempt"
+        ]
+      }
+    ]
+  },
+  "register": {
+    "path": "development/contracts/information-flow/known-limitations.m0d.v0.1.json",
+    "sha256": "b744ce4b114462c81486e16383eb72198cf5248f4f269154e610405b467552f8",
+    "entries": 28,
+    "contract_mandated_present": true,
+    "all_open": true
+  },
+  "result": "PASS"
+}

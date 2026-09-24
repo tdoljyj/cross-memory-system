@@ -1,0 +1,139 @@
+{
+  "points": {
+    "credentials_absent": {
+      "child_env_allowlist": [
+        "DO_NOT_TRACK",
+        "HOME",
+        "IFE2E_DENY_PORTS",
+        "IFE2E_SUPABASE_BIN",
+        "PATH",
+        "SHELL",
+        "SUPABASE_INTERNAL_IMAGE_REGISTRY",
+        "SUPABASE_TELEMETRY_DISABLED",
+        "TERM",
+        "WRANGLER_SEND_METRICS",
+        "npm_config_cache"
+      ],
+      "child_forbidden": [],
+      "orchestrator_scan": {
+        "checked_patterns": [
+          "/^SUPABASE_ACCESS_TOKEN$/",
+          "/^SUPABASE_DB_PASSWORD$/",
+          "/^CLOUDFLARE_API_TOKEN$/",
+          "/^CLOUDFLARE_ACCOUNT_ID$/",
+          "/^ANTHROPIC_API_KEY$/",
+          "/^OPENAI_API_KEY$/",
+          "/^GOOGLE_API_KEY$/",
+          "/^AZURE_OPENAI_/",
+          "/^AWS_/",
+          "/^PROMPTFOO_/",
+          "/^GEMINI_API_KEY$/",
+          "/^MISTRAL_API_KEY$/",
+          "/^COHERE_API_KEY$/",
+          "*DATABASE_URL non-loopback",
+          "*SUPABASE_DB_URL non-loopback"
+        ],
+        "forbidden": [],
+        "project_ref_linked": false
+      },
+      "pass": true
+    },
+    "database_identity": {
+      "connection_checks": [
+        {
+          "connection": "observer",
+          "database_equal": true,
+          "database_oid_equal": true,
+          "server_addr": "172.18.0.2",
+          "server_addr_local": true,
+          "system_identifier_equal": true
+        },
+        {
+          "connection": "fixtures",
+          "database_equal": true,
+          "database_oid_equal": true,
+          "server_addr": "172.18.0.2",
+          "server_addr_local": true,
+          "system_identifier_equal": true
+        }
+      ],
+      "database": "postgres",
+      "database_oid": "5",
+      "docker_bridge_cidrs": [
+        "172.18.0.0/16"
+      ],
+      "pass": true,
+      "phase_b_check": {
+        "id": "08.B.db_identity",
+        "pass": true
+      },
+      "rule": "local = loopback, Unix socket or the Docker bridge subnet(s) of the local db container read at runtime; every connection must match the identity recorded right after db reset",
+      "server_addr": "172.18.0.2",
+      "system_identifier": "7688977307277434918"
+    },
+    "harness_egress": {
+      "denied": 0,
+      "pass": true,
+      "processes": 4
+    },
+    "historical": {
+      "authorization": {
+        "decision_id": "7040b127-2a42-4ff6-ba46-060a594a9c1d",
+        "kind": "retroactive Owner authorization",
+        "quoted_owner_confirmation": "补记授权，结论保持“本地验证” (推荐)",
+        "receipt_id": "cef0f0dd-c89e-4eac-b805-18c0816b4449",
+        "writer": "Agent-written, disclosed under OPEN_BY_OD-5"
+      },
+      "backup_and_read_back": "none recorded for the S1 apply (register L28)",
+      "referenced_exception": "S1 production apply (PR #307)",
+      "register_entries": [
+        "L26",
+        "L28"
+      ],
+      "scope": "B08 claims only the S6 qualification runs, as the Decision states; every verdict keeps _LOCAL_QUALIFIED",
+      "statement": "PR #307 states migration S1 was applied to clued-prod before S6. That apply is outside every S6 qualification run and is the only known production write of the Information Flow slices."
+    },
+    "no_deploy_no_production_read": {
+      "pass": true,
+      "production_release_gate_pre_deploy_invoked": false,
+      "worker_bindings": [
+        "CLUED_ALLOWED_ORIGINS",
+        "P5_TENANT_WRITES",
+        "PROJECT_VIEWS_V2",
+        "SUPABASE_PUBLISHABLE_KEY",
+        "SUPABASE_URL"
+      ],
+      "wrangler_argv": [
+        "wrangler",
+        "deploy",
+        "--dry-run",
+        "--outdir",
+        "/tmp/ife2e-oQwwel/bundle",
+        "--config",
+        "evals/information-flow-e2e/wrangler.jsonc"
+      ]
+    },
+    "worker_egress": {
+      "denied": 0,
+      "hosts_contacted": [
+        "127.0.0.1:54321"
+      ],
+      "pass": true,
+      "production_host_requests": 0,
+      "supabase_url_binding_is_gateway": true
+    },
+    "zero_cost": {
+      "deploy": false,
+      "paid_credentials_present": false,
+      "pass": true,
+      "residual": "Image and CLI pulls and CLI update/telemetry checks happen in preflight, outside the qualification window; they are not writes, reach no model provider and cost nothing."
+    },
+    "zero_model_provider_calls": {
+      "bundle_provider_hosts": [],
+      "pass": true,
+      "provider_egress": 0
+    }
+  },
+  "result": "PASS",
+  "schema": "clued.information-flow.m0d.isolation/1"
+}

@@ -1,0 +1,504 @@
+{
+  "aliases": {
+    "C1": "99d4fbab-4cbe-4938-883e-c2fd5133456f",
+    "E1": "4c1c2fb5-3c9b-48b5-9708-20d768b26327",
+    "P01": "5c775d9e-bbcd-44a5-a6d4-c83e56be4563",
+    "POL1": "8595abb8-ac4f-4688-b23f-f686e00b3aa7",
+    "R1": "30e9f2e9-c40c-40f2-86ed-2820d57e7056"
+  },
+  "assertions": [
+    {
+      "expected": "committed",
+      "id": "01.submit",
+      "observed": "committed",
+      "pass": true,
+      "text": "Native submit commits"
+    },
+    {
+      "expected": true,
+      "id": "01.server_hash",
+      "observed": true,
+      "pass": true,
+      "text": "the submit returns a server-computed segment hash"
+    },
+    {
+      "expected": [
+        "<C1>"
+      ],
+      "id": "01.listed_pending",
+      "observed": [
+        "<C1>"
+      ],
+      "pass": true,
+      "text": "the candidate lists as pending"
+    },
+    {
+      "expected": "issued",
+      "id": "01.issue",
+      "observed": "issued",
+      "pass": true,
+      "text": "step 1 issues a confirmation token (observed authority)"
+    },
+    {
+      "expected": "no-store",
+      "id": "01.issue_no_store",
+      "observed": "no-store",
+      "pass": true,
+      "text": "the token response is not cacheable"
+    },
+    {
+      "expected": [
+        "committed",
+        "promoted",
+        1
+      ],
+      "id": "01.promote",
+      "observed": [
+        "committed",
+        "promoted",
+        1
+      ],
+      "pass": true,
+      "text": "step 2 promotes the candidate"
+    },
+    {
+      "expected": 1,
+      "id": "01.promote_rpc_once",
+      "observed": 1,
+      "pass": true,
+      "text": "the promote step runs clued_candidate_promote_v1 exactly once through the Worker"
+    },
+    {
+      "expected": 200,
+      "id": "01.mcp_initialize",
+      "observed": 200,
+      "pass": true,
+      "text": "the Agent initializes an MCP session"
+    },
+    {
+      "expected": "ok",
+      "id": "01.pack_ok",
+      "observed": "ok",
+      "pass": true,
+      "text": "the compile returns a pack"
+    },
+    {
+      "expected": true,
+      "id": "01.digest_binds_text",
+      "observed": true,
+      "pass": true,
+      "text": "sha256(pack_text) equals pack_digest"
+    },
+    {
+      "expected": [
+        [
+          "<R1>",
+          1
+        ]
+      ],
+      "id": "01.item_exact",
+      "observed": [
+        [
+          "<R1>",
+          1
+        ]
+      ],
+      "pass": true,
+      "text": "the pack contains exactly the promoted Record at version 1"
+    },
+    {
+      "expected": [
+        {
+          "content_hash": "1c3d715546216e3bb67c01dfd068b0c67c80c384b32eb59e7a6ddd90e4b94b83",
+          "evidence_id": "<E1>"
+        }
+      ],
+      "id": "01.evidence_hash",
+      "observed": [
+        {
+          "content_hash": "1c3d715546216e3bb67c01dfd068b0c67c80c384b32eb59e7a6ddd90e4b94b83",
+          "evidence_id": "<E1>"
+        }
+      ],
+      "pass": true,
+      "text": "the item carries the submit Evidence id and the server-computed hash"
+    },
+    {
+      "expected": true,
+      "id": "01.human_confirmed",
+      "observed": true,
+      "pass": true,
+      "text": "the item is human_confirmed"
+    },
+    {
+      "expected": [
+        true,
+        "NOT_GRANTED",
+        "NOT_EVALUATED"
+      ],
+      "id": "01.claims",
+      "observed": [
+        true,
+        "NOT_GRANTED",
+        "NOT_EVALUATED"
+      ],
+      "pass": true,
+      "text": "authoritative, execution not granted, model extraction not evaluated"
+    },
+    {
+      "expected": [
+        "measured",
+        "offline_target",
+        "pack_text"
+      ],
+      "id": "01.tokenizer",
+      "observed": [
+        "measured",
+        "offline_target",
+        "pack_text"
+      ],
+      "pass": true,
+      "text": "token counts are measured in workerd and labelled offline_target"
+    },
+    {
+      "expected": "37c6ed51b3997725cc88be967106ddd8876356ba76e11c0375b1384c3b0011d7",
+      "id": "01.measurement_binds_digest",
+      "observed": "37c6ed51b3997725cc88be967106ddd8876356ba76e11c0375b1384c3b0011d7",
+      "pass": true,
+      "text": "the measurement is bound to the pack digest"
+    },
+    {
+      "expected": "<POL1>",
+      "id": "01.policy_bound",
+      "observed": "<POL1>",
+      "pass": true,
+      "text": "the pack names the accepted policy"
+    }
+  ],
+  "claims": {
+    "model_extraction": "NOT_EVALUATED",
+    "od5_qualifier": "Agent authority confined only on the Information Flow path",
+    "verdict_env": "_LOCAL_QUALIFIED"
+  },
+  "code_binding": {
+    "code_tree": "599f24be25fb4c6e0c2538589e3ec4449453bef4",
+    "harness_tree": "c7471a9ff168ce8d66d4acac785989df49e8b937",
+    "input_commit": "e0d97f533d0e55548e32db05b7fbc72704c646d2",
+    "migrations_chain": {
+      "count": 72,
+      "latest": "20260924220000_information_flow_invalidation.sql",
+      "sha256": "2f4525d01fb43417e9bae8f789375b76239ac4a067a73fdd207eed9d17651c29"
+    },
+    "worker_tree": "521d4341f7f4a6008a757ec7e584ed57236544a3",
+    "worktree_clean": true
+  },
+  "contract": {
+    "path": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+    "sha256": "5c6371cf22b078cbd1fb0f61f3f6eb20b51a162a28e8942f04b81561bbb8c9ff"
+  },
+  "environment": {
+    "db_database_oid": "5",
+    "db_system_identifier": "7688977307277434918",
+    "docker": "29.3.1",
+    "images": {
+      "auth": "sha256:362659ca70eaa75ba05bbaf963caa84c1c5afe5e8fbf0777e17b830dd5f0f60a",
+      "db": "sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5fb408d051909b230f",
+      "kong": "sha256:1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d",
+      "rest": "sha256:5922bde07147b82b1c9d8f749e48c1e5b99ebb233f3888bb7ab65f07cf4ac82d"
+    },
+    "js_tiktoken": "1.0.21",
+    "migrations_applied": {
+      "latest": "20260924220000",
+      "n": 72
+    },
+    "miniflare": "5.20260820.0-alpha",
+    "node": "v24.19.0",
+    "qualification": "LOCAL",
+    "supabase_cli": "2.115.0",
+    "transport_tier": "T1",
+    "workerd": "1.20260820.1",
+    "wrangler": "4.125.0"
+  },
+  "error": null,
+  "normalized_digest": "10416e6e699cc0369f4792a16f70c421a3c9bbcb759bca44471330de2e044b98",
+  "notes": [],
+  "principals": {
+    "account_user": "<synthetic>",
+    "bindings": [
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:d2edb182b0a7",
+        "name": "B_main",
+        "scopes_count": 16
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:f96abf69072b",
+        "name": "B_reduce",
+        "scopes_count": 2
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:76a14ef8c27c",
+        "name": "B_del",
+        "scopes_count": 1
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:e062f443b629",
+        "name": "B_V",
+        "scopes_count": 1
+      }
+    ],
+    "token_labels": {
+      "U": "sha256:37ebc6128d06",
+      "V": "sha256:94c6e526dce7"
+    }
+  },
+  "result": "PASS",
+  "scenario_id": "E2E-01",
+  "schema": "clued.information-flow.m0d.e2e-evidence/1",
+  "steps": [
+    {
+      "channel": "worker_rest",
+      "duration_ms": 90,
+      "extracted": {
+        "candidates": [
+          {
+            "local": "item_task_bluepine",
+            "status": "pending",
+            "version": 1
+          }
+        ],
+        "error_code": null,
+        "replayed": false,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 1,
+      "request_sha256": "b310795c67e915a5b14eefb097f0630fe61642e4dca94ca04ec1b871dbd91537",
+      "response_sha256": "a8f89da04da6ff6aa17bba82beac4ef457c8d7ca885b709a0c366b6124625875",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 80,
+      "extracted": {
+        "authoritative": [
+          false
+        ],
+        "ids": [
+          "99d4fbab-4cbe-4938-883e-c2fd5133456f"
+        ]
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_list",
+          "status": 200
+        }
+      ],
+      "method": "GET",
+      "n": 2,
+      "request_sha256": null,
+      "response_sha256": "52a601226de885d919c455875f91359336ac55fc7b2da2cb17ad72244007e313",
+      "target": "/v1/intake?status=pending&scope=project%3A{id}"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 85,
+      "extracted": {
+        "authority": "observed",
+        "error_code": null,
+        "record_type": "task",
+        "status": "issued"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_confirmation_issue_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 3,
+      "request_sha256": "24010291a1c43ee93762fff437a78b8c145ab6ce6063a125372c972a6ec38523",
+      "response_sha256": "385ee108638723953c944fe8aa50cdabd8ab4a5d707336d6d558cce6cc8c9d3d",
+      "target": "/v1/intake/{id}/confirmation"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 100,
+      "extracted": {
+        "error_code": null,
+        "outcome": "promoted",
+        "record_version": 1,
+        "replayed": false,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_candidate_promote_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 4,
+      "request_sha256": "beac656fe2d69ecc3c04d846e92bb232d55e423cf84b70129d1fa224afb90843",
+      "response_sha256": "11e0e3425bb3e8023c1bd0be61e9cf48b479a33b1dc51a48451d8e0b4dca5c1f",
+      "target": "/v1/intake/{id}/promote"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 86,
+      "extracted": {
+        "error_code": null,
+        "status": "issued",
+        "task_class": "e2e.01"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_policy_confirmation_issue_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 5,
+      "request_sha256": "7c17e6bd0214da227f1ea3fb4fd28ab3175d87b3204cddc915705f43646035cf",
+      "response_sha256": "038cf04fe29f83103d2d1c21875d8e660a0a8a9a755f67210d5c2f75edb63355",
+      "target": "/v1/context/policies/confirmation"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 87,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_policy_accept_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 6,
+      "request_sha256": "9a9f7bffb180c04375ddd0f6a23ff955e12741d6368de93ac35e4fd0e299a132",
+      "response_sha256": "cb85ffbb624d7ced0d734b750d70e2b1360626893493971afde1ef0a7b7b75c6",
+      "target": "/v1/context/policies"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 4,
+      "extracted": {
+        "protocol": "2025-06-18"
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 7,
+      "request_sha256": "4d28c60c731d9d4177dfd117d0cb40479b2f14f8c1d7fbff6d28016062332dd4",
+      "response_sha256": "ca97767904dcc0fa651d9e8a1f0475032ac8e4970edce92ff92c1338bdd309ad",
+      "target": "/mcp initialize"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 682,
+      "extracted": {
+        "authoritative": true,
+        "error_code": null,
+        "execution_authorization": "NOT_GRANTED",
+        "items": [
+          {
+            "human_confirmed": true,
+            "id": "30e9f2e9-c40c-40f2-86ed-2820d57e7056",
+            "labels": [],
+            "tier": "authority_information",
+            "version": 1
+          }
+        ],
+        "manifest_reused": false,
+        "measurement_status": "measured",
+        "model_extraction": "NOT_EVALUATED",
+        "reason": null,
+        "revalidation": null,
+        "status": "ok"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_pack",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 8,
+      "request_sha256": "173b3ec529fcffee30ce0e4bbb7996eb2600dcb726178610dc4ff681f7dc0a42",
+      "response_sha256": "33eadd074087df4815a5b6a8690b22c704a642086c915dc1d1c663e54de05f64",
+      "target": "/mcp tools/call clued_context_pack"
+    }
+  ]
+}
