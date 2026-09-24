@@ -192,8 +192,14 @@ try {
   const runDue = async (force = false) => {
     for (const task of [...deferred]) {
       if (!force && Date.now() < task.dueAt) continue;
-      const wait = task.dueAt - Date.now();
-      if (wait > 0) { log(`waiting ${Math.ceil(wait / 1000)} s for the real-clock TTL`); await new Promise((r) => setTimeout(r, wait)); }
+      // setTimeout runs on the monotonic clock but token expiry is judged on
+      // the wall clock (Node and the db container share the host clock). A
+      // wall-clock step backwards during the wait (NTP) would wake us early,
+      // so re-wait until the wall clock itself has reached dueAt.
+      for (let wait = task.dueAt - Date.now(); wait > 0; wait = task.dueAt - Date.now()) {
+        log(`waiting ${Math.ceil(wait / 1000)} s for the real-clock TTL`);
+        await new Promise((r) => setTimeout(r, wait));
+      }
       deferred.splice(deferred.indexOf(task), 1);
       ttlWaits.push({ scenario: task.scenario.id, waited_ms_since_token_issue: Date.now() - task.issuedAt,
         required_ms: task.requiredMs });

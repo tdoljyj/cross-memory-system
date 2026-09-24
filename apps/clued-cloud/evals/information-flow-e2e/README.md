@@ -77,7 +77,9 @@ npx --yes supabase@2.115.0 stop --no-backup
 
 The run waits for the real 5-minute confirmation-token TTL (E2E-02, E2E-15), so
 it takes about 8–12 minutes. `--ttl-wait-ms` shortens the wait for debugging only;
-such a run is not evidence. E2E-08 restarts the db, PostgREST, GoTrue and Kong
+such a run is not evidence. The wait re-arms until the wall clock (which the
+db container shares and token expiry is judged on) reaches the due time, so a
+backward clock step during the wait cannot wake it early. E2E-08 restarts the db, PostgREST, GoTrue and Kong
 containers and runs phase B in a new process (`continuity-phase-b.mjs`).
 
 ## Pending full run
