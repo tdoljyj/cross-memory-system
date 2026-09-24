@@ -288,6 +288,7 @@ test('promotion results map to HTTP status, including the RFC 9470 step-up chall
     [{ status: 'rejected', error_code: 'reauthentication_required', authoritative: false }, 401],
     [{ status: 'rejected', error_code: 'confirmation_token_reused' }, 403],
     [{ status: 'rejected', error_code: 'confirmation_token_same_request' }, 403],
+    [{ status: 'rejected', error_code: 'confirmation_token_session_id_required', authoritative: false }, 403],
     [{ status: 'rejected', error_code: 'confirmation_view_stale' }, 409],
     [{ status: 'rejected', error_code: 'candidate_not_pending' }, 409],
     [{ status: 'rejected', error_code: 'candidate_expired' }, 409],
