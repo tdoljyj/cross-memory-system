@@ -86,14 +86,14 @@ jobs:
           node-version: 24.19.0
           # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below.
       - run: npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline
-      - name: Stage embedded PostgreSQL ICU compatibility runtime (job-local, no sudo)
+      - name: Hydrate embedded PostgreSQL bundled library symlinks
+        # --ignore-scripts skips the platform package's postinstall, which links the
+        # bundled libpq.so.5 and libicu*.so.60 that the binaries load via $ORIGIN/../lib.
+        working-directory: apps/clued-cloud/node_modules/@embedded-postgres/linux-x64
         run: |
-          icu_dir="$RUNNER_TEMP/libicu60"
-          curl -fsSLo "$RUNNER_TEMP/libicu60.deb" https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
-          echo "f01f61f57e63dc905e02e6441d10370fe0c79e43e70e6f5fe24b342fd2633209  $RUNNER_TEMP/libicu60.deb" | sha256sum -c -
-          rm -rf "$icu_dir" && dpkg-deb -x "$RUNNER_TEMP/libicu60.deb" "$icu_dir"
-          test -f "$icu_dir/usr/lib/x86_64-linux-gnu/libicuuc.so.60"
-          echo "LD_LIBRARY_PATH=$icu_dir/usr/lib/x86_64-linux-gnu" >> "$GITHUB_ENV"
+          node scripts/hydrate-symlinks.js
+          ./native/bin/initdb --version
+          ./native/bin/postgres --version
       - run: npm run typecheck
       - run: npm run test:authorization:transport
       - run: npm run test:authorization:database
