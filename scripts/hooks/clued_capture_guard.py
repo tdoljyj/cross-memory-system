@@ -8,7 +8,9 @@ the stop once, with a reason, when it finds:
 
 * a material outcome (merged PR, pushed main, applied migration, deployed edge
   function) with no Clued write attempted after it;
-* committed Clued writes with no committed checkpoint after them;
+* committed Clued writes with no committed checkpoint for their context after
+  them (BUG-20260924-003: a checkpoint absorbs only its own context's events,
+  so project-scope writes need a checkpoint in that project's context);
 * a human message that looks like an Owner decision with no Clued write
   attempted after it.
 
@@ -80,6 +82,15 @@ def result_status(text: str) -> str | None:
     return data.get("status") if isinstance(data, dict) else None
 
 
+def write_context(tool_input: dict) -> str | None:
+    """The checkpoint context a write belongs to, or None when unknown."""
+    for key in ("scope", "context_key"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def load_entries(path: Path) -> list[dict]:
     entries = []
     with path.open(encoding="utf-8", errors="replace") as handle:
@@ -106,8 +117,8 @@ def analyse(entries: list[dict]) -> list[Finding]:
     calls: dict[str, tuple[int, str, dict]] = {}
     outcomes: list[tuple[int, str, str]] = []  # (position, key, description)
     write_attempts: list[int] = []
-    committed_writes: list[tuple[int, str]] = []
-    checkpoints: list[int] = []
+    committed_writes: list[tuple[int, str, str | None]] = []  # (position, use id, context)
+    checkpoints: list[tuple[int, str]] = []  # (position, context)
     human_prompts: list[tuple[int, str, str]] = []  # (position, key, text)
 
     for pos, entry in enumerate(entries):
@@ -141,9 +152,9 @@ def analyse(entries: list[dict]) -> list[Finding]:
             body = result_text(block.get("content"))
             failed = bool(block.get("is_error"))
             if suffix in CLUED_WRITE_TOOLS and not failed and result_status(body) == "committed":
-                committed_writes.append((pos, use_id))
+                committed_writes.append((pos, use_id, write_context(tool_input)))
             elif suffix == CLUED_CHECKPOINT_TOOL and not failed and result_status(body) == "committed":
-                checkpoints.append(pos)
+                checkpoints.append((pos, write_context(tool_input) or "global"))
             elif suffix == "merge_pull_request" and not failed and '"merged":true' in body.replace(" ", ""):
                 number = tool_input.get("pullNumber", "?")
                 repo = f"{tool_input.get('owner', '')}/{tool_input.get('repo', '')}".strip("/")
@@ -167,14 +178,27 @@ def analyse(entries: list[dict]) -> list[Finding]:
                 f"- Material outcome with no Clued write after it: {description}. "
                 "Record it per §3 (close or update the Task, or a follow-up note).",
             ))
-    last_checkpoint = max(checkpoints, default=-1)
-    unchecked = [use_id for pos, use_id in committed_writes if pos > last_checkpoint]
-    if unchecked:
-        findings.append(Finding(
-            f"checkpoint:{unchecked[-1]}",
-            f"- {len(unchecked)} committed Clued write(s) since the last checkpoint. "
-            "Reconcile if you wrote since resume, then clued_session_checkpoint (§5).",
-        ))
+    # A write is settled by a later checkpoint in its own context; a write whose
+    # context is unknown is settled by any later checkpoint.
+    pending: dict[str, list[str]] = {}
+    for pos, use_id, context in committed_writes:
+        if not any(cp_pos > pos and (context is None or cp_context == context)
+                   for cp_pos, cp_context in checkpoints):
+            pending.setdefault(context or "", []).append(use_id)
+    for context, use_ids in pending.items():
+        if context:
+            message = (
+                f"- {len(use_ids)} committed Clued write(s) in context {context} since the last "
+                f"checkpoint in that context. Resume with context_key={context}, reconcile, then "
+                "clued_session_checkpoint with the same context_key and those writes' event IDs; "
+                "a checkpoint never covers another context's events (§5)."
+            )
+        else:
+            message = (
+                f"- {len(use_ids)} committed Clued write(s) since the last checkpoint. "
+                "Reconcile if you wrote since resume, then clued_session_checkpoint (§5)."
+            )
+        findings.append(Finding(f"checkpoint:{context}:{use_ids[-1]}", message))
     if human_prompts:
         pos, key, text = human_prompts[-1]
         match = DECISION_PATTERN.search(text)

@@ -94,6 +94,35 @@ class CaptureGuardTest(unittest.TestCase):
                    result("c1", {"error": "current_truth_changed_since_resume", "status": "conflict"}, True)]
         self.assertEqual(self.run_hook(entries).returncode, 2)
 
+    def test_checkpoint_in_another_context_does_not_settle_writes(self):
+        project = "project:0597aa60-9b98-4da6-a4ab-63d7705b632f"
+        entries = [call("w1", MUTATE, {"scope": project}), result("w1", COMMITTED),
+                   call("c1", CHECKPOINT, {"context_key": "global"}),
+                   result("c1", {"status": "committed", "version": 2})]
+        proc = self.run_hook(entries)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn(f"in context {project}", proc.stderr)
+        self.assertIn(f"context_key={project}", proc.stderr)
+
+    def test_checkpoint_without_context_key_counts_as_global(self):
+        entries = [call("w1", MUTATE, {"scope": "global"}), result("w1", COMMITTED),
+                   call("c1", CHECKPOINT), result("c1", {"status": "committed", "version": 2})]
+        self.assertEqual(self.run_hook(entries).returncode, 0)
+
+    def test_each_context_needs_its_own_checkpoint(self):
+        project = "project:p1"
+        writes = [call("w1", MUTATE, {"scope": "global"}), result("w1", COMMITTED),
+                  call("w2", MUTATE, {"scope": project}), result("w2", COMMITTED)]
+        global_only = writes + [call("c1", CHECKPOINT, {"context_key": "global"}),
+                                result("c1", {"status": "committed"})]
+        proc = self.run_hook(global_only)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn(f"in context {project}", proc.stderr)
+        self.assertNotIn("in context global", proc.stderr)
+        both = global_only + [call("c2", CHECKPOINT, {"context_key": project}),
+                              result("c2", {"status": "committed"})]
+        self.assertEqual(self.run_hook(both).returncode, 0)
+
     def test_decision_prompt_without_write_blocks(self):
         proc = self.run_hook([human("那就保持原样", "u9")])
         self.assertEqual(proc.returncode, 2)

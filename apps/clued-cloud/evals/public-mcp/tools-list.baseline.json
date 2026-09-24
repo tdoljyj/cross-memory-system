@@ -557,7 +557,7 @@
     },
     {
       "name": "clued_session_checkpoint",
-      "description": "Call before ending or handing off an authorized session. Atomically commits a canonical checkpoint using optimistic concurrency and returns an audit receipt or explicit conflict. Required Clued scope: context:write.",
+      "description": "Call before ending or handing off an authorized session. Atomically commits a canonical checkpoint using optimistic concurrency and returns an audit receipt or explicit conflict. A checkpoint covers only events of its own context_key: checkpoint project-scope writes in a session resumed with that project's context_key, and global writes in a global session. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
         "required": [

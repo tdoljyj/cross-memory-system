@@ -58,10 +58,12 @@ Rules for every capture:
 | `stale_base_version` (checkpoint) | Wrong counter | Use the session version from resume or the last checkpoint |
 | `resume_required_or_session_expired` | The token expired or was used by a checkpoint | Resume, reconcile if asked, retry with the new token (§5) |
 | `current_truth_changed_since_resume` (checkpoint) | A write changed current state after resume or the last reconcile | Reconcile with the same token, then retry the checkpoint (§5) |
+| `checkpoint_event_not_authorized` (checkpoint) | `coverage.event_ids` lists an event of another context | Checkpoint each context in its own session (§5) |
 | `lifecycle_action_cannot_edit_record_content` | A close or restore carried content fields | Send only `closure_summary` / `closed_reason` |
 | `INVALID_RECORD_FIELDS` | Missing or malformed fields | Add the named fields |
 
 5. Treat revoked or expired credentials as hard stops and resume again instead of overwriting; missing capability or failed admission remains unavailable. Report exactly what is unavailable and continue unrelated work.
+6. Some Hosts show every HTTP 403 as "blocked by a firewall or security service". Clued returns 403 for authorization denials and for contract-rule rejections it has not yet mapped to a tool error, so check your arguments against the tool's contract before calling it a network or infrastructure failure, and label any unverified cause as a guess.
 
 ## 5. End
 
@@ -69,7 +71,8 @@ Rules for every capture:
 2. The session remembers the current state it saw at resume or at its last reconcile. Any write since then, including your own §3 writes, makes the checkpoint fail with `current_truth_changed_since_resume`. So when you have written anything since resume or the last reconcile, call `clued_session_reconcile` with the same token before the checkpoint.
 3. A committed checkpoint ends that session token. To checkpoint again later in the same conversation, resume again, reconcile if the resume asks for it or you have written since, then checkpoint with the new token and the new session version.
 4. A checkpoint never replaces a §3 write, and a §3 write never needs a separate event to mirror it.
-5. Hosts with end-of-session hooks should enforce §3 and §5 there. Hosts without hooks rely on this text; the next resume reports capture state as unknown.
+5. A checkpoint covers only events of its own `context_key`. Project-scope writes belong to that project's context: resume with `context_key` `project:<id>`, reconcile, and checkpoint there with those writes' event IDs. Global writes are checkpointed in a global session. Never list one context's events in another context's checkpoint; when a context has nothing to absorb, pass an empty `event_ids`.
+6. Hosts with end-of-session hooks should enforce §3 and §5 there. Hosts without hooks rely on this text; the next resume reports capture state as unknown.
 
 ## 6. Boundaries
 

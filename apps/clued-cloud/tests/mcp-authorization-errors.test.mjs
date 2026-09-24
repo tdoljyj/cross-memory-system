@@ -68,7 +68,8 @@ test('missing credentials challenge before storage; authorized empty list succee
 test('contract-rule rejections return a tool error instead of an HTTP 403', async () => {
   const original = globalThis.fetch;
   try {
-    for (const message of ['lifecycle_action_cannot_edit_record_content', 'resume_required', 'project_scope_mismatch']) {
+    for (const message of ['lifecycle_action_cannot_edit_record_content', 'resume_required', 'project_scope_mismatch',
+      'checkpoint_event_not_authorized']) {
       globalThis.fetch = async () => Response.json({ code: '42501', message }, { status: 401 });
       const response = await handle(request('clued_bnd_isolated-fixture'), env);
       assert.equal(response.status, 200);
@@ -84,6 +85,34 @@ test('contract-rule rejections return a tool error instead of an HTTP 403', asyn
       { code: '42501', message: 'lifecycle_action_cannot_edit_record_content' }, { status: 401 });
     const { result } = await (await handle(request('clued_bnd_isolated-fixture'), env)).json();
     assert.match(result.structuredContent.error.hint, /closure_summary/);
+  } finally { globalThis.fetch = original; }
+});
+
+test('a checkpoint covering another context\'s events is a tool error, not a firewall-looking 403', async () => {
+  // BUG-20260924-003: this 42501 reached Hosts as HTTP 403, which they render as
+  // "blocked by a firewall", and the Agent misreported an infrastructure failure.
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async url => {
+      assert.equal(new URL(url).pathname, '/rest/v1/rpc/clued_mcp_commit_checkpoint');
+      return Response.json({ code: '42501', message: 'checkpoint_event_not_authorized' }, { status: 401 });
+    };
+    const response = await handle(new Request('https://clued.example/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer clued_bnd_isolated-fixture' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
+        name: 'clued_session_checkpoint', arguments: {
+          session_token: 'clued_ses_fixture', base_version: 1, context_key: 'global', snapshot: {},
+          summary: 's', next_action: 'n',
+          coverage: { mode: 'explicit', contexts: ['global'], tracks: ['t'], event_ids: [7] } } } }),
+    }), env);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.has('www-authenticate'), false);
+    const { result } = await response.json();
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, 'checkpoint_event_not_authorized');
+    assert.equal(result.structuredContent.error.category, 'request_rule');
+    assert.match(result.structuredContent.error.hint, /context_key/);
   } finally { globalThis.fetch = original; }
 });
 
