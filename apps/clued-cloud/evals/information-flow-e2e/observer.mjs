@@ -1,7 +1,8 @@
 // Read-only database observer (plan section 2.1, rule in section 3). Used
-// only for internal state that has no transport read route: lineage,
-// record_evidence_status, MTPE/projection/currentness heads, carriers and
-// Receipt status. Every query runs in a READ ONLY transaction and every
+// for internal state that has no transport read route (lineage,
+// record_evidence_status, token rows, Native markers, MTPE/projection/
+// currentness heads, carriers and stored Receipt status) and, where a
+// transport read route exists, only as corroboration of that read. Every query runs in a READ ONLY transaction and every
 // connection re-asserts the database identity recorded after `db reset`.
 
 import pg from 'pg';

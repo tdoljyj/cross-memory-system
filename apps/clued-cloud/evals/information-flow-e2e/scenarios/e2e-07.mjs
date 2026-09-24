@@ -2,7 +2,12 @@
 // PostgREST committed and before the Worker answers, a new host is started,
 // the same key and body replay the committed result, and a different digest
 // under the same key is rejected with a Receipt. Repeated for the Native
-// route and for the MCP intake and knowledge-proposal tools.
+// route and for the MCP intake and knowledge-proposal tools. "One row per
+// key" is observed through the transport list routes (GET /v1/intake with
+// submission_id, MCP clued_intake_list); the read-only observer counts by
+// idempotency key as corroboration. The rejected Receipt's stored status has
+// no transport read route (the audit route needs audit:read and returns no
+// status), so it stays an observer read beside the transport response.
 import { documentOf, item, key, nativeNote, segment } from './common.mjs';
 
 export const id = 'E2E-07';
@@ -49,6 +54,16 @@ export async function run(ctx, r) {
     extract: (b) => ({ status: b?.status, replayed: b?.replayed }) });
   r.check('07.native.replayed', 'the same key and body replay the committed Receipt', [200, true, n1.committed.receipt_id],
     [retry.status, retry.body?.replayed, retry.body?.receipt_id]);
+  const submissionId = n1.committed.supplemental?.submission_id ?? null;
+  const bySubmission = await r.rest(U, 'GET', `/v1/intake?scope=${encodeURIComponent(scope)}`
+    + `&submission_id=${encodeURIComponent(submissionId ?? '')}&limit=200`, undefined, { session,
+    extract: (b) => ({ status: b?.status, count: b?.candidates?.length ?? null }) });
+  const listed = await r.rest(U, 'GET', `/v1/intake?scope=${encodeURIComponent(scope)}&limit=200`, undefined, { session,
+    extract: (b) => ({ status: b?.status, local: b?.candidates?.filter((c) => c.candidate_local_id === 'item_e07n').length }) });
+  r.check('07.native.one_candidate_transport', 'transport: the submission lists one candidate and the scope holds one '
+    + 'candidate for the item', [200, [n1.committed.supplemental?.candidates?.[0]?.id ?? null], 1],
+  [bySubmission.status, (bySubmission.body?.candidates ?? []).map((c) => c.id),
+    (listed.body?.candidates ?? []).filter((c) => c.candidate_local_id === 'item_e07n').length]);
   r.check('07.native.one_submission', 'one submission row for the key', 1, await count(r,
     'select count(*)::int n from clued_private.information_intake_submissions where user_id=$1 and idempotency_key=$2',
     [U.userId, nativeKey]));
@@ -75,6 +90,12 @@ export async function run(ctx, r) {
     replayed: b?.replayed }) });
   r.check('07.agent.replayed', 'the MCP retry replays the committed Receipt', [true, a1.committed.receipt_id],
     [agentRetry.structured?.replayed, agentRetry.structured?.receipt_id]);
+  const agentListed = await r.tool(B, 'clued_intake_list', { scope, limit: 200 }, {
+    extract: (b) => ({ status: b?.status, local: b?.candidates?.filter((c) => c.candidate_local_id === 'item_e07a').length }) });
+  r.check('07.agent.one_candidate_transport', 'transport: the MCP list holds one candidate for the item',
+    [1, a1.committed.supplemental?.submission_id ?? null],
+    [(agentListed.structured?.candidates ?? []).filter((c) => c.candidate_local_id === 'item_e07a').length,
+      (agentListed.structured?.candidates ?? []).find((c) => c.candidate_local_id === 'item_e07a')?.submission_id ?? null]);
   r.check('07.agent.one_submission', 'one submission row for the MCP key', 1, await count(r,
     'select count(*)::int n from clued_private.information_intake_submissions where user_id=$1 and idempotency_key=$2',
     [U.userId, agentKey]));
@@ -97,6 +118,11 @@ export async function run(ctx, r) {
     replayed: b?.replayed }) });
   r.check('07.kp.replayed', 'the proposal retry replays the committed Receipt', [true, k1.committed.receipt_id],
     [kpRetry.structured?.replayed, kpRetry.structured?.receipt_id]);
+  const kpListed = await r.tool(B, 'clued_intake_list', { scope, tier: 'knowledge', limit: 200 }, {
+    extract: (b) => ({ status: b?.status, count: b?.candidates?.length ?? null }) });
+  r.check('07.kp.one_candidate_transport', 'transport: the MCP knowledge list holds one candidate for the assertion',
+    [k1.committed.supplemental?.candidate_id ?? null],
+    (kpListed.structured?.candidates ?? []).filter((c) => c.assertion === kpBody.assertion).map((c) => c.id));
   r.check('07.kp.one_candidate', 'one knowledge candidate for the key', 1, await count(r,
     'select count(*)::int n from clued_private.knowledge_candidates where user_id=$1 and idempotency_key=$2',
     [U.userId, kpKey]));

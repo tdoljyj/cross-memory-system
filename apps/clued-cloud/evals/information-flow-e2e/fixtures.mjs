@@ -1,8 +1,10 @@
 // The only harness database write path (plan section 2.1). Used exclusively
 // for setup that has no product transport: v12 issuer registration, the
-// E2E-13 maintenance write and Binding-row delete, and the E2E-15(b)
-// Evidence re-point. Every call is recorded by the harness as a
-// `db_fixture_setup` step and is never a pass observation.
+// E2E-13 maintenance write and Binding-row delete, the E2E-15 (d)/(d2)
+// candidate Evidence re-point, and the E2E-15 (d3) Evidence content-hash
+// tamper (tamperEvidenceHash, session_replication_role=replica for one
+// statement). Every call is recorded by the harness as a `db_fixture_setup`
+// step and is never a pass observation.
 
 import pg from 'pg';
 import { identity, loopbackOrBridge } from './observer.mjs';
