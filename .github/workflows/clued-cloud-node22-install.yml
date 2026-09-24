@@ -1,6 +1,6 @@
 name: clued-cloud-node22-install
 
-# apps/clued-cloud declares engines node >=22.13.0, but every other workflow
+# apps/clued-cloud declares engines node >=22.22.0, but every other workflow
 # installs on Node 24 (npm 11). npm 10 validates the lockfile more strictly,
 # so a lockfile that npm 11 accepts can still fail `npm ci` on Node 22.
 # This job installs on the declared engines floor to catch that drift.
@@ -52,7 +52,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.13.0
+          node-version: 22.22.0
       - run: node --version && npm --version
       - name: Install from lockfile on the engines floor
         run: >-
@@ -84,7 +84,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.13.0
+          node-version: 22.22.0
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
       - run: node --version && npm --version

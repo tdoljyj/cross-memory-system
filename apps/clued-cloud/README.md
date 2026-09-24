@@ -119,7 +119,7 @@ ChatGPT/Sites publishing surfaces are separate targets. A successful Sites build
 
 ## Local prerequisites
 
-- Node.js `>=22.13.0`
+- Node.js `>=22.22.0`
 - Docker for local Supabase/database suites
 - Linux/GNU utilities for scripts that explicitly require `bash`, `flock` or `timeout`
 
