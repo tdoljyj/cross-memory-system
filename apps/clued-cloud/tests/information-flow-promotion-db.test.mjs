@@ -415,7 +415,7 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
       assert.ok(!JSON.stringify(storedToken).includes(view.confirmation_token), 'the raw token is never stored');
       assert.equal(storedToken.session_id, 'sess-main');
       assert.ok(storedToken.expires_at - storedToken.issued_at === 5 * 60 * 1000, 'TTL is five minutes');
-      const e01Promote = await post(`/v1/intake/${e01Id}/promote`, { idempotency_key: 'if-s3-e01-promote',
+      const e01Promote = await post(`/v1/intake/${e01Id}/promote`, { idempotency_key: 'if-s3-promote-0101',
         base_version: 1, confirmation_token: view.confirmation_token, view_digest: view.view_digest });
       assert.equal(e01Promote.status, 200, JSON.stringify(e01Promote.body));
       assert.equal(e01Promote.body.status, 'committed');
@@ -466,7 +466,7 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
       // The pack is S4: it still fails closed (residual, disclosed).
       assert.equal((await call('clued_context_pack', { scope: 'global' })).error_code, 'CONTEXT_POLICY_REQUIRED');
       // Idempotent replay of the same key and body.
-      const e01Replay = await post(`/v1/intake/${e01Id}/promote`, { idempotency_key: 'if-s3-e01-promote',
+      const e01Replay = await post(`/v1/intake/${e01Id}/promote`, { idempotency_key: 'if-s3-promote-0101',
         base_version: 1, confirmation_token: view.confirmation_token, view_digest: view.view_digest });
       assert.equal(e01Replay.status, 200);
       assert.deepEqual([e01Replay.body.replayed, e01Replay.body.receipt_id], [true, e01Promote.body.receipt_id]);
@@ -951,7 +951,7 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
       const k3 = await call('clued_knowledge_propose', { idempotency_key: 'if-s3-e03-kp3', scope: 'global',
         rule_id: 'knowledge.dedup.v1', assertion: 'Duplicate risk notes.', sources: [{ id: sourceK2, version: 1 }] });
       const k3Reject = await post(`/v1/knowledge/candidates/${k3.supplemental.candidate_id}/reject`,
-        { idempotency_key: 'if-s3-kreject-01', base_version: 1 });
+        { idempotency_key: 'if-s3-promote-0102', base_version: 1 });
       assert.equal(k3Reject.status, 200, JSON.stringify(k3Reject.body));
       const k3Again = await call('clued_knowledge_propose', { idempotency_key: 'if-s3-e03-kp4', scope: 'global',
         rule_id: 'knowledge.dedup.v1', assertion: 'Duplicate risk notes.', sources: [{ id: sourceK2, version: 1 }] });
@@ -961,7 +961,7 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
       const withdrawable = await submit([item('withdraw', 'fact')], { via: 'agent' });
       const wdId = withdrawable.ids.item_withdraw;
       const wdToken = await issue({ tier: 'information', candidate_id: wdId, base_version: 1, authority: 'user_explicit' });
-      assert.equal((await agent(tokenA, 'clued_intake_withdraw', { idempotency_key: 'if-s3-withdraw-01', scope: 'global',
+      assert.equal((await agent(tokenA, 'clued_intake_withdraw', { idempotency_key: 'if-s3-promote-0103', scope: 'global',
         candidate_id: wdId, base_version: 1 })).status, 'committed');
       assert.ok((await tokenRow(wdToken.token_id)).revoked_at instanceof Date);
 
@@ -1019,10 +1019,10 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
     await admin.query('update public.clued_projects set merged_into_project_id=$2 where id=$1', [cycleA, cycleB]);
     await admin.query('update public.clued_projects set merged_into_project_id=$2 where id=$1', [cycleB, cycleA]);
     await admin.query('set session_replication_role=origin');
-    const cycleSubmit = await agent(tokenA, 'clued_intake_submit', { idempotency_key: 'if-s3-cycle-submit',
+    const cycleSubmit = await agent(tokenA, 'clued_intake_submit', { idempotency_key: 'if-s3-promote-0104',
       scope: `project:${cycleA}`, segment: segment('seg_s3_cycle'), candidates: documentOf('seg_s3_cycle', [item('c', 'fact')]) });
     assert.deepEqual([cycleSubmit.status, cycleSubmit.error_code], ['rejected', 'project_redirect_cycle']);
-    const cycleWithdraw = await agent(tokenA, 'clued_intake_withdraw', { idempotency_key: 'if-s3-cycle-withdraw',
+    const cycleWithdraw = await agent(tokenA, 'clued_intake_withdraw', { idempotency_key: 'if-s3-promote-0105',
       scope: `project:${cycleA}`, candidate_id: pendingForCycle, base_version: 1 });
     assert.deepEqual([cycleWithdraw.status, cycleWithdraw.error_code], ['rejected', 'project_redirect_cycle']);
   } finally {
