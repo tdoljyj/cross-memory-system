@@ -88,3 +88,39 @@ test("normal track to topic organization is admitted", () => {
   });
   assert.equal(result.status, "allow");
 });
+
+test("path traversal cannot escape the managed root", () => {
+  const result = check({
+    operation: "write",
+    artifact_role: "clued_resource",
+    destination_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/../../Clued旁路/a.md",
+  });
+  assert.equal(result.error_code, "SIBLING_ISLAND_FORBIDDEN");
+});
+
+test("Windows path matching is case-insensitive", () => {
+  const result = check({
+    operation: "write",
+    artifact_role: "clued_resource",
+    destination_path: "g:/我的云端硬盘/CLUED_资料中心/20_P_产品与体验/品牌与视觉/a.md",
+  });
+  assert.equal(result.status, "allow");
+});
+
+test("artifact role omission fails closed", () => {
+  const result = check({
+    operation: "move",
+    source_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/a.md",
+    destination_path: "G:/我的云端硬盘/Clued品牌资料/a.md",
+  });
+  assert.equal(result.error_code, "ARTIFACT_ROLE_REQUIRED");
+});
+
+test("delete classification omission fails closed", () => {
+  const result = check({
+    operation: "delete",
+    artifact_role: "clued_resource",
+    source_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/a.md",
+  });
+  assert.equal(result.error_code, "GOVERNANCE_CLASS_REQUIRED");
+});
