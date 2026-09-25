@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { detectResourceCenterBoundaryViolations, evaluateResourceCenterMutation, prepareResourceCenterMutationAdmission, verifyResourceCenterMutationAdmission } from "../../../kernel/policy/resource-center-mutation-policy.mjs";
+import { createGuardedResourceCenterMutator, detectResourceCenterBoundaryViolations, evaluateResourceCenterMutation, prepareResourceCenterMutationAdmission, verifyResourceCenterMutationAdmission } from "../../../kernel/policy/resource-center-mutation-policy.mjs";
 
 const profile = {
   managed_root: "G:/我的云端硬盘/Clued_资料中心",
@@ -308,4 +308,75 @@ test("host admission fails if a proof is replayed under another registered profi
     mutation,
   });
   assert.equal(result.error_code, "ADMISSION_BINDING_MISMATCH");
+});
+
+
+test("guarded Host wrapper never calls the side effect when preflight denies", async () => {
+  const registered = {
+    ...profile,
+    profile_id: "resource-center-primary",
+    registration_status: "registered",
+  };
+  let calls = 0;
+  const mutate = createGuardedResourceCenterMutator({
+    registered_profile: registered,
+    effect: async () => {
+      calls += 1;
+      return { ok: true };
+    },
+  });
+  const result = await mutate({
+    operation: "create",
+    artifact_role: "clued_resource",
+    target_kind: "directory",
+    directory_semantics: "topic",
+    destination_path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c/\u54c1\u724c\u4e0e\u89c6\u89c9/00_\u73b0\u884c\u57fa\u7ebf",
+  });
+  assert.equal(result.error_code, "STATUS_SEMANTIC_DIRECTORY_FORBIDDEN");
+  assert.equal(calls, 0);
+});
+
+test("guarded Host wrapper calls the side effect once with the exact admitted mutation", async () => {
+  const registered = {
+    ...profile,
+    profile_id: "resource-center-primary",
+    registration_status: "registered",
+  };
+  const seen = [];
+  const mutate = createGuardedResourceCenterMutator({
+    registered_profile: registered,
+    effect: async ({ mutation, admission }) => {
+      seen.push({ mutation, admission });
+      return { receipt: "host-effect-1" };
+    },
+  });
+  const mutation = {
+    operation: "move",
+    artifact_role: "clued_resource",
+    source_path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/90_\u5f85\u5f52\u7c7b/a.md",
+    destination_path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c/brand/a.md",
+  };
+  const result = await mutate(mutation);
+  assert.equal(result.status, "committed");
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].mutation, mutation);
+  assert.equal(seen[0].admission.profile_id, "resource-center-primary");
+  assert.equal(result.effect_result.receipt, "host-effect-1");
+});
+
+test("guarded Host wrapper stays read-only when its profile is not registered", async () => {
+  let calls = 0;
+  const mutate = createGuardedResourceCenterMutator({
+    registered_profile: profile,
+    effect: async () => {
+      calls += 1;
+    },
+  });
+  const result = await mutate({
+    operation: "write",
+    artifact_role: "clued_resource",
+    destination_path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c/a.md",
+  });
+  assert.equal(result.error_code, "REGISTERED_PROFILE_REQUIRED");
+  assert.equal(calls, 0);
 });

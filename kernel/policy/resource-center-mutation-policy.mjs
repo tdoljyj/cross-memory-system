@@ -276,3 +276,38 @@ export function verifyResourceCenterMutationAdmission({
     profile_id: prepared.profile_id,
   };
 }
+
+
+export function createGuardedResourceCenterMutator({ registered_profile: profile, effect } = {}) {
+  if (typeof effect !== "function") {
+    throw new TypeError("A trusted Host effect function is required.");
+  }
+
+  return async function guardedResourceCenterMutation(mutation) {
+    const admission = prepareResourceCenterMutationAdmission({
+      registered_profile: profile,
+      mutation,
+    });
+    if (admission.status !== "admitted") return admission;
+
+    const verification = verifyResourceCenterMutationAdmission({
+      admission,
+      registered_profile: profile,
+      mutation,
+    });
+    if (verification.status !== "allow") return verification;
+
+    const effectResult = await effect({
+      mutation,
+      admission,
+    });
+
+    return {
+      status: "committed",
+      policy_version: RESOURCE_CENTER_POLICY_VERSION,
+      profile_id: admission.profile_id,
+      binding: admission.binding,
+      effect_result: effectResult,
+    };
+  };
+}
