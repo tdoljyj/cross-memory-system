@@ -751,6 +751,327 @@ const SOLE_EXEMPT = new Map([
     + '"§7.1 lexical validation" subtest'],
 ]);
 
+// ---- branch-coverage obligations for the rest of the validator surface (S2c PR-2) -------------
+// Owner Decision 0402d831-fa57-4a31-86e4-44467b85a796 carries the obligation above — a
+// branch-resolved mirror plus a sole-cause sample per branch — from integration_facts_validate_v1
+// to the surface PR #340's third and fourth delta reviews found live fail-open mutants in. The
+// granularity rule is the one stated above: one predicate per piece of SQL text whose deletion can
+// change an output, with everything deliberately not emitted argued as an equivalent mutant in
+// EQUIVALENTS, and everything real but unreachable from the generator allow-listed with the
+// committed vector that covers it instead.
+//
+// Two obligations are added here, because these functions are not all "reject if any rule fires":
+//   ACCEPT-COVER — every accepting branch (an early `return true`, or one arm of a function that
+//     returns more than a boolean) is taken by at least one sample. A reject-only mirror says
+//     nothing about a branch that exists in order to accept: deleting the ceiling's
+//     LEGACY_UNRESTRICTED short-circuit turns an accept into a reject, and no reject rule fires.
+//   VALUE — where the result is not a boolean (integration_version_cmp_v1) the accepted samples are
+//     compared against an independent oracle, so the segment comparison is covered and not only the
+//     reject half.
+//
+// A regex is one piece of text in the same sense a disjunct is: its atoms and bounds are
+// independently mutable, and PR #340's fourth delta review found exactly that mutant — widening
+// `(\.[0-9]{1,6})?` to `{1,9}` passed 41/41. So one predicate is emitted per atom of the instant
+// grammar, not one for the whole match.
+const CEILING_SCOPES = ['audit:read', 'context:read', 'context:write'];
+const CEILING_ACTIONS = ['audit', 'close', 'feedback_submit', 'read', 'restore', 'write'];
+const RESOURCE_KINDS = ['scope', 'context'];
+const ENVIRONMENTS = ['canonical', 'test', 'preview', 'production'];
+// every name compared below is ASCII, where the C collation the SQL pins and JavaScript's
+// UTF-16 code-unit order agree; the ceiling subtest asserts that on the database for the two
+// vocabularies that are actually sorted (scopes and actions), so this is checked, not assumed
+const sortedUnique = (list) => [...new Set(list)].sort();
+const isCanonicalList = (list) => JSON.stringify(list) === JSON.stringify(sortedUnique(list));
+
+// ---- integration_capabilities_valid_v1(text[]) ----
+// `select p_capabilities is not null and array_position(p_capabilities, null) is null
+//    and p_capabilities <@ array[…7 names…]`
+const CAPABILITIES_RULES = [
+  ['capabilities:null', (v) => v === null],
+  ['capabilities:vocabulary', (v) => Array.isArray(v) && !v.every((e) => e !== null && ALL.includes(e))],
+];
+
+// ---- integration_timestamp_valid_v1(text) ----
+// The lexical shape is pinned first and the guarded cast runs second, so the predicates split the
+// same way: one per atom of the regex, then one for the cast. A sample is built by mutating exactly
+// one field of a well-formed instant, which is what isolates each atom for ACCEPT/SOLE.
+const LOOSE_INSTANT = /^([0-9]*)-([0-9]*)-([0-9]*)T([0-9]*):([0-9]*):([0-9]*)(\.[0-9]*)?(.*)$/;
+const OFFSET_RE = /^(Z|[+-][0-9]{2}:[0-9]{2})$/;
+const daysInMonth = (y, m) => [31, (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0 ? 29 : 28,
+  31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+// what PostgreSQL's timestamptz cast rejects among strings the regex already accepts: an
+// out-of-range month or day, a minute of 60…99, and an offset outside ±15:59 (probed on the
+// database by the subtest, not assumed here)
+function instantCastFails(text) {
+  const m = LOOSE_INSTANT.exec(text);
+  if (!m) return false;
+  const [, y, mo, d, , mi, , , offset] = m;
+  if (Number(mo) < 1 || Number(mo) > 12) return true;
+  if (Number(d) < 1 || Number(d) > daysInMonth(Number(y), Number(mo))) return true;
+  if (Number(mi) > 59) return true;
+  if (offset !== 'Z') {
+    const [oh, om] = offset.slice(1).split(':').map(Number);
+    if (oh > 15 || om > 59 || (oh === 15 && om > 59)) return true;
+  }
+  return false;
+}
+const field = (text, i) => { const m = LOOSE_INSTANT.exec(text); return m ? m[i] : null; };
+// every rule below is written to fire only when the string reaches its atom: the shape rule owns
+// everything the loose grammar cannot split, and each field rule reads its own capture group
+const INSTANT_RULES = [
+  ['instant:null', (v) => v === null],
+  ['instant:shape', (v) => typeof v === 'string' && !LOOSE_INSTANT.test(v)],
+  ['instant:year', (v) => field(v, 1) !== null && field(v, 1).length !== 4],
+  ['instant:month', (v) => field(v, 2) !== null && field(v, 2).length !== 2],
+  ['instant:day', (v) => field(v, 3) !== null && field(v, 3).length !== 2],
+  ['instant:hour', (v) => { const h = field(v, 4); return h !== null && !/^(2[0-3]|[01][0-9])$/.test(h); }],
+  ['instant:minute', (v) => { const x = field(v, 5); return x !== null && x.length !== 2; }],
+  ['instant:second', (v) => { const s = field(v, 6); return s !== null && !/^[0-5][0-9]$/.test(s); }],
+  // the bound PR #340's fourth delta review mutated: `{1,6}` widened to `{1,9}` passed the suite,
+  // and PostgreSQL rounds a 7th digit, so the document would not denote the instant it spells
+  ['instant:fraction', (v) => { const f = field(v, 7); return f !== null && f !== undefined
+    && !/^\.[0-9]{1,6}$/.test(f); }],
+  ['instant:offset', (v) => { const o = field(v, 8); return o !== null && o !== undefined && !OFFSET_RE.test(o); }],
+  ['instant:cast', (v) => typeof v === 'string' && instantCastFails(v)],
+];
+
+// ---- integration_ceiling_valid_v1(jsonb) ----
+const CEILING_ENTRY_KEYS = ['actions', 'environment', 'resource_id', 'resource_kind'];
+const entries = (c) => (isJsonObject(c) ? c.entries : undefined);
+const entryList = (c) => (Array.isArray(entries(c)) ? entries(c) : []);
+const legacy = (c) => entries(c) === 'LEGACY_UNRESTRICTED';
+const someEntry = (c, fire) => entryList(c).some((e) => fire(e));
+const CEILING_RULES = [
+  ['ceiling:type', (c) => !isJsonObject(c)],
+  ['ceiling:keyset', (c) => isJsonObject(c)
+    && JSON.stringify(Object.keys(c).sort()) !== JSON.stringify(['entries', 'scopes'])],
+  ['ceiling:scopes:type', (c) => isJsonObject(c) && 'scopes' in c && !Array.isArray(c.scopes)],
+  ['ceiling:scopes:vocabulary', (c) => isJsonObject(c) && Array.isArray(c.scopes)
+    && !c.scopes.every((e) => typeof e === 'string' && CEILING_SCOPES.includes(e))],
+  ['ceiling:scopes:canonical', (c) => isJsonObject(c) && Array.isArray(c.scopes)
+    && c.scopes.every((e) => typeof e === 'string') && !isCanonicalList(c.scopes)],
+  ['ceiling:entries:type', (c) => isJsonObject(c) && 'entries' in c && !legacy(c) && !Array.isArray(c.entries)],
+  ['ceiling:entry:type', (c) => someEntry(c, (e) => !isJsonObject(e))],
+  ['ceiling:entry:keyset', (c) => someEntry(c, (e) => isJsonObject(e)
+    && JSON.stringify(Object.keys(e).sort()) !== JSON.stringify(CEILING_ENTRY_KEYS))],
+  ['ceiling:resource_kind:type', (c) => someEntry(c, (e) => isJsonObject(e) && 'resource_kind' in e
+    && typeof e.resource_kind !== 'string')],
+  ['ceiling:resource_kind:domain', (c) => someEntry(c, (e) => isJsonObject(e)
+    && typeof e.resource_kind === 'string' && !RESOURCE_KINDS.includes(e.resource_kind))],
+  ['ceiling:resource_id:type', (c) => someEntry(c, (e) => isJsonObject(e) && 'resource_id' in e
+    && typeof e.resource_id !== 'string')],
+  ['ceiling:resource_id:length', (c) => someEntry(c, (e) => isJsonObject(e)
+    && typeof e.resource_id === 'string' && (e.resource_id.length < 1 || e.resource_id.length > 255))],
+  ['ceiling:environment:type', (c) => someEntry(c, (e) => isJsonObject(e) && 'environment' in e
+    && typeof e.environment !== 'string')],
+  ['ceiling:environment:domain', (c) => someEntry(c, (e) => isJsonObject(e)
+    && typeof e.environment === 'string' && !ENVIRONMENTS.includes(e.environment))],
+  ['ceiling:actions:type', (c) => someEntry(c, (e) => isJsonObject(e) && 'actions' in e && !Array.isArray(e.actions))],
+  ['ceiling:actions:empty', (c) => someEntry(c, (e) => isJsonObject(e) && Array.isArray(e.actions)
+    && e.actions.length === 0)],
+  ['ceiling:actions:element', (c) => someEntry(c, (e) => isJsonObject(e) && Array.isArray(e.actions)
+    && e.actions.some((a) => typeof a !== 'string'))],
+  ['ceiling:actions:domain', (c) => someEntry(c, (e) => isJsonObject(e) && Array.isArray(e.actions)
+    && e.actions.some((a) => typeof a === 'string' && !CEILING_ACTIONS.includes(a)))],
+  ['ceiling:actions:canonical', (c) => someEntry(c, (e) => isJsonObject(e) && Array.isArray(e.actions)
+    && e.actions.length > 0 && e.actions.every((a) => typeof a === 'string') && !isCanonicalList(e.actions))],
+  ['ceiling:entry:unique', (c) => { const keys = entryList(c).filter(isJsonObject)
+    .map((e) => JSON.stringify([e.resource_kind, e.resource_id, e.environment]));
+  return new Set(keys).size !== keys.length; }],
+];
+// the accepting branch: `if v_entries = '"LEGACY_UNRESTRICTED"' then return true`. Deleting it
+// makes every legacy ceiling fail the `jsonb_typeof(v_entries) <> 'array'` test one line down, so
+// it is a real branch that no reject rule can witness (§5.2, §10.3 v0.1.2 NIT-2).
+const CEILING_ACCEPTS = [
+  ['ceiling:accept:legacy', (c) => legacy(c)],
+  ['ceiling:accept:entries', (c) => Array.isArray(entries(c)) && entries(c).length > 0],
+  ['ceiling:accept:empty-entries', (c) => Array.isArray(entries(c)) && entries(c).length === 0],
+];
+
+// ---- integration_version_cmp_v1(text, text) ----
+const DOTTED = /^[0-9]+(\.[0-9]+)*$/;
+const CMP_RULES = [
+  ['cmp:left:null', ([a]) => a === null],
+  ['cmp:right:null', ([, b]) => b === null],
+  ['cmp:left:shape', ([a]) => typeof a === 'string' && !DOTTED.test(a)],
+  ['cmp:right:shape', ([, b]) => typeof b === 'string' && !DOTTED.test(b)],
+];
+// the comparison itself, recomputed independently: segment by segment as numbers, a missing
+// trailing segment read as 0 (the `coalesce(v_left[i], '0')` the loop pads with)
+function cmpOracle([a, b]) {
+  if (CMP_RULES.some(([, fire]) => fire([a, b]))) return null;
+  const left = a.split('.');
+  const right = b.split('.');
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const x = BigInt(left[i] ?? '0');
+    const y = BigInt(right[i] ?? '0');
+    if (x < y) return -1;
+    if (x > y) return 1;
+  }
+  return 0;
+}
+const CMP_ACCEPTS = [
+  ['cmp:accept:less', (p) => cmpOracle(p) === -1],
+  ['cmp:accept:greater', (p) => cmpOracle(p) === 1],
+  ['cmp:accept:equal', (p) => cmpOracle(p) === 0],
+  // the `coalesce(…, '0')` padding: equal only because the shorter side is read as zeroes
+  ['cmp:accept:pad', (p) => cmpOracle(p) === 0 && p[0].split('.').length !== p[1].split('.').length],
+];
+
+// Branches deliberately not emitted, each because deleting the text cannot change an output. Every
+// entry was checked against the database by the "equivalent mutants" subtest below, which asserts
+// the fact the argument rests on rather than restating the argument.
+const EQUIVALENTS = [
+  ['capabilities:null-element', 'array_position(p_capabilities, null) is null — the containment '
+    + 'disjunct of the same `and` already rejects an array with a NULL element: '
+    + "array['context.read', null] <@ the vocabulary is false, not NULL"],
+  ['instant:null-input', 'p_text is null — deleting it leaves the regex test as SQL NULL, so the '
+    + '`if` does not fire, the cast of NULL yields NULL without raising, and the function returns '
+    + '`v_parsed is not null` = false, the same answer'],
+  ['ceiling:null-input', 'p_ceiling is null — deleting it leaves jsonb_typeof(NULL) NULL so the '
+    + '`if` does not fire, and jsonb_object_keys over NULL aggregates to NULL, which `is distinct '
+    + "from array['entries','scopes']` rejects on the next line"],
+  ['ceiling:scopes:element-type', 'the `exists (… jsonb_typeof(e) <> \'string\')` disjunct — a '
+    + 'non-string element is also rejected by the scope containment, because its `#>>` text form '
+    + 'is never one of the three scope names (only a JSON string can spell one), and '
+    + 'array[NULL] <@ … is false'],
+];
+
+// ---- samples for the branch-coverage obligations ----------------------------------------------
+// Each sample is `{ v, sqlNull }`: `sqlNull` is a SQL NULL argument, everything else is the JSON
+// value itself, so a JSON null and a SQL NULL stay distinguishable (they are different inputs to
+// integration_ceiling_valid_v1, and the first is not reachable through `$1::jsonb` otherwise).
+const arg = (v) => ({ v });
+const NULL_ARG = { v: null, sqlNull: true };
+function* capabilitySamples() {
+  yield NULL_ARG;
+  for (const v of [[], ALL, [...ALL].reverse(), ['context.read', 'context.read']]) yield arg(v);
+  for (const c of ALL) yield arg([c]);
+  for (const v of [['admin.write'], ['context.read', 'admin.write'], ['context:read'], ['Context.Read'],
+    [''], ['context.read '], [null], ['context.read', null], [null, null]]) yield arg(v);
+}
+function* instantSamples() {
+  yield NULL_ARG;
+  for (const v of ['2026-09-24T12:00:00Z', '2026-09-24T12:00:00.1Z', '2026-09-24T12:00:00.123456+08:00',
+    '2028-02-29T00:00:00Z', '2026-12-31T23:59:59-05:00', '2026-01-01T00:00:00+00:00',
+    '2026-09-24T00:00:00Z', '2026-09-24T23:59:59Z', '2026-09-24T12:00:00-15:59']) yield arg(v);
+  // one mutated field per rule, from the same base, so each sample isolates one atom
+  for (const v of ['', 'x', '2026-09-24 12:00:00Z', '2026-09-24T12:00Z', ' 2026-09-24T12:00:00Z',
+    '2026-09-24T12:00:00Zx', '026-09-24T12:00:00Z', '20261-09-24T12:00:00Z', '2026-9-24T12:00:00Z',
+    '2026-091-24T12:00:00Z', '2026-09-4T12:00:00Z', '2026-09-241T12:00:00Z', '2026-09-24T1:00:00Z',
+    '2026-09-24T24:00:00Z', '2026-09-24T25:00:00Z', '2026-09-24T99:00:00Z', '2026-09-24T12:0:00Z',
+    '2026-09-24T12:000:00Z', '2026-09-24T12:00:60Z', '2026-09-24T12:00:99Z', '2026-09-24T12:00:0Z',
+    '2026-09-24T12:00:00.1234567Z', '2026-09-24T12:00:00.Z', '2026-09-24T12:00:00', '2026-09-24T12:00:00z',
+    '2026-09-24T12:00:00+0800', '2026-09-24T12:00:00+08:00:00', '2026-09-24T12:00:00UTC',
+    '2026-02-30T00:00:00Z', '2026-13-01T00:00:00Z', '2026-00-10T00:00:00Z', '2026-09-00T00:00:00Z',
+    '2026-09-31T00:00:00Z', '2026-02-29T00:00:00Z', '2026-09-24T12:60:00Z', '2026-09-24T12:99:00Z',
+    '2026-09-24T12:00:00+16:00', '2026-09-24T12:00:00+08:60']) yield arg(v);
+}
+const ENTRY = { resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write'] };
+const withEntry = (patch) => ({ scopes: [], entries: [{ ...ENTRY, ...patch }] });
+function* ceilingSamples() {
+  yield NULL_ARG;
+  for (const v of [null, [], 'LEGACY_UNRESTRICTED', 1, true]) yield arg(v);
+  // accepted shapes
+  for (const v of [{ scopes: [], entries: [] }, { scopes: [], entries: 'LEGACY_UNRESTRICTED' },
+    { scopes: CEILING_SCOPES, entries: 'LEGACY_UNRESTRICTED' }, { scopes: ['context:read'], entries: [ENTRY] },
+    { scopes: CEILING_SCOPES, entries: [ENTRY, { ...ENTRY, environment: 'production' },
+      { ...ENTRY, resource_kind: 'context', resource_id: 'a'.repeat(255) }] },
+    withEntry({ actions: CEILING_ACTIONS })]) yield arg(v);
+  // key set and top-level shape
+  for (const v of [{ scopes: [] }, { entries: [] }, {}, { scopes: [], entries: [], other: 1 },
+    { scopes: [], Entries: [] }]) yield arg(v);
+  // scopes
+  for (const v of [{ scopes: 'context:read', entries: [] }, { scopes: {}, entries: [] },
+    { scopes: ['canonical:read'], entries: [] }, { scopes: ['context:read', 'audit:read'], entries: [] },
+    { scopes: ['context:read', 'context:read'], entries: [] }, { scopes: [1], entries: [] },
+    { scopes: [null], entries: [] }, { scopes: ['Context:read'], entries: [] }]) yield arg(v);
+  // entries container
+  for (const v of [{ scopes: [], entries: 'UNRESTRICTED' }, { scopes: [], entries: {} },
+    { scopes: [], entries: 1 }, { scopes: [], entries: null }, { scopes: [], entries: [1] },
+    { scopes: [], entries: [null] }, { scopes: [], entries: [[]] }]) yield arg(v);
+  // one mutated entry field per rule
+  for (const patch of [{ resource_kind: 'project' }, { resource_kind: 1 }, { resource_kind: null },
+    { resource_id: '' }, { resource_id: 'a'.repeat(256) }, { resource_id: 123 }, { resource_id: null },
+    { environment: 'staging' }, { environment: 7 }, { environment: null },
+    { actions: 'read' }, { actions: {} }, { actions: [] }, { actions: ['delete'] },
+    { actions: [null] }, { actions: [1] }, { actions: ['write', 'read'] }, { actions: ['read', 'read'] },
+    { extra: 1 }]) yield arg(withEntry(patch));
+  for (const v of [{ scopes: [], entries: [{ resource_kind: 'scope', resource_id: 'g', environment: 'test' }] },
+    { scopes: [], entries: [ENTRY, { ...ENTRY, actions: ['read'] }] },
+    { scopes: [], entries: [ENTRY, { ...ENTRY, environment: 'test' }] }]) yield arg(v);
+}
+function* cmpSamples() {
+  for (const p of [['1.2', '1.10'], ['1.10', '1.2'], ['1.2.0', '1.2'], ['1.2', '1.2.0.0'], ['2', '1.9.9'],
+    ['01.2', '1.2'], ['0.9.9', '1'], ['1.0.0.1', '1'], ['1', '1'], ['0', '0'], ['1.0', '1'],
+    ['99999999999999999999.1', '99999999999999999999.2'], ['99999999999999999999.2', '99999999999999999999.1'],
+    ['1.2-beta', '1.2'], ['1.2', 'v1.2'], ['', '1'], ['1', ''], ['1..2', '1'], ['1.', '1'], ['.1', '1'],
+    [null, '1'], ['1', null], [null, null], [' 1', '1'], ['1', '1 '], ['1', '1.2.3.4.5.6']]) yield { v: p };
+}
+
+// ---- the runner ------------------------------------------------------------------------------
+// One pass per function: MIRROR (the mirror rejects exactly when the SQL does), SOLE (each rule is
+// the only one firing on some sample), ACCEPT-COVER (each accepting branch is taken by an accepted
+// sample), and, where the result is not a boolean, VALUE (the SQL equals an independent oracle).
+// A SQL NULL argument reaches the rules as JavaScript null: no rule table below distinguishes it
+// from a JSON null, because no function does either (see EQUIVALENTS).
+async function runObligation(spec) {
+  const fired = new Map(spec.rules.map(([id]) => [id, 0]));
+  const sole = new Map(spec.rules.map(([id]) => [id, 0]));
+  const accepted = new Map((spec.accepts ?? []).map(([id]) => [id, 0]));
+  const disagreements = { mirror: 0, value: 0, examples: [] };
+  const samples = [...spec.samples()];
+  for (let i = 0; i < samples.length; i += CHUNK) {
+    const chunk = samples.slice(i, i + CHUNK);
+    const rows = await spec.evaluate(chunk);
+    assert.equal(rows.length, chunk.length, `${spec.id}: the database returned a short result`);
+    chunk.forEach((sample, j) => {
+      const input = sample.sqlNull ? null : sample.v;
+      const result = spec.read(rows[j]);
+      const firing = spec.rules.filter(([, fire]) => fire(input)).map(([id]) => id);
+      for (const id of firing) fired.set(id, fired.get(id) + 1);
+      if (firing.length === 1) sole.set(firing[0], sole.get(firing[0]) + 1);
+      const rejected = spec.rejected(result);
+      if (rejected !== (firing.length > 0)) {
+        disagreements.mirror += 1;
+        if (disagreements.examples.length < 8) disagreements.examples.push({ kind: 'MIRROR', input, sql: result, firing });
+      }
+      if (!rejected) for (const [id, take] of spec.accepts ?? []) if (take(input)) accepted.set(id, accepted.get(id) + 1);
+      if (spec.value && !Object.is(spec.value(input), result)) {
+        disagreements.value += 1;
+        if (disagreements.examples.length < 8) {
+          disagreements.examples.push({ kind: 'VALUE', input, sql: result, oracle: spec.value(input) });
+        }
+      }
+    });
+  }
+  return { id: spec.id, fired, sole, accepted, disagreements, count: samples.length, spec };
+}
+function assertObligation(t, report) {
+  const { spec, disagreements: d } = report;
+  assert.equal(d.mirror, 0, `${report.id} MIRROR: the rule mirror and the SQL disagree on ${d.mirror} `
+    + `sample(s): ${JSON.stringify(d.examples.filter((e) => e.kind === 'MIRROR'), null, 1)}`);
+  assert.equal(d.value, 0, `${report.id} VALUE: the SQL and the oracle disagree on ${d.value} `
+    + `sample(s): ${JSON.stringify(d.examples.filter((e) => e.kind === 'VALUE'), null, 1)}`);
+  const never = [...report.fired].filter(([, n]) => n === 0).map(([id]) => id);
+  assert.deepEqual(never, [], `${report.id}: ${never.join(', ')} never fires — a rule no sample `
+    + 'reaches is not mirrored by anything');
+  const exempt = spec.exempt ?? new Map();
+  const blind = [...report.sole].filter(([id, n]) => n === 0 && !exempt.has(id)).map(([id]) => id);
+  assert.deepEqual(blind, [], `${report.id} SOLE: no sample isolates ${blind.join(', ')} — add a case `
+    + 'that breaks only that rule, or allow-list it naming the vector that covers it instead');
+  const stale = [...report.sole].filter(([id, n]) => n > 0 && exempt.has(id)).map(([id]) => id);
+  assert.deepEqual(stale, [], `${report.id}: the SOLE allow-list is stale for ${stale.join(', ')}`);
+  const unknown = [...exempt.keys()].filter((id) => !report.sole.has(id));
+  assert.deepEqual(unknown, [], `${report.id}: the SOLE allow-list names ${unknown.join(', ')}, not a rule id`);
+  const untaken = [...report.accepted].filter(([, n]) => n === 0).map(([id]) => id);
+  assert.deepEqual(untaken, [], `${report.id} ACCEPT-COVER: no accepted sample takes ${untaken.join(', ')}`);
+  const counts = [...report.sole].filter(([id]) => !exempt.has(id)).map(([, n]) => n);
+  t.diagnostic(`${report.id}: ${report.count} samples, ${report.fired.size} rules, `
+    + `${counts.length} isolated (${Math.min(...counts)}\u2026${Math.max(...counts)} each), `
+    + `${report.accepted.size} accepting branches, ${exempt.size} allow-listed`);
+}
+
 
 // Three centres for the single-factor and pairwise layers: the healthy ACTIVE base, a fresh, not yet
 // authorized installation, and a DEGRADED raw Binding with an incomplete identity (the S2c norm, §6.2).
@@ -1101,6 +1422,207 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         [[], false, 'not an object'],
         [undefined, false, 'null'],
       ]) assert.equal(await valid(value), expected, label);
+    });
+
+    // ---- branch coverage for the rest of the validator surface (Owner Decision 0402d831) -------
+    // MIRROR already catches a deleted accepting branch — the SQL would start rejecting a sample no
+    // rule fires on — but only if the corpus reaches that branch, which is what ACCEPT-COVER makes
+    // an obligation rather than a hope.
+    const jsonbChunk = (chunk) => [chunk.map((s) => (s.sqlNull ? null : JSON.stringify(s.v)))];
+    const OBLIGATIONS = [
+      { id: 'integration_capabilities_valid_v1', rules: CAPABILITIES_RULES, samples: capabilitySamples,
+        read: (row) => row.r, rejected: (r) => r === false,
+        evaluate: async (chunk) => (await admin.query(`select clued_private.integration_capabilities_valid_v1(
+            case when v is null then null else array(select jsonb_array_elements_text(v)) end) r
+          from unnest($1::jsonb[]) with ordinality t(v, i) order by i`, jsonbChunk(chunk))).rows },
+      { id: 'integration_timestamp_valid_v1', rules: INSTANT_RULES, samples: instantSamples,
+        read: (row) => row.r, rejected: (r) => r === false,
+        evaluate: async (chunk) => (await admin.query(`select clued_private.integration_timestamp_valid_v1(
+            case when v is null then null else v #>> '{}' end) r
+          from unnest($1::jsonb[]) with ordinality t(v, i) order by i`, jsonbChunk(chunk))).rows },
+      { id: 'integration_ceiling_valid_v1', rules: CEILING_RULES, accepts: CEILING_ACCEPTS,
+        samples: ceilingSamples, read: (row) => row.r, rejected: (r) => r === false,
+        evaluate: async (chunk) => (await admin.query(`select clued_private.integration_ceiling_valid_v1(v) r
+          from unnest($1::jsonb[]) with ordinality t(v, i) order by i`, jsonbChunk(chunk))).rows },
+      { id: 'integration_version_cmp_v1', rules: CMP_RULES, accepts: CMP_ACCEPTS, samples: cmpSamples,
+        value: cmpOracle, read: (row) => (row.r === null ? null : Number(row.r)), rejected: (r) => r === null,
+        evaluate: async (chunk) => (await admin.query(`select clued_private.integration_version_cmp_v1(a, b) r
+          from unnest($1::text[], $2::text[]) with ordinality t(a, b, i) order by i`,
+        [chunk.map((s) => s.v[0]), chunk.map((s) => s.v[1])])).rows },
+    ];
+    for (const spec of OBLIGATIONS) {
+      const report = await runObligation(spec);
+      await t.test(`branch coverage: ${spec.id} (S2c PR-2)`, () => assertObligation(t, report));
+    }
+
+    await t.test('the branches left out of those mirrors are equivalent mutants, on this database', async () => {
+      // EQUIVALENTS is an argument about SQL semantics, so the facts it rests on are asserted here
+      // rather than left as prose. Each row names the entry it supports.
+      const one = async (sql, params = []) => (await admin.query(sql, params)).rows[0];
+      // capabilities:null-element — the containment, not the guard, is what rejects a NULL element
+      assert.equal((await one(`select (array['context.read', null]::text[]
+        operator(pg_catalog.<@) array['context.read','context.write','audit.read','project.read',
+          'project.write','evidence.write','development_history.read']::text[]) r`)).r, false);
+      // instant:null-input — a SQL NULL reaches the cast and returns false without raising
+      assert.equal((await one(`select clued_private.integration_timestamp_valid_v1(null) r`)).r, false);
+      assert.equal((await one(`select (null::timestamptz is not null) r`)).r, false);
+      // ceiling:null-input — jsonb_object_keys over a SQL NULL aggregates to NULL, which the key-set
+      // test rejects; and the type disjunct is NOT equivalent, because jsonb_object_keys raises on
+      // a non-object, which is why it stays a rule
+      assert.equal((await one(`select clued_private.integration_ceiling_valid_v1(null) r`)).r, false);
+      assert.equal((await one(`select (select array_agg(k) from jsonb_object_keys(null::jsonb) k) is null r`)).r, true);
+      await assert.rejects(admin.query(`select 1 from jsonb_object_keys('[]'::jsonb)`),
+        (error) => error.code === '22023', 'jsonb_object_keys raises on a non-object');
+      // ceiling:scopes:element-type — the vocabulary containment rejects a non-string element too
+      for (const scopes of [[1], [null], [true], [['context:read']]]) {
+        assert.equal((await one(`select (array(select jsonb_array_elements_text($1::jsonb))
+          operator(pg_catalog.<@) array['context:read','context:write','audit:read']::text[]) r`,
+        [JSON.stringify(scopes)])).r, false, JSON.stringify(scopes));
+      }
+      // …and EQUIVALENTS stays live data rather than a comment: every entry is checked above and
+      // every check above belongs to an entry, so adding one without a check fails here.
+      assert.deepEqual(EQUIVALENTS.map(([id]) => id).sort(), ['capabilities:null-element',
+        'ceiling:null-input', 'ceiling:scopes:element-type', 'instant:null-input']);
+      for (const [id, reason] of EQUIVALENTS) assert.ok(reason.length > 40, `${id} has no argument`);
+      t.diagnostic(`EQUIVALENTS: ${EQUIVALENTS.length} branches argued and checked`);
+    });
+
+    await t.test('the C collation the ceiling pins agrees with the order the mirror compares against', async () => {
+      // sortedUnique() sorts in JavaScript; the SQL sorts `collate "C"`. Both vocabularies are
+      // ASCII, so they agree — asserted here rather than assumed, because a future vocabulary
+      // entry outside ASCII would silently split the two orders.
+      for (const [label, names] of [['scopes', CEILING_SCOPES], ['actions', CEILING_ACTIONS], ['capabilities', ALL]]) {
+        const { rows } = await admin.query(`select array(select e from unnest($1::text[]) e order by e collate "C") s`,
+          [[...names].reverse()]);
+        assert.deepEqual(rows[0].s, sortedUnique(names), label);
+      }
+    });
+
+    await t.test('integration_derive_v1 canonicalizes every set: de-duplicated, sorted, both paths', async () => {
+      const sha = async (facts) => (await admin.query('select clued_private.integration_derive_v1($1::jsonb) d',
+        [JSON.stringify(facts)])).rows[0].d.facts_sha256;
+      const canonical = await sha(golden.base);
+      // the known-names path: the sorted constant list is filtered, so duplicates and order vanish
+      assert.equal(await sha(merge(golden.base, { capability_universe: [...ALL].reverse() })), canonical, 'sorted');
+      assert.equal(await sha(merge(golden.base, { capability_universe: [...ALL, 'context.read'] })), canonical, 'de-duplicated');
+      assert.equal(await sha(merge(golden.base, { oauth_scope_facts: [...golden.base.oauth_scope_facts].reverse() })),
+        canonical, 'oauth scopes use the same path with their own constant list');
+      // …and it really is the sorted, de-duplicated set, not merely a stable one
+      const derived = (await admin.query('select clued_private.integration_derive_v1($1::jsonb) d',
+        [JSON.stringify(merge(golden.base, { capability_universe: [...ALL, 'context.read'].reverse() }))])).rows[0].d;
+      assert.equal(derived.facts_sha256, canonical);
+      // the unknown-names path: a set the constant list does not contain is sorted and de-duplicated
+      // by the jsonb_agg branch instead. Such a document is C1, but facts_sha256 is computed first
+      // (§7.1 rule 1 applies to every document, valid or not).
+      const odd = (universe) => merge(golden.base, { capability_universe: universe });
+      const a = await sha(odd(['zz.unknown', 'context.read']));
+      assert.equal(await sha(odd(['context.read', 'zz.unknown'])), a, 'unknown-name sets are sorted');
+      assert.equal(await sha(odd(['zz.unknown', 'context.read', 'zz.unknown'])), a, 'and de-duplicated');
+      assert.notEqual(a, canonical);
+      // mixed jsonb types in one set exercise the `jsonb_typeof(e)` first sort key of that branch
+      const mixed = await sha(odd(['context.read', 1, null, true]));
+      assert.equal(await sha(odd([true, null, 1, 'context.read'])), mixed, 'ordered by type, then text');
+      // the `jsonb_typeof(v_set) = 'array'` guard: a non-array set is left alone, not rewritten
+      const scalar = await sha(odd('context.read'));
+      assert.equal(await sha(odd('context.read')), scalar);
+      assert.notEqual(scalar, canonical);
+    });
+
+    await t.test('every registry CHECK constraint has a row that violates only it', async () => {
+      // PR #340's fourth delta review named at least three registry CHECKs with no negative case at
+      // all. Rather than add three rows, the obligation is made total: the negative cases are
+      // matched against the constraints that exist, so a CHECK added later without a case fails
+      // here instead of shipping uncovered (Owner Decision 0402d831).
+      const { rows: constraints } = await admin.query(`select co.conname, cl.relname from pg_constraint co
+        join pg_class cl on cl.oid = co.conrelid join pg_namespace n on n.oid = cl.relnamespace
+        where n.nspname = 'clued_private' and cl.relname like 'integration\\_%\\_v1' and co.contype = 'c'
+        order by cl.relname, co.conname`);
+      assert.ok(constraints.length > 0);
+      await admin.query(`insert into clued_private.integration_hosts_v1(host, tenant_dimension, account_dimension,
+        first_authorization_required, registry_version, capability_snapshot_ref)
+        values ('test.checks', 'NOT_APPLICABLE', 'NOT_APPLICABLE', true, 1, 'test')`);
+      const host = (patch) => ({ table: 'integration_hosts_v1', row: { host: 'test.ok', tenant_dimension: 'REQUIRED',
+        account_dimension: 'REQUIRED', first_authorization_required: true, registry_version: 1,
+        capability_snapshot_ref: 'test', ...patch } });
+      const surface = (patch) => ({ table: 'integration_host_surfaces_v1', row: { host: 'test.checks',
+        surface: 'ok', capability_ceiling: ['context.read'], host_features: '{}', registry_version: 1, ...patch } });
+      const provider = (patch) => ({ table: 'integration_providers_v1', row: { provider: 'test.ok',
+        connection_dimension: 'REQUIRED', connection_source: 'BINDING_ID', host_native: false,
+        registry_version: 1, ...patch } });
+      const rule = (patch) => ({ table: 'integration_compatibility_rules_v1', row: { host: 'test.checks',
+        adapter_family: 'fam', min_adapter_version: '1.0', min_package_version: null,
+        below_minimum: 'HARD_INCOMPATIBLE', degraded_mask: null, registry_version: 1, ...patch } });
+      const cases = [
+        ['hosts.host regex', host({ host: 'A.bad' })],
+        ['hosts.host too short', host({ host: 'ab' })],
+        ['hosts.tenant_dimension', host({ tenant_dimension: 'MAYBE' })],
+        ['hosts.account_dimension', host({ account_dimension: 'MAYBE' })],
+        ['hosts.registry_version', host({ registry_version: 0 })],
+        ['surfaces.surface regex', surface({ surface: 'Bad' })],
+        ['surfaces.capability_ceiling', surface({ capability_ceiling: ['admin.write'] })],
+        ['surfaces.registry_version', surface({ registry_version: 0 })],
+        ['providers.provider regex', provider({ provider: 'A' })],
+        ['providers.connection_dimension', provider({ connection_dimension: 'MAYBE' })],
+        ['providers.connection_source', provider({ connection_source: 'MAGIC' })],
+        ['providers.registry_version', provider({ registry_version: 0 })],
+        ['binding_domains.max_current_holders', { table: 'integration_binding_domains_v1',
+          row: { domain: 'test.ok', max_current_holders: 2, registry_version: 1 } }],
+        ['vocabulary.capability', { table: 'integration_capability_vocabulary_v1',
+          row: { capability: 'admin.write', vocabulary_version: 1 } }],
+        ['scope_map.oauth_scope', { table: 'integration_scope_capability_map_v1',
+          row: { map_version: 2, oauth_scope: 'admin:read', resource_action: 'read', capability: 'context.read' } }],
+        ['scope_map.resource_action', { table: 'integration_scope_capability_map_v1',
+          row: { map_version: 2, oauth_scope: 'context:read', resource_action: 'delete', capability: 'context.read' } }],
+        ['policy.incomplete_identity_ordinary_runtime', { table: 'integration_policy_v1',
+          row: { policy_version: 2, incomplete_identity_ordinary_runtime: 'MAYBE',
+            qualification_not_evaluated: 'NON_BLOCKING', default_recovery_policy: 'PERMITS_REAUTH',
+            canonical_verification_ttl: '30 days', installation_request_ttl: '30 minutes',
+            preclusion_rule: 'ALL_BLOCKING_PREDICATES' } }],
+        ['policy.qualification_not_evaluated', { table: 'integration_policy_v1',
+          row: { policy_version: 2, incomplete_identity_ordinary_runtime: 'PERMIT',
+            qualification_not_evaluated: 'MAYBE', default_recovery_policy: 'PERMITS_REAUTH',
+            canonical_verification_ttl: '30 days', installation_request_ttl: '30 minutes',
+            preclusion_rule: 'ALL_BLOCKING_PREDICATES' } }],
+        ['policy.default_recovery_policy', { table: 'integration_policy_v1',
+          row: { policy_version: 2, incomplete_identity_ordinary_runtime: 'PERMIT',
+            qualification_not_evaluated: 'NON_BLOCKING', default_recovery_policy: 'MAYBE',
+            canonical_verification_ttl: '30 days', installation_request_ttl: '30 minutes',
+            preclusion_rule: 'ALL_BLOCKING_PREDICATES' } }],
+        ['policy.preclusion_rule', { table: 'integration_policy_v1',
+          row: { policy_version: 2, incomplete_identity_ordinary_runtime: 'PERMIT',
+            qualification_not_evaluated: 'NON_BLOCKING', default_recovery_policy: 'PERMITS_REAUTH',
+            canonical_verification_ttl: '30 days', installation_request_ttl: '30 minutes',
+            preclusion_rule: 'SOME_BLOCKING' } }],
+        ['rules.adapter_family length', rule({ adapter_family: '' })],
+        ['rules.min_adapter_version regex', rule({ min_adapter_version: '1.0-beta' })],
+        ['rules.min_package_version regex', rule({ min_adapter_version: null, min_package_version: '1.0-beta' })],
+        ['rules.below_minimum', rule({ below_minimum: 'SOFT' })],
+        ['rules.registry_version', rule({ registry_version: 0 })],
+        ['rules.DEGRADED needs a mask', rule({ below_minimum: 'DEGRADED' })],
+        ['rules.at least one version', rule({ min_adapter_version: null })],
+        ['rules.mask vocabulary', rule({ below_minimum: 'DEGRADED', degraded_mask: ['admin.write'] })],
+      ];
+      const covered = new Map();
+      for (const [label, { table, row }] of cases) {
+        const keys = Object.keys(row);
+        const sql = `insert into clued_private.${table}(${keys.join(', ')}) values (${
+          keys.map((_, i) => `$${i + 1}`).join(', ')})`;
+        let error = null;
+        await admin.query(sql, keys.map((k) => row[k])).catch((e) => { error = e; });
+        assert.ok(error, `${label} was accepted`);
+        assert.equal(error.code, '23514', `${label}: ${error.message}`);
+        assert.ok(error.constraint, `${label} names no constraint`);
+        if (!covered.has(error.constraint)) covered.set(error.constraint, label);
+      }
+      await admin.query(`delete from clued_private.integration_hosts_v1 where host = 'test.checks'`);
+      const missing = constraints.filter((c) => !covered.has(c.conname))
+        .map((c) => `${c.relname}.${c.conname}`);
+      assert.deepEqual(missing, [], `${missing.length} registry CHECK constraint(s) have no negative `
+        + `case that violates only them: ${missing.join(', ')}`);
+      const unknown = [...covered.keys()].filter((name) => !constraints.some((c) => c.conname === name));
+      assert.deepEqual(unknown, [], `a negative case violated ${unknown.join(', ')}, which is not a `
+        + 'registry CHECK — the case is testing something other than what it names');
+      t.diagnostic(`registry CHECKs: ${constraints.length} constraints, ${cases.length} negative cases`);
     });
 
     await t.test('§7.1 lexical validation: timestamps are real instants, integers are integers (NIT-1, NIT-2)', async () => {
