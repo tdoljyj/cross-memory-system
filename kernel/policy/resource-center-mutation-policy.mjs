@@ -205,3 +205,74 @@ export function detectResourceCenterBoundaryViolations(input) {
 
   return violations;
 }
+
+
+function admissionBinding(input) {
+  return {
+    operation: input?.operation ?? null,
+    source_path: normalizePath(input?.source_path),
+    destination_path: normalizePath(input?.destination_path),
+    artifact_role: input?.artifact_role ?? null,
+    target_kind: input?.target_kind ?? "file",
+    directory_semantics: input?.directory_semantics ?? null,
+    governance_class: input?.governance_class ?? null,
+    delete_authority: input?.delete_authority === true,
+  };
+}
+
+export function prepareResourceCenterMutationAdmission({ registered_profile: profile, mutation } = {}) {
+  if (!profile || profile.registration_status !== "registered" ||
+    typeof profile.profile_id !== "string" || profile.profile_id.trim() === "") {
+    return {
+      status: "deny",
+      policy_version: RESOURCE_CENTER_POLICY_VERSION,
+      error_code: "REGISTERED_PROFILE_REQUIRED",
+    };
+  }
+
+  const result = evaluateResourceCenterMutation({ profile, ...(mutation ?? {}) });
+  if (result.status !== "allow") return result;
+
+  return {
+    status: "admitted",
+    admission_kind: "host_internal_bound_admission",
+    policy_version: RESOURCE_CENTER_POLICY_VERSION,
+    profile_id: profile.profile_id,
+    binding: admissionBinding(mutation),
+    security_boundary:
+      "not_a_bearer_capability; keep inside the trusted Host mutation wrapper",
+  };
+}
+
+export function verifyResourceCenterMutationAdmission({
+  admission,
+  registered_profile: profile,
+  mutation,
+} = {}) {
+  const prepared = prepareResourceCenterMutationAdmission({
+    registered_profile: profile,
+    mutation,
+  });
+  if (prepared.status !== "admitted") return prepared;
+  if (!admission || admission.admission_kind !== "host_internal_bound_admission") {
+    return {
+      status: "deny",
+      policy_version: RESOURCE_CENTER_POLICY_VERSION,
+      error_code: "ADMISSION_REQUIRED",
+    };
+  }
+  if (admission.policy_version !== prepared.policy_version ||
+    admission.profile_id !== prepared.profile_id ||
+    JSON.stringify(admission.binding) !== JSON.stringify(prepared.binding)) {
+    return {
+      status: "deny",
+      policy_version: RESOURCE_CENTER_POLICY_VERSION,
+      error_code: "ADMISSION_BINDING_MISMATCH",
+    };
+  }
+  return {
+    status: "allow",
+    policy_version: RESOURCE_CENTER_POLICY_VERSION,
+    profile_id: prepared.profile_id,
+  };
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { detectResourceCenterBoundaryViolations, evaluateResourceCenterMutation } from "../../../kernel/policy/resource-center-mutation-policy.mjs";
+import { detectResourceCenterBoundaryViolations, evaluateResourceCenterMutation, prepareResourceCenterMutationAdmission, verifyResourceCenterMutationAdmission } from "../../../kernel/policy/resource-center-mutation-policy.mjs";
 
 const profile = {
   managed_root: "G:/我的云端硬盘/Clued_资料中心",
@@ -220,4 +220,92 @@ test("boundary watcher ignores a registered external authority root", () => {
     ],
   });
   assert.deepEqual(violations, []);
+});
+
+
+test("host admission refuses an unregistered caller-supplied profile", () => {
+  const result = prepareResourceCenterMutationAdmission({
+    registered_profile: profile,
+    mutation: {
+      operation: "write",
+      artifact_role: "clued_resource",
+      destination_path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c/a.md",
+    },
+  });
+  assert.equal(result.error_code, "REGISTERED_PROFILE_REQUIRED");
+});
+
+test("host admission binds exact operation and path under a registered profile", () => {
+  const registered = {
+    ...profile,
+    profile_id: "resource-center-primary",
+    registration_status: "registered",
+  };
+  const mutation = {
+    operation: "write",
+    artifact_role: "clued_resource",
+    destination_path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c/brand/a.md",
+  };
+  const admission = prepareResourceCenterMutationAdmission({
+    registered_profile: registered,
+    mutation,
+  });
+  assert.equal(admission.status, "admitted");
+  assert.equal(admission.profile_id, "resource-center-primary");
+  assert.equal(admission.binding.operation, "write");
+  assert.match(admission.security_boundary, /not_a_bearer_capability/);
+  assert.equal(verifyResourceCenterMutationAdmission({
+    admission,
+    registered_profile: registered,
+    mutation,
+  }).status, "allow");
+});
+
+test("host admission fails if an Agent changes the destination after preflight", () => {
+  const registered = {
+    ...profile,
+    profile_id: "resource-center-primary",
+    registration_status: "registered",
+  };
+  const mutation = {
+    operation: "write",
+    artifact_role: "clued_resource",
+    destination_path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c/brand/a.md",
+  };
+  const admission = prepareResourceCenterMutationAdmission({
+    registered_profile: registered,
+    mutation,
+  });
+  const result = verifyResourceCenterMutationAdmission({
+    admission,
+    registered_profile: registered,
+    mutation: {
+      ...mutation,
+      destination_path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c/other/a.md",
+    },
+  });
+  assert.equal(result.error_code, "ADMISSION_BINDING_MISMATCH");
+});
+
+test("host admission fails if a proof is replayed under another registered profile", () => {
+  const registered = {
+    ...profile,
+    profile_id: "resource-center-primary",
+    registration_status: "registered",
+  };
+  const mutation = {
+    operation: "write",
+    artifact_role: "clued_resource",
+    destination_path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c/brand/a.md",
+  };
+  const admission = prepareResourceCenterMutationAdmission({
+    registered_profile: registered,
+    mutation,
+  });
+  const result = verifyResourceCenterMutationAdmission({
+    admission,
+    registered_profile: { ...registered, profile_id: "resource-center-secondary" },
+    mutation,
+  });
+  assert.equal(result.error_code, "ADMISSION_BINDING_MISMATCH");
 });

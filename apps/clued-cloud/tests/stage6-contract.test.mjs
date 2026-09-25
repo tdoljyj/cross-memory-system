@@ -41,6 +41,8 @@ test("agent contract makes stable ids and one transactional write explicit", asy
   assert.match(contract, /NO SIBLING ISLAND/);
   assert.match(contract, /Byte equality is not deletion authority/);
   assert.match(contract, /If the Host has no usable preflight path, mutation is unavailable/);
+  assert.match(contract, /Host-owned trusted configuration/);
+  assert.match(contract, /not a bearer capability/);
 });
 
 test("repository Skill, project rules and root snapshot share the v1.6 authority boundary", async () => {
