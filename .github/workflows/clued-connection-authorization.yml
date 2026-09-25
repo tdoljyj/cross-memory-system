@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - '.github/workflows/clued-connection-authorization.yml'
-      - '.github/workflows/clued-integration-runtime-nightly.yml'
       - 'apps/clued-cloud/worker/**'
       - 'apps/clued-cloud/app/**'
       - 'apps/clued-cloud/vite.config.ts'
@@ -34,7 +33,6 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/clued-connection-authorization.yml'
-      - '.github/workflows/clued-integration-runtime-nightly.yml'
       - 'apps/clued-cloud/worker/**'
       - 'apps/clued-cloud/app/**'
       - 'apps/clued-cloud/vite.config.ts'

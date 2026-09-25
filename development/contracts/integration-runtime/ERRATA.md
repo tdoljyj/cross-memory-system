@@ -85,20 +85,26 @@ procurement.
 
 ---
 
-## ERRATA-002 — canonical spellings: integer fields, ceiling `actions`, instants
+## ERRATA-002 — spellings the validator refuses: integers, `actions`, instants
 
 - **Authority:** items 1 and 2, Owner Decision
   `793ea908-3281-430d-8bfd-8e0b83bfd226`; item 3, Owner Decision
-  `25edd152-0d95-4cf7-b3eb-0ff32aed74d0` (both 2026-09-24).
+  `25edd152-0d95-4cf7-b3eb-0ff32aed74d0` (both 2026-09-24), and Owner Decision
+  `37e0f626-f9f7-43c1-b899-4d7584b952ab` (2026-09-25) for the wording of item 3,
+  which corrects what item 3 says without changing what the validator does.
 - **Raised by:** the Fresh-Context delta reviews of PR #338 — items 1 and 2 by
-  the first review's MAJOR-1, item 3 by the second review's MINOR-1.
+  the first review's MAJOR-1, item 3 by the second review's MINOR-1; item 3's
+  wording by the Fresh-Context review of PR #340, MAJOR-2.
 - **Status:** in force. Items 1 and 2 implemented by PR-1
   (migration `20260926000000`); item 3 by its follow-up.
 
-All three items exist for the same reason: the frozen contract requires a canonical
+Items 1 and 2 exist for the same reason: the frozen contract requires a canonical
 byte representation in places where it specifies only a value, and JSON admits
 several spellings of one value. Rather than rewrite a document before hashing or
-comparing it, the validator refuses the ambiguous spellings.
+comparing it, the validator refuses the ambiguous spellings. Item 3 is not a
+canonicality rule and does not claim to make an instant's spelling unique. It
+refuses two spellings for a different reason: they do not denote the instant they
+appear to spell.
 
 ### 1. Integer-valued fields accept only the integer spelling
 
@@ -132,23 +138,39 @@ cannot show whether authority changed.
 `C` collation, exactly as `scopes` already is. This does not change containment:
 `§10.11` compares `actions ⊆ C.actions` as sets, which is order-insensitive.
 
-### 3. An instant is written the one way `timestamptz` round-trips to
+### 3. An instant may not be spelled a way PostgreSQL re-points
 
 **What the frozen text says.** `§7.1` gives no lexical grammar for an instant at
 all — only the example `"2026-09-24T12:00:00Z"` — and `§7.2` sources `as_of` and
 `canonical_runtime_verification_facts.valid_until` from `timestamptz` columns.
 
 **Why that is a defect.** Two spellings PostgreSQL accepts do not denote the
-instant they appear to: it rolls `24:00:00` to the next day and `12:00:60` to
-`12:01:00`. `valid_until` is inside `facts_sha256`, so one instant written two
-ways hashes two ways, against `§7.1` rule 1. A normalizer formatting a
-`timestamptz` cannot produce either spelling, so nothing legitimate is lost.
+instant they appear to spell: it re-points `24:00:00Z` to `00:00:00Z` on the next
+day and `12:00:60Z` to `12:01:00Z`. `valid_until` is inside `facts_sha256`, so a
+document spelled either way is hashed, compared and acted on as a statement about
+an instant it does not name. Nothing legitimate is lost: a normalizer formatting a
+`timestamptz` cannot produce either spelling.
 
-**What replaces it.** An instant is `C1` unless it is the single spelling
-`timestamptz` round-trips to: hour `24` and second `60` are `C1`. Everything else
-the previous rule accepted is still accepted — a differential sweep of 400,000
-spellings on a live database found exactly 25 classes newly rejected (`h=0…23`
-with `s=60`, and `h=24` with `s=0`) and nothing newly accepted.
+**What replaces it.** An instant keeps the previous lexical rule minus those two
+spellings: hour `24` and second `60` are `C1`. That is all it is. It is not a
+canonicality rule — the accepted grammar still spells one instant several ways,
+each hashing differently (`2026-09-24T12:00:00Z`, `…T12:00:00+00:00`,
+`…T12:00:00.0Z`, `…T12:00:00.000000Z`, `2026-09-24T07:00:00-05:00` and
+`2026-09-24T13:00:00+01:00` are all the same instant and all accepted) — and it is
+not the spelling a round trip produces either: at `TimeZone UTC`,
+`'2026-09-24T12:00:00Z'::timestamptz::text` is `2026-09-24 12:00:00+00`, a space
+separator and a two-digit offset, which the rule rejects. The new grammar is a
+strict subset of the old one, so nothing is newly accepted; exactly 25 classes
+are newly rejected, `h=0…23` with `s=60` and `h=24` with `m=00, s=00`, every
+other out-of-range field already being a hard error in the cast rather than a
+re-pointing.
+
+**Evidence.** The count follows from the two regexes by inspection: the only
+difference is the hour and second alternations. The two re-pointings, and the
+fact that every accepted `Z` spelling round-trips to the instant it spells, are
+asserted against a live PostgreSQL by the committed test
+`apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs`, subtest
+"`§7.1` lexical validation".
 
 ### Boundary
 

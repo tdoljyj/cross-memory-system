@@ -168,8 +168,9 @@ const ENUMS = {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // §7.1 instants: the lexical shape the migration pins, then the calendar and the offset range
 // PostgreSQL's cast enforces. Hour 24 and second 60 are excluded because PostgreSQL rolls them over
-// to a different instant, and valid_until is inside facts_sha256; authority ERRATA-002 item 3
-// (Owner Decision 25edd152-0d95-4cf7-b3eb-0ff32aed74d0).
+// to a different instant, so the document would not denote the instant it spells and valid_until
+// is inside facts_sha256; authority ERRATA-002 item 3 (Owner Decisions
+// 25edd152-0d95-4cf7-b3eb-0ff32aed74d0, and 37e0f626-f9f7-43c1-b899-4d7584b952ab for its wording).
 const INSTANT_RE = /^(\d{4})-(\d{2})-(\d{2})T(2[0-3]|[01]\d):(\d{2}):([0-5]\d)(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
 function instantValid(text) {
   const m = typeof text === 'string' ? INSTANT_RE.exec(text) : null;
@@ -409,16 +410,34 @@ const DIMENSIONS = [
   ['capability_universe', [ALL, [], ['audit.read', 'context.read']].map((v) => ({ capability_universe: v }))],
 ];
 const KEEP = { claim_store: 0.85, connection_store: 0.85, 'lifecycle_facts.historical': 0.85, identity_completeness: 0.75 };
-// Schema-level corruptions mixed into the random layer (2 %), so C1 / C9 are exercised too.
+// Schema-level corruptions mixed into the random layer (2.5 %), so C1 / C9 are exercised too.
 // The list is generated from the same tables validateOracle and the migration validate against,
-// instead of being hand-written, so every enumeration, every exact key set and every mask rule has
-// negative coverage (v0.1.8 second delta review MINOR-2): one out-of-domain value per ENUMS entry,
-// one deleted required key and, separately, one unknown key per KEY_SETS entry, and both mask
-// directions per state object, plus the three C9 carriers and the three §7.1 / ERRATA-002 rules no
-// table drives. Each corruption introduces a single independent defect into a freshly cloned
-// document, and the rng it is handed is the sampler's, so the layer stays a function of SEED alone.
-// 2 % of 250,000 is ~82 samples per corruption at the CI count, and leaves 37.3 % of all P2 samples
-// valid (37.6 % before), so the §8 / §9 layers keep the same positive coverage.
+// instead of being hand-written, so every enumeration, every exact key set, every mask rule and
+// every value-shape rule of §7.1 has negative coverage. Authorities: the v0.1.8 second delta
+// review's MINOR-2, generate the list from the tables, for the first three kinds; the PR #340
+// review's MAJOR-1, the value shapes had no distinguishing sample in any layer, for the fourth.
+// One out-of-domain value per ENUMS entry; one deleted required key and, separately, one unknown
+// key per KEY_SETS entry; both mask directions per state object; and one per §7.1 rule that is neither
+// an enumeration nor a KEY_SETS entry — the three capability sets, the OAuth scope set, the four
+// branches of the resource_action_scope_facts tagged union (an exact key set of §7.1 that KEY_SETS
+// cannot express, because which keys are exact depends on mode), the two booleans, the
+// verification_id reference, the reauth_marks_open domain and type, the two contract-string types
+// and the revocation pair.
+//
+// Accuracy of the claims this comment used to make (the PR #340 review's MINOR-2), re-measured over
+// the CI sample count with the generator below:
+//   - A corruption is a single independent defect on most bases, but not on all. The ten
+//     required-key deletions never are: deleting a key breaks the exact-key-set rule and also the
+//     rule that reads that key. Eight of the 23 enumeration corruptions break a second C1 rule on
+//     part of the bases they land on — revocation_state (31 % of them) and revocation_source (68 %)
+//     break the revocation pair, the five *_state.value corruptions (23…37 %) break the mask rule
+//     whenever the base carried a non-null mask, and resource_action_scope_facts.mode (86 %) moves
+//     the union out of its ENTRIES branch while the capabilities key is still there. Coverage is
+//     unaffected — each of the eight isolates its own rule on the remaining bases, and the ten
+//     deletions are how the exact-key-set family gets its negative coverage — but the defect is
+//     not always singular.
+//   - Samples per corruption is not by itself the distinguishing power; samples per corruption
+//     whose base did not already violate the same rule is. Both are stated below.
 const setDotted = (facts, dotted, value) => {
   const keys = dotted.split('.');
   const node = keys.slice(0, -1).reduce((v, k) => (v[k] ??= {}), facts);
@@ -426,7 +445,8 @@ const setDotted = (facts, dotted, value) => {
 };
 const MASKED_VALUES = ['RESTRICTED', 'CONDITIONAL', 'DEGRADED'];
 const STATE_OBJECTS = ['environment_state', 'qualification_state', 'compatibility_state', 'host_state', 'adapter_state'];
-const CORRUPTIONS = [
+const CAPABILITY_SETS = ['capability_universe', 'host_state.surface_ceiling', 'host_state.declared'];
+const SHAPE_CORRUPTIONS = [
   // every enumeration of §7.1: a string outside its domain
   ...Object.keys(ENUMS).map((name) => (f) => setDotted(f, name, '__OUT_OF_DOMAIN__')),
   // every exact key set of §7.1: one required key deleted, and one unknown key added
@@ -444,17 +464,64 @@ const CORRUPTIONS = [
       (f, rng) => { f[name] = { ...f[name], value: masked[Math.floor(rng() * masked.length)], mask: null }; },
     ];
   }),
-  // the three C9 carriers: a well-formed but unknown schema, derivation contract or policy version
-  ...[['schema', 'clued.integration-facts.v2'], ['derivation_contract', 'clued.integration-derivation.v2'],
-    ['policy.policy_version', 2]].map(([name, value]) => (f) => setDotted(f, name, value)),
-  // the §7.1 rules that no table above drives: the capability vocabulary, the non-negative domain
-  // of reauth_marks_open, and the revocation pair. ERRATA-002 item 1's integer *spelling* rule is
-  // not reachable from here, because JSON.stringify emits 0.0 as 0; it is covered by the raw-text
-  // cases below instead.
-  (f) => { f.capability_universe = [...f.capability_universe, 'admin.write']; },
+  // ---- the §7.1 value shapes: the rules no table above drives (PR #340 review MAJOR-1) --------
+  // every capability set of §7.1: an element outside the capability vocabulary
+  ...CAPABILITY_SETS.map((name) => (f) => setDotted(f, name, [...(dig(f, name) ?? []), 'admin.write'])),
+  // the OAuth scope set, whose vocabulary is the three v12 scopes and not the capability names
+  (f) => { f.oauth_scope_facts = [...f.oauth_scope_facts, 'admin:write']; },
+  // resource_action_scope_facts, the tagged union: exactness in the ENTRIES branch and in the
+  // other two, the capability vocabulary of the ENTRIES member, and that member missing
+  (f) => { f.resource_action_scope_facts = { mode: 'ENTRIES', capabilities: [], unexpected_key: null }; },
+  (f) => { f.resource_action_scope_facts = { mode: 'NONE', unexpected_key: null }; },
+  (f) => { f.resource_action_scope_facts = { mode: 'ENTRIES', capabilities: ['admin.write'] }; },
+  (f) => { f.resource_action_scope_facts = { mode: 'ENTRIES' }; },
+  // the two booleans and the uuid reference: a value of the wrong JSON type, which the string
+  // spellings 'true' / 'false' / a non-uuid make visible without changing anything else
+  (f) => { f.lifecycle_facts.first_authorization_required = 'true'; },
+  (f) => { f.installation_facts.ever_authorized = 'false'; },
+  (f) => { f.canonical_runtime_verification_facts.verification_id = 'not-a-uuid'; },
+  // reauth_marks_open: outside its non-negative domain, and not a number at all. ERRATA-002
+  // item 1's integer *spelling* rule is not reachable from here, because JSON.stringify emits 0.0
+  // as 0; it is covered by the raw-text cases below instead.
   (f) => { f.reauth_marks_open = -1; },
+  (f) => { f.reauth_marks_open = '0'; },
+  // the two contract strings: a non-string is C1, not the C9 an unknown string would give
+  (f) => { f.schema = 1; },
+  (f) => { f.derivation_contract = null; },
+  // the revocation pair (§7.2, ERRATA-001)
   (f) => { f.revocation_source = f.revocation_state === 'REVOKED' ? 'NONE' : 'INTEGRATION'; },
 ];
+// C9_CONTRACT_UNKNOWN's three carriers: a well-formed but unknown schema, derivation contract or
+// policy version. They are the only way any layer of this file reaches C9.
+const C9_CORRUPTIONS = [['schema', 'clued.integration-facts.v2'],
+  ['derivation_contract', 'clued.integration-derivation.v2'], ['policy.policy_version', 2]]
+  .map(([name, value]) => (f) => setDotted(f, name, value));
+// The share of random samples that carry a corruption. It rose from 2 % as the shape list grew
+// from 59 members to 69, so that samples per corruption stay where they were instead of thinning
+// as the list grows; the cost is 0.2 pp of valid samples.
+const CORRUPTION_RATE = 0.025;
+// PR #340 review MINOR-1: draw the family first and the member second. A flat uniform draw over
+// one list made every code's share a function of the list's length, so growing the shape list from
+// 8 to 59 members cut random-layer C9 from 567 to 235 without anyone deciding to. C9 has exactly
+// three carriers in the whole schema and no other layer of this file reaches it, so its family is
+// drawn with a fixed 1/5 probability and the shape family with 4/5; within a family the draw stays
+// uniform, so the shape corruptions remain equally likely to each other. Both draws come from the
+// sampler's rng, so the layer is still a pure function of SEED. Editing SHAPE_CORRUPTIONS now
+// moves only the shape counts; C9_FAMILY_SHARE is the only thing that moves C9.
+const C9_FAMILY_SHARE = 1 / 5;
+const pickCorruption = (rng) => {
+  const family = rng() < C9_FAMILY_SHARE ? C9_CORRUPTIONS : SHAPE_CORRUPTIONS;
+  return family[Math.floor(rng() * family.length)];
+};
+// Measured over the CI count (250,000 random samples at SEED 20260924, 6,314 of them corrupted):
+// 59…92 samples per shape corruption (mean 73) and 403…442 per C9 carrier. No base drawn from
+// DIMENSIONS violates a C1 rule, so every one of those samples distinguishes the rule its
+// corruption breaks. The narrower figure — samples whose base carried no reason code at all —
+// averages 27 per shape corruption with a floor of 11 (it was ~31 with a floor of 17 before this
+// change). Random-layer C9 is 1,249 (was 235) and C1 5,065 (was 4,855); the random layer is 34.9 %
+// valid and the 265,246 P2 samples are 37.0 % valid (37.3 % before), so the §8 / §9 layers keep
+// the same positive coverage.
+
 // Three centres for the single-factor and pairwise layers: the healthy ACTIVE base, a fresh, not yet
 // authorized installation, and a DEGRADED raw Binding with an incomplete identity (the S2c norm, §6.2).
 const CENTRES = [golden.base, merge(golden.base, { authentication_state: 'NONE', authorization_state: 'NOT_GRANTED',
@@ -484,9 +551,9 @@ function* p2Samples() {
       // the whole domain; integrity classes keep more often so that more samples are valid
       if (rng() >= (KEEP[name] ?? 0.5)) facts = merge(facts, values[Math.floor(rng() * values.length)]);
     }
-    if (rng() < 0.02) {
+    if (rng() < CORRUPTION_RATE) {
       facts = clone(facts);
-      CORRUPTIONS[Math.floor(rng() * CORRUPTIONS.length)](facts, rng);
+      pickCorruption(rng)(facts, rng);
     }
     yield { layer: 'random', index: n, facts };
   }
@@ -788,9 +855,10 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         ['2026-09-24T25:00:00Z', false], ['2026-09-24T12:60:00Z', false], ['2026-09-24T12:00:61Z', false],
         ['2026-09-24T12:00:00', false], ['2026-09-24 12:00:00Z', false], ['now', false], [null, false],
       ]) assert.equal(await valid(value), expected, String(value));
-      // v0.1.8 delta review MINOR-2: PostgreSQL silently rolls the end-of-day hour 24 and the leap
-      // second 60 over to a different instant, so two spellings of one instant would hash
-      // differently and valid_until is inside facts_sha256. Both are rejected.
+      // ERRATA-002 item 3 (Owner Decisions 25edd152-0d95-4cf7-b3eb-0ff32aed74d0 and
+      // 37e0f626-f9f7-43c1-b899-4d7584b952ab): PostgreSQL silently rolls the end-of-day hour 24 and
+      // the leap second 60 over to a different instant, so the document would not denote the
+      // instant it spells and valid_until is inside facts_sha256. Both are rejected.
       const utc = async (value) => (await admin.query(
         `select to_char($1::timestamptz at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') t`, [value])).rows[0].t;
       for (const value of ['2026-09-24T12:00:60Z', '2026-09-24T24:00:00Z']) {
@@ -1094,7 +1162,7 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       if (a.state === 'VERIFYING' && p.verification_eligible !== true) fail('T-A7-7', sample, a);
       if (a.mutant !== a.state) fail('T-A7-8', sample, a);
 
-      // ---- semantic layer (v0.1.8 review MINOR-2 / MINOR-3): recomputed from the facts ----
+      // ---- semantic layer (the v0.1.8 review's MINOR-2 and MINOR-3, a semantic oracle) ----
       const o = oracle(f);
       for (const [key, value] of Object.entries(o.predicates)) {
         if (p[key] !== value) fail('P2-PREDICATES', sample, { key, derived: p[key], oracle: value });
