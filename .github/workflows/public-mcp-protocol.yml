@@ -8,7 +8,7 @@ on:
       - 'protocol/continuity/v1/**'
       - 'skills/clued/references/agent-contract.md'
       - 'kernel/policy/resource-center-mutation-policy.mjs'
-      - 'kernel/host/resource-center-mutation-host.mjs'
+      - 'kernel/host/resource-center-*.mjs'
   push:
     branches: [main]
     paths:
@@ -17,7 +17,7 @@ on:
       - 'protocol/continuity/v1/**'
       - 'skills/clued/references/agent-contract.md'
       - 'kernel/policy/resource-center-mutation-policy.mjs'
-      - 'kernel/host/resource-center-mutation-host.mjs'
+      - 'kernel/host/resource-center-*.mjs'
 
 permissions:
   contents: read

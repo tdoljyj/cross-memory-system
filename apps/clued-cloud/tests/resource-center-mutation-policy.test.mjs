@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { createResourceCenterFilesystemAdapter } from "../../../kernel/host/resource-center-filesystem-adapter.mjs";
 import { createResourceCenterHostAdapter } from "../../../kernel/host/resource-center-mutation-host.mjs";
 import { detectResourceCenterBoundaryViolations, evaluateResourceCenterMutation } from "../../../kernel/policy/resource-center-mutation-policy.mjs";
 
@@ -21,6 +25,22 @@ const registeredProfile = {
   profile_version: "resource-center-profile/1",
   registration_status: "registered",
 };
+
+const artifactAuthority = (overrides = {}) => Object.freeze({
+  artifact_id: "artifact:test",
+  artifact_role: "clued_resource",
+  governance_class: "ordinary",
+  delete_authority: false,
+  authority_version: "artifact-registry/1",
+  ...overrides,
+});
+
+const createHost = (options = {}) => createResourceCenterHostAdapter({
+  trusted_profile: registeredProfile,
+  resolve_artifact: () => artifactAuthority(),
+  effect: async () => ({ ok: true }),
+  ...options,
+});
 
 const check = (input) => evaluateResourceCenterMutation({ profile, ...input });
 
@@ -78,7 +98,7 @@ test("duplicate bytes do not authorize deleting governance evidence", () => {
   assert.equal(result.duplicate_bytes, true);
 });
 
-test("explicit delete authority admits an otherwise valid governance delete", () => {
+test("trusted delete authority admits an otherwise valid governance delete", () => {
   const result = check({
     operation: "delete",
     artifact_role: "clued_resource",
@@ -97,6 +117,28 @@ test("normal track to topic organization is admitted", () => {
     destination_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/a.md",
   });
   assert.equal(result.status, "allow");
+});
+
+test("delete rejects a destination instead of letting it mask the source", () => {
+  const result = check({
+    operation: "delete",
+    artifact_role: "clued_resource",
+    governance_class: "ordinary",
+    delete_authority: false,
+    source_path: "G:/我的云端硬盘/Clued_孤岛/证据.md",
+    destination_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/证据.md",
+  });
+  assert.equal(result.error_code, "DELETE_DESTINATION_FORBIDDEN");
+});
+
+test("move cannot mutate a source outside the managed or registered roots", () => {
+  const result = check({
+    operation: "move",
+    artifact_role: "clued_resource",
+    source_path: "D:/Unregistered/CluedLoose/a.md",
+    destination_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/a.md",
+  });
+  assert.equal(result.error_code, "SOURCE_OUTSIDE_REGISTERED_ROOT");
 });
 
 test("path traversal cannot escape the managed root", () => {
@@ -246,13 +288,13 @@ test("boundary watcher ignores a registered external authority root", () => {
 test("Host adapter rejects unregistered or unversioned bootstrap profiles", () => {
   assert.throws(() => createResourceCenterHostAdapter({
     trusted_profile: profile,
+    resolve_artifact: () => artifactAuthority(),
     effect: async () => {},
   }), /registered, versioned Host-owned/);
 });
 
 test("Host preflight binds exact operation, paths, artifact role, profile and policy versions", () => {
-  const adapter = createResourceCenterHostAdapter({
-    trusted_profile: registeredProfile,
+  const adapter = createHost({
     effect: async () => ({ ok: true }),
   });
   const result = adapter.preflight({
@@ -274,14 +316,17 @@ test("Host preflight binds exact operation, paths, artifact role, profile and po
 });
 
 test("mutation payload cannot self-declare profile or managed-root authority", () => {
-  const adapter = createResourceCenterHostAdapter({
-    trusted_profile: registeredProfile,
+  const adapter = createHost({
     effect: async () => ({ ok: true }),
   });
   for (const authority of [
     { profile: { registration_status: "registered" } },
     { managed_root: "D:/attacker-root" },
     { registered_external_roots: ["D:/attacker-root"] },
+    { governance_class: "ordinary" },
+    { delete_authority: true },
+    { artifact_authority_version: "attacker/1" },
+    { artifact_id: "attacker-artifact" },
   ]) {
     const result = adapter.preflight({
       operation: "write",
@@ -293,6 +338,47 @@ test("mutation payload cannot self-declare profile or managed-root authority", (
   }
 });
 
+test("Host artifact resolver, not the caller, decides governance delete authority", async () => {
+  let calls = 0;
+  const mutation = {
+    operation: "delete",
+    artifact_role: "clued_resource",
+    duplicate_bytes: true,
+    source_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/review.md",
+  };
+  const denied = createHost({
+    resolve_artifact: () => artifactAuthority({ governance_class: "governance" }),
+    effect: async () => { calls += 1; },
+  });
+  assert.equal((await denied.guardedMutation(mutation)).error_code, "DELETE_AUTHORITY_REQUIRED");
+  assert.equal(calls, 0);
+
+  const admitted = createHost({
+    resolve_artifact: () => artifactAuthority({ governance_class: "governance", delete_authority: true }),
+    effect: async ({ mutation: authorized }) => {
+      calls += 1;
+      assert.equal(authorized.governance_class, "governance");
+      assert.equal(authorized.delete_authority, true);
+      assert.equal(authorized.artifact_authority_version, "artifact-registry/1");
+    },
+  });
+  assert.equal((await admitted.guardedMutation(mutation)).status, "committed");
+  assert.equal(calls, 1);
+});
+
+test("Host rejects delete destination masking before the effect", async () => {
+  let calls = 0;
+  const adapter = createHost({ effect: async () => { calls += 1; } });
+  const result = await adapter.guardedMutation({
+    operation: "delete",
+    artifact_role: "clued_resource",
+    source_path: "G:/我的云端硬盘/Clued_孤岛/证据.md",
+    destination_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/证据.md",
+  });
+  assert.equal(result.error_code, "DELETE_DESTINATION_FORBIDDEN");
+  assert.equal(calls, 0);
+});
+
 test("Host adapter captures the trusted profile instead of retaining mutable caller config", () => {
   const bootstrapProfile = {
     ...registeredProfile,
@@ -301,6 +387,7 @@ test("Host adapter captures the trusted profile instead of retaining mutable cal
   };
   const adapter = createResourceCenterHostAdapter({
     trusted_profile: bootstrapProfile,
+    resolve_artifact: () => artifactAuthority(),
     effect: async () => ({ ok: true }),
   });
   bootstrapProfile.managed_root = "D:/attacker-root";
@@ -332,8 +419,7 @@ test("Host preflight rejects accessor-bearing mutation payloads without invoking
       return "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c/a.md";
     },
   });
-  const adapter = createResourceCenterHostAdapter({
-    trusted_profile: registeredProfile,
+  const adapter = createHost({
     effect: async () => ({ ok: true }),
   });
   const result = adapter.preflight(mutation);
@@ -343,8 +429,7 @@ test("Host preflight rejects accessor-bearing mutation payloads without invoking
 
 test("Host mutation API refuses a direct mutation without admission", async () => {
   let calls = 0;
-  const adapter = createResourceCenterHostAdapter({
-    trusted_profile: registeredProfile,
+  const adapter = createHost({
     effect: async () => { calls += 1; },
   });
   const result = await adapter.commitMutation({
@@ -360,12 +445,10 @@ test("Host mutation API refuses a direct mutation without admission", async () =
 
 test("lookalike or cross-adapter admission objects cannot be consumed", async () => {
   let calls = 0;
-  const first = createResourceCenterHostAdapter({
-    trusted_profile: registeredProfile,
+  const first = createHost({
     effect: async () => { calls += 1; },
   });
-  const second = createResourceCenterHostAdapter({
-    trusted_profile: registeredProfile,
+  const second = createHost({
     effect: async () => { calls += 1; },
   });
   const mutation = {
@@ -381,8 +464,7 @@ test("lookalike or cross-adapter admission objects cannot be consumed", async ()
 
 test("admission is exact-bound and consumed by a mismatched execution attempt", async () => {
   let calls = 0;
-  const adapter = createResourceCenterHostAdapter({
-    trusted_profile: registeredProfile,
+  const adapter = createHost({
     effect: async () => { calls += 1; },
   });
   const mutation = {
@@ -400,11 +482,29 @@ test("admission is exact-bound and consumed by a mismatched execution attempt", 
   assert.equal(calls, 0);
 });
 
+test("artifact authority drift invalidates and consumes an admission", async () => {
+  let authorityVersion = "artifact-registry/1";
+  let calls = 0;
+  const adapter = createHost({
+    resolve_artifact: () => artifactAuthority({ authority_version: authorityVersion }),
+    effect: async () => { calls += 1; },
+  });
+  const mutation = {
+    operation: "write",
+    artifact_role: "clued_resource",
+    destination_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/brand/a.md",
+  };
+  const issued = adapter.preflight(mutation);
+  authorityVersion = "artifact-registry/2";
+  assert.equal((await adapter.commitMutation({ admission: issued.admission, mutation })).error_code, "ADMISSION_BINDING_MISMATCH");
+  assert.equal((await adapter.commitMutation({ admission: issued.admission, mutation })).error_code, "ADMISSION_ALREADY_CONSUMED");
+  assert.equal(calls, 0);
+});
+
 test("admission expires and remains single-use", async () => {
   let now = 1_000;
   let calls = 0;
-  const adapter = createResourceCenterHostAdapter({
-    trusted_profile: registeredProfile,
+  const adapter = createHost({
     effect: async () => { calls += 1; },
     clock: () => now,
     admission_ttl_ms: 50,
@@ -423,8 +523,7 @@ test("admission expires and remains single-use", async () => {
 
 test("guarded Host wrapper never calls the side effect when preflight denies", async () => {
   let calls = 0;
-  const adapter = createResourceCenterHostAdapter({
-    trusted_profile: registeredProfile,
+  const adapter = createHost({
     effect: async () => { calls += 1; },
   });
   const result = await adapter.guardedMutation({
@@ -440,8 +539,7 @@ test("guarded Host wrapper never calls the side effect when preflight denies", a
 
 test("guarded Host wrapper consumes one exact admission and freezes effect input", async () => {
   const seen = [];
-  const adapter = createResourceCenterHostAdapter({
-    trusted_profile: registeredProfile,
+  const adapter = createHost({
     effect: async ({ mutation, admission, profile_identity: identity }) => {
       seen.push({ mutation, admission, identity });
       return { receipt: "host-effect-1" };
@@ -456,7 +554,16 @@ test("guarded Host wrapper consumes one exact admission and freezes effect input
   const result = await adapter.guardedMutation(mutation);
   assert.equal(result.status, "committed");
   assert.equal(seen.length, 1);
-  assert.deepEqual(seen[0].mutation, mutation);
+  assert.deepEqual({
+    operation: seen[0].mutation.operation,
+    artifact_role: seen[0].mutation.artifact_role,
+    source_path: seen[0].mutation.source_path,
+    destination_path: seen[0].mutation.destination_path,
+  }, mutation);
+  assert.equal(seen[0].mutation.governance_class, "ordinary");
+  assert.equal(seen[0].mutation.delete_authority, false);
+  assert.equal(seen[0].mutation.artifact_authority_version, "artifact-registry/1");
+  assert.equal(seen[0].mutation.artifact_id, "artifact:test");
   assert.equal(Object.isFrozen(seen[0].mutation), true);
   assert.equal(seen[0].identity.profile_id, "resource-center-primary");
   assert.equal(result.effect_result.receipt, "host-effect-1");
@@ -465,7 +572,7 @@ test("guarded Host wrapper consumes one exact admission and freezes effect input
 
 test("Host boundary scan uses captured trusted profile and no model callback", () => {
   let modelCalls = 0;
-  const adapter = createResourceCenterHostAdapter({
+  const adapter = createHost({
     trusted_profile: {
       ...registeredProfile,
       registered_external_roots: ["D:/RegisteredCluedArtifacts"],
@@ -486,4 +593,75 @@ test("Host boundary scan uses captured trusted profile and no model callback", (
     "UNAUTHORIZED_WORKSPACE_MUTATION",
   ]);
   assert.equal(modelCalls, 0);
+});
+
+test("official filesystem adapter consumes admission and scans trusted roots", async (t) => {
+  const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-"));
+  t.after(() => fs.rm(sandbox, { recursive: true, force: true }));
+  const managedRoot = path.join(sandbox, "Clued_资料中心");
+  const track = path.join(managedRoot, "20_P_产品与体验");
+  await fs.mkdir(track, { recursive: true });
+  const adapter = createResourceCenterFilesystemAdapter({
+    trusted_profile: {
+      registration_status: "registered",
+      profile_id: "filesystem-test",
+      profile_version: "resource-center-profile/2",
+      managed_root: managedRoot,
+      allowed_root_children: ["20_P_产品与体验"],
+      boundary_scan_roots: [sandbox],
+    },
+    resolve_artifact: () => artifactAuthority({ authority_version: "filesystem-registry/1" }),
+  });
+
+  const destination = path.join(track, "artifact.md");
+  const result = await adapter.guardedMutation({
+    operation: "create",
+    artifact_role: "clued_resource",
+    destination_path: destination,
+    content: "governed",
+  });
+  assert.equal(result.status, "committed");
+  assert.equal(await fs.readFile(destination, "utf8"), "governed");
+
+  await fs.mkdir(path.join(sandbox, "Clued_孤岛"));
+  const violations = await adapter.scanBoundary();
+  assert.equal(violations.some((item) =>
+    item.code === "UNAUTHORIZED_WORKSPACE_MUTATION" && item.path.includes("Clued_孤岛")), true);
+});
+
+test("official filesystem adapter rejects a realpath escape before the effect", async (t) => {
+  const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-realpath-"));
+  t.after(() => fs.rm(sandbox, { recursive: true, force: true }));
+  const managedRoot = path.join(sandbox, "Clued_资料中心");
+  const destination = path.join(managedRoot, "20_P_产品与体验", "linked", "artifact.md");
+  const outside = path.join(sandbox, "outside", "artifact.md");
+  let writeCalls = 0;
+  const fakeFilesystem = {
+    readdir: async () => [],
+    writeFile: async () => { writeCalls += 1; },
+    rename: async () => {},
+    unlink: async () => {},
+    rmdir: async () => {},
+    mkdir: async () => {},
+    realpath: async (candidate) => candidate === destination ? outside : candidate,
+  };
+  const adapter = createResourceCenterFilesystemAdapter({
+    trusted_profile: {
+      registration_status: "registered",
+      profile_id: "filesystem-realpath-test",
+      profile_version: "resource-center-profile/2",
+      managed_root: managedRoot,
+      allowed_root_children: ["20_P_产品与体验"],
+    },
+    resolve_artifact: () => artifactAuthority({ authority_version: "filesystem-registry/1" }),
+    filesystem: fakeFilesystem,
+  });
+
+  await assert.rejects(adapter.guardedMutation({
+    operation: "write",
+    artifact_role: "clued_resource",
+    destination_path: destination,
+    content: "must not escape",
+  }), { code: "DESTINATION_REALPATH_OUTSIDE_MANAGED_ROOT" });
+  assert.equal(writeCalls, 0);
 });

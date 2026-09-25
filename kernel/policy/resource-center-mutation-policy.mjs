@@ -85,6 +85,9 @@ export function evaluateResourceCenterMutation(input) {
   const directorySemantics = input?.directory_semantics;
   const governanceClass = input?.governance_class;
   const allowedChildren = new Set(profile.allowed_root_children ?? []);
+  const registeredExternalRoots = (profile.registered_external_roots ?? [])
+    .map(normalizePath)
+    .filter(Boolean);
   const statusNames = new Set(
     (profile.status_directory_names ?? DEFAULT_STATUS_DIRECTORY_NAMES).map(foldName),
   );
@@ -99,15 +102,26 @@ export function evaluateResourceCenterMutation(input) {
   if (!MUTATIONS.has(operation)) return deny("MUTATION_OPERATION_INVALID");
   if (!managedRoot) return deny("MANAGED_ROOT_REQUIRED");
   if (artifactRole !== "clued_resource") return deny("ARTIFACT_ROLE_REQUIRED");
-  if (!destination && operation !== "delete") return deny("DESTINATION_REQUIRED");
-  if (operation === "delete" && !source && !destination) return deny("DELETE_TARGET_REQUIRED");
+  if (operation === "delete") {
+    if (!source) return deny("DELETE_TARGET_REQUIRED");
+    if (destination) return deny("DELETE_DESTINATION_FORBIDDEN");
+  } else if (operation === "move" || operation === "rename") {
+    if (!source || !destination) return deny("SOURCE_AND_DESTINATION_REQUIRED");
+  } else {
+    if (!destination) return deny("DESTINATION_REQUIRED");
+    if (source) return deny("SOURCE_PATH_FORBIDDEN_FOR_OPERATION", { operation });
+  }
   if (targetKind === "directory" && !["track", "topic", "asset_collection"].includes(directorySemantics)) {
     return deny("DIRECTORY_SEMANTICS_REQUIRED");
   }
 
-  const target = destination ?? source;
+  const target = operation === "delete" ? source : destination;
   if (artifactRole === "clued_resource" && !isWithin(target, managedRoot)) {
     return deny("SIBLING_ISLAND_FORBIDDEN", { managed_root: managedRoot });
+  }
+  if (source && !isWithin(source, managedRoot) &&
+    !registeredExternalRoots.some((root) => isWithin(source, root))) {
+    return deny("SOURCE_OUTSIDE_REGISTERED_ROOT", { managed_root: managedRoot });
   }
 
   for (const path of [source, destination].filter(Boolean)) {
@@ -208,8 +222,10 @@ export function bindResourceCenterMutation(input) {
     artifact_role: input?.artifact_role ?? null,
     target_kind: input?.target_kind ?? "file",
     directory_semantics: input?.directory_semantics ?? null,
+    artifact_id: input?.artifact_id ?? null,
     governance_class: input?.governance_class ?? null,
     delete_authority: input?.delete_authority === true,
+    artifact_authority_version: input?.artifact_authority_version ?? null,
     duplicate_bytes: input?.duplicate_bytes === true,
     currentness_identity: input?.currentness_identity ?? null,
     workspace_version: input?.workspace_version ?? null,

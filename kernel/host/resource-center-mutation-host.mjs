@@ -18,7 +18,14 @@ const CALLER_AUTHORITY_FIELDS = new Set([
   "allowed_root_children",
   "status_directory_names",
   "registered_external_roots",
+  "boundary_scan_roots",
+  "boundary_scan_max_depth",
+  "boundary_scan_max_entries",
   "policy_version",
+  "governance_class",
+  "delete_authority",
+  "artifact_authority_version",
+  "artifact_id",
 ]);
 
 function deny(errorCode, details = {}) {
@@ -49,6 +56,9 @@ function snapshotTrustedProfile(profile) {
       ? undefined
       : Object.freeze([...profile.status_directory_names]),
     registered_external_roots: Object.freeze([...(profile.registered_external_roots ?? [])]),
+    boundary_scan_roots: Object.freeze([...(profile.boundary_scan_roots ?? [])]),
+    boundary_scan_max_depth: profile.boundary_scan_max_depth,
+    boundary_scan_max_entries: profile.boundary_scan_max_entries,
   });
 }
 
@@ -102,6 +112,44 @@ function mutationSnapshot(mutation) {
   return deepFreeze(snapshotJson(mutation));
 }
 
+function resolveTrustedArtifact(resolveArtifact, profile, mutation) {
+  let resolved;
+  try {
+    resolved = resolveArtifact(Object.freeze({ profile, mutation }));
+    if (resolved && typeof resolved.then === "function") {
+      return deny("ARTIFACT_AUTHORITY_ASYNC_FORBIDDEN");
+    }
+    resolved = deepFreeze(snapshotJson(resolved, new WeakSet(), "artifact_authority"));
+  } catch (error) {
+    return deny("ARTIFACT_AUTHORITY_RESOLUTION_FAILED", { reason: error.message });
+  }
+
+  if (!resolved || typeof resolved !== "object" || Array.isArray(resolved) ||
+    resolved.artifact_role !== "clued_resource" ||
+    !["ordinary", "governance"].includes(resolved.governance_class) ||
+    typeof resolved.delete_authority !== "boolean" ||
+    typeof resolved.authority_version !== "string" || resolved.authority_version.trim() === "" ||
+    !(resolved.artifact_id === null ||
+      (typeof resolved.artifact_id === "string" && resolved.artifact_id.trim() !== ""))) {
+    return deny("ARTIFACT_AUTHORITY_INVALID");
+  }
+  if (mutation.artifact_role !== resolved.artifact_role) {
+    return deny("ARTIFACT_ROLE_MISMATCH");
+  }
+
+  return {
+    status: "resolved",
+    mutation: deepFreeze({
+      ...mutation,
+      artifact_id: resolved.artifact_id?.trim() ?? null,
+      artifact_role: resolved.artifact_role,
+      governance_class: resolved.governance_class,
+      delete_authority: resolved.delete_authority,
+      artifact_authority_version: resolved.authority_version.trim(),
+    }),
+  };
+}
+
 function callerAuthorityField(mutation) {
   return Object.keys(mutation).find((key) => CALLER_AUTHORITY_FIELDS.has(key)) ?? null;
 }
@@ -130,18 +178,23 @@ function validateTtl(value) {
 /**
  * Creates the official in-process Resource Center mutation boundary.
  *
- * `trusted_profile` and `effect` are Host bootstrap dependencies. Mutation
+ * `trusted_profile`, `resolve_artifact` and `effect` are Host bootstrap
+ * dependencies. Mutation
  * callers receive the returned adapter only; they cannot replace the managed
  * root, profile or external-root registry through a mutation payload.
  */
 export function createResourceCenterHostAdapter({
   trusted_profile: trustedProfile,
+  resolve_artifact: resolveArtifact,
   effect,
   clock = Date.now,
   admission_ttl_ms: admissionTtlMs = DEFAULT_ADMISSION_TTL_MS,
 } = {}) {
   if (typeof effect !== "function") {
     throw new TypeError("A trusted Host effect function is required.");
+  }
+  if (typeof resolveArtifact !== "function") {
+    throw new TypeError("A trusted Host artifact authority resolver is required.");
   }
   if (typeof clock !== "function") throw new TypeError("clock must be a function");
 
@@ -167,13 +220,16 @@ export function createResourceCenterHostAdapter({
       return deny("CALLER_AUTHORITY_FIELDS_FORBIDDEN", { field: authorityField });
     }
 
-    const result = evaluateResourceCenterMutation({ profile, ...snapshot });
+    const resolved = resolveTrustedArtifact(resolveArtifact, profile, snapshot);
+    if (resolved.status !== "resolved") return resolved;
+    const authorizedMutation = resolved.mutation;
+    const result = evaluateResourceCenterMutation({ profile, ...authorizedMutation });
     if (result.status !== "allow") return result;
 
     const issuedAt = Number(clock());
     if (!Number.isFinite(issuedAt)) return deny("HOST_CLOCK_INVALID");
     const expiresAt = issuedAt + ttlMs;
-    const binding = exactBinding(profile, snapshot);
+    const binding = exactBinding(profile, authorizedMutation);
     const admission = deepFreeze({
       admission_kind: "host_instance_opaque_single_use",
       admission_id: randomUUID(),
@@ -219,15 +275,18 @@ export function createResourceCenterHostAdapter({
       return deny("CALLER_AUTHORITY_FIELDS_FORBIDDEN", { field: authorityField });
     }
 
-    const policyResult = evaluateResourceCenterMutation({ profile, ...snapshot });
+    const resolved = resolveTrustedArtifact(resolveArtifact, profile, snapshot);
+    if (resolved.status !== "resolved") return resolved;
+    const authorizedMutation = resolved.mutation;
+    const policyResult = evaluateResourceCenterMutation({ profile, ...authorizedMutation });
     if (policyResult.status !== "allow") return policyResult;
-    const binding = exactBinding(profile, snapshot);
+    const binding = exactBinding(profile, authorizedMutation);
     if (JSON.stringify(binding) !== JSON.stringify(state.binding)) {
       return deny("ADMISSION_BINDING_MISMATCH");
     }
 
     const effectResult = await effect({
-      mutation: snapshot,
+      mutation: authorizedMutation,
       admission,
       profile_identity: profileIdentity,
     });
