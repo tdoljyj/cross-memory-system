@@ -587,15 +587,17 @@ const pickCorruption = (rng) => {
 //      spot, and the assertion names it.
 //
 // The scope of that obligation is integration_facts_validate_v1 and nothing else — one function of
-// the nine in PURE. The other validators reached from this file (integration_ceiling_valid_v1,
-// integration_timestamp_valid_v1, integration_version_cmp_v1) and the registry CHECK constraints
-// have hand-written example tables only, with no coverage obligation and no mirror, so the
-// mutation-survivor class this list closes is NOT closed for them: PR #340's third delta review
-// found live fail-open mutants in all three places (the ceiling's resource_id length and type
-// disjuncts, the timestamp's fractional-second bound, the capability_ceiling CHECK on
-// integration_host_surfaces_v1 and the hosts.host regex CHECK). The first two are fixed by
-// targeted cases in their own subtests below; extending an obligation like this one to the
-// remaining functions is carried to S2c PR-2 by Owner Decision
+// the nine in PURE. Every other function reached from this file (integration_ceiling_valid_v1,
+// integration_timestamp_valid_v1, integration_version_cmp_v1, integration_capabilities_valid_v1
+// and integration_derive_v1's canonicalizer) and the registry CHECK constraints generally have
+// hand-written example tables only, with no coverage obligation and no mirror, so the
+// mutation-survivor class this list closes is NOT closed for them. PR #340's third and fourth
+// delta reviews found live fail-open mutants across those surfaces — the ceiling's resource_id
+// length and type disjuncts and its actions element type, the timestamp's fractional-second
+// bound, derive_v1's canonicalizer de-duplication, and at least three registry CHECKs — so this
+// enumeration is a sample of what is uncovered, not an inventory of it. The ceiling and timestamp
+// cases are fixed by targeted rows in their own subtests below; extending an obligation like this
+// one to the remaining functions is carried to S2c PR-2 by Owner Decision
 // 0402d831-fa57-4a31-86e4-44467b85a796.
 //
 // Where the line is drawn. A predicate is emitted for one piece of SQL text whose deletion can
@@ -1077,6 +1079,14 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         [{ scopes: [], entries: [{ ...entry, resource_id: 'a'.repeat(255) }] }, true, '255-char resource_id'],
         [{ scopes: [], entries: [{ ...entry, resource_id: 'a'.repeat(256) }] }, false, '256-char resource_id'],
         [{ scopes: [], entries: [{ ...entry, resource_id: 123 }] }, false, 'resource_id not a string'],
+        // PR #340 fourth delta review MAJOR-A: the same shape one `if` further down. Deleting the
+        // `jsonb_typeof(e) <> 'string'` disjunct from the actions element check passed the whole
+        // suite, because `(e #>> '{}')` on a JSON null is SQL NULL and `NULL not in (...)` is NULL,
+        // so the `exists` never fires. The two below are equivalent mutants today only through an
+        // accidental interaction with the key-uniqueness check, so they are pinned as well.
+        [{ scopes: [], entries: [{ ...entry, actions: [null] }] }, false, 'actions element not a string'],
+        [{ scopes: [null], entries: [] }, false, 'scopes element null'],
+        [{ scopes: [], entries: [{ ...entry, resource_kind: null }] }, false, 'resource_kind null'],
         [{ scopes: [], entries: [{ ...entry, extra: 1 }] }, false, 'extra entry key'],
         [{ scopes: [], entries: [entry, { ...entry, actions: ['read'] }] }, false, 'duplicate entry key'],
         [{ scopes: [], entries: [], other: 1 }, false, 'extra key'],

@@ -158,7 +158,9 @@ an instant it does not name. Nothing legitimate is lost: a normalizer formatting
 A third spelling class behaves the same way and needs no change, only a note that
 it is load-bearing: a fractional second of seven or more digits is not rejected by
 the cast either, it is *rounded* to the microsecond resolution `timestamptz`
-actually has, so `12:00:00.1234567Z` is stored and hashed as `12:00:00.123457`.
+actually has. The document keeps the digits it was written with, so
+`12:00:00.1234567Z` is hashed as spelled but *read* as `12:00:00.123457`: the hash
+covers a statement about an instant the document does not name.
 The previous lexical rule already bounded the fraction at `(\.[0-9]{1,6})?`, and
 that bound is retained here for exactly the reason above and not as an
 afterthought. It is not part of the count below, because it is not new.
@@ -182,14 +184,15 @@ is not the inconsistency with items 1 and 2 that it can look like. The differenc
 is who the producers are. `0.0` and an unsorted ceiling are cheap for any producer
 to avoid — item 1 costs a writer nothing, and item 2's own justification, stated
 above, is symmetry with `scopes` plus `§10.12` needing one `jsonb`
-representation per ceiling. An instant is not like that: the facts document may be
-authored by parties other than the PR-2 normalizer — the committed golden vectors,
-and other hosts submitting facts — whose ISO-8601 output legitimately varies
-between `Z` and `+00:00`, with or without a fractional part. A canonicality rule
-would reject those well-formed documents, and not only ill-formed ones. `§8.6`
-puts the problem where it belongs: normalization is the producer's job. Item 3
-therefore refuses only the spellings that do not denote the instant they name, and
-leaves single-spelling canonicality to the PR-2 normalizer contract.
+representation per ceiling. An instant is not like that: a facts document is
+also authored by hand, by the committed `§13.2` P5 golden vectors, whose ISO-8601
+spelling legitimately varies between `Z` and `+00:00`, with or without a
+fractional part. A canonicality rule would reject those well-formed documents, and
+not only ill-formed ones. `§7.1` puts the problem where it belongs: it defines the
+facts document as the output of `integration_normalize_v1`, so one spelling is
+that function's to guarantee. Item 3 therefore refuses only the spellings that do
+not denote the instant they name, and leaves single-spelling canonicality to the
+PR-2 normalizer contract.
 
 **Evidence.** The two regexes settle only half of the count. They differ in the
 hour and second alternations alone, so the new grammar is a strict subset and
