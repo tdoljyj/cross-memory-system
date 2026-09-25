@@ -86,13 +86,36 @@ async function assertDestinationParentWithin(filesystem, candidate, managedRoot)
   }
 }
 
-function assertUniqueRegularFile(stats, code) {
+function stableIdentityValue(value, allowZero) {
+  if (typeof value === "bigint") {
+    if (value < 0n || (!allowZero && value === 0n)) fail("FILESYSTEM_OBJECT_IDENTITY_UNAVAILABLE");
+    return value.toString();
+  }
+  if (!Number.isSafeInteger(value) || value < 0 || (!allowZero && value === 0)) {
+    fail("FILESYSTEM_OBJECT_IDENTITY_UNAVAILABLE");
+  }
+  return String(value);
+}
+
+function verifiedObjectIdentity(stats, hardLinkCode) {
+  if (typeof stats?.isFile !== "function") fail("FILESYSTEM_OBJECT_IDENTITY_UNAVAILABLE");
   if (!stats.isFile()) fail("MUTATION_TARGET_NOT_REGULAR_FILE");
-  if (stats.nlink !== 1) fail(code, { link_count: stats.nlink });
+  const linkCount = typeof stats.nlink === "bigint"
+    ? (stats.nlink <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(stats.nlink) : NaN)
+    : stats.nlink;
+  if (!Number.isSafeInteger(linkCount) || linkCount <= 0) {
+    fail("FILESYSTEM_OBJECT_IDENTITY_UNAVAILABLE");
+  }
+  if (linkCount !== 1) fail(hardLinkCode, { link_count: linkCount });
+  return Object.freeze({
+    device: stableIdentityValue(stats.dev, true),
+    inode: stableIdentityValue(stats.ino, false),
+    link_count: linkCount,
+  });
 }
 
 function sameObjectIdentity(left, right) {
-  return left.dev === right.dev && left.ino === right.ino;
+  return left.device === right.device && left.inode === right.inode;
 }
 
 async function writeExistingManagedFile(filesystem, candidate, managedRoot, content, replace) {
@@ -109,10 +132,11 @@ async function writeExistingManagedFile(filesystem, candidate, managedRoot, cont
       typeof handle.close !== "function") {
       fail("RESOURCE_CENTER_FILE_HANDLE_INVALID");
     }
-    const before = await handle.stat();
-    assertUniqueRegularFile(before, "HARD_LINK_ALIAS_FORBIDDEN");
-    const pathBefore = await filesystem.stat(candidate);
-    if (!sameObjectIdentity(before, pathBefore)) fail("MUTATION_TARGET_IDENTITY_CHANGED");
+    const before = await handle.stat({ bigint: true });
+    const beforeIdentity = verifiedObjectIdentity(before, "HARD_LINK_ALIAS_FORBIDDEN");
+    const pathBefore = await filesystem.stat(candidate, { bigint: true });
+    const pathBeforeIdentity = verifiedObjectIdentity(pathBefore, "HARD_LINK_ALIAS_FORBIDDEN");
+    if (!sameObjectIdentity(beforeIdentity, pathBeforeIdentity)) fail("MUTATION_TARGET_IDENTITY_CHANGED");
 
     // Re-check the resolved path after opening, then mutate only through the
     // verified handle so a path-based write cannot silently target another
@@ -127,17 +151,17 @@ async function writeExistingManagedFile(filesystem, candidate, managedRoot, cont
     await handle.writeFile(content);
     await handle.sync();
 
-    const after = await handle.stat();
-    const pathAfter = await filesystem.stat(candidate);
-    assertUniqueRegularFile(after, "HARD_LINK_ALIAS_DETECTED_AFTER_WRITE");
-    if (!sameObjectIdentity(before, after) || !sameObjectIdentity(after, pathAfter)) {
+    const after = await handle.stat({ bigint: true });
+    const pathAfter = await filesystem.stat(candidate, { bigint: true });
+    const afterIdentity = verifiedObjectIdentity(after, "HARD_LINK_ALIAS_DETECTED_AFTER_WRITE");
+    const pathAfterIdentity = verifiedObjectIdentity(pathAfter, "HARD_LINK_ALIAS_DETECTED_AFTER_WRITE");
+    if (!sameObjectIdentity(beforeIdentity, afterIdentity) ||
+      !sameObjectIdentity(afterIdentity, pathAfterIdentity)) {
       fail("MUTATION_TARGET_IDENTITY_CHANGED");
     }
     return Object.freeze({
-      device: after.dev,
-      inode: after.ino,
-      link_count: after.nlink,
-      size: after.size,
+      ...afterIdentity,
+      size: typeof after.size === "bigint" ? after.size.toString() : after.size,
     });
   } finally {
     await handle?.close?.();

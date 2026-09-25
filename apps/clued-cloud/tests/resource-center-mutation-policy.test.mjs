@@ -708,3 +708,46 @@ test("official filesystem adapter rejects a hard-link alias without changing the
   assert.equal(await fs.readFile(outside, "utf8"), "outside-original");
   assert.equal((await fs.stat(outside)).nlink, 2);
 });
+
+test("official filesystem adapter fails closed when a provider cannot prove object identity", async () => {
+  const managedRoot = path.resolve("virtual-provider", "Clued_资料中心");
+  const destination = path.join(managedRoot, "20_P_产品与体验", "artifact.md");
+  let writeCalls = 0;
+  const unsupportedStats = () => ({ isFile: () => true, nlink: 1, size: 0 });
+  const fakeFilesystem = {
+    readdir: async () => [],
+    writeFile: async () => {},
+    rename: async () => {},
+    unlink: async () => {},
+    rmdir: async () => {},
+    mkdir: async () => {},
+    realpath: async (candidate) => candidate,
+    stat: async () => unsupportedStats(),
+    open: async () => ({
+      stat: async () => unsupportedStats(),
+      writeFile: async () => { writeCalls += 1; },
+      truncate: async () => {},
+      sync: async () => {},
+      close: async () => {},
+    }),
+  };
+  const adapter = createResourceCenterFilesystemAdapter({
+    trusted_profile: {
+      registration_status: "registered",
+      profile_id: "filesystem-identity-test",
+      profile_version: "resource-center-profile/2",
+      managed_root: managedRoot,
+      allowed_root_children: ["20_P_产品与体验"],
+    },
+    resolve_artifact: () => artifactAuthority({ authority_version: "filesystem-registry/1" }),
+    filesystem: fakeFilesystem,
+  });
+
+  await assert.rejects(adapter.guardedMutation({
+    operation: "replace",
+    artifact_role: "clued_resource",
+    destination_path: destination,
+    content: "must fail closed",
+  }), { code: "FILESYSTEM_OBJECT_IDENTITY_UNAVAILABLE" });
+  assert.equal(writeCalls, 0);
+});
