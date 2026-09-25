@@ -86,6 +86,45 @@ async function assertDestinationParentWithin(filesystem, candidate, managedRoot)
   }
 }
 
+async function assertDestinationAbsent(filesystem, candidate) {
+  try {
+    await filesystem.lstat(candidate);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  fail("DESTINATION_ALREADY_EXISTS", { path: candidate });
+}
+
+async function moveRegularFileNoReplace(filesystem, source, destination, sourceRoots, managedRoot) {
+  await assertExistingPathWithin(filesystem, source, sourceRoots, "SOURCE_REALPATH_OUTSIDE_REGISTERED_ROOT");
+  await assertDestinationParentWithin(filesystem, destination, managedRoot);
+  // lstat rejects a symlink/junction itself, even when realpath points into a
+  // registered root. A pre-existing hard link is likewise not a unique source.
+  const beforeIdentity = verifiedObjectIdentity(
+    await filesystem.lstat(source, { bigint: true }),
+    "HARD_LINK_ALIAS_FORBIDDEN",
+  );
+  await assertDestinationAbsent(filesystem, destination);
+
+  // Node's path-based rename may overwrite, while link+unlink can leave a
+  // destination alias after any post-link failure. Neither is an acceptable
+  // default. The Host must supply a trusted provider-native, atomic no-replace
+  // operation with all-or-nothing failure semantics; otherwise deny before
+  // changing either path.
+  if (typeof filesystem.renameNoReplace !== "function") fail("ATOMIC_NO_REPLACE_UNAVAILABLE");
+  await filesystem.renameNoReplace(source, destination, Object.freeze({
+    expected_source_identity: beforeIdentity,
+  }));
+  await assertExistingPathWithin(filesystem, destination, [managedRoot], "DESTINATION_REALPATH_OUTSIDE_MANAGED_ROOT");
+  const finalIdentity = verifiedObjectIdentity(
+    await filesystem.lstat(destination, { bigint: true }),
+    "HARD_LINK_ALIAS_DETECTED_AFTER_MOVE",
+  );
+  if (!sameObjectIdentity(beforeIdentity, finalIdentity)) fail("MUTATION_TARGET_IDENTITY_CHANGED");
+  return finalIdentity;
+}
+
 function stableIdentityValue(value, allowZero) {
   if (typeof value === "bigint") {
     if (value < 0n || (!allowZero && value === 0n)) fail("FILESYSTEM_OBJECT_IDENTITY_UNAVAILABLE");
@@ -204,9 +243,10 @@ async function applyFilesystemMutation(filesystem, profile, mutation) {
       break;
     case "move":
     case "rename":
-      await assertExistingPathWithin(filesystem, source, sourceRoots, "SOURCE_REALPATH_OUTSIDE_REGISTERED_ROOT");
-      await assertDestinationParentWithin(filesystem, destination, profile.managed_root);
-      await filesystem.rename(source, destination);
+      if (mutation.target_kind === "directory") fail("ATOMIC_NO_REPLACE_UNAVAILABLE");
+      objectIdentity = await moveRegularFileNoReplace(
+        filesystem, source, destination, sourceRoots, profile.managed_root,
+      );
       break;
     case "delete":
       await assertExistingPathWithin(filesystem, source, sourceRoots, "SOURCE_REALPATH_OUTSIDE_REGISTERED_ROOT");
@@ -258,9 +298,10 @@ async function enumerateEntries(filesystem, profile, classifyObservedEntry) {
 }
 
 /**
- * Official Node filesystem integration for a Host-registered Resource Center.
- * The mutation caller receives only this adapter; profile, artifact authority,
- * filesystem effect and boundary enumeration are captured bootstrap inputs.
+ * Lower-level Node filesystem integration for a Host-registered Resource
+ * Center. Profile, artifact authority, filesystem effect and boundary
+ * enumeration are captured bootstrap inputs. Transport callers should receive
+ * the filesystem tool Host, which keeps this raw adapter and admissions private.
  */
 export function createResourceCenterFilesystemAdapter({
   trusted_profile: trustedProfile,
@@ -271,10 +312,11 @@ export function createResourceCenterFilesystemAdapter({
   admission_ttl_ms: admissionTtlMs,
 } = {}) {
   if (!filesystem || typeof filesystem.readdir !== "function" ||
-    typeof filesystem.writeFile !== "function" || typeof filesystem.rename !== "function" ||
+    typeof filesystem.writeFile !== "function" ||
     typeof filesystem.unlink !== "function" || typeof filesystem.rmdir !== "function" ||
     typeof filesystem.mkdir !== "function" || typeof filesystem.realpath !== "function" ||
-    typeof filesystem.open !== "function" || typeof filesystem.stat !== "function") {
+    typeof filesystem.open !== "function" || typeof filesystem.stat !== "function" ||
+    typeof filesystem.lstat !== "function") {
     fail("RESOURCE_CENTER_FILESYSTEM_INVALID");
   }
   if (classifyObservedEntry !== undefined && typeof classifyObservedEntry !== "function") {
