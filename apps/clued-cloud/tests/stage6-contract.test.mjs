@@ -42,8 +42,11 @@ test("agent contract makes stable ids and one transactional write explicit", asy
   assert.match(contract, /Byte equality is not deletion authority/);
   assert.match(contract, /If the Host has no usable preflight path, mutation is unavailable/);
   assert.match(contract, /Host-owned trusted configuration/);
+  assert.match(contract, /short-lived, single-use, unforgeable within that Host instance/);
   assert.match(contract, /not a bearer capability/);
   assert.match(contract, /shared guarded mutation wrapper/);
+  assert.match(contract, /reject a missing, forged, expired, already-consumed, cross-Host or binding-mismatched admission/);
+  assert.match(contract, /normal scans never call a model/);
   assert.match(contract, /side-effect function zero times/);
 });
 

@@ -158,13 +158,6 @@ function parentPath(value) {
   return index > 0 ? normalized.slice(0, index) : "/";
 }
 
-function baseName(value) {
-  const normalized = normalizePath(value);
-  if (!normalized) return "";
-  const index = normalized.lastIndexOf("/");
-  return index >= 0 ? normalized.slice(index + 1) : normalized;
-}
-
 export function detectResourceCenterBoundaryViolations(input) {
   const profile = input?.profile ?? {};
   const managedRoot = normalizePath(profile.managed_root);
@@ -188,9 +181,9 @@ export function detectResourceCenterBoundaryViolations(input) {
     if (registeredExternalRoots.some((root) => isWithin(path, root))) continue;
 
     const explicitRole = typeof entry === "object" && entry?.artifact_role === "clued_resource";
-    const cluedNamed = /clued/i.test(baseName(path));
+    const cluedNamed = path.split("/").some((segment) => /clued/i.test(segment));
     const inManagedParent = parent ? isWithin(path, parent) : false;
-    if (!explicitRole && !(inManagedParent && cluedNamed)) continue;
+    if (!explicitRole && !cluedNamed) continue;
 
     violations.push({
       code: "UNAUTHORIZED_WORKSPACE_MUTATION",
@@ -207,7 +200,7 @@ export function detectResourceCenterBoundaryViolations(input) {
 }
 
 
-function admissionBinding(input) {
+export function bindResourceCenterMutation(input) {
   return {
     operation: input?.operation ?? null,
     source_path: normalizePath(input?.source_path),
@@ -217,97 +210,8 @@ function admissionBinding(input) {
     directory_semantics: input?.directory_semantics ?? null,
     governance_class: input?.governance_class ?? null,
     delete_authority: input?.delete_authority === true,
-  };
-}
-
-export function prepareResourceCenterMutationAdmission({ registered_profile: profile, mutation } = {}) {
-  if (!profile || profile.registration_status !== "registered" ||
-    typeof profile.profile_id !== "string" || profile.profile_id.trim() === "") {
-    return {
-      status: "deny",
-      policy_version: RESOURCE_CENTER_POLICY_VERSION,
-      error_code: "REGISTERED_PROFILE_REQUIRED",
-    };
-  }
-
-  const result = evaluateResourceCenterMutation({ profile, ...(mutation ?? {}) });
-  if (result.status !== "allow") return result;
-
-  return {
-    status: "admitted",
-    admission_kind: "host_internal_bound_admission",
-    policy_version: RESOURCE_CENTER_POLICY_VERSION,
-    profile_id: profile.profile_id,
-    binding: admissionBinding(mutation),
-    security_boundary:
-      "not_a_bearer_capability; keep inside the trusted Host mutation wrapper",
-  };
-}
-
-export function verifyResourceCenterMutationAdmission({
-  admission,
-  registered_profile: profile,
-  mutation,
-} = {}) {
-  const prepared = prepareResourceCenterMutationAdmission({
-    registered_profile: profile,
-    mutation,
-  });
-  if (prepared.status !== "admitted") return prepared;
-  if (!admission || admission.admission_kind !== "host_internal_bound_admission") {
-    return {
-      status: "deny",
-      policy_version: RESOURCE_CENTER_POLICY_VERSION,
-      error_code: "ADMISSION_REQUIRED",
-    };
-  }
-  if (admission.policy_version !== prepared.policy_version ||
-    admission.profile_id !== prepared.profile_id ||
-    JSON.stringify(admission.binding) !== JSON.stringify(prepared.binding)) {
-    return {
-      status: "deny",
-      policy_version: RESOURCE_CENTER_POLICY_VERSION,
-      error_code: "ADMISSION_BINDING_MISMATCH",
-    };
-  }
-  return {
-    status: "allow",
-    policy_version: RESOURCE_CENTER_POLICY_VERSION,
-    profile_id: prepared.profile_id,
-  };
-}
-
-
-export function createGuardedResourceCenterMutator({ registered_profile: profile, effect } = {}) {
-  if (typeof effect !== "function") {
-    throw new TypeError("A trusted Host effect function is required.");
-  }
-
-  return async function guardedResourceCenterMutation(mutation) {
-    const admission = prepareResourceCenterMutationAdmission({
-      registered_profile: profile,
-      mutation,
-    });
-    if (admission.status !== "admitted") return admission;
-
-    const verification = verifyResourceCenterMutationAdmission({
-      admission,
-      registered_profile: profile,
-      mutation,
-    });
-    if (verification.status !== "allow") return verification;
-
-    const effectResult = await effect({
-      mutation,
-      admission,
-    });
-
-    return {
-      status: "committed",
-      policy_version: RESOURCE_CENTER_POLICY_VERSION,
-      profile_id: admission.profile_id,
-      binding: admission.binding,
-      effect_result: effectResult,
-    };
+    duplicate_bytes: input?.duplicate_bytes === true,
+    currentness_identity: input?.currentness_identity ?? null,
+    workspace_version: input?.workspace_version ?? null,
   };
 }
