@@ -20,8 +20,27 @@ const DEFAULT_STATUS_DIRECTORY_NAMES = [
 
 function normalizePath(value) {
   if (typeof value !== "string" || value.trim() === "") return null;
-  const normalized = value.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
+  const raw = value.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
+  const drive = /^[A-Za-z]:/.exec(raw)?.[0] ?? "";
+  const absolute = raw.startsWith("/") || drive !== "";
+  const rest = drive ? raw.slice(drive.length) : raw;
+  const parts = [];
+  for (const part of rest.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (parts.length > 0) parts.pop();
+      else if (!absolute) parts.push(part);
+      continue;
+    }
+    parts.push(part);
+  }
+  const prefix = drive ? drive[0].toUpperCase() + ":/" : absolute ? "/" : "";
+  const normalized = prefix + parts.join("/");
   return normalized.length > 1 ? normalized.replace(/\/$/, "") : normalized;
+}
+
+function pathKey(value) {
+  return /^[A-Za-z]:\//.test(value) ? value.toLowerCase() : value;
 }
 
 function foldName(value) {
@@ -34,7 +53,9 @@ function foldName(value) {
 }
 
 function isWithin(path, root) {
-  return path === root || path.startsWith(root + "/");
+  const candidate = pathKey(path);
+  const boundary = pathKey(root);
+  return candidate === boundary || candidate.startsWith(boundary + "/");
 }
 
 function relativeSegments(path, root) {
@@ -56,7 +77,7 @@ export function evaluateResourceCenterMutation(input) {
   const source = normalizePath(input?.source_path);
   const artifactRole = input?.artifact_role;
   const targetKind = input?.target_kind ?? "file";
-  const governanceClass = input?.governance_class ?? "ordinary";
+  const governanceClass = input?.governance_class;
   const allowedChildren = new Set(profile.allowed_root_children ?? []);
   const statusNames = new Set(
     (profile.status_directory_names ?? DEFAULT_STATUS_DIRECTORY_NAMES).map(foldName),
@@ -71,6 +92,7 @@ export function evaluateResourceCenterMutation(input) {
 
   if (!MUTATIONS.has(operation)) return deny("MUTATION_OPERATION_INVALID");
   if (!managedRoot) return deny("MANAGED_ROOT_REQUIRED");
+  if (artifactRole !== "clued_resource") return deny("ARTIFACT_ROLE_REQUIRED");
   if (!destination && operation !== "delete") return deny("DESTINATION_REQUIRED");
   if (operation === "delete" && !source && !destination) return deny("DELETE_TARGET_REQUIRED");
 
@@ -94,6 +116,10 @@ export function evaluateResourceCenterMutation(input) {
     if (forbidden) {
       return deny("STATUS_SEMANTIC_DIRECTORY_FORBIDDEN", { directory: forbidden });
     }
+  }
+
+  if (operation === "delete" && !["ordinary", "governance"].includes(governanceClass)) {
+    return deny("GOVERNANCE_CLASS_REQUIRED");
   }
 
   if (operation === "delete" && governanceClass === "governance" && input?.delete_authority !== true) {
