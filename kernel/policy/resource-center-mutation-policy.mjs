@@ -117,11 +117,14 @@ export function evaluateResourceCenterMutation(input) {
     if (!allowedChildren.has(segments[0])) {
       return deny("RESOURCE_CENTER_ROOT_CHILD_FORBIDDEN", { root_child: segments[0] });
     }
-    const forbidden = directorySegments(
-      path,
-      managedRoot,
-      path === destination ? targetKind : "file",
-    ).find((segment) => statusNames.has(foldName(segment)));
+  }
+
+  // Status semantics are forbidden at the mutation destination. The source is
+  // intentionally not blocked so an admitted move/rename can remediate an
+  // already-illegal status folder by moving material back into a legal topic.
+  if (destination && isWithin(destination, managedRoot)) {
+    const forbidden = directorySegments(destination, managedRoot, targetKind)
+      .find((segment) => statusNames.has(foldName(segment)));
     if (forbidden) {
       return deny("STATUS_SEMANTIC_DIRECTORY_FORBIDDEN", { directory: forbidden });
     }

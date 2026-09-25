@@ -160,3 +160,13 @@ test("a declared topic directory remains allowed", () => {
   });
   assert.equal(result.status, "allow");
 });
+
+test("remediation may move material out of an already-illegal status folder", () => {
+  const result = check({
+    operation: "move",
+    artifact_role: "clued_resource",
+    source_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/00_现行基线/a.md",
+    destination_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/a.md",
+  });
+  assert.equal(result.status, "allow");
+});
