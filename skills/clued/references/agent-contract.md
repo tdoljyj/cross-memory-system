@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 2
+Contract version: 3
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -81,3 +81,14 @@ Rules for every capture:
 3. Both Global and Project five views are Standard Work Projection. Task owns executable text; State references Task. A Frontier requires exact Task identity, version, scope, rules and currentness.
 4. Read access and priority do not grant execution permission. Deployment, migration, release, credential, billing, other-user access, explicit Project creation and destructive Project actions need their own explicit authorization.
 5. Report a suggestion as a suggestion and completion only when an operation result supports it.
+
+## 7. Governed external workspace mutations
+
+1. A Host may register an external workspace as **Clued-governed** (for example a Resource Center root, a project workspace or another explicitly registered storage surface). Registration binds the exact managed root and its deterministic layout/currentness policy; a nearby folder, same drive, matching name or broad filesystem permission never extends that root.
+2. Before any `create`, `write`, `move`, `rename`, `replace` or `delete` that can affect a governed workspace, the Agent must use the registered deterministic preflight for that workspace and obtain the exact admission/capability required by the Host. The preflight binds the operation, source, destination, artifact role, relevant version/currentness identity and policy version. If the Host has no usable preflight path, mutation is unavailable: stay read-only and report the missing capability instead of bypassing Clued with a generic file tool.
+3. Directory layout never carries Currentness or Authority. A governed Resource Center uses track/topic/necessary asset-collection structure only. Status-semantic directories such as `current`, `current baseline`, `current version`, `FIXED`, `FROZEN`, `candidate`, `historical` or equivalents are rejected when they would create a second status system. Currentness remains Canonical/source-bound.
+4. **NO SIBLING ISLAND** is enforced at the managed-root boundary. Clued Resource Center material must not be dropped in the parent/root directory, a sibling folder or another unregistered filesystem island. Legitimate external authority (for example GitHub, Canonical Store or a registered Artifact Provider) is represented by its registered external reference, not by an ad-hoc nearby folder.
+5. Byte equality is not deletion authority. A SHA-256 match may establish duplicate bytes, but deletion of a governance object, historical evidence or retained artifact still requires the applicable lifecycle/retention/authority admission. Never infer destructive permission from duplicate detection alone.
+6. After an admitted mutation, verify the actual destination/parent, object identity, format and expected result, and retain the Host/Clued result or Receipt. If a mutation changes Currentness, use the existing invalidation/reconciliation path; do not maintain a hand-written current-file list or status folder.
+7. Host qualification must include negative fixtures for: direct mutation without preflight, status folders, Resource Center parent/sibling/root drops, deletion based only on duplicate bytes, and status inference from filenames. It must include a positive track→topic case. Deterministic checks run without a model; a model is invoked only for an exceptional ambiguity that policy explicitly permits escalating.
+8. This contract does not claim that Clued can physically stop an unrelated third-party tool that already holds raw OS write permission. Until a Host uses a brokered writer, ACL or equivalent restricted write principal, such a channel is outside hard enforcement and must not be described as protected. Detection may report `UNAUTHORIZED_WORKSPACE_MUTATION`; physical non-bypassability requires the storage/Host boundary to remove generic write authority.
