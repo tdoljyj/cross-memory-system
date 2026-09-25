@@ -107,28 +107,16 @@ async function moveRegularFileNoReplace(filesystem, source, destination, sourceR
   );
   await assertDestinationAbsent(filesystem, destination);
 
-  // link is an atomic create-if-absent on supported filesystems. Path-based
-  // rename overwrites on common platforms and is unsafe even after lstat.
-  // Unsupported providers fail closed; directory moves require an explicit
-  // provider-native atomic no-replace implementation in a later stage.
-  await filesystem.link(source, destination);
-  const sourceAfterLink = verifiedObjectIdentityAllowTwo(
-    await filesystem.lstat(source, { bigint: true }),
-  );
-  const destinationAfterLink = verifiedObjectIdentityAllowTwo(
-    await filesystem.lstat(destination, { bigint: true }),
-  );
-  if (!sameObjectIdentity(beforeIdentity, sourceAfterLink) ||
-    !sameObjectIdentity(beforeIdentity, destinationAfterLink)) {
-    fail("MUTATION_TARGET_IDENTITY_CHANGED");
-  }
-  await assertDestinationParentWithin(filesystem, destination, managedRoot);
+  // Node's path-based rename may overwrite, while link+unlink can leave a
+  // destination alias after any post-link failure. Neither is an acceptable
+  // default. The Host must supply a trusted provider-native, atomic no-replace
+  // operation with all-or-nothing failure semantics; otherwise deny before
+  // changing either path.
+  if (typeof filesystem.renameNoReplace !== "function") fail("ATOMIC_NO_REPLACE_UNAVAILABLE");
+  await filesystem.renameNoReplace(source, destination, Object.freeze({
+    expected_source_identity: beforeIdentity,
+  }));
   await assertExistingPathWithin(filesystem, destination, [managedRoot], "DESTINATION_REALPATH_OUTSIDE_MANAGED_ROOT");
-  try {
-    await filesystem.unlink(source);
-  } catch (error) {
-    fail("PARTIAL_MOVE_SOURCE_RETAINED", { cause: error?.code ?? "unknown" });
-  }
   const finalIdentity = verifiedObjectIdentity(
     await filesystem.lstat(destination, { bigint: true }),
     "HARD_LINK_ALIAS_DETECTED_AFTER_MOVE",
@@ -158,17 +146,6 @@ function verifiedObjectIdentity(stats, hardLinkCode) {
     fail("FILESYSTEM_OBJECT_IDENTITY_UNAVAILABLE");
   }
   if (linkCount !== 1) fail(hardLinkCode, { link_count: linkCount });
-  return Object.freeze({
-    device: stableIdentityValue(stats.dev, true),
-    inode: stableIdentityValue(stats.ino, false),
-    link_count: linkCount,
-  });
-}
-
-function verifiedObjectIdentityAllowTwo(stats) {
-  if (typeof stats?.isFile !== "function" || !stats.isFile()) fail("MUTATION_TARGET_NOT_REGULAR_FILE");
-  const linkCount = typeof stats.nlink === "bigint" ? Number(stats.nlink) : stats.nlink;
-  if (linkCount !== 2) fail("MUTATION_TARGET_IDENTITY_CHANGED");
   return Object.freeze({
     device: stableIdentityValue(stats.dev, true),
     inode: stableIdentityValue(stats.ino, false),
@@ -335,7 +312,7 @@ export function createResourceCenterFilesystemAdapter({
   admission_ttl_ms: admissionTtlMs,
 } = {}) {
   if (!filesystem || typeof filesystem.readdir !== "function" ||
-    typeof filesystem.writeFile !== "function" || typeof filesystem.link !== "function" ||
+    typeof filesystem.writeFile !== "function" ||
     typeof filesystem.unlink !== "function" || typeof filesystem.rmdir !== "function" ||
     typeof filesystem.mkdir !== "function" || typeof filesystem.realpath !== "function" ||
     typeof filesystem.open !== "function" || typeof filesystem.stat !== "function" ||

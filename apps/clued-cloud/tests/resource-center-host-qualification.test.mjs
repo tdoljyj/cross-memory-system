@@ -283,13 +283,17 @@ test("official filesystem tool Host keeps admission internal and denies 00_\u73b
   const destination = path.join(topicRoot, "a.md");
   await fs.mkdir(inbox, { recursive: true });
   await fs.writeFile(source, "normal track to topic");
-  const moved = await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+  await assert.rejects(host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
     operation: "move",
     source_path: source,
     destination_path: destination,
-  });
-  assert.equal(moved.status, "committed");
-  assert.equal(await fs.readFile(destination, "utf8"), "normal track to topic");
+  }), { code: "ATOMIC_NO_REPLACE_UNAVAILABLE" });
+  assert.equal(await fs.readFile(source, "utf8"), "normal track to topic");
+  await assert.rejects(fs.lstat(destination), { code: "ENOENT" });
+
+  // A normal track-to-topic move remains policy-admissible, but this Node
+  // provider cannot safely commit it without an atomic no-replace primitive.
+  await fs.writeFile(destination, "existing destination");
 
   const secondSource = path.join(inbox, "b.md");
   await fs.writeFile(secondSource, "must not overwrite");
@@ -298,43 +302,11 @@ test("official filesystem tool Host keeps admission internal and denies 00_\u73b
     source_path: secondSource,
     destination_path: destination,
   }), { code: "DESTINATION_ALREADY_EXISTS" });
-  assert.equal(await fs.readFile(destination, "utf8"), "normal track to topic");
+  assert.equal(await fs.readFile(destination, "utf8"), "existing destination");
   assert.equal(await fs.readFile(secondSource, "utf8"), "must not overwrite");
 
   const raceSource = path.join(inbox, "race.md");
-  const raceDestination = path.join(topicRoot, "race.md");
   await fs.writeFile(raceSource, "source bytes");
-  const racingHost = createResourceCenterFilesystemToolHost({
-    trusted_profile: {
-      registration_status: "registered",
-      profile_id: "filesystem-tool-host-test",
-      profile_version: "resource-center-profile/2",
-      managed_root: managedRoot,
-      allowed_root_children: ["20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c", "90_\u5f85\u5f52\u7c7b"],
-      boundary_scan_roots: [sandbox],
-    },
-    resolve_artifact: () => ({
-      artifact_id: "artifact:tool-host-test",
-      artifact_role: "clued_resource",
-      governance_class: "ordinary",
-      delete_authority: false,
-      authority_version: "artifact-registry/1",
-      currentness_identity: "canonical:cv_155",
-      workspace_version: "snapshot:test",
-    }),
-    filesystem: {
-      ...fs,
-      link: async (from, to) => {
-        await fs.writeFile(to, "racer bytes", { flag: "wx" });
-        return fs.link(from, to);
-      },
-    },
-  });
-  await assert.rejects(racingHost.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
-    operation: "move", source_path: raceSource, destination_path: raceDestination,
-  }), { code: "EEXIST" });
-  assert.equal(await fs.readFile(raceDestination, "utf8"), "racer bytes");
-  assert.equal(await fs.readFile(raceSource, "utf8"), "source bytes");
 
   const alias = path.join(inbox, "alias.md");
   await fs.link(raceSource, alias);
