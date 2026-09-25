@@ -623,6 +623,16 @@ test("official filesystem adapter consumes admission and scans trusted roots", a
   assert.equal(result.status, "committed");
   assert.equal(await fs.readFile(destination, "utf8"), "governed");
 
+  const replaced = await adapter.guardedMutation({
+    operation: "replace",
+    artifact_role: "clued_resource",
+    destination_path: destination,
+    content: "governed replacement",
+  });
+  assert.equal(replaced.status, "committed");
+  assert.equal(replaced.effect_result.object_identity.link_count, 1);
+  assert.equal(await fs.readFile(destination, "utf8"), "governed replacement");
+
   await fs.mkdir(path.join(sandbox, "Clued_孤岛"));
   const violations = await adapter.scanBoundary();
   assert.equal(violations.some((item) =>
@@ -643,6 +653,8 @@ test("official filesystem adapter rejects a realpath escape before the effect", 
     unlink: async () => {},
     rmdir: async () => {},
     mkdir: async () => {},
+    open: async () => { throw new Error("open must not be reached"); },
+    stat: async () => { throw new Error("stat must not be reached"); },
     realpath: async (candidate) => candidate === destination ? outside : candidate,
   };
   const adapter = createResourceCenterFilesystemAdapter({
@@ -664,4 +676,35 @@ test("official filesystem adapter rejects a realpath escape before the effect", 
     content: "must not escape",
   }), { code: "DESTINATION_REALPATH_OUTSIDE_MANAGED_ROOT" });
   assert.equal(writeCalls, 0);
+});
+
+test("official filesystem adapter rejects a hard-link alias without changing the outside object", async (t) => {
+  const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-hardlink-"));
+  t.after(() => fs.rm(sandbox, { recursive: true, force: true }));
+  const managedRoot = path.join(sandbox, "Clued_资料中心");
+  const track = path.join(managedRoot, "20_P_产品与体验");
+  const outside = path.join(sandbox, "outside.md");
+  const alias = path.join(track, "alias.md");
+  await fs.mkdir(track, { recursive: true });
+  await fs.writeFile(outside, "outside-original");
+  await fs.link(outside, alias);
+  const adapter = createResourceCenterFilesystemAdapter({
+    trusted_profile: {
+      registration_status: "registered",
+      profile_id: "filesystem-hardlink-test",
+      profile_version: "resource-center-profile/2",
+      managed_root: managedRoot,
+      allowed_root_children: ["20_P_产品与体验"],
+    },
+    resolve_artifact: () => artifactAuthority({ authority_version: "filesystem-registry/1" }),
+  });
+
+  await assert.rejects(adapter.guardedMutation({
+    operation: "replace",
+    artifact_role: "clued_resource",
+    destination_path: alias,
+    content: "must not cross the boundary",
+  }), { code: "HARD_LINK_ALIAS_FORBIDDEN" });
+  assert.equal(await fs.readFile(outside, "utf8"), "outside-original");
+  assert.equal((await fs.stat(outside)).nlink, 2);
 });

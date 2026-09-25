@@ -86,10 +86,69 @@ async function assertDestinationParentWithin(filesystem, candidate, managedRoot)
   }
 }
 
+function assertUniqueRegularFile(stats, code) {
+  if (!stats.isFile()) fail("MUTATION_TARGET_NOT_REGULAR_FILE");
+  if (stats.nlink !== 1) fail(code, { link_count: stats.nlink });
+}
+
+function sameObjectIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+async function writeExistingManagedFile(filesystem, candidate, managedRoot, content, replace) {
+  await assertExistingPathWithin(
+    filesystem,
+    candidate,
+    [managedRoot],
+    "DESTINATION_REALPATH_OUTSIDE_MANAGED_ROOT",
+  );
+  const handle = await filesystem.open(candidate, "r+");
+  try {
+    if (!handle || typeof handle.stat !== "function" || typeof handle.writeFile !== "function" ||
+      typeof handle.truncate !== "function" || typeof handle.sync !== "function" ||
+      typeof handle.close !== "function") {
+      fail("RESOURCE_CENTER_FILE_HANDLE_INVALID");
+    }
+    const before = await handle.stat();
+    assertUniqueRegularFile(before, "HARD_LINK_ALIAS_FORBIDDEN");
+    const pathBefore = await filesystem.stat(candidate);
+    if (!sameObjectIdentity(before, pathBefore)) fail("MUTATION_TARGET_IDENTITY_CHANGED");
+
+    // Re-check the resolved path after opening, then mutate only through the
+    // verified handle so a path-based write cannot silently target another
+    // object between verification and the side effect.
+    await assertExistingPathWithin(
+      filesystem,
+      candidate,
+      [managedRoot],
+      "DESTINATION_REALPATH_OUTSIDE_MANAGED_ROOT",
+    );
+    if (replace) await handle.truncate(0);
+    await handle.writeFile(content);
+    await handle.sync();
+
+    const after = await handle.stat();
+    const pathAfter = await filesystem.stat(candidate);
+    assertUniqueRegularFile(after, "HARD_LINK_ALIAS_DETECTED_AFTER_WRITE");
+    if (!sameObjectIdentity(before, after) || !sameObjectIdentity(after, pathAfter)) {
+      fail("MUTATION_TARGET_IDENTITY_CHANGED");
+    }
+    return Object.freeze({
+      device: after.dev,
+      inode: after.ino,
+      link_count: after.nlink,
+      size: after.size,
+    });
+  } finally {
+    await handle?.close?.();
+  }
+}
+
 async function applyFilesystemMutation(filesystem, profile, mutation) {
   const destination = mutation.destination_path;
   const source = mutation.source_path;
   const sourceRoots = [profile.managed_root, ...profile.registered_external_roots];
+  let objectIdentity;
   switch (mutation.operation) {
     case "create":
       await assertDestinationParentWithin(filesystem, destination, profile.managed_root);
@@ -101,13 +160,23 @@ async function applyFilesystemMutation(filesystem, profile, mutation) {
       break;
     case "write":
       if (mutation.target_kind === "directory") fail("DIRECTORY_WRITE_FORBIDDEN");
-      await assertExistingPathWithin(filesystem, destination, [profile.managed_root], "DESTINATION_REALPATH_OUTSIDE_MANAGED_ROOT");
-      await filesystem.writeFile(destination, contentFor(mutation), { flag: "r+" });
+      objectIdentity = await writeExistingManagedFile(
+        filesystem,
+        destination,
+        profile.managed_root,
+        contentFor(mutation),
+        false,
+      );
       break;
     case "replace":
       if (mutation.target_kind === "directory") fail("DIRECTORY_REPLACE_FORBIDDEN");
-      await assertExistingPathWithin(filesystem, destination, [profile.managed_root], "DESTINATION_REALPATH_OUTSIDE_MANAGED_ROOT");
-      await filesystem.writeFile(destination, contentFor(mutation), { flag: "w" });
+      objectIdentity = await writeExistingManagedFile(
+        filesystem,
+        destination,
+        profile.managed_root,
+        contentFor(mutation),
+        true,
+      );
       break;
     case "move":
     case "rename":
@@ -127,6 +196,7 @@ async function applyFilesystemMutation(filesystem, profile, mutation) {
     operation: mutation.operation,
     source_path: source ?? null,
     destination_path: destination ?? null,
+    object_identity: objectIdentity ?? null,
   });
 }
 
@@ -179,7 +249,8 @@ export function createResourceCenterFilesystemAdapter({
   if (!filesystem || typeof filesystem.readdir !== "function" ||
     typeof filesystem.writeFile !== "function" || typeof filesystem.rename !== "function" ||
     typeof filesystem.unlink !== "function" || typeof filesystem.rmdir !== "function" ||
-    typeof filesystem.mkdir !== "function" || typeof filesystem.realpath !== "function") {
+    typeof filesystem.mkdir !== "function" || typeof filesystem.realpath !== "function" ||
+    typeof filesystem.open !== "function" || typeof filesystem.stat !== "function") {
     fail("RESOURCE_CENTER_FILESYSTEM_INVALID");
   }
   if (classifyObservedEntry !== undefined && typeof classifyObservedEntry !== "function") {
