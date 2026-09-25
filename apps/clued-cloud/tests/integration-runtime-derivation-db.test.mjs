@@ -107,10 +107,10 @@ function permuted(value, rng) {
 // Caveat (v0.1.8 review NIT-3): this is a transcription of the specification's pseudocode, in the
 // specification's own order, not an independently derived model. It therefore shares the SQL's
 // reading of every place where the specification is ambiguous — notably the C4 / C5 mapping and the
-// two C1 tightenings that ERRATA-001 settles, and the two that ERRATA-002 settles. It is evidence
+// two C1 tightenings that ERRATA-001 settles, and the three that ERRATA-002 settles. It is evidence
 // that the SQL implements the reading the authors intended, not evidence that the reading is right;
 // only the golden vectors and the errata carry that.
-const SCOPE_OF ={ 'context.read': 'context:read', 'project.read': 'context:read',
+const SCOPE_OF = { 'context.read': 'context:read', 'project.read': 'context:read',
   'development_history.read': 'context:read', 'context.write': 'context:write',
   'project.write': 'context:write', 'evidence.write': 'context:write', 'audit.read': 'audit:read' };
 const has = (list, value) => Array.isArray(list) && list.includes(value);
@@ -168,7 +168,9 @@ const ENUMS = {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // §7.1 instants: the lexical shape the migration pins, then the calendar and the offset range
 // PostgreSQL's cast enforces. Hour 24 and second 60 are excluded because PostgreSQL rolls them over
-// to a different instant, and valid_until is inside facts_sha256 (v0.1.8 delta review MINOR-2).
+// to a different instant, so the document would not denote the instant it spells and valid_until
+// is inside facts_sha256; authority ERRATA-002 item 3 (Owner Decisions
+// 25edd152-0d95-4cf7-b3eb-0ff32aed74d0, and 37e0f626-f9f7-43c1-b899-4d7584b952ab for its wording).
 const INSTANT_RE = /^(\d{4})-(\d{2})-(\d{2})T(2[0-3]|[01]\d):(\d{2}):([0-5]\d)(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
 function instantValid(text) {
   const m = typeof text === 'string' ? INSTANT_RE.exec(text) : null;
@@ -408,18 +410,348 @@ const DIMENSIONS = [
   ['capability_universe', [ALL, [], ['audit.read', 'context.read']].map((v) => ({ capability_universe: v }))],
 ];
 const KEEP = { claim_store: 0.85, connection_store: 0.85, 'lifecycle_facts.historical': 0.85, identity_completeness: 0.75 };
-// Schema-level corruptions mixed into the random layer (1 %), so C1 / C9 are exercised too.
-const CORRUPTIONS = [
-  (f) => { delete f.host_state; },
-  (f) => { f.ready_profile_verification_facts = { status: 'PASS' }; },
-  (f) => { f.authentication_state = 'ACTIVE'; },
-  (f) => { f.environment_state = { value: 'RESTRICTED', mask: null }; },
-  (f) => { f.capability_universe = [...f.capability_universe, 'admin.write']; },
-  (f) => { f.policy.policy_version = 2; },
-  (f) => { f.derivation_contract = 'clued.integration-derivation.v2'; },
+// Schema-level corruptions mixed into the random layer (4 %), so C1 / C9 are exercised too.
+// The list is generated from the same tables validateOracle and the migration validate against,
+// instead of being hand-written. What that buys, stated exactly: every §7.1 rule of the validator
+// has at least one sample that breaks it and nothing else, with four allow-listed exceptions that
+// no sample built from a JavaScript object can reach — the as_of and valid_until instant rules and
+// the reauth_marks_open / policy.policy_version integer spellings, which the raw-text vectors of
+// the "§7.1 lexical validation" subtest cover instead. That claim is not a comment: the RULE-SOLE
+// assertion below enumerates the validator's branches and fails naming any that no sample isolates,
+// and SOLE_EXEMPT is the allow-list it consults. An earlier version of this comment claimed the
+// mask rules were covered when the mask vocabulary had no distinguishing sample at all; the
+// assertion exists so that the claim cannot go stale again (Owner Decision
+// c79a6278-4cfa-478a-aa04-e98ff379c17a).
+//
+// The list, per family: one out-of-domain string and one one-element array per ENUMS entry; one
+// deleted required key and one unknown key per KEY_SETS entry; four mask directions per state
+// object (a non-null mask on an unmasked value, a JSON null mask on a masked one, a mask outside
+// the capability vocabulary and a mask spelled as a bare name rather than an array); and one per
+// §7.1 rule that is neither an enumeration nor a KEY_SETS entry — the three capability sets and
+// the OAuth scope set, in both the vocabulary and the array-type direction, the six directions of
+// the resource_action_scope_facts tagged union (an exact key set of §7.1 that KEY_SETS cannot
+// express, because which keys are exact depends on mode, plus the union not being an object and
+// its `mode` tag missing — PR #340 third delta review MINOR-1), the two booleans, the
+// verification_id reference, the reauth_marks_open domain and type, the two
+// contract-string types, the policy_version type and the revocation pair. Authorities: the v0.1.8
+// second delta review's MINOR-2, generate the list from the tables; the PR #340 review's MAJOR-1,
+// the value shapes had no distinguishing sample; the PR #340 second delta review's MAJOR-1 and
+// Owner Decision c79a6278 for the mask vocabulary and for the four families the RULE-SOLE
+// assertion then found with it (the array-typed enumeration, capability-set, OAuth-scope,
+// mask-array and policy_version-type directions, all of which jsonb containment accepts on its own
+// because a jsonb scalar is contained in an array that has it as an element).
+//
+// Measured over the CI count (250,000 random samples at SEED 20260924, 10,010 of them corrupted):
+// 56…92 samples per shape corruption (mean 73.8) and 644…674 per C9 carrier. No base drawn from
+// DIMENSIONS violates a C1 rule — that is asserted, not assumed, for every centre, every patch and
+// every pre-corruption random base — so every one of those samples distinguishes the rule its
+// corruption breaks. The narrower figure, samples whose base carried no reason code at all, is
+// 16…39 per shape corruption (mean 26.4). Random-layer C1 is 8,047 and C9 1,963; the random layer
+// is 34.4 % valid and the 265,246 P2 samples are 36.5 % valid, so the §8 / §9 layers keep the same
+// positive coverage. RULE-SOLE sees 8…674 isolating samples per validator rule.
+//
+// A corruption is a single independent defect on most bases, but not on all; 28 of the 109 are not
+// always singular, re-measured with the generator below:
+//   - the five JSON-null mask corruptions never are, by construction: a JSON null mask on a masked
+//     value fails both the array-type and the vocabulary test of the same `if`. That is exactly why
+//     the other two mask directions exist — a JSON null isolates neither disjunct.
+//   - the ten required-key deletions are singular except when the deleted key is itself a nested
+//     object (root: 59 %) or when the state object's value and mask are read by the mask rule as a
+//     pair (environment 76 %, qualification 87 %, compatibility 88 %, host 94 %, adapter 86 %).
+//   - sixteen of the 46 enumeration corruptions break a second C1 rule on part of their bases:
+//     revocation_state (64 % / 75 % singular for the out-of-domain and array directions) and
+//     revocation_source (35 % / 22 %) break the revocation pair, the five *_state.value ones
+//     (62…87 %) break the mask rule whenever the base carried a non-null mask, and
+//     resource_action_scope_facts.mode (16 % / 14 %) moves the union out of its ENTRIES branch
+//     while the capabilities key is still there.
+//   - deleting the union's `mode` tag (11 %) is singular only on a NONE or LEGACY_UNRESTRICTED
+//     base, where it leaves `{}`; on an ENTRIES base the leftover `capabilities` key also breaks
+//     the non-ENTRIES exactness rule.
+// Coverage is unaffected — each of the 28 isolates its own rule on the bases where it is singular,
+// and RULE-SOLE is what checks that, rule by rule, rather than this paragraph.
+const setDotted = (facts, dotted, value) => {
+  const keys = dotted.split('.');
+  const node = keys.slice(0, -1).reduce((v, k) => (v[k] ??= {}), facts);
+  node[keys[keys.length - 1]] = value;
+};
+const MASKED_VALUES = ['RESTRICTED', 'CONDITIONAL', 'DEGRADED'];
+const STATE_OBJECTS = ['environment_state', 'qualification_state', 'compatibility_state', 'host_state', 'adapter_state'];
+const CAPABILITY_SETS = ['capability_universe', 'host_state.surface_ceiling', 'host_state.declared'];
+const SHAPE_CORRUPTIONS = [
+  // every enumeration of §7.1: a string outside its domain, and the base's own value wrapped in a
+  // one-element array. The second is the only input that isolates the type half of the enumeration
+  // rule: jsonb containment accepts an array whose elements are all in the domain, so
+  // `not (v <@ domain)` passes and only `jsonb_typeof(v) is distinct from 'string'` rejects it.
+  ...Object.keys(ENUMS).map((name) => (f) => setDotted(f, name, '__OUT_OF_DOMAIN__')),
+  ...Object.keys(ENUMS).map((name) => (f) => setDotted(f, name, [dig(f, name)])),
+  // every exact key set of §7.1: one required key deleted, and one unknown key added
+  ...Object.entries(KEY_SETS).flatMap(([name, keys]) => [
+    (f, rng) => { delete (name === '' ? f : f[name])[keys[Math.floor(rng() * keys.length)]]; },
+    (f) => { (name === '' ? f : f[name]).unexpected_key = null; },
+  ]),
+  // every state object: a non-null mask on a value that must not carry one (ERRATA-001), and the
+  // opposite direction, a JSON null mask on a value that must carry one (§7.1)
+  ...STATE_OBJECTS.flatMap((name) => {
+    const masked = ENUMS[`${name}.value`].filter((v) => MASKED_VALUES.includes(v));
+    const unmasked = ENUMS[`${name}.value`].filter((v) => !MASKED_VALUES.includes(v));
+    return [
+      (f, rng) => { f[name] = { ...f[name], value: unmasked[Math.floor(rng() * unmasked.length)], mask: ['context.read'] }; },
+      (f, rng) => { f[name] = { ...f[name], value: masked[Math.floor(rng() * masked.length)], mask: null }; },
+      // the mask's own vocabulary, and its array type — neither of which the two directions above
+      // reach: a JSON null mask fails both the type and the containment test at once, so it
+      // isolates neither, while a bare vocabulary name is contained but is not an array
+      (f, rng) => { f[name] = { ...f[name], value: masked[Math.floor(rng() * masked.length)], mask: ['admin.write'] }; },
+      (f, rng) => { f[name] = { ...f[name], value: masked[Math.floor(rng() * masked.length)], mask: 'context.read' }; },
+    ];
+  }),
+  // ---- the §7.1 value shapes: the rules no table above drives (PR #340 review MAJOR-1) --------
+  // every capability set of §7.1: an element outside the capability vocabulary, and a single
+  // vocabulary name spelled as a bare string instead of a one-element array. The second isolates
+  // the array-type half of the rule, which containment alone accepts: a jsonb scalar is contained
+  // in an array that has it as an element.
+  ...CAPABILITY_SETS.map((name) => (f) => setDotted(f, name, [...(dig(f, name) ?? []), 'admin.write'])),
+  ...CAPABILITY_SETS.map((name) => (f) => setDotted(f, name, 'context.read')),
+  // the OAuth scope set, whose vocabulary is the three v12 scopes and not the capability names
+  (f) => { f.oauth_scope_facts = [...f.oauth_scope_facts, 'admin:write']; },
+  (f) => { f.oauth_scope_facts = 'context:read'; },
+  // resource_action_scope_facts, the tagged union: exactness in the ENTRIES branch and in the
+  // other two, the capability vocabulary of the ENTRIES member, and that member missing
+  (f) => { f.resource_action_scope_facts = { mode: 'ENTRIES', capabilities: [], unexpected_key: null }; },
+  (f) => { f.resource_action_scope_facts = { mode: 'NONE', unexpected_key: null }; },
+  (f) => { f.resource_action_scope_facts = { mode: 'ENTRIES', capabilities: ['admin.write'] }; },
+  (f) => { f.resource_action_scope_facts = { mode: 'ENTRIES' }; },
+  // …the union not being an object at all, and the tag itself missing, which on a NONE or
+  // LEGACY_UNRESTRICTED base leaves `{}` — an object no other corruption produces (MINOR-1)
+  (f) => { f.resource_action_scope_facts = 'NONE'; },
+  (f) => { delete f.resource_action_scope_facts.mode; },
+  // the two booleans and the uuid reference: a value of the wrong JSON type, which the string
+  // spellings 'true' / 'false' / a non-uuid make visible without changing anything else
+  (f) => { f.lifecycle_facts.first_authorization_required = 'true'; },
+  (f) => { f.installation_facts.ever_authorized = 'false'; },
+  (f) => { f.canonical_runtime_verification_facts.verification_id = 'not-a-uuid'; },
+  // reauth_marks_open: outside its non-negative domain, and not a number at all. ERRATA-002
+  // item 1's integer *spelling* rule is not reachable from here, because JSON.stringify emits 0.0
+  // as 0; it is covered by the raw-text cases below instead.
   (f) => { f.reauth_marks_open = -1; },
+  (f) => { f.reauth_marks_open = '0'; },
+  // the two contract strings and the policy version: a non-string / non-number is C1, not the C9
+  // an unknown value of the right type would give. `policy_version: '1'` also isolates the number
+  // half of its rule, which the ^[0-9]+$ test on the jsonb text form accepts on its own.
+  (f) => { f.schema = 1; },
+  (f) => { f.derivation_contract = null; },
+  (f) => { setDotted(f, 'policy.policy_version', '1'); },
+  // the revocation pair (§7.2, ERRATA-001)
   (f) => { f.revocation_source = f.revocation_state === 'REVOKED' ? 'NONE' : 'INTEGRATION'; },
 ];
+// C9_CONTRACT_UNKNOWN's three carriers: a well-formed but unknown schema, derivation contract or
+// policy version. They are the only way any layer of this file reaches C9.
+const C9_CORRUPTIONS = [['schema', 'clued.integration-facts.v2'],
+  ['derivation_contract', 'clued.integration-derivation.v2'], ['policy.policy_version', 2]]
+  .map(([name, value]) => (f) => setDotted(f, name, value));
+// The share of random samples that carry a corruption. It rose from 2 % to 2.5 % as the shape list
+// grew from 59 members to 69, and to 4 % as it grew to 109, so that samples per corruption stay
+// where they were instead of thinning as the list grows; the cost is valid samples.
+const CORRUPTION_RATE = 0.04;
+// PR #340 review MINOR-1: draw the family first and the member second. A flat uniform draw over
+// one list made every code's share a function of the list's length, so growing the shape list from
+// 8 to 59 members cut random-layer C9 from 567 to 235 without anyone deciding to. C9 has exactly
+// three carriers in the whole schema and no other layer of this file reaches it, so its family is
+// drawn with a fixed 1/5 probability and the shape family with 4/5; within a family the draw stays
+// uniform, so the shape corruptions remain equally likely to each other. Both draws come from the
+// sampler's rng, so the layer is still a pure function of SEED. Editing SHAPE_CORRUPTIONS now
+// moves only the shape counts; C9_FAMILY_SHARE is the only thing that moves C9.
+const C9_FAMILY_SHARE = 1 / 5;
+const pickCorruption = (rng) => {
+  const family = rng() < C9_FAMILY_SHARE ? C9_CORRUPTIONS : SHAPE_CORRUPTIONS;
+  return family[Math.floor(rng() * family.length)];
+};
+
+// ---- the validator's rules, one predicate per independently-mutable branch ---------------------
+// Owner Decision c79a6278-4cfa-478a-aa04-e98ff379c17a. Three consecutive reviews each found the
+// same shape of surviving fail-open mutant: a §7.1 / §7.3 rule that every layer of this file
+// happened to break only together with another rule, so deleting it changed no output. The two
+// assertions built on this list turn that review catch into a test obligation:
+//
+//   1. RULE-MIRROR — on every sample, `C1_RULES.some(fire)` equals whether validateOracle reported
+//      C1, and the same for C9. The mirror is sound (a predicate fires only where the SQL sets its
+//      flag), and complete over the sampled corpus: on no sample does the oracle report the code
+//      with no predicate firing. So it is a second, branch-resolved reading of the same validator.
+//      Completeness is a measured property of the corpus, not a structural one — a document shape
+//      that no layer of this file produces can still set the flag with nothing firing, and PR #340
+//      third delta review MINOR-1 found one (`resource_action_scope_facts: {}`), now closed by the
+//      `ras:mode:presence` predicate and the corruption that deletes the tag. The omissions below
+//      are therefore argued from the SQL text one by one, not inferred from the assertion passing.
+//   2. RULE-SOLE — every predicate has at least one sample where it is the ONLY predicate of its
+//      reason code that fires. That sample is what distinguishes the branch: delete the branch and
+//      the sample's code set changes. A predicate with no such sample is a mutation-testing blind
+//      spot, and the assertion names it.
+//
+// The scope of that obligation is integration_facts_validate_v1 and nothing else — one function of
+// the nine in PURE. Every other *validator* reached from this file
+// (integration_ceiling_valid_v1, integration_timestamp_valid_v1, integration_version_cmp_v1,
+// integration_capabilities_valid_v1), integration_derive_v1's canonicalizer, and the registry
+// CHECK constraints generally have hand-written example tables only, with no coverage obligation
+// and no mirror, so the
+// mutation-survivor class this list closes is NOT closed for them. PR #340's third and fourth
+// delta reviews found live fail-open mutants across those surfaces — the ceiling's resource_id
+// length and type disjuncts and its actions element type, the timestamp's fractional-second
+// bound, derive_v1's canonicalizer de-duplication, and at least three registry CHECKs (among
+// them the capability_ceiling CHECK on integration_host_surfaces_v1, its surface regex, and the
+// hosts.host regex) — so this
+// enumeration is a sample of what is uncovered, not an inventory of it. The ceiling and timestamp
+// cases are fixed by targeted rows in their own subtests below; extending an obligation like this
+// one to the remaining functions is carried to S2c PR-2 by Owner Decision
+// 0402d831-fa57-4a31-86e4-44467b85a796.
+//
+// Where the line is drawn. A predicate is emitted for one piece of SQL text whose deletion can
+// change the function's output — a single disjunct of a single `if`, instantiated once per entry of
+// the array or constant that drives its loop (the loop bodies are data-driven, and an entry of
+// `v_keys` / `v_enums` is as mutable as the disjunct that reads it). Deliberately NOT emitted,
+// because deleting the text cannot change any output — an equivalent mutant, not a blind spot:
+//   - `jsonb_typeof(v) is distinct from 'object'` in the exact-key-set loop. For a present
+//     non-object, `not (v ?& v_keys)` is already true (a jsonb scalar has no keys) or, for an
+//     array, `(v - v_keys) <> '{}'::jsonb` is (deleting elements from an array cannot give `{}`).
+//     For an absent nested object the root's own missing-key disjunct fires.
+//   - `not (v ?& array['mode','capabilities'])` in the ENTRIES branch of resource_action_scope_facts.
+//     It can only fire when `capabilities` is absent, which the `jsonb_typeof(v->'capabilities') is
+//     distinct from 'array'` disjunct of the same `if` also rejects.
+//   - the type half of the `as_of` rule as a separate predicate: for any non-string `as_of`, the
+//     `#>> '{}'` text form of the same `if` is either a non-instant or SQL NULL, and
+//     integration_timestamp_valid_v1 rejects both, so deleting `jsonb_typeof(v) is distinct from
+//     'string'` cannot change an output.
+// That list is short, and `reauth_marks_open` is NOT on it. An earlier version of this comment
+// named the type half of its rule here as well (PR #340 third delta review MINOR-3); both halves
+// of that claim were wrong. The predicate IS emitted below as `reauth_marks_open:type`, and
+// deleting `jsonb_typeof(v) is distinct from 'number'` is a fail-open mutant, not an equivalent
+// one: on `reauth_marks_open: null` the `#>> '{}'` form is SQL NULL, so `!~ '^[0-9]+$'` evaluates
+// to NULL and does not fire, and on `reauth_marks_open: '0'` the text form is `0`, which the
+// regex accepts. The second of those two is the shape list's `reauth_marks_open = '0'` corruption,
+// and it is what isolates this predicate for RULE-SOLE.
+// The required-key family is emitted as ONE `presence:*` predicate per object, not as two branches
+// per key, and the type halves of the rules that read a key are written to ignore an absent value.
+// That is the same judgement in the other direction: a missing key is rejected twice over, by the
+// `?&` disjunct and by the type check of whichever rule reads that key (every key of every object
+// has such a rule), so no single deletion of either fails open and no sample can isolate one from
+// the other. Modelling the pair as one predicate keeps RULE-SOLE meaningful — a key deletion does
+// isolate the pair from every other rule — instead of demanding a sample that cannot exist. It is
+// also why an earlier decomposition saw ~50 `keyset:*:missing` and `enum:*:type` predicates fire
+// without ever being sole.
+// the mirror runs on every sample, so every dotted path is split once, here, and never per call
+const at = (node, path) => path.reduce((v, k) => (v === null || typeof v !== 'object' ? undefined : v[k]), node);
+const jtype = (v) => (v === undefined ? undefined
+  : v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v === 'object' ? 'object' : typeof v);
+// `jsonb_typeof(v) is distinct from t`, with an absent value standing for SQL NULL
+const typeIsNot = (v, t) => jtype(v) !== t;
+// `not (v <@ names)` as the SQL evaluates it: NULL propagates, so `if` does not fire; a jsonb scalar
+// IS contained in an array that has it as an element, and an array is contained element-wise
+const notContained = (v, names) => {
+  if (v === undefined) return false;
+  if (typeof v === 'string') return !names.includes(v);
+  if (Array.isArray(v)) return !v.every((e) => typeof e === 'string' && names.includes(e));
+  return true;
+};
+const here = (v) => v !== undefined;
+const C1_RULES = [
+  // the exact key sets of §7.1: a required key absent (exempt, see above) and an unknown key present
+  ...Object.entries(KEY_SETS).flatMap(([name, keys]) => {
+    const node = (f) => (name === '' ? f : f[name]);
+    const label = name || '(root)';
+    return [
+      [`presence:${label}`, (f) => { const v = node(f); return !isJsonObject(v) || !keys.every((k) => present(v, k)); }],
+      [`keyset:${label}:unexpected`, (f) => { const v = node(f); return isJsonObject(v) && Object.keys(v).some((k) => !keys.includes(k)); }],
+    ];
+  }),
+  // the enumerations of §7.1: not a string, and outside the domain
+  ...Object.entries(ENUMS).flatMap(([name, values]) => {
+    const path = name.split('.');
+    return [
+      [`enum:${name}:type`, (f) => { const v = at(f, path); return here(v) && typeIsNot(v, 'string'); }],
+      [`enum:${name}:domain`, (f) => notContained(at(f, path), values)],
+    ];
+  }),
+  // the two booleans
+  ...['lifecycle_facts.first_authorization_required', 'installation_facts.ever_authorized'].map((name) => {
+    const path = name.split('.');
+    return [`bool:${name}`, (f) => { const v = at(f, path); return here(v) && typeIsNot(v, 'boolean'); }];
+  }),
+  // reauth_marks_open: a number, spelled as a non-negative integer (ERRATA-002 item 1)
+  ['reauth_marks_open:type', (f) => here(f.reauth_marks_open) && typeIsNot(f.reauth_marks_open, 'number')],
+  ['reauth_marks_open:integer', (f) => typeof f.reauth_marks_open === 'number' && !/^[0-9]+$/.test(String(f.reauth_marks_open))],
+  // as_of and the two canonical-runtime-verification references
+  ['as_of:instant', (f) => here(f.as_of) && !(typeof f.as_of === 'string' && instantValid(f.as_of))],
+  ['crv:verification_id', (f) => { const v = f.canonical_runtime_verification_facts?.verification_id;
+    return here(v) && !(v === null || (typeof v === 'string' && UUID_RE.test(v))); }],
+  ['crv:valid_until', (f) => { const v = f.canonical_runtime_verification_facts?.valid_until;
+    return here(v) && !(v === null || (typeof v === 'string' && instantValid(v))); }],
+  // the three capability sets and the OAuth scope set: an array, of vocabulary names
+  ...CAPABILITY_SETS.flatMap((name) => {
+    const path = name.split('.');
+    return [
+      [`capabilities:${name}:type`, (f) => { const v = at(f, path); return here(v) && typeIsNot(v, 'array'); }],
+      [`capabilities:${name}:vocabulary`, (f) => notContained(at(f, path), VOCAB)],
+    ];
+  }),
+  ['oauth_scope_facts:type', (f) => here(f.oauth_scope_facts) && typeIsNot(f.oauth_scope_facts, 'array')],
+  ['oauth_scope_facts:vocabulary', (f) => notContained(f.oauth_scope_facts, OAUTH_SCOPES)],
+  // resource_action_scope_facts, the tagged union
+  ['ras:type', (f) => here(f.resource_action_scope_facts) && typeIsNot(f.resource_action_scope_facts, 'object')],
+  // `mode` absent from the union. PR #340 third delta review MINOR-1: this is the one required key
+  // in the schema that no `presence:*` predicate covered, because resource_action_scope_facts is
+  // not a KEY_SETS entry (which keys are exact depends on mode) and `enum:…:mode:type` is written
+  // to ignore an absent value. The SQL still rejects it — the enum loop reads a SQL NULL, which is
+  // `distinct from 'string'` — so `resource_action_scope_facts: {}` was a live mirror
+  // counterexample: C1 from both SQL and validateOracle with no predicate firing.
+  ['ras:mode:presence', (f) => { const v = f.resource_action_scope_facts; return isJsonObject(v) && !present(v, 'mode'); }],
+  ['ras:ENTRIES:unexpected', (f) => { const v = f.resource_action_scope_facts;
+    return isJsonObject(v) && txt(v.mode) === 'ENTRIES' && Object.keys(v).some((k) => k !== 'mode' && k !== 'capabilities'); }],
+  ['ras:ENTRIES:capabilities:type', (f) => { const v = f.resource_action_scope_facts;
+    return isJsonObject(v) && txt(v.mode) === 'ENTRIES' && typeIsNot(v.capabilities, 'array'); }],
+  ['ras:ENTRIES:capabilities:vocabulary', (f) => { const v = f.resource_action_scope_facts;
+    return isJsonObject(v) && txt(v.mode) === 'ENTRIES' && notContained(v.capabilities, VOCAB); }],
+  ['ras:other:unexpected', (f) => { const v = f.resource_action_scope_facts;
+    return isJsonObject(v) && txt(v.mode) !== 'ENTRIES' && Object.keys(v).some((k) => k !== 'mode'); }],
+  // the masks (§5.6, ERRATA-001): an array exactly for RESTRICTED / CONDITIONAL / DEGRADED, of
+  // vocabulary names, and JSON null for every other value
+  ...STATE_OBJECTS.flatMap((name) => {
+    const mask = (f) => f[name]?.mask;
+    const isMasked = (f) => MASKED_VALUES.includes(txt(f[name]?.value));
+    return [
+      [`mask:${name}:array`, (f) => isMasked(f) && here(mask(f)) && typeIsNot(mask(f), 'array')],
+      [`mask:${name}:vocabulary`, (f) => isMasked(f) && notContained(mask(f), VOCAB)],
+      [`mask:${name}:null`, (f) => !isMasked(f) && here(mask(f)) && mask(f) !== null],
+    ];
+  }),
+  // the revocation pair (§7.2, ERRATA-001)
+  ['revocation:pair', (f) => eq(txt(f.revocation_state), 'REVOKED') !== (txt(f.revocation_source) !== 'NONE')],
+  // the C9 carriers: a value of the wrong type is C1, not C9
+  ['schema:type', (f) => here(f.schema) && typeof f.schema !== 'string'],
+  ['derivation_contract:type', (f) => here(f.derivation_contract) && typeof f.derivation_contract !== 'string'],
+  ['policy_version:type', (f) => { const v = f.policy?.policy_version; return here(v) && typeIsNot(v, 'number'); }],
+  ['policy_version:integer', (f) => { const v = f.policy?.policy_version;
+    return typeof v === 'number' && !/^[0-9]+$/.test(String(v)); }],
+];
+const C9_RULES = [
+  ['c9:schema', (f) => typeof f.schema === 'string' && f.schema !== 'clued.integration-facts.v1'],
+  ['c9:derivation_contract', (f) => typeof f.derivation_contract === 'string'
+    && f.derivation_contract !== 'clued.integration-derivation.v1'],
+  ['c9:policy_version', (f) => { const v = f.policy?.policy_version;
+    return typeof v === 'number' && /^[0-9]+$/.test(String(v)) && v !== 1; }],
+];
+// Predicates exempt from RULE-SOLE, each with the reason and, where the rule is reachable but not
+// from a JavaScript object, the committed vector that covers it instead. Nothing is listed here
+// merely for having no sample: an unreachable rule with no named vector is a coverage gap.
+const SOLE_EXEMPT = new Map([
+  ['as_of:instant', 'JSON.stringify cannot emit an invalid instant from a Date-free JS value that '
+    + 'the generator builds; covered by the "§7.1 lexical validation" vectors as_of 2026-13-99T99:99:99Z '
+    + 'and 2026-09-24T24:00:00Z'],
+  ['crv:valid_until', 'as as_of:instant; covered by the same subtest\'s valid_until vectors '
+    + '2026-02-31T00:00:00Z and 2026-09-24T12:00:60Z'],
+  ['policy_version:integer', 'ERRATA-002 item 1 is a rule about the jsonb text form, and '
+    + 'JSON.stringify emits 1.0 as 1; covered by the raw-text vector "policy_version":1.0 in the '
+    + '"§7.1 lexical validation" subtest'],
+]);
+
+
 // Three centres for the single-factor and pairwise layers: the healthy ACTIVE base, a fresh, not yet
 // authorized installation, and a DEGRADED raw Binding with an incomplete identity (the S2c norm, §6.2).
 const CENTRES = [golden.base, merge(golden.base, { authentication_state: 'NONE', authorization_state: 'NOT_GRANTED',
@@ -430,13 +762,17 @@ const CENTRES = [golden.base, merge(golden.base, { authentication_state: 'NONE',
 
 function* p2Samples() {
   for (const centre of CENTRES) {
-    for (const [, values] of DIMENSIONS) for (const patch of values) yield { layer: 'single', facts: merge(centre, patch) };
+    for (const [, values] of DIMENSIONS) for (const patch of values) {
+      const facts = merge(centre, patch);
+      yield { layer: 'single', facts, base: facts };
+    }
   }
   for (const centre of CENTRES) {
     for (let i = 0; i < DIMENSIONS.length; i += 1) {
       for (let j = i + 1; j < DIMENSIONS.length; j += 1) {
         for (const a of DIMENSIONS[i][1]) for (const b of DIMENSIONS[j][1]) {
-          yield { layer: 'pairwise', facts: merge(merge(centre, a), b) };
+          const facts = merge(merge(centre, a), b);
+          yield { layer: 'pairwise', facts, base: facts };
         }
       }
     }
@@ -449,11 +785,15 @@ function* p2Samples() {
       // the whole domain; integrity classes keep more often so that more samples are valid
       if (rng() >= (KEEP[name] ?? 0.5)) facts = merge(facts, values[Math.floor(rng() * values.length)]);
     }
-    if (rng() < 0.01) {
+    const base = facts;
+    if (rng() < CORRUPTION_RATE) {
       facts = clone(facts);
-      CORRUPTIONS[Math.floor(rng() * CORRUPTIONS.length)](facts);
+      pickCorruption(rng)(facts, rng);
     }
-    yield { layer: 'random', index: n, facts };
+    // `base` is the uncorrupted draw, which the sweep asserts is free of C1 (Owner Decision
+    // c79a6278): the samples-per-corruption argument above rests on every base being schema-valid,
+    // and a future DIMENSIONS edit that broke it would otherwise go unnoticed.
+    yield { layer: 'random', index: n, facts, base };
   }
 }
 
@@ -734,6 +1074,26 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         [{ scopes: [], entries: [{ ...entry, resource_kind: 'project' }] }, false, 'resource_kind'],
         [{ scopes: [], entries: [{ ...entry, environment: 'staging' }] }, false, 'environment'],
         [{ scopes: [], entries: [{ ...entry, resource_id: '' }] }, false, 'empty resource_id'],
+        // PR #340 third delta review MAJOR-3: the lower bound alone left the other two disjuncts of
+        // the same `if` fail-open — widening the length test to `1 and 100000` and deleting the
+        // `jsonb_typeof(...) <> 'string'` disjunct both passed the whole suite. §5.2 / §10.11
+        // compare ceilings as canonical jsonb, so an over-long or numeric resource_id would put a
+        // shape the rest of the contract does not expect into ceiling_before / ceiling_after.
+        [{ scopes: [], entries: [{ ...entry, resource_id: 'a'.repeat(255) }] }, true, '255-char resource_id'],
+        [{ scopes: [], entries: [{ ...entry, resource_id: 'a'.repeat(256) }] }, false, '256-char resource_id'],
+        [{ scopes: [], entries: [{ ...entry, resource_id: 123 }] }, false, 'resource_id not a string'],
+        // PR #340 fourth delta review MAJOR-A: the same shape one `if` further down. Deleting the
+        // `jsonb_typeof(e) <> 'string'` disjunct from the actions element check passed the whole
+        // suite, because `(e #>> '{}')` on a JSON null is SQL NULL and `NULL not in (...)` is NULL,
+        // so the `exists` never fires. The two below are equivalent mutants today, for different
+        // reasons: a non-string scope element is still rejected by the scope-vocabulary
+        // containment (`array[null] <@ ...` is false, the same disjunct the `scopes: [1]` row
+        // above already exercises), and a null resource_kind still fails the final key-uniqueness
+        // check (a NULL key counts in cardinality but not in count(distinct ...)). Neither closes
+        // anything new; both are pinned anyway, because each is equivalent only by accident.
+        [{ scopes: [], entries: [{ ...entry, actions: [null] }] }, false, 'actions element not a string'],
+        [{ scopes: [null], entries: [] }, false, 'scopes element null'],
+        [{ scopes: [], entries: [{ ...entry, resource_kind: null }] }, false, 'resource_kind null'],
         [{ scopes: [], entries: [{ ...entry, extra: 1 }] }, false, 'extra entry key'],
         [{ scopes: [], entries: [entry, { ...entry, actions: ['read'] }] }, false, 'duplicate entry key'],
         [{ scopes: [], entries: [], other: 1 }, false, 'extra key'],
@@ -752,21 +1112,80 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         ['2026-13-99T99:99:99Z', false], ['2026-02-30T00:00:00Z', false], ['2026-00-10T00:00:00Z', false],
         ['2026-09-24T25:00:00Z', false], ['2026-09-24T12:60:00Z', false], ['2026-09-24T12:00:61Z', false],
         ['2026-09-24T12:00:00', false], ['2026-09-24 12:00:00Z', false], ['now', false], [null, false],
+        // the fractional second is bounded at six digits, which is the same denotation argument as
+        // hour 24 and second 60 (PR #340 third delta review MAJOR-2): PostgreSQL does not reject a
+        // seven-or-more-digit fraction, it ROUNDS it to microseconds, so .1234567Z is hashed as
+        // spelled but read back as .123457 — a spelling that does not denote the instant it
+        // spells, inside facts_sha256 by way of valid_until. Widening the regex to {1,9} is a
+        // live fail-open
+        // mutant that nothing else in this file kills.
+        ['2026-09-24T12:00:00.1234567Z', false], ['2026-09-24T12:00:00.123456789Z', false],
+        ['2026-09-24T12:00:00.123456Z', true], ['2026-09-24T12:00:00.1Z', true],
       ]) assert.equal(await valid(value), expected, String(value));
-      // v0.1.8 delta review MINOR-2: PostgreSQL silently rolls the end-of-day hour 24 and the leap
-      // second 60 over to a different instant, so two spellings of one instant would hash
-      // differently and valid_until is inside facts_sha256. Both are rejected.
+      // …and the rounding is real, not assumed: the cast accepts the seven-digit spelling and
+      // re-points it to a different microsecond instant
+      assert.equal((await admin.query(`select pg_catalog.to_char($1::pg_catalog.timestamptz at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.US') t`, ['2026-09-24T12:00:00.1234567Z'])).rows[0].t, '2026-09-24T12:00:00.123457');
+      // ERRATA-002 item 3 (Owner Decisions 25edd152-0d95-4cf7-b3eb-0ff32aed74d0 and
+      // 37e0f626-f9f7-43c1-b899-4d7584b952ab): PostgreSQL silently rolls the end-of-day hour 24 and
+      // the leap second 60 over to a different instant, so the document would not denote the
+      // instant it spells and valid_until is inside facts_sha256. Both are rejected.
       const utc = async (value) => (await admin.query(
         `select to_char($1::timestamptz at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') t`, [value])).rows[0].t;
       for (const value of ['2026-09-24T12:00:60Z', '2026-09-24T24:00:00Z']) {
         assert.notEqual(await utc(value), value.replace('Z', ''), `${value} rolls over in PostgreSQL`);
         assert.equal(await valid(value), false, value);
       }
-      // …and every accepted Z-spelling round trips to the very instant it spells
-      for (const value of ['2026-09-24T12:00:00Z', '2026-09-24T23:59:59Z', '2026-09-24T00:00:00Z',
-        '2026-12-31T23:59:59Z', '2028-02-29T12:34:56.123456Z']) {
-        assert.equal(await valid(value), true, value);
-        assert.equal(await utc(value), value.replace(/(\.\d+)?Z$/, ''), `${value} round trip`);
+      // …and every accepted Z-spelling round trips to the very instant it spells. PR #340 second
+      // delta review NIT-1: asserted over a swept range, not at five sampled values, because
+      // ERRATA-002 item 3's Evidence paragraph quantifies over "every accepted Z spelling".
+      await admin.query(`create function pg_temp.cast_ok(t text) returns boolean language plpgsql as $fn$
+        begin perform t::pg_catalog.timestamptz; return true; exception when others then return false; end $fn$`);
+      const sweep = async (values) => (await admin.query(
+        `select v, pg_temp.cast_ok(v) cast_ok, clued_private.integration_timestamp_valid_v1(v) ok,
+           case when pg_temp.cast_ok(v) then pg_catalog.to_char(v::pg_catalog.timestamptz at time zone 'UTC',
+             'YYYY-MM-DD"T"HH24:MI:SS') end utc
+         from pg_catalog.unnest($1::text[]) v`, [values])).rows;
+      const pad = (n) => String(n).padStart(2, '0');
+      const zSpellings = [];
+      for (let h = 0; h < 24; h += 1) {
+        for (const m of [0, 1, 30, 59]) for (const sec of [0, 1, 30, 59]) {
+          zSpellings.push(`2026-09-24T${pad(h)}:${pad(m)}:${pad(sec)}Z`);
+        }
+      }
+      assert.equal(zSpellings.length, 384);
+      for (const row of await sweep(zSpellings)) {
+        assert.equal(row.ok, true, row.v);
+        assert.equal(row.utc, row.v.slice(0, -1), `${row.v} round trip`);
+      }
+      // PR #340 second delta review MINOR-1: ERRATA-002 item 3 counts "exactly 25 classes newly
+      // rejected". That does not follow from the two regexes alone — by regex inspection the newly
+      // refused set is every hour 24…99 and every second 60…99, hundreds of classes. It collapses
+      // to 25 only given PostgreSQL's cast acceptance set, so the cast half is asserted here over
+      // the hour and second ranges the count quantifies over, not at a handful of points. The old
+      // lexical rule was this regex; the shipped one narrows only its hour and second alternations.
+      const OLD_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
+      const grid = [];
+      for (let h = 0; h < 100; h += 1) {
+        for (const m of [0, 1, 30, 59, 60, 99]) for (const sec of [0, 1, 30, 59, 60, 61, 99]) {
+          grid.push(`2026-09-24T${pad(h)}:${pad(m)}:${pad(sec)}Z`);
+        }
+      }
+      for (let m = 0; m < 60; m += 1) grid.push(`2026-09-24T24:${pad(m)}:00Z`);
+      const rejected = new Set();
+      for (const row of await sweep(grid)) {
+        const oldAccepts = OLD_RE.test(row.v) && row.cast_ok;
+        assert.ok(!row.ok || oldAccepts, `${row.v}: the shipped rule accepts what the old one refused`);
+        if (oldAccepts && !row.ok) rejected.add(`${row.v.slice(11, 13)}/${row.v.slice(17, 19)}`);
+      }
+      // exactly the 25 (hour, second) classes ERRATA-002 item 3 names: h=00…23 with s=60, and h=24
+      // with s=00 — every other out-of-range field is a hard error in the cast, not a re-pointing
+      assert.deepEqual([...rejected].sort(),
+        [...Array.from({ length: 24 }, (unused, h) => `${pad(h)}/60`), '24/00'].sort());
+      assert.equal(rejected.size, 25);
+      // …and h=24 is accepted by the cast at minute 00 only, which is why it is one class and not 60
+      for (const row of await sweep(Array.from({ length: 60 }, (unused, m) => `2026-09-24T24:${pad(m)}:00Z`))) {
+        assert.equal(row.cast_ok, row.v === '2026-09-24T24:00:00Z', row.v);
       }
       // the offset range PostgreSQL enforces is unchanged by the tighter hour / second alternations
       for (const [value, expected] of [['2026-09-24T12:00:00+15:59', true], ['2026-09-24T12:00:00+16:00', false],
@@ -857,9 +1276,37 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         const d = (await admin.query('select clued_private.integration_derive_v1($1::jsonb) d', [value])).rows[0].d;
         assert.deepEqual([d.valid, d.reason_codes, d.integration_state], [false, ['C1_SCHEMA_INVALID'], null], String(value));
       }
-      // the predicate vector itself is checked: a missing key cannot fall through to a state
-      await assert.rejects(admin.query(`select clued_private.integration_select_state_v1('{"revoked": false}')`),
-        (error) => error.code === '22023' && /integration_predicate_vector_invalid/.test(error.message));
+      // The predicate vector itself is checked, key by key. PR #340 third delta review MAJOR-1: a
+      // single negative vector proved only that the loop raises on whichever key is missing first,
+      // so dropping any one key from the guard's array still left the suite green while a vector
+      // missing that key fell through to a state (with 'degraded' dropped, a vector without it
+      // returned INSTALLED, because SQL NULL does not fire `elsif degraded`). Every key is
+      // therefore asserted on its own, in both directions the guard tests — absent, and present
+      // but not a boolean — and against the `detail` that names the offending key.
+      const VECTOR_KEYS = ['revoked', 'hard_incompatible', 'credential_lost', 'reauth_recoverable', 'installed',
+        'first_authorization_required', 'ever_authorized', 'verification_eligible', 'crv_valid', 'blocked',
+        'candidate_empty', 'lifecycle_ok', 'degraded'];
+      const fullVector = Object.fromEntries(VECTOR_KEYS.map((key) => [key, false]));
+      assert.equal((await admin.query('select clued_private.integration_select_state_v1($1::jsonb) s',
+        [JSON.stringify(fullVector)])).rows[0].s, 'INSTALL_PENDING', 'the all-false vector is accepted');
+      for (const key of VECTOR_KEYS) {
+        for (const [vector, label] of [
+          [Object.fromEntries(Object.entries(fullVector).filter(([k]) => k !== key)), 'missing'],
+          [{ ...fullVector, [key]: 'false' }, 'not a boolean'],
+        ]) {
+          await assert.rejects(admin.query('select clued_private.integration_select_state_v1($1::jsonb)',
+            [JSON.stringify(vector)]),
+          (error) => error.code === '22023' && /integration_predicate_vector_invalid/.test(error.message)
+            && error.detail === key, `${key} ${label}`);
+        }
+      }
+      // …and every key the guard names is one integration_predicates_v1 really produces, so a
+      // rename on one side cannot leave this list asserting against a key that no longer exists
+      // (§8.4 reads a subset of the vector: the candidate list and the predicates §8.3 computes
+      // only for other consumers are not part of it)
+      const produced = (await admin.query('select clued_private.integration_predicates_v1($1::jsonb) v',
+        [JSON.stringify(golden.base)])).rows[0].v;
+      for (const key of VECTOR_KEYS) assert.equal(typeof produced[key], 'boolean', `predicates_v1 produces ${key}`);
     });
 
     await t.test('T-A7-10 derivation is read-only, immutable and reads no table', async () => {
@@ -1017,6 +1464,33 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       from jsonb_array_elements($1::jsonb) with ordinality x(f, n), lateral (select clued_private.integration_derive_v1(f) d offset 0) y
       order by n`, [docs]);
     const rng = mulberry32(SEED ^ 0x5eed);
+    // ---- rule coverage (Owner Decision c79a6278-4cfa-478a-aa04-e98ff379c17a) -------------------
+    // Two obligations on the branch-resolved mirror defined above, both riding on this one pass:
+    // it agrees with validateOracle on C1 / C9 on every sample, and every predicate is the sole
+    // cause of its reason code on at least one sample. Plus the assertion that the DIMENSIONS
+    // bases are themselves schema-valid, which is what makes a corrupted sample distinguishing.
+    const cover = { c1: { fired: C1_RULES.map(() => 0), sole: C1_RULES.map(() => 0) },
+      c9: { fired: C9_RULES.map(() => 0), sole: C9_RULES.map(() => 0) }, disagreements: 0, baseInvalid: 0 };
+    const COVER_PASSES = [[C1_RULES, 'C1_SCHEMA_INVALID', cover.c1], [C9_RULES, 'C9_CONTRACT_UNKNOWN', cover.c9]];
+    const coverRules = (sample, expected) => {
+      const baseCodes = sample.base === sample.facts ? expected : validateOracle(sample.base);
+      if (baseCodes.includes('C1_SCHEMA_INVALID')) {
+        cover.baseInvalid += 1;
+        fail('P2-BASE-SCHEMA', sample, { baseCodes });
+      }
+      for (const [rules, code, acc] of COVER_PASSES) {
+        let n = 0;
+        let last = -1;
+        for (let i = 0; i < rules.length; i += 1) {
+          if (rules[i][1](sample.facts)) { n += 1; last = i; acc.fired[i] += 1; }
+        }
+        if (n === 1) acc.sole[last] += 1;
+        if ((n > 0) !== expected.includes(code)) {
+          cover.disagreements += 1;
+          fail('P2-RULE-MIRROR', sample, { code, oracle: expected, fired: rules.filter((r) => r[1](sample.facts)).map((r) => r[0]) });
+        }
+      }
+    };
     const check = (sample, a, b) => {
       stats.total += 1;
       stats.layers[sample.layer] = (stats.layers[sample.layer] ?? 0) + 1;
@@ -1024,6 +1498,7 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       if (a.digest !== b.digest || a.sha !== b.sha) fail('T-A7-3', sample, { a, b });
       // ---- §7.3 validation oracle (v0.1.8 delta review MINOR-1): on every sample, valid or not ----
       const expected = validateOracle(f);
+      coverRules(sample, expected);
       if (JSON.stringify(a.codes) !== JSON.stringify(expected)) {
         fail('P2-VALIDATE', sample, { derived: a.codes, oracle: expected });
       }
@@ -1059,7 +1534,7 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       if (a.state === 'VERIFYING' && p.verification_eligible !== true) fail('T-A7-7', sample, a);
       if (a.mutant !== a.state) fail('T-A7-8', sample, a);
 
-      // ---- semantic layer (v0.1.8 review MINOR-2 / MINOR-3): recomputed from the facts ----
+      // ---- semantic layer (the v0.1.8 review's MINOR-2 and MINOR-3, a semantic oracle) ----
       const o = oracle(f);
       for (const [key, value] of Object.entries(o.predicates)) {
         if (p[key] !== value) fail('P2-PREDICATES', sample, { key, derived: p[key], oracle: value });
@@ -1127,6 +1602,42 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       assert.equal(stats.layers.random, RANDOM_SAMPLES);
       assert.deepEqual(Object.keys(stats.states).sort(), [...STATES].sort(), 'every state is reached from facts');
       assert.deepEqual(Object.keys(stats.codes).sort(), [...CODES].sort(), 'every §7.3 code is reached from facts');
+    });
+
+    // ---- the rule-coverage obligations (Owner Decision c79a6278) -------------------------------
+    await t.test('RULE-MIRROR: the branch-resolved rule mirror agrees with the validation oracle on C1 and C9', () => {
+      report('P2-RULE-MIRROR');
+      assert.equal(cover.disagreements, 0);
+      const never = [...C1_RULES.map(([id], i) => [id, cover.c1.fired[i]]),
+        ...C9_RULES.map(([id], i) => [id, cover.c9.fired[i]])].filter(([, n]) => n === 0).map(([id]) => id);
+      t.diagnostic(`RULE-MIRROR ${C1_RULES.length} C1 + ${C9_RULES.length} C9 predicates, 0 disagreements over `
+        + `${stats.total} samples; never fired: ${never.length ? never.join(', ') : 'none'}`);
+    });
+    await t.test('RULE-SOLE: every validator rule is the sole cause of its reason code on some sample', () => {
+      const counts = [...C1_RULES.map(([id], i) => [id, cover.c1.sole[i]]), ...C9_RULES.map(([id], i) => [id, cover.c9.sole[i]])];
+      // a predicate with no isolating sample is a mutation-testing blind spot: the branch could be
+      // deleted without any sample's reason codes changing, which is how N7 and its three
+      // predecessors survived. The allow-list is only for rules no JavaScript-object sample can
+      // reach, and each entry names the committed vector that covers it instead.
+      const blind = counts.filter(([id, n]) => n === 0 && !SOLE_EXEMPT.has(id)).map(([id]) => id);
+      assert.deepEqual(blind, [], `no sample isolates ${blind.length} validator rule(s): ${blind.join(', ')}`
+        + ' — add a corruption that breaks only that rule, or, if no sample can reach it, allow-list it'
+        + ' in SOLE_EXEMPT naming the raw-text vector that covers it');
+      // …and the allow-list stays honest: an entry that now has an isolating sample is stale
+      const stale = counts.filter(([id, n]) => n > 0 && SOLE_EXEMPT.has(id)).map(([id]) => id);
+      assert.deepEqual(stale, [], `SOLE_EXEMPT is stale: ${stale.join(', ')} now has an isolating sample`);
+      // …and every allow-listed id still names a predicate. A typo'd or obsolete entry would
+      // otherwise sit here silently forever, exempting nothing (PR #340 third delta review NIT-2).
+      const unknown = [...SOLE_EXEMPT.keys()].filter((id) => !counts.some(([known]) => known === id));
+      assert.deepEqual(unknown, [], `SOLE_EXEMPT names ${unknown.join(', ')}, which is not a predicate id`);
+      const sole = counts.filter(([id]) => !SOLE_EXEMPT.has(id)).map(([, n]) => n);
+      t.diagnostic(`RULE-SOLE ${sole.length} rules isolated, ${SOLE_EXEMPT.size} allow-listed; `
+        + `${Math.min(...sole)}…${Math.max(...sole)} isolating samples each `
+        + `(mean ${(sole.reduce((x, y) => x + y, 0) / sole.length).toFixed(1)})`);
+    });
+    await t.test('no base drawn from DIMENSIONS violates a C1 rule (single, pairwise and pre-corruption random)', () => {
+      report('P2-BASE-SCHEMA');
+      assert.equal(cover.baseInvalid, 0);
     });
     const properties = [
       ['T-A3-1', 'Candidate = ∅ ⇒ Operable = false'],

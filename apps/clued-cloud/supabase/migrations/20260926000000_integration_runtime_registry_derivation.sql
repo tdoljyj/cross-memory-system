@@ -31,6 +31,11 @@
 -- ---------------------------------------------------------------------------------------------
 -- Capability names (§5.1 vocabulary CHECK, §5.1 v0.1.2 NIT-3). Needed by the compatibility-rule
 -- CHECK below, so it is created first.
+-- The array_position(p_capabilities, null) guard is defensive redundancy, recorded here rather than
+-- removed (PR #340 second delta review, NIT-2): array['context.read', null]::text[] is already not
+-- contained in the vocabulary array, verified on a live PostgreSQL, so dropping the guard is an
+-- equivalent mutant and not a coverage gap. It stays because removing it would be a behavioural
+-- edit to a migration this branch keeps comments-only.
 create function clued_private.integration_capabilities_valid_v1(p_capabilities text[])
 returns boolean language sql immutable security invoker set search_path='' as $$
   select p_capabilities is not null
@@ -121,17 +126,23 @@ begin
   return 0;
 end $$;
 
--- ISO-8601 instant with an explicit offset (§7.1 as_of / valid_until). The lexical shape is pinned
--- first, so the guarded cast below cannot depend on the session TimeZone or DateStyle and the
--- function is genuinely immutable; the cast is what rejects out-of-range field values such as
--- 2026-13-99T99:99:99Z, which the regex alone accepts (v0.1.8 review NIT-1).
+-- Instant with an explicit offset (§7.1 as_of / valid_until): the ISO-8601 lexical shape, minus the
+-- two spellings PostgreSQL re-points to a different instant. This is a correctness rule and not a
+-- canonical-spelling one: one instant still has many accepted spellings here, each hashing
+-- differently, and none of them is the form a timestamptz round trip produces. Authority ERRATA-002
+-- item 3 (Owner Decision 25edd152-0d95-4cf7-b3eb-0ff32aed74d0; its wording corrected by Owner
+-- Decision 37e0f626-f9f7-43c1-b899-4d7584b952ab, raised as MAJOR-2 by the PR #340 review).
+-- The lexical shape is pinned first, so the guarded cast below cannot depend on the session TimeZone
+-- or DateStyle and the function is genuinely immutable; the cast is what rejects out-of-range field
+-- values such as 2026-13-99T99:99:99Z, which the regex alone accepts.
 -- The hour and second alternations pin 00…23 and 00…59 lexically, because PostgreSQL accepts the
 -- end-of-day hour 24 and the leap second 60 and silently rolls them over to a different instant
--- (24:00:00Z → the next day, 12:00:60Z → 12:01:00Z). Two spellings of one instant would then hash
--- differently, and canonical_runtime_verification_facts.valid_until is inside facts_sha256, which
--- §7.1 rule 1 requires to be a function of the truth alone. Every other out-of-range field is
--- already a hard error in the cast rather than a rollover (minute 60, offset minute 60, offset hour
--- 16, 2026-02-30), so the regex only has to remove these two.
+-- (24:00:00Z → the next day, 12:00:60Z → 12:01:00Z). A document spelled either way would therefore
+-- not denote the instant it spells, and canonical_runtime_verification_facts.valid_until is inside
+-- facts_sha256, so the hash and every comparison would be of a statement about an instant the
+-- document does not name. Every other out-of-range field is already a hard error in the cast rather
+-- than a rollover (minute 60, offset minute 60, offset hour 16, 2026-02-30), so the regex only has
+-- to remove these two.
 create function clued_private.integration_timestamp_valid_v1(p_text text)
 returns boolean language plpgsql immutable security invoker set search_path='' as $$
 declare
@@ -382,7 +393,8 @@ begin
     c1 := true;
   end if;
 
-  -- as_of: an ISO-8601 timestamp with an explicit offset (audit only; excluded from facts_sha256)
+  -- as_of: an ISO-8601 instant with an explicit offset, minus the spellings PostgreSQL re-points
+  -- to a different instant (integration_timestamp_valid_v1; audit only, excluded from facts_sha256)
   v := p_facts->'as_of';
   if pg_catalog.jsonb_typeof(v) is distinct from 'string'
      or not clued_private.integration_timestamp_valid_v1(v #>> '{}') then

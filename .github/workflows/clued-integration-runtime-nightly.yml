@@ -8,7 +8,8 @@ name: Clued integration runtime nightly property run
 #
 # It never runs on pull requests: the 2,000,000-sample run is far outside the per-PR runner budget
 # that scripts/ci/validate_runner_budget_policy.py guards, so it is scheduled and Owner-dispatched
-# only, and it stays on the trusted self-hosted pool rather than a hosted runner.
+# only (enforced by the job-level `if` below), and it stays on the trusted self-hosted pool rather
+# than a hosted runner.
 
 on:
   schedule:
@@ -25,9 +26,23 @@ concurrency:
 jobs:
   nightly-property-run:
     name: integration-runtime-nightly
-    if: github.repository == 'tdoljyj/cross-memory-system'
+    # Owner-dispatched only, the same gate clued-connection-authorization.yml puts on every
+    # self-hosted path, so a collaborator with write access cannot dispatch this onto the trusted
+    # pool. GitHub populates github.actor on a schedule run (in practice, the last actor to touch
+    # the workflow on the default branch — observed behaviour, not a documented guarantee), so the
+    # actor comparison is not what admits the nightly. The conclusion rests on the triggers, not on
+    # that behaviour and not on evaluation order: `on:` is schedule and workflow_dispatch only, so a
+    # run that is not a schedule run is a dispatch, and the actor comparison can only ever gate the
+    # dispatch.
+    if: >-
+      github.repository == 'tdoljyj/cross-memory-system' &&
+      (github.event_name == 'schedule' || github.actor == github.repository_owner)
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
-    timeout-minutes: 180
+    # The binding cap is the test file's own { timeout: 3_600_000 } (60 min), which is ~5x the
+    # measured 11.9-minute 2,000,000-sample run; this job timeout sits just above it (60 + 15 for
+    # checkout, npm ci and hydration) so that it is a reachable backstop for a hang outside the
+    # test rather than dead configuration.
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: apps/clued-cloud
