@@ -21,6 +21,7 @@ test("2026-09-25 regression: status-semantic folder is rejected", () => {
     operation: "create",
     artifact_role: "clued_resource",
     target_kind: "directory",
+    directory_semantics: "topic",
     destination_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/00_现行基线",
   });
   assert.equal(result.status, "deny");
@@ -51,6 +52,7 @@ test("an unregistered Resource Center root child is rejected", () => {
     operation: "create",
     artifact_role: "clued_resource",
     target_kind: "directory",
+    directory_semantics: "topic",
     destination_path: "G:/我的云端硬盘/Clued_资料中心/00_现行基线",
   });
   assert.equal(result.error_code, "RESOURCE_CENTER_ROOT_CHILD_FORBIDDEN");
@@ -123,4 +125,38 @@ test("delete classification omission fails closed", () => {
     source_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/a.md",
   });
   assert.equal(result.error_code, "GOVERNANCE_CLASS_REQUIRED");
+});
+
+test("directory creation without declared track/topic/asset semantics fails closed", () => {
+  const result = check({
+    operation: "create",
+    artifact_role: "clued_resource",
+    target_kind: "directory",
+    destination_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/新目录",
+  });
+  assert.equal(result.error_code, "DIRECTORY_SEMANTICS_REQUIRED");
+});
+
+test("status-split aliases from the 2026-09-25 incident are rejected", () => {
+  for (const name of ["10_候选与素材", "20_评审"]) {
+    const result = check({
+      operation: "create",
+      artifact_role: "clued_resource",
+      target_kind: "directory",
+      directory_semantics: "topic",
+      destination_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/" + name,
+    });
+    assert.equal(result.error_code, "STATUS_SEMANTIC_DIRECTORY_FORBIDDEN");
+  }
+});
+
+test("a declared topic directory remains allowed", () => {
+  const result = check({
+    operation: "create",
+    artifact_role: "clued_resource",
+    target_kind: "directory",
+    directory_semantics: "topic",
+    destination_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉",
+  });
+  assert.equal(result.status, "allow");
 });
