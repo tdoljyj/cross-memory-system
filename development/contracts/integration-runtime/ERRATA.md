@@ -185,8 +185,9 @@ is who the producers are. `0.0` and an unsorted ceiling are cheap for any produc
 to avoid — item 1 costs a writer nothing, and item 2's own justification, stated
 above, is symmetry with `scopes` plus `§10.12` needing one `jsonb`
 representation per ceiling. An instant is not like that: a facts document is
-also authored by hand, by the committed `§13.2` P5 golden vectors, whose ISO-8601
-spelling legitimately varies between `Z` and `+00:00`, with or without a
+also authored by hand, by the committed `§13.2` P5 golden vectors, whose `Z`
+spelling is not the form a `timestamptz` round trip produces, and whose ISO-8601
+spelling may legitimately vary between `Z` and `+00:00`, with or without a
 fractional part. A canonicality rule would reject those well-formed documents, and
 not only ill-formed ones. `§7.1` puts the problem where it belongs: it defines the
 facts document as the output of `integration_normalize_v1`, so one spelling is

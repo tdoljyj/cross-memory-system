@@ -587,14 +587,17 @@ const pickCorruption = (rng) => {
 //      spot, and the assertion names it.
 //
 // The scope of that obligation is integration_facts_validate_v1 and nothing else — one function of
-// the nine in PURE. Every other function reached from this file (integration_ceiling_valid_v1,
-// integration_timestamp_valid_v1, integration_version_cmp_v1, integration_capabilities_valid_v1
-// and integration_derive_v1's canonicalizer) and the registry CHECK constraints generally have
-// hand-written example tables only, with no coverage obligation and no mirror, so the
+// the nine in PURE. Every other *validator* reached from this file
+// (integration_ceiling_valid_v1, integration_timestamp_valid_v1, integration_version_cmp_v1,
+// integration_capabilities_valid_v1), integration_derive_v1's canonicalizer, and the registry
+// CHECK constraints generally have hand-written example tables only, with no coverage obligation
+// and no mirror, so the
 // mutation-survivor class this list closes is NOT closed for them. PR #340's third and fourth
 // delta reviews found live fail-open mutants across those surfaces — the ceiling's resource_id
 // length and type disjuncts and its actions element type, the timestamp's fractional-second
-// bound, derive_v1's canonicalizer de-duplication, and at least three registry CHECKs — so this
+// bound, derive_v1's canonicalizer de-duplication, and at least three registry CHECKs (among
+// them the capability_ceiling CHECK on integration_host_surfaces_v1, its surface regex, and the
+// hosts.host regex) — so this
 // enumeration is a sample of what is uncovered, not an inventory of it. The ceiling and timestamp
 // cases are fixed by targeted rows in their own subtests below; extending an obligation like this
 // one to the remaining functions is carried to S2c PR-2 by Owner Decision
@@ -1082,8 +1085,12 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         // PR #340 fourth delta review MAJOR-A: the same shape one `if` further down. Deleting the
         // `jsonb_typeof(e) <> 'string'` disjunct from the actions element check passed the whole
         // suite, because `(e #>> '{}')` on a JSON null is SQL NULL and `NULL not in (...)` is NULL,
-        // so the `exists` never fires. The two below are equivalent mutants today only through an
-        // accidental interaction with the key-uniqueness check, so they are pinned as well.
+        // so the `exists` never fires. The two below are equivalent mutants today, for different
+        // reasons: a non-string scope element is still rejected by the scope-vocabulary
+        // containment (`array[null] <@ ...` is false, the same disjunct the `scopes: [1]` row
+        // above already exercises), and a null resource_kind still fails the final key-uniqueness
+        // check (a NULL key counts in cardinality but not in count(distinct ...)). Neither closes
+        // anything new; both are pinned anyway, because each is equivalent only by accident.
         [{ scopes: [], entries: [{ ...entry, actions: [null] }] }, false, 'actions element not a string'],
         [{ scopes: [null], entries: [] }, false, 'scopes element null'],
         [{ scopes: [], entries: [{ ...entry, resource_kind: null }] }, false, 'resource_kind null'],
@@ -1107,9 +1114,10 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         ['2026-09-24T12:00:00', false], ['2026-09-24 12:00:00Z', false], ['now', false], [null, false],
         // the fractional second is bounded at six digits, which is the same denotation argument as
         // hour 24 and second 60 (PR #340 third delta review MAJOR-2): PostgreSQL does not reject a
-        // seven-or-more-digit fraction, it ROUNDS it to microseconds, so .1234567Z would be stored
-        // and hashed as .123457 — a spelling that does not denote the instant it spells, inside
-        // facts_sha256 by way of valid_until. Widening the regex to {1,9} is a live fail-open
+        // seven-or-more-digit fraction, it ROUNDS it to microseconds, so .1234567Z is hashed as
+        // spelled but read back as .123457 — a spelling that does not denote the instant it
+        // spells, inside facts_sha256 by way of valid_until. Widening the regex to {1,9} is a
+        // live fail-open
         // mutant that nothing else in this file kills.
         ['2026-09-24T12:00:00.1234567Z', false], ['2026-09-24T12:00:00.123456789Z', false],
         ['2026-09-24T12:00:00.123456Z', true], ['2026-09-24T12:00:00.1Z', true],
