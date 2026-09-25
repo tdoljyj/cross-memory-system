@@ -1,6 +1,5 @@
 import { createResourceCenterFilesystemAdapter } from "./resource-center-filesystem-adapter.mjs";
 import { createResourceCenterGovernedToolSurface } from "./resource-center-governed-tool-surface.mjs";
-import { qualifyResourceCenterHost } from "./resource-center-host-qualification.mjs";
 
 /**
  * Bootstraps the official filesystem-backed Host surface. Only listTools and
@@ -23,21 +22,11 @@ export function createResourceCenterFilesystemToolHost({
     admission_ttl_ms: admissionTtlMs,
   });
   const surface = createResourceCenterGovernedToolSurface({ adapter });
-  const qualification = qualifyResourceCenterHost({
-    trusted_profile: trustedProfile,
-    tools: surface.listTools(),
-    config: { allowedDirectories: [] },
-  });
-  if (qualification.status !== "qualified") {
-    const error = new Error("RESOURCE_CENTER_HOST_QUALIFICATION_FAILED");
-    error.code = "RESOURCE_CENTER_HOST_QUALIFICATION_FAILED";
-    error.qualification = qualification;
-    throw error;
-  }
-
   return Object.freeze({
     profile_identity: surface.profile_identity,
-    qualification,
+    // The enclosing Host must qualify its complete tool registry after this
+    // surface is registered. This factory cannot certify its own two tools as
+    // proof that no bypass exists elsewhere in the actual Host.
     listTools: surface.listTools,
     callTool: surface.callTool,
   });

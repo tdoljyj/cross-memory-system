@@ -50,6 +50,7 @@ const tools = deepFreeze([
     inputSchema: scanInputSchema,
   },
 ]);
+export const RESOURCE_CENTER_GOVERNED_TOOL_MANIFEST = tools;
 
 function invalidArguments(details = {}) {
   return {

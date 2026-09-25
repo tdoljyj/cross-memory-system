@@ -89,6 +89,7 @@ test("Remote Desktop Commander 0.2.51 is deterministically not qualified", () =>
     "BOUNDARY_SCAN_TOOL_MISSING",
     "OPEN_WORLD_PROCESS_TOOL_EXPOSED",
     "GENERIC_MUTATION_SCOPE_UNPROVEN",
+    "UNREVIEWED_HOST_TOOL_EXPOSED",
   ]));
 });
 
@@ -149,7 +150,7 @@ test("qualification rejects invalid or relative generic writer scopes", () => {
   }
 });
 
-test("qualification permits a generic file tool only when its scope is provably isolated", () => {
+test("qualification fails closed even for isolated generic tools in the same Host", () => {
   const { surface } = controlledSurface();
   const result = qualifyResourceCenterHost({
     trusted_profile: trustedProfile,
@@ -159,7 +160,34 @@ test("qualification permits a generic file tool only when its scope is provably 
     ],
     config: { allowedDirectories: ["D:/isolated-non-clued-output"] },
   });
-  assert.equal(result.status, "qualified");
+  assert.equal(result.status, "not_qualified");
+  assert.equal(result.findings.some((item) => item.code === "UNREVIEWED_HOST_TOOL_EXPOSED"), true);
+});
+
+test("qualification rejects unfamiliar command-capable tools and duplicate names", () => {
+  const { surface } = controlledSurface();
+  const result = qualifyResourceCenterHost({
+    trusted_profile: trustedProfile,
+    tools: [...surface.listTools(),
+      { name: "remote_automation", inputSchema: { type: "object", properties: { command: { type: "string" } } } },
+      surface.listTools()[0]],
+  });
+  assert.equal(result.status, "not_qualified");
+  assert.equal(result.findings.some((item) => item.code === "UNREVIEWED_HOST_TOOL_EXPOSED"), true);
+  assert.equal(result.findings.some((item) => item.code === "DUPLICATE_HOST_TOOL_EXPOSED"), true);
+});
+
+test("qualification rejects a governed tool schema expanded with a command", () => {
+  const { surface } = controlledSurface();
+  const manifest = surface.listTools().map((tool) => tool.name === RESOURCE_CENTER_MUTATION_TOOL
+    ? { ...tool, inputSchema: {
+      ...tool.inputSchema,
+      properties: { ...tool.inputSchema.properties, command: { type: "string" } },
+    } }
+    : tool);
+  const result = qualifyResourceCenterHost({ trusted_profile: trustedProfile, tools: manifest });
+  assert.equal(result.status, "not_qualified");
+  assert.equal(result.findings.some((item) => item.code === "GOVERNED_MUTATION_SCHEMA_NOT_CANONICAL"), true);
 });
 
 test("qualification rejects transport-visible admissions and authority fields", () => {
@@ -226,7 +254,17 @@ test("official filesystem tool Host keeps admission internal and denies 00_\u73b
       workspace_version: "snapshot:test",
     }),
   });
-  assert.equal(host.qualification.status, "qualified");
+  assert.equal(Object.hasOwn(host, "qualification"), false);
+  assert.equal(qualifyResourceCenterHost({
+    trusted_profile: {
+      registration_status: "registered",
+      profile_id: "filesystem-tool-host-test",
+      profile_version: "resource-center-profile/2",
+      managed_root: managedRoot,
+      boundary_scan_roots: [sandbox],
+    },
+    tools: host.listTools(),
+  }).status, "qualified");
   assert.equal(Object.hasOwn(host, "preflight"), false);
   assert.equal(Object.hasOwn(host, "commitMutation"), false);
 
@@ -262,6 +300,56 @@ test("official filesystem tool Host keeps admission internal and denies 00_\u73b
   }), { code: "DESTINATION_ALREADY_EXISTS" });
   assert.equal(await fs.readFile(destination, "utf8"), "normal track to topic");
   assert.equal(await fs.readFile(secondSource, "utf8"), "must not overwrite");
+
+  const raceSource = path.join(inbox, "race.md");
+  const raceDestination = path.join(topicRoot, "race.md");
+  await fs.writeFile(raceSource, "source bytes");
+  const racingHost = createResourceCenterFilesystemToolHost({
+    trusted_profile: {
+      registration_status: "registered",
+      profile_id: "filesystem-tool-host-test",
+      profile_version: "resource-center-profile/2",
+      managed_root: managedRoot,
+      allowed_root_children: ["20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c", "90_\u5f85\u5f52\u7c7b"],
+      boundary_scan_roots: [sandbox],
+    },
+    resolve_artifact: () => ({
+      artifact_id: "artifact:tool-host-test",
+      artifact_role: "clued_resource",
+      governance_class: "ordinary",
+      delete_authority: false,
+      authority_version: "artifact-registry/1",
+      currentness_identity: "canonical:cv_155",
+      workspace_version: "snapshot:test",
+    }),
+    filesystem: {
+      ...fs,
+      link: async (from, to) => {
+        await fs.writeFile(to, "racer bytes", { flag: "wx" });
+        return fs.link(from, to);
+      },
+    },
+  });
+  await assert.rejects(racingHost.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+    operation: "move", source_path: raceSource, destination_path: raceDestination,
+  }), { code: "EEXIST" });
+  assert.equal(await fs.readFile(raceDestination, "utf8"), "racer bytes");
+  assert.equal(await fs.readFile(raceSource, "utf8"), "source bytes");
+
+  const alias = path.join(inbox, "alias.md");
+  await fs.link(raceSource, alias);
+  await assert.rejects(host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+    operation: "move", source_path: raceSource, destination_path: path.join(topicRoot, "hardlink.md"),
+  }), { code: "HARD_LINK_ALIAS_FORBIDDEN" });
+  const symlink = path.join(inbox, "symlink.md");
+  try {
+    await fs.symlink(raceSource, symlink);
+    await assert.rejects(host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+      operation: "move", source_path: symlink, destination_path: path.join(topicRoot, "symlink.md"),
+    }), { code: "MUTATION_TARGET_NOT_REGULAR_FILE" });
+  } catch (error) {
+    if (!["EPERM", "EACCES", "ENOTSUP"].includes(error?.code)) throw error;
+  }
 
   await fs.mkdir(path.join(sandbox, "Clued_\u5b64\u5c9b"));
   const violations = await host.callTool(RESOURCE_CENTER_BOUNDARY_SCAN_TOOL, {});

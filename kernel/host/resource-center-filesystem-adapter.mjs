@@ -96,6 +96,47 @@ async function assertDestinationAbsent(filesystem, candidate) {
   fail("DESTINATION_ALREADY_EXISTS", { path: candidate });
 }
 
+async function moveRegularFileNoReplace(filesystem, source, destination, sourceRoots, managedRoot) {
+  await assertExistingPathWithin(filesystem, source, sourceRoots, "SOURCE_REALPATH_OUTSIDE_REGISTERED_ROOT");
+  await assertDestinationParentWithin(filesystem, destination, managedRoot);
+  // lstat rejects a symlink/junction itself, even when realpath points into a
+  // registered root. A pre-existing hard link is likewise not a unique source.
+  const beforeIdentity = verifiedObjectIdentity(
+    await filesystem.lstat(source, { bigint: true }),
+    "HARD_LINK_ALIAS_FORBIDDEN",
+  );
+  await assertDestinationAbsent(filesystem, destination);
+
+  // link is an atomic create-if-absent on supported filesystems. Path-based
+  // rename overwrites on common platforms and is unsafe even after lstat.
+  // Unsupported providers fail closed; directory moves require an explicit
+  // provider-native atomic no-replace implementation in a later stage.
+  await filesystem.link(source, destination);
+  const sourceAfterLink = verifiedObjectIdentityAllowTwo(
+    await filesystem.lstat(source, { bigint: true }),
+  );
+  const destinationAfterLink = verifiedObjectIdentityAllowTwo(
+    await filesystem.lstat(destination, { bigint: true }),
+  );
+  if (!sameObjectIdentity(beforeIdentity, sourceAfterLink) ||
+    !sameObjectIdentity(beforeIdentity, destinationAfterLink)) {
+    fail("MUTATION_TARGET_IDENTITY_CHANGED");
+  }
+  await assertDestinationParentWithin(filesystem, destination, managedRoot);
+  await assertExistingPathWithin(filesystem, destination, [managedRoot], "DESTINATION_REALPATH_OUTSIDE_MANAGED_ROOT");
+  try {
+    await filesystem.unlink(source);
+  } catch (error) {
+    fail("PARTIAL_MOVE_SOURCE_RETAINED", { cause: error?.code ?? "unknown" });
+  }
+  const finalIdentity = verifiedObjectIdentity(
+    await filesystem.lstat(destination, { bigint: true }),
+    "HARD_LINK_ALIAS_DETECTED_AFTER_MOVE",
+  );
+  if (!sameObjectIdentity(beforeIdentity, finalIdentity)) fail("MUTATION_TARGET_IDENTITY_CHANGED");
+  return finalIdentity;
+}
+
 function stableIdentityValue(value, allowZero) {
   if (typeof value === "bigint") {
     if (value < 0n || (!allowZero && value === 0n)) fail("FILESYSTEM_OBJECT_IDENTITY_UNAVAILABLE");
@@ -117,6 +158,17 @@ function verifiedObjectIdentity(stats, hardLinkCode) {
     fail("FILESYSTEM_OBJECT_IDENTITY_UNAVAILABLE");
   }
   if (linkCount !== 1) fail(hardLinkCode, { link_count: linkCount });
+  return Object.freeze({
+    device: stableIdentityValue(stats.dev, true),
+    inode: stableIdentityValue(stats.ino, false),
+    link_count: linkCount,
+  });
+}
+
+function verifiedObjectIdentityAllowTwo(stats) {
+  if (typeof stats?.isFile !== "function" || !stats.isFile()) fail("MUTATION_TARGET_NOT_REGULAR_FILE");
+  const linkCount = typeof stats.nlink === "bigint" ? Number(stats.nlink) : stats.nlink;
+  if (linkCount !== 2) fail("MUTATION_TARGET_IDENTITY_CHANGED");
   return Object.freeze({
     device: stableIdentityValue(stats.dev, true),
     inode: stableIdentityValue(stats.ino, false),
@@ -214,10 +266,10 @@ async function applyFilesystemMutation(filesystem, profile, mutation) {
       break;
     case "move":
     case "rename":
-      await assertExistingPathWithin(filesystem, source, sourceRoots, "SOURCE_REALPATH_OUTSIDE_REGISTERED_ROOT");
-      await assertDestinationParentWithin(filesystem, destination, profile.managed_root);
-      await assertDestinationAbsent(filesystem, destination);
-      await filesystem.rename(source, destination);
+      if (mutation.target_kind === "directory") fail("ATOMIC_NO_REPLACE_UNAVAILABLE");
+      objectIdentity = await moveRegularFileNoReplace(
+        filesystem, source, destination, sourceRoots, profile.managed_root,
+      );
       break;
     case "delete":
       await assertExistingPathWithin(filesystem, source, sourceRoots, "SOURCE_REALPATH_OUTSIDE_REGISTERED_ROOT");
@@ -283,7 +335,7 @@ export function createResourceCenterFilesystemAdapter({
   admission_ttl_ms: admissionTtlMs,
 } = {}) {
   if (!filesystem || typeof filesystem.readdir !== "function" ||
-    typeof filesystem.writeFile !== "function" || typeof filesystem.rename !== "function" ||
+    typeof filesystem.writeFile !== "function" || typeof filesystem.link !== "function" ||
     typeof filesystem.unlink !== "function" || typeof filesystem.rmdir !== "function" ||
     typeof filesystem.mkdir !== "function" || typeof filesystem.realpath !== "function" ||
     typeof filesystem.open !== "function" || typeof filesystem.stat !== "function" ||

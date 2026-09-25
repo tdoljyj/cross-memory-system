@@ -1,6 +1,8 @@
 import { RESOURCE_CENTER_POLICY_VERSION } from "../policy/resource-center-mutation-policy.mjs";
+import { isDeepStrictEqual } from "node:util";
 import {
   RESOURCE_CENTER_BOUNDARY_SCAN_TOOL,
+  RESOURCE_CENTER_GOVERNED_TOOL_MANIFEST,
   RESOURCE_CENTER_MUTATION_TOOL,
 } from "./resource-center-governed-tool-surface.mjs";
 
@@ -168,14 +170,35 @@ export function qualifyResourceCenterHost({ trusted_profile: trustedProfile, too
   const manifest = Array.isArray(tools) ? tools : [];
   const findings = [];
   const byName = new Map(manifest.map((tool) => [tool?.name, tool]));
+  const governedNames = new Set([RESOURCE_CENTER_MUTATION_TOOL, RESOURCE_CENTER_BOUNDARY_SCAN_TOOL]);
+  const seenNames = new Set();
+  for (const tool of manifest) {
+    if (seenNames.has(tool?.name)) findings.push(finding("DUPLICATE_HOST_TOOL_EXPOSED", { tool: tool?.name ?? null }));
+    seenNames.add(tool?.name);
+    // Qualification is intentionally closed-world. An unknown tool may write
+    // through a command, script, browser, or plugin regardless of its name.
+    if (!governedNames.has(tool?.name)) {
+      findings.push(finding("UNREVIEWED_HOST_TOOL_EXPOSED", { tool: tool?.name ?? null }));
+    }
+  }
 
   const governedMutation = byName.get(RESOURCE_CENTER_MUTATION_TOOL);
   if (!governedMutation) findings.push(finding("GOVERNED_MUTATION_TOOL_MISSING"));
-  else verifyGovernedMutationSchema(governedMutation, findings);
+  else {
+    verifyGovernedMutationSchema(governedMutation, findings);
+    if (!isDeepStrictEqual(toolSchema(governedMutation), RESOURCE_CENTER_GOVERNED_TOOL_MANIFEST[0].inputSchema)) {
+      findings.push(finding("GOVERNED_MUTATION_SCHEMA_NOT_CANONICAL"));
+    }
+  }
   const boundaryScan = byName.get(RESOURCE_CENTER_BOUNDARY_SCAN_TOOL);
   if (!boundaryScan) {
     findings.push(finding("BOUNDARY_SCAN_TOOL_MISSING"));
-  } else verifyBoundaryScanSchema(boundaryScan, findings);
+  } else {
+    verifyBoundaryScanSchema(boundaryScan, findings);
+    if (!isDeepStrictEqual(toolSchema(boundaryScan), RESOURCE_CENTER_GOVERNED_TOOL_MANIFEST[1].inputSchema)) {
+      findings.push(finding("BOUNDARY_SCAN_SCHEMA_NOT_CANONICAL"));
+    }
+  }
 
   const processTools = manifest
     .map((tool) => tool?.name)
