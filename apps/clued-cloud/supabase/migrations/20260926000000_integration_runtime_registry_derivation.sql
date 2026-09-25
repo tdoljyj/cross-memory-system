@@ -31,6 +31,11 @@
 -- ---------------------------------------------------------------------------------------------
 -- Capability names (§5.1 vocabulary CHECK, §5.1 v0.1.2 NIT-3). Needed by the compatibility-rule
 -- CHECK below, so it is created first.
+-- The array_position(p_capabilities, null) guard is defensive redundancy, recorded here rather than
+-- removed (PR #340 second delta review, NIT-2): array['context.read', null]::text[] is already not
+-- contained in the vocabulary array, verified on a live PostgreSQL, so dropping the guard is an
+-- equivalent mutant and not a coverage gap. It stays because removing it would be a behavioural
+-- edit to a migration this branch keeps comments-only.
 create function clued_private.integration_capabilities_valid_v1(p_capabilities text[])
 returns boolean language sql immutable security invoker set search_path='' as $$
   select p_capabilities is not null

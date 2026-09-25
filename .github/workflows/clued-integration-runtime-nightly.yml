@@ -28,10 +28,12 @@ jobs:
     name: integration-runtime-nightly
     # Owner-dispatched only, the same gate clued-connection-authorization.yml puts on every
     # self-hosted path, so a collaborator with write access cannot dispatch this onto the trusted
-    # pool. GitHub does set github.actor on a schedule run — to whoever last touched the workflow
-    # on the default branch — so the actor comparison is not what admits the nightly; the
-    # github.event_name == 'schedule' disjunct short-circuits before it, and the actor comparison
-    # only ever gates workflow_dispatch.
+    # pool. GitHub populates github.actor on a schedule run (in practice, the last actor to touch
+    # the workflow on the default branch — observed behaviour, not a documented guarantee), so the
+    # actor comparison is not what admits the nightly. The conclusion rests on the triggers, not on
+    # that behaviour and not on evaluation order: `on:` is schedule and workflow_dispatch only, so a
+    # run that is not a schedule run is a dispatch, and the actor comparison can only ever gate the
+    # dispatch.
     if: >-
       github.repository == 'tdoljyj/cross-memory-system' &&
       (github.event_name == 'schedule' || github.actor == github.repository_owner)

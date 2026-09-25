@@ -91,10 +91,14 @@ procurement.
   `793ea908-3281-430d-8bfd-8e0b83bfd226`; item 3, Owner Decision
   `25edd152-0d95-4cf7-b3eb-0ff32aed74d0` (both 2026-09-24), and Owner Decision
   `37e0f626-f9f7-43c1-b899-4d7584b952ab` (2026-09-25) for the wording of item 3,
-  which corrects what item 3 says without changing what the validator does.
+  which corrects what item 3 says without changing what the validator does, and
+  Owner Decision `c79a6278-4cfa-478a-aa04-e98ff379c17a` (2026-09-25) for item 3's
+  Evidence paragraph and its note on residual instant non-canonicality, likewise
+  wording only.
 - **Raised by:** the Fresh-Context delta reviews of PR #338 — items 1 and 2 by
   the first review's MAJOR-1, item 3 by the second review's MINOR-1; item 3's
-  wording by the Fresh-Context review of PR #340, MAJOR-2.
+  wording by the Fresh-Context review of PR #340, MAJOR-2, and by its second
+  delta review, MINOR-1, MINOR-2 and NIT-1.
 - **Status:** in force. Items 1 and 2 implemented by PR-1
   (migration `20260926000000`); item 3 by its follow-up.
 
@@ -165,12 +169,38 @@ are newly rejected, `h=0…23` with `s=60` and `h=24` with `m=00, s=00`, every
 other out-of-range field already being a hard error in the cast rather than a
 re-pointing.
 
-**Evidence.** The count follows from the two regexes by inspection: the only
-difference is the hour and second alternations. The two re-pointings, and the
-fact that every accepted `Z` spelling round-trips to the instant it spells, are
-asserted against a live PostgreSQL by the committed test
+That residual non-canonicality inside `facts_sha256` is knowingly retained, and
+is not the inconsistency with items 1 and 2 that it can look like. Those two
+refuse an ambiguous spelling because the refusal costs nothing: `0.0` and an
+unsorted `actions` have no legitimate producer. An instant does — `Z` and
+`+00:00` are both ordinary ISO-8601 output — so a canonicality rule here would
+reject well-formed documents and not only ill-formed ones. `§8.6` puts the
+problem where it belongs: normalization is the producer's job, and the PR-2
+normalizer is the sole producer of the facts document, formatting one
+`timestamptz` one way and so emitting one spelling. Item 3 therefore refuses only
+the two spellings that do not denote the instant they name, and leaves
+single-spelling canonicality to the PR-2 normalizer contract.
+
+**Evidence.** The two regexes settle only half of the count. They differ in the
+hour and second alternations alone, so the new grammar is a strict subset and
+nothing is newly accepted; but by regex inspection the newly refused set is every
+hour `24…99` and every second `60…99`, which is hundreds of classes, not 25. It
+collapses to 25 only together with PostgreSQL's cast acceptance set, which
+rejects outright, rather than re-points, every hour `25…99`, every second
+`61…99`, every minute outside `00…59`, and hour `24` at any minute or second
+other than `00`.
+
+Both halves are asserted against a live PostgreSQL by the committed test
 `apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs`, subtest
-"`§7.1` lexical validation".
+"`§7.1` lexical validation", over the ranges the count quantifies over rather
+than at sampled points. It sweeps hour `00…99` × minute `{00,01,30,59,60,99}` ×
+second `{00,01,30,59,60,61,99}`, plus hour `24` across all 60 minutes, and
+asserts that the shipped rule accepts nothing the old one refused, that the set
+of newly refused `(hour, second)` classes is exactly the 25 named above, and that
+the cast accepts hour `24` at minute `00` only. The same subtest asserts the two
+re-pointings, and that every accepted `Z` spelling in a 384-value sweep of hour
+`00…23` × minute `{00,01,30,59}` × second `{00,01,30,59}` round-trips to the
+instant it spells.
 
 ### Boundary
 
