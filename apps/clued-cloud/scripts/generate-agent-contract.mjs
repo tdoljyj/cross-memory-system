@@ -3,6 +3,7 @@
 // contract in skills/clued/references/agent-contract.md. `--check` exits 1
 // when the committed module is out of date.
 import { readFile, writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 
 const source = new URL("../../../skills/clued/references/agent-contract.md", import.meta.url);
 const target = new URL("../worker/generated/agent-contract.ts", import.meta.url);
@@ -17,7 +18,7 @@ export async function renderAgentContractModule() {
   ].join("\n");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const rendered = await renderAgentContractModule();
   if (process.argv.includes("--check")) {
     const current = await readFile(target, "utf8").catch(() => "");

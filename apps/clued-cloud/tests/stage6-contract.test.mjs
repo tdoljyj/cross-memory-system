@@ -37,6 +37,17 @@ test("agent contract makes stable ids and one transactional write explicit", asy
   assert.match(contract, /missing capability or failed admission remains unavailable/);
   assert.match(contract, /Active Event truth carriers are separate current sources/);
   assert.match(contract, /never recover current actions from old Markdown/);
+  assert.match(contract, /Governed external workspace mutations/);
+  assert.match(contract, /NO SIBLING ISLAND/);
+  assert.match(contract, /Byte equality is not deletion authority/);
+  assert.match(contract, /If the Host has no usable preflight path, mutation is unavailable/);
+  assert.match(contract, /Host-owned trusted configuration/);
+  assert.match(contract, /short-lived, single-use, unforgeable within that Host instance/);
+  assert.match(contract, /not a bearer capability/);
+  assert.match(contract, /shared guarded mutation wrapper/);
+  assert.match(contract, /reject a missing, forged, expired, already-consumed, cross-Host or binding-mismatched admission/);
+  assert.match(contract, /normal scans never call a model/);
+  assert.match(contract, /side-effect function zero times/);
 });
 
 test("repository Skill, project rules and root snapshot share the v1.6 authority boundary", async () => {
@@ -76,7 +87,7 @@ test("the Worker serves the single agent contract and advertises capture", async
   const generated = await readFile(new URL("../worker/generated/agent-contract.ts", import.meta.url), "utf8");
   assert.equal(generated, await renderAgentContractModule(), "run node scripts/generate-agent-contract.mjs");
   const lifecycle = (await bootstrap.json()).lifecycle;
-  assert.equal(lifecycle.contract.version, 2);
+  assert.equal(lifecycle.contract.version, 3);
   assert.equal(lifecycle.contract.url, "https://clued.test/clued-agent.md");
   assert.equal(lifecycle.durable_changes.capture, "material_outcomes_in_same_turn_before_reporting");
 });
