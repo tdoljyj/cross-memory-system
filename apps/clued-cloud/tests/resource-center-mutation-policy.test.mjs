@@ -697,6 +697,7 @@ test("official filesystem adapter rejects a realpath escape before the effect", 
   let writeCalls = 0;
   const fakeFilesystem = {
     readdir: async () => [],
+    lstat: async () => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); },
     writeFile: async () => { writeCalls += 1; },
     rename: async () => {},
     unlink: async () => {},
@@ -765,6 +766,7 @@ test("official filesystem adapter fails closed when a provider cannot prove obje
   const unsupportedStats = () => ({ isFile: () => true, nlink: 1, size: 0 });
   const fakeFilesystem = {
     readdir: async () => [],
+    lstat: async () => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); },
     writeFile: async () => {},
     rename: async () => {},
     unlink: async () => {},

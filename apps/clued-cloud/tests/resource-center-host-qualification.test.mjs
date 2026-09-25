@@ -120,6 +120,35 @@ test("qualification rejects generic mutation overlap and open process escape", (
   assert.equal(result.findings.some((item) => item.code === "OPEN_WORLD_PROCESS_TOOL_EXPOSED"), true);
 });
 
+test("qualification detects prefixed generic writer and process tool names", () => {
+  const { surface } = controlledSurface();
+  const result = qualifyResourceCenterHost({
+    trusted_profile: trustedProfile,
+    tools: [
+      ...surface.listTools(),
+      { name: "mcp__codex_apps__remote_desktop_commander_write_file", inputSchema: { type: "object" } },
+      { name: "mcp__codex_apps__remote_desktop_commander_start_process", inputSchema: { type: "object" } },
+    ],
+    config: { allowedDirectories: [] },
+  });
+  assert.equal(result.status, "not_qualified");
+  assert.equal(result.findings.some((item) => item.code === "GENERIC_MUTATION_SCOPE_UNPROVEN"), true);
+  assert.equal(result.findings.some((item) => item.code === "OPEN_WORLD_PROCESS_TOOL_EXPOSED"), true);
+});
+
+test("qualification rejects invalid or relative generic writer scopes", () => {
+  const { surface } = controlledSurface();
+  for (const allowedDirectories of [[""], ["relative/output"], ["D:/isolated-output", null]]) {
+    const result = qualifyResourceCenterHost({
+      trusted_profile: trustedProfile,
+      tools: [...surface.listTools(), { name: "write_file", inputSchema: { type: "object" } }],
+      config: { allowedDirectories },
+    });
+    assert.equal(result.status, "not_qualified");
+    assert.equal(result.findings.some((item) => item.code === "GENERIC_MUTATION_SCOPE_UNPROVEN"), true);
+  }
+});
+
 test("qualification permits a generic file tool only when its scope is provably isolated", () => {
   const { surface } = controlledSurface();
   const result = qualifyResourceCenterHost({
@@ -223,6 +252,16 @@ test("official filesystem tool Host keeps admission internal and denies 00_\u73b
   });
   assert.equal(moved.status, "committed");
   assert.equal(await fs.readFile(destination, "utf8"), "normal track to topic");
+
+  const secondSource = path.join(inbox, "b.md");
+  await fs.writeFile(secondSource, "must not overwrite");
+  await assert.rejects(host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+    operation: "move",
+    source_path: secondSource,
+    destination_path: destination,
+  }), { code: "DESTINATION_ALREADY_EXISTS" });
+  assert.equal(await fs.readFile(destination, "utf8"), "normal track to topic");
+  assert.equal(await fs.readFile(secondSource, "utf8"), "must not overwrite");
 
   await fs.mkdir(path.join(sandbox, "Clued_\u5b64\u5c9b"));
   const violations = await host.callTool(RESOURCE_CENTER_BOUNDARY_SCAN_TOOL, {});

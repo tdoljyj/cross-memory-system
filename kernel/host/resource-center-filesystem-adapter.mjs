@@ -86,6 +86,16 @@ async function assertDestinationParentWithin(filesystem, candidate, managedRoot)
   }
 }
 
+async function assertDestinationAbsent(filesystem, candidate) {
+  try {
+    await filesystem.lstat(candidate);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  fail("DESTINATION_ALREADY_EXISTS", { path: candidate });
+}
+
 function stableIdentityValue(value, allowZero) {
   if (typeof value === "bigint") {
     if (value < 0n || (!allowZero && value === 0n)) fail("FILESYSTEM_OBJECT_IDENTITY_UNAVAILABLE");
@@ -206,6 +216,7 @@ async function applyFilesystemMutation(filesystem, profile, mutation) {
     case "rename":
       await assertExistingPathWithin(filesystem, source, sourceRoots, "SOURCE_REALPATH_OUTSIDE_REGISTERED_ROOT");
       await assertDestinationParentWithin(filesystem, destination, profile.managed_root);
+      await assertDestinationAbsent(filesystem, destination);
       await filesystem.rename(source, destination);
       break;
     case "delete":
@@ -275,7 +286,8 @@ export function createResourceCenterFilesystemAdapter({
     typeof filesystem.writeFile !== "function" || typeof filesystem.rename !== "function" ||
     typeof filesystem.unlink !== "function" || typeof filesystem.rmdir !== "function" ||
     typeof filesystem.mkdir !== "function" || typeof filesystem.realpath !== "function" ||
-    typeof filesystem.open !== "function" || typeof filesystem.stat !== "function") {
+    typeof filesystem.open !== "function" || typeof filesystem.stat !== "function" ||
+    typeof filesystem.lstat !== "function") {
     fail("RESOURCE_CENTER_FILESYSTEM_INVALID");
   }
   if (classifyObservedEntry !== undefined && typeof classifyObservedEntry !== "function") {

@@ -57,11 +57,14 @@ const OPEN_PROCESS_NAMES = new Set([
 ]);
 
 function terminalToolName(name) {
-  return String(name ?? "")
+  const normalized = String(name ?? "")
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .toLowerCase()
-    .split(/[.:/\\-]+/)
-    .at(-1);
+    .replace(/[.:/\\-]+/g, "_");
+  for (const candidate of [...GENERIC_MUTATION_NAMES, ...OPEN_PROCESS_NAMES].sort((a, b) => b.length - a.length)) {
+    if (normalized === candidate || normalized.endsWith(`_${candidate}`)) return candidate;
+  }
+  return normalized;
 }
 
 function isGateInternalTool(name) {
@@ -187,12 +190,16 @@ export function qualifyResourceCenterHost({ trusted_profile: trustedProfile, too
     if (!Array.isArray(allowedDirectories) || allowedDirectories.length === 0) {
       findings.push(finding("GENERIC_MUTATION_SCOPE_UNPROVEN", { tools: genericMutationTools }));
     } else {
+      const normalizedDirectories = allowedDirectories.map(normalizePath);
+      if (normalizedDirectories.some((value) => !value || !/^([a-z]:\/|\/)/.test(value))) {
+        findings.push(finding("GENERIC_MUTATION_SCOPE_UNPROVEN", { tools: genericMutationTools }));
+      }
       const protectedRoots = [
         profile.managed_root,
         parentPath(profile.managed_root),
         ...profile.boundary_scan_roots,
       ].filter(Boolean);
-      for (const allowed of allowedDirectories.map(normalizePath).filter(Boolean)) {
+      for (const allowed of normalizedDirectories.filter(Boolean)) {
         if (protectedRoots.some((root) => overlaps(allowed, root))) {
           findings.push(finding("GENERIC_MUTATION_SCOPE_OVERLAPS_GOVERNED_BOUNDARY", {
             allowed_directory: allowed,
