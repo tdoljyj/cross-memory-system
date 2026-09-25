@@ -16,6 +16,11 @@ const DEFAULT_STATUS_DIRECTORY_NAMES = [
   "候选",
   "历史",
   "正式",
+  "候选与素材",
+  "评审",
+  "复核",
+  "reviews",
+  "review",
 ];
 
 function normalizePath(value) {
@@ -77,6 +82,7 @@ export function evaluateResourceCenterMutation(input) {
   const source = normalizePath(input?.source_path);
   const artifactRole = input?.artifact_role;
   const targetKind = input?.target_kind ?? "file";
+  const directorySemantics = input?.directory_semantics;
   const governanceClass = input?.governance_class;
   const allowedChildren = new Set(profile.allowed_root_children ?? []);
   const statusNames = new Set(
@@ -95,6 +101,9 @@ export function evaluateResourceCenterMutation(input) {
   if (artifactRole !== "clued_resource") return deny("ARTIFACT_ROLE_REQUIRED");
   if (!destination && operation !== "delete") return deny("DESTINATION_REQUIRED");
   if (operation === "delete" && !source && !destination) return deny("DELETE_TARGET_REQUIRED");
+  if (targetKind === "directory" && !["track", "topic", "asset_collection"].includes(directorySemantics)) {
+    return deny("DIRECTORY_SEMANTICS_REQUIRED");
+  }
 
   const target = destination ?? source;
   if (artifactRole === "clued_resource" && !isWithin(target, managedRoot)) {
