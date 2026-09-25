@@ -6,12 +6,16 @@ on:
       - '.github/workflows/public-mcp-*.yml'
       - 'apps/clued-cloud/**'
       - 'protocol/continuity/v1/**'
+      - 'skills/clued/references/agent-contract.md'
+      - 'kernel/policy/resource-center-mutation-policy.mjs'
   push:
     branches: [main]
     paths:
       - '.github/workflows/public-mcp-*.yml'
       - 'apps/clued-cloud/**'
       - 'protocol/continuity/v1/**'
+      - 'skills/clued/references/agent-contract.md'
+      - 'kernel/policy/resource-center-mutation-policy.mjs'
 
 permissions:
   contents: read
@@ -54,6 +58,8 @@ jobs:
           timeout --signal=TERM --kill-after=15s 4m
           npm ci --cache "$HOME/.npm" --prefer-offline
           --fetch-retries=2 --fetch-timeout=30000
+      - name: Verify governed Resource Center mutation contract
+        run: node --test tests/resource-center-mutation-policy.test.mjs tests/stage6-contract.test.mjs
       - name: Serialize fixed public MCP ports with other runners on this host
         run: |
           "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" acquire public-mcp-ports
@@ -120,6 +126,8 @@ jobs:
       - name: Verify gate terminal-state and timeout regressions
         run: npm run mcp:gate-receipt:test
       - run: npm ci
+      - name: Verify governed Resource Center mutation contract
+        run: node --test tests/resource-center-mutation-policy.test.mjs tests/stage6-contract.test.mjs
       - name: Start isolated MCP
         run: |
           printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\n' > evals/public-mcp/.dev.vars.public-mcp
