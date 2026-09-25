@@ -26,6 +26,8 @@ const CALLER_AUTHORITY_FIELDS = new Set([
   "delete_authority",
   "artifact_authority_version",
   "artifact_id",
+  "currentness_identity",
+  "workspace_version",
 ]);
 
 function deny(errorCode, details = {}) {
@@ -129,6 +131,8 @@ function resolveTrustedArtifact(resolveArtifact, profile, mutation) {
     !["ordinary", "governance"].includes(resolved.governance_class) ||
     typeof resolved.delete_authority !== "boolean" ||
     typeof resolved.authority_version !== "string" || resolved.authority_version.trim() === "" ||
+    typeof resolved.currentness_identity !== "string" || resolved.currentness_identity.trim() === "" ||
+    typeof resolved.workspace_version !== "string" || resolved.workspace_version.trim() === "" ||
     !(resolved.artifact_id === null ||
       (typeof resolved.artifact_id === "string" && resolved.artifact_id.trim() !== ""))) {
     return deny("ARTIFACT_AUTHORITY_INVALID");
@@ -146,6 +150,8 @@ function resolveTrustedArtifact(resolveArtifact, profile, mutation) {
       governance_class: resolved.governance_class,
       delete_authority: resolved.delete_authority,
       artifact_authority_version: resolved.authority_version.trim(),
+      currentness_identity: resolved.currentness_identity.trim(),
+      workspace_version: resolved.workspace_version.trim(),
     }),
   };
 }

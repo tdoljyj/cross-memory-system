@@ -61,7 +61,7 @@ jobs:
           npm ci --cache "$HOME/.npm" --prefer-offline
           --fetch-retries=2 --fetch-timeout=30000
       - name: Verify governed Resource Center mutation contract
-        run: node --test tests/resource-center-mutation-policy.test.mjs tests/stage6-contract.test.mjs
+        run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/stage6-contract.test.mjs
       - name: Serialize fixed public MCP ports with other runners on this host
         run: |
           "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" acquire public-mcp-ports
@@ -129,7 +129,7 @@ jobs:
         run: npm run mcp:gate-receipt:test
       - run: npm ci
       - name: Verify governed Resource Center mutation contract
-        run: node --test tests/resource-center-mutation-policy.test.mjs tests/stage6-contract.test.mjs
+        run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/stage6-contract.test.mjs
       - name: Start isolated MCP
         run: |
           printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\n' > evals/public-mcp/.dev.vars.public-mcp

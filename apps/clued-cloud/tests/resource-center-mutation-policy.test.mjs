@@ -32,6 +32,8 @@ const artifactAuthority = (overrides = {}) => Object.freeze({
   governance_class: "ordinary",
   delete_authority: false,
   authority_version: "artifact-registry/1",
+  currentness_identity: "canonical:cv_155",
+  workspace_version: "snapshot:snap_f6134235591bfcbfe4ba3a674383c3e0",
   ...overrides,
 });
 
@@ -301,7 +303,6 @@ test("Host preflight binds exact operation, paths, artifact role, profile and po
     operation: "write",
     artifact_role: "clued_resource",
     destination_path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c/brand/a.md",
-    currentness_identity: "canonical:cv_155",
   });
   assert.equal(result.status, "admitted");
   assert.equal(result.admission.admission_kind, "host_instance_opaque_single_use");
@@ -311,6 +312,7 @@ test("Host preflight binds exact operation, paths, artifact role, profile and po
   assert.equal(result.admission.binding.profile_version, "resource-center-profile/1");
   assert.equal(result.admission.binding.policy_version, "clued.resource-center-mutation-policy/1");
   assert.equal(result.admission.binding.currentness_identity, "canonical:cv_155");
+  assert.equal(result.admission.binding.workspace_version, "snapshot:snap_f6134235591bfcbfe4ba3a674383c3e0");
   assert.match(result.admission.binding.request_sha256, /^[0-9a-f]{64}$/);
   assert.equal(Object.isFrozen(result.admission), true);
 });
@@ -327,6 +329,8 @@ test("mutation payload cannot self-declare profile or managed-root authority", (
     { delete_authority: true },
     { artifact_authority_version: "attacker/1" },
     { artifact_id: "attacker-artifact" },
+    { currentness_identity: "canonical:attacker" },
+    { workspace_version: "snapshot:attacker" },
   ]) {
     const result = adapter.preflight({
       operation: "write",
@@ -364,6 +368,30 @@ test("Host artifact resolver, not the caller, decides governance delete authorit
   });
   assert.equal((await admitted.guardedMutation(mutation)).status, "committed");
   assert.equal(calls, 1);
+});
+
+test("Host fails closed when trusted currentness or workspace identity is unavailable", () => {
+  const mutation = {
+    operation: "write",
+    artifact_role: "clued_resource",
+    destination_path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c/a.md",
+  };
+  const withoutCurrentness = createHost({
+    resolve_artifact: () => {
+      const authority = { ...artifactAuthority() };
+      delete authority.currentness_identity;
+      return authority;
+    },
+  });
+  const withoutWorkspace = createHost({
+    resolve_artifact: () => {
+      const authority = { ...artifactAuthority() };
+      delete authority.workspace_version;
+      return authority;
+    },
+  });
+  assert.equal(withoutCurrentness.preflight(mutation).error_code, "ARTIFACT_AUTHORITY_INVALID");
+  assert.equal(withoutWorkspace.preflight(mutation).error_code, "ARTIFACT_AUTHORITY_INVALID");
 });
 
 test("Host rejects delete destination masking before the effect", async () => {
@@ -501,6 +529,25 @@ test("artifact authority drift invalidates and consumes an admission", async () 
   assert.equal(calls, 0);
 });
 
+test("trusted currentness drift invalidates and consumes an admission", async () => {
+  let currentnessIdentity = "canonical:cv_155";
+  let calls = 0;
+  const adapter = createHost({
+    resolve_artifact: () => artifactAuthority({ currentness_identity: currentnessIdentity }),
+    effect: async () => { calls += 1; },
+  });
+  const mutation = {
+    operation: "write",
+    artifact_role: "clued_resource",
+    destination_path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3/20_P_\u4ea7\u54c1\u4e0e\u4f53\u9a8c/brand/a.md",
+  };
+  const issued = adapter.preflight(mutation);
+  currentnessIdentity = "canonical:cv_156";
+  assert.equal((await adapter.commitMutation({ admission: issued.admission, mutation })).error_code, "ADMISSION_BINDING_MISMATCH");
+  assert.equal((await adapter.commitMutation({ admission: issued.admission, mutation })).error_code, "ADMISSION_ALREADY_CONSUMED");
+  assert.equal(calls, 0);
+});
+
 test("admission expires and remains single-use", async () => {
   let now = 1_000;
   let calls = 0;
@@ -564,6 +611,8 @@ test("guarded Host wrapper consumes one exact admission and freezes effect input
   assert.equal(seen[0].mutation.delete_authority, false);
   assert.equal(seen[0].mutation.artifact_authority_version, "artifact-registry/1");
   assert.equal(seen[0].mutation.artifact_id, "artifact:test");
+  assert.equal(seen[0].mutation.currentness_identity, "canonical:cv_155");
+  assert.equal(seen[0].mutation.workspace_version, "snapshot:snap_f6134235591bfcbfe4ba3a674383c3e0");
   assert.equal(Object.isFrozen(seen[0].mutation), true);
   assert.equal(seen[0].identity.profile_id, "resource-center-primary");
   assert.equal(result.effect_result.receipt, "host-effect-1");

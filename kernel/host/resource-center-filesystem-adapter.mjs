@@ -258,9 +258,10 @@ async function enumerateEntries(filesystem, profile, classifyObservedEntry) {
 }
 
 /**
- * Official Node filesystem integration for a Host-registered Resource Center.
- * The mutation caller receives only this adapter; profile, artifact authority,
- * filesystem effect and boundary enumeration are captured bootstrap inputs.
+ * Lower-level Node filesystem integration for a Host-registered Resource
+ * Center. Profile, artifact authority, filesystem effect and boundary
+ * enumeration are captured bootstrap inputs. Transport callers should receive
+ * the filesystem tool Host, which keeps this raw adapter and admissions private.
  */
 export function createResourceCenterFilesystemAdapter({
   trusted_profile: trustedProfile,
