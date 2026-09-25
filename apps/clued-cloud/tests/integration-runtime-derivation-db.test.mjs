@@ -428,10 +428,11 @@ const KEEP = { claim_store: 0.85, connection_store: 0.85, 'lifecycle_facts.histo
 // object (a non-null mask on an unmasked value, a JSON null mask on a masked one, a mask outside
 // the capability vocabulary and a mask spelled as a bare name rather than an array); and one per
 // §7.1 rule that is neither an enumeration nor a KEY_SETS entry — the three capability sets and
-// the OAuth scope set, in both the vocabulary and the array-type direction, the five branches of
+// the OAuth scope set, in both the vocabulary and the array-type direction, the six directions of
 // the resource_action_scope_facts tagged union (an exact key set of §7.1 that KEY_SETS cannot
-// express, because which keys are exact depends on mode, plus the union not being an object), the
-// two booleans, the verification_id reference, the reauth_marks_open domain and type, the two
+// express, because which keys are exact depends on mode, plus the union not being an object and
+// its `mode` tag missing — PR #340 third delta review MINOR-1), the two booleans, the
+// verification_id reference, the reauth_marks_open domain and type, the two
 // contract-string types, the policy_version type and the revocation pair. Authorities: the v0.1.8
 // second delta review's MINOR-2, generate the list from the tables; the PR #340 review's MAJOR-1,
 // the value shapes had no distinguishing sample; the PR #340 second delta review's MAJOR-1 and
@@ -440,30 +441,33 @@ const KEEP = { claim_store: 0.85, connection_store: 0.85, 'lifecycle_facts.histo
 // mask-array and policy_version-type directions, all of which jsonb containment accepts on its own
 // because a jsonb scalar is contained in an array that has it as an element).
 //
-// Measured over the CI count (250,000 random samples at SEED 20260924, 9,999 of them corrupted):
-// 56…93 samples per shape corruption (mean 74.4) and 637…679 per C9 carrier. No base drawn from
+// Measured over the CI count (250,000 random samples at SEED 20260924, 10,010 of them corrupted):
+// 56…92 samples per shape corruption (mean 73.8) and 644…674 per C9 carrier. No base drawn from
 // DIMENSIONS violates a C1 rule — that is asserted, not assumed, for every centre, every patch and
 // every pre-corruption random base — so every one of those samples distinguishes the rule its
 // corruption breaks. The narrower figure, samples whose base carried no reason code at all, is
-// 14…40 per shape corruption (mean 26.6). Random-layer C1 is 8,040 and C9 1,959; the random layer
+// 16…39 per shape corruption (mean 26.4). Random-layer C1 is 8,047 and C9 1,963; the random layer
 // is 34.4 % valid and the 265,246 P2 samples are 36.5 % valid, so the §8 / §9 layers keep the same
-// positive coverage. RULE-SOLE sees 11…679 isolating samples per validator rule.
+// positive coverage. RULE-SOLE sees 8…674 isolating samples per validator rule.
 //
-// A corruption is a single independent defect on most bases, but not on all; 27 of the 108 are not
+// A corruption is a single independent defect on most bases, but not on all; 28 of the 109 are not
 // always singular, re-measured with the generator below:
 //   - the five JSON-null mask corruptions never are, by construction: a JSON null mask on a masked
 //     value fails both the array-type and the vocabulary test of the same `if`. That is exactly why
 //     the other two mask directions exist — a JSON null isolates neither disjunct.
 //   - the ten required-key deletions are singular except when the deleted key is itself a nested
-//     object (root: 56 %) or when the state object's value and mask are read by the mask rule as a
-//     pair (environment 80 %, qualification 84 %, compatibility 86 %, host 95 %, adapter 82 %).
+//     object (root: 59 %) or when the state object's value and mask are read by the mask rule as a
+//     pair (environment 76 %, qualification 87 %, compatibility 88 %, host 94 %, adapter 86 %).
 //   - sixteen of the 46 enumeration corruptions break a second C1 rule on part of their bases:
-//     revocation_state (60 % / 75 % singular for the out-of-domain and array directions) and
-//     revocation_source (34 % / 26 %) break the revocation pair, the five *_state.value ones
-//     (64…84 %) break the mask rule whenever the base carried a non-null mask, and
-//     resource_action_scope_facts.mode (14 % / 18 %) moves the union out of its ENTRIES branch
+//     revocation_state (64 % / 75 % singular for the out-of-domain and array directions) and
+//     revocation_source (35 % / 22 %) break the revocation pair, the five *_state.value ones
+//     (62…87 %) break the mask rule whenever the base carried a non-null mask, and
+//     resource_action_scope_facts.mode (16 % / 14 %) moves the union out of its ENTRIES branch
 //     while the capabilities key is still there.
-// Coverage is unaffected — each of the 27 isolates its own rule on the bases where it is singular,
+//   - deleting the union's `mode` tag (11 %) is singular only on a NONE or LEGACY_UNRESTRICTED
+//     base, where it leaves `{}`; on an ENTRIES base the leftover `capabilities` key also breaks
+//     the non-ENTRIES exactness rule.
+// Coverage is unaffected — each of the 28 isolates its own rule on the bases where it is singular,
 // and RULE-SOLE is what checks that, rule by rule, rather than this paragraph.
 const setDotted = (facts, dotted, value) => {
   const keys = dotted.split('.');
@@ -516,8 +520,10 @@ const SHAPE_CORRUPTIONS = [
   (f) => { f.resource_action_scope_facts = { mode: 'NONE', unexpected_key: null }; },
   (f) => { f.resource_action_scope_facts = { mode: 'ENTRIES', capabilities: ['admin.write'] }; },
   (f) => { f.resource_action_scope_facts = { mode: 'ENTRIES' }; },
-  // …and the union not being an object at all
+  // …the union not being an object at all, and the tag itself missing, which on a NONE or
+  // LEGACY_UNRESTRICTED base leaves `{}` — an object no other corruption produces (MINOR-1)
   (f) => { f.resource_action_scope_facts = 'NONE'; },
+  (f) => { delete f.resource_action_scope_facts.mode; },
   // the two booleans and the uuid reference: a value of the wrong JSON type, which the string
   // spellings 'true' / 'false' / a non-uuid make visible without changing anything else
   (f) => { f.lifecycle_facts.first_authorization_required = 'true'; },
@@ -543,7 +549,7 @@ const C9_CORRUPTIONS = [['schema', 'clued.integration-facts.v2'],
   ['derivation_contract', 'clued.integration-derivation.v2'], ['policy.policy_version', 2]]
   .map(([name, value]) => (f) => setDotted(f, name, value));
 // The share of random samples that carry a corruption. It rose from 2 % to 2.5 % as the shape list
-// grew from 59 members to 69, and to 4 % as it grew to 108, so that samples per corruption stay
+// grew from 59 members to 69, and to 4 % as it grew to 109, so that samples per corruption stay
 // where they were instead of thinning as the list grows; the cost is valid samples.
 const CORRUPTION_RATE = 0.04;
 // PR #340 review MINOR-1: draw the family first and the member second. A flat uniform draw over
@@ -559,14 +565,6 @@ const pickCorruption = (rng) => {
   const family = rng() < C9_FAMILY_SHARE ? C9_CORRUPTIONS : SHAPE_CORRUPTIONS;
   return family[Math.floor(rng() * family.length)];
 };
-// Measured over the CI count (250,000 random samples at SEED 20260924, 6,314 of them corrupted):
-// 59…92 samples per shape corruption (mean 73) and 403…442 per C9 carrier. No base drawn from
-// DIMENSIONS violates a C1 rule, so every one of those samples distinguishes the rule its
-// corruption breaks. The narrower figure — samples whose base carried no reason code at all —
-// averages 27 per shape corruption with a floor of 11 (it was ~31 with a floor of 17 before this
-// change). Random-layer C9 is 1,249 (was 235) and C1 5,065 (was 4,855); the random layer is 34.9 %
-// valid and the 265,246 P2 samples are 37.0 % valid (37.3 % before), so the §8 / §9 layers keep
-// the same positive coverage.
 
 // ---- the validator's rules, one predicate per independently-mutable branch ---------------------
 // Owner Decision c79a6278-4cfa-478a-aa04-e98ff379c17a. Three consecutive reviews each found the
@@ -576,13 +574,29 @@ const pickCorruption = (rng) => {
 //
 //   1. RULE-MIRROR — on every sample, `C1_RULES.some(fire)` equals whether validateOracle reported
 //      C1, and the same for C9. The mirror is sound (a predicate fires only where the SQL sets its
-//      flag) and complete (nothing else sets it), so it is a second, branch-resolved reading of the
-//      same validator. Completeness is what licenses the omissions below: if a branch left out as
-//      subsumed were not in fact subsumed, some sample would set the flag with no predicate firing.
+//      flag), and complete over the sampled corpus: on no sample does the oracle report the code
+//      with no predicate firing. So it is a second, branch-resolved reading of the same validator.
+//      Completeness is a measured property of the corpus, not a structural one — a document shape
+//      that no layer of this file produces can still set the flag with nothing firing, and PR #340
+//      third delta review MINOR-1 found one (`resource_action_scope_facts: {}`), now closed by the
+//      `ras:mode:presence` predicate and the corruption that deletes the tag. The omissions below
+//      are therefore argued from the SQL text one by one, not inferred from the assertion passing.
 //   2. RULE-SOLE — every predicate has at least one sample where it is the ONLY predicate of its
 //      reason code that fires. That sample is what distinguishes the branch: delete the branch and
 //      the sample's code set changes. A predicate with no such sample is a mutation-testing blind
 //      spot, and the assertion names it.
+//
+// The scope of that obligation is integration_facts_validate_v1 and nothing else — one function of
+// the nine in PURE. The other validators reached from this file (integration_ceiling_valid_v1,
+// integration_timestamp_valid_v1, integration_version_cmp_v1) and the registry CHECK constraints
+// have hand-written example tables only, with no coverage obligation and no mirror, so the
+// mutation-survivor class this list closes is NOT closed for them: PR #340's third delta review
+// found live fail-open mutants in all three places (the ceiling's resource_id length and type
+// disjuncts, the timestamp's fractional-second bound, the capability_ceiling CHECK on
+// integration_host_surfaces_v1 and the hosts.host regex CHECK). The first two are fixed by
+// targeted cases in their own subtests below; extending an obligation like this one to the
+// remaining functions is carried to S2c PR-2 by Owner Decision
+// 0402d831-fa57-4a31-86e4-44467b85a796.
 //
 // Where the line is drawn. A predicate is emitted for one piece of SQL text whose deletion can
 // change the function's output — a single disjunct of a single `if`, instantiated once per entry of
@@ -596,10 +610,18 @@ const pickCorruption = (rng) => {
 //   - `not (v ?& array['mode','capabilities'])` in the ENTRIES branch of resource_action_scope_facts.
 //     It can only fire when `capabilities` is absent, which the `jsonb_typeof(v->'capabilities') is
 //     distinct from 'array'` disjunct of the same `if` also rejects.
-//   - the type halves of the `as_of` and `reauth_marks_open` rules as separate predicates: a
-//     non-string `as_of` has a `#>> '{}'` text form that fails the lexical test in the same `if`,
-//     and `reauth_marks_open`'s domain, spelling and negative cases are one `!~ '^[0-9]+$'`
-//     disjunct, not three.
+//   - the type half of the `as_of` rule as a separate predicate: for any non-string `as_of`, the
+//     `#>> '{}'` text form of the same `if` is either a non-instant or SQL NULL, and
+//     integration_timestamp_valid_v1 rejects both, so deleting `jsonb_typeof(v) is distinct from
+//     'string'` cannot change an output.
+// That list is short, and `reauth_marks_open` is NOT on it. An earlier version of this comment
+// named the type half of its rule here as well (PR #340 third delta review MINOR-3); both halves
+// of that claim were wrong. The predicate IS emitted below as `reauth_marks_open:type`, and
+// deleting `jsonb_typeof(v) is distinct from 'number'` is a fail-open mutant, not an equivalent
+// one: on `reauth_marks_open: null` the `#>> '{}'` form is SQL NULL, so `!~ '^[0-9]+$'` evaluates
+// to NULL and does not fire, and on `reauth_marks_open: '0'` the text form is `0`, which the
+// regex accepts. The second of those two is the shape list's `reauth_marks_open = '0'` corruption,
+// and it is what isolates this predicate for RULE-SOLE.
 // The required-key family is emitted as ONE `presence:*` predicate per object, not as two branches
 // per key, and the type halves of the rules that read a key are written to ignore an absent value.
 // That is the same judgement in the other direction: a missing key is rejected twice over, by the
@@ -668,6 +690,13 @@ const C1_RULES = [
   ['oauth_scope_facts:vocabulary', (f) => notContained(f.oauth_scope_facts, OAUTH_SCOPES)],
   // resource_action_scope_facts, the tagged union
   ['ras:type', (f) => here(f.resource_action_scope_facts) && typeIsNot(f.resource_action_scope_facts, 'object')],
+  // `mode` absent from the union. PR #340 third delta review MINOR-1: this is the one required key
+  // in the schema that no `presence:*` predicate covered, because resource_action_scope_facts is
+  // not a KEY_SETS entry (which keys are exact depends on mode) and `enum:…:mode:type` is written
+  // to ignore an absent value. The SQL still rejects it — the enum loop reads a SQL NULL, which is
+  // `distinct from 'string'` — so `resource_action_scope_facts: {}` was a live mirror
+  // counterexample: C1 from both SQL and validateOracle with no predicate firing.
+  ['ras:mode:presence', (f) => { const v = f.resource_action_scope_facts; return isJsonObject(v) && !present(v, 'mode'); }],
   ['ras:ENTRIES:unexpected', (f) => { const v = f.resource_action_scope_facts;
     return isJsonObject(v) && txt(v.mode) === 'ENTRIES' && Object.keys(v).some((k) => k !== 'mode' && k !== 'capabilities'); }],
   ['ras:ENTRIES:capabilities:type', (f) => { const v = f.resource_action_scope_facts;
@@ -1040,6 +1069,14 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         [{ scopes: [], entries: [{ ...entry, resource_kind: 'project' }] }, false, 'resource_kind'],
         [{ scopes: [], entries: [{ ...entry, environment: 'staging' }] }, false, 'environment'],
         [{ scopes: [], entries: [{ ...entry, resource_id: '' }] }, false, 'empty resource_id'],
+        // PR #340 third delta review MAJOR-3: the lower bound alone left the other two disjuncts of
+        // the same `if` fail-open — widening the length test to `1 and 100000` and deleting the
+        // `jsonb_typeof(...) <> 'string'` disjunct both passed the whole suite. §5.2 / §10.11
+        // compare ceilings as canonical jsonb, so an over-long or numeric resource_id would put a
+        // shape the rest of the contract does not expect into ceiling_before / ceiling_after.
+        [{ scopes: [], entries: [{ ...entry, resource_id: 'a'.repeat(255) }] }, true, '255-char resource_id'],
+        [{ scopes: [], entries: [{ ...entry, resource_id: 'a'.repeat(256) }] }, false, '256-char resource_id'],
+        [{ scopes: [], entries: [{ ...entry, resource_id: 123 }] }, false, 'resource_id not a string'],
         [{ scopes: [], entries: [{ ...entry, extra: 1 }] }, false, 'extra entry key'],
         [{ scopes: [], entries: [entry, { ...entry, actions: ['read'] }] }, false, 'duplicate entry key'],
         [{ scopes: [], entries: [], other: 1 }, false, 'extra key'],
@@ -1058,7 +1095,19 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         ['2026-13-99T99:99:99Z', false], ['2026-02-30T00:00:00Z', false], ['2026-00-10T00:00:00Z', false],
         ['2026-09-24T25:00:00Z', false], ['2026-09-24T12:60:00Z', false], ['2026-09-24T12:00:61Z', false],
         ['2026-09-24T12:00:00', false], ['2026-09-24 12:00:00Z', false], ['now', false], [null, false],
+        // the fractional second is bounded at six digits, which is the same denotation argument as
+        // hour 24 and second 60 (PR #340 third delta review MAJOR-2): PostgreSQL does not reject a
+        // seven-or-more-digit fraction, it ROUNDS it to microseconds, so .1234567Z would be stored
+        // and hashed as .123457 — a spelling that does not denote the instant it spells, inside
+        // facts_sha256 by way of valid_until. Widening the regex to {1,9} is a live fail-open
+        // mutant that nothing else in this file kills.
+        ['2026-09-24T12:00:00.1234567Z', false], ['2026-09-24T12:00:00.123456789Z', false],
+        ['2026-09-24T12:00:00.123456Z', true], ['2026-09-24T12:00:00.1Z', true],
       ]) assert.equal(await valid(value), expected, String(value));
+      // …and the rounding is real, not assumed: the cast accepts the seven-digit spelling and
+      // re-points it to a different microsecond instant
+      assert.equal((await admin.query(`select pg_catalog.to_char($1::pg_catalog.timestamptz at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.US') t`, ['2026-09-24T12:00:00.1234567Z'])).rows[0].t, '2026-09-24T12:00:00.123457');
       // ERRATA-002 item 3 (Owner Decisions 25edd152-0d95-4cf7-b3eb-0ff32aed74d0 and
       // 37e0f626-f9f7-43c1-b899-4d7584b952ab): PostgreSQL silently rolls the end-of-day hour 24 and
       // the leap second 60 over to a different instant, so the document would not denote the
@@ -1209,9 +1258,37 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         const d = (await admin.query('select clued_private.integration_derive_v1($1::jsonb) d', [value])).rows[0].d;
         assert.deepEqual([d.valid, d.reason_codes, d.integration_state], [false, ['C1_SCHEMA_INVALID'], null], String(value));
       }
-      // the predicate vector itself is checked: a missing key cannot fall through to a state
-      await assert.rejects(admin.query(`select clued_private.integration_select_state_v1('{"revoked": false}')`),
-        (error) => error.code === '22023' && /integration_predicate_vector_invalid/.test(error.message));
+      // The predicate vector itself is checked, key by key. PR #340 third delta review MAJOR-1: a
+      // single negative vector proved only that the loop raises on whichever key is missing first,
+      // so dropping any one key from the guard's array still left the suite green while a vector
+      // missing that key fell through to a state (with 'degraded' dropped, a vector without it
+      // returned INSTALLED, because SQL NULL does not fire `elsif degraded`). Every key is
+      // therefore asserted on its own, in both directions the guard tests — absent, and present
+      // but not a boolean — and against the `detail` that names the offending key.
+      const VECTOR_KEYS = ['revoked', 'hard_incompatible', 'credential_lost', 'reauth_recoverable', 'installed',
+        'first_authorization_required', 'ever_authorized', 'verification_eligible', 'crv_valid', 'blocked',
+        'candidate_empty', 'lifecycle_ok', 'degraded'];
+      const fullVector = Object.fromEntries(VECTOR_KEYS.map((key) => [key, false]));
+      assert.equal((await admin.query('select clued_private.integration_select_state_v1($1::jsonb) s',
+        [JSON.stringify(fullVector)])).rows[0].s, 'INSTALL_PENDING', 'the all-false vector is accepted');
+      for (const key of VECTOR_KEYS) {
+        for (const [vector, label] of [
+          [Object.fromEntries(Object.entries(fullVector).filter(([k]) => k !== key)), 'missing'],
+          [{ ...fullVector, [key]: 'false' }, 'not a boolean'],
+        ]) {
+          await assert.rejects(admin.query('select clued_private.integration_select_state_v1($1::jsonb)',
+            [JSON.stringify(vector)]),
+          (error) => error.code === '22023' && /integration_predicate_vector_invalid/.test(error.message)
+            && error.detail === key, `${key} ${label}`);
+        }
+      }
+      // …and every key the guard names is one integration_predicates_v1 really produces, so a
+      // rename on one side cannot leave this list asserting against a key that no longer exists
+      // (§8.4 reads a subset of the vector: the candidate list and the predicates §8.3 computes
+      // only for other consumers are not part of it)
+      const produced = (await admin.query('select clued_private.integration_predicates_v1($1::jsonb) v',
+        [JSON.stringify(golden.base)])).rows[0].v;
+      for (const key of VECTOR_KEYS) assert.equal(typeof produced[key], 'boolean', `predicates_v1 produces ${key}`);
     });
 
     await t.test('T-A7-10 derivation is read-only, immutable and reads no table', async () => {
@@ -1531,6 +1608,10 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       // …and the allow-list stays honest: an entry that now has an isolating sample is stale
       const stale = counts.filter(([id, n]) => n > 0 && SOLE_EXEMPT.has(id)).map(([id]) => id);
       assert.deepEqual(stale, [], `SOLE_EXEMPT is stale: ${stale.join(', ')} now has an isolating sample`);
+      // …and every allow-listed id still names a predicate. A typo'd or obsolete entry would
+      // otherwise sit here silently forever, exempting nothing (PR #340 third delta review NIT-2).
+      const unknown = [...SOLE_EXEMPT.keys()].filter((id) => !counts.some(([known]) => known === id));
+      assert.deepEqual(unknown, [], `SOLE_EXEMPT names ${unknown.join(', ')}, which is not a predicate id`);
       const sole = counts.filter(([id]) => !SOLE_EXEMPT.has(id)).map(([, n]) => n);
       t.diagnostic(`RULE-SOLE ${sole.length} rules isolated, ${SOLE_EXEMPT.size} allow-listed; `
         + `${Math.min(...sole)}…${Math.max(...sole)} isolating samples each `

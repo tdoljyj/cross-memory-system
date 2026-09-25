@@ -155,6 +155,14 @@ document spelled either way is hashed, compared and acted on as a statement abou
 an instant it does not name. Nothing legitimate is lost: a normalizer formatting a
 `timestamptz` cannot produce either spelling.
 
+A third spelling class behaves the same way and needs no change, only a note that
+it is load-bearing: a fractional second of seven or more digits is not rejected by
+the cast either, it is *rounded* to the microsecond resolution `timestamptz`
+actually has, so `12:00:00.1234567Z` is stored and hashed as `12:00:00.123457`.
+The previous lexical rule already bounded the fraction at `(\.[0-9]{1,6})?`, and
+that bound is retained here for exactly the reason above and not as an
+afterthought. It is not part of the count below, because it is not new.
+
 **What replaces it.** An instant keeps the previous lexical rule minus those two
 spellings: hour `24` and second `60` are `C1`. That is all it is. It is not a
 canonicality rule — the accepted grammar still spells one instant several ways,
@@ -170,16 +178,18 @@ other out-of-range field already being a hard error in the cast rather than a
 re-pointing.
 
 That residual non-canonicality inside `facts_sha256` is knowingly retained, and
-is not the inconsistency with items 1 and 2 that it can look like. Those two
-refuse an ambiguous spelling because the refusal costs nothing: `0.0` and an
-unsorted `actions` have no legitimate producer. An instant does — `Z` and
-`+00:00` are both ordinary ISO-8601 output — so a canonicality rule here would
-reject well-formed documents and not only ill-formed ones. `§8.6` puts the
-problem where it belongs: normalization is the producer's job, and the PR-2
-normalizer is the sole producer of the facts document, formatting one
-`timestamptz` one way and so emitting one spelling. Item 3 therefore refuses only
-the two spellings that do not denote the instant they name, and leaves
-single-spelling canonicality to the PR-2 normalizer contract.
+is not the inconsistency with items 1 and 2 that it can look like. The difference
+is who the producers are. `0.0` and an unsorted ceiling are cheap for any producer
+to avoid — item 1 costs a writer nothing, and item 2's own justification, stated
+above, is symmetry with `scopes` plus `§10.12` needing one `jsonb`
+representation per ceiling. An instant is not like that: the facts document may be
+authored by parties other than the PR-2 normalizer — the committed golden vectors,
+and other hosts submitting facts — whose ISO-8601 output legitimately varies
+between `Z` and `+00:00`, with or without a fractional part. A canonicality rule
+would reject those well-formed documents, and not only ill-formed ones. `§8.6`
+puts the problem where it belongs: normalization is the producer's job. Item 3
+therefore refuses only the spellings that do not denote the instant they name, and
+leaves single-spelling canonicality to the PR-2 normalizer contract.
 
 **Evidence.** The two regexes settle only half of the count. They differ in the
 hour and second alternations alone, so the new grammar is a strict subset and
@@ -200,7 +210,12 @@ of newly refused `(hour, second)` classes is exactly the 25 named above, and tha
 the cast accepts hour `24` at minute `00` only. The same subtest asserts the two
 re-pointings, and that every accepted `Z` spelling in a 384-value sweep of hour
 `00…23` × minute `{00,01,30,59}` × second `{00,01,30,59}` round-trips to the
-instant it spells.
+instant it spells. That sweep is whole-second `Z` spellings only: its assertion
+compares the round trip against the literal minus its `Z`, which a fractional
+spelling cannot satisfy, so the accepted fractional spellings listed above are not
+covered by it. The fractional bound is asserted separately, by the same subtest's
+`…T12:00:00.1234567Z` and `…T12:00:00.123456789Z` rejection cases together with a
+live cast showing the first of them rounding to `12:00:00.123457`.
 
 ### Boundary
 
