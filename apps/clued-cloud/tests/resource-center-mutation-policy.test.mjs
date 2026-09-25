@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluateResourceCenterMutation } from "../../../kernel/policy/resource-center-mutation-policy.mjs";
+import { detectResourceCenterBoundaryViolations, evaluateResourceCenterMutation } from "../../../kernel/policy/resource-center-mutation-policy.mjs";
 
 const profile = {
   managed_root: "G:/我的云端硬盘/Clued_资料中心",
@@ -169,4 +169,55 @@ test("remediation may move material out of an already-illegal status folder", ()
     destination_path: "G:/我的云端硬盘/Clued_资料中心/20_P_产品与体验/品牌与视觉/a.md",
   });
   assert.equal(result.status, "allow");
+});
+
+
+test("boundary watcher is quiet for the managed root and unrelated system files", () => {
+  const violations = detectResourceCenterBoundaryViolations({
+    profile,
+    observed_entries: [
+      { path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3", artifact_role: "clued_resource" },
+      { path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/desktop.ini" },
+    ],
+  });
+  assert.deepEqual(violations, []);
+});
+
+test("boundary watcher reports sibling and parent-root Clued islands", () => {
+  const violations = detectResourceCenterBoundaryViolations({
+    profile,
+    observed_entries: [
+      { path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued\u54c1\u724c\u8d44\u6599" },
+      { path: "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u8d44\u6599\u4e2d\u5fc3.md" },
+    ],
+  });
+  assert.equal(violations.length, 2);
+  for (const violation of violations) {
+    assert.equal(violation.code, "UNAUTHORIZED_WORKSPACE_MUTATION");
+    assert.equal(violation.reason, "resource_center_parent_or_sibling_island");
+  }
+});
+
+test("boundary watcher reports explicit Clued resource outside the parent even without a Clued filename", () => {
+  const violations = detectResourceCenterBoundaryViolations({
+    profile,
+    observed_entries: [
+      { path: "D:/Shared/brand/a.md", artifact_role: "clued_resource" },
+    ],
+  });
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].reason, "unregistered_clued_resource_location");
+});
+
+test("boundary watcher ignores a registered external authority root", () => {
+  const violations = detectResourceCenterBoundaryViolations({
+    profile: {
+      ...profile,
+      registered_external_roots: ["D:/RegisteredCluedArtifacts"],
+    },
+    observed_entries: [
+      { path: "D:/RegisteredCluedArtifacts/release/a.zip", artifact_role: "clued_resource" },
+    ],
+  });
+  assert.deepEqual(violations, []);
 });

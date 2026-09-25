@@ -146,3 +146,62 @@ export function evaluateResourceCenterMutation(input) {
     managed_root: managedRoot,
   };
 }
+
+
+function parentPath(value) {
+  const normalized = normalizePath(value);
+  if (!normalized) return null;
+  const index = normalized.lastIndexOf("/");
+  if (index <= 2 && /^[A-Za-z]:\/$/.test(normalized.slice(0, index + 1))) {
+    return normalized.slice(0, index + 1);
+  }
+  return index > 0 ? normalized.slice(0, index) : "/";
+}
+
+function baseName(value) {
+  const normalized = normalizePath(value);
+  if (!normalized) return "";
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(index + 1) : normalized;
+}
+
+export function detectResourceCenterBoundaryViolations(input) {
+  const profile = input?.profile ?? {};
+  const managedRoot = normalizePath(profile.managed_root);
+  if (!managedRoot) {
+    return [{
+      code: "MANAGED_ROOT_REQUIRED",
+      policy_version: RESOURCE_CENTER_POLICY_VERSION,
+    }];
+  }
+
+  const parent = parentPath(managedRoot);
+  const registeredExternalRoots = (profile.registered_external_roots ?? [])
+    .map(normalizePath)
+    .filter(Boolean);
+  const entries = Array.isArray(input?.observed_entries) ? input.observed_entries : [];
+  const violations = [];
+
+  for (const entry of entries) {
+    const path = normalizePath(typeof entry === "string" ? entry : entry?.path);
+    if (!path || isWithin(path, managedRoot)) continue;
+    if (registeredExternalRoots.some((root) => isWithin(path, root))) continue;
+
+    const explicitRole = typeof entry === "object" && entry?.artifact_role === "clued_resource";
+    const cluedNamed = /clued/i.test(baseName(path));
+    const inManagedParent = parent ? isWithin(path, parent) : false;
+    if (!explicitRole && !(inManagedParent && cluedNamed)) continue;
+
+    violations.push({
+      code: "UNAUTHORIZED_WORKSPACE_MUTATION",
+      policy_version: RESOURCE_CENTER_POLICY_VERSION,
+      path,
+      managed_root: managedRoot,
+      reason: inManagedParent
+        ? "resource_center_parent_or_sibling_island"
+        : "unregistered_clued_resource_location",
+    });
+  }
+
+  return violations;
+}
