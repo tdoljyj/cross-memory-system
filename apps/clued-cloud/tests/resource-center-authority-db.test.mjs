@@ -269,7 +269,7 @@ test("Canonical Resource Center registration and exact read-only authority", { t
         ...providerIdentity, destination_parent_version: "3",
       } })).status, "resolved");
     });
-    await t.test("temporary directory crosses Host, Worker and Canonical lookup; revocation stops the next effect", async (child) => {
+    await t.test("temporary authority reaches Host and Worker but missing write receipt prevents an effect", async (child) => {
       const tempParent = await fs.mkdtemp(path.join(os.tmpdir(), "clued-rc-acceptance-"));
       child.after(() => fs.rm(tempParent, { recursive: true, force: true }));
       const nativeRoot = path.join(tempParent, "Clued_资料中心");
@@ -355,9 +355,9 @@ test("Canonical Resource Center registration and exact read-only authority", { t
           operation: "create", destination_path: destination,
           target_kind: "directory", directory_semantics: "topic",
         });
-        assert.equal((await createTopic(nativeTopic)).status, "committed");
-        assert.equal((await fs.stat(nativeTopic)).isDirectory(), true);
-        topicExists = true;
+        assert.equal((await createTopic(nativeTopic)).error_code,
+          "POST_WRITE_CANONICAL_RECEIPT_UNAVAILABLE");
+        await assert.rejects(fs.stat(nativeTopic), { code: "ENOENT" });
         const unregisteredChild = path.join(nativeTopic, "child.txt");
         assert.equal((await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
           operation: "create", destination_path: unregisteredChild,
