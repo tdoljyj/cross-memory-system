@@ -70,13 +70,13 @@ begin
   -- lasts only for this database transaction, never across provider I/O.
   select * into v_profile from clued_private.resource_center_profiles_v1
     where id=(p_input->>'profile_id')::uuid and user_id=p_user_id for update;
-  if not found or (v_action not in ('inspect','settle_no_effect') and v_profile.state<>'active') then
+  if not found or (v_action not in ('inspect','cancel','settle_no_effect') and v_profile.state<>'active') then
     raise exception 'resource_center_profile_unavailable' using errcode='42501';
   end if;
   v_decision:=(p_input->>'source_decision_id')::uuid;
   if not clued_private.resource_center_decision_current_v1(
     p_user_id,v_profile.project_id,v_decision) or
-    (v_action not in ('inspect','settle_no_effect') and
+    (v_action not in ('inspect','cancel','settle_no_effect') and
       not clued_private.resource_center_decision_current_v1(
         p_user_id,v_profile.project_id,v_profile.source_decision_id)) then
     raise exception 'owner_decision_required' using errcode='42501';

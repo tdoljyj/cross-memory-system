@@ -328,6 +328,36 @@ test("Canonical Resource Center registration and exact read-only authority", { t
       }
     });
 
+    await t.test("new Owner authority can cancel prepared intent after original profile and Decision revocation", async () => {
+      const recoveryId = crypto.randomUUID();
+      await admin.query("insert into public.clued_memories(id,user_id,title,content,scope,project_id,record_type,status," +
+        "record_schema_version,lifecycle_status,canonical_scope,type_fields,relations,source_refs,authority,confidence_reason)" +
+        " select $1,user_id,'Cancel unstarted test intent',content,scope,project_id,record_type,status," +
+        "record_schema_version,lifecycle_status,canonical_scope,type_fields,relations,source_refs,authority,confidence_reason" +
+        " from public.clued_memories where id=$2", [recoveryId, DECISION]);
+      const journal = async (input) => (await admin.query(
+        "select public.clued_resource_center_mutation_journal_v1($1,$2::jsonb) value",
+        [USER, JSON.stringify({ profile_id: profileId, source_decision_id: recoveryId,
+          idempotency_key: crypto.randomUUID(), ...input })])).rows[0].value;
+      const prepared = await journal({ action: "prepare", request_key: "revoked-prepared",
+        request_sha256: "e".repeat(64), exact_request: exactRequest("e".repeat(64)), authority_token_hash: tokenHash,
+        authority_request: { profile_id: profileId, profile_version: "test/1",
+          policy_version: "clued.resource-center-mutation-policy/1", provider_identity: providerIdentity, mutation } });
+      assert.equal(prepared.state, "prepared");
+      await admin.query("update clued_private.resource_center_profiles_v1 set state='revoked' where id=$1", [profileId]);
+      await admin.query("update public.clued_memories set lifecycle_status='revoked' where id=$1", [DECISION]);
+      try {
+        const bound = { intent_id: prepared.intent_id, request_sha256: "e".repeat(64), base_version: 1 };
+        await assert.rejects(journal({ ...bound, action: "start" }), /profile_unavailable/);
+        const cancelled = await journal({ ...bound, action: "cancel" });
+        assert.equal(cancelled.state, "cancelled");
+        assert.equal(cancelled.execution_permitted, false);
+      } finally {
+        await admin.query("update public.clued_memories set lifecycle_status='active' where id=$1", [DECISION]);
+        await admin.query("update clued_private.resource_center_profiles_v1 set state='active' where id=$1", [profileId]);
+      }
+    });
+
     await t.test("file registration and CAS update bind current provider version", async () => {
       const filePath = TRACK + "/logo.svg";
       const file = await adminCall({

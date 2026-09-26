@@ -30,7 +30,10 @@ reviewed repair, retaining original bytes.
 3. An authorized service operator resolves the exact profile/request key/hash and
    original writer ID and uses administrative `inspect`, with a CURRENT Owner
    decision. This path permits a revoked profile without reactivating it.
-4. `prepared` may be cancelled by CAS. `started`/`uncertain` never expire into a
+4. `prepared` may be cancelled by administrative CAS using a new CURRENT Owner
+   decision even if the profile or original Decision is revoked. This cannot
+   authorize execution; `cancel` rejects started/uncertain states.
+   `started`/`uncertain` never expire into a
    free slot. A confirmed existing effect follows the exact provider verification
    and Canonical finalization path, not a second effect.
 
