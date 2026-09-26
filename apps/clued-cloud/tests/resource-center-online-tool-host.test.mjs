@@ -160,6 +160,38 @@ test("production wiring rejects a mismatched authority reply before touching the
   await assert.rejects(fs.stat(destination), { code: "ENOENT" });
 });
 
+test("production wiring consumes admission when the Drive parent version changes", async (t) => {
+  const { profile, destination } = await fixture(t);
+  let reads = 0;
+  const host = createResourceCenterOnlineToolHostFromService({
+    trusted_profile: profile,
+    authority_endpoint: "https://clued.example/v1/resource-center/authority",
+    authority_binding_token: `clued_rcb_${"a".repeat(40)}`,
+    resolve_provider_identity: async () => ({
+      root_folder_id: "root-id", root_folder_version: "1",
+      source_file_id: null, source_file_version: null,
+      destination_parent_id: "parent-id", destination_parent_version: String(++reads),
+      destination_file_id: null, destination_file_version: null,
+      provider_version: "a".repeat(64),
+    }),
+    fetch: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      return { ok: true, json: async () => ({
+        contract: body.request.contract, status: "resolved",
+        request_sha256: body.request_sha256, request: body.request,
+        authority: authority(),
+      }) };
+    },
+  });
+  const result = await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+    operation: "create", destination_path: destination,
+    target_kind: "directory", directory_semantics: "track",
+  });
+  assert.equal(result.error_code, "ADMISSION_BINDING_MISMATCH");
+  assert.equal(reads, 2);
+  await assert.rejects(fs.stat(destination), { code: "ENOENT" });
+});
+
 test("pinned Drive metadata and Clued service compose without exposing authority to the caller", async (t) => {
   const { profile, destination } = await fixture(t);
   const rootName = path.basename(profile.managed_root);

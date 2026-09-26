@@ -107,9 +107,17 @@ export function createResourceCenterAuthorityClient({
     if (result?.contract !== CONTRACT || result?.status !== "resolved" ||
       result?.request_sha256 !== requestSha256 ||
       !isDeepStrictEqual(result?.request, request) ||
-      !result?.authority || typeof result.authority !== "object" || Array.isArray(result.authority)) {
+      !result?.authority || typeof result.authority !== "object" || Array.isArray(result.authority) ||
+      typeof result.authority.workspace_version !== "string" || !result.authority.workspace_version) {
       throw new Error("ARTIFACT_AUTHORITY_RESPONSE_MISMATCH");
     }
-    return result.authority;
+    // The in-process admission must drift when Drive identity drifts, even if
+    // the Canonical authority version happens to remain unchanged.
+    return Object.freeze({
+      ...result.authority,
+      workspace_version: `provider+canonical:${sha256(JSON.stringify([
+        result.authority.workspace_version, request.provider_identity,
+      ]))}`,
+    });
   };
 }

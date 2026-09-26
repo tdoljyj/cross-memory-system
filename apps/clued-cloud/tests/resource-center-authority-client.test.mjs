@@ -37,7 +37,9 @@ test("dedicated resolver binds the exact request and keeps its token out of tool
       }) };
     },
   });
-  assert.deepEqual(await resolve({ profile, mutation }), authority);
+  const first = await resolve({ profile, mutation });
+  assert.deepEqual({ ...first, workspace_version: authority.workspace_version }, authority);
+  assert.match(first.workspace_version, /^provider\+canonical:[0-9a-f]{64}$/);
   assert.equal(calls[0].options.headers.authorization, `Bearer ${TOKEN}`);
   assert.equal(calls[0].options.redirect, "error");
   assert.equal(calls[0].options.cache, "no-store");
@@ -48,6 +50,27 @@ test("dedicated resolver binds the exact request and keeps its token out of tool
   await resolve({ profile, mutation });
   assert.notEqual(JSON.parse(calls[0].options.body).request.nonce,
     JSON.parse(calls[1].options.body).request.nonce);
+});
+
+test("provider identity drift changes the local admission binding even with unchanged Canonical authority", async () => {
+  let reads = 0;
+  const resolve = createResourceCenterAuthorityClient({
+    endpoint: "https://clued.example/v1/resource-center/authority",
+    binding_token: TOKEN,
+    resolve_provider_identity: async () => ({
+      ...providerIdentity, destination_parent_version: String(++reads),
+    }),
+    fetch: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      return { ok: true, json: async () => ({
+        contract: body.request.contract, status: "resolved", request: body.request,
+        request_sha256: body.request_sha256, authority,
+      }) };
+    },
+  });
+  const first = await resolve({ profile, mutation });
+  const second = await resolve({ profile, mutation });
+  assert.notEqual(first.workspace_version, second.workspace_version);
 });
 
 test("resolver rejects reply substitution, stale identity and non-TLS endpoint", async () => {
