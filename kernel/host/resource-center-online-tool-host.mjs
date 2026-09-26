@@ -2,7 +2,10 @@ import { createResourceCenterFilesystemAdapter } from "./resource-center-filesys
 import { createResourceCenterAuthorityClient } from "./resource-center-authority-client.mjs";
 import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveProviderIdentityResolver } from "./resource-center-google-drive-identity.mjs";
-import { createResourceCenterGovernedToolSurface } from "./resource-center-governed-tool-surface.mjs";
+import {
+  createResourceCenterGovernedToolSurface,
+  RESOURCE_CENTER_MUTATION_TOOL,
+} from "./resource-center-governed-tool-surface.mjs";
 
 function deny(errorCode) {
   return Object.freeze({ status: "deny", error_code: errorCode, side_effects: 0 });
@@ -17,10 +20,18 @@ function deny(errorCode) {
  * The lookup must itself authenticate a least-privilege Binding and return a
  * live, path-specific Artifact/Currentness result. This factory does not treat
  * a local file, caller claim, or cached snapshot as that authority.
+ * `prepare_write` reserves and consumes a durable, exact Canonical intent;
+ * `commit_post_write` is its Host-owned finalizer. Neither is a caller input.
+ * Until a real CAS/Receipt service implementation is installed, omit them: the
+ * online Host then exposes only boundary scanning and denies all mutations.
+ * The in-process quarantine supplements the service's durable profile fence.
+ * Installing callbacks alone is not proof of a qualified production service.
  */
 export function createResourceCenterOnlineToolHost({
   trusted_profile: trustedProfile,
   resolve_artifact_online: resolveArtifactOnline,
+  prepare_write: prepareWrite,
+  commit_post_write: commitPostWrite,
   classify_observed_entry: classifyObservedEntry,
   filesystem,
   clock,
@@ -31,6 +42,8 @@ export function createResourceCenterOnlineToolHost({
   }
 
   const profile = structuredClone(trustedProfile);
+  let quarantined = false;
+  let mutationInFlight = false;
   const scanner = createResourceCenterFilesystemAdapter({
     trusted_profile: profile,
     resolve_artifact: () => { throw new Error("SCAN_ONLY"); },
@@ -41,6 +54,20 @@ export function createResourceCenterOnlineToolHost({
   });
 
   async function guardedMutation(mutation) {
+    if (quarantined) return deny("POST_WRITE_RECONCILIATION_REQUIRED");
+    if (mutationInFlight) return deny("MUTATION_ALREADY_IN_PROGRESS");
+    mutationInFlight = true;
+    try {
+      return await executeMutation(mutation);
+    } finally {
+      mutationInFlight = false;
+    }
+  }
+
+  async function executeMutation(mutation) {
+    // Only create has a qualified journal/finalization contract. A definite
+    // unsupported operation has not reserved anything and must not quarantine.
+    if (mutation.operation !== "create") return deny("WRITER_OPERATION_NOT_QUALIFIED");
     let authority;
     const request = Object.freeze({
       profile: Object.freeze(structuredClone(profile)),
@@ -68,7 +95,74 @@ export function createResourceCenterOnlineToolHost({
     } catch {
       return deny("ARTIFACT_AUTHORITY_REVALIDATION_FAILED");
     }
-    return adapter.commitMutation({ admission: preflight.admission, mutation });
+    // Read authority alone is not a write grant. Without a Host-owned
+    // Canonical finalizer, refuse before the filesystem effect.
+    if (typeof commitPostWrite !== "function") {
+      return deny("POST_WRITE_CANONICAL_RECEIPT_UNAVAILABLE");
+    }
+    if (typeof prepareWrite !== "function") {
+      return deny("DURABLE_WRITE_RESERVATION_UNAVAILABLE");
+    }
+    let reservation;
+    try {
+      reservation = await prepareWrite(Object.freeze({
+        ...request, binding: preflight.admission.binding,
+      }));
+      if (reservation?.status !== "started" || reservation.execution_permitted !== true ||
+        typeof reservation.intent_id !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reservation.intent_id) ||
+        reservation.request_sha256 !== preflight.admission.binding.request_sha256) {
+        throw new Error("RESERVATION_INVALID");
+      }
+      reservation = Object.freeze(structuredClone(reservation));
+    } catch {
+      // A lost start response may have consumed the durable reservation. Do
+      // not retry the effect or clear it; recovery inspects Canonical state.
+      quarantined = true;
+      return deny("DURABLE_WRITE_RESERVATION_FAILED");
+    }
+    let effect;
+    try {
+      effect = await adapter.commitMutation({ admission: preflight.admission, mutation });
+    } catch {
+      // A thrown provider call may have changed storage before it failed.
+      quarantined = true;
+      return Object.freeze({
+        status: "unreconciled",
+        error_code: "PROVIDER_MUTATION_OUTCOME_UNKNOWN",
+        side_effects: "unknown",
+      });
+    }
+    if (effect.status !== "committed") {
+      // The service has already fenced the operation. Even a local admission
+      // denial requires reconciliation rather than silently abandoning it.
+      quarantined = true;
+      return effect;
+    }
+    try {
+      const receipt = await commitPostWrite(Object.freeze({
+        mutation: Object.freeze(structuredClone(mutation)),
+        binding: effect.binding,
+        reservation,
+        effect_result: effect.effect_result,
+      }));
+      if (receipt?.status !== "committed" ||
+        typeof receipt.receipt_id !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(receipt.receipt_id) ||
+        receipt.request_sha256 !== effect.binding.request_sha256) {
+        throw new Error("POST_WRITE_RECEIPT_INVALID");
+      }
+      return Object.freeze({ ...effect, canonical_receipt_id: receipt.receipt_id });
+    } catch {
+      // Never report a storage effect as a committed Canonical mutation.
+      // Keep this Host instance closed until an operator reconciles it.
+      quarantined = true;
+      return Object.freeze({
+        status: "unreconciled",
+        error_code: "POST_WRITE_CANONICAL_RECONCILIATION_FAILED",
+        side_effects: 1,
+      });
+    }
   }
 
   const surface = createResourceCenterGovernedToolSurface({
@@ -80,7 +174,10 @@ export function createResourceCenterOnlineToolHost({
   });
   return Object.freeze({
     profile_identity: surface.profile_identity,
-    listTools: surface.listTools,
+    // A read-only registration must not advertise a qualified mutation tool.
+    listTools: () => typeof commitPostWrite === "function" && typeof prepareWrite === "function" && !quarantined
+      ? surface.listTools()
+      : surface.listTools().filter((tool) => tool.name !== RESOURCE_CENTER_MUTATION_TOOL),
     callTool: surface.callTool,
   });
 }

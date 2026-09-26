@@ -36,6 +36,28 @@ jobs:
           TRIVY_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/clued-trivy"
           mkdir -p "$TRIVY_CACHE_DIR"
           echo "TRIVY_CACHE_DIR=$TRIVY_CACHE_DIR" >> "$GITHUB_ENV"
+      - name: Download vulnerability database through runner network
+        timeout-minutes: 6
+        run: |
+          # Only the pinned scanner and its cache use the runner network. No
+          # checkout or Docker socket is mounted during this download. A host
+          # loopback proxy is otherwise unreachable from the container bridge.
+          downloaded=false
+          for repository in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do
+            for attempt in 1 2; do
+            if docker run --rm --network host \
+              -e HTTP_PROXY -e HTTPS_PROXY -e NO_PROXY \
+              -e http_proxy -e https_proxy -e no_proxy \
+              -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
+              ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
+              fs --download-db-only --timeout 60s --db-repository "$repository"; then
+              downloaded=true
+              break 2
+            fi
+            sleep "$attempt"
+            done
+          done
+          test "$downloaded" = true
       - name: Vulnerabilities (HIGH/CRITICAL)
         run: |
           docker run --rm -v "$PWD:/repo" -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \

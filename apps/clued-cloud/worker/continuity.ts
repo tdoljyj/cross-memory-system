@@ -382,6 +382,37 @@ async function handleResourceCenterAuthority(request: Request, env: ContinuityEn
   });
 }
 
+async function handleResourceCenterWrite(request: Request, env: ContinuityEnv) {
+  validateOrigin(request, env);
+  if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { allow: "POST" });
+  const token = bearerToken(request);
+  if (!token || !/^clued_rcw_[A-Za-z0-9_-]{32,}$/.test(token)) {
+    return json({ error: "Resource Center writer denied." }, 403);
+  }
+  const body = await parseBody(request);
+  if (body.contract !== "clued.resource-center-write/1" ||
+    typeof body.nonce !== "string" || !/^[0-9a-f-]{36}$/.test(body.nonce) ||
+    !body.request || typeof body.request !== "object" || Array.isArray(body.request) ||
+    typeof body.request_sha256 !== "string" ||
+    await sha256(JSON.stringify(body.request)) !== body.request_sha256) {
+    return json({ error: "Resource Center writer denied." }, 403);
+  }
+  let outcome: unknown;
+  try {
+    outcome = await supabaseRequest(env, "/rest/v1/rpc/clued_resource_center_write_v1", {
+      method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_request: body.request }),
+    });
+  } catch {
+    return json({ error: "Resource Center writer unavailable." }, 503);
+  }
+  if (!outcome || typeof outcome !== "object" || Array.isArray(outcome) ||
+    (outcome as Record<string, unknown>).status === "denied") {
+    return json({ error: "Resource Center writer denied." }, 403);
+  }
+  return json({ contract: body.contract, nonce: body.nonce,
+    request: body.request, request_sha256: body.request_sha256, outcome });
+}
+
 function sanitizeCluedResult(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeCluedResult);
   if (!value || typeof value !== "object") return value;
@@ -2158,6 +2189,9 @@ async function handleContinuityRequestInner(
     if (url.pathname === "/mcp") return await handleMcp(request, env);
     if (url.pathname === "/v1/resource-center/authority") {
       return await handleResourceCenterAuthority(request, env);
+    }
+    if (url.pathname === "/v1/resource-center/write") {
+      return handleResourceCenterWrite(request, env);
     }
     if (url.pathname === "/v1/development" || url.pathname === "/v1/development/owner") {
       validateOrigin(request, env);
