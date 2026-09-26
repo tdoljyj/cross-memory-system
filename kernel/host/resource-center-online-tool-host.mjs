@@ -1,4 +1,7 @@
 import { createResourceCenterFilesystemAdapter } from "./resource-center-filesystem-adapter.mjs";
+import { createResourceCenterAuthorityClient } from "./resource-center-authority-client.mjs";
+import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-metadata.mjs";
+import { createGoogleDriveProviderIdentityResolver } from "./resource-center-google-drive-identity.mjs";
 import { createResourceCenterGovernedToolSurface } from "./resource-center-governed-tool-surface.mjs";
 
 function deny(errorCode) {
@@ -79,5 +82,52 @@ export function createResourceCenterOnlineToolHost({
     profile_identity: surface.profile_identity,
     listTools: surface.listTools,
     callTool: surface.callTool,
+  });
+}
+
+/** Production wiring: the only remote lookup comes from a Host-held Binding. */
+export function createResourceCenterOnlineToolHostFromService({
+  authority_endpoint: authorityEndpoint,
+  authority_binding_token: authorityBindingToken,
+  resolve_provider_identity: resolveProviderIdentity,
+  fetch,
+  ...hostOptions
+} = {}) {
+  return createResourceCenterOnlineToolHost({
+    ...hostOptions,
+    resolve_artifact_online: createResourceCenterAuthorityClient({
+      endpoint: authorityEndpoint,
+      binding_token: authorityBindingToken,
+      resolve_provider_identity: resolveProviderIdentity,
+      fetch,
+    }),
+  });
+}
+
+/** Compose the pinned Drive identity and Clued authority checks at bootstrap. */
+export function createResourceCenterGoogleDriveOnlineToolHost({
+  trusted_profile: trustedProfile,
+  root_folder_id: rootFolderId,
+  root_parent_id: rootParentId,
+  get_drive_access_token: getDriveAccessToken,
+  drive_fetch: driveFetch,
+  authority_fetch: authorityFetch,
+  ...hostOptions
+} = {}) {
+  const metadata = createGoogleDriveMetadataApi({
+    get_access_token: getDriveAccessToken,
+    fetch: driveFetch,
+  });
+  return createResourceCenterOnlineToolHostFromService({
+    ...hostOptions,
+    trusted_profile: trustedProfile,
+    fetch: authorityFetch,
+    resolve_provider_identity: createGoogleDriveProviderIdentityResolver({
+      managed_root: trustedProfile?.managed_root,
+      root_folder_id: rootFolderId,
+      root_parent_id: rootParentId,
+      get_file: metadata.getFile,
+      list_children: metadata.listChildren,
+    }),
   });
 }

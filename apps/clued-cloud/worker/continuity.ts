@@ -58,6 +58,7 @@ const SUPPORTED_MCP_VERSIONS = [
 ] as const;
 const MAX_JSON_BYTES = 1024 * 1024;
 const KERNEL_VERSION = "0.4.0";
+const RESOURCE_CENTER_AUTHORITY_CONTRACT = "clued.resource-center-authority/1";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
@@ -333,6 +334,52 @@ async function parseCanonicalBody(request: Request) {
     throw new HttpError(400, "Request body must be a JSON object.");
   }
   return { input, receivedPayloadHash: await sha256(text) };
+}
+
+async function handleResourceCenterAuthority(request: Request, env: ContinuityEnv) {
+  validateOrigin(request, env);
+  if (request.method !== "POST") {
+    return json({ error: "Method not allowed." }, 405, { allow: "POST" });
+  }
+  const token = bearerToken(request);
+  if (!token || !/^clued_rcb_[A-Za-z0-9_-]{32,}$/.test(token)) {
+    return json({ error: "Resource Center authority denied." }, 403);
+  }
+  const body = await parseBody(request);
+  const exactRequest = body.request;
+  const requestHash = body.request_sha256;
+  if (!exactRequest || Array.isArray(exactRequest) || typeof exactRequest !== "object" ||
+    typeof requestHash !== "string" || !/^[0-9a-f]{64}$/.test(requestHash) ||
+    (exactRequest as Record<string, unknown>).contract !== RESOURCE_CENTER_AUTHORITY_CONTRACT ||
+    typeof (exactRequest as Record<string, unknown>).nonce !== "string" ||
+    !/^[0-9a-f-]{36}$/.test((exactRequest as Record<string, unknown>).nonce as string) ||
+    await sha256(JSON.stringify(exactRequest)) !== requestHash) {
+    return json({ error: "Resource Center authority denied." }, 403);
+  }
+  let resolved: unknown;
+  try {
+    resolved = await supabaseRequest(env, "/rest/v1/rpc/clued_resource_center_authority_v1", {
+      method: "POST",
+      body: JSON.stringify({
+        p_token_hash: await sha256(token),
+        p_request: exactRequest,
+      }),
+    });
+  } catch {
+    return json({ error: "Resource Center authority unavailable." }, 503);
+  }
+  if (!resolved || Array.isArray(resolved) || typeof resolved !== "object" ||
+    (resolved as Record<string, unknown>).status !== "resolved" ||
+    !(resolved as Record<string, unknown>).authority) {
+    return json({ error: "Resource Center authority denied." }, 403);
+  }
+  return json({
+    contract: RESOURCE_CENTER_AUTHORITY_CONTRACT,
+    status: "resolved",
+    request: exactRequest,
+    request_sha256: requestHash,
+    authority: (resolved as Record<string, unknown>).authority,
+  });
 }
 
 function sanitizeCluedResult(value: unknown): unknown {
@@ -2109,6 +2156,9 @@ async function handleContinuityRequestInner(
       });
     }
     if (url.pathname === "/mcp") return await handleMcp(request, env);
+    if (url.pathname === "/v1/resource-center/authority") {
+      return await handleResourceCenterAuthority(request, env);
+    }
     if (url.pathname === "/v1/development" || url.pathname === "/v1/development/owner") {
       validateOrigin(request, env);
       if (!contextsEnabled(env)) return json({ error: "Development context is disabled." }, 404, corsHeaders(request));
