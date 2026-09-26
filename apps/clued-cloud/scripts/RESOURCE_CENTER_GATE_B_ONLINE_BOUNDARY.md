@@ -17,7 +17,9 @@ The Host also combines the Canonical workspace version with the pinned Drive
 IDs/versions in its in-process admission binding. If provider identity changes
 between the two online checks, admission is consumed and the side effect is
 denied even when the Canonical authority response itself is unchanged.
-The production Clued service endpoint and live credential are **not** included.
+The repository now contains a candidate Clued Worker endpoint and private
+Supabase migration for this contract. They are **not deployed**; the migration
+seeds no profile, Artifact or Binding. No live credential is included.
 `createResourceCenterGoogleDriveOnlineToolHost` composes both Host-held read
 channels; its positive temporary-directory test uses simulated metadata and
 authority responses, not production credentials or real Drive files.
@@ -34,9 +36,14 @@ from the mutation caller and never exports admission over MCP.
 Before connecting this bridge to a real writer, all of the following are
 required and independently evidenced:
 
-1. A reviewed Clued service contract that resolves one exact path/operation
-   against a Canonical Artifact registration. Repository snapshots, names,
-   byte hashes, local JSON and generic record search are not substitutes.
+1. Review and qualify the new Clued service contract against a Canonical
+   Artifact registration. Its private profile/Artifact/Binding tables are
+   initially empty. Administrative registration requires a same-Project
+   Owner-authored Decision and makes an Event plus immutable Receipt in one
+   transaction. The read-only resolver checks the exact registered path,
+   provider IDs/versions, active Decision Currentness and Binding scope.
+   Repository snapshots, names, byte hashes, local JSON and generic record
+   search are not substitutes.
 2. A dedicated read-only Binding scoped to that resolver and exact Resource
    Center registration. Its credential lives in Host secret storage, not Git,
    MCP arguments, prompts or receipts. Revocation and a denied-scope probe are
@@ -53,10 +60,17 @@ required and independently evidenced:
    Currentness drift, caller authority claims, status folders, sibling/root
    drops and duplicate-bytes delete have zero side effects. A permitted
    track-to-topic operation must produce a verified result/Receipt.
+6. Before any real writer is enabled, its post-write path must update or
+   invalidate the affected Canonical Artifact registration with CAS and a
+   Receipt. The current administrative registration contract and read-only
+   resolver do not yet supply that writer reconciliation.
 
-The Owner has authorized a reviewed production resolver, dedicated restricted
-environment and temporary-directory acceptance. That authorization does not
-turn this candidate client into a live authority source. Until every item
+The Owner has authorized a reviewed production resolver, minimal Canonical
+Artifact registration, dedicated restricted environment and temporary-object
+acceptance. The new migration and Worker route do not turn this candidate
+client into a live authority source until independently reviewed, deployed,
+registered and verified with a revocable dedicated Binding. No real Resource
+Center Artifact is seeded or reclassified by the migration. Until every item
 passes on the real endpoint, retain the installed read-only stdio pilot and
 `TRUSTED_ARTIFACT_CURRENTNESS_RESOLVER_UNAVAILABLE` for all mutation requests.
 Do not edit the real Resource Center or globally change RDP/Windows ACLs.

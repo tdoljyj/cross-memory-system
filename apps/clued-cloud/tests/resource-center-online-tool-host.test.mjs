@@ -136,7 +136,7 @@ test("production wiring rejects a mismatched authority reply before touching the
     authority_endpoint: "https://clued.example/v1/resource-center/authority",
     authority_binding_token: `clued_rcb_${"a".repeat(40)}`,
     resolve_provider_identity: async () => ({
-      root_folder_id: "root-id", root_folder_version: "1",
+      root_folder_id: "root-id", root_parent_id: "my-drive", root_folder_version: "1",
       source_file_id: null, source_file_version: null,
       destination_parent_id: "parent-id", destination_parent_version: "2",
       destination_file_id: null, destination_file_version: null,
@@ -168,7 +168,7 @@ test("production wiring consumes admission when the Drive parent version changes
     authority_endpoint: "https://clued.example/v1/resource-center/authority",
     authority_binding_token: `clued_rcb_${"a".repeat(40)}`,
     resolve_provider_identity: async () => ({
-      root_folder_id: "root-id", root_folder_version: "1",
+      root_folder_id: "root-id", root_parent_id: "my-drive", root_folder_version: "1",
       source_file_id: null, source_file_version: null,
       destination_parent_id: "parent-id", destination_parent_version: String(++reads),
       destination_file_id: null, destination_file_version: null,
@@ -216,6 +216,7 @@ test("pinned Drive metadata and Clued service compose without exposing authority
       authorityReads += 1;
       const body = JSON.parse(options.body);
       assert.equal(body.request.provider_identity.root_folder_id, "drive-root-folder");
+      assert.equal(body.request.provider_identity.root_parent_id, "my-drive");
       assert.equal(body.request.provider_identity.destination_parent_id, "drive-root-folder");
       return { ok: true, json: async () => ({
         contract: body.request.contract, status: "resolved",

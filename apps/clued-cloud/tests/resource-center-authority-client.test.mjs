@@ -15,7 +15,7 @@ const authority = {
   currentness_identity: "currentness/1", workspace_version: "workspace/1",
 };
 const providerIdentity = {
-  root_folder_id: "root-id", root_folder_version: "1",
+  root_folder_id: "root-id", root_parent_id: "my-drive", root_folder_version: "1",
   source_file_id: null, source_file_version: null,
   destination_parent_id: "parent-id", destination_parent_version: "2",
   destination_file_id: null, destination_file_version: null,

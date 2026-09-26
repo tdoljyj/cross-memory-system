@@ -102,6 +102,7 @@ export function createGoogleDriveProviderIdentityResolver({
 
     return Object.freeze({
       root_folder_id: rootFolderId,
+      root_parent_id: rootParentId,
       root_folder_version: rootFile.version,
       source_file_id: source?.id ?? null,
       source_file_version: source?.version ?? null,

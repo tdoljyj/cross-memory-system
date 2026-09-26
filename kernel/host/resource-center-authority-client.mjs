@@ -66,6 +66,7 @@ export function createResourceCenterAuthorityClient({
       (providerIdentity.destination_file_id !== null && !/^\d+$/.test(providerIdentity.destination_file_version)) ||
       (providerIdentity.destination_file_id === null && providerIdentity.destination_file_version !== null) ||
       typeof providerIdentity.root_folder_version !== "string" || !/^\d+$/.test(providerIdentity.root_folder_version) ||
+      typeof providerIdentity.root_parent_id !== "string" || !providerIdentity.root_parent_id ||
       typeof providerIdentity.provider_version !== "string" || !/^[0-9a-f]{64}$/.test(providerIdentity.provider_version) ||
       typeof providerIdentity.root_folder_id !== "string" || !providerIdentity.root_folder_id) {
       throw new Error("PROVIDER_IDENTITY_UNAVAILABLE");
@@ -78,6 +79,7 @@ export function createResourceCenterAuthorityClient({
       profile_version: profile.profile_version,
       provider_identity: Object.freeze({
         root_folder_id: providerIdentity.root_folder_id,
+        root_parent_id: providerIdentity.root_parent_id,
         root_folder_version: providerIdentity.root_folder_version,
         source_file_id: providerIdentity.source_file_id,
         source_file_version: providerIdentity.source_file_version,
