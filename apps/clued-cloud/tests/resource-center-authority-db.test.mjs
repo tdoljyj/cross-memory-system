@@ -9,6 +9,7 @@ import EmbeddedPostgres from "embedded-postgres";
 
 import { createResourceCenterGoogleDriveOnlineToolHost } from "../../../kernel/host/resource-center-online-tool-host.mjs";
 import { createResourceCenterWriteClient } from "../../../kernel/host/resource-center-write-client.mjs";
+import { createResourceCenterRecoveryStore } from "../../../kernel/host/resource-center-recovery-store.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "../../../kernel/host/resource-center-governed-tool-surface.mjs";
 import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 
@@ -235,6 +236,98 @@ test("Canonical Resource Center registration and exact read-only authority", { t
       assert.equal(alias.status, "rejected");
     });
 
+    await t.test("writer revocation wins a waiting start and exact fenced recovery releases no-effect intent", async () => {
+      const writerHash = crypto.createHash("sha256").update("revocation-race").digest("hex");
+      const issue = (await admin.query("select public.clued_resource_center_writer_admin_v1($1,$2::jsonb) value",
+        [USER, JSON.stringify({ action: "issue", authority_binding_id: bindingId,
+          source_decision_id: DECISION, token_hash: writerHash, idempotency_key: crypto.randomUUID(),
+          expires_at: new Date(Date.now() + 600000).toISOString() })])).rows[0].value;
+      const writerId = issue.target_refs.find((ref) => ref.role === "primary").id;
+      const digest = "d".repeat(64);
+      const request = { action: "prepare", request_key: "revoke-race", request_sha256: digest,
+        idempotency_key: crypto.randomUUID(), exact_request: exactRequest(digest),
+        authority_request: { profile_id: profileId, profile_version: "test/1",
+          policy_version: "clued.resource-center-mutation-policy/1", provider_identity: providerIdentity, mutation } };
+      const call = async (input, client = anon) => (await client.query(
+        "select public.clued_resource_center_write_v1($1,$2::jsonb) value",
+        [writerHash, JSON.stringify(input)])).rows[0].value;
+      const prepared = await call(request);
+      assert.equal(prepared.state, "prepared");
+      const competitor = server.getPgClient();
+      await competitor.connect();
+      const pid = (await competitor.query("select pg_backend_pid() pid")).rows[0].pid;
+      await competitor.query("set role anon");
+      let pendingStart;
+      try {
+        await admin.query("begin");
+        const revoke = (await admin.query("select public.clued_resource_center_writer_admin_v1($1,$2::jsonb) value",
+          [USER, JSON.stringify({ action: "revoke", authority_binding_id: bindingId,
+            writer_binding_id: writerId, source_decision_id: DECISION, idempotency_key: crypto.randomUUID() })])).rows[0].value;
+        assert.equal(revoke.status, "committed");
+        pendingStart = call({ action: "start", intent_id: prepared.intent_id,
+          request_sha256: digest, base_version: 1, idempotency_key: crypto.randomUUID() }, competitor);
+        let blocked = false;
+        for (let i = 0; i < 100; i += 1) {
+          blocked = (await admin.query("select wait_event_type from pg_stat_activity where pid=$1", [pid])).rows[0]?.wait_event_type === "Lock";
+          if (blocked) break;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assert.equal(blocked, true, "start must actually wait behind revocation");
+        await admin.query("commit");
+        assert.equal((await pendingStart).status, "denied");
+      } finally {
+        await admin.query("rollback");
+        if (pendingStart) await pendingStart;
+        await competitor.end();
+      }
+      const journal = async (input) => (await admin.query(
+        "select public.clued_resource_center_mutation_journal_v1($1,$2::jsonb) value",
+        [USER, JSON.stringify({ profile_id: profileId, writer_binding_id: writerId,
+          source_decision_id: DECISION, intent_id: prepared.intent_id, request_sha256: digest,
+          idempotency_key: crypto.randomUUID(), ...input })])).rows[0].value;
+      assert.equal((await journal({ action: "inspect" })).status, "prepared");
+      // Trusted internal journal simulates an already-issued permit. No storage
+      // effect is performed by this test. Revocation alone cannot settle it.
+      assert.equal((await journal({ action: "start", base_version: 1 })).state, "started");
+      assert.equal((await journal({ action: "settle_no_effect", base_version: 2,
+        recovery_decision_id: DECISION })).status, "rejected");
+      assert.equal((await call({ action: "settle_no_effect" })).status, "denied");
+      await admin.query("update clued_private.resource_center_profiles_v1 set state='revoked' where id=$1", [profileId]);
+      const replacement = await adminCall({ action: "profile_register", project_id: PROJECT,
+        profile_version: "replacement/1", managed_root: ROOT,
+        root_folder_id: ROOT_ID, root_parent_id: "my-drive", root_folder_version: "1" });
+      assert.equal(replacement.status, "committed");
+      const replacementId = replacement.target_refs.find((ref) => ref.role === "primary").id;
+      const fenced = await journal({ ...request, profile_id: replacementId, writer_binding_id: null,
+        idempotency_key: crypto.randomUUID() });
+      assert.equal(fenced.status, "rejected");
+      assert.match(fenced.error_code, /provider_root_fenced/);
+      assert.equal((await adminCall({ action: "profile_revoke", profile_id: replacementId, base_version: 1 })).status, "committed");
+      const recoveryId = crypto.randomUUID();
+      await admin.query("insert into public.clued_memories(id,user_id,title,content,scope,project_id,record_type,status," +
+        "record_schema_version,lifecycle_status,canonical_scope,type_fields,relations,source_refs,authority,confidence_reason)" +
+        " select $1,user_id,'Exact test recovery','Executor terminated then provider absence verified',scope,project_id," +
+        "record_type,status,record_schema_version,lifecycle_status,canonical_scope,$2::jsonb,relations,source_refs,authority,confidence_reason" +
+        " from public.clued_memories where id=$3", [recoveryId, JSON.stringify({ rationale: "Test-only exact recovery",
+          resource_center_recovery_intent_id: prepared.intent_id, resource_center_recovery_request_sha256: digest,
+          executor_terminated: true, provider_absence_verified_after_termination: true }), DECISION]);
+      await admin.query("update public.clued_memories set lifecycle_status='revoked' where id=$1", [DECISION]);
+      try {
+        const inspected = await journal({ action: "inspect", source_decision_id: recoveryId });
+        assert.equal(inspected.status, "started");
+        const settled = await journal({ action: "settle_no_effect", base_version: 2,
+          source_decision_id: recoveryId, recovery_decision_id: recoveryId });
+        assert.equal(settled.state, "cancelled");
+        assert.equal(settled.execution_permitted, false);
+        assert.equal(settled.final_result.outcome, "verified_no_effect");
+        assert.equal((await admin.query("select status from public.clued_audit_receipts where id=$1", [settled.receipt_id])).rows[0].status, "committed");
+      } finally {
+        // Fixture isolation only; production recovery must never reactivate old grants.
+        await admin.query("update public.clued_memories set lifecycle_status='active' where id=$1", [DECISION]);
+        await admin.query("update clued_private.resource_center_profiles_v1 set state='active' where id=$1", [profileId]);
+      }
+    });
+
     await t.test("file registration and CAS update bind current provider version", async () => {
       const filePath = TRACK + "/logo.svg";
       const file = await adminCall({
@@ -366,7 +459,7 @@ test("Canonical Resource Center registration and exact read-only authority", { t
         ...providerIdentity, destination_parent_version: "3",
       } })).status, "resolved");
     });
-    await t.test("temporary authority reaches Host and Worker but missing write receipt prevents an effect", async (child) => {
+    await t.test("temporary Host/Worker/DB chain denies read-only then atomically finalizes qualified create", async (child) => {
       const tempParent = await fs.mkdtemp(path.join(os.tmpdir(), "clued-rc-acceptance-"));
       child.after(() => fs.rm(tempParent, { recursive: true, force: true }));
       const nativeRoot = path.join(tempParent, "Clued_资料中心");
@@ -460,7 +553,10 @@ test("Canonical Resource Center registration and exact read-only authority", { t
           })],
         )).rows[0].value;
         assert.equal(writerIssued.status, "committed");
+        const recoveryPath = path.join(tempParent, "recovery.jsonl");
+        await fs.writeFile(recoveryPath, "", { flag: "wx" });
         const writeClient = createResourceCenterWriteClient({
+          ...createResourceCenterRecoveryStore(recoveryPath),
           endpoint: "https://clued.test/v1/resource-center/write", binding_token: writerToken,
           fetch: hostOptions.authority_fetch,
           resolve_provider_identity: async () => ({

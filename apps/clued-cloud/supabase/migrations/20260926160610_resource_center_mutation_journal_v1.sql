@@ -29,6 +29,9 @@ create table clued_private.resource_center_mutations_v1 (
 create unique index resource_center_mutations_v1_single_writer
   on clued_private.resource_center_mutations_v1(profile_id)
   where state in ('prepared','started','uncertain');
+-- Keep fencing across profile revocation/re-registration. A newly registered
+-- profile for the same root must not obtain a second permit while an old
+-- executor is unresolved. Serialize per provider root before the profile lock.
 alter table clued_private.resource_center_mutations_v1 enable row level security;
 revoke all on clued_private.resource_center_mutations_v1 from public,anon,authenticated;
 
@@ -56,21 +59,26 @@ declare
   v_sqlstate text;
 begin
   if p_user_id is null or coalesce(v_action,'') not in
-    ('prepare','start','cancel','uncertain','finalize','inspect') then
+    ('prepare','start','cancel','uncertain','finalize','inspect','settle_no_effect') then
     raise exception 'resource_center_journal_invalid' using errcode='22023';
   end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    p_user_id::text||':'||p.root_folder_id,0))
+    from clued_private.resource_center_profiles_v1 p
+    where p.id=(p_input->>'profile_id')::uuid and p.user_id=p_user_id;
   -- Same order as registry administration: profile, then intent. The row lock
   -- lasts only for this database transaction, never across provider I/O.
   select * into v_profile from clued_private.resource_center_profiles_v1
     where id=(p_input->>'profile_id')::uuid and user_id=p_user_id for update;
-  if not found or v_profile.state<>'active' then
+  if not found or (v_action not in ('inspect','settle_no_effect') and v_profile.state<>'active') then
     raise exception 'resource_center_profile_unavailable' using errcode='42501';
   end if;
   v_decision:=(p_input->>'source_decision_id')::uuid;
   if not clued_private.resource_center_decision_current_v1(
     p_user_id,v_profile.project_id,v_decision) or
-    not clued_private.resource_center_decision_current_v1(
-      p_user_id,v_profile.project_id,v_profile.source_decision_id) then
+    (v_action not in ('inspect','settle_no_effect') and
+      not clued_private.resource_center_decision_current_v1(
+        p_user_id,v_profile.project_id,v_profile.source_decision_id)) then
     raise exception 'owner_decision_required' using errcode='42501';
   end if;
   if v_action<>'prepare' then
@@ -104,6 +112,12 @@ begin
   end if;
   begin
     if v_action='prepare' then
+      if exists(select 1 from clued_private.resource_center_mutations_v1 m
+        join clued_private.resource_center_profiles_v1 p on p.id=m.profile_id
+        where m.user_id=p_user_id and p.root_folder_id=v_profile.root_folder_id
+          and m.state in ('prepared','started','uncertain')) then
+        raise exception 'resource_center_provider_root_fenced' using errcode='40001';
+      end if;
       v_request:=p_input->'authority_request';
       if coalesce(p_input->>'request_sha256','') !~ '^[0-9a-f]{64}$' or
         coalesce(p_input->>'request_key','')='' or
@@ -160,6 +174,31 @@ begin
       end if;
       update clued_private.resource_center_mutations_v1 set state='cancelled',
         version=version+1,updated_at=now(),receipt_id=v_receipt.id where id=v_intent.id returning * into v_intent;
+    elsif v_action='settle_no_effect' then
+      -- Administrative recovery only: expiry or provider absence alone never
+      -- proves a delayed executor cannot still act. Require revocation AND a
+      -- current, exact Owner recovery decision attesting executor termination
+      -- and provider absence after that termination. This is not Agent input.
+      if v_intent.state not in ('started','uncertain') or
+        v_decision is distinct from (p_input->>'recovery_decision_id')::uuid or
+        v_intent.writer_binding_id is null or
+        not exists(select 1 from clued_private.resource_center_writer_bindings_v1 w
+          where w.id=v_intent.writer_binding_id and w.revoked_at is not null) or
+        not clued_private.resource_center_decision_current_v1(
+          p_user_id,v_profile.project_id,(p_input->>'recovery_decision_id')::uuid) or
+        not exists(select 1 from public.clued_memories d
+          where d.id=(p_input->>'recovery_decision_id')::uuid and d.user_id=p_user_id
+            and d.type_fields->>'resource_center_recovery_intent_id'=v_intent.id::text
+            and d.type_fields->>'resource_center_recovery_request_sha256'=v_intent.request_sha256
+            and d.type_fields->>'executor_terminated'='true'
+            and d.type_fields->>'provider_absence_verified_after_termination'='true') then
+        raise exception 'resource_center_fenced_no_effect_evidence_required' using errcode='42501';
+      end if;
+      update clued_private.resource_center_mutations_v1 set state='cancelled',
+        version=version+1,updated_at=now(),receipt_id=v_receipt.id,
+        final_result=jsonb_build_object('outcome','verified_no_effect',
+          'recovery_decision_id',p_input->>'recovery_decision_id')
+        where id=v_intent.id returning * into v_intent;
     elsif v_action='uncertain' then
       if v_intent.state<>'started' then
         raise exception 'resource_center_intent_conflict' using errcode='40001';
@@ -312,6 +351,7 @@ declare
   v_input jsonb;
 begin
   if coalesce(p_token_hash,'') !~ '^[0-9a-f]{64}$' or jsonb_typeof(p_request) is distinct from 'object' or
+    coalesce(p_request->>'action','') not in ('prepare','start','cancel','uncertain','finalize','inspect') or
     exists(select 1 from jsonb_object_keys(p_request) k where k not in
       ('action','request_key','request_sha256','exact_request','authority_request',
        'intent_id','base_version','idempotency_key','postcondition')) then
@@ -325,6 +365,20 @@ begin
   if not found then return jsonb_build_object('status','denied'); end if;
   select * into v_profile from clued_private.resource_center_profiles_v1
     where id=v_binding.profile_id and user_id=v_binding.user_id and state='active';
+  if not found then return jsonb_build_object('status','denied'); end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    v_binding.user_id::text||':'||v_profile.root_folder_id,0));
+  select * into v_profile from clued_private.resource_center_profiles_v1
+    where id=v_binding.profile_id and user_id=v_binding.user_id and state='active' for update;
+  if not found then return jsonb_build_object('status','denied'); end if;
+  -- Serialize with writer/read revocation, then refresh both grants. Values
+  -- read before the lock may have been revoked or expired while waiting.
+  select * into v_writer from clued_private.resource_center_writer_bindings_v1
+    where token_hash=p_token_hash and revoked_at is null and expires_at>clock_timestamp();
+  if not found then return jsonb_build_object('status','denied'); end if;
+  select * into v_binding from clued_private.resource_center_bindings_v1
+    where id=v_writer.authority_binding_id and profile_id=v_profile.id
+      and user_id=v_profile.user_id and revoked_at is null and expires_at>clock_timestamp();
   if not found or not clued_private.resource_center_decision_current_v1(
     v_binding.user_id,v_profile.project_id,v_binding.source_decision_id) then
     return jsonb_build_object('status','denied');

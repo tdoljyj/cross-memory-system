@@ -10,6 +10,7 @@ export function createResourceCenterWriteClient({
   endpoint, binding_token: bindingToken,
   resolve_provider_identity: resolveProviderIdentity,
   verify_postcondition: verifyPostcondition,
+  persist_recovery: persistRecovery,
   fetch: fetchImpl = globalThis.fetch,
 } = {}) {
   const url = new URL(endpoint);
@@ -18,8 +19,9 @@ export function createResourceCenterWriteClient({
     throw new TypeError("A fixed HTTPS Resource Center writer endpoint is required.");
   }
   if (typeof bindingToken !== "string" || !/^clued_rcw_[A-Za-z0-9_-]{32,}$/.test(bindingToken) ||
-    typeof resolveProviderIdentity !== "function" || typeof verifyPostcondition !== "function") {
-    throw new TypeError("A dedicated writer Binding and trusted provider verifiers are required.");
+    typeof resolveProviderIdentity !== "function" || typeof verifyPostcondition !== "function" ||
+    typeof persistRecovery !== "function") {
+    throw new TypeError("A dedicated writer Binding, trusted provider verifiers and durable recovery store are required.");
   }
   async function invoke(request) {
     const nonce = randomUUID();
@@ -43,6 +45,12 @@ export function createResourceCenterWriteClient({
       if (mutation.operation !== "create") throw new Error("WRITER_OPERATION_NOT_QUALIFIED");
       const provider = await resolveProviderIdentity({ profile, mutation });
       const key = randomUUID();
+      // Persist correlation before any network side effect, including prepare.
+      // Never persist a credential or an execution grant. A recovered ticket is
+      // inspection-only; it cannot start/replay an old filesystem operation.
+      await persistRecovery(Object.freeze({ contract: "clued.resource-center-recovery/1",
+        request_key: key, request_sha256: binding.request_sha256,
+        profile_id: profile.profile_id, mutation: structuredClone(mutation) }));
       const prepared = await invoke({ action: "prepare", idempotency_key: `${key}:prepare`, request_key: key,
         request_sha256: binding.request_sha256, exact_request: { mutation, binding },
         authority_request: { contract: "clued.resource-center-authority/1",
@@ -64,6 +72,15 @@ export function createResourceCenterWriteClient({
         mutation: structuredClone(mutation), binding: structuredClone(binding), version: started.version, provider });
       return Object.freeze({ status: "started", execution_permitted: true,
         intent_id: started.intent_id, request_sha256: started.request_sha256 });
+    },
+    async inspect_recovery(ticket) {
+      if (ticket?.contract !== "clued.resource-center-recovery/1" ||
+        !/^[0-9a-f-]{36}$/i.test(ticket.request_key ?? "") ||
+        !/^[0-9a-f]{64}$/.test(ticket.request_sha256 ?? "")) {
+        throw new Error("RESOURCE_CENTER_RECOVERY_TICKET_INVALID");
+      }
+      return invoke({ action: "inspect", request_key: ticket.request_key,
+        request_sha256: ticket.request_sha256 });
     },
     async commit_post_write({ mutation, binding, reservation, effect_result: effectResult }) {
       const state = reservations.get(reservation.intent_id);

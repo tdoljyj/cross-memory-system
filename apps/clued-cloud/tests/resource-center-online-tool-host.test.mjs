@@ -12,6 +12,7 @@ import {
 import { RESOURCE_CENTER_MUTATION_TOOL } from "../../../kernel/host/resource-center-governed-tool-surface.mjs";
 import { qualifyResourceCenterHost } from "../../../kernel/host/resource-center-host-qualification.mjs";
 import { createResourceCenterWriteClient } from "../../../kernel/host/resource-center-write-client.mjs";
+import { createResourceCenterRecoveryStore } from "../../../kernel/host/resource-center-recovery-store.mjs";
 
 function profileFor(root) {
   return {
@@ -391,10 +392,16 @@ test("pinned Drive metadata and Clued service compose without exposing authority
   assert.equal((await fs.stat(destination)).isDirectory(), true);
 });
 
-test("writer client rejects read credentials and does not retry an uncertain start", async () => {
+test("writer client persists before network and can inspect a lost start without replay", async (t) => {
+  const { profile } = await fixture(t);
+  const journalPath = path.join(path.dirname(profile.managed_root), "recovery.jsonl");
+  await fs.writeFile(journalPath, "", { flag: "wx" });
+  const store = createResourceCenterRecoveryStore(journalPath);
+  let ticket;
   const bootstrap = {
     endpoint: "https://clued.example/v1/resource-center/write",
     resolve_provider_identity: async () => ({}), verify_postcondition: async () => ({}),
+    persist_recovery: async (value) => { await store.persist_recovery(value); ticket = value; },
   };
   assert.throws(() => createResourceCenterWriteClient({ ...bootstrap,
     binding_token: `clued_rcb_${"a".repeat(40)}` }), /dedicated writer/);
@@ -404,11 +411,14 @@ test("writer client rejects read credentials and does not retry an uncertain sta
     fetch: async (_url, options) => {
       const body = JSON.parse(options.body);
       calls += 1;
+      assert.deepEqual(await store.read_recovery(ticket.request_key), ticket);
       assert.equal(body.request.profile_id, undefined);
       assert.equal(body.request.managed_root, undefined);
       assert.equal(body.request.source_decision_id, undefined);
       assert.equal(body.request.authority_token_hash, undefined);
       if (calls === 2) throw new Error("start response lost");
+      if (body.request.action === "inspect") return Response.json({ ...body,
+        outcome: { status: "started", execution_permitted: false } });
       return Response.json({ ...body, outcome: { status: "committed", state: "prepared",
         intent_id: "00000000-0000-4000-8000-000000000010", version: 1,
         request_sha256: body.request.request_sha256 } });
@@ -417,6 +427,14 @@ test("writer client rejects read credentials and does not retry an uncertain sta
   await assert.rejects(client.prepare_write({ profile: { profile_id: "profile", profile_version: "1" },
     mutation: { operation: "create" }, binding: { request_sha256: "a".repeat(64) } }), /response lost/);
   assert.equal(calls, 2);
+  assert.equal((await client.inspect_recovery(await store.read_recovery(ticket.request_key))).status, "started");
+  assert.equal(calls, 3);
+  await assert.rejects(store.persist_recovery(ticket), /ALREADY_EXISTS/);
+  assert.equal(JSON.stringify(ticket).includes("clued_rcw_"), false);
+  await fs.appendFile(journalPath, '{"partial":');
+  await assert.rejects(store.persist_recovery({ ...ticket,
+    request_key: "00000000-0000-4000-8000-000000000099" }), /PARTIAL_RECORD/);
+  await assert.rejects(store.read_recovery(ticket.request_key), /PARTIAL_RECORD/);
 });
 
 test("writer client rejects substituted replies and unqualified operations", async () => {
@@ -424,6 +442,7 @@ test("writer client rejects substituted replies and unqualified operations", asy
   const client = createResourceCenterWriteClient({
     endpoint: "https://clued.example/v1/resource-center/write", binding_token: `clued_rcw_${"a".repeat(40)}`,
     resolve_provider_identity: async () => ({}), verify_postcondition: async () => ({}),
+    persist_recovery: async () => {},
     fetch: async (_url, options) => {
       calls += 1;
       return Response.json({ ...JSON.parse(options.body), nonce: "substituted" });
@@ -436,4 +455,35 @@ test("writer client rejects substituted replies and unqualified operations", asy
   await assert.rejects(client.prepare_write(input), /RESPONSE_MISMATCH/);
   assert.equal(calls, 1);
   await assert.rejects(client.commit_post_write({ reservation: { intent_id: "foreign" } }), /RESERVATION_MISMATCH/);
+});
+
+test("unsupported operation does not quarantine subsequent create", async (t) => {
+  const { profile, destination } = await fixture(t);
+  let reserves = 0;
+  const host = createResourceCenterOnlineToolHost({ trusted_profile: profile,
+    resolve_artifact_online: async () => authority(),
+    prepare_write: async (input) => { reserves += 1; return testReservation(input); },
+    commit_post_write: async ({ binding }) => ({ status: "committed",
+      receipt_id: "00000000-0000-4000-8000-000000000001", request_sha256: binding.request_sha256 }),
+  });
+  const mutation = { operation: "create", destination_path: destination,
+    target_kind: "directory", directory_semantics: "track" };
+  assert.equal((await host.callTool(RESOURCE_CENTER_MUTATION_TOOL,
+    { ...mutation, operation: "write" })).error_code, "WRITER_OPERATION_NOT_QUALIFIED");
+  assert.equal(reserves, 0);
+  assert.equal((await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, mutation)).status, "committed");
+  assert.equal(reserves, 1);
+});
+
+test("unavailable durable recovery storage prevents all service calls", async () => {
+  let calls = 0;
+  const client = createResourceCenterWriteClient({
+    endpoint: "https://clued.example/v1/resource-center/write", binding_token: `clued_rcw_${"a".repeat(40)}`,
+    resolve_provider_identity: async () => ({}), verify_postcondition: async () => ({}),
+    persist_recovery: async () => { throw new Error("disk unavailable"); },
+    fetch: async () => { calls += 1; throw new Error("must not call"); },
+  });
+  await assert.rejects(client.prepare_write({ profile: { profile_id: "profile", profile_version: "1" },
+    mutation: { operation: "create" }, binding: { request_sha256: "a".repeat(64) } }), /disk unavailable/);
+  assert.equal(calls, 0);
 });

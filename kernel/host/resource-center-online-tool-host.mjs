@@ -65,6 +65,9 @@ export function createResourceCenterOnlineToolHost({
   }
 
   async function executeMutation(mutation) {
+    // Only create has a qualified journal/finalization contract. A definite
+    // unsupported operation has not reserved anything and must not quarantine.
+    if (mutation.operation !== "create") return deny("WRITER_OPERATION_NOT_QUALIFIED");
     let authority;
     const request = Object.freeze({
       profile: Object.freeze(structuredClone(profile)),
