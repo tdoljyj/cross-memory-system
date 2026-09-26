@@ -14,6 +14,9 @@ live Drive IDs/versions; duplicate names or a moved root deny. A read-only
 Drive metadata transport is included, but the Host must still supply an
 authenticated, revocable metadata-only credential and keep it in secret storage.
 The production Clued service endpoint and live credential are **not** included.
+`createResourceCenterGoogleDriveOnlineToolHost` composes both Host-held read
+channels; its positive temporary-directory test uses simulated metadata and
+authority responses, not production credentials or real Drive files.
 
 The Host must supply `resolve_artifact_online` from a separately authenticated,
 revocable, least-privilege Clued Binding. For each exact mutation it must obtain

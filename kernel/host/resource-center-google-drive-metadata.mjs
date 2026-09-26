@@ -53,7 +53,7 @@ export function createGoogleDriveMetadataApi({
     for (let page = 0; page < 100; page += 1) {
       const url = new URL(DRIVE_API);
       url.searchParams.set("q", q);
-      url.searchParams.set("fields", `nextPageToken,files(${FIELDS})`);
+      url.searchParams.set("fields", `nextPageToken,incompleteSearch,files(${FIELDS})`);
       url.searchParams.set("pageSize", "1000");
       url.searchParams.set("supportsAllDrives", "true");
       url.searchParams.set("includeItemsFromAllDrives", "true");

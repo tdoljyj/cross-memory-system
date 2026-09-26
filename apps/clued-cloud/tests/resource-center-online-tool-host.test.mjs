@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   createResourceCenterOnlineToolHost,
   createResourceCenterOnlineToolHostFromService,
+  createResourceCenterGoogleDriveOnlineToolHost,
 } from "../../../kernel/host/resource-center-online-tool-host.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "../../../kernel/host/resource-center-governed-tool-surface.mjs";
 import { qualifyResourceCenterHost } from "../../../kernel/host/resource-center-host-qualification.mjs";
@@ -155,4 +156,45 @@ test("production wiring rejects a mismatched authority reply before touching the
   });
   assert.equal(result.error_code, "ARTIFACT_AUTHORITY_RESOLUTION_FAILED");
   await assert.rejects(fs.stat(destination), { code: "ENOENT" });
+});
+
+test("pinned Drive metadata and Clued service compose without exposing authority to the caller", async (t) => {
+  const { profile, destination } = await fixture(t);
+  const rootName = path.basename(profile.managed_root);
+  let driveReads = 0;
+  let authorityReads = 0;
+  const host = createResourceCenterGoogleDriveOnlineToolHost({
+    trusted_profile: profile,
+    root_folder_id: "drive-root-folder",
+    root_parent_id: "my-drive",
+    get_drive_access_token: async () => "metadata-only-test-token",
+    drive_fetch: async (url, options) => {
+      driveReads += 1;
+      assert.equal(options.headers.authorization, "Bearer metadata-only-test-token");
+      return { ok: true, json: async () => new URL(url).pathname.endsWith("/drive-root-folder")
+        ? { id: "drive-root-folder", name: rootName, parents: ["my-drive"],
+          mimeType: "application/vnd.google-apps.folder", version: "1", trashed: false }
+        : { files: [] } };
+    },
+    authority_endpoint: "https://clued.example/v1/resource-center/authority",
+    authority_binding_token: `clued_rcb_${"a".repeat(40)}`,
+    authority_fetch: async (_url, options) => {
+      authorityReads += 1;
+      const body = JSON.parse(options.body);
+      assert.equal(body.request.provider_identity.root_folder_id, "drive-root-folder");
+      assert.equal(body.request.provider_identity.destination_parent_id, "drive-root-folder");
+      return { ok: true, json: async () => ({
+        contract: body.request.contract, status: "resolved",
+        request_sha256: body.request_sha256, request: body.request, authority: authority(),
+      }) };
+    },
+  });
+  const result = await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+    operation: "create", destination_path: destination,
+    target_kind: "directory", directory_semantics: "track",
+  });
+  assert.equal(result.status, "committed");
+  assert.equal(authorityReads, 2);
+  assert.equal(driveReads, 4);
+  assert.equal((await fs.stat(destination)).isDirectory(), true);
 });

@@ -21,6 +21,7 @@ test("Drive metadata lookup uses only a Host credential and checks every page", 
   assert.equal(result[0].id, "child");
   assert.equal(urls.length, 2);
   assert.equal(urls[1].searchParams.get("pageToken"), "page-2");
+  assert.match(urls[0].searchParams.get("fields"), /incompleteSearch/);
   assert.match(urls[0].searchParams.get("q"), /'parent' in parents and name = 'a.md'/);
 });
 
