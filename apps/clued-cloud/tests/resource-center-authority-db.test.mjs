@@ -309,7 +309,6 @@ test("Canonical Resource Center registration and exact read-only authority", { t
         return Response.json(result);
       };
       try {
-        let topicExists = false;
         const host = createResourceCenterGoogleDriveOnlineToolHost({
           trusted_profile: {
             registration_status: "registered", profile_id: tempProfileId,
@@ -334,13 +333,6 @@ test("Canonical Resource Center registration and exact read-only authority", { t
                 parents: ["temp-root-id"], version: "2", trashed: false,
                 mimeType: "application/vnd.google-apps.folder",
               }] });
-            if (topicExists && query.includes("'temp-track-id' in parents")) {
-              return Response.json({ files: [{
-                id: "temp-topic-id", name: "视觉探索",
-                parents: ["temp-track-id"], version: "1", trashed: false,
-                mimeType: "application/vnd.google-apps.folder",
-              }] });
-            }
             return Response.json({ files: [] });
           },
           authority_endpoint: "https://clued.test/v1/resource-center/authority",
