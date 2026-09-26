@@ -11,6 +11,7 @@ import {
 } from "../../../kernel/host/resource-center-online-tool-host.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "../../../kernel/host/resource-center-governed-tool-surface.mjs";
 import { qualifyResourceCenterHost } from "../../../kernel/host/resource-center-host-qualification.mjs";
+import { createResourceCenterWriteClient } from "../../../kernel/host/resource-center-write-client.mjs";
 
 function profileFor(root) {
   return {
@@ -388,4 +389,51 @@ test("pinned Drive metadata and Clued service compose without exposing authority
   assert.equal(authorityReads, 2);
   assert.equal(driveReads, 4);
   assert.equal((await fs.stat(destination)).isDirectory(), true);
+});
+
+test("writer client rejects read credentials and does not retry an uncertain start", async () => {
+  const bootstrap = {
+    endpoint: "https://clued.example/v1/resource-center/write",
+    resolve_provider_identity: async () => ({}), verify_postcondition: async () => ({}),
+  };
+  assert.throws(() => createResourceCenterWriteClient({ ...bootstrap,
+    binding_token: `clued_rcb_${"a".repeat(40)}` }), /dedicated writer/);
+  let calls = 0;
+  const client = createResourceCenterWriteClient({ ...bootstrap,
+    binding_token: `clued_rcw_${"a".repeat(40)}`,
+    fetch: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      calls += 1;
+      assert.equal(body.request.profile_id, undefined);
+      assert.equal(body.request.managed_root, undefined);
+      assert.equal(body.request.source_decision_id, undefined);
+      assert.equal(body.request.authority_token_hash, undefined);
+      if (calls === 2) throw new Error("start response lost");
+      return Response.json({ ...body, outcome: { status: "committed", state: "prepared",
+        intent_id: "00000000-0000-4000-8000-000000000010", version: 1,
+        request_sha256: body.request.request_sha256 } });
+    },
+  });
+  await assert.rejects(client.prepare_write({ profile: { profile_id: "profile", profile_version: "1" },
+    mutation: { operation: "create" }, binding: { request_sha256: "a".repeat(64) } }), /response lost/);
+  assert.equal(calls, 2);
+});
+
+test("writer client rejects substituted replies and unqualified operations", async () => {
+  let calls = 0;
+  const client = createResourceCenterWriteClient({
+    endpoint: "https://clued.example/v1/resource-center/write", binding_token: `clued_rcw_${"a".repeat(40)}`,
+    resolve_provider_identity: async () => ({}), verify_postcondition: async () => ({}),
+    fetch: async (_url, options) => {
+      calls += 1;
+      return Response.json({ ...JSON.parse(options.body), nonce: "substituted" });
+    },
+  });
+  const input = { profile: { profile_id: "profile", profile_version: "1" },
+    mutation: { operation: "create" }, binding: { request_sha256: "a".repeat(64) } };
+  await assert.rejects(client.prepare_write({ ...input, mutation: { operation: "delete" } }), /NOT_QUALIFIED/);
+  assert.equal(calls, 0);
+  await assert.rejects(client.prepare_write(input), /RESPONSE_MISMATCH/);
+  assert.equal(calls, 1);
+  await assert.rejects(client.commit_post_write({ reservation: { intent_id: "foreign" } }), /RESERVATION_MISMATCH/);
 });

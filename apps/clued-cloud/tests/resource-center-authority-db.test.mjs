@@ -8,6 +8,7 @@ import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
 
 import { createResourceCenterGoogleDriveOnlineToolHost } from "../../../kernel/host/resource-center-online-tool-host.mjs";
+import { createResourceCenterWriteClient } from "../../../kernel/host/resource-center-write-client.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "../../../kernel/host/resource-center-governed-tool-surface.mjs";
 import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 
@@ -137,6 +138,13 @@ test("Canonical Resource Center registration and exact read-only authority", { t
     assert.equal(allowed.authority.governance_class, "ordinary");
     assert.match(allowed.authority.currentness_identity, /^decision:/);
     assert.match(allowed.authority.authority_version, /:1:1$/);
+    const exactRequest = (digest) => ({ mutation, binding: {
+      ...mutation, profile_id: profileId, profile_version: "test/1",
+      policy_version: "clued.resource-center-mutation-policy/1", request_sha256: digest,
+      artifact_authority_version: allowed.authority.authority_version,
+      currentness_identity: allowed.authority.currentness_identity,
+      governance_class: allowed.authority.governance_class,
+    } });
 
     await t.test("durable journal fences restart, start replay and uncertain effects", async () => {
       const journal = async (input, client = admin) => (await client.query(
@@ -146,7 +154,7 @@ test("Canonical Resource Center registration and exact read-only authority", { t
       )).rows[0].value;
       const prepare = {
         action: "prepare", request_key: "durable-create-1", request_sha256: "b".repeat(64),
-        exact_request: mutation, authority_token_hash: tokenHash,
+        exact_request: exactRequest("b".repeat(64)), authority_token_hash: tokenHash,
         authority_request: {
           profile_id: profileId, profile_version: "test/1",
           policy_version: "clued.resource-center-mutation-policy/1",
@@ -154,10 +162,14 @@ test("Canonical Resource Center registration and exact read-only authority", { t
         },
       };
       await assert.rejects(journal(prepare, anon), /permission denied/);
+      assert.equal((await journal({ ...prepare, exact_request: { ...prepare.exact_request,
+        binding: { ...prepare.exact_request.binding, destination_path: TRACK + "/substituted" } } })).status, "rejected");
       const prepared = await journal(prepare);
       assert.equal(prepared.status, "committed");
       assert.equal(prepared.state, "prepared");
       assert.equal(prepared.execution_permitted, false);
+      assert.equal((await journal({ action: "inspect", request_key: prepare.request_key,
+        request_sha256: prepare.request_sha256 })).intent_id, prepared.intent_id);
       const bound = { intent_id: prepared.intent_id, request_sha256: prepare.request_sha256 };
       const competitor = server.getPgClient();
       await competitor.connect();
@@ -167,7 +179,8 @@ test("Canonical Resource Center registration and exact read-only authority", { t
         const start = { ...bound, action: "start", base_version: 1,
           idempotency_key: "durable-start-once" };
         const results = await Promise.all([journal(start), journal({ ...start,
-          idempotency_key: "competing-start" }, competitor).catch((error) => ({ error: error.message }))]);
+          idempotency_key: "competing-start" }, competitor)].map((attempt) =>
+          attempt.catch((error) => ({ error: error.message }))));
         assert.equal(results.filter((value) => value.execution_permitted === true).length, 1);
         await assert.rejects(journal(start), /intent_conflict/);
         const unknown = await journal({ ...bound, action: "uncertain", base_version: 2 });
@@ -205,7 +218,7 @@ test("Canonical Resource Center registration and exact read-only authority", { t
           idempotency_key: crypto.randomUUID(), ...input })],
       )).rows[0].value;
       const prepared = await journal({ action: "prepare", request_key: "expired-create",
-        request_sha256: "c".repeat(64), exact_request: mutation, authority_token_hash: tokenHash,
+        request_sha256: "c".repeat(64), exact_request: exactRequest("c".repeat(64)), authority_token_hash: tokenHash,
         authority_request: { profile_id: profileId, profile_version: "test/1",
           policy_version: "clued.resource-center-mutation-policy/1", provider_identity: providerIdentity, mutation } });
       assert.equal(prepared.state, "prepared");
@@ -213,6 +226,13 @@ test("Canonical Resource Center registration and exact read-only authority", { t
       const bound = { intent_id: prepared.intent_id, request_sha256: "c".repeat(64), base_version: 1 };
       assert.equal((await journal({ ...bound, action: "start" })).status, "rejected");
       assert.equal((await journal({ ...bound, action: "cancel" })).state, "cancelled");
+    });
+
+    await t.test("a second profile cannot bypass the fence for the same provider root", async () => {
+      const alias = await adminCall({ action: "profile_register", project_id: PROJECT,
+        profile_version: "alias/1", managed_root: "G:/Alias/Clued_资料中心",
+        root_folder_id: ROOT_ID, root_parent_id: "my-drive", root_folder_version: "1" });
+      assert.equal(alias.status, "rejected");
     });
 
     await t.test("file registration and CAS update bind current provider version", async () => {
@@ -377,16 +397,18 @@ test("Canonical Resource Center registration and exact read-only authority", { t
       const worker = await loadContinuityWorker();
       const originalFetch = globalThis.fetch;
       globalThis.fetch = async (url, options) => {
-        assert.match(String(url), /\/rpc\/clued_resource_center_authority_v1$/);
+        assert.match(String(url), /\/rpc\/clued_resource_center_(authority|write)_v1$/);
         const body = JSON.parse(options.body);
+        const rpcName = String(url).endsWith("/clued_resource_center_write_v1")
+          ? "clued_resource_center_write_v1" : "clued_resource_center_authority_v1";
         const result = (await anon.query(
-          "select public.clued_resource_center_authority_v1($1,$2::jsonb) value",
+          `select public.${rpcName}($1,$2::jsonb) value`,
           [body.p_token_hash, JSON.stringify(body.p_request)],
         )).rows[0].value;
         return Response.json(result);
       };
       try {
-        const host = createResourceCenterGoogleDriveOnlineToolHost({
+        const hostOptions = {
           trusted_profile: {
             registration_status: "registered", profile_id: tempProfileId,
             profile_version: "temp/1", managed_root: nativeRoot,
@@ -419,7 +441,8 @@ test("Canonical Resource Center registration and exact read-only authority", { t
             { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
             { waitUntil() {}, passThroughOnException() {} },
           ),
-        });
+        };
+        const host = createResourceCenterGoogleDriveOnlineToolHost(hostOptions);
         const createTopic = (destination) => host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
           operation: "create", destination_path: destination,
           target_kind: "directory", directory_semantics: "topic",
@@ -427,6 +450,66 @@ test("Canonical Resource Center registration and exact read-only authority", { t
         assert.equal((await createTopic(nativeTopic)).error_code,
           "POST_WRITE_CANONICAL_RECEIPT_UNAVAILABLE");
         await assert.rejects(fs.stat(nativeTopic), { code: "ENOENT" });
+        const writerToken = "clued_rcw_" + "w".repeat(40);
+        const readBindingId = tempBinding.target_refs.find((ref) => ref.role === "primary").id;
+        const writerIssued = (await admin.query(
+          "select public.clued_resource_center_writer_admin_v1($1,$2::jsonb) value", [USER, JSON.stringify({
+            action: "issue", authority_binding_id: readBindingId, source_decision_id: DECISION,
+            token_hash: crypto.createHash("sha256").update(writerToken).digest("hex"),
+            expires_at: new Date(Date.now() + 1800000).toISOString(), idempotency_key: crypto.randomUUID(),
+          })],
+        )).rows[0].value;
+        assert.equal(writerIssued.status, "committed");
+        const writeClient = createResourceCenterWriteClient({
+          endpoint: "https://clued.test/v1/resource-center/write", binding_token: writerToken,
+          fetch: hostOptions.authority_fetch,
+          resolve_provider_identity: async () => ({
+            root_folder_id: "temp-root-id", root_parent_id: "temp-parent-id", root_folder_version: "1",
+            source_file_id: null, source_file_version: null,
+            destination_parent_id: "temp-track-id", destination_parent_version: "2",
+            destination_file_id: null, destination_file_version: null, provider_version: "a".repeat(64),
+          }),
+          verify_postcondition: async ({ mutation: effectMutation }) => {
+            assert.equal((await fs.stat(effectMutation.destination_path)).isDirectory(), true);
+            return { path: effectMutation.destination_path.replaceAll("\\", "/"), parent_id: "temp-track-id",
+              provider_file_id: "temp-new-topic-id", provider_file_version: "1" };
+          },
+        });
+        const writer = createResourceCenterGoogleDriveOnlineToolHost({ ...hostOptions, ...writeClient });
+        const written = await writer.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+          operation: "create", destination_path: nativeTopic, target_kind: "directory", directory_semantics: "topic",
+        });
+        assert.equal(written.status, "committed");
+        assert.match(written.canonical_receipt_id, /^[0-9a-f-]{36}$/);
+        assert.equal((await admin.query("select state from clued_private.resource_center_mutations_v1 where profile_id=$1", [tempProfileId])).rows[0].state, "committed");
+        assert.equal((await admin.query("select count(*)::int n from clued_private.resource_center_artifacts_v1 where profile_id=$1 and provider_file_id='temp-new-topic-id'", [tempProfileId])).rows[0].n, 1);
+        const writerHash = crypto.createHash("sha256").update(writerToken).digest("hex");
+        const callWriter = async (token, input) => (await anon.query(
+          "select public.clued_resource_center_write_v1($1,$2::jsonb) value", [token, JSON.stringify(input)],
+        )).rows[0].value;
+        assert.equal((await callWriter(crypto.createHash("sha256").update(rawToken).digest("hex"), { action: "inspect" })).status, "denied");
+        assert.equal((await callWriter(writerHash, { action: "inspect", profile_id: profileId })).status, "denied");
+        assert.equal((await callWriter(writerHash, { action: "inspect", authority_token_hash: tokenHash })).status, "denied");
+        const ownIntent = (await admin.query(
+          "select id,request_sha256 from clued_private.resource_center_mutations_v1 where profile_id=$1", [tempProfileId],
+        )).rows[0];
+        const inspect = { action: "inspect", intent_id: ownIntent.id, request_sha256: ownIntent.request_sha256 };
+        assert.equal((await callWriter(writerHash, inspect)).status, "committed");
+        const secondWriterHash = crypto.createHash("sha256").update("second-writer-test-only").digest("hex");
+        const writerAdmin = async (input) => (await admin.query(
+          "select public.clued_resource_center_writer_admin_v1($1,$2::jsonb) value", [USER, JSON.stringify({
+            authority_binding_id: readBindingId, source_decision_id: DECISION,
+            idempotency_key: crypto.randomUUID(), ...input,
+          })],
+        )).rows[0].value;
+        const secondWriter = await writerAdmin({ action: "issue", token_hash: secondWriterHash,
+          expires_at: new Date(Date.now() + 1800000).toISOString() });
+        assert.equal(secondWriter.status, "committed");
+        assert.equal((await callWriter(secondWriterHash, inspect)).status, "denied");
+        assert.equal((await writerAdmin({ action: "revoke",
+          writer_binding_id: secondWriter.target_refs.find((ref) => ref.role === "primary").id })).status, "committed");
+        assert.equal((await callWriter(secondWriterHash, inspect)).status, "denied");
+        assert.equal((await callWriter(writerHash, inspect)).status, "committed");
         const unregisteredChild = path.join(nativeTopic, "child.txt");
         assert.equal((await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
           operation: "create", destination_path: unregisteredChild,
@@ -437,6 +520,7 @@ test("Canonical Resource Center registration and exact read-only authority", { t
         assert.equal((await adminCall({
           action: "binding_revoke", profile_id: tempProfileId, binding_id: bindingId,
         })).status, "committed");
+        assert.equal((await callWriter(writerHash, { action: "inspect" })).status, "denied");
         const deniedTopic = path.join(nativeTrack, "revoked");
         assert.equal((await createTopic(deniedTopic)).error_code,
           "ARTIFACT_AUTHORITY_RESOLUTION_FAILED");

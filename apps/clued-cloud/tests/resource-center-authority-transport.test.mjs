@@ -87,3 +87,40 @@ test("normal Clued Bindings, changed request digests and denied registration hav
     globalThis.fetch = originalFetch;
   }
 });
+
+test("writer route separates credentials, binds responses and fails closed on transport error", async () => {
+  const worker = await loadContinuityWorker();
+  const originalFetch = globalThis.fetch;
+  const writerToken = "clued_rcw_" + "w".repeat(40);
+  const writeRequest = { action: "inspect", intent_id: "11111111-1111-4111-8111-111111111111",
+    request_sha256: "a".repeat(64) };
+  const body = { contract: "clued.resource-center-write/1", nonce: request.nonce,
+    request: writeRequest, request_sha256: digest(writeRequest) };
+  const call = (credential, payload = body) => worker.fetch(new Request("https://clued.test/v1/resource-center/write", {
+    method: "POST", headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  }), env, ctx);
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), body: JSON.parse(options.body) });
+    return Response.json({ status: "prepared", execution_permitted: false });
+  };
+  try {
+    assert.equal((await call(token)).status, 403);
+    assert.equal((await call("clued_bnd_" + "b".repeat(40))).status, 403);
+    assert.equal((await call(writerToken, { ...body, request_sha256: "0".repeat(64) })).status, 403);
+    assert.equal(calls.length, 0);
+    const response = await call(writerToken);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { ...body, outcome: { status: "prepared", execution_permitted: false } });
+    assert.match(calls[0].url, /\/rpc\/clued_resource_center_write_v1$/);
+    assert.equal(JSON.stringify(calls).includes(writerToken), false);
+    globalThis.fetch = async () => Response.json({ status: "denied" });
+    assert.equal((await call(writerToken)).status, 403);
+    globalThis.fetch = async () => { throw new Error("offline"); };
+    assert.equal((await call(writerToken)).status, 503);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
