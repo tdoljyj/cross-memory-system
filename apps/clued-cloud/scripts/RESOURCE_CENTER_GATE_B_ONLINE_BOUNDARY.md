@@ -13,6 +13,10 @@ Drive identity resolver maps the pinned root and each path component to unique
 live Drive IDs/versions; duplicate names or a moved root deny. A read-only
 Drive metadata transport is included, but the Host must still supply an
 authenticated, revocable metadata-only credential and keep it in secret storage.
+The Host also combines the Canonical workspace version with the pinned Drive
+IDs/versions in its in-process admission binding. If provider identity changes
+between the two online checks, admission is consumed and the side effect is
+denied even when the Canonical authority response itself is unchanged.
 The production Clued service endpoint and live credential are **not** included.
 `createResourceCenterGoogleDriveOnlineToolHost` composes both Host-held read
 channels; its positive temporary-directory test uses simulated metadata and
