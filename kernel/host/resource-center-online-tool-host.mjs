@@ -1,4 +1,5 @@
 import { createResourceCenterFilesystemAdapter } from "./resource-center-filesystem-adapter.mjs";
+import { createResourceCenterAuthorityClient } from "./resource-center-authority-client.mjs";
 import { createResourceCenterGovernedToolSurface } from "./resource-center-governed-tool-surface.mjs";
 
 function deny(errorCode) {
@@ -79,5 +80,24 @@ export function createResourceCenterOnlineToolHost({
     profile_identity: surface.profile_identity,
     listTools: surface.listTools,
     callTool: surface.callTool,
+  });
+}
+
+/** Production wiring: the only remote lookup comes from a Host-held Binding. */
+export function createResourceCenterOnlineToolHostFromService({
+  authority_endpoint: authorityEndpoint,
+  authority_binding_token: authorityBindingToken,
+  resolve_provider_identity: resolveProviderIdentity,
+  fetch,
+  ...hostOptions
+} = {}) {
+  return createResourceCenterOnlineToolHost({
+    ...hostOptions,
+    resolve_artifact_online: createResourceCenterAuthorityClient({
+      endpoint: authorityEndpoint,
+      binding_token: authorityBindingToken,
+      resolve_provider_identity: resolveProviderIdentity,
+      fetch,
+    }),
   });
 }

@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createResourceCenterOnlineToolHost } from "../../../kernel/host/resource-center-online-tool-host.mjs";
+import {
+  createResourceCenterOnlineToolHost,
+  createResourceCenterOnlineToolHostFromService,
+} from "../../../kernel/host/resource-center-online-tool-host.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "../../../kernel/host/resource-center-governed-tool-surface.mjs";
 import { qualifyResourceCenterHost } from "../../../kernel/host/resource-center-host-qualification.mjs";
 
@@ -123,4 +126,32 @@ test("status folder and caller authority are denied without an effect", async (t
   })).error_code, "CONTROLLED_TOOL_ARGUMENTS_INVALID");
   assert.equal(calls, 1);
   await assert.rejects(fs.stat(statusPath), { code: "ENOENT" });
+});
+
+test("production wiring rejects a mismatched authority reply before touching the filesystem", async (t) => {
+  const { profile, destination } = await fixture(t);
+  const host = createResourceCenterOnlineToolHostFromService({
+    trusted_profile: profile,
+    authority_endpoint: "https://clued.example/v1/resource-center/authority",
+    authority_binding_token: `clued_rcb_${"a".repeat(40)}`,
+    resolve_provider_identity: async () => ({
+      root_folder_id: "root-id", source_file_id: null,
+      destination_parent_id: "parent-id", provider_version: "123",
+    }),
+    fetch: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      return { ok: true, json: async () => ({
+        contract: body.request.contract, status: "resolved",
+        request_sha256: body.request_sha256,
+        request: { ...body.request, profile_id: "wrong-profile" },
+        authority: authority(),
+      }) };
+    },
+  });
+  const result = await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+    operation: "create", destination_path: destination,
+    target_kind: "directory", directory_semantics: "track",
+  });
+  assert.equal(result.error_code, "ARTIFACT_AUTHORITY_RESOLUTION_FAILED");
+  await assert.rejects(fs.stat(destination), { code: "ENOENT" });
 });

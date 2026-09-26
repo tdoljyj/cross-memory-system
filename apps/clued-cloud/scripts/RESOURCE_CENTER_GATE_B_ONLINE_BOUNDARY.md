@@ -3,7 +3,13 @@
 `kernel/host/resource-center-online-tool-host.mjs` is an asynchronous bridge
 between a Host-owned online resolver and the existing exact, single-use
 filesystem admission. It is **not** a live resolver, a production registration,
-or a Gate B qualification by itself.
+or a Gate B qualification by itself. `createResourceCenterOnlineToolHostFromService`
+adds a fixed HTTPS `/v1/resource-center/authority` client with a Host-held
+dedicated Binding token. Every request includes an unpredictable nonce and the
+exact operation, paths, role, profile/policy versions and Host-resolved provider
+IDs; the response must echo the identical request and digest. A mismatch or
+missing provider identity denies before any filesystem effect. The service
+endpoint and Google Drive provider-ID resolver are **not** implemented here.
 
 The Host must supply `resolve_artifact_online` from a separately authenticated,
 revocable, least-privilege Clued Binding. For each exact mutation it must obtain
@@ -37,8 +43,10 @@ required and independently evidenced:
    drops and duplicate-bytes delete have zero side effects. A permitted
    track-to-topic operation must produce a verified result/Receipt.
 
-Until every item passes on the real endpoint, retain the installed read-only
-stdio pilot and `TRUSTED_ARTIFACT_CURRENTNESS_RESOLVER_UNAVAILABLE` for all
-mutation requests. Do not edit the real Resource Center, change Windows ACLs,
-or publish the Clued service as part of this candidate. Rollback of a later
-isolated connection must leave the ordinary RDP connection intact.
+The Owner has authorized a reviewed production resolver, dedicated restricted
+environment and temporary-directory acceptance. That authorization does not
+turn this candidate client into a live authority source. Until every item
+passes on the real endpoint, retain the installed read-only stdio pilot and
+`TRUSTED_ARTIFACT_CURRENTNESS_RESOLVER_UNAVAILABLE` for all mutation requests.
+Do not edit the real Resource Center or globally change RDP/Windows ACLs.
+Rollback of a later isolated connection must leave ordinary RDP intact.
