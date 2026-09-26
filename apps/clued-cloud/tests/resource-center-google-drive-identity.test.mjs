@@ -37,8 +37,11 @@ test("Drive identity binds a normal track-to-topic move to exact IDs and version
   };
   const identity = await resolve({ profile: { managed_root: root }, mutation });
   assert.equal(identity.root_folder_id, "root-id");
+  assert.equal(identity.root_folder_version, "1");
   assert.equal(identity.source_file_id, "source");
+  assert.equal(identity.source_file_version, "5");
   assert.equal(identity.destination_parent_id, "topic");
+  assert.equal(identity.destination_parent_version, "4");
   assert.equal(identity.destination_file_id, null);
   assert.match(identity.provider_version, /^[0-9a-f]{64}$/);
   files.find((item) => item.id === "source").version = "6";

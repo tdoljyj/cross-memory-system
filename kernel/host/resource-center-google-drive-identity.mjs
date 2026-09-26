@@ -102,9 +102,13 @@ export function createGoogleDriveProviderIdentityResolver({
 
     return Object.freeze({
       root_folder_id: rootFolderId,
+      root_folder_version: rootFile.version,
       source_file_id: source?.id ?? null,
+      source_file_version: source?.version ?? null,
       destination_parent_id: destinationParent?.id ?? null,
+      destination_parent_version: destinationParent?.version ?? null,
       destination_file_id: destinationFile?.id ?? null,
+      destination_file_version: destinationFile?.version ?? null,
       provider_version: createHash("sha256").update(JSON.stringify(versions)).digest("hex"),
     });
   };

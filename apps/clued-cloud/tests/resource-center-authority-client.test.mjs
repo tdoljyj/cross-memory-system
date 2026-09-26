@@ -15,9 +15,11 @@ const authority = {
   currentness_identity: "currentness/1", workspace_version: "workspace/1",
 };
 const providerIdentity = {
-  root_folder_id: "root-id", source_file_id: null,
-  destination_parent_id: "parent-id", destination_file_id: null,
-  provider_version: "123",
+  root_folder_id: "root-id", root_folder_version: "1",
+  source_file_id: null, source_file_version: null,
+  destination_parent_id: "parent-id", destination_parent_version: "2",
+  destination_file_id: null, destination_file_version: null,
+  provider_version: "a".repeat(64),
 };
 
 test("dedicated resolver binds the exact request and keeps its token out of tool input", async () => {

@@ -48,15 +48,25 @@ export function createResourceCenterAuthorityClient({
     const providerIdentity = await resolveProviderIdentity(Object.freeze({ profile, mutation }));
     if (!providerIdentity || typeof providerIdentity !== "object" || Array.isArray(providerIdentity) ||
       (typeof providerIdentity.source_file_id !== "string" && providerIdentity.source_file_id !== null) ||
+      (typeof providerIdentity.source_file_version !== "string" && providerIdentity.source_file_version !== null) ||
       (typeof providerIdentity.destination_parent_id !== "string" && providerIdentity.destination_parent_id !== null) ||
+      (typeof providerIdentity.destination_parent_version !== "string" && providerIdentity.destination_parent_version !== null) ||
       (typeof providerIdentity.destination_file_id !== "string" && providerIdentity.destination_file_id !== null) ||
+      (typeof providerIdentity.destination_file_version !== "string" && providerIdentity.destination_file_version !== null) ||
       (mutation.operation === "delete" && !providerIdentity.source_file_id) ||
       (["move", "rename"].includes(mutation.operation) &&
         (!providerIdentity.source_file_id || !providerIdentity.destination_parent_id)) ||
       (["create", "write", "replace"].includes(mutation.operation) && !providerIdentity.destination_parent_id) ||
       (["write", "replace"].includes(mutation.operation) && !providerIdentity.destination_file_id) ||
       (["create", "move", "rename"].includes(mutation.operation) && providerIdentity.destination_file_id !== null) ||
-      typeof providerIdentity.provider_version !== "string" || !providerIdentity.provider_version ||
+      (providerIdentity.source_file_id !== null && !/^\d+$/.test(providerIdentity.source_file_version)) ||
+      (providerIdentity.source_file_id === null && providerIdentity.source_file_version !== null) ||
+      (providerIdentity.destination_parent_id !== null && !/^\d+$/.test(providerIdentity.destination_parent_version)) ||
+      (providerIdentity.destination_parent_id === null && providerIdentity.destination_parent_version !== null) ||
+      (providerIdentity.destination_file_id !== null && !/^\d+$/.test(providerIdentity.destination_file_version)) ||
+      (providerIdentity.destination_file_id === null && providerIdentity.destination_file_version !== null) ||
+      typeof providerIdentity.root_folder_version !== "string" || !/^\d+$/.test(providerIdentity.root_folder_version) ||
+      typeof providerIdentity.provider_version !== "string" || !/^[0-9a-f]{64}$/.test(providerIdentity.provider_version) ||
       typeof providerIdentity.root_folder_id !== "string" || !providerIdentity.root_folder_id) {
       throw new Error("PROVIDER_IDENTITY_UNAVAILABLE");
     }
@@ -68,9 +78,13 @@ export function createResourceCenterAuthorityClient({
       profile_version: profile.profile_version,
       provider_identity: Object.freeze({
         root_folder_id: providerIdentity.root_folder_id,
+        root_folder_version: providerIdentity.root_folder_version,
         source_file_id: providerIdentity.source_file_id,
+        source_file_version: providerIdentity.source_file_version,
         destination_parent_id: providerIdentity.destination_parent_id,
+        destination_parent_version: providerIdentity.destination_parent_version,
         destination_file_id: providerIdentity.destination_file_id,
+        destination_file_version: providerIdentity.destination_file_version,
         provider_version: providerIdentity.provider_version,
       }),
       mutation: bindResourceCenterMutation(mutation),

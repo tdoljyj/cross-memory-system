@@ -136,9 +136,11 @@ test("production wiring rejects a mismatched authority reply before touching the
     authority_endpoint: "https://clued.example/v1/resource-center/authority",
     authority_binding_token: `clued_rcb_${"a".repeat(40)}`,
     resolve_provider_identity: async () => ({
-      root_folder_id: "root-id", source_file_id: null,
-      destination_parent_id: "parent-id", destination_file_id: null,
-      provider_version: "123",
+      root_folder_id: "root-id", root_folder_version: "1",
+      source_file_id: null, source_file_version: null,
+      destination_parent_id: "parent-id", destination_parent_version: "2",
+      destination_file_id: null, destination_file_version: null,
+      provider_version: "a".repeat(64),
     }),
     fetch: async (_url, options) => {
       const body = JSON.parse(options.body);
