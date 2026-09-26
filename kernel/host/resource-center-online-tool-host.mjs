@@ -20,15 +20,17 @@ function deny(errorCode) {
  * The lookup must itself authenticate a least-privilege Binding and return a
  * live, path-specific Artifact/Currentness result. This factory does not treat
  * a local file, caller claim, or cached snapshot as that authority.
- * `commit_post_write` is a Host-owned Canonical finalizer, not a caller input.
- * Until a real CAS/Receipt service implementation is installed, omit it: the
+ * `prepare_write` reserves and consumes a durable, exact Canonical intent;
+ * `commit_post_write` is its Host-owned finalizer. Neither is a caller input.
+ * Until a real CAS/Receipt service implementation is installed, omit them: the
  * online Host then exposes only boundary scanning and denies all mutations.
- * An in-process quarantine is a local fail-closed measure, not durable
- * recovery or proof that another Host instance cannot write.
+ * The in-process quarantine supplements the service's durable profile fence.
+ * Installing callbacks alone is not proof of a qualified production service.
  */
 export function createResourceCenterOnlineToolHost({
   trusted_profile: trustedProfile,
   resolve_artifact_online: resolveArtifactOnline,
+  prepare_write: prepareWrite,
   commit_post_write: commitPostWrite,
   classify_observed_entry: classifyObservedEntry,
   filesystem,
@@ -95,6 +97,27 @@ export function createResourceCenterOnlineToolHost({
     if (typeof commitPostWrite !== "function") {
       return deny("POST_WRITE_CANONICAL_RECEIPT_UNAVAILABLE");
     }
+    if (typeof prepareWrite !== "function") {
+      return deny("DURABLE_WRITE_RESERVATION_UNAVAILABLE");
+    }
+    let reservation;
+    try {
+      reservation = await prepareWrite(Object.freeze({
+        ...request, binding: preflight.admission.binding,
+      }));
+      if (reservation?.status !== "started" || reservation.execution_permitted !== true ||
+        typeof reservation.intent_id !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reservation.intent_id) ||
+        reservation.request_sha256 !== preflight.admission.binding.request_sha256) {
+        throw new Error("RESERVATION_INVALID");
+      }
+      reservation = Object.freeze(structuredClone(reservation));
+    } catch {
+      // A lost start response may have consumed the durable reservation. Do
+      // not retry the effect or clear it; recovery inspects Canonical state.
+      quarantined = true;
+      return deny("DURABLE_WRITE_RESERVATION_FAILED");
+    }
     let effect;
     try {
       effect = await adapter.commitMutation({ admission: preflight.admission, mutation });
@@ -107,11 +130,17 @@ export function createResourceCenterOnlineToolHost({
         side_effects: "unknown",
       });
     }
-    if (effect.status !== "committed") return effect;
+    if (effect.status !== "committed") {
+      // The service has already fenced the operation. Even a local admission
+      // denial requires reconciliation rather than silently abandoning it.
+      quarantined = true;
+      return effect;
+    }
     try {
       const receipt = await commitPostWrite(Object.freeze({
         mutation: Object.freeze(structuredClone(mutation)),
         binding: effect.binding,
+        reservation,
         effect_result: effect.effect_result,
       }));
       if (receipt?.status !== "committed" ||
@@ -143,7 +172,7 @@ export function createResourceCenterOnlineToolHost({
   return Object.freeze({
     profile_identity: surface.profile_identity,
     // A read-only registration must not advertise a qualified mutation tool.
-    listTools: () => typeof commitPostWrite === "function" && !quarantined
+    listTools: () => typeof commitPostWrite === "function" && typeof prepareWrite === "function" && !quarantined
       ? surface.listTools()
       : surface.listTools().filter((tool) => tool.name !== RESOURCE_CENTER_MUTATION_TOOL),
     callTool: surface.callTool,

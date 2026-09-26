@@ -138,6 +138,83 @@ test("Canonical Resource Center registration and exact read-only authority", { t
     assert.match(allowed.authority.currentness_identity, /^decision:/);
     assert.match(allowed.authority.authority_version, /:1:1$/);
 
+    await t.test("durable journal fences restart, start replay and uncertain effects", async () => {
+      const journal = async (input, client = admin) => (await client.query(
+        "select public.clued_resource_center_mutation_journal_v1($1,$2::jsonb) value",
+        [USER, JSON.stringify({ profile_id: profileId, source_decision_id: DECISION,
+          idempotency_key: crypto.randomUUID(), ...input })],
+      )).rows[0].value;
+      const prepare = {
+        action: "prepare", request_key: "durable-create-1", request_sha256: "b".repeat(64),
+        exact_request: mutation, authority_token_hash: tokenHash,
+        authority_request: {
+          profile_id: profileId, profile_version: "test/1",
+          policy_version: "clued.resource-center-mutation-policy/1",
+          provider_identity: providerIdentity, mutation,
+        },
+      };
+      await assert.rejects(journal(prepare, anon), /permission denied/);
+      const prepared = await journal(prepare);
+      assert.equal(prepared.status, "committed");
+      assert.equal(prepared.state, "prepared");
+      assert.equal(prepared.execution_permitted, false);
+      const bound = { intent_id: prepared.intent_id, request_sha256: prepare.request_sha256 };
+      const competitor = server.getPgClient();
+      await competitor.connect();
+      try {
+        const other = await journal({ ...prepare, request_key: "another-host" }, competitor);
+        assert.equal(other.status, "rejected");
+        const start = { ...bound, action: "start", base_version: 1,
+          idempotency_key: "durable-start-once" };
+        const results = await Promise.all([journal(start), journal({ ...start,
+          idempotency_key: "competing-start" }, competitor).catch((error) => ({ error: error.message }))]);
+        assert.equal(results.filter((value) => value.execution_permitted === true).length, 1);
+        await assert.rejects(journal(start), /intent_conflict/);
+        const unknown = await journal({ ...bound, action: "uncertain", base_version: 2 });
+        assert.equal(unknown.state, "uncertain");
+        // Expiry is not a lock-release mechanism once the effect might exist.
+        await admin.query("update clued_private.resource_center_mutations_v1 set expires_at=now()-interval '1 hour' where id=$1", [prepared.intent_id]);
+        assert.equal((await journal({ ...prepare, request_key: "after-restart" }, competitor)).status, "rejected");
+        assert.equal((await journal({ ...bound, action: "cancel", base_version: 3 })).status, "rejected");
+        const postcondition = { path: mutation.destination_path, parent_id: TRACK_ID,
+          provider_file_id: "journal-created-topic", provider_file_version: "1" };
+        assert.equal((await journal({ ...bound, action: "finalize", base_version: 3,
+          postcondition: { ...postcondition, path: ROOT + "/wrong" } })).status, "rejected");
+        assert.equal((await journal({ ...bound, action: "inspect" })).status, "uncertain");
+        const finalized = await journal({ ...bound, action: "finalize", base_version: 3, postcondition });
+        assert.equal(finalized.state, "committed");
+        assert.equal(finalized.final_result.status, "committed");
+        assert.equal(finalized.execution_permitted, false);
+        const receipt = await admin.query("select status from public.clued_audit_receipts where id=$1", [finalized.receipt_id]);
+        assert.equal(receipt.rows[0].status, "committed");
+        assert.equal((await journal({ ...bound, action: "inspect" }, competitor)).status, "committed");
+        assert.equal((await admin.query("select count(*)::int n from clued_private.resource_center_artifacts_v1 where provider_file_id='journal-created-topic'")).rows[0].n, 1);
+      } finally {
+        await competitor.end();
+      }
+      // Keep later read-resolver fixtures independent of this created topic.
+      const artifact = (await admin.query("select id,version from clued_private.resource_center_artifacts_v1 where provider_file_id='journal-created-topic'")).rows[0];
+      assert.equal((await adminCall({ action: "artifact_revoke", profile_id: profileId,
+        artifact_id: artifact.id, base_version: artifact.version })).status, "committed");
+    });
+
+    await t.test("expired unstarted journal can cancel but cannot execute", async () => {
+      const journal = async (input) => (await admin.query(
+        "select public.clued_resource_center_mutation_journal_v1($1,$2::jsonb) value",
+        [USER, JSON.stringify({ profile_id: profileId, source_decision_id: DECISION,
+          idempotency_key: crypto.randomUUID(), ...input })],
+      )).rows[0].value;
+      const prepared = await journal({ action: "prepare", request_key: "expired-create",
+        request_sha256: "c".repeat(64), exact_request: mutation, authority_token_hash: tokenHash,
+        authority_request: { profile_id: profileId, profile_version: "test/1",
+          policy_version: "clued.resource-center-mutation-policy/1", provider_identity: providerIdentity, mutation } });
+      assert.equal(prepared.state, "prepared");
+      await admin.query("update clued_private.resource_center_mutations_v1 set expires_at=now()-interval '1 second' where id=$1", [prepared.intent_id]);
+      const bound = { intent_id: prepared.intent_id, request_sha256: "c".repeat(64), base_version: 1 };
+      assert.equal((await journal({ ...bound, action: "start" })).status, "rejected");
+      assert.equal((await journal({ ...bound, action: "cancel" })).state, "cancelled");
+    });
+
     await t.test("file registration and CAS update bind current provider version", async () => {
       const filePath = TRACK + "/logo.svg";
       const file = await adminCall({

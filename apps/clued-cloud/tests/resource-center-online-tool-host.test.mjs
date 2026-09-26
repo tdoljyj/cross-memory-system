@@ -35,6 +35,11 @@ function authority(version = "canonical/1") {
   };
 }
 
+async function testReservation({ binding }) {
+  return { status: "started", execution_permitted: true,
+    intent_id: "00000000-0000-4000-8000-000000000010", request_sha256: binding.request_sha256 };
+}
+
 async function fixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "clued-online-host-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -52,6 +57,7 @@ test("online Host rechecks exact authority before a permitted effect", async (t)
       observed.push({ profile: boundProfile, mutation });
       return authority();
     },
+    prepare_write: testReservation,
     commit_post_write: async ({ binding }) => ({
       status: "committed", receipt_id: "00000000-0000-4000-8000-000000000001",
       request_sha256: binding.request_sha256,
@@ -79,6 +85,7 @@ test("online authority drift and failure cause zero filesystem effects", async (
   const host = createResourceCenterOnlineToolHost({
     trusted_profile: profile,
     resolve_artifact_online: async () => authority(++calls === 1 ? "canonical/1" : "canonical/2"),
+    prepare_write: testReservation,
     commit_post_write: async ({ binding }) => ({
       status: "committed", receipt_id: "00000000-0000-4000-8000-000000000001",
       request_sha256: binding.request_sha256,
@@ -159,12 +166,53 @@ test("one Host cannot run two governed mutations concurrently", async (t) => {
   await assert.rejects(fs.stat(destination), { code: "ENOENT" });
 });
 
+test("a finalizer alone is insufficient without a durable reservation", async (t) => {
+  const { profile, destination } = await fixture(t);
+  const host = createResourceCenterOnlineToolHost({
+    trusted_profile: profile, resolve_artifact_online: async () => authority(),
+    commit_post_write: async () => { throw new Error("must not be reached"); },
+  });
+  const result = await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+    operation: "create", destination_path: destination,
+    target_kind: "directory", directory_semantics: "track",
+  });
+  assert.equal(result.error_code, "DURABLE_WRITE_RESERVATION_UNAVAILABLE");
+  assert.equal(host.listTools().some((tool) => tool.name === RESOURCE_CENTER_MUTATION_TOOL), false);
+  await assert.rejects(fs.stat(destination), { code: "ENOENT" });
+});
+
+test("lost or mismatched durable start responses cause zero effects and no retry", async (t) => {
+  for (const mode of ["lost", "wrong_digest", "replayed"]) {
+    const { profile, destination } = await fixture(t);
+    let calls = 0;
+    const host = createResourceCenterOnlineToolHost({
+      trusted_profile: profile, resolve_artifact_online: async () => authority(),
+      prepare_write: async ({ binding }) => {
+        calls += 1;
+        if (mode === "lost") throw new Error("response lost after start");
+        return { ...await testReservation({ binding }),
+          ...(mode === "wrong_digest" ? { request_sha256: "f".repeat(64) } : { execution_permitted: false }) };
+      },
+      commit_post_write: async () => { throw new Error("must not be reached"); },
+    });
+    const mutation = { operation: "create", destination_path: destination,
+      target_kind: "directory", directory_semantics: "track" };
+    assert.equal((await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, mutation)).error_code,
+      "DURABLE_WRITE_RESERVATION_FAILED");
+    assert.equal((await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, mutation)).error_code,
+      "POST_WRITE_RECONCILIATION_REQUIRED");
+    assert.equal(calls, 1);
+    await assert.rejects(fs.stat(destination), { code: "ENOENT" });
+  }
+});
+
 test("failed post-write finalization never reports committed and quarantines the Host", async (t) => {
   const { profile, destination } = await fixture(t);
   let finalizeCalls = 0;
   const host = createResourceCenterOnlineToolHost({
     trusted_profile: profile,
     resolve_artifact_online: async () => authority(),
+    prepare_write: testReservation,
     commit_post_write: async () => { finalizeCalls += 1; throw new Error("offline"); },
   });
   const mutation = {
@@ -188,6 +236,7 @@ test("a receipt for another mutation cannot acknowledge this storage effect", as
   const host = createResourceCenterOnlineToolHost({
     trusted_profile: profile,
     resolve_artifact_online: async () => authority(),
+    prepare_write: testReservation,
     commit_post_write: async () => ({
       status: "committed", receipt_id: "00000000-0000-4000-8000-000000000002",
       request_sha256: "0".repeat(64),
@@ -261,6 +310,7 @@ test("production wiring consumes admission when the Drive parent version changes
   let reads = 0;
   const host = createResourceCenterOnlineToolHostFromService({
     trusted_profile: profile,
+    prepare_write: testReservation,
     commit_post_write: async ({ binding }) => ({
       status: "committed", receipt_id: "00000000-0000-4000-8000-000000000001",
       request_sha256: binding.request_sha256,
@@ -312,6 +362,7 @@ test("pinned Drive metadata and Clued service compose without exposing authority
     },
     authority_endpoint: "https://clued.example/v1/resource-center/authority",
     authority_binding_token: `clued_rcb_${"a".repeat(40)}`,
+    prepare_write: testReservation,
     commit_post_write: async ({ binding }) => ({
       status: "committed", receipt_id: "00000000-0000-4000-8000-000000000001",
       request_sha256: binding.request_sha256,
