@@ -17,7 +17,11 @@ export function createResourceCenterStdioPilot({ trusted_profile: trustedProfile
       throw new Error("TRUSTED_ARTIFACT_CURRENTNESS_RESOLVER_UNAVAILABLE");
     },
   });
-  const tools = host.listTools();
+  const tools = Object.freeze(host.listTools().map((tool) => Object.freeze(
+    tool.name === RESOURCE_CENTER_MUTATION_TOOL
+      ? { ...tool, description: "Read-only pilot: Resource Center mutations always fail closed until a trusted live Artifact/Currentness resolver is installed." }
+      : tool,
+  )));
   const qualification = qualifyResourceCenterHost({ trusted_profile: trustedProfile, tools });
   if (qualification.status !== "qualified") {
     throw new Error("RESOURCE_CENTER_PILOT_TOOL_SURFACE_NOT_QUALIFIED");
