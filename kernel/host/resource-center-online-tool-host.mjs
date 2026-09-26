@@ -143,7 +143,7 @@ export function createResourceCenterOnlineToolHost({
   return Object.freeze({
     profile_identity: surface.profile_identity,
     // A read-only registration must not advertise a qualified mutation tool.
-    listTools: () => typeof commitPostWrite === "function"
+    listTools: () => typeof commitPostWrite === "function" && !quarantined
       ? surface.listTools()
       : surface.listTools().filter((tool) => tool.name !== RESOURCE_CENTER_MUTATION_TOOL),
     callTool: surface.callTool,

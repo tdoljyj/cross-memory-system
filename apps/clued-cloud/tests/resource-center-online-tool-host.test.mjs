@@ -177,6 +177,7 @@ test("failed post-write finalization never reports committed and quarantines the
   assert.equal(first.side_effects, 1);
   assert.equal((await fs.stat(destination)).isDirectory(), true);
   assert.equal(finalizeCalls, 1);
+  assert.equal(host.listTools().some((tool) => tool.name === RESOURCE_CENTER_MUTATION_TOOL), false);
   const second = await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, mutation);
   assert.equal(second.error_code, "POST_WRITE_RECONCILIATION_REQUIRED");
   assert.equal(finalizeCalls, 1);
