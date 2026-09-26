@@ -297,6 +297,50 @@ revoke all on function public.clued_resource_center_admin_v1(uuid,jsonb)
   from public,anon,authenticated;
 grant execute on function public.clued_resource_center_admin_v1(uuid,jsonb) to service_role;
 
+-- A registration is usable only while its Owner Decision and every directory
+-- ancestor remain current. Revoking a parent cannot leave live children usable.
+create function clued_private.resource_center_decision_current_v1(
+  p_user_id uuid,p_project_id uuid,p_decision_id uuid
+) returns boolean language sql security definer set search_path='' as $$
+  select exists(select 1 from public.clued_memories m
+    where m.id=p_decision_id and m.user_id=p_user_id
+      and m.record_type='decision' and m.authority='user_explicit'
+      and m.lifecycle_status='active'
+      and m.canonical_scope='project:'||p_project_id::text
+      and clued_private.record_currentness_fence(
+        p_user_id,m.id,array['project:'||p_project_id::text])='CURRENT');
+$$;
+revoke all on function clued_private.resource_center_decision_current_v1(uuid,uuid,uuid)
+  from public,anon,authenticated;
+
+create function clued_private.resource_center_path_current_v1(
+  p_user_id uuid,p_project_id uuid,p_profile_id uuid,p_root text,p_path text
+) returns boolean language plpgsql security definer set search_path='' as $$
+declare
+  v_path text:=p_path;
+  v_artifact clued_private.resource_center_artifacts_v1%rowtype;
+begin
+  if v_path is null or
+    (v_path<>p_root and left(v_path,char_length(p_root)+1)<>p_root||'/') then
+    return false;
+  end if;
+  loop
+    select * into v_artifact from clued_private.resource_center_artifacts_v1
+      where profile_id=p_profile_id and user_id=p_user_id and path=v_path
+        and state='active';
+    if not found or
+      (v_path<>p_path and v_artifact.target_kind<>'directory') or
+      not clued_private.resource_center_decision_current_v1(
+        p_user_id,p_project_id,v_artifact.source_decision_id) then
+      return false;
+    end if;
+    if v_path=p_root then return true; end if;
+    v_path:=left(v_path,char_length(v_path)-strpos(reverse(v_path),'/'));
+  end loop;
+end $$;
+revoke all on function clued_private.resource_center_path_current_v1(uuid,uuid,uuid,text,text)
+  from public,anon,authenticated;
+
 -- Resolve only the exact registered path and provider IDs/versions. Unknown,
 -- revoked, stale or merely same-named files have no authority result.
 create function public.clued_resource_center_authority_v1(
@@ -338,7 +382,11 @@ begin
       and profile_version=p_request->>'profile_version'
       and policy_version=p_request->>'policy_version';
   if not found or v_provider->>'root_folder_id' is distinct from v_profile.root_folder_id or
-    v_provider->>'root_parent_id' is distinct from v_profile.root_parent_id then
+    v_provider->>'root_parent_id' is distinct from v_profile.root_parent_id or
+    not clued_private.resource_center_decision_current_v1(
+      v_profile.user_id,v_profile.project_id,v_profile.source_decision_id) or
+    not clued_private.resource_center_decision_current_v1(
+      v_profile.user_id,v_profile.project_id,v_binding.source_decision_id) then
     return jsonb_build_object('status','denied');
   end if;
   select * into v_root from clued_private.resource_center_artifacts_v1
@@ -346,7 +394,11 @@ begin
       and path=v_profile.managed_root and target_kind='directory'
       and provider_file_id=v_profile.root_folder_id
       and provider_file_version=v_provider->>'root_folder_version';
-  if not found then return jsonb_build_object('status','denied'); end if;
+  if not found or not clued_private.resource_center_path_current_v1(
+    v_profile.user_id,v_profile.project_id,v_profile.id,
+    v_profile.managed_root,v_profile.managed_root) then
+    return jsonb_build_object('status','denied');
+  end if;
   if v_operation='delete' then
     if v_source_path is null or v_destination_path is not null then
       return jsonb_build_object('status','denied');
@@ -365,7 +417,11 @@ begin
         and provider_file_id=v_provider->>'source_file_id'
         and provider_file_version=v_provider->>'source_file_version'
         and target_kind=v_mutation->>'target_kind';
-    if not found then return jsonb_build_object('status','denied'); end if;
+    if not found or not clued_private.resource_center_path_current_v1(
+      v_profile.user_id,v_profile.project_id,v_profile.id,
+      v_profile.managed_root,v_source_path) then
+      return jsonb_build_object('status','denied');
+    end if;
   elsif v_provider->>'source_file_id' is not null or v_provider->>'source_file_version' is not null then
     return jsonb_build_object('status','denied');
   end if;
@@ -381,7 +437,11 @@ begin
         and path=v_parent_path and target_kind='directory'
         and provider_file_id=v_provider->>'destination_parent_id'
         and provider_file_version=v_provider->>'destination_parent_version';
-    if not found then return jsonb_build_object('status','denied'); end if;
+    if not found or not clued_private.resource_center_path_current_v1(
+      v_profile.user_id,v_profile.project_id,v_profile.id,
+      v_profile.managed_root,v_parent_path) then
+      return jsonb_build_object('status','denied');
+    end if;
     v_existing:=v_operation in ('write','replace');
     if v_existing then
       select * into v_destination from clued_private.resource_center_artifacts_v1
@@ -389,7 +449,11 @@ begin
           and path=v_destination_path and target_kind=v_mutation->>'target_kind'
           and provider_file_id=v_provider->>'destination_file_id'
           and provider_file_version=v_provider->>'destination_file_version';
-      if not found then return jsonb_build_object('status','denied'); end if;
+      if not found or not clued_private.resource_center_path_current_v1(
+        v_profile.user_id,v_profile.project_id,v_profile.id,
+        v_profile.managed_root,v_destination_path) then
+        return jsonb_build_object('status','denied');
+      end if;
     elsif v_provider->>'destination_file_id' is not null or
       v_provider->>'destination_file_version' is not null or
       exists(select 1 from clued_private.resource_center_artifacts_v1 a

@@ -216,6 +216,10 @@ test("Canonical Resource Center registration and exact read-only authority", { t
       assert.equal(changed.status, "resolved");
       assert.notEqual(changed.authority.currentness_identity, allowed.authority.currentness_identity);
       assert.match(changed.authority.authority_version, /:1:2$/);
+      await admin.query("update public.clued_memories set lifecycle_status='superseded' where id=$1", [DECISION]);
+      assert.equal((await resolve()).status, "denied");
+      await admin.query("update public.clued_memories set lifecycle_status='active' where id=$1", [DECISION]);
+      assert.equal((await resolve()).status, "resolved");
     });
 
     await t.test("unregistered paths, wrong IDs/versions and profile fail closed", async () => {
@@ -377,6 +381,16 @@ test("Canonical Resource Center registration and exact read-only authority", { t
     });
     assert.equal(removed.status, "committed");
     assert.equal((await resolve()).status, "denied");
+    assert.equal((await resolve({
+      mutation: {
+        ...mutation, operation: "replace", destination_path: TRACK + "/logo.svg",
+        target_kind: "file", directory_semantics: null,
+      },
+      provider_identity: {
+        ...providerIdentity, destination_parent_version: "3",
+        destination_file_id: "drive-logo-id", destination_file_version: "6",
+      },
+    })).status, "denied");
     const revoked = await adminCall({
       action: "binding_revoke", profile_id: profileId, binding_id: bindingId,
     });
