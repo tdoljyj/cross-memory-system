@@ -136,7 +136,8 @@ test("production wiring rejects a mismatched authority reply before touching the
     authority_binding_token: `clued_rcb_${"a".repeat(40)}`,
     resolve_provider_identity: async () => ({
       root_folder_id: "root-id", source_file_id: null,
-      destination_parent_id: "parent-id", provider_version: "123",
+      destination_parent_id: "parent-id", destination_file_id: null,
+      provider_version: "123",
     }),
     fetch: async (_url, options) => {
       const body = JSON.parse(options.body);

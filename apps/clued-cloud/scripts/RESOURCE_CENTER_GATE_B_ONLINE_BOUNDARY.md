@@ -8,8 +8,12 @@ adds a fixed HTTPS `/v1/resource-center/authority` client with a Host-held
 dedicated Binding token. Every request includes an unpredictable nonce and the
 exact operation, paths, role, profile/policy versions and Host-resolved provider
 IDs; the response must echo the identical request and digest. A mismatch or
-missing provider identity denies before any filesystem effect. The service
-endpoint and Google Drive provider-ID resolver are **not** implemented here.
+missing provider identity denies before any filesystem effect. A deterministic
+Drive identity resolver maps the pinned root and each path component to unique
+live Drive IDs/versions; duplicate names or a moved root deny. A read-only
+Drive metadata transport is included, but the Host must still supply an
+authenticated, revocable metadata-only credential and keep it in secret storage.
+The production Clued service endpoint and live credential are **not** included.
 
 The Host must supply `resolve_artifact_online` from a separately authenticated,
 revocable, least-privilege Clued Binding. For each exact mutation it must obtain

@@ -16,7 +16,8 @@ const authority = {
 };
 const providerIdentity = {
   root_folder_id: "root-id", source_file_id: null,
-  destination_parent_id: "parent-id", provider_version: "123",
+  destination_parent_id: "parent-id", destination_file_id: null,
+  provider_version: "123",
 };
 
 test("dedicated resolver binds the exact request and keeps its token out of tool input", async () => {
