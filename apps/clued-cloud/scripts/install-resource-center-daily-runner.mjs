@@ -94,6 +94,8 @@ export async function installDailyHost({ destination, consumer_runtime_directory
     const stopLauncher = launcher.replace(`,\n  @{ Path = ${ps(c.activation_path)}; Hash = '${c.activation_sha256}' }`, "")
       .replaceAll(invoke, `${invoke} --stop-renewal`);
     await freshFile(path.join(destination, "Stop-CluedResourceCenter.disabled.ps1"), stopLauncher);
+    await freshFile(path.join(destination, "Stop-CluedResourceCenter.disabled.cmd"),
+      `@echo off\r\nif not "%~1"=="" exit /b 2\r\npwsh -NoProfile -NonInteractive -File "${path.join(destination, "Stop-CluedResourceCenter.ps1")}"\r\nexit /b %errorlevel%\r\n`);
   }
   const manifest = { contract: "clued.resource-center-daily-install/1", state: "staged-not-enabled",
     destination, node_path: nodePath, node_sha256: nodeHash, config_sha256: hash(configBytes),

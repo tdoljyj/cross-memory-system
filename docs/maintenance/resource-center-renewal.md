@@ -60,14 +60,14 @@ no-op not-due renewal; validate a full rollover separately with temporary
 credentials/objects. Keep old logs and credentials private for evidence/recovery.
 
 The operator may register the pinned `Renew-CluedResourceCenter.ps1` with Windows
-Task Scheduler under the same interactive user, least privilege, every 15 minutes
+Task Scheduler using `install-resource-center-renewal-task.ps1`, under the same interactive user, least privilege, every 15 minutes
 and at logon. No password, administrator rights, RDP changes or ACL changes are
 required. Use hidden PowerShell, scrubbed environment and the fixed pinned
 launcher, never a model wakeup or script supplied by a job. A local error raises
 one user notification per unresolved incident; successful rotation clears only
 that notification marker. Task failures/crash locks require operator attention.
 
-`Stop-CluedResourceCenter.ps1` first fsyncs a monotonic local stop marker, then atomically
+`Stop-CluedResourceCenter.ps1` (or its double-click `.cmd` launcher) first fsyncs a monotonic local stop marker, then atomically
 revokes the server grant and current pair, even after expiry/lost delivery.
 Historical receipts cannot reactivate it. Stop must remain possible with an
 executor fence; it does not clear that fence or settle effects. If the network

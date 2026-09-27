@@ -69,6 +69,8 @@ test("explicit upgrade preserves old journal identities/content and runtime with
   assert.equal(next.state, "staged-not-enabled");
   assert.match(await fs.readFile(path.join(upgrade.destination, "Renew-CluedResourceCenter.disabled.ps1"), "utf8"), /--renew/);
   assert.match(await fs.readFile(path.join(upgrade.destination, "Stop-CluedResourceCenter.disabled.ps1"), "utf8"), /--stop-renewal/);
+  assert.doesNotMatch(await fs.readFile(path.join(upgrade.destination, "Stop-CluedResourceCenter.disabled.ps1"), "utf8"), /Path = '[^']*activation\.json'/);
+  assert.match(await fs.readFile(path.join(upgrade.destination, "Stop-CluedResourceCenter.disabled.cmd"), "utf8"), /Stop-CluedResourceCenter.ps1/);
   await assert.rejects(installDailyHost({ ...upgrade, destination: upgrade.destination + "-bad", host_config: { ...upgrade.host_config, root_folder_id: "other" } }), /SCOPE_CHANGED/);
 });
 test("actual Windows launcher forwards UTF-8 OS stdin and PowerShell pipeline only after activation", {skip:process.platform!=="win32"}, async t => {
