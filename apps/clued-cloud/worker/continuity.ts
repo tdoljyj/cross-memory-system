@@ -66,6 +66,7 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6Feature
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
+  CLUED_STORAGE_ACCOUNT_V1?: string;
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   CLUED_ALLOWED_ORIGINS?: string;
@@ -2207,6 +2208,24 @@ async function handleContinuityRequestInner(
       });
     }
     if (url.pathname === "/mcp") return await handleMcp(request, env);
+    if (url.pathname === "/v1/storage/account") {
+      validateOrigin(request, env);
+      if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true") return json({ error: "Not found." }, 404);
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
+      if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { allow: "POST, OPTIONS" });
+      const { token } = await requireSupabaseUser(request, env);
+      const input = await parseBody(request);
+      // The RPC independently checks auth.sessions. Never replace the native
+      // user JWT with a service-role credential or a caller-selected owner ID.
+      try {
+        const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_account_v1", {
+          method: "POST", userToken: token, body: JSON.stringify({ p_input: input }),
+        });
+        return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });
+      } catch {
+        return json({ error: "Storage account operation unavailable." }, 403, { "cache-control": "no-store" });
+      }
+    }
     if (url.pathname === "/v1/resource-center/authority") {
       return await handleResourceCenterAuthority(request, env);
     }
