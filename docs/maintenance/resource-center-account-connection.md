@@ -115,7 +115,26 @@ payload must agree; paths must already be canonical, never silently retargeted.
 There is deliberately no public or service-role execute grant on this internal
 function. It is not yet a cloud executor and cannot be advertised as one.
 
-Not yet implemented/qualified: private cloud executor wiring/provider effects, live
+The private cloud-executor candidate now composes the existing admission Host,
+native Drive create effect and postcondition verifier without a mounted disk.
+Its only execution input is connection/job IDs. Authenticated server closures
+must supply the job, registered profile, credential revision and exact RPCs;
+neither caller-selected profiles nor credentials are part of the public input.
+The shared begin must commit before an attempt is persisted and the single
+provider POST is sent. Lost begin, provider or finalization replies do not retry
+the effect. Synthetic tests cover this composition in both Node and workerd;
+they do not qualify a real provider or replace the shared database contracts.
+
+The remote boundary scanner exhausts metadata pagination under registered
+parent/scan-root IDs and reuses the deterministic island rules. Partial results,
+ambiguous names, shortcuts, traversal limits and identity drift (including the
+parent-list to child-GET handoff) fail closed. These ID/path anchors must come
+from trusted qualification, never from a job caller. External-root allowlists
+are not yet qualified and are rejected. Drive enumeration is not an atomic
+namespace snapshot: this detects observed violations, not arbitrary OS/provider
+writers or every concurrent namespace change. Normal scans use no model/content.
+
+Not yet implemented/qualified: fixed-issuer cloud RPC/credential wiring, live
 Google Web-client/root authorization qualification and formal entry cutover.
 Connection `active` means credential connection only, never a qualified writer.
 Do not enable the flag or promote this slice as a working multi-device writer.

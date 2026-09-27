@@ -41,6 +41,7 @@ export function createResourceCenterOnlineToolHost({
   clock,
   admission_ttl_ms: admissionTtlMs,
   mutation_effect: mutationEffect,
+  scan_boundary: scanBoundary,
 } = {}) {
   if (typeof resolveArtifactOnline !== "function") {
     throw new TypeError("A trusted online Artifact/Currentness resolver is required.");
@@ -48,11 +49,18 @@ export function createResourceCenterOnlineToolHost({
   if (mutationEffect !== undefined && typeof mutationEffect !== "function") {
     throw new TypeError("The provider effect must be a Host-owned function.");
   }
+  if (scanBoundary !== undefined && (typeof scanBoundary !== "function" || typeof mutationEffect !== "function")) {
+    throw new TypeError("A remote boundary scanner requires a Host-owned provider effect.");
+  }
 
   const profile = structuredClone(trustedProfile);
   let quarantined = false;
   let mutationInFlight = false;
-  const scanner = createResourceCenterFilesystemAdapter({
+  const scanner = scanBoundary ? {
+    profile_identity: createResourceCenterHostAdapter({ trusted_profile: profile,
+      resolve_artifact: () => { throw new Error("SCAN_ONLY"); }, effect: mutationEffect }).profile_identity,
+    scanBoundary,
+  } : createResourceCenterFilesystemAdapter({
     trusted_profile: profile,
     resolve_artifact: () => { throw new Error("SCAN_ONLY"); },
     classify_observed_entry: classifyObservedEntry,
