@@ -14,7 +14,7 @@ function safelyFinished(result) {
   return Array.isArray(result) || result?.status === "committed" ||
     (result?.status === "deny" && safeDenials.has(result.error_code) && !uncertainDenials.has(result.error_code) && result.side_effects !== "unknown" && !(result.side_effects > 0));
 }
-function parseLedger(text) {
+export function parseDailyLedger(text) {
   if (text && !text.endsWith("\n")) fail("DAILY_JOB_JOURNAL_INCOMPLETE");
   const jobs = new Map();
   for (const line of text.split("\n").filter(Boolean)) {
@@ -80,7 +80,7 @@ export async function runDailyJob({ job: input, state_directory: stateDirectory,
     try {
       const after = await journal.stat();
       if (before.dev !== after.dev || before.ino !== after.ino || after.nlink !== 1) fail("DAILY_JOB_JOURNAL_UNSAFE");
-      const jobs = parseLedger(await journal.readFile("utf8"));
+      const jobs = parseDailyLedger(await journal.readFile("utf8"));
       const prior = jobs.get(job.job_id.toLowerCase());
       if (prior) {
         if (Object.entries(identity).some(([key, value]) => prior[key] !== value)) fail("DAILY_JOB_IDENTITY_CONFLICT");
@@ -152,7 +152,7 @@ export async function settleDailyJob({ state_directory: directory, job_id: jobId
     try {
       const opened = await journal.stat();
       if (opened.dev !== st.dev || opened.ino !== st.ino || opened.nlink !== 1) fail("DAILY_JOB_JOURNAL_UNSAFE");
-      const jobs = parseLedger(await journal.readFile("utf8"));
+      const jobs = parseDailyLedger(await journal.readFile("utf8"));
       const prior = jobs.get(jobId.toLowerCase());
       if (!prior || prior.profile_id !== profile.profile_id) fail("DAILY_SETTLEMENT_JOB_MISMATCH");
       if (!["finished", "reconciled"].includes(prior.state)) {

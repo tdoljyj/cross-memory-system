@@ -53,6 +53,24 @@ test("installer never overwrites an existing deployment or its logs", async t =>
   await assert.rejects(installDailyHost(request),/EEXIST/);
   assert.equal(await fs.readFile(ledger,"utf8"),"preserve existing work");
 });
+
+test("explicit upgrade preserves old journal identities/content and runtime without enabling", async t => {
+  const request = await fixture(t), original = await installDailyHost(request);
+  await fs.rename(path.join(request.destination, "activation.pending.json"), path.join(request.destination, "activation.json"));
+  const oldConfig = JSON.parse(await fs.readFile(path.join(request.destination, "host.json"), "utf8"));
+  await fs.appendFile(path.join(oldConfig.state_directory, "jobs.jsonl"), "preserve old recovery history\n");
+  const upgrade = { ...request, destination: request.destination + "-upgrade", consumer_runtime_directory: request.destination,
+    existing_host: { config_path: path.join(request.destination, "host.json"), config_sha256: original.config_sha256 },
+    host_config: { ...request.host_config, renewal: { path: path.join(request.destination, "renewal.dpapi.jsonl"), identity: { dev: 1, ino: 1 } } } };
+  const next = await installDailyHost(upgrade);
+  const c = JSON.parse(await fs.readFile(path.join(upgrade.destination, "host.json"), "utf8"));
+  assert.equal(c.state_directory, oldConfig.state_directory);assert.deepEqual(c.journal_identity, oldConfig.journal_identity);
+  assert.equal(await fs.readFile(path.join(c.state_directory, "jobs.jsonl"), "utf8"), "preserve old recovery history\n");
+  assert.equal(next.state, "staged-not-enabled");
+  assert.match(await fs.readFile(path.join(upgrade.destination, "Renew-CluedResourceCenter.disabled.ps1"), "utf8"), /--renew/);
+  assert.match(await fs.readFile(path.join(upgrade.destination, "Stop-CluedResourceCenter.disabled.ps1"), "utf8"), /--stop-renewal/);
+  await assert.rejects(installDailyHost({ ...upgrade, destination: upgrade.destination + "-bad", host_config: { ...upgrade.host_config, root_folder_id: "other" } }), /SCOPE_CHANGED/);
+});
 test("actual Windows launcher forwards UTF-8 OS stdin and PowerShell pipeline only after activation", {skip:process.platform!=="win32"}, async t => {
   const request=await fixture(t);
   const echo="const chunks=[];for await(const b of process.stdin)chunks.push(b);process.stdout.write(JSON.stringify({received:Buffer.concat(chunks).toString('utf8'),hooks:process.env.NODE_OPTIONS??null}));";

@@ -10,6 +10,7 @@ import { createResourceCenterGoogleDriveNativeWriterToolHost } from "../../../ke
 import { createResourceCenterRecoveryStore, createResourceCenterProviderAttemptStore } from "../../../kernel/host/resource-center-recovery-store.mjs";
 import { runDailyJob, validateDailyJob, settleDailyJob } from "../../../kernel/host/resource-center-daily-job.mjs";
 import { createResourceCenterWriteClient } from "../../../kernel/host/resource-center-write-client.mjs";
+import { withResourceCenterLifecycle, openRenewalStore, activeRenewalCredentials, renewResourceCenter, stopResourceCenter } from "../../../kernel/host/resource-center-renewal.mjs";
 
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const fail = code => { throw new Error(code); };
@@ -25,6 +26,20 @@ function decrypt(bytes) {
   if (result.status !== 0 || result.error) fail("DAILY_HOST_SECRET_UNAVAILABLE");
   try { return JSON.parse(result.stdout); } catch { fail("DAILY_HOST_SECRET_INVALID"); }
 }
+function seal(value) {
+  const script = "$ErrorActionPreference='Stop'; $p=[Text.Encoding]::UTF8.GetBytes([Console]::In.ReadToEnd()); $b=[Security.Cryptography.ProtectedData]::Protect($p,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Convert]::ToBase64String($b))";
+  const r = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script],
+    { input: JSON.stringify(value), encoding: "utf8", windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024 });
+  if (r.status !== 0 || r.error) fail("DAILY_RENEWAL_SEAL_FAILED");return r.stdout;
+}
+async function notifyRenewal(c) {
+  // One notification per unresolved incident; a successful renewal clears only
+  // this marker, never a write/recovery lock or journal.
+  const file = path.join(c.state_directory, "renewal-notified.json");
+  let f;try { f = await fs.open(file, "wx"); } catch (e) { if (e.code === "EEXIST") return;throw e; }
+  try { await f.writeFile(JSON.stringify({ code: "DAILY_RENEWAL_NEEDS_ATTENTION", time: new Date().toISOString() }));await f.sync(); } finally { await f.close(); }
+  spawn("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('Clued 资料中心自动续签需要处理，受控写入保持关闭。请查看受控入口状态。','Clued 连接提醒') | Out-Null"], { windowsHide: true, stdio: "ignore" }).unref();
+}
 export const toWsl = p => {
   const normalized = p.replaceAll("\\", "/");
   const prefix = "//wsl.localhost/Ubuntu-24.04/";
@@ -39,7 +54,7 @@ export function validateDailyCredentials(secrets, profileId, now = Date.now()) {
     !Number.isFinite(now) || Date.parse(secrets.expires_at) - now < 10 * 60 * 1000) fail("DAILY_BINDING_RENEWAL_REQUIRED");
 }
 
-export async function loadDailyHostConfig(configPath, expectedHash) {
+export async function loadDailyHostConfig(configPath, expectedHash, { stopOnly = false } = {}) {
   if (!path.isAbsolute(configPath ?? "") || !/^[a-f0-9]{64}$/.test(expectedHash ?? "")) fail("DAILY_CONFIG_PIN_REQUIRED");
   const bytes = await safeFile(configPath);
   if (hash(bytes) !== expectedHash) fail("DAILY_CONFIG_PIN_MISMATCH");
@@ -51,16 +66,17 @@ export async function loadDailyHostConfig(configPath, expectedHash) {
     !/^[0-9a-f-]{36}$/i.test(c.profile.profile_id ?? "")) fail("DAILY_CONFIG_INVALID");
   for (const name of ["state_directory", "recovery_path", "attempt_path", "client_secret_path", "google_tokens_path", "bindings_path", "consumer_path", "probe_path", "bwrap_path"])
     if (!path.isAbsolute(c[name] ?? "")) fail("DAILY_CONFIG_PATH_INVALID");
-  for (const name of ["consumer", "probe", "bwrap"])
+  for (const name of stopOnly ? [] : ["consumer", "probe", "bwrap"])
     if (hash(await safeFile(c[`${name}_path`])) !== c[`${name}_sha256`]) fail("DAILY_RUNTIME_PIN_MISMATCH");
-  for (const name of ["jobs.jsonl", "recovery.jsonl", "attempts.jsonl"]) {
+  for (const name of stopOnly ? [] : ["jobs.jsonl", "recovery.jsonl", "attempts.jsonl"]) {
     const st = await fs.lstat(path.join(c.state_directory, name));
     const pin = c.journal_identity?.[name];
     if (!pin || !st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.dev !== pin.dev || st.ino !== pin.ino) fail("DAILY_JOURNAL_IDENTITY_CHANGED");
   }
   if (c.recovery_path !== path.join(c.state_directory, "recovery.jsonl") || c.attempt_path !== path.join(c.state_directory, "attempts.jsonl")) fail("DAILY_JOURNAL_IDENTITY_CHANGED");
+  if (c.renewal && (!path.isAbsolute(c.renewal.path ?? "") || !c.renewal.identity)) fail("DAILY_RENEWAL_CONFIG_INVALID");
   // A missing/disconnected mount cannot be misreported as a clean watcher.
-  for (const root of [c.profile.managed_root, ...c.profile.boundary_scan_roots]) {
+  for (const root of stopOnly ? [] : [c.profile.managed_root, ...c.profile.boundary_scan_roots]) {
     const st = await fs.lstat(root);
     if (!st.isDirectory() || st.isSymbolicLink()) fail("DAILY_SCAN_ROOT_UNAVAILABLE");
   }
@@ -109,13 +125,44 @@ export async function runIsolatedDailyConsumer(c, { job, tools, call_tool: callT
 
 export async function main(configPath, expectedHash, mode) {
   if (process.platform !== "win32") fail("DAILY_WINDOWS_HOST_REQUIRED");
+  const c = await loadDailyHostConfig(configPath, expectedHash, { stopOnly: mode === "--stop-renewal" });
+  if (mode === "--stop-renewal") {
+    if (!c.renewal) fail("DAILY_RENEWAL_NOT_INSTALLED");
+    const result = await stopResourceCenter({ directory: c.state_directory, filename: c.renewal.path,
+      identity: c.renewal.identity, unseal: decrypt });
+    process.stdout.write(JSON.stringify(result) + "\n");return;
+  }
+  return withResourceCenterLifecycle(c.state_directory, async () => {
+    let store;
+    try {
+      try { await fs.lstat(path.join(c.state_directory, "renewal-stop.json"));fail("DAILY_RENEWAL_STOPPED"); }
+      catch (e) { if (e.code !== "ENOENT") throw e; }
+      if (c.renewal) store = await openRenewalStore(c.renewal.path, c.renewal.identity, { seal, unseal: decrypt });
+      if (["--renew", "--stop-renewal"].includes(mode)) {
+        if (!store) fail("DAILY_RENEWAL_NOT_INSTALLED");
+        let lock;
+        // Stop only attenuates privileges and must remain available when an
+        // executor fence exists. It never removes that fence.
+        if (mode === "--renew") lock = await fs.open(path.join(c.state_directory, "executor.lock"), "wx");
+        try {
+          if (lock) { await lock.writeFile(JSON.stringify({ pid: process.pid, profile_id: c.profile.profile_id }));await lock.sync(); }
+          const result = await renewResourceCenter({ store, profile_id: c.profile.profile_id,
+            jobs: await fs.readFile(path.join(c.state_directory, "jobs.jsonl"), "utf8"), stop: mode === "--stop-renewal", notify: () => notifyRenewal(c) });
+          if (result.status === "rotated") await fs.unlink(path.join(c.state_directory, "renewal-notified.json")).catch(e => { if (e.code !== "ENOENT") throw e; });
+          process.stdout.write(JSON.stringify(result) + "\n");return;
+        } finally { if (lock) { await lock.close();await fs.unlink(path.join(c.state_directory, "executor.lock")); } }
+      }
+      return await runWithCredentials(c, mode, store ? activeRenewalCredentials(store.read(), c.profile.profile_id) : decrypt(await safeFile(c.bindings_path)));
+    } catch (error) { if (mode === "--renew" || mode === "--stop-renewal") await notifyRenewal(c);throw error; }
+    finally { await store?.close(); }
+  });
+}
+async function runWithCredentials(c, mode, secrets) {
   const chunks = []; let length = 0;
   for await (const chunk of process.stdin) {
     length += chunk.length; if (length > 2 * 1024 * 1024) fail("DAILY_INPUT_LIMIT"); chunks.push(chunk);
   }
   const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  const c = await loadDailyHostConfig(configPath, expectedHash);
-  const secrets = decrypt(await safeFile(c.bindings_path));
   validateDailyCredentials(secrets, c.profile.profile_id);
   if (mode === "--settle") {
     if (!input || Object.keys(input).sort().join(",") !== "job_id,request_key" ||
