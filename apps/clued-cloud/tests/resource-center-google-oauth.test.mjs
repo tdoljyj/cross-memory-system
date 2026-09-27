@@ -34,7 +34,7 @@ async function fixture(changes = {}) {
     },
     fetch: async (url, init) => {
       calls.push({ url: String(url), init });
-      assert.equal(init.redirect, "error");
+      assert.equal(init.redirect, "manual");
       if (changes.networkFailure) throw new Error("fixture-secret-in-upstream-error");
       if (String(url).endsWith("/token") && changes.tokenResponse) return changes.tokenResponse();
       if (String(url).endsWith("/token")) return Response.json({ access_token: "fixture-access-token", refresh_token: "fixture-refresh-token", token_type: "Bearer", expires_in: 3600, scope, ...(changes.tokens ?? {}) });

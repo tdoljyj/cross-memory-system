@@ -2,6 +2,7 @@ import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-postcondition.mjs";
+import { createStorageFetch } from "./storage-fetch";
 
 type Data = Record<string, unknown>;
 type Reference = {connection_id: string; job_id: string};
@@ -20,6 +21,7 @@ export async function createStorageCloudWorker(config: {
 }) {
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id)) throw denied();
   const vault = await createStorageCredentialVault(config.vault);
+  const fetcher = createStorageFetch(config.fetch);
   return Object.freeze({ async run(reference: Reference) {
     let loaded: Data | null = null;
     let recoveryMode=false, refreshed=false;
@@ -46,7 +48,7 @@ export async function createStorageCloudWorker(config: {
       return {...expected,access_token:token.access_token,scope:token.scope,expires_at_ms:token.expires_at_ms};
     };
     const executor = createResourceCenterCloudExecutor({
-      clock: config.clock ?? Date.now, drive_fetch: config.fetch ?? fetch,
+      clock: config.clock ?? Date.now, drive_fetch: fetcher,
       load_job: async (ref: Reference) => {
         const result = await config.rpc({...ref, action:"load"});
         if (result.status === "queued" && result.oauth_client_id !== config.client_id) throw denied();
@@ -77,7 +79,7 @@ export async function createStorageCloudWorker(config: {
             provider_subject:String(recoveryDescriptor.provider_subject),credential_version:Number((loaded as Data).credential_version)}),
             fetch:async (url,init) => {
               if (init?.method!=="GET") throw denied();
-              return (config.fetch??fetch)(url,init);
+              return fetcher(url,init);
             }});
           const verify=createGoogleDriveCreatePostconditionVerifier({managed_root:String(recovery.profile.managed_root),
             root_folder_id:String(recovery.root_folder_id),root_parent_id:String(recovery.root_parent_id),get_file:metadata.getFile,list_children:metadata.listChildren,

@@ -1,4 +1,5 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
+import { createStorageFetch } from "./storage-fetch";
 
 const scope = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -16,14 +17,14 @@ export async function createStorageGoogleRefresh(config: {
   rpc: (input: Data) => Promise<Data>; fetch?: typeof fetch; clock?: () => number;
 }) {
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id) || config.client_secret.length < 16) throw denied();
-  const vault = await createStorageCredentialVault(config.vault), fetcher = config.fetch ?? fetch, clock = config.clock ?? Date.now;
+  const vault = await createStorageCredentialVault(config.vault), fetcher = createStorageFetch(config.fetch), clock = config.clock ?? Date.now;
   async function read(response: Response): Promise<Data> {
     const text = await response.text();
     if (text.length > 65536) throw denied();
     const value: unknown = JSON.parse(text); if (!object(value)) throw denied(); return value;
   }
   async function metadata(url: string, token: string): Promise<Data> {
-    const response = await fetcher(url, { headers: { authorization: "Bearer " + token }, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10000) });
+    const response = await fetcher(url, { headers: { authorization: "Bearer " + token }, cache: "no-store", signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw denied(); return read(response);
   }
   return Object.freeze({
@@ -58,7 +59,7 @@ export async function createStorageGoogleRefresh(config: {
       if (!Number.isFinite(start) || start >= deadline) return failure("credential_invalid");
       let response: Response, tokens: Data;
       try {
-        response = await fetcher("https://oauth2.googleapis.com/token", { method: "POST", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10000),
+        response = await fetcher("https://oauth2.googleapis.com/token", { method: "POST", cache: "no-store", signal: AbortSignal.timeout(10000),
           headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: config.client_id,
             client_secret: config.client_secret, grant_type: "refresh_token", refresh_token: String(previous.refresh_token) }).toString() });
         tokens = await read(response);

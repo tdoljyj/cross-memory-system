@@ -1,4 +1,5 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
+import { createStorageFetch } from "./storage-fetch";
 
 const scopes = ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive.metadata.readonly"];
 const encoder = new TextEncoder();
@@ -48,12 +49,12 @@ export async function createStorageGoogleOAuth(configuration: {
       callback.protocol !== "https:" || callback.username || callback.password || callback.search || callback.hash ||
       callback.pathname !== "/storage/google/callback" || typeof rpc !== "function") fail();
   const vault = await createStorageCredentialVault(configuration.vault);
-  const fetcher = configuration.fetch ?? fetch;
+  const fetcher = createStorageFetch(configuration.fetch);
   const clock = configuration.clock ?? Date.now;
   async function json(url: string, init: RequestInit, tokenExchange = false): Promise<RecordValue> {
     let received = false;
     try {
-      const response = await fetcher(url, { ...init, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10000) });
+      const response = await fetcher(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(10000) });
       received = true;
       if (!response.ok && !tokenExchange) fail();
       const text = await response.text();
