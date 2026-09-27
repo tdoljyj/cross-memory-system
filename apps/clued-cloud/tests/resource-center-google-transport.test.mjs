@@ -32,6 +32,7 @@ test("native OAuth route adds only server issuer and returns no native/provider 
     if (String(url).endsWith("/auth/v1/user")) return Response.json({ id: "fixture-owner" });
     assert.equal(String(url), env.SUPABASE_URL + "/rest/v1/rpc/clued_storage_oauth_v1");
     assert.equal(new Headers(init.headers).get("authorization"), "Bearer fixture-native");
+    assert.equal(init.redirect, "manual"); assert.ok(init.signal);
     const body = JSON.parse(init.body); calls.push(body);
     assert.equal(body.p_issuer_hash, createHash("sha256").update(issuer).digest("hex"));
     if (body.p_input.action === "describe") return Response.json({ owner_id: randomUUID(), connection_id: connection, connection_version: 1, credential_version: 1,
@@ -56,6 +57,25 @@ test("callback transport exposes only a fixed reason, never upstream exception d
     assert.equal(response.status,403);
     assert.equal(response.headers.get("cache-control"),"no-store");
     assert.deepEqual(await response.json(),{error:"Storage Google connection unavailable.",reason:"attempt_unavailable"});
+  } finally {globalThis.fetch=original;}
+});
+
+test("existing OAuth issuer RPC refuses 307 and 308 without forwarding secrets or calling Google",async()=>{
+  const original=globalThis.fetch;let calls=0;
+  try {
+    for(const status of [307,308]) {
+      globalThis.fetch=async(url,init)=>{
+        if(String(url).endsWith('/auth/v1/user'))return Response.json({id:'fixture-owner'});
+        calls++;assert.equal(String(url),env.SUPABASE_URL+'/rest/v1/rpc/clued_storage_oauth_v1');
+        assert.equal(init.redirect,'manual');assert.ok(init.signal);
+        return new Response(null,{status,headers:{location:'https://untrusted.invalid'}});
+      };
+      for(const path of ['start','complete']) {
+        const response=await worker.fetch(request(path,path==='start'?{connection_id:connection}:{state:'a'.repeat(43),code:'synthetic-code'}),env);
+        assert.equal(response.status,403);assert.deepEqual(await response.json(),{error:'Storage Google connection unavailable.',...(path==='complete'?{reason:'attempt_unavailable'}:{})});
+      }
+    }
+    assert.equal(calls,4);
   } finally {globalThis.fetch=original;}
 });
 test("default refresh requires the refresh feature and a strict boolean before any private RPC",async()=>{

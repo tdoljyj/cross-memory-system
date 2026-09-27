@@ -36,6 +36,7 @@ import {
 import { measurePack } from "./context-pack";
 import { AGENT_CONTRACT_MARKDOWN } from "./generated/agent-contract";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
+import { createStorageGoogleProbe } from "./storage-google-probe";
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentTools } from "./storage-agent-tools";
@@ -2307,6 +2308,28 @@ async function handleContinuityRequestInner(
       });
     }
     if (url.pathname === "/mcp") return await handleMcp(request, env, ctx);
+    if (url.pathname === "/v1/storage/google/probe") {
+      validateOrigin(request, env);
+      if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404);
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
+      if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { allow: "POST, OPTIONS" });
+      const { token } = await requireSupabaseUser(request, env);
+      try {
+        const input = await parseBody(request), issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+        if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS) throw new Error("Unavailable");
+        const probe = await createStorageGoogleProbe({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
+          vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
+          rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_directory_probe_v1", {
+            method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+            body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),
+          }) as Record<string, unknown>,
+        });
+        return json(await probe.run(input), 200, { ...corsHeaders(request), "cache-control": "no-store" });
+      } catch {
+        return json({ error: "Storage directory observation unavailable.", execution_permitted: false },
+          403, { ...corsHeaders(request), "cache-control": "no-store" });
+      }
+    }
     if (url.pathname === "/v1/storage/google/start" || url.pathname === "/v1/storage/google/complete") {
       validateOrigin(request, env);
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404);
@@ -2323,7 +2346,7 @@ async function handleContinuityRequestInner(
           redirect_uri: env.CLUED_STORAGE_GOOGLE_REDIRECT_URI ?? "",
           vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
           rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_oauth_v1", {
-            method: "POST", userToken: token,
+            method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
             body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),
           }) as Record<string, unknown>,
         });
