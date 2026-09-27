@@ -4,6 +4,7 @@ import handler from "vinext/server/app-router-entry";
 import {
   handleContinuityRequest,
   runProjectionRefreshScheduled,
+  runStorageRefreshScheduled,
   type ContinuityEnv,
 } from "./continuity";
 
@@ -70,6 +71,10 @@ const worker = {
   },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(runProjectionRefreshScheduled(env));
+    ctx.waitUntil(runStorageRefreshScheduled(env).then(result => {
+      if (result.status === "unavailable" || result.status === "attention_required")
+        console.warn(JSON.stringify({ event: "storage_refresh_attention_required", status: result.status }));
+    }));
   },
 };
 

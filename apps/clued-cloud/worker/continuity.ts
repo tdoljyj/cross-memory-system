@@ -36,6 +36,7 @@ import {
 import { measurePack } from "./context-pack";
 import { AGENT_CONTRACT_MARKDOWN } from "./generated/agent-contract";
 import { createStorageGoogleOAuth } from "./storage-google-oauth";
+import { createStorageGoogleRefresh } from "./storage-google-refresh";
 
 declare const __CLUED_BUILD_SHA__: string | null;
 
@@ -69,6 +70,7 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6Feature
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
   CLUED_STORAGE_ACCOUNT_V1?: string;
   CLUED_STORAGE_GOOGLE_V1?: string;
+  CLUED_STORAGE_REFRESH_V1?: string;
   CLUED_STORAGE_GOOGLE_CLIENT_ID?: string;
   CLUED_STORAGE_GOOGLE_CLIENT_SECRET?: string;
   CLUED_STORAGE_GOOGLE_REDIRECT_URI?: string;
@@ -625,6 +627,29 @@ export async function runProjectionRefreshPipeline(
     return { status: "builder_protocol_error", processed, cas_conflicts: casConflicts };
   }
   return { status: "cycle_limit", processed, cas_conflicts: casConflicts };
+}
+
+export async function runStorageRefreshScheduled(env: ContinuityEnv) {
+  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true" || env.CLUED_STORAGE_REFRESH_V1 !== "true") return { status: "disabled" };
+  try {
+    const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+    if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS) return { status: "unavailable" };
+    const issuerHash = await sha256(issuer);
+    const rpc = async (input: Record<string, unknown>) => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_refresh_worker_v1", {
+      method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
+      signal: AbortSignal.timeout(10000), redirect: "error",
+    }) as Record<string, unknown>;
+    const due = await rpc({ action: "due" });
+    if (!Array.isArray(due.connections) || due.connections.length > 10 || !due.connections.every(c => typeof c === "string")) return { status: "unavailable" };
+    const refresher = await createStorageGoogleRefresh({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
+      client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS), rpc });
+    let committed = 0, unavailable = Number.isSafeInteger(due.pending_expired) && Number(due.pending_expired)>0 ? Number(due.pending_expired) : 0;
+    for (const connection of due.connections) {
+      const result = await refresher.run(connection);
+      if (result.status === "committed") committed++; else unavailable++;
+    }
+    return { status: unavailable ? "attention_required" : "ok", committed, unavailable };
+  } catch { return { status: "unavailable" }; }
 }
 
 export async function runProjectionRefreshScheduled(env: ContinuityEnv) {
@@ -2248,9 +2273,10 @@ async function handleContinuityRequestInner(
         return json({ error: "Storage Google connection unavailable." }, 403, { ...corsHeaders(request), "cache-control": "no-store" });
       }
     }
-    if (url.pathname === "/v1/storage/account") {
+    if (url.pathname === "/v1/storage/account" || url.pathname === "/v1/storage/refresh") {
       validateOrigin(request, env);
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true") return json({ error: "Not found." }, 404);
+      if (url.pathname.endsWith("/refresh") && env.CLUED_STORAGE_REFRESH_V1 !== "true") return json({ error: "Not found." }, 404);
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
       if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { allow: "POST, OPTIONS" });
       const { token } = await requireSupabaseUser(request, env);
@@ -2258,7 +2284,7 @@ async function handleContinuityRequestInner(
       // The RPC independently checks auth.sessions. Never replace the native
       // user JWT with a service-role credential or a caller-selected owner ID.
       try {
-        const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_account_v1", {
+        const result = await supabaseRequest(env, url.pathname.endsWith("/refresh") ? "/rest/v1/rpc/clued_storage_refresh_manage_v1" : "/rest/v1/rpc/clued_storage_account_v1", {
           method: "POST", userToken: token, body: JSON.stringify({ p_input: input }),
         });
         return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });

@@ -73,8 +73,29 @@ Both `CLUED_STORAGE_ACCOUNT_V1` and `CLUED_STORAGE_GOOGLE_V1` default off; issue
 Web OAuth client, fixed redirect and vault keyring are trusted server secrets.
 There are no seeds, production secrets or local DPAPI imports in this slice.
 
-Not yet implemented/qualified: credential CAS refresh persistence, background
-standing delegation, shared job/attempt execution, cloud provider effects, live
+The refresh candidate adds a separately explicit, revocable account delegation
+(`until_revoked`), managed only by a live native session. It is refresh-only: no
+file-operation grant, device identity or login-session lifetime is inherited.
+`CLUED_STORAGE_REFRESH_V1` also defaults off. The fixed private connector issuer
+polls at most ten due connections fairly; normal polling never calls a model.
+The first committed claim alone can disclose ciphertext to the trusted server.
+It authorizes one token exchange; unknown delivery retains the durable fence.
+Only an identical encrypted result commit may retry, never the Google exchange.
+Credential revision and connection CAS advance together, including AAD, to deny
+stale OAuth completions. Expiry is measured before the provider request.
+
+Explicit temporary provider errors get bounded 5/10/15-minute backoff and stop
+after three failures. Invalid credentials require fresh consent. Expired pending
+attempts remain visible as attention-required, never silently disappear. Fresh
+native Google consent can supersede credential-only attempts for the exact
+owner/root, including a revoked predecessor, but disables standing delegation
+until explicit re-enable. It cannot clear any unresolved file-mutation journal.
+Revocation and claims serialize; logout does not revoke a standing delegation.
+Provider tokens remain encrypted in private Canonical rows and never reach UI,
+Agent, receipts or logs. Native management CAS and final session/attempt expiry
+checks also apply after lock waits. The UI explains these limits before opt-in.
+
+Not yet implemented/qualified: shared job/attempt execution, cloud provider effects, live
 Google Web-client/root authorization qualification and formal entry cutover.
 Connection `active` means credential connection only, never a qualified writer.
 Do not enable the flag or promote this slice as a working multi-device writer.
