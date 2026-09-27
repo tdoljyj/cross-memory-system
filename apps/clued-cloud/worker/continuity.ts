@@ -382,6 +382,26 @@ async function handleResourceCenterAuthority(request: Request, env: ContinuityEn
   });
 }
 
+async function handleResourceCenterRenewal(request: Request, env: ContinuityEnv) {
+  validateOrigin(request, env);
+  if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { allow: "POST" });
+  const token = bearerToken(request);
+  if (!token || !/^clued_rcr_[a-f0-9]{64}$/.test(token)) return json({ status: "denied" }, 403);
+  const body = await parseBody(request);
+  if (body.contract !== "clued.resource-center-renewal/1" ||
+    Object.keys(body).some(key => !["contract", "request"].includes(key)) ||
+    !body.request || typeof body.request !== "object" || Array.isArray(body.request)) return json({ status: "denied" }, 403);
+  try {
+    const value = await supabaseRequest(env, "/rest/v1/rpc/clued_resource_center_renew_v1", {
+      method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_request: body.request }),
+    }) as Record<string, unknown>;
+    if (!value || !["active", "rotated", "stopped", "fenced"].includes(String(value.status))) return json({ status: "denied" }, 403);
+    // Never echo request: its credential hashes are bearer-equivalent.
+    return json(Object.fromEntries(["status", "grant_id", "profile_id", "generation", "expires_at", "receipt_id"]
+      .filter(key => value[key] !== undefined).map(key => [key, value[key]])));
+  } catch { return json({ status: "unavailable" }, 503); }
+}
+
 async function handleResourceCenterWrite(request: Request, env: ContinuityEnv) {
   validateOrigin(request, env);
   if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { allow: "POST" });
@@ -2192,6 +2212,9 @@ async function handleContinuityRequestInner(
     }
     if (url.pathname === "/v1/resource-center/write") {
       return handleResourceCenterWrite(request, env);
+    }
+    if (url.pathname === "/v1/resource-center/renew") {
+      return handleResourceCenterRenewal(request, env);
     }
     if (url.pathname === "/v1/development" || url.pathname === "/v1/development/owner") {
       validateOrigin(request, env);
