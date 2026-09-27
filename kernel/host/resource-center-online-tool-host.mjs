@@ -2,6 +2,8 @@ import { createResourceCenterFilesystemAdapter } from "./resource-center-filesys
 import { createResourceCenterAuthorityClient } from "./resource-center-authority-client.mjs";
 import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveProviderIdentityResolver } from "./resource-center-google-drive-identity.mjs";
+import { createGoogleDriveCreatePostconditionVerifier } from "./resource-center-google-drive-postcondition.mjs";
+import { createResourceCenterWriteClient } from "./resource-center-write-client.mjs";
 import {
   createResourceCenterGovernedToolSurface,
   RESOURCE_CENTER_MUTATION_TOOL,
@@ -207,12 +209,14 @@ export function createResourceCenterGoogleDriveOnlineToolHost({
   root_folder_id: rootFolderId,
   root_parent_id: rootParentId,
   get_drive_access_token: getDriveAccessToken,
+  get_drive_credential: getDriveCredential,
   drive_fetch: driveFetch,
   authority_fetch: authorityFetch,
   ...hostOptions
 } = {}) {
   const metadata = createGoogleDriveMetadataApi({
     get_access_token: getDriveAccessToken,
+    get_credential: getDriveCredential,
     fetch: driveFetch,
   });
   return createResourceCenterOnlineToolHostFromService({
@@ -227,4 +231,26 @@ export function createResourceCenterGoogleDriveOnlineToolHost({
       list_children: metadata.listChildren,
     }),
   });
+}
+
+/** Candidate mounted-provider writer composition. Bootstrap is Host-only and
+ * must already have qualified the actual volume and isolated executor. This
+ * factory never enables or registers a production profile by itself. */
+export function createResourceCenterGoogleDriveWriterToolHost({
+  trusted_profile: trustedProfile, root_folder_id: rootFolderId, root_parent_id: rootParentId,
+  get_drive_credential: getDriveCredential, drive_fetch: driveFetch,
+  authority_fetch: authorityFetch, writer_endpoint: writerEndpoint,
+  writer_binding_token: writerBindingToken, persist_recovery: persistRecovery,
+  ...hostOptions
+} = {}) {
+  const metadata = createGoogleDriveMetadataApi({ get_credential: getDriveCredential, fetch: driveFetch });
+  const pinned = { managed_root: trustedProfile?.managed_root, root_folder_id: rootFolderId,
+    root_parent_id: rootParentId, get_file: metadata.getFile, list_children: metadata.listChildren };
+  const resolveProviderIdentity = createGoogleDriveProviderIdentityResolver(pinned);
+  const writer = createResourceCenterWriteClient({ endpoint: writerEndpoint, binding_token: writerBindingToken,
+    resolve_provider_identity: resolveProviderIdentity,
+    verify_postcondition: createGoogleDriveCreatePostconditionVerifier(pinned),
+    persist_recovery: persistRecovery, fetch: authorityFetch });
+  return createResourceCenterOnlineToolHostFromService({ ...hostOptions, ...writer,
+    trusted_profile: trustedProfile, fetch: authorityFetch, resolve_provider_identity: resolveProviderIdentity });
 }

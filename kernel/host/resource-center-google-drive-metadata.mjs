@@ -1,5 +1,11 @@
 const DRIVE_API = "https://www.googleapis.com/drive/v3/files";
-const FIELDS = "id,name,mimeType,parents,version,trashed";
+const FIELDS = "id,name,mimeType,parents,version,trashed,size,sha256Checksum";
+const NAMESPACE_READ_SCOPES = new Set([
+  "https://www.googleapis.com/auth/drive.metadata.readonly",
+  "https://www.googleapis.com/auth/drive.metadata",
+  "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/drive",
+]);
 
 function driveLiteral(value) {
   if (typeof value !== "string" || !value || value.length > 1000) {
@@ -11,19 +17,34 @@ function driveLiteral(value) {
 /** Host-held Drive metadata-only access; never accepts a caller credential. */
 export function createGoogleDriveMetadataApi({
   get_access_token: getAccessToken,
+  get_credential: getCredential,
   fetch: fetchImpl = globalThis.fetch,
   timeout_ms: timeoutMs = 5000,
 } = {}) {
-  if (typeof getAccessToken !== "function" || typeof fetchImpl !== "function") {
+  if ((typeof getAccessToken !== "function" && typeof getCredential !== "function") ||
+    (getAccessToken !== undefined && getCredential !== undefined) || typeof fetchImpl !== "function") {
     throw new TypeError("A Host-owned Drive credential and fetch are required.");
   }
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) {
     throw new TypeError("timeout_ms must be 1..10000.");
   }
 
-  async function read(url) {
-    const token = await getAccessToken();
+  async function credential(requireNamespace) {
+    // The token and its granted scope must be obtained together from the
+    // Host's authenticated credential store, never from a tool payload or
+    // from the scopes requested in an authorization URL. Legacy token-only
+    // bootstrap remains usable for exact-ID reads, not absence/uniqueness.
+    const value = getCredential ? await getCredential() : { access_token: await getAccessToken() };
+    const token = value?.access_token;
     if (typeof token !== "string" || token.length < 16) throw new Error("DRIVE_CREDENTIAL_UNAVAILABLE");
+    if (requireNamespace && (typeof value?.scope !== "string" ||
+      !value.scope.split(/\s+/).some((scope) => NAMESPACE_READ_SCOPES.has(scope)))) {
+      throw new Error("DRIVE_NAMESPACE_VISIBILITY_UNPROVEN");
+    }
+    return token;
+  }
+
+  async function read(url, token) {
     const response = await fetchImpl(url, {
       method: "GET",
       headers: { authorization: `Bearer ${token}`, "cache-control": "no-store" },
@@ -40,13 +61,17 @@ export function createGoogleDriveMetadataApi({
     const url = new URL(`${DRIVE_API}/${encodeURIComponent(id)}`);
     url.searchParams.set("fields", FIELDS);
     url.searchParams.set("supportsAllDrives", "true");
-    const result = await read(url.href);
+    const result = await read(url.href, await credential(false));
     if (!result || result.id !== id) throw new Error("DRIVE_METADATA_MISMATCH");
     return result;
   }
 
   async function listChildren({ parent_id: parentId, name }) {
     const q = `${driveLiteral(parentId)} in parents and name = ${driveLiteral(name)} and trashed = false`;
+    // drive.file silently omits files created by other applications, even
+    // when incompleteSearch is false. An empty list is NOT proof of absence.
+    // Pin one token across pagination and recheck grants on the next lookup.
+    const token = await credential(true);
     const matches = [];
     let pageToken = null;
     const seenTokens = new Set();
@@ -58,7 +83,7 @@ export function createGoogleDriveMetadataApi({
       url.searchParams.set("supportsAllDrives", "true");
       url.searchParams.set("includeItemsFromAllDrives", "true");
       if (pageToken) url.searchParams.set("pageToken", pageToken);
-      const result = await read(url.href);
+      const result = await read(url.href, token);
       if (!Array.isArray(result?.files) || result.incompleteSearch === true) {
         throw new Error("DRIVE_LIST_INVALID");
       }

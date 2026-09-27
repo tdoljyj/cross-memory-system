@@ -353,7 +353,8 @@ test("pinned Drive metadata and Clued service compose without exposing authority
     trusted_profile: profile,
     root_folder_id: "drive-root-folder",
     root_parent_id: "my-drive",
-    get_drive_access_token: async () => "metadata-only-test-token",
+    get_drive_credential: async () => ({ access_token: "metadata-only-test-token",
+      scope: "https://www.googleapis.com/auth/drive.metadata.readonly" }),
     drive_fetch: async (url, options) => {
       driveReads += 1;
       assert.equal(options.headers.authorization, "Bearer metadata-only-test-token");
@@ -390,6 +391,39 @@ test("pinned Drive metadata and Clued service compose without exposing authority
   assert.equal(authorityReads, 2);
   assert.equal(driveReads, 4);
   assert.equal((await fs.stat(destination)).isDirectory(), true);
+});
+
+test("drive.file visibility failure stops the real Host composition before reservation or mutation", async (t) => {
+  const { profile, destination } = await fixture(t);
+  let authorityCalls = 0;
+  let writes = 0;
+  let driveCalls = 0;
+  const host = createResourceCenterGoogleDriveOnlineToolHost({
+    trusted_profile: profile, root_folder_id: "root", root_parent_id: "my-drive",
+    get_drive_credential: async () => ({ access_token: "file-scoped-test-token",
+      scope: "https://www.googleapis.com/auth/drive.file" }),
+    drive_fetch: async () => {
+      driveCalls += 1;
+      return Response.json({ id: "root", name: path.basename(profile.managed_root),
+        parents: ["my-drive"], mimeType: "application/vnd.google-apps.folder", version: "1", trashed: false });
+    },
+    authority_endpoint: "https://clued.example/v1/resource-center/authority",
+    authority_binding_token: `clued_rcb_${"a".repeat(40)}`,
+    authority_fetch: async () => { authorityCalls += 1; throw new Error("must not run"); },
+    prepare_write: async () => { writes += 1; throw new Error("must not run"); },
+    commit_post_write: async () => { writes += 1; throw new Error("must not run"); },
+  });
+  const result = await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+    operation: "create", destination_path: destination,
+    target_kind: "directory", directory_semantics: "track",
+  });
+  assert.equal(result.status, "deny");
+  assert.equal(result.side_effects, 0);
+  assert.equal(result.error_code, "ARTIFACT_AUTHORITY_RESOLUTION_FAILED");
+  assert.equal(driveCalls, 1);
+  assert.equal(authorityCalls, 0);
+  assert.equal(writes, 0);
+  await assert.rejects(fs.stat(destination), { code: "ENOENT" });
 });
 
 test("writer client persists before network and can inspect a lost start without replay", async (t) => {

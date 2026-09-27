@@ -207,6 +207,25 @@ async function writeExistingManagedFile(filesystem, candidate, managedRoot, cont
   }
 }
 
+async function createManagedFile(filesystem, candidate, managedRoot, content) {
+  const handle = await filesystem.open(candidate, "wx");
+  try {
+    const before = verifiedObjectIdentity(await handle.stat({ bigint: true }), "HARD_LINK_ALIAS_FORBIDDEN");
+    await assertExistingPathWithin(filesystem, candidate, [managedRoot], "DESTINATION_REALPATH_OUTSIDE_MANAGED_ROOT");
+    const pathBefore = verifiedObjectIdentity(await filesystem.lstat(candidate, { bigint: true }), "HARD_LINK_ALIAS_FORBIDDEN");
+    if (!sameObjectIdentity(before, pathBefore)) fail("MUTATION_TARGET_IDENTITY_CHANGED");
+    await handle.writeFile(content);
+    await handle.sync();
+    const after = verifiedObjectIdentity(await handle.stat({ bigint: true }), "HARD_LINK_ALIAS_DETECTED_AFTER_WRITE");
+    const pathAfter = verifiedObjectIdentity(await filesystem.lstat(candidate, { bigint: true }), "HARD_LINK_ALIAS_DETECTED_AFTER_WRITE");
+    await assertExistingPathWithin(filesystem, candidate, [managedRoot], "DESTINATION_REALPATH_OUTSIDE_MANAGED_ROOT");
+    if (!sameObjectIdentity(before, after) || !sameObjectIdentity(after, pathAfter)) fail("MUTATION_TARGET_IDENTITY_CHANGED");
+    return after;
+  } finally {
+    await handle.close();
+  }
+}
+
 async function applyFilesystemMutation(filesystem, profile, mutation) {
   const destination = mutation.destination_path;
   const source = mutation.source_path;
@@ -218,7 +237,7 @@ async function applyFilesystemMutation(filesystem, profile, mutation) {
       if (mutation.target_kind === "directory") {
         await filesystem.mkdir(destination, { recursive: false });
       } else {
-        await filesystem.writeFile(destination, mutation.content ?? "", { flag: "wx" });
+        objectIdentity = await createManagedFile(filesystem, destination, profile.managed_root, mutation.content ?? "");
       }
       break;
     case "write":
