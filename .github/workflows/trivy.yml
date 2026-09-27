@@ -37,7 +37,7 @@ jobs:
           mkdir -p "$TRIVY_CACHE_DIR"
           echo "TRIVY_CACHE_DIR=$TRIVY_CACHE_DIR" >> "$GITHUB_ENV"
       - name: Download vulnerability database through runner network
-        timeout-minutes: 6
+        timeout-minutes: 22
         run: |
           # Only the pinned scanner and its cache use the runner network. No
           # checkout or Docker socket is mounted during this download. A host
@@ -50,7 +50,7 @@ jobs:
               -e http_proxy -e https_proxy -e no_proxy \
               -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
               ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-              fs --download-db-only --timeout 60s --db-repository "$repository"; then
+              fs --download-db-only --timeout 5m --db-repository "$repository"; then
               downloaded=true
               break 2
             fi

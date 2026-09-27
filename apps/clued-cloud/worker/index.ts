@@ -4,6 +4,7 @@ import handler from "vinext/server/app-router-entry";
 import {
   handleContinuityRequest,
   runProjectionRefreshScheduled,
+  runStorageRefreshScheduled,
   type ContinuityEnv,
 } from "./continuity";
 
@@ -50,7 +51,14 @@ const legacyWorker = {
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    const response = await handler.fetch(request, env, ctx);
+    if (url.pathname === "/storage/google/callback") {
+      const protectedResponse = new Response(response.body, response);
+      protectedResponse.headers.set("cache-control", "no-store");
+      protectedResponse.headers.set("referrer-policy", "no-referrer");
+      return protectedResponse;
+    }
+    return response;
   },
 };
 
@@ -63,6 +71,10 @@ const worker = {
   },
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(runProjectionRefreshScheduled(env));
+    ctx.waitUntil(runStorageRefreshScheduled(env).then(result => {
+      if (result.status === "unavailable" || result.status === "attention_required")
+        console.warn(JSON.stringify({ event: "storage_refresh_attention_required", status: result.status }));
+    }));
   },
 };
 

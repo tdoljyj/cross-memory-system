@@ -377,7 +377,9 @@ async function loadWorkerContinuity(bundleDir) {
     outfile,
     bundle: true,
     format: 'esm',
-    platform: 'browser',
+    // This fixture imports the bundle in Node; Worker compatibility is tested
+    // separately by the workerd runtime suite.
+    platform: 'node',
     target: 'es2022',
     logLevel: 'silent',
   });

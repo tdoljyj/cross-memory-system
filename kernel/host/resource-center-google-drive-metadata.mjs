@@ -15,6 +15,7 @@ function driveLiteral(value) {
 }
 
 /** Host-held Drive metadata-only access; never accepts a caller credential. */
+/** @param {{get_credential: Function, fetch?: typeof fetch}} config */
 export function createGoogleDriveMetadataApi({
   get_access_token: getAccessToken,
   get_credential: getCredential,
@@ -66,8 +67,8 @@ export function createGoogleDriveMetadataApi({
     return result;
   }
 
-  async function listChildren({ parent_id: parentId, name }) {
-    const q = `${driveLiteral(parentId)} in parents and name = ${driveLiteral(name)} and trashed = false`;
+  async function list({ parent_id: parentId, name }, enumerate) {
+    const q = `${driveLiteral(parentId)} in parents${enumerate ? "" : ` and name = ${driveLiteral(name)}`} and trashed = false`;
     // drive.file silently omits files created by other applications, even
     // when incompleteSearch is false. An empty list is NOT proof of absence.
     // Pin one token across pagination and recheck grants on the next lookup.
@@ -88,7 +89,8 @@ export function createGoogleDriveMetadataApi({
         throw new Error("DRIVE_LIST_INVALID");
       }
       matches.push(...result.files);
-      if (matches.length > 1) return matches;
+      if (enumerate && matches.length > 10000) throw new Error("DRIVE_ENUMERATION_LIMIT");
+      if (!enumerate && matches.length > 1) return matches;
       const next = result.nextPageToken;
       if (!next) return matches;
       if (typeof next !== "string" || seenTokens.has(next)) throw new Error("DRIVE_PAGINATION_INVALID");
@@ -98,5 +100,6 @@ export function createGoogleDriveMetadataApi({
     throw new Error("DRIVE_PAGINATION_LIMIT");
   }
 
-  return Object.freeze({ getFile, listChildren });
+  return Object.freeze({ getFile, listChildren: input => list(input, false),
+    listFolder: parentId => list({ parent_id: parentId }, true) });
 }

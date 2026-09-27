@@ -22,11 +22,12 @@ export function loadContinuityWorker() {
     });
     stop();
     const { handleContinuityRequest, runProjectionRefreshPipeline,
-      runProjectionRefreshScheduled } = await import(pathToFileURL(output).href);
+      runProjectionRefreshScheduled, runStorageRefreshScheduled } = await import(pathToFileURL(output).href);
     return {
       fetch: (request, env, ctx) => handleContinuityRequest(request, env, ctx),
       runProjectionRefreshPipeline,
       runProjectionRefreshScheduled,
+      runStorageRefreshScheduled,
     };
   })();
   return workerPromise;

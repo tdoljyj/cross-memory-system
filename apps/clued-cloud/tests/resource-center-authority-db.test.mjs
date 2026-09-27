@@ -13,6 +13,9 @@ import { createResourceCenterRecoveryStore, createResourceCenterProviderAttemptS
 import { RESOURCE_CENTER_MUTATION_TOOL } from "../../../kernel/host/resource-center-governed-tool-surface.mjs";
 import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 import { testRenewalDatabase } from "./resource-center-renewal-db.fixture.mjs";
+import { testStorageAccount } from "./resource-center-account-db.fixture.mjs";
+import { testStorageOAuth } from "./resource-center-oauth-db.fixture.mjs";
+import { testAccountRefresh } from "./resource-center-account-refresh-db.fixture.mjs";
 
 const USER = "10000000-0000-4000-8000-000000000071";
 const PROJECT = "20000000-0000-4000-8000-000000000071";
@@ -698,6 +701,9 @@ test("Canonical Resource Center registration and exact read-only authority", { t
       }
     });
     await testRenewalDatabase(t, admin, server, USER, DECISION);
+    await testStorageAccount(t, admin, server, USER, DECISION);
+    await testStorageOAuth(t, admin, server, USER, DECISION);
+    await testAccountRefresh(t, admin, server, USER, DECISION);
     const removed = await adminCall({
       action: "artifact_revoke", profile_id: profileId, artifact_id: trackId, base_version: 2,
     });

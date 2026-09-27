@@ -7,7 +7,9 @@ const fail = (code) => { throw new Error(code); };
 
 /** Host-owned create verifier. Polls metadata only, never reads remote content
  * and never changes/retries storage. An uncertain result leaves the durable
- * write intent fenced; it is not permission to repeat the filesystem effect. */
+ * write intent fenced; it is not permission to repeat the filesystem effect.
+ * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, list_children: Function, require_effect_provider_id?: boolean, timeout_ms?: number, poll_ms?: number, clock?: () => number, sleep?: Function}} config
+ */
 export function createGoogleDriveCreatePostconditionVerifier({
   managed_root: managedRoot, root_folder_id: rootId, root_parent_id: rootParentId,
   get_file: getFile, list_children: listChildren,
