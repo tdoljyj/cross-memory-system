@@ -22,6 +22,18 @@ renames `activation.pending.json` to `activation.json` and the exact launchers;
 it does not change their pinned contents. The installer
 does not implement upgrades, resets or credential renewal. This establishes the
 existing Host/NTFS fsync contract, not an arbitrary hardware power-loss warranty.
+On endpoints where WSL cannot see the Windows private application-data directory,
+set an operator-fixed `consumer_runtime_directory` on a verified shared mount.
+Only the three hash-pinned public runtime files (consumer, probe, bubblewrap) go
+there. Host config, journals and credentials stay in the private Host location.
+Verify actual WSL execution before activation; a Windows existence check alone
+is not a mount-visibility qualification.
+For a WSL-native runtime directory exposed through the fixed
+`\\\\wsl.localhost\\Ubuntu-24.04\\...` path, verify its Linux execute bit:
+Windows `chmod` does not reliably set it over that boundary. The operator may
+set `u+x` on the exact newly installed bubblewrap binary inside that distro,
+then recheck its hash and run all 14 isolation checks before activation. This
+does not change Windows/Drive ACLs or add a consumer capability.
 Do not install a writable root, credentials, host temporary directory or shell
 tool into the consumer. The only broker manifest is the two official schemas.
 

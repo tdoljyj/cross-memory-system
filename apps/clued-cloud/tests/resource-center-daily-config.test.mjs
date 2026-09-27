@@ -4,8 +4,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import { loadDailyHostConfig, validateDailyCredentials } from "../scripts/resource-center-daily-runner.mjs";
+import { loadDailyHostConfig, validateDailyCredentials, toWsl } from "../scripts/resource-center-daily-runner.mjs";
 const hash = b => createHash("sha256").update(b).digest("hex");
+test("runtime path translation supports only local disks and the pinned WSL distro", () => {
+  assert.equal(toWsl("C:\\runtime\\probe.py"),"/mnt/c/runtime/probe.py");
+  assert.equal(toWsl("\\\\wsl.localhost\\Ubuntu-24.04\\home\\chase\\runtime\\probe.py"),"/home/chase/runtime/probe.py");
+  assert.throws(()=>toWsl("\\\\untrusted\\share\\probe.py"),/DAILY_WSL_PATH_UNSUPPORTED/);
+  assert.throws(()=>toWsl("\\\\wsl.localhost\\OtherDistro\\probe.py"),/DAILY_WSL_PATH_UNSUPPORTED/);
+});
 async function config(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "clued-daily-config-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));

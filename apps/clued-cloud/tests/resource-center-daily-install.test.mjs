@@ -39,6 +39,14 @@ test("installer rejects changed artifacts before creating destination", async t 
   await assert.rejects(installDailyHost(request),/INSTALL_SOURCE_CHANGED/);
   await assert.rejects(fs.stat(request.destination),/ENOENT/);
 });
+test("WSL-visible consumer assets may be separate but never contain Host config or journals", async t => {
+  const request=await fixture(t);request.consumer_runtime_directory=path.join(path.dirname(request.destination),"consumer-assets");
+  await installDailyHost(request);
+  assert.deepEqual((await fs.readdir(request.consumer_runtime_directory)).sort(),["bwrap","consumer.py","probe.py"]);
+  const config=JSON.parse(await fs.readFile(path.join(request.destination,"host.json"),"utf8"));
+  assert.equal(config.consumer_path,path.join(request.consumer_runtime_directory,"consumer.py"));
+  assert.equal(config.state_directory,path.join(request.destination,"state"));
+});
 test("installer never overwrites an existing deployment or its logs", async t => {
   const request=await fixture(t);await installDailyHost(request);
   const ledger=path.join(request.destination,"state","jobs.jsonl");await fs.writeFile(ledger,"preserve existing work");

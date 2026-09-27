@@ -25,7 +25,13 @@ function decrypt(bytes) {
   if (result.status !== 0 || result.error) fail("DAILY_HOST_SECRET_UNAVAILABLE");
   try { return JSON.parse(result.stdout); } catch { fail("DAILY_HOST_SECRET_INVALID"); }
 }
-const toWsl = p => p.replaceAll("\\", "/").replace(/^([A-Za-z]):/, (_, d) => `/mnt/${d.toLowerCase()}`);
+export const toWsl = p => {
+  const normalized = p.replaceAll("\\", "/");
+  const prefix = "//wsl.localhost/Ubuntu-24.04/";
+  if (normalized.startsWith(prefix)) return "/" + normalized.slice(prefix.length);
+  if (/^[A-Za-z]:\//.test(normalized)) return normalized.replace(/^([A-Za-z]):/, (_, d) => `/mnt/${d.toLowerCase()}`);
+  fail("DAILY_WSL_PATH_UNSUPPORTED");
+};
 
 export function validateDailyCredentials(secrets, profileId, now = Date.now()) {
   if (secrets?.profile_id !== profileId || !/^clued_rcb_[a-f0-9]{64}$/.test(secrets?.reader ?? "") ||

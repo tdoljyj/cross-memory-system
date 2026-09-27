@@ -20,9 +20,10 @@ async function freshFile(filename, bytes) {
 /** Source hashes are supplied by the reviewing operator, not the job caller.
  * Fresh directory only: an upgrade must preserve the existing state separately,
  * and this installer deliberately does not implement upgrades or credential renewal. */
-export async function installDailyHost({ destination, artifacts, host_config: input, node_path: nodePath }) {
+export async function installDailyHost({ destination, consumer_runtime_directory: runtime = destination, artifacts, host_config: input, node_path: nodePath }) {
   if (!path.isAbsolute(destination ?? "") || !path.isAbsolute(nodePath ?? "") || !input || input.enabled !== true)
     fail("INSTALL_ARGUMENT_INVALID");
+  if (!path.isAbsolute(runtime ?? "")) fail("INSTALL_ARGUMENT_INVALID");
   const parent = await fs.lstat(path.dirname(destination));
   if (!parent.isDirectory() || parent.isSymbolicLink()) fail("INSTALL_PARENT_UNSAFE");
   const data = {};
@@ -35,10 +36,15 @@ export async function installDailyHost({ destination, artifacts, host_config: in
   const nodeHash = hash(await regular(nodePath));
   // No recursive mkdir or reuse: an existing target is a hard error.
   await fs.mkdir(destination, { mode: 0o700 });
+  if (path.resolve(runtime) !== path.resolve(destination)) {
+    const runtimeParent = await fs.lstat(path.dirname(runtime));
+    if (!runtimeParent.isDirectory() || runtimeParent.isSymbolicLink()) fail("INSTALL_PARENT_UNSAFE");
+    await fs.mkdir(runtime, { mode: 0o700 });
+  }
   const state = path.join(destination, "state");await fs.mkdir(state, { mode: 0o700 });
   const names = { bundle: "runner.mjs", consumer: "consumer.py", probe: "probe.py", bwrap: "bwrap" };
-  for (const key of Object.keys(names)) await freshFile(path.join(destination, names[key]), data[key]);
-  await fs.chmod(path.join(destination, "bwrap"), 0o700);
+  for (const key of Object.keys(names)) await freshFile(path.join(key === "bundle" ? destination : runtime, names[key]), data[key]);
+  await fs.chmod(path.join(runtime, "bwrap"), 0o700);
   for (const name of ["jobs.jsonl", "recovery.jsonl", "attempts.jsonl"]) await freshFile(path.join(state, name), "");
   // Separate process verifies pre-provisioned entries before any launcher exists.
   const check = spawnSync(nodePath, ["--input-type=module", "-e", `import fs from 'node:fs/promises';import path from 'node:path';const ids={};for(const n of ['jobs.jsonl','recovery.jsonl','attempts.jsonl']){const p=path.join(process.argv[1],n),s=await fs.lstat(p),f=await fs.open(p,'r+');try{const t=await f.stat();if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.dev!==t.dev||s.ino!==t.ino||(await f.readFile()).length!==0)throw Error('UNSAFE');await f.sync();ids[n]={dev:s.dev,ino:s.ino};}finally{await f.close();}}process.stdout.write(JSON.stringify(ids));`, state],
@@ -51,7 +57,7 @@ export async function installDailyHost({ destination, artifacts, host_config: in
   c.activation_path = path.join(destination, "activation.json");c.activation_sha256 = hash(activation);
   await freshFile(path.join(destination, "activation.pending.json"), activation);
   for (const key of ["consumer", "probe", "bwrap"]) {
-    c[`${key}_path`] = path.join(destination, names[key]);c[`${key}_sha256`] = artifacts[key].sha256;
+    c[`${key}_path`] = path.join(runtime, names[key]);c[`${key}_sha256`] = artifacts[key].sha256;
   }
   const configPath = path.join(destination, "host.json"), bundlePath = path.join(destination, names.bundle);
   const configBytes = JSON.stringify(c, null, 2) + "\n";await freshFile(configPath, configBytes);
