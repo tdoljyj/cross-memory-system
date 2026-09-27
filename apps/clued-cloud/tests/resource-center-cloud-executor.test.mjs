@@ -22,7 +22,7 @@ test('sibling/root drops and status directory fail before durable start and prov
   };
   assert.equal((await f.run().run(f.reference)).status,'deny');assert.equal(f.info().starts,0);assert.equal(f.info().posts,0);
 });
-for(const [name,options] of Object.entries({revoked:{revoke:true},lostBegin:{lostBegin:true},missingAttemptReceipt:{failAttempt:true},expiredAdmission:{expireAdmission:true}})){
+for(const [name,options] of Object.entries({revoked:{revoke:true},lostBegin:{lostBegin:true},missingAttemptReceipt:{failAttempt:true},replayedAttempt:{replayedAttempt:true},expiredAdmission:{expireAdmission:true}})){
   test('cloud '+name+' prevents provider mutation and never retries start',async()=>{
     const f=fixture(options),executor=f.run();assert.notEqual((await executor.run(f.reference)).status,'committed');
     assert.equal(f.info().posts,0);await executor.run(f.reference);assert.ok(f.info().starts<=1);assert.equal(f.info().posts,0);

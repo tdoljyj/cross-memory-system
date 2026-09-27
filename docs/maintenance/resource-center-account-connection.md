@@ -125,6 +125,16 @@ provider POST is sent. Lost begin, provider or finalization replies do not retry
 the effect. Synthetic tests cover this composition in both Node and workerd;
 they do not qualify a real provider or replace the shared database contracts.
 
+The original mutation journal now also retains the provider attempt and its
+immutable Receipt before dispatch: generated provider ID, exact parent/path,
+binding, byte length and SHA-256. The internal recording function checks the
+stored job and original writer; only its first transaction records an attempt.
+Concurrent/equal replays disclose no new dispatch permission, changed IDs conflict,
+and the cloud Host rejects replayed recording receipts. The internal account-job
+finalizer requires that recorded ID/path/parent before reusing the original
+Artifact/Event/Receipt transaction. These private functions have no public or
+service-role execute grant; they still need the qualified fixed-issuer bridge.
+
 The remote boundary scanner exhausts metadata pagination under registered
 parent/scan-root IDs and reuses the deterministic island rules. Partial results,
 ambiguous names, shortcuts, traversal limits and identity drift (including the

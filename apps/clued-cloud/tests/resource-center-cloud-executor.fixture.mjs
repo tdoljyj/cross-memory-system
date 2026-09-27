@@ -40,8 +40,9 @@ export function fixture(options={}){
         assert.equal(input.attempt.intent_id,ids.intent);assert.equal(input.attempt.parent_id,'track');
         assert.equal(input.attempt.sha256,sha(mutation.content));
         if(options.failAttempt)throw new Error('durable store unavailable');
+        if(options.replayedAttempt)return {status:'replayed',attempt_recorded:false,execution_permitted:false,receipt_id:ids.receipt};
         if(options.expireAdmission)now+=60000;
-        return {status:'committed',receipt_id:ids.receipt,attempt:input.attempt};
+        return {status:'committed',attempt_recorded:true,receipt_id:ids.receipt,attempt:input.attempt};
       }
       assert.equal(input.action,'finalize');assert.equal(posts,1);assert.equal(input.postcondition.provider_file_id,'new-id');
       if(options.lostFinalize)throw new Error('lost receipt');

@@ -83,6 +83,37 @@ export async function testAccountJobs(t, admin, server, { user, decision, profil
       assert.equal((await inspect(pendingJob)).status,"queued");
       await assert.rejects(admin.query("select clued_private.storage_root_quiet_v1($1,'account-root')",[user]),/storage_root_has_unresolved_mutation/);
     });
+    await t.test("provider attempt is exact, receipt-backed and single-recorded across database clients",async()=>{
+      const status=await inspect(job);
+      const attempt={contract:"clued.resource-center-provider-attempt/1",intent_id:status.intent_id,
+        request_sha256:prepare(job).request_sha256,profile_id:profile,provider_file_id:"job-fixture-created",
+        destination_path:mutation.destination_path,parent_id:"account-track",target_kind:"file",binding:prepare(job).exact_request.binding,
+        size:String(Buffer.byteLength(mutation.content)),sha256:hash(mutation.content)};
+      const record=async(value,client=admin,owner=user,id=job)=>(await client.query(
+        "select clued_private.storage_job_provider_attempt_v1($1,$2,$3,$4::jsonb) value",[owner,id,writerHash,JSON.stringify(value)])).rows[0].value;
+      for(const change of [{intent_id:randomUUID()},{profile_id:randomUUID()},{request_sha256:hash("wrong")},
+        {parent_id:"other"},{destination_path:mutation.destination_path+"2"},{size:"0"},{sha256:hash("other")},{binding:{}},{unexpected:true}]){
+        await assert.rejects(record({...attempt,...change}),/storage_attempt_mismatch/);
+      }
+      await assert.rejects(record(attempt,admin,randomUUID()),/storage_attempt_unavailable/);
+      await assert.rejects(record(attempt,admin,user,pendingJob),/storage_attempt_unavailable/);
+      await assert.rejects(record(attempt,caller),/permission denied/);
+      for(const fn of ['storage_job_provider_attempt_v1','storage_job_finalize_v1']){
+        for(const role of ['anon','authenticated','service_role']){
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') yes",[role,`clued_private.${fn}(uuid,uuid,text,jsonb)`])).rows[0].yes,false);
+        }
+      }
+      const results=await Promise.all([record(attempt),record(attempt,competitor)]);
+      assert.equal(results.filter(r=>r.attempt_recorded===true).length,1);
+      assert.equal(results.filter(r=>r.status==='replayed'&&r.execution_permitted===false).length,1);
+      assert.equal(new Set(results.map(r=>r.receipt_id)).size,1);
+      const saved=(await admin.query("select provider_attempt,provider_attempt_receipt_id,version,state from clued_private.resource_center_mutations_v1 where id=$1",[status.intent_id])).rows[0];
+      assert.deepEqual(saved.provider_attempt,attempt);assert.equal(saved.version,'2');assert.equal(saved.state,'started');
+      assert.equal((await admin.query("select status from public.clued_audit_receipts where id=$1",[saved.provider_attempt_receipt_id])).rows[0].status,'committed');
+      await assert.rejects(record({...attempt,provider_file_id:'second-id'}),/storage_attempt_conflict/);
+      assert.equal((await begin(job)).execution_permitted,false);
+      await assert.rejects(begin(pendingJob),/storage_job_prepare_denied/);
+    });
     await t.test("revocation wins a genuinely waiting begin and preserves original pending fences",async()=>{
       const pid=(await competitor.query("select pg_backend_pid() pid")).rows[0].pid;
       let pending;
@@ -131,9 +162,12 @@ export async function testAccountJobs(t, admin, server, { user, decision, profil
       // This entire test uses a temporary database and synthetic provider; no
       // Drive call or real file exists. Complete its original journal so the
       // later OAuth fixture can test the same account root independently.
-      const result=(await caller.query("select public.clued_resource_center_write_v1($1,$2::jsonb) value",[writerHash,JSON.stringify({action:"finalize",intent_id:status.intent_id,
+      const finish={action:"finalize",intent_id:status.intent_id,
         base_version:2,request_sha256:prepare(job).request_sha256,idempotency_key:randomUUID(),
-        postcondition:{path:mutation.destination_path,parent_id:"account-track",provider_file_id:"job-fixture-created",provider_file_version:"1"}})])).rows[0].value;
+        postcondition:{path:mutation.destination_path,parent_id:"account-track",provider_file_id:"job-fixture-created",provider_file_version:"1"}};
+      const finalize=async input=>(await admin.query("select clued_private.storage_job_finalize_v1($1,$2,$3,$4::jsonb) value",[user,job,writerHash,JSON.stringify(input)])).rows[0].value;
+      await assert.rejects(finalize({...finish,postcondition:{...finish.postcondition,provider_file_id:'wrong-id'}}),/storage_attempt_postcondition_mismatch/);
+      const result=await finalize(finish);
       assert.equal(result.state,"committed");
       assert.equal((await inspect(job)).status,"committed");assert.equal((await inspect(job)).execution_permitted,false);
       assert.equal((await begin(job)).execution_permitted,false);

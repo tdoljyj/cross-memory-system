@@ -78,7 +78,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           return current?.request_sha256===binding.request_sha256?current:null;
         },persist_provider_attempt:async attempt=>{
           const result=await invoke({action:"provider_attempt",attempt});
-          if(result?.status!=="committed" || !uuid(result.receipt_id) || !isDeepStrictEqual(result.attempt,attempt)) fail();
+          if(result?.status!=="committed" || result.attempt_recorded!==true || !uuid(result.receipt_id) || !isDeepStrictEqual(result.attempt,attempt)) fail();
         }});
       const verify=createGoogleDriveCreatePostconditionVerifier({managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,require_effect_provider_id:true,clock});
