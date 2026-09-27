@@ -36,6 +36,7 @@ async function fixture(changes = {}) {
       calls.push({ url: String(url), init });
       assert.equal(init.redirect, "error");
       if (changes.networkFailure) throw new Error("fixture-secret-in-upstream-error");
+      if (String(url).endsWith("/token") && changes.tokenResponse) return changes.tokenResponse();
       if (String(url).endsWith("/token")) return Response.json({ access_token: "fixture-access-token", refresh_token: "fixture-refresh-token", token_type: "Bearer", expires_in: 3600, scope, ...(changes.tokens ?? {}) });
       assert.equal(init.headers.authorization, "Bearer fixture-access-token");
       if (String(url).includes("/about?")) return Response.json({ user: { me: true, permissionId: "provider-user", ...(changes.user ?? {}) } });
@@ -105,7 +106,7 @@ test("wrong state or backend identity never calls Google", async () => {
 test("fixed stage reasons distinguish safe failures without exposing provider data or retrying codes", async () => {
   for (const [changes, reason] of [
     [{ denied: true }, "attempt_unavailable"],
-    [{ networkFailure: true }, "token_exchange_unconfirmed"],
+    [{ networkFailure: true }, "token_transport_unconfirmed"],
     [{ tokens: { expires_in: "3600" } }, "token_response_invalid"],
     [{ tokens: { refresh_token: null } }, "refresh_token_missing"],
     [{ tokens: { scope: scope + " fixture-private-scope" } }, "scope_mismatch"],
@@ -129,5 +130,30 @@ test("fixed stage reasons distinguish safe failures without exposing provider da
     const count = f.calls.length;
     await assert.rejects(f.oauth.complete(input), /unavailable/);
     assert.equal(f.calls.length, count);
+  }
+});
+
+test("token errors expose only fixed classes, retain single exchange and never commit", async () => {
+  for (const [response, reason] of [
+    ...["invalid_client", "invalid_grant", "unauthorized_client", "invalid_request", "unsupported_grant_type"].map(error =>
+      [() => Response.json({ error, error_description: "fixture-private-upstream-body" }, { status: 400 }), "token_" + error]),
+    [() => Response.json({ error: "fixture-private-upstream-body" }, { status: 503 }), "token_http_rejected"],
+    [() => Response.json({ error: "__proto__" }, { status: 400 }), "token_http_rejected"],
+    [() => new Response("fixture-private-upstream-body", { status: 502 }), "token_response_unreadable"],
+    [() => new Response("x".repeat(65537), { status: 400 }), "token_response_unreadable"],
+    [() => Response.json(null), "token_response_unreadable"],
+  ]) {
+    const f = await fixture({ tokenResponse: response });
+    const url = new URL((await f.oauth.start(d.connection_id)).authorization_url);
+    const input = { state: url.searchParams.get("state"), code: "fixture-private-auth-code" };
+    await assert.rejects(f.oauth.complete(input), error => {
+      assert.equal(error.reason, reason);
+      for (const secret of [input.state, input.code, "fixture-private-upstream-body", "fixture-only-client-secret"])
+        assert.equal(JSON.stringify(error).includes(secret), false);
+      return true;
+    });
+    assert.equal(f.calls.length, 1); assert.equal(f.complete(), undefined);
+    await assert.rejects(f.oauth.complete(input), /unavailable/);
+    assert.equal(f.calls.length, 1);
   }
 });
