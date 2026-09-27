@@ -47,6 +47,49 @@ function fixture(confirm = true) {
 }
 const connection = { id: "fixture-connection-a", provider: "google-drive", state: "awaiting_provider", version:1, profile_id:"fixture-profile" };
 
+const recoveryJob='10000000-0000-4000-8000-000000000081',recoveryReceipt='10000000-0000-4000-8000-000000000082';
+async function recoveryReady(confirm=true,state='reauthorization_required') {
+  const f=fixture(confirm);await f.settle();f.respond(0,{connections:[{...connection,state}]});await f.settle();
+  f.input('原存储任务 ID').props.onChange({target:{value:recoveryJob}});await f.settle();
+  return f;
+}
+test('native recovery reads original receipt first, explicitly confirms settlement and prevents duplicate clicks',async()=>{
+  const f=await recoveryReady();const inspect=f.button('查询原任务回执');inspect.props.onClick();inspect.props.onClick();await f.settle();
+  assert.equal(f.requests.length,2);assert.equal(f.requests[1].url,'/v1/storage/recovery');
+  assert.deepEqual(JSON.parse(f.requests[1].init.body),{action:'inspect',connection_id:connection.id,job_id:recoveryJob});
+  f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'started',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
+  const settle=f.button('核验并登记原结果（不重写）');settle.props.onClick();settle.props.onClick();await f.settle();
+  assert.equal(f.requests.length,3);assert.equal(f.confirmations.length,1);assert.match(f.confirmations[0],/不会重新创建文件/);
+  assert.deepEqual(JSON.parse(f.requests[2].init.body),{action:'settle',connection_id:connection.id,job_id:recoveryJob});
+  f.respond(2,{job_id:recoveryJob,status:'committed',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
+  assert.match(f.text(),/没有重新写入文件或恢复权限/);assert.equal(f.requests.length,3);assert.equal(f.navigations.length,0);
+});
+test('cancelled or unknown recovery never resends; editing job clears old settlement controls',async()=>{
+  for(const consent of [false,true]) {
+    const f=await recoveryReady(consent);f.button('查询原任务回执').props.onClick();await f.settle();
+    f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'uncertain',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
+    f.button('核验并登记原结果（不重写）').props.onClick();await f.settle();
+    if(!consent)assert.equal(f.requests.length,2);
+    else {f.respond(2,{status:'inspection_required',execution_permitted:false});await f.settle();assert.match(f.text(),/不会自动重试/);assert.equal(f.requests.length,3);}
+    f.input('原存储任务 ID').props.onChange({target:{value:recoveryReceipt}});await f.settle();
+    assert.equal(f.text().includes('核验并登记原结果（不重写）'),false);
+  }
+});
+test('revoked connection permits historical inspection only, never a settlement button',async()=>{
+  const f=await recoveryReady(true,'revoked');f.button('查询原任务回执').props.onClick();await f.settle();
+  f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'started',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
+  assert.ok(f.text().includes(recoveryReceipt));assert.equal(f.text().includes('核验并登记原结果（不重写）'),false);
+});
+test('account switch before recovery dispatch blocks it and suppresses a late settlement receipt',async()=>{
+  const blocked=await recoveryReady();blocked.button('查询原任务回执').props.onClick();blocked.change('b');await blocked.settle();
+  assert.equal(blocked.requests.some(r=>r.url==='/v1/storage/recovery'),false);
+  const f=await recoveryReady();f.button('查询原任务回执').props.onClick();await f.settle();
+  f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'started',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
+  f.button('核验并登记原结果（不重写）').props.onClick();await f.settle();f.change('b');await f.settle();
+  f.respond(3,{connections:[]});await f.settle();f.respond(2,{job_id:recoveryJob,status:'committed',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
+  assert.equal(f.text().includes(recoveryReceipt),false);assert.equal(f.text().includes('原任务结果已核验'),false);assert.equal(f.requests.length,4);
+});
+
 test("directory observation submits only one exact connection and never claims writing is enabled",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
   const check=f.button("检查已登记目录（只读）");check.props.onClick();check.props.onClick();await f.settle();

@@ -148,7 +148,7 @@ This is not atomic same-name exclusion against unrelated Google clients and is
 not whole-Host qualification. Actual isolated tool inventory, rollback and the
 temporary real Host/Worker/Canonical receipt chain are still required.
 
-### Account cloud settlement-only component (not yet an enabled route)
+### Account cloud settlement-only recovery (pending deployment acceptance)
 
 `apps/clued-cloud/worker/storage-cloud-recovery.ts` is a private composition,
 not a public authorization endpoint. It accepts only a connection/job reference;
@@ -170,7 +170,36 @@ timeout cannot undo a transaction already delivered to the database: its origina
 job/intent and immutable receipt remain the source of truth. Return only the
 verified receipt reference, never credentials or upstream diagnostic payloads.
 
-This isolated component does not enable the account recovery route, allow an
-inactive connection, qualify a provider root, restore grants/delegations or clear
-a provider-root fence. Those require reviewed native-Owner DB/OAuth contracts
-and integrated acceptance. Unit tests alone are not production recovery evidence.
+The candidate `clued_storage_native_recovery_v1` RPC supplies the native-Owner
+plus fixed-issuer DB boundary. It serializes the original job and provider root,
+permits settlement for active or reauthorization-required connections, and rejects
+revoked connections. Its CAS fingerprint binds the entire loaded descriptor,
+encrypted credential, original provider attempt, connection version/state, job
+digest, profile version, native session and issuer. It is not a bearer capability:
+both calls independently recheck current authority, and settlement reuses the
+original Artifact/journal/Event/Receipt transaction. The old automatic recovery
+wrapper stays active-only. All private helpers have API execution revoked.
+
+After an unknown settlement reply, native `recovery_inspect` reads only the
+original job's durable status and receipt. It remains readable by the same live
+Owner and issuer after connection revocation, exposes no credentials and cannot
+dispatch or settle an effect. Do not rerun the writer or infer failure from a
+missing reply. Do not treat a CAS fingerprint as permission to write.
+
+The candidate native Web route `POST /v1/storage/recovery` accepts only
+`action: inspect|settle`, `connection_id` and the original `job_id`. Both account
+and Google management flags must be enabled; the new-job/executor flags are not
+required for historical inspection or settlement. It preserves the live native
+JWT, adds only the fixed server issuer, and never calls the normal executor.
+`inspect` returns a validated status/receipt whitelist without requiring vault
+keys. `settle` uses only the GET-only factory above. All results are no-store;
+an unknown settlement is not automatically retried. The account page requires
+reading the original status before explicit settlement confirmation, clears stale
+controls when IDs change, and discards late results after account changes.
+
+Neither this route nor the migration qualifies a provider root, restores grants
+or delegations, or performs credential-only OAuth. An expired credential still
+requires the separate human recovery contract; do not substitute ordinary OAuth
+completion (which activates a connection). Integrated acceptance and reviewed
+deployment remain required. Unit/transport tests alone are not production
+recovery evidence.

@@ -58,6 +58,7 @@ export async function createStorageCloudRecovery(config: {
           d.oauth_client_id !== config.client_id || typeof d.provider_subject !== "string" ||
           !/^[A-Za-z0-9_-]{1,255}$/.test(d.provider_subject) || !Number.isSafeInteger(d.credential_version) ||
           Number(d.credential_version) < 1 || !Number.isSafeInteger(d.version) || Number(d.version) < 1 ||
+          !/^[0-9a-f]{64}$/.test(String(d.recovery_binding)) ||
           !/^[0-9a-f]{64}$/.test(String(d.request_sha256)) || !providerId.test(String(d.root_folder_id)) ||
           !providerId.test(String(d.root_parent_id)) || !object(d.profile) || !object(d.mutation) ||
           !object(d.provider_before) || !object(d.attempt) ||
@@ -97,6 +98,7 @@ export async function createStorageCloudRecovery(config: {
         effect_result: { operation: "create", destination_path: d.mutation.destination_path, provider_file_id: d.attempt.provider_file_id } }));
       check();
       const done = await bounded(config.rpc({ ...pinned, action: "recovery_finalize", credential_version: d.credential_version,
+        recovery_binding: d.recovery_binding,
         finish: { intent_id: d.intent_id, base_version: d.version, request_sha256: d.request_sha256, postcondition } }));
       check();
       if (done.status !== "committed" || done.state !== "committed" || done.intent_id !== d.intent_id ||
