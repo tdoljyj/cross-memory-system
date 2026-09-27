@@ -7,9 +7,9 @@ import path from "node:path";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
 
-import { createResourceCenterGoogleDriveOnlineToolHost } from "../../../kernel/host/resource-center-online-tool-host.mjs";
-import { createResourceCenterWriteClient } from "../../../kernel/host/resource-center-write-client.mjs";
-import { createResourceCenterRecoveryStore } from "../../../kernel/host/resource-center-recovery-store.mjs";
+import { createResourceCenterGoogleDriveOnlineToolHost, createResourceCenterGoogleDriveWriterToolHost,
+  createResourceCenterGoogleDriveNativeWriterToolHost } from "../../../kernel/host/resource-center-online-tool-host.mjs";
+import { createResourceCenterRecoveryStore, createResourceCenterProviderAttemptStore } from "../../../kernel/host/resource-center-recovery-store.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "../../../kernel/host/resource-center-governed-tool-surface.mjs";
 import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 
@@ -539,7 +539,8 @@ test("Canonical Resource Center registration and exact read-only authority", { t
             boundary_scan_roots: [tempParent],
           },
           root_folder_id: "temp-root-id", root_parent_id: "temp-parent-id",
-          get_drive_access_token: async () => "metadata-only-test-token",
+          get_drive_credential: async () => ({ access_token: "metadata-only-test-token",
+            scope: "https://www.googleapis.com/auth/drive.metadata.readonly" }),
           drive_fetch: async (url) => {
             const parsed = new URL(url);
             if (parsed.pathname.endsWith("/temp-root-id")) {
@@ -555,6 +556,14 @@ test("Canonical Resource Center registration and exact read-only authority", { t
                 parents: ["temp-root-id"], version: "2", trashed: false,
                 mimeType: "application/vnd.google-apps.folder",
               }] });
+            let topicExists = false;
+            try { topicExists = (await fs.stat(nativeTopic)).isDirectory(); } catch { /* Not yet created. */ }
+            const topicMetadata = { id: "temp-new-topic-id", name: "视觉探索", parents: ["temp-track-id"],
+              version: "1", trashed: false, mimeType: "application/vnd.google-apps.folder" };
+            if (parsed.pathname.endsWith("/temp-new-topic-id") && topicExists) return Response.json(topicMetadata);
+            if (query.includes("'temp-track-id' in parents") && query.includes("视觉探索") && topicExists) {
+              return Response.json({ files: [topicMetadata] });
+            }
             return Response.json({ files: [] });
           },
           authority_endpoint: "https://clued.test/v1/resource-center/authority",
@@ -585,30 +594,61 @@ test("Canonical Resource Center registration and exact read-only authority", { t
         assert.equal(writerIssued.status, "committed");
         const recoveryPath = path.join(tempParent, "recovery.jsonl");
         await fs.writeFile(recoveryPath, "", { flag: "wx" });
-        const writeClient = createResourceCenterWriteClient({
+        assert.throws(() => createResourceCenterGoogleDriveWriterToolHost({
+          ...hostOptions,
           ...createResourceCenterRecoveryStore(recoveryPath),
-          endpoint: "https://clued.test/v1/resource-center/write", binding_token: writerToken,
-          fetch: hostOptions.authority_fetch,
-          resolve_provider_identity: async () => ({
-            root_folder_id: "temp-root-id", root_parent_id: "temp-parent-id", root_folder_version: "1",
-            source_file_id: null, source_file_version: null,
-            destination_parent_id: "temp-track-id", destination_parent_version: "2",
-            destination_file_id: null, destination_file_version: null, provider_version: "a".repeat(64),
-          }),
-          verify_postcondition: async ({ mutation: effectMutation }) => {
-            assert.equal((await fs.stat(effectMutation.destination_path)).isDirectory(), true);
-            return { path: effectMutation.destination_path.replaceAll("\\", "/"), parent_id: "temp-track-id",
-              provider_file_id: "temp-new-topic-id", provider_file_version: "1" };
+          writer_endpoint: "https://clued.test/v1/resource-center/write", writer_binding_token: writerToken,
+        }), /DRIVE_MOUNTED_WRITER_IDENTITY_UNQUALIFIED/);
+        await assert.rejects(fs.stat(nativeTopic), { code: "ENOENT" });
+        const attemptPath = path.join(tempParent, "provider-attempts.jsonl");
+        await fs.writeFile(attemptPath, "", { flag: "wx" });
+        const attempts = createResourceCenterProviderAttemptStore(attemptPath);
+        const nativeFilePath = path.join(nativeTrack, "native.txt");
+        const nativeContent = "Synthetic native-ID create\n";
+        let nativeMetadata = null;
+        let nativePosts = 0;
+        const nativeWriter = createResourceCenterGoogleDriveNativeWriterToolHost({ ...hostOptions,
+          get_drive_credential: async () => ({ access_token: "native-create-test-token",
+            scope: "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly" }),
+          ...createResourceCenterRecoveryStore(recoveryPath), ...attempts,
+          writer_endpoint: "https://clued.test/v1/resource-center/write", writer_binding_token: writerToken,
+          drive_fetch: async (url, options) => {
+            const parsed = new URL(url);
+            if (parsed.pathname.endsWith("/generateIds")) return Response.json({ ids: ["native-id"] });
+            if (options?.method === "POST") {
+              nativePosts++;
+              // The real store must already contain the exact generated ID.
+              const saved = JSON.parse((await fs.readFile(attemptPath, "utf8")).trim()).provider_attempt;
+              assert.equal(saved.provider_file_id, "native-id");
+              assert.equal(saved.destination_path, nativeFilePath.replaceAll("\\", "/"));
+              assert.match(options.body, /Synthetic native-ID create/);
+              nativeMetadata = { id: "native-id", name: "native.txt", parents: ["temp-track-id"],
+                mimeType: "text/plain", version: "1", trashed: false,
+                size: String(Buffer.byteLength(nativeContent)), sha256Checksum: crypto.createHash("sha256").update(nativeContent).digest("hex") };
+              return Response.json(nativeMetadata);
+            }
+            if (parsed.pathname.endsWith("/native-id")) return Response.json(nativeMetadata);
+            if ((parsed.searchParams.get("q") ?? "").includes("name = 'native.txt'")) {
+              return Response.json({ files: nativeMetadata ? [nativeMetadata] : [] });
+            }
+            return hostOptions.drive_fetch(url, options);
           },
         });
-        const writer = createResourceCenterGoogleDriveOnlineToolHost({ ...hostOptions, ...writeClient });
-        const written = await writer.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
-          operation: "create", destination_path: nativeTopic, target_kind: "directory", directory_semantics: "topic",
+        const nativeWritten = await nativeWriter.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+          operation: "create", destination_path: nativeFilePath, target_kind: "file", content: nativeContent,
         });
-        assert.equal(written.status, "committed");
-        assert.match(written.canonical_receipt_id, /^[0-9a-f-]{36}$/);
+        assert.equal(nativeWritten.status, "committed", JSON.stringify(nativeWritten));
+        assert.match(nativeWritten.canonical_receipt_id, /^[0-9a-f-]{36}$/);
+        assert.equal(nativePosts, 1);
         assert.equal((await admin.query("select state from clued_private.resource_center_mutations_v1 where profile_id=$1", [tempProfileId])).rows[0].state, "committed");
-        assert.equal((await admin.query("select count(*)::int n from clued_private.resource_center_artifacts_v1 where profile_id=$1 and provider_file_id='temp-new-topic-id'", [tempProfileId])).rows[0].n, 1);
+        await assert.rejects(fs.stat(nativeFilePath), { code: "ENOENT" });
+        const nativeAttempt = await attempts.read_provider_attempt(nativeWritten.effect_result.intent_id, nativeWritten.binding.request_sha256);
+        assert.equal(nativeAttempt.provider_file_id, "native-id");
+        assert.equal((await admin.query("select count(*)::int n from clued_private.resource_center_artifacts_v1 where profile_id=$1 and provider_file_id='native-id'", [tempProfileId])).rows[0].n, 1);
+        assert.equal((await nativeWriter.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
+          operation: "create", destination_path: nativeFilePath, target_kind: "file", content: "must not overwrite",
+        })).status, "deny");
+        assert.equal(nativePosts, 1);
         const writerHash = crypto.createHash("sha256").update(writerToken).digest("hex");
         const callWriter = async (token, input) => (await anon.query(
           "select public.clued_resource_center_write_v1($1,$2::jsonb) value", [token, JSON.stringify(input)],
@@ -636,7 +676,8 @@ test("Canonical Resource Center registration and exact read-only authority", { t
           writer_binding_id: secondWriter.target_refs.find((ref) => ref.role === "primary").id })).status, "committed");
         assert.equal((await callWriter(secondWriterHash, inspect)).status, "denied");
         assert.equal((await callWriter(writerHash, inspect)).status, "committed");
-        const unregisteredChild = path.join(nativeTopic, "child.txt");
+        // An unregistered parent remains unavailable after finalization.
+        const unregisteredChild = path.join(nativeTrack, "unregistered-parent", "child.txt");
         assert.equal((await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, {
           operation: "create", destination_path: unregisteredChild,
           target_kind: "file",

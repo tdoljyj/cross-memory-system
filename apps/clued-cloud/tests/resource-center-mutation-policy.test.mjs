@@ -671,6 +671,10 @@ test("official filesystem adapter consumes admission and scans trusted roots", a
   });
   assert.equal(result.status, "committed");
   assert.equal(await fs.readFile(destination, "utf8"), "governed");
+  assert.equal(result.effect_result.object_identity.link_count, 1);
+  await assert.rejects(adapter.guardedMutation({ operation: "create", artifact_role: "clued_resource",
+    destination_path: destination, content: "must not overwrite" }), { code: "EEXIST" });
+  assert.equal(await fs.readFile(destination, "utf8"), "governed");
 
   const replaced = await adapter.guardedMutation({
     operation: "replace",
@@ -686,6 +690,35 @@ test("official filesystem adapter consumes admission and scans trusted roots", a
   const violations = await adapter.scanBoundary();
   assert.equal(violations.some((item) =>
     item.code === "UNAUTHORIZED_WORKSPACE_MUTATION" && item.path.includes("Clued_孤岛")), true);
+});
+
+test("new file with unknown provider link count never receives content or a success result", async (t) => {
+  const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), "clued-create-link-count-"));
+  t.after(() => fs.rm(sandbox, { recursive: true, force: true }));
+  const track = path.join(sandbox, "20_P_产品与体验");
+  await fs.mkdir(track);
+  let writes = 0;
+  let closed = 0;
+  const adapter = createResourceCenterFilesystemAdapter({
+    trusted_profile: { registration_status: "registered", profile_id: "unqualified-volume-test",
+      profile_version: "test/1", managed_root: sandbox, allowed_root_children: ["20_P_产品与体验"] },
+    resolve_artifact: () => artifactAuthority(),
+    filesystem: { ...fs, open: async (file, mode) => {
+      assert.equal(mode, "wx");
+      const handle = await fs.open(file, mode);
+      return { stat: async () => Object.assign(await handle.stat({ bigint: true }), { nlink: 0n }),
+        writeFile: async () => { writes++; }, sync: () => handle.sync(),
+        close: async () => { closed++; await handle.close(); } };
+    } },
+  });
+  const destination = path.join(track, "empty.txt");
+  await assert.rejects(adapter.guardedMutation({ operation: "create", artifact_role: "clued_resource",
+    destination_path: destination, content: "must not be written" }), /FILESYSTEM_OBJECT_IDENTITY_UNAVAILABLE/);
+  assert.equal(writes, 0);
+  assert.equal(closed, 1);
+  assert.equal((await fs.stat(destination)).size, 0);
+  // Exclusive open can already have created an empty object. The online Host
+  // must fence this as uncertain, not claim zero effects or silently delete it.
 });
 
 test("official filesystem adapter rejects a realpath escape before the effect", async (t) => {

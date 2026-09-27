@@ -69,3 +69,81 @@ Temporary local tests and injected Drive metadata are not real Drive acceptance.
 Before enabling production writes, qualify the dedicated Google OAuth connection,
 provider operation/postcondition, restricted Host tool inventory, durable journal,
 and rollback/recovery on temporary objects. Until then, production stays read-only.
+
+### Drive visibility prerequisite
+
+`drive.file` can read app-created or individually authorized files, but a parent
+folder grant does not prove visibility of files created by other applications.
+Neither an empty list nor `incompleteSearch: false` proves their absence. Do not
+use this scope alone to qualify path uniqueness, absence recovery, or a complete
+parent/sibling watcher. Exact-ID diagnostic reads remain available.
+
+The official metadata path requires a Host-owned `get_credential` callback
+returning `{ access_token, scope }` together from the actual OAuth grant. The
+Google Host factory forwards this as `get_drive_credential`. Requested scopes,
+caller-declared scopes and static visibility flags are not grant evidence.
+Token-only legacy bootstrap fails namespace lookup closed. Pagination uses one
+credential snapshot; every subsequent lookup checks the current grant again.
+
+The least broader metadata grant is `drive.metadata.readonly`. It reveals
+account-wide file metadata and therefore requires separate explicit Owner
+consent; this code change does not request it or expand the existing connection.
+No metadata grant authorizes writing file content. Even with it, account/root
+identity, permission visibility, concurrent name conflicts, provider semantics,
+Host isolation and the durable journal still require qualification. In particular,
+Drive's same-generated-ID `409` prevents duplicate object creation on retry,
+not same-name creation with another ID. Do not enable the writer from that test.
+
+References: [Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)
+and [pre-generated IDs](https://developers.google.com/workspace/drive/api/guides/create-file).
+
+### Create postcondition and credential bootstrap
+
+`createGoogleDrivePilotCredential` refreshes only an already-consented exact
+`drive.file` + `drive.metadata.readonly` grant through Google's fixed token
+endpoint. The Host supplies an encrypted loader, never a tool payload. Refresh
+is single-flight. Changed grants, invalid replies, failed storage and revocation
+close the credential getter; provider error bodies are not logged. A rotated
+refresh token requires a durable Host-owned persistence callback before use.
+No callback installs an OS boundary or makes same-user DPAPI inaccessible to
+other processes running as that user.
+
+`createGoogleDriveCreatePostconditionVerifier` is a Host-only callback for the
+durable writer. It verifies the exact created path under a pinned root, all
+ancestor IDs/versions, unique name, provider ID/version, parent and type. It
+polls only for a not-yet-visible created object, with a finite deadline. A
+conflict, moved object, credential failure or changed version never permits
+retrying the filesystem effect. Files require exact UTF-8 byte count and Drive
+SHA-256 metadata; missing checksums fail closed instead of downloading content
+or silently using a weaker digest. File creation uses one exclusive handle,
+checks local object identity/link count and flushes the handle before returning.
+
+These helpers still require actual provider acceptance and an isolated Host.
+They do not offer an atomic cross-provider transaction or prevent an unrelated
+raw-OS writer from racing the mount. A failed postcondition leaves the existing
+durable fence intact for operator reconciliation. Do not enable real Resource
+Center mutation from unit tests or a temporary provider probe alone.
+
+### Native-ID candidate and disabled mounted writer
+
+`createResourceCenterGoogleDriveWriterToolHost` is deliberately unavailable:
+same path/name/hash cannot prove a local created object's Drive identity when
+another client races synchronization. It throws before any provider call. Do
+not relax the mounted provider's unknown link-count check to enable it.
+
+`createResourceCenterGoogleDriveNativeWriterToolHost` is the create-only
+candidate. After the durable Canonical start, it generates one Drive ID and
+appends/fsyncs its exact intent/binding/ID to a separate, preprovisioned private
+provider-attempt journal before the sole storage POST. The same Host clock is
+checked after credential refresh immediately before that POST; expiration
+leaves the durable fence intact. Authority is resolved again after prepare/start,
+so intermediate ancestor changes cannot replace the originally admitted identity.
+The postcondition requires the generated ID, not merely a matching name/hash.
+
+On response loss, read the saved provider attempt and inspect that exact ID,
+path, ancestry, type, size and SHA-256 under current authorization. No recovered
+attempt grants execution or automatic retry. A missing result does not by itself
+prove absence: retain the fence until the recovery contract above is satisfied.
+This is not atomic same-name exclusion against unrelated Google clients and is
+not whole-Host qualification. Actual isolated tool inventory, rollback and the
+temporary real Host/Worker/Canonical receipt chain are still required.
