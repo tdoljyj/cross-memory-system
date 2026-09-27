@@ -46,6 +46,23 @@ function fixture(confirm = true) {
   };
 }
 const connection = { id: "fixture-connection-a", provider: "google-drive", state: "awaiting_provider", version:1, profile_id:"fixture-profile" };
+
+test("directory observation submits only one exact connection and never claims writing is enabled",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
+  const check=f.button("检查已登记目录（只读）");check.props.onClick();check.props.onClick();await f.settle();
+  assert.equal(f.requests.length,2);assert.equal(f.requests[1].url,"/v1/storage/google/probe");
+  assert.deepEqual(JSON.parse(f.requests[1].init.body),{connection_id:connection.id});
+  f.respond(1,{status:"metadata_observed",attempt_id:"10000000-0000-4000-8000-000000000001",receipt_id:"10000000-0000-4000-8000-000000000002",execution_permitted:false});await f.settle();
+  assert.ok(f.text().includes("这不是完整存储资格验收"));assert.ok(f.text().includes("不会开启文件写入"));
+  assert.equal(f.requests.length,2);
+});
+test("directory observation late reply is discarded after account switch",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
+  f.button("检查已登记目录（只读）").props.onClick();await f.settle();f.change("b");await f.settle();
+  f.respond(2,{connections:[]});await f.settle();
+  f.respond(1,{status:"metadata_observed",attempt_id:"10000000-0000-4000-8000-000000000001",receipt_id:"10000000-0000-4000-8000-000000000002",execution_permitted:false});await f.settle();
+  assert.equal(f.text().includes("检查已记录"),false);assert.equal(f.text().includes("10000000-0000-4000-8000-000000000002"),false);
+});
 test("new connection defaults to disclosed refresh consent, can opt out or cancel, and never enrolls on listing",async()=>{
   const label='连接成功后自动续签（可取消；已有停用或失效设置不变）';
   for(const choice of [true,false]) {

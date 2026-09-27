@@ -1,0 +1,132 @@
+import assert from "node:assert/strict";
+import {randomUUID,randomBytes} from "node:crypto";
+import {mkdtemp} from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import {fileURLToPath,pathToFileURL} from "node:url";
+import test from "node:test";
+import {build} from "esbuild";
+const dir=await mkdtemp(path.join(os.tmpdir(),"clued-directory-probe-"));
+async function load(name) {
+  const outfile=path.join(dir,name+".mjs");
+  await build({entryPoints:[fileURLToPath(new URL("../worker/"+name+".ts",import.meta.url))],outfile,bundle:true,platform:"node",format:"esm"});
+  return import(pathToFileURL(outfile));
+}
+const {createStorageGoogleProbe}=await load("storage-google-probe");
+const {createStorageCredentialVault}=await load("storage-credential-vault");
+const scope="https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
+async function fixture(options={}) {
+  const root="/drive/Clued_资料中心", connection=randomUUID(), attempt=randomUUID(), receipt=randomUUID();
+  const vaultConfig={current_key_id:"k1",keys:{k1:randomBytes(32).toString("base64url")}};
+  const vault=await createStorageCredentialVault(vaultConfig);
+  const context={owner_id:randomUUID(),connection_id:connection,provider:"google-drive",provider_subject:"probe-user",oauth_client_id:"probe.apps.googleusercontent.com",credential_version:1};
+  const descriptor={...context,connection_version:1,layout:{contract:"clued.storage-directory-layout/1",managed_root:root,root_folder_id:"root",root_parent_id:"parent",allowed_root_children:["10_E"],
+    directories:[{path:root,provider_file_id:"root"},{path:root+"/10_E",provider_file_id:"track"},{path:root+"/10_E/topic",provider_file_id:"topic"}]},...options.descriptor};
+  const envelope=await vault.seal(JSON.stringify({access_token:"synthetic-private-access",refresh_token:"synthetic-private-refresh",token_type:"Bearer",scope,expires_at_ms:Date.now()+3600000,...options.secret}),context);
+  const item=(id,name,parent)=>({id,name,parents:parent?[parent]:[],mimeType:"application/vnd.google-apps.folder",version:"1",trashed:false,isAppAuthorized:true,capabilities:{canAddChildren:true}});
+  const files=[item("parent","drive"),item("root","Clued_资料中心","parent"),item("track","10_E","root"),item("topic","topic","track")];
+  const calls=[], rpcs=[];
+  const fetcher=async(url,init)=>{
+    calls.push({url:String(url),method:init.method});
+    assert.equal(init.method,"GET"); assert.equal(init.redirect,"manual"); assert.ok(init.signal);
+    assert.equal(new Headers(init.headers).get("authorization"),"Bearer synthetic-private-access");
+    const u=new URL(url); assert.equal(u.origin,"https://www.googleapis.com"); assert.equal(u.searchParams.has("alt"),false);
+    if(options.networkError)throw Error("synthetic-private-upstream");
+    if(options.redirect)return new Response(null,{status:302,headers:{location:"https://unexpected.invalid"}});
+    if(options.delay)options.delay();
+    if(u.pathname.endsWith("/about"))return Response.json({user:{me:true,permissionId:options.subject??"probe-user"}});
+    if(u.pathname.endsWith("/files")) {
+      assert.match(u.searchParams.get("fields"),/isAppAuthorized/);
+      const parent=u.searchParams.get("q").split("'")[1];
+      return Response.json({files:files.filter(f=>f.parents.includes(parent)),incompleteSearch:options.incomplete??false});
+    }
+    const result=structuredClone(files.find(f=>f.id===u.pathname.split("/").at(-1)));
+    if(result.id===options.unauthorized)result.isAppAuthorized=false;
+    return Response.json(result);
+  };
+  const rpc=async input=>{
+    rpcs.push(input);
+    if(input.action==="prepare") {
+      assert.deepEqual(input,{action:"prepare",connection_id:connection});
+      if(options.prepareError)throw Error("synthetic-private-db");
+      return {status:"prepared",attempt_id:attempt,descriptor,credential_envelope:envelope,expires_at:new Date(Date.now()+90000).toISOString()};
+    }
+    assert.deepEqual(Object.keys(input).sort(),["action","attempt_id","observation"]);
+    assert.equal(input.attempt_id,attempt); assert.equal(input.observation.directories.length,3);
+    if(options.commitError)throw Error("synthetic-private-stale");
+    return {status:"metadata_observed",attempt_id:attempt,receipt_id:receipt,execution_permitted:false,credential_envelope:envelope};
+  };
+  const probe=await createStorageGoogleProbe({client_id:context.oauth_client_id,vault:vaultConfig,rpc,fetch:fetcher,clock:options.clock});
+  return {probe,connection,attempt,receipt,calls,rpcs,rpc,fetcher,vaultConfig,client:context.oauth_client_id};
+}
+test("server directory observation uses pinned secret, fixed GETs and whitelisted receipt only",async()=>{
+  const f=await fixture(), result=await f.probe.run({connection_id:f.connection});
+  assert.deepEqual(result,{status:"metadata_observed",attempt_id:f.attempt,receipt_id:f.receipt,execution_permitted:false});
+  assert.equal(f.rpcs.length,2); assert.ok(f.calls.length>8);
+  assert.equal(JSON.stringify(f.rpcs[1]).includes("synthetic-private"),false);
+  assert.equal(JSON.stringify(result).includes("credential"),false);
+});
+test("no caller profile, root, credential, owner, report or issuer reaches private RPC",async()=>{
+  const f=await fixture();
+  for(const extra of [{profile_id:randomUUID()},{managed_root:"/caller"},{owner_id:randomUUID()},{observation:{}},{credential:{}},{issuer:"caller"}])
+    await assert.rejects(f.probe.run({connection_id:f.connection,...extra}),/^Error: storage_directory_probe_unavailable$/);
+  assert.equal(f.rpcs.length,0); assert.equal(f.calls.length,0);
+});
+test("profile/AAD/client/scope/expiry mismatch cannot read Google or refresh tokens",async()=>{
+  for(const options of [{descriptor:{owner_id:randomUUID()}},{descriptor:{oauth_client_id:"other-client"}},
+    {descriptor:{credential_version:2}},{secret:{scope:scope+" https://www.googleapis.com/auth/drive"}},
+    {secret:{expires_at_ms:Date.now()+10000}},{prepareError:true}]) {
+    const f=await fixture(options); await assert.rejects(f.probe.run({connection_id:f.connection}),/storage_directory_probe_unavailable/);
+    assert.equal(f.calls.length,0);assert.equal(f.rpcs.length,1);
+  }
+});
+test("subject, topic application grant, incomplete namespace and redirect failures cannot commit",async()=>{
+  for(const options of [{subject:"someone-else"},{unauthorized:"topic"},{incomplete:true},{redirect:true},{networkError:true}]) {
+    const f=await fixture(options);await assert.rejects(f.probe.run({connection_id:f.connection}),/^Error: storage_directory_probe_unavailable$/);
+    assert.equal(f.rpcs.length,1);assert.ok(f.calls.length>0);
+  }
+});
+test("post-read CAS rejection has no refresh, activation, retry or success response",async()=>{
+  const f=await fixture({commitError:true});await assert.rejects(f.probe.run({connection_id:f.connection}),/^Error: storage_directory_probe_unavailable$/);
+  assert.deepEqual(f.rpcs.map(r=>r.action),["prepare","complete"]);
+  assert.ok(f.calls.every(c=>c.method==="GET"));
+});
+test("time spent checking identity is part of the shared observation deadline",async()=>{
+  let now=Date.now(); const f=await fixture({clock:()=>now,delay:()=>{now+=60001;}});
+  await assert.rejects(f.probe.run({connection_id:f.connection}),/storage_directory_probe_unavailable/);
+  assert.equal(f.calls.length,1); assert.equal(f.rpcs.length,1);
+});
+
+test("native HTTP probe route preserves JWT plus fixed issuer and never accepts a report",async()=>{
+  const {loadContinuityWorker}=await import("./worker-continuity-loader.mjs"), worker=await loadContinuityWorker();
+  const f=await fixture(), origin="https://clued.example.invalid", issuer=randomBytes(32).toString("base64url");
+  const env={CLUED_STORAGE_ACCOUNT_V1:"true",CLUED_STORAGE_GOOGLE_V1:"true",SUPABASE_URL:"https://db.example.invalid",SUPABASE_PUBLISHABLE_KEY:"fixture-key",
+    CLUED_STORAGE_GOOGLE_CLIENT_ID:f.client,CLUED_STORAGE_CONNECTOR_ISSUER:issuer,CLUED_STORAGE_VAULT_KEYS:JSON.stringify(f.vaultConfig)};
+  const request=(body,token="native-fixture")=>new Request(origin+"/v1/storage/google/probe",{method:"POST",headers:{origin,"content-type":"application/json",authorization:"Bearer "+token},body:JSON.stringify(body)});
+  const original=globalThis.fetch; let redirect=false;
+  globalThis.fetch=async(url,init)=>{
+    if(String(url).endsWith("/auth/v1/user"))return Response.json({id:randomUUID()});
+    if(String(url).includes("db.example.invalid")) {
+      assert.equal(String(url),env.SUPABASE_URL+"/rest/v1/rpc/clued_storage_directory_probe_v1");
+      assert.equal(new Headers(init.headers).get("authorization"),"Bearer native-fixture");
+      const body=JSON.parse(init.body);assert.match(body.p_issuer_hash,/^[a-f0-9]{64}$/);assert.notEqual(body.p_issuer_hash,issuer);
+      assert.equal(init.redirect,"manual"); assert.ok(init.signal);
+      if(redirect)return new Response(null,{status:307,headers:{location:"https://untrusted.invalid"}});
+      return Response.json(await f.rpc(body.p_input));
+    }
+    return f.fetcher(url,init);
+  };
+  try {
+    assert.equal((await worker.fetch(request({connection_id:f.connection}),{})).status,404);
+    assert.equal((await worker.fetch(request({connection_id:f.connection},"clued_bnd_"+"a".repeat(64)),env)).status,401);
+    assert.equal((await worker.fetch(request({connection_id:f.connection,observation:{}}),env)).status,403);
+    assert.equal(f.rpcs.length,0);
+    const response=await worker.fetch(request({connection_id:f.connection}),env);
+    assert.equal(response.status,200);assert.equal(response.headers.get("cache-control"),"no-store");
+    assert.deepEqual(await response.json(),{status:"metadata_observed",attempt_id:f.attempt,receipt_id:f.receipt,execution_permitted:false});
+    redirect=true;const before=f.calls.length;
+    const denied=await worker.fetch(request({connection_id:f.connection}),env);
+    assert.equal(denied.status,403);assert.equal(f.calls.length,before);
+    assert.deepEqual(await denied.json(),{error:"Storage directory observation unavailable.",execution_permitted:false});
+  } finally {globalThis.fetch=original;}
+});

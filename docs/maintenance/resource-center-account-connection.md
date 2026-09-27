@@ -221,6 +221,52 @@ Tests: `resource-center-storage-vault.test.mjs` and the account fixture in
 
 ## Account Agent transport (candidate; production jobs remain disabled)
 
+### Native directory observation (candidate)
+
+The account page's read-only directory check calls `POST /v1/storage/google/probe`
+with only `connection_id`. Both account/Google feature flags must be enabled.
+The server preserves the native Owner JWT and adds its fixed private issuer to
+`clued_storage_directory_probe_v1`; it does not use a service-role impersonation.
+Internal RPCs reject redirects and time out after ten seconds. No caller root,
+profile, metadata report, credential, OAuth app or issuer is accepted by the route.
+
+Prepare records a 90-second, same-native-session/issuer attempt in a private
+operational table. The server resolves the active registered directory set from
+Canonical, excludes the non-writable start-here track, and pins profile/policy,
+connection/credential revisions, source Decision versions and artifact vectors.
+The existing provider-root quiet fence is reused; no journal is reset or copied.
+Ciphertext is returned only over the private server RPC; the attempt keeps its
+digest, not another credential copy. The trusted vault opens the exact AAD.
+
+The Google path is GET-only, uses exactly the two approved scopes, verifies the
+provider subject and each directory's independent application access, and checks
+parent/name/type/version through full child pagination and final identity reads.
+A single 60-second budget covers identity and metadata reads; nearly expired
+tokens fail closed with no refresh or retry. Normal inspection uses no model and
+reads no file bodies. A root grant does not imply child application authorization.
+
+Complete rechecks native session, issuer, quiet root and the full pinned snapshot,
+then atomically stores the exact observation with an Event and immutable Receipt.
+Identical completion within the live attempt returns the same receipt; changed,
+expired, revoked or stale completion is rejected. Wall-clock expiry is checked
+again after lock waits. Public output is only status, attempt/receipt IDs and
+`execution_permitted:false`; it never includes the descriptor or credentials.
+
+This is **directory observation**, not cloud runtime qualification, exhaustive
+sibling-island acceptance, admission or a file-operation grant. The existing
+boundary scanner remains a separate required check. A later reviewed runtime
+registration must bind actual fresh evidence; this migration does not change or
+call the cloud qualification/activation API. No jobs/executor flag, Binding grant,
+connection state, refresh delegation, writer or fence is changed. Failed attempts
+remain operational evidence; they are not represented as successful observations.
+
+Tests cover the private PostgreSQL contract (including real lock-wait expiry),
+HTTP validation/redirect refusal, vault-pinned provider reads, actual workerd
+composition and account-switch UI races. Synthetic results do not qualify live
+Google roots or imply final account-storage acceptance.
+
+### Agent transport contract
+
 `clued_storage_submit` and `clued_storage_inspect` are discovered only when both
 `CLUED_STORAGE_ACCOUNT_V1` and `CLUED_STORAGE_JOBS_V1` are enabled. Guessed tool
 calls are also rejected while disabled. These tools and `/v1/storage/jobs` use

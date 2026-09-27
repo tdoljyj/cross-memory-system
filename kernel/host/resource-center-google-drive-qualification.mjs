@@ -22,6 +22,7 @@ function identity(file) {
  * grant, admission or receipt. Its editable output alone cannot enable a writer.
  * Exact-ID authorization is checked independently for every registered directory;
  * root permission is never treated as inherited drive.file application access.
+ * @param {{trusted_layout?: unknown, get_file?: Function, list_folder?: Function, clock?: Function, timeout_ms?: number}} config
  */
 export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: getFile,
   list_folder: listFolder, clock = Date.now, timeout_ms: timeoutMs = 60000} = {}) {

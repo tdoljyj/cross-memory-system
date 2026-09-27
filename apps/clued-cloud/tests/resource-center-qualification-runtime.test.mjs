@@ -18,6 +18,8 @@ if(process.env.CLUED_QUALIFICATION_RUNTIME_CHILD!=='1') {
     import {createGoogleDriveDirectoryProbe} from '../../kernel/host/resource-center-google-drive-qualification.mjs';
     import {createGoogleDriveMetadataApi} from '../../kernel/host/resource-center-google-drive-metadata.mjs';
     import {createStorageFetch} from './worker/storage-fetch.ts';
+    import {createStorageGoogleProbe} from './worker/storage-google-probe.ts';
+    import {createStorageCredentialVault} from './worker/storage-credential-vault.ts';
     export default {async fetch(){
       const root='/drive/Clued_资料中心',folder='application/vnd.google-apps.folder';
       const item=(id,name,parent)=>({id,name,parents:parent?[parent]:[],mimeType:folder,version:'1',trashed:false,isAppAuthorized:true,capabilities:{canAddChildren:true}});
@@ -42,7 +44,25 @@ if(process.env.CLUED_QUALIFICATION_RUNTIME_CHILD!=='1') {
       let timeout=false;
       try{await createGoogleDriveDirectoryProbe({trusted_layout:layout,get_file:hanging.getFile,list_folder:hanging.listFolder,timeout_ms:10})();}
       catch(error){timeout=error.message==='DRIVE_QUALIFICATION_OBSERVATION_EXPIRED';}
-      return Response.json({result,calls,writes,aborted,timeout});
+      const vaultConfig={current_key_id:'fixture',keys:{fixture:btoa(String.fromCharCode(...new Uint8Array(32).fill(7))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')}};
+      const vault=await createStorageCredentialVault(vaultConfig);
+      const context={owner_id:'10000000-0000-4000-8000-000000000001',connection_id:'10000000-0000-4000-8000-000000000002',provider:'google-drive',provider_subject:'fixture-user',oauth_client_id:'fixture-client',credential_version:1};
+      const envelope=await vault.seal(JSON.stringify({access_token:'synthetic-access-token',token_type:'Bearer',scope:'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly',expires_at_ms:Date.now()+3600000}),context);
+      let serverGets=0,serverCommits=0;
+      const server=await createStorageGoogleProbe({client_id:context.oauth_client_id,vault:vaultConfig,
+        rpc:async input=>{
+          if(input.action==='prepare')return {status:'prepared',attempt_id:'10000000-0000-4000-8000-000000000003',descriptor:{...context,layout},credential_envelope:envelope,expires_at:new Date(Date.now()+90000).toISOString()};
+          if(input.action!=='complete'||input.observation.execution_permitted!==false)throw Error('invalid commit');
+          serverCommits++;return {status:'metadata_observed',attempt_id:input.attempt_id,receipt_id:'10000000-0000-4000-8000-000000000004',execution_permitted:false};
+        },fetch:async(url,init)=>{
+          if(init.method!=='GET'||init.redirect!=='manual'||!init.signal)throw Error('unsafe server read');serverGets++;
+          const u=new URL(url),id=u.pathname.split('/').at(-1);
+          if(id==='about')return Response.json({user:{me:true,permissionId:'fixture-user'}});
+          if(id==='files')return Response.json({files:files.filter(f=>f.parents.includes(u.searchParams.get('q').split("'")[1])),incompleteSearch:false});
+          return Response.json(files.find(f=>f.id===id));
+        }});
+      const serverResult=await server.run({connection_id:context.connection_id});
+      return Response.json({result,calls,writes,aborted,timeout,serverResult,serverGets,serverCommits});
     }};`},bundle:true,platform:'node',format:'esm',write:false});stop();
   let outbound=0;
   const runtime=new Miniflare({host:'127.0.0.1',port:0,cf:false,telemetry:{enabled:false},workers:[{
@@ -56,5 +76,8 @@ if(process.env.CLUED_QUALIFICATION_RUNTIME_CHILD!=='1') {
     assert.equal(result.result.execution_permitted,false);assert.equal(result.result.directories.length,2);
     assert.ok(result.calls>0);assert.equal(result.writes,0);assert.equal(outbound,0);
     assert.equal(result.aborted,true);assert.equal(result.timeout,true);
+    assert.equal(result.serverResult.status,'metadata_observed');assert.equal(result.serverResult.execution_permitted,false);
+    assert.equal(result.serverCommits,1);assert.ok(result.serverGets>0);
+    assert.equal(JSON.stringify(result).includes('synthetic-access-token'),false);
   } finally {await runtime.dispose();}
 });

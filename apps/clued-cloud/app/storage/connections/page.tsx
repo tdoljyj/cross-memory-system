@@ -124,6 +124,22 @@ export default function StorageConnections() {
       if (epoch === revision.current) setMessage(error instanceof Error ? error.message : "存储授权未确认，请查询授权核对。");
     } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
   }
+  async function observeDirectories(c: Connection) {
+    if (operationBusy.current || registrationBusy.current || busy || c.state !== "active") return;
+    const epoch = revision.current;
+    operationBusy.current = true; setBusy(true);
+    setMessage("正在只读检查已登记目录；不会创建文件或开启写入。");
+    try {
+      const result = await request("/v1/storage/google/probe", { connection_id: c.id }, () => epoch === revision.current);
+      if (epoch !== revision.current) return;
+      if (result.status !== "metadata_observed" || result.execution_permitted !== false ||
+        typeof result.attempt_id !== "string" || !/^[0-9a-f-]{36}$/.test(result.attempt_id) ||
+        typeof result.receipt_id !== "string" || !/^[0-9a-f-]{36}$/.test(result.receipt_id)) throw new Error("目录检查回执未确认；文件写入保持关闭。");
+      setMessage(`已登记目录的访问与元数据检查已记录。回执：${result.receipt_id}。这不是完整存储资格验收，不会开启文件写入。`);
+    } catch {
+      if (epoch === revision.current) setMessage("目录检查未确认；可能需要核对目录授权、当前版本或等待凭据续签。不会自动重试或开启文件写入。");
+    } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
+  }
   async function register() {
     if (registrationBusy.current || busy) return;
     const profile = profileId.trim(), decision = decisionId.trim();
@@ -204,6 +220,8 @@ export default function StorageConnections() {
     </section>
     {connections.map(c => <section className="my-4 rounded-xl border p-4" key={c.id}>
       <h2>{c.provider} · {labels[c.state] ?? "状态待确认"}</h2><p className="my-2 break-all text-sm">连接：{c.id}</p>
+      {c.state === "active" && <div className="my-2"><button disabled={busy} onClick={() => void observeDirectories(c)}>检查已登记目录（只读）</button>
+        <p className="text-sm">只核对服务端登记目录的访问与元数据，不读取文件正文，不授予 Agent 写入权限。</p></div>}
       {c.state === "awaiting_provider" && <label className="my-2 block"><input type="checkbox" disabled={busy}
         checked={defaultRefresh[c.id] ?? true} onChange={event => setDefaultRefresh(old => ({ ...old, [c.id]: event.target.checked }))} />
         连接成功后自动续签（可取消；已有停用或失效设置不变）</label>}
