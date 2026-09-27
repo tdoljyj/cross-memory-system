@@ -2346,7 +2346,7 @@ async function handleContinuityRequestInner(
           redirect_uri: env.CLUED_STORAGE_GOOGLE_REDIRECT_URI ?? "",
           vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
           rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_oauth_v1", {
-            method: "POST", userToken: token,
+            method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
             body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),
           }) as Record<string, unknown>,
         });
