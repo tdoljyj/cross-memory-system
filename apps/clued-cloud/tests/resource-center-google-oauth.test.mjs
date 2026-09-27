@@ -35,6 +35,7 @@ async function fixture(changes = {}) {
     fetch: async (url, init) => {
       calls.push({ url: String(url), init });
       assert.equal(init.redirect, "error");
+      if (changes.networkFailure) throw new Error("fixture-secret-in-upstream-error");
       if (String(url).endsWith("/token")) return Response.json({ access_token: "fixture-access-token", refresh_token: "fixture-refresh-token", token_type: "Bearer", expires_in: 3600, scope, ...(changes.tokens ?? {}) });
       assert.equal(init.headers.authorization, "Bearer fixture-access-token");
       if (String(url).includes("/about?")) return Response.json({ user: { me: true, permissionId: "provider-user", ...(changes.user ?? {}) } });
@@ -99,4 +100,34 @@ test("wrong state or backend identity never calls Google", async () => {
   const wrong = await fixture({ descriptor: { oauth_client_id: "other-client" } });
   await assert.rejects(wrong.oauth.start(d.connection_id), /unavailable/);
   assert.equal(wrong.pending(), undefined);
+});
+
+test("fixed stage reasons distinguish safe failures without exposing provider data or retrying codes", async () => {
+  for (const [changes, reason] of [
+    [{ denied: true }, "attempt_unavailable"],
+    [{ networkFailure: true }, "token_exchange_unconfirmed"],
+    [{ tokens: { expires_in: "3600" } }, "token_response_invalid"],
+    [{ tokens: { refresh_token: null } }, "refresh_token_missing"],
+    [{ tokens: { scope: scope + " fixture-private-scope" } }, "scope_mismatch"],
+    [{ user: { me: false } }, "provider_identity_unconfirmed"],
+    [{ root: { trashed: true } }, "root_identity_mismatch"],
+    [{ root: { isAppAuthorized: false } }, "root_not_authorized"],
+    [{ root: { capabilities: { canAddChildren: false } } }, "root_not_writable"],
+    [{ root: { parents: ["private-parent"] } }, "root_parent_mismatch"],
+  ]) {
+    const f = await fixture(changes);
+    const state = new URL((await f.oauth.start(d.connection_id)).authorization_url).searchParams.get("state");
+    const input = { state, code: "fixture-private-authorization-code" };
+    await assert.rejects(f.oauth.complete(input), error => {
+      assert.equal(error.reason, reason);
+      assert.equal(error.message, "storage_google_connection_unavailable");
+      for (const secret of [state, input.code, "fixture-access-token", "fixture-refresh-token", "private-parent", "fixture-secret-in-upstream-error"])
+        assert.equal(JSON.stringify(error).includes(secret), false);
+      return true;
+    });
+    assert.equal(f.complete(), undefined);
+    const count = f.calls.length;
+    await assert.rejects(f.oauth.complete(input), /unavailable/);
+    assert.equal(f.calls.length, count);
+  }
 });

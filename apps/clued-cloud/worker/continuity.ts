@@ -35,7 +35,7 @@ import {
 } from "./information-flow";
 import { measurePack } from "./context-pack";
 import { AGENT_CONTRACT_MARKDOWN } from "./generated/agent-contract";
-import { createStorageGoogleOAuth } from "./storage-google-oauth";
+import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 
@@ -2296,8 +2296,10 @@ async function handleContinuityRequestInner(
           result = await connector.complete({ state: input.state, code: input.code });
         }
         return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });
-      } catch {
-        return json({ error: "Storage Google connection unavailable." }, 403, { ...corsHeaders(request), "cache-control": "no-store" });
+      } catch (error) {
+        return json({ error: "Storage Google connection unavailable.",
+          ...(error instanceof StorageGoogleConnectionError ? { reason: error.reason } : {}) },
+          403, { ...corsHeaders(request), "cache-control": "no-store" });
       }
     }
     if (url.pathname === "/v1/storage/jobs") {

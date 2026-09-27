@@ -44,7 +44,11 @@ test("Google callback clears credentials before session/network and duplicate ef
 test("Google denial, duplicate query or missing native session never submits authorization code", async () => {
   for (const [query, auth] of [["error=access_denied", true], ["state=a&state=b&code=x", true], ["state=a&code=x", false]]) {
     const f = fixture(query, auth); await f.run(); assert.equal(f.requests.length, 0);
-    assert.equal(new URL(f.browser.location.href).search, ""); assert.ok(f.messages.every(message => message.includes("尚未确认") || message.includes("账号已变化")));
+    assert.equal(new URL(f.browser.location.href).search, "");
+    assert.ok(f.messages.length > 0);
+    assert.ok(f.messages.every(message => auth
+      ? message === "Google 授权未完成，请返回连接页检查。"
+      : message === "登录账号已变化，请返回连接页重新读取状态。"));
   }
 });
 test("logout or account switch before callback completion suppresses the old receipt", async () => {
