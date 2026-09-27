@@ -6,12 +6,18 @@ const SHORTCUT = "application/vnd.google-apps.shortcut";
 const id = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(value);
 const normalized = path => bindResourceCenterMutation({destination_path:path}).destination_path;
 const deny = code => { throw new Error(`DRIVE_QUALIFICATION_${code}`); };
-function identity(file) {
+function identity(file, allowParentlessBoundary = false) {
+  // The trusted outer boundary can be My Drive itself, whose parents field is
+  // omitted by the provider. It is not a writable/observed directory: only its
+  // exact ID and children anchor the managed root. Do not normalize this field
+  // (the final raw-metadata comparison must still detect changes), and never
+  // extend the exception to the managed root, descendants, or listed entries.
+  const parentlessBoundary = allowParentlessBoundary && file && !Object.hasOwn(file, "parents");
   if (!file || !id(file.id) || typeof file.name !== "string" || !file.name ||
       file.name.trim() !== file.name || /[/\\]/.test(file.name) || [".",".."].includes(file.name) ||
       typeof file.mimeType !== "string" || file.trashed !== false ||
-      !/^[1-9][0-9]{0,39}$/.test(file.version ?? "") || !Array.isArray(file.parents) ||
-      file.parents.some(parent => !id(parent))) deny("IDENTITY_INVALID");
+      !/^[1-9][0-9]{0,39}$/.test(file.version ?? "") ||
+      (!parentlessBoundary && (!Array.isArray(file.parents) || file.parents.some(parent => !id(parent))))) deny("IDENTITY_INVALID");
   return file;
 }
 
@@ -80,7 +86,7 @@ export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: 
     };
     try {
     const before = new Map(), observed = [];
-    const parent = identity(await read(getFile,layout.root_parent_id));
+    const parent = identity(await read(getFile,layout.root_parent_id), true);
     if (parent.id !== layout.root_parent_id || parent.mimeType !== FOLDER) deny("PARENT_INVALID");
     before.set(parent.id, parent);
     for (const entry of ordered) {
