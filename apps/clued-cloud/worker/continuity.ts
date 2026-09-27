@@ -39,6 +39,7 @@ import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storag
 import { createStorageGoogleProbe } from "./storage-google-probe";
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
+import { createStorageCloudRecovery } from "./storage-cloud-recovery";
 import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentTools } from "./storage-agent-tools";
 
 declare const __CLUED_BUILD_SHA__: string | null;
@@ -2308,6 +2309,39 @@ async function handleContinuityRequestInner(
       });
     }
     if (url.pathname === "/mcp") return await handleMcp(request, env, ctx);
+    if (url.pathname === "/v1/storage/recovery") {
+      validateOrigin(request, env);
+      // Recovery remains available when new jobs/execution are disabled. It is
+      // native Owner only and never enters the normal executor or refresh path.
+      const headers = { ...corsHeaders(request), "cache-control": "no-store" };
+      if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404, headers);
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+      if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { ...headers, allow: "POST, OPTIONS" });
+      const { token } = await requireSupabaseUser(request, env);
+      try {
+        const input = await parseBody(request), issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+        const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+        if (Object.keys(input).length !== 3 || typeof input.action !== "string" || !["inspect", "settle"].includes(input.action) ||
+            typeof input.connection_id !== "string" || !uuid.test(input.connection_id) ||
+            typeof input.job_id !== "string" || !uuid.test(input.job_id) || !issuer || issuer.length < 32) throw new Error("Unavailable");
+        const reference = { connection_id: input.connection_id, job_id: input.job_id };
+        const issuerHash = await sha256(issuer);
+        const rpc = async (value: Record<string, unknown>) => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_native_recovery_v1", {
+          method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+          body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }),
+        }) as Record<string, unknown>;
+        if (input.action === "inspect") {
+          // Status only, even without a vault or after connection revocation.
+          return json(storageAgentResult(await rpc({ ...reference, action: "recovery_inspect" }), reference), 200, headers);
+        }
+        if (!env.CLUED_STORAGE_VAULT_KEYS) throw new Error("Unavailable");
+        const recovery = await createStorageCloudRecovery({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
+          vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS), rpc });
+        return json(await recovery.run(reference), 200, headers);
+      } catch {
+        return json({ status: "inspection_required", execution_permitted: false }, 403, headers);
+      }
+    }
     if (url.pathname === "/v1/storage/google/probe") {
       validateOrigin(request, env);
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404);

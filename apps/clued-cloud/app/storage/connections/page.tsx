@@ -10,6 +10,9 @@ type Client = { binding_id: string; client_name: string; client_id: string; vers
 type ClientGrant = { binding_id: string; authorization_version: number; actions: StorageAction[]; expires_at: string; revoked_at: string | null; receipt_id: string; binding_current: boolean };
 type GrantView = { connection_id: string; connection_version: number; connection_state: string; grants: ClientGrant[] };
 type ClientDraft = { binding: string; actions: StorageAction[]; expires: string };
+type RecoveryView = { job_id: string; status: string; receipt_id: string };
+const recoveryLabels: Record<string, string> = { queued: "已排队", prepared: "已准备", started: "已开始，结果待核对", uncertain: "结果待核对",
+  committed: "已登记完成", cancelled: "已取消", denied: "已拒绝", attention_required: "需要核查" };
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const isDate = (v: unknown): v is string => typeof v === "string" && Number.isFinite(Date.parse(v));
 function isClient(v: unknown): v is Client {
@@ -44,6 +47,7 @@ export default function StorageConnections() {
   const [defaultRefresh, setDefaultRefresh] = useState<Record<string, boolean>>({});
   const [clients, setClients] = useState<Client[]>([]), [grantViews, setGrantViews] = useState<Record<string, GrantView>>({});
   const [clientDrafts, setClientDrafts] = useState<Record<string, ClientDraft>>({});
+  const [recoveryJobs, setRecoveryJobs] = useState<Record<string, string>>({}), [recoveryViews, setRecoveryViews] = useState<Record<string, RecoveryView>>({});
   const [profileId, setProfileId] = useState(""), [decisionId, setDecisionId] = useState("");
   const registrationBusy = useRef(false);
   const operationBusy = useRef(false);
@@ -52,6 +56,7 @@ export default function StorageConnections() {
     const epoch = ++revision.current;
     setRenewals({});
     setClients([]); setGrantViews({}); setClientDrafts({});
+    setRecoveryJobs({}); setRecoveryViews({});
     setBusy(true);
     try { const result = await request("/v1/storage/account", { action: "list" });
       if (epoch !== revision.current) return;
@@ -68,6 +73,7 @@ export default function StorageConnections() {
       if (disposed) return;
       ++revision.current; setConnections([]); setRenewals({}); setDefaultRefresh({}); setProfileId(""); setDecisionId("");
       setClients([]); setGrantViews({}); setClientDrafts({});
+      setRecoveryJobs({}); setRecoveryViews({});
       // Do not await Supabase calls from inside its auth callback lock.
       scheduleRead();
     });
@@ -122,6 +128,34 @@ export default function StorageConnections() {
       if (epoch === revision.current) setMessage(action === "list" ? "" : "存储授权设置已确认；正式执行仍受门禁约束。");
     } catch (error) {
       if (epoch === revision.current) setMessage(error instanceof Error ? error.message : "存储授权未确认，请查询授权核对。");
+    } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  async function recover(c: Connection, action: "inspect" | "settle") {
+    if (operationBusy.current || registrationBusy.current || busy) return;
+    const job = recoveryJobs[c.id]?.trim(), prior = recoveryViews[c.id];
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    if (!job || !uuid.test(job)) { setMessage("请填写原存储任务 ID；不要生成新任务重试。"); return; }
+    if (action === "settle") {
+      if (!["active", "reauthorization_required"].includes(c.state) || prior?.job_id !== job || !["started", "uncertain"].includes(prior.status)) return;
+      if (!window.confirm(`核对原任务 ${job} 的 Google 元数据，并在结果一致时登记原回执？不会重新创建文件、恢复权限或续签。`)) return;
+    }
+    const epoch = revision.current;
+    operationBusy.current = true; setBusy(true);
+    setRecoveryViews(old => { const next = { ...old }; delete next[c.id]; return next; });
+    try {
+      const result = await request("/v1/storage/recovery", { action, connection_id: c.id, job_id: job }, () => epoch === revision.current);
+      if (epoch !== revision.current) return;
+      if (result.execution_permitted !== false || result.job_id !== job || typeof result.receipt_id !== "string" || !uuid.test(result.receipt_id)) throw new Error("Unconfirmed");
+      if (action === "inspect") {
+        if (result.connection_id !== c.id || typeof result.status !== "string" || !Object.hasOwn(recoveryLabels, result.status)) throw new Error("Unconfirmed");
+        setRecoveryViews(old => ({ ...old, [c.id]: { job_id: job, status: result.status as string, receipt_id: result.receipt_id as string } }));
+        setMessage("已读取原任务；回执不代表重新取得写入权限。");
+      } else {
+        if (result.status !== "committed") throw new Error("Unconfirmed");
+        setMessage(`原任务结果已核验并登记。回执：${result.receipt_id}。没有重新写入文件或恢复权限。`);
+      }
+    } catch {
+      if (epoch === revision.current) setMessage("原任务结果尚未确认。请查询原任务回执；不会自动重试、重新创建文件或恢复权限。凭据过期须另走受审恢复授权。");
     } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
   }
   async function observeDirectories(c: Connection) {
@@ -220,6 +254,18 @@ export default function StorageConnections() {
     </section>
     {connections.map(c => <section className="my-4 rounded-xl border p-4" key={c.id}>
       <h2>{c.provider} · {labels[c.state] ?? "状态待确认"}</h2><p className="my-2 break-all text-sm">连接：{c.id}</p>
+      <details className="my-4 rounded border p-3"><summary>核对未确认的原存储任务</summary>
+        <p className="my-2 text-sm">使用原任务 ID 查询结果。核验仅读取 Google 元数据并登记原回执，不会重派文件操作、恢复权限或开启续签。</p>
+        <label className="my-2 block">原存储任务 ID<input className="block w-full rounded border p-2" autoComplete="off" disabled={busy}
+          value={recoveryJobs[c.id] ?? ""} onChange={event => {
+            setRecoveryJobs(old => ({ ...old, [c.id]: event.target.value }));
+            setRecoveryViews(old => { const next = { ...old }; delete next[c.id]; return next; });
+          }} /></label>
+        <button disabled={busy || !recoveryJobs[c.id]?.trim()} onClick={() => void recover(c, "inspect")}>查询原任务回执</button>
+        {recoveryViews[c.id] && <><p role="status" className="my-2 break-all">{recoveryLabels[recoveryViews[c.id].status]}；回执：{recoveryViews[c.id].receipt_id}</p>
+          {["active", "reauthorization_required"].includes(c.state) && ["started", "uncertain"].includes(recoveryViews[c.id].status) &&
+            <button disabled={busy} onClick={() => void recover(c, "settle")}>核验并登记原结果（不重写）</button>}</>}
+      </details>
       {c.state === "active" && <div className="my-2"><button disabled={busy} onClick={() => void observeDirectories(c)}>检查已登记目录（只读）</button>
         <p className="text-sm">只核对服务端登记目录的访问与元数据，不读取文件正文，不授予 Agent 写入权限。</p></div>}
       {c.state === "awaiting_provider" && <label className="my-2 block"><input type="checkbox" disabled={busy}

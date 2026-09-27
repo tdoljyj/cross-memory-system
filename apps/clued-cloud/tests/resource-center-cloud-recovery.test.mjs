@@ -142,3 +142,54 @@ test('lost or late settlement remains unknown and never resends the finalization
     assert.equal(f.base.info().posts,1);
   }
 });
+
+test('native recovery HTTP accepts only original IDs, preserves native JWT plus fixed issuer, and never dispatches',async()=>{
+  const {loadContinuityWorker}=await import('./worker-continuity-loader.mjs'),worker=await loadContinuityWorker();
+  const f=await setup({token:{expires_at_ms:Date.now()+3600000}}),issuer='synthetic-recovery-issuer-'.repeat(3);
+  const origin='https://clued.example.invalid';
+  const env={CLUED_STORAGE_ACCOUNT_V1:'true',CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_JOBS_V1:'false',CLUED_STORAGE_EXECUTOR_V1:'false',
+    CLUED_STORAGE_CONNECTOR_ISSUER:issuer,CLUED_STORAGE_GOOGLE_CLIENT_ID:f.config.client_id,CLUED_STORAGE_VAULT_KEYS:JSON.stringify(f.config.vault),
+    SUPABASE_URL:'https://db.example.invalid',SUPABASE_PUBLISHABLE_KEY:'fixture-public'};
+  const request=(body,token='native-fixture',method='POST',site=origin)=>new Request(origin+'/v1/storage/recovery',{
+    method,headers:{origin:site,'content-type':'application/json',authorization:'Bearer '+token},...(method==='POST'?{body:JSON.stringify(body)}:{})});
+  const ref=f.base.reference,before=globalThis.fetch,rpcs=[];let redirect=false,inspectResult={
+    ...ref,status:'started',request_digest:'a'.repeat(64),intent_id:ids.intent,receipt_id:ids.receipt,execution_permitted:false,private_secret:'must-not-escape'};
+  globalThis.fetch=async(url,init)=>{
+    if(String(url).endsWith('/auth/v1/user'))return Response.json({id:f.d.owner_id});
+    if(String(url).startsWith(env.SUPABASE_URL)) {
+      assert.equal(String(url),env.SUPABASE_URL+'/rest/v1/rpc/clued_storage_native_recovery_v1');
+      assert.equal(new Headers(init.headers).get('authorization'),'Bearer native-fixture');
+      assert.equal(init.redirect,'manual');assert.ok(init.signal);
+      const body=JSON.parse(init.body);assert.match(body.p_issuer_hash,/^[a-f0-9]{64}$/);assert.notEqual(body.p_issuer_hash,issuer);
+      rpcs.push(body.p_input);
+      if(redirect)return new Response(null,{status:307,headers:{location:'https://untrusted.invalid'}});
+      return Response.json(body.p_input.action==='recovery_inspect'?inspectResult:await f.config.rpc(body.p_input));
+    }
+    return f.config.fetch(url,init);
+  };
+  try {
+    const input={...ref,action:'settle'};
+    assert.equal((await worker.fetch(request(input),{})).status,404);
+    assert.equal((await worker.fetch(request(input,'clued_bnd_'+'a'.repeat(40)),env)).status,401);
+    assert.equal((await worker.fetch(request(input,'native-fixture','GET'),env)).status,405);
+    assert.equal((await worker.fetch(request(input,'native-fixture','POST','https://untrusted.invalid'),env)).status,403);
+    for(const extra of [{action:'submit'},{action:'recovery_load'},{action:['inspect']},{action:['settle']},{action:{}},{action:null},
+      {profile:{}},{finish:{}},{credential_version:1},{owner_id:f.d.owner_id},{issuer:'caller'}])
+      assert.equal((await worker.fetch(request({...input,...extra}),env)).status,403);
+    assert.equal(rpcs.length,0);assert.equal(f.gets.length,0);
+    const inspected=await worker.fetch(request({...ref,action:'inspect'}),{...env,CLUED_STORAGE_VAULT_KEYS:undefined});
+    assert.equal(inspected.status,200);assert.equal(inspected.headers.get('cache-control'),'no-store');
+    const data=await inspected.json();assert.equal(Object.keys(data).length,7);assert.equal(data.private_secret,undefined);
+    assert.deepEqual(rpcs,[{...ref,action:'recovery_inspect'}]);assert.equal(f.gets.length,0);
+    const settled=await worker.fetch(request(input),env);
+    assert.equal(settled.status,200);assert.equal(settled.headers.get('cache-control'),'no-store');
+    assert.deepEqual(await settled.json(),{status:'committed',job_id:ids.job,receipt_id:ids.receipt,execution_permitted:false});
+    assert.deepEqual(rpcs.map(x=>x.action),['recovery_inspect','recovery_load','recovery_finalize']);
+    assert.equal(f.base.info().posts,1);assert.equal(f.base.info().starts,1);
+    inspectResult={...inspectResult,job_id:ids.profile};
+    const wrong=await worker.fetch(request({...ref,action:'inspect'}),env);
+    assert.equal(wrong.status,403);assert.deepEqual(await wrong.json(),inspect);
+    redirect=true;const reads=f.gets.length;
+    const denied=await worker.fetch(request(input),env);assert.deepEqual(await denied.json(),inspect);assert.equal(f.gets.length,reads);
+  } finally {globalThis.fetch=before;}
+});

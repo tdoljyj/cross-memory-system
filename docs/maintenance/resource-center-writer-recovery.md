@@ -148,7 +148,7 @@ This is not atomic same-name exclusion against unrelated Google clients and is
 not whole-Host qualification. Actual isolated tool inventory, rollback and the
 temporary real Host/Worker/Canonical receipt chain are still required.
 
-### Account cloud settlement-only component (not yet an enabled route)
+### Account cloud settlement-only recovery (pending deployment acceptance)
 
 `apps/clued-cloud/worker/storage-cloud-recovery.ts` is a private composition,
 not a public authorization endpoint. It accepts only a connection/job reference;
@@ -186,9 +186,20 @@ Owner and issuer after connection revocation, exposes no credentials and cannot
 dispatch or settle an effect. Do not rerun the writer or infer failure from a
 missing reply. Do not treat a CAS fingerprint as permission to write.
 
-Neither the component nor this candidate migration enables a public Web route,
-qualifies a provider root, restores grants/delegations or performs credential-only
-OAuth. An expired credential still requires the separate human recovery contract;
-do not substitute ordinary OAuth completion (which activates a connection).
-Integrated acceptance and reviewed deployment remain required. Unit tests alone
-are not production recovery evidence.
+The candidate native Web route `POST /v1/storage/recovery` accepts only
+`action: inspect|settle`, `connection_id` and the original `job_id`. Both account
+and Google management flags must be enabled; the new-job/executor flags are not
+required for historical inspection or settlement. It preserves the live native
+JWT, adds only the fixed server issuer, and never calls the normal executor.
+`inspect` returns a validated status/receipt whitelist without requiring vault
+keys. `settle` uses only the GET-only factory above. All results are no-store;
+an unknown settlement is not automatically retried. The account page requires
+reading the original status before explicit settlement confirmation, clears stale
+controls when IDs change, and discards late results after account changes.
+
+Neither this route nor the migration qualifies a provider root, restores grants
+or delegations, or performs credential-only OAuth. An expired credential still
+requires the separate human recovery contract; do not substitute ordinary OAuth
+completion (which activates a connection). Integrated acceptance and reviewed
+deployment remain required. Unit/transport tests alone are not production
+recovery evidence.
