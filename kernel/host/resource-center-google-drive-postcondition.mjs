@@ -11,6 +11,7 @@ const fail = (code) => { throw new Error(code); };
 export function createGoogleDriveCreatePostconditionVerifier({
   managed_root: managedRoot, root_folder_id: rootId, root_parent_id: rootParentId,
   get_file: getFile, list_children: listChildren,
+  require_effect_provider_id: requireEffectProviderId = false,
   timeout_ms: timeoutMs = 30_000, poll_ms: pollMs = 1000,
   clock = Date.now, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
@@ -32,20 +33,22 @@ export function createGoogleDriveCreatePostconditionVerifier({
   return async function verify({ profile, mutation, provider_before: before, effect_result: effect }) {
     const destination = normalized(mutation?.destination_path);
     if (mutation?.operation !== "create" || mutation.source_path ||
-      !["file", "directory"].includes(mutation.target_kind) || normalized(profile?.managed_root) !== root ||
+      !["file", "directory"].includes(mutation.target_kind ?? "file") || normalized(profile?.managed_root) !== root ||
       !destination?.startsWith(root + "/") || !effect || effect.operation !== "create" ||
       normalized(effect.destination_path) !== destination ||
       before?.root_folder_id !== rootId || before.root_parent_id !== rootParentId ||
       !before.destination_parent_id || !before.destination_parent_version || !/^[0-9a-f]{64}$/.test(before.provider_version ?? "") ||
-      before.destination_file_id !== null || before.destination_file_version !== null) {
+      before.destination_file_id !== null || before.destination_file_version !== null ||
+      (requireEffectProviderId && !/^[A-Za-z0-9_-]{1,160}$/.test(effect.provider_file_id ?? ""))) {
       fail("DRIVE_POSTCONDITION_REQUEST_MISMATCH");
     }
     const parts = destination.slice(root.length + 1).split("/");
     const name = parts.pop();
     const folder = mutation.target_kind === "directory";
-    if (!folder && typeof mutation.content !== "string") fail("DRIVE_POSTCONDITION_CONTENT_REQUIRED");
-    const size = folder ? null : String(Buffer.byteLength(mutation.content, "utf8"));
-    const digest = folder ? null : createHash("sha256").update(mutation.content, "utf8").digest("hex");
+    const content = mutation.content ?? "";
+    if (!folder && typeof content !== "string") fail("DRIVE_POSTCONDITION_CONTENT_REQUIRED");
+    const size = folder ? null : String(Buffer.byteLength(content, "utf8"));
+    const digest = folder ? null : createHash("sha256").update(content, "utf8").digest("hex");
     async function parentIdentity() {
       let node = await getFile(rootId);
       check(node, rootId, root.slice(root.lastIndexOf("/") + 1), rootParentId, true);
@@ -76,6 +79,7 @@ export function createGoogleDriveCreatePostconditionVerifier({
       if (!Array.isArray(matches) || matches.length > 1) fail("DRIVE_POSTCONDITION_DESTINATION_AMBIGUOUS");
       if (matches.length === 1) {
         const listed = matches[0];
+        if (effect.provider_file_id && listed.id !== effect.provider_file_id) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
         if (typeof listed.id !== "string" || !listed.id) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
         const file = await getFile(listed.id);
         check(file, listed.id, name, parent.id, folder);

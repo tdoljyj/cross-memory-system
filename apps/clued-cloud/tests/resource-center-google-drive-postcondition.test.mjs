@@ -90,3 +90,12 @@ test("credential/network errors are not converted into empty successful scans", 
   const f = fixture({ options: { get_file: async () => { throw new Error("DRIVE_METADATA_UNAVAILABLE"); } } });
   await assert.rejects(f.verify(f.request), /DRIVE_METADATA_UNAVAILABLE/);
 });
+
+test("native postcondition requires the exact generated ID, not a same-name same-content substitute", async () => {
+  const f = fixture({ options: { require_effect_provider_id: true } });
+  await assert.rejects(f.verify(f.request), /REQUEST_MISMATCH/);
+  f.request.effect_result.provider_file_id = "other-generated-id";
+  await assert.rejects(f.verify(f.request), /IDENTITY_MISMATCH/);
+  f.request.effect_result.provider_file_id = "topic";
+  assert.equal((await f.verify(f.request)).provider_file_id, "topic");
+});

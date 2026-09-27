@@ -66,3 +66,38 @@ export function createResourceCenterRecoveryStore(journalPath) {
     },
   });
 }
+
+/** Separate Host-private journal, provisioned with the same durability and
+ * isolation requirements as the reservation journal. One exact native attempt
+ * per started intent; recovery is read-only and grants no retry capability. */
+export function createResourceCenterProviderAttemptStore(journalPath) {
+  const journal = createResourceCenterRecoveryStore(journalPath);
+  function validate(attempt) {
+    if (attempt?.contract !== "clued.resource-center-provider-attempt/1" ||
+      !/^[0-9a-f-]{36}$/i.test(attempt.intent_id ?? "") ||
+      !/^[0-9a-f]{64}$/.test(attempt.request_sha256 ?? "") ||
+      !/^[A-Za-z0-9_-]{1,160}$/.test(attempt.provider_file_id ?? "") ||
+      attempt.binding?.request_sha256 !== attempt.request_sha256 ||
+      attempt.binding?.profile_id !== attempt.profile_id ||
+      attempt.binding?.destination_path !== attempt.destination_path ||
+      attempt.binding?.operation !== "create" || !attempt.parent_id ||
+      !["file", "directory"].includes(attempt.target_kind)) {
+      throw new Error("RESOURCE_CENTER_PROVIDER_ATTEMPT_INVALID");
+    }
+  }
+  return Object.freeze({
+    async persist_provider_attempt(attempt) {
+      validate(attempt);
+      await journal.persist_recovery({ contract: "clued.resource-center-recovery/1", request_key: attempt.intent_id,
+        request_sha256: attempt.request_sha256, profile_id: attempt.profile_id, provider_attempt: structuredClone(attempt) });
+    },
+    async read_provider_attempt(intentId, requestHash) {
+      const ticket = await journal.read_recovery(intentId);
+      validate(ticket.provider_attempt);
+      if (ticket.request_sha256 !== requestHash || ticket.provider_attempt.request_sha256 !== requestHash) {
+        throw new Error("RESOURCE_CENTER_PROVIDER_ATTEMPT_MISMATCH");
+      }
+      return Object.freeze(ticket.provider_attempt);
+    },
+  });
+}

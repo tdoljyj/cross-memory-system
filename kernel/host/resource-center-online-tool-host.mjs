@@ -4,6 +4,8 @@ import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-met
 import { createGoogleDriveProviderIdentityResolver } from "./resource-center-google-drive-identity.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "./resource-center-google-drive-postcondition.mjs";
 import { createResourceCenterWriteClient } from "./resource-center-write-client.mjs";
+import { createResourceCenterHostAdapter } from "./resource-center-mutation-host.mjs";
+import { createGoogleDriveNativeCreateEffect } from "./resource-center-google-drive-create-effect.mjs";
 import {
   createResourceCenterGovernedToolSurface,
   RESOURCE_CENTER_MUTATION_TOOL,
@@ -38,9 +40,13 @@ export function createResourceCenterOnlineToolHost({
   filesystem,
   clock,
   admission_ttl_ms: admissionTtlMs,
+  mutation_effect: mutationEffect,
 } = {}) {
   if (typeof resolveArtifactOnline !== "function") {
     throw new TypeError("A trusted online Artifact/Currentness resolver is required.");
+  }
+  if (mutationEffect !== undefined && typeof mutationEffect !== "function") {
+    throw new TypeError("The provider effect must be a Host-owned function.");
   }
 
   const profile = structuredClone(trustedProfile);
@@ -81,13 +87,14 @@ export function createResourceCenterOnlineToolHost({
       return deny("ARTIFACT_AUTHORITY_RESOLUTION_FAILED");
     }
 
-    const adapter = createResourceCenterFilesystemAdapter({
+    const adapter = (mutationEffect ? createResourceCenterHostAdapter : createResourceCenterFilesystemAdapter)({
       trusted_profile: profile,
       resolve_artifact: () => authority,
       classify_observed_entry: classifyObservedEntry,
       filesystem,
       clock,
       admission_ttl_ms: admissionTtlMs,
+      effect: mutationEffect,
     });
     const preflight = adapter.preflight(mutation);
     if (preflight.status !== "admitted") return preflight;
@@ -125,6 +132,9 @@ export function createResourceCenterOnlineToolHost({
     }
     let effect;
     try {
+      // prepare/start includes asynchronous provider and Canonical work. Bind
+      // the effect to freshly resolved authority, not the pre-prepare cache.
+      authority = await resolveArtifactOnline(request);
       effect = await adapter.commitMutation({ admission: preflight.admission, mutation });
     } catch {
       // A thrown provider call may have changed storage before it failed.
@@ -233,24 +243,48 @@ export function createResourceCenterGoogleDriveOnlineToolHost({
   });
 }
 
-/** Candidate mounted-provider writer composition. Bootstrap is Host-only and
- * must already have qualified the actual volume and isolated executor. This
- * factory never enables or registers a production profile by itself. */
-export function createResourceCenterGoogleDriveWriterToolHost({
+/** A pathname/hash is not proof of local-object -> Drive ID identity. Keep
+ * the former mounted candidate unavailable until that mapping is qualified. */
+export function createResourceCenterGoogleDriveWriterToolHost() {
+  throw new Error("DRIVE_MOUNTED_WRITER_IDENTITY_UNQUALIFIED");
+}
+
+/** Native Drive candidate: Agent callers never receive credentials, generated
+ * IDs, provider attempts or raw effect APIs. Production use still requires
+ * review, isolated bootstrap and temporary end-to-end provider qualification. */
+export function createResourceCenterGoogleDriveNativeWriterToolHost({
   trusted_profile: trustedProfile, root_folder_id: rootFolderId, root_parent_id: rootParentId,
   get_drive_credential: getDriveCredential, drive_fetch: driveFetch,
   authority_fetch: authorityFetch, writer_endpoint: writerEndpoint,
   writer_binding_token: writerBindingToken, persist_recovery: persistRecovery,
-  ...hostOptions
+  persist_provider_attempt: persistProviderAttempt, ...hostOptions
 } = {}) {
   const metadata = createGoogleDriveMetadataApi({ get_credential: getDriveCredential, fetch: driveFetch });
   const pinned = { managed_root: trustedProfile?.managed_root, root_folder_id: rootFolderId,
     root_parent_id: rootParentId, get_file: metadata.getFile, list_children: metadata.listChildren };
-  const resolveProviderIdentity = createGoogleDriveProviderIdentityResolver(pinned);
+  const resolve = createGoogleDriveProviderIdentityResolver(pinned);
+  const startedProviders = new Map();
+  let preparedProvider;
   const writer = createResourceCenterWriteClient({ endpoint: writerEndpoint, binding_token: writerBindingToken,
-    resolve_provider_identity: resolveProviderIdentity,
-    verify_postcondition: createGoogleDriveCreatePostconditionVerifier(pinned),
+    resolve_provider_identity: async (request) => { preparedProvider = await resolve(request); return preparedProvider; },
+    verify_postcondition: createGoogleDriveCreatePostconditionVerifier({ ...pinned, require_effect_provider_id: true }),
     persist_recovery: persistRecovery, fetch: authorityFetch });
-  return createResourceCenterOnlineToolHostFromService({ ...hostOptions, ...writer,
-    trusted_profile: trustedProfile, fetch: authorityFetch, resolve_provider_identity: resolveProviderIdentity });
+  const effect = createGoogleDriveNativeCreateEffect({ trusted_profile: trustedProfile,
+    get_credential: getDriveCredential, resolve_provider_identity: resolve,
+    consume_started_provider: (binding) => {
+      const started = startedProviders.get(binding.request_sha256);
+      startedProviders.delete(binding.request_sha256);
+      return started;
+    }, persist_provider_attempt: persistProviderAttempt, fetch: driveFetch, clock: hostOptions.clock });
+  return createResourceCenterOnlineToolHostFromService({ ...hostOptions,
+    trusted_profile: trustedProfile, fetch: authorityFetch, resolve_provider_identity: resolve,
+    mutation_effect: effect, commit_post_write: writer.commit_post_write,
+    prepare_write: async (request) => {
+      preparedProvider = undefined;
+      const started = await writer.prepare_write(request);
+      if (!preparedProvider) throw new Error("DRIVE_NATIVE_PREPARED_IDENTITY_UNAVAILABLE");
+      startedProviders.set(request.binding.request_sha256, Object.freeze({
+        ...started, provider: structuredClone(preparedProvider) }));
+      return started;
+    } });
 }

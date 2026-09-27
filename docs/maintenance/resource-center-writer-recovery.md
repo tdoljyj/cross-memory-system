@@ -123,3 +123,27 @@ They do not offer an atomic cross-provider transaction or prevent an unrelated
 raw-OS writer from racing the mount. A failed postcondition leaves the existing
 durable fence intact for operator reconciliation. Do not enable real Resource
 Center mutation from unit tests or a temporary provider probe alone.
+
+### Native-ID candidate and disabled mounted writer
+
+`createResourceCenterGoogleDriveWriterToolHost` is deliberately unavailable:
+same path/name/hash cannot prove a local created object's Drive identity when
+another client races synchronization. It throws before any provider call. Do
+not relax the mounted provider's unknown link-count check to enable it.
+
+`createResourceCenterGoogleDriveNativeWriterToolHost` is the create-only
+candidate. After the durable Canonical start, it generates one Drive ID and
+appends/fsyncs its exact intent/binding/ID to a separate, preprovisioned private
+provider-attempt journal before the sole storage POST. The same Host clock is
+checked after credential refresh immediately before that POST; expiration
+leaves the durable fence intact. Authority is resolved again after prepare/start,
+so intermediate ancestor changes cannot replace the originally admitted identity.
+The postcondition requires the generated ID, not merely a matching name/hash.
+
+On response loss, read the saved provider attempt and inspect that exact ID,
+path, ancestry, type, size and SHA-256 under current authorization. No recovered
+attempt grants execution or automatic retry. A missing result does not by itself
+prove absence: retain the fence until the recovery contract above is satisfied.
+This is not atomic same-name exclusion against unrelated Google clients and is
+not whole-Host qualification. Actual isolated tool inventory, rollback and the
+temporary real Host/Worker/Canonical receipt chain are still required.

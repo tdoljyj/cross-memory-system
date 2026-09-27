@@ -8,6 +8,7 @@ import {
   createResourceCenterOnlineToolHost,
   createResourceCenterOnlineToolHostFromService,
   createResourceCenterGoogleDriveOnlineToolHost,
+  createResourceCenterGoogleDriveWriterToolHost,
 } from "../../../kernel/host/resource-center-online-tool-host.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "../../../kernel/host/resource-center-governed-tool-surface.mjs";
 import { qualifyResourceCenterHost } from "../../../kernel/host/resource-center-host-qualification.mjs";
@@ -50,6 +51,30 @@ async function fixture(t) {
   return { profile, destination: path.join(profile.managed_root, "20_P_产品与体验") };
 }
 
+test("mounted Drive writer cannot claim an unrelated same-name/hash object", () => {
+  let effects = 0;
+  assert.throws(() => createResourceCenterGoogleDriveWriterToolHost({
+    drive_fetch: () => { effects++; }, mutation_effect: () => { effects++; },
+  }), /DRIVE_MOUNTED_WRITER_IDENTITY_UNQUALIFIED/);
+  assert.equal(effects, 0);
+});
+
+test("authority changed by prepare is re-bound before effect and retains the fence", async (t) => {
+  const { profile, destination } = await fixture(t);
+  let prepared = false, effects = 0;
+  const host = createResourceCenterOnlineToolHost({ trusted_profile: profile,
+    resolve_artifact_online: async () => ({ ...authority(), workspace_version: prepared ? "provider-B" : "provider-A" }),
+    prepare_write: async (request) => { prepared = true; return testReservation(request); },
+    mutation_effect: async () => { effects++; },
+    commit_post_write: async () => { throw new Error("must not finalize"); },
+  });
+  const request = { operation: "create", destination_path: destination,
+    target_kind: "directory", directory_semantics: "track" };
+  assert.equal((await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, request)).error_code, "ADMISSION_BINDING_MISMATCH");
+  assert.equal((await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, request)).error_code, "POST_WRITE_RECONCILIATION_REQUIRED");
+  assert.equal(effects, 0);
+});
+
 test("online Host rechecks exact authority before a permitted effect", async (t) => {
   const { profile, destination } = await fixture(t);
   const observed = [];
@@ -75,7 +100,7 @@ test("online Host rechecks exact authority before a permitted effect", async (t)
   });
   assert.equal(result.status, "committed");
   assert.equal(result.canonical_receipt_id, "00000000-0000-4000-8000-000000000001");
-  assert.equal(observed.length, 2);
+  assert.equal(observed.length, 3);
   assert.equal(observed[0].profile.managed_root, profile.managed_root);
   assert.equal(observed[0].mutation.artifact_role, "clued_resource");
   assert.equal((await fs.stat(destination)).isDirectory(), true);
@@ -99,7 +124,7 @@ test("online authority drift and failure cause zero filesystem effects", async (
   };
   const drift = await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, request);
   assert.equal(drift.error_code, "ADMISSION_BINDING_MISMATCH");
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
   await assert.rejects(fs.stat(destination), { code: "ENOENT" });
 
   const offline = createResourceCenterOnlineToolHost({
@@ -340,7 +365,7 @@ test("production wiring consumes admission when the Drive parent version changes
     target_kind: "directory", directory_semantics: "track",
   });
   assert.equal(result.error_code, "ADMISSION_BINDING_MISMATCH");
-  assert.equal(reads, 2);
+  assert.equal(reads, 3);
   await assert.rejects(fs.stat(destination), { code: "ENOENT" });
 });
 
@@ -388,8 +413,8 @@ test("pinned Drive metadata and Clued service compose without exposing authority
   });
   assert.equal(result.status, "committed");
   assert.equal(result.canonical_receipt_id, "00000000-0000-4000-8000-000000000001");
-  assert.equal(authorityReads, 2);
-  assert.equal(driveReads, 4);
+  assert.equal(authorityReads, 3);
+  assert.equal(driveReads, 6);
   assert.equal((await fs.stat(destination)).isDirectory(), true);
 });
 
