@@ -27,13 +27,33 @@ function isGrantView(v: Record<string, unknown>, id: string): v is GrantView {
       && isDate(g.expires_at) && (g.revoked_at === null || isDate(g.revoked_at)) && typeof g.receipt_id === "string" && typeof g.binding_current === "boolean");
 }
 type RefreshStatus = { enabled: boolean; version: number; connection_version: number; failures: number; pending: boolean; next_refresh_at: string | null };
+const probeStages: Record<string, string> = { request: "请求验证", prepare: "账号与目录当前状态", descriptor: "目录配置", credential: "连接凭据与有效期",
+  identity: "Google 账号身份", directories: "Google 目录元数据与权限", receipt: "最终状态复核与回执" };
+const probeReasons: Record<string, string> = { DIRECTORY_NOT_APP_AUTHORIZED: "至少一个已登记目录尚未向当前 Google 应用授权", DIRECTORY_NOT_WRITABLE: "至少一个目录不允许新建子项",
+  IDENTITY_INVALID: "提供方返回的对象身份字段不完整或无效", PARENT_INVALID: "父目录身份不符合登记", LAYOUT_INVALID: "登记布局不符合检查合同",
+  DIRECTORY_CHANGED: "目录名称、位置或版本发生变化", PATH_AMBIGUOUS: "目录存在同名或身份冲突", SHORTCUT_UNQUALIFIED: "检测到尚未纳入资格验证的快捷方式",
+  DIRECTORY_NOT_LISTED: "目录枚举结果缺少已登记对象", ENUMERATION_INVALID: "目录枚举未确认", ENTRY_LIMIT: "目录数量超过本次检查上限",
+  OBSERVATION_EXPIRED: "本次检查超过时间限制", CLOCK_INVALID: "检查时钟未确认" };
+class ProbeRequestError extends Error {}
 async function request(path: string, body: object | undefined, stillCurrent: () => boolean = () => true) {
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session) throw new Error("请先登录 Clued，再返回此页。");
   if (!stillCurrent()) throw new Error("账号或页面已变化，请重新确认。");
   const response = await fetch(path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
     body: JSON.stringify(body), cache: "no-store", redirect: "error" });
-  if (!response.ok) throw new Error(response.status === 404 ? "账号存储连接尚未开放，原入口未切换。" : "操作未确认，请刷新状态后检查；不会自动重试或放宽权限。");
+  if (!response.ok) {
+    if (path === "/v1/storage/google/probe" && response.status === 403) {
+      const failure: unknown = await response.json().catch(() => null);
+      if (isObject(failure) && failure.execution_permitted === false && isObject(failure.diagnostic)) {
+        const { stage, reason } = failure.diagnostic;
+        if (typeof stage === "string" && Object.hasOwn(probeStages, stage) && typeof reason === "string" &&
+          (reason === "UNCONFIRMED" || Object.hasOwn(probeReasons, reason))) {
+          throw new ProbeRequestError(`目录检查未确认：${probeStages[stage]}${reason === "UNCONFIRMED" ? "" : `；${probeReasons[reason]}`}。不会自动重试或开启文件写入。`);
+        }
+      }
+    }
+    throw new Error(response.status === 404 ? "账号存储连接尚未开放，原入口未切换。" : "操作未确认，请刷新状态后检查；不会自动重试或放宽权限。");
+  }
   const value: unknown = await response.json();
   const current = await supabase.auth.getSession();
   if (current.error || current.data.session?.user.id !== data.session.user.id) throw new Error("账号已变化，请重新读取连接。");
@@ -44,6 +64,7 @@ const labels: Record<string, string> = { awaiting_provider: "等待 Google 授�
 export default function StorageConnections() {
   const [connections, setConnections] = useState<Connection[]>([]), [message, setMessage] = useState("正在读取……"), [busy, setBusy] = useState(false);
   const [renewals, setRenewals] = useState<Record<string, RefreshStatus>>({});
+  const [probeMessages, setProbeMessages] = useState<Record<string, string>>({});
   const [defaultRefresh, setDefaultRefresh] = useState<Record<string, boolean>>({});
   const [clients, setClients] = useState<Client[]>([]), [grantViews, setGrantViews] = useState<Record<string, GrantView>>({});
   const [clientDrafts, setClientDrafts] = useState<Record<string, ClientDraft>>({});
@@ -55,6 +76,7 @@ export default function StorageConnections() {
   const refresh = useCallback(async () => {
     const epoch = ++revision.current;
     setRenewals({});
+    setProbeMessages({});
     setClients([]); setGrantViews({}); setClientDrafts({});
     setRecoveryJobs({}); setRecoveryViews({});
     setBusy(true);
@@ -72,6 +94,7 @@ export default function StorageConnections() {
     const { data } = supabase.auth.onAuthStateChange(() => {
       if (disposed) return;
       ++revision.current; setConnections([]); setRenewals({}); setDefaultRefresh({}); setProfileId(""); setDecisionId("");
+      setProbeMessages({});
       setClients([]); setGrantViews({}); setClientDrafts({});
       setRecoveryJobs({}); setRecoveryViews({});
       // Do not await Supabase calls from inside its auth callback lock.
@@ -172,16 +195,17 @@ export default function StorageConnections() {
     if (operationBusy.current || registrationBusy.current || busy || c.state !== "active") return;
     const epoch = revision.current;
     operationBusy.current = true; setBusy(true);
-    setMessage("正在只读检查已登记目录；不会创建文件或开启写入。");
+    const report = (value: string) => { setMessage(value); setProbeMessages(old => ({ ...old, [c.id]: value })); };
+    report("正在只读检查已登记目录；不会创建文件或开启写入。");
     try {
       const result = await request("/v1/storage/google/probe", { connection_id: c.id }, () => epoch === revision.current);
       if (epoch !== revision.current) return;
       if (result.status !== "metadata_observed" || result.execution_permitted !== false ||
         typeof result.attempt_id !== "string" || !/^[0-9a-f-]{36}$/.test(result.attempt_id) ||
         typeof result.receipt_id !== "string" || !/^[0-9a-f-]{36}$/.test(result.receipt_id)) throw new Error("目录检查回执未确认；文件写入保持关闭。");
-      setMessage(`已登记目录的访问与元数据检查已记录。回执：${result.receipt_id}。这不是完整存储资格验收，不会开启文件写入。`);
-    } catch {
-      if (epoch === revision.current) setMessage("目录检查未确认；可能需要核对目录授权、当前版本或等待凭据续签。不会自动重试或开启文件写入。");
+      report(`已登记目录的访问与元数据检查已记录。回执：${result.receipt_id}。这不是完整存储资格验收，不会开启文件写入。`);
+    } catch (error) {
+      if (epoch === revision.current) report(error instanceof ProbeRequestError ? error.message : "目录检查未确认；可能需要核对目录授权、当前版本或等待凭据续签。不会自动重试或开启文件写入。");
     } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
   }
   async function register() {
@@ -278,7 +302,8 @@ export default function StorageConnections() {
               <button disabled={busy} onClick={() => void recover(c, "authorize")}>凭据过期：重新授权以核对原任务</button></>}</>}
       </details>
       {c.state === "active" && <div className="my-2"><button disabled={busy} onClick={() => void observeDirectories(c)}>检查已登记目录（只读）</button>
-        <p className="text-sm">只核对服务端登记目录的访问与元数据，不读取文件正文，不授予 Agent 写入权限。</p></div>}
+        <p className="text-sm">只核对服务端登记目录的访问与元数据，不读取文件正文，不授予 Agent 写入权限。</p>
+        {probeMessages[c.id] && <p role="status" aria-live="polite" className="my-2 break-all">{probeMessages[c.id]}</p>}</div>}
       {c.state === "awaiting_provider" && <label className="my-2 block"><input type="checkbox" disabled={busy}
         checked={defaultRefresh[c.id] ?? true} onChange={event => setDefaultRefresh(old => ({ ...old, [c.id]: event.target.checked }))} />
         连接成功后自动续签（可取消；已有停用或失效设置不变）</label>}
