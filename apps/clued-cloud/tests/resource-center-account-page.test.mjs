@@ -58,6 +58,14 @@ test("account change suppresses a late Google authorization navigation", async (
   f.respond(1,{authorization_url:"https://accounts.google.com/o/oauth2/v2/auth?state=fixture"}); await f.settle();
   assert.equal(f.navigations.length,0); assert.equal(f.text().includes(connection.id),false);
 });
+test("double-clicking Google connect prepares only one attempt; immediate account switch sends none",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[connection]});await f.settle();
+  const connect=f.button("连接 / 重新授权 Google");connect.props.onClick();connect.props.onClick();await f.settle();
+  assert.equal(f.requests.length,2);
+  const changed=fixture();await changed.settle();changed.respond(0,{connections:[connection]});await changed.settle();
+  changed.button("连接 / 重新授权 Google").props.onClick();changed.change("b");await changed.settle();
+  assert.equal(changed.requests.filter(r=>r.url==="/v1/storage/google/start").length,0);
+});
 const status = { enabled:false,version:0,connection_version:2,failures:0,pending:false,next_refresh_at:null };
 async function ready(confirm=true) {
   const f=fixture(confirm); await f.settle(); f.respond(0,{connections:[{...connection,state:"active",version:2}]}); await f.settle();

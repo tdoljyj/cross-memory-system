@@ -24,6 +24,7 @@ export default function StorageConnections() {
   const [renewals, setRenewals] = useState<Record<string, RefreshStatus>>({});
   const [profileId, setProfileId] = useState(""), [decisionId, setDecisionId] = useState("");
   const registrationBusy = useRef(false);
+  const operationBusy = useRef(false);
   const revision = useRef(0);
   const refresh = useCallback(async () => {
     const epoch = ++revision.current;
@@ -94,13 +95,15 @@ export default function StorageConnections() {
     } finally { if (epoch === revision.current) setBusy(false); }
   }
   async function operate(c: Connection, revoke: boolean) {
+    if (operationBusy.current || busy) return;
     if (revoke && !window.confirm("停用这条账号存储连接？这会阻止该连接后续的新执行和续签；已开始的操作需要核对回执。")) return;
+    operationBusy.current = true;
     setBusy(true);
     const epoch = revision.current;
     try {
-      if (revoke) { await request("/v1/storage/account", { action: "revoke_connection", connection_id: c.id, base_version: c.version, idempotency_key: crypto.randomUUID() }); if (epoch === revision.current) await refresh(); }
+      if (revoke) { await request("/v1/storage/account", { action: "revoke_connection", connection_id: c.id, base_version: c.version, idempotency_key: crypto.randomUUID() }, () => epoch === revision.current); if (epoch === revision.current) await refresh(); }
       else {
-        const result = await request("/v1/storage/google/start", { connection_id: c.id });
+        const result = await request("/v1/storage/google/start", { connection_id: c.id }, () => epoch === revision.current);
         if (epoch !== revision.current) return;
         if (typeof result.authorization_url !== "string") throw new Error("授权地址未确认。");
         const url = new URL(result.authorization_url);
@@ -108,7 +111,7 @@ export default function StorageConnections() {
         window.location.assign(url.href);
       }
     } catch (error) { if (epoch === revision.current) setMessage(error instanceof Error ? error.message : "操作未确认。"); }
-    finally { if (epoch === revision.current) setBusy(false); }
+    finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
   }
   return <main className="mx-auto max-w-3xl px-6 py-16"><h1 className="text-2xl font-semibold">账号存储连接</h1>
     <p className="my-4">权限统一归属 Clued 账号；手机、平板和电脑使用同一份服务端规则。Google 凭据不下发到设备。</p>

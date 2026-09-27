@@ -46,3 +46,15 @@ test("native OAuth route adds only server issuer and returns no native/provider 
     assert.equal(calls.length, 2); assert.ok(calls[1].p_input.verifier_envelope.ciphertext);
   } finally { globalThis.fetch = original; }
 });
+
+test("callback transport exposes only a fixed reason, never upstream exception details", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async url => String(url).endsWith("/auth/v1/user") ? Response.json({id:"fixture-owner"}) :
+    Response.json({message:"private-provider-secret",reason:"attacker-controlled-text"},{status:403});
+  try {
+    const response = await worker.fetch(request("complete",{state:"a".repeat(43),code:"fixture-auth-code"}),env);
+    assert.equal(response.status,403);
+    assert.equal(response.headers.get("cache-control"),"no-store");
+    assert.deepEqual(await response.json(),{error:"Storage Google connection unavailable.",reason:"attempt_unavailable"});
+  } finally {globalThis.fetch=original;}
+});
