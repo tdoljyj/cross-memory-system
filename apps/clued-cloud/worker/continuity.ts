@@ -69,6 +69,7 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6Feature
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
   CLUED_STORAGE_ACCOUNT_V1?: string;
+  CLUED_STORAGE_JOBS_V1?: string;
   CLUED_STORAGE_GOOGLE_V1?: string;
   CLUED_STORAGE_REFRESH_V1?: string;
   CLUED_STORAGE_GOOGLE_CLIENT_ID?: string;
@@ -2271,6 +2272,25 @@ async function handleContinuityRequestInner(
         return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });
       } catch {
         return json({ error: "Storage Google connection unavailable." }, 403, { ...corsHeaders(request), "cache-control": "no-store" });
+      }
+    }
+    if (url.pathname === "/v1/storage/jobs") {
+      validateOrigin(request, env);
+      if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_JOBS_V1 !== "true") return json({ error: "Not found." }, 404);
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
+      if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { allow: "POST, OPTIONS" });
+      const token = bearerToken(request);
+      if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) return json({ error: "An explicitly granted Clued Binding is required." }, 403);
+      const input = await parseBody(request);
+      try {
+        // Submission/status only. Never proxy a caller to the private begin
+        // function or return a provider credential/admission through this API.
+        const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_jobs_v1", {
+          method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
+        });
+        return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });
+      } catch {
+        return json({ error: "Storage job unavailable." }, 403, { ...corsHeaders(request), "cache-control": "no-store" });
       }
     }
     if (url.pathname === "/v1/storage/account" || url.pathname === "/v1/storage/refresh") {

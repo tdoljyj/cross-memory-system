@@ -95,7 +95,27 @@ Provider tokens remain encrypted in private Canonical rows and never reach UI,
 Agent, receipts or logs. Native management CAS and final session/attempt expiry
 checks also apply after lock waits. The UI explains these limits before opt-in.
 
-Not yet implemented/qualified: shared job/attempt execution, cloud provider effects, live
+The shared-job candidate adds `POST /v1/storage/jobs` (submit/inspect only), off
+unless both `CLUED_STORAGE_ACCOUNT_V1` and `CLUED_STORAGE_JOBS_V1` are true. It
+requires an existing v12 Binding plus the owner's explicit storage grant, not a
+native JWT or `context:write` alone. Private Canonical rows retain full create
+intent and payload; public status and audit Events expose only identity, digest
+and receipt. The primary key is owner/job, independent of device or connection.
+An exact resubmission is status-only; changing bytes, path or connection conflicts.
+Neither submission nor inspection returns an execution permit.
+
+The unexposed `storage_job_begin_v1` composition point atomically prepares and
+starts the original mutation journal, then links that attempt to the job. Only
+the first successful transaction returns execution permission; later calls only
+inspect the same intent. Original provider-root fences and refresh fences remain
+in force. No parallel attempt ledger or timeout-based fence clearing is added.
+It pins the submitting grant Receipt and authorization version: revoke/regrant
+cannot revive old queued work. Authority projection, exact mutation and full
+payload must agree; paths must already be canonical, never silently retargeted.
+There is deliberately no public or service-role execute grant on this internal
+function. It is not yet a cloud executor and cannot be advertised as one.
+
+Not yet implemented/qualified: private cloud executor wiring/provider effects, live
 Google Web-client/root authorization qualification and formal entry cutover.
 Connection `active` means credential connection only, never a qualified writer.
 Do not enable the flag or promote this slice as a working multi-device writer.

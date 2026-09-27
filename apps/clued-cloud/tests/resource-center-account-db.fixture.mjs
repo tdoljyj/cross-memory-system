@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+import { testAccountJobs } from "./resource-center-account-jobs-db.fixture.mjs";
 const hash = s => createHash("sha256").update(s).digest("hex");
 
 export async function testStorageAccount(t, admin, server, user, decision) {
@@ -68,6 +69,12 @@ export async function testStorageAccount(t, admin, server, user, decision) {
       assert.equal(await check(0), bindings[0].binding);
       await assert.rejects(check(1), /storage_binding_denied/);
       assert.equal(await check(1, "inspect"), bindings[1].binding);
+    });
+    await testAccountJobs(t, admin, server, { user, decision, profile, connection, bindings, grant,
+      revoke: async i => {
+        const r=await account(input("revoke_client", {connection_id:connection,base_version:version,binding_id:bindings[i].binding}));
+        version=r.committed_versions[connection];return r;
+      },
     });
     await t.test("session expiry during a real connection lock wait rolls back grant and receipt", async () => {
       await admin.query("update auth.sessions set not_after=clock_timestamp()+interval '3 seconds' where id=$1", [session]);
