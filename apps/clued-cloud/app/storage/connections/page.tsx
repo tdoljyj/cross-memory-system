@@ -5,9 +5,10 @@ import Link from "next/link";
 import { supabase } from "../../supabase-browser";
 type Connection = { id: string; provider: string; state: string; version: number; profile_id: string };
 type RefreshStatus = { enabled: boolean; version: number; connection_version: number; failures: number; pending: boolean; next_refresh_at: string | null };
-async function request(path: string, body: object) {
+async function request(path: string, body: object, stillCurrent: () => boolean = () => true) {
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session) throw new Error("请先登录 Clued，再返回此页。");
+  if (!stillCurrent()) throw new Error("账号或页面已变化，请重新确认。");
   const response = await fetch(path, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
     body: JSON.stringify(body), cache: "no-store", redirect: "error" });
   if (!response.ok) throw new Error(response.status === 404 ? "账号存储连接尚未开放，原入口未切换。" : "操作未确认，请刷新状态后检查；不会自动重试或放宽权限。");
@@ -21,6 +22,8 @@ const labels: Record<string, string> = { awaiting_provider: "等待 Google 授�
 export default function StorageConnections() {
   const [connections, setConnections] = useState<Connection[]>([]), [message, setMessage] = useState("正在读取……"), [busy, setBusy] = useState(false);
   const [renewals, setRenewals] = useState<Record<string, RefreshStatus>>({});
+  const [profileId, setProfileId] = useState(""), [decisionId, setDecisionId] = useState("");
+  const registrationBusy = useRef(false);
   const revision = useRef(0);
   const refresh = useCallback(async () => {
     const epoch = ++revision.current;
@@ -39,13 +42,33 @@ export default function StorageConnections() {
     const scheduleRead = () => queueMicrotask(() => { if (!disposed) void refresh(); });
     const { data } = supabase.auth.onAuthStateChange(() => {
       if (disposed) return;
-      ++revision.current; setConnections([]); setRenewals({});
+      ++revision.current; setConnections([]); setRenewals({}); setProfileId(""); setDecisionId("");
       // Do not await Supabase calls from inside its auth callback lock.
       scheduleRead();
     });
     scheduleRead();
     return () => { disposed = true; ++liveRevision.current; data.subscription.unsubscribe(); };
   }, [refresh]);
+  async function register() {
+    if (registrationBusy.current || busy) return;
+    const profile = profileId.trim(), decision = decisionId.trim();
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    if (!uuid.test(profile) || !uuid.test(decision)) { setMessage("请填写有效的已登记目录 ID 和当前授权 Decision ID。"); return; }
+    const epoch = revision.current;
+    if (!window.confirm("登记这一个已治理目录的账号连接？目录和授权由服务端核验；此步骤不授予 Google 访问、后台续签或 Agent 文件写入权限。")) return;
+    registrationBusy.current = true; setBusy(true);
+    try {
+      // Stable per-owner receipt identity survives page reload and a lost reply.
+      // A revoked connection is not revived by replay; it stays visible as revoked.
+      const result = await request("/v1/storage/account", { action: "register", profile_id: profile, source_decision_id: decision,
+        idempotency_key: `storage-register-ui-v1:${profile}:${decision}` }, () => epoch === revision.current);
+      if (epoch !== revision.current) return;
+      if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("登记回执未确认，请刷新状态核对；不要另建重复连接。");
+      await refresh();
+    } catch (error) {
+      if (epoch === revision.current) setMessage(error instanceof Error ? error.message : "登记未确认，请刷新核对；再次提交相同目录与授权会沿用同一请求。");
+    } finally { registrationBusy.current = false; if (epoch === revision.current) setBusy(false); }
+  }
   async function renewal(c: Connection, action: "status" | "enable" | "disable") {
     const previous = renewals[c.id];
     if (action !== "status" && !previous) return;
@@ -90,6 +113,14 @@ export default function StorageConnections() {
   return <main className="mx-auto max-w-3xl px-6 py-16"><h1 className="text-2xl font-semibold">账号存储连接</h1>
     <p className="my-4">权限统一归属 Clued 账号；手机、平板和电脑使用同一份服务端规则。Google 凭据不下发到设备。</p>
     <p role="status" className="my-4">{message}</p>
+    <section className="my-4 rounded-xl border p-4"><h2>登记已治理目录</h2>
+      <p className="my-2 text-sm">仅引用服务端已登记的目录与当前授权，不接受自定义磁盘路径。登记不代表写入已启用；相同请求可安全核对回执，已停用连接不会自动恢复。</p>
+      <label className="my-2 block">已登记目录 ID<input className="block w-full rounded border p-2" value={profileId} disabled={busy}
+        autoComplete="off" onChange={event => setProfileId(event.target.value)} /></label>
+      <label className="my-2 block">当前授权 Decision ID<input className="block w-full rounded border p-2" value={decisionId} disabled={busy}
+        autoComplete="off" onChange={event => setDecisionId(event.target.value)} /></label>
+      <button disabled={busy || !profileId.trim() || !decisionId.trim()} onClick={() => void register()}>登记账号连接</button>
+    </section>
     {connections.map(c => <section className="my-4 rounded-xl border p-4" key={c.id}>
       <h2>{c.provider} · {labels[c.state] ?? "状态待确认"}</h2><p className="my-2 break-all text-sm">连接：{c.id}</p>
       {c.state !== "revoked" && <div className="flex gap-4"><button disabled={busy} onClick={() => void operate(c, false)}>连接 / 重新授权 Google</button>
