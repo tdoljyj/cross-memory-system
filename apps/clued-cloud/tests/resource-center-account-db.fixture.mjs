@@ -71,6 +71,48 @@ export async function testStorageAccount(t, admin, server, user, decision) {
       await assert.rejects(check(1), /storage_binding_denied/);
       assert.equal(await check(1, "inspect"), bindings[1].binding);
     });
+    await t.test("native client-grant readback is exact, owner-scoped, metadata-only and has no write effects", async () => {
+      const read = {action:"client_grants",connection_id:connection};
+      const before = (await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n;
+      const view = await account(read);
+      assert.deepEqual(Object.keys(view).sort(),["connection_id","connection_state","connection_version","grants"]);
+      assert.equal(view.connection_id,connection);assert.equal(view.connection_version,version);assert.equal(view.connection_state,"active");
+      assert.equal(view.grants.length,2);
+      for(const g of view.grants) {
+        assert.deepEqual(Object.keys(g).sort(),["actions","authorization_version","binding_current","binding_id","expires_at","receipt_id","revoked_at"]);
+        assert.equal(g.binding_current,true);assert.equal(g.revoked_at,null);assert.equal(g.authorization_version,1);
+      }
+      await assert.rejects(account({...read,owner_id:user}),/storage_input_invalid/);
+      await assert.rejects(account({...read,managed_root:"/caller"}),/storage_input_invalid/);
+      await assert.rejects(account({action:"client_grants"}),/storage_input_invalid/);
+      const other = randomUUID(), otherSession=randomUUID();
+      await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'other-storage@example.invalid',now())",[other]);
+      await admin.query("insert into auth.sessions(id,user_id) values($1,$2)",[otherSession,other]);
+      try {
+        await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",[other,JSON.stringify({sub:other,session_id:otherSession})]);
+        await assert.rejects(account(read),/storage_connection_unavailable/);
+        await assert.rejects(account({...read,connection_id:randomUUID()}),/storage_connection_unavailable/);
+      } finally {
+        await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",[user,JSON.stringify({sub:user,session_id:session})]);
+      }
+      assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n,before);
+      assert.equal((await account(read)).connection_version,version);
+      await assert.rejects(native.query("select clued_private.storage_client_grants_read_v1($1::jsonb)",[JSON.stringify(read)]),/permission denied/);
+    });
+    await t.test("readback rechecks native session expiry after a connection lock wait",async()=>{
+      await admin.query("update auth.sessions set not_after=clock_timestamp()+interval '1 second' where id=$1",[session]);
+      await admin.query("begin");let pending;
+      try {
+        await admin.query("select id from clued_private.storage_connections_v1 where id=$1 for update",[connection]);
+        pending=account({action:"client_grants",connection_id:connection}).then(value=>({value}),error=>({error}));
+        await waitForLock();
+        await admin.query("select pg_sleep(greatest(0,extract(epoch from (not_after-clock_timestamp())))+0.02) from auth.sessions where id=$1",[session]);
+        await admin.query("commit");assert.match((await pending).error?.message??"",/storage_native_session_required/);
+      } finally {
+        await admin.query("rollback");if(pending)await pending;
+        await admin.query("update auth.sessions set not_after=null where id=$1",[session]);
+      }
+    });
     await testAccountJobs(t, admin, server, { user, decision, profile, connection, bindings, grant,
       revoke: async i => {
         const r=await account(input("revoke_client", {connection_id:connection,base_version:version,binding_id:bindings[i].binding}));
@@ -122,6 +164,7 @@ export async function testStorageAccount(t, admin, server, user, decision) {
         selected: [{ resource_kind: "scope", resource_id: "project:"+project, environment: "canonical", actions: ["write"] }] })]);
       await assert.rejects(check(0), /storage_binding_denied/);
       assert.equal(await check(1, "inspect"), bindings[1].binding);
+      assert.equal((await account({action:"client_grants",connection_id:connection})).grants.find(g=>g.binding_id===bindings[0].binding).binding_current,false);
       await native.query("select public.clued_authorization_manage_v12($1::jsonb)", [JSON.stringify({ op: "revoke", binding_id: bindings[0].binding, base_version: 2 })]);
       await assert.rejects(check(0), /storage_binding_denied/);
       await admin.query("begin");
@@ -135,10 +178,13 @@ export async function testStorageAccount(t, admin, server, user, decision) {
       await assert.rejects(check(1, "inspect"), /storage_connection_unavailable/);
       const stored = (await admin.query("select * from clued_private.storage_connections_v1 where id=$1", [connection])).rows[0];
       assert.equal(stored.state, "revoked"); assert.ok(stored.credential_envelope);
+      const readback=await account({action:"client_grants",connection_id:connection});
+      assert.equal(readback.connection_state,"revoked");assert.equal(readback.grants.length,2);
     });
     await t.test("logged-out native JWT cannot manage storage while independent grants are not session clones", async () => {
       await admin.query("delete from auth.sessions where id=$1", [session]);
       await assert.rejects(account({ action: "list" }), /storage_native_session_required/);
+      await assert.rejects(account({ action: "client_grants", connection_id:connection }), /storage_native_session_required/);
       assert.equal((await admin.query("select revoked_at from clued_private.authorizations_v12 where binding_id=$1", [bindings[1].binding])).rows[0].revoked_at, null);
     });
     await t.test("private storage rows and internal authorization are unavailable to public clients", async () => {

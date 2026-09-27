@@ -4,12 +4,31 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../supabase-browser";
 type Connection = { id: string; provider: string; state: string; version: number; profile_id: string };
+const storageActions = { inspect: "查看资料信息", create_file: "新建文件", create_topic: "新建主题目录" };
+type StorageAction = keyof typeof storageActions;
+type Client = { binding_id: string; client_name: string; client_id: string; version: number; expires_at: string; active: boolean };
+type ClientGrant = { binding_id: string; authorization_version: number; actions: StorageAction[]; expires_at: string; revoked_at: string | null; receipt_id: string; binding_current: boolean };
+type GrantView = { connection_id: string; connection_version: number; connection_state: string; grants: ClientGrant[] };
+type ClientDraft = { binding: string; actions: StorageAction[]; expires: string };
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const isDate = (v: unknown): v is string => typeof v === "string" && Number.isFinite(Date.parse(v));
+function isClient(v: unknown): v is Client {
+  return isObject(v) && typeof v.binding_id === "string" && typeof v.client_name === "string" && typeof v.client_id === "string"
+    && Number.isSafeInteger(v.version) && Number(v.version) > 0 && isDate(v.expires_at) && typeof v.active === "boolean";
+}
+function isGrantView(v: Record<string, unknown>, id: string): v is GrantView {
+  return v.connection_id === id && Number.isSafeInteger(v.connection_version) && Number(v.connection_version) > 0
+    && typeof v.connection_state === "string" && Array.isArray(v.grants) && v.grants.every(g => isObject(g)
+      && typeof g.binding_id === "string" && Number.isSafeInteger(g.authorization_version) && Number(g.authorization_version) > 0
+      && Array.isArray(g.actions) && g.actions.length > 0 && g.actions.every(a => typeof a === "string" && Object.hasOwn(storageActions, a))
+      && isDate(g.expires_at) && (g.revoked_at === null || isDate(g.revoked_at)) && typeof g.receipt_id === "string" && typeof g.binding_current === "boolean");
+}
 type RefreshStatus = { enabled: boolean; version: number; connection_version: number; failures: number; pending: boolean; next_refresh_at: string | null };
-async function request(path: string, body: object, stillCurrent: () => boolean = () => true) {
+async function request(path: string, body: object | undefined, stillCurrent: () => boolean = () => true) {
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session) throw new Error("请先登录 Clued，再返回此页。");
   if (!stillCurrent()) throw new Error("账号或页面已变化，请重新确认。");
-  const response = await fetch(path, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
+  const response = await fetch(path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
     body: JSON.stringify(body), cache: "no-store", redirect: "error" });
   if (!response.ok) throw new Error(response.status === 404 ? "账号存储连接尚未开放，原入口未切换。" : "操作未确认，请刷新状态后检查；不会自动重试或放宽权限。");
   const value: unknown = await response.json();
@@ -23,6 +42,8 @@ export default function StorageConnections() {
   const [connections, setConnections] = useState<Connection[]>([]), [message, setMessage] = useState("正在读取……"), [busy, setBusy] = useState(false);
   const [renewals, setRenewals] = useState<Record<string, RefreshStatus>>({});
   const [defaultRefresh, setDefaultRefresh] = useState<Record<string, boolean>>({});
+  const [clients, setClients] = useState<Client[]>([]), [grantViews, setGrantViews] = useState<Record<string, GrantView>>({});
+  const [clientDrafts, setClientDrafts] = useState<Record<string, ClientDraft>>({});
   const [profileId, setProfileId] = useState(""), [decisionId, setDecisionId] = useState("");
   const registrationBusy = useRef(false);
   const operationBusy = useRef(false);
@@ -30,6 +51,7 @@ export default function StorageConnections() {
   const refresh = useCallback(async () => {
     const epoch = ++revision.current;
     setRenewals({});
+    setClients([]); setGrantViews({}); setClientDrafts({});
     setBusy(true);
     try { const result = await request("/v1/storage/account", { action: "list" });
       if (epoch !== revision.current) return;
@@ -45,12 +67,63 @@ export default function StorageConnections() {
     const { data } = supabase.auth.onAuthStateChange(() => {
       if (disposed) return;
       ++revision.current; setConnections([]); setRenewals({}); setDefaultRefresh({}); setProfileId(""); setDecisionId("");
+      setClients([]); setGrantViews({}); setClientDrafts({});
       // Do not await Supabase calls from inside its auth callback lock.
       scheduleRead();
     });
     scheduleRead();
     return () => { disposed = true; ++liveRevision.current; data.subscription.unsubscribe(); };
   }, [refresh]);
+  async function readClients(c: Connection, epoch: number) {
+    const stillCurrent = () => epoch === revision.current;
+    const listed = await request("/oauth/connections/api", undefined, stillCurrent);
+    if (!stillCurrent()) return;
+    if (!Array.isArray(listed.bindings) || !listed.bindings.every(isClient)) throw new Error("客户端列表未确认。");
+    const view = await request("/v1/storage/account", { action: "client_grants", connection_id: c.id }, stillCurrent);
+    if (!stillCurrent()) return;
+    if (!isGrantView(view, c.id)) throw new Error("存储授权列表未确认。");
+    setClients(listed.bindings); setGrantViews(old => ({ ...old, [c.id]: view }));
+    setConnections(old => old.map(item => item.id === c.id ? { ...item, version: view.connection_version, state: view.connection_state } : item));
+    setClientDrafts(old => { const next = { ...old }; delete next[c.id]; return next; });
+  }
+  async function manageClient(c: Connection, action: "list" | "grant_client" | "revoke_client", grant?: ClientGrant) {
+    if (operationBusy.current || registrationBusy.current || busy) return;
+    const epoch = revision.current, view = grantViews[c.id], draft = clientDrafts[c.id];
+    const client = clients.find(item => item.binding_id === draft?.binding);
+    let payload: Record<string, unknown> | undefined;
+    if (action !== "list") {
+      if (!view) return;
+      if (action === "grant_client") {
+        if (view.connection_state !== "active" || !client?.active || !draft?.actions.length || !isDate(draft.expires)
+          || Date.parse(draft.expires) <= Date.now() || Date.parse(draft.expires) > Date.parse(client.expires_at)) {
+          setMessage("请选择有效客户端、至少一项操作和不超过客户端授权的期限。"); return;
+        }
+        if (!window.confirm(`授权 ${client.client_name}（${client.binding_id}）在连接 ${c.id} 下${draft.actions.map(a => storageActions[a]).join("、")}，至 ${draft.expires}？不含覆盖、移动、改名或删除；实际执行仍须通过全部门禁。`)) return;
+        payload = { binding_id: client.binding_id, authorization_version: client.version, actions: draft.actions, expires_at: draft.expires };
+      } else {
+        if (!grant || grant.revoked_at !== null) return;
+        if (!window.confirm(`停用客户端 ${grant.binding_id} 在此存储连接的权限？不影响它的 Clued 记忆权限或其他客户端；已开始的操作仍须核对回执。`)) return;
+        payload = { binding_id: grant.binding_id };
+      }
+      // Fixed request identity and body for this confirmed operation. An uncertain
+      // response clears controls and requires readback, never an automatic regrant.
+      payload = { action, connection_id: c.id, base_version: view.connection_version, ...payload, idempotency_key: crypto.randomUUID() };
+    }
+    operationBusy.current = true; setBusy(true);
+    setGrantViews(old => { const next = { ...old }; delete next[c.id]; return next; });
+    try {
+      if (payload) {
+        const result = await request("/v1/storage/account", payload, () => epoch === revision.current);
+        if (epoch !== revision.current) return;
+        if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("授权回执未确认；请查询授权核对，不会自动重试。");
+      }
+      if (epoch !== revision.current) return;
+      await readClients(c, epoch);
+      if (epoch === revision.current) setMessage(action === "list" ? "" : "存储授权设置已确认；正式执行仍受门禁约束。");
+    } catch (error) {
+      if (epoch === revision.current) setMessage(error instanceof Error ? error.message : "存储授权未确认，请查询授权核对。");
+    } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
+  }
   async function register() {
     if (registrationBusy.current || busy) return;
     const profile = profileId.trim(), decision = decisionId.trim();
@@ -144,6 +217,37 @@ export default function StorageConnections() {
           {renewals[c.id].failures > 0 ? `；连续失败 ${renewals[c.id].failures} 次。` : ""}</p>
           <button disabled={busy || (!renewals[c.id].enabled && (c.state !== "active" || renewals[c.id].pending))}
             onClick={() => void renewal(c, renewals[c.id].enabled ? "disable" : "enable")}>{renewals[c.id].enabled ? "停用后台续签" : "授权开启后台续签"}</button></>}
+      </div>
+      <div className="mt-4 border-t pt-4"><h3>Agent 存储权限</h3>
+        <p className="my-2 text-sm">选择已经连接 Clued 的客户端，按账号统一授权，不按设备建权。记忆权限不包含存储权限；这里不会开启尚未验收的文件执行入口。</p>
+        <button disabled={busy} onClick={() => void manageClient(c, "list")}>查询客户端存储授权</button>
+        {grantViews[c.id] && <>
+          {grantViews[c.id].grants.length === 0 && <p>暂无客户端存储授权。</p>}
+          {grantViews[c.id].grants.map(g => <div key={g.binding_id} className="my-2 rounded border p-3">
+            <p>{clients.find(b => b.binding_id === g.binding_id)?.client_name ?? "已登记客户端"} · {g.binding_id}</p>
+            <p>已登记操作：{g.actions.map(a => storageActions[a]).join("、")}；到期：{g.expires_at}</p>
+            <p>{g.revoked_at ? "已停用" : !g.binding_current || Date.parse(g.expires_at) <= Date.now() ? "已失效，不能用于新执行" : "授权已登记；实际执行仍需连接、目录与执行器门禁通过"}</p>
+            <p className="break-all text-sm">回执：{g.receipt_id}</p>
+            {g.revoked_at === null && <button disabled={busy} onClick={() => void manageClient(c, "revoke_client", g)}>停用此客户端存储权限</button>}
+          </div>)}
+          {grantViews[c.id].connection_state === "active" && <>
+            <label className="my-2 block">授权客户端<select className="block w-full rounded border p-2" disabled={busy} value={clientDrafts[c.id]?.binding ?? ""}
+              onChange={event => { const client = clients.find(b => b.binding_id === event.target.value);
+                setClientDrafts(old => ({ ...old, [c.id]: { binding: client?.binding_id ?? "", actions: [],
+                  expires: client ? new Date(Math.min(Date.now() + 3600000, Date.parse(client.expires_at))).toISOString() : "" } })); }}>
+              <option value="">请选择客户端</option>{clients.filter(b => b.active && Date.parse(b.expires_at) > Date.now()).map(b =>
+                <option key={b.binding_id} value={b.binding_id}>{b.client_name} · {b.binding_id}</option>)}
+            </select></label>
+            {clientDrafts[c.id]?.binding && <>
+              {(Object.keys(storageActions) as StorageAction[]).map(a => <label className="mr-4 inline-block" key={a}><input type="checkbox" disabled={busy}
+                checked={clientDrafts[c.id].actions.includes(a)} onChange={event => setClientDrafts(old => ({ ...old, [c.id]: { ...old[c.id],
+                  actions: (Object.keys(storageActions) as StorageAction[]).filter(key => key === a ? event.target.checked : old[c.id].actions.includes(key)) } }))} />{storageActions[a]}</label>)}
+              <p className="my-2 text-sm">本次授权最长一小时，且不超过客户端原授权期限；到期时间：{clientDrafts[c.id].expires}。不会自动续活此客户端权限。</p>
+              <button disabled={busy || !clientDrafts[c.id].actions.length} onClick={() => void manageClient(c, "grant_client")}>确认授予所选存储权限</button>
+            </>}
+            {!clients.some(b => b.active && Date.parse(b.expires_at) > Date.now()) && <p>没有有效客户端；请先连接 Agent 到 Clued。</p>}
+          </>}
+        </>}
       </div>
     </section>)}
     <div className="mt-6 flex gap-4"><button disabled={busy} onClick={() => void refresh()}>刷新状态</button><Link href="/">返回 Clued 登录页</Link></div>
