@@ -147,3 +147,30 @@ prove absence: retain the fence until the recovery contract above is satisfied.
 This is not atomic same-name exclusion against unrelated Google clients and is
 not whole-Host qualification. Actual isolated tool inventory, rollback and the
 temporary real Host/Worker/Canonical receipt chain are still required.
+
+### Account cloud settlement-only component (not yet an enabled route)
+
+`apps/clued-cloud/worker/storage-cloud-recovery.ts` is a private composition,
+not a public authorization endpoint. It accepts only a connection/job reference;
+its trusted RPC must authenticate the Owner and fixed issuer and pin the original
+job, intent, request digest, provider attempt, credential generation and journal
+CAS on both load and settlement. The component does not supply that DB contract.
+
+It decrypts only the exact account/connection/provider/client/generation envelope
+and performs GET-only Drive metadata verification of the original provider ID.
+It never invokes the normal executor, obtains a new admission, refreshes OAuth,
+generates an object ID, retries the effect or falls back to ordinary job loading.
+Expired credentials require a separate human-authorized credential recovery.
+An inspection failure or lost settlement response leaves the result unknown;
+inspect the original durable job rather than repeat its provider effect.
+
+One bounded deadline covers RPC loading, provider reads and the settlement reply.
+A late load/read cannot initiate settlement. Once settlement has been sent, a
+timeout cannot undo a transaction already delivered to the database: its original
+job/intent and immutable receipt remain the source of truth. Return only the
+verified receipt reference, never credentials or upstream diagnostic payloads.
+
+This isolated component does not enable the account recovery route, allow an
+inactive connection, qualify a provider root, restore grants/delegations or clear
+a provider-root fence. Those require reviewed native-Owner DB/OAuth contracts
+and integrated acceptance. Unit tests alone are not production recovery evidence.
