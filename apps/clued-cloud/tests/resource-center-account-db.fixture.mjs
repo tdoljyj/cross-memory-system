@@ -50,7 +50,7 @@ export async function testStorageAccount(t, admin, server, user, decision) {
       const approved = (await native.query("select public.clued_authorization_approve_v12($1,$2,$3,$4::jsonb,$5,$6) value", [issuer, prepared.request_id, prepared.version,
         JSON.stringify([{ resource_kind: "scope", resource_id: "project:"+project, environment: "canonical", actions: ["write", "close"] }]), token, new Date(Date.now()+3600000).toISOString()])).rows[0].value;
       const binding = approved.binding_id;
-      assert.equal((await admin.query("select expires_at from public.clued_agent_bindings where id=$1", [binding])).rows[0].expires_at, null);
+      assert.equal((await admin.query("select to_jsonb(b)->>'expires_at' legacy_expiry from public.clued_agent_bindings b where id=$1", [binding])).rows[0].legacy_expiry, null);
       bindings.push({ binding, token });
     }
     const check = async (index, action = "create_file") => (await admin.query("select (clued_private.storage_binding_v1($1,$2,$3)).id id", [bindings[index].token, connection, action])).rows[0].id;
@@ -59,6 +59,10 @@ export async function testStorageAccount(t, admin, server, user, decision) {
         authorization_version: 1, actions, expires_at: new Date(Date.now() + 1800000).toISOString() }));
       version = r.committed_versions[connection]; return r;
     };
+    await t.test("empty native grant readback works without a mandatory legacy Binding expiry",async()=>{
+      const view=await account({action:"client_grants",connection_id:connection});
+      assert.deepEqual(view.grants,[]);assert.equal(view.connection_id,connection);
+    });
     await t.test("context write and account ownership do not grant storage; provider must be qualified", async () => {
       await assert.rejects(check(0), /storage_binding_denied/);
       await assert.rejects(grant(0, ["create_file"]), /storage_connection_unavailable/);
@@ -70,6 +74,52 @@ export async function testStorageAccount(t, admin, server, user, decision) {
       assert.equal(await check(0), bindings[0].binding);
       await assert.rejects(check(1), /storage_binding_denied/);
       assert.equal(await check(1, "inspect"), bindings[1].binding);
+    });
+    await t.test("v12 expiry is mandatory and an optional earlier legacy fence never extends it",async()=>{
+      const id=bindings[0].binding;
+      const original=(await admin.query("select expires_at from clued_private.authorizations_v12 where binding_id=$1",[id])).rows[0].expires_at;
+      const hasLegacy=(await admin.query("select exists(select 1 from information_schema.columns where table_schema='public' and table_name='clued_agent_bindings' and column_name='expires_at') present")).rows[0].present;
+      const tooLong=()=>account(input("grant_client",{connection_id:connection,base_version:version,binding_id:id,
+        authorization_version:1,actions:["inspect"],expires_at:new Date(Date.now()+7200000).toISOString()}));
+      await assert.rejects(tooLong(),/storage_binding_denied/);
+      try {
+        await admin.query("update clued_private.authorizations_v12 set expires_at=clock_timestamp()-interval '1 second' where binding_id=$1",[id]);
+        await assert.rejects(check(0),/storage_binding_denied/);
+        await assert.rejects(grant(0,["inspect"]),/storage_binding_denied/);
+        assert.equal((await account({action:"client_grants",connection_id:connection})).grants.find(g=>g.binding_id===id).binding_current,false);
+      } finally {await admin.query("update clued_private.authorizations_v12 set expires_at=$2 where binding_id=$1",[id,original]);}
+      if(hasLegacy) {
+        try {
+          await admin.query("update public.clued_agent_bindings set expires_at=clock_timestamp()+interval '5 minutes' where id=$1",[id]);
+          assert.equal(await check(0),id);
+          await assert.rejects(grant(0,["inspect"]),/storage_binding_denied/);
+          await admin.query("update public.clued_agent_bindings set expires_at=clock_timestamp()-interval '1 second' where id=$1",[id]);
+          await assert.rejects(check(0),/storage_binding_denied/);
+          await assert.rejects(grant(0,["inspect"]),/storage_binding_denied/);
+          assert.equal((await account({action:"client_grants",connection_id:connection})).grants.find(g=>g.binding_id===id).binding_current,false);
+        } finally {await admin.query("update public.clued_agent_bindings set expires_at=null where id=$1",[id]);}
+      }
+      assert.equal(await check(0),id);
+    });
+    await t.test("v12 expiry during an actual connection lock wait rejects grant and rolls back receipts",async()=>{
+      const id=bindings[0].binding;
+      const original=(await admin.query("select expires_at from clued_private.authorizations_v12 where binding_id=$1",[id])).rows[0].expires_at;
+      const before=(await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n;
+      await admin.query("update clued_private.authorizations_v12 set expires_at=clock_timestamp()+interval '1 second' where binding_id=$1",[id]);
+      await admin.query("begin");let pending;
+      try {
+        await admin.query("select id from clued_private.storage_connections_v1 where id=$1 for update",[connection]);
+        pending=grant(0,["inspect"]).then(value=>({value}),error=>({error}));
+        await waitForLock();
+        await admin.query("select pg_sleep(greatest(0,extract(epoch from (expires_at-clock_timestamp())))+0.02) from clued_private.authorizations_v12 where binding_id=$1",[id]);
+        await admin.query("commit");
+        assert.match((await pending).error?.message??"",/storage_binding_denied/);
+        assert.equal((await admin.query("select version from clued_private.storage_connections_v1 where id=$1",[connection])).rows[0].version,String(version));
+        assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n,before);
+      } finally {
+        await admin.query("rollback");if(pending)await pending;
+        await admin.query("update clued_private.authorizations_v12 set expires_at=$2 where binding_id=$1",[id,original]);
+      }
     });
     await t.test("native client-grant readback is exact, owner-scoped, metadata-only and has no write effects", async () => {
       const read = {action:"client_grants",connection_id:connection};

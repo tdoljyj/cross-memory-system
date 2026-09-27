@@ -36,7 +36,7 @@ async function freePort() {
   return port;
 }
 
-test("Canonical Resource Center registration and exact read-only authority", { timeout: 180000 }, async (t) => {
+for (const bindingSchema of ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
@@ -64,11 +64,38 @@ test("Canonical Resource Center registration and exact read-only authority", { t
     for (const name of (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql")).sort()) {
       try {
         if (name === "20260927145426_resource_center_default_refresh_consent_v1.sql") refreshUpgrade = await seedRefreshUpgrade(admin,server);
+        if (name === "20260927232454_resource_center_binding_expiry_compat_v1.sql" && bindingSchema === "production-no-legacy-expiry") {
+          // Model the deployed shape only in this ephemeral database. Prove the
+          // native readback fails before this successor and works after it.
+          await admin.query("alter table public.clued_agent_bindings drop column expires_at restrict");
+          const native = server.getPgClient(); await native.connect();
+          try {
+            await native.query("set role authenticated");
+            await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+              [refreshUpgrade.user,JSON.stringify({sub:refreshUpgrade.user,session_id:refreshUpgrade.session})]);
+            const read = () => native.query("select public.clued_storage_account_v1($1::jsonb) value",
+              [JSON.stringify({action:"client_grants",connection_id:refreshUpgrade.connections[0].id})]);
+            const before = (await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n;
+            await t.test("deployed missing-column readback reproduces before the exact successor",async()=>{
+              await assert.rejects(read(),/column b\.expires_at does not exist/);
+            });
+            await admin.query(await fs.readFile(path.join(migrationDir,name),"utf8"));
+            await t.test("the same native readback succeeds after the successor without a receipt or schema expansion",async()=>{
+              assert.deepEqual((await read()).rows[0].value.grants,[]);
+              assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n,before);
+            });
+          } finally {await native.end();}
+          continue;
+        }
         await admin.query(await fs.readFile(path.join(migrationDir, name), "utf8"));
       } catch (error) {
         throw new Error("Migration " + name + ": " + error.message, { cause: error });
       }
     }
+    await t.test("Binding schema explicitly covers deployed missing-column and optional legacy shapes",async()=>{
+      const has=(await admin.query("select exists(select 1 from information_schema.columns where table_schema='public' and table_name='clued_agent_bindings' and column_name='expires_at') present")).rows[0].present;
+      assert.equal(has,bindingSchema==="legacy-expiry");
+    });
     await t.test("actual upgrade never opts in pre-existing connections or old attempts, including a pre-delegation stop",async()=>{
       assert.ok(refreshUpgrade);
       await verifyRefreshUpgrade(admin,server,refreshUpgrade);

@@ -25,6 +25,7 @@ async function fixture(options={}) {
   const envelope=await vault.seal(JSON.stringify({access_token:"synthetic-private-access",refresh_token:"synthetic-private-refresh",token_type:"Bearer",scope,expires_at_ms:Date.now()+3600000,...options.secret}),context);
   const item=(id,name,parent)=>({id,name,parents:parent?[parent]:[],mimeType:"application/vnd.google-apps.folder",version:"1",trashed:false,isAppAuthorized:true,capabilities:{canAddChildren:true}});
   const files=[item("parent","drive"),item("root","Clued_资料中心","parent"),item("track","10_E","root"),item("topic","topic","track")];
+  if(options.parentlessBoundary)delete files[0].parents;
   const calls=[], rpcs=[];
   const fetcher=async(url,init)=>{
     calls.push({url:String(url),method:init.method});
@@ -38,7 +39,7 @@ async function fixture(options={}) {
     if(u.pathname.endsWith("/files")) {
       assert.match(u.searchParams.get("fields"),/isAppAuthorized/);
       const parent=u.searchParams.get("q").split("'")[1];
-      return Response.json({files:files.filter(f=>f.parents.includes(parent)),incompleteSearch:options.incomplete??false});
+      return Response.json({files:files.filter(f=>f.parents?.includes(parent)),incompleteSearch:options.incomplete??false});
     }
     const result=structuredClone(files.find(f=>f.id===u.pathname.split("/").at(-1)));
     if(result.id===options.unauthorized)result.isAppAuthorized=false;
@@ -65,6 +66,16 @@ test("server directory observation uses pinned secret, fixed GETs and whiteliste
   assert.equal(f.rpcs.length,2); assert.ok(f.calls.length>8);
   assert.equal(JSON.stringify(f.rpcs[1]).includes("synthetic-private"),false);
   assert.equal(JSON.stringify(result).includes("credential"),false);
+});
+
+test("server observes a parentless outer boundary without adding a writable root or relaxing topic grants",async()=>{
+  const f=await fixture({parentlessBoundary:true});const result=await f.probe.run({connection_id:f.connection});
+  assert.equal(result.status,"metadata_observed");assert.equal(result.execution_permitted,false);
+  assert.deepEqual(f.rpcs[1].observation.directories.map(x=>x.provider_file_id),["root","track","topic"]);
+  const denied=await fixture({parentlessBoundary:true,unauthorized:"topic"});let error;
+  try {await denied.probe.run({connection_id:denied.connection});}catch(e){error=e;}
+  assert.deepEqual(storageProbeDiagnostic(error),{stage:"directories",reason:"DIRECTORY_NOT_APP_AUTHORIZED"});
+  assert.equal(denied.rpcs.length,1);
 });
 test("no caller profile, root, credential, owner, report or issuer reaches private RPC",async()=>{
   const f=await fixture();

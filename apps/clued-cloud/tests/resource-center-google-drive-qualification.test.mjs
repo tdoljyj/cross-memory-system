@@ -10,7 +10,7 @@ function fixture() {
   const config={trusted_layout:{contract:"clued.storage-directory-layout/1",managed_root:root,root_folder_id:"root",root_parent_id:"parent",
     allowed_root_children:["10_E"],directories:[{path:root,provider_file_id:"root"},{path:root+"/10_E",provider_file_id:"track"},
       {path:root+"/10_E/主题",provider_file_id:"topic"}]},clock:()=>1000,
-    get_file:async id=>structuredClone(files.find(f=>f.id===id)),list_folder:async id=>structuredClone(files.filter(f=>f.parents.includes(id)))};
+    get_file:async id=>structuredClone(files.find(f=>f.id===id)),list_folder:async id=>structuredClone(files.filter(f=>f.parents?.includes(id)))};
   return {files,config,run:()=>createGoogleDriveDirectoryProbe(config)()};
 }
 test("root, track and topic require independent application access; observation is not permission",async()=>{
@@ -18,6 +18,41 @@ test("root, track and topic require independent application access; observation 
   assert.equal(result.status,"metadata_observed"); assert.equal(result.execution_permitted,false);
   assert.deepEqual(result.directories.map(x=>x.provider_file_id),["root","track","topic"]);
   assert.equal(Object.hasOwn(result,"admission"),false);
+});
+
+test("trusted outer My Drive boundary may omit parents but never becomes a writable directory",async()=>{
+  const f=fixture();delete f.files[0].parents;
+  const result=await f.run();
+  assert.equal(result.status,"metadata_observed");assert.equal(result.execution_permitted,false);
+  assert.deepEqual(result.directories.map(x=>x.provider_file_id),["root","track","topic"]);
+  assert.equal(Object.hasOwn(f.files[0],"parents"),false);
+});
+
+test("missing parents is not accepted for any managed directory or enumerated child",async()=>{
+  for(const target of ["root","track","topic"]) {
+    const f=fixture();delete f.files.find(x=>x.id===target).parents;
+    await assert.rejects(f.run(),/IDENTITY_INVALID/);
+  }
+  const f=fixture(),list=f.config.list_folder;
+  f.config.list_folder=async id=>[...await list(id),{...item("unparented","unparented"),parents:undefined}];
+  await assert.rejects(f.run(),/IDENTITY_INVALID/);
+});
+
+test("outer boundary malformed parents and identity still fail closed",async()=>{
+  for(const change of [{parents:null},{parents:undefined},{parents:"root"},{parents:["invalid/id"]},
+    {version:"0"},{version:""},{trashed:true},{id:"other"},{mimeType:"application/vnd.google-apps.shortcut"}]) {
+    const f=fixture(),get=f.config.get_file;
+    f.config.get_file=async id=>id==="parent"?{...await get(id),...change}:get(id);
+    await assert.rejects(f.run(),/QUALIFICATION_(IDENTITY_INVALID|PARENT_INVALID)/);
+  }
+});
+
+test("parentless boundary keeps raw-metadata drift and exact child-parent checks",async()=>{
+  const f=fixture();delete f.files[0].parents;const get=f.config.get_file;let reads=0;
+  f.config.get_file=async id=>{const file=await get(id);if(id==="parent"&&++reads>1)file.parents=[];return file;};
+  await assert.rejects(f.run(),/DIRECTORY_CHANGED/);
+  const wrong=fixture();delete wrong.files[0].parents;wrong.files[1].parents=["elsewhere"];
+  await assert.rejects(wrong.run(),/DIRECTORY_CHANGED/);
 });
 for (const target of ["root","track","topic"]) {
   test(`${target} missing own app authorization cannot inherit root access`,async()=>{
