@@ -2289,8 +2289,10 @@ async function handleContinuityRequestInner(
         });
         let result;
         if (url.pathname.endsWith("/start")) {
-          if (Object.keys(input).length !== 1 || typeof input.connection_id !== "string") throw new Error("Invalid");
-          result = await connector.start(input.connection_id);
+          if (Object.keys(input).some(key => !["connection_id", "default_refresh"].includes(key)) || typeof input.connection_id !== "string" ||
+              ("default_refresh" in input && typeof input.default_refresh !== "boolean")) throw new Error("Invalid");
+          if (input.default_refresh === true && env.CLUED_STORAGE_REFRESH_V1 !== "true") throw new Error("Unavailable");
+          result = await connector.start(input.connection_id, input.default_refresh === true);
         } else {
           if (Object.keys(input).length !== 2 || typeof input.state !== "string" || typeof input.code !== "string") throw new Error("Invalid");
           result = await connector.complete({ state: input.state, code: input.code });

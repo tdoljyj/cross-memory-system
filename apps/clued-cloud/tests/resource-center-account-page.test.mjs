@@ -46,6 +46,20 @@ function fixture(confirm = true) {
   };
 }
 const connection = { id: "fixture-connection-a", provider: "google-drive", state: "awaiting_provider", version:1, profile_id:"fixture-profile" };
+test("new connection defaults to disclosed refresh consent, can opt out or cancel, and never enrolls on listing",async()=>{
+  const label='连接成功后自动续签（可取消；已有停用或失效设置不变）';
+  for(const choice of [true,false]) {
+    const f=fixture(); await f.settle(); f.respond(0,{connections:[connection]}); await f.settle();
+    assert.equal(f.requests.length,1); assert.equal(f.input(label).props.checked,true);
+    if(!choice){f.input(label).props.onChange({target:{checked:false}}); await f.settle();}
+    f.button('连接 / 重新授权 Google').props.onClick(); await f.settle();
+    assert.equal(JSON.parse(f.requests[1].init.body).default_refresh,choice);
+    assert.equal(f.confirmations.length,choice?1:0);
+    if(choice) assert.ok(f.confirmations[0].includes('不授予 Agent 文件写入权限'));
+  }
+  const cancelled=fixture(false); await cancelled.settle(); cancelled.respond(0,{connections:[connection]}); await cancelled.settle();
+  cancelled.button('连接 / 重新授权 Google').props.onClick(); await cancelled.settle(); assert.equal(cancelled.requests.length,1);
+});
 test("late account A list cannot appear after switching to B", async () => {
   const f=fixture(); await f.settle(); f.change("b"); await f.settle();
   f.respond(1,{connections:[]}); await f.settle(); f.respond(0,{connections:[connection]}); await f.settle();
@@ -94,6 +108,17 @@ test("account switch during refresh setting does not query or display the old co
   f.change("b"); await f.settle(); f.respond(3,{connections:[]}); await f.settle();
   f.respond(2,{receipt_id:"old-receipt"}); await f.settle();
   assert.equal(f.requests.length,4); assert.equal(f.text().includes(connection.id),false); assert.equal(f.text().includes("设置已确认"),false);
+});
+test("double click cannot dispatch two refresh changes",async()=>{
+  const f=await ready(); const enable=f.button("授权开启后台续签");
+  enable.props.onClick(); enable.props.onClick(); await f.settle();
+  assert.equal(f.requests.length,3); assert.equal(f.confirmations.length,1);
+  assert.equal(JSON.parse(f.requests[2].init.body).action,"enable");
+});
+test("account switch before refresh dispatch blocks stale consent",async()=>{
+  const f=await ready(); f.button("授权开启后台续签").props.onClick(); f.change("b"); await f.settle();
+  assert.equal(f.requests.some(r=>JSON.parse(r.init.body).action === "enable"),false);
+  assert.equal(f.text().includes(connection.id),false);
 });
 
 const registrationProfile="00000000-0000-4000-8000-000000000011", registrationDecision="00000000-0000-4000-8000-000000000012";

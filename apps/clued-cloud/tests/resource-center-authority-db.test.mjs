@@ -16,6 +16,7 @@ import { testRenewalDatabase } from "./resource-center-renewal-db.fixture.mjs";
 import { testStorageAccount } from "./resource-center-account-db.fixture.mjs";
 import { testStorageOAuth } from "./resource-center-oauth-db.fixture.mjs";
 import { testAccountRefresh } from "./resource-center-account-refresh-db.fixture.mjs";
+import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refresh-upgrade-db.fixture.mjs";
 
 const USER = "10000000-0000-4000-8000-000000000071";
 const PROJECT = "20000000-0000-4000-8000-000000000071";
@@ -52,18 +53,25 @@ test("Canonical Resource Center registration and exact read-only authority", { t
       "create role service_role nologin bypassrls; create role authenticator nologin noinherit;" +
       "create schema auth; create schema extensions; create extension pgcrypto with schema extensions;" +
       "create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz);" +
+      "create table auth.sessions(id uuid primary key,user_id uuid not null,not_after timestamptz);" +
       "create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;" +
       "create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;" +
       "grant usage on schema auth,extensions to anon,authenticated,service_role;" +
       "grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;");
     const migrationDir = path.join(process.cwd(), "supabase", "migrations");
+    let refreshUpgrade;
     for (const name of (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql")).sort()) {
       try {
+        if (name === "20260927145426_resource_center_default_refresh_consent_v1.sql") refreshUpgrade = await seedRefreshUpgrade(admin,server);
         await admin.query(await fs.readFile(path.join(migrationDir, name), "utf8"));
       } catch (error) {
         throw new Error("Migration " + name + ": " + error.message, { cause: error });
       }
     }
+    await t.test("actual upgrade never opts in pre-existing connections or old attempts, including a pre-delegation stop",async()=>{
+      assert.ok(refreshUpgrade);
+      await verifyRefreshUpgrade(admin,server,refreshUpgrade);
+    });
     await admin.query("insert into auth.users(id,email) values($1,'owner@example.invalid')", [USER]);
     await admin.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at)" +
       " values($1,$2,'Resource Center','resource center',$3,'confirmed',now())",

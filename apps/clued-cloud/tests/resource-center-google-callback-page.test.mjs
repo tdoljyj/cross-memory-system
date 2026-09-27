@@ -58,3 +58,12 @@ test("confirmed callback displays receipt but does not claim file execution; acc
   assert.ok(f.message().includes("fixture-receipt"));assert.ok(f.message().includes("文件操作仍需独立授权"));
   f.change();assert.ok(f.message().includes("登录账号已变化"));
 });
+test("callback reports only confirmed server refresh state, never assumes the default succeeded",async()=>{
+  for(const enabled of [true,false,undefined]) {
+    const f=await fixture({status:'completed',receipt_id:'fixture-receipt',...(enabled===undefined?{}:{refresh_enabled:enabled})},true);
+    assert.equal(f.message().includes('后台续签已开启'),enabled===true);
+    assert.equal(f.message().includes('后台续签保持关闭'),enabled===false);
+    assert.ok(f.message().includes('文件操作仍需独立授权'));
+    await f.remount(); assert.equal(f.calls.length,1);
+  }
+});

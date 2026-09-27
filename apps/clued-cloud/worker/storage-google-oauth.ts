@@ -75,7 +75,7 @@ export async function createStorageGoogleOAuth(configuration: {
     }
   }
   return Object.freeze({
-    async start(connectionId: string): Promise<{ authorization_url: string }> {
+    async start(connectionId: string, defaultRefresh = false): Promise<{ authorization_url: string }> {
       try {
         if (!id.test(connectionId)) fail();
         const d = descriptor(await rpc({ action: "describe", connection_id: connectionId }), client, redirect);
@@ -85,7 +85,8 @@ export async function createStorageGoogleOAuth(configuration: {
         const challenge = base64(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(verifier))));
         const sealed = await vault.seal(verifier, context(d, "oauth_" + attempt));
         const stored = await rpc({ action: "prepare", connection_id: d.connection_id, connection_version: d.connection_version,
-          attempt_id: attempt, state_hash: await hash(state), verifier_envelope: sealed });
+          attempt_id: attempt, state_hash: await hash(state), verifier_envelope: sealed,
+          ...(defaultRefresh ? { default_refresh_consent: (d as Descriptor & { default_refresh_eligible?: boolean }).default_refresh_eligible === true } : {}) });
         if (stored.status !== "prepared") fail();
         const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
         url.search = new URLSearchParams({ client_id: client, redirect_uri: redirect, response_type: "code", scope: scopes.join(" "),
@@ -93,7 +94,7 @@ export async function createStorageGoogleOAuth(configuration: {
         return { authorization_url: url.href };
       } catch { return fail(); }
     },
-    async complete(input: { state: string; code: string }): Promise<{ status: "completed"; receipt_id: string }> {
+    async complete(input: { state: string; code: string }): Promise<{ status: "completed"; receipt_id: string; refresh_enabled?: boolean }> {
       // Only these fixed local stage names leave this boundary. Never expose an
       // upstream body, exception, code, state, token, subject or provider file ID.
       let stage = "callback_invalid";
@@ -103,7 +104,8 @@ export async function createStorageGoogleOAuth(configuration: {
         const stateHash = await hash(input.state);
         stage = "attempt_unavailable";
         const claimed = await rpc({ action: "claim", state_hash: stateHash });
-        if (claimed.status === "completed" && id.test(String(claimed.receipt_id))) return { status: "completed", receipt_id: String(claimed.receipt_id) };
+        if (claimed.status === "completed" && id.test(String(claimed.receipt_id))) return { status: "completed", receipt_id: String(claimed.receipt_id),
+          ...(typeof claimed.refresh_enabled === "boolean" ? { refresh_enabled: claimed.refresh_enabled } : {}) };
         const d = descriptor(claimed, client, redirect);
         if (claimed.status !== "claimed" || !id.test(String(claimed.attempt_id))) fail();
         stage = "verifier_unavailable";
@@ -149,7 +151,8 @@ export async function createStorageGoogleOAuth(configuration: {
         stage = "credential_commit_unconfirmed";
         const result = await rpc({ action: "complete", state_hash: stateHash, provider_subject: subject, credential_envelope: sealed });
         if (result.status !== "completed" || !id.test(String(result.receipt_id))) fail();
-        return { status: "completed", receipt_id: String(result.receipt_id) };
+        return { status: "completed", receipt_id: String(result.receipt_id),
+          ...(typeof result.refresh_enabled === "boolean" ? { refresh_enabled: result.refresh_enabled } : {}) };
       } catch (error) { throw new StorageGoogleConnectionError(error instanceof TokenExchangeFailure ? error.reason : stage); }
     },
   });
