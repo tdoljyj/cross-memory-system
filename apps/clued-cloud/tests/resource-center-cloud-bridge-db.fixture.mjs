@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
+import { testNativeRecovery, testNativeRecoveryRace } from './resource-center-native-recovery-db.fixture.mjs';
 
 const sha=s=>createHash('sha256').update(s).digest('hex');
 const dir=await mkdtemp(join(tmpdir(),'clued-cloud-bridge-'));
@@ -91,7 +92,7 @@ export async function testCloudBridge(t,admin,server,{user,profile,decision,conn
       assert.equal((await (await worker()).run(next)).status,'unavailable');assert.equal(posts,1);
       await admin.query('update clued_private.storage_oauth_apps_v1 set revoked_at=null where issuer_hash=$1',[issuer]);
     });
-    await t.test('lost provider reply retains original DB fence across worker restart, never re-dispatches',async()=>{
+    await t.test('lost provider reply retains original DB fence across worker restart, never re-dispatches',async(child)=>{
       const lost=await submit({...mutation,destination_path:mutation.destination_path+'-lost'});losePost=true;
       assert.equal((await (await worker()).run(lost)).status,'unreconciled');assert.equal(posts,2);
       const row=(await admin.query('select m.*,j.job_id from clued_private.storage_jobs_v1 j join clued_private.resource_center_mutations_v1 m on m.id=j.intent_id where j.job_id=$1',[lost.job_id])).rows[0];
@@ -106,6 +107,8 @@ export async function testCloudBridge(t,admin,server,{user,profile,decision,conn
       assert.equal((await (await worker(other)).run(lost)).status,'inspection_required');assert.equal(posts,2);
       assert.equal((await admin.query('select state from clued_private.resource_center_mutations_v1 where id=$1',[row.id])).rows[0].state,'started');
       files.set(latestId,actual);
+      await testNativeRecovery(child,admin,server,{user,profile,decision,connection,native,issuer,lost,row,vaultConfig,provider,
+        posts:()=>posts});
       // A real explicit delegation permits same-scope refresh for this exact
       // in-flight job, even after client revocation. It issues no new writer.
       const cVersion=(await admin.query('select version from clued_private.storage_connections_v1 where id=$1',[connection])).rows[0].version;
@@ -167,6 +170,20 @@ export async function testCloudBridge(t,admin,server,{user,profile,decision,conn
       assert.equal((await admin.query('select count(*)::int n from clued_private.resource_center_writer_bindings_v1')).rows[0].n,count);
       assert.equal((await admin.query('select expires_at<clock_timestamp() expired from clued_private.resource_center_writer_bindings_v1 where id=$1',[row.writer_binding_id])).rows[0].expired,true);
       assert.equal((await (await worker()).run(lost)).status,'unavailable');assert.equal(posts,2);
+    });
+    await t.test('two native settlements racing across independent database connections commit the original job only once',async()=>{
+      const c=(await admin.query('select version from clued_private.storage_connections_v1 where id=$1',[connection])).rows[0];
+      const a=(await admin.query('select version from clued_private.authorizations_v12 where binding_id=$1',[bindings[0].binding])).rows[0];
+      await native.query('select public.clued_storage_account_v1($1::jsonb)',[{action:'grant_client',connection_id:connection,
+        base_version:Number(c.version),binding_id:bindings[0].binding,authorization_version:Number(a.version),
+        actions:['inspect','create_file'],expires_at:new Date(Date.now()+600000).toISOString(),idempotency_key:randomUUID()}]);
+      const racing=await submit({...mutation,destination_path:mutation.destination_path+'-race'});
+      assert.equal((await (await worker()).run(racing)).status,'unreconciled');
+      const before=posts;
+      await testNativeRecoveryRace(admin,server,{native,issuer,ref:racing,vaultConfig,provider});
+      assert.equal(posts,before);
+      const status=(await client.query('select public.clued_storage_jobs_v1($1,$2::jsonb) v',[bindings[0].token,{...racing,action:'inspect'}])).rows[0].v;
+      assert.equal(status.status,'committed');assert.equal(status.execution_permitted,false);
     });
   } finally {await client.end();await other.end();}
 }

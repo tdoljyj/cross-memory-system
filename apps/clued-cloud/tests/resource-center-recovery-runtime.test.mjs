@@ -23,7 +23,7 @@ if(process.env.CLUED_RECOVERY_RUNTIME_CHILD!=='1') {
       await base.run().run(base.reference);options.redirect='manual';
       const current=base.info().currentRequest;
       const d={...await base.config.load_job(base.reference),status:'recovery_only',oauth_client_id:'fixture-client',
-        intent_id:ids.intent,version:2,request_sha256:current.request_sha256,
+        intent_id:ids.intent,version:2,request_sha256:current.request_sha256,recovery_binding:'e'.repeat(64),
         provider_before:current.authority_request.provider_identity,
         attempt:{provider_file_id:'new-id',parent_id:'track',destination_path:current.exact_request.mutation.destination_path}};
       const vaultConfig={current_key_id:'fixture',keys:{fixture:btoa(String.fromCharCode(...new Uint8Array(32).fill(7))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')}};
@@ -37,7 +37,7 @@ if(process.env.CLUED_RECOVERY_RUNTIME_CHILD!=='1') {
           if(input.connection_id!==ids.connection||input.job_id!==ids.job)throw Error('wrong reference');
           if(input.action==='recovery_load')return d;
           if(input.action!=='recovery_finalize'||input.finish.intent_id!==ids.intent||input.finish.base_version!==2||
-             input.finish.request_sha256!==current.request_sha256||input.credential_version!==1||
+             input.finish.request_sha256!==current.request_sha256||input.credential_version!==1||input.recovery_binding!=='e'.repeat(64)||
              input.finish.postcondition.provider_file_id!=='new-id')throw Error('wrong settlement');
           finalizes++;return {status:'committed',state:'committed',intent_id:ids.intent,receipt_id:ids.receipt,execution_permitted:false};
         },fetch:async(url,init)=>{

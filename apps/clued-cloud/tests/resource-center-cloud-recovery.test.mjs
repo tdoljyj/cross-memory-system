@@ -25,7 +25,7 @@ async function setup(options={}) {
   fixtureOptions.redirect='manual';
   const current=base.info().currentRequest;
   const d={...await base.config.load_job(base.reference),status:'recovery_only',oauth_client_id:'test-client',
-    intent_id:ids.intent,version:2,request_sha256:current.request_sha256,
+    intent_id:ids.intent,version:2,request_sha256:current.request_sha256,recovery_binding:'e'.repeat(64),
     provider_before:current.authority_request.provider_identity,
     attempt:{provider_file_id:'new-id',parent_id:'track',destination_path:current.exact_request.mutation.destination_path}};
   const vaultConfig={current_key_id:'test',keys:{test:randomBytes(32).toString('base64url')}};
@@ -47,6 +47,7 @@ async function setup(options={}) {
       assert.equal(input.finish.intent_id,ids.intent);assert.equal(input.finish.base_version,2);
       assert.equal(input.finish.request_sha256,current.request_sha256);assert.equal(input.credential_version,1);
       assert.equal(input.finish.postcondition.provider_file_id,'new-id');
+      assert.equal(input.recovery_binding,'e'.repeat(64));
       if(options.hangFinalize)return new Promise(()=>{});
       if(options.lateFinalize)await new Promise(resolve=>setTimeout(resolve,800));
       if(options.finalizeError)throw Error('private-finalize-error');
@@ -97,7 +98,7 @@ test('malformed references and synchronous adapter failures clean up without unh
 });
 test('wrong owner/AAD, client, job, connection, version, attempt or digest cannot settle',async()=>{
   for(const descriptor of [{owner_id:ids.profile},{oauth_client_id:'other'}, {job_id:ids.profile},{connection_id:ids.profile},
-    {credential_version:2},{version:0},{request_sha256:'bad'},{attempt:{provider_file_id:'other'}},{root_folder_id:'../root'}]) {
+    {credential_version:2},{version:0},{request_sha256:'bad'},{recovery_binding:null},{attempt:{provider_file_id:'other'}},{root_folder_id:'../root'}]) {
     const f=await setup({descriptor});assert.deepEqual(await f.run.run(f.base.reference),inspect);
     assert.equal(f.calls.length,1);assert.equal(f.base.info().posts,1);
   }
