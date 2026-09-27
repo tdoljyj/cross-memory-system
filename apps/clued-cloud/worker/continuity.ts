@@ -36,6 +36,7 @@ import {
 import { measurePack } from "./context-pack";
 import { AGENT_CONTRACT_MARKDOWN } from "./generated/agent-contract";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
+import { createStorageGoogleRecoveryOAuth } from "./storage-google-recovery-oauth";
 import { createStorageGoogleProbe } from "./storage-google-probe";
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
@@ -2364,7 +2365,7 @@ async function handleContinuityRequestInner(
           403, { ...corsHeaders(request), "cache-control": "no-store" });
       }
     }
-    if (url.pathname === "/v1/storage/google/start" || url.pathname === "/v1/storage/google/complete") {
+    if (["/v1/storage/google/start", "/v1/storage/google/complete", "/v1/storage/google/recovery/start", "/v1/storage/google/recovery/inspect"].includes(url.pathname)) {
       validateOrigin(request, env);
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404);
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
@@ -2374,25 +2375,34 @@ async function handleContinuityRequestInner(
         const input = await parseBody(request);
         const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
         if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS) throw new Error("Unavailable");
-        const connector = await createStorageGoogleOAuth({
+        const recoveryStart = url.pathname === "/v1/storage/google/recovery/start";
+        if (recoveryStart && (Object.keys(input).length !== 2 || typeof input.connection_id !== "string" || typeof input.job_id !== "string")) throw new Error("Invalid");
+        const configuration = {
           client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
           client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "",
           redirect_uri: env.CLUED_STORAGE_GOOGLE_REDIRECT_URI ?? "",
           vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
-          rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_oauth_v1", {
+          rpc: async (value: Record<string, unknown>) => await supabaseRequest(env, recoveryStart
+            ? "/rest/v1/rpc/clued_storage_recovery_oauth_start_v1" : "/rest/v1/rpc/clued_storage_oauth_v1", {
             method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
             body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),
           }) as Record<string, unknown>,
-        });
+        };
         let result;
-        if (url.pathname.endsWith("/start")) {
+        if (recoveryStart) {
+          result = await (await createStorageGoogleRecoveryOAuth(configuration,
+            { connection_id: input.connection_id as string, job_id: input.job_id as string })).start();
+        } else if (url.pathname.endsWith("/inspect")) {
+          if (Object.keys(input).length !== 1 || typeof input.state !== "string") throw new Error("Invalid");
+          result = await (await createStorageGoogleOAuth(configuration)).inspectRecovery(input.state);
+        } else if (url.pathname.endsWith("/start")) {
           if (Object.keys(input).some(key => !["connection_id", "default_refresh"].includes(key)) || typeof input.connection_id !== "string" ||
               ("default_refresh" in input && typeof input.default_refresh !== "boolean")) throw new Error("Invalid");
           if (input.default_refresh === true && env.CLUED_STORAGE_REFRESH_V1 !== "true") throw new Error("Unavailable");
-          result = await connector.start(input.connection_id, input.default_refresh === true);
+          result = await (await createStorageGoogleOAuth(configuration)).start(input.connection_id, input.default_refresh === true);
         } else {
           if (Object.keys(input).length !== 2 || typeof input.state !== "string" || typeof input.code !== "string") throw new Error("Invalid");
-          result = await connector.complete({ state: input.state, code: input.code });
+          result = await (await createStorageGoogleOAuth(configuration)).complete({ state: input.state, code: input.code });
         }
         return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });
       } catch (error) {

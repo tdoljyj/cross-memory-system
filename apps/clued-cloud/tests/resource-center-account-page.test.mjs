@@ -80,6 +80,28 @@ test('revoked connection permits historical inspection only, never a settlement 
   f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'started',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
   assert.ok(f.text().includes(recoveryReceipt));assert.equal(f.text().includes('核验并登记原结果（不重写）'),false);
 });
+
+test('fresh recovery consent is exact-job, explicit, one-click and never sends default renewal authority',async()=>{
+  const f=await recoveryReady();f.button('查询原任务回执').props.onClick();await f.settle();
+  f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'started',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
+  const button=f.button('凭据过期：重新授权以核对原任务');button.props.onClick();button.props.onClick();await f.settle();
+  assert.equal(f.requests.length,3);assert.equal(f.requests[2].url,'/v1/storage/google/recovery/start');
+  assert.deepEqual(JSON.parse(f.requests[2].init.body),{connection_id:connection.id,job_id:recoveryJob});
+  assert.match(f.confirmations[0],/不恢复已停用连接/);assert.match(f.confirmations[0],/Google 最终同意由你确认/);
+  f.respond(2,{authorization_url:'https://accounts.google.com/o/oauth2/v2/auth?state=fixture'});await f.settle();
+  assert.equal(f.navigations.length,1);
+});
+
+test('cancel or account change prevents stale recovery consent and late redirects',async()=>{
+  for(const kind of ['cancel','before','after']){
+    const f=await recoveryReady(kind!=='cancel');f.button('查询原任务回执').props.onClick();await f.settle();
+    f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'started',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
+    f.button('凭据过期：重新授权以核对原任务').props.onClick();if(kind==='before')f.change('b');await f.settle();
+    if(kind==='after'){f.change('b');await f.settle();f.respond(2,{authorization_url:'https://accounts.google.com/o/oauth2/v2/auth?state=fixture'});await f.settle();}
+    else assert.equal(f.requests.some(r=>r.url==='/v1/storage/google/recovery/start'),false);
+    assert.equal(f.navigations.length,0);
+  }
+});
 test('account switch before recovery dispatch blocks it and suppresses a late settlement receipt',async()=>{
   const blocked=await recoveryReady();blocked.button('查询原任务回执').props.onClick();blocked.change('b');await blocked.settle();
   assert.equal(blocked.requests.some(r=>r.url==='/v1/storage/recovery'),false);

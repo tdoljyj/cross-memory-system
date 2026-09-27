@@ -197,9 +197,55 @@ an unknown settlement is not automatically retried. The account page requires
 reading the original status before explicit settlement confirmation, clears stale
 controls when IDs change, and discards late results after account changes.
 
-Neither this route nor the migration qualifies a provider root, restores grants
-or delegations, or performs credential-only OAuth. An expired credential still
-requires the separate human recovery contract; do not substitute ordinary OAuth
-completion (which activates a connection). Integrated acceptance and reviewed
-deployment remain required. Unit/transport tests alone are not production
-recovery evidence.
+Neither settlement nor its migration qualifies a provider root, restores grants
+or delegations, or performs credential-only OAuth. Integrated acceptance and
+reviewed deployment remain required. Unit/transport tests alone are not
+production recovery evidence.
+
+### Fresh-human credential-only OAuth (candidate, not production acceptance)
+
+After reading the exact original job, the native account page can request
+`POST /v1/storage/google/recovery/start` with only connection/job IDs. It explicitly
+confirms that Google consent replaces credentials only. The server captures the
+description fingerprint before preparing a ten-minute, single-claim S256 PKCE
+attempt. There is no default-refresh checkbox or implicit grant in this flow.
+The same Google Web client, callback and two approved scopes are used; final
+Google consent remains the Owner's action.
+
+The existing private OAuth attempt table has a fixed purpose. Old rows default
+to `connection`; recovery rows require exact job, full recovery fingerprint and
+pending-refresh snapshot and cannot carry default refresh consent. The existing
+unique state hash is shared by both purposes. Callback dispatch authenticates
+native Owner/session and fixed issuer, reads the unique purpose before acquiring
+attempt locks, and never falls back from recovery into ordinary activation.
+
+Recovery uses issuer → original job → provider root → connection/currentness
+serialization. Every describe/prepare/claim/complete rechecks original intent,
+provider attempt, credential generation, policy and native session. The pending
+refresh snapshot includes exact same-connection old-generation attempt identities
+and recovery targets; any new/finished/changed claim invalidates the consent.
+Delegation authority fields are pinned, but fairness-only `last_polled_at` is not.
+If another verifier settles the original file, this recovery CAS fails safely;
+that is not evidence that the file failed or that Google rejected the code.
+
+Successful fresh consent updates only encrypted credential/connection generations
+and their immutable Receipt, plus superseding the precise snapshotted credential
+exchanges in the same transaction. Connection state, stop markers, client grants,
+delegation settings/schedule/failures and file journals are unchanged. There is no
+root-wide sweep, writer renewal, new admission, Drive write or redispatch.
+
+Unknown exchange requires a new human consent, never reuse of that Google code.
+Unknown commit response is resolved with `POST /v1/storage/google/recovery/inspect`
+and the original state, without a code. It hashes state server-side and returns
+only original attempt status/Receipt and `execution_permitted:false` after native
+Owner/session/issuer checks, including an expired completed attempt. Callback URL
+is cleared before network work; all unconfirmed completions, including truncated
+200 responses, get at most one bounded inspect. Remounts do not repeat complete
+or inspect. An unconfirmed inspect stays unknown; never infer success from the
+connection's current state or clear a fence to proceed.
+
+After confirmed credential replacement, separately inspect and settle the
+original file job through the GET-only contract above. No automatic continuation
+of a file effect is permitted. Deployment, live consent and exact-root acceptance
+are separate gates; these candidate tests do not reopen accepted Gate B or finish
+the full Storage hardening workstream.

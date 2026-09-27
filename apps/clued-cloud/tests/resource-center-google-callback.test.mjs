@@ -13,7 +13,7 @@ function fixture(query, authenticated = true, delayed = false) {
     replaceState(_state, _unused, value) { calls.push("clear"); browser.location.href = new URL(value, browser.location.href).href; },
   } };
   const exports = {};
-  vm.runInNewContext(compiled, { exports, URL, Error, window: browser,
+  vm.runInNewContext(compiled, { exports, URL, Error, AbortSignal, window: browser,
     require(name) {
       if (name === "react") return { useState: initial => [initial, message => messages.push(message)], useEffect: effect => effects.push(effect) };
       if (name === "react/jsx-runtime") return { jsx() {}, jsxs() {} };

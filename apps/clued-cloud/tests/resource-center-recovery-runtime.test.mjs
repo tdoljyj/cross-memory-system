@@ -17,6 +17,8 @@ if(process.env.CLUED_RECOVERY_RUNTIME_CHILD!=='1') {
     import {fixture,ids} from './tests/resource-center-cloud-executor.fixture.mjs';
     import {createStorageCloudRecovery} from './worker/storage-cloud-recovery.ts';
     import {createStorageCredentialVault} from './worker/storage-credential-vault.ts';
+    import {createStorageGoogleRecoveryOAuth} from './worker/storage-google-recovery-oauth.ts';
+    import {createStorageGoogleOAuth} from './worker/storage-google-oauth.ts';
     export default {async fetch(){
       // The synthetic prior effect is fixture setup, never performed by recovery.
       const options={lostFinalize:true},base=fixture(options);
@@ -48,7 +50,38 @@ if(process.env.CLUED_RECOVERY_RUNTIME_CHILD!=='1') {
       const worker=await createStorageCloudRecovery(config),result=await worker.run(base.reference);
       hang=true;const stalled=await createStorageCloudRecovery({...config,timeout_ms:100});
       const timeout=await stalled.run(base.reference);
-      return Response.json({result,timeout,gets,finalizes,aborted,posts:base.info().posts,starts:base.info().starts});
+      let prepared,credentialDone=false,tokenPosts=0,oauthGets=0;
+      const descriptor={...d,connection_version:1,credential_version:2,redirect_uri:'https://example.invalid/storage/google/callback'};
+      const oauthConfig={client_id:'fixture-client',client_secret:'fixture-private-client-secret',redirect_uri:descriptor.redirect_uri,vault:vaultConfig,
+        rpc:async input=>{
+          if(input.action==='describe'){if(input.job_id!==ids.job)throw Error('wrong job');return descriptor;}
+          if(input.action==='prepare'){
+            if(input.job_id!==ids.job||input.recovery_binding!==d.recovery_binding||'default_refresh_consent' in input)throw Error('unsafe prepare');
+            prepared=input;return {status:'prepared'};
+          }
+          if(input.state_hash!==prepared.state_hash)throw Error('wrong state');
+          if(input.action==='claim')return credentialDone?{status:'completed',receipt_id:ids.receipt,purpose:'credential_recovery'}:
+            {...descriptor,status:'claimed',attempt_id:prepared.attempt_id,verifier_envelope:prepared.verifier_envelope,purpose:'credential_recovery'};
+          if(input.action==='complete'){credentialDone=true;return {status:'completed',receipt_id:ids.receipt,purpose:'credential_recovery'};}
+          throw Error('unsafe OAuth action');
+        },fetch:async(url,init)=>{
+          if(init.redirect!=='manual'||!init.signal)throw Error('unsafe OAuth IO');
+          if(String(url)==='https://oauth2.googleapis.com/token'){
+            tokenPosts++;if(init.method!=='POST')throw Error('wrong token method');
+            return Response.json({access_token:'fixture-new-access-token',refresh_token:'fixture-new-refresh-token',token_type:'Bearer',expires_in:3600,
+              scope:'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly'});
+          }
+          if(init.method&&init.method!=='GET')throw Error('Drive write forbidden');oauthGets++;
+          return String(url).includes('/about?')?Response.json({user:{me:true,permissionId:d.provider_subject}}):
+            Response.json({id:d.root_folder_id,parents:[d.root_parent_id],mimeType:'application/vnd.google-apps.folder',trashed:false,isAppAuthorized:true,capabilities:{canAddChildren:true}});
+        }};
+      const fresh=await createStorageGoogleRecoveryOAuth(oauthConfig,base.reference);
+      const state=new URL((await fresh.start()).authorization_url).searchParams.get('state');
+      const callback=await createStorageGoogleOAuth(oauthConfig);
+      const credentialResult=await callback.complete({state,code:'fixture-fresh-code'});
+      const replay=await callback.complete({state,code:'fixture-fresh-code'});
+      return Response.json({result,timeout,gets,finalizes,aborted,posts:base.info().posts,starts:base.info().starts,
+        credentialResult,replay,tokenPosts,oauthGets});
     }};`},bundle:true,platform:'node',format:'esm',write:false});stop();
   let outbound=0;
   const runtime=new Miniflare({host:'127.0.0.1',port:0,cf:false,telemetry:{enabled:false},workers:[{
@@ -62,6 +95,8 @@ if(process.env.CLUED_RECOVERY_RUNTIME_CHILD!=='1') {
     assert.equal(result.result.execution_permitted,false);assert.equal(result.timeout.status,'inspection_required');
     assert.equal(result.finalizes,1);assert.ok(result.gets>0);assert.equal(result.aborted,true);
     assert.equal(result.posts,1);assert.equal(result.starts,1);assert.equal(outbound,0);
+    assert.equal(result.credentialResult.purpose,'credential_recovery');assert.deepEqual(result.replay,result.credentialResult);
+    assert.equal(result.tokenPosts,1);assert.equal(result.oauthGets,2);
     assert.equal(JSON.stringify(result).includes('synthetic-cloud-token'),false);
   } finally {await runtime.dispose();}
 });

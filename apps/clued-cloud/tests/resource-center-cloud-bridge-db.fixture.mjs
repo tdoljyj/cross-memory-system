@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { testNativeRecovery, testNativeRecoveryRace } from './resource-center-native-recovery-db.fixture.mjs';
+import { testCredentialRecoveryOAuth } from './resource-center-credential-recovery-oauth-db.fixture.mjs';
 
 const sha=s=>createHash('sha256').update(s).digest('hex');
 const dir=await mkdtemp(join(tmpdir(),'clued-cloud-bridge-'));
@@ -109,6 +110,7 @@ export async function testCloudBridge(t,admin,server,{user,profile,decision,conn
       files.set(latestId,actual);
       await testNativeRecovery(child,admin,server,{user,profile,decision,connection,native,issuer,lost,row,vaultConfig,provider,
         posts:()=>posts});
+      await testCredentialRecoveryOAuth(child,admin,server,{user,connection,native,issuer,lost,row,vaultConfig});
       // A real explicit delegation permits same-scope refresh for this exact
       // in-flight job, even after client revocation. It issues no new writer.
       const cVersion=(await admin.query('select version from clued_private.storage_connections_v1 where id=$1',[connection])).rows[0].version;

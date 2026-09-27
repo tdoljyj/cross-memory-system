@@ -6,7 +6,7 @@ import { supabase } from "../../../supabase-browser";
 
 // One in-memory delivery across React remounts. Never persist the Google code,
 // state or provider credentials in browser storage; never feed it to Clued auth.
-let delivery: Promise<{ receipt: string; owner: string; refreshEnabled?: boolean }> | undefined;
+let delivery: Promise<{ receipt: string; owner: string; refreshEnabled?: boolean; recovery?: boolean }> | undefined;
 class CallbackFailure extends Error {}
 const reasons: Record<string, string> = {
   callback_invalid: "Google 回调参数未通过校验",
@@ -34,7 +34,7 @@ const reasons: Record<string, string> = {
   credential_seal_unavailable: "服务端凭据加密未完成",
   credential_commit_unconfirmed: "凭据保存回执未确认，请先返回连接页核对状态，不要重复授权",
 };
-function finish(): Promise<{ receipt: string; owner: string; refreshEnabled?: boolean }> {
+function finish(): Promise<{ receipt: string; owner: string; refreshEnabled?: boolean; recovery?: boolean }> {
   if (delivery) return delivery;
   const query = new URL(window.location.href).searchParams;
   const state = query.get("state"), code = query.get("code");
@@ -46,19 +46,34 @@ function finish(): Promise<{ receipt: string; owner: string; refreshEnabled?: bo
     if (error || !data.session) throw new CallbackFailure("请使用开始授权时的 Clued 登录会话，返回连接页检查。");
     const response = await fetch("/v1/storage/google/complete", {
       method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
-      body: JSON.stringify({ state, code }), cache: "no-store", redirect: "error", referrerPolicy: "no-referrer",
-    });
-    if (!response.ok) {
+      body: JSON.stringify({ state, code }), cache: "no-store", redirect: "error", referrerPolicy: "no-referrer", signal: AbortSignal.timeout(15000),
+    }).catch(() => null);
+    const body: unknown = await response?.json().catch(() => null);
+    const result = body as { status?: unknown; receipt_id?: unknown; refresh_enabled?: unknown; purpose?: unknown } | null;
+    if (!response?.ok || result?.status !== "completed" || typeof result.receipt_id !== "string") {
       // Render only our fixed allowlist, never raw server/Google error text.
-      const failure: unknown = await response.json().catch(() => null);
-      const reason = failure && typeof failure === "object" && "reason" in failure ? failure.reason : null;
+      const reason = body && typeof body === "object" && "reason" in body ? body.reason : null;
+      // Every unconfirmed delivery (including 200 with a truncated body) gets
+      // one bounded read, never a repeat of complete or the authorization code.
+      // State stays in this in-memory closure only; a remount reuses delivery.
+      try {
+        const current = await supabase.auth.getSession();
+        if (!current.error && current.data.session?.user.id === data.session.user.id) {
+          const inspected = await fetch("/v1/storage/google/recovery/inspect", {
+            method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
+            body: JSON.stringify({ state }), cache: "no-store", redirect: "error", referrerPolicy: "no-referrer", signal: AbortSignal.timeout(10000),
+          });
+          const receipt = (inspected.ok ? await inspected.json() : null) as { status?: unknown; execution_permitted?: unknown; receipt_id?: unknown } | null;
+          if (receipt?.status === "completed" && receipt.execution_permitted === false && typeof receipt.receipt_id === "string")
+            return { receipt: receipt.receipt_id, owner: data.session.user.id, recovery: true };
+        }
+      } catch { /* Unknown remains unknown; never exchange the code twice. */ }
       const message = typeof reason === "string" && Object.hasOwn(reasons, reason) ? reasons[reason] : "连接未确认，请返回连接页检查状态";
       throw new CallbackFailure(message + "。此操作不会开启文件写入；不会自动重试或放宽权限。");
     }
-    const result = await response.json() as { status?: unknown; receipt_id?: unknown; refresh_enabled?: unknown } | null;
-    if (result?.status !== "completed" || typeof result.receipt_id !== "string") throw new CallbackFailure("尚未取得确认回执，请返回连接页检查状态。");
     return { receipt: result.receipt_id, owner: data.session.user.id,
-      ...(typeof result.refresh_enabled === "boolean" ? { refreshEnabled: result.refresh_enabled } : {}) };
+      ...(result.purpose === "credential_recovery" ? { recovery: true } :
+        typeof result.refresh_enabled === "boolean" ? { refreshEnabled: result.refresh_enabled } : {}) };
   })();
   return delivery;
 }
@@ -78,7 +93,8 @@ export default function StorageGoogleCallback() {
     void finish().then(async result => {
       const current = await supabase.auth.getSession();
       if (active && !changed && !current.error && current.data.session?.user.id === result.owner)
-        setMessage("连接凭据已安全保存。回执：" + result.receipt +
+        setMessage(result.recovery ? "恢复凭据已安全保存。回执：" + result.receipt + "。连接停用状态、Agent 权限和后台续签设置未改变；请返回查询并核对原任务，没有重新创建文件。" :
+          "连接凭据已安全保存。回执：" + result.receipt +
           (typeof result.refreshEnabled === "boolean" ? (result.refreshEnabled ? "。后台续签已开启" : "。后台续签保持关闭") : "") +
           "。文件操作仍需独立授权与执行验收。");
     }, error => { if (active && !changed) setMessage(error instanceof CallbackFailure ? error.message : "连接尚未确认，请返回连接页检查状态。正式写入不会因此开启。"); });
