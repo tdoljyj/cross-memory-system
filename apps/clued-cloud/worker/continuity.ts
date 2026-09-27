@@ -35,6 +35,7 @@ import {
 } from "./information-flow";
 import { measurePack } from "./context-pack";
 import { AGENT_CONTRACT_MARKDOWN } from "./generated/agent-contract";
+import { createStorageGoogleOAuth } from "./storage-google-oauth";
 
 declare const __CLUED_BUILD_SHA__: string | null;
 
@@ -67,6 +68,12 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6Feature
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
   CLUED_STORAGE_ACCOUNT_V1?: string;
+  CLUED_STORAGE_GOOGLE_V1?: string;
+  CLUED_STORAGE_GOOGLE_CLIENT_ID?: string;
+  CLUED_STORAGE_GOOGLE_CLIENT_SECRET?: string;
+  CLUED_STORAGE_GOOGLE_REDIRECT_URI?: string;
+  CLUED_STORAGE_CONNECTOR_ISSUER?: string;
+  CLUED_STORAGE_VAULT_KEYS?: string;
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   CLUED_ALLOWED_ORIGINS?: string;
@@ -2208,6 +2215,39 @@ async function handleContinuityRequestInner(
       });
     }
     if (url.pathname === "/mcp") return await handleMcp(request, env);
+    if (url.pathname === "/v1/storage/google/start" || url.pathname === "/v1/storage/google/complete") {
+      validateOrigin(request, env);
+      if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404);
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
+      if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { allow: "POST, OPTIONS" });
+      const { token } = await requireSupabaseUser(request, env);
+      try {
+        const input = await parseBody(request);
+        const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+        if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS) throw new Error("Unavailable");
+        const connector = await createStorageGoogleOAuth({
+          client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
+          client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "",
+          redirect_uri: env.CLUED_STORAGE_GOOGLE_REDIRECT_URI ?? "",
+          vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
+          rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_oauth_v1", {
+            method: "POST", userToken: token,
+            body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),
+          }) as Record<string, unknown>,
+        });
+        let result;
+        if (url.pathname.endsWith("/start")) {
+          if (Object.keys(input).length !== 1 || typeof input.connection_id !== "string") throw new Error("Invalid");
+          result = await connector.start(input.connection_id);
+        } else {
+          if (Object.keys(input).length !== 2 || typeof input.state !== "string" || typeof input.code !== "string") throw new Error("Invalid");
+          result = await connector.complete({ state: input.state, code: input.code });
+        }
+        return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });
+      } catch {
+        return json({ error: "Storage Google connection unavailable." }, 403, { ...corsHeaders(request), "cache-control": "no-store" });
+      }
+    }
     if (url.pathname === "/v1/storage/account") {
       validateOrigin(request, env);
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true") return json({ error: "Not found." }, 404);

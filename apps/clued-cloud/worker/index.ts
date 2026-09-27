@@ -50,7 +50,14 @@ const legacyWorker = {
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    const response = await handler.fetch(request, env, ctx);
+    if (url.pathname === "/storage/google/callback") {
+      const protectedResponse = new Response(response.body, response);
+      protectedResponse.headers.set("cache-control", "no-store");
+      protectedResponse.headers.set("referrer-policy", "no-referrer");
+      return protectedResponse;
+    }
+    return response;
   },
 };
 

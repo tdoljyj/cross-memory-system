@@ -57,9 +57,26 @@ profile/Decision checks, receipt-backed mutations, server-only credential AEAD.
 Registration remains `awaiting_provider`; it cannot create provider credentials
 or activate a writer. The internal Binding check is not an exposed admission.
 
-Not yet implemented/qualified: new Google consent/callback, trusted credential
-activation and CAS refresh persistence, background standing delegation, shared
-job/attempt execution, cloud provider effects, account-management UI and cutover.
+The follow-on OAuth candidate adds native account connection and callback pages,
+server-only Google code exchange with S256 PKCE, same-native-session durable
+state, one-shot claim and transactional encrypted credential activation. The
+connector requires a provisioned private issuer in addition to the native JWT;
+neither alone can activate credentials. Only the two approved Drive scopes are
+accepted. Identity uses Drive `user.permissionId`, not an invented OpenID claim.
+Root/parent, `isAppAuthorized` and `canAddChildren` are all verified. An unpicked
+root is denied: a successful OAuth scope grant alone is not a file selection.
+The callback clears its URL before session restoration or network calls and
+never feeds a Google code into Supabase's login-code exchange. Claimed but lost
+exchanges require fresh consent; completed replay returns only its receipt.
+Expiry starts conservatively before token exchange, not after metadata checks.
+Both `CLUED_STORAGE_ACCOUNT_V1` and `CLUED_STORAGE_GOOGLE_V1` default off; issuer,
+Web OAuth client, fixed redirect and vault keyring are trusted server secrets.
+There are no seeds, production secrets or local DPAPI imports in this slice.
+
+Not yet implemented/qualified: credential CAS refresh persistence, background
+standing delegation, shared job/attempt execution, cloud provider effects, live
+Google Web-client/root authorization qualification and formal entry cutover.
+Connection `active` means credential connection only, never a qualified writer.
 Do not enable the flag or promote this slice as a working multi-device writer.
 Do not replace the current local entry, revive its disabled scheduler, delete old
 journals, or clear unresolved effects. Production needs reviewed exact artifacts,
