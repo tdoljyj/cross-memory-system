@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../supabase-browser";
 type Connection = { id: string; provider: string; state: string; version: number; profile_id: string };
-const storageActions = { inspect: "查看资料信息", create_file: "新建文件", create_topic: "新建主题目录" };
+const storageActions = { inspect: "查看存储任务状态", create_file: "新建文件", create_topic: "新建主题目录" };
 type StorageAction = keyof typeof storageActions;
 type Client = { binding_id: string; client_name: string; client_id: string; version: number; expires_at: string; active: boolean };
 type ClientGrant = { binding_id: string; authorization_version: number; actions: StorageAction[]; expires_at: string; revoked_at: string | null; receipt_id: string; binding_current: boolean };
