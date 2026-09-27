@@ -16,6 +16,31 @@ Grant creation pins the current v12 authorization version. Revoke, expiry or
 reduce invalidates the storage grant; re-consent is an explicit native action.
 V12's existing scope/context tables and frozen IntegrationRuntime are unchanged.
 
+### Native client-grant management
+
+The account connection page lists existing clients through `/oauth/connections/api`.
+No secret, new device identity or caller-supplied owner is requested. All operation
+checkboxes start empty. Native confirmation names the exact Binding, connection,
+actions and expiration; this UI caps a grant at one hour and the original v12
+authorization expiry. Regranting is always explicit, never a consequence of
+Google reconnect, refresh consent, login or listing.
+
+`clued_storage_account_v1({action: "client_grants", connection_id})` is an exact,
+native-owner-only read action. It returns the connection CAS/state and a whitelist
+of grant metadata, including revoked/expired grants and their receipt. The
+`binding_current` field checks only v12 lifecycle/version, **not** profile currentness,
+provider visibility or executor qualification; the UI must not call it permission
+to execute. It creates no Receipt/Event and rechecks the native session after
+lock waits. Existing grant/revoke mutations retain their original transaction,
+CAS and Receipt contract. Credential envelopes and bearer hashes are never returned.
+
+An uncertain mutation reply removes action controls and requires explicit readback;
+there is no automatic retry/regrant. Account changes discard drafts and late replies.
+Client storage revocation does not revoke its unrelated memory grant, other clients,
+the provider connection or a standing refresh delegation. In-flight file effects
+still require reconciliation. This management UI does not enable the jobs/executor
+flags or qualify a live provider.
+
 The account endpoint requires a live native `auth.sessions` row. Client grants
 do not depend on the continued existence of the owner's browser session.
 Background standing delegation must be separately explicit and revocable: it
