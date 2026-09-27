@@ -36,8 +36,11 @@ function fixture(confirm = true) {
   const settle = async () => { for(let i=0;i<20;i++) await Promise.resolve(); render(); };
   const text = n => Array.isArray(n) ? n.map(text).join("") : n == null || typeof n === "boolean" ? "" : typeof n === "object" ? text(n.props?.children) : String(n);
   function button(label) { let found; const visit = n => { if (Array.isArray(n)) return n.forEach(visit); if (!n || typeof n !== "object") return; if(n.type === "button" && text(n) === label) found=n; visit(n.props?.children); }; visit(tree); assert.ok(found,label); return found; }
+  function input(label) { let found; const visit = n => { if(Array.isArray(n)) return n.forEach(visit); if(!n || typeof n !== "object") return;
+    if(n.type === "label" && text(n) === label) { const children = Array.isArray(n.props.children) ? n.props.children : [n.props.children]; found=children.find(c=>c?.type === "input"); }
+    visit(n.props?.children); }; visit(tree); assert.ok(found,label); return found; }
   render();
-  return { requests, navigations, confirmations, settle, text: () => text(tree), button,
+  return { requests, navigations, confirmations, settle, text: () => text(tree), button, input,
     change(id) { owner=id; authCallback("SIGNED_IN", id ? { user:{id} } : null); render(); },
     respond(i,value) { requests[i].resolve({ ok:true, json:async()=>value }); },
   };
@@ -83,4 +86,44 @@ test("account switch during refresh setting does not query or display the old co
   f.change("b"); await f.settle(); f.respond(3,{connections:[]}); await f.settle();
   f.respond(2,{receipt_id:"old-receipt"}); await f.settle();
   assert.equal(f.requests.length,4); assert.equal(f.text().includes(connection.id),false); assert.equal(f.text().includes("设置已确认"),false);
+});
+
+const registrationProfile="00000000-0000-4000-8000-000000000011", registrationDecision="00000000-0000-4000-8000-000000000012";
+async function registrationReady(confirm=true) {
+  const f=fixture(confirm); await f.settle(); f.respond(0,{connections:[]}); await f.settle();
+  f.input("已登记目录 ID").props.onChange({target:{value:registrationProfile}});
+  f.input("当前授权 Decision ID").props.onChange({target:{value:registrationDecision}}); await f.settle(); return f;
+}
+test("native registration sends only exact existing IDs and a stable receipt key, not write grants",async()=>{
+  const f=await registrationReady(); const button=f.button("登记账号连接"); button.props.onClick(); button.props.onClick(); await f.settle();
+  assert.equal(f.requests.length,2); assert.ok(f.confirmations[0].includes("不授予 Google 访问"));
+  const body=JSON.parse(f.requests[1].init.body);
+  assert.deepEqual(body,{action:"register",profile_id:registrationProfile,source_decision_id:registrationDecision,
+    idempotency_key:`storage-register-ui-v1:${registrationProfile}:${registrationDecision}`});
+  f.respond(1,{status:"committed",receipt_id:"fixture-receipt"}); await f.settle();
+  assert.deepEqual(JSON.parse(f.requests[2].init.body),{action:"list"});
+  f.respond(2,{connections:[connection]}); await f.settle(); assert.ok(f.text().includes(connection.id));
+  assert.equal(f.navigations.length,0);
+});
+test("registration cancellation or invalid identifiers causes no mutation",async()=>{
+  const f=await registrationReady(false); f.button("登记账号连接").props.onClick(); await f.settle(); assert.equal(f.requests.length,1);
+  const invalid=await registrationReady(); invalid.input("已登记目录 ID").props.onChange({target:{value:"G:/caller-selected-root"}}); await invalid.settle();
+  invalid.button("登记账号连接").props.onClick(); await invalid.settle(); assert.equal(invalid.requests.length,1); assert.equal(invalid.confirmations.length,0);
+});
+test("uncertain registration response and reload keep the same account-scoped operation identity",async()=>{
+  const f=await registrationReady(); f.button("登记账号连接").props.onClick(); await f.settle();
+  f.respond(1,{status:"unknown"}); await f.settle(); assert.ok(f.text().includes("登记回执未确认"));
+  f.button("登记账号连接").props.onClick(); await f.settle(); assert.equal(f.requests[1].init.body,f.requests[2].init.body);
+  const reloaded=await registrationReady(); reloaded.button("登记账号连接").props.onClick(); await reloaded.settle();
+  assert.equal(f.requests[1].init.body,reloaded.requests[1].init.body);
+});
+test("account switch before registration dispatch blocks the stale request and clears draft",async()=>{
+  const f=await registrationReady(); f.button("登记账号连接").props.onClick(); f.change("b"); await f.settle();
+  assert.equal(f.requests.some(r=>JSON.parse(r.init.body).action === "register"),false);
+  assert.equal(f.input("已登记目录 ID").props.value,""); assert.equal(f.input("当前授权 Decision ID").props.value,"");
+});
+test("late registration receipt after account switch cannot refresh old connection state",async()=>{
+  const f=await registrationReady(); f.button("登记账号连接").props.onClick(); await f.settle(); f.change("b"); await f.settle();
+  f.respond(2,{connections:[]}); await f.settle(); f.respond(1,{status:"committed",receipt_id:"old-receipt"}); await f.settle();
+  assert.equal(f.requests.length,3); assert.equal(f.text().includes(connection.id),false);
 });
