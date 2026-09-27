@@ -29,6 +29,7 @@ const resource = `${origin}/mcp`;
 const originalFetch = globalThis.fetch;
 function fixture() {
   const bindings = new Map(); const prepared = new Map(); const calls = []; const background = [];
+  const storageGrants = new Set();
   const env = { OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin,
     CLUED_AUTHORIZATION_ISSUER_TOKEN: 'isolated-issuer-test-value', SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'test-public-key', PROJECT_VIEWS_V2: 'true' };
   const run = (route, options = {}) => handle(new Request(`${origin}${route}`, options), env, { waitUntil(promise) { background.push(promise); }, passThroughOnException() {}, props: {} }, async () => new Response('fallback', { status: 404 }));
@@ -60,10 +61,18 @@ function fixture() {
     }
     if (name === 'clued_authorization_status_v12') return Response.json(bindings.get(body.p_token_hash) || { active: false });
     if (name === 'clued_record_list') return Response.json({ status: 'ok', records: [] });
+    if (name === 'clued_storage_jobs_v1') {
+      if (!bindings.get(body.p_token_hash)?.active || !storageGrants.has(body.p_token_hash)) {
+        return Response.json({ message: 'storage_binding_denied', code: '42501' }, { status: 403 });
+      }
+      return Response.json({ connection_id: body.p_input.connection_id, job_id: body.p_input.job_id,
+        request_digest: 'a'.repeat(64), status: 'queued', intent_id: null,
+        receipt_id: '30000000-0000-4000-8000-000000000001', execution_permitted: false });
+    }
     if (name === 'clued_mcp_projection_refresh_claim') return Response.json({ status: 'idle' });
     throw new Error(`Unexpected storage route: ${name}`);
   };
-  return { env, run, bindings, calls, background };
+  return { env, run, bindings, calls, background, storageGrants };
 }
 async function client(f) {
   const response = await f.run('/oauth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_name: 'Isolated client', redirect_uris: ['https://client.example/callback'], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }) });
@@ -96,6 +105,43 @@ async function approve(f, clientId, flow) {
 }
 const call = (token, name) => ({ method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: { record_type: 'state' } } }) });
+
+test('real OAuth MCP storage tools retain live Binding and separate storage grant gates', async () => {
+  const f = fixture();
+  try {
+    f.env.CLUED_STORAGE_ACCOUNT_V1 = 'true'; f.env.CLUED_STORAGE_JOBS_V1 = 'true';
+    const id = await client(f), flow = await begin(f, id), token = await approve(f, id, flow);
+    const ref = { connection_id: '20000000-0000-4000-8000-000000000001', job_id: '10000000-0000-4000-8000-000000000001' };
+    const mutation = { operation: 'create', target_kind: 'file', destination_path: 'G:/My Drive/Clued_资料中心/track/topic/test.md', content: 'fixture' };
+    const storageCall = (access, name, args) => ({ ...call(access, name), body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
+    // Actual provider issued a context:write token, but no storage grant exists.
+    let response = await f.run('/mcp', storageCall(token.access_token, 'clued_storage_submit', { ...ref, mutation }));
+    assert.equal(response.status, 200); assert.equal((await response.json()).result.isError, true);
+    const bindingHash = [...f.bindings.keys()][0]; f.storageGrants.add(bindingHash);
+    // Narrowing memory scopes does not substitute for or erase the separate grant.
+    const refresh = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, scope: 'context:read', resource }) });
+    assert.equal(refresh.status, 200); const narrowed = await refresh.json();
+    assert.equal(narrowed.scope, 'context:read');
+    for (const [name, args] of [['clued_storage_submit', { ...ref, mutation }], ['clued_storage_inspect', ref]]) {
+      response = await f.run('/mcp', storageCall(narrowed.access_token, name, args));
+      assert.equal(response.status, 200); const body = (await response.json()).result;
+      assert.equal(body.isError, false); assert.equal(body.structuredContent.execution_permitted, false);
+      assert.equal(f.calls.filter(x => x.name === 'clued_storage_jobs_v1').at(-1).body.p_token_hash, bindingHash);
+    }
+    f.storageGrants.delete(bindingHash);
+    response = await f.run('/mcp', storageCall(narrowed.access_token, 'clued_storage_inspect', ref));
+    assert.equal((await response.json()).result.isError, true);
+    f.storageGrants.add(bindingHash); f.env.CLUED_STORAGE_JOBS_V1 = 'false';
+    let before = f.calls.filter(x => x.name === 'clued_storage_jobs_v1').length;
+    assert.equal((await f.run('/mcp', storageCall(narrowed.access_token, 'clued_storage_submit', { ...ref, mutation }))).status, 404);
+    assert.equal(f.calls.filter(x => x.name === 'clued_storage_jobs_v1').length, before);
+    f.env.CLUED_STORAGE_JOBS_V1 = 'true'; f.bindings.get(bindingHash).active = false;
+    before = f.calls.filter(x => x.name === 'clued_storage_jobs_v1').length;
+    assert.equal((await f.run('/mcp', storageCall(narrowed.access_token, 'clued_storage_inspect', ref))).status, 400);
+    assert.equal(f.calls.filter(x => x.name === 'clued_storage_jobs_v1').length, before);
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 test('real OAuth discovery challenges unauthenticated MCP and advertises the new issuer', async () => {
   const f = fixture(); try {

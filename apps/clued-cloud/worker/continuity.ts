@@ -38,6 +38,7 @@ import { AGENT_CONTRACT_MARKDOWN } from "./generated/agent-contract";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
+import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentTools } from "./storage-agent-tools";
 
 declare const __CLUED_BUILD_SHA__: string | null;
 
@@ -1382,12 +1383,36 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {
   };
 }
 
-export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_DEVELOPMENT_CONTEXT_V14">) {
-  return tools.filter((tool) =>
+export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1">) {
+  const existing = tools.filter((tool) =>
     (!(tool.name in recordRpcByTool || tool.name in informationFlowRpcByTool) || recordsV2Enabled(env))
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
     && (!(tool.name in contextRpcByTool) || contextsEnabled(env))
   ).map(publishTool);
+  return [...existing, ...(storageJobsEnabled(env) ? storageAgentTools : [])];
+}
+
+function storageJobsEnabled(env: Pick<ContinuityEnv, "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1">) {
+  return env.CLUED_STORAGE_ACCOUNT_V1 === "true" && env.CLUED_STORAGE_JOBS_V1 === "true";
+}
+
+async function callStorageJob(request: Request, env: ContinuityEnv, input: Record<string, unknown>, ctx?: ContinuityExecutionContext,
+  projectResult: (value: unknown, input: Record<string, unknown>) => unknown = value => value) {
+  if (!storageJobsEnabled(env)) throw new HttpError(404, "Storage jobs are disabled.");
+  const token = bearerToken(request);
+  if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new HttpError(403, "An explicitly granted Clued Binding is required.");
+  const result = projectResult(await supabaseRequest(env, "/rest/v1/rpc/clued_storage_jobs_v1", {
+    method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
+  }), input);
+  // Same durable job, root fence and fixed executor for REST and MCP. Inspect
+  // never dispatches. A queued reply alone is neither admission nor completion.
+  if (ctx && input.action === "submit" && result && typeof result === "object" && "status" in result &&
+      ["queued", "started", "uncertain"].includes(String(result.status)) &&
+      "connection_id" in result && typeof result.connection_id === "string" && result.connection_id === input.connection_id &&
+      "job_id" in result && typeof result.job_id === "string" && result.job_id === input.job_id) {
+    ctx.waitUntil(runStorageCloudJob(env, { connection_id: result.connection_id, job_id: result.job_id }));
+  }
+  return result;
 }
 
 const rpcByTool = {
@@ -1651,7 +1676,20 @@ async function callTool(
   env: ContinuityEnv,
   name: unknown,
   args: unknown,
+  ctx?: ContinuityExecutionContext,
 ) {
+  if (isStorageAgentTool(name)) {
+    if (!storageJobsEnabled(env)) throw new HttpError(404, "Storage jobs are disabled.");
+    try {
+      const input = storageAgentInput(name, args);
+      const result = await callStorageJob(request, env, input, ctx, storageAgentResult);
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
+    } catch {
+      // No provider, issuer, credentials, paths or database diagnostics in errors.
+      const result = { error: "storage_job_unavailable", message: "Storage job unavailable. Check the same job ID; do not create another job to retry an unknown effect." };
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+    }
+  }
   if (name === "clued_agent_bootstrap") {
     const result = bootstrapContract(new URL(request.url).origin, env);
     return {
@@ -1733,7 +1771,7 @@ function rpcError(id: JsonRpcId | undefined, code: number, message: string, data
   return { jsonrpc: "2.0", id: id ?? null, error: { code, message, data } };
 }
 
-async function handleMcp(request: Request, env: ContinuityEnv) {
+async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityExecutionContext) {
   validateOrigin(request, env);
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders(request) });
@@ -1797,8 +1835,10 @@ async function handleMcp(request: Request, env: ContinuityEnv) {
     if (rpc.method === "tools/call") {
       const name = rpc.params?.name;
       const args = rpc.params?.arguments;
-      const result = await callTool(request, env, name, args);
-      return json(rpcResult(rpc.id, result), 200, corsHeaders(request));
+      const result = await callTool(request, env, name, args, ctx);
+      return json(rpcResult(rpc.id, result), 200, {
+        ...corsHeaders(request), ...(isStorageAgentTool(name) ? { "cache-control": "no-store" } : {}),
+      });
     }
     return json(rpcError(rpc.id, -32601, "Method not found"), 404, corsHeaders(request));
   } catch (error) {
@@ -2266,7 +2306,7 @@ async function handleContinuityRequestInner(
         clued_binding_portal: `${url.origin}/`,
       });
     }
-    if (url.pathname === "/mcp") return await handleMcp(request, env);
+    if (url.pathname === "/mcp") return await handleMcp(request, env, ctx);
     if (url.pathname === "/v1/storage/google/start" || url.pathname === "/v1/storage/google/complete") {
       validateOrigin(request, env);
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404);
@@ -2313,15 +2353,7 @@ async function handleContinuityRequestInner(
       if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) return json({ error: "An explicitly granted Clued Binding is required." }, 403);
       const input = await parseBody(request);
       try {
-        // Public response is submission/status only. Background execution uses
-        // the fixed private issuer, never the caller's supplied policy or token.
-        const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_jobs_v1", {
-          method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
-        });
-        if (ctx && input.action === "submit" && result && typeof result === "object" && "status" in result && ["queued","started","uncertain"].includes(String(result.status)) &&
-            "connection_id" in result && typeof result.connection_id === "string" && "job_id" in result && typeof result.job_id === "string") {
-          ctx.waitUntil(runStorageCloudJob(env,{connection_id:result.connection_id,job_id:result.job_id}));
-        }
+        const result = await callStorageJob(request, env, input, ctx);
         return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });
       } catch {
         return json({ error: "Storage job unavailable." }, 403, { ...corsHeaders(request), "cache-control": "no-store" });
