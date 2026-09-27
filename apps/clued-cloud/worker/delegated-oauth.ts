@@ -1,6 +1,7 @@
 /** OAuth protocol is delegated to the maintained provider; Clued retains live grants. */
 import { OAuthProvider, OAuthError, type AuthRequest, type OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import { handleContinuityRequest, publicToolPolicies, type ContinuityEnv } from './continuity';
+import { isStorageAgentTool } from './storage-agent-tools';
 
 const SCOPES = ['context:read', 'context:write', 'audit:read'];
 const PENDING_TTL = 600;
@@ -234,6 +235,10 @@ async function consentRoute(request: Request, env: DelegatedOAuthEnv): Promise<R
   }
 }
 export function requiredToolScopes(name: string, args: Json = {}): readonly string[] | null {
+  // Storage authority is a separate native-Owner grant, not context:write.
+  // scopedApi still checks the live v12 Binding before the storage RPC performs
+  // its exact connection/action grant check. This does not issue any grant.
+  if (isStorageAgentTool(name)) return [];
   if (name === 'clued_context') {
     const operation = String(args.op);
     if (['context_list', 'record_list'].includes(operation)) return ['context:read'];

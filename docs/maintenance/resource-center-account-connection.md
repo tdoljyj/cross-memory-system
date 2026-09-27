@@ -218,3 +218,36 @@ CI, the actual provider consent and bounded live qualification before cutover.
 
 Tests: `resource-center-storage-vault.test.mjs` and the account fixture in
 `resource-center-authority-db.test.mjs`, plus transport and authorization suites.
+
+## Account Agent transport (candidate; production jobs remain disabled)
+
+`clued_storage_submit` and `clued_storage_inspect` are discovered only when both
+`CLUED_STORAGE_ACCOUNT_V1` and `CLUED_STORAGE_JOBS_V1` are enabled. Guessed tool
+calls are also rejected while disabled. These tools and `/v1/storage/jobs` use
+the same Canonical jobs RPC and fixed-server execution bridge. No new OAuth
+scope, credential copy, per-device permission store or database migration is
+introduced. The default MCP tool baseline is unchanged.
+
+The caller must use its own v12 Clued Binding with an explicit account-native
+storage grant (`create_file` / `create_topic`, and `inspect` for status). Ordinary
+`context:write`, a native JWT and a caller-declared owner/profile are insufficient.
+No tools for grant issuance, Google credentials, raw admission or provider effects
+are exposed. The server still derives the trusted root/profile/artifact role and
+consumes the exact single-use admission. The MCP response contains only the
+job/connection IDs, digest, state, intent, receipt and replay marker; it never
+grants execution to the Agent and is not cached.
+
+For one user-authorized create, choose a stable job UUID and retain the exact
+connection and request payload. A lost reply is not failure or permission to
+choose a fresh UUID: inspect the original job. Inspection never dispatches or
+clears a fence. Identical submission replays use the existing durable identity;
+changed content with that UUID conflicts. `queued`, `started`, `uncertain` and
+`attention_required` are not success. Only verified `committed` with its receipt
+supports completion. Directory requests are limited to topic/asset-collection
+semantics; deterministic policy independently rejects status folders and islands.
+The full JSON request must fit the existing transport byte limit.
+
+Transport regression tests use a synthetic RPC/provider. They do not prove a
+live Owner storage grant, qualified cloud runtime/root, manual OAuth recovery or
+real file acceptance. Keep production jobs/executor flags off until those gates
+pass; this increment alone does not complete the account storage entry.
