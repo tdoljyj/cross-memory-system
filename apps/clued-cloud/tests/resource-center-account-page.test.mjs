@@ -42,10 +42,32 @@ function fixture(confirm = true) {
   render();
   return { requests, navigations, confirmations, settle, text: () => text(tree), button, input,
     change(id) { owner=id; authCallback("SIGNED_IN", id ? { user:{id} } : null); render(); },
-    respond(i,value) { requests[i].resolve({ ok:true, json:async()=>value }); },
+    respond(i,value,status=200) { requests[i].resolve({ ok:status<400, status, json:async()=>value }); },
+    probeFeedback() { let found=""; const visit=n=>{if(Array.isArray(n))return n.forEach(visit);if(!n||typeof n!=="object")return;
+      if(n.type==="div" && Array.isArray(n.props.children) && n.props.children.some(c=>c?.type==="button" && text(c)==="检查已登记目录（只读）"))
+        found=n.props.children.filter(c=>c?.props?.role==="status").map(text).join("");visit(n.props.children);};visit(tree);return found;},
   };
 }
 const connection = { id: "fixture-connection-a", provider: "google-drive", state: "awaiting_provider", version:1, profile_id:"fixture-profile" };
+
+test("directory probe shows progress and safe failure beside its button without a second dispatch",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
+  const b=f.button("检查已登记目录（只读）");b.props.onClick();b.props.onClick();await f.settle();
+  assert.equal(f.requests.length,2);assert.match(f.probeFeedback(),/正在只读检查/);
+  f.respond(1,{execution_permitted:false,diagnostic:{stage:"directories",reason:"DIRECTORY_NOT_APP_AUTHORIZED"}},403);await f.settle();
+  assert.match(f.probeFeedback(),/尚未向当前 Google 应用授权/);assert.match(f.probeFeedback(),/不会自动重试或开启文件写入/);
+  assert.equal(f.requests.length,2);assert.equal(f.button("检查已登记目录（只读）").props.disabled,false);
+});
+test("directory probe error text cannot inject upstream content or cross an account switch",async()=>{
+  for(const changed of [false,true]) {
+    const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
+    f.button("检查已登记目录（只读）").props.onClick();await f.settle();
+    if(changed){f.change("b");await f.settle();f.respond(2,{connections:[]});await f.settle();}
+    f.respond(1,{execution_permitted:false,diagnostic:{stage:"credential",reason:"private-token"},error:"private-token"},403);await f.settle();
+    assert.equal(f.text().includes("private-token"),false);
+    if(changed)assert.equal(f.probeFeedback(),"");else assert.match(f.probeFeedback(),/目录检查未确认/);
+  }
+});
 
 const recoveryJob='10000000-0000-4000-8000-000000000081',recoveryReceipt='10000000-0000-4000-8000-000000000082';
 async function recoveryReady(confirm=true,state='reauthorization_required') {

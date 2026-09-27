@@ -12,7 +12,7 @@ async function load(name) {
   await build({entryPoints:[fileURLToPath(new URL("../worker/"+name+".ts",import.meta.url))],outfile,bundle:true,platform:"node",format:"esm"});
   return import(pathToFileURL(outfile));
 }
-const {createStorageGoogleProbe}=await load("storage-google-probe");
+const {createStorageGoogleProbe,storageProbeDiagnostic}=await load("storage-google-probe");
 const {createStorageCredentialVault}=await load("storage-credential-vault");
 const scope="https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 async function fixture(options={}) {
@@ -127,6 +127,19 @@ test("native HTTP probe route preserves JWT plus fixed issuer and never accepts 
     redirect=true;const before=f.calls.length;
     const denied=await worker.fetch(request({connection_id:f.connection}),env);
     assert.equal(denied.status,403);assert.equal(f.calls.length,before);
-    assert.deepEqual(await denied.json(),{error:"Storage directory observation unavailable.",execution_permitted:false});
+    assert.deepEqual(await denied.json(),{error:"Storage directory observation unavailable.",execution_permitted:false,diagnostic:{stage:"prepare",reason:"UNCONFIRMED"}});
   } finally {globalThis.fetch=original;}
+});
+
+test("diagnostics reveal only fixed stage/reason, never upstream secrets or caller error fields",async()=>{
+  assert.deepEqual(storageProbeDiagnostic({stage:"credential",reason:"synthetic-private-token"}),{stage:"request",reason:"UNCONFIRMED"});
+  for(const [options,stage,reason] of [[{prepareError:true},"prepare","UNCONFIRMED"],
+    [{secret:{expires_at_ms:0}},"credential","UNCONFIRMED"],[{networkError:true},"identity","UNCONFIRMED"],
+    [{unauthorized:"topic"},"directories","DIRECTORY_NOT_APP_AUTHORIZED"],[{commitError:true},"receipt","UNCONFIRMED"]]) {
+    const f=await fixture(options);let caught;
+    try {await f.probe.run({connection_id:f.connection});}catch(error){caught=error;}
+    assert.ok(caught);assert.deepEqual(storageProbeDiagnostic(caught),{stage,reason});
+    assert.equal(JSON.stringify(storageProbeDiagnostic(caught)).includes("synthetic-private"),false);
+    assert.ok(f.calls.every(c=>c.method==="GET"));
+  }
 });

@@ -37,7 +37,7 @@ import { measurePack } from "./context-pack";
 import { AGENT_CONTRACT_MARKDOWN } from "./generated/agent-contract";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
 import { createStorageGoogleRecoveryOAuth } from "./storage-google-recovery-oauth";
-import { createStorageGoogleProbe } from "./storage-google-probe";
+import { createStorageGoogleProbe, storageProbeDiagnostic } from "./storage-google-probe";
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
@@ -2360,8 +2360,8 @@ async function handleContinuityRequestInner(
           }) as Record<string, unknown>,
         });
         return json(await probe.run(input), 200, { ...corsHeaders(request), "cache-control": "no-store" });
-      } catch {
-        return json({ error: "Storage directory observation unavailable.", execution_permitted: false },
+      } catch (error) {
+        return json({ error: "Storage directory observation unavailable.", execution_permitted: false, diagnostic: storageProbeDiagnostic(error) },
           403, { ...corsHeaders(request), "cache-control": "no-store" });
       }
     }
