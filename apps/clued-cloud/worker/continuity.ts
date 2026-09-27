@@ -641,12 +641,12 @@ export async function runStorageCloudJob(env: ContinuityEnv, reference: {connect
     const issuerHash=await sha256(issuer);
     const rpc=async (input:Record<string,unknown>) => await supabaseRequest(env,"/rest/v1/rpc/clued_storage_cloud_worker_v1",{
       method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_input:input}),
-      signal:AbortSignal.timeout(10000),redirect:"error",
+      signal:AbortSignal.timeout(10000),redirect:"manual",
     }) as Record<string,unknown>;
     const recoveryRefresh=env.CLUED_STORAGE_REFRESH_V1==="true" ? await createStorageGoogleRefresh({
       client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID??"",client_secret:env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET??"",
       vault:JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),rpc:async input => await supabaseRequest(env,"/rest/v1/rpc/clued_storage_refresh_worker_v1",{
-        method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_input:input}),signal:AbortSignal.timeout(10000),redirect:"error",
+        method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_input:input}),signal:AbortSignal.timeout(10000),redirect:"manual",
       }) as Record<string,unknown>}) : null;
     const executor=await createStorageCloudWorker({client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID??"",
       vault:JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),rpc,
@@ -663,7 +663,7 @@ export async function runStorageRefreshScheduled(env: ContinuityEnv) {
     const issuerHash = await sha256(issuer);
     const rpc = async (input: Record<string, unknown>) => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_refresh_worker_v1", {
       method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
-      signal: AbortSignal.timeout(10000), redirect: "error",
+      signal: AbortSignal.timeout(10000), redirect: "manual",
     }) as Record<string, unknown>;
     const due = await rpc({ action: "due" });
     if (!Array.isArray(due.connections) || due.connections.length > 10 || !due.connections.every(c => typeof c === "string")) return { status: "unavailable" };

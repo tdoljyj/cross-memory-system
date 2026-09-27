@@ -1,4 +1,5 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
+import { createStorageFetch } from "./storage-fetch";
 
 const scopes = ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive.metadata.readonly"];
 const encoder = new TextEncoder();
@@ -6,6 +7,10 @@ const id = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const fail = (): never => { throw new Error("storage_google_connection_unavailable"); };
 export class StorageGoogleConnectionError extends Error {
   constructor(readonly reason: string) { super("storage_google_connection_unavailable"); }
+}
+// Private, fixed classifications only: never retain an upstream body/cause.
+class TokenExchangeFailure extends Error {
+  constructor(readonly reason: string) { super("storage_google_token_exchange_failed"); }
 }
 const base64 = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 const hash = async (s: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(s))), b => b.toString(16).padStart(2, "0")).join("");
@@ -44,18 +49,30 @@ export async function createStorageGoogleOAuth(configuration: {
       callback.protocol !== "https:" || callback.username || callback.password || callback.search || callback.hash ||
       callback.pathname !== "/storage/google/callback" || typeof rpc !== "function") fail();
   const vault = await createStorageCredentialVault(configuration.vault);
-  const fetcher = configuration.fetch ?? fetch;
+  const fetcher = createStorageFetch(configuration.fetch);
   const clock = configuration.clock ?? Date.now;
-  async function json(url: string, init: RequestInit): Promise<RecordValue> {
+  async function json(url: string, init: RequestInit, tokenExchange = false): Promise<RecordValue> {
+    let received = false;
     try {
-      const response = await fetcher(url, { ...init, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10000) });
-      if (!response.ok) fail();
+      const response = await fetcher(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(10000) });
+      received = true;
+      if (!response.ok && !tokenExchange) fail();
       const text = await response.text();
       if (text.length > 65536) fail();
       const value: unknown = JSON.parse(text);
       if (!value || typeof value !== "object" || Array.isArray(value)) fail();
+      if (!response.ok) {
+        const reason = (value as RecordValue).error;
+        const known = new Set(["invalid_client", "invalid_grant", "unauthorized_client", "invalid_request", "unsupported_grant_type"]);
+        throw new TokenExchangeFailure(typeof reason === "string" && known.has(reason)
+          ? "token_" + reason : "token_http_rejected");
+      }
       return value as RecordValue;
-    } catch { return fail(); }
+    } catch (error) {
+      if (tokenExchange) throw error instanceof TokenExchangeFailure ? error :
+        new TokenExchangeFailure(received ? "token_response_unreadable" : "token_transport_unconfirmed");
+      return fail();
+    }
   }
   return Object.freeze({
     async start(connectionId: string): Promise<{ authorization_url: string }> {
@@ -97,7 +114,7 @@ export async function createStorageGoogleOAuth(configuration: {
         stage = "token_exchange_unconfirmed";
         const tokens = await json("https://oauth2.googleapis.com/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({ client_id: client, client_secret: clientSecret, redirect_uri: redirect,
-            code: input.code, code_verifier: verifier, grant_type: "authorization_code" }).toString() });
+            code: input.code, code_verifier: verifier, grant_type: "authorization_code" }).toString() }, true);
         stage = "token_response_invalid";
         if (tokens.token_type !== "Bearer" || typeof tokens.access_token !== "string" || tokens.access_token.length < 16 ||
             !Number.isInteger(tokens.expires_in) || Number(tokens.expires_in) < 120 || Number(tokens.expires_in) > 86400) fail();
@@ -133,7 +150,7 @@ export async function createStorageGoogleOAuth(configuration: {
         const result = await rpc({ action: "complete", state_hash: stateHash, provider_subject: subject, credential_envelope: sealed });
         if (result.status !== "completed" || !id.test(String(result.receipt_id))) fail();
         return { status: "completed", receipt_id: String(result.receipt_id) };
-      } catch { throw new StorageGoogleConnectionError(stage); }
+      } catch (error) { throw new StorageGoogleConnectionError(error instanceof TokenExchangeFailure ? error.reason : stage); }
     },
   });
 }

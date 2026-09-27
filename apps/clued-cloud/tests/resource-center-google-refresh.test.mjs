@@ -38,7 +38,7 @@ async function fixture(changes = {}) {
       throw new Error("unexpected RPC");
     },
     fetch: async (url, init) => {
-      calls.push({ url: String(url), init }); assert.equal(init.redirect, "error"); assert.equal(init.cache, "no-store");
+      calls.push({ url: String(url), init }); assert.equal(init.redirect, "manual"); assert.equal(init.cache, "no-store");
       if (String(url) === "https://oauth2.googleapis.com/token") {
         if (changes.networkError) throw new Error("unknown delivery");
         if (changes.malformed) return new Response("not JSON");

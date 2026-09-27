@@ -43,6 +43,16 @@ test("unknown/prototype reasons cannot render arbitrary server text",async()=>{
     assert.equal(f.message(),"连接未确认，请返回连接页检查状态。此操作不会开启文件写入；不会自动重试或放宽权限。");
   }
 });
+
+test("token failure classes show fixed guidance, never upstream error descriptions",async()=>{
+  for(const reason of ["token_invalid_client","token_invalid_grant","token_unauthorized_client","token_invalid_request",
+    "token_unsupported_grant_type","token_http_rejected","token_response_unreadable","token_transport_unconfirmed"]){
+    const f=await fixture({reason,error:"fixture-private-upstream-body"});
+    assert.ok(f.message().includes("不会自动重试或放宽权限"));
+    assert.equal(f.message().includes("fixture-private-upstream-body"),false);
+    await f.remount();assert.equal(f.calls.length,1);
+  }
+});
 test("confirmed callback displays receipt but does not claim file execution; account change wins",async()=>{
   const f=await fixture({status:"completed",receipt_id:"fixture-receipt"},true);
   assert.ok(f.message().includes("fixture-receipt"));assert.ok(f.message().includes("文件操作仍需独立授权"));

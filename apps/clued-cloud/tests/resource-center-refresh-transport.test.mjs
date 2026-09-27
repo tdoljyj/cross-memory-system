@@ -43,7 +43,7 @@ test("scheduler uses only fixed private issuer RPC, bounded batch and non-sensit
   const previous = globalThis.fetch, calls = []; let connections = [connection], pending = 0;
   globalThis.fetch = async (url, init) => {
     assert.equal(String(url), env.SUPABASE_URL+"/rest/v1/rpc/clued_storage_refresh_worker_v1");
-    assert.equal(new Headers(init.headers).get("authorization"), "Bearer fixture-public-key"); assert.equal(init.redirect, "error");
+    assert.equal(new Headers(init.headers).get("authorization"), "Bearer fixture-public-key"); assert.equal(init.redirect, "manual");
     const input = JSON.parse(init.body); calls.push(input);
     assert.equal(input.p_issuer_hash, createHash("sha256").update(issuer).digest("hex"));
     if (input.p_input.action === "due") return Response.json({ connections, pending_expired: pending });

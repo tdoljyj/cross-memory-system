@@ -18,7 +18,7 @@ test("cloud executor runs in workerd; unknown provider effects survive executor 
         const lost = fixture({lostPost:true});
         const first = await lost.run().run(lost.reference);
         const restart = await lost.run().run(lost.reference);
-        const bridged=fixture(), descriptor=await bridged.config.load_job(bridged.reference);
+        const bridged=fixture({redirect:'manual'}), descriptor=await bridged.config.load_job(bridged.reference);
         const token=await bridged.config.get_credential();
         const keys={current_key_id:'test',keys:{test:btoa('b'.repeat(32)).replace(/=+$/,'')}};
         const vault=await createStorageCredentialVault(keys);

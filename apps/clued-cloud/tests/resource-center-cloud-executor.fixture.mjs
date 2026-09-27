@@ -50,7 +50,7 @@ export function fixture(options={}){
         final_result:{status:'committed'},receipt_id:ids.receipt};
     },drive_fetch:async(url,init)=>{
       const u=new URL(url);
-      assert.equal(init.redirect,'error');assert.equal(init.cache,'no-store');
+      assert.equal(init.redirect,options.redirect??'error');assert.equal(init.cache,'no-store');
       if(init.method==='POST'){
         assert.equal(status,'started');assert.ok(trace.includes('provider_attempt'));posts++;trace.push('provider-post');
         files.set('new-id',{id:'new-id',name:'new.txt',parents:['track'],version:'1',trashed:false,mimeType:'text/plain',
