@@ -113,7 +113,7 @@ It pins the submitting grant Receipt and authorization version: revoke/regrant
 cannot revive old queued work. Authority projection, exact mutation and full
 payload must agree; paths must already be canonical, never silently retargeted.
 There is deliberately no public or service-role execute grant on this internal
-function. It is not yet a cloud executor and cannot be advertised as one.
+function. Only the separately qualified server bridge below can call it.
 
 The private cloud-executor candidate now composes the existing admission Host,
 native Drive create effect and postcondition verifier without a mounted disk.
@@ -133,7 +133,7 @@ Concurrent/equal replays disclose no new dispatch permission, changed IDs confli
 and the cloud Host rejects replayed recording receipts. The internal account-job
 finalizer requires that recorded ID/path/parent before reusing the original
 Artifact/Event/Receipt transaction. These private functions have no public or
-service-role execute grant; they still need the qualified fixed-issuer bridge.
+service-role execute grant; the fixed-issuer bridge composes them internally.
 
 The remote boundary scanner exhausts metadata pagination under registered
 parent/scan-root IDs and reuses the deterministic island rules. Partial results,
@@ -144,8 +144,47 @@ are not yet qualified and are rejected. Drive enumeration is not an atomic
 namespace snapshot: this detects observed violations, not arbitrary OS/provider
 writers or every concurrent namespace change. Normal scans use no model/content.
 
-Not yet implemented/qualified: fixed-issuer cloud RPC/credential wiring, live
-Google Web-client/root authorization qualification and formal entry cutover.
+The fixed-issuer bridge candidate derives owner, profile and original writer
+from the Canonical job; no API caller selects any of these. Server-side AEAD
+opening pins owner/connection/provider subject/client/credential revision. The
+database requires separately reviewed immutable runtime qualification for the
+exact profile version and registered tracks. Its `execution_enabled` and the
+Worker's `CLUED_STORAGE_EXECUTOR_V1` both default off. OAuth alone enables neither.
+The public submit route schedules this private bridge using only the returned
+job/connection IDs; inspection never dispatches. Failed preflight records a
+terminal denied/attention outcome instead of leaving an apparently queued job.
+An existing original mutation always takes precedence, including a lost reply.
+
+Recovery starts with a fixed-server metadata-only lookup, independently of the
+original client's now-expired/revoked grant. The original writer is never renewed.
+An exact provider-ID/hash/path/parent verification may settle the original
+Artifact/Event/Receipt transaction using a fresh read-only authority lookup.
+That lookup must agree with the original authority vector. Two-minute writer
+expiry does not prevent this settlement; profile/account/Decision revocation does.
+
+If the Google access token expires, a still-enabled explicit account refresh
+delegation can authorize recovery-only refresh. The existing refresh attempt
+stores exact job/intent/provider-attempt digest plus delegation/credential CAS.
+Ordinary refresh still requires a quiet root. The recovery branch retains the
+file fence, cannot issue writer/admission, and permits only a token-endpoint POST
+followed by GET-only Drive verification. Lost token exchange never retries; an
+identical encrypted commit may retry. Another verifier settling the exact file
+first does not invalidate an already acquired credential-only commit.
+
+Recovery limits are deliberate and incomplete: `invalid_grant`, an unknown token
+exchange, no live refresh delegation or revoked connection keep writes closed.
+There is currently **no implemented manual OAuth recovery contract through an
+unresolved file fence**. General fresh OAuth remains blocked there. Do not claim
+complete automatic/manual recovery; a separately reviewed exact-subject/root
+credential-only recovery contract is residual work, not permission to clear logs.
+
+Tests combine real isolated PostgreSQL, two server executors, encrypted fixture
+credentials and a synthetic provider, plus actual workerd runtime. Revocation,
+unknown refresh and concurrent-settlement fault injections use rollback-only
+fixtures; these are not all real two-client database races or live Google tests.
+
+Not yet qualified: live Google Web-client/root authorization, reviewed production
+activation, formal no-dual-active entry cutover and bounded real-object acceptance.
 Connection `active` means credential connection only, never a qualified writer.
 Do not enable the flag or promote this slice as a working multi-device writer.
 Do not replace the current local entry, revive its disabled scheduler, delete old

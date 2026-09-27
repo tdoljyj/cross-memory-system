@@ -10,13 +10,26 @@ test("cloud executor runs in workerd; unknown provider effects survive executor 
   const { outputFiles } = await build({
     stdin: { contents: `
       import { fixture } from './tests/resource-center-cloud-executor.fixture.mjs';
+      import { createStorageCloudWorker } from './worker/storage-cloud-executor.ts';
+      import { createStorageCredentialVault } from './worker/storage-credential-vault.ts';
       export default { async fetch() {
         const good = fixture();
         const result = await good.run().run(good.reference);
         const lost = fixture({lostPost:true});
         const first = await lost.run().run(lost.reference);
         const restart = await lost.run().run(lost.reference);
-        return Response.json({result,good:good.info(),first,restart,lost:lost.info()});
+        const bridged=fixture(), descriptor=await bridged.config.load_job(bridged.reference);
+        const token=await bridged.config.get_credential();
+        const keys={current_key_id:'test',keys:{test:btoa('b'.repeat(32)).replace(/=+$/,'')}};
+        const vault=await createStorageCredentialVault(keys);
+        const envelope=await vault.seal(JSON.stringify({...token,token_type:'Bearer'}),{owner_id:descriptor.owner_id,
+          connection_id:descriptor.connection_id,provider:'google-drive',provider_subject:descriptor.provider_subject,
+          credential_version:descriptor.credential_version,oauth_client_id:'test-client'});
+        const bridge=await createStorageCloudWorker({client_id:'test-client',vault:keys,clock:bridged.config.clock,fetch:bridged.config.drive_fetch,
+          rpc:async input=>input.action==='load'?{...descriptor,credential_envelope:envelope,oauth_client_id:'test-client'}:
+            bridged.config.rpc(input.action==='finalize'?{...input.finish,connection_id:input.connection_id,job_id:input.job_id}:input)});
+        const bridgedResult=await bridge.run(bridged.reference);
+        return Response.json({result,good:good.info(),first,restart,lost:lost.info(),bridgedResult,bridgedPosts:bridged.info().posts});
       }};`, resolveDir: fileURLToPath(new URL("../", import.meta.url)), sourcefile: "cloud-runtime-fixture.mjs" },
     bundle: true, platform: "node", format: "esm", write: false,
   });
@@ -43,6 +56,8 @@ test("cloud executor runs in workerd; unknown provider effects survive executor 
     assert.equal(body.restart.status, "inspection_required");
     assert.equal(body.lost.posts, 1);
     assert.equal(body.lost.starts, 1);
+    assert.equal(body.bridgedResult.status,"committed");
+    assert.equal(body.bridgedPosts,1);
     assert.equal(outbound, 0);
   } finally { await runtime.dispose(); }
 });

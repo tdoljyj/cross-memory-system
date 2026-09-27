@@ -1,0 +1,104 @@
+import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
+import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
+import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
+import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-postcondition.mjs";
+
+type Data = Record<string, unknown>;
+type Reference = {connection_id: string; job_id: string};
+const object = (value: unknown): value is Data => !!value && typeof value === "object" && !Array.isArray(value);
+const denied = () => new Error("storage_cloud_unavailable");
+const scopes="https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
+
+/** Private server bridge. The fixed RPC authenticates the issuer and derives
+ * owner/profile/writer from Canonical job state. No raw result is an API reply.
+ * Envelope decryption stays here; the native effect receives access_token only.
+ */
+export async function createStorageCloudWorker(config: {
+  client_id: string; vault: Parameters<typeof createStorageCredentialVault>[0];
+  rpc: (input: Data) => Promise<Data>; fetch?: typeof fetch; clock?: () => number;
+  recovery_refresh?: (reference: Reference) => Promise<{status:string}>;
+}) {
+  if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id)) throw denied();
+  const vault = await createStorageCredentialVault(config.vault);
+  return Object.freeze({ async run(reference: Reference) {
+    let loaded: Data | null = null;
+    let recoveryMode=false, refreshed=false;
+    const credential = async (expected: Omit<StorageCredentialContext,"provider"|"oauth_client_id">) => {
+      if (!loaded || expected.owner_id !== loaded.owner_id || expected.connection_id !== loaded.connection_id ||
+          expected.provider_subject !== loaded.provider_subject || expected.credential_version !== loaded.credential_version) throw denied();
+      const context: StorageCredentialContext = {...expected,provider:"google-drive",oauth_client_id:config.client_id};
+      const token: unknown = JSON.parse(await vault.open(loaded.credential_envelope as StorageCredentialEnvelope,context));
+      if (!object(token) || token.token_type !== "Bearer" || typeof token.access_token !== "string" || token.access_token.length<16 ||
+        typeof token.scope!=="string" || [...new Set(token.scope.split(/\s+/))].sort().join(" ")!==scopes ||
+        !Number.isFinite(token.expires_at_ms)) throw denied();
+      if (Number(token.expires_at_ms)-(config.clock??Date.now)()<=60000) {
+        if (!recoveryMode || refreshed || !config.recovery_refresh) throw denied();
+        refreshed=true;
+        if ((await config.recovery_refresh(reference)).status!=="committed") throw denied();
+        const fresh=await config.rpc({...reference,action:"recovery_load"});
+        if (fresh.status!=="recovery_only" || fresh.owner_id!==loaded.owner_id || fresh.connection_id!==loaded.connection_id ||
+          fresh.job_id!==loaded.job_id || fresh.provider_subject!==loaded.provider_subject || fresh.oauth_client_id!==config.client_id ||
+          fresh.intent_id!==loaded.intent_id || fresh.request_sha256!==loaded.request_sha256 ||
+          Number(fresh.credential_version)!==expected.credential_version+1) throw denied();
+        loaded=fresh;
+        return credential({...expected,credential_version:Number(fresh.credential_version)});
+      }
+      return {...expected,access_token:token.access_token,scope:token.scope,expires_at_ms:token.expires_at_ms};
+    };
+    const executor = createResourceCenterCloudExecutor({
+      clock: config.clock ?? Date.now, drive_fetch: config.fetch ?? fetch,
+      load_job: async (ref: Reference) => {
+        const result = await config.rpc({...ref, action:"load"});
+        if (result.status === "queued" && result.oauth_client_id !== config.client_id) throw denied();
+        loaded = result;
+        const descriptor = {...result}; delete descriptor.credential_envelope; delete descriptor.oauth_client_id;
+        return descriptor;
+      },
+      get_credential: credential,
+      rpc: async (input: Data) => {
+        if (!loaded || input.connection_id !== loaded.connection_id || input.job_id !== loaded.job_id) throw denied();
+        const {connection_id, job_id, action, ...body} = input;
+        return config.rpc({connection_id, job_id, action, credential_version:loaded.credential_version,
+          ...(action==="finalize" ? {finish:{action,...body}} : body)});
+      },
+    });
+    try {
+      // Fixed server identity may settle a previously authorized effect even if
+      // the submitting client is revoked. It never needs a successful new load.
+      let recovery: Data | null=null;
+      try { recovery=await config.rpc({...reference,action:"recovery_load"}); } catch { /* No recoverable effect; normal load remains fully gated. */ }
+      if (recovery?.status==="recovery_only") {
+        try {
+          if (typeof recovery.owner_id!=="string" || recovery.connection_id!==reference.connection_id || recovery.job_id!==reference.job_id || recovery.oauth_client_id!==config.client_id ||
+            recovery.provider!=="google-drive" || !object(recovery.profile) || !object(recovery.mutation) || !object(recovery.attempt)) throw denied();
+          loaded=recovery; recoveryMode=true;
+          const recoveryDescriptor=recovery;
+          const metadata=createGoogleDriveMetadataApi({get_credential:()=>credential({owner_id:String(recovery.owner_id),connection_id:reference.connection_id,
+            provider_subject:String(recoveryDescriptor.provider_subject),credential_version:Number((loaded as Data).credential_version)}),
+            fetch:async (url,init) => {
+              if (init?.method!=="GET") throw denied();
+              return (config.fetch??fetch)(url,init);
+            }});
+          const verify=createGoogleDriveCreatePostconditionVerifier({managed_root:String(recovery.profile.managed_root),
+            root_folder_id:String(recovery.root_folder_id),root_parent_id:String(recovery.root_parent_id),get_file:metadata.getFile,list_children:metadata.listChildren,
+            require_effect_provider_id:true,timeout_ms:10000,poll_ms:1000,clock:config.clock??Date.now});
+          const postcondition=await verify({profile:recovery.profile,mutation:recovery.mutation,provider_before:recovery.provider_before,
+            effect_result:{operation:"create",destination_path:recovery.mutation.destination_path,provider_file_id:recovery.attempt.provider_file_id}});
+          const done=await config.rpc({...reference,action:"recovery_finalize",credential_version:(loaded as Data).credential_version,
+            finish:{intent_id:recovery.intent_id,base_version:recovery.version,request_sha256:recovery.request_sha256,postcondition}});
+          if (done.status!=="committed" || done.state!=="committed" || done.intent_id!==recovery.intent_id ||
+            typeof done.receipt_id!=="string" || done.execution_permitted!==false) throw denied();
+          return {status:"committed",job_id:reference.job_id,receipt_id:done.receipt_id,execution_permitted:false};
+        } catch { return {status:"inspection_required",execution_permitted:false}; }
+      }
+      const result=await executor.run(reference);
+      if (loaded && ["deny","unavailable","unreconciled"].includes(result.status)) {
+        try { await config.rpc({...reference,action:"report",credential_version:(loaded as Data).credential_version,
+          outcome:{status:result.status==="deny"?"denied":"attention_required"}}); }
+        catch { /* Never redispatch. Original Canonical journal remains authoritative. */ }
+      }
+      return result;
+    }
+    finally { loaded = null; }
+  }});
+}

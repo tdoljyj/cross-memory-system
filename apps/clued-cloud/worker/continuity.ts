@@ -37,6 +37,7 @@ import { measurePack } from "./context-pack";
 import { AGENT_CONTRACT_MARKDOWN } from "./generated/agent-contract";
 import { createStorageGoogleOAuth } from "./storage-google-oauth";
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
+import { createStorageCloudWorker } from "./storage-cloud-executor";
 
 declare const __CLUED_BUILD_SHA__: string | null;
 
@@ -70,6 +71,7 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6Feature
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
   CLUED_STORAGE_ACCOUNT_V1?: string;
   CLUED_STORAGE_JOBS_V1?: string;
+  CLUED_STORAGE_EXECUTOR_V1?: string;
   CLUED_STORAGE_GOOGLE_V1?: string;
   CLUED_STORAGE_REFRESH_V1?: string;
   CLUED_STORAGE_GOOGLE_CLIENT_ID?: string;
@@ -628,6 +630,29 @@ export async function runProjectionRefreshPipeline(
     return { status: "builder_protocol_error", processed, cas_conflicts: casConflicts };
   }
   return { status: "cycle_limit", processed, cas_conflicts: casConflicts };
+}
+
+export async function runStorageCloudJob(env: ContinuityEnv, reference: {connection_id:string;job_id:string}) {
+  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_JOBS_V1 !== "true" ||
+      env.CLUED_STORAGE_GOOGLE_V1 !== "true" || env.CLUED_STORAGE_EXECUTOR_V1 !== "true") return {status:"disabled"};
+  try {
+    const issuer=env.CLUED_STORAGE_CONNECTOR_ISSUER;
+    if (!issuer || issuer.length<32 || !env.CLUED_STORAGE_VAULT_KEYS) return {status:"unavailable"};
+    const issuerHash=await sha256(issuer);
+    const rpc=async (input:Record<string,unknown>) => await supabaseRequest(env,"/rest/v1/rpc/clued_storage_cloud_worker_v1",{
+      method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_input:input}),
+      signal:AbortSignal.timeout(10000),redirect:"error",
+    }) as Record<string,unknown>;
+    const recoveryRefresh=env.CLUED_STORAGE_REFRESH_V1==="true" ? await createStorageGoogleRefresh({
+      client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID??"",client_secret:env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET??"",
+      vault:JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),rpc:async input => await supabaseRequest(env,"/rest/v1/rpc/clued_storage_refresh_worker_v1",{
+        method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_input:input}),signal:AbortSignal.timeout(10000),redirect:"error",
+      }) as Record<string,unknown>}) : null;
+    const executor=await createStorageCloudWorker({client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID??"",
+      vault:JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),rpc,
+      recovery_refresh:recoveryRefresh ? ref=>recoveryRefresh.run(ref.connection_id,ref.job_id) : undefined});
+    return await executor.run(reference);
+  } catch { return {status:"unavailable"}; }
 }
 
 export async function runStorageRefreshScheduled(env: ContinuityEnv) {
@@ -2184,6 +2209,7 @@ async function handleInformationFlowApi(request: Request, env: ContinuityEnv) {
 async function handleContinuityRequestInner(
   request: Request,
   env: ContinuityEnv,
+  ctx?: ContinuityExecutionContext,
 ): Promise<Response | null> {
   const url = new URL(request.url);
   try {
@@ -2283,11 +2309,15 @@ async function handleContinuityRequestInner(
       if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) return json({ error: "An explicitly granted Clued Binding is required." }, 403);
       const input = await parseBody(request);
       try {
-        // Submission/status only. Never proxy a caller to the private begin
-        // function or return a provider credential/admission through this API.
+        // Public response is submission/status only. Background execution uses
+        // the fixed private issuer, never the caller's supplied policy or token.
         const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_jobs_v1", {
           method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
         });
+        if (ctx && input.action === "submit" && result && typeof result === "object" && "status" in result && ["queued","started","uncertain"].includes(String(result.status)) &&
+            "connection_id" in result && typeof result.connection_id === "string" && "job_id" in result && typeof result.job_id === "string") {
+          ctx.waitUntil(runStorageCloudJob(env,{connection_id:result.connection_id,job_id:result.job_id}));
+        }
         return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });
       } catch {
         return json({ error: "Storage job unavailable." }, 403, { ...corsHeaders(request), "cache-control": "no-store" });
@@ -2378,7 +2408,7 @@ export async function handleContinuityRequest(
   env: ContinuityEnv,
   ctx?: ContinuityExecutionContext,
 ): Promise<Response | null> {
-  const response = await handleContinuityRequestInner(request, env);
+  const response = await handleContinuityRequestInner(request, env, ctx);
   if (response?.ok && ctx && projectionBuilderToken(env) &&
     mayInvalidateApprovedProjection(request)) {
     ctx.waitUntil(runProjectionRefreshPipeline(env));

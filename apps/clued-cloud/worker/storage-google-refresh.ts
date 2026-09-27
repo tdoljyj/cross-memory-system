@@ -27,15 +27,17 @@ export async function createStorageGoogleRefresh(config: {
     if (!response.ok) throw denied(); return read(response);
   }
   return Object.freeze({
-    async run(connection: string): Promise<{ status: string }> {
+    async run(connection: string, recoveryJob?: string): Promise<{ status: string }> {
       if (!uuid.test(connection)) return { status: "unavailable" };
+      if (recoveryJob !== undefined && !uuid.test(recoveryJob)) return { status: "unavailable" };
+      const rpc = (input: Data) => config.rpc({...input,...(recoveryJob ? {recovery_job_id:recoveryJob} : {})});
       const attempt = crypto.randomUUID();
       let claimed: Data;
-      try { claimed = await config.rpc({ action: "claim", connection_id: connection, attempt_id: attempt }); }
+      try { claimed = await rpc({ action: "claim", connection_id: connection, attempt_id: attempt }); }
       catch { return { status: "unavailable" }; }
       if (claimed.status !== "acquired") return { status: "not_acquired" };
       const failure = async (reason: string) => {
-        try { await config.rpc({ action: "fail", connection_id: connection, attempt_id: attempt, reason }); }
+        try { await rpc({ action: "fail", connection_id: connection, attempt_id: attempt, reason }); }
         catch { /* Unknown settlement remains fenced. Never log the upstream data. */ }
         return { status: "unavailable" };
       };
@@ -88,7 +90,7 @@ export async function createStorageGoogleRefresh(config: {
         const commit = { action: "commit", connection_id: connection, attempt_id: attempt, credential_envelope: envelope, expires_at: new Date(expires).toISOString() };
         // Only retry this exact ciphertext commit, which is CAS + receipt-backed.
         for (let tries=0; tries<2; tries++) {
-          try { const result = await config.rpc(commit); if (result.status === "committed") return { status: "committed" }; }
+          try { const result = await rpc(commit); if (result.status === "committed") return { status: "committed" }; }
           catch { /* a lost commit reply is recovered through its original digest */ }
         }
         return { status: "uncertain" };

@@ -20,6 +20,7 @@ const unavailable = () => ({status:"unavailable",execution_permitted:false});
  * run accepts correlation IDs ONLY. Shared DB begin, not this process, owns
  * cross-device exclusion. A lost start/POST is inspection-only forever here.
  * The caller never receives a credential, admission or durable execution grant.
+ * @param {{load_job: Function, rpc: Function, get_credential: Function, drive_fetch?: typeof fetch, clock?: () => number}} config
  */
 export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_credential:getCredential,
   drive_fetch:driveFetch=globalThis.fetch,clock=Date.now}={}){

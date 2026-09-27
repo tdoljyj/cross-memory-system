@@ -44,3 +44,26 @@ test("database rejection does not expose payload or internal diagnostics", async
     assert.equal(result.status, 403); assert.equal((await result.text()).includes("private-content"), false);
   } finally { globalThis.fetch = before; }
 });
+
+test("qualified submit schedules only fixed issuer execution; status reads never dispatch", async () => {
+  const before=globalThis.fetch, calls=[], pending=[];
+  const ref={connection_id:'20000000-0000-4000-8000-000000000001',job_id:'10000000-0000-4000-8000-000000000001'};
+  const secret='synthetic-fixed-issuer-'.repeat(3);
+  const enabled={...env,CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_EXECUTOR_V1:'true',CLUED_STORAGE_CONNECTOR_ISSUER:secret,
+    CLUED_STORAGE_GOOGLE_CLIENT_ID:'fixture-client',CLUED_STORAGE_VAULT_KEYS:JSON.stringify({current_key_id:'v1',keys:{v1:Buffer.alloc(32,7).toString('base64url')}})};
+  globalThis.fetch=async(url,init)=>{
+    const body=JSON.parse(init.body);calls.push({url:String(url),body});
+    if(String(url).endsWith('/clued_storage_jobs_v1'))return Response.json({...ref,status:'queued',execution_permitted:false});
+    assert.equal(String(url),env.SUPABASE_URL+'/rest/v1/rpc/clued_storage_cloud_worker_v1');
+    assert.equal(body.p_issuer_hash,createHash('sha256').update(secret).digest('hex'));
+    if(body.p_input.action==='recovery_load')return Response.json({error:'not_recoverable'},{status:403});
+    assert.deepEqual(body.p_input,{...ref,action:'load'});
+    return Response.json({...ref,contract:'clued.storage-job-execution/1',owner_id:'30000000-0000-4000-8000-000000000001',request_digest:'a'.repeat(64),status:'committed'});
+  };
+  try {
+    const response=await worker.fetch(request({...ref,action:'submit',mutation:{}}),enabled,{waitUntil:p=>pending.push(p)});
+    const body=await response.json();assert.equal(body.status,'queued');assert.equal(JSON.stringify(body).includes(secret),false);
+    await Promise.all(pending);assert.equal(calls.length,3);
+    await worker.fetch(request({...ref,action:'inspect'}),enabled,{waitUntil:p=>pending.push(p)});assert.equal(calls.length,4);assert.equal(pending.length,1);
+  }finally{globalThis.fetch=before;}
+});

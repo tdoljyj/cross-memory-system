@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { testAccountJobs } from "./resource-center-account-jobs-db.fixture.mjs";
+import { testCloudBridge } from "./resource-center-cloud-bridge-db.fixture.mjs";
 const hash = s => createHash("sha256").update(s).digest("hex");
 
 export async function testStorageAccount(t, admin, server, user, decision) {
@@ -76,6 +77,13 @@ export async function testStorageAccount(t, admin, server, user, decision) {
         version=r.committed_versions[connection];return r;
       },
     });
+    await testCloudBridge(t,admin,server,{user,profile,decision,connection,bindings,native,
+      revoke:async()=>{
+        version=Number((await admin.query('select version from clued_private.storage_connections_v1 where id=$1',[connection])).rows[0].version);
+        const r=await account(input('revoke_client',{connection_id:connection,base_version:version,binding_id:bindings[0].binding}));
+        version=r.committed_versions[connection];
+      }});
+    version=Number((await admin.query('select version from clued_private.storage_connections_v1 where id=$1',[connection])).rows[0].version);
     await t.test("session expiry during a real connection lock wait rolls back grant and receipt", async () => {
       await admin.query("update auth.sessions set not_after=clock_timestamp()+interval '3 seconds' where id=$1", [session]);
       await admin.query("begin");

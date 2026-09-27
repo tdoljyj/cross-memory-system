@@ -15,6 +15,7 @@ function driveLiteral(value) {
 }
 
 /** Host-held Drive metadata-only access; never accepts a caller credential. */
+/** @param {{get_credential: Function, fetch?: typeof fetch}} config */
 export function createGoogleDriveMetadataApi({
   get_access_token: getAccessToken,
   get_credential: getCredential,
