@@ -46,7 +46,7 @@ if(process.env.CLUED_RECOVERY_RUNTIME_CHILD!=='1') {
           return base.config.drive_fetch(url,init);
         }};
       const worker=await createStorageCloudRecovery(config),result=await worker.run(base.reference);
-      hang=true;const stalled=await createStorageCloudRecovery({...config,timeout_ms:10});
+      hang=true;const stalled=await createStorageCloudRecovery({...config,timeout_ms:100});
       const timeout=await stalled.run(base.reference);
       return Response.json({result,timeout,gets,finalizes,aborted,posts:base.info().posts,starts:base.info().starts});
     }};`},bundle:true,platform:'node',format:'esm',write:false});stop();

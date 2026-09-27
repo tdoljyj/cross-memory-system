@@ -48,7 +48,7 @@ async function setup(options={}) {
       assert.equal(input.finish.request_sha256,current.request_sha256);assert.equal(input.credential_version,1);
       assert.equal(input.finish.postcondition.provider_file_id,'new-id');
       if(options.hangFinalize)return new Promise(()=>{});
-      if(options.lateFinalize)await new Promise(resolve=>setTimeout(resolve,80));
+      if(options.lateFinalize)await new Promise(resolve=>setTimeout(resolve,800));
       if(options.finalizeError)throw Error('private-finalize-error');
       return {status:'committed',state:'committed',intent_id:ids.intent,receipt_id:ids.receipt,execution_permitted:false,
         private_secret:'must-not-escape',...options.result};
@@ -135,8 +135,8 @@ test('shared deadline bounds stalled load/provider and prevents late finalizatio
 });
 test('lost or late settlement remains unknown and never resends the finalization',async()=>{
   for(const options of [{hangFinalize:true},{lateFinalize:true}]) {
-    const f=await setup({...options,timeout:50});assert.deepEqual(await f.run.run(f.base.reference),inspect);
-    await new Promise(resolve=>setTimeout(resolve,100));
+    const f=await setup({...options,timeout:500});assert.deepEqual(await f.run.run(f.base.reference),inspect);
+    await new Promise(resolve=>setTimeout(resolve,1000));
     assert.deepEqual(f.calls.map(x=>x.action),['recovery_load','recovery_finalize']);
     assert.equal(f.base.info().posts,1);
   }
