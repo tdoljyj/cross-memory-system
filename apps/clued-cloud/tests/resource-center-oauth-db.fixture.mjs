@@ -47,7 +47,8 @@ export async function testStorageOAuth(t, admin, server, user, decision) {
       const stored = (await admin.query("select * from clued_private.storage_connections_v1 where id=$1", [connection])).rows[0];
       assert.equal(stored.state, "active"); assert.equal(stored.credential_version, "1");
       assert.deepEqual(stored.credential_envelope, envelope);
-      assert.equal(Object.keys(result).sort().join(), "receipt_id,status");
+      assert.equal(Object.keys(result).sort().join(), "receipt_id,refresh_enabled,status");
+      assert.equal(result.refresh_enabled, false);
       const receipt = (await admin.query("select status from public.clued_audit_receipts where id=$1", [result.receipt_id])).rows[0];
       assert.equal(receipt.status, "committed");
     });

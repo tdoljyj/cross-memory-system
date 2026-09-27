@@ -22,6 +22,7 @@ const labels: Record<string, string> = { awaiting_provider: "等待 Google 授�
 export default function StorageConnections() {
   const [connections, setConnections] = useState<Connection[]>([]), [message, setMessage] = useState("正在读取……"), [busy, setBusy] = useState(false);
   const [renewals, setRenewals] = useState<Record<string, RefreshStatus>>({});
+  const [defaultRefresh, setDefaultRefresh] = useState<Record<string, boolean>>({});
   const [profileId, setProfileId] = useState(""), [decisionId, setDecisionId] = useState("");
   const registrationBusy = useRef(false);
   const operationBusy = useRef(false);
@@ -43,7 +44,7 @@ export default function StorageConnections() {
     const scheduleRead = () => queueMicrotask(() => { if (!disposed) void refresh(); });
     const { data } = supabase.auth.onAuthStateChange(() => {
       if (disposed) return;
-      ++revision.current; setConnections([]); setRenewals({}); setProfileId(""); setDecisionId("");
+      ++revision.current; setConnections([]); setRenewals({}); setDefaultRefresh({}); setProfileId(""); setDecisionId("");
       // Do not await Supabase calls from inside its auth callback lock.
       scheduleRead();
     });
@@ -71,16 +72,17 @@ export default function StorageConnections() {
     } finally { registrationBusy.current = false; if (epoch === revision.current) setBusy(false); }
   }
   async function renewal(c: Connection, action: "status" | "enable" | "disable") {
+    if (operationBusy.current || busy) return;
     const previous = renewals[c.id];
     if (action !== "status" && !previous) return;
     if (action === "enable" && !window.confirm("允许 Clued 服务端持续续签这条 Google 连接，直到你主动停用？手机、平板或电脑退出登录不影响续签。仅保留现有授权范围，不新增文件写入权限。")) return;
     if (action === "disable" && !window.confirm("停用后不再发起新的后台续签。已经开始的续签需要核对结果，不能靠重新开启跳过。")) return;
-    const epoch = revision.current; setBusy(true);
+    const epoch = revision.current; operationBusy.current = true; setBusy(true);
     try {
       if (action !== "status") await request("/v1/storage/refresh", { action, connection_id: c.id, base_version: previous.connection_version,
-        delegation_version: previous.version, idempotency_key: crypto.randomUUID(), ...(action === "enable" ? { until_revoked: true } : {}) });
+        delegation_version: previous.version, idempotency_key: crypto.randomUUID(), ...(action === "enable" ? { until_revoked: true } : {}) }, () => epoch === revision.current);
       if (epoch !== revision.current) return;
-      const value = await request("/v1/storage/refresh", { action: "status", connection_id: c.id });
+      const value = await request("/v1/storage/refresh", { action: "status", connection_id: c.id }, () => epoch === revision.current);
       if (epoch !== revision.current) return;
       if (typeof value.enabled !== "boolean" || !Number.isSafeInteger(value.version) || !Number.isSafeInteger(value.connection_version) ||
         !Number.isSafeInteger(value.failures) || typeof value.pending !== "boolean" || !(value.next_refresh_at === null || typeof value.next_refresh_at === "string")) throw new Error("续签状态未确认。");
@@ -92,18 +94,21 @@ export default function StorageConnections() {
         setRenewals(old => { const next = { ...old }; delete next[c.id]; return next; });
         setMessage(error instanceof Error ? error.message : "续签设置未确认，请重新查询状态。");
       }
-    } finally { if (epoch === revision.current) setBusy(false); }
+    } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
   }
   async function operate(c: Connection, revoke: boolean) {
     if (operationBusy.current || busy) return;
     if (revoke && !window.confirm("停用这条账号存储连接？这会阻止该连接后续的新执行和续签；已开始的操作需要核对回执。")) return;
+    const enrollRefresh = !revoke && c.state === "awaiting_provider" && (defaultRefresh[c.id] ?? true);
+    if (enrollRefresh && !window.confirm("连接成功后，允许 Clued 服务端按原范围自动续签，直到你停用？可先取消并取消勾选。已有停用或失效记录会保持关闭，不会恢复；这不授予 Agent 文件写入权限。")) return;
     operationBusy.current = true;
     setBusy(true);
     const epoch = revision.current;
     try {
       if (revoke) { await request("/v1/storage/account", { action: "revoke_connection", connection_id: c.id, base_version: c.version, idempotency_key: crypto.randomUUID() }, () => epoch === revision.current); if (epoch === revision.current) await refresh(); }
       else {
-        const result = await request("/v1/storage/google/start", { connection_id: c.id }, () => epoch === revision.current);
+        const result = await request("/v1/storage/google/start", { connection_id: c.id,
+          ...(c.state === "awaiting_provider" ? { default_refresh: enrollRefresh } : {}) }, () => epoch === revision.current);
         if (epoch !== revision.current) return;
         if (typeof result.authorization_url !== "string") throw new Error("授权地址未确认。");
         const url = new URL(result.authorization_url);
@@ -126,10 +131,13 @@ export default function StorageConnections() {
     </section>
     {connections.map(c => <section className="my-4 rounded-xl border p-4" key={c.id}>
       <h2>{c.provider} · {labels[c.state] ?? "状态待确认"}</h2><p className="my-2 break-all text-sm">连接：{c.id}</p>
+      {c.state === "awaiting_provider" && <label className="my-2 block"><input type="checkbox" disabled={busy}
+        checked={defaultRefresh[c.id] ?? true} onChange={event => setDefaultRefresh(old => ({ ...old, [c.id]: event.target.checked }))} />
+        连接成功后自动续签（可取消；已有停用或失效设置不变）</label>}
       {c.state !== "revoked" && <div className="flex gap-4"><button disabled={busy} onClick={() => void operate(c, false)}>连接 / 重新授权 Google</button>
         <button disabled={busy} onClick={() => void operate(c, true)}>停用连接</button></div>}
       <div className="mt-4 border-t pt-4"><h3>账号级后台续签</h3>
-        <p className="my-2 text-sm">独立授权、默认关闭；开启后由服务端执行，不依赖任何设备在线。此开关不授予 Agent 整理或写入文件的权限。</p>
+        <p className="my-2 text-sm">新连接在授权时默认选择自动续签，可取消或随时停用；已有停用设置不会自动恢复。由服务端执行，不依赖任何设备在线，不授予 Agent 整理或写入文件的权限。</p>
         <button disabled={busy} onClick={() => void renewal(c, "status")}>查询续签状态</button>
         {renewals[c.id] && <><p role="status" className="my-2">{renewals[c.id].enabled ? "后台续签已开启" : "后台续签已关闭"}
           {renewals[c.id].pending ? "；存在尚未确认的续签。请核对结果，必要时重新授权 Google。" : ""}

@@ -71,6 +71,17 @@ test("new server Google consent uses exact scopes, PKCE and durable state before
   assert.equal(JSON.stringify(result).includes("fixture-only-client-secret"), false);
   assert.equal(JSON.stringify(f.pending()).includes(url.searchParams.get("state")), false);
 });
+test("default refresh is prepare-bound and server eligibility cannot be overridden by the caller",async()=>{
+  for(const eligible of [true,false,undefined]) {
+    const f=await fixture({descriptor:{default_refresh_eligible:eligible}});
+    await f.oauth.start(d.connection_id,true);
+    assert.equal(f.pending().default_refresh_consent,eligible===true);
+    assert.equal(f.calls.length,0);
+  }
+  const legacy=await fixture({descriptor:{default_refresh_eligible:true}});
+  await legacy.oauth.start(d.connection_id);
+  assert.equal(Object.hasOwn(legacy.pending(),'default_refresh_consent'),false);
+});
 test("one code exchange verifies exact root and stores ciphertext only; replay recovers receipt", async () => {
   const f = await fixture(), url = new URL((await f.oauth.start(d.connection_id)).authorization_url);
   const input = { state: url.searchParams.get("state"), code: "fixture-auth-code" };
