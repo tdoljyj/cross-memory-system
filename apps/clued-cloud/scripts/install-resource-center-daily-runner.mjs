@@ -89,7 +89,11 @@ export async function installDailyHost({ destination, consumer_runtime_directory
   await freshFile(path.join(destination, "Repair-CluedResourceCenter.disabled.ps1"), settlementLauncher);
   if (input.renewal) {
     await freshFile(path.join(destination, "Renew-CluedResourceCenter.disabled.ps1"), launcher.replaceAll(invoke, `${invoke} --renew`));
-    await freshFile(path.join(destination, "Stop-CluedResourceCenter.disabled.ps1"), launcher.replaceAll(invoke, `${invoke} --stop-renewal`));
+    // Attenuation remains available after activation is removed. Node, bundle
+    // and config pins still apply; only the write-activation prerequisite drops.
+    const stopLauncher = launcher.replace(`,\n  @{ Path = ${ps(c.activation_path)}; Hash = '${c.activation_sha256}' }`, "")
+      .replaceAll(invoke, `${invoke} --stop-renewal`);
+    await freshFile(path.join(destination, "Stop-CluedResourceCenter.disabled.ps1"), stopLauncher);
   }
   const manifest = { contract: "clued.resource-center-daily-install/1", state: "staged-not-enabled",
     destination, node_path: nodePath, node_sha256: nodeHash, config_sha256: hash(configBytes),

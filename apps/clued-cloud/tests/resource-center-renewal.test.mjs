@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import { renewResourceCenter, activeRenewalCredentials, openRenewalStore, withResourceCenterLifecycle, callRenewal, stopResourceCenter } from "../../../kernel/host/resource-center-renewal.mjs";
+import { renewResourceCenter, activeRenewalCredentials, openRenewalStore, withResourceCenterLifecycle, callRenewal, stopResourceCenter, guardedResourceCenterFetch, assertResourceCenterNotStopped } from "../../../kernel/host/resource-center-renewal.mjs";
 import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 
 const hash = v => createHash("sha256").update(v).digest("hex");
@@ -104,6 +104,22 @@ test("emergency stop works with crash locks and incomplete later journal, never 
   assert.deepEqual(seen, originalRequest);assert.equal(await fs.readFile(filename, "utf8"), before);
   assert.equal(await fs.readFile(path.join(dir, "executor.lock"), "utf8"), "unresolved");
   assert.equal(await fs.readFile(path.join(dir, "lifecycle.lock"), "utf8"), "crashed");
+});
+test("stop during stdin or credential wait blocks later dispatch even when server is offline", async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "clued-stop-race-"));t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  let calls = 0;const guarded = guardedResourceCenterFetch(dir, async () => { calls++;return Response.json({}); });
+  assertResourceCenterNotStopped(dir); // invocation has already started
+  let release;const credential = new Promise(r => { release = r; });
+  const inFlight = (async () => { await credential;return guarded("https://www.googleapis.com/upload/drive/v3/files", { method: "POST" }); })();
+  await fs.writeFile(path.join(dir, "renewal-stop.json"), "stop persisted; remote offline");release();
+  await assert.rejects(inFlight, /STOPPED/);assert.equal(calls, 0);
+  assert.throws(() => assertResourceCenterNotStopped(dir), /STOPPED/); // after stdin
+});
+test("stop after rotation reply prevents successor activation", async () => {
+  const f = fixture();let stopped = false;
+  const r = await f.run({ request: async (...args) => { const result = await f.request(...args);stopped = true;return result; },
+    assert_active: () => { if (stopped) throw Error("DAILY_RENEWAL_STOPPED"); } });
+  assert.equal(r.status, "needs_attention");assert.equal(f.store.read().phase, "pending");assert.equal(f.calls.length, 1);
 });
 test("dedicated renewal transport never echoes token hashes, rejects other credential roles", async () => {
   const worker = await loadContinuityWorker(), original = globalThis.fetch;let calls = 0;

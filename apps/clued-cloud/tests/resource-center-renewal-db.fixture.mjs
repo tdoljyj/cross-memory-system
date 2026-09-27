@@ -65,6 +65,23 @@ export async function testRenewalDatabase(t, admin, server, user, decision) {
       assert.equal((await admin.query("select clued_private.resource_center_renewal_current_v1($1) ok", [reader])).rows[0].ok, false);
     } finally { await admin.query("rollback"); }
   });
+  await t.test("Decision close winning a real row-lock wait denies the waiting status", async () => {
+    const competitor = server.getPgClient();await competitor.connect();
+    const pid = (await competitor.query("select pg_backend_pid() pid")).rows[0].pid;
+    const version = (await admin.query("select version from public.clued_memories where id=$1", [decision])).rows[0].version;
+    try {
+      await admin.query("begin");await admin.query("select id from public.clued_memories where id=$1 for update", [decision]);
+      const pending = renew(req.renewal_hash, status(), competitor);let waiting = false;
+      for (let i=0;i<100;i++) { waiting=(await admin.query("select exists(select 1 from pg_locks where pid=$1 and not granted) waiting",[pid])).rows[0].waiting;if(waiting)break;await new Promise(r=>setTimeout(r,10)); }
+      assert.equal(waiting,true);
+      await admin.query("update public.clued_memories set version=version+1 where id=$1", [decision]);await admin.query("commit");
+      assert.equal((await pending).status,"denied");
+    } finally {
+      await admin.query("rollback");await competitor.end();
+      // Isolated fixture reset only, never a production authority operation.
+      await admin.query("update public.clued_memories set version=$2 where id=$1", [decision,version]);
+    }
+  });
   await t.test("expiry after waiting for profile lock denies renewal", async () => {
     const competitor = server.getPgClient();await competitor.connect();
     try {

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { lstatSync } from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -8,6 +9,16 @@ const fail = code => { throw new Error(code); };
 const digest = value => createHash("sha256").update(value).digest("hex");
 const uuid = value => /^[0-9a-f-]{36}$/.test(value ?? "");
 const ttl = 24 * 60 * 60 * 1000;
+export function assertResourceCenterNotStopped(directory) {
+  try { lstatSync(path.join(directory, "renewal-stop.json"));fail("DAILY_RENEWAL_STOPPED"); }
+  catch (e) { if (e.code !== "ENOENT") throw e; }
+}
+/** Synchronous check immediately before network dispatch, including after an
+ * asynchronously refreshed Google credential. Already-dispatched I/O is not
+ * cancelled or described as rolled back by a later stop. */
+export function guardedResourceCenterFetch(directory, fetchImpl = fetch) {
+  return (url, options) => { assertResourceCenterNotStopped(directory);return fetchImpl(url, options); };
+}
 
 /** Whole Host invocation lock, acquired BEFORE loading any credentials. It is
  * additional to, and never clears, the existing executor/recovery fences. */
@@ -107,7 +118,7 @@ export async function stopResourceCenter({ directory, filename, identity, unseal
 /** Called under lifecycle + executor locks. Injected clock/transport are test
  * seams in the trusted Host, never consumer arguments. No provider operation. */
 export async function renewResourceCenter({ store, profile_id: profileId, jobs, request = callRenewal, now = Date.now,
-  stop = false, notify = async () => {} }) {
+  stop = false, notify = async () => {}, assert_active: assertActive = () => {} }) {
   let state = store.read();
   if (state.profile_id !== profileId) fail("DAILY_RENEWAL_PROFILE_MISMATCH");
   if (stop) {
@@ -134,17 +145,19 @@ export async function renewResourceCenter({ store, profile_id: profileId, jobs, 
   state = { ...state, attempts: state.attempts + 1, retry_after: now() + Math.min(60, 2 ** state.attempts) * 60000 };
   await store.append(state); // a crash cannot reset the retry budget
   try {
+    assertActive();
     const result = await request(state.renewal, state.exact);
     if (result.status !== "rotated" || result.grant_id !== state.grant_id || result.profile_id !== profileId ||
       result.generation !== state.generation + 1 || !uuid(result.receipt_id) ||
       !Number.isFinite(Date.parse(result.expires_at)) || Date.parse(result.expires_at) - now() < 10 * 60000 ||
       Date.parse(result.expires_at) - now() > ttl + 60000) fail("DAILY_RENEWAL_NOT_COMMITTED");
     // Revocation wins over a recovered historical receipt before activation.
+    assertActive();
     const live = await request(state.next.renewal, { action: "status", request_id: randomUUID() });
     if (live.status !== "active" || live.grant_id !== result.grant_id || live.generation !== result.generation || live.expires_at !== result.expires_at) fail("DAILY_RENEWAL_NOT_CURRENT");
     const active = { contract: state.contract, profile_id: profileId, grant_id: state.grant_id,
       generation: result.generation, phase: "active", ...state.next, expires_at: result.expires_at, receipt_id: result.receipt_id };
-    await store.append(active);
+    assertActive();await store.append(active);assertActive();
     return { status: "rotated", generation: result.generation, expires_at: result.expires_at, receipt_id: result.receipt_id };
   } catch {
     await notify("DAILY_RENEWAL_NEEDS_ATTENTION");

@@ -10,7 +10,7 @@ import { createResourceCenterGoogleDriveNativeWriterToolHost } from "../../../ke
 import { createResourceCenterRecoveryStore, createResourceCenterProviderAttemptStore } from "../../../kernel/host/resource-center-recovery-store.mjs";
 import { runDailyJob, validateDailyJob, settleDailyJob } from "../../../kernel/host/resource-center-daily-job.mjs";
 import { createResourceCenterWriteClient } from "../../../kernel/host/resource-center-write-client.mjs";
-import { withResourceCenterLifecycle, openRenewalStore, activeRenewalCredentials, renewResourceCenter, stopResourceCenter } from "../../../kernel/host/resource-center-renewal.mjs";
+import { withResourceCenterLifecycle, openRenewalStore, activeRenewalCredentials, renewResourceCenter, stopResourceCenter, assertResourceCenterNotStopped, guardedResourceCenterFetch, callRenewal } from "../../../kernel/host/resource-center-renewal.mjs";
 
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const fail = code => { throw new Error(code); };
@@ -59,7 +59,7 @@ export async function loadDailyHostConfig(configPath, expectedHash, { stopOnly =
   const bytes = await safeFile(configPath);
   if (hash(bytes) !== expectedHash) fail("DAILY_CONFIG_PIN_MISMATCH");
   const c = JSON.parse(bytes);
-  if (!path.isAbsolute(c.activation_path ?? "") || hash(await safeFile(c.activation_path)) !== c.activation_sha256) fail("DAILY_ACTIVATION_REQUIRED");
+  if (!path.isAbsolute(c.activation_path ?? "") || (!stopOnly && hash(await safeFile(c.activation_path)) !== c.activation_sha256)) fail("DAILY_ACTIVATION_REQUIRED");
   if (c.contract !== "clued.resource-center-daily-host/1" || c.enabled !== true ||
     c.profile?.registration_status !== "registered" || !path.isAbsolute(c.profile.managed_root ?? "") ||
     !c.root_folder_id || !c.root_parent_id || c.distribution !== "Ubuntu-24.04" ||
@@ -135,8 +135,7 @@ export async function main(configPath, expectedHash, mode) {
   return withResourceCenterLifecycle(c.state_directory, async () => {
     let store;
     try {
-      try { await fs.lstat(path.join(c.state_directory, "renewal-stop.json"));fail("DAILY_RENEWAL_STOPPED"); }
-      catch (e) { if (e.code !== "ENOENT") throw e; }
+      assertResourceCenterNotStopped(c.state_directory);
       if (c.renewal) store = await openRenewalStore(c.renewal.path, c.renewal.identity, { seal, unseal: decrypt });
       if (["--renew", "--stop-renewal"].includes(mode)) {
         if (!store) fail("DAILY_RENEWAL_NOT_INSTALLED");
@@ -147,8 +146,11 @@ export async function main(configPath, expectedHash, mode) {
         try {
           if (lock) { await lock.writeFile(JSON.stringify({ pid: process.pid, profile_id: c.profile.profile_id }));await lock.sync(); }
           const result = await renewResourceCenter({ store, profile_id: c.profile.profile_id,
-            jobs: await fs.readFile(path.join(c.state_directory, "jobs.jsonl"), "utf8"), stop: mode === "--stop-renewal", notify: () => notifyRenewal(c) });
+            jobs: await fs.readFile(path.join(c.state_directory, "jobs.jsonl"), "utf8"), stop: mode === "--stop-renewal", notify: () => notifyRenewal(c),
+            assert_active: () => assertResourceCenterNotStopped(c.state_directory),
+            request: (token, request) => callRenewal(token, request, guardedResourceCenterFetch(c.state_directory)) });
           if (result.status === "rotated") await fs.unlink(path.join(c.state_directory, "renewal-notified.json")).catch(e => { if (e.code !== "ENOENT") throw e; });
+          if (result.status === "needs_attention") process.exitCode = 2;
           process.stdout.write(JSON.stringify(result) + "\n");return;
         } finally { if (lock) { await lock.close();await fs.unlink(path.join(c.state_directory, "executor.lock")); } }
       }
@@ -163,6 +165,7 @@ async function runWithCredentials(c, mode, secrets) {
     length += chunk.length; if (length > 2 * 1024 * 1024) fail("DAILY_INPUT_LIMIT"); chunks.push(chunk);
   }
   const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  assertResourceCenterNotStopped(c.state_directory);
   validateDailyCredentials(secrets, c.profile.profile_id);
   if (mode === "--settle") {
     if (!input || Object.keys(input).sort().join(",") !== "job_id,request_key" ||
@@ -194,6 +197,7 @@ async function runWithCredentials(c, mode, secrets) {
   const recovery = createResourceCenterRecoveryStore(c.recovery_path);
   const attempts = createResourceCenterProviderAttemptStore(c.attempt_path);
   const host = createResourceCenterGoogleDriveNativeWriterToolHost({ trusted_profile: c.profile,
+    drive_fetch: guardedResourceCenterFetch(c.state_directory), authority_fetch: guardedResourceCenterFetch(c.state_directory),
     root_folder_id: c.root_folder_id, root_parent_id: c.root_parent_id, get_drive_credential: getCredential,
     authority_endpoint: "https://clued.pixelgrav.com/v1/resource-center/authority", authority_binding_token: secrets.reader,
     writer_endpoint: "https://clued.pixelgrav.com/v1/resource-center/write", writer_binding_token: secrets.writer,
