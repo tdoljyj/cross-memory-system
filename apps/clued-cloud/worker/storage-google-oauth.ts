@@ -75,6 +75,15 @@ export async function createStorageGoogleOAuth(configuration: {
     }
   }
   return Object.freeze({
+    async inspectRecovery(state: string): Promise<{ status: string; receipt_id: string | null; execution_permitted: false }> {
+      if (typeof state !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(state)) fail();
+      const result = await rpc({ action: "inspect", state_hash: await hash(state) });
+      if (result.purpose !== "credential_recovery" || !["prepared", "claimed", "completed", "expired"].includes(String(result.status)) ||
+        typeof result.status !== "string" || result.execution_permitted !== false ||
+        !(result.receipt_id === null || (typeof result.receipt_id === "string" && id.test(result.receipt_id))) ||
+        (result.status === "completed" && result.receipt_id === null)) fail();
+      return { status: result.status as string, receipt_id: result.receipt_id as string | null, execution_permitted: false };
+    },
     async start(connectionId: string, defaultRefresh = false): Promise<{ authorization_url: string }> {
       try {
         if (!id.test(connectionId)) fail();
@@ -94,7 +103,7 @@ export async function createStorageGoogleOAuth(configuration: {
         return { authorization_url: url.href };
       } catch { return fail(); }
     },
-    async complete(input: { state: string; code: string }): Promise<{ status: "completed"; receipt_id: string; refresh_enabled?: boolean }> {
+    async complete(input: { state: string; code: string }): Promise<{ status: "completed"; receipt_id: string; refresh_enabled?: boolean; purpose?: "credential_recovery" }> {
       // Only these fixed local stage names leave this boundary. Never expose an
       // upstream body, exception, code, state, token, subject or provider file ID.
       let stage = "callback_invalid";
@@ -105,7 +114,8 @@ export async function createStorageGoogleOAuth(configuration: {
         stage = "attempt_unavailable";
         const claimed = await rpc({ action: "claim", state_hash: stateHash });
         if (claimed.status === "completed" && id.test(String(claimed.receipt_id))) return { status: "completed", receipt_id: String(claimed.receipt_id),
-          ...(typeof claimed.refresh_enabled === "boolean" ? { refresh_enabled: claimed.refresh_enabled } : {}) };
+          ...(claimed.purpose === "credential_recovery" ? { purpose: "credential_recovery" as const } :
+            typeof claimed.refresh_enabled === "boolean" ? { refresh_enabled: claimed.refresh_enabled } : {}) };
         const d = descriptor(claimed, client, redirect);
         if (claimed.status !== "claimed" || !id.test(String(claimed.attempt_id))) fail();
         stage = "verifier_unavailable";
@@ -152,7 +162,8 @@ export async function createStorageGoogleOAuth(configuration: {
         const result = await rpc({ action: "complete", state_hash: stateHash, provider_subject: subject, credential_envelope: sealed });
         if (result.status !== "completed" || !id.test(String(result.receipt_id))) fail();
         return { status: "completed", receipt_id: String(result.receipt_id),
-          ...(typeof result.refresh_enabled === "boolean" ? { refresh_enabled: result.refresh_enabled } : {}) };
+          ...(result.purpose === "credential_recovery" ? { purpose: "credential_recovery" as const } :
+            typeof result.refresh_enabled === "boolean" ? { refresh_enabled: result.refresh_enabled } : {}) };
       } catch (error) { throw new StorageGoogleConnectionError(error instanceof TokenExchangeFailure ? error.reason : stage); }
     },
   });

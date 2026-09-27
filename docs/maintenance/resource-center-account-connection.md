@@ -196,12 +196,13 @@ followed by GET-only Drive verification. Lost token exchange never retries; an
 identical encrypted commit may retry. Another verifier settling the exact file
 first does not invalidate an already acquired credential-only commit.
 
-Recovery limits are deliberate and incomplete: `invalid_grant`, an unknown token
-exchange, no live refresh delegation or revoked connection keep writes closed.
-There is currently **no implemented manual OAuth recovery contract through an
-unresolved file fence**. General fresh OAuth remains blocked there. Do not claim
-complete automatic/manual recovery; a separately reviewed exact-subject/root
-credential-only recovery contract is residual work, not permission to clear logs.
+General fresh OAuth remains blocked by an unresolved file fence. The separate
+credential-only human recovery candidate described in
+[writer recovery](resource-center-writer-recovery.md) binds the original job and
+does not activate the connection or alter permissions. It requires fresh human
+Google consent, the same subject/client/root/scopes and native session plus fixed
+issuer. Revoked connections stay unavailable. This implementation is not live
+Google acceptance, permission to clear logs, or a claim of complete recovery.
 
 Tests combine real isolated PostgreSQL, two server executors, encrypted fixture
 credentials and a synthetic provider, plus actual workerd runtime. Revocation,

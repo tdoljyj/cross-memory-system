@@ -87,3 +87,33 @@ test("default refresh requires the refresh feature and a strict boolean before a
     assert.equal(rpcCalls,0);
   } finally {globalThis.fetch=original;}
 });
+
+test('recovery start pins one job and describe fingerprint, without new execution flags or default refresh',async()=>{
+  const original=globalThis.fetch,job=randomUUID(),calls=[];
+  globalThis.fetch=async(url,init)=>{
+    if(String(url).endsWith('/auth/v1/user'))return Response.json({id:'fixture-owner'});
+    assert.equal(String(url),env.SUPABASE_URL+'/rest/v1/rpc/clued_storage_recovery_oauth_start_v1');
+    assert.equal(init.redirect,'manual');assert.ok(init.signal);
+    assert.equal(new Headers(init.headers).get('authorization'),'Bearer fixture-native');
+    const body=JSON.parse(init.body);calls.push(body);
+    assert.equal(body.p_issuer_hash,createHash('sha256').update(issuer).digest('hex'));
+    assert.equal(body.p_input.job_id,job);assert.equal(body.p_input.connection_id,connection);
+    if(body.p_input.action==='describe')return Response.json({owner_id:randomUUID(),connection_id:connection,connection_version:9,credential_version:4,
+      provider_subject:'fixture-subject',oauth_client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID,redirect_uri:env.CLUED_STORAGE_GOOGLE_REDIRECT_URI,
+      root_folder_id:'root',root_parent_id:'parent',recovery_binding:'e'.repeat(64),default_refresh_eligible:true});
+    assert.equal(body.p_input.recovery_binding,'e'.repeat(64));assert.equal(body.p_input.connection_version,9);
+    assert.equal(Object.hasOwn(body.p_input,'default_refresh_consent'),false);
+    return Response.json({status:'prepared'});
+  };
+  try{
+    const response=await worker.fetch(request('recovery/start',{connection_id:connection,job_id:job}),env);
+    assert.equal(response.status,200);assert.equal(calls.length,2);assert.equal(response.headers.get('cache-control'),'no-store');
+    const result=await response.json();assert.equal(new URL(result.authorization_url).searchParams.get('include_granted_scopes'),'false');
+    assert.deepEqual(Object.keys(result),['authorization_url']);
+    for(const bad of [{default_refresh:true},{purpose:'connection'},{recovery_binding:'f'.repeat(64)},{managed_root:'/caller'},{job_id:['x']},{connection_id:{}}]){
+      assert.equal((await worker.fetch(request('recovery/start',{connection_id:connection,job_id:job,...bad}),env)).status,403);
+    }
+    assert.equal(calls.length,2);
+    assert.equal((await worker.fetch(request('recovery/start',{connection_id:connection,job_id:job},'clued_bnd_'+'a'.repeat(64)),env)).status,401);
+  }finally{globalThis.fetch=original;}
+});

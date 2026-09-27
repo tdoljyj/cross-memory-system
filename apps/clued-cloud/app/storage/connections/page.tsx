@@ -130,19 +130,29 @@ export default function StorageConnections() {
       if (epoch === revision.current) setMessage(error instanceof Error ? error.message : "存储授权未确认，请查询授权核对。");
     } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
   }
-  async function recover(c: Connection, action: "inspect" | "settle") {
+  async function recover(c: Connection, action: "inspect" | "settle" | "authorize") {
     if (operationBusy.current || registrationBusy.current || busy) return;
     const job = recoveryJobs[c.id]?.trim(), prior = recoveryViews[c.id];
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     if (!job || !uuid.test(job)) { setMessage("请填写原存储任务 ID；不要生成新任务重试。"); return; }
-    if (action === "settle") {
+    if (action === "settle" || action === "authorize") {
       if (!["active", "reauthorization_required"].includes(c.state) || prior?.job_id !== job || !["started", "uncertain"].includes(prior.status)) return;
-      if (!window.confirm(`核对原任务 ${job} 的 Google 元数据，并在结果一致时登记原回执？不会重新创建文件、恢复权限或续签。`)) return;
+      if (!window.confirm(action === "authorize"
+        ? `为原任务 ${job} 重新取得同一 Google 账号的两项既有权限？只更新服务端凭据；不恢复已停用连接、Agent 权限或后台续签，不重新创建文件。Google 最终同意由你确认。`
+        : `核对原任务 ${job} 的 Google 元数据，并在结果一致时登记原回执？不会重新创建文件、恢复权限或续签。`)) return;
     }
     const epoch = revision.current;
     operationBusy.current = true; setBusy(true);
     setRecoveryViews(old => { const next = { ...old }; delete next[c.id]; return next; });
     try {
+      if (action === "authorize") {
+        const result = await request("/v1/storage/google/recovery/start", { connection_id: c.id, job_id: job }, () => epoch === revision.current);
+        if (epoch !== revision.current) return;
+        if (typeof result.authorization_url !== "string") throw new Error("Unconfirmed");
+        const url = new URL(result.authorization_url);
+        if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" || url.username || url.password) throw new Error("Unconfirmed");
+        window.location.assign(url.href); return;
+      }
       const result = await request("/v1/storage/recovery", { action, connection_id: c.id, job_id: job }, () => epoch === revision.current);
       if (epoch !== revision.current) return;
       if (result.execution_permitted !== false || result.job_id !== job || typeof result.receipt_id !== "string" || !uuid.test(result.receipt_id)) throw new Error("Unconfirmed");
@@ -264,7 +274,8 @@ export default function StorageConnections() {
         <button disabled={busy || !recoveryJobs[c.id]?.trim()} onClick={() => void recover(c, "inspect")}>查询原任务回执</button>
         {recoveryViews[c.id] && <><p role="status" className="my-2 break-all">{recoveryLabels[recoveryViews[c.id].status]}；回执：{recoveryViews[c.id].receipt_id}</p>
           {["active", "reauthorization_required"].includes(c.state) && ["started", "uncertain"].includes(recoveryViews[c.id].status) &&
-            <button disabled={busy} onClick={() => void recover(c, "settle")}>核验并登记原结果（不重写）</button>}</>}
+            <><button disabled={busy} onClick={() => void recover(c, "settle")}>核验并登记原结果（不重写）</button>
+              <button disabled={busy} onClick={() => void recover(c, "authorize")}>凭据过期：重新授权以核对原任务</button></>}</>}
       </details>
       {c.state === "active" && <div className="my-2"><button disabled={busy} onClick={() => void observeDirectories(c)}>检查已登记目录（只读）</button>
         <p className="text-sm">只核对服务端登记目录的访问与元数据，不读取文件正文，不授予 Agent 写入权限。</p></div>}
