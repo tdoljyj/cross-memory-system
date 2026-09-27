@@ -38,10 +38,44 @@ jobs:
           echo "TRIVY_CACHE_DIR=$TRIVY_CACHE_DIR" >> "$GITHUB_ENV"
       - name: Download vulnerability database through runner network
         timeout-minutes: 22
+        env:
+          TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9
+          # When every download attempt fails, a cached database built within
+          # this many hours is still used, with a warning. Older or missing
+          # databases fail the job as before.
+          TRIVY_DB_FALLBACK_MAX_AGE_HOURS: "72"
         run: |
           # Only the pinned scanner and its cache use the runner network. No
           # checkout or Docker socket is mounted during this download. A host
           # loopback proxy is otherwise unreachable from the container bridge.
+          db_dir="$TRIVY_CACHE_DIR/db"
+          metadata_epoch() {
+            value="$(sed -n "s/.*\"$1\" *: *\"\([^\"]*\)\".*/\1/p" "$db_dir/metadata.json" 2>/dev/null | head -n 1)"
+            if [ -n "$value" ]; then date -u -d "$value" +%s 2>/dev/null || true; fi
+          }
+          now="$(date -u +%s)"
+          next_update="$(metadata_epoch NextUpdate)"
+          if [ -f "$db_dir/trivy.db" ] && [ -n "$next_update" ] && [ "$now" -lt "$next_update" ]; then
+            echo "Cached vulnerability database is current; no download needed."
+            exit 0
+          fi
+
+          # Trivy deletes the cached metadata before it downloads, so a failed
+          # in-place download destroys the last good database. Download into a
+          # per-run staging cache and swap it in only after success. The cache
+          # is root-owned by the container, so file operations run in it too.
+          staging="trivy-db-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          in_cache() {
+            docker run --rm --network none --entrypoint sh \
+              -v "$TRIVY_CACHE_DIR:/cache" "$TRIVY_IMAGE" -ec "$1" sh "$staging"
+          }
+          # Also drop staging caches abandoned by cancelled runs.
+          cleanup_staging() {
+            in_cache 'rm -rf "/cache/$1"
+              find /cache -maxdepth 1 -name "trivy-db-staging-*" -mmin +120 -exec rm -rf {} \;' || true
+          }
+          trap cleanup_staging EXIT
+
           downloaded=false
           for repository in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do
             for attempt in 1 2; do
@@ -49,20 +83,40 @@ jobs:
               -e HTTP_PROXY -e HTTPS_PROXY -e NO_PROXY \
               -e http_proxy -e https_proxy -e no_proxy \
               -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
-              ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-              fs --download-db-only --timeout 5m --db-repository "$repository"; then
+              "$TRIVY_IMAGE" \
+              fs --download-db-only --timeout 5m --cache-dir "/root/.cache/trivy/$staging" --db-repository "$repository"; then
               downloaded=true
               break 2
             fi
             sleep "$attempt"
             done
           done
-          test "$downloaded" = true
+          if [ "$downloaded" = true ]; then
+            in_cache 'rm -rf /cache/db.previous
+              if [ -d /cache/db ]; then mv /cache/db /cache/db.previous; fi
+              mv "/cache/$1/db" /cache/db
+              rm -rf /cache/db.previous'
+            exit 0
+          fi
+
+          updated_at="$(metadata_epoch UpdatedAt)"
+          if [ -f "$db_dir/trivy.db" ] && [ -n "$updated_at" ]; then
+            age_hours=$(( (now - updated_at) / 3600 ))
+            if [ "$age_hours" -le "$TRIVY_DB_FALLBACK_MAX_AGE_HOURS" ]; then
+              echo "::warning title=Trivy DB download failed::Using the cached vulnerability database built ${age_hours}h ago (limit ${TRIVY_DB_FALLBACK_MAX_AGE_HOURS}h)."
+              exit 0
+            fi
+            echo "::error title=Trivy DB download failed::Cached vulnerability database is ${age_hours}h old, over the ${TRIVY_DB_FALLBACK_MAX_AGE_HOURS}h fallback limit."
+          else
+            echo "::error title=Trivy DB download failed::No usable cached vulnerability database."
+          fi
+          exit 1
       - name: Vulnerabilities (HIGH/CRITICAL)
         run: |
+          # The previous step prepared the database; never re-download here.
           docker run --rm -v "$PWD:/repo" -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
             ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-            fs --db-repository ghcr.io/aquasecurity/trivy-db:2 --db-repository mirror.gcr.io/aquasec/trivy-db:2 --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo
+            fs --skip-db-update --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo
       - name: Secrets
         run: |
           docker run --rm -v "$PWD:/repo" -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
