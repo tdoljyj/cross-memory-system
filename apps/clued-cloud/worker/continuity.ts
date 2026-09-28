@@ -2338,13 +2338,54 @@ async function handleContinuityRequestInner(
           method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
           body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }),
         }) as Record<string, unknown>;
+        const ownerStatus = storageAgentResult(await rpc({ ...reference, action: "recovery_inspect" }), reference);
         if (input.action === "inspect") {
           // Status only, even without a vault or after connection revocation.
-          return json(storageAgentResult(await rpc({ ...reference, action: "recovery_inspect" }), reference), 200, headers);
+          return json(ownerStatus, 200, headers);
         }
         if (!env.CLUED_STORAGE_VAULT_KEYS) throw new Error("Unavailable");
+        // Owner lookup above prevents the fixed issuer bridge from becoming a
+        // cross-account recovery endpoint. This branch never calls the executor.
+        const verifiedRpc = async (value: Record<string, unknown>) => await supabaseRequest(env,
+          "/rest/v1/rpc/clued_storage_cloud_worker_router_v2", {
+            method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+            body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }),
+          }) as Record<string, unknown>;
+        let verifiedStatus: Record<string, unknown> | null = null;
+        try { verifiedStatus = await verifiedRpc({ ...reference, action: "verified_inspect" }); }
+        catch { /* The legacy connection is still restricted by the v1 fence. */ }
+        if (verifiedStatus?.status === "committed" && verifiedStatus.job_id === reference.job_id &&
+            verifiedStatus.connection_id === reference.connection_id && uuid.test(String(verifiedStatus.receipt_id)) &&
+            verifiedStatus.execution_permitted === false) {
+          return json({ status: "committed", job_id: reference.job_id, receipt_id: verifiedStatus.receipt_id,
+            execution_permitted: false }, 200, headers);
+        }
+        if (verifiedStatus?.status === "verified" && verifiedStatus.job_id === reference.job_id &&
+            verifiedStatus.connection_id === reference.connection_id &&
+            uuid.test(String(verifiedStatus.verified_receipt_id)) &&
+            /^[0-9a-f]{64}$/.test(String(verifiedStatus.verified_digest)) &&
+            verifiedStatus.execution_permitted === false) {
+          const settled = await verifiedRpc({ ...reference, action: "settle_verified" });
+          if (settled.status !== "committed" || settled.state !== "committed" ||
+              !uuid.test(String(settled.receipt_id)) || settled.execution_permitted !== false) throw new Error("Unavailable");
+          return json({ status: "committed", job_id: reference.job_id, receipt_id: settled.receipt_id,
+            execution_permitted: false }, 200, headers);
+        }
+        if (verifiedStatus?.status === "none") throw new Error("No original effect");
+        let accountDescriptor: Record<string, unknown> | null = null;
+        if (verifiedStatus) {
+          if (verifiedStatus.status !== "inspection_required" || verifiedStatus.job_id !== reference.job_id ||
+              verifiedStatus.connection_id !== reference.connection_id || verifiedStatus.execution_permitted !== false)
+            throw new Error("Unavailable");
+          accountDescriptor = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_native_recovery_load_v2", {
+            method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+            body: JSON.stringify({ p_issuer_secret: issuer, p_input: { ...reference, action: "recovery_load" } }),
+          }) as Record<string, unknown>;
+          if (accountDescriptor.status !== "recovery_only") throw new Error("Unavailable");
+        }
         const recovery = await createStorageCloudRecovery({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
-          vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS), rpc });
+          vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS), rpc,
+          ...(accountDescriptor?.status === "recovery_only" ? { verified: { descriptor: accountDescriptor, rpc: verifiedRpc } } : {}) });
         return json(await recovery.run(reference), 200, headers);
       } catch {
         return json({ status: "inspection_required", execution_permitted: false }, 403, headers);
