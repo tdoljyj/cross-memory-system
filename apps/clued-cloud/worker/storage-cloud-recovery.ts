@@ -101,7 +101,8 @@ export async function createStorageCloudRecovery(config: {
       check();
       let done: Data;
       if (config.verified) {
-        if (postcondition.verified_proof?.contract !== "clued.storage-create-verified/2") throw denied();
+        if (!object(postcondition) || !object(postcondition.verified_proof) ||
+            postcondition.verified_proof.contract !== "clued.storage-create-verified/2") throw denied();
         const { verified_proof: proof, ...post } = postcondition;
         const finish = { action: "finalize", intent_id: d.intent_id, base_version: d.version,
           request_sha256: d.request_sha256, idempotency_key: `account-job:${pinned.job_id}:finalize`, postcondition: post };
