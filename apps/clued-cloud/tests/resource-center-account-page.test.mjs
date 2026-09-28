@@ -62,7 +62,11 @@ test("provider diagnostic categories render beside the button without raw errors
   for(const [reason,label] of [["PROVIDER_AUTHENTICATION_REJECTED","未接受当前访问凭据"],
     ["PROVIDER_ACCESS_REJECTED","拒绝了这次元数据访问"],["PROVIDER_OBJECT_UNAVAILABLE","未返回所查询的登记对象"],
     ["PROVIDER_RATE_LIMITED","限制了请求频率"],["PROVIDER_SERVER_UNAVAILABLE","服务暂时不可用"],
-    ["PROVIDER_RESPONSE_REJECTED","未接受这次请求"],["PROVIDER_TIMEOUT","单次元数据请求超时"]]) {
+    ["PROVIDER_RESPONSE_REJECTED","未接受这次请求"],["PROVIDER_TIMEOUT","单次元数据请求超时"],
+    ["RUNTIME_SUBREQUEST_LIMIT","单次外部请求上限"],["PROVIDER_REDIRECT_REJECTED","不允许的跳转"],
+    ["PROVIDER_RESPONSE_INVALID","响应格式无效"],["METADATA_ID_MISMATCH","对象 ID 与查询不一致"],
+    ["PAGINATION_INVALID","分页标记无效"],["PAGINATION_LIMIT","分页超过"],
+    ["NAMESPACE_VISIBILITY_UNPROVEN","只读元数据权限未确认"]]) {
     const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
     f.button("检查已登记目录（只读）").props.onClick();await f.settle();
     f.respond(1,{execution_permitted:false,diagnostic:{stage:"directories",reason},error:"private-provider-text"},403);await f.settle();

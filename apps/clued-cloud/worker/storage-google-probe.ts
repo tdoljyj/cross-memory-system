@@ -17,6 +17,11 @@ class ProbeFailure extends Error {
 const directoryReasons = new Set(["LAYOUT_INVALID", "IDENTITY_INVALID", "PARENT_INVALID", "DIRECTORY_CHANGED",
   "DIRECTORY_NOT_APP_AUTHORIZED", "DIRECTORY_NOT_WRITABLE", "ENUMERATION_INVALID", "PATH_AMBIGUOUS",
   "SHORTCUT_UNQUALIFIED", "DIRECTORY_NOT_LISTED", "ENTRY_LIMIT", "OBSERVATION_EXPIRED", "CLOCK_INVALID"]);
+const metadataReasons: Readonly<Record<string, string>> = Object.freeze({
+  DRIVE_METADATA_MISMATCH: "METADATA_ID_MISMATCH", DRIVE_LIST_INVALID: "ENUMERATION_INVALID",
+  DRIVE_PAGINATION_INVALID: "PAGINATION_INVALID", DRIVE_PAGINATION_LIMIT: "PAGINATION_LIMIT",
+  DRIVE_ENUMERATION_LIMIT: "ENTRY_LIMIT", DRIVE_NAMESPACE_VISIBILITY_UNPROVEN: "NAMESPACE_VISIBILITY_UNPROVEN",
+});
 export function storageProbeDiagnostic(error: unknown) {
   return error instanceof ProbeFailure ? { stage: error.stage, reason: error.reason } : { stage: "request", reason: "UNCONFIRMED" };
 }
@@ -108,6 +113,17 @@ export async function createStorageGoogleProbe(config: {
       // Only the private timeout signal's actual reason proves a timeout.
       if (requestSignal?.aborted && requestSignal.reason instanceof DOMException && requestSignal.reason.name === "TimeoutError")
         throw new ProbeFailure(stage, "PROVIDER_TIMEOUT");
+      // Exact runtime/adapter literals only. Never copy arbitrary exception text
+      // (which may contain a URL or secret), and never turn diagnosis into retry.
+      if (stage === "identity" || stage === "directories") {
+        if (error instanceof Error && /^Too many subrequests(?:\.| by single [Ww]orker invocation\.?)?$/.test(error.message))
+          throw new ProbeFailure(stage, "RUNTIME_SUBREQUEST_LIMIT");
+        if (error instanceof Error && error.message === "storage_redirect_rejected")
+          throw new ProbeFailure(stage, "PROVIDER_REDIRECT_REJECTED");
+        if (error instanceof SyntaxError) throw new ProbeFailure(stage, "PROVIDER_RESPONSE_INVALID");
+        if (stage === "directories" && error instanceof Error && Object.hasOwn(metadataReasons, error.message))
+          throw new ProbeFailure(stage, metadataReasons[error.message]);
+      }
       throw new ProbeFailure(stage, "UNCONFIRMED");
     }
   }});

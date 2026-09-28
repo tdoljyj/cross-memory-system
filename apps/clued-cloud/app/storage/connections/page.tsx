@@ -37,7 +37,10 @@ const probeReasons: Record<string, string> = { DIRECTORY_NOT_APP_AUTHORIZED: "�
   PROVIDER_AUTHENTICATION_REJECTED: "Google 未接受当前访问凭据", PROVIDER_ACCESS_REJECTED: "Google 拒绝了这次元数据访问",
   PROVIDER_OBJECT_UNAVAILABLE: "Google 未返回所查询的登记对象", PROVIDER_RATE_LIMITED: "Google 暂时限制了请求频率",
   PROVIDER_SERVER_UNAVAILABLE: "Google 服务暂时不可用", PROVIDER_RESPONSE_REJECTED: "Google 未接受这次请求",
-  PROVIDER_TIMEOUT: "Google 单次元数据请求超时" };
+  PROVIDER_TIMEOUT: "Google 单次元数据请求超时", RUNTIME_SUBREQUEST_LIMIT: "云端运行环境达到单次外部请求上限",
+  PROVIDER_REDIRECT_REJECTED: "Google 请求出现不允许的跳转", PROVIDER_RESPONSE_INVALID: "Google 响应格式无效",
+  METADATA_ID_MISMATCH: "Google 返回的对象 ID 与查询不一致", PAGINATION_INVALID: "目录分页标记无效或重复",
+  PAGINATION_LIMIT: "目录分页超过本次检查上限", NAMESPACE_VISIBILITY_UNPROVEN: "目录枚举所需的只读元数据权限未确认" };
 class ProbeRequestError extends Error {}
 async function request(path: string, body: object | undefined, stillCurrent: () => boolean = () => true) {
   const { data, error } = await supabase.auth.getSession();
