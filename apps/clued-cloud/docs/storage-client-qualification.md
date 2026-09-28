@@ -36,11 +36,13 @@ is not a user storage permission lifetime.
 Only the existing database deployment owner can call
 `clued_private.storage_client_capability_admin_v2(jsonb)`. It is SECURITY INVOKER,
 denies PUBLIC/anon/authenticated/service_role, and requires the current
-`platform_admin_v13` version. Missing platform designation fails closed; this
-work does not bootstrap it. Events and Receipts belong to that registered
-platform administrator, not an arbitrary request owner.
+`storage_admin_v2` version and active state. This storage-only designation is
+bound to an existing verified account, independently of `platform_admin_v13`.
+Missing or revoked designation fails closed. Events and Receipts belong to that
+designated subject. Neither a native login nor an Agent Binding can invoke this
+database-owner-only maintenance function, even when it belongs to the subject.
 
-All four actions require `action`, `idempotency_key`, `platform_admin_version`,
+All four actions require `action`, `idempotency_key`, `storage_admin_version`,
 `evidence_id`, and `evidence_sha256`. Additional exact fields:
 
 - `register_snapshot`: `request_id`, `expected_request_digest`,
@@ -71,6 +73,29 @@ request cannot register a parallel lineage to escape its deny history. Ambiguous
 pre-existing lineages fail closed instead of selecting one by name or age.
 
 ## Evidence and execution lifecycle
+
+### Storage-only designation lifecycle
+
+The deployment owner calls `clued_private.storage_admin_designate_v2(jsonb)` only
+after exact Owner approval. Fields: `action` (`designate`/`revoke`), `subject_id`,
+`base_version`, `idempotency_key`, `decision_id`, `decision_version`,
+`approval_receipt_id`, and the immutable approval Receipt's `approval_sha256`
+(`request_sha256`). The current, user-explicit project Decision must name
+`type_fields.storage_admin_subject_id` and `type_fields.storage_admin_action`.
+Its committed Receipt must identify that exact Decision/version. Each approval
+is consumed once. Initial base is 0; subsequent changes use the current version.
+The subject is permanent; revoke/reactivate increments its version without
+deleting history. Reactivation needs fresh approval. Replays return success only
+for the latest unchanged designation Receipt; an older activation conflicts.
+
+This path only reviews the designated account's source requests and transition
+manifests. Global technical capability changes are explicitly marked
+`global_technical_effect=true` in audit Events; their revocation can affect future
+consumers but does not enumerate other accounts. Other users still need their own
+account policies and a separately qualified onboarding/link path. The designation
+does not confer global platform-admin rights or activate file execution.
+
+### Source qualification
 
 Evidence is the **point-in-time audit basis** for platform qualification.
 Withdrawal blocks new register/qualify/link references to that evidence.

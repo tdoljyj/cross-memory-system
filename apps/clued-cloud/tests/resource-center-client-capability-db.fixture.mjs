@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+import { storageAdminApproval, storageAdminCall } from "./resource-center-storage-admin-db.fixture.mjs";
 
 const hash = value => createHash("sha256").update(value).digest("hex");
 const API = "clued_private.storage_client_capability_admin_v2";
 
 // Run only in resource-center-authority-db.test.mjs's disposable PostgreSQL.
-// The platform administrator and all source/evidence objects are synthetic;
+// The storage administrator and all source/evidence objects are synthetic;
 // this fixture is not a deployment, bootstrap or production-registration path.
 export async function testStorageClientCapability(t, admin, server, user, decision) {
-  const actor = randomUUID(), actorSession = randomUUID(), ownerSession = randomUUID();
+  const actor = user, foreign = randomUUID(), actorSession = randomUUID(), ownerSession = randomUUID();
   const issuer = hash(randomUUID()), resource = "https://capability-fixture.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
   const clients = [];
+  let adminVersion = 1;
   const connect = async role => {
     const client = server.getPgClient(); clients.push(client); await client.connect();
     await client.query("set statement_timeout='10s'");
@@ -23,12 +25,13 @@ export async function testStorageClientCapability(t, admin, server, user, decisi
     "select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
     [subject, JSON.stringify({ sub: subject, role: "authenticated", session_id: id, aal: "aal1",
       amr: [{ method: "password", timestamp: Math.floor(Date.now() / 1000) }] })]);
-  await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'capability-platform@example.invalid',now())", [actor]);
+  await admin.query("update auth.users set email_confirmed_at=clock_timestamp() where id=$1", [actor]);
+  await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'foreign-fixture@example.invalid',now())", [foreign]);
   await admin.query("insert into auth.sessions(id,user_id) values($1,$2),($3,$4)", [actorSession, actor, ownerSession, user]);
   await session(native, user, ownerSession);
   await admin.query("insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,$2,'client-capability-fixture')", [issuer, resource]);
   const call = async (input, client = admin) => (await client.query(`select ${API}($1::jsonb) value`, [JSON.stringify(input)])).rows[0].value;
-  const common = proof => ({ idempotency_key: randomUUID(), platform_admin_version: 1,
+  const common = proof => ({ idempotency_key: randomUUID(), storage_admin_version: adminVersion,
     evidence_id: proof.id, evidence_sha256: proof.digest });
   const evidence = async (text, { owner = actor, mime = "application/json", type = "test_output" } = {}) => {
     const input = { idempotency_key: randomUUID(), evidence_schema_version: 1, evidence_type: type,
@@ -169,7 +172,7 @@ export async function testStorageClientCapability(t, admin, server, user, decisi
       assert.equal((await admin.query("select to_regprocedure('public.storage_client_capability_admin_v2(jsonb)') value")).rows[0].value, null);
       for (const role of ["anon", "authenticated", "service_role"]) {
         const client = await connect(role); await session(client, actor, actorSession);
-        await reject({ action: "qualify", actor_id: actor, issuer_hash: issuer, platform_admin_version: 1 }, /permission denied/, client);
+        await reject({ action: "qualify", actor_id: actor, issuer_hash: issuer, storage_admin_version: 1 }, /permission denied/, client);
       }
       // Isolated misconfiguration regression: even an accidental EXECUTE grant
       // must not let a service-role connection impersonate the SQL owner.
@@ -180,12 +183,14 @@ export async function testStorageClientCapability(t, admin, server, user, decisi
       } finally { await admin.query("rollback"); }
     });
     const original = await binding(), firstInput = await registrationInput(original);
-    await t.test("missing platform designation fails closed without bootstrapping it", async () => {
-      assert.equal((await admin.query("select count(*)::int n from clued_private.platform_admin_v13")).rows[0].n, 0);
-      await reject(firstInput, /platform_admin/);
-      assert.equal((await admin.query("select count(*)::int n from clued_private.platform_admin_v13")).rows[0].n, 0);
+    await t.test("missing storage designation fails closed without bootstrapping it", async () => {
+      assert.equal((await admin.query("select count(*)::int n from clued_private.storage_admin_v2")).rows[0].n, 0);
+      await reject(firstInput, /storage_admin/);
+      assert.equal((await admin.query("select count(*)::int n from clued_private.storage_admin_v2")).rows[0].n, 0);
     });
-    await admin.query("insert into clued_private.platform_admin_v13(subject_id,version) values($1,1)", [actor]);
+    const designate = await storageAdminApproval(admin, actor, project, "designate");
+    assert.equal((await storageAdminCall(admin, designate)).status, "committed");
+    assert.equal((await admin.query("select count(*)::int n from clued_private.platform_admin_v13")).rows[0].n, 0);
     let registration, capability;
     await t.test("reviewed raw UTF-8 source registers exact server request identity with one qualification receipt", async () => {
       const result = await call(firstInput); assert.equal(result.status, "committed", JSON.stringify(result));
@@ -207,8 +212,8 @@ export async function testStorageClientCapability(t, admin, server, user, decisi
       await reject({ ...firstInput, expected_registration_generation: 1 }, /IDEMPOTENCY|idempotency/);
       await admin.query("begin");
       try {
-        await admin.query("update clued_private.platform_admin_v13 set version=2 where singleton");
-        await assert.rejects(call(firstInput), /platform_admin/);
+        await admin.query("update clued_private.storage_admin_v2 set version=2,state='revoked' where singleton");
+        await assert.rejects(call(firstInput), /storage_admin/);
       } finally { await admin.query("rollback"); }
     });
     await t.test("malformed or stale source and nonmatching Evidence cannot create registration authority", async () => {
@@ -225,16 +230,17 @@ export async function testStorageClientCapability(t, admin, server, user, decisi
         const b = await binding(); await reject(await registrationInput(b, { document: change(source(b)) }));
       }
       const b = await binding(), valid = await registrationInput(b);
+      await reject({ ...valid, platform_admin_version: adminVersion }, /storage_client_admin_input_invalid/);
       await reject({ ...valid, evidence_sha256: hash("wrong-evidence") });
       await reject({ ...valid, source_snapshot_json: valid.source_snapshot_json.trimEnd() });
-      for (const options of [{ owner: user }, { mime: "text/plain" }, { type: "web_ref" }]) {
+      for (const options of [{ owner: foreign }, { mime: "text/plain" }, { type: "web_ref" }]) {
         const proof = await evidence(valid.source_snapshot_json, options);
         await reject({ ...valid, ...common(proof) });
       }
       for (const extra of [{ owner_id: user }, { actions: ["delete"] }, { issuer_hash: issuer }, { client_name: "trusted" }]) {
         await reject({ ...valid, idempotency_key: randomUUID(), ...extra });
       }
-      for (const change of [{ platform_admin_version: "1" }, { expected_registration_generation: "0" },
+      for (const change of [{ storage_admin_version: "1" }, { expected_registration_generation: "0" },
         { request_id: 123 }, { expected_request_digest: null }, { expected_lineage_id: 1 }]) {
         await reject({ ...valid, idempotency_key: randomUUID(), ...change });
       }
@@ -491,6 +497,49 @@ export async function testStorageClientCapability(t, admin, server, user, decisi
       assert.deepEqual((await business()).policies, before.policies);
       await reject(await qualificationInput(old, Number(old.capability.version)), /registration|generation|version|conflict/);
       await reject(await linkInput(old, await binding(old.binding.clientId)), /registration|generation|capability|version|conflict/);
+    });
+    await t.test("storage maintenance rejects foreign request ownership and audits global technical effects", async () => {
+      const foreignRequest = await binding(), foreignInput = await registrationInput(foreignRequest);
+      await admin.query("begin");
+      try {
+        await admin.query("update clued_private.authorization_requests_v12 set owner_id=$1 where id=$2", [foreign, foreignRequest.request]);
+        await assert.rejects(call(foreignInput), /storage_admin_scope_denied/);
+      } finally { await admin.query("rollback"); }
+      for (const input of [await qualificationInput(registration, 0), await revokeInput(capability.capability),
+        await linkInput(capability, original), await linkInput(capability, await binding(original.clientId))]) {
+        await admin.query("begin");
+        try {
+          await admin.query("update clued_private.authorization_requests_v12 set owner_id=$1 where id=$2", [foreign, original.request]);
+          await assert.rejects(call(input), /storage_admin_scope_denied/);
+        } finally { await admin.query("rollback"); }
+      }
+      const event = (await admin.query("select change_summary from public.clued_context_events where receipt_id=$1",
+        [registration.result.receipt_id])).rows[0];
+      assert.equal(event.change_summary.global_technical_effect, true);
+      assert.equal((await admin.query("select count(*)::int n from clued_private.platform_admin_v13")).rows[0].n, 0);
+    });
+    await t.test("storage designation revocation and qualification serialize in both orders", async () => {
+      for (const revokeWins of [false, true]) {
+        const input = await registrationInput(await binding());
+        const stop = await storageAdminApproval(admin, actor, project, "revoke", adminVersion);
+        await operator.query("begin"); let pending;
+        try {
+          const first = revokeWins ? await storageAdminCall(operator, stop) : await call(input, operator);
+          assert.equal(first.status, "committed");
+          pending = (revokeWins ? call(input, contender) : storageAdminCall(contender, stop))
+            .then(value => ({ value }), error => ({ error }));
+          await waitForLock(contender); await operator.query("commit");
+          const second = await pending;
+          if (revokeWins) assert.match(second.error?.message ?? "", /storage_admin_required/);
+          else { assert.equal(second.error, undefined); assert.equal(second.value.status, "committed"); }
+          assert.equal((await admin.query("select count(*)::int n from clued_private.storage_client_registrations_v2 where source_request_id=$1",
+            [input.request_id])).rows[0].n, revokeWins ? 0 : 1);
+          adminVersion++;
+          await reject({ ...input, storage_admin_version: adminVersion }, /storage_admin_required/);
+        } finally { await operator.query("rollback"); if (pending) await pending; }
+        const resume = await storageAdminApproval(admin, actor, project, "designate", adminVersion);
+        assert.equal((await storageAdminCall(admin, resume)).status, "committed"); adminVersion++;
+      }
     });
     await t.test("issuer revoked while a request waits is rechecked before qualification effects", async () => {
       const input = await registrationInput(await binding());

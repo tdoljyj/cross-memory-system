@@ -13,8 +13,8 @@ export async function testStoragePolicyTransition(t, admin, server, user, decisi
   const clients = [], sessionId = randomUUID(), issuer = hash(randomUUID()), oauthClient = `transition-${randomUUID()}`;
   const clientIssuer = hash(randomUUID()), resource = "https://policy-transition.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
-  const platform = (await admin.query("select subject_id,version from clued_private.platform_admin_v13 where singleton")).rows[0];
-  assert.ok(platform, "reviewed platform designation must be supplied by the earlier isolated fixture");
+  const platform = (await admin.query("select subject_id,version from clued_private.storage_admin_v2 where singleton")).rows[0];
+  assert.ok(platform, "reviewed storage designation must be supplied by the earlier isolated fixture");
   const connect = async role => {
     const client = server.getPgClient(); clients.push(client); await client.connect();
     await client.query("set statement_timeout='10s'");
@@ -94,7 +94,7 @@ export async function testStoragePolicyTransition(t, admin, server, user, decisi
       decision_version: Number(version), disclosure_version: "clued.storage-account-consent/2", expires_at: new Date(Date.now() + 3600000).toISOString(),
       expected_inventory_digest: await digest(await inventory(target, history)), history_preimages: history, ...overrides };
     const text = JSON.stringify(document, null, 2) + "\n", proof = await evidence(text);
-    return { action: "register", platform_admin_version: Number(platform.version), idempotency_key: randomUUID(), evidence_id: proof.id,
+    return { action: "register", storage_admin_version: Number(platform.version), idempotency_key: randomUUID(), evidence_id: proof.id,
       evidence_sha256: proof.digest, manifest_json: text };
   };
   const manifest = async (target, overrides = {}) => {
@@ -180,6 +180,9 @@ export async function testStoragePolicyTransition(t, admin, server, user, decisi
         const caller = await connect(role); await login(caller);
         await rejected(() => adminCall(input, caller), /permission denied|offline_database_operator_required/);
       }
+      await rejected(() => adminCall({ ...input, platform_admin_version: input.storage_admin_version }), /storage_transition_input_invalid/);
+      const foreignManifest = await manifestInput(target, { owner_id: randomUUID() });
+      await rejected(() => adminCall(foreignManifest), /storage_admin_scope_denied/);
       const item = await manifest(target); assert.deepEqual(await effects(), before);
       assert.equal((await adminCall(item.input)).receipt_id, item.result.receipt_id);
       await assert.rejects(admin.query("update clued_private.storage_policy_transition_manifests_v2 set expires_at=expires_at+interval '1 hour' where id=$1", [item.id]), /storage_transition_history_immutable/);
@@ -330,7 +333,7 @@ export async function testStoragePolicyTransition(t, admin, server, user, decisi
         await rejected(() => adminCall({ ...input, idempotency_key: randomUUID(), manifest_json: text, evidence_id: proof.id, evidence_sha256: proof.digest }), /storage_transition_history_unproven/);
       }
       await rejected(() => adminCall({ ...input, evidence_sha256: hash("different bytes") }), /storage_transition_review_required/);
-      await rejected(() => adminCall({ ...input, platform_admin_version: Number(platform.version) + 1 }), /platform_admin|required|conflict/);
+      await rejected(() => adminCall({ ...input, storage_admin_version: Number(platform.version) + 1 }), /storage_admin|required|conflict/);
       const tooLong = await manifestInput(target, { expires_at: new Date(Date.now() + 25 * 3600000).toISOString() });
       await rejected(() => adminCall(tooLong), /storage_transition_input_invalid/);
     });
