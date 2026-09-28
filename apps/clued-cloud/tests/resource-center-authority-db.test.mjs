@@ -19,6 +19,8 @@ import { testAccountRefresh } from "./resource-center-account-refresh-db.fixture
 import { testDirectoryProbe } from "./resource-center-directory-probe-db.fixture.mjs";
 import { testAccountPolicy } from "./resource-center-account-policy-db.fixture.mjs";
 import { testStorageClientCapability } from "./resource-center-client-capability-db.fixture.mjs";
+import { testStoragePolicyTransition } from "./resource-center-policy-transition-db.fixture.mjs";
+import { testAccountCloud } from "./resource-center-account-cloud-db.fixture.mjs";
 import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refresh-upgrade-db.fixture.mjs";
 
 const USER = "10000000-0000-4000-8000-000000000071";
@@ -38,7 +40,8 @@ async function freePort() {
   return port;
 }
 
-for (const bindingSchema of ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
+const focusedCloud = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "account-cloud";
+for (const bindingSchema of focusedCloud ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
@@ -112,6 +115,13 @@ for (const bindingSchema of ["legacy-expiry", "production-no-legacy-expiry"]) te
       " values($1,$2,'Owner approval','Temporary test objects only','project',$3,'decision','active',1,'active'," +
       "$4,'{\"rationale\":\"Test registration\"}','{}','{}','user_explicit','Owner confirmed')",
     [DECISION, USER, PROJECT, "project:" + PROJECT]);
+
+    // Fast local diagnosis only. CI leaves this unset and runs both complete
+    // schema shapes plus every existing Resource Center regression.
+    if (focusedCloud) {
+      await testAccountCloud(t, admin, server, USER, DECISION);
+      return;
+    }
 
     const adminCall = async (input) => (await admin.query(
       "select public.clued_resource_center_admin_v1($1,$2::jsonb) value",
@@ -745,6 +755,8 @@ for (const bindingSchema of ["legacy-expiry", "production-no-legacy-expiry"]) te
     await testDirectoryProbe(t, admin, server, USER, DECISION);
     await testAccountPolicy(t, admin, server, USER, DECISION);
     await testStorageClientCapability(t, admin, server, USER, DECISION);
+    await testStoragePolicyTransition(t, admin, server, USER, DECISION);
+    await testAccountCloud(t, admin, server, USER, DECISION);
     const removed = await adminCall({
       action: "artifact_revoke", profile_id: profileId, artifact_id: trackId, base_version: 2,
     });

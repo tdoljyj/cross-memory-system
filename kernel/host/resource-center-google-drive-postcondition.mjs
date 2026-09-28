@@ -8,12 +8,13 @@ const fail = (code) => { throw new Error(code); };
 /** Host-owned create verifier. Polls metadata only, never reads remote content
  * and never changes/retries storage. An uncertain result leaves the durable
  * write intent fenced; it is not permission to repeat the filesystem effect.
- * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, list_children: Function, require_effect_provider_id?: boolean, timeout_ms?: number, poll_ms?: number, clock?: () => number, sleep?: Function}} config
+ * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, list_children: Function, require_effect_provider_id?: boolean, include_verified_proof?: boolean, timeout_ms?: number, poll_ms?: number, clock?: () => number, sleep?: Function}} config
  */
 export function createGoogleDriveCreatePostconditionVerifier({
   managed_root: managedRoot, root_folder_id: rootId, root_parent_id: rootParentId,
   get_file: getFile, list_children: listChildren,
   require_effect_provider_id: requireEffectProviderId = false,
+  include_verified_proof: includeVerifiedProof = false,
   timeout_ms: timeoutMs = 30_000, poll_ms: pollMs = 1000,
   clock = Date.now, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
@@ -21,7 +22,8 @@ export function createGoogleDriveCreatePostconditionVerifier({
   if (!root || !rootId || !rootParentId || typeof getFile !== "function" ||
     typeof listChildren !== "function" || typeof clock !== "function" || typeof sleep !== "function" ||
     !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
-    !Number.isInteger(pollMs) || pollMs < 1 || pollMs > timeoutMs) {
+    !Number.isInteger(pollMs) || pollMs < 1 || pollMs > timeoutMs ||
+    typeof includeVerifiedProof !== "boolean" || (includeVerifiedProof && !requireEffectProviderId)) {
     throw new TypeError("Pinned Drive identity, metadata API and bounded polling are required.");
   }
   function check(file, id, name, parent, folder) {
@@ -94,8 +96,18 @@ export function createGoogleDriveCreatePostconditionVerifier({
         if (!Array.isArray(finalList) || finalList.length !== 1 || finalList[0].id !== file.id ||
           finalList[0].version !== file.version) fail("DRIVE_POSTCONDITION_VERSION_CHANGED");
         if (clock() > deadline) fail("DRIVE_POSTCONDITION_SYNC_TIMEOUT");
-        return Object.freeze({ path: destination, parent_id: parent.id,
-          provider_file_id: file.id, provider_file_version: file.version });
+        const postcondition = { path: destination, parent_id: parent.id,
+          provider_file_id: file.id, provider_file_version: file.version };
+        if (!includeVerifiedProof) return Object.freeze(postcondition);
+        // This is emitted only after the complete metadata/content/ancestor and
+        // uniqueness checks above. The fixed server bridge, never an Agent,
+        // may persist it against the original started journal before revoke.
+        const verifiedProof = Object.freeze({ contract: "clued.storage-create-verified/2",
+          ...postcondition, target_kind: mutation.target_kind, size, sha256: digest,
+          provider_before: structuredClone(before),
+          checks: Object.freeze({ identity: true, content: true, ancestors: true,
+            unique_name: true, stable_version: true }) });
+        return Object.freeze({ ...postcondition, verified_proof: verifiedProof });
       }
       const remaining = deadline - clock();
       if (remaining <= 0 || attempt === attempts - 1) break;

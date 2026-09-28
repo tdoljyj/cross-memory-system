@@ -48,6 +48,25 @@ test("UTF-8 file contents are proved by SHA256 and byte count metadata", async (
     await assert.rejects(bad.verify(bad.request), /CONTENT_MISMATCH/);
   }
 });
+
+test("opt-in durable proof is emitted only after the exact provider checks", async () => {
+  const f = fixture({ file: true, options: { require_effect_provider_id: true, include_verified_proof: true } });
+  f.request.effect_result.provider_file_id = "topic";
+  const result = await f.verify(f.request);
+  assert.deepEqual(result.verified_proof, {
+    contract: "clued.storage-create-verified/2", path: f.request.mutation.destination_path,
+    parent_id: "track", provider_file_id: "topic", provider_file_version: "1", target_kind: "file",
+    size: String(Buffer.byteLength(f.request.mutation.content)),
+    sha256: createHash("sha256").update(f.request.mutation.content).digest("hex"),
+    provider_before: f.request.provider_before,
+    checks: { identity: true, content: true, ancestors: true, unique_name: true, stable_version: true },
+  });
+  const bad = fixture({ file: true, options: { require_effect_provider_id: true, include_verified_proof: true } });
+  bad.request.effect_result.provider_file_id = "topic";
+  bad.files.topic.sha256Checksum = "a".repeat(64);
+  await assert.rejects(bad.verify(bad.request), /CONTENT_MISMATCH/);
+  assert.equal((await fixture({ file: true }).verify(f.request)).verified_proof, undefined);
+});
 test("sync timeout is bounded and does not retry the storage effect", async () => {
   const f = fixture({ missing: 100 });
   await assert.rejects(f.verify(f.request), /SYNC_TIMEOUT/);

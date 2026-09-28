@@ -20,11 +20,12 @@ const unavailable = () => ({status:"unavailable",execution_permitted:false});
  * run accepts correlation IDs ONLY. Shared DB begin, not this process, owns
  * cross-device exclusion. A lost start/POST is inspection-only forever here.
  * The caller never receives a credential, admission or durable execution grant.
- * @param {{load_job: Function, rpc: Function, get_credential: Function, drive_fetch?: typeof fetch, clock?: () => number}} config
+ * @param {{load_job: Function, rpc: Function, get_credential: Function, drive_fetch?: typeof fetch, clock?: () => number, verified_result_mode?: boolean}} config
  */
 export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_credential:getCredential,
-  drive_fetch:driveFetch=globalThis.fetch,clock=Date.now}={}){
-  if([loadJob,rpc,getCredential,driveFetch,clock].some(fn=>typeof fn!=="function")) throw new TypeError("Private server dependencies required.");
+  drive_fetch:driveFetch=globalThis.fetch,clock=Date.now,verified_result_mode:verifiedResultMode=false}={}){
+  if([loadJob,rpc,getCredential,driveFetch,clock].some(fn=>typeof fn!=="function") ||
+    typeof verifiedResultMode!=="boolean") throw new TypeError("Private server dependencies required.");
   const seen=new Set();
   return Object.freeze({async run(reference){
     if(!reference || Object.keys(reference).sort().join(",")!=="connection_id,job_id" ||
@@ -82,7 +83,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           if(result?.status!=="committed" || result.attempt_recorded!==true || !uuid(result.receipt_id) || !isDeepStrictEqual(result.attempt,attempt)) fail();
         }});
       const verify=createGoogleDriveCreatePostconditionVerifier({managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
-        root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,require_effect_provider_id:true,clock});
+        root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
+        require_effect_provider_id:true,include_verified_proof:verifiedResultMode,clock});
       const host=createResourceCenterOnlineToolHost({trusted_profile:profile,resolve_artifact_online:resolveAuthority,
         mutation_effect:effect,scan_boundary:scan,clock,
         prepare_write:async({mutation:input,binding})=>{
@@ -98,9 +100,23 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           return {status:"started",execution_permitted:true,intent_id:result.intent_id,request_sha256:result.request_sha256};
         },commit_post_write:async({mutation:input,binding,reservation,effect_result:result})=>{
           if(!saved || saved.result.intent_id!==reservation.intent_id) fail();
-          const postcondition=await verify({profile,mutation:input,provider_before:saved.provider,effect_result:result});
-          const finished=await invoke({action:"finalize",intent_id:reservation.intent_id,base_version:saved.result.version,
-            request_sha256:binding.request_sha256,idempotency_key:"account-job:"+ref.job_id+":finalize",postcondition});
+          const verification=await verify({profile,mutation:input,provider_before:saved.provider,effect_result:result});
+          const {verified_proof:proof,...postcondition}=verification;
+          const finish={action:"finalize",intent_id:reservation.intent_id,base_version:saved.result.version,
+            request_sha256:binding.request_sha256,idempotency_key:"account-job:"+ref.job_id+":finalize",postcondition};
+          let finished;
+          if(verifiedResultMode){
+            if(proof?.contract!=="clued.storage-create-verified/2") fail();
+            const recorded=await invoke({action:"verified_record",finish,proof});
+            if(recorded?.status!=="verified" || recorded.intent_id!==reservation.intent_id ||
+              !uuid(recorded.verified_receipt_id) || !/^[0-9a-f]{64}$/.test(recorded.verified_digest??"") ||
+              !Number.isSafeInteger(recorded.version) || recorded.execution_permitted!==false) fail();
+            finished=await invoke({action:"settle_verified",intent_id:reservation.intent_id,
+              base_version:recorded.version,request_sha256:binding.request_sha256,
+              verified_receipt_id:recorded.verified_receipt_id,verified_digest:recorded.verified_digest});
+          }else{
+            finished=await invoke({action:"finalize",...finish});
+          }
           if(finished?.status!=="committed" || finished.state!=="committed" || finished.intent_id!==reservation.intent_id ||
             finished.request_sha256!==binding.request_sha256 || finished.final_result?.status!=="committed" || !uuid(finished.receipt_id)) fail();
           return {status:"committed",receipt_id:finished.receipt_id,request_sha256:binding.request_sha256};
