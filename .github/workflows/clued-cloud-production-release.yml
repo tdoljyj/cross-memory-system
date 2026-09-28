@@ -161,6 +161,7 @@ jobs:
         if: ${{ !inputs.backup_only && !inputs.source_capture_only }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
+          CLUED_MIGRATION_HASH_DIAGNOSTIC: ${{ github.ref == 'refs/heads/diagnostic/storage-source-history' && inputs.preflight_only }}
         run: |
           mkdir -p .sites-runtime/release-evidence
           node scripts/production-release-gate.mjs --pre-deploy \

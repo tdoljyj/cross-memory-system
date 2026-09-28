@@ -120,7 +120,10 @@ async function main() {
   const commit = git(['rev-parse', 'HEAD']);
   if (git(['status', '--porcelain'])) throw new Error('source_worktree_dirty');
   if (process.env.GITHUB_ACTIONS === 'true' &&
-      (process.env.GITHUB_SHA !== commit || process.env.GITHUB_REF !== 'refs/heads/main')) {
+      (process.env.GITHUB_SHA !== commit ||
+       (process.env.GITHUB_REF !== 'refs/heads/main' &&
+        !(process.env.GITHUB_REF === 'refs/heads/diagnostic/storage-source-history' &&
+          process.env.CLUED_MIGRATION_HASH_DIAGNOSTIC === 'true')))) {
     throw new Error('production_source_not_main_checkout');
   }
   if (process.env.GITHUB_ACTIONS !== 'true' &&
