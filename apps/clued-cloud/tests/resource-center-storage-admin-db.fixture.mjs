@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 
 export const STORAGE_ADMIN_API = "clued_private.storage_admin_designate_v2";
 export const storageAdminCall = async (db, input) => (await db.query(
@@ -7,14 +7,18 @@ export const storageAdminCall = async (db, input) => (await db.query(
 
 // Real M1 approval contracts, synthetic subjects and a disposable database only.
 export async function storageAdminApproval(db, subject, project, action, base = 0) {
+  const tokenHash = randomBytes(32).toString("hex");
+  await db.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+    values($1,'synthetic','Storage owner approval',$2,array['context:read','context:write'],array[$3])`,
+    [subject, tokenHash, `project:${project}`]);
   const request = { operation: "create", record_type: "decision", record_schema_version: 1,
     scope: `project:${project}`, lifecycle_status: "active", authority: "user_explicit", user_confirmed: true,
     confidence_reason: "Synthetic explicit storage administration approval", idempotency_key: randomUUID(),
     source_refs: [], source_unavailable_reason: "Disposable PostgreSQL fixture",
     mutation: { title: "Storage-only administrator fixture", content: "Synthetic approval; no production authority",
       type_fields: { rationale: "Test exact approval binding", storage_admin_subject_id: subject, storage_admin_action: action } } };
-  const result = (await db.query("select clued_private.record_mutation_core($1,null,$2::jsonb,clued_private.m1_sha256($2::jsonb)) value",
-    [subject, JSON.stringify(request)])).rows[0].value;
+  const result = (await db.query("select public.clued_record_mutate($1,$2::jsonb) value",
+    [tokenHash, JSON.stringify(request)])).rows[0].value;
   assert.equal(result.status, "committed", JSON.stringify(result));
   const decision = result.target_refs.find(ref => ref.kind === "record" && ref.role === "primary").id;
   const receipt = (await db.query("select request_sha256 from public.clued_audit_receipts where id=$1", [result.receipt_id])).rows[0];
@@ -89,6 +93,7 @@ export async function testStorageAdmin(t, db, server, user, project) {
         await rejected({ ...input, ...extra }, /storage_admin_approval_required|storage_admin_version_conflict|storage_admin_input_invalid/);
       }
       for (const change of ["authority='inferred'", "lifecycle_status='revoked'",
+        "receipt_id=null",
         "type_fields=type_fields||'{\"storage_admin_subject_id\":\"00000000-0000-4000-8000-000000000000\"}'::jsonb",
         "type_fields=type_fields||'{\"storage_admin_action\":\"revoke\"}'::jsonb"]) {
         await db.query("savepoint wrong_approval");
@@ -98,6 +103,30 @@ export async function testStorageAdmin(t, db, server, user, project) {
         } finally { await db.query("rollback to savepoint wrong_approval"); }
       }
       assert.deepEqual(await row(), []);
+    });
+  });
+  await t.test("approval requires the exact authenticated Owner M1 Receipt, not an unbound or unrelated receipt", async () => {
+    await isolated(async () => {
+      const input = await storageAdminApproval(db, user, project, "designate");
+      const foreign = randomUUID(), foreignBinding = randomUUID();
+      await db.query("insert into auth.users(id,email) values($1,'foreign-admin-proof@example.invalid')", [foreign]);
+      await db.query(`insert into public.clued_agent_bindings(id,user_id,vendor,agent_name,token_hash)
+        values($1,$2,'synthetic','Foreign approval',$3)`, [foreignBinding, foreign, randomBytes(32).toString("hex")]);
+      for (const change of ["binding_id=null", `binding_id='${foreignBinding}'`,
+        "operation='event_append'", "operation_family='event_append'", "object_type='record'",
+        "context_key='m1:event_append'", "error_code='SYNTHETIC_ERROR'"]) {
+        await db.query("savepoint wrong_receipt");
+        try {
+          // Fault injection is confined to this disposable transaction.
+          await db.query(`update public.clued_audit_receipts set ${change} where id=$1`, [input.approval_receipt_id]);
+          await rejected(input, /storage_admin_approval_required/);
+          assert.deepEqual(await row(), []);
+        } finally { await db.query("rollback to savepoint wrong_receipt"); }
+      }
+      // Revoking a client later does not erase its historical Owner approval.
+      await db.query(`update public.clued_agent_bindings set revoked_at=clock_timestamp()
+        where id=(select binding_id from public.clued_audit_receipts where id=$1)`, [input.approval_receipt_id]);
+      assert.equal((await storageAdminCall(db, input)).status, "committed");
     });
   });
   await t.test("anonymous, deleted and banned subjects cannot activate; an unavailable subject can still be revoked", async () => {

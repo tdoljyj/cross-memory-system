@@ -82,7 +82,13 @@ begin
     or not clued_private.resource_center_decision_current_v1(u,d.project_id,d.id)
     or d.type_fields->>'storage_admin_subject_id' is distinct from u::text
     or d.type_fields->>'storage_admin_action' is distinct from op
+    or d.receipt_id is distinct from proof.id
     or proof.status is distinct from 'committed' or proof.request_sha256 is distinct from p_input->>'approval_sha256'
+    or proof.error_code is not null
+    or proof.operation is distinct from 'record_mutation' or proof.operation_family is distinct from 'record_mutation'
+    or proof.object_type is distinct from 'request' or proof.context_key is distinct from 'm1:record_mutation'
+    or proof.binding_id is null or not exists(select 1 from public.clued_agent_bindings b
+      where b.id=proof.binding_id and b.user_id=u)
     or proof.committed_versions->>d.id::text is distinct from d.version::text
     or not(proof.target_refs @> jsonb_build_array(jsonb_build_object('kind','record','role','primary','id',d.id)))
     or exists(select 1 from public.clued_context_events e where e.user_id=u
