@@ -28,7 +28,7 @@ function isGrantView(v: Record<string, unknown>, id: string): v is GrantView {
 }
 type RefreshStatus = { enabled: boolean; version: number; connection_version: number; failures: number; pending: boolean; next_refresh_at: string | null };
 const probeStages: Record<string, string> = { request: "请求验证", prepare: "账号与目录当前状态", descriptor: "目录配置", credential: "连接凭据与有效期",
-  identity: "Google 账号身份", directories: "Google 目录元数据与权限", receipt: "最终状态复核与回执" };
+  identity: "Google 账号身份", directories: "Google 目录元数据与权限", boundary: "父级与同级目录边界", receipt: "最终状态复核与回执" };
 const probeReasons: Record<string, string> = { DIRECTORY_NOT_APP_AUTHORIZED: "至少一个已登记目录尚未向当前 Google 应用授权", DIRECTORY_NOT_WRITABLE: "至少一个目录不允许新建子项",
   IDENTITY_INVALID: "提供方返回的对象身份字段不完整或无效", PARENT_INVALID: "父目录身份不符合登记", LAYOUT_INVALID: "登记布局不符合检查合同",
   DIRECTORY_CHANGED: "目录名称、位置或版本发生变化", PATH_AMBIGUOUS: "目录存在同名或身份冲突", SHORTCUT_UNQUALIFIED: "检测到尚未纳入资格验证的快捷方式",
@@ -40,7 +40,14 @@ const probeReasons: Record<string, string> = { DIRECTORY_NOT_APP_AUTHORIZED: "�
   PROVIDER_TIMEOUT: "Google 单次元数据请求超时", RUNTIME_SUBREQUEST_LIMIT: "云端运行环境达到单次外部请求上限",
   PROVIDER_REDIRECT_REJECTED: "Google 请求出现不允许的跳转", PROVIDER_RESPONSE_INVALID: "Google 响应格式无效",
   METADATA_ID_MISMATCH: "Google 返回的对象 ID 与查询不一致", PAGINATION_INVALID: "目录分页标记无效或重复",
-  PAGINATION_LIMIT: "目录分页超过本次检查上限", NAMESPACE_VISIBILITY_UNPROVEN: "目录枚举所需的只读元数据权限未确认" };
+  PAGINATION_LIMIT: "目录分页超过本次检查上限", NAMESPACE_VISIBILITY_UNPROVEN: "目录枚举所需的只读元数据权限未确认",
+  UNAUTHORIZED_WORKSPACE_MUTATION: "发现未登记的 Clued 资料位置（UNAUTHORIZED_WORKSPACE_MUTATION）",
+  BOUNDARY_PROFILE_UNQUALIFIED: "边界配置未通过验证", BOUNDARY_IDENTITY_INVALID: "边界对象身份无效",
+  BOUNDARY_ROOT_CHANGED: "资料根身份发生变化", BOUNDARY_ALIAS_OR_CYCLE: "边界存在重复引用或循环",
+  BOUNDARY_FOLDER_INVALID: "边界目录类型无效", BOUNDARY_CHANGED: "扫描期间边界发生变化",
+  BOUNDARY_ENUMERATION_INVALID: "边界枚举不完整", BOUNDARY_ENTRY_LIMIT: "边界条目超过检查上限",
+  BOUNDARY_PATH_AMBIGUOUS: "边界存在同名或路径冲突", BOUNDARY_SHORTCUT_UNQUALIFIED: "边界存在未验证的快捷方式",
+  BOUNDARY_DEPTH_LIMIT: "边界目录深度超过检查上限", BOUNDARY_ROOT_NOT_LISTED: "边界枚举缺少资料根" };
 class ProbeRequestError extends Error {}
 async function request(path: string, body: object | undefined, stillCurrent: () => boolean = () => true) {
   const { data, error } = await supabase.auth.getSession();
@@ -211,6 +218,19 @@ export default function StorageConnections() {
         typeof result.attempt_id !== "string" || !/^[0-9a-f-]{36}$/.test(result.attempt_id) ||
         typeof result.receipt_id !== "string" || !/^[0-9a-f-]{36}$/.test(result.receipt_id)) throw new Error("目录检查回执未确认；文件写入保持关闭。");
       report(`已登记目录的访问与元数据检查已记录。回执：${result.receipt_id}。这不是完整存储资格验收，不会开启文件写入。`);
+      const b = result.boundary_observation;
+      if (isObject(b) && b.contract === "clued.storage-boundary-observation/1" && b.status === "clean" &&
+        b.digest_format === "sorted-json/1" && Number.isSafeInteger(b.observed_at_ms) && Number(b.observed_at_ms) >= 0 &&
+        b.policy_version === "clued.resource-center-mutation-policy/1" && b.scanner_contract === "clued.google-drive-boundary/1" &&
+        typeof b.descriptor_sha256 === "string" && /^[a-f0-9]{64}$/.test(b.descriptor_sha256) &&
+        typeof b.scan_config_sha256 === "string" && /^[a-f0-9]{64}$/.test(b.scan_config_sha256)) {
+        // Only validated, explicit fields may enter the owner-visible evidence summary.
+        const evidence = { attempt_id: result.attempt_id, receipt_id: result.receipt_id,
+          boundary_observation: { contract: b.contract, status: b.status, observed_at_ms: b.observed_at_ms,
+            policy_version: b.policy_version, scanner_contract: b.scanner_contract, digest_format: b.digest_format,
+            descriptor_sha256: b.descriptor_sha256, scan_config_sha256: b.scan_config_sha256 }, execution_permitted: false };
+        report(`目录检查回执：${result.receipt_id}。本次父级与同级边界只读扫描未发现违规；这只是观察时点检测，不是原子快照。边界结果需连同受审发布版本另存验收证据，不包含在旧目录回执合同中。不会开启文件写入。验收摘要：${JSON.stringify(evidence)}`);
+      }
     } catch (error) {
       if (epoch === revision.current) report(error instanceof ProbeRequestError ? error.message : "目录检查未确认；可能需要核对目录授权、当前版本或等待凭据续签。不会自动重试或开启文件写入。");
     } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }

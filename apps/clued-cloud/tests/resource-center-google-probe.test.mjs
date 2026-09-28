@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {randomUUID,randomBytes} from "node:crypto";
+import {randomUUID,randomBytes,createHash} from "node:crypto";
 import {mkdtemp} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -40,9 +40,12 @@ async function fixture(options={}) {
     }
   }
   if(options.parentlessBoundary)delete files[0].parents;
+  if(options.sibling)files.push({...item('sibling',options.sibling,'parent'),mimeType:'text/plain'});
+  if(options.nestedIsland)files.push(item('external','ordinary','parent'),{...item('island','Clued_notes.md','external'),mimeType:'text/plain'});
   const calls=[], rpcs=[];
   const fetcher=async(url,init)=>{
     calls.push({url:String(url),method:init.method});
+    if(calls.length>=5)options.boundaryDelay?.();
     if(options.fetchLimit && calls.length>options.fetchLimit)throw Error(options.limitMessage??"Too many subrequests.");
     assert.equal(init.method,String(url).includes("/batch/")?"POST":"GET"); assert.equal(init.redirect,"manual"); assert.ok(init.signal);
     assert.equal(new Headers(init.headers).get("authorization"),"Bearer synthetic-private-access");
@@ -63,10 +66,11 @@ async function fixture(options={}) {
     if(u.pathname.endsWith("/files")) {
       assert.match(u.searchParams.get("fields"),/isAppAuthorized/);
       const parent=u.searchParams.get("q").split("'")[1];
-      return {files:files.filter(f=>f.parents?.includes(parent)),incompleteSearch:options.incomplete??false};
+      return {files:files.filter(f=>f.parents?.includes(parent)),incompleteSearch:options.incomplete??(options.boundaryIncomplete && calls.length>=5)??false};
     }
     const result=structuredClone(files.find(f=>f.id===u.pathname.split("/").at(-1)));
     if(result.id===options.unauthorized)result.isAppAuthorized=false;
+    if(options.boundaryDrift && calls.length>=9 && result.id==='root')result.version='2';
     return result;
     };
     assert.equal(u.href,"https://www.googleapis.com/batch/drive/v3");
@@ -87,12 +91,16 @@ async function fixture(options={}) {
     return {status:"metadata_observed",attempt_id:attempt,receipt_id:receipt,execution_permitted:false,credential_envelope:envelope};
   };
   const probe=await createStorageGoogleProbe({client_id:context.oauth_client_id,vault:vaultConfig,rpc,fetch:fetcher,clock:options.clock});
-  return {probe,connection,attempt,receipt,calls,rpcs,rpc,fetcher,vaultConfig,client:context.oauth_client_id};
+  return {probe,connection,attempt,receipt,calls,rpcs,rpc,fetcher,vaultConfig,descriptor,client:context.oauth_client_id};
 }
 test("server directory observation uses pinned secret, fixed GET-only batches and whitelisted receipt only",async()=>{
   const f=await fixture(), result=await f.probe.run({connection_id:f.connection});
-  assert.deepEqual(result,{status:"metadata_observed",attempt_id:f.attempt,receipt_id:f.receipt,execution_permitted:false});
-  assert.equal(f.rpcs.length,2); assert.equal(f.calls.length,4);
+  const {boundary_observation: boundary,...directory}=result;
+  assert.deepEqual(directory,{status:"metadata_observed",attempt_id:f.attempt,receipt_id:f.receipt,execution_permitted:false});
+  assert.equal(boundary.contract,'clued.storage-boundary-observation/1');assert.equal(boundary.status,'clean');
+  assert.match(boundary.descriptor_sha256,/^[a-f0-9]{64}$/);assert.match(boundary.scan_config_sha256,/^[a-f0-9]{64}$/);
+  assert.equal(f.rpcs[1].observation.boundary_observation,undefined);
+  assert.equal(f.rpcs.length,2); assert.equal(f.calls.length,9);
   assert.equal(JSON.stringify(f.rpcs[1]).includes("synthetic-private"),false);
   assert.equal(JSON.stringify(result).includes("credential"),false);
 });
@@ -129,7 +137,7 @@ test("subject, topic application grant, incomplete namespace and redirect failur
 test("post-read CAS rejection has no refresh, activation, retry or success response",async()=>{
   const f=await fixture({commitError:true});await assert.rejects(f.probe.run({connection_id:f.connection}),/^Error: storage_directory_probe_unavailable$/);
   assert.deepEqual(f.rpcs.map(r=>r.action),["prepare","complete"]);
-  assert.deepEqual(f.calls.map(c=>c.method),["GET","POST","POST","POST"]);
+  assert.deepEqual(f.calls.map(c=>c.method),["GET",...Array(8).fill("POST")]);
 });
 test("time spent checking identity is part of the shared observation deadline",async()=>{
   let now=Date.now(); const f=await fixture({clock:()=>now,delay:()=>{now+=60001;}});
@@ -163,7 +171,9 @@ test("native HTTP probe route preserves JWT plus fixed issuer and never accepts 
     assert.equal(f.rpcs.length,0);
     const response=await worker.fetch(request({connection_id:f.connection}),env);
     assert.equal(response.status,200);assert.equal(response.headers.get("cache-control"),"no-store");
-    assert.deepEqual(await response.json(),{status:"metadata_observed",attempt_id:f.attempt,receipt_id:f.receipt,execution_permitted:false});
+    const result=await response.json();assert.equal(result.boundary_observation.status,'clean');
+    delete result.boundary_observation;
+    assert.deepEqual(result,{status:"metadata_observed",attempt_id:f.attempt,receipt_id:f.receipt,execution_permitted:false});
     redirect=true;const before=f.calls.length;
     const denied=await worker.fetch(request({connection_id:f.connection}),env);
     assert.equal(denied.status,403);assert.equal(f.calls.length,before);
@@ -204,11 +214,11 @@ test("actual per-request timeout is classified using the private abort signal an
   assert.equal(f.calls.length,2);assert.equal(f.rpcs.length,1);
 });
 
-test("31 registered directories preserve 97 inner GETs in one identity GET and three batches",async()=>{
+test("31 registered directories preserve directory batches plus a complete independent parent boundary scan",async()=>{
   const complete=await fixture({fullSize:true});
   assert.equal((await complete.probe.run({connection_id:complete.connection})).status,"metadata_observed");
-  assert.equal(complete.calls.length,4);assert.equal(complete.rpcs.length,2);
-  assert.deepEqual(complete.calls.map(c=>c.innerGets??1),[1,32,32,32]);
+  assert.equal(complete.calls.length,9);assert.equal(complete.rpcs.length,2);
+  assert.deepEqual(complete.calls.map(c=>c.innerGets??1),[1,32,32,32,1,1,1,1,1]);
   for(const limitMessage of ["Too many subrequests.",
     "Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits"]) {
     const limited=await fixture({fullSize:true,fetchLimit:2,limitMessage});let error;
@@ -217,6 +227,41 @@ test("31 registered directories preserve 97 inner GETs in one identity GET and t
     assert.equal(limited.calls.length,3);assert.equal(limited.rpcs.length,1);
     assert.deepEqual(limited.calls.map(c=>c.method),["GET","POST","POST"]);
   }
+});
+
+test('sibling/root drop and nested island deny before directory receipt without revealing names',async()=>{
+  for(const options of [{sibling:'Clued_drop.md'},{nestedIsland:true}]) {
+    const f=await fixture(options);let error;
+    try{await f.probe.run({connection_id:f.connection});}catch(e){error=e;}
+    assert.deepEqual(storageProbeDiagnostic(error),{stage:'boundary',reason:'UNAUTHORIZED_WORKSPACE_MUTATION'});
+    assert.equal(f.rpcs.length,1);assert.ok(!JSON.stringify(storageProbeDiagnostic(error)).includes('Clued_drop'));
+  }
+  const normal=await fixture({sibling:'ordinary.txt'});
+  assert.equal((await normal.probe.run({connection_id:normal.connection})).boundary_observation.status,'clean');
+});
+
+test('boundary incomplete enumeration, final drift, timeout and subrequest limit never complete',async()=>{
+  for(const options of [{boundaryIncomplete:true},{boundaryDrift:true},{fetchLimit:6}]) {
+    const f=await fixture(options);await assert.rejects(f.probe.run({connection_id:f.connection}),/storage_directory_probe_unavailable/);
+    assert.equal(f.rpcs.length,1);
+  }
+  let now=Date.now();const f=await fixture({clock:()=>now,boundaryDelay:()=>{now+=60001;}});
+  await assert.rejects(f.probe.run({connection_id:f.connection}),/storage_directory_probe_unavailable/);
+  assert.equal(f.rpcs.length,1);assert.equal(f.calls.length,5);
+});
+
+test('manual evidence digests are reproducible and descriptor changes never reuse its digest',async()=>{
+  const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'
+    ?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;
+  const hash=value=>createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
+  const f=await fixture(),first=(await f.probe.run({connection_id:f.connection})).boundary_observation;
+  assert.equal(first.descriptor_sha256,hash(f.descriptor));
+  assert.equal(first.scan_config_sha256,hash({managed_root:'/drive/Clued_资料中心',root_folder_id:'root',root_parent_id:'parent',
+    scan_roots:[{folder_id:'parent',path:'/drive'}],max_depth:8,max_entries:10000}));
+  f.descriptor.connection_version++;
+  const second=(await f.probe.run({connection_id:f.connection})).boundary_observation;
+  assert.notEqual(first.descriptor_sha256,second.descriptor_sha256);
+  assert.equal(first.scan_config_sha256,second.scan_config_sha256);
 });
 
 test("runtime and metadata failure diagnostics are exact closed codes, never arbitrary exception text",async()=>{
