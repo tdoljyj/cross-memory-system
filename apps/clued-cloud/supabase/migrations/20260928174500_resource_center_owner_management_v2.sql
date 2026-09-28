@@ -18,7 +18,7 @@ begin
     return jsonb_build_object('connections',coalesce((select jsonb_agg(jsonb_build_object(
       'id',co.id,'version',co.version,'provider',co.provider,'state',co.state,
       'auth_mode',co.auth_mode,'scope_name',pr.profile_version,'root_name',pr.managed_root,
-      'policy_active',ap.state='active' and co.state='active' and co.revoked_at is null,
+      'policy_active',coalesce(ap.state='active' and co.state='active' and co.revoked_at is null,false),
       'actions',case when ap.state='active' then to_jsonb(ap.actions) else '[]'::jsonb end,
       'refresh_enabled',coalesce(d.enabled,false) and co.state='active',
       'database_execution_enabled',(select count(*)=1 and bool_and(app.execution_enabled)
