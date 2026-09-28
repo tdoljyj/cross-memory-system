@@ -2348,7 +2348,7 @@ async function handleContinuityRequestInner(
         // cross-account recovery endpoint. This branch never calls the executor.
         const verifiedRpc = async (value: Record<string, unknown>) => await supabaseRequest(env,
           "/rest/v1/rpc/clued_storage_cloud_worker_router_v2", {
-            method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+            method: "POST", redirect: "manual", signal: AbortSignal.timeout(10000),
             body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }),
           }) as Record<string, unknown>;
         let verifiedStatus: Record<string, unknown> | null = null;
