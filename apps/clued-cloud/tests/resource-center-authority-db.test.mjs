@@ -20,6 +20,7 @@ import { testDirectoryProbe } from "./resource-center-directory-probe-db.fixture
 import { testAccountPolicy } from "./resource-center-account-policy-db.fixture.mjs";
 import { testStorageClientCapability } from "./resource-center-client-capability-db.fixture.mjs";
 import { testStoragePolicyTransition } from "./resource-center-policy-transition-db.fixture.mjs";
+import { testStorageAdmin } from "./resource-center-storage-admin-db.fixture.mjs";
 import { testAccountCloud } from "./resource-center-account-cloud-db.fixture.mjs";
 import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refresh-upgrade-db.fixture.mjs";
 
@@ -41,7 +42,8 @@ async function freePort() {
 }
 
 const focusedCloud = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "account-cloud";
-for (const bindingSchema of focusedCloud ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
+const focusedAdmin = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-admin";
+for (const bindingSchema of focusedCloud || focusedAdmin ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
@@ -120,6 +122,13 @@ for (const bindingSchema of focusedCloud ? ["legacy-expiry"] : ["legacy-expiry",
     // schema shapes plus every existing Resource Center regression.
     if (focusedCloud) {
       await testAccountCloud(t, admin, server, USER, DECISION);
+      return;
+    }
+
+    if (focusedAdmin) {
+      await testStorageAdmin(t, admin, server, USER, PROJECT);
+      await testStorageClientCapability(t, admin, server, USER, DECISION);
+      await testStoragePolicyTransition(t, admin, server, USER, DECISION);
       return;
     }
 
@@ -754,6 +763,7 @@ for (const bindingSchema of focusedCloud ? ["legacy-expiry"] : ["legacy-expiry",
     await testAccountRefresh(t, admin, server, USER, DECISION);
     await testDirectoryProbe(t, admin, server, USER, DECISION);
     await testAccountPolicy(t, admin, server, USER, DECISION);
+    await testStorageAdmin(t, admin, server, USER, PROJECT);
     await testStorageClientCapability(t, admin, server, USER, DECISION);
     await testStoragePolicyTransition(t, admin, server, USER, DECISION);
     await testAccountCloud(t, admin, server, USER, DECISION);
