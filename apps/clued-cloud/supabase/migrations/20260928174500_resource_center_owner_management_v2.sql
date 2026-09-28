@@ -20,7 +20,10 @@ begin
       'auth_mode',co.auth_mode,'scope_name',pr.profile_version,'root_name',pr.managed_root,
       'policy_active',ap.state='active' and co.state='active' and co.revoked_at is null,
       'actions',case when ap.state='active' then to_jsonb(ap.actions) else '[]'::jsonb end,
-      'refresh_enabled',coalesce(d.enabled,false) and co.state='active') order by co.id)
+      'refresh_enabled',coalesce(d.enabled,false) and co.state='active',
+      'database_execution_enabled',(select count(*)=1 and bool_and(app.execution_enabled)
+        from clued_private.storage_oauth_apps_v1 app where app.oauth_client_id=co.oauth_client_id and app.revoked_at is null),
+      'profile_current',pr.state='active' and pr.version=co.profile_version) order by co.id)
       from clued_private.storage_connections_v1 co
       join clued_private.resource_center_profiles_v1 pr on pr.id=co.profile_id and pr.user_id=u
       left join clued_private.storage_account_policies_v2 ap on ap.id=co.account_policy_id and ap.owner_id=u
