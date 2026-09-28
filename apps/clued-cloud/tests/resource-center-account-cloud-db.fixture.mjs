@@ -323,6 +323,13 @@ export async function testAccountCloud(t, admin, server, user, decision) {
       const result = await executor(target, storage, caller, async request => { requests.push(structuredClone(request)); }).run(job.reference);
       assert.equal(result.status, "unreconciled", JSON.stringify(result)); assert.equal(storage.posts, 1);
       const row = await journal(job), originalJob = await jobRow(job); assert.equal(row.state, "started"); assert.ok(row.provider_attempt);
+      const routerAcl = (await admin.query(`select has_function_privilege('anon',$1,'EXECUTE') anon,
+        has_function_privilege('authenticated',$1,'EXECUTE') authenticated`,
+        ['public.clued_storage_cloud_worker_router_v2(text,jsonb)'])).rows[0];
+      assert.deepEqual(routerAcl,{anon:true,authenticated:false});
+      const verifiedStatus = await cloud({action:"verified_inspect",...job.reference});
+      assert.equal(verifiedStatus.status,"inspection_required");
+      assert.equal(verifiedStatus.job_id,job.reference.job_id);
       // In the isolated database, load only the exact original attempt under a
       // native Owner session and fixed issuer. The temporary envelope is not a
       // usable token and the surrounding transaction rolls back all fixture IO.
