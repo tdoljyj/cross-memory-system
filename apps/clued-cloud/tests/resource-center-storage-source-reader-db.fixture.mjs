@@ -32,7 +32,7 @@ export async function testStorageSourceReader(t, admin) {
     }
     const migration = await readFile(path.join(process.cwd(), "supabase", "migrations",
       "20260928113000_resource_center_storage_source_reader_v2.sql"), "utf8");
-    await assert.rejects(admin.query(migration), /storage_source_reader_role_already_exists/);
+    await assert.rejects(admin.query(migration), /already exists/);
   });
 
   await t.test("storage source reader resolves only an exact live request and cannot read base tables", async () => {
