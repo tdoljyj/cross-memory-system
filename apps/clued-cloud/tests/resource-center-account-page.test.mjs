@@ -66,7 +66,9 @@ test("provider diagnostic categories render beside the button without raw errors
     ["RUNTIME_SUBREQUEST_LIMIT","单次外部请求上限"],["PROVIDER_REDIRECT_REJECTED","不允许的跳转"],
     ["PROVIDER_RESPONSE_INVALID","响应格式无效"],["METADATA_ID_MISMATCH","对象 ID 与查询不一致"],
     ["PAGINATION_INVALID","分页标记无效"],["PAGINATION_LIMIT","分页超过"],
-    ["NAMESPACE_VISIBILITY_UNPROVEN","只读元数据权限未确认"]]) {
+    ["NAMESPACE_VISIBILITY_UNPROVEN","只读元数据权限未确认"],
+    ["UNAUTHORIZED_WORKSPACE_MUTATION","UNAUTHORIZED_WORKSPACE_MUTATION"],
+    ["BOUNDARY_CHANGED","扫描期间边界发生变化"]]) {
     const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
     f.button("检查已登记目录（只读）").props.onClick();await f.settle();
     f.respond(1,{execution_permitted:false,diagnostic:{stage:"directories",reason},error:"private-provider-text"},403);await f.settle();
@@ -166,6 +168,21 @@ test("directory observation late reply is discarded after account switch",async(
   f.respond(2,{connections:[]});await f.settle();
   f.respond(1,{status:"metadata_observed",attempt_id:"10000000-0000-4000-8000-000000000001",receipt_id:"10000000-0000-4000-8000-000000000002",execution_permitted:false});await f.settle();
   assert.equal(f.text().includes("检查已记录"),false);assert.equal(f.text().includes("10000000-0000-4000-8000-000000000002"),false);
+});
+
+test('boundary clean report is distinct from a durable receipt and malformed reports cannot claim clean',async()=>{
+  for(const valid of [true,false]) {
+    const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+    f.button('检查已登记目录（只读）').props.onClick();await f.settle();
+    f.respond(1,{status:'metadata_observed',attempt_id:'10000000-0000-4000-8000-000000000001',receipt_id:'10000000-0000-4000-8000-000000000002',execution_permitted:false,
+      boundary_observation:{contract:'clued.storage-boundary-observation/1',status:'clean',observed_at_ms:100,digest_format:'sorted-json/1',
+        policy_version:'clued.resource-center-mutation-policy/1',scanner_contract:'clued.google-drive-boundary/1',secret:'must-not-display',
+        descriptor_sha256:'a'.repeat(64),scan_config_sha256:valid?'b'.repeat(64):'private-invalid'}});await f.settle();
+    assert.equal(f.text().includes('本次父级与同级边界只读扫描未发现违规'),valid);
+    if(valid){assert.match(f.text(),/不包含在旧目录回执合同中/);assert.ok(f.text().includes('"descriptor_sha256":"'+'a'.repeat(64)+'"'));assert.ok(f.text().includes('"observed_at_ms":100'));}
+    assert.equal(f.text().includes('must-not-display'),false);
+    assert.match(f.text(),/不会开启文件写入/);assert.equal(f.text().includes('private-invalid'),false);
+  }
 });
 test("new connection defaults to disclosed refresh consent, can opt out or cancel, and never enrolls on listing",async()=>{
   const label='连接成功后自动续签（可取消；已有停用或失效设置不变）';

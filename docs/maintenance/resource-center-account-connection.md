@@ -250,12 +250,36 @@ Complete rechecks native session, issuer, quiet root and the full pinned snapsho
 then atomically stores the exact observation with an Event and immutable Receipt.
 Identical completion within the live attempt returns the same receipt; changed,
 expired, revoked or stale completion is rejected. Wall-clock expiry is checked
-again after lock waits. Public output is only status, attempt/receipt IDs and
-`execution_permitted:false`; it never includes the descriptor or credentials.
+again after lock waits. Public output contains status, attempt/receipt IDs,
+`execution_permitted:false` and the additive report described below; it never
+includes the raw descriptor, sibling entries or credentials.
 
-This is **directory observation**, not cloud runtime qualification, exhaustive
-sibling-island acceptance, admission or a file-operation grant. The existing
-boundary scanner remains a separate required check. A later reviewed runtime
+The Worker now also runs the existing deterministic boundary scanner **before**
+completion, against the fixed Canonical parent/root with the same credential,
+60-second budget and batch adapter's cumulative byte budget. It performs fresh
+reads, follows complete pagination, rejects shortcuts/limits/drift and does not
+read file bodies. Single-element metadata batches do not reduce a recursive
+scan's request count; exhausting any limit fails closed without a receipt.
+
+The additive `boundary_observation` report is returned only after that scan and
+the original CAS complete. It has a versioned contract, observation timestamp,
+policy/scanner contract and sorted-JSON SHA-256 of the prepared descriptor and
+fixed scan configuration. Sorted JSON recursively sorts object keys, preserves
+array order, uses compact JSON and UTF-8; it is not PostgreSQL's jsonb digest.
+The fixed configuration has `managed_root`, `root_folder_id`, `root_parent_id`,
+`scan_roots: [{folder_id: root_parent_id, path: parent(managed_root)}]`,
+`max_depth: 8`, `max_entries: 10000`. No caller roots or raw sibling names escape.
+This report is **not part of the unchanged directory Receipt schema**. An old
+Receipt never gains boundary semantics. Before manual reviewed runtime
+qualification, retain separate immutable Evidence binding the exact new reviewed
+release, attempt ID, prepared descriptor/digest, directory Receipt, report and
+fixed scan configuration. Deployment plus a directory Receipt alone is not proof.
+No automated qualifier may consume this report as a durable boundary Receipt;
+that requires a future versioned observation/CAS successor.
+
+This remains observation-time detection, not a Drive atomic namespace snapshot,
+cloud runtime qualification, admission or a file-operation grant. Every actual
+write still runs the existing boundary scanner again. A later reviewed runtime
 registration must bind actual fresh evidence; this migration does not change or
 call the cloud qualification/activation API. No jobs/executor flag, Binding grant,
 connection state, refresh delegation, writer or fence is changed. Failed attempts

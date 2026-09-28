@@ -1,4 +1,7 @@
 import { createGoogleDriveDirectoryProbe } from "../../../kernel/host/resource-center-google-drive-qualification.mjs";
+import { createGoogleDriveBoundaryScanner } from "../../../kernel/host/resource-center-google-drive-boundary.mjs";
+import { RESOURCE_CENTER_POLICY_VERSION } from "../../../kernel/policy/resource-center-mutation-policy.mjs";
+import { createHash } from "node:crypto";
 import { createStorageGoogleMetadataBatch } from "./storage-google-metadata-batch";
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
@@ -8,7 +11,18 @@ const object = (v: unknown): v is Data => !!v && typeof v === "object" && !Array
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const scopes = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 function fail(): never { throw new Error("storage_directory_probe_unavailable"); }
-type ProbeStage = "request" | "prepare" | "descriptor" | "credential" | "identity" | "directories" | "receipt";
+type ProbeStage = "request" | "prepare" | "descriptor" | "credential" | "identity" | "directories" | "boundary" | "receipt";
+// Versioned, deterministic JSON digest for separately retained review Evidence.
+// It is not the database's jsonb digest or an execution capability.
+function sortedJson(value: unknown): string {
+  if (Array.isArray(value)) return "[" + value.map(sortedJson).join(",") + "]";
+  if (object(value)) return "{" + Object.keys(value).sort().map(key => JSON.stringify(key) + ":" + sortedJson(value[key])).join(",") + "}";
+  const encoded = JSON.stringify(value); if (encoded === undefined) fail(); return encoded;
+}
+const digest = (value: unknown) => createHash("sha256").update(sortedJson(value)).digest("hex");
+const boundaryReasons = new Set(["PROFILE_UNQUALIFIED", "IDENTITY_INVALID", "ROOT_CHANGED", "ALIAS_OR_CYCLE",
+  "FOLDER_INVALID", "CHANGED", "ENUMERATION_INVALID", "ENTRY_LIMIT", "PATH_AMBIGUOUS", "SHORTCUT_UNQUALIFIED",
+  "DEPTH_LIMIT", "ROOT_NOT_LISTED"]);
 class ProbeFailure extends Error {
   constructor(readonly stage: ProbeStage, readonly reason: string) { super("storage_directory_probe_unavailable"); }
 }
@@ -107,17 +121,45 @@ export async function createStorageGoogleProbe(config: {
         get_files: metadata.getFiles, list_folders: metadata.listFolders, clock,
         timeout_ms: Math.max(1, Math.floor(deadline-checkTime())) })();
       checkTime(); signal.throwIfAborted();
+      stage = "boundary";
+      // Closed to the same Canonical parent/root as the cloud executor. No
+      // caller scan roots, external-root exceptions, credential copy or cache.
+      if (!object(d.layout) || typeof d.layout.managed_root !== "string") fail();
+      const root = d.layout.managed_root;
+      const scanConfig = { managed_root: root, root_folder_id: d.layout.root_folder_id,
+        root_parent_id: d.layout.root_parent_id, scan_roots: [{ folder_id: d.layout.root_parent_id,
+          path: root.slice(0, root.lastIndexOf("/")) }], max_depth: 8, max_entries: 10000 };
+      const scan = createGoogleDriveBoundaryScanner({
+        trusted_profile: { registration_status: "registered", managed_root: root,
+          boundary_scan_max_depth: scanConfig.max_depth, boundary_scan_max_entries: scanConfig.max_entries },
+        root_folder_id: scanConfig.root_folder_id, root_parent_id: scanConfig.root_parent_id, scan_roots: scanConfig.scan_roots,
+        get_file: async (id: string) => { checkTime(); return (await metadata.getFiles([id], { signal }))[0]; },
+        list_folder: async (id: string) => { checkTime(); return (await metadata.listFolders([id], { signal }))[0]; },
+      });
+      const findings = await scan();
+      checkTime(); signal.throwIfAborted();
+      if (findings.length) throw new ProbeFailure(stage, "UNAUTHORIZED_WORKSPACE_MUTATION");
+      const boundaryObservation = { contract: "clued.storage-boundary-observation/1", status: "clean",
+        observed_at_ms: checkTime(), policy_version: RESOURCE_CENTER_POLICY_VERSION,
+        scanner_contract: "clued.google-drive-boundary/1", digest_format: "sorted-json/1",
+        descriptor_sha256: digest(d), scan_config_sha256: digest(scanConfig) };
       stage = "receipt";
       const result = await config.rpc({ action: "complete", attempt_id: prepared.attempt_id, observation });
       if (result.status !== "metadata_observed" || result.attempt_id !== prepared.attempt_id ||
         !uuid.test(String(result.receipt_id)) || result.execution_permitted !== false) fail();
       // Never spread an RPC/provider response onto the public boundary.
-      return { status: "metadata_observed", attempt_id: String(prepared.attempt_id), receipt_id: String(result.receipt_id), execution_permitted: false };
+      // This additive report is NOT in the old directory Receipt. Manual
+      // qualification must retain immutable Evidence binding this report,
+      // attempt/descriptor, exact reviewed release and directory Receipt.
+      return { status: "metadata_observed", attempt_id: String(prepared.attempt_id), receipt_id: String(result.receipt_id),
+        boundary_observation: boundaryObservation, execution_permitted: false };
     } catch (error) {
       if (error instanceof ProbeFailure) throw error;
       const candidate = error instanceof Error && error.message.startsWith("DRIVE_QUALIFICATION_")
         ? error.message.slice("DRIVE_QUALIFICATION_".length) : "";
       if (stage === "directories" && directoryReasons.has(candidate)) throw new ProbeFailure(stage, candidate);
+      const boundaryCode = error instanceof Error && error.message.startsWith("DRIVE_BOUNDARY_") ? error.message.slice(15) : "";
+      if (stage === "boundary" && boundaryReasons.has(boundaryCode)) throw new ProbeFailure(stage, "BOUNDARY_" + boundaryCode);
       if (observationSignal?.aborted) throw new ProbeFailure(stage, "OBSERVATION_EXPIRED");
       // The primitive aborts its callbacks during normal finally cleanup too.
       // Only the private timeout signal's actual reason proves a timeout.
@@ -125,13 +167,13 @@ export async function createStorageGoogleProbe(config: {
         throw new ProbeFailure(stage, "PROVIDER_TIMEOUT");
       // Exact runtime/adapter literals only. Never copy arbitrary exception text
       // (which may contain a URL or secret), and never turn diagnosis into retry.
-      if (stage === "identity" || stage === "directories") {
+      if (stage === "identity" || stage === "directories" || stage === "boundary") {
         if (error instanceof Error && (subrequestLimitMessage.test(error.message) || error.message === subrequestLimitHint))
           throw new ProbeFailure(stage, "RUNTIME_SUBREQUEST_LIMIT");
         if (error instanceof Error && error.message === "storage_redirect_rejected")
           throw new ProbeFailure(stage, "PROVIDER_REDIRECT_REJECTED");
         if (error instanceof SyntaxError) throw new ProbeFailure(stage, "PROVIDER_RESPONSE_INVALID");
-        if (stage === "directories" && error instanceof Error && Object.hasOwn(metadataReasons, error.message))
+        if ((stage === "directories" || stage === "boundary") && error instanceof Error && Object.hasOwn(metadataReasons, error.message))
           throw new ProbeFailure(stage, metadataReasons[error.message]);
       }
       throw new ProbeFailure(stage, "UNCONFIRMED");
