@@ -189,6 +189,14 @@ test("late account A list cannot appear after switching to B", async () => {
   f.respond(1,{connections:[]}); await f.settle(); f.respond(0,{connections:[connection]}); await f.settle();
   assert.equal(f.text().includes(connection.id),false);
 });
+const status = { enabled:false,version:0,connection_version:2,failures:0,pending:false,next_refresh_at:null };
+async function ready(confirm=true) {
+  const f=fixture(confirm); await f.settle(); f.respond(0,{connections:[{...connection,state:"active",version:2}]}); await f.settle();
+  assert.equal(f.requests.length,1);
+  f.button("查询续签状态").props.onClick(); await f.settle();
+  assert.equal(f.requests[1].url,"/v1/storage/refresh"); assert.deepEqual(JSON.parse(f.requests[1].init.body),{action:"status",connection_id:connection.id});
+  f.respond(1,status); await f.settle(); return f;
+}
 test("standing refresh requires explicit confirmation and exact CAS, then reads fresh status",async()=>{
   const f=await ready(); f.button("授权开启后台续签").props.onClick(); await f.settle();
   assert.ok(f.confirmations[0].includes("退出登录不影响续签"));
