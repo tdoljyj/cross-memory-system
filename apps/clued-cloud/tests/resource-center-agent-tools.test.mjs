@@ -59,6 +59,28 @@ test('MCP requires an actual Binding transport and rejects caller authority befo
   } finally { globalThis.fetch = before; }
 });
 
+test('well-shaped write, replace, move, rename and delete are rejected before any RPC or dispatch', async () => {
+  const before = globalThis.fetch; let count = 0;
+  const source = mutation.destination_path;
+  const cases = [
+    { operation: 'write', target_kind: 'file', destination_path: source, content: 'changed bytes' },
+    { operation: 'replace', target_kind: 'file', destination_path: source, content: 'replacement bytes' },
+    { operation: 'move', target_kind: 'file', source_path: source, destination_path: 'G:/My Drive/Clued_资料中心/track/other-topic/example.md' },
+    { operation: 'rename', target_kind: 'file', source_path: source, destination_path: 'G:/My Drive/Clued_资料中心/track/topic/renamed.md' },
+    { operation: 'delete', target_kind: 'file', source_path: source },
+  ];
+  globalThis.fetch = async () => { count++; throw new Error('must not fetch'); };
+  try {
+    for (const input of cases) {
+      const pending = [];
+      const reply = await (await submit({ ...ref, mutation: input }, env, { waitUntil: p => pending.push(p) })).json();
+      assert.ok(reply.result?.isError === true || reply.error, input.operation + ' must be rejected');
+      assert.equal(count, 0, input.operation + ' must not reach an RPC');
+      assert.equal(pending.length, 0, input.operation + ' must not schedule execution');
+    }
+  } finally { globalThis.fetch = before; }
+});
+
 test('same existing jobs RPC hashes Binding, uses anon, whitelists response and never grants execution to caller', async () => {
   const before = globalThis.fetch; const calls = [];
   globalThis.fetch = async (url, init) => {

@@ -86,6 +86,37 @@ test("changed content or missing durable start never reaches Google", async () =
   const noStart = fixture({ consume_started_provider: () => null });
   await assert.rejects(noStart.effect(noStart.request), /DURABLE_START_REQUIRED/); assert.equal(noStart.events.length, 0);
 });
+test("non-create operations with matching request hashes never consume a start or contact Google", async (t) => {
+  for (const operation of ["write", "replace", "move", "rename", "delete"]) {
+    await t.test(operation, async () => {
+      const calls = [];
+      const unexpected = name => async () => { calls.push(name); throw new Error("must not run"); };
+      const f = fixture({
+        get_credential: unexpected("credential"),
+        resolve_provider_identity: unexpected("identity"),
+        consume_started_provider: () => { calls.push("consume"); throw new Error("must not run"); },
+        persist_provider_attempt: unexpected("persist"),
+        fetch: unexpected("fetch"),
+      });
+      const source = f.request.mutation.destination_path;
+      f.request.mutation = operation === "delete"
+        ? { operation, source_path: source, target_kind: "file", artifact_role: "clued_resource" }
+        : ["move", "rename"].includes(operation)
+          ? { operation, source_path: source, destination_path: source + ".moved",
+            target_kind: "file", artifact_role: "clued_resource" }
+          : { ...f.request.mutation, operation };
+      // A stale create hash would test substitution, not the operation gate.
+      f.request.admission.binding = { ...f.binding, operation,
+        source_path: f.request.mutation.source_path ?? null,
+        destination_path: f.request.mutation.destination_path ?? null,
+        request_sha256: createHash("sha256").update(JSON.stringify(f.request.mutation)).digest("hex") };
+      await assert.rejects(f.effect(f.request), { message: "DRIVE_NATIVE_REQUEST_MISMATCH" });
+      assert.deepEqual(calls, []);
+      assert.deepEqual(f.events, []);
+      assert.equal(f.attempt(), undefined);
+    });
+  }
+});
 test("attempt persistence failure prevents storage creation", async () => {
   const f = fixture({ persist_provider_attempt: async () => { throw new Error("RECOVERY_STORAGE_FAILED"); } });
   await assert.rejects(f.effect(f.request), /RECOVERY_STORAGE_FAILED/);
