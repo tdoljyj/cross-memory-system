@@ -21,6 +21,7 @@ import { testAccountPolicy } from "./resource-center-account-policy-db.fixture.m
 import { testStorageClientCapability } from "./resource-center-client-capability-db.fixture.mjs";
 import { testStoragePolicyTransition } from "./resource-center-policy-transition-db.fixture.mjs";
 import { testStorageAdmin } from "./resource-center-storage-admin-db.fixture.mjs";
+import { testStorageSourceReader } from "./resource-center-storage-source-reader-db.fixture.mjs";
 import { testAccountCloud } from "./resource-center-account-cloud-db.fixture.mjs";
 import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refresh-upgrade-db.fixture.mjs";
 
@@ -128,6 +129,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin ? ["legacy-expiry"] : [
     if (focusedAdmin) {
       await testStorageAdmin(t, admin, server, USER, PROJECT);
       await testStorageClientCapability(t, admin, server, USER, DECISION);
+      await testStorageSourceReader(t, admin);
       await testStoragePolicyTransition(t, admin, server, USER, DECISION);
       return;
     }
@@ -765,6 +767,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin ? ["legacy-expiry"] : [
     await testAccountPolicy(t, admin, server, USER, DECISION);
     await testStorageAdmin(t, admin, server, USER, PROJECT);
     await testStorageClientCapability(t, admin, server, USER, DECISION);
+    await testStorageSourceReader(t, admin);
     await testStoragePolicyTransition(t, admin, server, USER, DECISION);
     await testAccountCloud(t, admin, server, USER, DECISION);
     const removed = await adminCall({

@@ -112,13 +112,13 @@ test('provider failures are sanitized, body bounded and never retried', async ()
 test('exact DB read uses read-only transaction and parameters, never emits private identity', async () => {
   const calls = [];
   const database = { query: async (sql, args) => {
-    calls.push({ sql, args }); return { rows: sql.startsWith('select r.id') ? [request] : [] };
+    calls.push({ sql, args }); return { rows: sql.startsWith('select * from clued_storage_source.') ? [request] : [] };
   } };
   assert.deepEqual(await readExactRequest(database, requestId), request);
   assert.equal(calls[0].sql, 'begin read only'); assert.equal(calls.at(-1).sql, 'commit');
   assert.deepEqual(calls[2].args, [requestId]);
-  assert.match(calls[2].sql, /r\.id=\$1::uuid/);
-  assert.doesNotMatch(calls[2].sql.split(' from ')[0], /issuer_hash|owner_id/);
+  assert.equal(calls[2].sql, 'select * from clued_storage_source.authorization_request_snapshot_v2($1::uuid)');
+  assert.doesNotMatch(calls[2].sql, /clued_private|clued_agent_bindings|issuer_hash|owner_id/);
   assert.doesNotMatch(calls.map(call => call.sql).join('\n'), /for share|for update|insert |update |delete /i);
 });
 
@@ -194,4 +194,36 @@ test('a repository fsmonitor helper cannot run during the actual collector Git s
       CLUED_ATTESTATION_DATABASE_URL: 'SECRET-DB-TEST', CLOUDFLARE_API_TOKEN: 'SECRET-CF-TEST' } });
     await assert.rejects(readFile(marker), { code: 'ENOENT' });
   } finally { await rm(directory, { recursive: true }); }
+});
+
+test('production capture workflow is owner-only on main and cannot qualify or mutate storage', async () => {
+  await assert.rejects(readFile(join(process.cwd(), '..', '..', '.github', 'workflows',
+    'clued-storage-client-source.yml'), 'utf8'), { code: 'ENOENT' });
+  const workflow = await readFile(join(process.cwd(), '..', '..', '.github', 'workflows',
+    'clued-cloud-production-release.yml'), 'utf8');
+  assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(workflow, /github\.actor == github\.repository_owner/);
+  assert.match(workflow, /github\.triggering_actor == github\.repository_owner/);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
+  assert.match(workflow, /--request-id "\$REQUEST_ID"/);
+  assert.match(workflow, /--expected-request-digest "\$REQUEST_DIGEST"/);
+  assert.match(workflow, /--expected-release-sha "\$GITHUB_SHA"/);
+  assert.match(workflow, /CLUED_STORAGE_SOURCE_DATABASE_URL/);
+  assert.match(workflow, /CLUED_STORAGE_SOURCE_CLOUDFLARE_TOKEN/);
+  assert.match(workflow, /retention-days: \$\{\{ inputs\.source_capture_only && 1 \|\| 30 \}\}/);
+  const capture = workflow.slice(workflow.indexOf('- name: Capture exact nonsecret registration source'),
+    workflow.indexOf('- name: Install embedded PostgreSQL ICU compatibility runtime'));
+  assert.doesNotMatch(capture, /secrets\.CLUED_ATTESTATION_DATABASE_URL|secrets\.CLUED_CLOUDFLARE_DEPLOY_TOKEN|wrangler deploy/);
+  assert.doesNotMatch(capture, /storage_client_capability_admin_v2|register_snapshot|qualify|supabase_apply/);
+  for (const name of ['Install embedded PostgreSQL ICU compatibility runtime',
+    'Verify projection and MTPE behavior', 'Build exact Worker source',
+    'Block release unless database and Worker heartbeat are ready',
+    'Check Cloudflare deployment credential', 'Deploy Clued production Worker',
+    'Record deployment completion time', 'Verify exact live commit and currentness transport',
+    'Verify projection currentness after deployment']) {
+    const step = workflow.slice(workflow.indexOf(`- name: ${name}`),
+      workflow.indexOf('- name:', workflow.indexOf(`- name: ${name}`) + 1));
+    assert.match(step, /!inputs\.source_capture_only/);
+  }
 });
