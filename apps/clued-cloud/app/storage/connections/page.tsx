@@ -127,7 +127,7 @@ export default function StorageConnections() {
           连接后开启后台续签</label>}
         {["awaiting_provider", "reauthorization_required"].includes(c.state) &&
           <button disabled={busy} onClick={() => void connect(c)}>连接／重新授权 Google</button>}
-        {c.state !== "revoked" && <button disabled={busy} onClick={() => void disconnect(c)}>断开网盘连接</button>}
+        {["active", "reauthorization_required"].includes(c.state) && <button disabled={busy} onClick={() => void disconnect(c)}>断开网盘连接</button>}
       </section>;
     })}
     <div className="mt-6 flex gap-4"><button disabled={busy} onClick={() => void refresh()}>刷新状态</button>
