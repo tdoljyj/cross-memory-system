@@ -25,10 +25,24 @@ async function fixture(options={}) {
   const envelope=await vault.seal(JSON.stringify({access_token:"synthetic-private-access",refresh_token:"synthetic-private-refresh",token_type:"Bearer",scope,expires_at_ms:Date.now()+3600000,...options.secret}),context);
   const item=(id,name,parent)=>({id,name,parents:parent?[parent]:[],mimeType:"application/vnd.google-apps.folder",version:"1",trashed:false,isAppAuthorized:true,capabilities:{canAddChildren:true}});
   const files=[item("parent","drive"),item("root","Clued_资料中心","parent"),item("track","10_E","root"),item("topic","topic","track")];
+  if(options.fullSize) {
+    descriptor.layout.allowed_root_children=Array.from({length:5},(_,i)=>`track${i}`);
+    descriptor.layout.directories=[{path:root,provider_file_id:"root"}];
+    files.splice(2);
+    for(let i=0;i<5;i++) {
+      files.push(item(`track${i}`,`track${i}`,"root"));
+      descriptor.layout.directories.push({path:root+`/track${i}`,provider_file_id:`track${i}`});
+      for(let j=0;j<5;j++) {
+        files.push(item(`topic${i}_${j}`,`topic${j}`,`track${i}`));
+        descriptor.layout.directories.push({path:root+`/track${i}/topic${j}`,provider_file_id:`topic${i}_${j}`});
+      }
+    }
+  }
   if(options.parentlessBoundary)delete files[0].parents;
   const calls=[], rpcs=[];
   const fetcher=async(url,init)=>{
     calls.push({url:String(url),method:init.method});
+    if(options.fetchLimit && calls.length>options.fetchLimit)throw Error("Too many subrequests.");
     assert.equal(init.method,"GET"); assert.equal(init.redirect,"manual"); assert.ok(init.signal);
     assert.equal(new Headers(init.headers).get("authorization"),"Bearer synthetic-private-access");
     const u=new URL(url); assert.equal(u.origin,"https://www.googleapis.com"); assert.equal(u.searchParams.has("alt"),false);
@@ -38,6 +52,8 @@ async function fixture(options={}) {
     if(u.pathname.endsWith("/about"))return Response.json({user:{me:true,permissionId:options.subject??"probe-user"}});
     if(options.metadataStatus)return new Response("synthetic-private-provider-body",{status:options.metadataStatus,headers:{"x-private":"synthetic-private-header"}});
     if(options.metadataNetworkError)throw new Error("synthetic-private-network-failure");
+    if(options.metadataError)throw options.metadataError;
+    if(options.invalidJson)return new Response("synthetic-private-invalid-json");
     if(options.metadataTimeout) await new Promise((_,reject)=>{
       if(init.signal.aborted)reject(init.signal.reason);
       else init.signal.addEventListener("abort",()=>reject(init.signal.reason),{once:true});
@@ -59,7 +75,7 @@ async function fixture(options={}) {
       return {status:"prepared",attempt_id:attempt,descriptor,credential_envelope:envelope,expires_at:new Date(Date.now()+90000).toISOString()};
     }
     assert.deepEqual(Object.keys(input).sort(),["action","attempt_id","observation"]);
-    assert.equal(input.attempt_id,attempt); assert.equal(input.observation.directories.length,3);
+    assert.equal(input.attempt_id,attempt); assert.equal(input.observation.directories.length,options.fullSize?31:3);
     if(options.commitError)throw Error("synthetic-private-stale");
     return {status:"metadata_observed",attempt_id:attempt,receipt_id:receipt,execution_permitted:false,credential_envelope:envelope};
   };
@@ -179,4 +195,35 @@ test("actual per-request timeout is classified using the private abort signal an
   try {await f.probe.run({connection_id:f.connection});}catch(error){caught=error;}
   assert.deepEqual(storageProbeDiagnostic(caught),{stage:"directories",reason:"PROVIDER_TIMEOUT"});
   assert.equal(f.calls.length,2);assert.equal(f.rpcs.length,1);
+});
+
+test("31 registered directories require 97 GETs; a runtime request limit denies without skipping checks or retry",async()=>{
+  const complete=await fixture({fullSize:true});
+  assert.equal((await complete.probe.run({connection_id:complete.connection})).status,"metadata_observed");
+  assert.equal(complete.calls.length,97);assert.equal(complete.rpcs.length,2);
+  const limited=await fixture({fullSize:true,fetchLimit:50});let error;
+  try{await limited.probe.run({connection_id:limited.connection});}catch(e){error=e;}
+  assert.deepEqual(storageProbeDiagnostic(error),{stage:"directories",reason:"RUNTIME_SUBREQUEST_LIMIT"});
+  assert.equal(limited.calls.length,51);assert.equal(limited.rpcs.length,1);
+  assert.ok(limited.calls.every(c=>c.method==="GET"));
+});
+
+test("runtime and metadata failure diagnostics are exact closed codes, never arbitrary exception text",async()=>{
+  for(const [message,reason] of [["Too many subrequests.","RUNTIME_SUBREQUEST_LIMIT"],
+    ["Too many subrequests by single Worker invocation.","RUNTIME_SUBREQUEST_LIMIT"],
+    ["Too many subrequests. synthetic-private-token","UNCONFIRMED"],
+    ["storage_redirect_rejected","PROVIDER_REDIRECT_REJECTED"],
+    ["DRIVE_METADATA_MISMATCH","METADATA_ID_MISMATCH"],["DRIVE_LIST_INVALID","ENUMERATION_INVALID"],
+    ["DRIVE_PAGINATION_INVALID","PAGINATION_INVALID"],["DRIVE_PAGINATION_LIMIT","PAGINATION_LIMIT"],
+    ["DRIVE_ENUMERATION_LIMIT","ENTRY_LIMIT"],["DRIVE_NAMESPACE_VISIBILITY_UNPROVEN","NAMESPACE_VISIBILITY_UNPROVEN"]]) {
+    const f=await fixture({metadataError:new Error(message)});let error;
+    try{await f.probe.run({connection_id:f.connection});}catch(e){error=e;}
+    assert.deepEqual(storageProbeDiagnostic(error),{stage:"directories",reason});
+    assert.equal(f.calls.length,2);assert.equal(f.rpcs.length,1);
+    assert.equal(JSON.stringify(storageProbeDiagnostic(error)).includes("synthetic-private"),false);
+  }
+  const invalid=await fixture({invalidJson:true});let error;
+  try{await invalid.probe.run({connection_id:invalid.connection});}catch(e){error=e;}
+  assert.deepEqual(storageProbeDiagnostic(error),{stage:"directories",reason:"PROVIDER_RESPONSE_INVALID"});
+  assert.equal(invalid.calls.length,2);assert.equal(invalid.rpcs.length,1);
 });
