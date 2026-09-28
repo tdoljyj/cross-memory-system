@@ -195,3 +195,17 @@ test('a repository fsmonitor helper cannot run during the actual collector Git s
     await assert.rejects(readFile(marker), { code: 'ENOENT' });
   } finally { await rm(directory, { recursive: true }); }
 });
+
+test('production capture workflow is owner-only on main and cannot qualify or mutate storage', async () => {
+  const workflow = await readFile(join(process.cwd(), '..', '..', '.github', 'workflows',
+    'clued-storage-client-source.yml'), 'utf8');
+  assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(workflow, /github\.actor == github\.repository_owner/);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /--request-id "\$REQUEST_ID"/);
+  assert.match(workflow, /--expected-request-digest "\$REQUEST_DIGEST"/);
+  assert.match(workflow, /--expected-release-sha "\$GITHUB_SHA"/);
+  assert.match(workflow, /CLUED_CLOUDFLARE_DEPLOY_TOKEN/);
+  assert.match(workflow, /retention-days: 1/);
+  assert.doesNotMatch(workflow, /storage_client_capability_admin_v2|register_snapshot|qualify|wrangler deploy|supabase_apply/);
+});
