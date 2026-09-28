@@ -197,6 +197,8 @@ test('a repository fsmonitor helper cannot run during the actual collector Git s
 });
 
 test('production capture workflow is owner-only on main and cannot qualify or mutate storage', async () => {
+  await assert.rejects(readFile(join(process.cwd(), '..', '..', '.github', 'workflows',
+    'clued-storage-client-source.yml'), 'utf8'), { code: 'ENOENT' });
   const workflow = await readFile(join(process.cwd(), '..', '..', '.github', 'workflows',
     'clued-cloud-production-release.yml'), 'utf8');
   assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
@@ -216,7 +218,10 @@ test('production capture workflow is owner-only on main and cannot qualify or mu
   assert.doesNotMatch(capture, /storage_client_capability_admin_v2|register_snapshot|qualify|supabase_apply/);
   for (const name of ['Install embedded PostgreSQL ICU compatibility runtime',
     'Verify projection and MTPE behavior', 'Build exact Worker source',
-    'Block release unless database and Worker heartbeat are ready']) {
+    'Block release unless database and Worker heartbeat are ready',
+    'Check Cloudflare deployment credential', 'Deploy Clued production Worker',
+    'Record deployment completion time', 'Verify exact live commit and currentness transport',
+    'Verify projection currentness after deployment']) {
     const step = workflow.slice(workflow.indexOf(`- name: ${name}`),
       workflow.indexOf('- name:', workflow.indexOf(`- name: ${name}`) + 1));
     assert.match(step, /!inputs\.source_capture_only/);
