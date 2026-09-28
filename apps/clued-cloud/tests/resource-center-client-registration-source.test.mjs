@@ -112,13 +112,13 @@ test('provider failures are sanitized, body bounded and never retried', async ()
 test('exact DB read uses read-only transaction and parameters, never emits private identity', async () => {
   const calls = [];
   const database = { query: async (sql, args) => {
-    calls.push({ sql, args }); return { rows: sql.startsWith('select r.id') ? [request] : [] };
+    calls.push({ sql, args }); return { rows: sql.startsWith('select * from clued_storage_source.') ? [request] : [] };
   } };
   assert.deepEqual(await readExactRequest(database, requestId), request);
   assert.equal(calls[0].sql, 'begin read only'); assert.equal(calls.at(-1).sql, 'commit');
   assert.deepEqual(calls[2].args, [requestId]);
-  assert.match(calls[2].sql, /r\.id=\$1::uuid/);
-  assert.doesNotMatch(calls[2].sql.split(' from ')[0], /issuer_hash|owner_id/);
+  assert.equal(calls[2].sql, 'select * from clued_storage_source.authorization_request_snapshot_v2($1::uuid)');
+  assert.doesNotMatch(calls[2].sql, /clued_private|clued_agent_bindings|issuer_hash|owner_id/);
   assert.doesNotMatch(calls.map(call => call.sql).join('\n'), /for share|for update|insert |update |delete /i);
 });
 

@@ -136,13 +136,8 @@ export async function readExactRequest(database, requestId) {
   await database.query('begin read only');
   try {
     await database.query("set local statement_timeout = '10000ms'");
-    const result = await database.query(`select r.id,r.request_digest,r.client_id,r.client_name,r.redirect_uri,
-      r.resource,r.requested_scopes,r.status from clued_private.authorization_requests_v12 r
-      join clued_private.authorization_issuers_v12 i on i.token_hash=r.issuer_hash and i.resource=r.resource
-      join clued_private.authorizations_v12 a on a.request_id=r.id and a.binding_id=r.binding_id and a.owner_id=r.owner_id
-      join public.clued_agent_bindings b on b.id=a.binding_id and b.user_id=r.owner_id
-      where r.id=$1::uuid and r.status='approved' and i.revoked_at is null and a.revoked_at is null and b.revoked_at is null
-        and a.client_id=r.client_id and a.resource=r.resource`, [requestId]);
+    const result = await database.query(
+      'select * from clued_storage_source.authorization_request_snapshot_v2($1::uuid)', [requestId]);
     if (result.rows.length !== 1) fail('source_request_mismatch');
     await database.query('commit');
     return result.rows[0];

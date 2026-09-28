@@ -16,8 +16,15 @@ database request and the namespace from committed `wrangler.production.jsonc`.
 It reads that one Cloudflare OAuth KV client key, then rechecks the request.
 There is no provider list, write, retry, or automatic qualification.
 
-The existing deployment environment supplies `CLUED_ATTESTATION_DATABASE_URL`,
-`CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`; never put these values in
+The existing deployment workflow maps two dedicated read-only secrets to the
+collector's runtime variables. `CLUED_STORAGE_SOURCE_DATABASE_URL` belongs to a
+LOGIN role whose only capability is membership in the NOLOGIN
+`clued_storage_source_reader_v2` role. That role can execute only
+`clued_storage_source.authorization_request_snapshot_v2(uuid)` and has no
+backing-table privileges. `CLUED_STORAGE_SOURCE_CLOUDFLARE_TOKEN` has only the
+minimum Cloudflare KV read permission used for the committed OAuth namespace.
+The workflow maps them to `CLUED_ATTESTATION_DATABASE_URL` and
+`CLOUDFLARE_API_TOKEN`; it also supplies `CLOUDFLARE_ACCOUNT_ID`. Never put these values in
 arguments, output, Evidence, Git, browser storage, or ordinary Agent tools.
 Git subprocesses receive a minimal noncredential environment with helpers
 disabled. Raw `ClientInfo.clientSecret`, including a hash, is not evidence.
