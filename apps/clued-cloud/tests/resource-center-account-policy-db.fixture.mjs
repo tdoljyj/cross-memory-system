@@ -152,6 +152,49 @@ export async function testAccountPolicy(t, admin, server, user, decision) {
       assert.deepEqual(await counters(),before);
     });
     const rootA=await activate(first), rootB=await activate(second);
+    await t.test("native Owner management separates storage-only client revoke from whole-connection disconnect",async()=>{
+      const owner = async input => (await native.query("select public.clued_storage_owner_manage_v2($1::jsonb) value",
+        [JSON.stringify(input)])).rows[0].value;
+      const acl=(await admin.query(`select has_function_privilege('anon','public.clued_storage_owner_manage_v2(jsonb)','EXECUTE') anon,
+        has_function_privilege('authenticated','public.clued_storage_owner_manage_v2(jsonb)','EXECUTE') authenticated,
+        has_function_privilege('service_role','public.clued_storage_owner_manage_v2(jsonb)','EXECUTE') service`)).rows[0];
+      assert.deepEqual(acl,{anon:false,authenticated:true,service:false});
+      const isolated=await activate(await createRoot("owner-management"));
+      const client=await qualify(await createBinding("owner-management-client"),isolated.receipt);
+      const summary=(await owner({action:"connections"})).connections.find(row=>row.id===isolated.connection);
+      assert.equal(summary.policy_active,true);assert.equal(summary.root_name,isolated.root);
+      assert.equal(summary.database_execution_enabled,false);
+      const initial=(await owner({action:"clients"})).clients.find(row=>row.binding_id===client.binding);
+      assert.deepEqual({denied:initial.denied,generation:initial.generation},{denied:false,generation:0});
+      const authBefore=(await admin.query("select version,revoked_at from clued_private.authorizations_v12 where binding_id=$1",[client.binding])).rows[0];
+      const clientRequest={action:"revoke_client",binding_id:client.binding,base_generation:0,idempotency_key:randomUUID()};
+      const revoked=await owner(clientRequest);
+      assert.equal(revoked.status,"committed");assert.deepEqual(await owner(clientRequest),revoked);
+      assert.match(String(revoked.receipt_id),/^[0-9a-f-]{36}$/);
+      const denied=(await owner({action:"clients"})).clients.find(row=>row.binding_id===client.binding);
+      assert.equal(denied.denied,true);assert.equal(denied.generation,1);assert.equal(denied.receipt_id,revoked.receipt_id);
+      await assert.rejects(evaluate(client,isolated),/storage_policy_denied/);
+      const replacement=await qualify(await createBinding(client.client),isolated.receipt,client);
+      await assert.rejects(evaluate(replacement,isolated),/storage_policy_denied/);
+      assert.deepEqual((await admin.query("select version,revoked_at from clued_private.authorizations_v12 where binding_id=$1",[client.binding])).rows[0],authBefore);
+      assert.equal((await evaluate(bindingB,isolated)).binding_id,bindingB.binding);
+      const stopRequest={action:"disconnect",connection_id:isolated.connection,base_version:summary.version,idempotency_key:randomUUID()};
+      const stopped=await owner(stopRequest);
+      assert.equal(stopped.status,"committed");assert.deepEqual(await owner(stopRequest),stopped);
+      const latest=(await owner({action:"connections"})).connections.find(row=>row.id===isolated.connection);
+      assert.equal(latest.state,"revoked");assert.equal(latest.auth_mode,"revoked");
+      assert.equal(latest.policy_active,false);assert.equal(latest.refresh_enabled,false);
+      const rows=(await admin.query(`select
+        (select count(*)::int from clued_private.storage_root_denies_v2 where owner_id=$1 and provider='google-drive'
+          and provider_subject='policy-fixture-subject' and root_folder_id=$2 and lineage_id is null and denied) roots,
+        (select count(*)::int from clued_private.storage_account_policies_v2 where id=$3 and state='revoked' and revocation_receipt_id=$4) policies`,
+        [user,isolated.rootId,isolated.policy,stopped.receipt_id])).rows[0];
+      assert.deepEqual(rows,{roots:1,policies:1});
+      await assert.rejects(evaluate(bindingB,isolated),/storage_policy_denied/);
+      assert.equal((await evaluate(bindingB,rootA)).binding_id,bindingB.binding);
+      await assert.rejects(owner({...stopRequest,idempotency_key:randomUUID()}),/storage_owner_version_conflict/);
+      await assert.rejects(owner({...clientRequest,idempotency_key:randomUUID()}),/storage_owner_version_conflict/);
+    });
     await t.test("one account policy admits two qualified clients without per-Binding storage grants or new OAuth scopes",async()=>{
       const before=await counters();
       for(const binding of [bindingA,bindingB]) for(const action of ACTIONS) {
