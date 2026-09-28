@@ -11,6 +11,18 @@ on:
         description: Create an encrypted pre-migration database backup without deploying
         type: boolean
         default: false
+      source_capture_only:
+        description: Capture one reviewed nonsecret storage client source without deploying
+        type: boolean
+        default: false
+      source_request_id:
+        description: Exact approved authorization request UUID; source-capture mode only
+        type: string
+        default: ''
+      source_request_digest:
+        description: Exact immutable authorization request SHA-256; source-capture mode only
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -21,7 +33,10 @@ concurrency:
 
 jobs:
   release:
-    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     defaults:
@@ -37,11 +52,40 @@ jobs:
           node-version: 24.19.0
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
+      - name: Validate exclusive release mode
+        env:
+          PREFLIGHT_ONLY: ${{ inputs.preflight_only }}
+          BACKUP_ONLY: ${{ inputs.backup_only }}
+          SOURCE_CAPTURE_ONLY: ${{ inputs.source_capture_only }}
+          SOURCE_REQUEST_ID: ${{ inputs.source_request_id }}
+          SOURCE_REQUEST_DIGEST: ${{ inputs.source_request_digest }}
+        run: |
+          set -euo pipefail
+          if [ "$SOURCE_CAPTURE_ONLY" = true ]; then
+            test "$PREFLIGHT_ONLY" = false
+            test "$BACKUP_ONLY" = false
+            test -n "$SOURCE_REQUEST_ID"
+            test -n "$SOURCE_REQUEST_DIGEST"
+          else
+            test -z "$SOURCE_REQUEST_ID"
+            test -z "$SOURCE_REQUEST_DIGEST"
+          fi
       - name: Check production database credential
+        if: ${{ !inputs.source_capture_only }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: |
           test -n "$CLUED_ATTESTATION_DATABASE_URL"
+      - name: Check least-privilege source credentials
+        if: ${{ inputs.source_capture_only }}
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_STORAGE_SOURCE_DATABASE_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_STORAGE_SOURCE_CLOUDFLARE_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLUED_ATTESTATION_DATABASE_URL"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
       - name: Check production backup encryption credential
         if: ${{ inputs.backup_only }}
         env:
@@ -82,23 +126,38 @@ jobs:
           shred -u "$dump_path" "$verified_path"
       - if: ${{ !inputs.backup_only }}
         run: npm ci --ignore-scripts
+      - name: Capture exact nonsecret registration source
+        if: ${{ inputs.source_capture_only }}
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_STORAGE_SOURCE_DATABASE_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_STORAGE_SOURCE_CLOUDFLARE_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+          REQUEST_ID: ${{ inputs.source_request_id }}
+          REQUEST_DIGEST: ${{ inputs.source_request_digest }}
+        run: |
+          mkdir -p .sites-runtime/storage-client-source
+          node scripts/storage-client-registration-source.mjs \
+            --request-id "$REQUEST_ID" \
+            --expected-request-digest "$REQUEST_DIGEST" \
+            --expected-release-sha "$GITHUB_SHA" \
+            --output .sites-runtime/storage-client-source/registration.json
       - name: Install embedded PostgreSQL ICU compatibility runtime
-        if: ${{ !inputs.backup_only }}
+        if: ${{ !inputs.backup_only && !inputs.source_capture_only }}
         run: |
           curl -fsSLo /tmp/libicu60.deb https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
           sudo dpkg -i /tmp/libicu60.deb
       - name: Verify projection and MTPE behavior
-        if: ${{ !inputs.backup_only }}
+        if: ${{ !inputs.backup_only && !inputs.source_capture_only }}
         run: |
           node --test tests/production-release-gate.test.mjs
           npm run test:projection:refresh
           npm run test:mtpe:intake
           npm run typecheck
       - name: Build exact Worker source
-        if: ${{ !inputs.backup_only }}
+        if: ${{ !inputs.backup_only && !inputs.source_capture_only }}
         run: npm run build
       - name: Block release unless database and Worker heartbeat are ready
-        if: ${{ !inputs.backup_only }}
+        if: ${{ !inputs.backup_only && !inputs.source_capture_only }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: |
@@ -106,7 +165,7 @@ jobs:
           node scripts/production-release-gate.mjs --pre-deploy \
             --evidence-out .sites-runtime/release-evidence/production-preflight.json
       - name: Check Cloudflare deployment credential
-        if: ${{ !inputs.preflight_only && !inputs.backup_only }}
+        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
@@ -114,23 +173,23 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
       - name: Deploy Clued production Worker
-        if: ${{ !inputs.preflight_only && !inputs.backup_only }}
+        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --config wrangler.production.jsonc --keep-vars
       - name: Record deployment completion time
-        if: ${{ !inputs.preflight_only && !inputs.backup_only }}
+        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
         id: deployment_completion
         run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$GITHUB_OUTPUT"
       - name: Verify exact live commit and currentness transport
-        if: ${{ !inputs.preflight_only && !inputs.backup_only }}
+        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: node scripts/verify-currentness-transport.mjs --production --evidence-out .sites-runtime/release-evidence/currentness-attestation.json
       - name: Verify projection currentness after deployment
-        if: ${{ !inputs.preflight_only && !inputs.backup_only }}
+        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: |
@@ -145,7 +204,7 @@ jobs:
           exit 1
       - name: Preserve release evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: clued-cloud-production-release-${{ github.run_id }}
           path: |
@@ -154,5 +213,6 @@ jobs:
             apps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json
             apps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc
             apps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json
+            apps/clued-cloud/.sites-runtime/storage-client-source/registration.json
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: ${{ inputs.source_capture_only && 1 || 30 }}

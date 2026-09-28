@@ -198,14 +198,27 @@ test('a repository fsmonitor helper cannot run during the actual collector Git s
 
 test('production capture workflow is owner-only on main and cannot qualify or mutate storage', async () => {
   const workflow = await readFile(join(process.cwd(), '..', '..', '.github', 'workflows',
-    'clued-storage-client-source.yml'), 'utf8');
+    'clued-cloud-production-release.yml'), 'utf8');
   assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
   assert.match(workflow, /github\.actor == github\.repository_owner/);
+  assert.match(workflow, /github\.triggering_actor == github\.repository_owner/);
   assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
   assert.match(workflow, /--request-id "\$REQUEST_ID"/);
   assert.match(workflow, /--expected-request-digest "\$REQUEST_DIGEST"/);
   assert.match(workflow, /--expected-release-sha "\$GITHUB_SHA"/);
-  assert.match(workflow, /CLUED_CLOUDFLARE_DEPLOY_TOKEN/);
-  assert.match(workflow, /retention-days: 1/);
-  assert.doesNotMatch(workflow, /storage_client_capability_admin_v2|register_snapshot|qualify|wrangler deploy|supabase_apply/);
+  assert.match(workflow, /CLUED_STORAGE_SOURCE_DATABASE_URL/);
+  assert.match(workflow, /CLUED_STORAGE_SOURCE_CLOUDFLARE_TOKEN/);
+  assert.match(workflow, /retention-days: \$\{\{ inputs\.source_capture_only && 1 \|\| 30 \}\}/);
+  const capture = workflow.slice(workflow.indexOf('- name: Capture exact nonsecret registration source'),
+    workflow.indexOf('- name: Install embedded PostgreSQL ICU compatibility runtime'));
+  assert.doesNotMatch(capture, /secrets\.CLUED_ATTESTATION_DATABASE_URL|secrets\.CLUED_CLOUDFLARE_DEPLOY_TOKEN|wrangler deploy/);
+  assert.doesNotMatch(capture, /storage_client_capability_admin_v2|register_snapshot|qualify|supabase_apply/);
+  for (const name of ['Install embedded PostgreSQL ICU compatibility runtime',
+    'Verify projection and MTPE behavior', 'Build exact Worker source',
+    'Block release unless database and Worker heartbeat are ready']) {
+    const step = workflow.slice(workflow.indexOf(`- name: ${name}`),
+      workflow.indexOf('- name:', workflow.indexOf(`- name: ${name}`) + 1));
+    assert.match(step, /!inputs\.source_capture_only/);
+  }
 });
