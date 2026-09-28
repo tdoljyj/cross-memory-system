@@ -18,6 +18,7 @@ export async function createStorageCloudWorker(config: {
   client_id: string; vault: Parameters<typeof createStorageCredentialVault>[0];
   rpc: (input: Data) => Promise<Data>; fetch?: typeof fetch; clock?: () => number;
   recovery_refresh?: (reference: Reference) => Promise<{status:string}>;
+  account_policy_v2?: boolean;
 }) {
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id)) throw denied();
   const vault = await createStorageCredentialVault(config.vault);
@@ -49,6 +50,7 @@ export async function createStorageCloudWorker(config: {
     };
     const executor = createResourceCenterCloudExecutor({
       clock: config.clock ?? Date.now, drive_fetch: fetcher,
+      verified_result_mode: config.account_policy_v2 === true,
       load_job: async (ref: Reference) => {
         const result = await config.rpc({...ref, action:"load"});
         if (result.status === "queued" && result.oauth_client_id !== config.client_id) throw denied();
@@ -60,15 +62,41 @@ export async function createStorageCloudWorker(config: {
       rpc: async (input: Data) => {
         if (!loaded || input.connection_id !== loaded.connection_id || input.job_id !== loaded.job_id) throw denied();
         const {connection_id, job_id, action, ...body} = input;
-        return config.rpc({connection_id, job_id, action, credential_version:loaded.credential_version,
+        return config.rpc({connection_id, job_id, action,
+          ...(action==="settle_verified" ? {} : {credential_version:loaded.credential_version}),
           ...(action==="finalize" ? {finish:{action,...body}} : body)});
       },
     });
     try {
+      if (config.account_policy_v2 === true) {
+        // Read the original journal before any provider access. A recorded proof
+        // is settled from Canonical state only, even after a Worker restart.
+        try {
+          const prior=await config.rpc({...reference,action:"verified_inspect"});
+          if (prior.status==="verified") {
+            if (prior.job_id!==reference.job_id || prior.connection_id!==reference.connection_id ||
+              typeof prior.verified_receipt_id!=="string" || typeof prior.verified_digest!=="string") throw denied();
+            const settled=await config.rpc({...reference,action:"settle_verified"});
+            if (settled.status!=="committed" || settled.state!=="committed" ||
+              !object(settled.final_result) || settled.final_result.status!=="committed" || typeof settled.receipt_id!=="string" ||
+              settled.execution_permitted!==false) throw denied();
+            return {status:"committed",job_id:reference.job_id,receipt_id:settled.receipt_id,execution_permitted:false};
+          }
+          if (prior.status==="committed") {
+            if (prior.job_id!==reference.job_id || prior.connection_id!==reference.connection_id ||
+              typeof prior.receipt_id!=="string" || prior.execution_permitted!==false) throw denied();
+            return {status:"committed",job_id:reference.job_id,receipt_id:prior.receipt_id,execution_permitted:false};
+          }
+          if (prior.status!=="none" || prior.job_id!==reference.job_id || prior.connection_id!==reference.connection_id ||
+              prior.execution_permitted!==false) throw denied();
+        } catch { return {status:"inspection_required",execution_permitted:false}; }
+      }
       // Fixed server identity may settle a previously authorized effect even if
       // the submitting client is revoked. It never needs a successful new load.
       let recovery: Data | null=null;
-      try { recovery=await config.rpc({...reference,action:"recovery_load"}); } catch { /* No recoverable effect; normal load remains fully gated. */ }
+      if (config.account_policy_v2 !== true) {
+        try { recovery=await config.rpc({...reference,action:"recovery_load"}); } catch { /* No recoverable effect; normal load remains fully gated. */ }
+      }
       if (recovery?.status==="recovery_only") {
         try {
           if (typeof recovery.owner_id!=="string" || recovery.connection_id!==reference.connection_id || recovery.job_id!==reference.job_id || recovery.oauth_client_id!==config.client_id ||

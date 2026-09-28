@@ -75,9 +75,11 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6Feature
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
   CLUED_STORAGE_ACCOUNT_V1?: string;
   CLUED_STORAGE_JOBS_V1?: string;
+  CLUED_STORAGE_JOBS_V2?: string;
   CLUED_STORAGE_EXECUTOR_V1?: string;
   CLUED_STORAGE_GOOGLE_V1?: string;
   CLUED_STORAGE_REFRESH_V1?: string;
+  CLUED_STORAGE_POLICY_TRANSITION_V2?: string;
   CLUED_STORAGE_GOOGLE_CLIENT_ID?: string;
   CLUED_STORAGE_GOOGLE_CLIENT_SECRET?: string;
   CLUED_STORAGE_GOOGLE_REDIRECT_URI?: string;
@@ -643,7 +645,9 @@ export async function runStorageCloudJob(env: ContinuityEnv, reference: {connect
     const issuer=env.CLUED_STORAGE_CONNECTOR_ISSUER;
     if (!issuer || issuer.length<32 || !env.CLUED_STORAGE_VAULT_KEYS) return {status:"unavailable"};
     const issuerHash=await sha256(issuer);
-    const rpc=async (input:Record<string,unknown>) => await supabaseRequest(env,"/rest/v1/rpc/clued_storage_cloud_worker_v1",{
+    const cloudRpc=env.CLUED_STORAGE_JOBS_V2==="true"
+      ? "clued_storage_cloud_worker_router_v2" : "clued_storage_cloud_worker_v1";
+    const rpc=async (input:Record<string,unknown>) => await supabaseRequest(env,`/rest/v1/rpc/${cloudRpc}`,{
       method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_input:input}),
       signal:AbortSignal.timeout(10000),redirect:"manual",
     }) as Record<string,unknown>;
@@ -654,6 +658,7 @@ export async function runStorageCloudJob(env: ContinuityEnv, reference: {connect
       }) as Record<string,unknown>}) : null;
     const executor=await createStorageCloudWorker({client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID??"",
       vault:JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),rpc,
+      account_policy_v2:env.CLUED_STORAGE_JOBS_V2==="true",
       recovery_refresh:recoveryRefresh ? ref=>recoveryRefresh.run(ref.connection_id,ref.job_id) : undefined});
     return await executor.run(reference);
   } catch { return {status:"unavailable"}; }
@@ -1403,8 +1408,10 @@ async function callStorageJob(request: Request, env: ContinuityEnv, input: Recor
   projectResult: (value: unknown, input: Record<string, unknown>) => unknown = value => value) {
   if (!storageJobsEnabled(env)) throw new HttpError(404, "Storage jobs are disabled.");
   const token = bearerToken(request);
-  if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new HttpError(403, "An explicitly granted Clued Binding is required.");
-  const result = projectResult(await supabaseRequest(env, "/rest/v1/rpc/clued_storage_jobs_v1", {
+  if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new HttpError(403, "A valid Clued Binding is required.");
+  const jobsRpc=env.CLUED_STORAGE_JOBS_V2==="true"
+    ? "clued_storage_jobs_router_v2" : "clued_storage_jobs_v1";
+  const result = projectResult(await supabaseRequest(env, `/rest/v1/rpc/${jobsRpc}`, {
     method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
   }), input);
   // Same durable job, root fence and fixed executor for REST and MCP. Inspect
@@ -2443,6 +2450,47 @@ async function handleContinuityRequestInner(
         return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });
       } catch {
         return json({ error: "Storage account operation unavailable." }, 403, { "cache-control": "no-store" });
+      }
+    }
+    if (url.pathname === "/v1/storage/policy-transition") {
+      validateOrigin(request, env);
+      const headers = { ...corsHeaders(request), "cache-control": "no-store" };
+      if (env.CLUED_STORAGE_POLICY_TRANSITION_V2 !== "true" || env.CLUED_STORAGE_ACCOUNT_V1 !== "true") {
+        return json({ error: "Not found." }, 404, headers);
+      }
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+      if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { ...headers, allow: "POST, OPTIONS" });
+      const { token } = await requireSupabaseUser(request, env);
+      try {
+        const input = await parseBody(request);
+        const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+        const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+        const sha = /^[0-9a-f]{64}$/;
+        const action = input.action;
+        const allowed = action === "describe" || action === "inspect"
+          ? ["action", "manifest_id"]
+          : action === "transition"
+            ? ["action", "manifest_id", "manifest_sha256", "expected_inventory_digest", "idempotency_key"]
+            : action === "cancel_queued"
+              ? ["action", "manifest_id", "manifest_sha256", "expected_inventory_digest", "idempotency_key",
+                "job_id", "request_digest", "submit_receipt_id"]
+              : null;
+        if (!allowed || Object.keys(input).length !== allowed.length || allowed.some(key => !(key in input)) ||
+            !uuid.test(String(input.manifest_id)) || !issuer || issuer.length < 32) throw new Error("Invalid");
+        if (action === "transition" || action === "cancel_queued") {
+          if (!sha.test(String(input.manifest_sha256)) || !sha.test(String(input.expected_inventory_digest)) ||
+              typeof input.idempotency_key !== "string" || input.idempotency_key.length < 8 ||
+              input.idempotency_key.length > 160 || input.idempotency_key.trim() !== input.idempotency_key) throw new Error("Invalid");
+        }
+        if (action === "cancel_queued" && (!uuid.test(String(input.job_id)) ||
+            !sha.test(String(input.request_digest)) || !uuid.test(String(input.submit_receipt_id)))) throw new Error("Invalid");
+        const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_policy_transition_v2", {
+          method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+          body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: input }),
+        });
+        return json(result, 200, headers);
+      } catch {
+        return json({ error: "Storage policy transition unavailable.", execution_permitted: false }, 403, headers);
       }
     }
     if (url.pathname === "/v1/resource-center/authority") {
