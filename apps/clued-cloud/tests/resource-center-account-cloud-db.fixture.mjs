@@ -14,7 +14,8 @@ const SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapi
 // already-tested registration/transition contracts, not a production backfill.
 // All provider operations below use an in-memory fake, never Google or a disk.
 export async function testAccountCloud(t, admin, server, user, decision) {
-  const clients = [], session = randomUUID(), issuer = sha(randomUUID()), clientIssuer = sha(randomUUID());
+  const issuerSecret = randomUUID() + randomUUID();
+  const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
   const oauthClient = `account-cloud-${randomUUID()}`, resource = "https://account-cloud.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
   const connect = async role => {
@@ -322,6 +323,32 @@ export async function testAccountCloud(t, admin, server, user, decision) {
       const result = await executor(target, storage, caller, async request => { requests.push(structuredClone(request)); }).run(job.reference);
       assert.equal(result.status, "unreconciled", JSON.stringify(result)); assert.equal(storage.posts, 1);
       const row = await journal(job), originalJob = await jobRow(job); assert.equal(row.state, "started"); assert.ok(row.provider_attempt);
+      const routerAcl = (await admin.query(`select has_function_privilege('anon',$1,'EXECUTE') anon,
+        has_function_privilege('authenticated',$1,'EXECUTE') authenticated`,
+        ['public.clued_storage_cloud_worker_router_v2(text,jsonb)'])).rows[0];
+      assert.deepEqual(routerAcl,{anon:true,authenticated:false});
+      const verifiedStatus = await cloud({action:"verified_inspect",...job.reference});
+      assert.equal(verifiedStatus.status,"inspection_required");
+      assert.equal(verifiedStatus.job_id,job.reference.job_id);
+      // In the isolated database, load only the exact original attempt under a
+      // native Owner session and fixed issuer. The temporary envelope is not a
+      // usable token and the surrounding transaction rolls back all fixture IO.
+      await admin.query("begin");
+      try {
+        await admin.query("update clued_private.storage_connections_v1 set credential_envelope=$2::jsonb where id=$1", [target.connection,
+          JSON.stringify({contract:"clued.storage-credential/1",key_id:"fixture",nonce:"A".repeat(16),ciphertext:"B".repeat(24)})]);
+        await admin.query("set local role authenticated");
+        await admin.query("select set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claims',$2,true)",
+          [user,JSON.stringify({sub:user,session_id:session})]);
+        const original = {action:"recovery_load",...job.reference};
+        const loaded = (await admin.query("select public.clued_storage_native_recovery_load_v2($1,$2::jsonb) value",
+          [issuerSecret,JSON.stringify(original)])).rows[0].value;
+        assert.equal(loaded.status,"recovery_only"); assert.equal(loaded.intent_id,row.id);
+        assert.equal(loaded.attempt.provider_file_id,row.provider_attempt.provider_file_id);
+        assert.equal(loaded.job_id,job.reference.job_id);
+        await assert.rejects(admin.query("select public.clued_storage_native_recovery_load_v2($1,$2::jsonb)",
+          ["wrong-secret".repeat(4),JSON.stringify(original)]),/storage_recovery_denied/);
+      } finally { await admin.query("rollback"); }
       const request = requests.find(item => item.action === "provider_attempt"); assert.ok(request);
       const before = await counters(), replay = await cloud(request);
       assert.equal(replay.status, "replayed"); assert.equal(replay.attempt_recorded, false); assert.equal(replay.execution_permitted, false);

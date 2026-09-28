@@ -50,6 +50,25 @@ if(process.env.CLUED_RECOVERY_RUNTIME_CHILD!=='1') {
       const worker=await createStorageCloudRecovery(config),result=await worker.run(base.reference);
       hang=true;const stalled=await createStorageCloudRecovery({...config,timeout_ms:100});
       const timeout=await stalled.run(base.reference);
+      hang=false;let verifiedRecords=0,verifiedSettles=0;
+      const verified=await createStorageCloudRecovery({...config,
+        rpc:async()=>{throw Error('v2 cannot use legacy recovery');},
+        verified:{descriptor:d,rpc:async input=>{
+          if(input.connection_id!==ids.connection||input.job_id!==ids.job)throw Error('wrong original job');
+          if(input.action==='verified_record'){
+            if(input.credential_version!==1||input.finish.action!=='finalize'||input.finish.intent_id!==ids.intent||
+              input.finish.base_version!==2||input.finish.idempotency_key!=='account-job:'+ids.job+':finalize'||
+              input.proof.contract!=='clued.storage-create-verified/2'||input.proof.checks.content!==true||
+              input.proof.provider_file_id!=='new-id'||input.finish.postcondition.verified_proof)throw Error('unverified record');
+            verifiedRecords++;return {status:'verified',intent_id:ids.intent,version:2,verified_receipt_id:ids.receipt,
+              verified_digest:'f'.repeat(64),execution_permitted:false};
+          }
+          if(input.action!=='settle_verified'||input.intent_id!==ids.intent||input.base_version!==2||
+            input.verified_receipt_id!==ids.receipt||input.verified_digest!=='f'.repeat(64))throw Error('unsafe settlement');
+          verifiedSettles++;return {status:'committed',state:'committed',intent_id:ids.intent,receipt_id:ids.receipt,
+            execution_permitted:false,final_result:{status:'committed'}};
+        }}});
+      const verifiedResult=await verified.run(base.reference);
       let prepared,credentialDone=false,tokenPosts=0,oauthGets=0;
       const descriptor={...d,connection_version:1,credential_version:2,redirect_uri:'https://example.invalid/storage/google/callback'};
       const oauthConfig={client_id:'fixture-client',client_secret:'fixture-private-client-secret',redirect_uri:descriptor.redirect_uri,vault:vaultConfig,
@@ -80,7 +99,8 @@ if(process.env.CLUED_RECOVERY_RUNTIME_CHILD!=='1') {
       const callback=await createStorageGoogleOAuth(oauthConfig);
       const credentialResult=await callback.complete({state,code:'fixture-fresh-code'});
       const replay=await callback.complete({state,code:'fixture-fresh-code'});
-      return Response.json({result,timeout,gets,finalizes,aborted,posts:base.info().posts,starts:base.info().starts,
+      return Response.json({result,timeout,verifiedResult,verifiedRecords,verifiedSettles,
+        gets,finalizes,aborted,posts:base.info().posts,starts:base.info().starts,
         credentialResult,replay,tokenPosts,oauthGets});
     }};`},bundle:true,platform:'node',format:'esm',write:false});stop();
   let outbound=0;
@@ -94,6 +114,8 @@ if(process.env.CLUED_RECOVERY_RUNTIME_CHILD!=='1') {
     const result=await response.json();assert.equal(result.result.status,'committed');
     assert.equal(result.result.execution_permitted,false);assert.equal(result.timeout.status,'inspection_required');
     assert.equal(result.finalizes,1);assert.ok(result.gets>0);assert.equal(result.aborted,true);
+    assert.equal(result.verifiedResult.status,'committed');assert.equal(result.verifiedRecords,1);
+    assert.equal(result.verifiedSettles,1);
     assert.equal(result.posts,1);assert.equal(result.starts,1);assert.equal(outbound,0);
     assert.equal(result.credentialResult.purpose,'credential_recovery');assert.deepEqual(result.replay,result.credentialResult);
     assert.equal(result.tokenPosts,1);assert.equal(result.oauthGets,2);

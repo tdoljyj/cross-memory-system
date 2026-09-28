@@ -184,12 +184,62 @@ test('native recovery HTTP accepts only original IDs, preserves native JWT plus 
     const settled=await worker.fetch(request(input),env);
     assert.equal(settled.status,200);assert.equal(settled.headers.get('cache-control'),'no-store');
     assert.deepEqual(await settled.json(),{status:'committed',job_id:ids.job,receipt_id:ids.receipt,execution_permitted:false});
-    assert.deepEqual(rpcs.map(x=>x.action),['recovery_inspect','recovery_load','recovery_finalize']);
+    assert.deepEqual(rpcs.map(x=>x.action),['recovery_inspect','recovery_inspect','recovery_load','recovery_finalize']);
     assert.equal(f.base.info().posts,1);assert.equal(f.base.info().starts,1);
     inspectResult={...inspectResult,job_id:ids.profile};
     const wrong=await worker.fetch(request({...ref,action:'inspect'}),env);
     assert.equal(wrong.status,403);assert.deepEqual(await wrong.json(),inspect);
     redirect=true;const reads=f.gets.length;
     const denied=await worker.fetch(request(input),env);assert.deepEqual(await denied.json(),inspect);assert.equal(f.gets.length,reads);
+  } finally {globalThis.fetch=before;}
+});
+
+test('account-policy recovery uses native Owner preflight, read-only descriptor and durable v2 settlement',async()=>{
+  const {loadContinuityWorker}=await import('./worker-continuity-loader.mjs'),worker=await loadContinuityWorker();
+  const f=await setup({token:{expires_at_ms:Date.now()+3600000}}),issuer='synthetic-account-recovery-issuer-'.repeat(3);
+  const origin='https://clued.example.invalid',ref=f.base.reference,before=globalThis.fetch,calls=[];
+  const env={CLUED_STORAGE_ACCOUNT_V1:'true',CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_JOBS_V2:'true',
+    CLUED_STORAGE_EXECUTOR_V1:'false',CLUED_STORAGE_CONNECTOR_ISSUER:issuer,
+    CLUED_STORAGE_GOOGLE_CLIENT_ID:f.config.client_id,CLUED_STORAGE_VAULT_KEYS:JSON.stringify(f.config.vault),
+    SUPABASE_URL:'https://db.example.invalid',SUPABASE_PUBLISHABLE_KEY:'fixture-public'};
+  globalThis.fetch=async(url,init)=>{
+    if(String(url).endsWith('/auth/v1/user'))return Response.json({id:f.d.owner_id});
+    if(String(url).startsWith(env.SUPABASE_URL)){
+      assert.equal(init.redirect,'manual');assert.ok(init.signal);
+      const body=JSON.parse(init.body),rpc=String(url).split('/').pop();calls.push({rpc,action:body.p_input.action});
+      assert.equal(new Headers(init.headers).get('authorization'),
+        'Bearer '+(rpc==='clued_storage_cloud_worker_router_v2'?'fixture-public':'native-fixture'));
+      if(rpc==='clued_storage_native_recovery_v1'){
+        assert.equal(body.p_input.action,'recovery_inspect');
+        return Response.json({...ref,status:'started',request_digest:'a'.repeat(64),intent_id:ids.intent,
+          receipt_id:ids.receipt,execution_permitted:false});
+      }
+      if(rpc==='clued_storage_native_recovery_load_v2'){
+        assert.equal(body.p_issuer_secret,issuer);assert.deepEqual(body.p_input,{...ref,action:'recovery_load'});
+        return Response.json(f.d);
+      }
+      assert.equal(rpc,'clued_storage_cloud_worker_router_v2');
+      assert.match(body.p_issuer_hash,/^[a-f0-9]{64}$/);
+      if(body.p_input.action==='verified_inspect')return Response.json({...ref,status:'inspection_required',execution_permitted:false});
+      if(body.p_input.action==='verified_record'){
+        assert.equal(body.p_input.finish.intent_id,ids.intent);
+        assert.equal(body.p_input.proof.contract,'clued.storage-create-verified/2');
+        return Response.json({status:'verified',intent_id:ids.intent,version:2,verified_receipt_id:ids.receipt,
+          verified_digest:'f'.repeat(64),execution_permitted:false});
+      }
+      assert.equal(body.p_input.action,'settle_verified');
+      return Response.json({status:'committed',state:'committed',intent_id:ids.intent,receipt_id:ids.receipt,
+        execution_permitted:false,final_result:{status:'committed'}});
+    }
+    assert.equal(init.method,'GET');return f.config.fetch(url,init);
+  };
+  try {
+    const response=await worker.fetch(new Request(origin+'/v1/storage/recovery',{method:'POST',
+      headers:{origin,'content-type':'application/json',authorization:'Bearer native-fixture'},
+      body:JSON.stringify({...ref,action:'settle'})}),env);
+    assert.equal(response.status,200);
+    assert.deepEqual(await response.json(),{status:'committed',job_id:ids.job,receipt_id:ids.receipt,execution_permitted:false});
+    assert.deepEqual(calls.map(x=>x.action),['recovery_inspect','verified_inspect','recovery_load','verified_record','settle_verified']);
+    assert.equal(f.base.info().posts,1);assert.equal(f.base.info().starts,1);
   } finally {globalThis.fetch=before;}
 });
