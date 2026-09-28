@@ -125,7 +125,7 @@ export default function OAuthConnectionsPage() {
     const value = await readResponse(response, "无法读取客户端网盘访问状态。");
     if (!isObject(value) || !Array.isArray(value.clients) || !value.clients.every(row => isObject(row)
       && typeof row.binding_id === "string" && typeof row.denied === "boolean"
-      && Number.isSafeInteger(row.generation) && row.generation >= 0
+      && typeof row.generation === "number" && Number.isSafeInteger(row.generation) && row.generation >= 0
       && (row.receipt_id === null || typeof row.receipt_id === "string"))) {
       throw new Error("客户端网盘访问状态未确认。");
     }
