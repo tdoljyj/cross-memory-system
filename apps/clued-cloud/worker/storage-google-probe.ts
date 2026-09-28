@@ -1,5 +1,5 @@
 import { createGoogleDriveDirectoryProbe } from "../../../kernel/host/resource-center-google-drive-qualification.mjs";
-import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
+import { createStorageGoogleMetadataBatch } from "./storage-google-metadata-batch";
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
 
@@ -21,6 +21,11 @@ const metadataReasons: Readonly<Record<string, string>> = Object.freeze({
   DRIVE_METADATA_MISMATCH: "METADATA_ID_MISMATCH", DRIVE_LIST_INVALID: "ENUMERATION_INVALID",
   DRIVE_PAGINATION_INVALID: "PAGINATION_INVALID", DRIVE_PAGINATION_LIMIT: "PAGINATION_LIMIT",
   DRIVE_ENUMERATION_LIMIT: "ENTRY_LIMIT", DRIVE_NAMESPACE_VISIBILITY_UNPROVEN: "NAMESPACE_VISIBILITY_UNPROVEN",
+  DRIVE_BATCH_INVALID: "PROVIDER_RESPONSE_INVALID", DRIVE_BATCH_SIZE_LIMIT: "PROVIDER_RESPONSE_INVALID",
+  DRIVE_BATCH_TIMEOUT: "PROVIDER_TIMEOUT", DRIVE_BATCH_HTTP_401: "PROVIDER_AUTHENTICATION_REJECTED",
+  DRIVE_BATCH_HTTP_403: "PROVIDER_ACCESS_REJECTED", DRIVE_BATCH_HTTP_404: "PROVIDER_OBJECT_UNAVAILABLE",
+  DRIVE_BATCH_HTTP_429: "PROVIDER_RATE_LIMITED", DRIVE_BATCH_HTTP_500: "PROVIDER_SERVER_UNAVAILABLE",
+  DRIVE_BATCH_HTTP_400: "PROVIDER_RESPONSE_REJECTED",
 });
 // Runtime versions may append this fixed configuration hint. Accept the whole
 // literal, not arbitrary suffixes: diagnostics must never echo exception text.
@@ -31,7 +36,7 @@ export function storageProbeDiagnostic(error: unknown) {
 }
 
 /** Private server composition. rpc preserves the native Owner JWT AND adds the
- * fixed server issuer. Only the connection ID is public input. This is a GET-only
+ * fixed server issuer. Only the connection ID is public input. This is a metadata-only
  * observation with a post-read CAS receipt, never a writer qualification/grant.
  */
 export async function createStorageGoogleProbe(config: {
@@ -63,7 +68,7 @@ export async function createStorageGoogleProbe(config: {
       if (!object(secret) || secret.token_type !== "Bearer" || typeof secret.access_token !== "string" || secret.access_token.length < 16 ||
         typeof secret.scope !== "string" || [...new Set(secret.scope.split(/\s+/))].sort().join(" ") !== scopes ||
         !Number.isFinite(secret.expires_at_ms) || Number(secret.expires_at_ms) < deadline + 10000) fail();
-      const accessToken = secret.access_token, scope = secret.scope;
+      const accessToken = secret.access_token;
       const checkTime = () => { const now = clock(); if (!Number.isFinite(now) || now < started || now >= deadline) fail(); return now; };
       // One budget covers identity lookup, every metadata page, and final reads.
       const signal = AbortSignal.timeout(Math.max(1, Math.floor(deadline-checkTime())));
@@ -95,10 +100,11 @@ export async function createStorageGoogleProbe(config: {
       const identity: unknown = await about.json();
       if (!object(identity) || !object(identity.user) || identity.user.me !== true || identity.user.permissionId !== d.provider_subject) fail();
       stage = "directories";
-      const metadata = createGoogleDriveMetadataApi({ get_credential: async () => ({access_token:accessToken,scope}),
-        fetch: read, authorization_details: true, timeout_ms: 10000 });
+      // A separate closed transport wraps only metadata GETs in Google's batch
+      // endpoint. The identity GET allowlist above is deliberately not widened.
+      const metadata = createStorageGoogleMetadataBatch({ access_token: accessToken, fetch: fetcher, signal });
       const observation = await createGoogleDriveDirectoryProbe({ trusted_layout: d.layout,
-        get_file: metadata.getFile, list_folder: metadata.listFolder, clock,
+        get_files: metadata.getFiles, list_folders: metadata.listFolders, clock,
         timeout_ms: Math.max(1, Math.floor(deadline-checkTime())) })();
       checkTime(); signal.throwIfAborted();
       stage = "receipt";
