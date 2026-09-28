@@ -34,7 +34,8 @@ concurrency:
 jobs:
   release:
     if: >-
-      github.ref == 'refs/heads/main' &&
+      (github.ref == 'refs/heads/main' ||
+       (github.ref == 'refs/heads/diagnostic/storage-source-history' && inputs.preflight_only)) &&
       github.actor == github.repository_owner &&
       github.triggering_actor == github.repository_owner
     runs-on: ubuntu-24.04

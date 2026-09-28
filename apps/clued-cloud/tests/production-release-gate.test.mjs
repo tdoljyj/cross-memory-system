@@ -61,10 +61,10 @@ test('release refuses an alias with different SQL or a second migration with mis
     '20260925120000_followup.sql'];
   state.migrationSources = { ...state.migrationSources,
     '20260925120000_followup.sql': 'select 1;' };
-  assert.deepEqual(verifyReleaseState(state), [
-    'production_baseline_sql_mismatch',
-    'unapplied_or_mismatched_migration:20260925120000_followup.sql',
-  ]);
+  const errors = verifyReleaseState(state);
+  assert.equal(errors[0], 'production_baseline_sql_mismatch');
+  assert.match(errors[1],
+    /^unapplied_or_mismatched_migration:20260925120000_followup\.sql:0:0:[a-f0-9]{64}:9:[a-f0-9]{64}$/);
 });
 
 test('a newly applied migration may have a generated production version only when name and SQL match', () => {

@@ -62,7 +62,11 @@ export function verifyReleaseState({ baseline, sourceSql, history, changedPaths,
     if (matching.length !== 1 || typeof sql !== 'string' ||
         matching[0].statements?.length !== 1 ||
         ![sql, sql + '\r\n'].includes(matching[0].statements[0])) {
-      errors.push(`unapplied_or_mismatched_migration:${filename}`);
+      const stored = matching.length === 1 && matching[0].statements?.length === 1
+        ? matching[0].statements[0] : '';
+      errors.push(`unapplied_or_mismatched_migration:${filename}:${matching.length}:` +
+        `${typeof stored === 'string' ? stored.length : -1}:${sha256(stored)}:` +
+        `${typeof sql === 'string' ? sql.length : -1}:${sha256(sql ?? '')}`);
     }
   }
 
