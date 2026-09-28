@@ -27,6 +27,8 @@ type Binding = {
   grants: Grant[];
 };
 type Selection = Record<string, Record<string, string[]>>;
+type StorageAccess = { binding_id: string; denied: boolean; generation: number; receipt_id: string | null };
+
 
 const actionLabels: Record<string, string> = {
   read: "读取", write: "新增和修改", close: "关闭和归档", restore: "恢复记录",
@@ -88,6 +90,8 @@ export default function OAuthConnectionsPage() {
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [bindings, setBindings] = useState<Binding[]>([]);
+  const [storageAccess, setStorageAccess] = useState<Record<string, StorageAccess>>({});
+  const [storageLoaded, setStorageLoaded] = useState(false);
   const [selection, setSelection] = useState<Selection>({});
   const [pending, setPending] = useState<string | null>(null);
   const [needsReload, setNeedsReload] = useState(false);
@@ -112,6 +116,26 @@ export default function OAuthConnectionsPage() {
     setNeedsReload(false);
   }, []);
 
+  const readStorageAccess = useCallback(async (who: Session, epoch: number): Promise<Record<string, StorageAccess> | null> => {
+    const response = await fetch("/v1/storage/owner", {
+      method: "POST", credentials: "same-origin", cache: "no-store",
+      headers: { Authorization: `Bearer ${who.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "clients" }),
+    });
+    const value = await readResponse(response, "无法读取客户端网盘访问状态。");
+    if (!isObject(value) || !Array.isArray(value.clients) || !value.clients.every(row => isObject(row)
+      && typeof row.binding_id === "string" && typeof row.denied === "boolean"
+      && Number.isSafeInteger(row.generation) && row.generation >= 0
+      && (row.receipt_id === null || typeof row.receipt_id === "string"))) {
+      throw new Error("客户端网盘访问状态未确认。");
+    }
+    const latest = await supabase.auth.getSession();
+    if (accountEpoch.current !== epoch || latest.error || latest.data.session?.user.id !== who.user.id) return null;
+    const rows = Object.fromEntries((value.clients as StorageAccess[]).map(row => [row.binding_id, row]));
+    setStorageAccess(rows); setStorageLoaded(true);
+    return rows;
+  }, []);
+
   const readBindings = useCallback(async (who: Session, epoch: number, apply = true): Promise<Binding[] | null> => {
     if (accountEpoch.current !== epoch) return null;
     readController.current?.abort();
@@ -132,7 +156,10 @@ export default function OAuthConnectionsPage() {
       }
       if (accountEpoch.current !== epoch || request !== readNumber.current || controller.signal.aborted) return null;
       const rows: Binding[] = value.bindings;
-      if (apply) applyBindings(rows);
+      if (apply) {
+        applyBindings(rows);
+        try { await readStorageAccess(who, epoch); } catch { if (accountEpoch.current === epoch) { setStorageAccess({}); setStorageLoaded(false); } }
+      }
       return rows;
     } catch (failure) {
       if (accountEpoch.current !== epoch || controller.signal.aborted) return null;
@@ -141,7 +168,7 @@ export default function OAuthConnectionsPage() {
     } finally {
       if (accountEpoch.current === epoch && request === readNumber.current) setLoading(false);
     }
-  }, [applyBindings]);
+  }, [applyBindings, readStorageAccess]);
 
   useEffect(() => {
     let disposed = false;
@@ -161,6 +188,7 @@ export default function OAuthConnectionsPage() {
       writeController.current = null;
       window.clearTimeout(timer);
       setBindings([]);
+      setStorageAccess({}); setStorageLoaded(false);
       setSelection({});
       setLoaded(false);
       setPending(null);
@@ -289,6 +317,38 @@ export default function OAuthConnectionsPage() {
     }
   }, [applyBindings, needsReload, readBindings, selection]);
 
+  async function revokeStorage(binding: Binding) {
+    const who = currentSession.current, epoch = accountEpoch.current;
+    const prior = storageAccess[binding.binding_id];
+    if (!who || !storageLoaded || !prior || prior.denied || writeController.current || needsReload) return;
+    if (!window.confirm(`仅撤销 ${binding.client_name} 的网盘访问？此客户端的 Clued 记忆权限、其他客户端和整个网盘连接不变。已开始的文件操作仍需核对原回执。`)) return;
+    const controller = new AbortController();
+    writeController.current = controller; setPending(binding.binding_id); setError(""); setNotice("");
+    try {
+      const response = await fetch("/v1/storage/owner", {
+        method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal,
+        headers: { Authorization: `Bearer ${who.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "revoke_client", binding_id: binding.binding_id,
+          base_generation: prior.generation, idempotency_key: crypto.randomUUID() }),
+      });
+      const value = await readResponse(response, "网盘访问撤销结果未确认。");
+      if (!isObject(value) || value.status !== "committed" || typeof value.receipt_id !== "string")
+        throw new Error("网盘访问回执未确认。");
+      const latest = await readStorageAccess(who, epoch);
+      if (!latest?.[binding.binding_id]?.denied || latest[binding.binding_id].generation <= prior.generation)
+        throw new Error("撤销回读未确认。");
+      if (accountEpoch.current === epoch) setNotice(`此客户端的网盘访问已撤销。回执：${value.receipt_id}；记忆权限不变。`);
+    } catch {
+      if (accountEpoch.current === epoch && !controller.signal.aborted) {
+        setStorageLoaded(false); setNeedsReload(true);
+        setError("网盘访问撤销结果未确认。请重新读取当前状态和原回执，不要再次提交。");
+      }
+    } finally {
+      if (writeController.current === controller) writeController.current = null;
+      if (accountEpoch.current === epoch) setPending(null);
+    }
+  }
+
   const busy = authBusy || loading || pending !== null;
   return (
     <main className="oauth-shell">
@@ -361,6 +421,12 @@ export default function OAuthConnectionsPage() {
                     }} />{grant.resource_kind === "context" && action === "close" ? "关闭/撤回记录" : actionLabels[action] || action}
                 </label>)}
               </fieldset>)}
+              {storageLoaded && storageAccess[binding.binding_id] && <div className="oauth-actions">
+                <p className="oauth-copy">{storageAccess[binding.binding_id].denied ? "网盘访问已单独撤销" : "网盘访问按账号规则单独管理"}</p>
+                {!storageAccess[binding.binding_id].denied && <button className="oauth-secondary" type="button"
+                  disabled={busy || needsReload} onClick={() => void revokeStorage(binding)}>仅撤销此客户端的网盘访问</button>}
+              </div>}
+              {!storageLoaded && <p className="oauth-copy">网盘访问状态未确认；重新读取连接后再管理。</p>}
               {unavailable ? <p className="oauth-copy">此连接无法恢复。需要继续访问时，请从客户端重新发起授权。</p> : <>
                 <p className="oauth-copy" style={{ marginBottom: 14 }}>{changed ? "权限调整尚未保存。保存后不能在此重新增加已移除的权限。" : "取消勾选可减少权限；新增权限需要重新授权。"}</p>
                 <div className="oauth-actions">
