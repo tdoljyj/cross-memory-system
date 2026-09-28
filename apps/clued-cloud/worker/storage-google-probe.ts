@@ -22,6 +22,10 @@ const metadataReasons: Readonly<Record<string, string>> = Object.freeze({
   DRIVE_PAGINATION_INVALID: "PAGINATION_INVALID", DRIVE_PAGINATION_LIMIT: "PAGINATION_LIMIT",
   DRIVE_ENUMERATION_LIMIT: "ENTRY_LIMIT", DRIVE_NAMESPACE_VISIBILITY_UNPROVEN: "NAMESPACE_VISIBILITY_UNPROVEN",
 });
+// Runtime versions may append this fixed configuration hint. Accept the whole
+// literal, not arbitrary suffixes: diagnostics must never echo exception text.
+const subrequestLimitMessage = /^Too many subrequests(?:\.| by single [Ww]orker invocation\.?)?$/;
+const subrequestLimitHint = "Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits";
 export function storageProbeDiagnostic(error: unknown) {
   return error instanceof ProbeFailure ? { stage: error.stage, reason: error.reason } : { stage: "request", reason: "UNCONFIRMED" };
 }
@@ -116,7 +120,7 @@ export async function createStorageGoogleProbe(config: {
       // Exact runtime/adapter literals only. Never copy arbitrary exception text
       // (which may contain a URL or secret), and never turn diagnosis into retry.
       if (stage === "identity" || stage === "directories") {
-        if (error instanceof Error && /^Too many subrequests(?:\.| by single [Ww]orker invocation\.?)?$/.test(error.message))
+        if (error instanceof Error && (subrequestLimitMessage.test(error.message) || error.message === subrequestLimitHint))
           throw new ProbeFailure(stage, "RUNTIME_SUBREQUEST_LIMIT");
         if (error instanceof Error && error.message === "storage_redirect_rejected")
           throw new ProbeFailure(stage, "PROVIDER_REDIRECT_REJECTED");

@@ -42,7 +42,7 @@ async function fixture(options={}) {
   const calls=[], rpcs=[];
   const fetcher=async(url,init)=>{
     calls.push({url:String(url),method:init.method});
-    if(options.fetchLimit && calls.length>options.fetchLimit)throw Error("Too many subrequests.");
+    if(options.fetchLimit && calls.length>options.fetchLimit)throw Error(options.limitMessage??"Too many subrequests.");
     assert.equal(init.method,"GET"); assert.equal(init.redirect,"manual"); assert.ok(init.signal);
     assert.equal(new Headers(init.headers).get("authorization"),"Bearer synthetic-private-access");
     const u=new URL(url); assert.equal(u.origin,"https://www.googleapis.com"); assert.equal(u.searchParams.has("alt"),false);
@@ -201,16 +201,22 @@ test("31 registered directories require 97 GETs; a runtime request limit denies 
   const complete=await fixture({fullSize:true});
   assert.equal((await complete.probe.run({connection_id:complete.connection})).status,"metadata_observed");
   assert.equal(complete.calls.length,97);assert.equal(complete.rpcs.length,2);
-  const limited=await fixture({fullSize:true,fetchLimit:50});let error;
-  try{await limited.probe.run({connection_id:limited.connection});}catch(e){error=e;}
-  assert.deepEqual(storageProbeDiagnostic(error),{stage:"directories",reason:"RUNTIME_SUBREQUEST_LIMIT"});
-  assert.equal(limited.calls.length,51);assert.equal(limited.rpcs.length,1);
-  assert.ok(limited.calls.every(c=>c.method==="GET"));
+  for(const limitMessage of ["Too many subrequests.",
+    "Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits"]) {
+    const limited=await fixture({fullSize:true,fetchLimit:50,limitMessage});let error;
+    try{await limited.probe.run({connection_id:limited.connection});}catch(e){error=e;}
+    assert.deepEqual(storageProbeDiagnostic(error),{stage:"directories",reason:"RUNTIME_SUBREQUEST_LIMIT"});
+    assert.equal(limited.calls.length,51);assert.equal(limited.rpcs.length,1);
+    assert.ok(limited.calls.every(c=>c.method==="GET"));
+  }
 });
 
 test("runtime and metadata failure diagnostics are exact closed codes, never arbitrary exception text",async()=>{
   for(const [message,reason] of [["Too many subrequests.","RUNTIME_SUBREQUEST_LIMIT"],
     ["Too many subrequests by single Worker invocation.","RUNTIME_SUBREQUEST_LIMIT"],
+    ["Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits","RUNTIME_SUBREQUEST_LIMIT"],
+    ["Too many subrequests by single Worker invocation. To configure this limit, refer to https://unexpected.invalid/synthetic-private-token","UNCONFIRMED"],
+    ["Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits synthetic-private-token","UNCONFIRMED"],
     ["Too many subrequests. synthetic-private-token","UNCONFIRMED"],
     ["storage_redirect_rejected","PROVIDER_REDIRECT_REJECTED"],
     ["DRIVE_METADATA_MISMATCH","METADATA_ID_MISMATCH"],["DRIVE_LIST_INVALID","ENUMERATION_INVALID"],
