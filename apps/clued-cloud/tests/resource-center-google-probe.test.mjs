@@ -6,6 +6,7 @@ import path from "node:path";
 import {fileURLToPath,pathToFileURL} from "node:url";
 import test from "node:test";
 import {build} from "esbuild";
+import {batchRequests,batchReply} from "./google-batch-fixture.mjs";
 const dir=await mkdtemp(path.join(os.tmpdir(),"clued-directory-probe-"));
 async function load(name) {
   const outfile=path.join(dir,name+".mjs");
@@ -43,7 +44,7 @@ async function fixture(options={}) {
   const fetcher=async(url,init)=>{
     calls.push({url:String(url),method:init.method});
     if(options.fetchLimit && calls.length>options.fetchLimit)throw Error(options.limitMessage??"Too many subrequests.");
-    assert.equal(init.method,"GET"); assert.equal(init.redirect,"manual"); assert.ok(init.signal);
+    assert.equal(init.method,String(url).includes("/batch/")?"POST":"GET"); assert.equal(init.redirect,"manual"); assert.ok(init.signal);
     assert.equal(new Headers(init.headers).get("authorization"),"Bearer synthetic-private-access");
     const u=new URL(url); assert.equal(u.origin,"https://www.googleapis.com"); assert.equal(u.searchParams.has("alt"),false);
     if(options.networkError)throw Error("synthetic-private-upstream");
@@ -58,14 +59,20 @@ async function fixture(options={}) {
       if(init.signal.aborted)reject(init.signal.reason);
       else init.signal.addEventListener("abort",()=>reject(init.signal.reason),{once:true});
     });
+    const metadata = u => {
     if(u.pathname.endsWith("/files")) {
       assert.match(u.searchParams.get("fields"),/isAppAuthorized/);
       const parent=u.searchParams.get("q").split("'")[1];
-      return Response.json({files:files.filter(f=>f.parents?.includes(parent)),incompleteSearch:options.incomplete??false});
+      return {files:files.filter(f=>f.parents?.includes(parent)),incompleteSearch:options.incomplete??false};
     }
     const result=structuredClone(files.find(f=>f.id===u.pathname.split("/").at(-1)));
     if(result.id===options.unauthorized)result.isAppAuthorized=false;
-    return Response.json(result);
+    return result;
+    };
+    assert.equal(u.href,"https://www.googleapis.com/batch/drive/v3");
+    const parts=batchRequests(init.body);
+    calls.at(-1).innerGets=parts.length;
+    return batchReply(parts.map(part=>({...part,value:metadata(new URL(part.path,u.origin))})).reverse());
   };
   const rpc=async input=>{
     rpcs.push(input);
@@ -82,10 +89,10 @@ async function fixture(options={}) {
   const probe=await createStorageGoogleProbe({client_id:context.oauth_client_id,vault:vaultConfig,rpc,fetch:fetcher,clock:options.clock});
   return {probe,connection,attempt,receipt,calls,rpcs,rpc,fetcher,vaultConfig,client:context.oauth_client_id};
 }
-test("server directory observation uses pinned secret, fixed GETs and whitelisted receipt only",async()=>{
+test("server directory observation uses pinned secret, fixed GET-only batches and whitelisted receipt only",async()=>{
   const f=await fixture(), result=await f.probe.run({connection_id:f.connection});
   assert.deepEqual(result,{status:"metadata_observed",attempt_id:f.attempt,receipt_id:f.receipt,execution_permitted:false});
-  assert.equal(f.rpcs.length,2); assert.ok(f.calls.length>8);
+  assert.equal(f.rpcs.length,2); assert.equal(f.calls.length,4);
   assert.equal(JSON.stringify(f.rpcs[1]).includes("synthetic-private"),false);
   assert.equal(JSON.stringify(result).includes("credential"),false);
 });
@@ -122,7 +129,7 @@ test("subject, topic application grant, incomplete namespace and redirect failur
 test("post-read CAS rejection has no refresh, activation, retry or success response",async()=>{
   const f=await fixture({commitError:true});await assert.rejects(f.probe.run({connection_id:f.connection}),/^Error: storage_directory_probe_unavailable$/);
   assert.deepEqual(f.rpcs.map(r=>r.action),["prepare","complete"]);
-  assert.ok(f.calls.every(c=>c.method==="GET"));
+  assert.deepEqual(f.calls.map(c=>c.method),["GET","POST","POST","POST"]);
 });
 test("time spent checking identity is part of the shared observation deadline",async()=>{
   let now=Date.now(); const f=await fixture({clock:()=>now,delay:()=>{now+=60001;}});
@@ -174,7 +181,7 @@ test("diagnostics reveal only fixed stage/reason, never upstream secrets or call
     try {await f.probe.run({connection_id:f.connection});}catch(error){caught=error;}
     assert.ok(caught);assert.deepEqual(storageProbeDiagnostic(caught),{stage,reason});
     assert.equal(JSON.stringify(storageProbeDiagnostic(caught)).includes("synthetic-private"),false);
-    assert.ok(f.calls.every(c=>c.method==="GET"));
+    assert.ok(f.calls.every(c=>c.method==="GET" || (c.method==="POST" && c.url==="https://www.googleapis.com/batch/drive/v3")));
   }
 });
 
@@ -197,17 +204,18 @@ test("actual per-request timeout is classified using the private abort signal an
   assert.equal(f.calls.length,2);assert.equal(f.rpcs.length,1);
 });
 
-test("31 registered directories require 97 GETs; a runtime request limit denies without skipping checks or retry",async()=>{
+test("31 registered directories preserve 97 inner GETs in one identity GET and three batches",async()=>{
   const complete=await fixture({fullSize:true});
   assert.equal((await complete.probe.run({connection_id:complete.connection})).status,"metadata_observed");
-  assert.equal(complete.calls.length,97);assert.equal(complete.rpcs.length,2);
+  assert.equal(complete.calls.length,4);assert.equal(complete.rpcs.length,2);
+  assert.deepEqual(complete.calls.map(c=>c.innerGets??1),[1,32,32,32]);
   for(const limitMessage of ["Too many subrequests.",
     "Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits"]) {
-    const limited=await fixture({fullSize:true,fetchLimit:50,limitMessage});let error;
+    const limited=await fixture({fullSize:true,fetchLimit:2,limitMessage});let error;
     try{await limited.probe.run({connection_id:limited.connection});}catch(e){error=e;}
     assert.deepEqual(storageProbeDiagnostic(error),{stage:"directories",reason:"RUNTIME_SUBREQUEST_LIMIT"});
-    assert.equal(limited.calls.length,51);assert.equal(limited.rpcs.length,1);
-    assert.ok(limited.calls.every(c=>c.method==="GET"));
+    assert.equal(limited.calls.length,3);assert.equal(limited.rpcs.length,1);
+    assert.deepEqual(limited.calls.map(c=>c.method),["GET","POST","POST"]);
   }
 });
 

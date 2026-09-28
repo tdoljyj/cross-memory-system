@@ -28,10 +28,12 @@ function identity(file, allowParentlessBoundary = false) {
  * grant, admission or receipt. Its editable output alone cannot enable a writer.
  * Exact-ID authorization is checked independently for every registered directory;
  * root permission is never treated as inherited drive.file application access.
- * @param {{trusted_layout?: unknown, get_file?: Function, list_folder?: Function, clock?: Function, timeout_ms?: number}} config
+ * @param {{trusted_layout?: unknown, get_file?: Function, list_folder?: Function, get_files?: Function, list_folders?: Function, clock?: Function, timeout_ms?: number}} config
  */
 export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: getFile,
-  list_folder: listFolder, clock = Date.now, timeout_ms: timeoutMs = 60000} = {}) {
+  list_folder: listFolder, get_files: getFiles, list_folders: listFolders,
+  clock = Date.now, timeout_ms: timeoutMs = 60000} = {}) {
+  const batched = getFiles !== undefined || listFolders !== undefined;
   const layout = structuredClone(raw), directories = layout?.directories;
   const root = layout?.managed_root;
   if (layout?.contract !== "clued.storage-directory-layout/1" || typeof root !== "string" ||
@@ -43,7 +45,8 @@ export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: 
       layout.allowed_root_children.some(name => typeof name !== "string" || !name || name.length > 160 ||
         name.trim() !== name || /[/\\]/.test(name) || [".","..","00_从这里开始"].includes(name)) ||
       !Array.isArray(directories) || !directories.length || directories.length > 1024 ||
-      typeof getFile !== "function" || typeof listFolder !== "function" || typeof clock !== "function" ||
+      (batched ? typeof getFiles !== "function" || typeof listFolders !== "function"
+        : typeof getFile !== "function" || typeof listFolder !== "function") || typeof clock !== "function" ||
       !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000) deny("LAYOUT_INVALID");
   const byPath = new Map(), ids = new Set([layout.root_parent_id]);
   for (const entry of directories) {
@@ -86,11 +89,20 @@ export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: 
     };
     try {
     const before = new Map(), observed = [];
-    const parent = identity(await read(getFile,layout.root_parent_id), true);
+    const fileIds = [layout.root_parent_id, ...ordered.map(entry => entry.provider_file_id)];
+    // These are strict phase barriers, not one mixed batch. A provider may
+    // execute subrequests in any order. No batch failure falls back to GETs.
+    const phase = async batch => {
+      const values = await read(batch, fileIds);
+      if (!Array.isArray(values) || values.length !== fileIds.length) deny("ENUMERATION_INVALID");
+      return new Map(fileIds.map((fileId, i) => [fileId, values[i]]));
+    };
+    const initial = batched ? await phase(getFiles) : null;
+    const parent = identity(initial ? initial.get(layout.root_parent_id) : await read(getFile, layout.root_parent_id), true);
     if (parent.id !== layout.root_parent_id || parent.mimeType !== FOLDER) deny("PARENT_INVALID");
     before.set(parent.id, parent);
     for (const entry of ordered) {
-      const file = identity(await read(getFile,entry.provider_file_id));
+      const file = identity(initial ? initial.get(entry.provider_file_id) : await read(getFile, entry.provider_file_id));
       const parentId = entry.path === root ? layout.root_parent_id : byPath.get(entry.path.slice(0,entry.path.lastIndexOf("/"))).provider_file_id;
       if (file.id !== entry.provider_file_id || file.name !== entry.path.split("/").at(-1) ||
           file.mimeType !== FOLDER || !isDeepStrictEqual(file.parents,[parentId])) deny("DIRECTORY_CHANGED");
@@ -100,8 +112,9 @@ export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: 
       observed.push({path:entry.path,provider_file_id:file.id,provider_file_version:file.version,parent_id:parentId});
     }
     let count = 0;
+    const listings = batched ? await phase(listFolders) : null;
     for (const [folderId] of before) {
-      const children = await read(listFolder,folderId);
+      const children = listings ? listings.get(folderId) : await read(listFolder, folderId);
       if (!Array.isArray(children)) deny("ENUMERATION_INVALID");
       const names = new Set(), listedIds = new Set();
       for (const value of children) {
@@ -115,7 +128,8 @@ export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: 
       for (const file of observed) if (file.parent_id === folderId && !listedIds.has(file.provider_file_id)) deny("DIRECTORY_NOT_LISTED");
     }
     // Detect observed metadata drift, not an atomic provider namespace snapshot.
-    for (const [fileId,file] of before) if (!isDeepStrictEqual(await read(getFile,fileId),file)) deny("DIRECTORY_CHANGED");
+    const final = batched ? await phase(getFiles) : null;
+    for (const [fileId,file] of before) if (!isDeepStrictEqual(final ? final.get(fileId) : await read(getFile, fileId),file)) deny("DIRECTORY_CHANGED");
     const finished = checkTime();
     return {contract:"clued.storage-directory-observation/1",status:"metadata_observed",
       execution_permitted:false,observed_at_ms:finished,directories:observed};

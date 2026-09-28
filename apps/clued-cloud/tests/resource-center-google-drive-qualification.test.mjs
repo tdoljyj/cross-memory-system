@@ -20,6 +20,25 @@ test("root, track and topic require independent application access; observation 
   assert.equal(Object.hasOwn(result,"admission"),false);
 });
 
+test("paired batch callbacks preserve phase barriers, reject drift, and never fall back after failure",async()=>{
+  for(const mode of ["success","drift","failure","short"]){
+    const f=fixture(),calls=[];let reads=0;
+    f.config.get_files=async ids=>{calls.push("get");reads++;
+      if(mode==="failure")throw Error("batch failed");
+      const values=await Promise.all(ids.map(id=>f.config.get_file(id)));
+      if(mode==="drift"&&reads===2)values[0].version="2";
+      return mode==="short"?values.slice(1):values;};
+    f.config.list_folders=async ids=>{calls.push("list");assert.equal(reads,1);return Promise.all(ids.map(id=>f.config.list_folder(id)));};
+    if(mode==="success")assert.equal((await f.run()).status,"metadata_observed");
+    else await assert.rejects(f.run(),mode==="drift"?/DIRECTORY_CHANGED/:mode==="short"?/ENUMERATION_INVALID/:/batch failed/);
+    assert.deepEqual(calls,["success","drift"].includes(mode)?["get","list","get"]:["get"]);
+  }
+  for(const key of ["get_files","list_folders"]){const f=fixture();f.config[key]=async()=>[];assert.throws(()=>createGoogleDriveDirectoryProbe(f.config),/LAYOUT_INVALID/);}
+  const f=fixture();f.config.trusted_layout.directories[0].path="/outside";let calls=0;
+  f.config.get_files=f.config.list_folders=async()=>{calls++;return [];};
+  assert.throws(()=>createGoogleDriveDirectoryProbe(f.config),/LAYOUT_INVALID/);assert.equal(calls,0);
+});
+
 test("trusted outer My Drive boundary may omit parents but never becomes a writable directory",async()=>{
   const f=fixture();delete f.files[0].parents;
   const result=await f.run();
@@ -75,6 +94,11 @@ test("duplicate names, aliases, omitted listings and shortcuts fail closed",asyn
   const b=fixture();b.config.list_folder=async()=>[];await assert.rejects(b.run(),/DIRECTORY_NOT_LISTED/);
   const c=fixture();c.files.push({...item("link","link","topic"),mimeType:"application/vnd.google-apps.shortcut"});
   await assert.rejects(c.run(),/SHORTCUT_UNQUALIFIED/);
+});
+test("scalar fallback still stops enumeration at the first global entry overflow",async()=>{
+  const f=fixture();let listings=0;
+  f.config.list_folder=async()=>{listings++;return Array.from({length:10001},(_,i)=>item("child"+i,"child"+i,"parent"));};
+  await assert.rejects(f.run(),/ENTRY_LIMIT/);assert.equal(listings,1);
 });
 test("list-to-GET and final version drift cannot yield success",async()=>{
   const a=fixture(),list=a.config.list_folder;
