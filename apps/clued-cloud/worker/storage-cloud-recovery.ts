@@ -21,6 +21,7 @@ export async function createStorageCloudRecovery(config: {
   client_id: string; vault: Parameters<typeof createStorageCredentialVault>[0];
   rpc: (input: Data) => Promise<Data>; fetch?: typeof fetch; clock?: () => number;
   timeout_ms?: number;
+  verified?: { descriptor: Data; rpc: (input: Data) => Promise<Data> };
 }) {
   const timeout = config.timeout_ms ?? 10000;
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id) || typeof config.rpc !== "function" ||
@@ -51,14 +52,14 @@ export async function createStorageCloudRecovery(config: {
     // load/provider response must never proceed to settlement after the deadline.
     const bounded = <T>(work: Promise<T>): Promise<T> => Promise.race([work, expired]);
     try {
-      const loaded = await bounded(config.rpc({ ...pinned, action: "recovery_load" })); check();
+      const loaded = config.verified?.descriptor ?? await bounded(config.rpc({ ...pinned, action: "recovery_load" })); check();
       const d = structuredClone(loaded);
       if (d.status !== "recovery_only" || d.connection_id !== pinned.connection_id || d.job_id !== pinned.job_id ||
           !uuid.test(String(d.owner_id)) || !uuid.test(String(d.intent_id)) || d.provider !== "google-drive" ||
           d.oauth_client_id !== config.client_id || typeof d.provider_subject !== "string" ||
           !/^[A-Za-z0-9_-]{1,255}$/.test(d.provider_subject) || !Number.isSafeInteger(d.credential_version) ||
           Number(d.credential_version) < 1 || !Number.isSafeInteger(d.version) || Number(d.version) < 1 ||
-          !/^[0-9a-f]{64}$/.test(String(d.recovery_binding)) ||
+          (!config.verified && !/^[0-9a-f]{64}$/.test(String(d.recovery_binding))) ||
           !/^[0-9a-f]{64}$/.test(String(d.request_sha256)) || !providerId.test(String(d.root_folder_id)) ||
           !providerId.test(String(d.root_parent_id)) || !object(d.profile) || !object(d.mutation) ||
           !object(d.provider_before) || !object(d.attempt) ||
@@ -92,17 +93,35 @@ export async function createStorageCloudRecovery(config: {
         managed_root: String(d.profile.managed_root), root_folder_id: String(d.root_folder_id), root_parent_id: String(d.root_parent_id),
         get_file: (id: string) => metadata.getFile(id, { signal: abort.signal }),
         list_children: (input: Data) => metadata.listChildren(input, { signal: abort.signal }),
-        require_effect_provider_id: true, timeout_ms: timeout, poll_ms: Math.min(1000, timeout), clock,
+          require_effect_provider_id: true, include_verified_proof: !!config.verified,
+          timeout_ms: timeout, poll_ms: Math.min(1000, timeout), clock,
       });
       const postcondition = await bounded(verify({ profile: d.profile, mutation: d.mutation, provider_before: d.provider_before,
         effect_result: { operation: "create", destination_path: d.mutation.destination_path, provider_file_id: d.attempt.provider_file_id } }));
       check();
-      const done = await bounded(config.rpc({ ...pinned, action: "recovery_finalize", credential_version: d.credential_version,
-        recovery_binding: d.recovery_binding,
-        finish: { intent_id: d.intent_id, base_version: d.version, request_sha256: d.request_sha256, postcondition } }));
+      let done: Data;
+      if (config.verified) {
+        if (postcondition.verified_proof?.contract !== "clued.storage-create-verified/2") throw denied();
+        const { verified_proof: proof, ...post } = postcondition;
+        const finish = { action: "finalize", intent_id: d.intent_id, base_version: d.version,
+          request_sha256: d.request_sha256, idempotency_key: `account-job:${pinned.job_id}:finalize`, postcondition: post };
+        const recorded = await bounded(config.verified.rpc({ ...pinned, action: "verified_record",
+          credential_version: d.credential_version, finish, proof })); check();
+        if (recorded.status !== "verified" || recorded.intent_id !== d.intent_id ||
+          recorded.version !== d.version || !uuid.test(String(recorded.verified_receipt_id)) ||
+          !/^[0-9a-f]{64}$/.test(String(recorded.verified_digest)) || recorded.execution_permitted !== false) throw denied();
+        done = await bounded(config.verified.rpc({ ...pinned, action: "settle_verified", intent_id: d.intent_id,
+          base_version: d.version, request_sha256: d.request_sha256,
+          verified_receipt_id: recorded.verified_receipt_id, verified_digest: recorded.verified_digest }));
+      } else {
+        done = await bounded(config.rpc({ ...pinned, action: "recovery_finalize", credential_version: d.credential_version,
+          recovery_binding: d.recovery_binding,
+          finish: { intent_id: d.intent_id, base_version: d.version, request_sha256: d.request_sha256, postcondition } }));
+      }
       check();
       if (done.status !== "committed" || done.state !== "committed" || done.intent_id !== d.intent_id ||
-          !uuid.test(String(done.receipt_id)) || done.execution_permitted !== false) throw denied();
+          !uuid.test(String(done.receipt_id)) || done.execution_permitted !== false ||
+          (config.verified && (!object(done.final_result) || done.final_result.status !== "committed"))) throw denied();
       return { status: "committed", job_id: pinned.job_id, receipt_id: String(done.receipt_id), execution_permitted: false };
     } catch {
       // Includes an unknown finalize reply: query the original job separately;
