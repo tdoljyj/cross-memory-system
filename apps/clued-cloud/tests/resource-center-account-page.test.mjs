@@ -58,6 +58,19 @@ test("directory probe shows progress and safe failure beside its button without 
   assert.match(f.probeFeedback(),/尚未向当前 Google 应用授权/);assert.match(f.probeFeedback(),/不会自动重试或开启文件写入/);
   assert.equal(f.requests.length,2);assert.equal(f.button("检查已登记目录（只读）").props.disabled,false);
 });
+test("provider diagnostic categories render beside the button without raw errors or retries",async()=>{
+  for(const [reason,label] of [["PROVIDER_AUTHENTICATION_REJECTED","未接受当前访问凭据"],
+    ["PROVIDER_ACCESS_REJECTED","拒绝了这次元数据访问"],["PROVIDER_OBJECT_UNAVAILABLE","未返回所查询的登记对象"],
+    ["PROVIDER_RATE_LIMITED","限制了请求频率"],["PROVIDER_SERVER_UNAVAILABLE","服务暂时不可用"],
+    ["PROVIDER_RESPONSE_REJECTED","未接受这次请求"],["PROVIDER_TIMEOUT","单次元数据请求超时"]]) {
+    const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
+    f.button("检查已登记目录（只读）").props.onClick();await f.settle();
+    f.respond(1,{execution_permitted:false,diagnostic:{stage:"directories",reason},error:"private-provider-text"},403);await f.settle();
+    assert.ok(f.probeFeedback().includes(label));assert.equal(f.text().includes("private-provider-text"),false);
+    assert.match(f.probeFeedback(),/不会自动重试或开启文件写入/);assert.equal(f.requests.length,2);
+  }
+});
+
 test("directory probe error text cannot inject upstream content or cross an account switch",async()=>{
   for(const changed of [false,true]) {
     const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();

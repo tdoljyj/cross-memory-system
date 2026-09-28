@@ -36,6 +36,12 @@ async function fixture(options={}) {
     if(options.redirect)return new Response(null,{status:302,headers:{location:"https://unexpected.invalid"}});
     if(options.delay)options.delay();
     if(u.pathname.endsWith("/about"))return Response.json({user:{me:true,permissionId:options.subject??"probe-user"}});
+    if(options.metadataStatus)return new Response("synthetic-private-provider-body",{status:options.metadataStatus,headers:{"x-private":"synthetic-private-header"}});
+    if(options.metadataNetworkError)throw new Error("synthetic-private-network-failure");
+    if(options.metadataTimeout) await new Promise((_,reject)=>{
+      if(init.signal.aborted)reject(init.signal.reason);
+      else init.signal.addEventListener("abort",()=>reject(init.signal.reason),{once:true});
+    });
     if(u.pathname.endsWith("/files")) {
       assert.match(u.searchParams.get("fields"),/isAppAuthorized/);
       const parent=u.searchParams.get("q").split("'")[1];
@@ -146,11 +152,31 @@ test("diagnostics reveal only fixed stage/reason, never upstream secrets or call
   assert.deepEqual(storageProbeDiagnostic({stage:"credential",reason:"synthetic-private-token"}),{stage:"request",reason:"UNCONFIRMED"});
   for(const [options,stage,reason] of [[{prepareError:true},"prepare","UNCONFIRMED"],
     [{secret:{expires_at_ms:0}},"credential","UNCONFIRMED"],[{networkError:true},"identity","UNCONFIRMED"],
-    [{unauthorized:"topic"},"directories","DIRECTORY_NOT_APP_AUTHORIZED"],[{commitError:true},"receipt","UNCONFIRMED"]]) {
+    [{unauthorized:"topic"},"directories","DIRECTORY_NOT_APP_AUTHORIZED"],[{metadataNetworkError:true},"directories","UNCONFIRMED"],
+    [{commitError:true},"receipt","UNCONFIRMED"]]) {
     const f=await fixture(options);let caught;
     try {await f.probe.run({connection_id:f.connection});}catch(error){caught=error;}
     assert.ok(caught);assert.deepEqual(storageProbeDiagnostic(caught),{stage,reason});
     assert.equal(JSON.stringify(storageProbeDiagnostic(caught)).includes("synthetic-private"),false);
     assert.ok(f.calls.every(c=>c.method==="GET"));
   }
+});
+
+test("provider HTTP diagnostics expose only a closed numeric-status classification without retry",async()=>{
+  for(const [status,reason] of [[401,"PROVIDER_AUTHENTICATION_REJECTED"],[403,"PROVIDER_ACCESS_REJECTED"],
+    [404,"PROVIDER_OBJECT_UNAVAILABLE"],[429,"PROVIDER_RATE_LIMITED"],[500,"PROVIDER_SERVER_UNAVAILABLE"],
+    [400,"PROVIDER_RESPONSE_REJECTED"]]) {
+    const f=await fixture({metadataStatus:status});let caught;
+    try {await f.probe.run({connection_id:f.connection});}catch(error){caught=error;}
+    assert.deepEqual(storageProbeDiagnostic(caught),{stage:"directories",reason});
+    assert.equal(f.calls.length,2);assert.equal(f.rpcs.length,1);
+    assert.equal(JSON.stringify(storageProbeDiagnostic(caught)).includes("synthetic-private"),false);
+  }
+});
+
+test("actual per-request timeout is classified using the private abort signal and never retried",async()=>{
+  const f=await fixture({metadataTimeout:true});let caught;
+  try {await f.probe.run({connection_id:f.connection});}catch(error){caught=error;}
+  assert.deepEqual(storageProbeDiagnostic(caught),{stage:"directories",reason:"PROVIDER_TIMEOUT"});
+  assert.equal(f.calls.length,2);assert.equal(f.rpcs.length,1);
 });

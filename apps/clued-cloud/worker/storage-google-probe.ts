@@ -34,6 +34,7 @@ export async function createStorageGoogleProbe(config: {
   const fetcher = createStorageFetch(config.fetch), clock = config.clock ?? Date.now;
   return Object.freeze({ async run(input: unknown) {
     let stage: ProbeStage = "request";
+    let observationSignal: AbortSignal | undefined, requestSignal: AbortSignal | undefined;
     try {
       if (!object(input) || Object.keys(input).length !== 1 || typeof input.connection_id !== "string" || !uuid.test(input.connection_id)) fail();
       stage = "prepare";
@@ -57,13 +58,24 @@ export async function createStorageGoogleProbe(config: {
       const checkTime = () => { const now = clock(); if (!Number.isFinite(now) || now < started || now >= deadline) fail(); return now; };
       // One budget covers identity lookup, every metadata page, and final reads.
       const signal = AbortSignal.timeout(Math.max(1, Math.floor(deadline-checkTime())));
+      observationSignal = signal;
       const read: typeof fetch = async (url, init) => {
         checkTime(); signal.throwIfAborted();
         const parsed = new URL(String(url));
         if (parsed.origin !== "https://www.googleapis.com" || parsed.username || parsed.password || parsed.hash ||
           !/^\/drive\/v3\/(about|files(?:\/[A-Za-z0-9_-]+)?)$/.test(parsed.pathname) || parsed.searchParams.has("alt") ||
           init?.method !== "GET") fail();
-        const result = await fetcher(url, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal });
+        requestSignal = init?.signal ? AbortSignal.any([signal, init.signal]) : signal;
+        const result = await fetcher(url, { ...init, signal: requestSignal });
+        // Classify only the numeric status, never Google's body/headers or URL.
+        if (!result.ok) {
+          const reason = result.status === 401 ? "PROVIDER_AUTHENTICATION_REJECTED"
+            : result.status === 403 ? "PROVIDER_ACCESS_REJECTED"
+              : result.status === 404 ? "PROVIDER_OBJECT_UNAVAILABLE"
+                : result.status === 429 ? "PROVIDER_RATE_LIMITED"
+                  : result.status >= 500 ? "PROVIDER_SERVER_UNAVAILABLE" : "PROVIDER_RESPONSE_REJECTED";
+          throw new ProbeFailure(stage, reason);
+        }
         checkTime(); signal.throwIfAborted(); return result;
       };
       stage = "identity";
@@ -87,9 +99,16 @@ export async function createStorageGoogleProbe(config: {
       // Never spread an RPC/provider response onto the public boundary.
       return { status: "metadata_observed", attempt_id: String(prepared.attempt_id), receipt_id: String(result.receipt_id), execution_permitted: false };
     } catch (error) {
+      if (error instanceof ProbeFailure) throw error;
       const candidate = error instanceof Error && error.message.startsWith("DRIVE_QUALIFICATION_")
         ? error.message.slice("DRIVE_QUALIFICATION_".length) : "";
-      throw new ProbeFailure(stage, stage === "directories" && directoryReasons.has(candidate) ? candidate : "UNCONFIRMED");
+      if (stage === "directories" && directoryReasons.has(candidate)) throw new ProbeFailure(stage, candidate);
+      if (observationSignal?.aborted) throw new ProbeFailure(stage, "OBSERVATION_EXPIRED");
+      // The primitive aborts its callbacks during normal finally cleanup too.
+      // Only the private timeout signal's actual reason proves a timeout.
+      if (requestSignal?.aborted && requestSignal.reason instanceof DOMException && requestSignal.reason.name === "TimeoutError")
+        throw new ProbeFailure(stage, "PROVIDER_TIMEOUT");
+      throw new ProbeFailure(stage, "UNCONFIRMED");
     }
   }});
 }

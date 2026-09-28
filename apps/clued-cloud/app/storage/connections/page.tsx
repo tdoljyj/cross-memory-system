@@ -33,7 +33,11 @@ const probeReasons: Record<string, string> = { DIRECTORY_NOT_APP_AUTHORIZED: "�
   IDENTITY_INVALID: "提供方返回的对象身份字段不完整或无效", PARENT_INVALID: "父目录身份不符合登记", LAYOUT_INVALID: "登记布局不符合检查合同",
   DIRECTORY_CHANGED: "目录名称、位置或版本发生变化", PATH_AMBIGUOUS: "目录存在同名或身份冲突", SHORTCUT_UNQUALIFIED: "检测到尚未纳入资格验证的快捷方式",
   DIRECTORY_NOT_LISTED: "目录枚举结果缺少已登记对象", ENUMERATION_INVALID: "目录枚举未确认", ENTRY_LIMIT: "目录数量超过本次检查上限",
-  OBSERVATION_EXPIRED: "本次检查超过时间限制", CLOCK_INVALID: "检查时钟未确认" };
+  OBSERVATION_EXPIRED: "本次检查超过时间限制", CLOCK_INVALID: "检查时钟未确认",
+  PROVIDER_AUTHENTICATION_REJECTED: "Google 未接受当前访问凭据", PROVIDER_ACCESS_REJECTED: "Google 拒绝了这次元数据访问",
+  PROVIDER_OBJECT_UNAVAILABLE: "Google 未返回所查询的登记对象", PROVIDER_RATE_LIMITED: "Google 暂时限制了请求频率",
+  PROVIDER_SERVER_UNAVAILABLE: "Google 服务暂时不可用", PROVIDER_RESPONSE_REJECTED: "Google 未接受这次请求",
+  PROVIDER_TIMEOUT: "Google 单次元数据请求超时" };
 class ProbeRequestError extends Error {}
 async function request(path: string, body: object | undefined, stillCurrent: () => boolean = () => true) {
   const { data, error } = await supabase.auth.getSession();
