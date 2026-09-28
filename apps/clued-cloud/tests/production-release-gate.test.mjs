@@ -79,6 +79,18 @@ test('a newly applied migration may have a generated production version only whe
   assert.deepEqual(verifyReleaseState(state), []);
 });
 
+test('migration history may omit exactly one terminal LF recorded by the migration runner', () => {
+  const state = healthy();
+  state.migrationFiles = [...state.migrationFiles, '20260925120000_followup.sql'];
+  state.migrationSources = { ...state.migrationSources,
+    '20260925120000_followup.sql': 'select 1;\n' };
+  state.changedPaths = [{ status: 'A', path:
+    'apps/clued-cloud/supabase/migrations/20260925120000_followup.sql' }];
+  state.history.push({ version: '20260923060000', name: 'followup',
+    statements: ['select 1;'] });
+  assert.deepEqual(verifyReleaseState(state), []);
+});
+
 test('release refuses a duplicate source-version migration row even with the expected name', () => {
   const state = healthy();
   state.history.push({ version: baseline.source_migration.slice(0, 14),

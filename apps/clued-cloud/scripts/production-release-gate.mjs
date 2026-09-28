@@ -59,9 +59,12 @@ export function verifyReleaseState({ baseline, sourceSql, history, changedPaths,
     if (match[1] <= migrationVersion) continue;
     const matching = history.filter((row) => row.name === match[2]);
     const sql = migrationSources[filename];
+    const acceptedStatements = typeof sql === 'string'
+      ? [sql, sql + '\r\n', ...(sql.endsWith('\n') ? [sql.slice(0, -1)] : [])]
+      : [];
     if (matching.length !== 1 || typeof sql !== 'string' ||
         matching[0].statements?.length !== 1 ||
-        ![sql, sql + '\r\n'].includes(matching[0].statements[0])) {
+        !acceptedStatements.includes(matching[0].statements[0])) {
       errors.push(`unapplied_or_mismatched_migration:${filename}`);
     }
   }
