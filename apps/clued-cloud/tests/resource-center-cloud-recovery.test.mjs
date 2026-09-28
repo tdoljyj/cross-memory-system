@@ -184,7 +184,7 @@ test('native recovery HTTP accepts only original IDs, preserves native JWT plus 
     const settled=await worker.fetch(request(input),env);
     assert.equal(settled.status,200);assert.equal(settled.headers.get('cache-control'),'no-store');
     assert.deepEqual(await settled.json(),{status:'committed',job_id:ids.job,receipt_id:ids.receipt,execution_permitted:false});
-    assert.deepEqual(rpcs.map(x=>x.action),['recovery_inspect','recovery_load','recovery_finalize']);
+    assert.deepEqual(rpcs.map(x=>x.action),['recovery_inspect','recovery_inspect','recovery_load','recovery_finalize']);
     assert.equal(f.base.info().posts,1);assert.equal(f.base.info().starts,1);
     inspectResult={...inspectResult,job_id:ids.profile};
     const wrong=await worker.fetch(request({...ref,action:'inspect'}),env);
