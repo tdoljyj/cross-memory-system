@@ -4,11 +4,10 @@
 
 do $$
 begin
-  if exists(select 1 from pg_catalog.pg_roles where rolname='clued_storage_source_reader_v2') then
-    raise exception 'storage_source_reader_role_already_exists' using errcode='42501';
+  if not exists(select 1 from pg_catalog.pg_roles where rolname='clued_storage_source_reader_v2') then
+    create role clued_storage_source_reader_v2 nologin
+      nosuperuser nocreatedb nocreaterole noinherit nobypassrls;
   end if;
-  create role clued_storage_source_reader_v2 nologin
-    nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls;
 end $$;
 
 create schema clued_storage_source;
