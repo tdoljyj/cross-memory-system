@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 const ROLE = "clued_storage_source_reader_v2";
 const API = "clued_storage_source.authorization_request_snapshot_v2(uuid)";
@@ -7,10 +9,10 @@ const API = "clued_storage_source.authorization_request_snapshot_v2(uuid)";
 // Run only in resource-center-authority-db.test.mjs's disposable PostgreSQL.
 export async function testStorageSourceReader(t, admin) {
   await t.test("storage source reader is a non-login, exact-function-only capability", async () => {
-    const role = (await admin.query(`select rolcanlogin,rolsuper,rolcreatedb,rolcreaterole,rolinherit,rolbypassrls
+    const role = (await admin.query(`select rolcanlogin,rolsuper,rolcreatedb,rolcreaterole,rolinherit,rolreplication,rolbypassrls
       from pg_roles where rolname=$1`, [ROLE])).rows[0];
     assert.deepEqual(role, { rolcanlogin: false, rolsuper: false, rolcreatedb: false,
-      rolcreaterole: false, rolinherit: false, rolbypassrls: false });
+      rolcreaterole: false, rolinherit: false, rolreplication: false, rolbypassrls: false });
     const acl = (await admin.query(`select p.prosecdef,p.provolatile,p.proconfig,
       has_function_privilege($1,p.oid,'EXECUTE') dedicated,
       has_function_privilege('anon',p.oid,'EXECUTE') anon,
@@ -28,6 +30,9 @@ export async function testStorageSourceReader(t, admin) {
       "clued_private.authorizations_v12", "public.clued_agent_bindings"]) {
       assert.equal((await admin.query("select has_table_privilege($1,$2,'SELECT') value", [ROLE, table])).rows[0].value, false);
     }
+    const migration = await readFile(path.join(process.cwd(), "supabase", "migrations",
+      "20260928113000_resource_center_storage_source_reader_v2.sql"), "utf8");
+    await assert.rejects(admin.query(migration), /storage_source_reader_role_already_exists/);
   });
 
   await t.test("storage source reader resolves only an exact live request and cannot read base tables", async () => {
