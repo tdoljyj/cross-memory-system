@@ -44,6 +44,23 @@ export async function testAccountJobs(t, admin, server, { user, decision, profil
       await assert.rejects(caller.query("select clued_private.storage_job_begin_v1($1,$2,$3,'{}')",[user,job,hash("writer")]),/permission denied/);
       assert.equal((await admin.query("select has_function_privilege('service_role','clued_private.storage_job_begin_v1(uuid,uuid,text,jsonb)','EXECUTE') yes")).rows[0].yes,false);
     });
+    await t.test("well-shaped non-create operations cannot create a durable account job", async () => {
+      const source = mutation.destination_path;
+      const cases = [
+        { operation:"write", target_kind:"file", destination_path:source, content:"changed bytes" },
+        { operation:"replace", target_kind:"file", destination_path:source, content:"replacement bytes" },
+        { operation:"move", target_kind:"file", source_path:source, destination_path:"/account/Clued_资料中心/20_P_产品与体验/topic/example.txt" },
+        { operation:"rename", target_kind:"file", source_path:source, destination_path:"/account/Clued_资料中心/20_P_产品与体验/renamed.txt" },
+        { operation:"delete", target_kind:"file", source_path:source },
+      ];
+      const beforeCount = (await admin.query("select count(*)::int n from clued_private.storage_jobs_v1 where owner_id=$1",[user])).rows[0].n;
+      for (const input of cases) {
+        const rejectedJob = randomUUID();
+        await assert.rejects(submit(rejectedJob,input),/storage_job_input_invalid/,input.operation + " must be rejected");
+        assert.equal((await admin.query("select count(*)::int n from clued_private.storage_jobs_v1 where owner_id=$1 and job_id=$2",[user,rejectedJob])).rows[0].n,0,input.operation + " must not persist its job");
+        assert.equal((await admin.query("select count(*)::int n from clued_private.storage_jobs_v1 where owner_id=$1",[user])).rows[0].n,beforeCount,input.operation + " must not persist another job");
+      }
+    });
     const adminCall = async input => (await admin.query("select public.clued_resource_center_admin_v1($1,$2::jsonb) value",[user,JSON.stringify({idempotency_key:randomUUID(),source_decision_id:decision,...input})])).rows[0].value;
     assert.equal((await adminCall({action:"artifact_register",profile_id:profile,path:"/account/Clued_资料中心/20_P_产品与体验",
       provider_file_id:"account-track",provider_file_version:"2",target_kind:"directory",governance_class:"ordinary",delete_authority:false})).status,"committed");

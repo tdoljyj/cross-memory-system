@@ -534,6 +534,39 @@ test("unsupported operation does not quarantine subsequent create", async (t) =>
   assert.equal(reserves, 1);
 });
 
+test("non-create operation matrix preserves test files without authority, reservation or provider effects", async (t) => {
+  const { profile, destination } = await fixture(t);
+  await fs.mkdir(destination);
+  const source = path.join(destination, "source.txt");
+  const target = path.join(destination, "target.txt");
+  await fs.writeFile(source, "original source", { flag: "wx" });
+  await fs.writeFile(target, "original target", { flag: "wx" });
+  const calls = [];
+  const unexpected = name => async () => { calls.push(name); throw new Error("must not run"); };
+  const host = createResourceCenterOnlineToolHost({ trusted_profile: profile,
+    resolve_artifact_online: unexpected("authority"),
+    prepare_write: unexpected("reserve"),
+    mutation_effect: unexpected("effect"),
+    commit_post_write: unexpected("receipt"),
+  });
+  for (const operation of ["write", "replace", "move", "rename", "delete"]) {
+    await t.test(operation, async () => {
+      const mutation = operation === "delete"
+        ? { operation, source_path: source, target_kind: "file" }
+        : ["move", "rename"].includes(operation)
+          ? { operation, source_path: source, destination_path: target, target_kind: "file" }
+          : { operation, destination_path: target, content: "replacement", target_kind: "file" };
+      const result = await host.callTool(RESOURCE_CENTER_MUTATION_TOOL, mutation);
+      assert.equal(result.status, "deny");
+      assert.equal(result.error_code, "WRITER_OPERATION_NOT_QUALIFIED");
+      assert.equal(result.side_effects, 0);
+      assert.deepEqual(calls, []);
+      assert.equal(await fs.readFile(source, "utf8"), "original source");
+      assert.equal(await fs.readFile(target, "utf8"), "original target");
+    });
+  }
+});
+
 test("unavailable durable recovery storage prevents all service calls", async () => {
   let calls = 0;
   const client = createResourceCenterWriteClient({
