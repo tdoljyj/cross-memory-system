@@ -1,382 +1,136 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../../supabase-browser";
-type Connection = { id: string; provider: string; state: string; version: number; profile_id: string };
-const storageActions = { inspect: "查看存储任务状态", create_file: "新建文件", create_topic: "新建主题目录" };
-type StorageAction = keyof typeof storageActions;
-type Client = { binding_id: string; client_name: string; client_id: string; version: number; expires_at: string; active: boolean };
-type ClientGrant = { binding_id: string; authorization_version: number; actions: StorageAction[]; expires_at: string; revoked_at: string | null; receipt_id: string; binding_current: boolean };
-type GrantView = { connection_id: string; connection_version: number; connection_state: string; grants: ClientGrant[] };
-type ClientDraft = { binding: string; actions: StorageAction[]; expires: string };
-type RecoveryView = { job_id: string; status: string; receipt_id: string };
-const recoveryLabels: Record<string, string> = { queued: "已排队", prepared: "已准备", started: "已开始，结果待核对", uncertain: "结果待核对",
-  committed: "已登记完成", cancelled: "已取消", denied: "已拒绝", attention_required: "需要核查" };
-const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
-const isDate = (v: unknown): v is string => typeof v === "string" && Number.isFinite(Date.parse(v));
-function isClient(v: unknown): v is Client {
-  return isObject(v) && typeof v.binding_id === "string" && typeof v.client_name === "string" && typeof v.client_id === "string"
-    && Number.isSafeInteger(v.version) && Number(v.version) > 0 && isDate(v.expires_at) && typeof v.active === "boolean";
+
+type Connection = {
+  id: string; version: number; provider: string; state: string; auth_mode: string;
+  root_name: string; policy_active: boolean; actions: string[];
+  refresh_enabled: boolean; database_execution_enabled: boolean; profile_current: boolean;
+};
+const actionName: Record<string, string> = { inspect: "查看任务状态", create_file: "新建文件", create_topic: "新建主题目录" };
+const stateName: Record<string, string> = {
+  awaiting_provider: "等待 Google 授权", active: "已连接", reauthorization_required: "需要重新授权", revoked: "已断开",
+};
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+function isConnection(value: unknown): value is Connection {
+  return isObject(value) && typeof value.id === "string" && Number.isSafeInteger(value.version)
+    && typeof value.provider === "string" && typeof value.state === "string"
+    && typeof value.auth_mode === "string" && typeof value.root_name === "string"
+    && typeof value.policy_active === "boolean" && typeof value.refresh_enabled === "boolean"
+    && typeof value.database_execution_enabled === "boolean" && typeof value.profile_current === "boolean"
+    && Array.isArray(value.actions) && value.actions.every(action => typeof action === "string" && Object.hasOwn(actionName, action));
 }
-function isGrantView(v: Record<string, unknown>, id: string): v is GrantView {
-  return v.connection_id === id && Number.isSafeInteger(v.connection_version) && Number(v.connection_version) > 0
-    && typeof v.connection_state === "string" && Array.isArray(v.grants) && v.grants.every(g => isObject(g)
-      && typeof g.binding_id === "string" && Number.isSafeInteger(g.authorization_version) && Number(g.authorization_version) > 0
-      && Array.isArray(g.actions) && g.actions.length > 0 && g.actions.every(a => typeof a === "string" && Object.hasOwn(storageActions, a))
-      && isDate(g.expires_at) && (g.revoked_at === null || isDate(g.revoked_at)) && typeof g.receipt_id === "string" && typeof g.binding_current === "boolean");
-}
-type RefreshStatus = { enabled: boolean; version: number; connection_version: number; failures: number; pending: boolean; next_refresh_at: string | null };
-const probeStages: Record<string, string> = { request: "请求验证", prepare: "账号与目录当前状态", descriptor: "目录配置", credential: "连接凭据与有效期",
-  identity: "Google 账号身份", directories: "Google 目录元数据与权限", boundary: "父级与同级目录边界", receipt: "最终状态复核与回执" };
-const probeReasons: Record<string, string> = { DIRECTORY_NOT_APP_AUTHORIZED: "至少一个已登记目录尚未向当前 Google 应用授权", DIRECTORY_NOT_WRITABLE: "至少一个目录不允许新建子项",
-  IDENTITY_INVALID: "提供方返回的对象身份字段不完整或无效", PARENT_INVALID: "父目录身份不符合登记", LAYOUT_INVALID: "登记布局不符合检查合同",
-  DIRECTORY_CHANGED: "目录名称、位置或版本发生变化", PATH_AMBIGUOUS: "目录存在同名或身份冲突", SHORTCUT_UNQUALIFIED: "检测到尚未纳入资格验证的快捷方式",
-  DIRECTORY_NOT_LISTED: "目录枚举结果缺少已登记对象", ENUMERATION_INVALID: "目录枚举未确认", ENTRY_LIMIT: "目录数量超过本次检查上限",
-  OBSERVATION_EXPIRED: "本次检查超过时间限制", CLOCK_INVALID: "检查时钟未确认",
-  PROVIDER_AUTHENTICATION_REJECTED: "Google 未接受当前访问凭据", PROVIDER_ACCESS_REJECTED: "Google 拒绝了这次元数据访问",
-  PROVIDER_OBJECT_UNAVAILABLE: "Google 未返回所查询的登记对象", PROVIDER_RATE_LIMITED: "Google 暂时限制了请求频率",
-  PROVIDER_SERVER_UNAVAILABLE: "Google 服务暂时不可用", PROVIDER_RESPONSE_REJECTED: "Google 未接受这次请求",
-  PROVIDER_TIMEOUT: "Google 单次元数据请求超时", RUNTIME_SUBREQUEST_LIMIT: "云端运行环境达到单次外部请求上限",
-  PROVIDER_REDIRECT_REJECTED: "Google 请求出现不允许的跳转", PROVIDER_RESPONSE_INVALID: "Google 响应格式无效",
-  METADATA_ID_MISMATCH: "Google 返回的对象 ID 与查询不一致", PAGINATION_INVALID: "目录分页标记无效或重复",
-  PAGINATION_LIMIT: "目录分页超过本次检查上限", NAMESPACE_VISIBILITY_UNPROVEN: "目录枚举所需的只读元数据权限未确认",
-  UNAUTHORIZED_WORKSPACE_MUTATION: "发现未登记的 Clued 资料位置（UNAUTHORIZED_WORKSPACE_MUTATION）",
-  BOUNDARY_PROFILE_UNQUALIFIED: "边界配置未通过验证", BOUNDARY_IDENTITY_INVALID: "边界对象身份无效",
-  BOUNDARY_ROOT_CHANGED: "资料根身份发生变化", BOUNDARY_ALIAS_OR_CYCLE: "边界存在重复引用或循环",
-  BOUNDARY_FOLDER_INVALID: "边界目录类型无效", BOUNDARY_CHANGED: "扫描期间边界发生变化",
-  BOUNDARY_ENUMERATION_INVALID: "边界枚举不完整", BOUNDARY_ENTRY_LIMIT: "边界条目超过检查上限",
-  BOUNDARY_PATH_AMBIGUOUS: "边界存在同名或路径冲突", BOUNDARY_SHORTCUT_UNQUALIFIED: "边界存在未验证的快捷方式",
-  BOUNDARY_DEPTH_LIMIT: "边界目录深度超过检查上限", BOUNDARY_ROOT_NOT_LISTED: "边界枚举缺少资料根" };
-class ProbeRequestError extends Error {}
-async function request(path: string, body: object | undefined, stillCurrent: () => boolean = () => true) {
+async function accountRequest(body: object, path = "/v1/storage/owner") {
   const { data, error } = await supabase.auth.getSession();
-  if (error || !data.session) throw new Error("请先登录 Clued，再返回此页。");
-  if (!stillCurrent()) throw new Error("账号或页面已变化，请重新确认。");
-  const response = await fetch(path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
-    body: JSON.stringify(body), cache: "no-store", redirect: "error" });
-  if (!response.ok) {
-    if (path === "/v1/storage/google/probe" && response.status === 403) {
-      const failure: unknown = await response.json().catch(() => null);
-      if (isObject(failure) && failure.execution_permitted === false && isObject(failure.diagnostic)) {
-        const { stage, reason } = failure.diagnostic;
-        if (typeof stage === "string" && Object.hasOwn(probeStages, stage) && typeof reason === "string" &&
-          (reason === "UNCONFIRMED" || Object.hasOwn(probeReasons, reason))) {
-          throw new ProbeRequestError(`目录检查未确认：${probeStages[stage]}${reason === "UNCONFIRMED" ? "" : `；${probeReasons[reason]}`}。不会自动重试或开启文件写入。`);
-        }
-      }
-    }
-    throw new Error(response.status === 404 ? "账号存储连接尚未开放，原入口未切换。" : "操作未确认，请刷新状态后检查；不会自动重试或放宽权限。");
-  }
-  const value: unknown = await response.json();
-  const current = await supabase.auth.getSession();
-  if (current.error || current.data.session?.user.id !== data.session.user.id) throw new Error("账号已变化，请重新读取连接。");
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("响应未确认。");
-  return value as Record<string, unknown>;
+  if (error || !data.session) throw new Error("请登录 Clued 后重新读取连接。");
+  const response = await fetch(path, {
+    method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
+    body: JSON.stringify(body), cache: "no-store", redirect: "error",
+  });
+  if (!response.ok) throw new Error("结果未确认，请重新读取连接状态；不要重复提交。");
+  const result: unknown = await response.json();
+  const latest = await supabase.auth.getSession();
+  if (latest.error || latest.data.session?.user.id !== data.session.user.id) throw new Error("账号已变化，请重新读取。");
+  if (!isObject(result)) throw new Error("连接状态未确认。");
+  return result;
 }
-const labels: Record<string, string> = { awaiting_provider: "等待 Google 授权", active: "Google 连接已建立（不代表文件写入已启用）", reauthorization_required: "需要重新授权", revoked: "已停用" };
 export default function StorageConnections() {
-  const [connections, setConnections] = useState<Connection[]>([]), [message, setMessage] = useState("正在读取……"), [busy, setBusy] = useState(false);
-  const [renewals, setRenewals] = useState<Record<string, RefreshStatus>>({});
-  const [probeMessages, setProbeMessages] = useState<Record<string, string>>({});
-  const [defaultRefresh, setDefaultRefresh] = useState<Record<string, boolean>>({});
-  const [clients, setClients] = useState<Client[]>([]), [grantViews, setGrantViews] = useState<Record<string, GrantView>>({});
-  const [clientDrafts, setClientDrafts] = useState<Record<string, ClientDraft>>({});
-  const [recoveryJobs, setRecoveryJobs] = useState<Record<string, string>>({}), [recoveryViews, setRecoveryViews] = useState<Record<string, RecoveryView>>({});
-  const [profileId, setProfileId] = useState(""), [decisionId, setDecisionId] = useState("");
-  const registrationBusy = useRef(false);
-  const operationBusy = useRef(false);
-  const revision = useRef(0);
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [workerEnabled, setWorkerEnabled] = useState(false);
+  const [message, setMessage] = useState("正在读取连接……");
+  const [busy, setBusy] = useState(false);
+  const [defaultRefresh, setDefaultRefresh] = useState(false);
+  const revision = useRef(0), operation = useRef(false);
   const refresh = useCallback(async () => {
     const epoch = ++revision.current;
-    setRenewals({});
-    setProbeMessages({});
-    setClients([]); setGrantViews({}); setClientDrafts({});
-    setRecoveryJobs({}); setRecoveryViews({});
     setBusy(true);
-    try { const result = await request("/v1/storage/account", { action: "list" });
+    try {
+      const result = await accountRequest({ action: "connections" });
       if (epoch !== revision.current) return;
-      if (!Array.isArray(result.connections) || !result.connections.every(c => c && typeof c.id === "string" && typeof c.provider === "string" && typeof c.state === "string" && Number.isSafeInteger(c.version))) throw new Error("连接列表未确认。");
-      setConnections(result.connections); setMessage(result.connections.length ? "" : "暂无已登记连接。请先完成受治理目录登记。");
-    } catch (error) { if (epoch === revision.current) { setConnections([]); setMessage(error instanceof Error ? error.message : "无法读取连接。"); } }
-    finally { if (epoch === revision.current) setBusy(false); }
+      if (!Array.isArray(result.connections) || !result.connections.every(isConnection)
+        || typeof result.worker_execution_enabled !== "boolean") throw new Error("连接摘要未确认。");
+      setConnections(result.connections);
+      setWorkerEnabled(result.worker_execution_enabled);
+      setMessage(result.connections.length ? "" : "暂无存储连接；受治理目录登记请进入管理入口。");
+      return result.connections as Connection[];
+    } catch (error) {
+      if (epoch === revision.current) {
+        setConnections([]); setWorkerEnabled(false);
+        setMessage(error instanceof Error ? error.message : "连接状态未确认。");
+      }
+      return null;
+    } finally { if (epoch === revision.current) setBusy(false); }
   }, []);
   useEffect(() => {
     let disposed = false;
-    const liveRevision = revision;
-    const scheduleRead = () => queueMicrotask(() => { if (!disposed) void refresh(); });
     const { data } = supabase.auth.onAuthStateChange(() => {
       if (disposed) return;
-      ++revision.current; setConnections([]); setRenewals({}); setDefaultRefresh({}); setProfileId(""); setDecisionId("");
-      setProbeMessages({});
-      setClients([]); setGrantViews({}); setClientDrafts({});
-      setRecoveryJobs({}); setRecoveryViews({});
-      // Do not await Supabase calls from inside its auth callback lock.
-      scheduleRead();
+      ++revision.current; setConnections([]); setWorkerEnabled(false);
+      queueMicrotask(() => { if (!disposed) void refresh(); });
     });
-    scheduleRead();
-    return () => { disposed = true; ++liveRevision.current; data.subscription.unsubscribe(); };
+    queueMicrotask(() => { if (!disposed) void refresh(); });
+    return () => { disposed = true; ++revision.current; data.subscription.unsubscribe(); };
   }, [refresh]);
-  async function readClients(c: Connection, epoch: number) {
-    const stillCurrent = () => epoch === revision.current;
-    const listed = await request("/oauth/connections/api", undefined, stillCurrent);
-    if (!stillCurrent()) return;
-    if (!Array.isArray(listed.bindings) || !listed.bindings.every(isClient)) throw new Error("客户端列表未确认。");
-    const view = await request("/v1/storage/account", { action: "client_grants", connection_id: c.id }, stillCurrent);
-    if (!stillCurrent()) return;
-    if (!isGrantView(view, c.id)) throw new Error("存储授权列表未确认。");
-    setClients(listed.bindings); setGrantViews(old => ({ ...old, [c.id]: view }));
-    setConnections(old => old.map(item => item.id === c.id ? { ...item, version: view.connection_version, state: view.connection_state } : item));
-    setClientDrafts(old => { const next = { ...old }; delete next[c.id]; return next; });
-  }
-  async function manageClient(c: Connection, action: "list" | "grant_client" | "revoke_client", grant?: ClientGrant) {
-    if (operationBusy.current || registrationBusy.current || busy) return;
-    const epoch = revision.current, view = grantViews[c.id], draft = clientDrafts[c.id];
-    const client = clients.find(item => item.binding_id === draft?.binding);
-    let payload: Record<string, unknown> | undefined;
-    if (action !== "list") {
-      if (!view) return;
-      if (action === "grant_client") {
-        if (view.connection_state !== "active" || !client?.active || !draft?.actions.length || !isDate(draft.expires)
-          || Date.parse(draft.expires) <= Date.now() || Date.parse(draft.expires) > Date.parse(client.expires_at)) {
-          setMessage("请选择有效客户端、至少一项操作和不超过客户端授权的期限。"); return;
-        }
-        if (!window.confirm(`授权 ${client.client_name}（${client.binding_id}）在连接 ${c.id} 下${draft.actions.map(a => storageActions[a]).join("、")}，至 ${draft.expires}？不含覆盖、移动、改名或删除；实际执行仍须通过全部门禁。`)) return;
-        payload = { binding_id: client.binding_id, authorization_version: client.version, actions: draft.actions, expires_at: draft.expires };
-      } else {
-        if (!grant || grant.revoked_at !== null) return;
-        if (!window.confirm(`停用客户端 ${grant.binding_id} 在此存储连接的权限？不影响它的 Clued 记忆权限或其他客户端；已开始的操作仍须核对回执。`)) return;
-        payload = { binding_id: grant.binding_id };
-      }
-      // Fixed request identity and body for this confirmed operation. An uncertain
-      // response clears controls and requires readback, never an automatic regrant.
-      payload = { action, connection_id: c.id, base_version: view.connection_version, ...payload, idempotency_key: crypto.randomUUID() };
-    }
-    operationBusy.current = true; setBusy(true);
-    setGrantViews(old => { const next = { ...old }; delete next[c.id]; return next; });
-    try {
-      if (payload) {
-        const result = await request("/v1/storage/account", payload, () => epoch === revision.current);
-        if (epoch !== revision.current) return;
-        if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("授权回执未确认；请查询授权核对，不会自动重试。");
-      }
-      if (epoch !== revision.current) return;
-      await readClients(c, epoch);
-      if (epoch === revision.current) setMessage(action === "list" ? "" : "存储授权设置已确认；正式执行仍受门禁约束。");
-    } catch (error) {
-      if (epoch === revision.current) setMessage(error instanceof Error ? error.message : "存储授权未确认，请查询授权核对。");
-    } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
-  }
-  async function recover(c: Connection, action: "inspect" | "settle" | "authorize") {
-    if (operationBusy.current || registrationBusy.current || busy) return;
-    const job = recoveryJobs[c.id]?.trim(), prior = recoveryViews[c.id];
-    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-    if (!job || !uuid.test(job)) { setMessage("请填写原存储任务 ID；不要生成新任务重试。"); return; }
-    if (action === "settle" || action === "authorize") {
-      if (!["active", "reauthorization_required"].includes(c.state) || prior?.job_id !== job || !["started", "uncertain"].includes(prior.status)) return;
-      if (!window.confirm(action === "authorize"
-        ? `为原任务 ${job} 重新取得同一 Google 账号的两项既有权限？只更新服务端凭据；不恢复已停用连接、Agent 权限或后台续签，不重新创建文件。Google 最终同意由你确认。`
-        : `核对原任务 ${job} 的 Google 元数据，并在结果一致时登记原回执？不会重新创建文件、恢复权限或续签。`)) return;
-    }
+  async function connect(c: Connection) {
+    if (operation.current || busy || !["awaiting_provider", "reauthorization_required"].includes(c.state)) return;
+    const enrollRefresh = c.state === "awaiting_provider" && defaultRefresh;
+    if (enrollRefresh && !window.confirm("连接后允许 Clued 服务端按既有范围后台续签，直到主动停用？")) return;
+    operation.current = true; setBusy(true);
     const epoch = revision.current;
-    operationBusy.current = true; setBusy(true);
-    setRecoveryViews(old => { const next = { ...old }; delete next[c.id]; return next; });
     try {
-      if (action === "authorize") {
-        const result = await request("/v1/storage/google/recovery/start", { connection_id: c.id, job_id: job }, () => epoch === revision.current);
-        if (epoch !== revision.current) return;
-        if (typeof result.authorization_url !== "string") throw new Error("Unconfirmed");
-        const url = new URL(result.authorization_url);
-        if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" || url.username || url.password) throw new Error("Unconfirmed");
-        window.location.assign(url.href); return;
-      }
-      const result = await request("/v1/storage/recovery", { action, connection_id: c.id, job_id: job }, () => epoch === revision.current);
+      const result = await accountRequest({ connection_id: c.id,
+        ...(c.state === "awaiting_provider" ? { default_refresh: enrollRefresh } : {}) }, "/v1/storage/google/start");
+      if (epoch !== revision.current || typeof result.authorization_url !== "string") return;
+      const url = new URL(result.authorization_url);
+      if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" || url.username || url.password)
+        throw new Error("授权地址未确认。");
+      window.location.assign(url.href);
+    } catch { if (epoch === revision.current) setMessage("Google 连接请求未确认，请刷新状态后核对。"); }
+    finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  async function disconnect(c: Connection) {
+    if (operation.current || busy || c.state === "revoked") return;
+    if (!window.confirm("断开整个网盘连接？会停止此连接的后续存储操作与后台续签，不删除 Google Drive 文件。已开始的操作可能仍需核对原回执；断开后不再允许读取提供方来恢复未确认的结果。")) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      const result = await accountRequest({ action: "disconnect", connection_id: c.id, base_version: c.version,
+        idempotency_key: crypto.randomUUID() });
       if (epoch !== revision.current) return;
-      if (result.execution_permitted !== false || result.job_id !== job || typeof result.receipt_id !== "string" || !uuid.test(result.receipt_id)) throw new Error("Unconfirmed");
-      if (action === "inspect") {
-        if (result.connection_id !== c.id || typeof result.status !== "string" || !Object.hasOwn(recoveryLabels, result.status)) throw new Error("Unconfirmed");
-        setRecoveryViews(old => ({ ...old, [c.id]: { job_id: job, status: result.status as string, receipt_id: result.receipt_id as string } }));
-        setMessage("已读取原任务；回执不代表重新取得写入权限。");
-      } else {
-        if (result.status !== "committed") throw new Error("Unconfirmed");
-        setMessage(`原任务结果已核验并登记。回执：${result.receipt_id}。没有重新写入文件或恢复权限。`);
-      }
+      if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("断开回执未确认。");
+      const latest = await refresh();
+      const stopped = latest?.find(item => item.id === c.id);
+      setMessage(stopped?.state === "revoked" && !stopped.policy_active && !stopped.refresh_enabled
+        ? `网盘连接已断开。回执：${result.receipt_id}` : "断开已提交，但最新状态未确认。请核对原回执。");
     } catch {
-      if (epoch === revision.current) setMessage("原任务结果尚未确认。请查询原任务回执；不会自动重试、重新创建文件或恢复权限。凭据过期须另走受审恢复授权。");
-    } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
+      if (epoch === revision.current) { await refresh(); setMessage("断开结果未确认。请核对最新状态与原回执，勿重复提交。"); }
+    } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
-  async function observeDirectories(c: Connection) {
-    if (operationBusy.current || registrationBusy.current || busy || c.state !== "active") return;
-    const epoch = revision.current;
-    operationBusy.current = true; setBusy(true);
-    const report = (value: string) => { setMessage(value); setProbeMessages(old => ({ ...old, [c.id]: value })); };
-    report("正在只读检查已登记目录；不会创建文件或开启写入。");
-    try {
-      const result = await request("/v1/storage/google/probe", { connection_id: c.id }, () => epoch === revision.current);
-      if (epoch !== revision.current) return;
-      if (result.status !== "metadata_observed" || result.execution_permitted !== false ||
-        typeof result.attempt_id !== "string" || !/^[0-9a-f-]{36}$/.test(result.attempt_id) ||
-        typeof result.receipt_id !== "string" || !/^[0-9a-f-]{36}$/.test(result.receipt_id)) throw new Error("目录检查回执未确认；文件写入保持关闭。");
-      report(`已登记目录的访问与元数据检查已记录。回执：${result.receipt_id}。这不是完整存储资格验收，不会开启文件写入。`);
-      const b = result.boundary_observation;
-      if (isObject(b) && b.contract === "clued.storage-boundary-observation/1" && b.status === "clean" &&
-        b.digest_format === "sorted-json/1" && Number.isSafeInteger(b.observed_at_ms) && Number(b.observed_at_ms) >= 0 &&
-        b.policy_version === "clued.resource-center-mutation-policy/1" && b.scanner_contract === "clued.google-drive-boundary/1" &&
-        typeof b.descriptor_sha256 === "string" && /^[a-f0-9]{64}$/.test(b.descriptor_sha256) &&
-        typeof b.scan_config_sha256 === "string" && /^[a-f0-9]{64}$/.test(b.scan_config_sha256)) {
-        // Only validated, explicit fields may enter the owner-visible evidence summary.
-        const evidence = { attempt_id: result.attempt_id, receipt_id: result.receipt_id,
-          boundary_observation: { contract: b.contract, status: b.status, observed_at_ms: b.observed_at_ms,
-            policy_version: b.policy_version, scanner_contract: b.scanner_contract, digest_format: b.digest_format,
-            descriptor_sha256: b.descriptor_sha256, scan_config_sha256: b.scan_config_sha256 }, execution_permitted: false };
-        report(`目录检查回执：${result.receipt_id}。本次父级与同级边界只读扫描未发现违规；这只是观察时点检测，不是原子快照。边界结果需连同受审发布版本另存验收证据，不包含在旧目录回执合同中。不会开启文件写入。验收摘要：${JSON.stringify(evidence)}`);
-      }
-    } catch (error) {
-      if (epoch === revision.current) report(error instanceof ProbeRequestError ? error.message : "目录检查未确认；可能需要核对目录授权、当前版本或等待凭据续签。不会自动重试或开启文件写入。");
-    } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
-  }
-  async function register() {
-    if (registrationBusy.current || busy) return;
-    const profile = profileId.trim(), decision = decisionId.trim();
-    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-    if (!uuid.test(profile) || !uuid.test(decision)) { setMessage("请填写有效的已登记目录 ID 和当前授权 Decision ID。"); return; }
-    const epoch = revision.current;
-    if (!window.confirm("登记这一个已治理目录的账号连接？目录和授权由服务端核验；此步骤不授予 Google 访问、后台续签或 Agent 文件写入权限。")) return;
-    registrationBusy.current = true; setBusy(true);
-    try {
-      // Stable per-owner receipt identity survives page reload and a lost reply.
-      // A revoked connection is not revived by replay; it stays visible as revoked.
-      const result = await request("/v1/storage/account", { action: "register", profile_id: profile, source_decision_id: decision,
-        idempotency_key: `storage-register-ui-v1:${profile}:${decision}` }, () => epoch === revision.current);
-      if (epoch !== revision.current) return;
-      if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("登记回执未确认，请刷新状态核对；不要另建重复连接。");
-      await refresh();
-    } catch (error) {
-      if (epoch === revision.current) setMessage(error instanceof Error ? error.message : "登记未确认，请刷新核对；再次提交相同目录与授权会沿用同一请求。");
-    } finally { registrationBusy.current = false; if (epoch === revision.current) setBusy(false); }
-  }
-  async function renewal(c: Connection, action: "status" | "enable" | "disable") {
-    if (operationBusy.current || busy) return;
-    const previous = renewals[c.id];
-    if (action !== "status" && !previous) return;
-    if (action === "enable" && !window.confirm("允许 Clued 服务端持续续签这条 Google 连接，直到你主动停用？手机、平板或电脑退出登录不影响续签。仅保留现有授权范围，不新增文件写入权限。")) return;
-    if (action === "disable" && !window.confirm("停用后不再发起新的后台续签。已经开始的续签需要核对结果，不能靠重新开启跳过。")) return;
-    const epoch = revision.current; operationBusy.current = true; setBusy(true);
-    try {
-      if (action !== "status") await request("/v1/storage/refresh", { action, connection_id: c.id, base_version: previous.connection_version,
-        delegation_version: previous.version, idempotency_key: crypto.randomUUID(), ...(action === "enable" ? { until_revoked: true } : {}) }, () => epoch === revision.current);
-      if (epoch !== revision.current) return;
-      const value = await request("/v1/storage/refresh", { action: "status", connection_id: c.id }, () => epoch === revision.current);
-      if (epoch !== revision.current) return;
-      if (typeof value.enabled !== "boolean" || !Number.isSafeInteger(value.version) || !Number.isSafeInteger(value.connection_version) ||
-        !Number.isSafeInteger(value.failures) || typeof value.pending !== "boolean" || !(value.next_refresh_at === null || typeof value.next_refresh_at === "string")) throw new Error("续签状态未确认。");
-      setRenewals(old => ({ ...old, [c.id]: value as RefreshStatus }));
-      setConnections(old => old.map(item => item.id === c.id ? { ...item, version: Number(value.connection_version) } : item));
-      setMessage(action === "status" ? "" : "设置已确认。");
-    } catch (error) {
-      if (epoch === revision.current) {
-        setRenewals(old => { const next = { ...old }; delete next[c.id]; return next; });
-        setMessage(error instanceof Error ? error.message : "续签设置未确认，请重新查询状态。");
-      }
-    } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
-  }
-  async function operate(c: Connection, revoke: boolean) {
-    if (operationBusy.current || busy) return;
-    if (revoke && !window.confirm("停用这条账号存储连接？这会阻止该连接后续的新执行和续签；已开始的操作需要核对回执。")) return;
-    const enrollRefresh = !revoke && c.state === "awaiting_provider" && (defaultRefresh[c.id] ?? true);
-    if (enrollRefresh && !window.confirm("连接成功后，允许 Clued 服务端按原范围自动续签，直到你停用？可先取消并取消勾选。已有停用或失效记录会保持关闭，不会恢复；这不授予 Agent 文件写入权限。")) return;
-    operationBusy.current = true;
-    setBusy(true);
-    const epoch = revision.current;
-    try {
-      if (revoke) { await request("/v1/storage/account", { action: "revoke_connection", connection_id: c.id, base_version: c.version, idempotency_key: crypto.randomUUID() }, () => epoch === revision.current); if (epoch === revision.current) await refresh(); }
-      else {
-        const result = await request("/v1/storage/google/start", { connection_id: c.id,
-          ...(c.state === "awaiting_provider" ? { default_refresh: enrollRefresh } : {}) }, () => epoch === revision.current);
-        if (epoch !== revision.current) return;
-        if (typeof result.authorization_url !== "string") throw new Error("授权地址未确认。");
-        const url = new URL(result.authorization_url);
-        if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth") throw new Error("授权地址未确认。");
-        window.location.assign(url.href);
-      }
-    } catch (error) { if (epoch === revision.current) setMessage(error instanceof Error ? error.message : "操作未确认。"); }
-    finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
-  }
-  return <main className="mx-auto max-w-3xl px-6 py-16"><h1 className="text-2xl font-semibold">账号存储连接</h1>
-    <p className="my-4">权限统一归属 Clued 账号；手机、平板和电脑使用同一份服务端规则。Google 凭据不下发到设备。</p>
+  return <main className="mx-auto max-w-3xl px-6 py-16">
+    <h1 className="text-2xl font-semibold">存储连接</h1>
+    <p className="my-4">Google Drive 的授权属于当前 Clued 账号。这里显示已登记范围与实际执行状态。</p>
     <p role="status" className="my-4">{message}</p>
-    <section className="my-4 rounded-xl border p-4"><h2>登记已治理目录</h2>
-      <p className="my-2 text-sm">仅引用服务端已登记的目录与当前授权，不接受自定义磁盘路径。登记不代表写入已启用；相同请求可安全核对回执，已停用连接不会自动恢复。</p>
-      <label className="my-2 block">已登记目录 ID<input className="block w-full rounded border p-2" value={profileId} disabled={busy}
-        autoComplete="off" onChange={event => setProfileId(event.target.value)} /></label>
-      <label className="my-2 block">当前授权 Decision ID<input className="block w-full rounded border p-2" value={decisionId} disabled={busy}
-        autoComplete="off" onChange={event => setDecisionId(event.target.value)} /></label>
-      <button disabled={busy || !profileId.trim() || !decisionId.trim()} onClick={() => void register()}>登记账号连接</button>
-    </section>
-    {connections.map(c => <section className="my-4 rounded-xl border p-4" key={c.id}>
-      <h2>{c.provider} · {labels[c.state] ?? "状态待确认"}</h2><p className="my-2 break-all text-sm">连接：{c.id}</p>
-      <details className="my-4 rounded border p-3"><summary>核对未确认的原存储任务</summary>
-        <p className="my-2 text-sm">使用原任务 ID 查询结果。核验仅读取 Google 元数据并登记原回执，不会重派文件操作、恢复权限或开启续签。</p>
-        <label className="my-2 block">原存储任务 ID<input className="block w-full rounded border p-2" autoComplete="off" disabled={busy}
-          value={recoveryJobs[c.id] ?? ""} onChange={event => {
-            setRecoveryJobs(old => ({ ...old, [c.id]: event.target.value }));
-            setRecoveryViews(old => { const next = { ...old }; delete next[c.id]; return next; });
-          }} /></label>
-        <button disabled={busy || !recoveryJobs[c.id]?.trim()} onClick={() => void recover(c, "inspect")}>查询原任务回执</button>
-        {recoveryViews[c.id] && <><p role="status" className="my-2 break-all">{recoveryLabels[recoveryViews[c.id].status]}；回执：{recoveryViews[c.id].receipt_id}</p>
-          {["active", "reauthorization_required"].includes(c.state) && ["started", "uncertain"].includes(recoveryViews[c.id].status) &&
-            <><button disabled={busy} onClick={() => void recover(c, "settle")}>核验并登记原结果（不重写）</button>
-              <button disabled={busy} onClick={() => void recover(c, "authorize")}>凭据过期：重新授权以核对原任务</button></>}</>}
-      </details>
-      {c.state === "active" && <div className="my-2"><button disabled={busy} onClick={() => void observeDirectories(c)}>检查已登记目录（只读）</button>
-        <p className="text-sm">只核对服务端登记目录的访问与元数据，不读取文件正文，不授予 Agent 写入权限。</p>
-        {probeMessages[c.id] && <p role="status" aria-live="polite" className="my-2 break-all">{probeMessages[c.id]}</p>}</div>}
-      {c.state === "awaiting_provider" && <label className="my-2 block"><input type="checkbox" disabled={busy}
-        checked={defaultRefresh[c.id] ?? true} onChange={event => setDefaultRefresh(old => ({ ...old, [c.id]: event.target.checked }))} />
-        连接成功后自动续签（可取消；已有停用或失效设置不变）</label>}
-      {c.state !== "revoked" && <div className="flex gap-4"><button disabled={busy} onClick={() => void operate(c, false)}>连接 / 重新授权 Google</button>
-        <button disabled={busy} onClick={() => void operate(c, true)}>停用连接</button></div>}
-      <div className="mt-4 border-t pt-4"><h3>账号级后台续签</h3>
-        <p className="my-2 text-sm">新连接在授权时默认选择自动续签，可取消或随时停用；已有停用设置不会自动恢复。由服务端执行，不依赖任何设备在线，不授予 Agent 整理或写入文件的权限。</p>
-        <button disabled={busy} onClick={() => void renewal(c, "status")}>查询续签状态</button>
-        {renewals[c.id] && <><p role="status" className="my-2">{renewals[c.id].enabled ? "后台续签已开启" : "后台续签已关闭"}
-          {renewals[c.id].pending ? "；存在尚未确认的续签。请核对结果，必要时重新授权 Google。" : ""}
-          {renewals[c.id].failures > 0 ? `；连续失败 ${renewals[c.id].failures} 次。` : ""}</p>
-          <button disabled={busy || (!renewals[c.id].enabled && (c.state !== "active" || renewals[c.id].pending))}
-            onClick={() => void renewal(c, renewals[c.id].enabled ? "disable" : "enable")}>{renewals[c.id].enabled ? "停用后台续签" : "授权开启后台续签"}</button></>}
-      </div>
-      <div className="mt-4 border-t pt-4"><h3>Agent 存储权限</h3>
-        <p className="my-2 text-sm">选择已经连接 Clued 的客户端，按账号统一授权，不按设备建权。记忆权限不包含存储权限；这里不会开启尚未验收的文件执行入口。</p>
-        <button disabled={busy} onClick={() => void manageClient(c, "list")}>查询客户端存储授权</button>
-        {grantViews[c.id] && <>
-          {grantViews[c.id].grants.length === 0 && <p>暂无客户端存储授权。</p>}
-          {grantViews[c.id].grants.map(g => <div key={g.binding_id} className="my-2 rounded border p-3">
-            <p>{clients.find(b => b.binding_id === g.binding_id)?.client_name ?? "已登记客户端"} · {g.binding_id}</p>
-            <p>已登记操作：{g.actions.map(a => storageActions[a]).join("、")}；到期：{g.expires_at}</p>
-            <p>{g.revoked_at ? "已停用" : !g.binding_current || Date.parse(g.expires_at) <= Date.now() ? "已失效，不能用于新执行" : "授权已登记；实际执行仍需连接、目录与执行器门禁通过"}</p>
-            <p className="break-all text-sm">回执：{g.receipt_id}</p>
-            {g.revoked_at === null && <button disabled={busy} onClick={() => void manageClient(c, "revoke_client", g)}>停用此客户端存储权限</button>}
-          </div>)}
-          {grantViews[c.id].connection_state === "active" && <>
-            <label className="my-2 block">授权客户端<select className="block w-full rounded border p-2" disabled={busy} value={clientDrafts[c.id]?.binding ?? ""}
-              onChange={event => { const client = clients.find(b => b.binding_id === event.target.value);
-                setClientDrafts(old => ({ ...old, [c.id]: { binding: client?.binding_id ?? "", actions: [],
-                  expires: client ? new Date(Math.min(Date.now() + 3600000, Date.parse(client.expires_at))).toISOString() : "" } })); }}>
-              <option value="">请选择客户端</option>{clients.filter(b => b.active && Date.parse(b.expires_at) > Date.now()).map(b =>
-                <option key={b.binding_id} value={b.binding_id}>{b.client_name} · {b.binding_id}</option>)}
-            </select></label>
-            {clientDrafts[c.id]?.binding && <>
-              {(Object.keys(storageActions) as StorageAction[]).map(a => <label className="mr-4 inline-block" key={a}><input type="checkbox" disabled={busy}
-                checked={clientDrafts[c.id].actions.includes(a)} onChange={event => setClientDrafts(old => ({ ...old, [c.id]: { ...old[c.id],
-                  actions: (Object.keys(storageActions) as StorageAction[]).filter(key => key === a ? event.target.checked : old[c.id].actions.includes(key)) } }))} />{storageActions[a]}</label>)}
-              <p className="my-2 text-sm">本次授权最长一小时，且不超过客户端原授权期限；到期时间：{clientDrafts[c.id].expires}。不会自动续活此客户端权限。</p>
-              <button disabled={busy || !clientDrafts[c.id].actions.length} onClick={() => void manageClient(c, "grant_client")}>确认授予所选存储权限</button>
-            </>}
-            {!clients.some(b => b.active && Date.parse(b.expires_at) > Date.now()) && <p>没有有效客户端；请先连接 Agent 到 Clued。</p>}
-          </>}
-        </>}
-      </div>
-    </section>)}
-    <div className="mt-6 flex gap-4"><button disabled={busy} onClick={() => void refresh()}>刷新状态</button><Link href="/">返回 Clued 登录页</Link></div>
+    {connections.map(c => {
+      const available = c.state === "active" && c.auth_mode === "account_policy" && c.policy_active
+        && c.profile_current && c.database_execution_enabled && workerEnabled;
+      return <section key={c.id} className="my-4 rounded-xl border p-4">
+        <h2 className="font-semibold">{c.provider === "google-drive" ? "Google Drive" : c.provider} · {stateName[c.state] ?? "状态待确认"}</h2>
+        <p className="my-2">已登记范围：{c.root_name}</p>
+        <p>账号允许的操作：{c.policy_active && c.actions.length ? c.actions.map(action => actionName[action]).join("、") : "无当前可用授权"}</p>
+        <p role="status" className="my-2">{available ? "存储执行入口已开启；每项操作仍须通过当前目录、客户端和单次任务准入。" : "当前文件操作不可用或暂停；连接状态不代表写入已启用。"}</p>
+        <p className="my-2 text-sm">后台续签：{c.refresh_enabled ? "开启" : "关闭"}。</p>
+        {c.state === "awaiting_provider" && <label className="my-2 block">
+          <input type="checkbox" disabled={busy} checked={defaultRefresh} onChange={event => setDefaultRefresh(event.target.checked)} />
+          连接后开启后台续签</label>}
+        {["awaiting_provider", "reauthorization_required"].includes(c.state) &&
+          <button disabled={busy} onClick={() => void connect(c)}>连接／重新授权 Google</button>}
+        {["active", "reauthorization_required"].includes(c.state) && <button disabled={busy} onClick={() => void disconnect(c)}>断开网盘连接</button>}
+      </section>;
+    })}
+    <div className="mt-6 flex gap-4"><button disabled={busy} onClick={() => void refresh()}>刷新状态</button>
+      <Link href="/storage/admin">存储管理</Link><Link href="/oauth/connections">已连接应用／客户端管理</Link></div>
   </main>;
 }

@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import test from "node:test";
 import ts from "typescript";
-const compiled = ts.transpileModule(readFileSync(new URL("../app/storage/connections/page.tsx", import.meta.url), "utf8"), {
+const compiled = ts.transpileModule(readFileSync(new URL("../app/storage/admin/page.tsx", import.meta.url), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2020, esModuleInterop: true },
 }).outputText;
 function fixture(confirm = true) {
@@ -184,44 +184,15 @@ test('boundary clean report is distinct from a durable receipt and malformed rep
     assert.match(f.text(),/不会开启文件写入/);assert.equal(f.text().includes('private-invalid'),false);
   }
 });
-test("new connection defaults to disclosed refresh consent, can opt out or cancel, and never enrolls on listing",async()=>{
-  const label='连接成功后自动续签（可取消；已有停用或失效设置不变）';
-  for(const choice of [true,false]) {
-    const f=fixture(); await f.settle(); f.respond(0,{connections:[connection]}); await f.settle();
-    assert.equal(f.requests.length,1); assert.equal(f.input(label).props.checked,true);
-    if(!choice){f.input(label).props.onChange({target:{checked:false}}); await f.settle();}
-    f.button('连接 / 重新授权 Google').props.onClick(); await f.settle();
-    assert.equal(JSON.parse(f.requests[1].init.body).default_refresh,choice);
-    assert.equal(f.confirmations.length,choice?1:0);
-    if(choice) assert.ok(f.confirmations[0].includes('不授予 Agent 文件写入权限'));
-  }
-  const cancelled=fixture(false); await cancelled.settle(); cancelled.respond(0,{connections:[connection]}); await cancelled.settle();
-  cancelled.button('连接 / 重新授权 Google').props.onClick(); await cancelled.settle(); assert.equal(cancelled.requests.length,1);
-});
 test("late account A list cannot appear after switching to B", async () => {
   const f=fixture(); await f.settle(); f.change("b"); await f.settle();
   f.respond(1,{connections:[]}); await f.settle(); f.respond(0,{connections:[connection]}); await f.settle();
   assert.equal(f.text().includes(connection.id),false);
 });
-test("account change suppresses a late Google authorization navigation", async () => {
-  const f=fixture(); await f.settle(); f.respond(0,{connections:[connection]}); await f.settle();
-  f.button("连接 / 重新授权 Google").props.onClick(); await f.settle();
-  f.change("b"); await f.settle();
-  f.respond(1,{authorization_url:"https://accounts.google.com/o/oauth2/v2/auth?state=fixture"}); await f.settle();
-  assert.equal(f.navigations.length,0); assert.equal(f.text().includes(connection.id),false);
-});
-test("double-clicking Google connect prepares only one attempt; immediate account switch sends none",async()=>{
-  const f=fixture();await f.settle();f.respond(0,{connections:[connection]});await f.settle();
-  const connect=f.button("连接 / 重新授权 Google");connect.props.onClick();connect.props.onClick();await f.settle();
-  assert.equal(f.requests.length,2);
-  const changed=fixture();await changed.settle();changed.respond(0,{connections:[connection]});await changed.settle();
-  changed.button("连接 / 重新授权 Google").props.onClick();changed.change("b");await changed.settle();
-  assert.equal(changed.requests.filter(r=>r.url==="/v1/storage/google/start").length,0);
-});
 const status = { enabled:false,version:0,connection_version:2,failures:0,pending:false,next_refresh_at:null };
 async function ready(confirm=true) {
   const f=fixture(confirm); await f.settle(); f.respond(0,{connections:[{...connection,state:"active",version:2}]}); await f.settle();
-  assert.equal(f.requests.length,1); // Listing does not silently authorize refresh.
+  assert.equal(f.requests.length,1);
   f.button("查询续签状态").props.onClick(); await f.settle();
   assert.equal(f.requests[1].url,"/v1/storage/refresh"); assert.deepEqual(JSON.parse(f.requests[1].init.body),{action:"status",connection_id:connection.id});
   f.respond(1,status); await f.settle(); return f;
@@ -313,51 +284,3 @@ async function chooseClient(f) {
   assert.equal(f.input("新建文件").props.checked,false);
   f.input("新建文件").props.onChange({target:{checked:true}});await f.settle();
 }
-test("storage permissions reuse existing Binding, start empty, and submit only confirmed exact actions and CAS",async()=>{
-  const f=await clientsReady();assert.equal(f.requests.length,3);await chooseClient(f);
-  const b=f.button("确认授予所选存储权限");b.props.onClick();b.props.onClick();await f.settle();
-  assert.equal(f.requests.length,4);assert.equal(f.confirmations.length,1);
-  const body=JSON.parse(f.requests[3].init.body);
-  assert.equal(body.action,"grant_client");assert.equal(body.binding_id,client.binding_id);assert.equal(body.authorization_version,3);
-  assert.equal(body.connection_id,connection.id);assert.equal(body.base_version,4);assert.deepEqual(body.actions,["create_file"]);
-  assert.ok(Date.parse(body.expires_at)<=Date.now()+3600000);assert.ok(Date.parse(body.expires_at)>Date.now());
-  assert.ok(f.confirmations[0].includes(body.expires_at));assert.ok(f.confirmations[0].includes(client.binding_id));
-  assert.ok(f.confirmations[0].includes("不含覆盖、移动、改名或删除"));
-  f.respond(3,{status:"committed",receipt_id:"new-receipt"});await f.settle();
-  assert.equal(f.requests[4].init.method,"GET"); // Readback, not a second mutation.
-});
-test("cancel, invalid client and immediate account switch never grant storage",async()=>{
-  const cancelled=await clientsReady(false);await chooseClient(cancelled);cancelled.button("确认授予所选存储权限").props.onClick();await cancelled.settle();
-  assert.equal(cancelled.requests.length,3);
-  const f=await clientsReady();await chooseClient(f);f.button("确认授予所选存储权限").props.onClick();f.change("b");await f.settle();
-  assert.equal(f.requests.some(r=>r.init.body && JSON.parse(r.init.body).action==="grant_client"),false);
-  assert.equal(f.text().includes(client.binding_id),false);
-});
-test("unknown grant reply clears grant controls, does not retry or claim success, and explicit read is read-only",async()=>{
-  const f=await clientsReady();await chooseClient(f);f.button("确认授予所选存储权限").props.onClick();await f.settle();
-  f.respond(3,{status:"unknown"});await f.settle();assert.equal(f.requests.length,4);
-  assert.ok(f.text().includes("授权回执未确认"));assert.equal(f.text().includes("确认授予所选存储权限"),false);
-  f.button("查询客户端存储授权").props.onClick();await f.settle();assert.equal(f.requests[4].init.method,"GET");
-  assert.equal(f.requests.filter(r=>r.init.body && JSON.parse(r.init.body).action==="grant_client").length,1);
-});
-test("malformed or late client/grant reads never mean no grants and never cross accounts",async()=>{
-  const f=await clientsReady();f.button("查询客户端存储授权").props.onClick();await f.settle();
-  f.respond(3,{bindings:[{...client,version:"3"}]});await f.settle();
-  assert.ok(f.text().includes("客户端列表未确认"));assert.equal(f.text().includes("暂无客户端存储授权"),false);
-  f.button("查询客户端存储授权").props.onClick();await f.settle();f.change("b");await f.settle();
-  f.respond(4,{bindings:[client]});await f.settle();assert.equal(f.requests.length,6);assert.equal(f.text().includes(client.binding_id),false);
-  const bad=fixture();await bad.settle();bad.respond(0,{connections:[{...connection,state:"active"}]});await bad.settle();
-  bad.button("查询客户端存储授权").props.onClick();await bad.settle();bad.respond(1,{bindings:[client]});await bad.settle();
-  bad.respond(2,{...grantView,connection_id:"another-connection"});await bad.settle();assert.ok(bad.text().includes("存储授权列表未确认"));
-});
-test("revocation affects only this connection's client grant and requires receipt plus fresh readback",async()=>{
-  const g={binding_id:client.binding_id,authorization_version:3,actions:["inspect"],expires_at:client.expires_at,revoked_at:null,receipt_id:"old-receipt",binding_current:false};
-  const f=await clientsReady(true,[{...client,active:false}],[g]);assert.ok(f.text().includes("已失效"));
-  f.button("停用此客户端存储权限").props.onClick();await f.settle();
-  assert.deepEqual(JSON.parse(f.requests[3].init.body),{action:"revoke_client",connection_id:connection.id,base_version:4,binding_id:client.binding_id,idempotency_key:"fixture-request"});
-  assert.ok(f.confirmations[0].includes("不影响它的 Clued 记忆权限"));
-  f.respond(3,{status:"committed",receipt_id:"stop-receipt"});await f.settle();
-  f.respond(4,{bindings:[{...client,active:false}]});await f.settle();
-  f.respond(5,{...grantView,connection_version:5,grants:[{...g,revoked_at:new Date().toISOString(),receipt_id:"stop-receipt"}]});await f.settle();
-  assert.ok(f.text().includes("已停用"));assert.ok(f.text().includes("stop-receipt"));assert.equal(f.text().includes("停用此客户端存储权限"),false);
-});

@@ -2474,6 +2474,29 @@ async function handleContinuityRequestInner(
         return json({ error: "Storage job unavailable." }, 403, { ...corsHeaders(request), "cache-control": "no-store" });
       }
     }
+    if (url.pathname === "/v1/storage/owner") {
+      validateOrigin(request, env);
+      const headers = { ...corsHeaders(request), "cache-control": "no-store" };
+      if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true") return json({ error: "Not found." }, 404, headers);
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+      if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { ...headers, allow: "POST, OPTIONS" });
+      const { token } = await requireSupabaseUser(request, env);
+      try {
+        const input = await parseBody(request);
+        const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_owner_manage_v2", {
+          method: "POST", userToken: token, body: JSON.stringify({ p_input: input }),
+        }) as Record<string, unknown>;
+        if (input.action === "connections" && Array.isArray(result.connections)) {
+          // This flag reflects the Worker gate at the time of this read. Every
+          // real job still rechecks the database switch and all exact authority.
+          return json({ ...result, worker_execution_enabled: env.CLUED_STORAGE_EXECUTOR_V1 === "true" },
+            200, headers);
+        }
+        return json(result, 200, headers);
+      } catch {
+        return json({ error: "Storage owner operation unavailable." }, 403, headers);
+      }
+    }
     if (url.pathname === "/v1/storage/account" || url.pathname === "/v1/storage/refresh") {
       validateOrigin(request, env);
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true") return json({ error: "Not found." }, 404);
