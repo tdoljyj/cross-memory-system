@@ -18,6 +18,7 @@ import { testStorageOAuth } from "./resource-center-oauth-db.fixture.mjs";
 import { testAccountRefresh } from "./resource-center-account-refresh-db.fixture.mjs";
 import { testDirectoryProbe } from "./resource-center-directory-probe-db.fixture.mjs";
 import { testAccountPolicy } from "./resource-center-account-policy-db.fixture.mjs";
+import { testStorageClientCapability } from "./resource-center-client-capability-db.fixture.mjs";
 import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refresh-upgrade-db.fixture.mjs";
 
 const USER = "10000000-0000-4000-8000-000000000071";
@@ -743,6 +744,7 @@ for (const bindingSchema of ["legacy-expiry", "production-no-legacy-expiry"]) te
     await testAccountRefresh(t, admin, server, USER, DECISION);
     await testDirectoryProbe(t, admin, server, USER, DECISION);
     await testAccountPolicy(t, admin, server, USER, DECISION);
+    await testStorageClientCapability(t, admin, server, USER, DECISION);
     const removed = await adminCall({
       action: "artifact_revoke", profile_id: profileId, artifact_id: trackId, base_version: 2,
     });
