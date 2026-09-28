@@ -205,9 +205,10 @@ test('account-policy recovery uses native Owner preflight, read-only descriptor 
   globalThis.fetch=async(url,init)=>{
     if(String(url).endsWith('/auth/v1/user'))return Response.json({id:f.d.owner_id});
     if(String(url).startsWith(env.SUPABASE_URL)){
-      assert.equal(new Headers(init.headers).get('authorization'),'Bearer native-fixture');
       assert.equal(init.redirect,'manual');assert.ok(init.signal);
       const body=JSON.parse(init.body),rpc=String(url).split('/').pop();calls.push({rpc,action:body.p_input.action});
+      assert.equal(new Headers(init.headers).get('authorization'),
+        'Bearer '+(rpc==='clued_storage_cloud_worker_router_v2'?'fixture-public':'native-fixture'));
       if(rpc==='clued_storage_native_recovery_v1'){
         assert.equal(body.p_input.action,'recovery_inspect');
         return Response.json({...ref,status:'started',request_digest:'a'.repeat(64),intent_id:ids.intent,
