@@ -66,7 +66,7 @@ test("existing OAuth issuer RPC refuses 307 and 308 without forwarding secrets o
     for(const status of [307,308]) {
       globalThis.fetch=async(url,init)=>{
         if(String(url).endsWith('/auth/v1/user'))return Response.json({id:'fixture-owner'});
-        calls++;assert.equal(String(url),env.SUPABASE_URL+'/rest/v1/rpc/clued_storage_oauth_v1');
+        calls++;assert.ok([env.SUPABASE_URL+'/rest/v1/rpc/clued_storage_oauth_v1',env.SUPABASE_URL+'/rest/v1/rpc/clued_storage_oauth_callback_v2'].includes(String(url)));
         assert.equal(init.redirect,'manual');assert.ok(init.signal);
         return new Response(null,{status,headers:{location:'https://untrusted.invalid'}});
       };
@@ -92,11 +92,11 @@ test('recovery start pins one job and describe fingerprint, without new executio
   const original=globalThis.fetch,job=randomUUID(),calls=[];
   globalThis.fetch=async(url,init)=>{
     if(String(url).endsWith('/auth/v1/user'))return Response.json({id:'fixture-owner'});
-    assert.equal(String(url),env.SUPABASE_URL+'/rest/v1/rpc/clued_storage_recovery_oauth_start_v1');
+    assert.equal(String(url),env.SUPABASE_URL+'/rest/v1/rpc/clued_storage_recovery_oauth_start_v2');
     assert.equal(init.redirect,'manual');assert.ok(init.signal);
     assert.equal(new Headers(init.headers).get('authorization'),'Bearer fixture-native');
     const body=JSON.parse(init.body);calls.push(body);
-    assert.equal(body.p_issuer_hash,createHash('sha256').update(issuer).digest('hex'));
+    assert.equal(body.p_issuer_secret,issuer);assert.equal(body.p_issuer_hash,undefined);
     assert.equal(body.p_input.job_id,job);assert.equal(body.p_input.connection_id,connection);
     if(body.p_input.action==='describe')return Response.json({owner_id:randomUUID(),connection_id:connection,connection_version:9,credential_version:4,
       provider_subject:'fixture-subject',oauth_client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID,redirect_uri:env.CLUED_STORAGE_GOOGLE_REDIRECT_URI,
