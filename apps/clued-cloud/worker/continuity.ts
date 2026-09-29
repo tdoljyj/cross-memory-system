@@ -715,6 +715,12 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
     for (const reference of due.jobs as Array<{ connection_id: string; job_id: string }>) {
       try {
         const prior = await verifiedRpc({ ...reference, action: "verified_inspect" });
+        if (prior.status === "committed" && prior.connection_id === reference.connection_id &&
+            prior.job_id === reference.job_id && prior.execution_permitted === false &&
+            typeof prior.receipt_id === "string" && uuid.test(prior.receipt_id)) {
+          committed++;
+          continue;
+        }
         if (prior.status === "verified" && prior.connection_id === reference.connection_id &&
             prior.job_id === reference.job_id && prior.execution_permitted === false &&
             typeof prior.verified_receipt_id === "string" && uuid.test(prior.verified_receipt_id) &&

@@ -33,6 +33,7 @@ test("scheduled recovery uses the fixed issuer, bounded references and the origi
   const calls = [];
   let jobs = [reference];
   let verified = false;
+  let alreadyCommitted = false;
   globalThis.fetch = async (url, init) => {
     assert.ok(["/rest/v1/rpc/clued_storage_scheduled_recovery_v2",
       "/rest/v1/rpc/clued_storage_cloud_worker_router_v2"].some(path => String(url) === env.SUPABASE_URL + path));
@@ -45,7 +46,8 @@ test("scheduled recovery uses the fixed issuer, bounded references and the origi
       if (input.p_input.action === "settle_verified") return Response.json({ status: "committed", state: "committed",
         ...reference, final_result: { status: "committed" }, receipt_id: randomUUID(), execution_permitted: false });
       assert.equal(input.p_input.action, "verified_inspect");
-      return Response.json(verified ? { status: "verified", ...reference, verified_receipt_id: randomUUID(),
+      return Response.json(alreadyCommitted ? { status: "committed", ...reference, receipt_id: randomUUID(),
+        execution_permitted: false } : verified ? { status: "verified", ...reference, verified_receipt_id: randomUUID(),
         verified_digest: "a".repeat(64), execution_permitted: false }
         : { status: "inspection_required", ...reference, execution_permitted: false });
     }
@@ -60,6 +62,9 @@ test("scheduled recovery uses the fixed issuer, bounded references and the origi
     calls.length = 0; verified = true;
     assert.deepEqual(await worker.runStorageRecoveryScheduled(env), { status: "ok", committed: 1, attention: 0 });
     assert.deepEqual(calls.map(call => call.action), ["due", "verified_inspect", "settle_verified"]);
+    calls.length = 0; alreadyCommitted = true;
+    assert.deepEqual(await worker.runStorageRecoveryScheduled(env), { status: "ok", committed: 1, attention: 0 });
+    assert.deepEqual(calls.map(call => call.action), ["due", "verified_inspect"]);
     calls.length = 0; jobs = Array.from({ length: 4 }, () => ({ connection_id: randomUUID(), job_id: randomUUID() }));
     assert.deepEqual(await worker.runStorageRecoveryScheduled(env), { status: "unavailable" });
     assert.deepEqual(calls.map(call => call.action), ["due"]);
