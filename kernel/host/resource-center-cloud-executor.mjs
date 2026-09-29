@@ -43,10 +43,16 @@ const postWriteFailureCodes = Object.freeze({
   finalize_rpc:"FINALIZE_RPC_UNAVAILABLE",
   finalize_result:"FINALIZE_RESPONSE_INVALID",
 });
+const safeVerifyErrorCodes = new Set([
+  "CLOUD_EXECUTOR_UNAVAILABLE", "DRIVE_CREDENTIAL_UNAVAILABLE", "DRIVE_NAMESPACE_VISIBILITY_UNPROVEN",
+  "DRIVE_METADATA_UNAVAILABLE", "DRIVE_METADATA_MISMATCH", "DRIVE_METADATA_TIMEOUT",
+  "DRIVE_METADATA_ABORTED", "DRIVE_METADATA_REQUEST_FAILED", "DRIVE_METADATA_RESPONSE_INVALID",
+  "DRIVE_LIST_INVALID", "DRIVE_ENUMERATION_LIMIT", "DRIVE_PAGINATION_INVALID", "DRIVE_PAGINATION_LIMIT",
+]);
 const logPostWriteFailure = (stage,error) => {
   // These fixed labels identify the failed step without logging job, file, credential or raw error data.
   const knownVerifierCode=stage==="verify" && typeof error?.message==="string" &&
-    /^DRIVE_POSTCONDITION_[A-Z_]{1,48}$/.test(error.message);
+    (safeVerifyErrorCodes.has(error.message) || /^DRIVE_POSTCONDITION_[A-Z_]{1,48}$/.test(error.message));
   console.warn(JSON.stringify({event:stage==="verify"?"storage_cloud_postcondition_failed":"storage_cloud_postwrite_failed",stage,
     error_code:knownVerifierCode?error.message:postWriteFailureCodes[stage]}));
 };

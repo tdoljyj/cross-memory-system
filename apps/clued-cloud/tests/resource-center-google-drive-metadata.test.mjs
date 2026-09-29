@@ -66,6 +66,19 @@ test("Drive authentication and malformed credential errors fail before absence c
   assert.equal(requests, 0);
 });
 
+test("Drive metadata failures expose fixed categories without provider details", async () => {
+  const cases = [
+    { code: "DRIVE_METADATA_REQUEST_FAILED", fetch: async () => { throw new Error("private provider response"); } },
+    { code: "DRIVE_METADATA_TIMEOUT", fetch: async () => { throw Object.assign(new Error("private timeout"), { name: "TimeoutError" }); } },
+    { code: "DRIVE_METADATA_TIMEOUT", fetch: async () => ({ ok: true, json: async () => { throw Object.assign(new Error("private timeout"), { name: "TimeoutError" }); } }) },
+    { code: "DRIVE_METADATA_RESPONSE_INVALID", fetch: async () => ({ ok: true, json: async () => { throw new Error("private response"); } }) },
+  ];
+  for (const { code, fetch } of cases) {
+    const api = createGoogleDriveMetadataApi({ get_credential: getCredential, fetch });
+    await assert.rejects(api.getFile("known-file"), (error) => error.message === code);
+  }
+});
+
 test("Drive metadata lookup uses only a Host credential and checks every page", async () => {
   const urls = [];
   const api = createGoogleDriveMetadataApi({

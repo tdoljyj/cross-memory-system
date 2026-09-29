@@ -68,13 +68,13 @@ test('post-write failures identify the stage without logging provider or RPC det
     {name:'verified settlement response',stage:'settle_verified_result',code:'SETTLE_VERIFIED_RESPONSE_INVALID'},
   ];
   for(const {name,stage,code} of cases){
-    const f=fixture(),rpc=f.config.rpc,fetch=f.config.drive_fetch;
+    const f=fixture(),rpc=f.config.rpc,credential=f.config.get_credential;
     f.config.verified_result_mode=true;
-    f.config.drive_fetch=async(url,init)=>{
-      if(name==='Drive verification' && new URL(url).pathname.endsWith('/new-id') && init.method!=='POST'){
+    f.config.get_credential=async(...args)=>{
+      if(name==='Drive verification' && f.info().posts===1){
         throw new Error('private provider response '+root);
       }
-      return fetch(url,init);
+      return credential(...args);
     };
     f.config.rpc=async input=>{
       if(input.action==='verified_record'){
@@ -102,6 +102,33 @@ test('post-write failures identify the stage without logging provider or RPC det
     assert.equal(f.info().trace.filter(action=>action==='provider-post').length,1,name);
     assert.deepEqual(logs.map(message=>JSON.parse(message)),[
       {event:stage==='verify'?'storage_cloud_postcondition_failed':'storage_cloud_postwrite_failed',stage,error_code:code},
+      {event:'storage_cloud_unreconciled',error_code:'POST_WRITE_CANONICAL_RECONCILIATION_FAILED'},
+    ],name);
+    assert.equal(logs.join('').includes(root),false,name);
+    assert.equal(logs.join('').includes(ids.job),false,name);
+  }
+});
+test('post-write Drive metadata failures retain safe categories and never repeat the provider POST',async()=>{
+  const cases=[
+    {name:'HTTP failure',code:'DRIVE_METADATA_UNAVAILABLE',response:async()=>new Response(null,{status:503})},
+    {name:'transport failure',code:'DRIVE_METADATA_REQUEST_FAILED',response:async()=>{throw new Error('private provider response '+root);}},
+    {name:'timeout',code:'DRIVE_METADATA_TIMEOUT',response:async()=>{throw Object.assign(new Error('private timeout '+root),{name:'TimeoutError'});}},
+    {name:'invalid JSON',code:'DRIVE_METADATA_RESPONSE_INVALID',response:async()=>({ok:true,json:async()=>{throw new Error('private response '+root);}})},
+  ];
+  for(const {name,code,response} of cases){
+    const f=fixture(),fetch=f.config.drive_fetch;
+    f.config.drive_fetch=async(url,init)=>
+      f.info().posts===1 && init.method==='GET' && new URL(url).pathname.endsWith('/new-id')
+        ? response() : fetch(url,init);
+    const logs=[],original=console.warn;
+    console.warn=message=>logs.push(message);
+    let result;
+    try { result=await f.run().run(f.reference); }
+    finally { console.warn=original; }
+    assert.equal(result.status,'unreconciled',name);
+    assert.equal(f.info().posts,1,name);
+    assert.deepEqual(logs.map(message=>JSON.parse(message)),[
+      {event:'storage_cloud_postcondition_failed',stage:'verify',error_code:code},
       {event:'storage_cloud_unreconciled',error_code:'POST_WRITE_CANONICAL_RECONCILIATION_FAILED'},
     ],name);
     assert.equal(logs.join('').includes(root),false,name);
