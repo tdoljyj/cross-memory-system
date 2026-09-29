@@ -25,13 +25,15 @@ begin
       select j0.connection_id,j0.job_id from clued_private.storage_jobs_v1 j0
       join clued_private.storage_connections_v1 c0 on c0.id=j0.connection_id and c0.owner_id=j0.owner_id
       join clued_private.resource_center_mutations_v1 m0 on m0.id=j0.intent_id and m0.user_id=j0.owner_id
+      join public.clued_audit_receipts r0 on r0.id=m0.provider_attempt_receipt_id
+        and r0.user_id=j0.owner_id and r0.status='committed' and r0.operation='storage_provider_attempt'
       where c0.oauth_client_id=app.oauth_client_id and c0.revoked_at is null
         and c0.auth_mode='account_policy' and c0.state in ('active','reauthorization_required')
         and j0.authority_snapshot_v2 is not null and m0.state in ('started','uncertain')
         and m0.provider_attempt is not null and m0.provider_attempt_receipt_id is not null
-        and m0.created_at<=clock_timestamp()-interval '15 seconds'
-        and m0.created_at>clock_timestamp()-interval '10 minutes'
-      order by m0.created_at,j0.job_id limit 3
+        and r0.created_at<=clock_timestamp()-interval '15 seconds'
+        and r0.created_at>clock_timestamp()-interval '10 minutes'
+      order by r0.created_at,j0.job_id limit 3
     ) q;
     return jsonb_build_object('status','ok','jobs',jobs);
   end if;

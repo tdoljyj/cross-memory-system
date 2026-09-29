@@ -347,7 +347,8 @@ export async function testAccountCloud(t, admin, server, user, decision) {
         assert.equal(loaded.attempt.provider_file_id,row.provider_attempt.provider_file_id);
         assert.equal(loaded.job_id,job.reference.job_id);
         await admin.query("reset role");
-        await admin.query("update clued_private.resource_center_mutations_v1 set created_at=clock_timestamp()-interval '30 seconds' where id=$1", [row.id]);
+        await admin.query("update clued_private.resource_center_mutations_v1 set created_at=clock_timestamp()-interval '20 minutes' where id=$1", [row.id]);
+        await admin.query("update public.clued_audit_receipts set created_at=clock_timestamp()-interval '30 seconds' where id=$1", [row.provider_attempt_receipt_id]);
         await admin.query("set local role anon");
         const scheduled = async input => (await admin.query("select public.clued_storage_scheduled_recovery_v2($1,$2::jsonb) value",
           [issuer,JSON.stringify(input)])).rows[0].value;
