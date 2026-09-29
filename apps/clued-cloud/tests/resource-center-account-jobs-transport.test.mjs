@@ -109,3 +109,67 @@ test("V2 cloud dispatch never retries a failed account job through the legacy ex
     assert.equal(calls[1].body.p_input.action, "verified_inspect");
   } finally { globalThis.fetch = before; }
 });
+
+test("with a job queue binding, submit enqueues the exact job and the consumer runs it once and acks", async () => {
+  const before = globalThis.fetch; const calls = []; const pending = []; const sent = [];
+  const ref = { connection_id: "20000000-0000-4000-8000-000000000003", job_id: "10000000-0000-4000-8000-000000000003" };
+  const secret = "synthetic-fixed-issuer-".repeat(3);
+  const enabled = { ...env, CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_EXECUTOR_V1: "true", CLUED_STORAGE_CONNECTOR_ISSUER: secret,
+    CLUED_STORAGE_GOOGLE_CLIENT_ID: "fixture-client",
+    CLUED_STORAGE_VAULT_KEYS: JSON.stringify({ current_key_id: "v1", keys: { v1: Buffer.alloc(32, 7).toString("base64url") } }),
+    CLUED_STORAGE_JOB_QUEUE: { send: async body => { sent.push(body); } } };
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body); calls.push({ url: String(url), body });
+    if (String(url).endsWith("/clued_storage_jobs_v1")) return Response.json({ ...ref, status: "queued", execution_permitted: false });
+    assert.equal(String(url), env.SUPABASE_URL + "/rest/v1/rpc/clued_storage_cloud_worker_v1");
+    if (body.p_input.action === "recovery_load") return Response.json({ error: "not_recoverable" }, { status: 403 });
+    assert.deepEqual(body.p_input, { ...ref, action: "load" });
+    return Response.json({ ...ref, contract: "clued.storage-job-execution/1", owner_id: "30000000-0000-4000-8000-000000000001",
+      request_digest: "a".repeat(64), status: "committed" });
+  };
+  try {
+    const response = await worker.fetch(request({ ...ref, action: "submit", mutation: {} }), enabled, { waitUntil: p => pending.push(p) });
+    assert.equal((await response.json()).status, "queued");
+    await Promise.all(pending);
+    assert.deepEqual(sent, [ref]);
+    assert.equal(calls.length, 1);
+    const acks = [];
+    await worker.runStorageJobQueue({ messages: [{ body: sent[0], ack: () => acks.push("job") }] }, enabled);
+    assert.deepEqual(acks, ["job"]);
+    assert.equal(calls.length, 3);
+    assert.ok(calls.slice(1).every(call => call.url.endsWith("/clued_storage_cloud_worker_v1")));
+  } finally { globalThis.fetch = before; }
+});
+
+test("job queue consumer acks malformed messages without dispatch, and a failed enqueue runs the job in place", async () => {
+  const before = globalThis.fetch; const calls = []; const pending = [];
+  const ref = { connection_id: "20000000-0000-4000-8000-000000000004", job_id: "10000000-0000-4000-8000-000000000004" };
+  const secret = "synthetic-fixed-issuer-".repeat(3);
+  const enabled = { ...env, CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_EXECUTOR_V1: "true", CLUED_STORAGE_CONNECTOR_ISSUER: secret,
+    CLUED_STORAGE_GOOGLE_CLIENT_ID: "fixture-client",
+    CLUED_STORAGE_VAULT_KEYS: JSON.stringify({ current_key_id: "v1", keys: { v1: Buffer.alloc(32, 7).toString("base64url") } }),
+    CLUED_STORAGE_JOB_QUEUE: { send: async () => { throw new Error("queue unavailable"); } } };
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body); calls.push({ url: String(url), body });
+    if (String(url).endsWith("/clued_storage_jobs_v1")) return Response.json({ ...ref, status: "queued", execution_permitted: false });
+    if (body.p_input.action === "recovery_load") return Response.json({ error: "not_recoverable" }, { status: 403 });
+    return Response.json({ ...ref, contract: "clued.storage-job-execution/1", owner_id: "30000000-0000-4000-8000-000000000001",
+      request_digest: "a".repeat(64), status: "committed" });
+  };
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const acks = [];
+    await worker.runStorageJobQueue({ messages: [
+      { body: null, ack: () => acks.push("null") },
+      { body: { connection_id: "not-a-uuid", job_id: ref.job_id }, ack: () => acks.push("bad-id") },
+      { body: { job_id: ref.job_id }, ack: () => acks.push("missing") },
+    ] }, enabled);
+    assert.deepEqual(acks, ["null", "bad-id", "missing"]);
+    assert.equal(calls.length, 0);
+    await worker.fetch(request({ ...ref, action: "submit", mutation: {} }), enabled, { waitUntil: p => pending.push(p) });
+    await Promise.all(pending);
+    assert.equal(calls.length, 3);
+    assert.ok(calls.some(call => call.url.endsWith("/clued_storage_cloud_worker_v1") &&
+      JSON.stringify(call.body.p_input) === JSON.stringify({ ...ref, action: "load" })));
+  } finally { globalThis.fetch = before; console.warn = warn; }
+});

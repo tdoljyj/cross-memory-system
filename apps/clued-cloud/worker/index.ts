@@ -6,7 +6,9 @@ import {
   runProjectionRefreshScheduled,
   runStorageRefreshScheduled,
   runStorageRecoveryScheduled,
+  runStorageJobQueue,
   type ContinuityEnv,
+  type StorageJobQueueMessage,
 } from "./continuity";
 
 import { delegatedOAuthEnabled, handleDelegatedOAuth, type DelegatedOAuthEnv } from "./delegated-oauth";
@@ -80,6 +82,9 @@ const worker = {
       if (result.status === "unavailable" || result.status === "attention_required")
         console.warn(JSON.stringify({ event: "storage_recovery_attention_required", status: result.status }));
     }));
+  },
+  async queue(batch: { readonly messages: readonly StorageJobQueueMessage[] }, env: Env) {
+    await runStorageJobQueue(batch, env);
   },
 };
 
