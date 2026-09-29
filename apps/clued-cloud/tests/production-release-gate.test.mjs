@@ -17,6 +17,7 @@ const postBaselineMigrationSources = Object.fromEntries(await Promise.all(
 const productionWorkflow = await readFile(new URL(
   '../../../.github/workflows/clued-cloud-production-release.yml', import.meta.url), 'utf8');
 const now = new Date('2026-09-23T05:12:49Z');
+const OWNER = 'a'.repeat(64), OTHER = 'b'.repeat(64);
 
 function healthy() {
   return {
@@ -38,10 +39,12 @@ function healthy() {
       observed_at: '2026-09-23T05:12:49Z',
       heartbeat: { last_result: 'idle', last_finished_at: '2026-09-23T05:11:59Z' },
       projections: [
-        { projection_key: 'global.priority_frontier', job_status: 'completed',
+        { tenant_key: OWNER, builder_served: true,
+          projection_key: 'global.priority_frontier', job_status: 'completed',
           invalidation_revision: 94, resolved_through_revision: 94,
           stale_since: null, source_digest_status: 'match' },
-        { projection_key: 'global.__aggregate__', job_status: 'completed',
+        { tenant_key: OWNER, builder_served: true,
+          projection_key: 'global.__aggregate__', job_status: 'completed',
           invalidation_revision: 181, resolved_through_revision: 181,
           stale_since: null, source_digest_status: 'match' },
       ],
@@ -116,6 +119,30 @@ test('release refuses stale projections and a cycle-limited heartbeat', () => {
   assert.deepEqual(verifyReleaseState(state), [
     'worker_heartbeat_not_healthy',
     'projection_not_current:global.priority_frontier',
+  ]);
+});
+
+test('release checks only tenants the Builder serves and fails closed without one', () => {
+  const unserved = (key) => ({ tenant_key: OTHER, builder_served: false, projection_key: key,
+    job_status: 'queued', invalidation_revision: 4, resolved_through_revision: 0,
+    stale_since: '2026-09-23T05:00:00Z', source_digest_status: 'not_applicable' });
+  const state = healthy();
+  state.watchdog.projections.push(unserved('global.priority_frontier'), unserved('global.__aggregate__'));
+  assert.deepEqual(verifyReleaseState(state), []);
+
+  const servedStale = healthy();
+  servedStale.watchdog.projections.push({ ...unserved('global.__aggregate__'), builder_served: true });
+  assert.deepEqual(verifyReleaseState(servedStale), ['projection_not_current:global.__aggregate__']);
+
+  const duplicate = healthy();
+  duplicate.watchdog.projections.push({ ...duplicate.watchdog.projections[0] });
+  assert.deepEqual(verifyReleaseState(duplicate), ['projection_not_current:global.priority_frontier']);
+
+  const legacySnapshot = healthy();
+  for (const row of legacySnapshot.watchdog.projections) delete row.builder_served;
+  assert.deepEqual(verifyReleaseState(legacySnapshot), [
+    'projection_not_current:global.priority_frontier',
+    'projection_not_current:global.__aggregate__',
   ]);
 });
 
