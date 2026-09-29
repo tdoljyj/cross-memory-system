@@ -27,6 +27,14 @@
       "environment": "production"
     }
   ],
+  "queues": {
+    "producers": [
+      { "binding": "CLUED_STORAGE_JOB_QUEUE", "queue": "clued-storage-jobs" }
+    ],
+    "consumers": [
+      { "queue": "clued-storage-jobs", "max_batch_size": 1, "max_batch_timeout": 0, "max_retries": 0 }
+    ]
+  },
   "triggers": { "crons": ["* * * * *"] },
   "observability": {
     "enabled": true,
