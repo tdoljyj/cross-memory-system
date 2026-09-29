@@ -346,6 +346,39 @@ export async function testAccountCloud(t, admin, server, user, decision) {
         assert.equal(loaded.status,"recovery_only"); assert.equal(loaded.intent_id,row.id);
         assert.equal(loaded.attempt.provider_file_id,row.provider_attempt.provider_file_id);
         assert.equal(loaded.job_id,job.reference.job_id);
+        const oauth = async (name, input) => (await admin.query(`select public.${name}($1,$2::jsonb) value`,
+          [issuerSecret, JSON.stringify(input)])).rows[0].value;
+        const description = await oauth("clued_storage_recovery_oauth_start_v2",
+          {action:"describe",...job.reference});
+        assert.equal(description.connection_id,target.connection);
+        assert.equal(description.provider_subject,"account-cloud-subject");
+        assert.match(description.recovery_binding,/^[0-9a-f]{64}$/);
+        assert.equal(description.credential_envelope,undefined);
+        const stateHash = sha(randomUUID()), oauthAttempt = randomUUID();
+        const verifierEnvelope = {contract:"clued.storage-credential/1",key_id:"fixture",
+          nonce:"A".repeat(16),ciphertext:"B".repeat(24)};
+        const prepared = await oauth("clued_storage_recovery_oauth_start_v2",{
+          action:"prepare",...job.reference,connection_version:description.connection_version,
+          attempt_id:oauthAttempt,state_hash:stateHash,verifier_envelope:verifierEnvelope,
+          recovery_binding:description.recovery_binding});
+        assert.equal(prepared.status,"prepared");
+        const claimed = await oauth("clued_storage_oauth_callback_v2",{action:"claim",state_hash:stateHash});
+        assert.equal(claimed.status,"claimed");assert.equal(claimed.purpose,"credential_recovery");
+        assert.equal(claimed.attempt_id,oauthAttempt);assert.equal(claimed.credential_envelope,undefined);
+        const completed = await oauth("clued_storage_oauth_callback_v2",{action:"complete",
+          state_hash:stateHash,provider_subject:"account-cloud-subject",credential_envelope:verifierEnvelope});
+        assert.equal(completed.status,"completed");assert.equal(completed.purpose,"credential_recovery");
+        const replay = await oauth("clued_storage_oauth_callback_v2",{action:"claim",state_hash:stateHash});
+        assert.equal(replay.receipt_id,completed.receipt_id);
+        const freshConnection = (await admin.query("select credential_version from clued_private.storage_connections_v1 where id=$1",
+          [target.connection])).rows[0];
+        assert.equal(freshConnection.credential_version,2);
+        assert.equal((await journal(job)).state,"started","consent never settles or repeats the provider effect");
+        assert.equal(storage.posts,1);
+        await admin.query("savepoint wrong_recovery_issuer");
+        await assert.rejects(admin.query("select public.clued_storage_recovery_oauth_start_v2($1,$2::jsonb)",
+          ["wrong-secret".repeat(4),JSON.stringify({action:"describe",...job.reference})]),/storage_credential_recovery_denied/);
+        await admin.query("rollback to savepoint wrong_recovery_issuer");
         await assert.rejects(admin.query("select public.clued_storage_native_recovery_load_v2($1,$2::jsonb)",
           ["wrong-secret".repeat(4),JSON.stringify(original)]),/storage_recovery_denied/);
       } finally { await admin.query("rollback"); }
