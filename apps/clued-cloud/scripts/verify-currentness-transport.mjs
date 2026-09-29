@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import pg from 'pg';
-import { PRODUCTION_HEALTH_URL, verifyLiveSourceCommit } from './currentness-live-build.mjs';
+import { PRODUCTION_HEALTH_URL, verifyLiveSourceCommit, waitForLiveSourceCommit } from './currentness-live-build.mjs';
 
 const TEST_FILES = Object.freeze([
   'tests/user-memory-bundle.test.mjs',
@@ -59,7 +59,7 @@ if (production) {
   if (process.env.GITHUB_ACTIONS !== 'true' || !process.env.GITHUB_RUN_ID ||
       process.env.GITHUB_SHA !== commit) throw new Error('Production verification requires the matching GitHub CI run');
   if (!process.env.CLUED_ATTESTATION_DATABASE_URL) throw new Error('Missing privileged attestation database URL');
-  await verifyLiveSourceCommit(commit);
+  await waitForLiveSourceCommit(commit, { log: (line) => process.stderr.write(`${line}\n`) });
 }
 
 const testArgs = ['--test', '--test-force-exit', ...TEST_FILES];

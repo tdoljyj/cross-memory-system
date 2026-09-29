@@ -1,0 +1,16 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  // Information Flow M0-D S6 harness Worker (local qualification only).
+  // Same continuity handler as evals/public-mcp. No build command, no KV,
+  // no services and no global_fetch_strictly_public: the harness must reach
+  // the loopback Supabase gateway. Never deployed; bundled with
+  // `wrangler deploy --dry-run --outdir` and run in Miniflare (workerd).
+  "name": "clued-information-flow-e2e",
+  "main": "../public-mcp/worker.ts",
+  "compatibility_date": "2026-08-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "PROJECT_VIEWS_V2": "true",
+    "P5_TENANT_WRITES": "false"
+  }
+}

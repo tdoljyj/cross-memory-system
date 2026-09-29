@@ -60,6 +60,37 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     await anon.connect();
     await anon.query('set role anon');
     const rpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`, [tokenHash, input])).rows[0].value;
+    // A global-scope change invalidates both Global projections; admission waits for
+    // the refresh Worker. This drains the queue the way the Worker does.
+    const workerToken = hash();
+    const workerId = (await admin.query(`insert into public.clued_agent_bindings
+      (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'system','Projection refresh Worker',$2,array['context:read'],array['*']) returning id`,
+    [userId, workerToken])).rows[0].id;
+    await admin.query(`insert into clued_private.projection_builder_grants
+      (binding_id,user_id,target_scope,projection_key,granted_by)
+      values($1,$2,'global','global.priority_frontier','test-worker'),
+            ($1,$2,'global','global.__aggregate__','test-worker')`, [workerId, userId]);
+    const worker = async (name, input = {}) => (await anon.query(`select public.${name}($1,$2) value`,
+      [workerToken, input])).rows[0].value;
+    const drainProjections = async () => {
+      for (let round = 0; round < 6; round += 1) {
+        await admin.query(`update clued_private.projection_refresh_jobs set next_attempt_at=now()
+          where user_id=$1 and status in ('queued','failed')`, [userId]);
+        const claim = await worker('clued_mcp_projection_refresh_claim');
+        if (!claim.lease_id) return;
+        const applied = await worker('clued_mcp_projection_refresh_apply', {
+          projection_key: claim.projection_key, lease_id: claim.lease_id,
+          expected_invalidation_revision: claim.expected_invalidation_revision,
+          expected_source_vector_digest: claim.expected_source_vector_digest,
+        });
+        assert.ok(['rebuilt', 'reconciled'].includes(applied.status), JSON.stringify(applied));
+      }
+      throw new Error('projection refresh did not converge');
+    };
+    const globalProjectionsPending = async () => (await admin.query(`select count(*)::int n
+      from clued_private.projection_invalidation_heads where user_id=$1 and target_scope='global'
+        and invalidation_revision>resolved_through_revision`, [userId])).rows[0].n;
     const restored = await rpc('clued_mcp_restore', { context_key: 'global', response_view: 'structured' });
     const session = (await admin.query(`select id,restored_currentness_digest,restored_currentness_vector
       from public.clued_continuity_sessions where token_hash=encode(extensions.digest($1,'sha256'),'hex')`,
@@ -94,6 +125,11 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     assert.equal((await admin.query('select reconciliation_required from public.clued_continuity_sessions where id=$1', [session.id])).rows[0].reconciliation_required, true);
     assert.equal((await admin.query('select count(*)::integer n from public.clued_context_checkpoints where session_id=$1', [session.id])).rows[0].n, 0);
     assert.equal((await admin.query('select count(*)::integer n from public.clued_checkpoint_event_absorptions where event_id=$1', [event.event_id])).rows[0].n, 0);
+    // The global decision Event invalidated both Global projections: nothing is
+    // admission-eligible until the refresh Worker has rebuilt them.
+    assert.equal(await globalProjectionsPending(), 2);
+    await drainProjections();
+    assert.equal(await globalProjectionsPending(), 0);
     const reconcile = await rpc('clued_mcp_session_reconcile', {
       context_key: 'global', session_token: restored.session_token,
     });
@@ -130,6 +166,15 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
       proof_receipt_id: proofReceiptId, idempotency_key: uuid(),
     });
     assert.equal(resolvedCarrier.status, 'transitioned');
+
+    // The Worker rebuild above created the system Frontier projection record. The
+    // scenario below reconstructs the pre-projection legacy state (a hand-bound
+    // Frontier), so detach the system projection's head and binding first; the
+    // fence only accepts the single record the projection head points to.
+    await admin.query(`delete from clued_private.projection_record_bindings
+      where user_id=$1 and projection_key='global.priority_frontier'`, [userId]);
+    await admin.query(`delete from clued_private.projection_heads
+      where user_id=$1 and projection_key='global.priority_frontier'`, [userId]);
 
     // T-CUR-28/35/45: a Project terminal source invalidates a preexisting
     // Global frontier; only a separately granted builder can rebuild it.

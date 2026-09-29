@@ -1,0 +1,69 @@
+name: Clued integration runtime nightly property run
+
+# IntegrationRuntime v0.1.8 §13.2 P2 (c) states two separate obligations: 250,000 fixed-seed random
+# facts in CI, and 2,000,000 nightly. The CI figure is the default of
+# apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs and runs in
+# clued-connection-authorization.yml; this workflow is the nightly one, and it is the only place
+# that sets CLUED_INTEGRATION_RUNTIME_PROPERTY_FULL=1.
+#
+# It never runs on pull requests: the 2,000,000-sample run is far outside the per-PR runner budget
+# that scripts/ci/validate_runner_budget_policy.py guards, so it is scheduled and Owner-dispatched
+# only (enforced by the job-level `if` below), and it stays on the trusted self-hosted pool rather
+# than a hosted runner.
+
+on:
+  schedule:
+    - cron: "47 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  nightly-property-run:
+    name: integration-runtime-nightly
+    # Owner-dispatched only, the same gate clued-connection-authorization.yml puts on every
+    # self-hosted path, so a collaborator with write access cannot dispatch this onto the trusted
+    # pool. GitHub populates github.actor on a schedule run (in practice, the last actor to touch
+    # the workflow on the default branch — observed behaviour, not a documented guarantee), so the
+    # actor comparison is not what admits the nightly. The conclusion rests on the triggers, not on
+    # that behaviour and not on evaluation order: `on:` is schedule and workflow_dispatch only, so a
+    # run that is not a schedule run is a dispatch, and the actor comparison can only ever gate the
+    # dispatch.
+    if: >-
+      github.repository == 'tdoljyj/cross-memory-system' &&
+      (github.event_name == 'schedule' || github.actor == github.repository_owner)
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    # The binding cap is the test file's own { timeout: 3_600_000 } (60 min), which is ~5x the
+    # measured 11.9-minute 2,000,000-sample run; this job timeout sits just above it (60 + 15 for
+    # checkout, npm ci and hydration) so that it is a reachable backstop for a hang outside the
+    # test rather than dead configuration.
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+    env:
+      CLUED_INTEGRATION_RUNTIME_PROPERTY_FULL: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.19.0
+          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below.
+      - run: npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline
+      - name: Hydrate embedded PostgreSQL bundled library symlinks
+        # --ignore-scripts skips the platform package's postinstall, which links the
+        # bundled libpq.so.5 and libicu*.so.60 that the binaries load via $ORIGIN/../lib.
+        working-directory: apps/clued-cloud/node_modules/@embedded-postgres/linux-x64
+        run: |
+          node scripts/hydrate-symlinks.js
+          ./native/bin/initdb --version
+          ./native/bin/postgres --version
+      - name: P2 nightly 2,000,000-sample run (§13.2 P2 (c))
+        run: npm run test:integration-runtime:db

@@ -1,0 +1,103 @@
+{
+  "schema": "clued.information-flow.m0d.a03-closure/1",
+  "gate": "M0D-A03",
+  "dependency_locks": {
+    "apps/clued-cloud/package-lock.json": "488ee285551bbefbab655710dd79fdfa62e7d70a598b9a0acab33e17fa440fe2",
+    "package-lock.json (root)": null,
+    "supabase_cli": "2.115.0",
+    "images": {
+      "auth": "sha256:362659ca70eaa75ba05bbaf963caa84c1c5afe5e8fbf0777e17b830dd5f0f60a",
+      "db": "sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5fb408d051909b230f",
+      "kong": "sha256:1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d",
+      "rest": "sha256:5922bde07147b82b1c9d8f749e48c1e5b99ebb233f3888bb7ab65f07cf4ac82d"
+    },
+    "js_tiktoken": "1.0.21",
+    "o200k_ranks_sha256": "de7eb511338b0e23589a3cae2dceb8dd66c2a9fd70dbf7ea778fd9df9f175d45",
+    "compiler_ranks_binding_file_sha256": "b7350be2f38f9d28aa6377670f0e72636c9ea9675cff4f0b1a60cec7f6c2fefd",
+    "migrations_chain": {
+      "count": 73,
+      "latest": "20260924230000_decision_supersede_v12_guard.sql",
+      "sha256": "68f6c0dc83d69c5b411ee92b2c87371d46139961334c1852c8e413d4fd4d8a9a"
+    }
+  },
+  "vendored_subsets": {
+    "m0a": {
+      "lines": 20,
+      "mismatched": 0
+    },
+    "m0c": {
+      "lines": 24,
+      "mismatched": 0
+    }
+  },
+  "contract": {
+    "path": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+    "sha256": "5c6371cf22b078cbd1fb0f61f3f6eb20b51a162a28e8942f04b81561bbb8c9ff"
+  },
+  "parents": {
+    "original_bytes_modified": false,
+    "a01_result": "PASS_WITH_DISCLOSED_NONDETERMINISM",
+    "a01_m0c_test_attempts": [
+      {
+        "attempt": 1,
+        "exit_code": 0,
+        "failing_tests": []
+      },
+      {
+        "attempt": 2,
+        "exit_code": 0,
+        "failing_tests": []
+      },
+      {
+        "attempt": 3,
+        "exit_code": 1,
+        "failing_tests": [
+          "normal mock run binds all preflight digests and records every attempt"
+        ]
+      }
+    ]
+  },
+  "register": {
+    "path": "development/contracts/information-flow/known-limitations.m0d.v0.1.json",
+    "sha256": "731f848303b5eaf7618fc384f293308301ec328ab9fe0d008917eb0040bc28ae",
+    "entries": 32,
+    "ids": [
+      "L01",
+      "L02",
+      "L03",
+      "L04",
+      "L05",
+      "L06",
+      "L07",
+      "L08",
+      "L09",
+      "L10",
+      "L11",
+      "L12",
+      "L13",
+      "L14",
+      "L15",
+      "L16",
+      "L17",
+      "L18",
+      "L19",
+      "L20",
+      "L21",
+      "L22",
+      "L23",
+      "L24",
+      "L25",
+      "L26",
+      "L27",
+      "L28",
+      "L29",
+      "L30",
+      "L31",
+      "L32"
+    ],
+    "contract_mandated_present": true,
+    "contiguous": true,
+    "all_open": true
+  },
+  "result": "PASS"
+}

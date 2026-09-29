@@ -104,7 +104,39 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         coverage: { mode: 'explicit', contexts: [scope], tracks: ['retained'], event_ids: [] },
         idempotency_key: uuid(), ...extra,
       });
-      return { userId, token, bindingId, rpc, project, record, update, restore, checkpoint };
+      // A global-scope change invalidates both Global projections, and admission
+      // waits for the refresh Worker. This drains the queue the way the Worker does.
+      let workerToken = null;
+      const drainProjections = async () => {
+        if (!workerToken) {
+          workerToken = hash();
+          const workerId = (await admin.query(`insert into public.clued_agent_bindings
+            (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+            values($1,'system','Projection refresh Worker',$2,array['context:read'],array['*'])
+            returning id`, [userId, workerToken])).rows[0].id;
+          await admin.query(`insert into clued_private.projection_builder_grants
+            (binding_id,user_id,target_scope,projection_key,granted_by)
+            values($1,$2,'global','global.priority_frontier','test-worker'),
+                  ($1,$2,'global','global.__aggregate__','test-worker')`, [workerId, userId]);
+        }
+        const worker = async (name, input = {}) => (await anon.query(
+          `select public.${name}($1,$2) value`, [workerToken, input])).rows[0].value;
+        for (let round = 0; round < 6; round += 1) {
+          await admin.query(`update clued_private.projection_refresh_jobs set next_attempt_at=now()
+            where user_id=$1 and status in ('queued','failed')`, [userId]);
+          const claim = await worker('clued_mcp_projection_refresh_claim');
+          if (!claim.lease_id) return;
+          const applied = await worker('clued_mcp_projection_refresh_apply', {
+            projection_key: claim.projection_key, lease_id: claim.lease_id,
+            expected_invalidation_revision: claim.expected_invalidation_revision,
+            expected_source_vector_digest: claim.expected_source_vector_digest,
+          });
+          assert.ok(['rebuilt', 'reconciled'].includes(applied.status), JSON.stringify(applied));
+        }
+        throw new Error('projection refresh did not converge');
+      };
+      return { userId, token, bindingId, rpc, project, record, update, restore, checkpoint,
+        drainProjections };
     }
 
     await t.test('M-LIVE-01: resume constraints/conflicts share the Event fence and work logs never revive checkpoint actions', async () => {
@@ -450,6 +482,12 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         where user_id=$1`, [f.userId])).rows[0].n, 0);
       assert.equal((await admin.query(`select count(*)::integer n from public.clued_checkpoint_event_absorptions
         where event_id=$1`, [first.event_id])).rows[0].n, 0);
+      // The global decision Events invalidated both Global projections.
+      const pending = await f.rpc('clued_mcp_session_reconcile', {
+        context_key: 'global', session_token: session.session_token,
+      });
+      assert.equal(pending.admission_eligible, false);
+      await f.drainProjections();
       const reconcile = await f.rpc('clued_mcp_session_reconcile', {
         context_key: 'global', session_token: session.session_token,
       });
@@ -655,8 +693,10 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
 
     await t.test('T-CUR-23/26/27/28/30/57: legacy checkpoint and stale Global source read', async () => {
       const f = await fixture();
+      // A bound Frontier record carries its projection_key like every projection record,
+      // so writing it is projection bookkeeping, not a global source change.
       const frontier = await f.record('global', 'state', '0.3.3 / NOT_DEPLOYED',
-        { state_kind: 'frontier' });
+        { state_kind: 'frontier', projection_key: 'global.priority_frontier' });
       await admin.query(`insert into clued_private.projection_record_bindings
         (record_id,user_id,target_scope,projection_key,projection_owner)
         values($1,$2,'global','global.priority_frontier','legacy_fixture')`,
@@ -1138,10 +1178,17 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       const visible = await f.rpc('clued_record_list', { level: 'project', project_id: destination.id,
         record_type: 'task', include_history: true });
       assert.ok(visible.records.some(row => row.id === winnerId));
+      // Removing the intent is rejected; omitting it keeps it (field-level merge).
       const immutable = await f.rpc('clued_record_mutate', { ...make(intentA), operation: 'update',
         id: winnerId, base_version: 1, scope: p.scope,
-        mutation: { type_fields: { execution_bucket: 'next' } } });
+        mutation: { type_fields: { execution_bucket: 'next', execution_intent: null } } });
       assert.equal(immutable.error_code, 'execution_intent_identity_immutable');
+      const kept = await f.rpc('clued_record_mutate', { ...make(intentA), operation: 'update',
+        id: winnerId, base_version: 1, scope: p.scope,
+        mutation: { type_fields: { execution_bucket: 'next' } } });
+      assert.equal(kept.status, 'committed', JSON.stringify(kept));
+      assert.equal((await admin.query(`select type_fields->'execution_intent'->>'id' v
+        from public.clued_memories where id=$1`, [winnerId])).rows[0].v, intentA);
       assert.equal((await admin.query(`select count(*) from public.clued_memories
         where user_id=$1 and record_type='task'`, [f.userId])).rows[0].count, '2');
     });

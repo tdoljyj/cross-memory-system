@@ -314,6 +314,22 @@ class DeterministicT1Gates(unittest.TestCase):
         self.assertEqual(f"memory/objects/projects/{PROJECT}.json", plan.sources_read[0])
         self.assertTrue(all(PROJECT in path.as_posix() for path in plan.paths))
 
+    def test_f20_project_v2_removes_certainty_but_keeps_the_same_exact_route(self):
+        repo = self.make_repo()
+        object_path = repo / "memory" / "objects" / "projects" / f"{PROJECT}.json"
+
+        def upgrade(value):
+            value["schema_version"] = 6
+            value["data"]["project_schema_version"] = 2
+            value["data"].pop("certainty_status")
+
+        self.update_json(object_path, upgrade)
+        plan = self.plan(repo, project_id=PROJECT)
+        self.assertEqual("unique-canonical-project-route", plan.reason)
+
+        self.update_json(object_path, lambda value: value["data"].__setitem__("certainty_status", "confirmed"))
+        self.assert_fails_before_project_views(repo, "PROJECT_OBJECT_INVALID")
+
     def test_f20_missing_index_route_falls_back_to_exact_authority_object(self):
         plan = self.plan(self.make_repo(indexed=False), project_id=PROJECT)
         self.assertEqual("index-rejected-exact-object-fallback", plan.reason)

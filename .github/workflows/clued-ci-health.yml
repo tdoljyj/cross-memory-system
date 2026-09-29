@@ -1,0 +1,82 @@
+name: clued-ci-health
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/clued-ci-health.yml"
+      - "scripts/ci/self-hosted/**"
+      - "tests/test_ci_health.py"
+  schedule:
+    # Hourly keeps the hosted-minute cost bounded; the self-hosted heartbeat
+    # workflow still probes every exact runner route every 15 minutes for free.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      scan_job_history:
+        description: Scan recent jobs in addition to the runner snapshot
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: clued-ci-health-${{ github.event_name }}-${{ github.event.pull_request.number || 'pool-snapshot' }}
+  cancel-in-progress: false
+
+jobs:
+  deterministic-health-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Evaluate runner pool and startup latency
+        id: health
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CI_HEALTH_GITHUB_TOKEN: ${{ secrets.CI_HEALTH_GITHUB_TOKEN }}
+        run: >-
+          python3 scripts/ci/self-hosted/ci_health.py
+          --output "$RUNNER_TEMP/clued-ci-health.json"
+          --max-runs 20
+          ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scan_job_history)) && '--scan-job-history' || '' }}
+
+      - name: Publish or recover the dedicated anomaly transport
+        if: github.event_name != 'pull_request'
+        id: transport
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 scripts/ci/self-hosted/ci_health_transport.py
+          --report "$RUNNER_TEMP/clued-ci-health.json"
+
+      - name: Optional explicit-model API fallback
+        if: >-
+          github.event_name != 'pull_request' &&
+          steps.health.outputs.notify_model == 'true' &&
+          vars.CLUED_CI_HEALTH_ANALYSIS_MODE == 'openai_api'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: >-
+          python3 scripts/ci/self-hosted/ci_health_analyze.py
+          --report "$RUNNER_TEMP/clued-ci-health.json"
+          --output "$RUNNER_TEMP/clued-ci-health-analysis.md"
+          --model gpt-6-luna
+
+      - name: Attach API fallback analysis to anomaly PR
+        if: >-
+          github.event_name != 'pull_request' &&
+          steps.health.outputs.notify_model == 'true' &&
+          vars.CLUED_CI_HEALTH_ANALYSIS_MODE == 'openai_api' &&
+          steps.transport.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.transport.outputs.pr_number }}
+        run: gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/clued-ci-health-analysis.md"

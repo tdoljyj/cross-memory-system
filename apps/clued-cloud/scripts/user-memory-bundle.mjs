@@ -15,8 +15,12 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 export const BUNDLE_CONTRACT = "clued.user-memory-bundle";
-export const BUNDLE_VERSION = "1.0.0";
-export const BUNDLE_SCHEMA_VERSION = 1;
+export const BUNDLE_VERSION = "2.0.0";
+export const BUNDLE_SCHEMA_VERSION = 2;
+const READABLE_BUNDLE_VERSIONS = new Map([
+  [1, "1.0.0"],
+  [2, "2.0.0"],
+]);
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const LEGACY_EVIDENCE = [
@@ -158,9 +162,8 @@ function projectFromRecords(sourceProjectId, records) {
   return {
     source_project_id: sourceProjectId,
     name: sourceProjectId,
-    certainty_status: "confirmed",
     progress_status: "active",
-    evidence: "Existing structured project memories are material-work evidence.",
+    recognition_evidence: "Existing structured project memories are material-work evidence.",
     record_count: records.filter((record) => record.source_project_id === sourceProjectId).length,
   };
 }
@@ -358,9 +361,10 @@ async function parseJsonLines(filePath) {
 export async function validateUserMemoryBundle(bundleDirectory) {
   bundleDirectory = await realpath(bundleDirectory);
   const manifest = JSON.parse(await readFile(await containedPath(bundleDirectory, "manifest.json"), "utf8"));
-  if (manifest.schema_version !== BUNDLE_SCHEMA_VERSION) throw new Error("Unsupported bundle schema_version.");
   if (manifest.contract !== BUNDLE_CONTRACT) throw new Error("Unsupported bundle contract.");
-  if (manifest.contract_version !== BUNDLE_VERSION) throw new Error("Unsupported bundle contract_version.");
+  const readableContractVersion = READABLE_BUNDLE_VERSIONS.get(manifest.schema_version);
+  if (!readableContractVersion) throw new Error("Unsupported bundle schema_version.");
+  if (manifest.contract_version !== readableContractVersion) throw new Error("Unsupported bundle contract_version.");
   if (manifest.boundaries?.production_canonical_store !== "supabase") {
     throw new Error("Bundle must declare Supabase as the production canonical store.");
   }
@@ -387,6 +391,30 @@ export async function validateUserMemoryBundle(bundleDirectory) {
     throw new Error("Duplicate source record IDs are not allowed.");
   }
   const projectIds = new Set(projects.map((project) => project.source_project_id));
+  for (const project of projects) {
+    assertString(project.source_project_id, "project.source_project_id", { max: 120 });
+    assertString(project.name, `${project.source_project_id}.name`, { max: 120 });
+    assertString(project.progress_status, `${project.source_project_id}.progress_status`, { max: 40 });
+    if (!new Set(["not_started", "active", "paused", "completed", "archived"]).has(project.progress_status)) {
+      throw new Error(`Unsupported Project progress_status: ${project.progress_status}`);
+    }
+    if (!Number.isInteger(project.record_count) || project.record_count < 1) {
+      throw new Error(`${project.source_project_id}.record_count must be a positive integer.`);
+    }
+    if (manifest.schema_version === 1) {
+      const allowed = new Set(["source_project_id", "name", "certainty_status", "progress_status", "evidence", "record_count"]);
+      if (Object.keys(project).some((key) => !allowed.has(key))) throw new Error("Bundle v1 Project contains an unsupported field.");
+      if (project.certainty_status !== "confirmed") throw new Error("Bundle v1 Project must remain confirmed historical input.");
+      assertString(project.evidence, `${project.source_project_id}.evidence`, { max: 8000 });
+    } else {
+      if ("certainty_status" in project || "confirmed_at" in project || "confidence" in project) {
+        throw new Error("Bundle v2 Project must not expose the retired certainty axis.");
+      }
+      const allowed = new Set(["source_project_id", "name", "progress_status", "recognition_evidence", "record_count"]);
+      if (Object.keys(project).some((key) => !allowed.has(key))) throw new Error("Bundle v2 Project contains an unsupported field.");
+      assertString(project.recognition_evidence, `${project.source_project_id}.recognition_evidence`, { max: 500 });
+    }
+  }
   for (const record of records) {
     assertString(record.source_id, "record.source_id", { max: 160 });
     assertString(record.title, `${record.source_id}.title`, { max: 120 });
@@ -405,9 +433,15 @@ export async function validateUserMemoryBundle(bundleDirectory) {
       throw new Error(`Bundle contains a forbidden tenant or credential field: ${record.source_id}`);
     }
   }
+  for (const project of projects) {
+    const actualRecordCount = records.filter((record) => record.source_project_id === project.source_project_id).length;
+    if (project.record_count !== actualRecordCount) {
+      throw new Error(`Project record_count does not match records.jsonl: ${project.source_project_id}`);
+    }
+  }
 
   const expectedDigest = sha256(
-    `${BUNDLE_CONTRACT}\n${BUNDLE_VERSION}\n${projects.map(jsonLine).join("")}${records.map(jsonLine).join("")}`,
+    `${BUNDLE_CONTRACT}\n${manifest.contract_version}\n${projects.map(jsonLine).join("")}${records.map(jsonLine).join("")}`,
   );
   if (manifest.bundle_digest !== expectedDigest || manifest.bundle_id !== `umb_${expectedDigest.slice(0, 24)}`) {
     throw new Error("Bundle digest or ID does not match canonical payloads.");

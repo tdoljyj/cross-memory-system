@@ -4,12 +4,18 @@ on:
   pull_request:
     paths:
       - "scripts/ci/self-hosted/**"
+      - "tests/test_ci_health.py"
       - ".github/workflows/node-profile-policy.yml"
+      - ".github/workflows/clued-ci-health.yml"
+      - ".github/workflows/clued-ci-runner-heartbeat.yml"
   push:
     branches: [main]
     paths:
       - "scripts/ci/self-hosted/**"
+      - "tests/test_ci_health.py"
       - ".github/workflows/node-profile-policy.yml"
+      - ".github/workflows/clued-ci-health.yml"
+      - ".github/workflows/clued-ci-runner-heartbeat.yml"
 
 permissions:
   contents: read
@@ -38,6 +44,7 @@ jobs:
         with:
           persist-credentials: false
       - run: python scripts/ci/self-hosted/validate_node_profiles.py
+      - run: python tests/test_ci_health.py
       - name: Parse PowerShell onboarding scripts
         shell: powershell
         run: |
@@ -75,6 +82,7 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 scripts/ci/self-hosted/validate_node_profiles.py
+      - run: python3 tests/test_ci_health.py
       - run: bash -n scripts/ci/self-hosted/bootstrap-linux-runner.sh
 
   untrusted-hosted:
@@ -96,4 +104,5 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 scripts/ci/self-hosted/validate_node_profiles.py
+      - run: python3 tests/test_ci_health.py
       - run: bash -n scripts/ci/self-hosted/bootstrap-linux-runner.sh

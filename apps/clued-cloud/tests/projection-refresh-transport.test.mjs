@@ -53,3 +53,72 @@ test("Projection refresh remains inert without the independent Builder binding",
     globalThis.fetch = previousFetch;
   }
 });
+
+test("scheduled refresh records a bounded Builder heartbeat around the cycle", async () => {
+  const worker = await loadContinuityWorker();
+  const previousFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const body = JSON.parse(init.body);
+    calls.push({ url: String(input), body });
+    return Response.json(calls.length === 2 ? { status: "idle" } : { status: "recorded" });
+  };
+  try {
+    assert.deepEqual(await worker.runProjectionRefreshScheduled(env), {
+      status: "idle", processed: 0, cas_conflicts: 0,
+    });
+    assert.deepEqual(calls.map((call) => new URL(call.url).pathname.split('/').at(-1)),
+      ["clued_mcp_projection_refresh_heartbeat", "clued_mcp_projection_refresh_claim",
+        "clued_mcp_projection_refresh_heartbeat"]);
+    assert.equal(calls[0].body.p_input.phase, "start");
+    assert.equal(calls[2].body.p_input.phase, "finish");
+    assert.equal(calls[2].body.p_input.result, "idle");
+    assert.equal(calls[0].body.p_input.run_id, calls[2].body.p_input.run_id);
+    assert.ok(calls.every(({ body }) => !JSON.stringify(body).includes(env.CLUED_PROJECTION_BUILDER_TOKEN)));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("terminal projection failure is reported directly by the Worker heartbeat", async () => {
+  const worker = await loadContinuityWorker();
+  const previousFetch = globalThis.fetch;
+  const responses = [
+    { status: "recorded" },
+    { status: "claimed", projection_key: "global.priority_frontier", lease_id: "11111111-1111-4111-8111-111111111111", expected_invalidation_revision: 94, expected_source_vector_digest: "a".repeat(64) },
+    { status: "failed", projection_key: "global.priority_frontier", error_code: "frontier_candidate_not_unique" },
+    { status: "recorded" },
+  ];
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    calls.push({ input: String(input), body: JSON.parse(init.body) });
+    return Response.json(responses.shift());
+  };
+  try {
+    const result = await worker.runProjectionRefreshScheduled(env);
+    assert.equal(result.status, "failed");
+    assert.equal(result.error_code, "frontier_candidate_not_unique");
+    assert.equal(calls.length, 4);
+    assert.equal(calls[3].body.p_input.result, "failed");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("dependency-blocked aggregate does not consume the full heartbeat cycle limit", async () => {
+  const worker = await loadContinuityWorker();
+  const previousFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return Response.json({ status: "waiting", retry_after_ms: 0,
+      next_attempt_at: "2026-09-23T04:18:00Z" });
+  };
+  try {
+    const result = await worker.runProjectionRefreshPipeline(env);
+    assert.equal(result.status, "waiting");
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});

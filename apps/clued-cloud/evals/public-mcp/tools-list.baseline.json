@@ -437,8 +437,127 @@
       }
     },
     {
+      "name": "clued_mtpe_snapshot",
+      "description": "Read the deterministic Universal Intake candidate universe, system recommendations, Owner-selected focus, executability, and selected Frontier. Requires complete authorized source coverage. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_mtpe_validate",
+      "description": "Validate Universal Intake coverage, priority/executability completeness, and successor bindings without mutating Canonical work. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_mtpe_owner_pin",
+      "description": "Set or cancel the Owner-selected current focus for one eligible Universal Intake Task using explicit user confirmation, exact Task-version CAS, Event, Receipt, and projection invalidation. Required Clued scope: context:write.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "operation",
+          "record_id",
+          "base_version",
+          "idempotency_key",
+          "user_confirmed"
+        ],
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "set",
+              "cancel"
+            ]
+          },
+          "record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "base_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 160
+          },
+          "user_confirmed": {
+            "type": "boolean",
+            "const": true
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "request_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:write"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
       "name": "clued_session_checkpoint",
-      "description": "Call before ending or handing off an authorized session. Atomically commits a canonical checkpoint using optimistic concurrency and returns an audit receipt or explicit conflict. Required Clued scope: context:write.",
+      "description": "Call before ending or handing off an authorized session. Atomically commits a canonical checkpoint using optimistic concurrency and returns an audit receipt or explicit conflict. A checkpoint covers only events of its own context_key: checkpoint project-scope writes in a session resumed with that project's context_key, and global writes in a global session. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -546,7 +665,7 @@
     },
     {
       "name": "clued_search_context",
-      "description": "Search authorized current context and events with deterministic lexical matching. Superseded history is excluded unless explicitly requested. Required Clued scope: context:read.",
+      "description": "Search authorized current context and events with deterministic term matching (whole query first, then at least 60% of its terms, or every term of a one-term query; Chinese is split into two-character terms). Without context_key, or with scope=all, every readable project and Global are searched; a context_key alone searches that scope only, and scope=context without context_key searches the session's own context. No match is not evidence that a record does not exist. Superseded history is excluded unless explicitly requested. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -564,6 +683,13 @@
           },
           "context_key": {
             "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "all",
+              "context"
+            ]
           },
           "include_history": {
             "type": "boolean",
@@ -739,7 +865,7 @@
     },
     {
       "name": "clued_project_mutate",
-      "description": "Create, update, complete, archive, or restore one v1.6 Canonical Project with CAS, Event, and immutable Receipt. Project merge writes are not enabled. Required Clued scope: context:write.",
+      "description": "Create, update, complete, archive, or restore one Project Lifecycle v2 Canonical Project with CAS, Event, and immutable Receipt. Recognition metadata is evidence, not a lifecycle state. Project merge writes are not enabled. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -764,7 +890,7 @@
           },
           "project_schema_version": {
             "type": "integer",
-            "const": 1
+            "const": 2
           },
           "base_version": {
             "anyOf": [
@@ -788,6 +914,37 @@
           },
           "mutation": {
             "type": "object"
+          },
+          "recognition": {
+            "type": "object",
+            "properties": {
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "v2_explicit_create",
+                  "v2_agent_recognition"
+                ]
+              },
+              "source_refs": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false
@@ -812,17 +969,10 @@
     },
     {
       "name": "clued_project_list",
-      "description": "List the user's canonical projects, independently filtering certainty and work progress. Dismissed and merged records are hidden by default. Required Clued scope: context:read.",
+      "description": "List the user's recognized canonical Projects, optionally filtering work progress. Recognition metadata and legacy certainty compatibility fields are not exposed. Dismissed and merged records are hidden by default. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "certainty_status": {
-            "type": "string",
-            "enum": [
-              "unconfirmed",
-              "confirmed"
-            ]
-          },
           "progress_status": {
             "type": "string",
             "enum": [
@@ -937,7 +1087,7 @@
     },
     {
       "name": "clued_record_mutate",
-      "description": "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint. Required Clued scope: context:write.",
+      "description": "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). On an existing record, mutation.type_fields and mutation.relations merge into the stored top-level keys: omitted keys are kept and a key sent as null is removed; field_mode=replace replaces each object sent whole. Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -1011,6 +1161,13 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "field_mode": {
+            "type": "string",
+            "enum": [
+              "merge",
+              "replace"
             ]
           },
           "source_refs": {
@@ -1417,6 +1574,310 @@
         "clued/requiredScopes": [
           "context:read",
           "audit:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_intake_submit",
+      "description": "Submit Candidate Information by deterministic capture: an M0-A segment plus an explicit candidate document. The server validates both, computes the Evidence hash over the submitted segment, and stores pending candidates with authority=none. Candidates are never current truth and cannot be promoted by an Agent; promotion needs the Owner's Native two-step confirmation. The route fixes tier, source and Binding; payload fields cannot choose them. Required Clued scope: context:write.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "scope",
+          "segment",
+          "candidates"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 160
+          },
+          "request_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "scope": {
+            "type": "string",
+            "pattern": "^(profile|global|project:[0-9a-f-]{36})$"
+          },
+          "segment": {
+            "type": "object",
+            "description": "M0-A segment-input.v1 document."
+          },
+          "candidates": {
+            "type": "object",
+            "description": "M0-A candidate-information.v1 document for the same segment_id."
+          },
+          "client_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:write"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_intake_list",
+      "description": "List this Binding's own candidates in one scope (tier=information by default, or tier=knowledge). Every row is returned with authority=none and authoritative=false. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "pattern": "^(profile|global|project:[0-9a-f-]{36})$"
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "information",
+              "knowledge"
+            ],
+            "default": "information"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "promoted",
+              "rejected",
+              "conflict",
+              "withdrawn",
+              "expired"
+            ]
+          },
+          "submission_id": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_intake_withdraw",
+      "description": "Withdraw one of this Binding's own pending Candidate Information rows (pending -> withdrawn) with row-version CAS and a Receipt. Required Clued scope: context:write.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "candidate_id",
+          "base_version"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 160
+          },
+          "request_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "candidate_id": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "base_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "scope": {
+            "type": "string",
+            "pattern": "^(profile|global|project:[0-9a-f-]{36})$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:write"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_knowledge_propose",
+      "description": "Propose Candidate Knowledge over explicit source Record versions with a closed rule id. Every source must be human-confirmed Authority Information the caller can read, at exactly the cited version, CURRENT or active; otherwise the proposal is rejected with a Receipt. No rule engine or model runs. The candidate has authority=none until the Owner promotes it natively. Required Clued scope: context:write.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "idempotency_key",
+          "scope",
+          "rule_id",
+          "assertion",
+          "sources"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 160
+          },
+          "request_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "scope": {
+            "type": "string",
+            "pattern": "^(profile|global|project:[0-9a-f-]{36})$"
+          },
+          "rule_id": {
+            "type": "string",
+            "enum": [
+              "knowledge.consolidate.v1",
+              "knowledge.dedup.v1",
+              "knowledge.cross_record_fact.v1"
+            ]
+          },
+          "assertion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "version"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "evidence_ids": {
+            "type": "array",
+            "maxItems": 20,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:write"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_context_pack",
+      "description": "Compile or read a Minimum Sufficient Context Pack under an accepted Context Policy. Compiling without an accepted policy fails closed with CONTEXT_POLICY_REQUIRED. A pack never grants execution authorization. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "pattern": "^(profile|global|project:[0-9a-f-]{36})$"
+          },
+          "policy_id": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+          },
+          "task_class": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
         ],
         "clued/scopeEnforcement": "server-side"
       }

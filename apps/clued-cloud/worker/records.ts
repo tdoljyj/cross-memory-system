@@ -14,7 +14,7 @@ export const P6_AUTHORITY_CONFLICT_POLICY = {
 } as const;
 
 export const currentWorkContract = {
-  version: "clued-v1.6-m1-k-cont",
+  version: "clued-v1.6-m1-k-cont-project-v2",
   read_order: [
     "global_registry_and_priority",
     "project_state_task_decision",
@@ -46,7 +46,7 @@ export const currentWorkContract = {
     entry_mode: "query_conclusion_or_stable_id_reference",
     entry_template: "- `{id}` — {title}: {conclusion} [status={status}; version={version}]",
   },
-  project_creation: "explicit_confirmation_required",
+  project_creation: "recognition_decision_then_create",
   idempotency_boundary: "verified_user_and_operation_family",
   event_stream_ordering_enabled: false,
   record_merge_write_enabled: false,
@@ -83,7 +83,7 @@ export const recordTools = [
   {
     name: "clued_record_mutate",
     description:
-      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint.",
+      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). On an existing record, mutation.type_fields and mutation.relations merge into the stored top-level keys: omitted keys are kept and a key sent as null is removed; field_mode=replace replaces each object sent whole. Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint.",
     inputSchema: {
       type: "object",
       required: ["operation", "record_type", "record_schema_version", "lifecycle_status", "scope", "idempotency_key", "authority", "confidence_reason"],
@@ -97,6 +97,7 @@ export const recordTools = [
         lifecycle_status: { type: "string", enum: ["active", "completed", "cancelled", "archived", "revoked"] },
         scope: { type: "string", pattern: "^(profile|global|project:[0-9a-fA-F-]{36})$" },
         base_version: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] },
+        field_mode: { type: "string", enum: ["merge", "replace"] },
         source_refs: { type: "array", uniqueItems: true, items: { type: "string", format: "uuid" } },
         source_unavailable_reason: { anyOf: [{ type: "string", maxLength: 1000 }, { type: "null" }] },
         mutation: {
@@ -168,9 +169,9 @@ export const recordRpcByTool = {
   clued_decision_supersede: "clued_decision_supersede",
   clued_evidence_ingest: "clued_evidence_ingest",
   clued_event_append: "clued_event_append",
-  clued_canonical_export: "clued_canonical_export",
+  clued_canonical_export: "clued_canonical_export_v2",
 } as const;
 
 export type UserRecordRpc = "clued_user_record_list" | "clued_user_record_mutate" |
   "clued_user_decision_supersede" | "clued_user_evidence_ingest" | "clued_user_event_append" |
-  "clued_user_canonical_export";
+  "clued_user_canonical_export_v2";

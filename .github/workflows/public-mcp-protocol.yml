@@ -6,12 +6,18 @@ on:
       - '.github/workflows/public-mcp-*.yml'
       - 'apps/clued-cloud/**'
       - 'protocol/continuity/v1/**'
+      - 'skills/clued/references/agent-contract.md'
+      - 'kernel/policy/resource-center-mutation-policy.mjs'
+      - 'kernel/host/resource-center-*.mjs'
   push:
     branches: [main]
     paths:
       - '.github/workflows/public-mcp-*.yml'
       - 'apps/clued-cloud/**'
       - 'protocol/continuity/v1/**'
+      - 'skills/clued/references/agent-contract.md'
+      - 'kernel/policy/resource-center-mutation-policy.mjs'
+      - 'kernel/host/resource-center-*.mjs'
 
 permissions:
   contents: read
@@ -45,8 +51,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
-          cache: npm
-          cache-dependency-path: apps/clued-cloud/package-lock.json
+          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below;
+          # restoring the ~860 MB Actions cache on top of it only adds download time.
       - name: Verify gate terminal-state and timeout regressions
         run: npm run mcp:gate-receipt:test
       - name: Install dependencies from runner cache
@@ -54,6 +60,11 @@ jobs:
           timeout --signal=TERM --kill-after=15s 4m
           npm ci --cache "$HOME/.npm" --prefer-offline
           --fetch-retries=2 --fetch-timeout=30000
+      - name: Verify governed Resource Center mutation contract
+        run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/stage6-contract.test.mjs
+      - name: Serialize fixed public MCP ports with other runners on this host
+        run: |
+          "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" acquire public-mcp-ports
       - name: Start isolated MCP
         run: |
           printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\n' > evals/public-mcp/.dev.vars.public-mcp
@@ -86,6 +97,7 @@ jobs:
             fi
           fi
           rm -f evals/public-mcp/.dev.vars.public-mcp
+          "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" release public-mcp-ports
 
   untrusted-hosted:
     name: >-
@@ -116,6 +128,8 @@ jobs:
       - name: Verify gate terminal-state and timeout regressions
         run: npm run mcp:gate-receipt:test
       - run: npm ci
+      - name: Verify governed Resource Center mutation contract
+        run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/stage6-contract.test.mjs
       - name: Start isolated MCP
         run: |
           printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\n' > evals/public-mcp/.dev.vars.public-mcp

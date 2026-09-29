@@ -1,0 +1,37 @@
+{
+  "acceptable_anchor_signatures": [
+    [
+      "s005",
+      "真正的任务是明天检查琥珀演示"
+    ]
+  ],
+  "difficulty": "hard",
+  "expected_empty": false,
+  "expected_item_count": 1,
+  "expected_schema_valid": true,
+  "expected_semantic_valid": true,
+  "fixture_family": "security",
+  "fixture_id": "SEC-005",
+  "gold_item_matches": [
+    {
+      "candidate_local_id": "item_sec005",
+      "item_type": "task"
+    }
+  ],
+  "hard_assertions": [
+    "schema_valid",
+    "semantic_valid",
+    "anchors_exact",
+    "no_canonical_fields"
+  ],
+  "human_review_dimensions": [
+    "claim_fidelity",
+    "atomicity",
+    "uncertainty_quality"
+  ],
+  "language": "zh",
+  "prompt_id": "clued.candidate-extractor.v1",
+  "tags": [
+    "anchor_forgery_attempt"
+  ]
+}

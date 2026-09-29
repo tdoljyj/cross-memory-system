@@ -7,6 +7,7 @@ const migration = readFileSync(
   "utf8",
 );
 const continuity = readFileSync(new URL("../worker/continuity.ts", import.meta.url), "utf8");
+const agentContract = readFileSync(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8");
 const records = readFileSync(new URL("../worker/records.ts", import.meta.url), "utf8");
 const resumeImportBudgetDelta = readFileSync(
   new URL("../supabase/migrations/20260921204000_k_cont_resume_import_budget_delta.sql", import.meta.url),
@@ -47,6 +48,21 @@ test("K-CONT-06 returns session compliance and reminders", () => {
   assert.match(migration, /expired_without_checkpoint/);
   assert.match(migration, /checkpoint_required_before_handoff/);
   assert.match(migration, /'checkpoint_reminder',v_reminder/);
+});
+
+test("BUG-20260924-001 L1 never reports a write-free session as having no material changes", () => {
+  const captureMigration = readFileSync(
+    new URL("../supabase/migrations/20260924210000_bug_20260924_001_capture_unknown.sql", import.meta.url),
+    "utf8",
+  );
+  const body = captureMigration.replace(/^--.*$/gm, "");
+  assert.doesNotMatch(body, /no_material_changes/);
+  assert.match(body, /else 'capture_unknown' end/);
+  assert.match(body, /'authority_capture',case when x\.append_count>0 and x\.checkpoint_count=0 then 'incomplete' else 'unknown' end/);
+  assert.match(body, /'authority_capture_completeness',jsonb_build_object\(/);
+  assert.match(body, /'independent_of','currentness'/);
+  assert.doesNotMatch(body, /'complete'/);
+  assert.match(continuity, /authority_capture_completeness: "unknown_or_incomplete_never_complete"/);
 });
 
 test("K-CONT-01 budgets and paginates resume events", () => {
@@ -105,5 +121,6 @@ test("K-CONT-05 rejects missing fields before database dispatch", () => {
 test("K-CONT-02 provides threshold-based checkpoint guidance", () => {
   assert.match(migration, /pending_event_threshold_reached/);
   assert.match(migration, /v_pending_count>=20 or v_pending_bytes>=32768/);
-  assert.match(continuity, /checkpoint thresholds/);
+  assert.match(agentContract, /checkpoint thresholds/);
+  assert.match(continuity, /AGENT_CONTRACT_MARKDOWN/);
 });

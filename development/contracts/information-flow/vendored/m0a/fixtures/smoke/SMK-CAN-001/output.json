@@ -1,0 +1,40 @@
+{
+  "schema_version": "candidate_information.v1",
+  "segment_id": "seg_can_001",
+  "items": [
+    {
+      "candidate_local_id": "item_task_bluepine",
+      "item_type": "task",
+      "claim": "需要在 2026 年 9 月 2 日前完成蓝松项目的风险清单。",
+      "summary": "完成蓝松项目风险清单",
+      "action_level": "needs_action",
+      "priority": null,
+      "entity_mentions": [
+        {
+          "type": "project",
+          "mention": "蓝松项目",
+          "role": "target"
+        }
+      ],
+      "topics": [
+        "风险清单"
+      ],
+      "temporal_mentions": [
+        {
+          "kind": "due_at",
+          "source_text": "2026 年 9 月 2 日前",
+          "source_message_id": "msg_can_001_a"
+        }
+      ],
+      "source_anchors": [
+        {
+          "message_id": "msg_can_001_a",
+          "exact_quote": "请在 2026 年 9 月 2 日前完成蓝松项目的风险清单。"
+        }
+      ],
+      "confidence": 0.98,
+      "uncertainties": [],
+      "sensitivity_hint": "none"
+    }
+  ]
+}

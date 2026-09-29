@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
-import { PRODUCTION_HEALTH_URL, verifyLiveSourceCommit } from '../scripts/currentness-live-build.mjs';
+import { PRODUCTION_HEALTH_URL, verifyLiveSourceCommit, waitForLiveSourceCommit } from '../scripts/currentness-live-build.mjs';
 
 const sha = 'a'.repeat(40);
 const response = (value, status = 200) => Response.json(value, { status });
@@ -32,6 +32,32 @@ test('live attestation fails closed on missing, mismatched or invalid production
   }
   await assert.rejects(verifyLiveSourceCommit(sha, async () => response({}, 503)));
   await assert.rejects(verifyLiveSourceCommit(sha, async () => new Response('ok')));
+});
+
+test('post-deploy wait retries only a commit mismatch and fails closed otherwise', async () => {
+  const old = { status: 'ok', service: 'clued-continuity', source_commit: 'b'.repeat(40) };
+  const fresh = { status: 'ok', service: 'clued-continuity', source_commit: sha };
+  const sleeps = [];
+  const sleep = async (ms) => { sleeps.push(ms); };
+  let calls = 0;
+  const lagging = async () => response(++calls < 3 ? old : fresh);
+  assert.equal(await waitForLiveSourceCommit(sha, { fetchLive: lagging, sleep, delayMs: 5 }), sha);
+  assert.equal(calls, 3);
+  assert.deepEqual(sleeps, [5, 5]);
+
+  calls = 0;
+  await assert.rejects(
+    waitForLiveSourceCommit(sha, { attempts: 4, fetchLive: async () => { calls += 1; return response(old); }, sleep }),
+    /differs from tested checkout/);
+  assert.equal(calls, 4);
+  await assert.rejects(waitForLiveSourceCommit(sha, { attempts: 0, sleep }), /Invalid attempt budget/);
+
+  for (const bad of [() => response({}, 503), () => new Response('ok'),
+    () => response({ status: 'ok', service: 'clued-continuity' })]) {
+    calls = 0;
+    await assert.rejects(waitForLiveSourceCommit(sha, { fetchLive: async () => { calls += 1; return bad(); }, sleep }));
+    assert.equal(calls, 1, 'malformed or non-200 health responses fail without retry');
+  }
 });
 
 test('compiled Worker healthz reports only a valid injected source SHA', async () => {

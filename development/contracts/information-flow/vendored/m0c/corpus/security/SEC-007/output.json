@@ -1,0 +1,11 @@
+{
+  "boundary": "same_topic",
+  "confidence": 0.96,
+  "left_message_id": "s007a",
+  "right_message_id": "s007b",
+  "schema_version": "segment_boundary.v1",
+  "signals": [
+    "injection_is_data",
+    "same_project"
+  ]
+}

@@ -1,0 +1,473 @@
+{
+  "aliases": {
+    "M5": "9a4d3227-1cd7-46e8-bcca-6ff5be7f3939",
+    "NA": "59a75dbe-4ffa-44c8-8b8d-643647faa197",
+    "NB": "5368be4c-43d3-49e9-bfc1-b0c198561a1f",
+    "P05A": "1a8e8161-da12-4f41-b03f-57a1a0baa54b",
+    "P05B": "b8f76f20-86ae-4c6e-9e9d-60d0d1b98a5f"
+  },
+  "assertions": [
+    {
+      "expected": "ok",
+      "id": "05.before.pack_ok",
+      "observed": "ok",
+      "pass": true,
+      "text": "the compile returns a pack"
+    },
+    {
+      "expected": true,
+      "id": "05.before.digest_binds_text",
+      "observed": true,
+      "pass": true,
+      "text": "sha256(pack_text) equals pack_digest"
+    },
+    {
+      "expected": [
+        "project:<P05A>",
+        "project:<P05B>"
+      ],
+      "id": "05.effective_scopes",
+      "observed": [
+        "project:<P05A>",
+        "project:<P05B>"
+      ],
+      "pass": true,
+      "text": "the first compile covers both granted scopes"
+    },
+    {
+      "expected": [
+        "<NA>",
+        "<NB>"
+      ],
+      "id": "05.before_items",
+      "observed": [
+        "<NA>",
+        "<NB>"
+      ],
+      "pass": true,
+      "text": "before: notes from both scopes"
+    },
+    {
+      "expected": [
+        200,
+        [
+          "project:<P05A>"
+        ]
+      ],
+      "id": "05.reduce",
+      "observed": [
+        200,
+        [
+          "project:<P05A>"
+        ]
+      ],
+      "pass": true,
+      "text": "the owner reduces the Binding to scope A"
+    },
+    {
+      "expected": "ok",
+      "id": "05.after.pack_ok",
+      "observed": "ok",
+      "pass": true,
+      "text": "the compile returns a pack"
+    },
+    {
+      "expected": true,
+      "id": "05.after.digest_binds_text",
+      "observed": true,
+      "pass": true,
+      "text": "sha256(pack_text) equals pack_digest"
+    },
+    {
+      "expected": [
+        "project:<P05A>"
+      ],
+      "id": "05.next_scopes",
+      "observed": [
+        "project:<P05A>"
+      ],
+      "pass": true,
+      "text": "the next compile covers only scope A"
+    },
+    {
+      "expected": [
+        "<NA>"
+      ],
+      "id": "05.next_items",
+      "observed": [
+        "<NA>"
+      ],
+      "pass": true,
+      "text": "the next compile omits scope B items"
+    },
+    {
+      "expected": [
+        409,
+        "STALE",
+        "binding_scope_reduced"
+      ],
+      "id": "05.revalidate",
+      "observed": [
+        409,
+        "STALE",
+        "binding_scope_reduced"
+      ],
+      "pass": true,
+      "text": "the existing manifest fails revalidation (binding_scope_reduced)"
+    }
+  ],
+  "claims": {
+    "model_extraction": "NOT_EVALUATED",
+    "od5_qualifier": "Agent authority confined only on the Information Flow path",
+    "verdict_env": "_LOCAL_QUALIFIED"
+  },
+  "code_binding": {
+    "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+    "harness_tree": "004aad442e99860b1c2f587aba0781a750ecfa7f",
+    "input_commit": "6fb2a98ec4e36bb2cddeb501f8bbfa22f28ab4df",
+    "migrations_chain": {
+      "count": 73,
+      "latest": "20260924230000_decision_supersede_v12_guard.sql",
+      "sha256": "68f6c0dc83d69c5b411ee92b2c87371d46139961334c1852c8e413d4fd4d8a9a"
+    },
+    "worker_tree": "e73cb582dea46a84690429ee6c59d0cc54ed3bcc",
+    "worktree_clean": true
+  },
+  "contract": {
+    "path": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+    "sha256": "5c6371cf22b078cbd1fb0f61f3f6eb20b51a162a28e8942f04b81561bbb8c9ff"
+  },
+  "environment": {
+    "db_database_oid": "5",
+    "db_system_identifier": "7689002206797361190",
+    "docker": "29.3.1",
+    "images": {
+      "auth": "sha256:362659ca70eaa75ba05bbaf963caa84c1c5afe5e8fbf0777e17b830dd5f0f60a",
+      "db": "sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5fb408d051909b230f",
+      "kong": "sha256:1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d",
+      "rest": "sha256:5922bde07147b82b1c9d8f749e48c1e5b99ebb233f3888bb7ab65f07cf4ac82d"
+    },
+    "js_tiktoken": "1.0.21",
+    "migrations_applied": {
+      "latest": "20260924230000",
+      "n": 73
+    },
+    "miniflare": "5.20260820.0-alpha",
+    "node": "v24.19.0",
+    "qualification": "LOCAL",
+    "supabase_cli": "2.115.0",
+    "transport_tier": "T1",
+    "workerd": "1.20260820.1",
+    "wrangler": "4.125.0"
+  },
+  "error": null,
+  "normalized_digest": "0a975ee44cdfc1970499ce9eda5178b9ef2d083c3fabf62dee1d23261bff2bf5",
+  "notes": [
+    "Transport: reduce is a PostgREST call with the owner JWT (plan section 14 item 25)."
+  ],
+  "principals": {
+    "account_user": "<synthetic>",
+    "bindings": [
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:c85804e704fa",
+        "name": "B_main",
+        "scopes_count": 16
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:95cc7d143812",
+        "name": "B_reduce",
+        "scopes_count": 2
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:d1ec81d0170b",
+        "name": "B_del",
+        "scopes_count": 1
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:37277e05527f",
+        "name": "B_V",
+        "scopes_count": 1
+      }
+    ],
+    "token_labels": {
+      "U": "sha256:716fba5f9918",
+      "V": "sha256:9919da5bd400"
+    }
+  },
+  "result": "PASS",
+  "scenario_id": "E2E-05",
+  "schema": "clued.information-flow.m0d.e2e-evidence/1",
+  "steps": [
+    {
+      "channel": "worker_rest",
+      "duration_ms": 87,
+      "extracted": {
+        "replayed": false,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_record_mutate",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 1,
+      "request_sha256": "e4f20a84a74302824912165cfaf08f8f78226cdc5c1c65542dbeefd58684d1f8",
+      "response_sha256": "970714b43c2a3f5f51fcaa9564e5ec017a5e0245bff497afe6560eb4a4c009d6",
+      "target": "/v1/records"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 87,
+      "extracted": {
+        "replayed": false,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_record_mutate",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 2,
+      "request_sha256": "955782c5135964f72d43f85ed4ee61589b8e15d89410feb854fc7307adaa0b37",
+      "response_sha256": "5def639cd6b52e4ad16bc1f768cca27c2ceab8fd628a1016b88a5ea801f67dca",
+      "target": "/v1/records"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 86,
+      "extracted": {
+        "error_code": null,
+        "status": "issued",
+        "task_class": "e05.check"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_policy_confirmation_issue_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 3,
+      "request_sha256": "5a54afede6eee90830c392d4dcfec389f4f88f7f7b8153342c8de24773836e3d",
+      "response_sha256": "b5273551d06183520d05f725f66f5930324602bbff9a23b31e1cf31704955425",
+      "target": "/v1/context/policies/confirmation"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 91,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_policy_accept_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 4,
+      "request_sha256": "f0f2d003f16c19023ee1faa739f1524c1e56f64f198f1dca62a9bb8b4c1a20e1",
+      "response_sha256": "8c29dece6142fb1a2be2f7d0aed1c704af93f872813500e56571b116ae9875b1",
+      "target": "/v1/context/policies"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 24,
+      "extracted": {
+        "authoritative": true,
+        "error_code": null,
+        "execution_authorization": "NOT_GRANTED",
+        "items": [
+          {
+            "human_confirmed": true,
+            "id": "59a75dbe-4ffa-44c8-8b8d-643647faa197",
+            "labels": [],
+            "tier": "authority_information",
+            "version": 1
+          },
+          {
+            "human_confirmed": true,
+            "id": "5368be4c-43d3-49e9-bfc1-b0c198561a1f",
+            "labels": [],
+            "tier": "authority_information",
+            "version": 1
+          }
+        ],
+        "manifest_reused": false,
+        "measurement_status": "measured",
+        "model_extraction": "NOT_EVALUATED",
+        "reason": null,
+        "revalidation": null,
+        "status": "ok"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_pack",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 5,
+      "request_sha256": "ec38f54ee7139deba43cedab2914a234d6da6c93e7ddda15e79294b24abf843f",
+      "response_sha256": "797d0c6fb63d13b0875850276dc429f67f5b35de57355b4037539cad5f17f132",
+      "target": "/mcp tools/call clued_context_pack"
+    },
+    {
+      "channel": "postgrest_direct",
+      "duration_ms": 12,
+      "extracted": {
+        "count": 3
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 6,
+      "request_sha256": "72fa3b95e01725f4c0c555f7d61b42744aee926785ccfb55bdfa0f875ef8293e",
+      "response_sha256": "2f956b878f464a4b450598fdfc2f6e09f5ce7b3074cb7d083b25d934bff26774",
+      "target": "/rest/v1/rpc/clued_authorization_manage_v12 (owner_jwt)"
+    },
+    {
+      "channel": "postgrest_direct",
+      "duration_ms": 10,
+      "extracted": {
+        "selected": [
+          "project:1a8e8161-da12-4f41-b03f-57a1a0baa54b"
+        ],
+        "version": 2
+      },
+      "http_status": 200,
+      "ledger": [],
+      "method": "POST",
+      "n": 7,
+      "request_sha256": "3be43d89bdfde30bfd5c72c0157d27000a5dc6c163cfc1ed65a7300cd735d970",
+      "response_sha256": "d4017b254d7526d356c90f0548a1aebfe3ca8bbbf6c780e11ba67e6b2989ad97",
+      "target": "/rest/v1/rpc/clued_authorization_manage_v12 (owner_jwt)"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 22,
+      "extracted": {
+        "authoritative": true,
+        "error_code": null,
+        "execution_authorization": "NOT_GRANTED",
+        "items": [
+          {
+            "human_confirmed": true,
+            "id": "59a75dbe-4ffa-44c8-8b8d-643647faa197",
+            "labels": [],
+            "tier": "authority_information",
+            "version": 1
+          }
+        ],
+        "manifest_reused": false,
+        "measurement_status": "measured",
+        "model_extraction": "NOT_EVALUATED",
+        "reason": null,
+        "revalidation": null,
+        "status": "ok"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_pack",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 8,
+      "request_sha256": "adf0ac44b84bd34ef1acd8b9d48458c0950b18e0bcf072725aa56f12abbc8c7f",
+      "response_sha256": "c4080f85b551b6a8a01be47e7bc3fea9329aa2f6aff39963970cab2326f44540",
+      "target": "/mcp tools/call clued_context_pack"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 80,
+      "extracted": {
+        "authoritative": null,
+        "error_code": null,
+        "execution_authorization": null,
+        "items": null,
+        "manifest_reused": null,
+        "measurement_status": null,
+        "model_extraction": null,
+        "reason": "binding_scope_reduced",
+        "revalidation": "STALE",
+        "status": "stale"
+      },
+      "http_status": 409,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_context_pack",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 9,
+      "request_sha256": "728dd4297481484ec68cc0203f055550a8d34671318e73371e23c6798f4638f1",
+      "response_sha256": "41ddef3dd16f68b678040c7db0ce9255cdd6779f39cdd0161d343e1081513f19",
+      "target": "/v1/context/pack"
+    }
+  ]
+}

@@ -30,8 +30,47 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  links:
+  links-trusted-self-hosted:
+    name: >-
+      ${{ ((github.event_name == 'push' &&
+                     github.actor == github.repository_owner) ||
+                    (github.event_name == 'pull_request' &&
+                     github.event.pull_request.head.repo.full_name == github.repository &&
+                     github.actor == github.repository_owner))
+          && 'links' || 'links-self-hosted-skipped' }}
+    if: >-
+      (github.event_name == 'push' &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner)
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 scripts/ci/check_active_doc_links.py
+
+  links-untrusted-hosted:
+    name: >-
+      ${{ ((github.event_name == 'push' &&
+                     github.actor != github.repository_owner) ||
+                    (github.event_name == 'pull_request' &&
+                     (github.event.pull_request.head.repo.full_name != github.repository ||
+                      github.actor != github.repository_owner)))
+          && 'links' || 'links-hosted-skipped' }}
+    if: >-
+      (github.event_name == 'push' &&
+       github.actor != github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       (github.event.pull_request.head.repo.full_name != github.repository ||
+        github.actor != github.repository_owner))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

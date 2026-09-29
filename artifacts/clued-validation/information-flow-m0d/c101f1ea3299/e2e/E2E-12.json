@@ -1,0 +1,489 @@
+{
+  "aliases": {
+    "BYPASS": "76f69d87-0554-436e-9dd0-64962b542bc7",
+    "N12": "bee12c8c-29c5-43c6-9cc3-e15df2a83263",
+    "OBS": "e0b3e69c-d38a-4551-8d46-cdb3275b16b0",
+    "P12": "8b102079-4831-4213-befe-bed6bc93fe1c"
+  },
+  "assertions": [
+    {
+      "expected": "committed",
+      "id": "12.observed_write",
+      "observed": "committed",
+      "pass": true,
+      "text": "the Binding writes an observed note directly"
+    },
+    {
+      "expected": "ok",
+      "id": "12.default.pack_ok",
+      "observed": "ok",
+      "pass": true,
+      "text": "the compile returns a pack"
+    },
+    {
+      "expected": true,
+      "id": "12.default.digest_binds_text",
+      "observed": true,
+      "pass": true,
+      "text": "sha256(pack_text) equals pack_digest"
+    },
+    {
+      "expected": [
+        "<N12>"
+      ],
+      "id": "12.default_items",
+      "observed": [
+        "<N12>"
+      ],
+      "pass": true,
+      "text": "the default pack contains neither Agent-authored Record"
+    },
+    {
+      "expected": true,
+      "id": "12.default_authoritative",
+      "observed": true,
+      "pass": true,
+      "text": "the default pack is authoritative"
+    },
+    {
+      "expected": "ok",
+      "id": "12.optin.pack_ok",
+      "observed": "ok",
+      "pass": true,
+      "text": "the compile returns a pack"
+    },
+    {
+      "expected": true,
+      "id": "12.optin.digest_binds_text",
+      "observed": true,
+      "pass": true,
+      "text": "sha256(pack_text) equals pack_digest"
+    },
+    {
+      "expected": [
+        "<BYPASS>",
+        "<N12>",
+        "<OBS>"
+      ],
+      "id": "12.optin_items",
+      "observed": [
+        "<BYPASS>",
+        "<N12>",
+        "<OBS>"
+      ],
+      "pass": true,
+      "text": "the opt-in pack contains both Agent-authored Records"
+    },
+    {
+      "expected": [
+        [
+          "AGENT_AUTHORED"
+        ],
+        "agent_binding",
+        false
+      ],
+      "id": "12.optin_bypass_label",
+      "observed": [
+        [
+          "AGENT_AUTHORED"
+        ],
+        "agent_binding",
+        false
+      ],
+      "pass": true,
+      "text": "opt-in: the bypass Record is labelled AGENT_AUTHORED and not human-confirmed"
+    },
+    {
+      "expected": [
+        [
+          "AGENT_AUTHORED"
+        ],
+        "agent_binding",
+        false
+      ],
+      "id": "12.optin_observed_label",
+      "observed": [
+        [
+          "AGENT_AUTHORED"
+        ],
+        "agent_binding",
+        false
+      ],
+      "pass": true,
+      "text": "opt-in: the observed Record is labelled AGENT_AUTHORED and not human-confirmed"
+    },
+    {
+      "expected": false,
+      "id": "12.optin_not_authoritative",
+      "observed": false,
+      "pass": true,
+      "text": "the opt-in pack is authoritative=false"
+    }
+  ],
+  "claims": {
+    "model_extraction": "NOT_EVALUATED",
+    "od5_qualifier": "Agent authority confined only on the Information Flow path",
+    "verdict_env": "_LOCAL_QUALIFIED"
+  },
+  "code_binding": {
+    "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+    "harness_tree": "004aad442e99860b1c2f587aba0781a750ecfa7f",
+    "input_commit": "6fb2a98ec4e36bb2cddeb501f8bbfa22f28ab4df",
+    "migrations_chain": {
+      "count": 73,
+      "latest": "20260924230000_decision_supersede_v12_guard.sql",
+      "sha256": "68f6c0dc83d69c5b411ee92b2c87371d46139961334c1852c8e413d4fd4d8a9a"
+    },
+    "worker_tree": "e73cb582dea46a84690429ee6c59d0cc54ed3bcc",
+    "worktree_clean": true
+  },
+  "contract": {
+    "path": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+    "sha256": "5c6371cf22b078cbd1fb0f61f3f6eb20b51a162a28e8942f04b81561bbb8c9ff"
+  },
+  "environment": {
+    "db_database_oid": "5",
+    "db_system_identifier": "7689002206797361190",
+    "docker": "29.3.1",
+    "images": {
+      "auth": "sha256:362659ca70eaa75ba05bbaf963caa84c1c5afe5e8fbf0777e17b830dd5f0f60a",
+      "db": "sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5fb408d051909b230f",
+      "kong": "sha256:1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d",
+      "rest": "sha256:5922bde07147b82b1c9d8f749e48c1e5b99ebb233f3888bb7ab65f07cf4ac82d"
+    },
+    "js_tiktoken": "1.0.21",
+    "migrations_applied": {
+      "latest": "20260924230000",
+      "n": 73
+    },
+    "miniflare": "5.20260820.0-alpha",
+    "node": "v24.19.0",
+    "qualification": "LOCAL",
+    "supabase_cli": "2.115.0",
+    "transport_tier": "T1",
+    "workerd": "1.20260820.1",
+    "wrangler": "4.125.0"
+  },
+  "error": null,
+  "normalized_digest": "702665c3ed467642390d1636c6d3e6dc522b562829d6ad3c94f13ea1db013341",
+  "notes": [],
+  "principals": {
+    "account_user": "<synthetic>",
+    "bindings": [
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:c85804e704fa",
+        "name": "B_main",
+        "scopes_count": 16
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:95cc7d143812",
+        "name": "B_reduce",
+        "scopes_count": 2
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:d1ec81d0170b",
+        "name": "B_del",
+        "scopes_count": 1
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:37277e05527f",
+        "name": "B_V",
+        "scopes_count": 1
+      }
+    ],
+    "token_labels": {
+      "U": "sha256:716fba5f9918",
+      "V": "sha256:9919da5bd400"
+    }
+  },
+  "result": "PASS",
+  "scenario_id": "E2E-12",
+  "schema": "clued.information-flow.m0d.e2e-evidence/1",
+  "steps": [
+    {
+      "channel": "worker_rest",
+      "duration_ms": 84,
+      "extracted": {
+        "replayed": false,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_record_mutate",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 1,
+      "request_sha256": "125b4fad7a19de268deea98a93486598cf58757fa02ba86af07ddd9e18774927",
+      "response_sha256": "47dc2f9f1f44a53e331390846ee13134f2f0fe88dec484968fc08ab2145ec052",
+      "target": "/v1/records"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 13,
+      "extracted": {
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_evidence_ingest",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 2,
+      "request_sha256": "81dd1918b73fedbb8dc9e5a4e0ad077e69708a06e9c556a80be9c6931f6db1bf",
+      "response_sha256": "f15e70ea461b0a6d0dd07fdf78100682aca40e60dda340bb196189bf9aeb1695",
+      "target": "/mcp tools/call clued_evidence_ingest"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 16,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_record_mutate",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 3,
+      "request_sha256": "f26842a17c6b25c81ebaf79fe6a2f0fc89934663dece64c0361fdca75af4a05f",
+      "response_sha256": "49a7e2cb5939b47e3acfe2261db39a7c50f0bd62c80f231856aeca4b8044442a",
+      "target": "/mcp tools/call clued_record_mutate"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 86,
+      "extracted": {
+        "error_code": null,
+        "status": "issued",
+        "task_class": "e12.default"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_policy_confirmation_issue_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 4,
+      "request_sha256": "3a0f01597dad6d26cc50269efa455e99fd261758ca9ec26bfead6c249ff14d3d",
+      "response_sha256": "fb32e82af7b19ba835327aae346b2a87fcd5456af6ca4869d17601b15948592c",
+      "target": "/v1/context/policies/confirmation"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 81,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_policy_accept_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 5,
+      "request_sha256": "2ae292ecb2485f1991f59e9d3da9f1ad9cf7ffbf8b5053ca2734d77f1d4f0eac",
+      "response_sha256": "133ba19cc8e6987dfd991a7c067c204cbf811e868528e90a9daeb668580d4d15",
+      "target": "/v1/context/policies"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 72,
+      "extracted": {
+        "error_code": null,
+        "status": "issued",
+        "task_class": "e12.optin"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_policy_confirmation_issue_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 6,
+      "request_sha256": "fffc768f93ce459a598e5e1e0188407411bd3711f0326310b565a0360c6820e8",
+      "response_sha256": "30f223449a727eaaee3b5495b1ccf53193ad51d37e03b3f9355f42074fd1f528",
+      "target": "/v1/context/policies/confirmation"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 80,
+      "extracted": {
+        "error_code": null,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_policy_accept_v1",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 7,
+      "request_sha256": "05327b9d95c56dc3b6ee6dde57574aeaf745f1b9e8a4ae303294d1c895306e1f",
+      "response_sha256": "a707ebcccc0b7418ed8055cddfa44477d1c71d0265ded9d6537b347b9edf5d16",
+      "target": "/v1/context/policies"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 678,
+      "extracted": {
+        "authoritative": true,
+        "error_code": null,
+        "execution_authorization": "NOT_GRANTED",
+        "items": [
+          {
+            "human_confirmed": true,
+            "id": "bee12c8c-29c5-43c6-9cc3-e15df2a83263",
+            "labels": [],
+            "tier": "authority_information",
+            "version": 1
+          }
+        ],
+        "manifest_reused": false,
+        "measurement_status": "measured",
+        "model_extraction": "NOT_EVALUATED",
+        "reason": null,
+        "revalidation": null,
+        "status": "ok"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_pack",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 8,
+      "request_sha256": "96e0e648428c2bbbd6c12b1e00ec39ce82ea3df3c05b44b570de4902271d6bba",
+      "response_sha256": "3877b36343bc32f282ad78835ef4b0fdcda05e7f1d184150000eff6de370a851",
+      "target": "/mcp tools/call clued_context_pack"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 28,
+      "extracted": {
+        "authoritative": false,
+        "error_code": null,
+        "execution_authorization": "NOT_GRANTED",
+        "items": [
+          {
+            "human_confirmed": false,
+            "id": "76f69d87-0554-436e-9dd0-64962b542bc7",
+            "labels": [
+              "AGENT_AUTHORED"
+            ],
+            "tier": "authority_information",
+            "version": 1
+          },
+          {
+            "human_confirmed": true,
+            "id": "bee12c8c-29c5-43c6-9cc3-e15df2a83263",
+            "labels": [],
+            "tier": "authority_information",
+            "version": 1
+          },
+          {
+            "human_confirmed": false,
+            "id": "e0b3e69c-d38a-4551-8d46-cdb3275b16b0",
+            "labels": [
+              "AGENT_AUTHORED"
+            ],
+            "tier": "authority_information",
+            "version": 1
+          }
+        ],
+        "manifest_reused": false,
+        "measurement_status": "measured",
+        "model_extraction": "NOT_EVALUATED",
+        "reason": null,
+        "revalidation": null,
+        "status": "ok"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_context_pack",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 9,
+      "request_sha256": "74b41e48f5e0f72f907d4822c46b745e3e4b1dbc4456f25b3c97e67800c093d1",
+      "response_sha256": "2508534a37db631cb06172a8cc9631e8326bc76978e12ea60794c8737c4f0199",
+      "target": "/mcp tools/call clued_context_pack"
+    }
+  ]
+}

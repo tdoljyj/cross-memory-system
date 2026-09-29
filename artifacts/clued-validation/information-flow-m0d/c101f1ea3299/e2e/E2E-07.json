@@ -1,0 +1,661 @@
+{
+  "aliases": {
+    "C7N": "78853b05-fc38-49ce-ad48-768db46b0d20",
+    "P07": "2ba7525f-12a1-4b94-a47d-1456edb67f7c",
+    "SRC7": "83295366-8621-4db3-b114-a024769ebc98"
+  },
+  "assertions": [
+    {
+      "expected": true,
+      "id": "07.rpc:clued_user_intake_submit.new_process",
+      "observed": true,
+      "pass": true,
+      "text": "the retry runs in a new Worker host process"
+    },
+    {
+      "expected": true,
+      "id": "07.native.lost",
+      "observed": true,
+      "pass": true,
+      "text": "the client saw no response (connection reset)"
+    },
+    {
+      "expected": "committed",
+      "id": "07.native.committed_upstream",
+      "observed": "committed",
+      "pass": true,
+      "text": "PostgREST had committed the submit"
+    },
+    {
+      "expected": [
+        200,
+        true,
+        "3aadca2d-e994-49d1-a634-1147ce77ed4c"
+      ],
+      "id": "07.native.replayed",
+      "observed": [
+        200,
+        true,
+        "3aadca2d-e994-49d1-a634-1147ce77ed4c"
+      ],
+      "pass": true,
+      "text": "the same key and body replay the committed Receipt"
+    },
+    {
+      "expected": 1,
+      "id": "07.native.one_submission",
+      "observed": 1,
+      "pass": true,
+      "text": "one submission row for the key"
+    },
+    {
+      "expected": 1,
+      "id": "07.native.one_candidate",
+      "observed": 1,
+      "pass": true,
+      "text": "one candidate set for the key"
+    },
+    {
+      "expected": [
+        409,
+        "rejected",
+        "IDEMPOTENCY_KEY_CONFLICT"
+      ],
+      "id": "07.native.digest_conflict",
+      "observed": [
+        409,
+        "rejected",
+        "IDEMPOTENCY_KEY_CONFLICT"
+      ],
+      "pass": true,
+      "text": "a different digest under the same key is rejected"
+    },
+    {
+      "expected": [
+        "rejected"
+      ],
+      "id": "07.native.rejected_receipt",
+      "observed": [
+        "rejected"
+      ],
+      "pass": true,
+      "text": "the conflict is recorded as a rejected Receipt"
+    },
+    {
+      "expected": true,
+      "id": "07.rpc:clued_intake_submit.new_process",
+      "observed": true,
+      "pass": true,
+      "text": "the retry runs in a new Worker host process"
+    },
+    {
+      "expected": true,
+      "id": "07.agent.lost",
+      "observed": true,
+      "pass": true,
+      "text": "the MCP client saw no response"
+    },
+    {
+      "expected": [
+        true,
+        "9cb404c3-b5ca-46ec-a9c3-6b6eec349918"
+      ],
+      "id": "07.agent.replayed",
+      "observed": [
+        true,
+        "9cb404c3-b5ca-46ec-a9c3-6b6eec349918"
+      ],
+      "pass": true,
+      "text": "the MCP retry replays the committed Receipt"
+    },
+    {
+      "expected": 1,
+      "id": "07.agent.one_submission",
+      "observed": 1,
+      "pass": true,
+      "text": "one submission row for the MCP key"
+    },
+    {
+      "expected": [
+        "rejected",
+        "IDEMPOTENCY_KEY_CONFLICT",
+        true
+      ],
+      "id": "07.agent.digest_conflict",
+      "observed": [
+        "rejected",
+        "IDEMPOTENCY_KEY_CONFLICT",
+        true
+      ],
+      "pass": true,
+      "text": "the MCP digest conflict is rejected with a Receipt"
+    },
+    {
+      "expected": true,
+      "id": "07.rpc:clued_knowledge_propose.new_process",
+      "observed": true,
+      "pass": true,
+      "text": "the retry runs in a new Worker host process"
+    },
+    {
+      "expected": true,
+      "id": "07.kp.lost",
+      "observed": true,
+      "pass": true,
+      "text": "the MCP client saw no response"
+    },
+    {
+      "expected": [
+        true,
+        "457e0492-910e-4522-b068-78c41e64270e"
+      ],
+      "id": "07.kp.replayed",
+      "observed": [
+        true,
+        "457e0492-910e-4522-b068-78c41e64270e"
+      ],
+      "pass": true,
+      "text": "the proposal retry replays the committed Receipt"
+    },
+    {
+      "expected": 1,
+      "id": "07.kp.one_candidate",
+      "observed": 1,
+      "pass": true,
+      "text": "one knowledge candidate for the key"
+    },
+    {
+      "expected": [
+        "rejected",
+        "IDEMPOTENCY_KEY_CONFLICT",
+        true
+      ],
+      "id": "07.kp.digest_conflict",
+      "observed": [
+        "rejected",
+        "IDEMPOTENCY_KEY_CONFLICT",
+        true
+      ],
+      "pass": true,
+      "text": "the proposal digest conflict is rejected with a Receipt"
+    }
+  ],
+  "claims": {
+    "model_extraction": "NOT_EVALUATED",
+    "od5_qualifier": "Agent authority confined only on the Information Flow path",
+    "verdict_env": "_LOCAL_QUALIFIED"
+  },
+  "code_binding": {
+    "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+    "harness_tree": "004aad442e99860b1c2f587aba0781a750ecfa7f",
+    "input_commit": "6fb2a98ec4e36bb2cddeb501f8bbfa22f28ab4df",
+    "migrations_chain": {
+      "count": 73,
+      "latest": "20260924230000_decision_supersede_v12_guard.sql",
+      "sha256": "68f6c0dc83d69c5b411ee92b2c87371d46139961334c1852c8e413d4fd4d8a9a"
+    },
+    "worker_tree": "e73cb582dea46a84690429ee6c59d0cc54ed3bcc",
+    "worktree_clean": true
+  },
+  "contract": {
+    "path": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+    "sha256": "5c6371cf22b078cbd1fb0f61f3f6eb20b51a162a28e8942f04b81561bbb8c9ff"
+  },
+  "environment": {
+    "db_database_oid": "5",
+    "db_system_identifier": "7689002206797361190",
+    "docker": "29.3.1",
+    "images": {
+      "auth": "sha256:362659ca70eaa75ba05bbaf963caa84c1c5afe5e8fbf0777e17b830dd5f0f60a",
+      "db": "sha256:86a2e078779e5bdccda1f6f6c5063aa9779a322d1fface5fb408d051909b230f",
+      "kong": "sha256:1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d",
+      "rest": "sha256:5922bde07147b82b1c9d8f749e48c1e5b99ebb233f3888bb7ab65f07cf4ac82d"
+    },
+    "js_tiktoken": "1.0.21",
+    "migrations_applied": {
+      "latest": "20260924230000",
+      "n": 73
+    },
+    "miniflare": "5.20260820.0-alpha",
+    "node": "v24.19.0",
+    "qualification": "LOCAL",
+    "supabase_cli": "2.115.0",
+    "transport_tier": "T1",
+    "workerd": "1.20260820.1",
+    "wrangler": "4.125.0"
+  },
+  "error": null,
+  "normalized_digest": "5a2bd05418995ffd67b81b5b0a02aff753b25aaed0e3da21bd15576a40767737",
+  "notes": [],
+  "principals": {
+    "account_user": "<synthetic>",
+    "bindings": [
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:c85804e704fa",
+        "name": "B_main",
+        "scopes_count": 16
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:95cc7d143812",
+        "name": "B_reduce",
+        "scopes_count": 2
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:d1ec81d0170b",
+        "name": "B_del",
+        "scopes_count": 1
+      },
+      {
+        "error": null,
+        "granted_scopes": [
+          "context:read",
+          "context:write"
+        ],
+        "label": "sha256:37277e05527f",
+        "name": "B_V",
+        "scopes_count": 1
+      }
+    ],
+    "token_labels": {
+      "U": "sha256:716fba5f9918",
+      "V": "sha256:9919da5bd400"
+    }
+  },
+  "result": "PASS",
+  "scenario_id": "E2E-07",
+  "schema": "clued.information-flow.m0d.e2e-evidence/1",
+  "steps": [
+    {
+      "channel": "worker_rest",
+      "duration_ms": 105,
+      "extracted": {},
+      "http_status": "network_error:UND_ERR_SOCKET",
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 1,
+      "request_sha256": "aa3754d3f8a80ee5a1ddca2f13eb9c55a2628b4116ce31cfa26da3c1c7eeb718",
+      "response_sha256": null,
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "process_control",
+      "duration_ms": 0,
+      "extracted": {
+        "killed_pgid": 32434,
+        "killed_pid": 32434,
+        "path_class": "rpc:clued_user_intake_submit",
+        "signal": "SIGKILL",
+        "upstream_status": 200
+      },
+      "http_status": null,
+      "ledger": [],
+      "method": "PROCESS",
+      "n": 2,
+      "request_sha256": null,
+      "response_sha256": null,
+      "target": "SIGKILL worker host process group after committed upstream response"
+    },
+    {
+      "channel": "process_control",
+      "duration_ms": 0,
+      "extracted": {
+        "new_pid": 1188
+      },
+      "http_status": null,
+      "ledger": [],
+      "method": "PROCESS",
+      "n": 3,
+      "request_sha256": null,
+      "response_sha256": null,
+      "target": "start a new worker host"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 149,
+      "extracted": {
+        "replayed": true,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 4,
+      "request_sha256": "aa3754d3f8a80ee5a1ddca2f13eb9c55a2628b4116ce31cfa26da3c1c7eeb718",
+      "response_sha256": "6fc3fc7e792daf4b6519b57d6afc41a5c4d1f8d5e1c5039600adde54711d7588",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "db_observer_readonly",
+      "duration_ms": 2,
+      "extracted": null,
+      "http_status": null,
+      "ledger": [],
+      "method": "SELECT",
+      "n": 5,
+      "request_sha256": "1cf71b527a6a135cd857d62003e90a8ad3057df40befc359ae4dcebc34a0b173",
+      "response_sha256": "8cd664de3db2ebc3a68f6507c3d786addcdaffc9393fea9ce94364129ba27a98",
+      "target": "row count"
+    },
+    {
+      "channel": "db_observer_readonly",
+      "duration_ms": 2,
+      "extracted": null,
+      "http_status": null,
+      "ledger": [],
+      "method": "SELECT",
+      "n": 6,
+      "request_sha256": "646a3b6ad96b57a24f00446f09328f904bc545a49d85bfae2847cf58836ca5d6",
+      "response_sha256": "8cd664de3db2ebc3a68f6507c3d786addcdaffc9393fea9ce94364129ba27a98",
+      "target": "row count"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 86,
+      "extracted": {
+        "error_code": "IDEMPOTENCY_KEY_CONFLICT",
+        "status": "rejected"
+      },
+      "http_status": 409,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 7,
+      "request_sha256": "9dabad691c8166232c089b6444886ce6ac9e61329cad35ba8fd843de3fd4098d",
+      "response_sha256": "e1621424dbd5d428c8faedb9ec4ddf414684606f78344bfaab177064b1c18422",
+      "target": "/v1/intake"
+    },
+    {
+      "channel": "db_observer_readonly",
+      "duration_ms": 2,
+      "extracted": null,
+      "http_status": null,
+      "ledger": [],
+      "method": "SELECT",
+      "n": 8,
+      "request_sha256": "7a20269f26410b970f27d7bf5e369477fd843f2226418bc7a966147a1f7eb16d",
+      "response_sha256": "74da8254021d4f4005741f0347cef1d62cb64f201b7adda0f3faca0b3467a8b2",
+      "target": "rejected Receipt"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 26,
+      "extracted": {},
+      "http_status": "network_error:UND_ERR_SOCKET",
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 9,
+      "request_sha256": "1a7c8c95a95cdf0614bfd9daf115819024b74348be5bec526580d23351c8de7b",
+      "response_sha256": null,
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "process_control",
+      "duration_ms": 0,
+      "extracted": {
+        "killed_pgid": 1188,
+        "killed_pid": 1188,
+        "path_class": "rpc:clued_intake_submit",
+        "signal": "SIGKILL",
+        "upstream_status": 200
+      },
+      "http_status": null,
+      "ledger": [],
+      "method": "PROCESS",
+      "n": 10,
+      "request_sha256": null,
+      "response_sha256": null,
+      "target": "SIGKILL worker host process group after committed upstream response"
+    },
+    {
+      "channel": "process_control",
+      "duration_ms": 0,
+      "extracted": {
+        "new_pid": 1224
+      },
+      "http_status": null,
+      "ledger": [],
+      "method": "PROCESS",
+      "n": 11,
+      "request_sha256": null,
+      "response_sha256": null,
+      "target": "start a new worker host"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 44,
+      "extracted": {
+        "replayed": true,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 12,
+      "request_sha256": "6f99f716ba3bdcb4a8ecfc467c89ccaafd14cfdfaaa93a80d2a9894ef8d8cdd7",
+      "response_sha256": "7d4223460735b6d0cb5b375f07ccb1ac37e5a98fd64fae4734de049ad0794425",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "db_observer_readonly",
+      "duration_ms": 2,
+      "extracted": null,
+      "http_status": null,
+      "ledger": [],
+      "method": "SELECT",
+      "n": 13,
+      "request_sha256": "1cf71b527a6a135cd857d62003e90a8ad3057df40befc359ae4dcebc34a0b173",
+      "response_sha256": "8cd664de3db2ebc3a68f6507c3d786addcdaffc9393fea9ce94364129ba27a98",
+      "target": "row count"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 17,
+      "extracted": {
+        "error_code": "IDEMPOTENCY_KEY_CONFLICT",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_intake_submit",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 14,
+      "request_sha256": "dc84b7ec7fc1fc52db564c4233d723f0480f4915983a07ddfec1ed13ed0caa87",
+      "response_sha256": "1df6a3ab4d45815f22d4f720532d182c19bf74db430475b85480266290b72e0d",
+      "target": "/mcp tools/call clued_intake_submit"
+    },
+    {
+      "channel": "worker_rest",
+      "duration_ms": 85,
+      "extracted": {
+        "replayed": false,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "auth_user",
+          "status": 200
+        },
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_user_record_mutate",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 15,
+      "request_sha256": "719f182fb43fd50f19d63fc9f7848e4ec788860a3efc402f403c4ecbeb724042",
+      "response_sha256": "33580964fec6d2ac6df1304e3098b84438ef78dd4ceb2b3fa55a07cfe2aaa6b7",
+      "target": "/v1/records"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 26,
+      "extracted": {},
+      "http_status": "network_error:UND_ERR_SOCKET",
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_knowledge_propose",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 16,
+      "request_sha256": "27e44bb58641506b86f2e73a59ff51f4540ea7a65bb10e02547ceac10e7c1c8e",
+      "response_sha256": null,
+      "target": "/mcp tools/call clued_knowledge_propose"
+    },
+    {
+      "channel": "process_control",
+      "duration_ms": 0,
+      "extracted": {
+        "killed_pgid": 1224,
+        "killed_pid": 1224,
+        "path_class": "rpc:clued_knowledge_propose",
+        "signal": "SIGKILL",
+        "upstream_status": 200
+      },
+      "http_status": null,
+      "ledger": [],
+      "method": "PROCESS",
+      "n": 17,
+      "request_sha256": null,
+      "response_sha256": null,
+      "target": "SIGKILL worker host process group after committed upstream response"
+    },
+    {
+      "channel": "process_control",
+      "duration_ms": 0,
+      "extracted": {
+        "new_pid": 1250
+      },
+      "http_status": null,
+      "ledger": [],
+      "method": "PROCESS",
+      "n": 18,
+      "request_sha256": null,
+      "response_sha256": null,
+      "target": "start a new worker host"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 44,
+      "extracted": {
+        "replayed": true,
+        "status": "committed"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_knowledge_propose",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 19,
+      "request_sha256": "97da48707c29564ed6b6c679c1444fc4831e0c169536c3f9a1ff05c141afbc5a",
+      "response_sha256": "108ae83117e1d334f1fd27f35068448bba6786d0a6a32dfcef0a1eed2eed43b3",
+      "target": "/mcp tools/call clued_knowledge_propose"
+    },
+    {
+      "channel": "db_observer_readonly",
+      "duration_ms": 3,
+      "extracted": null,
+      "http_status": null,
+      "ledger": [],
+      "method": "SELECT",
+      "n": 20,
+      "request_sha256": "21919d87635f1afd8c876b93816cc1409a4413721521b34c2f180d9c4ec6664e",
+      "response_sha256": "8cd664de3db2ebc3a68f6507c3d786addcdaffc9393fea9ce94364129ba27a98",
+      "target": "row count"
+    },
+    {
+      "channel": "worker_mcp",
+      "duration_ms": 17,
+      "extracted": {
+        "error_code": "IDEMPOTENCY_KEY_CONFLICT",
+        "status": "rejected"
+      },
+      "http_status": 200,
+      "ledger": [
+        {
+          "allowed": true,
+          "path_class": "rpc:clued_knowledge_propose",
+          "status": 200
+        }
+      ],
+      "method": "POST",
+      "n": 21,
+      "request_sha256": "f93a8ad95a852c0f08ffadba35aa9d669449725a1a5fee7db5234dc177b4869f",
+      "response_sha256": "9ce9b74ad1c892d6af5a8235ee3f448649fa2dc343740f893b0fed4510fa4ce7",
+      "target": "/mcp tools/call clued_knowledge_propose"
+    }
+  ]
+}

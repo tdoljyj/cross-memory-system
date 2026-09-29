@@ -8,6 +8,9 @@ on:
       - 'apps/clued-cloud/app/**'
       - 'apps/clued-cloud/vite.config.ts'
       - 'apps/clued-cloud/supabase/migrations/**'
+      - 'apps/clued-cloud/tests/information-flow-*.test.mjs'
+      - 'development/contracts/information-flow/vendored/**'
+      - 'scripts/phase2-qualification/minimum-context-compiler/**'
       - 'apps/clued-cloud/tests/*authorization*.test.mjs'
       - 'apps/clued-cloud/tests/delegated-oauth-transport.test.mjs'
       - 'apps/clued-cloud/tests/development-context-api.test.mjs'
@@ -19,6 +22,17 @@ on:
       - 'apps/clued-cloud/tests/context-v2-*.test.mjs'
       - 'apps/clued-cloud/tests/currentness-*.test.mjs'
       - 'apps/clued-cloud/tests/projection-refresh-*.test.mjs'
+      - 'apps/clued-cloud/tests/record-update-field-merge-db.test.mjs'
+      - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'
+      - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'
+      - 'apps/clued-cloud/tests/resource-center-*.test.mjs'
+      - 'kernel/host/resource-center-*.mjs'
+      - 'kernel/host/resource-center-*.py'
+      - 'apps/clued-cloud/scripts/*resource-center*.mjs'
+      - 'kernel/policy/resource-center-*.mjs'
+      - 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql'
+      - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'
+      - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'
       - 'apps/clued-cloud/package*.json'
   push:
     branches: [main]
@@ -28,6 +42,9 @@ on:
       - 'apps/clued-cloud/app/**'
       - 'apps/clued-cloud/vite.config.ts'
       - 'apps/clued-cloud/supabase/migrations/**'
+      - 'apps/clued-cloud/tests/information-flow-*.test.mjs'
+      - 'development/contracts/information-flow/vendored/**'
+      - 'scripts/phase2-qualification/minimum-context-compiler/**'
       - 'apps/clued-cloud/tests/*authorization*.test.mjs'
       - 'apps/clued-cloud/tests/delegated-oauth-transport.test.mjs'
       - 'apps/clued-cloud/tests/development-context-api.test.mjs'
@@ -39,14 +56,101 @@ on:
       - 'apps/clued-cloud/tests/context-v2-*.test.mjs'
       - 'apps/clued-cloud/tests/currentness-*.test.mjs'
       - 'apps/clued-cloud/tests/projection-refresh-*.test.mjs'
+      - 'apps/clued-cloud/tests/record-update-field-merge-db.test.mjs'
+      - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'
+      - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'
+      - 'apps/clued-cloud/tests/resource-center-*.test.mjs'
+      - 'kernel/host/resource-center-*.mjs'
+      - 'kernel/host/resource-center-*.py'
+      - 'apps/clued-cloud/scripts/*resource-center*.mjs'
+      - 'kernel/policy/resource-center-*.mjs'
+      - 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql'
+      - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'
+      - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'
       - 'apps/clued-cloud/package*.json'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  isolated-candidate:
+  isolated-candidate-trusted-self-hosted:
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'push' &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner)
+    name: >-
+      ${{ ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
+             (github.event_name == 'push' && github.actor == github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository &&
+              github.actor == github.repository_owner))
+          && 'isolated-candidate' || 'isolated-candidate-self-hosted-skipped' }}
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.19.0
+          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below.
+      - run: npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline
+      - name: Hydrate embedded PostgreSQL bundled library symlinks
+        # --ignore-scripts skips the platform package's postinstall, which links the
+        # bundled libpq.so.5 and libicu*.so.60 that the binaries load via $ORIGIN/../lib.
+        working-directory: apps/clued-cloud/node_modules/@embedded-postgres/linux-x64
+        run: |
+          node scripts/hydrate-symlinks.js
+          ./native/bin/initdb --version
+          ./native/bin/postgres --version
+      - run: npm run typecheck
+      - run: npm run test:authorization:transport
+      - run: npm run test:authorization:database
+      - run: npm run test:context:v2
+      - run: npm run test:projection:refresh
+      - run: npm run test:information-flow:candidates
+      - run: npm run test:information-flow:intake
+      - run: npm run test:information-flow:promotion
+      - run: npm run test:information-flow:context
+      - run: npm run test:information-flow:invalidation
+      - run: npm run test:information-flow:hardening
+      - run: npm run test:records:db
+      - run: npm run test:integration-runtime:db
+      - run: npm run test:authorization:invitations
+      - run: npm run test:authorization:migrations
+      - run: npm run test:resource-center:authority
+      - run: npm run test:authorization:integration
+      - run: npm run test:authorization:pages
+
+  isolated-candidate-untrusted-hosted:
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       github.actor != github.repository_owner) ||
+      (github.event_name == 'push' &&
+       github.actor != github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       (github.event.pull_request.head.repo.full_name != github.repository ||
+        github.actor != github.repository_owner))
+    name: >-
+      ${{ ((github.event_name == 'workflow_dispatch' && github.actor != github.repository_owner) ||
+             (github.event_name == 'push' && github.actor != github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              (github.event.pull_request.head.repo.full_name != github.repository ||
+               github.actor != github.repository_owner)))
+          && 'isolated-candidate' || 'isolated-candidate-hosted-skipped' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     defaults:
@@ -54,6 +158,8 @@ jobs:
         working-directory: apps/clued-cloud
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24.19.0
@@ -70,7 +176,16 @@ jobs:
       - run: npm run test:authorization:database
       - run: npm run test:context:v2
       - run: npm run test:projection:refresh
+      - run: npm run test:information-flow:candidates
+      - run: npm run test:information-flow:intake
+      - run: npm run test:information-flow:promotion
+      - run: npm run test:information-flow:context
+      - run: npm run test:information-flow:invalidation
+      - run: npm run test:information-flow:hardening
+      - run: npm run test:records:db
+      - run: npm run test:integration-runtime:db
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
+      - run: npm run test:resource-center:authority
       - run: npm run test:authorization:integration
       - run: npm run test:authorization:pages

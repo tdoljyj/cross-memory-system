@@ -37,7 +37,8 @@ The inventory currently declares two active physical hosts:
 ```text
 company-primary / DESK-W-591
 ├─ clued-ci-company-win-01
-└─ clued-ci-company-linux-01
+├─ clued-ci-company-linux-01
+└─ clued-ci-company-linux-02   (additional Linux slot)
    capacity: workstation-v1
 
 home-primary / Turing
@@ -47,6 +48,32 @@ home-primary / Turing
 ```
 
 Runtime online/busy state is intentionally **not** stored in Git. The inventory records desired identity and capabilities; GitHub remains the runtime status surface.
+
+## Low-cost CI health monitor
+
+`.github/workflows/clued-ci-health.yml` checks the pool once an hour on a small GitHub-hosted runner (hourly bounds the hosted-minute cost). The hosted runner is deliberate: a monitor scheduled on the pool it watches could not report a total pool outage. `.github/workflows/clued-ci-runner-heartbeat.yml` separately sends a no-checkout, exact-label route probe to each of the five declared runners every 15 minutes (company Linux slots route by their own `runner-company-linux-NN` label). A successful probe proves that the named runner can accept its complete required-label contract. The healthy path is entirely deterministic and never invokes a model.
+
+The default path needs no extra secret. GitHub's workflow token can read workflow/job state but cannot list repository runner registrations, so the monitor falls back to the four exact-label heartbeat routes. If a deliberately scoped `CI_HEALTH_GITHUB_TOKEN` secret with repository Administration read access is later supplied, the same script also uses the direct runner API for registered name, OS, labels, online, and busy state. The secretless heartbeat path remains the default and treats inability to call the administrative endpoint as an observation-mode choice, not as an anomaly.
+
+The monitor preserves the current alert thresholds:
+
+- all four active inventory routes retain their exact required labels; with the optional read token, registered name and OS drift are checked directly as well;
+- Windows and Linux capability-pool degradation is inferred from routability and queue delay; with the optional read token, current online/busy state is added and a single offline redundant runner is recorded without becoming a pool failure;
+- startup delay must exceed five minutes at least twice in the same capability pool during the 24-hour lookback before it becomes an anomaly.
+
+Startup latency is evaluated by the deterministic hourly schedule. Each scheduled run reads at most the 20 most recent general workflow runs plus the 20 most recent heartbeat runs and applies the two-occurrence rule; pull-request validation does not scan job history. Previously observed slow starts are carried forward from the machine-owned transport report until they leave the 24-hour window, so a busy repository cannot evict threshold evidence merely by creating newer runs. An exact runner route becomes unavailable only after two probes for that route each exceed five minutes. GitHub exposes `workflow_job` as a webhook event but not as a GitHub Actions workflow trigger, so the schedule plus repository-local heartbeat is the smallest secretless transport that covers every workflow and all four exact routes without external infrastructure.
+
+Threshold-reaching anomalies are published to the dedicated draft PR head `automation/clued-ci-health-event`, with title `[Clued CI Health] anomaly event transport` and labels `ci-health-anomaly-event` plus `do-not-merge`. Its body carries a prominent `DO NOT MERGE` warning. The evidence lives at `.github/ci-health-events/latest.json`. Identical anomaly fingerprints are a no-op; recovery closes the PR; a later anomaly reopens it and restores the warning and labels. Retiring the transport means closing the PR and deleting its branch without merging. Transport commits use `[skip ci]` so the alert path does not add load to the unhealthy pool.
+
+For ChatGPT Work, bootstrap the dedicated anomaly PR first, then create an event-triggered task on the web or supported mobile app. Restrict its GitHub trigger to this repository, the exact anomaly PR, title, and label, and select **commit updates only**. The saved prompt must re-read the structured evidence, verify the exact head branch, and require `status=ANOMALY` plus `notify_model=true` before analysis. Ordinary PR activity, reviews, comments, merges, transport closure/recovery, and unchanged fingerprints must not enter analysis.
+
+After saving the Work task, run the transport once with `--force-event` to publish a single commit update for an already-open current anomaly. This is only a bootstrap/replay control; normal scheduled runs omit it and retain fingerprint deduplication.
+
+The Scheduled Task UI can explicitly choose a model and reasoning effort when those choices are available to the account/workspace. Select `gpt-6-luna` with low reasoning if the Work task offers it, then verify the saved task. This repository cannot set or verify that ChatGPT-side choice, so do not claim the model is fixed unless the saved task actually shows it.
+
+An explicit OpenAI API fallback is included but disabled by default. Set repository variable `CLUED_CI_HEALTH_ANALYSIS_MODE=openai_api` and add an `OPENAI_API_KEY` secret only after deliberately choosing API billing. That path calls `gpt-6-luna` with low reasoning, and it still runs only for `notify_model=true`. The repository does not create, infer, or require an API key for the default ChatGPT Work transport.
+
+Do not leave the ChatGPT Work path active when deliberately switching to `openai_api`; one anomaly should have one analysis owner.
 
 
 ## Current qualification status
@@ -281,6 +308,22 @@ The rendered watchdog is intentionally conservative:
 - suspends Linux CI only after the current Linux job is idle and host memory/disk crosses the profile's danger threshold;
 - resumes Linux CI after the profile's recovery threshold is satisfied;
 - never changes GitHub Secrets, production deployment authority, DNS, database state, or production traffic.
+
+## Add a Linux slot on an existing host
+
+A host with spare WSL capacity can run more than one Linux runner in the same distro. Each extra slot is declared under the host's `additional_linux_runners` with its own `name`, `root`, `service_unit` and a `route_label` of the form `runner-<site>-linux-NN`; it shares the primary runner's `distro`, `user`, watchdog and Docker engine. While its `state` is `enrolling`, the health monitor treats it as known but not required and the watchdog leaves it alone.
+
+Jobs that bind fixed host ports (`public-mcp-protocol` and `public-mcp-behavior` share port 8787 and the default local Supabase ports) take the host-wide `host-port-lock.sh ... public-mcp-ports` lock, so two slots on one host never run them at the same time. Other Linux jobs use free or run-isolated ports and run in parallel.
+
+Enroll the slot inside the host's WSL distro as the runner user, using a fresh registration token from GitHub → Settings → Actions → Runners → New self-hosted runner:
+
+```bash
+bash scripts/ci/self-hosted/bootstrap-linux-runner.sh --site company \
+  --name clued-ci-company-linux-02 --root "$HOME/actions-runner-02" \
+  --extra-labels runner-company-linux-02
+```
+
+Then, in one change: set the slot's `state` to `active`, give the primary runner on the same host its own `route_label` (add that label to the primary runner in GitHub's runner settings first), add both route labels to the heartbeat matrix, and re-render the host watchdog with `render-host-watchdog.ps1 -HostId <host>` so it also supervises the new service.
 
 ## Add a third or fourth device
 

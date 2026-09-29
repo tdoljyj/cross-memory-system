@@ -1,0 +1,231 @@
+name: Information Flow M0-D E2E
+
+# Contract development/contracts/information-flow/M0DCloseout.v0.1.md section 7
+# and gates M0D-B06..B08. Runs the S6 harness over the real local Worker
+# (workerd via Miniflare) and the full local Supabase stack (Kong, PostgREST,
+# GoTrue, PostgreSQL with the full migration chain). Local qualification only:
+# no production access, no deploy, no model or provider calls. The evidence is
+# uploaded as a CI artifact for the reproducibility cross-check; committed
+# evidence comes from the reviewed local run.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/information-flow-e2e.yml
+      - apps/clued-cloud/supabase/migrations/**
+      - apps/clued-cloud/worker/**
+      - apps/clued-cloud/evals/information-flow-e2e/**
+      - apps/clued-cloud/evals/public-mcp/worker.ts
+      - apps/clued-cloud/tests/information-flow-*.test.mjs
+      - development/contracts/information-flow/**
+      - apps/clued-cloud/package.json
+      - apps/clued-cloud/package-lock.json
+  pull_request:
+    paths:
+      - .github/workflows/information-flow-e2e.yml
+      - apps/clued-cloud/supabase/migrations/**
+      - apps/clued-cloud/worker/**
+      - apps/clued-cloud/evals/information-flow-e2e/**
+      - apps/clued-cloud/evals/public-mcp/worker.ts
+      - apps/clued-cloud/tests/information-flow-*.test.mjs
+      - development/contracts/information-flow/**
+      - apps/clued-cloud/package.json
+      - apps/clued-cloud/package-lock.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-trusted-self-hosted:
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'push' &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner)
+    name: Information Flow E2E over the local Worker and Supabase stack
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+          # Self-hosted runners keep a persistent ~/.npm; no Actions npm cache.
+
+      - name: Install application dependencies
+        run: npm ci --cache "$HOME/.npm" --prefer-offline
+
+      - name: Isolate local Supabase ports
+        env:
+          CLUED_IFE2E_RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          run_id = int(os.environ['CLUED_IFE2E_RUN_ID'])
+          port_base = 45000 + (run_id % 1000) * 10
+          config = Path('supabase/config.toml')
+          source = config.read_text(encoding='utf-8')
+          project = 'project_id = "clued-cloud"'
+          if source.count(project) != 1:
+              raise RuntimeError('Unexpected Supabase project ID')
+          source = source.replace(project, f'project_id = "clued-ife2e-{run_id}"')
+          source, count = re.subn(
+              r'(?m)^([ \t]*(?:port|shadow_port)[ \t]*=[ \t]*)5432([0-9])$',
+              lambda match: match.group(1) + str(port_base + int(match.group(2))),
+              source,
+          )
+          if count != 7:
+              raise RuntimeError(f'Expected seven Supabase ports, found {count}')
+          config.write_text(source, encoding='utf-8')
+          print(f'IF E2E Supabase project and ports isolated for run {run_id}')
+          PY
+
+      - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)
+        run: npx --yes supabase@2.115.0 start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      - name: Deny loopback proxy ports to the harness isolation guard
+        run: |
+          # Any loopback HTTP(S) proxy port is refused by the guard; "none" when
+          # the runner has no loopback proxy (IFE2E_DENY_PORTS is recorded in run.json).
+          ports=$(python3 - <<'PY'
+          import os, urllib.parse
+          out = set()
+          for name in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'):
+              value = os.environ.get(name)
+              if not value:
+                  continue
+              url = urllib.parse.urlparse(value if '://' in value else 'http://' + value)
+              if url.hostname in ('127.0.0.1', 'localhost', '::1') and url.port:
+                  out.add(str(url.port))
+          print(','.join(sorted(out)) or 'none')
+          PY
+          )
+          echo "IFE2E_DENY_PORTS=$ports" >> "$GITHUB_ENV"
+
+      - name: Run the Information Flow E2E harness
+        run: npm run test:information-flow:e2e -- --evidence-dir "$RUNNER_TEMP/ife2e"
+
+      - name: Recompute normalized evidence digests
+        if: always()
+        run: npm run information-flow:e2e:verify -- --dir "$RUNNER_TEMP/ife2e"
+
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: information-flow-e2e-evidence
+          path: ${{ runner.temp }}/ife2e
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Capture safe failure diagnostics
+        if: failure()
+        run: |
+          docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+          docker system df
+
+      - name: Stop the local Supabase stack
+        if: always()
+        run: npx --yes supabase@2.115.0 stop --no-backup
+
+  e2e-untrusted-hosted:
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       github.actor != github.repository_owner) ||
+      (github.event_name == 'push' &&
+       github.actor != github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       (github.event.pull_request.head.repo.full_name != github.repository ||
+        github.actor != github.repository_owner))
+    name: Information Flow E2E over the local Worker and Supabase stack (hosted)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: apps/clued-cloud/package-lock.json
+
+      - name: Install application dependencies
+        run: npm ci
+
+      - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)
+        run: npx --yes supabase@2.115.0 start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      - name: Deny loopback proxy ports to the harness isolation guard
+        run: |
+          # Any loopback HTTP(S) proxy port is refused by the guard; "none" when
+          # the runner has no loopback proxy (IFE2E_DENY_PORTS is recorded in run.json).
+          ports=$(python3 - <<'PY'
+          import os, urllib.parse
+          out = set()
+          for name in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'):
+              value = os.environ.get(name)
+              if not value:
+                  continue
+              url = urllib.parse.urlparse(value if '://' in value else 'http://' + value)
+              if url.hostname in ('127.0.0.1', 'localhost', '::1') and url.port:
+                  out.add(str(url.port))
+          print(','.join(sorted(out)) or 'none')
+          PY
+          )
+          echo "IFE2E_DENY_PORTS=$ports" >> "$GITHUB_ENV"
+
+      - name: Run the Information Flow E2E harness
+        run: npm run test:information-flow:e2e -- --evidence-dir "$RUNNER_TEMP/ife2e"
+
+      - name: Recompute normalized evidence digests
+        if: always()
+        run: npm run information-flow:e2e:verify -- --dir "$RUNNER_TEMP/ife2e"
+
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: information-flow-e2e-evidence
+          path: ${{ runner.temp }}/ife2e
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Capture safe failure diagnostics
+        if: failure()
+        run: |
+          docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+          docker system df
+
+      - name: Stop the local Supabase stack
+        if: always()
+        run: npx --yes supabase@2.115.0 stop --no-backup

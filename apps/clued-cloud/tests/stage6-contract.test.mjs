@@ -37,23 +37,57 @@ test("agent contract makes stable ids and one transactional write explicit", asy
   assert.match(contract, /missing capability or failed admission remains unavailable/);
   assert.match(contract, /Active Event truth carriers are separate current sources/);
   assert.match(contract, /never recover current actions from old Markdown/);
+  assert.match(contract, /Governed external workspace mutations/);
+  assert.match(contract, /NO SIBLING ISLAND/);
+  assert.match(contract, /Byte equality is not deletion authority/);
+  assert.match(contract, /If the Host has no usable preflight path, mutation is unavailable/);
+  assert.match(contract, /Host-owned trusted configuration/);
+  assert.match(contract, /short-lived, single-use, unforgeable within that Host instance/);
+  assert.match(contract, /not a bearer capability/);
+  assert.match(contract, /shared guarded mutation wrapper/);
+  assert.match(contract, /reject a missing, forged, expired, already-consumed, cross-Host or binding-mismatched admission/);
+  assert.match(contract, /normal scans never call a model/);
+  assert.match(contract, /side-effect function zero times/);
 });
 
 test("repository Skill, project rules and root snapshot share the v1.6 authority boundary", async () => {
-  const [skill, agents, rootAgents, manifestText] = await Promise.all([
+  const [skill, contract, agents, rootAgents, manifestText] = await Promise.all([
     readFile(new URL("../../../skills/clued/SKILL.md", import.meta.url), "utf8"),
+    readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8"),
     readFile(new URL("../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../../../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../../../memory/manifest.json", import.meta.url), "utf8"),
   ]);
   const manifest = JSON.parse(manifestText);
   assert.match(skill, /authenticated Clued service/);
-  assert.match(skill, /no local business-memory copies or Markdown reverse writes/);
-  assert.match(agents, /only online Canonical Store/);
-  assert.match(agents, /Never dual-write Markdown/);
+  assert.match(contract, /only online Canonical Store/);
+  assert.match(contract, /never dual-write Markdown/);
+  assert.match(contract, /read-only, versioned export/);
+  for (const text of [skill, agents, rootAgents]) {
+    assert.match(text, /agent-contract\.md/);
+  }
   assert.match(rootAgents, /clued_record_mutate/);
   assert.equal(manifest.baseline_claim, "current");
   assert.equal(manifest.source_verification, "live_rechecked");
   assert.equal(manifest.views_complete, true);
   assert.equal(manifest.status, "ready");
+});
+
+test("the Worker serves the single agent contract and advertises capture", async () => {
+  const worker = await loadWorker();
+  const [source, response, bootstrap] = await Promise.all([
+    readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8"),
+    worker.fetch(new Request("https://clued.test/clued-agent.md"), baseEnv, ctx),
+    worker.fetch(new Request("https://clued.test/v1/continuity/bootstrap"), baseEnv, ctx),
+  ]);
+  const served = await response.text();
+  assert.ok(served.startsWith(source), "served contract must be the source file verbatim");
+  assert.match(served, /## 3\. Capture/);
+  const { renderAgentContractModule } = await import("../scripts/generate-agent-contract.mjs");
+  const generated = await readFile(new URL("../worker/generated/agent-contract.ts", import.meta.url), "utf8");
+  assert.equal(generated, await renderAgentContractModule(), "run node scripts/generate-agent-contract.mjs");
+  const lifecycle = (await bootstrap.json()).lifecycle;
+  assert.equal(lifecycle.contract.version, 3);
+  assert.equal(lifecycle.contract.url, "https://clued.test/clued-agent.md");
+  assert.equal(lifecycle.durable_changes.capture, "material_outcomes_in_same_turn_before_reporting");
 });

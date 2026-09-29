@@ -1,0 +1,66 @@
+name: clued-ci-runner-heartbeat
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clued-ci-runner-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  windows-route:
+    name: runner-heartbeat / ${{ matrix.runner_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner_name: clued-ci-company-win-01
+            site_label: site-company
+          - runner_name: clued-ci-home-win-01
+            site_label: site-home
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312, "${{ matrix.site_label }}"]
+    timeout-minutes: 10
+    steps:
+      - name: Verify exact runner route
+        shell: powershell
+        env:
+          EXPECTED_RUNNER_NAME: ${{ matrix.runner_name }}
+        run: |
+          if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER_NAME) {
+            throw "Expected $env:EXPECTED_RUNNER_NAME but routed to $env:RUNNER_NAME"
+          }
+          Write-Output "Runner route verified: $env:RUNNER_NAME"
+
+  linux-route:
+    name: runner-heartbeat / ${{ matrix.runner_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # site-company matches both company Linux slots, so company routes use
+          # each runner's own route label; home has a single Linux runner.
+          - runner_name: clued-ci-company-linux-01
+            route_label: runner-company-linux-01
+          - runner_name: clued-ci-company-linux-02
+            route_label: runner-company-linux-02
+          - runner_name: clued-ci-home-linux-01
+            route_label: site-home
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, runtime-wsl2, "${{ matrix.route_label }}"]
+    timeout-minutes: 10
+    steps:
+      - name: Verify exact runner route
+        shell: bash
+        env:
+          EXPECTED_RUNNER_NAME: ${{ matrix.runner_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_NAME" != "$EXPECTED_RUNNER_NAME" ]]; then
+            echo "Expected $EXPECTED_RUNNER_NAME but routed to $RUNNER_NAME" >&2
+            exit 1
+          fi
+          echo "Runner route verified: $RUNNER_NAME"

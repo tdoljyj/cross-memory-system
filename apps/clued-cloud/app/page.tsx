@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { type Session } from "@supabase/supabase-js";
 import { supabase, restoreBrowserSession } from "./supabase-browser";
 import Link from "next/link";
@@ -31,10 +31,8 @@ type IssuedBinding = { token: string; mcpUrl: string; binding: Binding };
 type Project = {
   id: string;
   name: string;
-  certainty_status: "unconfirmed" | "confirmed";
   progress_status: "not_started" | "active" | "paused" | "completed" | "archived";
   summary: string | null;
-  confidence: number;
   version: number;
   updated_at: string;
 };
@@ -42,7 +40,7 @@ type RecordView = "state" | "task" | "decision" | "archive" | "log";
 type RecordLevel = "global" | "project";
 type RecordListState = {
   key: string;
-  epoch: number;
+  selectionToken: object | null;
   status: "idle" | "loading" | "ready" | "unknown" | "error";
   records: CluedRecord[];
 };
@@ -143,16 +141,13 @@ const copy = {
     bindingError: "Clued could not update AI connections. The continuity database may still need its migration.",
     continuityProtocol: "Automatic protocol: restore → work events → checkpoint",
     projectsTitle: "Projects",
-    projectsCopy: "A mention starts as unconfirmed. Explicit intent or real work promotes the same project without losing its history.",
+    projectsCopy: "Once Clued recognizes an item as a Project, it is created here. Recognition confidence stays in private evidence; work progress remains independent.",
     newProject: "Project name",
-    newProjectPlaceholder: "Mention or add a project",
-    addUnconfirmed: "Add as unconfirmed",
+    newProjectPlaceholder: "Add a project",
+    addProject: "Create project",
     addingProject: "Adding…",
-    unconfirmedProjects: "Unconfirmed projects",
-    confirmedProjects: "Confirmed projects",
-    noUnconfirmedProjects: "No unconfirmed projects.",
-    noConfirmedProjects: "No confirmed projects.",
-    confirmProject: "Confirm",
+    projectList: "Your projects",
+    noProjects: "No projects yet.",
     archiveProject: "Archive",
     projectError: "The project change was not confirmed. Your input is kept; please try again.",
     progressNotStarted: "Not started",
@@ -164,7 +159,7 @@ const copy = {
     workViewsCopy: "Read global priority first, then project State, Tasks and Decisions. Log and Archive are evidence on demand; every view keeps the same canonical ID.",
     globalLevel: "Global",
     projectLevel: "Project",
-    chooseProject: "Choose a confirmed project",
+    chooseProject: "Choose a project",
     stateView: "State",
     taskView: "Tasks",
     decisionView: "Decisions",
@@ -285,16 +280,13 @@ const copy = {
     bindingError: "Clued 暂时无法更新 AI 连接；连续性数据库迁移可能尚未生效。",
     continuityProtocol: "自动协议：恢复 → 工作事件 → 检查点",
     projectsTitle: "项目",
-    projectsCopy: "提到项目时先进入未确定；明确意图或开始实质工作后，原项目会直接晋级，历史不会丢失。",
+    projectsCopy: "Clued 识别为项目后会直接在这里创建；识别置信度只保留在后台证据中，工作进度独立管理。",
     newProject: "项目名称",
-    newProjectPlaceholder: "提到或添加一个项目",
-    addUnconfirmed: "加入未确定项目",
+    newProjectPlaceholder: "添加一个项目",
+    addProject: "创建项目",
     addingProject: "正在添加…",
-    unconfirmedProjects: "未确定项目",
-    confirmedProjects: "已确定项目",
-    noUnconfirmedProjects: "暂无未确定项目。",
-    noConfirmedProjects: "暂无已确定项目。",
-    confirmProject: "确定",
+    projectList: "你的项目",
+    noProjects: "暂无项目。",
     archiveProject: "归档",
     projectError: "项目变更尚未确认，已保留输入，请重试。",
     progressNotStarted: "未开始",
@@ -306,7 +298,7 @@ const copy = {
     workViewsCopy: "先读全局优先级，再读项目状态、任务和决策；日志与归档仅按需作证据，每个视图保留同一个 canonical ID。",
     globalLevel: "全局",
     projectLevel: "项目",
-    chooseProject: "选择一个已确定项目",
+    chooseProject: "选择一个项目",
     stateView: "状态",
     taskView: "任务",
     decisionView: "决策",
@@ -425,17 +417,15 @@ export default function Home() {
   const [recordView, setRecordView] = useState<RecordView>("state");
   const [recordLevel, setRecordLevel] = useState<RecordLevel>("global");
   const [recordProjectId, setRecordProjectId] = useState("");
-  const [recordList, setRecordList] = useState<RecordListState>({ key: "", epoch: 0, status: "idle", records: [] });
+  const [recordList, setRecordList] = useState<RecordListState>({ key: "", selectionToken: null, status: "idle", records: [] });
   const [recordTitle, setRecordTitle] = useState("");
   const [recordContent, setRecordContent] = useState("");
   const [recordBusy, setRecordBusy] = useState(false);
   const [recordError, setRecordError] = useState(false);
   const recordSelectionKey = JSON.stringify([session?.user.id, session?.access_token, view, recordsEnabled,
     recordLevel, recordProjectId, recordView]);
-  const recordSelection = useRef(recordSelectionKey);
-  const recordSelectionEpoch = useRef(0);
-  if (recordSelection.current !== recordSelectionKey) ++recordSelectionEpoch.current;
-  recordSelection.current = recordSelectionKey;
+  const recordSelectionToken = useMemo(() => ({ key: recordSelectionKey }), [recordSelectionKey]);
+  const activeRecordSelection = useRef(recordSelectionToken);
   const recordReadGeneration = useRef(0);
   const recordCreateKey = JSON.stringify([session?.user.id, recordLevel, recordProjectId, recordView,
     recordTitle.trim(), recordContent.trim()]);
@@ -546,12 +536,11 @@ export default function Home() {
     };
   }, [session, view]);
 
-  async function refreshRecordList(key: string, token: string, level: RecordLevel,
-    projectId: string, type: RecordView, signal?: AbortSignal) {
+  async function refreshRecordList(key: string, selectionToken: object, token: string,
+    level: RecordLevel, projectId: string, type: RecordView, signal?: AbortSignal) {
     const generation = ++recordReadGeneration.current;
-    const epoch = recordSelectionEpoch.current;
-    setRecordList({ key, epoch, status: "loading", records: [] });
-    const current = () => recordSelection.current === key && recordSelectionEpoch.current === epoch
+    setRecordList({ key, selectionToken, status: "loading", records: [] });
+    const current = () => activeRecordSelection.current === selectionToken
       && recordReadGeneration.current === generation && !signal?.aborted;
     const query = new URLSearchParams({ level, record_type: type });
     if (level === "project") query.set("project_id", projectId);
@@ -565,24 +554,29 @@ export default function Home() {
       if (!Array.isArray(result.records)) throw new Error("invalid-record-list");
       if (!current()) return;
       const unknown = result.current_projection_unavailable === true || result.projection_rebuild_required === true;
-      setRecordList({ key, epoch, status: unknown ? "unknown" : "ready", records: unknown ? [] : result.records });
+      setRecordList({ key, selectionToken, status: unknown ? "unknown" : "ready", records: unknown ? [] : result.records });
     } catch {
-      if (current()) setRecordList({ key, epoch, status: "error", records: [] });
+      if (current()) setRecordList({ key, selectionToken, status: "error", records: [] });
     }
   }
 
   useEffect(function loadRecordView() {
-    setRecordError(false);
-    setRecordBusy(false);
-    if (!session || view !== "account" || !recordsEnabled || (recordLevel === "project" && !recordProjectId)) {
-      ++recordReadGeneration.current;
-      setRecordList({ key: recordSelectionKey, epoch: recordSelectionEpoch.current, status: "idle", records: [] });
-      return;
-    }
+    activeRecordSelection.current = recordSelectionToken;
     const controller = new AbortController();
-    void refreshRecordList(recordSelectionKey, session.access_token, recordLevel, recordProjectId, recordView, controller.signal);
-    return () => { controller.abort(); };
-  }, [recordSelectionKey]);
+    const timer = window.setTimeout(() => {
+      if (activeRecordSelection.current !== recordSelectionToken) return;
+      setRecordError(false);
+      setRecordBusy(false);
+      if (!session || view !== "account" || !recordsEnabled || (recordLevel === "project" && !recordProjectId)) {
+        ++recordReadGeneration.current;
+        setRecordList({ key: recordSelectionKey, selectionToken: recordSelectionToken, status: "idle", records: [] });
+        return;
+      }
+      void refreshRecordList(recordSelectionKey, recordSelectionToken, session.access_token,
+        recordLevel, recordProjectId, recordView, controller.signal);
+    }, 0);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [recordSelectionKey, recordSelectionToken, recordLevel, recordProjectId, recordView, recordsEnabled, session, view]);
 
   function resetNotices() {
     setError("");
@@ -740,10 +734,16 @@ export default function Home() {
         name,
         body: JSON.stringify({
           operation: "create",
-          project_schema_version: 1,
+          project_schema_version: 2,
           base_version: null,
           idempotency_key: crypto.randomUUID(),
-          mutation: { name, certainty_status: "unconfirmed", progress_status: "paused", aliases: [] },
+          mutation: { name, progress_status: "not_started", aliases: [] },
+          recognition: {
+            confidence: 1,
+            reason: "The account owner explicitly created this Project.",
+            source: "v2_explicit_create",
+            source_refs: [],
+          },
         }),
       };
     }
@@ -792,7 +792,7 @@ export default function Home() {
     }
   }
 
-  async function updateProject(project: Project, action: "confirm" | "set_progress" | "archive", extra: Record<string, unknown> = {}) {
+  async function updateProject(project: Project, action: "set_progress" | "archive", extra: Record<string, unknown> = {}) {
     if (!session) return;
     setProjectBusy(true);
     setProjectError(false);
@@ -800,11 +800,7 @@ export default function Home() {
       const terminal = project.progress_status === "completed" || project.progress_status === "archived";
       let operation: "update" | "complete" | "archive" | "restore";
       const mutation: Record<string, unknown> = {};
-      if (action === "confirm") {
-        if (terminal) throw new Error("project-restore-required");
-        operation = "update";
-        mutation.certainty_status = "confirmed";
-      } else if (action === "archive") {
+      if (action === "archive") {
         operation = "archive";
       } else {
         const progress = extra.progress_status;
@@ -816,7 +812,7 @@ export default function Home() {
           operation = "complete";
         } else if (progress === "archived") {
           operation = "archive";
-        } else if (progress === "active" || progress === "paused") {
+        } else if (progress === "not_started" || progress === "active" || progress === "paused") {
           operation = "update";
           mutation.progress_status = progress;
         } else {
@@ -831,7 +827,7 @@ export default function Home() {
         },
         body: JSON.stringify({
           operation,
-          project_schema_version: 1,
+          project_schema_version: 2,
           base_version: project.version,
           idempotency_key: crypto.randomUUID(),
           mutation,
@@ -857,12 +853,12 @@ export default function Home() {
     if (recordLevel === "project" && !recordProjectId) return;
     if (!recordTitle.trim() || !recordContent.trim()) return;
     const submissionKey = recordSelectionKey;
-    const submissionEpoch = recordSelectionEpoch.current;
-    const current = () => recordSelection.current === submissionKey && recordSelectionEpoch.current === submissionEpoch;
+    const submissionToken = recordSelectionToken;
+    const current = () => activeRecordSelection.current === submissionToken;
     setRecordBusy(true);
     setRecordError(false);
     ++recordReadGeneration.current;
-    setRecordList({ key: submissionKey, epoch: submissionEpoch, status: "loading", records: [] });
+    setRecordList({ key: submissionKey, selectionToken: submissionToken, status: "loading", records: [] });
     const idempotencyKey = crypto.randomUUID();
     const input: Record<string, unknown> = {
       operation: "create",
@@ -907,11 +903,11 @@ export default function Home() {
       pendingRecordCreate.current = null;
       setRecordTitle("");
       setRecordContent("");
-      await refreshRecordList(submissionKey, session.access_token, recordLevel, recordProjectId, recordView);
+      await refreshRecordList(submissionKey, submissionToken, session.access_token, recordLevel, recordProjectId, recordView);
     } catch {
       if (current()) {
         setRecordError(true);
-        setRecordList({ key: submissionKey, epoch: submissionEpoch, status: "error", records: [] });
+        setRecordList({ key: submissionKey, selectionToken: submissionToken, status: "error", records: [] });
       }
     } finally {
       if (current()) setRecordBusy(false);
@@ -925,10 +921,8 @@ export default function Home() {
     completed: t.progressCompleted,
     archived: t.progressArchived,
   };
-  const unconfirmedProjects = projects.filter((project) => project.certainty_status === "unconfirmed");
-  const confirmedProjects = projects.filter((project) => project.certainty_status === "confirmed");
   const recordStatus = !session || view !== "account" || !recordsEnabled || (recordLevel === "project" && !recordProjectId)
-    ? "idle" : recordList.key === recordSelectionKey && recordList.epoch === recordSelectionEpoch.current ? recordList.status : "loading";
+    ? "idle" : recordList.key === recordSelectionKey && recordList.selectionToken === recordSelectionToken ? recordList.status : "loading";
   const visibleRecords = recordStatus === "ready" ? recordList.records : [];
   const recordViewLabels: Record<RecordView, string> = {
     state: t.stateView,
@@ -1136,29 +1130,20 @@ export default function Home() {
                     />
                   </label>
                   <button className="primary-button" type="submit" disabled={projectBusy}>
-                    {projectBusy ? t.addingProject : t.addUnconfirmed}
+                    {projectBusy ? t.addingProject : t.addProject}
                   </button>
                 </form>
                 {projectError && <p className="notice error">{t.projectError}</p>}
                 <div className="project-columns">
-                  {([
-                    ["unconfirmed", t.unconfirmedProjects, t.noUnconfirmedProjects, unconfirmedProjects],
-                    ["confirmed", t.confirmedProjects, t.noConfirmedProjects, confirmedProjects],
-                  ] as const).map(([certainty, title, empty, items]) => (
-                    <section className="project-group" key={certainty}>
-                      <h4>{title}<span>{items.length}</span></h4>
-                      {items.length === 0 ? <p className="empty-bindings">{empty}</p> : items.map((project) => (
+                  <section className="project-group">
+                      <h4>{t.projectList}<span>{projects.length}</span></h4>
+                      {projects.length === 0 ? <p className="empty-bindings">{t.noProjects}</p> : projects.map((project) => (
                         <article className="project-item" key={project.id}>
                           <div>
                             <strong>{project.name}</strong>
                             <span>{projectProgressLabels[project.progress_status]}</span>
                           </div>
                           <div className="project-actions">
-                            {certainty === "unconfirmed" && ["active", "paused"].includes(project.progress_status) && (
-                              <button type="button" onClick={() => updateProject(project, "confirm")} disabled={projectBusy}>
-                                {t.confirmProject}
-                              </button>
-                            )}
                             <select
                               aria-label={`${project.name} progress`}
                               value={project.progress_status}
@@ -1166,9 +1151,8 @@ export default function Home() {
                               disabled={projectBusy}
                             >
                               {Object.entries(projectProgressLabels)
-                                .filter(([value]) => value !== "not_started" || value === project.progress_status)
                                 .filter(([value]) => !["completed", "archived"].includes(project.progress_status) || value === "active" || value === project.progress_status)
-                                .map(([value, label]) => <option value={value} key={value} disabled={value === "not_started"}>{label}</option>)}
+                                .map(([value, label]) => <option value={value} key={value}>{label}</option>)}
                             </select>
                             {project.progress_status !== "archived" && <button type="button" onClick={() => updateProject(project, "archive")} disabled={projectBusy}>
                               {t.archiveProject}
@@ -1177,7 +1161,6 @@ export default function Home() {
                         </article>
                       ))}
                     </section>
-                  ))}
                 </div>
               </div>
               {recordsEnabled && (
@@ -1208,7 +1191,7 @@ export default function Home() {
                       onChange={(event) => setRecordProjectId(event.target.value)}
                     >
                       <option value="">{t.chooseProject}</option>
-                      {confirmedProjects.map((project) => (
+                      {projects.map((project) => (
                         <option value={project.id} key={project.id}>{project.name}</option>
                       ))}
                     </select>

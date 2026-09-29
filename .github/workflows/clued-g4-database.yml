@@ -51,9 +51,15 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.19.0
-          cache: npm
-          cache-dependency-path: apps/clued-cloud/package-lock.json
+          node-version: 24.19.0
+          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below;
+          # restoring the ~860 MB Actions cache on top of it only adds download time.
+
+      - name: Install application dependencies
+        run: npm ci --cache "$HOME/.npm" --prefer-offline
+
+      - name: Build the application surfaces used by lifecycle tests
+        run: npm run build
 
       - name: Isolate local Supabase ports
         env:
@@ -95,6 +101,9 @@ jobs:
       - name: Run Unified Record V2 RLS and transaction tests
         run: npm run db:test:m1
 
+      - name: Run Project Lifecycle Successor v2 database and surface tests
+        run: npm run test:project:lifecycle:v2
+
       - name: Capture safe failure diagnostics
         if: failure()
         run: |
@@ -103,7 +112,19 @@ jobs:
 
       - name: Stop isolated Supabase runtime
         if: always()
-        run: npx --yes supabase@2.115.0 stop --no-backup
+        run: |
+          # The CLI may return nonzero while pruning unrelated containers on
+          # this persistent runner. The gate still requires this run's isolated
+          # runtime to be stopped; Docker errors must not be mistaken for clean.
+          npx --yes supabase@2.115.0 stop --no-backup || stop_status=$?
+          running=$(docker ps --format '{{.Names}}') || exit 1
+          if grep -Eq '^supabase_.*_clued-g4-${{ github.run_id }}$' <<< "$running"; then
+            echo '::error::Isolated Supabase containers remain running'
+            exit 1
+          fi
+          if [ "${stop_status:-0}" -ne 0 ]; then
+            echo '::warning::Supabase global prune failed after this run stopped'
+          fi
 
   database-gate-untrusted-hosted:
     if: >-
@@ -130,9 +151,15 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.19.0
+          node-version: 24.19.0
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
+
+      - name: Install application dependencies
+        run: npm ci
+
+      - name: Build the application surfaces used by lifecycle tests
+        run: npm run build
 
       - name: Start isolated Supabase runtime
         run: npm run db:start
@@ -145,6 +172,9 @@ jobs:
 
       - name: Run Unified Record V2 RLS and transaction tests
         run: npm run db:test:m1
+
+      - name: Run Project Lifecycle Successor v2 database and surface tests
+        run: npm run test:project:lifecycle:v2
 
       - name: Capture safe failure diagnostics
         if: failure()

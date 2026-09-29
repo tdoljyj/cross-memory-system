@@ -12,6 +12,7 @@ PROFILE_PATH = BASE / "node-profiles.json"
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 WIN_NAME = re.compile(r"^clued-ci-(home|company|other)-win-[0-9]{2}$")
 LINUX_NAME = re.compile(r"^clued-ci-(home|company|other)-linux-[0-9]{2}$")
+ROUTE_LABEL = re.compile(r"^runner-(home|company|other)-(win|linux)-[0-9]{2}$")
 
 def fail(errors: list[str], message: str) -> None:
     errors.append(message)
@@ -57,6 +58,7 @@ def main() -> int:
     host_ids: set[str] = set()
     hostnames: set[str] = set()
     runner_names: set[str] = set()
+    route_labels: set[str] = set()
     for host in data.get("hosts", []):
         host_id = host.get("host_id", "")
         hostname = host.get("hostname", "")
@@ -76,10 +78,40 @@ def main() -> int:
         if capacity not in capacity_profiles:
             fail(errors, f"{host_id}: unknown capacity profile {capacity}")
 
-        for kind, regex in (("windows_runner", WIN_NAME), ("linux_runner", LINUX_NAME)):
-            runner = host.get(kind)
+        additional = host.get("additional_linux_runners", [])
+        if not isinstance(additional, list):
+            fail(errors, f"{host_id}: additional_linux_runners must be a list")
+            additional = []
+        if additional and not host.get("linux_runner"):
+            fail(errors, f"{host_id}: additional_linux_runners require a primary linux_runner")
+        primary_linux = host.get("linux_runner") or {}
+        entries = [(kind, regex, host.get(kind)) for kind, regex in (("windows_runner", WIN_NAME), ("linux_runner", LINUX_NAME))]
+        entries += [(f"additional_linux_runners[{index}]", LINUX_NAME, runner) for index, runner in enumerate(additional)]
+        for kind, regex, runner in entries:
             if not runner:
                 continue
+            if kind.startswith("additional_linux_runners"):
+                # Extra slots share the primary WSL distro, user and watchdog.
+                for key in ("distro", "user"):
+                    if runner.get(key) != primary_linux.get(key):
+                        fail(errors, f"{host_id}/{kind}: {key} must match the primary linux_runner")
+                for key in ("root", "service_unit"):
+                    if not runner.get(key) or runner.get(key) == primary_linux.get(key):
+                        fail(errors, f"{host_id}/{kind}: {key} must be set and distinct from the primary linux_runner")
+                if runner.get("manage_native_docker"):
+                    fail(errors, f"{host_id}/{kind}: only the primary linux_runner may manage native Docker")
+            runner_state = runner.get("state", state)
+            if runner_state not in lifecycle_states:
+                fail(errors, f"{host_id}/{kind}: invalid lifecycle state {runner_state}")
+            route_label = runner.get("route_label")
+            if route_label is not None:
+                if not isinstance(route_label, str) or not ROUTE_LABEL.fullmatch(route_label):
+                    fail(errors, f"{host_id}/{kind}: non-canonical route_label {route_label}")
+                elif route_label in route_labels:
+                    fail(errors, f"duplicate route_label: {route_label}")
+                elif route_label.removeprefix("runner-") != runner.get("name", "").removeprefix("clued-ci-"):
+                    fail(errors, f"{host_id}/{kind}: route_label must name its own runner")
+                route_labels.add(route_label)
             name = runner.get("name", "")
             profile_name = runner.get("profile", "")
             profile = runner_profiles.get(profile_name)

@@ -57,6 +57,8 @@ test("implements MCP initialization and continuity tool discovery", async () => 
   assert.equal(initialized.result.serverInfo.name, "Clued Continuity");
   assert.equal(initialized.result.protocolVersion, "2026-07-28");
   assert.equal(initialized.result.serverInfo.version, "0.4.0");
+  assert.match(initialized.result.instructions, /https:\/\/clued\.test\/clued-agent\.md/);
+  assert.match(initialized.result.instructions, /in the same turn, before reporting it done/);
 
   const list = await worker.fetch(
     new Request("https://clued.test/mcp", {
@@ -79,6 +81,9 @@ test("implements MCP initialization and continuity tool discovery", async () => 
       "clued_projection_rebuild",
       "clued_full_global_reconcile",
       "clued_currentness_g6_gate",
+      "clued_mtpe_snapshot",
+      "clued_mtpe_validate",
+      "clued_mtpe_owner_pin",
       "clued_session_checkpoint",
       "clued_search_context",
       "clued_read_log",
@@ -311,6 +316,54 @@ test("forwards MCP calls as token-hash RPCs", async () => {
     assert.equal(response.status, 200);
     const result = await response.json();
     assert.equal(result.result.structuredContent.version, 7);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("reports authority capture separately from currentness on resume and reconcile", async () => {
+  const worker = await loadWorker();
+  const originalFetch = globalThis.fetch;
+  const rpcResults = {
+    clued_mcp_restore: { status: "restored", version: 7, session_compliance: { state: "active" } },
+    clued_mcp_session_reconcile: { status: "current", currentness_state: "CURRENT", admission_eligible: true },
+    clued_mcp_search_context: { status: "ok", results: [] },
+  };
+  globalThis.fetch = async (input) => {
+    const rpc = String(input).match(/\/rest\/v1\/rpc\/([a-z0-9_]+)$/)?.[1];
+    assert.ok(rpc in rpcResults, `unexpected RPC ${rpc}`);
+    return Response.json(rpcResults[rpc]);
+  };
+  const call = async (name, args) => {
+    const response = await worker.fetch(
+      new Request("https://clued.test/mcp", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer clued_bnd_${"a".repeat(43)}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name, arguments: args } }),
+      }),
+      env,
+      ctx,
+    );
+    assert.equal(response.status, 200);
+    return (await response.json()).result.structuredContent;
+  };
+  const expected = {
+    state: "unknown",
+    basis: "server_observes_only_writes_that_reached_clued",
+    independent_of: "currentness",
+  };
+
+  try {
+    const resumed = await call("clued_session_resume", { context_key: "global" });
+    assert.deepEqual(resumed.authority_capture_completeness, expected);
+    const reconciled = await call("clued_session_reconcile", { session_token: "clued_ses_x", context_key: "global" });
+    assert.equal(reconciled.currentness_state, "CURRENT");
+    assert.deepEqual(reconciled.authority_capture_completeness, expected);
+    const searched = await call("clued_search_context", { query: "x" });
+    assert.equal("authority_capture_completeness" in searched, false);
   } finally {
     globalThis.fetch = originalFetch;
   }

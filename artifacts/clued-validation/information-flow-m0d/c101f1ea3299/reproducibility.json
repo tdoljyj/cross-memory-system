@@ -1,0 +1,271 @@
+{
+  "code_tree_equal": true,
+  "committed_run": {
+    "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+    "db_system_identifier": "7689002206797361190",
+    "input_commit": "6fb2a98ec4e36bb2cddeb501f8bbfa22f28ab4df",
+    "run_flags": {
+      "deny_ports": "44697",
+      "evidence_dir": "<evidence dir>",
+      "only": null,
+      "skip_reset": false,
+      "tier": "T1",
+      "ttl_wait_ms_override": null
+    }
+  },
+  "cross_check_run": {
+    "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+    "committed": "per-row digests only (this file); the raw second run is not committed",
+    "db_system_identifier": "7689004369289240614",
+    "input_commit": "6fb2a98ec4e36bb2cddeb501f8bbfa22f28ab4df",
+    "run_flags": {
+      "deny_ports": "44697",
+      "evidence_dir": "<evidence dir>",
+      "only": null,
+      "skip_reset": false,
+      "tier": "T1",
+      "ttl_wait_ms_override": null
+    }
+  },
+  "differing": [],
+  "distinct_databases": true,
+  "generated_by": "apps/clued-cloud/evals/information-flow-e2e/reproducibility.mjs",
+  "normalization": {
+    "arrays": "sorted by canonical form after normalization",
+    "byte_integrity": "SHA256SUMS over every evidence file (the seal)",
+    "drops": [
+      "steps[].ledger",
+      "steps[].request_sha256",
+      "steps[].response_sha256",
+      "steps[].duration_ms",
+      "assertions[].text",
+      "assertions[].observed",
+      "notes",
+      "aliases (used only to name ids)",
+      "environment",
+      "code_binding"
+    ],
+    "keeps": [
+      "scenario_id",
+      "steps[].n",
+      "steps[].channel",
+      "steps[].method",
+      "steps[].target (template)",
+      "steps[].http_status (network errors collapsed)",
+      "steps[].extracted",
+      "assertions[].id",
+      "assertions[].expected",
+      "assertions[].pass",
+      "result"
+    ],
+    "replaces": [
+      "aliased uuids -> <alias>",
+      "other uuids -> <uuid>",
+      "64-hex -> <hex64>",
+      "32-hex -> <hex32>",
+      "ISO timestamps -> <ts>",
+      "PostgreSQL system identifiers",
+      "volatile keys (pids, ports, durations, event ids)"
+    ]
+  },
+  "result": "REPRODUCED",
+  "rule": "equal normalized digests for every row at the same code tree (raw bodies differ per run)",
+  "scenarios": {
+    "E2E-01": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "10416e6e699cc0369f4792a16f70c421a3c9bbcb759bca44471330de2e044b98",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "10416e6e699cc0369f4792a16f70c421a3c9bbcb759bca44471330de2e044b98",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-02": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "c909f7c2da473d5bb222df1ada6dba77303a7a2db3b0065300e1f387f45fd738",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "c909f7c2da473d5bb222df1ada6dba77303a7a2db3b0065300e1f387f45fd738",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-03": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "0422122d92ea2a0177c0f0957fc0880c70db10e19a69b8c5e1f73a7b03883823",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "0422122d92ea2a0177c0f0957fc0880c70db10e19a69b8c5e1f73a7b03883823",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-04": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "5d9428bd3c6fee08200c8ecc81e2ecf32cc96d84c992bfd0cbb3b358c34bd5d8",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "5d9428bd3c6fee08200c8ecc81e2ecf32cc96d84c992bfd0cbb3b358c34bd5d8",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-05": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "0a975ee44cdfc1970499ce9eda5178b9ef2d083c3fabf62dee1d23261bff2bf5",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "0a975ee44cdfc1970499ce9eda5178b9ef2d083c3fabf62dee1d23261bff2bf5",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-06": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "b0651054e89c82eb1fb9b32265fae8b8723437b40c9d622b3bb11f8392b25e11",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "b0651054e89c82eb1fb9b32265fae8b8723437b40c9d622b3bb11f8392b25e11",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-07": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "5a2bd05418995ffd67b81b5b0a02aff753b25aaed0e3da21bd15576a40767737",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "5a2bd05418995ffd67b81b5b0a02aff753b25aaed0e3da21bd15576a40767737",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-08": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "f304cfa1cccd5ed6c8e4a87fb22cd9d0745180948e7cdc0346e9070b1054352a",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "f304cfa1cccd5ed6c8e4a87fb22cd9d0745180948e7cdc0346e9070b1054352a",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-09": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "86ac48c57ddf77b69ce1a72477c4e48b4850bd5ccbe59c52fd69ffbb3599e9de",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "86ac48c57ddf77b69ce1a72477c4e48b4850bd5ccbe59c52fd69ffbb3599e9de",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-10": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "0192fed0eac56e9815d32017e427c991e8b9f327f7ba282c428c3e4e59f15c4f",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "0192fed0eac56e9815d32017e427c991e8b9f327f7ba282c428c3e4e59f15c4f",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-11": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "371edb8483aedcaac2c69c10284723b7dca8b698079b74f7d727e310b3577d59",
+        "result": "OBSERVED"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "371edb8483aedcaac2c69c10284723b7dca8b698079b74f7d727e310b3577d59",
+        "result": "OBSERVED"
+      },
+      "equal": true
+    },
+    "E2E-12": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "702665c3ed467642390d1636c6d3e6dc522b562829d6ad3c94f13ea1db013341",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "702665c3ed467642390d1636c6d3e6dc522b562829d6ad3c94f13ea1db013341",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-13": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "9d294851705b7ac720ffe02dd9374b7a470c3c82f17710468405099c336dbba9",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "9d294851705b7ac720ffe02dd9374b7a470c3c82f17710468405099c336dbba9",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-14": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "a72b009d6b7b0d3b136fafdbddbe94c86f8eb8ec882db1512b6051047f717e23",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "a72b009d6b7b0d3b136fafdbddbe94c86f8eb8ec882db1512b6051047f717e23",
+        "result": "PASS"
+      },
+      "equal": true
+    },
+    "E2E-15": {
+      "committed_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "6fcf465f401f8ef0aaca491978fae1b69adac4b3a97bffe81bb493d77081fcfa",
+        "result": "PASS"
+      },
+      "cross_check_run": {
+        "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+        "digest": "6fcf465f401f8ef0aaca491978fae1b69adac4b3a97bffe81bb493d77081fcfa",
+        "result": "PASS"
+      },
+      "equal": true
+    }
+  },
+  "schema": "clued.information-flow.m0d.reproducibility/2"
+}

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.22.0"
   },
   "scripts": {
     "install:ci": "bash scripts/install-ci.sh",
@@ -12,7 +12,18 @@
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run build && node --test tests/*.test.mjs",
     "test:context:v2": "node --test --test-force-exit tests/context-v2-terminal-restore-db.test.mjs tests/context-v2-legacy-continuity-manifest.test.mjs tests/currentness-retained-all.test.mjs tests/currentness-transport.test.mjs tests/home-record-currentness.test.mjs tests/user-memory-bundle.test.mjs tests/continuity.test.mjs tests/stage6-contract.test.mjs",
-    "test:projection:refresh": "node --test --test-force-exit tests/projection-refresh-pipeline-db.test.mjs tests/projection-refresh-transport.test.mjs",
+    "test:projection:refresh": "node --test --test-force-exit tests/projection-refresh-pipeline-db.test.mjs tests/global-scope-projection-invalidation-db.test.mjs tests/projection-refresh-transport.test.mjs tests/projection-watchdog.test.mjs",
+    "test:project:lifecycle:v2": "node --test --test-force-exit tests/project-lifecycle-successor-v2-db.test.mjs tests/project-api.test.mjs tests/home-project-create.test.mjs tests/rendered-html.test.mjs tests/user-memory-bundle.test.mjs tests/two-level-snapshot.test.mjs",
+    "test:production:release-gate": "node --test tests/production-release-gate.test.mjs",
+    "test:information-flow:candidates": "node --test --test-force-exit tests/information-flow-candidate-store-db.test.mjs",
+    "test:information-flow:intake": "node --test --test-force-exit tests/information-flow-intake-transport-db.test.mjs tests/information-flow-transport.test.mjs",
+    "test:information-flow:promotion": "node --test --test-force-exit tests/information-flow-promotion-db.test.mjs tests/information-flow-transport.test.mjs",
+    "test:information-flow:context": "node --test --test-force-exit tests/information-flow-context-db.test.mjs tests/information-flow-context-pack.test.mjs tests/information-flow-transport.test.mjs",
+    "test:information-flow:invalidation": "node --test --test-force-exit tests/information-flow-invalidation-db.test.mjs tests/information-flow-transport.test.mjs",
+    "test:information-flow:hardening": "node --test --test-force-exit tests/information-flow-token-hardening-db.test.mjs",
+    "test:records:db": "node --test --test-force-exit tests/record-update-field-merge-db.test.mjs tests/event-continuity-manifest-db.test.mjs tests/search-context-cross-scope-db.test.mjs tests/currentness-record-fence-db.test.mjs",
+    "test:integration-runtime:db": "node --test --test-force-exit tests/integration-runtime-derivation-db.test.mjs",
+    "test:mtpe:intake": "node --test --test-force-exit tests/mtpe-universal-intake-db.test.mjs tests/mtpe-frontier-eligibility-v2-db.test.mjs tests/mtpe-frontier-eligibility-v2-1-db.test.mjs tests/mtpe-universal-intake-transport.test.mjs",
     "test:v2:red": "node --test tests/v2-red/*.test.mjs",
     "db:start": "npx --yes supabase@2.115.0 start",
     "db:reset": "npx --yes supabase@2.115.0 db reset --local --no-seed",
@@ -55,21 +66,27 @@
     "test:authorization:transport": "node --test tests/delegated-oauth-transport.test.mjs tests/development-context-api.test.mjs tests/mcp-authorization-errors.test.mjs",
     "test:authorization:database": "node --test --test-force-exit tests/connection-authorization-db.test.mjs tests/authorization-closeout.test.mjs tests/project-list-authorization-db.test.mjs tests/checkpoint-idempotency-db.test.mjs tests/checkpoint-replay-receipt-db.test.mjs tests/k-cont-db.test.mjs tests/priority-projection-db.test.mjs",
     "test:authorization:migrations": "node --test --test-force-exit tests/authorization-migration-chain.test.mjs",
+    "test:resource-center:authority": "node --test --test-force-exit tests/resource-center-*.test.mjs",
     "test:authorization:integration": "node --test --test-force-exit tests/authorization-end-to-end.test.mjs",
-    "test:authorization:pages": "node --test tests/consent-account-race.test.mjs tests/project-invitations-ui.test.mjs tests/supabase-browser.test.mjs tests/development-contexts-ui.test.mjs tests/home-project-create.test.mjs",
-    "test:authorization:invitations": "node --test --test-force-exit tests/project-invitations-db.test.mjs"
+    "test:authorization:pages": "node --test tests/consent-account-race.test.mjs tests/project-invitations-ui.test.mjs tests/supabase-browser.test.mjs tests/development-contexts-ui.test.mjs tests/context-policy-ui.test.mjs tests/home-project-create.test.mjs",
+    "test:authorization:invitations": "node --test --test-force-exit tests/project-invitations-db.test.mjs",
+    "test:information-flow:e2e": "node --require ./evals/information-flow-e2e/isolation-guard.cjs evals/information-flow-e2e/run.mjs",
+    "information-flow:e2e:verify": "node evals/information-flow-e2e/verify-evidence.mjs"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.10.3",
     "@supabase/supabase-js": "^2.112.3",
     "drizzle-orm": "0.45.2",
+    "js-tiktoken": "1.0.21",
     "next": "16.3.3",
+    "pg": "8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.53.1",
     "@cloudflare/workers-types": "5.20260823.1",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@modelcontextprotocol/inspector": "2.4.0",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
@@ -79,9 +96,9 @@
     "@vitejs/plugin-rsc": "0.5.34",
     "drizzle-kit": "0.31.10",
     "embedded-postgres": "18.4.0-beta.17",
+    "esbuild": "0.28.1",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
-    "pg": "8.23.0",
     "promptfoo": "0.122.2",
     "react-server-dom-webpack": "19.2.8",
     "tailwindcss": "4.2.1",
@@ -89,6 +106,11 @@
     "vinext": "1.0.0-beta.8",
     "vite": "8.2.2",
     "wrangler": "4.125.0"
+  },
+  "overrides": {
+    "mongodb": {
+      "gcp-metadata": "^9.0.3"
+    }
   },
   "type": "module",
   "displayName": "Clued"

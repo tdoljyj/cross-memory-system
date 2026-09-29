@@ -17,9 +17,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const SNAPSHOT_CONTRACT = "clued.two-level-five-view.snapshot";
-export const SNAPSHOT_SCHEMA_VERSION = 5;
+export const SNAPSHOT_SCHEMA_VERSION = 6;
+export const SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS = new Set([5, 6]);
 export const INDEX_SCHEMA_VERSION = 1;
-export const GENERATOR_VERSION = "1.6.0";
+export const GENERATOR_VERSION = "1.7.0";
 export const DEFAULT_EXPORT_POLICY_VERSION = "clued-m0-offline-v1";
 export const SNAPSHOT_PUBLICATION_LOCK_POLICY = Object.freeze({
   stale_lock_seconds: 900,
@@ -172,16 +173,30 @@ function recordIsCanonical(record) {
   );
 }
 
-function projectIsCanonical(project) {
-  return Boolean(
+function projectIsCanonical(project, sourceSchemaVersion) {
+  const common = Boolean(
     project &&
     typeof project.canonical_project_id === "string" &&
-    Number.isInteger(project.project_schema_version) && project.project_schema_version > 0 &&
     Number.isInteger(project.version) && project.version > 0 &&
-    ["unconfirmed", "confirmed"].includes(project.certainty_status) &&
-    ["active", "paused", "completed", "archived"].includes(project.progress_status) &&
+    ["not_started", "active", "paused", "completed", "archived"].includes(project.progress_status) &&
     ["active", "merged"].includes(project.lifecycle_status),
   );
+  if (!common) return false;
+  if (sourceSchemaVersion === 1) {
+    return project.project_schema_version === 1 && project.certainty_status === "confirmed";
+  }
+  return project.project_schema_version === 2 && !("certainty_status" in project) &&
+    !("confirmed_at" in project) && !("confidence" in project);
+}
+
+function projectForV2Snapshot(project) {
+  if (project.project_schema_version === 2) return structuredClone(project);
+  const successor = structuredClone(project);
+  delete successor.certainty_status;
+  delete successor.confirmed_at;
+  delete successor.confidence;
+  successor.project_schema_version = 2;
+  return successor;
 }
 
 function eventIsCanonical(event) {
@@ -326,13 +341,13 @@ export async function readLegacyMemorySource({ memoryDirectory, canonicalVersion
 }
 
 function validateSource(source) {
-  if (!source || source.schema_version !== 1) throw new Error("Unsupported source snapshot schema.");
+  if (!source || ![1, 2].includes(source.schema_version)) throw new Error("Unsupported source snapshot schema.");
   if (typeof source.canonical_version !== "string" || !source.canonical_version) throw new Error("source.canonical_version is required.");
   if (!['live_rechecked', 'bundle_only'].includes(source.source_verification)) throw new Error("Invalid source_verification.");
   if (source.source_verification === "live_rechecked" && source.views_complete !== true) {
     throw new Error("A live-rechecked current source must have views_complete=true.");
   }
-  for (const project of source.projects ?? []) if (!projectIsCanonical(project)) throw new Error("Source contains a non-canonical Project outside a legacy envelope.");
+  for (const project of source.projects ?? []) if (!projectIsCanonical(project, source.schema_version)) throw new Error("Source contains a non-canonical Project outside a legacy envelope.");
   for (const record of source.records ?? []) if (!recordIsCanonical(record)) throw new Error("Source contains a non-canonical Record outside a legacy envelope.");
   for (const event of source.events ?? []) if (!eventIsCanonical(event)) throw new Error("Source contains a non-canonical Event outside a legacy envelope.");
   for (const evidence of source.evidence ?? []) if (!evidenceIsCanonical(evidence)) throw new Error("Source contains non-canonical Evidence outside a legacy envelope.");
@@ -344,7 +359,7 @@ function makeSnapshotIdentity({ source, buildEpoch, migrationRunId, generatorVer
     contract: SNAPSHOT_CONTRACT,
     schema_version: SNAPSHOT_SCHEMA_VERSION,
     record_schema: "clued-record-v1.6",
-    project_schema: "clued-project-v1.6",
+    project_schema: "clued-project-v2",
     event_schema: "clued-event-v1.6",
     index_schema_version: INDEX_SCHEMA_VERSION,
     event_rollups_enabled: false,
@@ -472,6 +487,8 @@ export async function buildSnapshot({
   const { snapshotVersion, baselineClaim, generatorConfigHash } = makeSnapshotIdentity({
     source, buildEpoch, migrationRunId, generatorVersion, exportPolicyVersion,
   });
+  const canonicalProjects = (source.projects ?? []).map(projectForV2Snapshot);
+  const canonicalSource = { ...source, projects: canonicalProjects };
   const snapshotRoot = path.resolve(outputDirectory);
   const memoryRoot = path.resolve(snapshotRoot, "memory");
   if (await exists(snapshotRoot)) throw new Error(`Snapshot output already exists: ${snapshotRoot}`);
@@ -485,15 +502,15 @@ export async function buildSnapshot({
   const receiptRefs = new Set(source.referenced_receipts ?? []);
 
   try {
-    for (const project of [...(source.projects ?? [])].sort((a, b) => a.canonical_project_id.localeCompare(b.canonical_project_id))) {
+    for (const project of [...canonicalProjects].sort((a, b) => a.canonical_project_id.localeCompare(b.canonical_project_id))) {
       const id = project.canonical_project_id;
       const relative = `objects/projects/${safeOpaquePath(id)}.json`;
       await writeJson(memoryRoot, relative, envelope("project", snapshotVersion, id, source.canonical_version, project));
-      byId[id] = { path: relative, kind: "project", storage_scope: null, effective_scope: `project:${resolveProject(source.projects, id).finalId}`, lifecycle_status: project.lifecycle_status, final_target_id: resolveProject(source.projects, id).finalId, view_refs: [] };
+      byId[id] = { path: relative, kind: "project", storage_scope: null, effective_scope: `project:${resolveProject(canonicalProjects, id).finalId}`, lifecycle_status: project.lifecycle_status, final_target_id: resolveProject(canonicalProjects, id).finalId, view_refs: [] };
       destinationMap.push({ source_kind: "project", source_id: id, destination: relative, disposition: "canonical_object" });
       if (project.receipt_id) receiptRefs.add(project.receipt_id);
       if (project.lifecycle_status === "merged") {
-        const resolved = resolveProject(source.projects, id);
+        const resolved = resolveProject(canonicalProjects, id);
         if (Array.isArray(project.redirect_path) && project.redirect_path.length > 0 && project.redirect_path.every((segment) => segment.merge_receipt_id && segment.source_committed_version && segment.target_committed_version)) {
           const redirectRelative = `projects/${safeOpaquePath(id)}/redirect.json`;
           const redirect = envelope("project_redirect", snapshotVersion, id, source.canonical_version, {
@@ -517,7 +534,7 @@ export async function buildSnapshot({
       const relative = `objects/records/${safeOpaquePath(record.id)}.json`;
       await writeJson(memoryRoot, relative, envelope("record", snapshotVersion, record.id, source.canonical_version, record));
       const storedProject = recordScopeProjectId(record.scope);
-      const effectiveProject = storedProject ? resolveProject(source.projects ?? [], storedProject).finalId : null;
+      const effectiveProject = storedProject ? resolveProject(canonicalProjects, storedProject).finalId : null;
       const effectiveScope = effectiveProject ? `project:${effectiveProject}` : record.scope;
       byId[record.id] = { path: relative, kind: "record", storage_scope: record.scope, effective_scope: effectiveScope, lifecycle_status: record.lifecycle_status, final_target_id: record.merged_into ?? null, view_refs: [] };
       byScope.storage_scope[record.scope] ??= [];
@@ -623,7 +640,7 @@ export async function buildSnapshot({
       destinationMap.push({ source_kind: "legacy_evidence", source_id: item.legacy_id, destination: metadataRelative, disposition: item.omitted_reason ? "omitted_stub" : "preserved" });
     }
 
-    await renderViews(memoryRoot, source, snapshotVersion, pending.length);
+    await renderViews(memoryRoot, canonicalSource, snapshotVersion, pending.length);
     for (const section of Object.values(byScope)) {
       if (Array.isArray(section)) section.sort();
       else for (const ids of Object.values(section)) ids.sort();
@@ -728,7 +745,7 @@ export async function validateSnapshot(snapshotDirectory) {
   const memoryRoot = path.resolve(snapshotRoot, "memory");
   const manifestPath = path.resolve(memoryRoot, "manifest.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  if (manifest.schema_version !== SNAPSHOT_SCHEMA_VERSION || manifest.contract !== SNAPSHOT_CONTRACT) throw new Error("Unsupported snapshot contract.");
+  if (!SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS.has(manifest.schema_version) || manifest.contract !== SNAPSHOT_CONTRACT) throw new Error("Unsupported snapshot contract.");
   if (manifest.status !== "ready" || manifest.views_stale !== false) throw new Error("Only a ready, non-stale snapshot is valid.");
   if (manifest.index?.path !== "index.json" || manifest.index?.schema_version !== INDEX_SCHEMA_VERSION) throw new Error("Snapshot must contain one canonical index.json.");
   if (manifest.event_rollups_enabled !== false || manifest.snapshot_counts?.event_rollups !== 0) throw new Error("M0 cannot claim Event Rollups.");

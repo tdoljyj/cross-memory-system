@@ -1,0 +1,280 @@
+{
+  "schema": "clued.information-flow.m0d.closeout-manifest/1",
+  "not_mvp0_closure": true,
+  "input_commit": "d26ae970f8ba249e0b870cb78d3f567f5233dcd1",
+  "code_tree": "c101f1ea3299d33f06d7fd33025de9c858b481e0",
+  "contract": {
+    "path": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+    "sha256": "5c6371cf22b078cbd1fb0f61f3f6eb20b51a162a28e8942f04b81561bbb8c9ff",
+    "freeze_decision": "825aa822",
+    "od_decision": "ef229e68-bff5-4dca-9b7f-159a08096748"
+  },
+  "parents": {
+    "transport_zip_sha256": {
+      "m0a": "677f9df89e38567d4bc94475169297ffb891991ee54b913af8d450d4e2a50465",
+      "m0b": "bbf8037e7c727c6630e82ce15a72c0082a10ee045fd311477325fd8563bbe08f",
+      "m0c": "06c1eb9414b09e367a96e267cd96dca3d94044ef02ccd9bd59a458ec8dacaed9"
+    },
+    "result": "PASS_WITH_DISCLOSED_NONDETERMINISM"
+  },
+  "part_a": {
+    "M0D-A01": "CONDITIONAL_ON_OWNER_ACCEPTANCE (PASS_WITH_DISCLOSED_NONDETERMINISM)",
+    "M0D-A02": "UNMET_OD-1b",
+    "M0D-A03": "PASS",
+    "M0D-A04": "THIS_MANIFEST"
+  },
+  "a03_seal_check": {
+    "closure_result": "PASS",
+    "register_sha256_at_closure": "731f848303b5eaf7618fc384f293308301ec328ab9fe0d008917eb0040bc28ae",
+    "register_sha256_now": "731f848303b5eaf7618fc384f293308301ec328ab9fe0d008917eb0040bc28ae",
+    "ids_at_closure": [
+      "L01",
+      "L02",
+      "L03",
+      "L04",
+      "L05",
+      "L06",
+      "L07",
+      "L08",
+      "L09",
+      "L10",
+      "L11",
+      "L12",
+      "L13",
+      "L14",
+      "L15",
+      "L16",
+      "L17",
+      "L18",
+      "L19",
+      "L20",
+      "L21",
+      "L22",
+      "L23",
+      "L24",
+      "L25",
+      "L26",
+      "L27",
+      "L28",
+      "L29",
+      "L30",
+      "L31",
+      "L32"
+    ],
+    "ids_now": [
+      "L01",
+      "L02",
+      "L03",
+      "L04",
+      "L05",
+      "L06",
+      "L07",
+      "L08",
+      "L09",
+      "L10",
+      "L11",
+      "L12",
+      "L13",
+      "L14",
+      "L15",
+      "L16",
+      "L17",
+      "L18",
+      "L19",
+      "L20",
+      "L21",
+      "L22",
+      "L23",
+      "L24",
+      "L25",
+      "L26",
+      "L27",
+      "L28",
+      "L29",
+      "L30",
+      "L31",
+      "L32"
+    ],
+    "pass": true
+  },
+  "part_b": {
+    "M0D-B01": {
+      "status": "PASS",
+      "evidence": {
+        "regression.json": "96a378007656cc792ecaea7528ea4c725070b2adc50396a91de02541c24fb140"
+      }
+    },
+    "M0D-B02": {
+      "status": "PASS",
+      "e2e": [
+        [
+          "E2E-06",
+          "PASS"
+        ],
+        [
+          "E2E-07",
+          "PASS"
+        ]
+      ]
+    },
+    "M0D-B03": {
+      "status": "PASS",
+      "e2e": [
+        [
+          "E2E-01",
+          "PASS"
+        ],
+        [
+          "E2E-02",
+          "PASS"
+        ],
+        [
+          "E2E-03",
+          "PASS"
+        ],
+        [
+          "E2E-15",
+          "PASS"
+        ],
+        [
+          "E2E-11",
+          "OBSERVED"
+        ]
+      ]
+    },
+    "M0D-B04": {
+      "status": "PASS",
+      "e2e": [
+        [
+          "E2E-01",
+          "PASS"
+        ],
+        [
+          "E2E-05",
+          "PASS"
+        ],
+        [
+          "E2E-12",
+          "PASS"
+        ],
+        [
+          "E2E-13",
+          "PASS"
+        ],
+        [
+          "E2E-14",
+          "PASS"
+        ]
+      ]
+    },
+    "M0D-B05": {
+      "status": "PASS",
+      "e2e": [
+        [
+          "E2E-03",
+          "PASS"
+        ],
+        [
+          "E2E-04",
+          "PASS"
+        ],
+        [
+          "E2E-05",
+          "PASS"
+        ]
+      ]
+    },
+    "M0D-B06": {
+      "status": "PASS",
+      "e2e": [
+        [
+          "E2E-08",
+          "PASS"
+        ]
+      ]
+    },
+    "M0D-B07": {
+      "status": "PASS_WITH_DISCLOSED_BASELINE",
+      "evidence": {
+        "regression.json": "96a378007656cc792ecaea7528ea4c725070b2adc50396a91de02541c24fb140"
+      }
+    },
+    "M0D-B08": {
+      "status": "PASS_WITH_REFERENCED_EXCEPTION",
+      "qualifier": "Scoped to the S6 qualification runs. The S1 clued-prod apply (PR #307) is a referenced exception: retroactive authorization by Agent-written Decision 7040b127-2a42-4ff6-ba46-060a594a9c1d under OPEN_BY_OD-5, no backup or read-back (register L26, L28).",
+      "e2e": [
+        [
+          "E2E-09",
+          "PASS"
+        ]
+      ],
+      "evidence": {
+        "isolation.json": "ffe232b3856f5a99fc9cdf397b4d957d6f657ceaca8b2765da370478cb131a85",
+        "egress-summary.json": "50cb0a4389cd99e628abf5e7b0f9df28096a034c70aab8978e888cc07b1d8af3"
+      }
+    },
+    "M0D-B09": {
+      "status": "PASS",
+      "evidence": {
+        "b09-review.json": "541a707a955cef5789669a118eb95af76b6bea686c3efbd42895edeb45cf2324"
+      }
+    }
+  },
+  "supporting_db_evidence": {
+    "E2E-02 issue+consume in one transaction": {
+      "suite": "test:information-flow:promotion",
+      "file": "apps/clued-cloud/tests/information-flow-promotion-db.test.mjs",
+      "assertion": "confirmation_token_same_request",
+      "result": "PASS",
+      "output_sha256": "063c327ce56fa6b3f373119ca8adb3946f22ed3c3fca9bc51f20289994bca1e4",
+      "role": "supporting evidence only"
+    }
+  },
+  "review_rounds": [
+    {
+      "file": "b09-review.rounds/01.json",
+      "input_commit": "81c52d44d21fa0d748fa4b557517b67e22f19c10",
+      "verdict": "HOLD_FAIL",
+      "counts": {
+        "blocker": 0,
+        "major": 2,
+        "minor": 7
+      },
+      "sha256": "bb1e3e82d1522bf61422b4c5ba18ff815195d4e301990af1aea60672d785a587"
+    },
+    {
+      "file": "b09-review.rounds/02.json",
+      "input_commit": "224e27804d8fd255e118646c26113c198238061d",
+      "verdict": "HOLD_FAIL",
+      "counts": {
+        "blocker": 1,
+        "major": 0,
+        "minor": 16
+      },
+      "sha256": "cd06ae0c3e3444e745b19e4da077bce0e3395c429f3f3d7c7270644eda5fb0d2"
+    }
+  ],
+  "observations": {
+    "E2E-11": {
+      "result": "OBSERVED",
+      "register_entry": "L01",
+      "limitation_id": "OPEN_BY_OD-5"
+    }
+  },
+  "proposed_verdict_labels": {
+    "part_a": "A01 CONDITIONAL_ON_OWNER_ACCEPTANCE (PASS_WITH_DISCLOSED_NONDETERMINISM), A02 UNMET (OD-1b), A03 PASS, A04 PASS; MVP-0 stays open",
+    "part_b": "CONDITIONAL: PASS / CLUED_INFORMATION_FLOW_M0D_PART_B_RUNTIME_ACCEPTED_MODEL_FREE_LOCAL_QUALIFIED (Agent authority confined only on the Information Flow path) only if the Owner accepts the disclosed A01 nondeterminism; otherwise BLOCKED / CLUED_INFORMATION_FLOW_M0D_GAPS_FOUND",
+    "never_combined": true,
+    "recorded_by": "proposal only; a Canonical verdict Decision needs the Owner (contract header rule); Task 45fb2ae7 stays open"
+  },
+  "does_not_authorize": [
+    "production migration, deployment or release",
+    "Provider/model calls, or any budget",
+    "purchase",
+    "changes to M0-A/B/C bytes",
+    "promotion of real user data during qualification",
+    "changes to the general M1 user_confirmed semantics (OD-5)",
+    "MTPE/Frontier rule or code changes",
+    "entry to Phase 2 Slice A, or claims that P-007/P-008/P-009/P-011 are complete"
+  ]
+}

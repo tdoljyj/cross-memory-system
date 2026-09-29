@@ -10,7 +10,9 @@ This directory is an engineering source tree. Repository source, tests and docum
 - App-specific rules: [`AGENTS.md`](./AGENTS.md)
 - Root architecture/navigation: [`../../README.md`](../../README.md)
 - Currentness/projection implementation note: [`docs/model-program-m0/post-commit-projection-refresh.md`](./docs/model-program-m0/post-commit-projection-refresh.md)
+- Production release sequence and migration-history gate: [`docs/production-release.md`](./docs/production-release.md)
 - Project lifecycle successor: [`../../development/contracts/project-lifecycle/ProjectLifecycleSuccessor.v0.1.md`](../../development/contracts/project-lifecycle/ProjectLifecycleSuccessor.v0.1.md)
+- Project lifecycle production candidate: [`../../development/contracts/project-lifecycle/ProductionMigrationCandidate.v0.1.md`](../../development/contracts/project-lifecycle/ProductionMigrationCandidate.v0.1.md)
 
 ## Runtime authority boundary
 
@@ -51,7 +53,7 @@ Canonical commit
 
 If refresh/reconciliation cannot prove the required source vector and revision, the read path remains fail-closed as `STALE`, `UNKNOWN` or `PROJECTION_REQUIRED`.
 
-The minimal post-commit refresh implementation currently in this repository is documented separately. Its source presence or local test PASS does not mean that its migration, Builder grant or Worker schedule has been deployed.
+The post-commit refresh pipeline was observed in production during the 2026-09-23 incident. Future deployment claims require the release gate and live attestation described in the production release document.
 
 ## Canonical Project contract
 
@@ -59,15 +61,15 @@ The deployed v1 Project schema still contains legacy `certainty_status = unconfi
 
 Do **not** treat that physical compatibility field as the long-term product organization model.
 
-The accepted successor direction is:
+The accepted successor direction is implemented in a reviewable v2 candidate:
 
 - Clued creates a Project when it determines the item is a Project.
 - Recognition confidence/reason remain backend metadata/evidence.
 - Project progress remains separate from recognition.
-- The public/product Project contract will remove certainty as a lifecycle/filter axis through a versioned successor.
+- The v2 public/product Project contract removes certainty as a lifecycle/filter axis.
 - Legacy `unconfirmed` rows require explicit migration disposition; they are not silently bulk-promoted.
 
-See [Project Lifecycle Successor v0.1](../../development/contracts/project-lifecycle/ProjectLifecycleSuccessor.v0.1.md). It is a successor design/implementation boundary, **not a deployed migration**.
+The candidate adds versioned v2 RPCs/views, an immutable private disposition ledger, a read-only production inventory query, Bundle v2 and Snapshot v6. The old v1 RPCs and physical compatibility fields remain only for the bounded rollout/rollback window. See [Project Lifecycle Successor v0.1](../../development/contracts/project-lifecycle/ProjectLifecycleSuccessor.v0.1.md) and the [Production Migration Candidate](../../development/contracts/project-lifecycle/ProductionMigrationCandidate.v0.1.md). Source presence remains **not a deployed migration**.
 
 ## Canonical Records and two-level views
 
@@ -105,7 +107,7 @@ Formal repository readers follow:
 
 and validate the pointed bundle/Manifest according to the repository trust policy. Snapshot `baseline_claim=current` means “current-claimed at its recorded export boundary”; it never replaces online Currentness.
 
-Bundle/import compatibility contracts remain versioned. Historical Bundle v1 semantics are preserved rather than silently rewritten when a successor is introduced.
+Bundle/import compatibility contracts remain versioned. Bundle v2 and Snapshot v6 remove the Project certainty axis; historical Bundle v1 and Snapshot v5 remain readable rather than being rewritten in place.
 
 ## Production Worker vs Sites
 
@@ -117,7 +119,7 @@ ChatGPT/Sites publishing surfaces are separate targets. A successful Sites build
 
 ## Local prerequisites
 
-- Node.js `>=22.13.0`
+- Node.js `>=22.22.0`
 - Docker for local Supabase/database suites
 - Linux/GNU utilities for scripts that explicitly require `bash`, `flock` or `timeout`
 
@@ -183,3 +185,5 @@ Before any production change:
 - obtain separate authority for schema apply, deployment, binding/secret mutation and release.
 
 After deployment, production Currentness/build attestation is a separate verification step. A repository merge alone is not production acceptance.
+
+Use the owner-dispatched `Clued Cloud production release` workflow for the production Worker. It checks the production migration history and both projection currentness fences before deploying, then verifies the exact live commit and currentness again.
