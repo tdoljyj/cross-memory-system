@@ -79,6 +79,11 @@ begin
     or m.id is null or m.state not in ('started','uncertain') or m.version<2
     or m.profile_version<>p.version or m.verified_result_v2 is not null
     or m.provider_attempt is null or m.provider_attempt_receipt_id is null
+    or not exists(select 1 from public.clued_audit_receipts r1
+      where r1.id=m.provider_attempt_receipt_id and r1.user_id=u
+        and r1.status='committed' and r1.operation='storage_provider_attempt'
+        and r1.created_at<=clock_timestamp()-interval '15 seconds'
+        and r1.created_at>clock_timestamp()-interval '10 minutes')
     or m.writer_binding_id is distinct from j.cloud_writer_binding_id
     or m.exact_request->'mutation' is distinct from
       (j.mutation||jsonb_build_object('artifact_role','clued_resource'))

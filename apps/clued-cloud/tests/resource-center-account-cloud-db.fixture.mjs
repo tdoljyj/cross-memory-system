@@ -359,6 +359,12 @@ export async function testAccountCloud(t, admin, server, user, decision) {
         assert.equal(scheduledDescriptor.status,"recovery_only");
         assert.equal(scheduledDescriptor.intent_id,row.id);
         assert.deepEqual(scheduledDescriptor.attempt,loaded.attempt);
+        await admin.query("savepoint expired_scheduled_attempt");
+        await admin.query("reset role");
+        await admin.query("update public.clued_audit_receipts set created_at=clock_timestamp()-interval '20 minutes' where id=$1", [row.provider_attempt_receipt_id]);
+        await admin.query("set local role anon");
+        await assert.rejects(scheduled({action:"load",...job.reference}),/storage_scheduled_recovery_denied/);
+        await admin.query("rollback to savepoint expired_scheduled_attempt");
         await admin.query("savepoint bad_scheduled_recovery");
         await assert.rejects(scheduled({action:"load",...job.reference,mutation:{operation:"create"}}),/storage_scheduled_recovery_denied/);
         await admin.query("rollback to savepoint bad_scheduled_recovery");
