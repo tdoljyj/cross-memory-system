@@ -114,6 +114,7 @@ test('post-write Drive metadata failures retain safe categories and never repeat
     {name:'transport failure',code:'DRIVE_METADATA_REQUEST_FAILED',response:async()=>{throw new Error('private provider response '+root);}},
     {name:'timeout',code:'DRIVE_METADATA_TIMEOUT',response:async()=>{throw Object.assign(new Error('private timeout '+root),{name:'TimeoutError'});}},
     {name:'invalid JSON',code:'DRIVE_METADATA_RESPONSE_INVALID',response:async()=>({ok:true,json:async()=>{throw new Error('private response '+root);}})},
+    {name:'subrequest limit',code:'DRIVE_METADATA_SUBREQUEST_LIMIT',response:async()=>{throw new Error('Too many subrequests.');}},
   ];
   for(const {name,code,response} of cases){
     const f=fixture(),fetch=f.config.drive_fetch;
@@ -133,6 +134,23 @@ test('post-write Drive metadata failures retain safe categories and never repeat
     ],name);
     assert.equal(logs.join('').includes(root),false,name);
     assert.equal(logs.join('').includes(ids.job),false,name);
+  }
+});
+test('post-write credential failures keep the fixed credential label',async()=>{
+  for(const code of ['STORAGE_CREDENTIAL_EXPIRING','STORAGE_CREDENTIAL_OPEN_FAILED','STORAGE_CREDENTIAL_CONTEXT_MISMATCH']){
+    const f=fixture(),credential=f.config.get_credential;
+    f.config.get_credential=async(...args)=>{
+      if(f.info().posts===1) throw new Error(code);
+      return credential(...args);
+    };
+    const logs=[],original=console.warn;
+    console.warn=message=>logs.push(message);
+    let result;
+    try { result=await f.run().run(f.reference); }
+    finally { console.warn=original; }
+    assert.equal(result.status,'unreconciled',code);
+    assert.equal(f.info().posts,1,code);
+    assert.deepEqual(JSON.parse(logs[0]),{event:'storage_cloud_postcondition_failed',stage:'verify',error_code:code},code);
   }
 });
 test('caller profile/payload injection and cross-account credential never reach a write',async()=>{

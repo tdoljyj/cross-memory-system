@@ -98,3 +98,37 @@ test("cloud executor runs in workerd; unknown provider effects survive executor 
     assert.equal(outbound, 0);
   } finally { await runtime.dispose(); }
 });
+
+test("Worker credential closure labels a post-write expiry without changing the fail-closed outcome", async () => {
+  const { outputFiles } = await build({
+    stdin: { contents: `
+      export { fixture } from './tests/resource-center-cloud-executor.fixture.mjs';
+      export { createStorageCloudWorker } from './worker/storage-cloud-executor.ts';
+      export { createStorageCredentialVault } from './worker/storage-credential-vault.ts';`,
+      resolveDir: fileURLToPath(new URL("../", import.meta.url)), sourcefile: "cloud-credential-label.mjs" },
+    bundle: true, platform: "node", format: "esm", write: false,
+  });
+  const { fixture, createStorageCloudWorker, createStorageCredentialVault } =
+    await import("data:text/javascript;base64," + Buffer.from(outputFiles[0].text).toString("base64"));
+  const f = fixture({redirect:'manual'}), descriptor = await f.config.load_job(f.reference);
+  const token = await f.config.get_credential(), start = f.config.clock();
+  const keys = {current_key_id:'test',keys:{test:btoa('b'.repeat(32)).replace(/=+$/,'')}};
+  const vault = await createStorageCredentialVault(keys);
+  const envelope = await vault.seal(JSON.stringify({...token,token_type:'Bearer',expires_at_ms:start+120000}),{owner_id:descriptor.owner_id,
+    connection_id:descriptor.connection_id,provider:'google-drive',provider_subject:descriptor.provider_subject,
+    credential_version:descriptor.credential_version,oauth_client_id:'test-client'});
+  // The token is valid for the pre-write steps and falls inside the 60 s margin only after the one POST.
+  const bridge = await createStorageCloudWorker({client_id:'test-client',vault:keys,fetch:f.config.drive_fetch,
+    clock:()=>f.info().posts ? start+90000 : start,
+    rpc:async input=>input.action==='load'?{...descriptor,credential_envelope:envelope,oauth_client_id:'test-client'}:
+      f.config.rpc(input.action==='finalize'?{...input.finish,connection_id:input.connection_id,job_id:input.job_id}:input)});
+  const logs = [], original = console.warn;
+  console.warn = message => logs.push(message);
+  let result;
+  try { result = await bridge.run(f.reference); }
+  finally { console.warn = original; }
+  assert.equal(result.status, "unreconciled");
+  assert.equal(f.info().posts, 1);
+  assert.deepEqual(JSON.parse(logs[0]), {event:"storage_cloud_postcondition_failed",stage:"verify",error_code:"STORAGE_CREDENTIAL_EXPIRING"});
+  assert.equal(logs.join("").includes(f.reference.job_id), false);
+});
