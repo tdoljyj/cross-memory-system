@@ -342,13 +342,17 @@ class ManifestBoundaryRegression(unittest.TestCase):
 class UnifiedEntryContract(unittest.TestCase):
     def test_consumer_contract_uses_unified_entry_without_external_preflight(self):
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-        ps1 = (ROOT / "sync-memory.ps1").read_text(encoding="utf-8")
+        entry = (ROOT / "sync-memory.ps1").read_text(encoding="utf-8")
+        ps1 = (ROOT / "scripts" / "sync-memory.ps1").read_text(encoding="utf-8")
         self.assertIn("-AlignAndVerify", agents)
         self.assertNotIn("Check `git ls-remote origin main`", agents)
+        self.assertIn('"scripts/sync-memory.ps1") @PSBoundParameters', entry)
         self.assertIn('@("align-and-verify", $Access)', ps1)
 
     def test_post_push_remote_verification_is_retained(self):
-        source = SYNC_PATH.read_text(encoding="utf-8")
+        entry = SYNC_PATH.read_text(encoding="utf-8")
+        source = (ROOT / "scripts" / "sync-memory.py").read_text(encoding="utf-8")
+        self.assertIn('_CluedPath(__file__).resolve().parent / "scripts" / "sync-memory.py"', entry)
         self.assertIn('remote_after = run("git", "ls-remote", "origin", "refs/heads/main")', source)
         self.assertIn('run("git", "merge-base", "--is-ancestor", head_after, remote_after', source)
 
