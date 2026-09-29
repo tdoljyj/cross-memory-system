@@ -63,6 +63,30 @@ test('watchdog detects idle, failed, stuck, missing, and inconsistent projection
     'global.__aggregate__', { source_digest_status: null })] })), /invalid_watchdog_projection/);
 });
 
+test('watchdog counts tenants the Builder does not serve instead of alerting per row', () => {
+  const other = 'b'.repeat(64);
+  const unserved = (key) => row(key, { tenant_key: other, builder_served: false,
+    invalidation_revision: 4, resolved_through_revision: 0, job_status: 'queued',
+    stale_since: '2026-09-23T00:00:00.000Z', source_digest_status: 'not_applicable' });
+  const mixed = snapshot({ projections: [
+    row('global.priority_frontier', { builder_served: true }),
+    row('global.__aggregate__', { builder_served: true }),
+    unserved('global.priority_frontier'), unserved('global.__aggregate__'),
+  ] });
+  const incidents = evaluateProjectionWatchdog(mixed);
+  assert.deepEqual(incidents.map((i) => [i.key, i.code]), [['tenants:unserved', 'UNSERVED_TENANTS']]);
+  assert.match(incidents[0].detail, /^1 tenant\(s\)/);
+  assert.equal(JSON.stringify(incidents).includes(other), false);
+  const servedStale = snapshot({ projections: [
+    row('global.priority_frontier', { builder_served: true, invalidation_revision: 4,
+      source_digest_status: 'not_applicable', stale_since: '2026-09-23T00:00:00.000Z' }),
+    row('global.__aggregate__', { builder_served: true }),
+  ] });
+  assert.deepEqual(evaluateProjectionWatchdog(servedStale).map((i) => i.code), ['STALE_TIMEOUT']);
+  assert.throws(() => evaluateProjectionWatchdog(snapshot({ projections: [
+    row('global.__aggregate__', { builder_served: 'yes' })] })), /invalid_watchdog_projection/);
+});
+
 test('watchdog de-duplicates recurring incidents and emits recovery transitions', () => {
   const incidents = evaluateProjectionWatchdog(snapshot({ heartbeat: null }));
   const first = notificationChanges([], incidents);
