@@ -1204,17 +1204,22 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       await refusedWith('policy_digest_mismatch');
       dos = await accept(dosDoc, 6);
       packOk(await compileDos(), 'dos v7');
-      // (f) A Binding work_log Event that shadows global decisions.
+      // (f) A Binding work_log Event that shadows global decisions no longer
+      // disables the policy: the approving Decision is judged on its own
+      // lifecycle (Owner Decision 0b183c2e, contract 6.1).
       const resumed = await call('clued_session_resume', { context_key: 'global' });
       assert.ok(resumed.session_token, JSON.stringify(resumed));
       const shadow = await call('clued_append_event', { context_key: 'global', session_token: resumed.session_token,
         base_version: resumed.version, event_type: 'decision', payload: { note: 'Agent decision event' },
         idempotency_key: key('shadow') });
       assert.equal(shadow.status, 'appended', JSON.stringify(shadow));
-      await refusedWith('policy_decision_not_current');
+      assert.equal((await admin.query('select clued_private.record_currentness_fence($1,$2,null) f',
+        [userId, (await decisionOf(dos.policyId)).id])).rows[0].f, 'SHADOWED_BY_ACTIVE_EVENT',
+        'the generic fence still shadows the approving Decision');
+      packOk(await compileDos(), 'dos v7 under an active global Event');
       assert.equal((await post('/v1/context/policies', acceptInput((await issuePolicy(dosDoc, 7)).body))).status, 200,
         'acceptance itself still commits');
-      await refusedWith('policy_decision_not_current');
+      packOk(await compileDos(), 'dos v8 under an active global Event');
     } finally {
       globalThis.fetch = previousFetch;
       console.warn = previousWarn;
