@@ -34,6 +34,31 @@ test('v2 records real provider proof before pure settlement',async()=>{
   const result=await createResourceCenterCloudExecutor(f.config).run(f.reference);
   assert.equal(result.status,'committed');assert.equal(f.info().posts,1);
 });
+test('Drive version advancement after upload settles the original job with one POST',async()=>{
+  const f=fixture(),fetch=f.config.drive_fetch,rpc=f.config.rpc;let advanced=false,proof;
+  f.config.verified_result_mode=true;
+  f.config.drive_fetch=async(url,init)=>{
+    if(f.info().posts===1 && !advanced && init.method==='GET' && new URL(url).pathname.endsWith('/new-id')){
+      f.files.get('new-id').version='2';advanced=true;
+    }
+    return fetch(url,init);
+  };
+  f.config.rpc=async input=>{
+    if(input.action==='verified_record'){
+      proof=input.proof;
+      return {status:'verified',intent_id:ids.intent,verified_receipt_id:ids.receipt,
+        verified_digest:'a'.repeat(64),version:3,execution_permitted:false};
+    }
+    if(input.action==='settle_verified') return {status:'committed',state:'committed',intent_id:ids.intent,
+      request_sha256:input.request_sha256,final_result:{status:'committed'},receipt_id:ids.receipt};
+    return rpc(input);
+  };
+  assert.equal((await f.run().run(f.reference)).status,'committed');
+  assert.equal(advanced,true);
+  assert.equal(proof.provider_file_version,'2');
+  assert.equal(proof.checks.stable_version,true);
+  assert.equal(f.info().posts,1);
+});
 test('post-write failures identify the stage without logging provider or RPC details',async()=>{
   const cases=[
     {name:'Drive verification',stage:'verify',code:'DRIVE_POSTCONDITION_UNAVAILABLE'},
