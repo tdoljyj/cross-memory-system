@@ -2430,11 +2430,18 @@ async function handleContinuityRequestInner(
           client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "",
           redirect_uri: env.CLUED_STORAGE_GOOGLE_REDIRECT_URI ?? "",
           vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
-          rpc: async (value: Record<string, unknown>) => await supabaseRequest(env, recoveryStart
-            ? "/rest/v1/rpc/clued_storage_recovery_oauth_start_v1" : "/rest/v1/rpc/clued_storage_oauth_v1", {
-            method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
-            body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),
-          }) as Record<string, unknown>,
+          rpc: async (value: Record<string, unknown>) => {
+            const callback = value.action === "claim" || value.action === "complete" || value.action === "inspect";
+            return await supabaseRequest(env, recoveryStart
+              ? "/rest/v1/rpc/clued_storage_recovery_oauth_start_v2"
+              : callback ? "/rest/v1/rpc/clued_storage_oauth_callback_v2"
+              : "/rest/v1/rpc/clued_storage_oauth_v1", {
+              method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+              body: JSON.stringify(callback || recoveryStart
+                ? { p_issuer_secret: issuer, p_input: value }
+                : { p_issuer_hash: await sha256(issuer), p_input: value }),
+            }) as Record<string, unknown>;
+          },
         };
         let result;
         if (recoveryStart) {

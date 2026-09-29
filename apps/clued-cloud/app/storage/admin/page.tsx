@@ -129,7 +129,7 @@ export default function StorageConnections() {
         setMessage(`原任务结果已核验并登记。回执：${result.receipt_id}。没有重新写入文件或恢复权限。`);
       }
     } catch {
-      if (epoch === revision.current) setMessage("原任务结果尚未确认。请查询原任务回执；不会自动重试、重新创建文件或恢复权限。凭据过期须另走受审恢复授权。");
+      if (epoch === revision.current) setMessage("原任务结果尚未确认。请查询原任务回执；不会自动重试、重新创建文件或恢复权限。如凭据失效，可在此页为原任务重新授权。");
     } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
   }
   async function observeDirectories(c: Connection) {
@@ -231,7 +231,7 @@ export default function StorageConnections() {
         {recoveryViews[c.id] && <><p role="status" className="my-2 break-all">{recoveryLabels[recoveryViews[c.id].status]}；回执：{recoveryViews[c.id].receipt_id}</p>
           {["active", "reauthorization_required"].includes(c.state) && ["started", "uncertain"].includes(recoveryViews[c.id].status) &&
             <><button disabled={busy} onClick={() => void recover(c, "settle")}>核验并登记原结果（不重写）</button>
-              <button disabled={busy} onClick={() => void recover(c, "authorize")}>凭据过期：重新授权以核对原任务</button></>}</>}
+              <button disabled={busy} onClick={() => void recover(c, "authorize")}>重新授权以核对原任务（凭据失效时）</button></>}</>}
       </details>
       {c.state === "active" && <div className="my-2"><button disabled={busy} onClick={() => void observeDirectories(c)}>检查已登记目录（只读）</button>
         <p className="text-sm">只核对服务端登记目录的访问与元数据，不读取文件正文，不授予 Agent 写入权限。</p>

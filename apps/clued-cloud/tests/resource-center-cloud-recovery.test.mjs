@@ -243,3 +243,49 @@ test('account-policy recovery uses native Owner preflight, read-only descriptor 
     assert.equal(f.base.info().posts,1);assert.equal(f.base.info().starts,1);
   } finally {globalThis.fetch=before;}
 });
+
+test('Owner recovery start and callback inspect use the secret-bound account-policy RPC',async()=>{
+  const {loadContinuityWorker}=await import('./worker-continuity-loader.mjs'),worker=await loadContinuityWorker();
+  const origin='https://clued.example.invalid',issuer='fixture-account-recovery-issuer-'.repeat(3);
+  const owner='11111111-1111-4111-8111-111111111111',connection='22222222-2222-4222-8222-222222222222',
+    job='33333333-3333-4333-8333-333333333333';
+  const redirect=origin+'/storage/google/callback',client='fixture-google-client';
+  const vault={current_key_id:'fixture',keys:{fixture:btoa(String.fromCharCode(...new Uint8Array(32).fill(7))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')}};
+  const descriptor={owner_id:owner,connection_id:connection,connection_version:1,credential_version:2,
+    provider_subject:'fixture-subject',oauth_client_id:client,redirect_uri:redirect,
+    root_folder_id:'fixture-root',root_parent_id:'fixture-parent',recovery_binding:'e'.repeat(64)};
+  const env={CLUED_STORAGE_ACCOUNT_V1:'true',CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_CONNECTOR_ISSUER:issuer,
+    CLUED_STORAGE_GOOGLE_CLIENT_ID:client,CLUED_STORAGE_GOOGLE_CLIENT_SECRET:'fixture-google-secret-very-long',
+    CLUED_STORAGE_GOOGLE_REDIRECT_URI:redirect,CLUED_STORAGE_VAULT_KEYS:JSON.stringify(vault),
+    SUPABASE_URL:'https://db.example.invalid',SUPABASE_PUBLISHABLE_KEY:'fixture-public'};
+  const before=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,init)=>{
+    if(String(url).endsWith('/auth/v1/user'))return Response.json({id:owner});
+    if(String(url).startsWith(env.SUPABASE_URL)){
+      assert.equal(new Headers(init.headers).get('authorization'),'Bearer native-fixture');
+      const rpc=String(url).split('/').pop(),body=JSON.parse(init.body);calls.push({rpc,body});
+      assert.equal(body.p_issuer_secret,issuer);
+      assert.equal(body.p_issuer_hash,undefined);
+      if(body.p_input.action==='describe'){assert.deepEqual(body.p_input,{action:'describe',connection_id:connection,job_id:job});return Response.json(descriptor);}
+      if(body.p_input.action==='prepare'){
+        assert.equal(body.p_input.job_id,job);assert.equal(body.p_input.recovery_binding,descriptor.recovery_binding);
+        assert.equal(body.p_input.default_refresh_consent,undefined);return Response.json({status:'prepared'});
+      }
+      assert.equal(body.p_input.action,'inspect');
+      return Response.json({purpose:'credential_recovery',status:'prepared',receipt_id:null,execution_permitted:false});
+    }
+    throw Error('unexpected provider I/O');
+  };
+  try {
+    const headers={origin,'content-type':'application/json',authorization:'Bearer native-fixture'};
+    const start=await worker.fetch(new Request(origin+'/v1/storage/google/recovery/start',{method:'POST',headers,
+      body:JSON.stringify({connection_id:connection,job_id:job})}),env);
+    assert.equal(start.status,200);
+    assert.equal(new URL((await start.json()).authorization_url).origin,'https://accounts.google.com');
+    const inspect=await worker.fetch(new Request(origin+'/v1/storage/google/recovery/inspect',{method:'POST',headers,
+      body:JSON.stringify({state:'a'.repeat(43)})}),env);
+    assert.equal(inspect.status,200);assert.equal((await inspect.json()).execution_permitted,false);
+    assert.deepEqual(calls.map(x=>x.rpc),[
+      'clued_storage_recovery_oauth_start_v2','clued_storage_recovery_oauth_start_v2','clued_storage_oauth_callback_v2']);
+  } finally {globalThis.fetch=before;}
+});
