@@ -65,7 +65,7 @@ Startup latency is evaluated by the deterministic hourly schedule. Each schedule
 
 Each slow start records the runner that finally took it and a `wait_cause`, derived only from the collected jobs:
 
-- `runner_occupied`: other jobs kept that runner busy for all but at most the threshold of the wait. The entry lists them in `occupied_by`, for example a `public-mcp-gate-receipt` poll holding a Windows runner ahead of its exact-route heartbeat.
+- `runner_occupied`: other jobs kept that runner busy for all but at most the threshold of the wait. The entry lists them in `occupied_by`, for example a long Linux job ahead of that runner's exact-route heartbeat. (`public-mcp-gate-receipt` used to poll for up to an hour on a Windows runner; it now evaluates once each time a required check completes.)
 - `runner_idle_while_work_queued`: the runner ran no collected job for longer than the threshold while other jobs it could serve (their labels are a subset of its required labels) each waited that long. It was offline or suspended, not busy. When at least two such jobs are seen for one runner, `RUNNER_IDLE_WHILE_WORK_QUEUED` is raised for that runner.
 - `unassigned`: the job is still queued. `unexplained`: neither pattern applies, or the runner is not in the inventory.
 
@@ -313,7 +313,7 @@ The rendered watchdog is intentionally conservative:
 - keeps the declared WSL distro alive;
 - restores native Docker and the Linux systemd runner;
 - gives the Windows runner `BelowNormal` process priority;
-- suspends Linux CI only after the current Linux job is idle and host memory/disk crosses the profile's danger threshold;
+- suspends Linux CI only after the current Linux job is idle and host memory/disk crosses the profile's danger threshold. It inspects the runner only when a suspend is due. A `Runner.Worker` process, sampled twice a few seconds apart, marks the runner busy; so does a listener log whose last event is `Running job:`. A missing or unreadable listener log no longer holds the suspend back. When WSL cannot be queried, the suspend is deferred. Each deferral reason is logged once per low-capacity episode;
 - resumes Linux CI after the profile's recovery threshold is satisfied;
 - never changes GitHub Secrets, production deployment authority, DNS, database state, or production traffic.
 

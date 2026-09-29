@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  GATE_STATUS_CONTEXT,
   REQUIRED_CHECKS,
   buildReceipt,
+  commitStatusFor,
+  gateApplies,
   evaluateCheckRuns,
   validateCandidate,
   waitForRequiredChecks,
@@ -105,4 +108,31 @@ test("a pending snapshot can become four green without changing the candidate", 
   });
   assert.equal(reads, 2);
   assert.equal(result.state, "PASS");
+});
+
+test("the gate applies only where public-mcp-behavior runs", () => {
+  assert.equal(gateApplies(runs()), true);
+  assert.equal(gateApplies(runs().filter((run) => run.name !== "public-mcp-behavior")), false);
+  assert.equal(gateApplies([]), false);
+});
+
+test("commit status mirrors the verdict and names the receipt digest", () => {
+  const digest = "b".repeat(64);
+  const pass = commitStatusFor({ evaluation: evaluateCheckRuns(runs()), receiptSha256: digest, targetUrl: "https://example.invalid/run" });
+  assert.deepEqual(pass, {
+    state: "success",
+    context: GATE_STATUS_CONTEXT,
+    description: `PASS receipt sha256:${"b".repeat(16)}`,
+    target_url: "https://example.invalid/run",
+  });
+  const fail = commitStatusFor({ evaluation: evaluateCheckRuns(runs("failure")), receiptSha256: digest });
+  assert.equal(fail.state, "failure");
+  assert.equal("target_url" in fail, false);
+
+  const active = runs();
+  active[0] = { ...active[0], status: "queued", conclusion: null };
+  const pending = commitStatusFor({ evaluation: evaluateCheckRuns(active) });
+  assert.equal(pending.state, "pending");
+  assert.equal(pending.description, "Waiting for public-mcp-protocol");
+  assert(pending.description.length <= 140);
 });
