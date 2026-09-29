@@ -361,6 +361,10 @@ export async function testAccountCloud(t, admin, server, user, decision) {
         await admin.query("savepoint bad_scheduled_recovery");
         await assert.rejects(scheduled({action:"load",...job.reference,mutation:{operation:"create"}}),/storage_scheduled_recovery_denied/);
         await admin.query("rollback to savepoint bad_scheduled_recovery");
+        await admin.query("savepoint malformed_scheduled_reference");
+        await assert.rejects(scheduled({action:"load",connection_id:"not-a-uuid",job_id:job.reference.job_id}),
+          /storage_scheduled_recovery_denied/);
+        await admin.query("rollback to savepoint malformed_scheduled_reference");
         await admin.query("savepoint wrong_scheduled_issuer");
         await assert.rejects(admin.query("select public.clued_storage_scheduled_recovery_v2($1,$2::jsonb)",
           [sha("wrong-issuer"),JSON.stringify({action:"load",...job.reference})]),/storage_scheduled_recovery_denied/);

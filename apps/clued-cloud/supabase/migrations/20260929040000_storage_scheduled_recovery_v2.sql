@@ -36,7 +36,9 @@ begin
     return jsonb_build_object('status','ok','jobs',jobs);
   end if;
   if p_input is distinct from jsonb_build_object('action','load',
-    'connection_id',p_input->>'connection_id','job_id',p_input->>'job_id') then
+    'connection_id',p_input->>'connection_id','job_id',p_input->>'job_id')
+    or coalesce(p_input->>'connection_id','') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    or coalesce(p_input->>'job_id','') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
     raise exception 'storage_scheduled_recovery_denied' using errcode='42501'; end if;
   select * into j from clued_private.storage_jobs_v1
     where job_id=(p_input->>'job_id')::uuid and connection_id=(p_input->>'connection_id')::uuid;
