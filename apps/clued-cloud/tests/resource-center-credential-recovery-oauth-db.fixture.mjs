@@ -81,6 +81,23 @@ export async function testCredentialRecoveryOAuth(t,admin,server,{user,connectio
         const attemptRow=(await db.query('select purpose,recovery_job_id from clued_private.storage_oauth_attempts_v1 where id=$1',
           [attempt])).rows[0];
         assert.equal(attemptRow.purpose,'credential_recovery');assert.equal(attemptRow.recovery_job_id,lost.job_id);
+        const auto=async input=>(await db.query('select public.clued_storage_recovery_auto_target_v1($1,$2::jsonb) v',
+          [secret,input])).rows[0].v;
+        await db.query('savepoint target_before_complete');
+        await assert.rejects(auto({action:'target',state_hash:stateHash}),/denied/);
+        await db.query('rollback to savepoint target_before_complete');
+        await db.query('savepoint wrong_job');
+        await assert.rejects(auto({action:'mark',state_hash:stateHash,connection_id:connection,job_id:randomUUID()}),/denied/);
+        await db.query('rollback to savepoint wrong_job');
+        assert.deepEqual(await auto({action:'mark',state_hash:stateHash,...lost}),{status:'marked'});
+        assert.equal((await db.query('select auto_settle_original from clued_private.storage_oauth_attempts_v1 where id=$1',[attempt])).rows[0].auto_settle_original,true);
+        await db.query(`update clued_private.storage_oauth_attempts_v1 set status='completed',
+          receipt_id=(select receipt_id from clued_private.storage_connections_v1 where id=$2) where id=$1`,[attempt,connection]);
+        assert.deepEqual(await auto({action:'target',state_hash:stateHash}),
+          {status:'ready',connection_id:connection,job_id:lost.job_id,execution_permitted:false});
+        await db.query('savepoint mark_after_complete');
+        await assert.rejects(auto({action:'mark',state_hash:stateHash,...lost}),/denied/);
+        await db.query('rollback to savepoint mark_after_complete');
         assert.equal((await db.query('select state from clued_private.resource_center_mutations_v1 where id=$1',[row.id])).rows[0].state,'started');
         assert.equal(exchanges,0);
       }finally{await db.query('rollback');}

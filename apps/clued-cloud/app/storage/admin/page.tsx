@@ -102,7 +102,7 @@ export default function StorageConnections() {
     if (action === "settle" || action === "authorize") {
       if (!["active", "reauthorization_required"].includes(c.state) || prior?.job_id !== job || !["started", "uncertain"].includes(prior.status)) return;
       if (!window.confirm(action === "authorize"
-        ? `为原任务 ${job} 重新取得同一 Google 账号的两项既有权限？只更新服务端凭据；不恢复已停用连接、Agent 权限或后台续签，不重新创建文件。Google 最终同意由你确认。`
+        ? `为原任务 ${job} 重新取得同一 Google 账号的两项既有权限？Google 同意后将自动只读核对原对象，结果一致即登记原回执；不恢复已停用连接、Agent 权限或后台续签，不重新创建文件。Google 最终同意由你确认。`
         : `核对原任务 ${job} 的 Google 元数据，并在结果一致时登记原回执？不会重新创建文件、恢复权限或续签。`)) return;
     }
     const epoch = revision.current;
@@ -110,7 +110,7 @@ export default function StorageConnections() {
     setRecoveryViews(old => { const next = { ...old }; delete next[c.id]; return next; });
     try {
       if (action === "authorize") {
-        const result = await request("/v1/storage/google/recovery/start", { connection_id: c.id, job_id: job }, () => epoch === revision.current);
+        const result = await request("/v1/storage/google/recovery/auto-start", { connection_id: c.id, job_id: job }, () => epoch === revision.current);
         if (epoch !== revision.current) return;
         if (typeof result.authorization_url !== "string") throw new Error("Unconfirmed");
         const url = new URL(result.authorization_url);
@@ -231,7 +231,7 @@ export default function StorageConnections() {
         {recoveryViews[c.id] && <><p role="status" className="my-2 break-all">{recoveryLabels[recoveryViews[c.id].status]}；回执：{recoveryViews[c.id].receipt_id}</p>
           {["active", "reauthorization_required"].includes(c.state) && ["started", "uncertain"].includes(recoveryViews[c.id].status) &&
             <><button disabled={busy} onClick={() => void recover(c, "settle")}>核验并登记原结果（不重写）</button>
-              <button disabled={busy} onClick={() => void recover(c, "authorize")}>重新授权以核对原任务（凭据失效时）</button></>}</>}
+              <button disabled={busy} onClick={() => void recover(c, "authorize")}>重新授权并自动核对原任务（凭据失效时）</button></>}</>}
       </details>
       {c.state === "active" && <div className="my-2"><button disabled={busy} onClick={() => void observeDirectories(c)}>检查已登记目录（只读）</button>
         <p className="text-sm">只核对服务端登记目录的访问与元数据，不读取文件正文，不授予 Agent 写入权限。</p>

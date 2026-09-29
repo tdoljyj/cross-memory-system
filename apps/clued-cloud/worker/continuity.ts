@@ -2413,7 +2413,9 @@ async function handleContinuityRequestInner(
           403, { ...corsHeaders(request), "cache-control": "no-store" });
       }
     }
-    if (["/v1/storage/google/start", "/v1/storage/google/complete", "/v1/storage/google/recovery/start", "/v1/storage/google/recovery/inspect"].includes(url.pathname)) {
+    if (["/v1/storage/google/start", "/v1/storage/google/complete", "/v1/storage/google/recovery/start",
+      "/v1/storage/google/recovery/auto-start", "/v1/storage/google/recovery/auto-target",
+      "/v1/storage/google/recovery/inspect"].includes(url.pathname)) {
       validateOrigin(request, env);
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404);
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
@@ -2423,7 +2425,8 @@ async function handleContinuityRequestInner(
         const input = await parseBody(request);
         const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
         if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS) throw new Error("Unavailable");
-        const recoveryStart = url.pathname === "/v1/storage/google/recovery/start";
+        const recoveryStart = url.pathname === "/v1/storage/google/recovery/start" || url.pathname === "/v1/storage/google/recovery/auto-start";
+        const autoStart = url.pathname === "/v1/storage/google/recovery/auto-start";
         if (recoveryStart && (Object.keys(input).length !== 2 || typeof input.connection_id !== "string" || typeof input.job_id !== "string")) throw new Error("Invalid");
         const configuration = {
           client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
@@ -2447,6 +2450,23 @@ async function handleContinuityRequestInner(
         if (recoveryStart) {
           result = await (await createStorageGoogleRecoveryOAuth(configuration,
             { connection_id: input.connection_id as string, job_id: input.job_id as string })).start();
+          if (autoStart) {
+            const authorization = new URL(result.authorization_url);
+            const state = authorization.searchParams.get("state");
+            if (!state || !/^[A-Za-z0-9_-]{43}$/.test(state)) throw new Error("Invalid");
+            const marked = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_recovery_auto_target_v1", {
+              method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+              body: JSON.stringify({ p_issuer_secret: issuer, p_input: { action: "mark", state_hash: await sha256(state),
+                connection_id: input.connection_id, job_id: input.job_id } }),
+            }) as Record<string, unknown>;
+            if (marked.status !== "marked") throw new Error("Unavailable");
+          }
+        } else if (url.pathname.endsWith("/auto-target")) {
+          if (Object.keys(input).length !== 1 || typeof input.state !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(input.state)) throw new Error("Invalid");
+          result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_recovery_auto_target_v1", {
+            method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+            body: JSON.stringify({ p_issuer_secret: issuer, p_input: { action: "target", state_hash: await sha256(input.state) } }),
+          });
         } else if (url.pathname.endsWith("/inspect")) {
           if (Object.keys(input).length !== 1 || typeof input.state !== "string") throw new Error("Invalid");
           result = await (await createStorageGoogleOAuth(configuration)).inspectRecovery(input.state);
