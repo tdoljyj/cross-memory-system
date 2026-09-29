@@ -22,13 +22,14 @@ export function loadContinuityWorker() {
     });
     stop();
     const { handleContinuityRequest, runProjectionRefreshPipeline,
-      runProjectionRefreshScheduled, runStorageRefreshScheduled, runStorageRecoveryScheduled } = await import(pathToFileURL(output).href);
+      runProjectionRefreshScheduled, runStorageRefreshScheduled, runStorageRecoveryScheduled, runStorageJobQueue } = await import(pathToFileURL(output).href);
     return {
       fetch: (request, env, ctx) => handleContinuityRequest(request, env, ctx),
       runProjectionRefreshPipeline,
       runProjectionRefreshScheduled,
       runStorageRefreshScheduled,
       runStorageRecoveryScheduled,
+      runStorageJobQueue,
     };
   })();
   return workerPromise;

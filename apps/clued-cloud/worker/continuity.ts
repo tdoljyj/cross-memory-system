@@ -88,6 +88,21 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6Feature
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   CLUED_ALLOWED_ORIGINS?: string;
+  CLUED_STORAGE_JOB_QUEUE?: StorageJobQueue;
+}
+
+export interface StorageJobQueue {
+  send(body: StorageJobReference): Promise<unknown>;
+}
+
+export interface StorageJobReference {
+  connection_id: string;
+  job_id: string;
+}
+
+export interface StorageJobQueueMessage {
+  readonly body: unknown;
+  ack(): void;
 }
 
 export interface ContinuityExecutionContext {
@@ -685,6 +700,39 @@ export async function runStorageRefreshScheduled(env: ContinuityEnv) {
     }
     return { status: unavailable ? "attention_required" : "ok", committed, unavailable };
   } catch { return { status: "unavailable" }; }
+}
+
+// A queue consumer runs the job in its own invocation, so scan, write and
+// post-write verify are not bounded by the ~30 s waitUntil extension of the
+// submit request. Without the binding, or if enqueueing fails, the job runs
+// in place as before; the durable job and its fences are the same either way.
+async function dispatchStorageCloudJob(env: ContinuityEnv, reference: StorageJobReference) {
+  if (env.CLUED_STORAGE_JOB_QUEUE) {
+    try { await env.CLUED_STORAGE_JOB_QUEUE.send({ connection_id: reference.connection_id, job_id: reference.job_id }); return; }
+    catch { console.warn(JSON.stringify({ event: "storage_job_enqueue_failed" })); }
+  }
+  await runStorageCloudJob(env, reference);
+}
+
+const STORAGE_JOB_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// Each message is acknowledged once, whatever the outcome. A redelivered
+// message could only reach an already started job, whose unknown effect is
+// settled by scheduled recovery and must never be dispatched again.
+export async function runStorageJobQueue(batch: { readonly messages: readonly StorageJobQueueMessage[] }, env: ContinuityEnv) {
+  for (const message of batch.messages) {
+    const body = message.body as Partial<StorageJobReference> | null;
+    try {
+      if (body && typeof body === "object" && typeof body.connection_id === "string" && typeof body.job_id === "string" &&
+          STORAGE_JOB_UUID.test(body.connection_id) && STORAGE_JOB_UUID.test(body.job_id)) {
+        await runStorageCloudJob(env, { connection_id: body.connection_id, job_id: body.job_id });
+      } else {
+        console.warn(JSON.stringify({ event: "storage_job_queue_message_invalid" }));
+      }
+    } finally {
+      message.ack();
+    }
+  }
 }
 
 export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
@@ -1486,7 +1534,7 @@ async function callStorageJob(request: Request, env: ContinuityEnv, input: Recor
       ["queued", "started", "uncertain"].includes(String(result.status)) &&
       "connection_id" in result && typeof result.connection_id === "string" && result.connection_id === input.connection_id &&
       "job_id" in result && typeof result.job_id === "string" && result.job_id === input.job_id) {
-    ctx.waitUntil(runStorageCloudJob(env, { connection_id: result.connection_id, job_id: result.job_id }));
+    ctx.waitUntil(dispatchStorageCloudJob(env, { connection_id: result.connection_id, job_id: result.job_id }));
   }
   return result;
 }

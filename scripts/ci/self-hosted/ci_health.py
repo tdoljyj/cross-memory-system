@@ -312,16 +312,117 @@ def job_pool(job: dict[str, Any]) -> str | None:
     return None
 
 
+def job_wait_end(job: dict[str, Any], now: datetime) -> datetime | None:
+    """When a job stopped waiting for a runner; GitHub prefills started_at while queued."""
+    if job.get("status") == "queued":
+        return now
+    if not job.get("runner_name") and job.get("conclusion") == "cancelled":
+        # Cancelled before any runner took it: it waited until the cancellation.
+        return parse_time(job.get("completed_at")) or now
+    return parse_time(job.get("started_at"))
+
+
+def idle_gaps(
+    start: datetime,
+    end: datetime,
+    busy: list[tuple[datetime, datetime]],
+) -> list[tuple[datetime, datetime]]:
+    gaps: list[tuple[datetime, datetime]] = []
+    cursor = start
+    for busy_start, busy_end in sorted(busy):
+        if busy_end <= cursor:
+            continue
+        if busy_start > cursor:
+            gaps.append((cursor, min(busy_start, end)))
+        cursor = max(cursor, busy_end)
+        if cursor >= end:
+            break
+    if cursor < end:
+        gaps.append((cursor, end))
+    return [(gap_start, gap_end) for gap_start, gap_end in gaps if gap_end > gap_start]
+
+
+def classify_wait(
+    job: dict[str, Any],
+    created: datetime,
+    started: datetime,
+    jobs: list[dict[str, Any]],
+    runner_labels: dict[str, set[str]],
+    now: datetime,
+    threshold_seconds: int,
+) -> dict[str, Any]:
+    """Explain a slow start on runner R from the collected jobs.
+
+    runner_occupied: other collected jobs kept R busy for all but at most the
+    threshold of the wait. runner_idle_while_work_queued: R ran no collected job
+    for longer than the threshold while another job R could serve was waiting
+    for that long, which points at R being offline or suspended rather than
+    busy. Jobs outside the collected runs are invisible, so both are best-effort.
+    """
+    runner = str(job.get("runner_name") or "")
+    labels = runner_labels.get(runner)
+    if labels is None:
+        return {"wait_cause": "unexplained"}
+    job_id = str(job.get("id"))
+    busy: list[tuple[datetime, datetime]] = []
+    occupying: list[dict[str, Any]] = []
+    for other in jobs:
+        if str(other.get("id")) == job_id or other.get("runner_name") != runner:
+            continue
+        other_start = parse_time(other.get("started_at"))
+        other_end = parse_time(other.get("completed_at"))
+        if other_end is None and other.get("status") == "in_progress":
+            other_end = now
+        if other_start is None or other_end is None:
+            continue
+        if other_end <= created or other_start >= started:
+            continue
+        busy.append((other_start, other_end))
+        occupying.append({"job_id": other.get("id"), "run_id": other.get("run_id"), "name": other.get("name")})
+    gaps = idle_gaps(created, started, busy)
+    idle_seconds = int(sum((gap_end - gap_start).total_seconds() for gap_start, gap_end in gaps))
+
+    evidence: list[dict[str, Any]] = []
+    for gap_start, gap_end in gaps:
+        if (gap_end - gap_start).total_seconds() <= threshold_seconds:
+            continue
+        for other in jobs:
+            if str(other.get("id")) == job_id or other.get("runner_name") == runner:
+                continue
+            if other.get("conclusion") == "skipped" or not label_names(other) <= labels:
+                continue
+            waited_from = parse_time(other.get("created_at"))
+            waited_until = job_wait_end(other, now)
+            if waited_from is None or waited_until is None:
+                continue
+            overlap = (min(gap_end, waited_until) - max(gap_start, waited_from)).total_seconds()
+            if overlap >= threshold_seconds:
+                evidence.append({"job_id": other.get("id"), "name": other.get("name"), "overlap_seconds": int(overlap)})
+
+    if evidence:
+        evidence.sort(key=lambda item: (-item["overlap_seconds"], str(item["job_id"])))
+        return {
+            "wait_cause": "runner_idle_while_work_queued",
+            "idle_seconds": idle_seconds,
+            "queued_eligible_jobs": evidence[:10],
+        }
+    if idle_seconds <= threshold_seconds:
+        return {"wait_cause": "runner_occupied", "idle_seconds": idle_seconds, "occupied_by": occupying[:5]}
+    return {"wait_cause": "unexplained", "idle_seconds": idle_seconds}
+
+
 def evaluate_startup_delays(
     jobs: list[dict[str, Any]],
     now: datetime,
     threshold_seconds: int,
     minimum_repeats: int,
     lookback_hours: int,
+    runner_labels: dict[str, set[str]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     since = now - timedelta(hours=lookback_hours)
     slow_by_pool: dict[str, list[dict[str, Any]]] = {}
     seen: set[str] = set()
+    runner_labels = runner_labels or {}
 
     for job in jobs:
         job_id = str(job.get("id") or f"{job.get('run_id')}:{job.get('name')}:{job.get('created_at')}")
@@ -345,19 +446,41 @@ def evaluate_startup_delays(
             continue
         if delay_seconds <= threshold_seconds:
             continue
+        if job.get("wait_cause"):
+            # Carried forward from an earlier report, whose job context is gone.
+            cause = {
+                key: job[key]
+                for key in ("wait_cause", "idle_seconds", "occupied_by", "queued_eligible_jobs")
+                if key in job
+            }
+        elif delay_kind == "queued":
+            cause = {"wait_cause": "unassigned"}
+        else:
+            cause = classify_wait(job, created, started, jobs, runner_labels, now, threshold_seconds)
         slow_by_pool.setdefault(pool, []).append({
             "job_id": job_id,
             "run_id": job.get("run_id"),
             "name": job.get("name"),
+            "runner_name": job.get("runner_name") or None,
             "created_at": isoformat(created),
             "started_at": isoformat(started) if started else None,
             "delay_seconds": delay_seconds,
             "kind": delay_kind,
+            **cause,
         })
 
     anomalies: list[dict[str, Any]] = []
+    idle_evidence: dict[str, dict[str, Any]] = {}
     for pool, slow_jobs in sorted(slow_by_pool.items()):
         slow_jobs.sort(key=lambda item: (item["created_at"], item["job_id"]))
+        causes: dict[str, int] = {}
+        for item in slow_jobs:
+            causes[item["wait_cause"]] = causes.get(item["wait_cause"], 0) + 1
+            if item["wait_cause"] == "runner_idle_while_work_queued" and item.get("runner_name"):
+                entry = idle_evidence.setdefault(item["runner_name"], {"pool": pool, "probes": [], "queued": {}})
+                entry["probes"].append(item)
+                for queued in item.get("queued_eligible_jobs", []):
+                    entry["queued"][str(queued["job_id"])] = queued
         if len(slow_jobs) >= minimum_repeats:
             anomalies.append(anomaly(
                 "REPEATED_STARTUP_DELAY",
@@ -367,8 +490,26 @@ def evaluate_startup_delays(
                 threshold_seconds=threshold_seconds,
                 minimum_repeats=minimum_repeats,
                 occurrences=len(slow_jobs),
+                wait_causes=dict(sorted(causes.items())),
                 jobs=slow_jobs[-10:],
             ))
+
+    # A runner that sat idle while at least minimum_repeats jobs it could serve
+    # each waited past the threshold was unavailable, not merely busy.
+    for runner, entry in sorted(idle_evidence.items()):
+        if len(entry["queued"]) < minimum_repeats:
+            continue
+        anomalies.append(anomaly(
+            "RUNNER_IDLE_WHILE_WORK_QUEUED",
+            f"runner:{runner}:idle-while-work-queued",
+            f"{runner} ran no job while at least {minimum_repeats} jobs it could serve waited past the threshold; it was likely offline or suspended.",
+            runner=runner,
+            pool=entry["pool"],
+            threshold_seconds=threshold_seconds,
+            minimum_repeats=minimum_repeats,
+            queued_eligible_job_count=len(entry["queued"]),
+            probes=entry["probes"][-10:],
+        ))
 
     observations = {
         "lookback_hours": lookback_hours,
@@ -407,8 +548,9 @@ def build_report(
             expected, pools, runners, declared_runner_names(inventory)
         )
         runner_observations["mode"] = "repository-runner-api"
+    runner_labels = {name: set(contract["required_labels"]) for name, contract in expected.items()}
     delay_anomalies, delay_observations = evaluate_startup_delays(
-        jobs, now, threshold_seconds, minimum_repeats, lookback_hours
+        jobs, now, threshold_seconds, minimum_repeats, lookback_hours, runner_labels
     )
     anomalies = sorted(runner_anomalies + delay_anomalies, key=lambda item: item["key"])
     status = "ANOMALY" if anomalies else "HEALTHY"
@@ -503,7 +645,7 @@ def previous_delay_jobs(report: dict[str, Any]) -> list[dict[str, Any]]:
             started_at = entry.get("started_at")
             if not started_at:
                 started_at = isoformat(created + timedelta(seconds=int(entry.get("delay_seconds") or 0)))
-            result.append({
+            job = {
                 "id": entry.get("job_id"),
                 "run_id": entry.get("run_id"),
                 "name": entry.get("name"),
@@ -512,7 +654,13 @@ def previous_delay_jobs(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "labels": labels,
                 "created_at": entry.get("created_at"),
                 "started_at": started_at,
-            })
+            }
+            if entry.get("runner_name"):
+                job["runner_name"] = entry["runner_name"]
+            for key in ("wait_cause", "idle_seconds", "occupied_by", "queued_eligible_jobs"):
+                if key in entry:
+                    job[key] = entry[key]
+            result.append(job)
     return result
 
 
