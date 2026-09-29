@@ -2,12 +2,11 @@
 // account drives the Part B chain against the live Worker and records every
 // step and assertion. Nothing here touches the database directly, resets
 // state, bypasses a trigger or reads another account: every call goes through
-// the public Worker with the test account's own session or its own Binding.
+// the public Worker with the test account's own session.
 //
-// Chain: sign in -> own Binding -> Native intake -> list -> two-step promote
-// -> accept a run-scoped Context Policy -> Agent compiles a pack over MCP
-// (live tokenizer measurement) -> Evidence withdrawal -> manifest STALE and
-// recompile excludes the record -> revoke the Binding.
+// Chain: sign in -> Native intake -> list -> two-step promote -> accept a
+// run-scoped Context Policy -> compile a pack (live tokenizer measurement)
+// -> Evidence withdrawal -> manifest STALE and recompile excludes the record.
 //
 // Required env: CLUED_E2E_EMAIL, CLUED_E2E_PASSWORD. Optional:
 // CLUED_E2E_BASE_URL (default https://clued.pixelgrav.com), --evidence-out.
@@ -21,7 +20,6 @@ import { resolveSupabasePublicConfig } from '../../app/supabase-public-config.ts
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const fixtureDir = path.join(repoRoot, 'development/contracts/information-flow/vendored/m0a/fixtures/smoke/SMK-CAN-001');
-const MCP_PROTOCOL = '2025-06-18';
 const TOKENIZER = { package: 'js-tiktoken', version: '1.0.21', encoding: 'o200k_base',
   model_mapping: 'gpt-4.1-2025-04-14' };
 
@@ -40,7 +38,8 @@ const checks = [];
 function check(id, label, expected, actual) {
   const pass = JSON.stringify(expected) === JSON.stringify(actual);
   checks.push({ id, label, pass, expected, actual });
-  process.stdout.write(`${pass ? 'PASS' : 'FAIL'} ${id} ${label}\n`);
+  process.stdout.write(`${pass ? 'PASS' : 'FAIL'} ${id} ${label}${pass ? ''
+    : ` expected=${JSON.stringify(expected)} actual=${JSON.stringify(actual)}`}\n`);
   return pass;
 }
 
@@ -71,29 +70,14 @@ if (!check('00.sign_in', 'the test account signs in', 200, signIn.status)) proce
 const jwt = signIn.body.access_token;
 const native = (method, pathname, body) => call('worker_rest', method, pathname, { bearer: jwt, body });
 
-// 2. The test account issues its own Agent Binding.
-const bound = await native('POST', '/api/bindings', { vendor: 'Other', agentName: `prod-e2e ${runId}`,
-  scopes: ['context:read', 'context:write'] });
-check('00.binding', 'the test account issues an Agent Binding', [200, true],
-  [bound.status, typeof bound.body?.token === 'string' && bound.body.token.startsWith('clued_bnd_')]);
-const bindingToken = bound.body?.token;
-const bindingId = bound.body?.binding?.id;
-let mcpId = 0;
-const tool = async (name, args) => {
-  const res = await call('worker_mcp', 'POST', `/mcp tools/call ${name}`, { url: `${base}/mcp`, bearer: bindingToken,
-    headers: { accept: 'application/json, text/event-stream', 'mcp-protocol-version': MCP_PROTOCOL },
-    body: { jsonrpc: '2.0', id: ++mcpId, method: 'tools/call', params: { name, arguments: args } } });
-  return { ...res, structured: res.body?.result?.structuredContent ?? res.body?.error ?? res.body };
-};
+// Production /mcp is OAuth-only (delegated OAuth wraps it), so a scripted
+// Binding cannot reach it; the Agent/OAuth pack path is verified separately.
+// This run compiles through the account-session route /v1/context/pack, which
+// runs the same Worker measurement (measurePack) over the same compile RPC.
+const packRest = (input) => native('POST', '/v1/context/pack', input);
 
 let failed = false;
 try {
-  const init = await call('worker_mcp', 'POST', '/mcp initialize', { url: `${base}/mcp`, bearer: bindingToken,
-    headers: { accept: 'application/json, text/event-stream', 'mcp-protocol-version': MCP_PROTOCOL },
-    body: { jsonrpc: '2.0', id: ++mcpId, method: 'initialize', params: { protocolVersion: MCP_PROTOCOL, capabilities: {},
-      clientInfo: { name: 'clued-prod-e2e', version: '1.0.0' } } } });
-  check('00.mcp_initialize', 'the Agent initializes an MCP session', 200, init.status);
-
   // 3. Native intake of the vendored smoke fixture under a run-unique segment id.
   const segmentId = `seg_prod_e2e_${runId}`;
   const segment = { ...JSON.parse(fs.readFileSync(path.join(fixtureDir, 'input.json'), 'utf8')), segment_id: segmentId };
@@ -129,10 +113,10 @@ try {
     base_policy_version: 0, confirmation_token: policyIssue.body?.confirmation_token, view_digest: policyIssue.body?.view_digest });
   check('03.policy_accept', 'the policy is accepted', 'committed', policyAccept.body?.status);
 
-  // 6. The Agent compiles a pack over MCP; the Worker measures it live.
-  const packed = await tool('clued_context_pack', { scope: 'global', task_class: taskClass });
-  const pack = packed.structured;
-  check('04.pack_ok', 'the Agent receives a pack', 'ok', pack?.status);
+  // 6. Compile a pack; the live Worker measures it with the bound tokenizer.
+  const packed = await packRest({ scope: 'global', task_class: taskClass });
+  const pack = packed.body;
+  check('04.pack_ok', 'the compile returns a pack', [200, 'ok'], [packed.status, pack?.status]);
   const item = pack?.pack?.items?.find((row) => row.canonical_id === recordId);
   check('04.item', 'the pack holds the promoted Record, human_confirmed, with the submit Evidence',
     [true, true, true], [Boolean(item), item?.human_confirmed === true,
@@ -155,18 +139,12 @@ try {
   const revalidated = await native('POST', '/v1/context/pack', { manifest_id: manifestId });
   check('05.revalidate', 'the earlier manifest revalidates as STALE (evidence_withdrawn)', [409, 'STALE', 'evidence_withdrawn'],
     [revalidated.status, revalidated.body?.revalidation, revalidated.body?.reason]);
-  const recompiled = await tool('clued_context_pack', { scope: 'global', task_class: taskClass });
+  const recompiled = await packRest({ scope: 'global', task_class: taskClass });
   check('05.recompile', 'a recompile no longer contains the record', false,
-    (recompiled.structured?.pack?.items ?? []).some((row) => row.canonical_id === recordId));
+    (recompiled.body?.pack?.items ?? []).some((row) => row.canonical_id === recordId));
 } catch (error) {
   failed = true;
   process.stdout.write(`ERROR ${error.message}\n`);
-} finally {
-  // 8. Revoke the run's Binding whatever happened.
-  if (bindingId) {
-    const revoked = await native('DELETE', `/api/bindings?id=${encodeURIComponent(bindingId)}`);
-    check('06.revoke', 'the run Binding is revoked', true, revoked.status >= 200 && revoked.status < 300);
-  }
 }
 
 const passed = !failed && checks.every((row) => row.pass);
