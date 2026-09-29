@@ -370,11 +370,13 @@ export async function testAccountCloud(t, admin, server, user, decision) {
         assert.equal(completed.status,"completed");assert.equal(completed.purpose,"credential_recovery");
         const replay = await oauth("clued_storage_oauth_callback_v2",{action:"claim",state_hash:stateHash});
         assert.equal(replay.receipt_id,completed.receipt_id);
+        await admin.query("reset role");
         const freshConnection = (await admin.query("select credential_version from clued_private.storage_connections_v1 where id=$1",
           [target.connection])).rows[0];
         assert.equal(freshConnection.credential_version,2);
         assert.equal((await journal(job)).state,"started","consent never settles or repeats the provider effect");
         assert.equal(storage.posts,1);
+        await admin.query("set local role authenticated");
         await admin.query("savepoint wrong_recovery_issuer");
         await assert.rejects(admin.query("select public.clued_storage_recovery_oauth_start_v2($1,$2::jsonb)",
           ["wrong-secret".repeat(4),JSON.stringify({action:"describe",...job.reference})]),/storage_credential_recovery_denied/);
