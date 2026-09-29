@@ -117,3 +117,27 @@ test('recovery start pins one job and describe fingerprint, without new executio
     assert.equal((await worker.fetch(request('recovery/start',{connection_id:connection,job_id:job},'clued_bnd_'+'a'.repeat(64)),env)).status,401);
   }finally{globalThis.fetch=original;}
 });
+test('automatic recovery is explicitly marked for one original job before returning Google consent URL',async()=>{
+  const original=globalThis.fetch,job=randomUUID(),calls=[];
+  globalThis.fetch=async(url,init)=>{
+    if(String(url).endsWith('/auth/v1/user'))return Response.json({id:'fixture-owner'});
+    const body=JSON.parse(init.body);calls.push({url:String(url),body});
+    if(body.p_input.action==='describe')return Response.json({owner_id:randomUUID(),connection_id:connection,connection_version:9,credential_version:4,
+      provider_subject:'fixture-subject',oauth_client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID,redirect_uri:env.CLUED_STORAGE_GOOGLE_REDIRECT_URI,
+      root_folder_id:'root',root_parent_id:'parent',recovery_binding:'e'.repeat(64)});
+    if(body.p_input.action==='prepare')return Response.json({status:'prepared'});
+    assert.equal(String(url),env.SUPABASE_URL+'/rest/v1/rpc/clued_storage_recovery_auto_target_v1');
+    if(body.p_input.action==='target')return Response.json({status:'ready',connection_id:connection,job_id:job,execution_permitted:false});
+    assert.equal(body.p_input.action,'mark');assert.equal(body.p_input.connection_id,connection);assert.equal(body.p_input.job_id,job);
+    assert.match(body.p_input.state_hash,/^[0-9a-f]{64}$/);return Response.json({status:'marked'});
+  };
+  try{
+    const result=await worker.fetch(request('recovery/auto-start',{connection_id:connection,job_id:job}),env);
+    assert.equal(result.status,200, result.status===200?'':await result.text());assert.equal(calls.length,3);
+    const state=new URL((await result.json()).authorization_url).searchParams.get('state');
+    assert.equal(calls[2].body.p_input.state_hash,createHash('sha256').update(state).digest('hex'));
+    const target=await worker.fetch(request('recovery/auto-target',{state}),env);
+    assert.equal(target.status,200);assert.equal(calls[3].body.p_input.action,'target');
+    assert.equal(calls[3].body.p_input.state_hash,calls[2].body.p_input.state_hash);
+  }finally{globalThis.fetch=original;}
+});

@@ -14,6 +14,8 @@ async function fixture(result,ok=false,inspection,options={}) {
       history:{replaceState:(_a,_b,url)=>history.push(url)}},
     fetch:async(url,init)=>{calls.push({url,init});assert.ok(init.signal);
       if(url.endsWith('/inspect')&&options.hangInspect)return new Promise((_,reject)=>init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true}));
+      if(url.endsWith('/auto-target'))return {ok:true,json:async()=>options.target??{status:'manual'}};
+      if(url==='/v1/storage/recovery')return {ok:true,json:async()=>options.settlement??{status:'inspection_required',execution_permitted:false}};
       return {ok:url.endsWith('/inspect')?!!inspection:ok,json:async()=>{if(!url.endsWith('/inspect')&&options.brokenBody)throw Error('truncated body');return url.endsWith('/inspect')?inspection:result;}};},
     require(name){
       if(name==="react")return {useState:initial=>[initial,v=>{message=v;}],useEffect:fn=>effects.push(fn)};
@@ -75,9 +77,9 @@ test('recovery callback never claims activation or renewal; a lost commit reads 
     const f=lost?await fixture({reason:'credential_commit_unconfirmed'},false,{status:'completed',receipt_id:'original-receipt',execution_permitted:false}):
       await fixture({status:'completed',receipt_id:'original-receipt',purpose:'credential_recovery',refresh_enabled:true},true);
     assert.match(f.message(),/连接停用状态、Agent 权限和后台续签设置未改变/);assert.equal(f.message().includes('后台续签已开启'),false);
-    assert.equal(f.calls.length,lost?2:1);
+    assert.equal(f.calls.length,lost?3:2);
     if(lost)assert.deepEqual(JSON.parse(f.calls[1].init.body),{state:'fixture-state'});
-    await f.remount();assert.equal(f.calls.length,lost?2:1);
+    await f.remount();assert.equal(f.calls.length,lost?3:2);
   }
 });
 
@@ -86,9 +88,31 @@ test('200 truncated body, gateway failure and malformed success each inspect at 
     const confirmed={status:'completed',receipt_id:'original-receipt',execution_permitted:false};
     const f=await fixture(options.malformed?{status:'unknown'}:{},!options.gateway,confirmed,options);
     if(options.hangInspect)await new Promise(resolve=>setTimeout(resolve,20));
-    assert.equal(f.calls.length,2);assert.equal(f.calls[0].url,'/v1/storage/google/complete');
+    assert.equal(f.calls.length,options.hangInspect?2:3);assert.equal(f.calls[0].url,'/v1/storage/google/complete');
     assert.equal(f.calls[1].url,'/v1/storage/google/recovery/inspect');assert.deepEqual(JSON.parse(f.calls[1].init.body),{state:'fixture-state'});
     assert.equal(f.message().includes('original-receipt'),!options.hangInspect);
-    await f.remount();assert.equal(f.calls.length,2);
+    await f.remount();assert.equal(f.calls.length,options.hangInspect?2:3);
   }
+});
+test('new recovery consent automatically settles the exact original job and shows its separate receipt',async()=>{
+  const connection='10000000-0000-4000-8000-000000000081',job='10000000-0000-4000-8000-000000000082';
+  const receipt='10000000-0000-4000-8000-000000000083';
+  const f=await fixture({status:'completed',receipt_id:'credential-receipt',purpose:'credential_recovery'},true,undefined,{
+    target:{status:'ready',connection_id:connection,job_id:job,execution_permitted:false},
+    settlement:{status:'committed',job_id:job,receipt_id:receipt,execution_permitted:false},
+  });
+  assert.deepEqual(f.calls.map(x=>x.url),['/v1/storage/google/complete','/v1/storage/google/recovery/auto-target','/v1/storage/recovery']);
+  assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:'settle',connection_id:connection,job_id:job});
+  assert.match(f.message(),/原任务结果已自动核验并登记/);assert.match(f.message(),new RegExp(receipt));
+  await f.remount();assert.equal(f.calls.length,3);
+});
+test('unconfirmed original result stops after one comparison and one original-job read',async()=>{
+  const connection='10000000-0000-4000-8000-000000000081',job='10000000-0000-4000-8000-000000000082';
+  const f=await fixture({status:'completed',receipt_id:'credential-receipt',purpose:'credential_recovery'},true,undefined,{
+    target:{status:'ready',connection_id:connection,job_id:job,execution_permitted:false},
+  });
+  assert.deepEqual(f.calls.map(x=>x.url),['/v1/storage/google/complete','/v1/storage/google/recovery/auto-target',
+    '/v1/storage/recovery','/v1/storage/recovery']);
+  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:'inspect',connection_id:connection,job_id:job});
+  assert.match(f.message(),/原任务结果尚未确认/);await f.remount();assert.equal(f.calls.length,4);
 });

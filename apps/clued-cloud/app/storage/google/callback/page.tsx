@@ -6,7 +6,8 @@ import { supabase } from "../../../supabase-browser";
 
 // One in-memory delivery across React remounts. Never persist the Google code,
 // state or provider credentials in browser storage; never feed it to Clued auth.
-let delivery: Promise<{ receipt: string; owner: string; refreshEnabled?: boolean; recovery?: boolean }> | undefined;
+type Delivery = { receipt: string; owner: string; refreshEnabled?: boolean; recovery?: boolean; originalReceipt?: string; originalUnconfirmed?: boolean };
+let delivery: Promise<Delivery> | undefined;
 class CallbackFailure extends Error {}
 const reasons: Record<string, string> = {
   callback_invalid: "Google 回调参数未通过校验",
@@ -34,7 +35,38 @@ const reasons: Record<string, string> = {
   credential_seal_unavailable: "服务端凭据加密未完成",
   credential_commit_unconfirmed: "凭据保存回执未确认，请先返回连接页核对状态，不要重复授权",
 };
-function finish(): Promise<{ receipt: string; owner: string; refreshEnabled?: boolean; recovery?: boolean }> {
+async function settleOriginal(state: string, token: string, owner: string, receipt: string): Promise<Delivery> {
+  const current = await supabase.auth.getSession();
+  if (current.error || current.data.session?.user.id !== owner) throw new CallbackFailure("登录账号已变化，请返回连接页重新读取状态。");
+  const headers = { "content-type": "application/json", authorization: "Bearer " + token };
+  const post = async (path: string, body: object) => {
+    const sameOwner = await supabase.auth.getSession();
+    if (sameOwner.error || sameOwner.data.session?.user.id !== owner) throw new CallbackFailure("登录账号已变化，请返回连接页重新读取状态。");
+    const response = await fetch(path, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store",
+      redirect: "error", referrerPolicy: "no-referrer", signal: AbortSignal.timeout(15000) }).catch(() => null);
+    return (response?.ok ? await response.json().catch(() => null) : null) as Record<string, unknown> | null;
+  };
+  const target = await post("/v1/storage/google/recovery/auto-target", { state });
+  if (target?.status === "manual") return { receipt, owner, recovery: true }; // Consent began before automatic settlement was offered.
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (target?.status !== "ready" || target.execution_permitted !== false ||
+    typeof target.connection_id !== "string" || !uuid.test(target.connection_id) ||
+    typeof target.job_id !== "string" || !uuid.test(target.job_id))
+    return { receipt, owner, recovery: true, originalUnconfirmed: true };
+  const reference = { connection_id: target.connection_id, job_id: target.job_id };
+  const settled = await post("/v1/storage/recovery", { action: "settle", ...reference });
+  if (settled?.status === "committed" && settled.job_id === reference.job_id &&
+    settled.execution_permitted === false && typeof settled.receipt_id === "string" && uuid.test(settled.receipt_id))
+    return { receipt, owner, recovery: true, originalReceipt: settled.receipt_id };
+  // One read of the original job resolves a lost settlement reply. Never
+  // repeat the metadata comparison or the Google authorization-code exchange.
+  const inspected = await post("/v1/storage/recovery", { action: "inspect", ...reference });
+  if (inspected?.status === "committed" && inspected.job_id === reference.job_id && inspected.connection_id === reference.connection_id &&
+    inspected.execution_permitted === false && typeof inspected.receipt_id === "string" && uuid.test(inspected.receipt_id))
+    return { receipt, owner, recovery: true, originalReceipt: inspected.receipt_id };
+  return { receipt, owner, recovery: true, originalUnconfirmed: true };
+}
+function finish(): Promise<Delivery> {
   if (delivery) return delivery;
   const query = new URL(window.location.href).searchParams;
   const state = query.get("state"), code = query.get("code");
@@ -65,15 +97,16 @@ function finish(): Promise<{ receipt: string; owner: string; refreshEnabled?: bo
           });
           const receipt = (inspected.ok ? await inspected.json() : null) as { status?: unknown; execution_permitted?: unknown; receipt_id?: unknown } | null;
           if (receipt?.status === "completed" && receipt.execution_permitted === false && typeof receipt.receipt_id === "string")
-            return { receipt: receipt.receipt_id, owner: data.session.user.id, recovery: true };
+            return await settleOriginal(state, data.session.access_token, data.session.user.id, receipt.receipt_id);
         }
       } catch { /* Unknown remains unknown; never exchange the code twice. */ }
       const message = typeof reason === "string" && Object.hasOwn(reasons, reason) ? reasons[reason] : "连接未确认，请返回连接页检查状态";
       throw new CallbackFailure(message + "。此操作不会开启文件写入；不会自动重试或放宽权限。");
     }
+    if (result.purpose === "credential_recovery")
+      return await settleOriginal(state, data.session.access_token, data.session.user.id, result.receipt_id);
     return { receipt: result.receipt_id, owner: data.session.user.id,
-      ...(result.purpose === "credential_recovery" ? { recovery: true } :
-        typeof result.refresh_enabled === "boolean" ? { refreshEnabled: result.refresh_enabled } : {}) };
+      ...(typeof result.refresh_enabled === "boolean" ? { refreshEnabled: result.refresh_enabled } : {}) };
   })();
   return delivery;
 }
@@ -93,7 +126,11 @@ export default function StorageGoogleCallback() {
     void finish().then(async result => {
       const current = await supabase.auth.getSession();
       if (active && !changed && !current.error && current.data.session?.user.id === result.owner)
-        setMessage(result.recovery ? "恢复凭据已安全保存。回执：" + result.receipt + "。连接停用状态、Agent 权限和后台续签设置未改变；请返回查询并核对原任务，没有重新创建文件。" :
+        setMessage(result.recovery ? "恢复凭据已安全保存。回执：" + result.receipt +
+          (result.originalReceipt ? "。原任务结果已自动核验并登记。回执：" + result.originalReceipt :
+            result.originalUnconfirmed ? "。原任务结果尚未确认，请查询原任务回执；不会自动重试或重新授权" :
+              "。本次授权沿用旧的凭据恢复流程，请返回查询原任务") +
+          "。连接停用状态、Agent 权限和后台续签设置未改变；没有重新创建文件。" :
           "连接凭据已安全保存。回执：" + result.receipt +
           (typeof result.refreshEnabled === "boolean" ? (result.refreshEnabled ? "。后台续签已开启" : "。后台续签保持关闭") : "") +
           "。文件操作仍需独立授权与执行验收。");
