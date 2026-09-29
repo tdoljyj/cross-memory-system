@@ -34,6 +34,55 @@ test('v2 records real provider proof before pure settlement',async()=>{
   const result=await createResourceCenterCloudExecutor(f.config).run(f.reference);
   assert.equal(result.status,'committed');assert.equal(f.info().posts,1);
 });
+test('post-write failures identify the stage without logging provider or RPC details',async()=>{
+  const cases=[
+    {name:'Drive verification',stage:'verify',code:'DRIVE_POSTCONDITION_UNAVAILABLE'},
+    {name:'verified record RPC',stage:'verified_record_rpc',code:'VERIFIED_RECORD_RPC_UNAVAILABLE'},
+    {name:'verified record response',stage:'verified_record_result',code:'VERIFIED_RECORD_RESPONSE_INVALID'},
+    {name:'verified settlement RPC',stage:'settle_verified_rpc',code:'SETTLE_VERIFIED_RPC_UNAVAILABLE'},
+    {name:'verified settlement response',stage:'settle_verified_result',code:'SETTLE_VERIFIED_RESPONSE_INVALID'},
+  ];
+  for(const {name,stage,code} of cases){
+    const f=fixture(),rpc=f.config.rpc,fetch=f.config.drive_fetch;
+    f.config.verified_result_mode=true;
+    f.config.drive_fetch=async(url,init)=>{
+      if(name==='Drive verification' && new URL(url).pathname.endsWith('/new-id') && init.method!=='POST'){
+        throw new Error('private provider response '+root);
+      }
+      return fetch(url,init);
+    };
+    f.config.rpc=async input=>{
+      if(input.action==='verified_record'){
+        if(name==='verified record RPC')throw new Error('private RPC response '+ids.job);
+        if(name==='verified record response')return {status:'invalid',private_path:root};
+        return {status:'verified',intent_id:ids.intent,verified_receipt_id:ids.receipt,
+          verified_digest:'a'.repeat(64),version:3,execution_permitted:false};
+      }
+      if(input.action==='settle_verified'){
+        if(name==='verified settlement RPC')throw new Error('private RPC response '+ids.job);
+        if(name==='verified settlement response')return {status:'invalid',private_path:root};
+        return {status:'committed',state:'committed',intent_id:ids.intent,
+          request_sha256:input.request_sha256,final_result:{status:'committed'},receipt_id:ids.receipt};
+      }
+      return rpc(input);
+    };
+    const logs=[],original=console.warn;
+    console.warn=message=>logs.push(message);
+    let result;
+    try { result=await f.run().run(f.reference); }
+    finally { console.warn=original; }
+    assert.equal(result.status,'unreconciled',name);
+    assert.equal(result.error_code,'POST_WRITE_CANONICAL_RECONCILIATION_FAILED',name);
+    assert.equal(f.info().posts,1,name);
+    assert.equal(f.info().trace.filter(action=>action==='provider-post').length,1,name);
+    assert.deepEqual(logs.map(message=>JSON.parse(message)),[
+      {event:stage==='verify'?'storage_cloud_postcondition_failed':'storage_cloud_postwrite_failed',stage,error_code:code},
+      {event:'storage_cloud_unreconciled',error_code:'POST_WRITE_CANONICAL_RECONCILIATION_FAILED'},
+    ],name);
+    assert.equal(logs.join('').includes(root),false,name);
+    assert.equal(logs.join('').includes(ids.job),false,name);
+  }
+});
 test('caller profile/payload injection and cross-account credential never reach a write',async()=>{
   const f=fixture();assert.equal((await f.run().run({...f.reference,managed_root:'/other'})).status,'unavailable');assert.equal(f.info().loads,0);
   const other=fixture({credential:{owner_id:ids.connection}});
