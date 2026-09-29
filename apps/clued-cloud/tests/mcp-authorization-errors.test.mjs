@@ -116,6 +116,30 @@ test('a checkpoint covering another context\'s events is a tool error, not a fir
   } finally { globalThis.fetch = original; }
 });
 
+test('a malformed resume context_key is a tool error naming the key format', async () => {
+  // A bare project UUID reached Hosts as HTTP 403 ("blocked by a firewall").
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async url => {
+      assert.equal(new URL(url).pathname, '/rest/v1/rpc/clued_mcp_restore');
+      return Response.json({ code: '42501', message: 'requested_context_not_authorized' }, { status: 401 });
+    };
+    const response = await handle(new Request('https://clued.example/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer clued_bnd_isolated-fixture' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
+        name: 'clued_session_resume', arguments: { context_key: '00000000-0000-4000-8000-000000000000' } } }),
+    }), env);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.has('www-authenticate'), false);
+    const { result } = await response.json();
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, 'requested_context_not_authorized');
+    assert.equal(result.structuredContent.error.category, 'request_rule');
+    assert.match(result.structuredContent.error.hint, /project:<canonical_project_id>/);
+  } finally { globalThis.fetch = original; }
+});
+
 test('unlisted and authorization denials keep the HTTP 403', async () => {
   const original = globalThis.fetch;
   try {
