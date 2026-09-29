@@ -1,0 +1,50 @@
+name: Clued Information Flow production E2E
+
+# Owner-dispatched only. Drives the Information Flow chain against the live
+# Worker with a dedicated test account (register L26). It writes permanent,
+# synthetic records into that test account and nowhere else.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clued-information-flow-prod-e2e
+  cancel-in-progress: false
+
+jobs:
+  prod-e2e:
+    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Check test account credentials
+        env:
+          CLUED_E2E_EMAIL: ${{ secrets.CLUED_E2E_EMAIL }}
+          CLUED_E2E_PASSWORD: ${{ secrets.CLUED_E2E_PASSWORD }}
+        run: |
+          test -n "$CLUED_E2E_EMAIL"
+          test -n "$CLUED_E2E_PASSWORD"
+      - name: Run the production Information Flow chain
+        env:
+          CLUED_E2E_EMAIL: ${{ secrets.CLUED_E2E_EMAIL }}
+          CLUED_E2E_PASSWORD: ${{ secrets.CLUED_E2E_PASSWORD }}
+        run: node evals/information-flow-prod/run.mjs --evidence-out prod-e2e-evidence.json
+      - name: Preserve evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clued-information-flow-prod-e2e-${{ github.run_id }}
+          path: apps/clued-cloud/prod-e2e-evidence.json
+          if-no-files-found: ignore
+          retention-days: 90

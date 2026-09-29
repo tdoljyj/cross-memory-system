@@ -21,6 +21,9 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-storage-executor-window.yml": (
         "Owner-dispatched five-minute Storage executor gate uses a clean Ubuntu worker with the isolated Cloudflare deployment credential; it does not run on pull requests or check out code."
     ),
+    "clued-information-flow-prod-e2e.yml": (
+        "Owner-dispatched production E2E reaches the public Worker with a dedicated test account; it holds no database or deployment credential and does not run on pull requests."
+    ),
     "clued-ci-health.yml": (
         "The lightweight monitor must remain independent of the self-hosted pool so it can detect complete Windows/Linux capability-pool loss."
     ),
