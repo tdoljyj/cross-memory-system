@@ -62,6 +62,29 @@ export async function testCredentialRecoveryOAuth(t,admin,server,{user,connectio
     return id;
   };
   try {
+    await t.test('server-selected legacy recovery start retains the exact original job contract',async()=>{
+      await begin();try{
+        const secret='fixture-legacy-recovery-secret-'+randomUUID(),known=sha(secret);
+        await db.query(`insert into clued_private.storage_oauth_apps_v1(issuer_hash,oauth_client_id,redirect_uri,execution_enabled)
+          select $2,oauth_client_id,redirect_uri,execution_enabled
+          from clued_private.storage_oauth_apps_v1 where issuer_hash=$1`,[issuer,known]);
+        const route=async input=>(await db.query('select public.clued_storage_recovery_oauth_start_v2($1,$2::jsonb) v',
+          [secret,input])).rows[0].v;
+        const description=await route({action:'describe',...lost});
+        assert.equal(description.connection_id,connection);
+        assert.match(description.recovery_binding,/^[0-9a-f]{64}$/);
+        const attempt=randomUUID(),stateHash=sha(randomUUID());
+        const stored=await route({action:'prepare',...lost,connection_version:description.connection_version,
+          recovery_binding:description.recovery_binding,attempt_id:attempt,state_hash:stateHash,
+          verifier_envelope:{contract:'clued.storage-credential/1',key_id:'v1',nonce:'a'.repeat(16),ciphertext:'a'.repeat(23)}});
+        assert.equal(stored.status,'prepared');
+        const attemptRow=(await db.query('select purpose,recovery_job_id from clued_private.storage_oauth_attempts_v1 where id=$1',
+          [attempt])).rows[0];
+        assert.equal(attemptRow.purpose,'credential_recovery');assert.equal(attemptRow.recovery_job_id,lost.job_id);
+        assert.equal((await db.query('select state from clued_private.resource_center_mutations_v1 where id=$1',[row.id])).rows[0].state,'started');
+        assert.equal(exchanges,0);
+      }finally{await db.query('rollback');}
+    });
     await t.test('fresh human recovery changes only encrypted credential generation, preserving original file fence and stopped permissions',async()=>{
       await begin();
       try {
