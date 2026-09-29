@@ -76,6 +76,68 @@ test('early boundary scan denial logs a code without scan findings',async()=>{
   assert.equal(island.info().starts,0);assert.equal(island.info().posts,0);
   assert.deepEqual(logs.map(message=>JSON.parse(message)),[{event:'storage_cloud_denied',error_code:'UNAUTHORIZED_WORKSPACE_MUTATION'}]);
 });
+test('authority failures identify the failed stage using fixed labels without exposing inputs',async()=>{
+  for(const scenario of ['provider','provider_unknown','rpc','denied','mismatch']){
+    const f=fixture();
+    if(scenario==='provider' || scenario==='provider_unknown'){
+      const fetch=f.config.drive_fetch;
+      f.config.drive_fetch=async(url,init)=>{
+        const response=await fetch(url,init);
+        if(new URL(url).searchParams.get('q')?.includes("name = 'track'")){
+          if(scenario==='provider_unknown') throw new Error('private provider detail '+root);
+          const body=await response.json();
+          return Response.json({...body,files:body.files.map(file=>({...file,version:null}))});
+        }
+        return response;
+      };
+    }else {
+      const rpc=f.config.rpc;
+      f.config.rpc=async input=>{
+        if(input.action!=='authority') return rpc(input);
+        if(scenario==='rpc') throw new Error('private database detail '+ids.job);
+        if(scenario==='denied') return {status:'denied',private_path:root};
+        return {status:'resolved',request:{private_path:root},authority:{workspace_version:'workspace/1'}};
+      };
+    }
+    const logs=[],original=console.warn;
+    console.warn=message=>logs.push(message);
+    let result;
+    try { result=await f.run().run(f.reference); }
+    finally { console.warn=original; }
+    assert.equal(result.status,'deny');
+    assert.equal(result.error_code,'ARTIFACT_AUTHORITY_RESOLUTION_FAILED');
+    assert.equal(f.info().starts,0);assert.equal(f.info().posts,0);
+    const expected={provider:['provider_identity','PROVIDER_METADATA_MISMATCH'],
+      provider_unknown:['provider_identity','PROVIDER_IDENTITY_UNAVAILABLE'],
+      rpc:['canonical_rpc','AUTHORITY_RPC_UNAVAILABLE'],denied:['canonical_result','AUTHORITY_RPC_DENIED'],
+      mismatch:['canonical_result','AUTHORITY_RESPONSE_MISMATCH']}[scenario];
+    assert.deepEqual(logs.map(message=>JSON.parse(message)),[
+      {event:'storage_cloud_authority_failed',phase:'initial',stage:expected[0],error_code:expected[1]},
+      {event:'storage_cloud_denied',error_code:'ARTIFACT_AUTHORITY_RESOLUTION_FAILED'},
+    ]);
+    assert.equal(logs.join('').includes(root),false);
+    assert.equal(logs.join('').includes(ids.job),false);
+  }
+});
+test('authority diagnostics distinguish revalidation after initial resolution',async()=>{
+  const f=fixture(),rpc=f.config.rpc;let lookups=0;
+  f.config.rpc=async input=>{
+    if(input.action==='authority' && ++lookups===2) return {status:'denied'};
+    return rpc(input);
+  };
+  const logs=[],original=console.warn;
+  console.warn=message=>logs.push(message);
+  let result;
+  try { result=await f.run().run(f.reference); }
+  finally { console.warn=original; }
+  assert.equal(result.error_code,'ARTIFACT_AUTHORITY_REVALIDATION_FAILED');
+  assert.equal(lookups,2);
+  assert.equal(f.info().starts,0);assert.equal(f.info().posts,0);
+  assert.deepEqual(logs.map(message=>JSON.parse(message)),[
+    {event:'storage_cloud_authority_failed',phase:'revalidation',stage:'canonical_result',error_code:'AUTHORITY_RPC_DENIED'},
+    {event:'storage_cloud_denied',error_code:'ARTIFACT_AUTHORITY_REVALIDATION_FAILED'},
+  ]);
+});
 for(const [name,options] of Object.entries({revoked:{revoke:true},lostBegin:{lostBegin:true},missingAttemptReceipt:{failAttempt:true},replayedAttempt:{replayedAttempt:true},expiredAdmission:{expireAdmission:true}})){
   test('cloud '+name+' prevents provider mutation and never retries start',async()=>{
     const f=fixture(options),executor=f.run();assert.notEqual((await executor.run(f.reference)).status,'committed');
