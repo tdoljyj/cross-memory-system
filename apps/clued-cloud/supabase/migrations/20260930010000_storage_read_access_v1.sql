@@ -240,14 +240,14 @@ begin
       p_input->>'operation',p_input->>'object_id',p_input->>'condition_hmac',p_input->>'key_id')
     returning * into rr;
     return jsonb_build_object('contract','clued.storage-read-admission/1','receipt_id',rr.id,'class',wanted,
-      'owner_id',c.owner_id,'connection_id',c.id,'provider','google-drive','provider_subject',c.provider_subject,
+      'owner_id',c.owner_id,'connection_id',c.id,'binding_id',rr.binding_id,'provider','google-drive','provider_subject',c.provider_subject,
       'oauth_client_id',c.oauth_client_id,'credential_version',c.credential_version,'credential_envelope',c.credential_envelope,
       'root_folder_id',evaluated->>'root_folder_id','read_generation',rr.read_generation);
   end if;
   if (p_input-array['action','connection_id','receipt_id','item_count','byte_count','complete'])<>'{}'::jsonb
     or not(p_input ?& array['action','connection_id','receipt_id','item_count','byte_count','complete'])
     or coalesce(p_input->>'receipt_id','') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-    or jsonb_typeof(p_input->'item_count') is distinct from 'number' or p_input->>'item_count' !~ '^(0|[1-9][0-9]{0,5})$'
+    or jsonb_typeof(p_input->'item_count') is distinct from 'number' or p_input->>'item_count' !~ '^(0|[1-9][0-9]{0,4}|100000)$'
     or jsonb_typeof(p_input->'byte_count') is distinct from 'number' or p_input->>'byte_count' !~ '^(0|[1-9][0-9]{0,15})$'
     or jsonb_typeof(p_input->'complete') is distinct from 'boolean' then
     raise exception 'storage_read_input_invalid' using errcode='22023'; end if;
@@ -294,7 +294,9 @@ begin
     if not found then raise exception 'storage_owner_denied' using errcode='42501'; end if;
     select * into ra from clued_private.storage_read_access_v1 where connection_id=c.id and owner_id=u and state='active';
     return jsonb_build_object('connection_id',c.id,'disclosure_version',disclosure,
-      'read_generation',coalesce(ra.read_generation,(select max(read_generation) from clued_private.storage_read_access_v1 where connection_id=c.id),0),
+      -- read_generation is the set_classes CAS base: the active generation, or 0.
+      'read_generation',coalesce(ra.read_generation,0),
+      'last_generation',coalesce((select max(read_generation) from clued_private.storage_read_access_v1 where connection_id=c.id),0),
       'active',ra.id is not null,'classes',coalesce(to_jsonb(ra.classes),'[]'::jsonb),
       'bound_to_active_policy',coalesce(ra.account_policy_id=c.account_policy_id and c.auth_mode='account_policy' and c.state='active',false),
       'class_denies',coalesce((select jsonb_agg(jsonb_build_object('binding_id',b0.id,'class',d.class,'denied',d.denied,'generation',d.generation) order by b0.id,d.class)
@@ -340,7 +342,6 @@ begin
     if c.id is null or c.auth_mode<>'account_policy' or c.state<>'active' or c.revoked_at is not null
       or policy.id is null or policy.state<>'active' or p.root_folder_id is distinct from root
       or coalesce(ra.read_generation,0)<>expected
-      or (ra.id is null and expected<>0 and exists(select 1 from clued_private.storage_read_access_v1 where connection_id=c.id and read_generation>expected))
       or (ra.id is null and cardinality(wanted)=0)
       or (ra.id is not null and ra.classes=wanted and ra.account_policy_id=policy.id) then
       raise exception 'storage_owner_version_conflict' using errcode='40001'; end if;

@@ -13,7 +13,10 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const fileId = /^[A-Za-z0-9_-]{1,160}$/;
 const scopes = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const FOLDER = "application/vnd.google-apps.folder", SHORTCUT = "application/vnd.google-apps.shortcut";
-const PAGE = 200, MAX_DEPTH = 32, SEARCH_CHUNK = 32, SEARCH_ROUNDS = 8, SEARCH_RESULTS = 200, QUEUE_LIMIT = 512;
+const PAGE = 200, MAX_DEPTH = 32, SEARCH_CHUNK = 32, SEARCH_ROUNDS = 8, SEARCH_RESULTS = 200, QUEUE_LIMIT = 256;
+// §5.3 provider budget: batch HTTP requests per call. Search stops early with
+// a cursor; list/stat/resolve fail closed rather than exceed it.
+const SUBREQUEST_BUDGET = 50, SEARCH_RESERVE = 10;
 const CURSOR_TTL_MS = 3600000;
 const encoder = new TextEncoder(), decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -56,7 +59,7 @@ const allowed: Record<Input["operation"], string[]> = {
 };
 export function storageReadInput(args: unknown): Input {
   if (!object(args) || typeof args.connection_id !== "string" || !uuid.test(args.connection_id) ||
-    typeof args.operation !== "string" || !(args.operation in allowed)) fail("storage_read_input_invalid");
+    typeof args.operation !== "string" || !Object.hasOwn(allowed, args.operation)) fail("storage_read_input_invalid");
   const input = args as Data, op = input.operation as Input["operation"];
   if (Object.keys(input).some(k => !["connection_id", "operation", ...allowed[op]].includes(k))) fail("storage_read_input_invalid");
   for (const k of ["folder_id", "object_id", "within"]) if (k in input && (typeof input[k] !== "string" || !fileId.test(String(input[k])))) fail("storage_read_input_invalid");
@@ -143,21 +146,23 @@ export async function createStorageReadAgent(config: {
       : input.operation === "resolve" ? { reference: input.reference } : {};
     const hmac = Object.values(condition).some(v => v !== undefined) ? await conditionHmac(input.connection_id, condition) : null;
     const objectId = input.operation === "stat" ? input.object_id : input.operation === "list" ? input.folder_id : input.operation === "search" ? input.within : undefined;
-    let admitted: Data;
+    let admitted: Data = {};
     try {
       admitted = await config.rpc({ token_hash, input: { action: "admit", connection_id: input.connection_id, operation: input.operation,
         ...(objectId ? { object_id: objectId } : {}), ...(hmac ? { condition_hmac: hmac, key_id: receiptRing.current } : {}) } });
     } catch { return fail("storage_read_unavailable"); }
-    if (admitted.contract !== "clued.storage-read-admission/1" || !uuid.test(String(admitted.receipt_id)) || admitted.class !== "read" ||
-      admitted.connection_id !== input.connection_id || admitted.oauth_client_id !== config.client_id || !uuid.test(String(admitted.owner_id)) ||
-      typeof admitted.root_folder_id !== "string" || !fileId.test(admitted.root_folder_id) ||
-      typeof admitted.provider_subject !== "string" || !Number.isSafeInteger(admitted.credential_version) ||
-      !Number.isSafeInteger(admitted.read_generation)) fail("storage_read_unavailable");
-    const rootId = String(admitted.root_folder_id);
-    const bind = { connection_id: input.connection_id, read_generation: admitted.read_generation, root: rootId,
-      operation: input.operation, condition: hmac ?? "", folder: input.operation === "list" ? (input.folder_id ?? rootId) : "" };
     let count = 0, complete = false;
     try {
+      // Validated inside try so that any admitted intent is still finalized.
+      if (admitted.contract !== "clued.storage-read-admission/1" || !uuid.test(String(admitted.receipt_id)) || admitted.class !== "read" ||
+        admitted.connection_id !== input.connection_id || admitted.oauth_client_id !== config.client_id || !uuid.test(String(admitted.owner_id)) ||
+        !uuid.test(String(admitted.binding_id)) || typeof admitted.root_folder_id !== "string" || !fileId.test(admitted.root_folder_id) ||
+        typeof admitted.provider_subject !== "string" || !Number.isSafeInteger(admitted.credential_version) ||
+        !Number.isSafeInteger(admitted.read_generation)) fail("storage_read_unavailable");
+      const rootId = String(admitted.root_folder_id);
+      // Cursors are bound to the exact Binding, not only the connection.
+      const bind = { connection_id: input.connection_id, binding_id: admitted.binding_id, read_generation: admitted.read_generation, root: rootId,
+        operation: input.operation, condition: hmac ?? "", folder: input.operation === "list" ? (input.folder_id ?? rootId) : "" };
       const context: StorageCredentialContext = { owner_id: String(admitted.owner_id), connection_id: input.connection_id, provider: "google-drive",
         provider_subject: String(admitted.provider_subject), oauth_client_id: config.client_id, credential_version: Number(admitted.credential_version) };
       let token: unknown;
@@ -166,7 +171,13 @@ export async function createStorageReadAgent(config: {
       if (!object(token) || token.token_type !== "Bearer" || typeof token.access_token !== "string" || token.access_token.length < 16 ||
         typeof token.scope !== "string" || [...new Set(token.scope.split(/\s+/))].sort().join(" ") !== scopes ||
         !Number.isFinite(token.expires_at_ms) || Number(token.expires_at_ms) - clock() <= 60000) fail("storage_read_unavailable");
-      const drive = createStorageGoogleMetadataBatch({ access_token: String(token.access_token), fetch: createStorageFetch(config.fetch), signal: AbortSignal.timeout(25000) });
+      let used = 0;
+      const base = createStorageFetch(config.fetch);
+      const budgeted: typeof fetch = async (url, init) => {
+        if (++used > SUBREQUEST_BUDGET) throw new Error("DRIVE_READ_BUDGET");
+        return base(url, init);
+      };
+      const drive = createStorageGoogleMetadataBatch({ access_token: String(token.access_token), fetch: budgeted, signal: AbortSignal.timeout(25000) });
 
       // Parent-chain root scope (§5.2): every chain of every object must reach
       // the root by provider ID within MAX_DEPTH; otherwise out of scope.
@@ -175,12 +186,14 @@ export async function createStorageReadAgent(config: {
         const missing = [...new Set(ids)].filter(id => !known.has(id) && !missing404.has(id) && id !== rootId);
         for (let i = 0; i < missing.length; i += 1024) {
           const chunk = missing.slice(i, i + 1024);
+          // Isolating 404s costs one request per ID; only for small batches.
+          const isolate = chunk.length <= 8;
           let values: unknown[];
           try { values = await drive.getFiles(chunk); }
           catch (error) {
             // A missing or invisible object is out of scope, like one outside
             // the root. A batch fails as a whole, so isolate each ID once.
-            if (!(error instanceof Error && error.message === "DRIVE_BATCH_HTTP_404")) return fail("storage_read_unavailable");
+            if (!(error instanceof Error && error.message === "DRIVE_BATCH_HTTP_404") || !isolate) return fail("storage_read_unavailable");
             values = [];
             for (const id of chunk) {
               try { values.push(...await drive.getFiles([id])); }
@@ -247,17 +260,19 @@ export async function createStorageReadAgent(config: {
         if (!Number.isSafeInteger(offset) || offset < 0 || offset > items.length) fail("cursor_invalid");
         const page = items.slice(offset, offset + PAGE);
         count = page.length; complete = offset + PAGE >= items.length;
-        return { folder_id: folder, items: page, complete, next_cursor: complete ? null : await seal(bind, { offset: offset + PAGE }) };
+        return { folder_id: folder, items: page, complete, provider_errors: [], next_cursor: complete ? null : await seal(bind, { offset: offset + PAGE }) };
       }
 
       if (input.operation === "search") {
         const start = input.within ?? rootId;
-        let queue: string[];
+        let queue: string[], lossy = false;
         const resumed = new Set<string>();
         if (input.cursor) {
           const state = await open(input.cursor, bind);
           if (!Array.isArray(state.queue) || state.queue.some(id => typeof id !== "string" || !fileId.test(id))) fail("cursor_invalid");
           queue = state.queue as string[];
+          if (queue.length > QUEUE_LIMIT || typeof state.lossy !== "boolean") fail("cursor_invalid");
+          lossy = state.lossy as boolean;
           queue.forEach(id => resumed.add(id));
         } else {
           if (start !== rootId && (!(await inRoot([start])).has(start) || known.get(start)?.mimeType !== FOLDER)) fail("not_found_in_scope");
@@ -265,8 +280,8 @@ export async function createStorageReadAgent(config: {
         }
         const needle = input.name_contains?.toLocaleLowerCase();
         const matches: Item[] = [];
-        let rounds = 0, truncated = false;
-        while (queue.length && rounds < SEARCH_ROUNDS && matches.length < SEARCH_RESULTS) {
+        let rounds = 0;
+        while (queue.length && rounds < SEARCH_ROUNDS && matches.length < SEARCH_RESULTS && used <= SUBREQUEST_BUDGET - SEARCH_RESERVE) {
           let chunk = queue.splice(0, SEARCH_CHUNK);
           // Folders carried in a cursor are re-checked on the page that uses
           // them; one moved out of the root since the last page is dropped.
@@ -277,26 +292,29 @@ export async function createStorageReadAgent(config: {
           const lists = await scopedChildren(await children(chunk));
           for (const raw of lists.flat()) {
             const it = item(raw, rootId);
-            if (it.kind === "folder") { if (queue.length < QUEUE_LIMIT) queue.push(it.id); else truncated = true; }
+            // A dropped subtree makes this search lossy for good: the flag is
+            // sealed into every later cursor, so no later page claims complete.
+            if (it.kind === "folder") { if (queue.length < QUEUE_LIMIT) queue.push(it.id); else lossy = true; }
             if ((!needle || it.name.toLocaleLowerCase().includes(needle)) && (!input.mime_type || it.mime_type === input.mime_type)) matches.push(it);
           }
         }
         matches.sort(byName);
-        count = matches.length; complete = !queue.length && !truncated;
-        return { items: matches, complete, next_cursor: queue.length ? await seal(bind, { queue }) : null,
-          ...(truncated ? { limit_reached: true } : {}) };
+        count = matches.length; complete = !queue.length && !lossy;
+        return { items: matches, complete, next_cursor: queue.length ? await seal(bind, { queue, lossy }) : null,
+          ...(lossy ? { limit_reached: true } : {}) };
       }
 
       // resolve: Drive link or ID -> stat; otherwise a root-relative path by exact names.
       const reference = String(input.reference).trim();
       const linked = /^https:\/\/(?:drive|docs)\.google\.com\/.*?(?:\/d\/|\/folders\/|[?&]id=)([A-Za-z0-9_-]{10,160})/.exec(reference)?.[1];
       const direct = linked ?? (fileId.test(reference) && !reference.includes("/") && reference.length >= 10 ? reference : null);
-      if (direct) {
-        if (!(await inRoot([direct])).has(direct)) fail("not_found_in_scope");
+      if (direct && (await inRoot([direct])).has(direct)) {
         await fetchAll([direct]);
         count = 1; complete = true;
         return { matches: [direct === rootId ? { id: rootId, name: "", mime_type: FOLDER, kind: "folder", parents: [] } : item(known.get(direct)!, rootId)], complete: true };
       }
+      // A link that is not in scope never falls back; a bare token may be a name.
+      if (linked) fail("not_found_in_scope");
       const segments = reference.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
       if (!segments.length || segments.length > MAX_DEPTH || segments.some(s => s === "." || s === "..")) fail("storage_read_input_invalid");
       let current = rootId, candidates: Item[] = [];
@@ -313,7 +331,7 @@ export async function createStorageReadAgent(config: {
       count = candidates.length; complete = true;
       return { matches: candidates, complete: true, ...(exact ? {} : { ambiguous: true }) };
     } finally {
-      try {
+      if (uuid.test(String(admitted.receipt_id))) try {
         await config.rpc({ token_hash, input: { action: "finalize", connection_id: input.connection_id, receipt_id: admitted.receipt_id,
           item_count: count, byte_count: 0, complete } });
       } catch { console.warn(JSON.stringify({ event: "storage_read_finalize_failed" })); }

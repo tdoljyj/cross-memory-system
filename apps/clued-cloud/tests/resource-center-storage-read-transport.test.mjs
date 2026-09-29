@@ -8,7 +8,9 @@ import { createStorageCredentialVault } from "../worker/storage-credential-vault
 // Synthetic RPC and an in-memory Drive only: no database, Google or disk.
 const worker = await loadContinuityWorker();
 const origin = "https://clued.example.invalid";
-const token = "clued_bnd_" + "r".repeat(40);
+const token = "clued_bnd_" + "r".repeat(40), otherToken = "clued_bnd_" + "o".repeat(40);
+const BINDINGS = { [createHash("sha256").update(token).digest("hex")]: "30000000-0000-4000-8000-0000000000a1",
+  [createHash("sha256").update(otherToken).digest("hex")]: "30000000-0000-4000-8000-0000000000b2" };
 const sha = value => createHash("sha256").update(value).digest("hex");
 const vaultKeys = { current_key_id: "test", keys: { test: btoa("v".repeat(32)).replace(/=+$/, "") } };
 const OWNER = "10000000-0000-4000-8000-0000000000a1", CONNECTION = "20000000-0000-4000-8000-0000000000a1";
@@ -60,11 +62,11 @@ function harness(options = {}) {
       const body = JSON.parse(init.body);
       calls.push(body);
       assert.equal(body.p_issuer_hash, sha(env.CLUED_STORAGE_CONNECTOR_ISSUER));
-      assert.equal(body.p_token_hash, sha(token));
+      assert.ok(BINDINGS[body.p_token_hash], "only a real Binding hash reaches the RPC");
       if (body.p_input.action === "admit") {
         if (state.admitError) return new Response(JSON.stringify({ message: "storage_read_denied" }), { status: 403 });
         return Response.json({ contract: "clued.storage-read-admission/1", receipt_id: randomUUID(), class: "read", owner_id: OWNER,
-          connection_id: body.p_input.connection_id, provider: "google-drive", provider_subject: "subject-1", oauth_client_id: "read-client",
+          connection_id: body.p_input.connection_id, binding_id: BINDINGS[body.p_token_hash], provider: "google-drive", provider_subject: "subject-1", oauth_client_id: "read-client",
           credential_version: 3, credential_envelope: options.envelope ?? await envelope(), root_folder_id: ROOT, read_generation: options.generation ?? 1 });
       }
       return Response.json({ receipt_id: body.p_input.receipt_id, state: "finalized", replayed: false });
@@ -165,6 +167,9 @@ test("stat and resolve decide scope by provider-ID chains, never by names", asyn
   assert.equal((await browse({ operation: "resolve", reference: "20_P_产品与体验/nothing" })).value.error, "not_found_in_scope");
   assert.equal((await browse({ operation: "resolve", reference: "20_P_产品与体验/../x" })).value.error, "storage_read_input_invalid");
   const drive = tree(); drive.add("dupA000000000001", "Twin", [ROOT]); drive.add("dupB000000000001", "Twin", [ROOT]);
+  drive.add("namedLikeAnId01", "ProjectNotes", [ROOT]);
+  const bare = await browse({ operation: "resolve", reference: "ProjectNotes" }, { drive });
+  assert.deepEqual(bare.value.matches.map(m => m.id), ["namedLikeAnId01"], "a bare name that looks like an ID still resolves as a path");
   const twin = await browse({ operation: "resolve", reference: "Twin" }, { drive });
   assert.equal(twin.value.ambiguous, true); assert.deepEqual(twin.value.matches.map(m => m.id), ["dupA000000000001", "dupB000000000001"]);
   const hmac = link.h.calls[0].p_input;
@@ -202,6 +207,9 @@ test("cursors are sealed, bound and re-checked: tampering, cross-binding and mov
     assert.equal((await browse({ operation: "list", folder_id: "bigFolder0000001", cursor }, { harness: h })).value.error, "cursor_invalid");
   }
   assert.equal((await browse({ operation: "list", folder_id: ROOT, cursor: first.value.next_cursor }, { harness: h })).value.error, "cursor_invalid");
+  assert.equal((await browse({ operation: "list", folder_id: "bigFolder0000001", cursor: first.value.next_cursor }, { harness: h }, env, otherToken)).value.error,
+    "cursor_invalid", "a cursor issued to one Binding is rejected for another on the same connection");
+  assert.equal((await browse({ operation: "list", folder_id: "bigFolder0000001" }, { harness: h }, env, otherToken)).value.items.length, 200);
   assert.equal((await browse({ operation: "list", folder_id: "bigFolder0000001", cursor: first.value.next_cursor }, { drive, generation: 2 })).value.error,
     "cursor_invalid", "a changed read_generation invalidates the cursor");
   // Search stops after the result budget with the deeper folder still queued.
@@ -228,4 +236,18 @@ test("credential scope, subject and expiry are rechecked; failures still finaliz
     { ...context, provider_subject: "someone-else" });
   const { value } = await browse({ operation: "list" }, { envelope: wrong });
   assert.equal(value.error, "storage_read_unavailable");
+});
+
+test("a search that had to drop folders never reports complete on any later page", async () => {
+  const drive = tree();
+  for (let i = 0; i < 300; i++) drive.add(`wideFolder${String(i).padStart(6, "0")}`, `plan folder ${i}`, [ROOT], FOLDER);
+  const h = harness({ drive });
+  let page = await browse({ operation: "search", name_contains: "zzz-no-match" }, { harness: h }), pages = 1;
+  assert.equal(page.value.complete, false); assert.equal(page.value.limit_reached, true);
+  while (page.value.next_cursor) {
+    page = await browse({ operation: "search", name_contains: "zzz-no-match", cursor: page.value.next_cursor }, { harness: h });
+    assert.equal(page.isError, false); assert.equal(page.value.complete, false, "lossy stays sealed in the cursor");
+    assert.ok(++pages < 20);
+  }
+  assert.equal(page.value.next_cursor, null);
 });

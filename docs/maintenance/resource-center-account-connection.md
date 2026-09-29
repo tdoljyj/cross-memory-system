@@ -392,6 +392,14 @@ vault and Google client ID.
   carried in a cursor are re-checked on the page that uses them.
 - The condition HMAC is domain-separated by connection ID (each connection
   belongs to exactly one owner), with the key ID stored on the receipt.
+- Cursors are also bound to the admitted Binding. A search that had to drop
+  folders (queue limit 256) seals `lossy` into every later cursor, so no later
+  page reports `complete: true`.
+- Each call has a budget of 50 Google batch requests. Search stops early with a
+  cursor; list, stat and resolve fail closed. Folders with more than 10,000
+  children cannot be listed in P1.
+- Known P1 limitation: shared-drive objects are not detected by `driveId`; the
+  registered root must be in My Drive, as the existing connection flow requires.
 
 Production application, the read switch, the secrets and the Owner's first
 `set_classes` each need separate Owner approval.

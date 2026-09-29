@@ -145,6 +145,7 @@ export async function testStorageRead(t, admin, server, user, decision) {
       assert.equal(admitted.class, "read"); assert.equal(admitted.root_folder_id, target.rootId);
       assert.deepEqual(admitted.credential_envelope, { sealed: true }); assert.equal(admitted.credential_version, 1);
       assert.equal(admitted.oauth_client_id, oauthClient); assert.equal(admitted.provider_subject, "storage-read-subject");
+      assert.equal(admitted.binding_id, client.id, "cursors are bound to the admitted Binding");
       const row = (await admin.query("select * from clued_private.storage_read_receipts_v1 where id=$1", [admitted.receipt_id])).rows[0];
       assert.equal(row.state, "intent"); assert.equal(row.lineage_id, client.lineage); assert.equal(row.condition_hmac, hmac);
       assert.equal(row.operation, "search"); assert.equal(row.item_count, null);
@@ -214,11 +215,25 @@ export async function testStorageRead(t, admin, server, user, decision) {
       await waitForLock(native);
       await caller.query("commit");
       assert.equal((await revoke).status, "committed");
+      const off = await access({ action: "status", connection_id: target.connection });
+      assert.equal(off.active, false); assert.equal(off.read_generation, 0, "inactive CAS base is 0"); assert.equal(off.last_generation, 2);
       assert.equal((await admin.query("select state from clued_private.storage_read_receipts_v1 where id=$1", [inflight.receipt_id])).rows[0].state, "intent");
       await denied(admit(target, client));
       // The in-flight read may still be finalized for audit after the revoke.
       assert.equal((await read(client, { action: "finalize", connection_id: target.connection, receipt_id: inflight.receipt_id,
         item_count: 1, byte_count: 0, complete: true })).state, "finalized");
+    });
+
+    await t.test("a revoked v12 Binding stops admission even with read access active", async () => {
+      const third = await bind(target);
+      const again = await setClasses(target, ["read"], 0);
+      assert.equal(again.status, "committed", JSON.stringify(again));
+      assert.ok((await admit(target, third)).receipt_id);
+      await admin.query("update public.clued_agent_bindings set revoked_at=clock_timestamp() where id=$1", [third.id]);
+      await denied(admit(target, third));
+      assert.ok((await admit(target, client)).receipt_id, "other clients are unaffected");
+      const current = (await access({ action: "status", connection_id: target.connection })).read_generation;
+      assert.equal((await setClasses(target, [], current)).status, "committed");
     });
 
     await t.test("read switch and disconnect each stop admission; read access never revives on its own", async () => {
