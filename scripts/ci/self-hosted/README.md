@@ -313,7 +313,7 @@ The rendered watchdog is intentionally conservative:
 - keeps the declared WSL distro alive;
 - restores native Docker and the Linux systemd runner;
 - gives the Windows runner `BelowNormal` process priority;
-- suspends Linux CI only after the current Linux job is idle and host memory/disk crosses the profile's danger threshold;
+- suspends Linux CI only after the current Linux job is idle and host memory/disk crosses the profile's danger threshold. It inspects the runner only when a suspend is due. A `Runner.Worker` process, sampled twice a few seconds apart, marks the runner busy; so does a listener log whose last event is `Running job:`. A missing or unreadable listener log no longer holds the suspend back. When WSL cannot be queried, the suspend is deferred. Each deferral reason is logged once per low-capacity episode;
 - resumes Linux CI after the profile's recovery threshold is satisfied;
 - never changes GitHub Secrets, production deployment authority, DNS, database state, or production traffic.
 
