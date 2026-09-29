@@ -257,6 +257,23 @@ test('authority diagnostics distinguish revalidation after initial resolution',a
     {event:'storage_cloud_denied',error_code:'ARTIFACT_AUTHORITY_REVALIDATION_FAILED'},
   ]);
 });
+test('authority denial logs only an allowlisted fixed reason label',async()=>{
+  for(const [reason,expected] of [['parent_version_mismatch','parent_version_mismatch'],['root_version_mismatch','root_version_mismatch'],
+    ['private detail /Clued_资料中心/x',undefined],[{nested:true},undefined],[undefined,undefined]]){
+    const f=fixture(),rpc=f.config.rpc;
+    f.config.rpc=async input=>input.action==='authority'?{status:'denied',reason}:rpc(input);
+    const logs=[],original=console.warn;
+    console.warn=message=>logs.push(message);
+    let result;
+    try { result=await f.run().run(f.reference); }
+    finally { console.warn=original; }
+    assert.equal(result.error_code,'ARTIFACT_AUTHORITY_RESOLUTION_FAILED');
+    assert.equal(f.info().starts,0);assert.equal(f.info().posts,0);
+    assert.deepEqual(JSON.parse(logs[0]),{event:'storage_cloud_authority_failed',phase:'initial',stage:'canonical_result',
+      error_code:'AUTHORITY_RPC_DENIED',...(expected?{reason:expected}:{})});
+    assert.equal(logs.join('').includes('Clued_资料中心'),false);
+  }
+});
 for(const [name,options] of Object.entries({revoked:{revoke:true},lostBegin:{lostBegin:true},missingAttemptReceipt:{failAttempt:true},replayedAttempt:{replayedAttempt:true},expiredAdmission:{expireAdmission:true}})){
   test('cloud '+name+' prevents provider mutation and never retries start',async()=>{
     const f=fixture(options),executor=f.run();assert.notEqual((await executor.run(f.reference)).status,'committed');
