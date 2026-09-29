@@ -118,7 +118,7 @@ export async function createStorageGoogleProbe(config: {
       // endpoint. The identity GET allowlist above is deliberately not widened.
       const metadata = createStorageGoogleMetadataBatch({ access_token: accessToken, fetch: fetcher, signal });
       const observation = await createGoogleDriveDirectoryProbe({ trusted_layout: d.layout,
-        get_files: metadata.getFiles, list_folders: metadata.listFolders, clock,
+        get_files: metadata.getFiles, list_folders: metadata.listFolders, get_sharings: metadata.getSharings, clock,
         timeout_ms: Math.max(1, Math.floor(deadline-checkTime())) })();
       checkTime(); signal.throwIfAborted();
       stage = "boundary";

@@ -623,6 +623,13 @@ for (const bindingSchema of focusedCloud || focusedAdmin ? ["legacy-expiry"] : [
                 mimeType: "application/vnd.google-apps.folder",
               });
             }
+            if (parsed.pathname.endsWith("/temp-track-id")) {
+              return Response.json({
+                id: "temp-track-id", name: "20_P_产品与体验",
+                parents: ["temp-root-id"], version: "2", trashed: false,
+                mimeType: "application/vnd.google-apps.folder",
+              });
+            }
             const query = parsed.searchParams.get("q") ?? "";
             if (query.includes("'temp-root-id' in parents")) return Response.json({ files: [{
                 id: "temp-track-id", name: "20_P_产品与体验",
@@ -780,8 +787,71 @@ for (const bindingSchema of focusedCloud || focusedAdmin ? ["legacy-expiry"] : [
     await testStorageSourceReader(t, admin);
     await testStoragePolicyTransition(t, admin, server, USER, DECISION);
     await testAccountCloud(t, admin, server, USER, DECISION);
+    await t.test("a directory with a recorded sharing digest is matched by sharing, not Drive version", async () => {
+      const shared = "d".repeat(64), changed = "e".repeat(64);
+      const rowVersion = async (id) => Number((await admin.query(
+        "select version from clued_private.resource_center_artifacts_v1 where id=$1", [id])).rows[0].version);
+      const update = async (id, path, fileId, fileVersion, extra) => {
+        const row = (await admin.query(`select governance_class,delete_authority
+          from clued_private.resource_center_artifacts_v1 where id=$1`, [id])).rows[0];
+        return adminCall({
+          action: "artifact_update", profile_id: profileId, artifact_id: id, base_version: await rowVersion(id),
+          path, provider_file_id: fileId, provider_file_version: fileVersion,
+          governance_class: row.governance_class, delete_authority: row.delete_authority, ...extra,
+        });
+      };
+      const parent = (overrides) => resolve({ provider_identity: { ...providerIdentity, ...overrides } });
+      // The authority lookup and the verified settlement share this rule.
+      const match = async (...args) => (await admin.query(
+        "select clued_private.resource_center_directory_match_v1($1,$2,$3,$4) value", args)).rows[0].value;
+      assert.equal(await match("3", null, "3", null), "match");
+      assert.equal(await match("3", null, "4", shared), "version_mismatch");
+      assert.equal(await match("3", shared, "9", shared), "match");
+      assert.equal(await match("3", shared, "3", changed), "sharing_changed");
+      assert.equal(await match("3", shared, "3", null), "sharing_unavailable");
+      assert.equal((await update(trackId, TRACK, TRACK_ID, "3", { provider_sharing_digest: "not-a-digest" })).status,
+        "rejected");
+      assert.equal((await update(trackId, TRACK, TRACK_ID, "3", { provider_sharing_digest: shared })).status, "committed");
+      assert.equal((await parent({ destination_parent_version: "9", destination_parent_sharing_digest: shared })).status,
+        "resolved");
+      assert.deepEqual(await parent({ destination_parent_version: "3", destination_parent_sharing_digest: changed }),
+        { status: "denied", reason: "parent_sharing_changed" });
+      assert.deepEqual(await parent({ destination_parent_version: "3" }),
+        { status: "denied", reason: "parent_sharing_unavailable" });
+      // A version-only update keeps the recorded digest.
+      assert.equal((await update(trackId, TRACK, TRACK_ID, "4")).status, "committed");
+      assert.equal((await parent({ destination_parent_version: "9", destination_parent_sharing_digest: shared })).status,
+        "resolved");
+      // Clearing the digest restores exact version matching.
+      assert.equal((await update(trackId, TRACK, TRACK_ID, "3", { provider_sharing_digest: null })).status, "committed");
+      assert.deepEqual(await parent({ destination_parent_version: "9", destination_parent_sharing_digest: shared }),
+        { status: "denied", reason: "parent_version_mismatch" });
+      assert.equal((await parent({ destination_parent_version: "3" })).status, "resolved");
+
+      const rootId = (await admin.query(`select id from clued_private.resource_center_artifacts_v1
+        where profile_id=$1 and path=$2 and state='active'`, [profileId, ROOT])).rows[0].id;
+      const rootVersion = (await admin.query(
+        "select provider_file_version v from clued_private.resource_center_artifacts_v1 where id=$1", [rootId])).rows[0].v;
+      assert.equal((await update(rootId, ROOT, ROOT_ID, rootVersion, { provider_sharing_digest: shared })).status, "committed");
+      assert.equal((await parent({ destination_parent_version: "3", root_folder_version: "999",
+        root_sharing_digest: shared })).status, "resolved");
+      assert.deepEqual(await parent({ destination_parent_version: "3", root_folder_version: rootVersion,
+        root_sharing_digest: changed }), { status: "denied", reason: "root_sharing_changed" });
+      assert.equal((await update(rootId, ROOT, ROOT_ID, rootVersion, { provider_sharing_digest: null })).status, "committed");
+      assert.deepEqual(await parent({ destination_parent_version: "3", root_folder_version: "999" }),
+        { status: "denied", reason: "root_version_mismatch" });
+      const file = (await admin.query(`select id,path,provider_file_id,provider_file_version v
+        from clued_private.resource_center_artifacts_v1 where profile_id=$1 and target_kind='file' and state='active'
+        limit 1`, [profileId])).rows[0];
+      if (file) {
+        assert.equal((await update(file.id, file.path, file.provider_file_id, file.v,
+          { provider_sharing_digest: shared })).status, "rejected");
+      }
+    });
     const removed = await adminCall({
-      action: "artifact_revoke", profile_id: profileId, artifact_id: trackId, base_version: 2,
+      action: "artifact_revoke", profile_id: profileId, artifact_id: trackId,
+      base_version: Number((await admin.query(
+        "select version from clued_private.resource_center_artifacts_v1 where id=$1", [trackId])).rows[0].version),
     });
     assert.equal(removed.status, "committed");
     assert.equal((await resolve()).status, "denied");

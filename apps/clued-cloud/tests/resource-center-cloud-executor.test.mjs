@@ -294,7 +294,9 @@ test('batched boundary scan keeps post-write verify inside the subrequest budget
     // admits the write, then the budget runs out during post-write verification.
     for(let i=0;i<6;i++)f.files.set('t'+i,{id:'t'+i,name:'top'+i,parents:['parent'],version:'1',trashed:false,mimeType:FOLDER});
     // Every outbound call (provider or database RPC) spends the same per-invocation budget.
-    const spend=()=>{if(++used>50)throw new Error('Too many subrequests.');};
+    // The budget allows for the two directory sharing reads per identity resolution:
+    // the per-folder scan still runs out during verify, the batched scan fits.
+    const spend=()=>{if(++used>60)throw new Error('Too many subrequests.');};
     f.config.drive_fetch=async(url,init)=>{spend();return fetch(url,init);};
     f.config.rpc=async input=>{spend();return rpc(input);};
     if(batched){
@@ -318,5 +320,5 @@ test('batched boundary scan keeps post-write verify inside the subrequest budget
   assert.equal(after.result.status,'committed');
   assert.equal(after.posts,1);
   assert.deepEqual(after.logs,[]);
-  assert.ok(after.used<=40,String(after.used));
+  assert.ok(after.used<=52,String(after.used));
 });

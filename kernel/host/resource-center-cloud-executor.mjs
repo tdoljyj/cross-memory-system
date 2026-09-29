@@ -31,6 +31,7 @@ const providerAuthorityCodes = new Set([
 const authorityDenialReasons = new Set([
   "request_invalid", "binding_inactive", "profile_mismatch", "root_identity_mismatch", "decision_not_current",
   "root_version_mismatch", "root_unregistered", "root_path_not_current", "operation_shape_invalid",
+  "root_sharing_changed", "root_sharing_unavailable", "parent_sharing_changed", "parent_sharing_unavailable",
   "source_mismatch", "destination_outside_root", "parent_version_mismatch", "parent_unregistered",
   "parent_path_not_current", "destination_mismatch", "destination_exists", "artifact_decision_not_current",
   "internal_error",
@@ -118,7 +119,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       };
       const metadata=createGoogleDriveMetadataApi({get_credential:credential,fetch:driveFetch});
       const resolveProvider=createGoogleDriveProviderIdentityResolver({managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
-        root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren});
+        root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
+        get_sharing:metadata.getSharing});
       let batched={};
       if(metadataBatch){
         const batch=await metadataBatch(Object.freeze({access_token:(await credential()).access_token}));
