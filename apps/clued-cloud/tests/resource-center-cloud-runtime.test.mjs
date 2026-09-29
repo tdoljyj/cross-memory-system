@@ -60,7 +60,7 @@ test("cloud executor runs in workerd; unknown provider effects survive executor 
             throw Error('unexpected action');
           }});
         const recoveredResult=await recovered.run(bridged.reference);
-        return Response.json({result,good:good.info(),first,restart,lost:lost.info(),bridgedResult,bridgedPosts:bridged.info().posts,
+        return Response.json({result,good:good.info(),first,restart,lost:lost.info(),bridgedResult,bridgedPosts:bridged.info().posts,bridgedBatches:bridged.info().batches,
           v2Result,v2Posts:v2.info().posts,
           recoveredResult,replayCalls});
       }};`, resolveDir: fileURLToPath(new URL("../", import.meta.url)), sourcefile: "cloud-runtime-fixture.mjs" },
@@ -91,6 +91,7 @@ test("cloud executor runs in workerd; unknown provider effects survive executor 
     assert.equal(body.lost.starts, 1);
     assert.equal(body.bridgedResult.status,"committed");
     assert.equal(body.bridgedPosts,1);
+    assert.ok(body.bridgedBatches>0);
     assert.equal(body.v2Result.status,"committed");
     assert.equal(body.v2Posts,1);
     assert.equal(body.recoveredResult.status,"committed");

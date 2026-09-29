@@ -66,11 +66,15 @@ const logPostWriteFailure = (stage,error) => {
  * run accepts correlation IDs ONLY. Shared DB begin, not this process, owns
  * cross-device exclusion. A lost start/POST is inspection-only forever here.
  * The caller never receives a credential, admission or durable execution grant.
- * @param {{load_job: Function, rpc: Function, get_credential: Function, drive_fetch?: typeof fetch, clock?: () => number, verified_result_mode?: boolean}} config
+ * metadata_batch, when supplied, returns {getFiles, listFolders} bound to one
+ * validated access token; the boundary scan then reads a folder level per call.
+ * @param {{load_job: Function, rpc: Function, get_credential: Function, drive_fetch?: typeof fetch, clock?: () => number, verified_result_mode?: boolean, metadata_batch?: Function}} config
  */
 export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_credential:getCredential,
-  drive_fetch:driveFetch=globalThis.fetch,clock=Date.now,verified_result_mode:verifiedResultMode=false}={}){
+  drive_fetch:driveFetch=globalThis.fetch,clock=Date.now,verified_result_mode:verifiedResultMode=false,
+  metadata_batch:metadataBatch}={}){
   if([loadJob,rpc,getCredential,driveFetch,clock].some(fn=>typeof fn!=="function") ||
+    (metadataBatch!==undefined && typeof metadataBatch!=="function") ||
     typeof verifiedResultMode!=="boolean") throw new TypeError("Private server dependencies required.");
   const seen=new Set();
   return Object.freeze({async run(reference){
@@ -106,8 +110,14 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const metadata=createGoogleDriveMetadataApi({get_credential:credential,fetch:driveFetch});
       const resolveProvider=createGoogleDriveProviderIdentityResolver({managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren});
+      let batched={};
+      if(metadataBatch){
+        const batch=await metadataBatch(Object.freeze({access_token:(await credential()).access_token}));
+        if(typeof batch?.getFiles!=="function" || typeof batch?.listFolders!=="function") fail();
+        batched={get_files:ids=>batch.getFiles(ids),list_folders:ids=>batch.listFolders(ids)};
+      }
       const scan=createGoogleDriveBoundaryScanner({trusted_profile:profile,root_folder_id:descriptor.root_folder_id,root_parent_id:descriptor.root_parent_id,
-        scan_roots:descriptor.scan_roots,get_file:metadata.getFile,list_folder:metadata.listFolder});
+        scan_roots:descriptor.scan_roots,get_file:metadata.getFile,list_folder:metadata.listFolder,...batched});
       const findings=await scan();
       if(findings.length) {
         logDiagnostic("deny","UNAUTHORIZED_WORKSPACE_MUTATION");

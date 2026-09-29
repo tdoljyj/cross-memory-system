@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { testNativeRecovery, testNativeRecoveryRace } from './resource-center-native-recovery-db.fixture.mjs';
 import { testCredentialRecoveryOAuth } from './resource-center-credential-recovery-oauth-db.fixture.mjs';
+import { batchRequests, batchReply } from './google-batch-fixture.mjs';
 
 const sha=s=>createHash('sha256').update(s).digest('hex');
 const dir=await mkdtemp(join(tmpdir(),'clued-cloud-bridge-'));
@@ -37,8 +38,17 @@ export async function testCloudBridge(t,admin,server,{user,profile,decision,conn
   const files=new Map([['account-parent',file('account-parent','account')],['account-root',file('account-root','Clued_资料中心','account-parent')],
     ['account-track',file('account-track','20_P_产品与体验','account-root','2')]]);
   let posts=0;let latestId;let losePost=false;
+  const read=u=>{
+    const q=u.searchParams.get('q');
+    if(q){const parent=/'([^']+)' in parents/.exec(q)?.[1],name=/name = '([^']+)'/.exec(q)?.[1];
+      return {status:200,value:{files:[...files.values()].filter(f=>f.parents.includes(parent)&&(!name||name===f.name)),incompleteSearch:false}};}
+    const found=files.get(u.pathname.split('/').at(-1));return found?{status:200,value:found}:{status:404,value:{}};
+  };
   const provider=async(url,init)=>{
     const u=new URL(url);assert.equal(new Headers(init.headers).get('authorization'),'Bearer '+tokens.access_token);
+    // Metadata-only GET envelope used by the batched boundary scan; never a file write.
+    if(u.href==='https://www.googleapis.com/batch/drive/v3')
+      return batchReply(batchRequests(init.body).map(part=>{const r=read(new URL(part.path,u.origin));return {...part,value:r.value,status:r.status};}));
     if(init.method==='POST'){
       posts++;const raw=init.body;const match=/\{[^\r\n]+"appProperties":\{[^\r\n]+\}\}/.exec(raw);
       const metadata=JSON.parse(match?.[0]??raw);
@@ -49,10 +59,7 @@ export async function testCloudBridge(t,admin,server,{user,profile,decision,conn
       files.set(metadata.id,created);if(losePost)throw new Error('synthetic lost POST');return Response.json(created);
     }
     if(u.pathname.endsWith('/generateIds')){latestId='cloud-'+randomUUID();return Response.json({ids:[latestId]});}
-    const q=u.searchParams.get('q');
-    if(q){const parent=/'([^']+)' in parents/.exec(q)?.[1],name=/name = '([^']+)'/.exec(q)?.[1];
-      return Response.json({files:[...files.values()].filter(f=>f.parents.includes(parent)&&(!name||name===f.name)),incompleteSearch:false});}
-    return files.has(u.pathname.split('/').at(-1))?Response.json(files.get(u.pathname.split('/').at(-1))):new Response('',{status:404});
+    const r=read(u);return r.status===200?Response.json(r.value):new Response('',{status:r.status});
   };
   const worker=async(db=client,overrides={})=>createStorageCloudWorker({client_id:'fixture-client',vault:vaultConfig,rpc:input=>rpc(input,db),fetch:provider,...overrides});
   try {
