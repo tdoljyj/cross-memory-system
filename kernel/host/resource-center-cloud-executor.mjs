@@ -100,7 +100,13 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           return {status:"started",execution_permitted:true,intent_id:result.intent_id,request_sha256:result.request_sha256};
         },commit_post_write:async({mutation:input,binding,reservation,effect_result:result})=>{
           if(!saved || saved.result.intent_id!==reservation.intent_id) fail();
-          const verification=await verify({profile,mutation:input,provider_before:saved.provider,effect_result:result});
+          const verification=await verify({profile,mutation:input,provider_before:saved.provider,effect_result:result})
+            .catch(error=>{
+              const code=typeof error?.message==="string" && /^DRIVE_POSTCONDITION_[A-Z_]+$/.test(error.message)
+                ? error.message : "DRIVE_POSTCONDITION_UNAVAILABLE";
+              console.warn(JSON.stringify({event:"storage_cloud_postcondition_failed",error_code:code}));
+              throw error;
+            });
           const {verified_proof:proof,...postcondition}=verification;
           const finish={action:"finalize",intent_id:reservation.intent_id,base_version:saved.result.version,
             request_sha256:binding.request_sha256,idempotency_key:"account-job:"+ref.job_id+":finalize",postcondition};
@@ -122,6 +128,11 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           return {status:"committed",receipt_id:finished.receipt_id,request_sha256:binding.request_sha256};
         }});
       const result=await host.callTool(RESOURCE_CENTER_MUTATION_TOOL,mutation);
+      if(result.status==="unreconciled") {
+        // Keep the original journal fenced, but leave a stable diagnostic for
+        // the operator. Never log the job, credential, path or provider reply.
+        console.warn(JSON.stringify({event:"storage_cloud_unreconciled",error_code:result.error_code}));
+      }
       // Keep the internal admission, binding and provider result out of the
       // public job result. Recovery reads the original durable service state.
       return result.status==="committed" ? {status:"committed",job_id:ref.job_id,receipt_id:result.canonical_receipt_id,execution_permitted:false} :

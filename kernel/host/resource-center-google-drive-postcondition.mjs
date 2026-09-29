@@ -88,6 +88,15 @@ export function createGoogleDriveCreatePostconditionVerifier({
         const file = await getFile(listed.id);
         check(file, listed.id, name, parent.id, folder);
         if (file.version !== listed.version) fail("DRIVE_POSTCONDITION_VERSION_CHANGED");
+        if (!folder && file.size === size && (file.sha256Checksum == null || file.sha256Checksum === "")) {
+          // Drive may list a newly created object before publishing its
+          // checksum. Only absence is provisional; a different checksum or
+          // byte count is a real mismatch and must fail closed.
+          const remaining = deadline - clock();
+          if (remaining <= 0 || attempt === attempts - 1) break;
+          await sleep(Math.min(pollMs, remaining));
+          continue;
+        }
         if (!folder && (file.size !== size || file.sha256Checksum !== digest)) {
           fail("DRIVE_POSTCONDITION_CONTENT_MISMATCH");
         }
