@@ -1,0 +1,121 @@
+name: Clued Storage executor window
+
+# Opens the production Worker's CLUED_STORAGE_EXECUTOR_V1 gate for at most
+# five minutes and always sets it back to false, or closes it immediately.
+# The database execution switch stays a separate gate; opening this one alone
+# executes nothing. Each run must name the Clued Decision that authorizes it.
+# No repository code is checked out or run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: open_window sets the gate to true, waits, then sets it to false; close sets it to false now
+        type: choice
+        options:
+          - open_window
+          - close
+        default: open_window
+      minutes:
+        description: Minutes to keep the gate open (1-5); open_window only
+        type: number
+        default: 5
+      decision_id:
+        description: Clued Decision UUID that authorizes this run
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  WORKER_NAME: clued-cloud
+  SECRET_NAME: CLUED_STORAGE_EXECUTOR_V1
+  WRANGLER: wrangler@4.125.0
+
+jobs:
+  open-window:
+    if: >-
+      inputs.mode == 'open_window' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    concurrency:
+      group: clued-storage-executor-window-open
+      cancel-in-progress: false
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Validate inputs and credentials
+        env:
+          MINUTES: ${{ inputs.minutes }}
+          DECISION_ID: ${{ inputs.decision_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$MINUTES" =~ ^[1-5]$ ]] || { echo "minutes must be 1-5"; exit 1; }
+          [[ "$DECISION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo "decision_id must be a lowercase UUID"; exit 1; }
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          echo "decision_id=$DECISION_ID minutes=$MINUTES"
+      - name: Open gate
+        working-directory: ${{ runner.temp }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          printf 'true' | npx --yes "$WRANGLER" secret put "$SECRET_NAME" --name "$WORKER_NAME"
+          echo "opened_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      - name: Hold window
+        env:
+          MINUTES: ${{ inputs.minutes }}
+        run: sleep "$((MINUTES * 60))"
+      - name: Close gate
+        if: always()
+        working-directory: ${{ runner.temp }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if printf 'false' | npx --yes "$WRANGLER" secret put "$SECRET_NAME" --name "$WORKER_NAME"; then
+              echo "closed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Failed to close $SECRET_NAME; set it to false manually"
+          exit 1
+
+  close:
+    if: >-
+      inputs.mode == 'close' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: clued-storage-executor-window-close
+      cancel-in-progress: false
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Close gate
+        working-directory: ${{ runner.temp }}
+        env:
+          DECISION_ID: ${{ inputs.decision_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$DECISION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo "decision_id must be a lowercase UUID"; exit 1; }
+          printf 'false' | npx --yes "$WRANGLER" secret put "$SECRET_NAME" --name "$WORKER_NAME"
+          echo "closed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) decision_id=$DECISION_ID"

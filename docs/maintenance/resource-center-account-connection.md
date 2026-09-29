@@ -175,6 +175,11 @@ opening pins owner/connection/provider subject/client/credential revision. The
 database requires separately reviewed immutable runtime qualification for the
 exact profile version and registered tracks. Its `execution_enabled` and the
 Worker's `CLUED_STORAGE_EXECUTOR_V1` both default off. OAuth alone enables neither.
+The `Clued Storage executor window` workflow is the reviewed way to open the
+Worker gate: the repository owner dispatches it from `main` with the authorizing
+Decision ID, it sets the secret to `true` for at most five minutes and then always
+sets it back to `false`; `mode: close` closes it immediately. It uses the existing
+deploy credential and checks out no code. The database switch stays a separate gate.
 The public submit route schedules this private bridge using only the returned
 job/connection IDs; inspection never dispatches. Failed preflight records a
 terminal denied/attention outcome instead of leaving an apparently queued job.
