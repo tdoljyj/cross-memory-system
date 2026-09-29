@@ -104,9 +104,42 @@ test("moved root/parent, trashed object and shortcut all deny", async () => {
     await assert.rejects(f.verify(f.request), /IDENTITY_MISMATCH|ANCESTOR_CHANGED/);
   }
 });
-test("concurrent version change never produces a successful receipt postcondition", async () => {
-  const f = fixture({ alter: (files, event) => { if (event.get === "topic") files.topic.version = "2"; } });
+test("new file version settles across list/get and final list without another create", async () => {
+  let changedOnGet = false;
+  const first = fixture({ file: true, alter: (files, event) => {
+    if (event.get === "topic" && !changedOnGet) {
+      files.topic.version = "2";
+      changedOnGet = true;
+    }
+  }, options: { require_effect_provider_id: true, include_verified_proof: true } });
+  first.request.effect_result.provider_file_id = "topic";
+  const firstResult = await first.verify(first.request);
+  assert.equal(firstResult.provider_file_version, "2");
+  assert.equal(firstResult.verified_proof.checks.stable_version, true);
+  assert.equal(first.stats().now, 10);
+
+  const second = fixture({ file: true, alter: (files, event) => {
+    if (event.targetLists === 2) files.topic.version = "2";
+  } });
+  assert.equal((await second.verify(second.request)).provider_file_version, "2");
+  assert.equal(second.stats().now, 10);
+});
+test("continuously changing file version remains fenced after the polling deadline", async () => {
+  const f = fixture({ file: true, alter: (files, event) => {
+    if (event.get === "topic") files.topic.version = String(Number(files.topic.version) + 1);
+  } });
   await assert.rejects(f.verify(f.request), /VERSION_CHANGED/);
+  assert.equal(f.stats().now, 100);
+});
+test("version advancement with different content fails without waiting for a later match", async () => {
+  const f = fixture({ file: true, alter: (files, event) => {
+    if (event.get === "topic") {
+      files.topic.version = "2";
+      files.topic.sha256Checksum = "a".repeat(64);
+    }
+  } });
+  await assert.rejects(f.verify(f.request), /CONTENT_MISMATCH/);
+  assert.equal(f.stats().now, 0);
 });
 test("duplicate destination and final duplicate race fail closed", async () => {
   for (const finalRace of [false, true]) {

@@ -77,6 +77,13 @@ export function createGoogleDriveCreatePostconditionVerifier({
     const deadline = clock() + timeoutMs;
     // Iteration bound also protects against an injected/non-monotonic clock.
     const attempts = Math.ceil(timeoutMs / pollMs) + 1;
+    async function waitForStableVersion(attempt) {
+      // Drive may advance a new file's version while publishing its metadata.
+      // Recheck the entire identity/content/ancestor chain; never repeat create.
+      const remaining = deadline - clock();
+      if (remaining <= 0 || attempt === attempts - 1) fail("DRIVE_POSTCONDITION_VERSION_CHANGED");
+      await sleep(Math.min(pollMs, remaining));
+    }
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const parent = await parentIdentity();
       const matches = await listChildren({ parent_id: parent.id, name });
@@ -87,7 +94,13 @@ export function createGoogleDriveCreatePostconditionVerifier({
         if (typeof listed.id !== "string" || !listed.id) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
         const file = await getFile(listed.id);
         check(file, listed.id, name, parent.id, folder);
-        if (file.version !== listed.version) fail("DRIVE_POSTCONDITION_VERSION_CHANGED");
+        if (!folder && ((file.size != null && file.size !== size) ||
+          (file.sha256Checksum != null && file.sha256Checksum !== "" && file.sha256Checksum !== digest)))
+          fail("DRIVE_POSTCONDITION_CONTENT_MISMATCH");
+        if (file.version !== listed.version) {
+          await waitForStableVersion(attempt);
+          continue;
+        }
         if (!folder && file.size === size && (file.sha256Checksum == null || file.sha256Checksum === "")) {
           // Drive may list a newly created object before publishing its
           // checksum. Only absence is provisional; a different checksum or
@@ -102,8 +115,12 @@ export function createGoogleDriveCreatePostconditionVerifier({
         }
         await parentIdentity();
         const finalList = await listChildren({ parent_id: parent.id, name });
-        if (!Array.isArray(finalList) || finalList.length !== 1 || finalList[0].id !== file.id ||
-          finalList[0].version !== file.version) fail("DRIVE_POSTCONDITION_VERSION_CHANGED");
+        if (!Array.isArray(finalList) || finalList.length !== 1 || finalList[0].id !== file.id)
+          fail("DRIVE_POSTCONDITION_VERSION_CHANGED");
+        if (finalList[0].version !== file.version) {
+          await waitForStableVersion(attempt);
+          continue;
+        }
         if (clock() > deadline) fail("DRIVE_POSTCONDITION_SYNC_TIMEOUT");
         const postcondition = { path: destination, parent_id: parent.id,
           provider_file_id: file.id, provider_file_version: file.version };
