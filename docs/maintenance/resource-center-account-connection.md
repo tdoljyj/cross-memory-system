@@ -184,7 +184,15 @@ One cloud job runs scan, authority, write and post-write verify in a single
 invocation, which needs more than the Workers Free 50-subrequest budget, so
 `wrangler.production.jsonc` sets `limits.subrequests` explicitly (Workers Paid).
 The public submit route schedules this private bridge using only the returned
-job/connection IDs; inspection never dispatches. Failed preflight records a
+job/connection IDs, on the `clued-storage-jobs` queue consumer (batch 1, no
+retries, each message acked once); inspection never dispatches.
+When the authority lookup denies a job, `public.clued_resource_center_authority_v1`
+returns a fixed `reason` label (for example `root_version_mismatch`,
+`parent_version_mismatch`, `parent_unregistered`, `destination_exists` or
+`decision_not_current`) and the cloud executor adds it to its
+`storage_cloud_authority_failed` log line. The label names the failed check and
+never carries a path, version or provider ID; a version mismatch means the
+registry needs the directory check and a CAS `artifact_update`. Failed preflight records a
 terminal denied/attention outcome instead of leaving an apparently queued job.
 An existing original mutation always takes precedence, including a lost reply.
 

@@ -450,7 +450,8 @@ for (const bindingSchema of focusedCloud || focusedAdmin ? ["legacy-expiry"] : [
         delete_authority: false,
       });
       assert.equal(updated.status, "committed");
-      assert.equal((await resolve({ mutation: replacement, provider_identity: identity })).status, "denied");
+      assert.deepEqual(await resolve({ mutation: replacement, provider_identity: identity }),
+        { status: "denied", reason: "destination_mismatch" });
       const next = await resolve({ mutation: replacement, provider_identity: {
         ...identity, destination_file_version: "6",
       } });
@@ -506,16 +507,25 @@ for (const bindingSchema of focusedCloud || focusedAdmin ? ["legacy-expiry"] : [
     });
 
     await t.test("unregistered paths, wrong IDs/versions and profile fail closed", async () => {
-      assert.equal((await resolve({ profile_version: "other" })).status, "denied");
-      assert.equal((await resolve({ provider_identity: {
+      assert.deepEqual(await resolve({ profile_version: "other" }), { status: "denied", reason: "profile_mismatch" });
+      assert.deepEqual(await resolve({ provider_identity: {
         ...providerIdentity, destination_parent_id: "same-name-other-id",
-      } })).status, "denied");
-      assert.equal((await resolve({ provider_identity: {
+      } }), { status: "denied", reason: "parent_unregistered" });
+      assert.deepEqual(await resolve({ provider_identity: {
         ...providerIdentity, destination_parent_version: "3",
-      } })).status, "denied");
-      assert.equal((await resolve({ mutation: {
+      } }), { status: "denied", reason: "parent_version_mismatch" });
+      assert.deepEqual(await resolve({ provider_identity: {
+        ...providerIdentity, root_folder_version: "999",
+      } }), { status: "denied", reason: "root_version_mismatch" });
+      assert.deepEqual(await resolve({ provider_identity: {
+        ...providerIdentity, root_folder_id: "other-root-id",
+      } }), { status: "denied", reason: "root_identity_mismatch" });
+      assert.deepEqual(await resolve({ mutation: {
         ...mutation, destination_path: ROOT + "/not-registered/topic",
-      } })).status, "denied");
+      } }), { status: "denied", reason: "parent_unregistered" });
+      assert.deepEqual(await resolve({ mutation: {
+        ...mutation, destination_path: "/elsewhere/topic",
+      } }), { status: "denied", reason: "destination_outside_root" });
     });
     await t.test("a generic Clued hash cannot substitute for the dedicated Binding", async () => {
       const generic = crypto.randomBytes(32).toString("hex");
@@ -523,7 +533,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin ? ["legacy-expiry"] : [
         "select public.clued_resource_center_authority_v1($1,$2::jsonb) value",
         [generic, JSON.stringify({ profile_id: profileId })],
       )).rows[0].value;
-      assert.equal(denied.status, "denied");
+      assert.deepEqual(denied, { status: "denied", reason: "request_invalid" });
     });
     await t.test("administrative writes and tables are inaccessible to anon", async () => {
       assert.equal((await admin.query("select has_function_privilege('anon'," +

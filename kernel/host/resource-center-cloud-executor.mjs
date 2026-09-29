@@ -27,9 +27,18 @@ const providerAuthorityCodes = new Set([
   "DRIVE_METADATA_UNAVAILABLE", "DRIVE_NAMESPACE_VISIBILITY_UNPROVEN", "DRIVE_PAGINATION_INVALID",
   "DRIVE_PAGINATION_LIMIT",
 ]);
-const logAuthorityFailure = (phase,stage,errorCode) => {
+// Fixed denial labels from public.clued_resource_center_authority_v1; each names a failed check, never a value.
+const authorityDenialReasons = new Set([
+  "request_invalid", "binding_inactive", "profile_mismatch", "root_identity_mismatch", "decision_not_current",
+  "root_version_mismatch", "root_unregistered", "root_path_not_current", "operation_shape_invalid",
+  "source_mismatch", "destination_outside_root", "parent_version_mismatch", "parent_unregistered",
+  "parent_path_not_current", "destination_mismatch", "destination_exists", "artifact_decision_not_current",
+  "internal_error",
+]);
+const logAuthorityFailure = (phase,stage,errorCode,reason) => {
   // Emit only fixed labels. In particular, never serialize an exception, RPC response or provider identity.
-  console.warn(JSON.stringify({event:"storage_cloud_authority_failed",phase,stage,error_code:errorCode}));
+  console.warn(JSON.stringify({event:"storage_cloud_authority_failed",phase,stage,error_code:errorCode,
+    ...(authorityDenialReasons.has(reason) ? {reason} : {})}));
 };
 const postWriteFailureCodes = Object.freeze({
   reservation:"POST_WRITE_RESERVATION_MISMATCH",
@@ -144,7 +153,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           throw error;
         }
         if(result?.status!=="resolved"){
-          logAuthorityFailure(phase,"canonical_result",result?.status==="denied"?"AUTHORITY_RPC_DENIED":"AUTHORITY_RESPONSE_INVALID");
+          if(result?.status==="denied") logAuthorityFailure(phase,"canonical_result","AUTHORITY_RPC_DENIED",result.reason);
+          else logAuthorityFailure(phase,"canonical_result","AUTHORITY_RESPONSE_INVALID");
           fail();
         }
         if(!isDeepStrictEqual(result.request,request) || !result.authority?.workspace_version){
