@@ -346,6 +346,26 @@ export async function testAccountCloud(t, admin, server, user, decision) {
         assert.equal(loaded.status,"recovery_only"); assert.equal(loaded.intent_id,row.id);
         assert.equal(loaded.attempt.provider_file_id,row.provider_attempt.provider_file_id);
         assert.equal(loaded.job_id,job.reference.job_id);
+        await admin.query("reset role");
+        await admin.query("update clued_private.resource_center_mutations_v1 set created_at=clock_timestamp()-interval '30 seconds' where id=$1", [row.id]);
+        await admin.query("set local role anon");
+        const scheduled = async input => (await admin.query("select public.clued_storage_scheduled_recovery_v2($1,$2::jsonb) value",
+          [issuer,JSON.stringify(input)])).rows[0].value;
+        const due = await scheduled({action:"due"});
+        assert.equal(due.status,"ok");
+        assert.deepEqual(due.jobs.filter(item => item.job_id===job.reference.job_id),[job.reference]);
+        const scheduledDescriptor = await scheduled({action:"load",...job.reference});
+        assert.equal(scheduledDescriptor.status,"recovery_only");
+        assert.equal(scheduledDescriptor.intent_id,row.id);
+        assert.deepEqual(scheduledDescriptor.attempt,loaded.attempt);
+        await admin.query("savepoint bad_scheduled_recovery");
+        await assert.rejects(scheduled({action:"load",...job.reference,mutation:{operation:"create"}}),/storage_scheduled_recovery_denied/);
+        await admin.query("rollback to savepoint bad_scheduled_recovery");
+        await admin.query("savepoint wrong_scheduled_issuer");
+        await assert.rejects(admin.query("select public.clued_storage_scheduled_recovery_v2($1,$2::jsonb)",
+          [sha("wrong-issuer"),JSON.stringify({action:"load",...job.reference})]),/storage_scheduled_recovery_denied/);
+        await admin.query("rollback to savepoint wrong_scheduled_issuer");
+        await admin.query("set local role authenticated");
         const oauth = async (name, input) => (await admin.query(`select public.${name}($1,$2::jsonb) value`,
           [issuerSecret, JSON.stringify(input)])).rows[0].value;
         const description = await oauth("clued_storage_recovery_oauth_start_v2",
