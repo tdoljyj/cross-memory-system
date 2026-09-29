@@ -130,10 +130,24 @@ revoke all on function clued_private.storage_credential_recovery_oauth_v2(text,j
 -- original job and receives no credential envelope or permission grant.
 create function public.clued_storage_recovery_oauth_start_v2(p_issuer_secret text,p_input jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
+declare u uuid:=clued_private.storage_owner_v1(); p_hash text;
+  c clued_private.storage_connections_v1;
 begin
-  if coalesce(p_input->>'action','') not in ('describe','prepare') then
+  if jsonb_typeof(p_input) is distinct from 'object'
+    or coalesce(p_input->>'action','') not in ('describe','prepare')
+    or coalesce(length(p_issuer_secret),0)<32 then
     raise exception 'storage_credential_recovery_denied' using errcode='42501'; end if;
-  return clued_private.storage_credential_recovery_oauth_v2(p_issuer_secret,p_input);
+  p_hash:=encode(sha256(convert_to(p_issuer_secret,'UTF8')),'hex');
+  -- This is a routing read, never authority. The selected legacy/v2 contract
+  -- rechecks Owner, issuer, exact job, connection mode and root under its locks.
+  select * into c from clued_private.storage_connections_v1
+    where id=(p_input->>'connection_id')::uuid and owner_id=u;
+  if c.auth_mode='account_policy' then
+    return clued_private.storage_credential_recovery_oauth_v2(p_issuer_secret,p_input);
+  elsif c.auth_mode='legacy' then
+    return clued_private.storage_credential_recovery_oauth_v1(p_hash,p_input);
+  end if;
+  raise exception 'storage_credential_recovery_denied' using errcode='42501';
 end $$;
 revoke all on function public.clued_storage_recovery_oauth_start_v2(text,jsonb) from public,anon,authenticated,service_role;
 grant execute on function public.clued_storage_recovery_oauth_start_v2(text,jsonb) to authenticated;
