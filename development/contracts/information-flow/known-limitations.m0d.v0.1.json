@@ -66,6 +66,12 @@
       "status": "OPEN",
       "evidence_refs": [
         "e2e/E2E-14.json"
+      ],
+      "history": [
+        {
+          "change": "On 2026-09-29 production showed that any active global work_log Event with the decision dimension shadowed every approving Decision, so every accepted policy was refused with policy_decision_not_current (Task 9351fc10-4978-4271-9b6b-99a416d06f80). Under Owner Decision 0b183c2e-8d20-4736-8ce5-7d41ae8ce6f9, migration 20260929150000 judges the approving Decision on its own lifecycle, so an Event no longer disables a policy. A Binding can still edit or supersede the approving Decision and shadow pack items through Events, so the entry stays OPEN.",
+          "previous_status": "OPEN"
+        }
       ]
     },
     {
@@ -610,6 +616,14 @@
       "kind": "Canonical Decision",
       "items": {
         "L14": "keep OPEN; upgrade to the Cloudflare Workers Paid plan before the first Context Policy is accepted, then observe first-pack CPU in production"
+      }
+    },
+    {
+      "decision_id": "0b183c2e-8d20-4736-8ce5-7d41ae8ce6f9",
+      "receipt_id": "8cff2453-0461-4e89-9159-00ad889a2ff9",
+      "kind": "Canonical Decision",
+      "items": {
+        "contract_6.1": "the approving Decision of a Context Policy is judged on its own lifecycle (exact version, not archived/merged/closed/superseded, Native marker) and is not shadowed by unrelated active Events"
       }
     }
   ],
