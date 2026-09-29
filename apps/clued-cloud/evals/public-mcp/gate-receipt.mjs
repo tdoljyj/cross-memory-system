@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -7,6 +8,10 @@ export const REQUIRED_CHECKS = Object.freeze([
   "gitleaks",
   "trivy",
 ]);
+
+// The gate applies to exactly the pull requests public-mcp-behavior runs for.
+export const GATE_APPLICABILITY_CHECK = "public-mcp-behavior";
+export const GATE_STATUS_CONTEXT = "public-mcp-gate-receipt";
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -76,6 +81,27 @@ export function buildReceipt({ repository, sha, pullRequest, evaluation, checked
   };
 }
 
+export function gateApplies(checkRuns) {
+  return checkRuns.some((run) => run.name === GATE_APPLICABILITY_CHECK);
+}
+
+export function commitStatusFor({ evaluation, receiptSha256, targetUrl }) {
+  const state = { PASS: "success", FAIL: "failure", PENDING: "pending" }[evaluation.state];
+  let description;
+  if (evaluation.state === "PENDING") {
+    const waiting = evaluation.checks.filter((check) => check.status !== "completed").map((check) => check.name);
+    description = `Waiting for ${waiting.join(", ")}`;
+  } else {
+    description = `${evaluation.state} receipt sha256:${receiptSha256.slice(0, 16)}`;
+  }
+  return {
+    state,
+    context: GATE_STATUS_CONTEXT,
+    description: description.slice(0, 140),
+    ...(targetUrl ? { target_url: targetUrl } : {}),
+  };
+}
+
 function parseInteger(value, fallback, minimum) {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed >= minimum ? parsed : fallback;
@@ -100,9 +126,27 @@ async function fetchCheckRuns({ apiUrl, repository, sha, token, requestTimeoutSe
   return payload.check_runs;
 }
 
+async function postCommitStatus({ apiUrl, repository, sha, token, requestTimeoutSeconds, status }) {
+  const response = await fetch(`${apiUrl}/repos/${repository}/statuses/${sha}`, {
+    method: "POST",
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "x-github-api-version": "2022-11-28",
+      "user-agent": "clued-public-mcp-gate-receipt-v1.1",
+    },
+    body: JSON.stringify(status),
+    signal: AbortSignal.timeout(requestTimeoutSeconds * 1000),
+  });
+  if (!response.ok) throw new Error(`GATE_STATUS_API_${response.status}`);
+}
+
 async function writeReceipt(output, receipt) {
+  const text = `${JSON.stringify(receipt, null, 2)}\n`;
   await fs.mkdir(path.dirname(path.resolve(output)), { recursive: true });
-  await fs.writeFile(output, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+  await fs.writeFile(output, text, { encoding: "utf8", flag: "wx" });
+  return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
 export async function waitForRequiredChecks({
@@ -132,20 +176,45 @@ async function main() {
   const pollSeconds = parseInteger(process.env.GATE_POLL_SECONDS, 10, 1);
   const requestTimeoutSeconds = parseInteger(process.env.GATE_REQUEST_TIMEOUT_SECONDS, 30, 1);
 
+  // "once" evaluates the current snapshot a single time and reports it as a
+  // commit status on the candidate; the workflow re-runs it whenever one of
+  // the required checks completes, so no runner is held while they queue.
+  const once = process.env.GATE_MODE === "once";
+  const targetUrl = process.env.GATE_STATUS_TARGET_URL || null;
+
   validateCandidate({ repository, sha });
   if (!token) throw new Error("GATE_GITHUB_TOKEN_REQUIRED");
 
-  const evaluation = await waitForRequiredChecks({
-    readChecks: () => fetchCheckRuns({
-      apiUrl,
-      repository,
-      sha,
-      token,
-      requestTimeoutSeconds,
-    }),
-    timeoutSeconds,
-    pollSeconds,
+  const readChecks = () => fetchCheckRuns({
+    apiUrl,
+    repository,
+    sha,
+    token,
+    requestTimeoutSeconds,
   });
+  let evaluation;
+  if (once) {
+    const checkRuns = await readChecks();
+    if (!gateApplies(checkRuns)) {
+      console.log(JSON.stringify({ verdict: "NOT_APPLICABLE", candidate_sha: sha }));
+      return;
+    }
+    evaluation = evaluateCheckRuns(checkRuns);
+    if (evaluation.state === "PENDING") {
+      await postCommitStatus({
+        apiUrl, repository, sha, token, requestTimeoutSeconds,
+        status: commitStatusFor({ evaluation, targetUrl }),
+      });
+      console.log(JSON.stringify({
+        verdict: "PENDING",
+        candidate_sha: sha,
+        checks: evaluation.checks.map(({ name, status }) => ({ name, status })),
+      }));
+      return;
+    }
+  } else {
+    evaluation = await waitForRequiredChecks({ readChecks, timeoutSeconds, pollSeconds });
+  }
   const receipt = buildReceipt({
     repository,
     sha,
@@ -153,13 +222,22 @@ async function main() {
     evaluation,
     checkedAt: new Date().toISOString(),
   });
-  await writeReceipt(output, receipt);
+  const receiptSha256 = await writeReceipt(output, receipt);
+  if (once) {
+    await postCommitStatus({
+      apiUrl, repository, sha, token, requestTimeoutSeconds,
+      status: commitStatusFor({ evaluation, receiptSha256, targetUrl }),
+    });
+  }
   console.log(JSON.stringify({
     verdict: receipt.verdict,
     candidate_sha: receipt.candidate_sha,
+    receipt_sha256: receiptSha256,
     checks: receipt.required_checks.map(({ name, conclusion }) => ({ name, conclusion })),
   }));
-  if (receipt.verdict !== "PASS") process.exitCode = 1;
+  // In once mode the verdict lives in the commit status on the candidate; the
+  // evaluating job itself is attached to the default branch and stays green.
+  if (!once && receipt.verdict !== "PASS") process.exitCode = 1;
 }
 
 if (!process.env.NODE_TEST_CONTEXT) {
