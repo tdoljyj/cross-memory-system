@@ -31,6 +31,25 @@ const logAuthorityFailure = (phase,stage,errorCode) => {
   // Emit only fixed labels. In particular, never serialize an exception, RPC response or provider identity.
   console.warn(JSON.stringify({event:"storage_cloud_authority_failed",phase,stage,error_code:errorCode}));
 };
+const postWriteFailureCodes = Object.freeze({
+  reservation:"POST_WRITE_RESERVATION_MISMATCH",
+  verify:"DRIVE_POSTCONDITION_UNAVAILABLE",
+  postcondition:"POST_WRITE_POSTCONDITION_INVALID",
+  proof:"POST_WRITE_PROOF_INVALID",
+  verified_record_rpc:"VERIFIED_RECORD_RPC_UNAVAILABLE",
+  verified_record_result:"VERIFIED_RECORD_RESPONSE_INVALID",
+  settle_verified_rpc:"SETTLE_VERIFIED_RPC_UNAVAILABLE",
+  settle_verified_result:"SETTLE_VERIFIED_RESPONSE_INVALID",
+  finalize_rpc:"FINALIZE_RPC_UNAVAILABLE",
+  finalize_result:"FINALIZE_RESPONSE_INVALID",
+});
+const logPostWriteFailure = (stage,error) => {
+  // These fixed labels identify the failed step without logging job, file, credential or raw error data.
+  const knownVerifierCode=stage==="verify" && typeof error?.message==="string" &&
+    /^DRIVE_POSTCONDITION_[A-Z_]{1,48}$/.test(error.message);
+  console.warn(JSON.stringify({event:stage==="verify"?"storage_cloud_postcondition_failed":"storage_cloud_postwrite_failed",stage,
+    error_code:knownVerifierCode?error.message:postWriteFailureCodes[stage]}));
+};
 
 /** Private cloud composition, not an Agent tool or production activation.
  * load_job/rpc/credential custody must be fixed, authenticated server closures.
@@ -140,33 +159,42 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           startedProvider={intent_id:result.intent_id,request_sha256:result.request_sha256,provider:request.provider_identity};
           return {status:"started",execution_permitted:true,intent_id:result.intent_id,request_sha256:result.request_sha256};
         },commit_post_write:async({mutation:input,binding,reservation,effect_result:result})=>{
-          if(!saved || saved.result.intent_id!==reservation.intent_id) fail();
-          const verification=await verify({profile,mutation:input,provider_before:saved.provider,effect_result:result})
-            .catch(error=>{
-              const code=typeof error?.message==="string" && /^DRIVE_POSTCONDITION_[A-Z_]+$/.test(error.message)
-                ? error.message : "DRIVE_POSTCONDITION_UNAVAILABLE";
-              console.warn(JSON.stringify({event:"storage_cloud_postcondition_failed",error_code:code}));
-              throw error;
-            });
-          const {verified_proof:proof,...postcondition}=verification;
-          const finish={action:"finalize",intent_id:reservation.intent_id,base_version:saved.result.version,
-            request_sha256:binding.request_sha256,idempotency_key:"account-job:"+ref.job_id+":finalize",postcondition};
-          let finished;
-          if(verifiedResultMode){
-            if(proof?.contract!=="clued.storage-create-verified/2") fail();
-            const recorded=await invoke({action:"verified_record",finish,proof});
-            if(recorded?.status!=="verified" || recorded.intent_id!==reservation.intent_id ||
-              !uuid(recorded.verified_receipt_id) || !/^[0-9a-f]{64}$/.test(recorded.verified_digest??"") ||
-              !Number.isSafeInteger(recorded.version) || recorded.execution_permitted!==false) fail();
-            finished=await invoke({action:"settle_verified",intent_id:reservation.intent_id,
-              base_version:recorded.version,request_sha256:binding.request_sha256,
-              verified_receipt_id:recorded.verified_receipt_id,verified_digest:recorded.verified_digest});
-          }else{
-            finished=await invoke({action:"finalize",...finish});
+          let stage="reservation";
+          try{
+            if(!saved || saved.result.intent_id!==reservation.intent_id) fail();
+            stage="verify";
+            const verification=await verify({profile,mutation:input,provider_before:saved.provider,effect_result:result});
+            stage="postcondition";
+            const {verified_proof:proof,...postcondition}=verification;
+            const finish={action:"finalize",intent_id:reservation.intent_id,base_version:saved.result.version,
+              request_sha256:binding.request_sha256,idempotency_key:"account-job:"+ref.job_id+":finalize",postcondition};
+            let finished;
+            if(verifiedResultMode){
+              stage="proof";
+              if(proof?.contract!=="clued.storage-create-verified/2") fail();
+              stage="verified_record_rpc";
+              const recorded=await invoke({action:"verified_record",finish,proof});
+              stage="verified_record_result";
+              if(recorded?.status!=="verified" || recorded.intent_id!==reservation.intent_id ||
+                !uuid(recorded.verified_receipt_id) || !/^[0-9a-f]{64}$/.test(recorded.verified_digest??"") ||
+                !Number.isSafeInteger(recorded.version) || recorded.execution_permitted!==false) fail();
+              stage="settle_verified_rpc";
+              finished=await invoke({action:"settle_verified",intent_id:reservation.intent_id,
+                base_version:recorded.version,request_sha256:binding.request_sha256,
+                verified_receipt_id:recorded.verified_receipt_id,verified_digest:recorded.verified_digest});
+              stage="settle_verified_result";
+            }else{
+              stage="finalize_rpc";
+              finished=await invoke({action:"finalize",...finish});
+              stage="finalize_result";
+            }
+            if(finished?.status!=="committed" || finished.state!=="committed" || finished.intent_id!==reservation.intent_id ||
+              finished.request_sha256!==binding.request_sha256 || finished.final_result?.status!=="committed" || !uuid(finished.receipt_id)) fail();
+            return {status:"committed",receipt_id:finished.receipt_id,request_sha256:binding.request_sha256};
+          }catch(error){
+            logPostWriteFailure(stage,error);
+            throw error;
           }
-          if(finished?.status!=="committed" || finished.state!=="committed" || finished.intent_id!==reservation.intent_id ||
-            finished.request_sha256!==binding.request_sha256 || finished.final_result?.status!=="committed" || !uuid(finished.receipt_id)) fail();
-          return {status:"committed",receipt_id:finished.receipt_id,request_sha256:binding.request_sha256};
         }});
       const result=await host.callTool(RESOURCE_CENTER_MUTATION_TOOL,mutation);
       if(result.status==="unreconciled" || result.status==="deny") {
