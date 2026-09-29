@@ -7,6 +7,7 @@
 - 源码基线：`cf01d7af0396a3addc2ea126e8de0525b905eee4`（PR #400 合并后的 `main`）。
 - 延续 Task：`2aa57e7c-9960-45bc-a6f2-ba0c7d74ec9a`；不新建 Program。
 - Owner 方向：Decision `1c82772d-a682-4d71-b454-31a981d778b1` v2——目标是完整存储能力，不限于 Browse / Read；第一步是本合同 + 威胁模型，不改代码、不含迁移。
+- Owner 选定 §9 D1–D6：Decision `634e3e57-8e7c-4884-890c-f07501f1a0b4`（全部为推荐项）。
 - 需求输入：《Clued Artifact & Storage Fabric：Storage Browse / Read 能力缺口 v0.1》（2026-09-29，Google Drive）。
 - 关系：扩展 `AccountStorageInheritance.v0.1.md`（账号策略、客户端继承、作业原子性）与 `StorageAdministration.v0.1.md`；两者中“不开放覆盖、移动、改名、删除”“不改变 `drive.file` 与 `drive.metadata.readonly`”的限制，在本合同对应阶段获 Owner 单独批准并上线前继续有效。
 - 本合同通过审查不等于代码通过；代码通过不等于生产启用；每个阶段的 PR 合并、生产迁移、发布、执行开关与真实验收各需 Owner 单独批准。
@@ -88,7 +89,7 @@
 
 | 等级 | 包含 | 风险 | 授权方式 |
 | --- | --- | --- | --- |
-| `read` | list、stat、search、resolve | 暴露结构与文件名 | 账号策略中勾选；连接时说明“Clued 可查看所选目录内的文件名和目录结构” |
+| `read` | list、stat、search、resolve | 暴露结构与文件名 | 连接时默认开启（D2），Owner 可关闭；连接时说明“Clued 可查看所选目录内的文件名和目录结构” |
 | `read_content` | read | 暴露正文，存在提示注入风险 | 独立勾选 |
 | `create` | create_file、create_topic | 已上线 | 沿用 |
 | `modify` | replace、rename、move（文件）、untrash | 可逆，但会改变现状 | 独立勾选 |
@@ -110,7 +111,7 @@
 1. **只移入回收站，不永久删除。**Receipt 写明 Google 会在 30 天后自动清除，恢复窗口到期后不可恢复。
 2. **治理类对象**（`governance_class = governance`）必须具备 `delete_authority`，沿用现有策略。字节相同只能证明是重复件，不能作为删除依据（Agent 合同 §7.5）。
 3. **单次作业只处理一个对象**，不提供批量删除作业。
-4. **同一任务上限**：同一 Agent 会话在单个任务中移入回收站超过 N 个对象（建议 N = 5，Owner 定）时，服务端拒绝。之后需 Owner 在原生页面给出针对本批对象的确认 Receipt，列出每个对象的 ID、路径和版本，才能继续。
+4. **同一任务上限**：同一 Agent 会话在单个任务中移入回收站超过 N 个对象（N = 5，Owner 已定，D4）时，服务端拒绝。之后需 Owner 在原生页面给出针对本批对象的确认 Receipt，列出每个对象的 ID、路径和版本，才能继续。
 5. 根、track 目录以及含已登记子项的目录不能 trash。
 
 ## 4. Google 权限：需要 Owner 决定的关键事实
@@ -142,7 +143,7 @@ Google Drive 对各 scope 的可见范围不同，这直接决定每个阶段能
 
 备选方案 **Google Picker**：用户在 Google 自带的选择器里选中资料根，`drive.file` 即可覆盖选中对象。选中文件夹后是否覆盖其全部子孙，取决于 Google 当前行为，需在 P2 前验证；只有验证通过，才能作为不扩大 scope 的路径。
 
-**本合同不预设选择**，§9 中 Owner 决定 D1 从三条路径中选一：Picker / `drive.readonly` + `drive` / 仅对 Clued 自建文件开放。
+**Owner 已定（D1）**：先实测 Picker。验证通过则走 Picker；不通过时，再由 Owner 在“`drive.readonly` + `drive`”与“仅对 Clued 自建文件开放”之间另行决定。
 
 ## 5. 读路径合同（P1、P2）
 
@@ -184,7 +185,7 @@ Google Drive 对各 scope 的可见范围不同，这直接决定每个阶段能
 - 每次读调用产生 `clued.storage-read/1` Receipt，包含：调用客户端、Binding、策略 generation、操作、对象 ID（或 list / search 的目录 ID 与条件摘要）、返回条数或字节数、完整性标志、时间。
 - **不含**正文、文件名列表或搜索词原文，只保存 HMAC 摘要。
 - 读回执与写回执分表或分类型存放，避免把“读过”误当作“改过”。
-- 回执保留期由 Owner 决定（D5）。
+- 回执保留期与写回执一致（D5）。
 - 撤销后，新的读调用立即拒绝。已返回给调用方的副本无法撤回，产品文案需明确这一点。
 
 ### 5.6 未登记对象
@@ -266,16 +267,18 @@ Google Drive 对各 scope 的可见范围不同，这直接决定每个阶段能
 
 **建议先做 P1**：不用改 Google scope，就能解决“Agent 看不见资料空间”这个核心问题；判定器、边界扫描和元数据读取器都可以复用。
 
-## 9. 需要 Owner 决定的问题
+## 9. Owner 决定（已选定）
 
-| # | 问题 | 选项 | 建议 |
-| --- | --- | --- | --- |
-| D1 | 如何覆盖非 Clued 创建的已有资料 | a) Google Picker（需先验证文件夹是否覆盖子孙）；b) 申请 `drive.readonly` + `drive`，并承担 Google 验证与年度评估；c) 仅对 Clued 自建文件开放读写，已有资料只能看元数据 | 先验证 a；不可行时，再在 b 与 c 之间决定 |
-| D2 | 新等级的默认状态 | 连接时默认开启 `read`，其余等级默认关闭；或全部默认关闭 | 默认开启 `read`，其余关闭 |
-| D3 | 删除语义 | 仅回收站；或也允许永久删除 | 仅回收站 |
-| D4 | 单任务 trash 上限 N | 数值 | 5 |
-| D5 | 读回执保留期 | 天数 | 与写回执一致 |
-| D6 | `read_content` 是否允许按客户端 deny | 是 / 否 | 是（复用 `storage_client_denies_v2`） |
+Owner 于 2026-09-29 选定，记录为 Decision `634e3e57-8e7c-4884-890c-f07501f1a0b4`：
+
+| # | 问题 | 选定 |
+| --- | --- | --- |
+| D1 | 如何覆盖非 Clued 创建的已有资料 | 先实测 Google Picker（选中文件夹是否覆盖其全部子孙）；不可行时，再在“`drive.readonly` + `drive`”与“仅 Clued 自建文件”之间另行决定 |
+| D2 | 新等级的默认状态 | 连接时默认只开 `read`，其余等级默认关闭 |
+| D3 | 删除语义 | 仅移入回收站，不永久删除 |
+| D4 | 单任务 trash 上限 N | 5 |
+| D5 | 读回执保留期 | 与写回执一致 |
+| D6 | `read_content` 是否允许按客户端 deny | 是（复用 `storage_client_denies_v2`） |
 
 ## 10. 验收要点（逐期细化）
 
