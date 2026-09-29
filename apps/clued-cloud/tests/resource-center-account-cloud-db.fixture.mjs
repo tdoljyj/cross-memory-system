@@ -373,7 +373,7 @@ export async function testAccountCloud(t, admin, server, user, decision) {
         await admin.query("reset role");
         const freshConnection = (await admin.query("select credential_version from clued_private.storage_connections_v1 where id=$1",
           [target.connection])).rows[0];
-        assert.equal(freshConnection.credential_version,2);
+        assert.equal(Number(freshConnection.credential_version),2);
         assert.equal((await journal(job)).state,"started","consent never settles or repeats the provider effect");
         assert.equal(storage.posts,1);
         await admin.query("set local role authenticated");
