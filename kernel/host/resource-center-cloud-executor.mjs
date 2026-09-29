@@ -14,6 +14,11 @@ const hash = value => createHash("sha256").update(JSON.stringify(value)).digest(
 const scopes = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const fail = () => { throw new Error("CLOUD_EXECUTOR_UNAVAILABLE"); };
 const unavailable = () => ({status:"unavailable",execution_permitted:false});
+const logDiagnostic = (status,errorCode) => {
+  // Never log the job, credential, path, scan findings or provider reply.
+  const code=typeof errorCode==="string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(errorCode) ? errorCode : "UNSPECIFIED";
+  console.warn(JSON.stringify({event:status==="deny"?"storage_cloud_denied":"storage_cloud_unreconciled",error_code:code}));
+};
 
 /** Private cloud composition, not an Agent tool or production activation.
  * load_job/rpc/credential custody must be fixed, authenticated server closures.
@@ -63,7 +68,10 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const scan=createGoogleDriveBoundaryScanner({trusted_profile:profile,root_folder_id:descriptor.root_folder_id,root_parent_id:descriptor.root_parent_id,
         scan_roots:descriptor.scan_roots,get_file:metadata.getFile,list_folder:metadata.listFolder});
       const findings=await scan();
-      if(findings.length) return {status:"deny",error_code:"UNAUTHORIZED_WORKSPACE_MUTATION",findings,side_effects:0,execution_permitted:false};
+      if(findings.length) {
+        logDiagnostic("deny","UNAUTHORIZED_WORKSPACE_MUTATION");
+        return {status:"deny",error_code:"UNAUTHORIZED_WORKSPACE_MUTATION",findings,side_effects:0,execution_permitted:false};
+      }
       const authorityRequest=async input=>({contract:"clued.resource-center-authority/1",policy_version:RESOURCE_CENTER_POLICY_VERSION,
         profile_id:profile.profile_id,profile_version:profile.profile_version,mutation:bindResourceCenterMutation(input),
         provider_identity:await resolveProvider({profile,mutation:input})});
@@ -129,11 +137,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         }});
       const result=await host.callTool(RESOURCE_CENTER_MUTATION_TOOL,mutation);
       if(result.status==="unreconciled" || result.status==="deny") {
-        // Keep the original journal fenced, but leave a stable diagnostic for
-        // the operator. Never log the job, credential, path or provider reply.
-        const code=typeof result.error_code==="string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(result.error_code)
-          ? result.error_code : "UNSPECIFIED";
-        console.warn(JSON.stringify({event:result.status==="deny"?"storage_cloud_denied":"storage_cloud_unreconciled",error_code:code}));
+        // Keep the original journal fenced, but leave a stable diagnostic.
+        logDiagnostic(result.status,result.error_code);
       }
       // Keep the internal admission, binding and provider result out of the
       // public job result. Recovery reads the original durable service state.

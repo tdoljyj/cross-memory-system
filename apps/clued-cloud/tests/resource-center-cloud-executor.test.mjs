@@ -64,6 +64,18 @@ test('preflight denial logs only a bounded diagnostic code',async()=>{
   assert.equal(logs[0].includes(root),false);
   assert.equal(logs[0].includes(ids.job),false);
 });
+test('early boundary scan denial logs a code without scan findings',async()=>{
+  const island=fixture({island:true});
+  const logs=[],original=console.warn;
+  console.warn=message=>logs.push(message);
+  let result;
+  try { result=await island.run().run(island.reference); }
+  finally { console.warn=original; }
+  assert.equal(result.status,'deny');
+  assert.equal(result.error_code,'UNAUTHORIZED_WORKSPACE_MUTATION');
+  assert.equal(island.info().starts,0);assert.equal(island.info().posts,0);
+  assert.deepEqual(logs.map(message=>JSON.parse(message)),[{event:'storage_cloud_denied',error_code:'UNAUTHORIZED_WORKSPACE_MUTATION'}]);
+});
 for(const [name,options] of Object.entries({revoked:{revoke:true},lostBegin:{lostBegin:true},missingAttemptReceipt:{failAttempt:true},replayedAttempt:{replayedAttempt:true},expiredAdmission:{expireAdmission:true}})){
   test('cloud '+name+' prevents provider mutation and never retries start',async()=>{
     const f=fixture(options),executor=f.run();assert.notEqual((await executor.run(f.reference)).status,'committed');
