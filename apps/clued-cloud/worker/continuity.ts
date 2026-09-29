@@ -687,6 +687,72 @@ export async function runStorageRefreshScheduled(env: ContinuityEnv) {
   } catch { return { status: "unavailable" }; }
 }
 
+export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
+  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true" ||
+      env.CLUED_STORAGE_JOBS_V2 !== "true" || env.CLUED_STORAGE_EXECUTOR_V1 !== "true") return { status: "disabled" };
+  try {
+    const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+    if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS) return { status: "unavailable" };
+    const issuerHash = await sha256(issuer);
+    const recoveryRpc = async (input: Record<string, unknown>) => await supabaseRequest(env,
+      "/rest/v1/rpc/clued_storage_scheduled_recovery_v2", {
+        method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
+        signal: AbortSignal.timeout(10000), redirect: "manual",
+      }) as Record<string, unknown>;
+    const verifiedRpc = async (input: Record<string, unknown>) => await supabaseRequest(env,
+      "/rest/v1/rpc/clued_storage_cloud_worker_router_v2", {
+        method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
+        signal: AbortSignal.timeout(10000), redirect: "manual",
+      }) as Record<string, unknown>;
+    const due = await recoveryRpc({ action: "due" });
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    if (due.status !== "ok" || !Array.isArray(due.jobs) || due.jobs.length > 3 ||
+        !due.jobs.every(job => job && typeof job === "object" &&
+          Object.keys(job).sort().join(",") === "connection_id,job_id" &&
+          typeof job.connection_id === "string" && uuid.test(job.connection_id) &&
+          typeof job.job_id === "string" && uuid.test(job.job_id))) return { status: "unavailable" };
+    let committed = 0, attention = 0;
+    for (const reference of due.jobs as Array<{ connection_id: string; job_id: string }>) {
+      try {
+        const prior = await verifiedRpc({ ...reference, action: "verified_inspect" });
+        if (prior.status === "committed" && prior.connection_id === reference.connection_id &&
+            prior.job_id === reference.job_id && prior.execution_permitted === false &&
+            typeof prior.receipt_id === "string" && uuid.test(prior.receipt_id)) {
+          committed++;
+          continue;
+        }
+        if (prior.status === "verified" && prior.connection_id === reference.connection_id &&
+            prior.job_id === reference.job_id && prior.execution_permitted === false &&
+            typeof prior.verified_receipt_id === "string" && uuid.test(prior.verified_receipt_id) &&
+            typeof prior.verified_digest === "string" && /^[0-9a-f]{64}$/.test(prior.verified_digest)) {
+          const settled = await verifiedRpc({ ...reference, action: "settle_verified" });
+          if (settled.status !== "committed" || settled.state !== "committed" ||
+              settled.connection_id !== reference.connection_id || settled.job_id !== reference.job_id ||
+              !settled.final_result || typeof settled.final_result !== "object" ||
+              (settled.final_result as Record<string, unknown>).status !== "committed" ||
+              settled.execution_permitted !== false || typeof settled.receipt_id !== "string" ||
+              !uuid.test(settled.receipt_id)) throw new Error("settlement unavailable");
+          committed++;
+          continue;
+        }
+        if (prior.status !== "inspection_required" || prior.connection_id !== reference.connection_id ||
+            prior.job_id !== reference.job_id || prior.execution_permitted !== false)
+          throw new Error("original journal unavailable");
+        const descriptor = await recoveryRpc({ ...reference, action: "load" });
+        if (descriptor.status !== "recovery_only" || descriptor.connection_id !== reference.connection_id ||
+            descriptor.job_id !== reference.job_id) throw new Error("recovery descriptor unavailable");
+        const recovery = await createStorageCloudRecovery({
+          client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
+          rpc: recoveryRpc, verified: { descriptor, rpc: verifiedRpc }, timeout_ms: 10000,
+        });
+        const result = await recovery.run(reference);
+        if (result.status === "committed") committed++; else attention++;
+      } catch { attention++; }
+    }
+    return { status: attention ? "attention_required" : "ok", committed, attention };
+  } catch { return { status: "unavailable" }; }
+}
+
 export async function runProjectionRefreshScheduled(env: ContinuityEnv) {
   if (!projectionBuilderToken(env)) return runProjectionRefreshPipeline(env);
   const runId = crypto.randomUUID();

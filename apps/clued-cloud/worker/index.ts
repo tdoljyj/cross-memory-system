@@ -5,6 +5,7 @@ import {
   handleContinuityRequest,
   runProjectionRefreshScheduled,
   runStorageRefreshScheduled,
+  runStorageRecoveryScheduled,
   type ContinuityEnv,
 } from "./continuity";
 
@@ -74,6 +75,10 @@ const worker = {
     ctx.waitUntil(runStorageRefreshScheduled(env).then(result => {
       if (result.status === "unavailable" || result.status === "attention_required")
         console.warn(JSON.stringify({ event: "storage_refresh_attention_required", status: result.status }));
+    }));
+    ctx.waitUntil(runStorageRecoveryScheduled(env).then(result => {
+      if (result.status === "unavailable" || result.status === "attention_required")
+        console.warn(JSON.stringify({ event: "storage_recovery_attention_required", status: result.status }));
     }));
   },
 };

@@ -43,10 +43,25 @@ test("create waits for sync then pins provider ID/version and ancestor identity"
 test("UTF-8 file contents are proved by SHA256 and byte count metadata", async () => {
   const f = fixture({ file: true });
   assert.equal((await f.verify(f.request)).provider_file_id, "topic");
-  for (const patch of [{ size: "1" }, { sha256Checksum: undefined }, { sha256Checksum: "a".repeat(64) }]) {
+  for (const patch of [{ size: "1" }, { sha256Checksum: "a".repeat(64) }]) {
     const bad = fixture({ file: true }); Object.assign(bad.files.topic, patch);
     await assert.rejects(bad.verify(bad.request), /CONTENT_MISMATCH/);
   }
+});
+test("newly created file waits for a missing checksum and remains bounded", async () => {
+  let reads = 0;
+  const f = fixture({ file: true, options: { get_file: async id => {
+    const file = structuredClone(f.files[id]);
+    if (id === "topic" && reads++ < 2) delete file.sha256Checksum;
+    return file;
+  } } });
+  assert.equal((await f.verify(f.request)).provider_file_id, "topic");
+  assert.equal(reads, 3);
+  assert.equal(f.stats().now, 20);
+  const never = fixture({ file: true });
+  delete never.files.topic.sha256Checksum;
+  await assert.rejects(never.verify(never.request), /SYNC_TIMEOUT/);
+  assert.equal(never.stats().now, 100);
 });
 
 test("opt-in durable proof is emitted only after the exact provider checks", async () => {
