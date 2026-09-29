@@ -89,13 +89,17 @@ export function verifyReleaseState({ baseline, sourceSql, history, changedPaths,
     if (minHeartbeatAt !== null && heartbeatAt <= Date.parse(minHeartbeatAt)) {
       errors.push('worker_has_not_run_after_deployment');
     }
+    // Only tenants the running Builder serves can become current; rows of other
+    // tenants (for example a production E2E account) are left to the watchdog.
     for (const key of requiredKeys) {
-      const matching = Array.isArray(watchdog.projections)
-        ? watchdog.projections.filter((row) => row.projection_key === key) : [];
-      const row = matching[0];
-      if (matching.length !== 1 || row.job_status !== 'completed' ||
-          row.invalidation_revision !== row.resolved_through_revision ||
-          row.stale_since !== null || row.source_digest_status !== 'match') {
+      const served = Array.isArray(watchdog.projections)
+        ? watchdog.projections.filter((row) => row?.projection_key === key &&
+          row.builder_served === true) : [];
+      if (served.length === 0 ||
+          new Set(served.map((row) => row.tenant_key)).size !== served.length ||
+          served.some((row) => row.job_status !== 'completed' ||
+            row.invalidation_revision !== row.resolved_through_revision ||
+            row.stale_since !== null || row.source_digest_status !== 'match')) {
         errors.push(`projection_not_current:${key}`);
       }
     }
