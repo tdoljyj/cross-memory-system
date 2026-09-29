@@ -19,6 +19,18 @@ const logDiagnostic = (status,errorCode) => {
   const code=typeof errorCode==="string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(errorCode) ? errorCode : "UNSPECIFIED";
   console.warn(JSON.stringify({event:status==="deny"?"storage_cloud_denied":"storage_cloud_unreconciled",error_code:code}));
 };
+const providerAuthorityCodes = new Set([
+  "PROVIDER_DESTINATION_EXISTS", "PROVIDER_LIST_UNAVAILABLE", "PROVIDER_METADATA_MISMATCH",
+  "PROVIDER_PATH_AMBIGUOUS", "PROVIDER_PATH_OUTSIDE_REGISTERED_ROOT", "PROVIDER_PATH_UNREGISTERED",
+  "PROVIDER_PROFILE_ROOT_MISMATCH", "PROVIDER_ROOT_ID_MISMATCH", "PROVIDER_ROOT_MUTATION_FORBIDDEN",
+  "DRIVE_CREDENTIAL_UNAVAILABLE", "DRIVE_LIST_INVALID", "DRIVE_METADATA_MISMATCH",
+  "DRIVE_METADATA_UNAVAILABLE", "DRIVE_NAMESPACE_VISIBILITY_UNPROVEN", "DRIVE_PAGINATION_INVALID",
+  "DRIVE_PAGINATION_LIMIT",
+]);
+const logAuthorityFailure = (phase,stage,errorCode) => {
+  // Emit only fixed labels. In particular, never serialize an exception, RPC response or provider identity.
+  console.warn(JSON.stringify({event:"storage_cloud_authority_failed",phase,stage,error_code:errorCode}));
+};
 
 /** Private cloud composition, not an Agent tool or production activation.
  * load_job/rpc/credential custody must be fixed, authenticated server closures.
@@ -76,9 +88,30 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         profile_id:profile.profile_id,profile_version:profile.profile_version,mutation:bindResourceCenterMutation(input),
         provider_identity:await resolveProvider({profile,mutation:input})});
       const invoke=async input=>rpc(Object.freeze({...ref,...input}));
+      let authorityLookupCount=0;
       const resolveAuthority=async({mutation:input})=>{
-        const request=await authorityRequest(input), result=await invoke({action:"authority",request});
-        if(result?.status!=="resolved" || !isDeepStrictEqual(result.request,request) || !result.authority?.workspace_version) fail();
+        const phase=["initial","revalidation","pre_effect"][Math.min(authorityLookupCount++,2)];
+        let request;
+        try { request=await authorityRequest(input); }
+        catch(error){
+          const message=error?.message;
+          logAuthorityFailure(phase,"provider_identity",providerAuthorityCodes.has(message)?message:"PROVIDER_IDENTITY_UNAVAILABLE");
+          throw error;
+        }
+        let result;
+        try { result=await invoke({action:"authority",request}); }
+        catch(error){
+          logAuthorityFailure(phase,"canonical_rpc","AUTHORITY_RPC_UNAVAILABLE");
+          throw error;
+        }
+        if(result?.status!=="resolved"){
+          logAuthorityFailure(phase,"canonical_result",result?.status==="denied"?"AUTHORITY_RPC_DENIED":"AUTHORITY_RESPONSE_INVALID");
+          fail();
+        }
+        if(!isDeepStrictEqual(result.request,request) || !result.authority?.workspace_version){
+          logAuthorityFailure(phase,"canonical_result","AUTHORITY_RESPONSE_MISMATCH");
+          fail();
+        }
         return Object.freeze({...result.authority,workspace_version:"provider+canonical:"+hash([result.authority.workspace_version,request.provider_identity])});
       };
       let startedProvider=null, saved=null;
