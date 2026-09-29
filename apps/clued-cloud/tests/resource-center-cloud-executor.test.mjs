@@ -269,3 +269,37 @@ for(const [name,options] of Object.entries({lostPost:{lostPost:true},lostFinaliz
     assert.equal(f.info().posts,1);assert.equal((await f.run().run(f.reference)).status,'inspection_required');assert.equal(f.info().posts,1);
   });
 }
+test('batched boundary scan keeps post-write verify inside the subrequest budget that the per-folder scan exhausts',async()=>{
+  const FOLDER='application/vnd.google-apps.folder';
+  const run=async batched=>{
+    const f=fixture(),fetch=f.config.drive_fetch,rpc=f.config.rpc;let used=0;
+    // Six ordinary folders beside the registered root: the per-folder scan still
+    // admits the write, then the budget runs out during post-write verification.
+    for(let i=0;i<6;i++)f.files.set('t'+i,{id:'t'+i,name:'top'+i,parents:['parent'],version:'1',trashed:false,mimeType:FOLDER});
+    // Every outbound call (provider or database RPC) spends the same per-invocation budget.
+    const spend=()=>{if(++used>50)throw new Error('Too many subrequests.');};
+    f.config.drive_fetch=async(url,init)=>{spend();return fetch(url,init);};
+    f.config.rpc=async input=>{spend();return rpc(input);};
+    if(batched){
+      const byId=id=>structuredClone(f.files.get(id));
+      const children=id=>[...f.files.values()].filter(x=>x.parents.includes(id)).map(x=>structuredClone(x));
+      const chunk=async(ids,read)=>{for(let i=0;i<ids.length;i+=32)spend();return ids.map(read);};
+      f.config.metadata_batch=async({access_token})=>{
+        assert.equal(access_token,'synthetic-cloud-token');
+        return {getFiles:ids=>chunk(ids,byId),listFolders:ids=>chunk(ids,children)};
+      };
+    }
+    const logs=[],original=console.warn;console.warn=message=>logs.push(message);
+    try{return {result:await f.run().run(f.reference),posts:f.info().posts,logs:logs.map(m=>JSON.parse(m)),used};}
+    finally{console.warn=original;}
+  };
+  const before=await run(false);
+  assert.equal(before.result.status,'unreconciled');
+  assert.equal(before.posts,1);
+  assert.deepEqual(before.logs[0],{event:'storage_cloud_postcondition_failed',stage:'verify',error_code:'DRIVE_METADATA_SUBREQUEST_LIMIT'});
+  const after=await run(true);
+  assert.equal(after.result.status,'committed');
+  assert.equal(after.posts,1);
+  assert.deepEqual(after.logs,[]);
+  assert.ok(after.used<=40,String(after.used));
+});

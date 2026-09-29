@@ -3,6 +3,7 @@ import { createStorageCredentialVault, type StorageCredentialContext, type Stora
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-postcondition.mjs";
 import { createStorageFetch } from "./storage-fetch";
+import { createStorageGoogleMetadataBatch } from "./storage-google-metadata-batch";
 
 type Data = Record<string, unknown>;
 type Reference = {connection_id: string; job_id: string};
@@ -59,6 +60,10 @@ export async function createStorageCloudWorker(config: {
     };
     const executor = createResourceCenterCloudExecutor({
       clock: config.clock ?? Date.now, drive_fetch: fetcher,
+      // The boundary scan reads a whole folder level per request, so one run
+      // stays within the Worker's per-invocation subrequest budget.
+      metadata_batch: ({ access_token }: { access_token: string }) =>
+        createStorageGoogleMetadataBatch({ access_token, fetch: config.fetch, signal: AbortSignal.timeout(60000) }),
       verified_result_mode: config.account_policy_v2 === true,
       load_job: async (ref: Reference) => {
         const result = await config.rpc({...ref, action:"load"});
