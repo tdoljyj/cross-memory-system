@@ -383,6 +383,40 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
           where a.user_id=e.user_id and a.context_key=e.context_key and a.event_id=e.id)`,
       [userId, projectContext])).rows[0].count;
     assert.equal(Number(readableCheckpoint.pending_event_count_after), visiblePendingCount);
+
+    // A full 100-event page resolves record_targets (including an upper-case
+    // stored id) within the production anon statement_timeout. The primary-key
+    // lookup itself is pinned by k-cont-contract; this fixture checks results.
+    for (let index = 0; index < 300; index++) {
+      const pageNote = await rpc("clued_record_mutate", {
+        operation: "create", record_type: "note", record_schema_version: 1, lifecycle_status: "active", scope: "global",
+        idempotency_key: uuid(), authority: "user_explicit", user_confirmed: true, confidence_reason: "K-CONT page cost fixture",
+        source_refs: [], source_unavailable_reason: null,
+        mutation: { title: `Page cost note ${index}`, content: "fixture", type_fields: { note_kind: "log" }, relations: {} },
+      });
+      assert.equal(pageNote.status, "committed", JSON.stringify(pageNote));
+    }
+    for (let index = 0; index < 100; index++) {
+      assert.equal((await rpc("clued_event_append", {
+        event_schema_version: 1, event_type: "extension:kcont:page_cost", event_scope: projectContext,
+        target_refs: [{ kind: "record", id: projectRecordId }], audit_visibility: "work_log", idempotency_key: uuid(),
+      })).status, "committed");
+    }
+    await admin.query(`update public.clued_context_events set target_refs=jsonb_build_array(jsonb_build_object('kind','record','id',upper($2::text)))
+      where id=(select max(id) from public.clued_context_events where user_id=$1 and canonical_event_type='extension:kcont:page_cost')`,
+      [userId, projectRecordId]);
+    await anon.query("set statement_timeout='3s'");
+    const pageCursor = (await admin.query(`select min(id)-1 as id from public.clued_context_events
+      where user_id=$1 and canonical_event_type='extension:kcont:page_cost'`, [userId])).rows[0].id;
+    const fullPage = await reducedRpc("clued_mcp_restore", {
+      context_key: projectContext, response_view: "structured", event_cursor: Number(pageCursor), event_limit: 100,
+      event_budget_bytes: 262144,
+    });
+    await anon.query("reset statement_timeout");
+    const pageCostEvents = fullPage.events_after_checkpoint.filter((item) => item.canonical_event_type === "extension:kcont:page_cost");
+    assert.equal(pageCostEvents.length, 100);
+    assert.ok(pageCostEvents.every((item) =>
+      item.record_targets.length === 1 && item.record_targets[0].title === "Project constraint"));
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

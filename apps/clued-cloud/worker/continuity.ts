@@ -1042,7 +1042,7 @@ const tools = [
       properties: {
         context_key: {
           type: "string",
-          description: "Stable project or workspace key. Defaults to global.",
+          description: "Context to resume: \"global\" (default) or \"project:<canonical_project_id>\". A bare project UUID is rejected.",
         },
         client_session_id: {
           type: "string",
@@ -1708,6 +1708,8 @@ const REQUEST_RULE_REJECTIONS: Readonly<Record<string, string | null>> = {
   resume_required: "Call clued_session_resume and retry with the returned session_token.",
   resume_required_or_session_expired: "Call clued_session_resume and retry with the returned session_token.",
   session_not_found: "Call clued_session_resume and retry with the returned session_token.",
+  requested_context_not_authorized:
+    "context_key must be \"global\" or \"project:<canonical_project_id>\", not a bare project ID. Retry with the prefixed key.",
   checkpoint_event_not_authorized:
     "coverage.event_ids may list only events of this checkpoint's context_key. Checkpoint each context separately: resume with that context's context_key (for example project:<id> for project-scope writes), reconcile, then checkpoint with the same context_key and its own event ids.",
   authority_escalation_forbidden: null,

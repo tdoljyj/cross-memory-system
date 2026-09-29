@@ -32,7 +32,7 @@
         "properties": {
           "context_key": {
             "type": "string",
-            "description": "Stable project or workspace key. Defaults to global."
+            "description": "Context to resume: \"global\" (default) or \"project:<canonical_project_id>\". A bare project UUID is rejected."
           },
           "client_session_id": {
             "type": "string",
