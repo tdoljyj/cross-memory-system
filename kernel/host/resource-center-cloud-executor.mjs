@@ -128,10 +128,12 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           return {status:"committed",receipt_id:finished.receipt_id,request_sha256:binding.request_sha256};
         }});
       const result=await host.callTool(RESOURCE_CENTER_MUTATION_TOOL,mutation);
-      if(result.status==="unreconciled") {
+      if(result.status==="unreconciled" || result.status==="deny") {
         // Keep the original journal fenced, but leave a stable diagnostic for
         // the operator. Never log the job, credential, path or provider reply.
-        console.warn(JSON.stringify({event:"storage_cloud_unreconciled",error_code:result.error_code}));
+        const code=typeof result.error_code==="string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(result.error_code)
+          ? result.error_code : "UNSPECIFIED";
+        console.warn(JSON.stringify({event:result.status==="deny"?"storage_cloud_denied":"storage_cloud_unreconciled",error_code:code}));
       }
       // Keep the internal admission, binding and provider result out of the
       // public job result. Recovery reads the original durable service state.
