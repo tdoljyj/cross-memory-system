@@ -42,6 +42,7 @@ import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
 import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentTools } from "./storage-agent-tools";
+import { createStorageReadAgent, storageReadTool, StorageReadError } from "./storage-read-agent";
 
 declare const __CLUED_BUILD_SHA__: string | null;
 
@@ -85,6 +86,9 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6Feature
   CLUED_STORAGE_GOOGLE_REDIRECT_URI?: string;
   CLUED_STORAGE_CONNECTOR_ISSUER?: string;
   CLUED_STORAGE_VAULT_KEYS?: string;
+  CLUED_STORAGE_READ_V1?: string;
+  CLUED_STORAGE_READ_RECEIPT_KEYS?: string;
+  CLUED_STORAGE_READ_CURSOR_KEY?: string;
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   CLUED_ALLOWED_ORIGINS?: string;
@@ -1505,13 +1509,41 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {
   };
 }
 
-export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1">) {
+export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1">) {
   const existing = tools.filter((tool) =>
     (!(tool.name in recordRpcByTool || tool.name in informationFlowRpcByTool) || recordsV2Enabled(env))
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
     && (!(tool.name in contextRpcByTool) || contextsEnabled(env))
   ).map(publishTool);
-  return [...existing, ...(storageJobsEnabled(env) ? storageAgentTools : [])];
+  return [...existing, ...(storageJobsEnabled(env) ? storageAgentTools : []), ...(storageReadEnabled(env) ? [storageReadTool] : [])];
+}
+
+// StorageFullCapability.v0.1 P1. Independent of the write/job flags: turning
+// reads on or off never changes the write tools, and vice versa.
+function storageReadEnabled(env: Pick<ContinuityEnv, "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1">) {
+  return env.CLUED_STORAGE_ACCOUNT_V1 === "true" && env.CLUED_STORAGE_GOOGLE_V1 === "true" && env.CLUED_STORAGE_READ_V1 === "true";
+}
+
+async function callStorageRead(request: Request, env: ContinuityEnv, args: unknown) {
+  const token = bearerToken(request);
+  if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new StorageReadError("storage_read_unavailable");
+  const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+  if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS || !env.CLUED_STORAGE_READ_RECEIPT_KEYS || !env.CLUED_STORAGE_READ_CURSOR_KEY)
+    throw new StorageReadError("storage_read_unavailable");
+  const issuerHash = await sha256(issuer);
+  let agent: Awaited<ReturnType<typeof createStorageReadAgent>>;
+  try {
+    agent = await createStorageReadAgent({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
+      receipt_keys: JSON.parse(env.CLUED_STORAGE_READ_RECEIPT_KEYS), cursor_key: env.CLUED_STORAGE_READ_CURSOR_KEY,
+      rpc: async ({ token_hash, input }) => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_read_v1", {
+        method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_token_hash: token_hash, p_input: input }),
+        signal: AbortSignal.timeout(10000), redirect: "manual",
+      }) as Record<string, unknown> });
+  } catch (error) {
+    if (error instanceof StorageReadError) throw error;
+    throw new StorageReadError("storage_read_unavailable");
+  }
+  return agent.run(await sha256(token), args);
 }
 
 function storageJobsEnabled(env: Pick<ContinuityEnv, "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1">) {
@@ -1804,6 +1836,21 @@ async function callTool(
   args: unknown,
   ctx?: ContinuityExecutionContext,
 ) {
+  if (name === storageReadTool.name) {
+    if (!storageReadEnabled(env)) throw new HttpError(404, "Storage reads are disabled.");
+    try {
+      const result = await callStorageRead(request, env, args);
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
+    } catch (error) {
+      // Fixed codes only: no provider text, IDs, paths, credentials or database details.
+      const code = error instanceof StorageReadError ? error.code : "storage_read_unavailable";
+      const result = { error: code, message: code === "not_found_in_scope"
+        ? "Not found inside the authorized root. This is not proof that it does not exist."
+        : code === "cursor_invalid" ? "The cursor is invalid or expired. Start the listing or search again."
+        : code === "storage_read_input_invalid" ? "Invalid input for clued_storage_browse." : "Storage read unavailable." };
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+    }
+  }
   if (isStorageAgentTool(name)) {
     if (!storageJobsEnabled(env)) throw new HttpError(404, "Storage jobs are disabled.");
     try {
@@ -1963,7 +2010,7 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
       const args = rpc.params?.arguments;
       const result = await callTool(request, env, name, args, ctx);
       return json(rpcResult(rpc.id, result), 200, {
-        ...corsHeaders(request), ...(isStorageAgentTool(name) ? { "cache-control": "no-store" } : {}),
+        ...corsHeaders(request), ...(isStorageAgentTool(name) || name === storageReadTool.name ? { "cache-control": "no-store" } : {}),
       });
     }
     return json(rpcError(rpc.id, -32601, "Method not found"), 404, corsHeaders(request));

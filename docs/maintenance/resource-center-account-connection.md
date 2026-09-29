@@ -368,6 +368,30 @@ the same identity/policy row locks as the write evaluator, without a job lock.
 Disconnect, policy revoke and read toggles (root X) and client revoke or class
 deny (lineage X) serialize with it; the admit commit is the linearization point.
 
-No MCP tool, Worker route or Google call is added by this migration. Production
-application, the read switch and the Owner's first `set_classes` each need
-separate Owner approval.
+The migration itself adds no MCP tool, Worker route or Google call.
+
+### `clued_storage_browse` (P1 Worker tool)
+
+`worker/storage-read-agent.ts` adds the read-only MCP tool `clued_storage_browse`
+(`list`, `stat`, `search`, `resolve`). It is listed and callable only when
+`CLUED_STORAGE_ACCOUNT_V1`, `CLUED_STORAGE_GOOGLE_V1` and `CLUED_STORAGE_READ_V1`
+are all `true`, independent of the write/job flags. It also needs the secrets
+`CLUED_STORAGE_READ_RECEIPT_KEYS` (`{"current":"k1","keys":{"k1":"<base64 32 bytes>"}}`)
+and `CLUED_STORAGE_READ_CURSOR_KEY` (base64 32 bytes), plus the existing issuer,
+vault and Google client ID.
+
+- Every call is admitted by `clued_storage_read_v1` first; the intent receipt is
+  committed before any Google request and finalized in `finally`.
+- Google access is metadata-only through the existing batch transport (no
+  `alt=media`, no scope change). Root scope is the provider-ID parent chain;
+  a multi-parent object with any chain outside the root, missing objects and
+  outside objects all return `not_found_in_scope`.
+- Search walks only the root subtree breadth-first and never reports how many
+  results were filtered. `next_cursor` is AES-GCM sealed and bound to the
+  connection, read generation, root, operation and condition HMAC; folders
+  carried in a cursor are re-checked on the page that uses them.
+- The condition HMAC is domain-separated by connection ID (each connection
+  belongs to exactly one owner), with the key ID stored on the receipt.
+
+Production application, the read switch, the secrets and the Owner's first
+`set_classes` each need separate Owner approval.
