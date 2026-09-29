@@ -3,7 +3,7 @@
 ## 0. 文档边界与实施门槛
 
 - **类型**：与实现、迁移和验收直接绑定的工程合同。它不是上线证明，也不是任何阶段的实施授权。
-- **状态**：**CANDIDATE（r2）**，待 Owner 审查。
+- **状态**：**CANDIDATE（r3）**，待 Owner 审查。
 - **修订记录**：
   - r1：初稿。
   - r2：按独立审查结论（FAIL：3 BLOCKER / 7 MAJOR）修订。改动如下：
@@ -16,6 +16,7 @@
     - 可 trash 的目录以 provider 实测为准（§3.4）；
     - 版本核验方式（§6.1）；
     - 以及若干 MINOR 修正。
+  - r3：按增量复审（PASS）补充：搜索游标由服务端封签（§5.3）；P3 换策略时迁移读取授权（§3.3、§8）；撤销串行表述（§5.1）；摘要版本列（§3.3）；`headRevisionId` 仅适用于有二进制内容的文件（§6.1）。
 - **源码基线**：`cf01d7af0396a3addc2ea126e8de0525b905eee4`（PR #400 合并后的 `main`）。
 - **延续 Task**：`2aa57e7c-9960-45bc-a6f2-ba0c7d74ec9a`；不新建 Program。
 - **Owner 方向与决定**：
@@ -168,6 +169,7 @@
 - 行不可变，只有状态列可改（沿用写入策略的触发器模式）。开关某个等级 = 在同一事务里撤销旧行、插入新行，`read_generation` +1，并写 Event 与 Receipt。
 - 这个事务**不改** `storage_account_policies_v2`，**不改** `auth_generation`，也不取 job 锁。锁顺序：native 身份检查 → root advisory（排他）→ connection S → policy S → 读取授权 X。
 - 生效条件：写入策略被撤销或连接进入 `revoked` 时，读取判定立即失败，因为判定器要求所绑定的策略处于 active。读取授权不会独立复活。
+- 换策略时迁移：P3 起开关写入等级会产生新的 `policy_id`。换策略事务必须在同一事务内撤销旧读取授权行，并插入绑定新策略、等级集合和 `disclosure_version` 均不变的新行，`read_generation` +1，写 Receipt。断开网盘或撤销策略（而非换策略）时不迁移。
 - 迁移已有连接：P1 上线**不会**自动给已有连接加 `read`。Owner 要在原生页面确认一次（新的 `disclosure_version`），才会建立读取授权。新连接在激活事务里按 D2 默认建立 `{read}`。
 
 **二、按等级的客户端 deny `storage_read_client_denies_v1`（D6，P1 建表，P2 起使用 `read_content`）**
@@ -178,7 +180,7 @@
 
 **三、写入策略（P3 起）**
 
-- 新增摘要合同 `clued.storage-account-scope/3`，把写入等级集合纳入摘要。已有行继续按 v2 摘要验证：判定器根据行内记录的摘要合同版本选择算法，绝不用新算法去重算旧行。
+- 新增摘要合同 `clued.storage-account-scope/3`，把写入等级集合纳入摘要。策略表新增不可变列 `scope_contract`（默认 `clued.storage-account-scope/2`，由迁移补齐；不可变触发器按原规则覆盖该列）。判定器按该列选择算法，绝不用新算法去重算旧行。
 - 开关写入等级 = 换一份策略（新 `policy_id`，`auth_generation` +1）。前提是该根处于 quiet 状态，即没有 queued / prepared / started / uncertain 的作业；不 quiet 就拒绝，与 AccountStorageInheritance §7 的 legacy→account-policy 切换采用同一锁顺序和 quiet 复核。已消费或结果未知的作业绝不重新授权。
 - 旧模式 `storage_client_grants_v1` 不扩展。新等级只在 `account_policy` 模式下提供；legacy 连接须先迁移。
 
@@ -265,7 +267,7 @@
 → 写入读回执 intent 行 → 提交
 ```
 
-所有撤销路径都在同一把 root advisory 上取排他锁，或在同一个 lineage guard 上取排他锁：断开网盘、撤销策略、撤销客户端、新增按等级 deny、开关读取授权。因此两者互相串行。每次锁等待之后，以及产生结果之前，都要用 `clock_timestamp()` 复核到期、会话与代次。
+撤销路径与读判定器通过以下任一方式串行：断开网盘、撤销策略、开关读取授权取同一 root advisory 的排他锁；撤销客户端、新增按等级 deny 取同一 lineage guard 的排他锁；v12 Binding / authorization 撤销与平台 capability 撤销则通过读判定器持有的共享行锁与之冲突。每次锁等待之后，以及产生结果之前，都要用 `clock_timestamp()` 复核到期、会话与代次。
 
 **线性化点**
 
@@ -302,6 +304,7 @@
 - 目录清单在同一次遍历中获得，不依赖登记表。可以传入 `within` 参数（必须是根内目录）来缩小起点。
 - 单次调用的 provider 子请求上限为 50。
 - 预算用尽但还有目录没查时，返回 `complete: false` 和 `next_cursor`，调用方可以续查。
+- `next_cursor` 是服务端封签的不透明值（AEAD，密钥与读回执 keyring 分开），绑定 owner、connection、读取授权 generation、根 provider ID 和原始条件摘要；任一不符即拒绝。续查的每一页都重新按 §5.2 判定待查目录和每条结果的父链（含多父规则）；中途被移出根的目录直接丢弃，只影响 `complete`。`within` 参数同样按 §5.2 判定。
 - 分页中断、provider 限流、对象状态未知时，返回 `incomplete` 或 `UNKNOWN`，不伪装成完整结果。
 
 **resolve**
@@ -372,7 +375,7 @@
   - `move` / `rename`：必须同时有源和目标；
   - `replace`：只有目标，不能有源。目标必须是已登记的既有文件，外加新内容。
 - **版本前提：**
-  - 被操作的既有对象必须已登记，调用方要带上自己观测到的 `provider_file_version` 和 `headRevisionId`。
+  - 被操作的既有对象必须已登记，调用方要带上自己观测到的 `provider_file_version`；有二进制内容的文件还要带 `headRevisionId`。Google 原生文件和目录没有 `headRevisionId`，改用 `version` 与 `modifiedTime`。
   - 服务端在 pre_effect 阶段用 GET 复核。不一致时返回 `source_version_mismatch`，不执行 effect。
 - **写后核验以 `headRevisionId`、`sha256Checksum` / `md5Checksum`、`modifiedTime` 为准，不要求 `version` 恰好 +1。** Drive 的 `version` 会随服务端的其他变化跳增。跳增超过 1 时，先重新 GET，核对目标状态和校验和；一致就结算，不一致才判为 `attention_required`。
 - **目录规则沿用现有 mutation policy：** 状态目录规则、NO SIBLING ISLAND、track / topic 语义。目标目录不能是状态语义目录；源路径豁免，以便把文件移出违规目录。
@@ -449,7 +452,7 @@
 | P0 | 本合同 | 无 | — |
 | P1 | `read` 等级：list / stat / search（名称、类型）/ resolve；读取授权对象、按等级 deny 表、读判定器、读开关、读回执；新的连接说明文案（`disclosure_version`） | 无 | P0 |
 | P2 | `read_content`：读 Clued 自建文件的正文（D1 实测通过后，扩展到已有文件）；Agent 合同修订（T1） | 取决于 D1 | P1 |
-| P3 | `modify`：rename、文件 move（仅限已登记对象）；写入策略摘要 v3 与换策略事务 | 无（仅限 Clued 自建或 Picker 覆盖的文件） | P1 |
+| P3 | `modify`：rename、文件 move（仅限已登记对象）；写入策略摘要 v3、`scope_contract` 列与换策略事务（含读取授权迁移） | 无（仅限 Clued 自建或 Picker 覆盖的文件） | P1 |
 | P4 | `replace`、revision 保护、revert | 同 P3 | P3 |
 | P5 | `destructive`：trash、untrash（判定器新增 `restore`）、§3.4 约束、原生批量确认 | 同 P3 | P3 |
 | P6 | `modify_subtree`：目录 move 与子树路径重写 | 同 P3 | P3 |
@@ -477,7 +480,7 @@
 - 授权一个精确的根后，能列出它的直属内容，且不依赖任何同步盘电脑在线。
 - 父级、兄弟目录、其他账号的对象全部不可见。
 - 不跟随快捷方式；多父对象只要有一条父链在根外，就拒绝。
-- 搜索只返回根内结果，不含被过滤数量；预算用尽时返回 `complete: false`；分页中断时返回 `incomplete`。
+- 搜索只返回根内结果，不含被过滤数量；预算用尽时返回 `complete: false`；分页中断时返回 `incomplete`；伪造或跨绑定的 `next_cursor` 被拒绝；续查时被移出根的目录不再被搜索。
 - 读回执不含文件名和搜索词原文；intent 写不进去时，provider 请求数为 0。
 - **撤销竞态**（参照 AccountStorageInheritance A06）：
   - 撤销在判定器提交之前提交 → 本次拒绝；
@@ -499,6 +502,7 @@
 - 真实 Drive 上的正向验收；
 - 源版本不一致、目标在根外、目标是状态目录、同名冲突、围栏被占用、effect 结果不确定后的 GET 恢复；
 - `version` 跳增超过 1 时不误判；
+- （P3）开关写入等级后，读取授权随新策略迁移，读取不中断；
 - 判定拒绝时，effect 函数被调用 0 次。
 
 **P5**
