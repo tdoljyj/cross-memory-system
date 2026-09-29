@@ -14,6 +14,13 @@ function driveLiteral(value) {
   return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 
+// workerd rejects fetch once an invocation exhausts its subrequest budget. Match
+// only these fixed runtime literals so provider or exception text never leaks.
+const SUBREQUEST_LIMIT_MESSAGE = /^Too many subrequests(?:\.| by single [Ww]orker invocation\.?)?$/;
+const SUBREQUEST_LIMIT_HINT = "Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits";
+const subrequestLimit = (error) => error instanceof Error &&
+  (SUBREQUEST_LIMIT_MESSAGE.test(error.message) || error.message === SUBREQUEST_LIMIT_HINT);
+
 /** Host-held Drive metadata-only access; never accepts a caller credential. */
 /** @param {{get_credential?: Function, get_access_token?: Function, fetch?: typeof fetch, timeout_ms?: number, authorization_details?: boolean}} config */
 export function createGoogleDriveMetadataApi({
@@ -50,15 +57,30 @@ export function createGoogleDriveMetadataApi({
 
   async function read(url, token, signal) {
     signal?.throwIfAborted();
-    const response = await fetchImpl(url, {
-      method: "GET",
-      headers: { authorization: `Bearer ${token}`, "cache-control": "no-store" },
-      cache: "no-store", redirect: "error", signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
-    });
+    let response;
+    try {
+      response = await fetchImpl(url, {
+        method: "GET",
+        headers: { authorization: `Bearer ${token}`, "cache-control": "no-store" },
+        cache: "no-store", redirect: "error", signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      // Keep provider text out of post-write diagnostics while preserving the transport category.
+      if (error?.name === "TimeoutError") throw new Error("DRIVE_METADATA_TIMEOUT");
+      if (error?.name === "AbortError" || signal?.aborted) throw new Error("DRIVE_METADATA_ABORTED");
+      if (subrequestLimit(error)) throw new Error("DRIVE_METADATA_SUBREQUEST_LIMIT");
+      throw new Error("DRIVE_METADATA_REQUEST_FAILED");
+    }
     signal?.throwIfAborted();
     if (!response.ok) throw new Error("DRIVE_METADATA_UNAVAILABLE");
-    return await response.json();
+    try {
+      return await response.json();
+    } catch (error) {
+      if (error?.name === "TimeoutError") throw new Error("DRIVE_METADATA_TIMEOUT");
+      if (error?.name === "AbortError" || signal?.aborted) throw new Error("DRIVE_METADATA_ABORTED");
+      throw new Error("DRIVE_METADATA_RESPONSE_INVALID");
+    }
   }
 
   async function getFile(id, {signal} = {}) {

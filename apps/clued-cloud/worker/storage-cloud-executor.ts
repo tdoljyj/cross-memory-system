@@ -26,23 +26,32 @@ export async function createStorageCloudWorker(config: {
   return Object.freeze({ async run(reference: Reference) {
     let loaded: Data | null = null;
     let recoveryMode=false, refreshed=false;
-    const credential = async (expected: Omit<StorageCredentialContext,"provider"|"oauth_client_id">) => {
+    // Each rejection below carries a fixed label so post-write diagnostics can name
+    // the credential step. Outcomes are unchanged: every branch still fails closed.
+    const reject = (code: string) => new Error(code);
+    const credential = async (expected: Omit<StorageCredentialContext,"provider"|"oauth_client_id">): Promise<Data> => {
       if (!loaded || expected.owner_id !== loaded.owner_id || expected.connection_id !== loaded.connection_id ||
-          expected.provider_subject !== loaded.provider_subject || expected.credential_version !== loaded.credential_version) throw denied();
+          expected.provider_subject !== loaded.provider_subject || expected.credential_version !== loaded.credential_version)
+        throw reject("STORAGE_CREDENTIAL_CONTEXT_MISMATCH");
       const context: StorageCredentialContext = {...expected,provider:"google-drive",oauth_client_id:config.client_id};
-      const token: unknown = JSON.parse(await vault.open(loaded.credential_envelope as StorageCredentialEnvelope,context));
+      let token: unknown;
+      try { token = JSON.parse(await vault.open(loaded.credential_envelope as StorageCredentialEnvelope,context)); }
+      catch { throw reject("STORAGE_CREDENTIAL_OPEN_FAILED"); }
       if (!object(token) || token.token_type !== "Bearer" || typeof token.access_token !== "string" || token.access_token.length<16 ||
         typeof token.scope!=="string" || [...new Set(token.scope.split(/\s+/))].sort().join(" ")!==scopes ||
-        !Number.isFinite(token.expires_at_ms)) throw denied();
+        !Number.isFinite(token.expires_at_ms)) throw reject("STORAGE_CREDENTIAL_INVALID");
       if (Number(token.expires_at_ms)-(config.clock??Date.now)()<=60000) {
-        if (!recoveryMode || refreshed || !config.recovery_refresh) throw denied();
+        if (!recoveryMode || refreshed || !config.recovery_refresh) throw reject("STORAGE_CREDENTIAL_EXPIRING");
         refreshed=true;
-        if ((await config.recovery_refresh(reference)).status!=="committed") throw denied();
-        const fresh=await config.rpc({...reference,action:"recovery_load"});
+        let fresh: Data;
+        try {
+          if ((await config.recovery_refresh(reference)).status!=="committed") throw denied();
+          fresh=await config.rpc({...reference,action:"recovery_load"});
+        } catch { throw reject("STORAGE_CREDENTIAL_REFRESH_FAILED"); }
         if (fresh.status!=="recovery_only" || fresh.owner_id!==loaded.owner_id || fresh.connection_id!==loaded.connection_id ||
           fresh.job_id!==loaded.job_id || fresh.provider_subject!==loaded.provider_subject || fresh.oauth_client_id!==config.client_id ||
           fresh.intent_id!==loaded.intent_id || fresh.request_sha256!==loaded.request_sha256 ||
-          Number(fresh.credential_version)!==expected.credential_version+1) throw denied();
+          Number(fresh.credential_version)!==expected.credential_version+1) throw reject("STORAGE_CREDENTIAL_REFRESH_FAILED");
         loaded=fresh;
         return credential({...expected,credential_version:Number(fresh.credential_version)});
       }
