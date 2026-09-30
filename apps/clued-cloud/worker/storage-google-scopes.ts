@@ -2,7 +2,7 @@
  * This module and its kernel mirror (kernel/host/resource-center-google-scopes.mjs)
  * are the only non-test places that may spell a Google scope URL, besides the
  * local pilot credential. Their exported values must stay equal item by item
- * (checked by tests/storage-google-scopes.test.mjs).
+ * (checked by apps/clued-cloud/tests/resource-center-google-scopes.test.mjs).
  *
  * legacy: drive.file + drive.metadata.readonly (bodies of Clued-created files only).
  * normal: legacy + drive.readonly (any body under the registered root, enforced

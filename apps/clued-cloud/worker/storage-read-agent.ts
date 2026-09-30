@@ -307,7 +307,11 @@ export async function createStorageReadAgent(config: {
         // Until N1, a normal (drive.readonly) token reads bodies exactly like
         // drive.file: only files this app is authorized for, confirmed from
         // metadata before any media or export request (StorageNormalUse §3 item 3).
-        const appAuthorizedOnly = scopeProfile(token.scope) === "normal";
+        // The token's profile equals the admitted provider_scope_profile (checked
+        // above). TODO(N1): unlock any-file reads only for a normal token AND
+        // content_profile normal/1, and answer an unauthorized file with
+        // scope_upgrade_required instead of content_not_accessible.
+        const appAuthorizedOnly = admitted.provider_scope_profile === "normal";
         // Revision identity for a later replace precondition (§5.4).
         const detailResponse = await get("https://www.googleapis.com/drive/v3/files/" + id + "?" +
           new URLSearchParams({ fields: "id,headRevisionId,modifiedTime,size,sha256Checksum" + (appAuthorizedOnly ? ",isAppAuthorized" : ""),

@@ -2,7 +2,7 @@
  * (StorageNormalUse.v0.1 §2.2). These two modules are the only non-test places
  * that may spell a Google scope URL, besides the local pilot credential
  * (resource-center-google-drive-credential.mjs). Exported values must stay
- * equal item by item (checked by apps/clued-cloud/tests/storage-google-scopes.test.mjs).
+ * equal item by item (checked by apps/clued-cloud/apps/clued-cloud/tests/resource-center-google-scopes.test.mjs).
  *
  * legacy: drive.file + drive.metadata.readonly.
  * normal: legacy + drive.readonly.
