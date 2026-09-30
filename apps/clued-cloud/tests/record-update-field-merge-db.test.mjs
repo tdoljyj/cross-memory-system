@@ -211,6 +211,21 @@ test('record updates merge type_fields and relations instead of replacing them',
       base_version: 8, idempotency_key: uuid(), mutation: { closure_summary: 'done', closed_reason: 'fixture' } });
     assert.equal(result.status, 'committed', JSON.stringify(result));
     assert.deepEqual((await row(id)).type_fields, { execution_bucket: "later", criticality: "LOW" });
+
+    // 10. A relations-only update on a record whose relations are empty stores and
+    //     returns every key it sends (Task b9ecc7cd reported this shape as dropped).
+    const bare = await mutate({ ...base, operation: 'create', record_type: 'task', idempotency_key: uuid(),
+      source_refs: [], source_unavailable_reason: 'fixture',
+      mutation: { title: 'Relations-only fixture', content: 'body',
+        type_fields: { execution_bucket: 'later' }, relations: {} } });
+    assert.equal(bare.status, 'committed', JSON.stringify(bare));
+    const bareId = bare.target_refs[0].id;
+    const sent = { corrects: [uuid()], observed_by: 'fixture host', open_question: { text: 'q', blocking: false } };
+    result = await update(bareId, 1, { relations: sent });
+    assert.equal(result.status, 'committed', JSON.stringify(result));
+    assert.deepEqual(result.supplemental.record.relations, sent);
+    assert.deepEqual((await row(bareId)).relations, sent);
+    assert.equal((await row(bareId)).v, 2);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
