@@ -54,7 +54,7 @@ Rules for every capture:
 
 | Error | Meaning | Action |
 |---|---|---|
-| `authority_escalation_forbidden` | `user_explicit` without `user_confirmed: true` | Add `user_confirmed: true` only if the Owner actually said it; otherwise use the true, lower authority |
+| `authority_escalation_forbidden` | `user_explicit` without `user_confirmed: true`, including in `error.invalid_fields` | Add `user_confirmed: true` only when the user explicitly confirmed this exact record; otherwise use the actual `observed` / `inferred` authority |
 | `terminal_record_read_only` | The record is completed, cancelled or archived | Follow-up note (§3) |
 | `record_version_conflict` | Someone changed the record | Re-read and reconcile meaning; never overwrite a newer decision |
 | `stale_base_version` (checkpoint) | Wrong counter, or another session checkpointed this context since your resume or last checkpoint | Retry with the `expected_version` the error returns; your session token stays valid |
@@ -62,7 +62,7 @@ Rules for every capture:
 | `current_truth_changed_since_resume` (checkpoint) | A write changed current state after resume or the last reconcile | Reconcile with the same token, then retry the checkpoint (§5) |
 | `checkpoint_event_not_authorized` (checkpoint) | `coverage.event_ids` lists an event of another context | Checkpoint each context in its own session (§5) |
 | `lifecycle_action_cannot_edit_record_content` | A close or restore carried content fields | Send only `closure_summary` / `closed_reason` |
-| `INVALID_RECORD_FIELDS` | Missing or malformed fields | Add the named fields |
+| `INVALID_RECORD_FIELDS` | Missing or malformed fields; MCP returns an HTTP 200 `isError: true` rejected tool result | Read `error.missing_fields` and `error.invalid_fields`, fix the listed fields and retry once; field paths and error codes are returned without request values |
 
 5. Treat revoked or expired credentials as hard stops and resume again instead of overwriting; missing capability or failed admission remains unavailable. Report exactly what is unavailable and continue unrelated work.
 6. Some Hosts show every HTTP 403 as "blocked by a firewall or security service". Clued returns 403 for authorization denials and for contract-rule rejections it has not yet mapped to a tool error, so check your arguments against the tool's contract before calling it a network or infrastructure failure, and label any unverified cause as a guess.

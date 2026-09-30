@@ -45,7 +45,7 @@ export const storageAgentTools = [
   },
   {
     name: "clued_storage_inspect",
-    description: "Read one account storage job's status and receipt using an Owner-granted inspect permission on this client's Binding. This does not read file contents, resume execution, refresh credentials or clear an unresolved fence. Keep the original job_id after a lost reply.",
+    description: "Read one account storage job's status and receipt using an Owner-granted inspect permission on this client's Binding. A denied or attention_required job may carry a fixed reason_code (for example UNAUTHORIZED_WORKSPACE_MUTATION); details stay with the Owner. This does not read file contents, resume execution, refresh credentials or clear an unresolved fence. Keep the original job_id after a lost reply.",
     inputSchema: { type: "object", required: ["connection_id", "job_id"], properties: reference, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { "clued/requiredStorageGrant": ["inspect"], "clued/scopeEnforcement": "server-side" },
@@ -132,7 +132,10 @@ export function storageAgentResult(value: unknown, input: Data): Data {
     value.execution_permitted !== false || typeof value.request_digest !== "string" || !/^[0-9a-f]{64}$/.test(value.request_digest) ||
     !uuid(value.receipt_id) || (value.intent_id !== null && !uuid(value.intent_id)) ||
     !["queued", "prepared", "started", "uncertain", "committed", "cancelled", "denied", "attention_required"].includes(String(value.status)) ||
-    ("replayed" in value && typeof value.replayed !== "boolean")) throw new Error("storage_job_response_invalid");
-  return Object.fromEntries(["job_id", "connection_id", "request_digest", "status", "intent_id", "receipt_id", "execution_permitted", "replayed"]
+    ("replayed" in value && typeof value.replayed !== "boolean") ||
+    // Only the fixed reason code of a pre-reservation outcome; its findings stay in the Owner's row.
+    ("reason_code" in value && (typeof value.reason_code !== "string" || !/^[A-Z][A-Z0-9_]{2,63}$/.test(value.reason_code) ||
+      (value.status !== "denied" && value.status !== "attention_required")))) throw new Error("storage_job_response_invalid");
+  return Object.fromEntries(["job_id", "connection_id", "request_digest", "status", "intent_id", "receipt_id", "execution_permitted", "replayed", "reason_code"]
     .filter(key => key in value).map(key => [key, value[key]]));
 }

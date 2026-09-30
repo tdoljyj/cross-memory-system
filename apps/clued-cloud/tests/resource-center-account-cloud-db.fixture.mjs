@@ -251,6 +251,54 @@ export async function testAccountCloud(t, admin, server, user, decision) {
         assert.deepEqual(await counters(), before);
       } finally { await admin.query("rollback"); }
     });
+    await t.test("dispatch report stores a strict optional reason in the Owner's job, receipt and event; inspect sees its code only", async () => {
+      const initial = await createRoot(), client = await bind(initial), target = await activate(initial);
+      const [job, plainJob, codeJob] = [await submit(target, client), await submit(target, client), await submit(target, client)];
+      const report = (reference, outcome) => cloud({ action: "report", ...reference, credential_version: 1, outcome });
+      const island = { path: target.root.replace(/\/[^/]+$/, "/Clued_岛.md"), reason: "resource_center_parent_or_sibling_island" };
+      const finding = (overrides = {}) => ({ ...island, ...overrides });
+      const code = "UNAUTHORIZED_WORKSPACE_MUTATION";
+      const before = await counters();
+      for (const outcome of [
+        { status: "denied", extra: true }, { status: "denied", reason: code }, { status: "denied", reason: null },
+        { status: "denied", reason: {} }, { status: "denied", reason: { code: "lower_case" } }, { status: "denied", reason: { code: "AB" } },
+        { status: "denied", reason: { code: "X".repeat(65) } }, { status: "denied", reason: { code, extra: 1 } },
+        { status: "attention_required", reason: { code, findings: [finding()] } },
+        { status: "denied", reason: { code, findings: [] } }, { status: "denied", reason: { code, findings: finding() } },
+        { status: "denied", reason: { code, findings: Array.from({ length: 11 }, () => finding()) } },
+        { status: "denied", reason: { code, findings: [finding({ path: "x".repeat(1001) })] } },
+        { status: "denied", reason: { code, findings: [finding({ path: "" })] } },
+        { status: "denied", reason: { code, findings: [finding({ managed_root: target.root })] } },
+        { status: "denied", reason: { code, findings: [finding({ reason: "Not_A_Label" })] } },
+        { status: "denied", reason: { code, findings: [finding({ path: 7 })] } }, { status: "committed", reason: { code } },
+      ]) await assert.rejects(report(job.reference, outcome), /storage_cloud_denied/, JSON.stringify(outcome).slice(0, 120));
+      assert.deepEqual(await counters(), before); assert.equal((await jobRow(job)).dispatch_outcome, null);
+      // The embedded test cluster may use SQL_ASCII, where length() counts bytes; production is UTF8.
+      const outcome = { status: "denied", reason: { code, findings: [finding(), finding({ path: "x".repeat(1000) }), finding({ path: "资料/岛.md" })] } };
+      const reported = await report(job.reference, outcome);
+      assert.equal(reported.status, "denied"); assert.equal(reported.reason_code, code); assert.equal(reported.findings, undefined);
+      const row = await jobRow(job); assert.deepEqual(row.dispatch_outcome, outcome); assert.equal(row.intent_id, null);
+      const receipt = (await admin.query("select operation,status from public.clued_audit_receipts where id=$1", [row.dispatch_outcome_receipt_id])).rows[0];
+      assert.deepEqual(receipt, { operation: "storage_dispatch_outcome", status: "committed" });
+      const event = (await admin.query("select canonical_event_type,change_summary from public.clued_context_events where receipt_id=$1", [row.dispatch_outcome_receipt_id])).rows[0];
+      assert.equal(event.canonical_event_type, "extension:storage:dispatch_outcome");
+      // The exported event never carries Drive paths: code and finding count only.
+      assert.deepEqual(event.change_summary.outcome, { status: "denied", reason: { code, finding_count: 3 } });
+      assert.equal(JSON.stringify(event.change_summary).includes("岛"), false); assert.equal(JSON.stringify(event.change_summary).includes("xxxx"), false);
+      // The first journal wins; a later report never rewrites the stored reason.
+      const again = await report(job.reference, { status: "attention_required" });
+      assert.equal(again.status, "denied"); assert.deepEqual((await jobRow(job)).dispatch_outcome, outcome);
+      const inspected = (await caller.query(`select ${JOBS}($1,$2::jsonb) value`, [client.token, JSON.stringify({ action: "inspect", ...job.reference })])).rows[0].value;
+      assert.equal(inspected.status, "denied"); assert.equal(inspected.reason_code, code);
+      assert.equal(JSON.stringify(inspected).includes("Clued_岛"), false);
+      // Backward compatible: an outcome without a reason is stored and inspected exactly as before.
+      const plain = await report(plainJob.reference, { status: "attention_required" });
+      assert.equal(plain.status, "attention_required"); assert.equal("reason_code" in plain, false);
+      assert.deepEqual((await jobRow(plainJob)).dispatch_outcome, { status: "attention_required" });
+      const codeOnly = await report(codeJob.reference, { status: "attention_required", reason: { code: "DRIVE_BOUNDARY_CHANGED" } });
+      assert.equal(codeOnly.status, "attention_required"); assert.equal(codeOnly.reason_code, "DRIVE_BOUNDARY_CHANGED");
+      assert.deepEqual((await jobRow(codeJob)).dispatch_outcome, { status: "attention_required", reason: { code: "DRIVE_BOUNDARY_CHANGED" } });
+    });
     await t.test("root revoke and cloud load serialize in both winning orders without issuing post-revoke writers", async () => {
       for (const loadWins of [false, true]) {
         const initial = await createRoot(), client = await bind(initial), target = await activate(initial), job = await submit(target, client);

@@ -83,7 +83,7 @@ export const recordTools = [
   {
     name: "clued_record_mutate",
     description:
-      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). On an existing record, mutation.type_fields and mutation.relations merge into the stored top-level keys: omitted keys are kept and a key sent as null is removed; field_mode=replace replaces each object sent whole. Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint.",
+      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. authority=user_explicit requires user_confirmed=true only when the user explicitly confirmed this exact record; otherwise use the actual observed/inferred authority. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). execution_bucket accepts only now, next, blocked, later. The database requires the other four keys but imposes no value enum: use a rationale explaining the decision, state_kind=manual for a manual State, fact_kind=preference for a preference, or note_kind=log for a follow-up note. On an existing record, mutation.type_fields and mutation.relations merge into the stored top-level keys: omitted keys are kept and a key sent as null is removed; field_mode=replace replaces each object sent whole. Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint.",
     inputSchema: {
       type: "object",
       required: ["operation", "record_type", "record_schema_version", "lifecycle_status", "scope", "idempotency_key", "authority", "confidence_reason"],
@@ -105,7 +105,13 @@ export const recordTools = [
           properties: {
             title: { type: "string" },
             content: { type: "string" },
-            type_fields: { type: "object" },
+            type_fields: { type: "object", description: "Create requires the key for record_type. Only execution_bucket has a database value enum; other required keys have no value enum.", properties: {
+              execution_bucket: { type: "string", enum: ["now", "next", "blocked", "later"], description: "Required for task." },
+              rationale: { description: "Required for decision; explain the decision. No database value enum." },
+              state_kind: { description: "Required for state; manual is used for a manual State. No database value enum." },
+              fact_kind: { description: "Required for profile_fact; preference is used for a preference. No database value enum." },
+              note_kind: { description: "Required for note; log is used for a follow-up note. No database value enum." },
+            } },
             relations: { type: "object" },
             closure_summary: { type: "string" },
             closed_reason: { type: "string" },
@@ -116,7 +122,7 @@ export const recordTools = [
         reopen_reason: { type: "string", minLength: 1, maxLength: 1000 },
         terminal_receipt_id: { type: "string", format: "uuid" },
         authority: { type: "string", enum: ["user_explicit", "observed", "inferred", "imported"] },
-        user_confirmed: { type: "boolean" },
+        user_confirmed: { type: "boolean", description: "Must be true with authority=user_explicit, only when the user explicitly confirmed this exact record." },
         observed_at: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] },
         confidence: { anyOf: [{ type: "number", minimum: 0, maximum: 1 }, { type: "null" }] },
         confidence_reason: { type: "string", minLength: 1 },
