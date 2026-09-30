@@ -4,7 +4,6 @@ param(
     [switch]$AlignAndVerify,
     [switch]$Doctor,
     [switch]$Bootstrap,
-    [switch]$CommitRepo,
     [ValidateSet("NONE", "IDENTITY", "PREFERENCE", "PROJECT", "HISTORY", "CONSTRAINT", "MULTI")]
     [string]$Access = "MULTI"
 )
