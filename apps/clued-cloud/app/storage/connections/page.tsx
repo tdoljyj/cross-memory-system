@@ -9,7 +9,9 @@ type Connection = {
   root_name: string; policy_active: boolean; actions: string[];
   refresh_enabled: boolean; database_execution_enabled: boolean; profile_current: boolean;
 };
-const actionName: Record<string, string> = { inspect: "查看任务状态", create_file: "新建文件", create_topic: "新建主题目录" };
+const actionName: Record<string, string> = {
+  inspect: "查看任务状态", create_file: "新建文件", create_topic: "新建主题目录", modify: "改名、移动文件",
+};
 const stateName: Record<string, string> = {
   awaiting_provider: "等待 Google 授权", active: "已连接", reauthorization_required: "需要重新授权", revoked: "已断开",
 };
@@ -43,10 +45,19 @@ function isReadAccess(value: unknown): value is ReadAccess {
     && typeof value.disclosure_version === "string" && typeof value.content_disclosure_version === "string"
     && Array.isArray(value.classes) && value.classes.every(item => typeof item === "string");
 }
+type WriteAccess = { active: boolean; policy_generation: number; disclosure_version: string; classes: string[] };
+function isWriteAccess(value: unknown): value is WriteAccess {
+  return isObject(value) && typeof value.active === "boolean" && Number.isSafeInteger(value.policy_generation)
+    && typeof value.disclosure_version === "string"
+    && Array.isArray(value.classes) && value.classes.every(item => item === "modify");
+}
 export default function StorageConnections() {
   // Read level (StorageFullCapability P1) is loaded on demand per connection so
   // the everyday page stays one request; every change is a native CAS mutation.
   const [readAccess, setReadAccess] = useState<Record<string, ReadAccess>>({});
+  // Write level (P3): changing it replaces the account policy, so the page
+  // always reloads the connection list and both settings afterwards.
+  const [writeAccess, setWriteAccess] = useState<Record<string, WriteAccess>>({});
   const [connections, setConnections] = useState<Connection[]>([]);
   const [workerEnabled, setWorkerEnabled] = useState(false);
   const [message, setMessage] = useState("正在读取连接……");
@@ -105,10 +116,14 @@ export default function StorageConnections() {
     operation.current = true; setBusy(true);
     const epoch = revision.current;
     try {
-      const result = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access");
+      // The write level is optional here: its failure never hides the read settings.
+      const [result, write] = await Promise.all([
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access"),
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/write-access").catch(() => null)]);
       if (epoch !== revision.current) return;
       if (!isReadAccess(result)) throw new Error("查看设置未确认。");
       setReadAccess(current => ({ ...current, [c.id]: result }));
+      if (isWriteAccess(write)) setWriteAccess(current => ({ ...current, [c.id]: write }));
     } catch { if (epoch === revision.current) setMessage("Agent 查看设置未确认，请稍后重试。"); }
     finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
@@ -147,6 +162,48 @@ export default function StorageConnections() {
         setMessage("Agent 查看设置结果未确认。请重新读取设置并核对，勿重复提交。");
       }
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  async function toggleModify(c: Connection) {
+    const current = writeAccess[c.id];
+    if (operation.current || busy || !current?.active) return;
+    const enable = !current.classes.includes("modify");
+    if (!window.confirm(enable
+      ? "允许已授权的 Agent 在此目录内改名和移动由 Clued 创建的文件？每次操作都会留下回执，可以再改回原名或原位置；不会删除或覆盖文件内容。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。"
+      : "停止 Agent 改名和移动文件？尚未开始的排队任务会被取消，已开始但未完成的任务需先结束。新建文件和查看设置不受影响。")) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    let settled = epoch;
+    try {
+      const result = await accountRequest({ action: "set_classes", connection_id: c.id, classes: enable ? ["modify"] : [],
+        base_generation: current.policy_generation, disclosure_version: current.disclosure_version,
+        idempotency_key: crypto.randomUUID() }, "/v1/storage/write-access");
+      if (epoch !== revision.current) return;
+      if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
+      // refresh() starts a new revision and clears busy; the readback belongs
+      // to that revision, and the operation keeps the page busy until it ends.
+      const reloadedList = await refresh();
+      // undefined: a newer revision (sign-in change) superseded this reload.
+      if (reloadedList === undefined) return;
+      const reloaded = revision.current;
+      settled = reloaded; setBusy(true);
+      if (reloadedList === null) throw new Error("连接摘要未确认。");
+      const [latest, read] = await Promise.all([
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/write-access"),
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access")]);
+      if (reloaded !== revision.current) return;
+      if (!isWriteAccess(latest) || !isReadAccess(read)) throw new Error("修改设置未确认。");
+      setWriteAccess(state => ({ ...state, [c.id]: latest }));
+      setReadAccess(state => ({ ...state, [c.id]: read }));
+      setMessage(latest.classes.includes("modify") === enable
+        ? `${enable ? "已允许" : "已停止"} Agent 改名和移动文件。回执：${result.receipt_id}` : "已提交，但最新状态未确认。请核对原回执。");
+    } catch {
+      // The policy (and the read access bound to it) may have changed: drop both.
+      setWriteAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
+      setReadAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
+      if (settled === revision.current) {
+        setMessage("Agent 修改设置结果未确认。若此目录有已开始但未完成的任务，请等它结束后再试。请重新读取设置并核对，勿重复提交。");
+      }
+    } finally { operation.current = false; if (settled === revision.current) setBusy(false); }
   }
   async function disconnect(c: Connection) {
     if (operation.current || busy || c.state === "revoked") return;
@@ -194,6 +251,11 @@ export default function StorageConnections() {
             <p className="mt-2">Agent 读正文：{readAccess[c.id].classes.includes("read_content") ? "已允许（仅 Clued 创建的文本文件）" : "未允许"}</p>
             <button disabled={busy} onClick={() => void toggleRead(c, "read_content")}>
               {readAccess[c.id].classes.includes("read_content") ? "停止 Agent 读正文" : "允许 Agent 读正文"}</button>
+          </>}
+          {writeAccess[c.id]?.active && <>
+            <p className="mt-2">Agent 改名和移动文件：{writeAccess[c.id].classes.includes("modify") ? "已允许（仅 Clued 创建的文件）" : "未允许"}</p>
+            <button disabled={busy} onClick={() => void toggleModify(c)}>
+              {writeAccess[c.id].classes.includes("modify") ? "停止 Agent 改名和移动文件" : "允许 Agent 改名和移动文件"}</button>
           </>}
         </div>}
         {["active", "reauthorization_required"].includes(c.state) && <button disabled={busy} onClick={() => void disconnect(c)}>断开网盘连接</button>}
