@@ -11,7 +11,8 @@ const revisionId = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,200
  * same file (ID, name, only parent, same ancestor folder IDs) with a new head
  * revision whose size and sha256 are the new content's, a stable version
  * across two reads, the previous head revision kept forever with the previous
- * content's size and md5, and every listed older Clued pin released. A Drive
+ * content's size and md5. Each listed older Clued pin is read and reported
+ * released only if Drive shows it unkept; a release is never a condition. A Drive
  * version jump is recorded, not treated as failure. Anything else leaves the
  * intent fenced; recovery repeats only these reads.
  * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, list_children: Function, get_revision: Function, include_verified_proof?: boolean, timeout_ms?: number, poll_ms?: number, clock?: () => number, sleep?: Function}} config
@@ -41,7 +42,7 @@ export function createGoogleDriveReplacePostconditionVerifier({
       effect?.operation !== "replace" || effect.destination_path !== shape.destination ||
       !/^[A-Za-z0-9_-]{1,160}$/.test(effect.provider_file_id ?? "") || !revisionId(effect.pinned_revision_id) ||
       !Array.isArray(effect.release_revision_ids) || !effect.release_revision_ids.every(revisionId) ||
-      effect.release_revision_ids.includes(effect.pinned_revision_id) ||
+      effect.release_revision_ids.includes(effect.pinned_revision_id) || typeof effect.previously_kept !== "boolean" ||
       Object.keys(before2 ?? {}).sort().join(",") !== "head_revision_id,md5,sha256,size" ||
       before2.head_revision_id !== effect.pinned_revision_id ||
       Object.keys(after ?? {}).sort().join(",") !== "sha256,size" || !/^[0-9a-f]{64}$/.test(after.sha256) ||
@@ -95,9 +96,13 @@ export function createGoogleDriveReplacePostconditionVerifier({
           (kept.md5Checksum != null && before2.md5 !== null && kept.md5Checksum !== before2.md5)) {
           fail("DRIVE_POSTCONDITION_PREVIOUS_REVISION_NOT_KEPT");
         }
+        // Releases are observed, not required: only a revision Drive shows
+        // unkept is reported released; any other stays pinned for next time.
+        const released = [];
         for (const id of effect.release_revision_ids) {
-          const released = await getRevision(fileId, id);
-          if (released?.id !== id || released.keepForever !== false) fail("DRIVE_POSTCONDITION_RELEASE_NOT_APPLIED");
+          let seenRelease = null;
+          try { seenRelease = await getRevision(fileId, id); } catch { seenRelease = null; }
+          if (seenRelease?.id === id && seenRelease.keepForever === false) released.push(id);
         }
         await parentIdentity();
         const again = await observe(parent);
@@ -110,10 +115,11 @@ export function createGoogleDriveReplacePostconditionVerifier({
           const verifiedProof = Object.freeze({ contract: "clued.storage-replace-verified/1", ...postcondition,
             operation: "replace", destination_file_version: shape.destination_file_version,
             content_before: { ...before2 }, content_after: { ...after }, pinned_revision_id: effect.pinned_revision_id,
-            release_revision_ids: [...effect.release_revision_ids], restore_job_id: shape.restore_job_id,
+            previously_kept: effect.previously_kept, release_revision_ids: [...effect.release_revision_ids],
+            released_revision_ids: released, restore_job_id: shape.restore_job_id,
             provider_before: structuredClone(before),
             checks: Object.freeze({ identity: true, ancestors: true, stable_state: true, content: true,
-              revision_changed: true, previous_revision_kept: true, releases_applied: true }) });
+              revision_changed: true, previous_revision_kept: true, releases_observed: true }) });
           return Object.freeze({ ...postcondition, verified_proof: verifiedProof });
         }
       }

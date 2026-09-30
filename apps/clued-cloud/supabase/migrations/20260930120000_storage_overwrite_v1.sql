@@ -14,10 +14,13 @@
 --   upload), the new content's size and sha256, and the older Clued pins to
 --   release. The verified proof (clued.storage-replace-verified/1) must repeat
 --   them. Settlement updates the same Artifact by CAS and records the pin.
--- * storage_revision_pins_v1 lists only revisions Clued pinned. At most K of
---   one Artifact stay pinned; each replace releases the oldest beyond K-1 in
---   the same job, and each released row names the settlement receipt whose
---   proof lists it. Owner-pinned revisions are never touched.
+-- * storage_revision_pins_v1 lists the revisions Clued pinned. At most K of
+--   one Artifact stay pinned; each replace tries to release the oldest beyond
+--   K-1, and each row the proof observed released names the settlement
+--   receipt. Releases never gate settlement: a pin Drive still keeps stays
+--   pinned and is listed again. A head the Owner already kept forever is
+--   recorded owner_kept and never released; other Owner-kept revisions are
+--   never touched.
 -- * Scheduled and native recovery load replace descriptors; recovery only reads.
 
 -- Action sets: the create set plus any of modify, overwrite.
@@ -68,8 +71,10 @@ begin
     'actions',to_jsonb(p_actions)));
 end $$;
 
--- Revisions Clued pinned (kept forever) before overwriting a file. Only these
--- are ever released by Clued.
+-- Revisions Clued pinned (kept forever) before overwriting a file. Only rows
+-- in state pinned are ever released by Clued. A head the Owner had already
+-- kept forever is recorded as owner_kept: restorable, never released, and not
+-- counted toward K.
 create table clued_private.storage_revision_pins_v1 (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id),
@@ -83,7 +88,7 @@ create table clued_private.storage_revision_pins_v1 (
   job_id uuid not null unique,
   intent_id uuid not null references clued_private.resource_center_mutations_v1(id),
   pin_receipt_id uuid not null references public.clued_audit_receipts(id),
-  state text not null default 'pinned' check(state in ('pinned','released')),
+  state text not null default 'pinned' check(state in ('pinned','released','owner_kept')),
   released_at timestamptz,
   released_receipt_id uuid references public.clued_audit_receipts(id),
   created_at timestamptz not null default clock_timestamp(),
@@ -155,7 +160,8 @@ begin
 end $$;
 
 -- The pinned revision a revert restores: the pin recorded by the named
--- committed replace job of the same owner, for the same Artifact, still pinned.
+-- committed replace job of the same owner, for the same Artifact, still kept
+-- (pinned by Clued, or kept by the Owner).
 create function clued_private.storage_restore_v1(j clued_private.storage_jobs_v1)
 returns jsonb language plpgsql stable security definer set search_path='' as $$
 declare pin clued_private.storage_revision_pins_v1; target clued_private.resource_center_artifacts_v1;
@@ -163,7 +169,7 @@ begin
   if j.mutation->>'operation' is distinct from 'replace' or not (j.mutation ? 'restore_job_id') then return null; end if;
   target:=clued_private.storage_replace_target_v1(j);
   select * into pin from clued_private.storage_revision_pins_v1 where job_id=(j.mutation->>'restore_job_id')::uuid
-    and owner_id=j.owner_id and state='pinned';
+    and owner_id=j.owner_id and state in ('pinned','owner_kept');
   if target.id is null or pin.id is null or pin.artifact_id<>target.id or pin.provider_file_id<>target.provider_file_id
     or pin.sha256 is null then
     return jsonb_build_object('unavailable',true); end if;
@@ -172,7 +178,8 @@ begin
 end $$;
 
 -- Expected provider attempt of a replace. The previous content identity and
--- head revision are observed by the executor and only shape-checked here; the
+-- head revision (and whether the Owner already kept it) are observed by the
+-- executor and only shape-checked here; the
 -- new content's identity, the restore and the releases are the server's.
 create function clued_private.storage_replace_attempt_v1(m clued_private.resource_center_mutations_v1,
   j clued_private.storage_jobs_v1,p_attempt jsonb)
@@ -190,7 +197,8 @@ begin
     or coalesce(before->>'sha256','0'||repeat('a',63)) !~ '^[0-9a-f]{64}$'
     or coalesce(before->>'md5',repeat('a',32)) !~ '^[0-9a-f]{32}$'
     or (before->>'sha256' is null and before->>'md5' is null)
-    or p_attempt->>'pinned_revision_id' is distinct from before->>'head_revision_id' then
+    or p_attempt->>'pinned_revision_id' is distinct from before->>'head_revision_id'
+    or jsonb_typeof(p_attempt->'previously_kept') is distinct from 'boolean' then
     return null; end if;
   if j.mutation ? 'content' then
     after:=jsonb_build_object('size',octet_length(j.mutation->>'content')::text,
@@ -206,7 +214,7 @@ begin
     'destination_path',j.mutation->>'destination_path',
     'parent_id',m.authority_request->'provider_identity'->>'destination_parent_id',
     'destination_file_version',j.mutation->>'destination_file_version','content_before',before,
-    'pinned_revision_id',before->>'head_revision_id','content_after',after,
+    'pinned_revision_id',before->>'head_revision_id','previously_kept',p_attempt->'previously_kept','content_after',after,
     'restore_job_id',j.mutation->'restore_job_id','release_revision_ids',clued_private.storage_revision_releases_v1(target.id),
     'target_kind','file','binding',m.exact_request->'binding');
 end $$;
@@ -262,24 +270,26 @@ returns jsonb language sql stable security definer set search_path='' as $$
 $$;
 
 -- At settlement of a replace: record the kept previous revision, and mark the
--- released older pins with the settlement receipt whose proof lists them.
+-- older pins the proof observed released with the settlement receipt. A pin
+-- Drive still kept stays pinned; the next replace lists it again.
 create function clued_private.storage_revision_settle_v1(m clued_private.resource_center_mutations_v1,
   j clued_private.storage_jobs_v1,p_proof jsonb,p_receipt uuid)
 returns void language plpgsql security definer set search_path='' as $$
 declare released int; wanted int;
 begin
   if j.mutation->>'operation' is distinct from 'replace' then return; end if;
-  wanted:=jsonb_array_length(p_proof->'release_revision_ids');
+  wanted:=jsonb_array_length(p_proof->'released_revision_ids');
   update clued_private.storage_revision_pins_v1 set state='released',released_at=clock_timestamp(),released_receipt_id=p_receipt
     where artifact_id=(m.authority_result->'authority'->>'artifact_id')::uuid and state='pinned'
-      and revision_id in (select jsonb_array_elements_text(p_proof->'release_revision_ids'));
+      and revision_id in (select jsonb_array_elements_text(p_proof->'released_revision_ids'));
   get diagnostics released=row_count;
   if released<>wanted then raise exception 'storage_verified_registry_changed' using errcode='40001'; end if;
   insert into clued_private.storage_revision_pins_v1(owner_id,profile_id,artifact_id,provider_file_id,revision_id,size,md5,sha256,
-    job_id,intent_id,pin_receipt_id)
+    job_id,intent_id,pin_receipt_id,state)
   values(j.owner_id,m.profile_id,(m.authority_result->'authority'->>'artifact_id')::uuid,p_proof->>'provider_file_id',
     p_proof->>'pinned_revision_id',p_proof->'content_before'->>'size',p_proof->'content_before'->>'md5',
-    p_proof->'content_before'->>'sha256',j.job_id,m.id,p_receipt);
+    p_proof->'content_before'->>'sha256',j.job_id,m.id,p_receipt,
+    case when (p_proof->>'previously_kept')::boolean then 'owner_kept' else 'pinned' end);
 end $$;
 
 -- Native Owner control of the write levels: classes [] / modify / overwrite,
@@ -484,10 +494,17 @@ begin
       expected:=post||jsonb_build_object('contract','clued.storage-replace-verified/1','operation','replace',
         'destination_file_version',j.mutation->>'destination_file_version','content_before',attempt_expected->'content_before',
         'content_after',attempt_expected->'content_after','pinned_revision_id',attempt_expected->'pinned_revision_id',
+        'previously_kept',attempt_expected->'previously_kept',
         'release_revision_ids',attempt_expected->'release_revision_ids','restore_job_id',attempt_expected->'restore_job_id',
+        -- Observed releases: distinct members of the attempted list, else null (mismatch).
+        'released_revision_ids',case when jsonb_typeof(proof->'released_revision_ids')='array'
+          and not exists(select 1 from jsonb_array_elements(proof->'released_revision_ids') e
+            where jsonb_typeof(e)<>'string' or not (attempt_expected->'release_revision_ids') @> jsonb_build_array(e))
+          and jsonb_array_length(proof->'released_revision_ids')=(select count(distinct e) from jsonb_array_elements(proof->'released_revision_ids') e)
+          then proof->'released_revision_ids' end,
         'provider_before',m.authority_request->'provider_identity',
         'checks',jsonb_build_object('identity',true,'ancestors',true,'stable_state',true,'content',true,
-          'revision_changed',true,'previous_revision_kept',true,'releases_applied',true));
+          'revision_changed',true,'previous_revision_kept',true,'releases_observed',true));
     elsif j.mutation->>'operation' in ('rename','move') then
       expected:=post||jsonb_build_object('contract','clued.storage-'||(j.mutation->>'operation')||'-verified/1',$r$,1),
     ('clued_private.storage_verified_result_v2(text,jsonb)',

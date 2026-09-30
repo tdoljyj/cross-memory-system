@@ -124,7 +124,7 @@ export async function testStorageReplace(t, admin, server, user, decision) {
     const files = new Map([[target.parentId, directory(target.parentId, target.root.split("/").at(-2))],
       [target.rootId, directory(target.rootId, "Clued_资料中心", target.parentId)], [target.trackId, directory(target.trackId, "20_P_产品与体验", target.rootId)]]);
     const revisions = new Map(); // file id -> Map(revision id -> {id, keepForever, bytes})
-    const state = { posts: 0, writes: 0, losePost: false, loseUpload: false, keptExtra: 0, files, revisions };
+    const state = { posts: 0, writes: 0, losePost: false, loseUpload: false, loseRelease: false, keptExtra: 0, files, revisions };
     const newRevision = (file, bytes) => {
       const id = "rev-" + randomUUID();
       const revs = revisions.get(file.id) ?? new Map(); revisions.set(file.id, revs);
@@ -144,6 +144,7 @@ export async function testStorageReplace(t, admin, server, user, decision) {
         assert.equal(recorded, 1, "the exact attempt is durable before every provider write");
         if (revisionIndex > 0) {
           const revision = revisions.get(id).get(parts[revisionIndex + 1]);
+          if (state.loseRelease && JSON.parse(init.body).keepForever === false) throw new Error("synthetic lost release");
           revision.keepForever = JSON.parse(init.body).keepForever;
           return Response.json({ id: revision.id, keepForever: revision.keepForever });
         }
@@ -282,6 +283,44 @@ export async function testStorageReplace(t, admin, server, user, decision) {
       assert.equal(storage.revisions.get(created.provider_file_id).get(rows[1].revision_id).keepForever, true);
     });
 
+    await t.test("a failed release does not fence the replace; the pin stays and is released by the next replace", async () => {
+      const { target, client, storage } = await setup();
+      const created = await createFile(target, client, storage, "release.txt");
+      const version = () => storage.files.get(created.provider_file_id).version;
+      for (let i = 0; i < 10; i++) assert.equal((await run(target, client, storage, replace(created.path, version(), { content: `edit ${i}\n` }))).result.status, "committed");
+      storage.loseRelease = true;
+      const lost = await run(target, client, storage, replace(created.path, version(), { content: "edit 10\n" }));
+      assert.equal(lost.result.status, "committed", JSON.stringify(lost.result));
+      let rows = await pins(created.id);
+      assert.equal(rows.filter(r => r.state === "pinned").length, 11, "the unreleased pin stays pinned");
+      assert.deepEqual((await journal(lost.job)).verified_result_v2.proof.released_revision_ids, []);
+      storage.loseRelease = false;
+      assert.equal((await run(target, client, storage, replace(created.path, version(), { content: "edit 11\n" }))).result.status, "committed");
+      rows = await pins(created.id);
+      assert.equal(rows.filter(r => r.state === "pinned").length, 10);
+      assert.deepEqual(rows.slice(0, 2).map(r => r.state), ["released", "released"]);
+      assert.equal(storage.revisions.get(created.provider_file_id).get(rows[0].revision_id).keepForever, false);
+    });
+
+    await t.test("a head the Owner already kept is recorded owner_kept, never released, and still restorable", async () => {
+      const { target, client, storage } = await setup();
+      const created = await createFile(target, client, storage, "owner-kept.txt", "owner kept this\n");
+      const file = storage.files.get(created.provider_file_id), ownerKept = file.headRevisionId;
+      storage.revisions.get(file.id).get(ownerKept).keepForever = true;
+      const writes = storage.writes;
+      const first = await run(target, client, storage, replace(created.path, file.version, { content: "agent edit\n" }));
+      assert.equal(first.result.status, "committed", JSON.stringify(first.result));
+      assert.equal(storage.writes - writes, 1, "only the upload: the kept head is not written again");
+      assert.deepEqual((await pins(created.id)).map(r => [r.revision_id, r.state]), [[ownerKept, "owner_kept"]]);
+      for (let i = 0; i < 10; i++) assert.equal((await run(target, client, storage, replace(created.path, storage.files.get(file.id).version, { content: `more ${i}\n` }))).result.status, "committed");
+      const rows = await pins(created.id);
+      assert.equal(rows[0].state, "owner_kept"); assert.equal(rows.filter(r => r.state === "pinned").length, 10);
+      assert.equal(storage.revisions.get(file.id).get(ownerKept).keepForever, true, "Clued never releases the Owner's revision");
+      const reverted = await run(target, client, storage, replace(created.path, storage.files.get(file.id).version, { restore_job_id: first.job.reference.job_id }));
+      assert.equal(reverted.result.status, "committed", JSON.stringify(reverted.result));
+      assert.equal(storage.content(file.id), "owner kept this\n");
+    });
+
     await t.test("refusals with zero provider writes: stale version, keep limit, unknown restore, no overwrite level, bad shapes", async () => {
       const { target, client, storage } = await setup();
       const created = await createFile(target, client, storage, "guarded.txt");
@@ -297,6 +336,10 @@ export async function testStorageReplace(t, admin, server, user, decision) {
       storage.keptExtra = 200;
       assert.equal((await run(target, client, storage, replace(created.path, version, { content: "x" }))).result.status, "deny", "Drive's 200 kept revisions");
       storage.keptExtra = 0;
+      const stored = storage.files.get(created.provider_file_id);
+      stored.mimeType = "application/zip";
+      assert.equal((await run(target, client, storage, replace(created.path, version, { content: "x" }))).result.status, "deny", "not a text file");
+      stored.mimeType = "text/plain";
       assert.equal(storage.writes, 0, "no provider write happened");
       assert.equal((await counters()).intents, before.intents, "no durable reservation was made");
       const modifyOnly = await setup(["modify"]);
@@ -337,7 +380,8 @@ export async function testStorageReplace(t, admin, server, user, decision) {
       const { verified_proof: proof, ...postcondition } = await verify({ profile: descriptor.profile, mutation: descriptor.mutation,
         provider_before: descriptor.provider_before, effect_result: { operation: "replace", destination_path: a.destination_path,
           provider_file_id: a.provider_file_id, content_before: a.content_before, content_after: a.content_after,
-          pinned_revision_id: a.pinned_revision_id, release_revision_ids: a.release_revision_ids, restore_job_id: a.restore_job_id } });
+          pinned_revision_id: a.pinned_revision_id, previously_kept: a.previously_kept, release_revision_ids: a.release_revision_ids,
+          restore_job_id: a.restore_job_id } });
       const finish = { action: "finalize", intent_id: descriptor.intent_id, base_version: descriptor.version, request_sha256: descriptor.request_sha256,
         idempotency_key: `account-job:${job.reference.job_id}:finalize`, postcondition };
       const recorded = await cloud({ action: "verified_record", ...job.reference, credential_version: descriptor.credential_version, finish, proof });

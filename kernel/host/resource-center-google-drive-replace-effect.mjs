@@ -34,17 +34,17 @@ export function replaceShape(mutation) {
 export const contentAfter = (bytes) => Object.freeze({ size: String(bytes.byteLength), sha256: sha256Hex(bytes) });
 
 /** Private effect for the admitted, durable-started Host only. The exact
- * attempt (file, previous content identity, the revision to keep, the new
- * content's identity and the Clued-pinned revisions to release) is durably
- * recorded BEFORE the first provider write. Then, in order: keep the current
- * head revision forever, upload the new bytes, release the listed older
- * Clued pins. Drive has no conditional update; the file is re-read before and
+ * attempt (file, previous content identity, the revision to keep and whether
+ * the Owner already kept it, the new content's identity and the Clued-pinned
+ * revisions to release) is durably recorded BEFORE the first provider write.
+ * Then, in order: keep the current head revision forever (unless already
+ * kept), upload the new bytes, try to release the listed older Clued pins. Drive has no conditional update; the file is re-read before and
  * after the durable flush and the verifier re-reads afterwards. A lost reply
  * is inspected, never retried. `replacement` is the Host-validated bytes
  * (the new content, or a restored revision checked against its pin). */
 export function createGoogleDriveNativeReplaceEffect({
   trusted_profile: trustedProfile, get_credential: getCredential, get_file: getFile,
-  resolve_provider_identity: resolveProviderIdentity,
+  get_revision: getRevision, resolve_provider_identity: resolveProviderIdentity,
   consume_started_provider: consumeStartedProvider,
   persist_provider_attempt: persistProviderAttempt,
   replacement, release_revision_ids: releaseRevisionIds,
@@ -52,7 +52,7 @@ export function createGoogleDriveNativeReplaceEffect({
   clock = Date.now,
 } = {}) {
   if (!trustedProfile || typeof getCredential !== "function" || typeof getFile !== "function" ||
-    typeof resolveProviderIdentity !== "function" || typeof consumeStartedProvider !== "function" ||
+    typeof getRevision !== "function" || typeof resolveProviderIdentity !== "function" || typeof consumeStartedProvider !== "function" ||
     typeof persistProviderAttempt !== "function" || typeof fetchImpl !== "function" || typeof clock !== "function" ||
     !(replacement instanceof Uint8Array) || replacement.byteLength > MAX_BYTES ||
     !Array.isArray(releaseRevisionIds) || releaseRevisionIds.length > 200 ||
@@ -106,11 +106,16 @@ export function createGoogleDriveNativeReplaceEffect({
     const file = await targetFile(before.destination_file_id, shape, before.destination_parent_id);
     const contentBefore = contentIdentity(file), pinned = file.headRevisionId, after = contentAfter(replacement);
     if (releases.includes(pinned)) fail("DRIVE_NATIVE_REQUEST_MISMATCH");
+    // A head the Owner already keeps forever is recorded as such: Clued then
+    // neither sets nor ever releases it, and it does not count toward K.
+    const head = await getRevision(file.id, pinned);
+    if (head?.id !== pinned || typeof head.keepForever !== "boolean") fail("DRIVE_NATIVE_TARGET_MISMATCH");
+    const previouslyKept = head.keepForever;
     const attempt = Object.freeze({ contract: "clued.storage-replace-attempt/1", intent_id: started.intent_id,
       request_sha256: requestHash, profile_id: profile.profile_id, operation: "replace", provider_file_id: file.id,
       destination_path: shape.destination, parent_id: before.destination_parent_id,
       destination_file_version: shape.destination_file_version, content_before: contentBefore,
-      pinned_revision_id: pinned, content_after: after, restore_job_id: shape.restore_job_id,
+      pinned_revision_id: pinned, previously_kept: previouslyKept, content_after: after, restore_job_id: shape.restore_job_id,
       release_revision_ids: releases, target_kind: "file", binding: structuredClone(binding) });
     await persistProviderAttempt(attempt);
     // Recheck after the durable flush, still before the first provider write.
@@ -118,8 +123,10 @@ export function createGoogleDriveNativeReplaceEffect({
     const again = await targetFile(file.id, shape, before.destination_parent_id);
     if (!isDeepStrictEqual(contentIdentity(again), contentBefore)) fail("DRIVE_NATIVE_TARGET_MISMATCH");
     const revision = (id) => `${API}/${encodeURIComponent(file.id)}/revisions/${encodeURIComponent(id)}?fields=id,keepForever`;
-    const kept = await write(revision(pinned), { body: JSON.stringify({ keepForever: true }) }, admission.expires_at_ms);
-    if (kept?.id !== pinned || kept.keepForever !== true) fail("DRIVE_NATIVE_RESPONSE_MISMATCH");
+    if (!previouslyKept) {
+      const kept = await write(revision(pinned), { body: JSON.stringify({ keepForever: true }) }, admission.expires_at_ms);
+      if (kept?.id !== pinned || kept.keepForever !== true) fail("DRIVE_NATIVE_RESPONSE_MISMATCH");
+    }
     const result = await write(`${UPLOAD}/${encodeURIComponent(file.id)}?uploadType=media&fields=${FIELDS}`,
       { body: replacement, contentType: file.mimeType }, admission.expires_at_ms);
     if (result?.id !== file.id || result.name !== file.name || result.trashed !== false ||
@@ -129,13 +136,15 @@ export function createGoogleDriveNativeReplaceEffect({
       (result.sha256Checksum != null && result.sha256Checksum !== "" && result.sha256Checksum !== after.sha256)) {
       fail("DRIVE_NATIVE_RESPONSE_MISMATCH");
     }
+    // Releases are cleanup, not part of the replace: a failed or expired
+    // release is left to the verifier's observation, and a pin Drive still
+    // keeps stays pinned and is listed again by the next replace.
     for (const id of releases) {
-      const released = await write(revision(id), { body: JSON.stringify({ keepForever: false }) }, admission.expires_at_ms);
-      if (released?.id !== id || released.keepForever !== false) fail("DRIVE_NATIVE_RESPONSE_MISMATCH");
+      try { await write(revision(id), { body: JSON.stringify({ keepForever: false }) }, admission.expires_at_ms); } catch { /* observed later */ }
     }
     return Object.freeze({ operation: "replace", source_path: null, destination_path: shape.destination,
       provider_file_id: file.id, provider_file_version: result.version, content_before: contentBefore,
-      content_after: after, pinned_revision_id: pinned, release_revision_ids: releases,
+      content_after: after, pinned_revision_id: pinned, previously_kept: previouslyKept, release_revision_ids: releases,
       restore_job_id: shape.restore_job_id, intent_id: started.intent_id });
   };
 }

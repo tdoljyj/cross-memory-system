@@ -44,7 +44,7 @@ function effectFixture(mutation = contentMutation, d = drive(), overrides = {}) 
   const events = [];
   const binding = { profile_id: profile.profile_id, request_sha256: createHash("sha256").update(JSON.stringify(mutation)).digest("hex") };
   let consumed = false, attempt;
-  const effect = createGoogleDriveNativeReplaceEffect({ trusted_profile: profile, get_file: d.getFile,
+  const effect = createGoogleDriveNativeReplaceEffect({ trusted_profile: profile, get_file: d.getFile, get_revision: d.getRevision,
     get_credential: async () => ({ access_token: "replace-test-access-token", scope: SCOPE }),
     resolve_provider_identity: async () => before(),
     consume_started_provider: () => consumed ? null : (consumed = true, { intent_id: intent, request_sha256: binding.request_sha256, provider: before() }),
@@ -87,12 +87,38 @@ test("replace records the exact attempt, keeps the head revision, uploads, then 
   assert.deepEqual(f.attempt(), { contract: "clued.storage-replace-attempt/1", intent_id: intent,
     request_sha256: f.request.admission.binding.request_sha256, profile_id: profile.profile_id, operation: "replace", provider_file_id: "file",
     destination_path: contentMutation.destination_path, parent_id: "track", destination_file_version: "5", content_before: CONTENT_BEFORE,
-    pinned_revision_id: "rev-1", content_after: contentAfter(NEW), restore_job_id: null, release_revision_ids: ["rev-0"],
+    pinned_revision_id: "rev-1", previously_kept: false, content_after: contentAfter(NEW), restore_job_id: null, release_revision_ids: ["rev-0"],
     target_kind: "file", binding: f.request.admission.binding });
   assert.deepEqual(result, { operation: "replace", source_path: null, destination_path: contentMutation.destination_path,
     provider_file_id: "file", provider_file_version: "7", content_before: CONTENT_BEFORE, content_after: contentAfter(NEW),
-    pinned_revision_id: "rev-1", release_revision_ids: ["rev-0"], restore_job_id: null, intent_id: intent });
+    pinned_revision_id: "rev-1", previously_kept: false, release_revision_ids: ["rev-0"], restore_job_id: null, intent_id: intent });
   assert.equal(f.d.revisions.get("rev-1").keepForever, true); assert.equal(f.d.revisions.get("rev-0").keepForever, false);
+});
+
+test("a head the Owner already keeps is recorded as such and not written again", async () => {
+  const d = drive(); d.revisions.get("rev-1").keepForever = true;
+  const f = effectFixture(contentMutation, d);
+  const result = await f.effect(f.request);
+  assert.deepEqual(f.events, ["persist", "upload", "keep:rev-0:false"]);
+  assert.equal(f.attempt().previously_kept, true); assert.equal(result.previously_kept, true);
+});
+
+test("a failed release after the upload does not fail the replace; the verifier reports it unreleased", async () => {
+  const d = drive();
+  const f = effectFixture(contentMutation, d, { fetch: async (url, options) => {
+    const u = new URL(url), parts = u.pathname.split("/");
+    if (parts.at(-2) === "revisions") {
+      const id = decodeURIComponent(parts.at(-1));
+      if (id === "rev-0") { f.events.push("release-lost"); throw new Error("socket closed"); }
+      d.revisions.get(id).keepForever = true; f.events.push(`keep:${id}:true`); return Response.json({ id, keepForever: true });
+    }
+    f.events.push("upload"); return Response.json(upload(d, Buffer.from(options.body)));
+  } });
+  const result = await f.effect(f.request);
+  assert.deepEqual(f.events, ["persist", "keep:rev-1:true", "upload", "release-lost"]);
+  const verified = await verifier(d)({ profile, mutation: contentMutation, provider_before: before(), effect_result: result });
+  assert.deepEqual(verified.verified_proof.released_revision_ids, []);
+  assert.deepEqual(verified.verified_proof.release_revision_ids, ["rev-0"]);
 });
 
 test("a stale version, a Google-native file, unproven content or a changed file never reaches a provider write", async () => {
@@ -149,7 +175,7 @@ function verifier(d, extra = {}) {
 }
 const effectResult = (mutation = contentMutation, restore = null) => ({ operation: "replace", source_path: null,
   destination_path: mutation.destination_path, provider_file_id: "file", provider_file_version: "7", content_before: CONTENT_BEFORE,
-  content_after: contentAfter(NEW), pinned_revision_id: "rev-1", release_revision_ids: ["rev-0"], restore_job_id: restore });
+  content_after: contentAfter(NEW), pinned_revision_id: "rev-1", previously_kept: false, release_revision_ids: ["rev-0"], restore_job_id: restore });
 const replaced = () => {
   const d = drive(); upload(d, NEW); d.revisions.get("rev-1").keepForever = true; d.revisions.get("rev-0").keepForever = false; return d;
 };
@@ -161,9 +187,10 @@ test("the verifier proves the new content, the kept previous revision and the re
   const proof = result.verified_proof;
   assert.equal(proof.contract, "clued.storage-replace-verified/1");
   assert.deepEqual(proof.checks, { identity: true, ancestors: true, stable_state: true, content: true, revision_changed: true,
-    previous_revision_kept: true, releases_applied: true });
+    previous_revision_kept: true, releases_observed: true });
   assert.deepEqual(proof.content_before, CONTENT_BEFORE); assert.deepEqual(proof.content_after, contentAfter(NEW));
   assert.equal(proof.pinned_revision_id, "rev-1"); assert.deepEqual(proof.release_revision_ids, ["rev-0"]);
+  assert.deepEqual(proof.released_revision_ids, ["rev-0"]); assert.equal(proof.previously_kept, false);
   const restored = await verifier(replaced())({ profile, mutation: restoreMutation, provider_before: before(), effect_result: effectResult(restoreMutation, restoreJob) });
   assert.equal(restored.verified_proof.restore_job_id, restoreJob);
 });
@@ -182,7 +209,6 @@ test("the verifier fails closed on unchanged or wrong content, an unkept or chan
     ["DRIVE_POSTCONDITION_CONTENT_MISMATCH", () => { const d = replaced(); d.files.get("file").size = "1"; return d; }],
     ["DRIVE_POSTCONDITION_PREVIOUS_REVISION_NOT_KEPT", () => { const d = replaced(); d.revisions.get("rev-1").keepForever = false; return d; }],
     ["DRIVE_POSTCONDITION_PREVIOUS_REVISION_NOT_KEPT", () => { const d = replaced(); d.revisions.get("rev-1").md5Checksum = "f".repeat(32); return d; }],
-    ["DRIVE_POSTCONDITION_RELEASE_NOT_APPLIED", () => { const d = replaced(); d.revisions.get("rev-0").keepForever = true; return d; }],
     ["DRIVE_POSTCONDITION_IDENTITY_MISMATCH", () => { const d = replaced(); d.files.get("file").parents = ["track", "root"]; return d; }],
     ["DRIVE_POSTCONDITION_SYNC_TIMEOUT", () => { const d = replaced(); delete d.files.get("file").sha256Checksum; return d; }],
   ];
@@ -192,7 +218,8 @@ test("the verifier fails closed on unchanged or wrong content, an unkept or chan
   }
   for (const [provider, effect] of [[{ ...before(), destination_file_version: "4" }, effectResult()],
     [before(), { ...effectResult(), release_revision_ids: ["rev-1"] }], [before(), effectResult(contentMutation, restoreJob)],
-    [before(), { ...effectResult(), content_before: { ...CONTENT_BEFORE, head_revision_id: "rev-0" } }]]) {
+    [before(), { ...effectResult(), content_before: { ...CONTENT_BEFORE, head_revision_id: "rev-0" } }],
+    [before(), { ...effectResult(), previously_kept: undefined }]]) {
     await assert.rejects(verifier(replaced())({ profile, mutation: contentMutation, provider_before: provider, effect_result: effect }),
       /DRIVE_POSTCONDITION_REQUEST_MISMATCH/);
   }

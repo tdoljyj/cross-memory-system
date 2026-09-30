@@ -30,6 +30,7 @@ const providerAuthorityCodes = new Set([
   "DRIVE_CREDENTIAL_UNAVAILABLE", "DRIVE_LIST_INVALID", "DRIVE_METADATA_MISMATCH",
   "DRIVE_METADATA_UNAVAILABLE", "DRIVE_NAMESPACE_VISIBILITY_UNPROVEN", "DRIVE_PAGINATION_INVALID",
   "DRIVE_PAGINATION_LIMIT", "SOURCE_VERSION_MISMATCH", "DESTINATION_VERSION_MISMATCH", "REVISION_KEEP_LIMIT",
+  "REPLACE_TARGET_UNSUPPORTED",
 ]);
 // Fixed denial labels from public.clued_resource_center_authority_v1; each names a failed check, never a value.
 const authorityDenialReasons = new Set([
@@ -202,6 +203,17 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           logAuthorityFailure(phase,"provider_identity","REVISION_KEEP_LIMIT");
           fail();
         }
+        // The level covers text files whose kept content can be reverted:
+        // a text type, at most 1 MiB, with a sha256 to check a restore by.
+        if(replace && phase==="initial"){
+          const target=await metadata.getFile(request.provider_identity.destination_file_id);
+          if(!/^(text\/[a-z0-9.+-]+|application\/(json|xml))$/.test(target?.mimeType??"") ||
+            !/^[0-9a-f]{64}$/.test(target.sha256Checksum??"") || !/^(0|[1-9]\d{0,19})$/.test(target.size??"") ||
+            Number(target.size)>1024*1024){
+            logAuthorityFailure(phase,"provider_identity","REPLACE_TARGET_UNSUPPORTED");
+            fail();
+          }
+        }
         return Object.freeze({...result.authority,workspace_version:"provider+canonical:"+hash([result.authority.workspace_version,request.provider_identity])});
       };
       let startedProvider=null, saved=null;
@@ -223,7 +235,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         if(String(replacement.byteLength)!==restore.size || (restore.sha256!=null && sha256Hex(replacement)!==restore.sha256) ||
           (restore.md5!=null && md5Hex(replacement)!==restore.md5)) fail();
       }
-      const effect=replace ? createGoogleDriveNativeReplaceEffect({...effectConfig,get_file:metadata.getFile,replacement,
+      const effect=replace ? createGoogleDriveNativeReplaceEffect({...effectConfig,get_file:metadata.getFile,get_revision:metadata.getRevision,replacement,
           release_revision_ids:descriptor.revision_releases})
         : modify ? createGoogleDriveNativeModifyEffect({...effectConfig,get_file:metadata.getFile})
         : createGoogleDriveNativeCreateEffect(effectConfig);

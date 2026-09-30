@@ -606,9 +606,10 @@ K = 10 Clued-pinned revisions per file).
   destination_path, destination_file_version}` plus exactly one of
   `content` (UTF-8, at most 1 MiB) or `restore_job_id`. The target must be a
   file Clued registered, at the version the Agent last saw; a stale version is
-  refused before any reservation (`DESTINATION_VERSION_MISMATCH`).
-  Google-native documents and files without a head revision and checksum
-  are refused.
+  refused before any reservation (`DESTINATION_VERSION_MISMATCH`). The target
+  must be a text file (`text/*`, JSON or XML) of at most 1 MiB with a sha256,
+  so its kept content can be reverted (`REPLACE_TARGET_UNSUPPORTED`
+  otherwise).
 - A revert is a replace with `restore_job_id`: the committed replace job of
   the same file whose kept previous revision is restored. The executor
   downloads that revision and requires its size, sha256 and md5 to equal the
@@ -618,20 +619,27 @@ K = 10 Clued-pinned revisions per file).
   `clued.storage-replace-attempt/1`: file, previous content identity, the
   head revision to keep, the new content's size and sha256, the restore job
   and the older Clued pins to release. It re-reads the file after that
-  durable flush, then: sets the head revision `keepForever=true`, uploads the
-  new bytes, and sets each released revision `keepForever=false`. A file
+  durable flush, then: sets the head revision `keepForever=true` (skipped
+  when the Owner already keeps it), uploads the new bytes, and tries to set
+  each released revision `keepForever=false`. A file
   that already has 200 kept revisions (Drive's limit) is refused
   (`REVISION_KEEP_LIMIT`) instead of skipping protection.
 - The verifier proves `clued.storage-replace-verified/1`: same file ID, name,
   parent and ancestor folder IDs; a new head revision whose size and sha256
   are the new content's (a sha256 Drive publishes late is re-read); a stable
   version over two reads; the previous revision kept forever with the
-  previous size and md5; every listed release applied.
+  previous size and md5. It reads each listed release and reports as released
+  only those Drive shows unkept; releases never block settlement.
 - Settlement updates the same Artifact by CAS (`artifact_update`) and adds a
   row to `storage_revision_pins_v1`. At most 10 Clued pins per file stay
-  pinned; each replace releases all but the newest 9 in the same job, and
-  each released row names the settlement receipt whose proof lists it.
-  Revisions the Owner kept in Drive are never touched.
+  pinned; each replace tries to release all but the newest 9, and each row
+  observed released names the settlement receipt. A release that failed
+  stays pinned and is listed again by the next replace. A head the Owner had
+  already kept is recorded `owner_kept`: restorable, never released, not
+  counted. Other revisions the Owner kept in Drive are never touched.
+- Residual (T13): Drive has no conditional upload. An outside edit landing
+  between the executor's last re-read and the upload is overwritten without
+  a Clued pin; Drive's own revision history still holds it.
 - A lost upload reply leaves the intent fenced. Scheduled and native recovery
   load replace descriptors, re-verify by GET only and settle through the same
   verified record; they never upload again.

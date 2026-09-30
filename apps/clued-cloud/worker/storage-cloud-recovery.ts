@@ -114,7 +114,8 @@ export async function createStorageCloudRecovery(config: {
         effect_result: replace
           ? { operation: "replace", destination_path: d.mutation.destination_path, provider_file_id: d.attempt.provider_file_id,
               content_before: d.attempt.content_before, content_after: d.attempt.content_after,
-              pinned_revision_id: d.attempt.pinned_revision_id, release_revision_ids: d.attempt.release_revision_ids,
+              pinned_revision_id: d.attempt.pinned_revision_id, previously_kept: d.attempt.previously_kept,
+              release_revision_ids: d.attempt.release_revision_ids,
               restore_job_id: d.attempt.restore_job_id }
           : modify
           ? { operation, source_path: d.mutation.source_path, destination_path: d.mutation.destination_path,
