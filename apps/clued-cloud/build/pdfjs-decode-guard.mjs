@@ -17,6 +17,9 @@ import { readFile } from "node:fs/promises";
  *   entry Parser.getObj / makeInlineImage builds, charged with the parser
  *   (content streams, indirect objects, object streams, xref recovery), which
  *   carries the size of the top-level object being parsed;
+ * - "oplist": each operator added to an OperatorList and each path operator
+ *   PartialEvaluator.buildPath records (text extraction builds operator lists
+ *   only for Type3 CharProcs, and keeps them with the font);
  * - "chars": the characters of each string, hex string and name the Lexer
  *   returns (content streams, objects and embedded CMaps alike);
  * - "cmap": CMap entries (CMap.mapOne, and the codes of each mapCidRange /
@@ -31,9 +34,13 @@ import { readFile } from "node:fs/promises";
  *   string, name or array past 256 Ki elements (pdf.js collects them one
  *   element at a time).
  *
+ * It also bounds EvaluatorPreprocessor.nonProcessedArgs (the extra operands
+ * pdf.js keeps for the rest of a content stream) to the last 33.
+ *
  * worker/storage-read-pdf.ts installs the guard, charges each call to the
  * extraction running in the current async context and throws once a limit is
- * reached. A missing guard throws (TypeError), so nothing is decoded unguarded.
+ * reached or, checked every few thousand calls, the call's deadline has
+ * passed (so CPU is bounded inside a page, a form or a CharProc). A missing guard throws (TypeError), so nothing is decoded unguarded.
  * The patched module also exports CLUED_PDF_DECODE_GUARD, which
  * storage-read-pdf.ts requires before it parses any PDF: a build that skipped
  * this step fails closed. The anchors match pdfjs-dist 6.3.289 exactly; any
@@ -45,6 +52,12 @@ const G = "globalThis.__cluedPdfDecodeGuard";
 const MAX_ELEMENTS = 256 * 1024;
 /** A Dict (an object with its own Map) costs about as much heap as 6 array elements. */
 const DICT_WEIGHT = 6;
+/** EvaluatorPreprocessor.read refuses a 34th operand ("Too many arguments"). */
+const MAX_OPERANDS = 33;
+/** An operator kept in an operator list (its operand array has room for 17
+ * elements) costs about as much heap as a Dict; a path operator adds 3–7
+ * numbers to one shared path buffer and weighs 1. */
+const OPERATOR_WEIGHT = 6;
 const PATCHES = [
   // DecodeStream.ensureBuffer
   ["    while (size < requested) {\n      size *= 2;\n    }\n    const buffer2 = new Uint8Array(size);",
@@ -59,6 +72,19 @@ const PATCHES = [
   // EvaluatorPreprocessor.read
   ["  read(operation) {\n    let args = operation.args;\n    while (true) {\n      const obj = this.parser.getObj();",
     `  read(operation) {\n    let args = operation.args;\n    while (true) {\n      ${G}("token");\n      const obj = this.parser.getObj();`],
+  // EvaluatorPreprocessor.read: operands beyond an operator's count move to
+  // nonProcessedArgs, which pdf.js keeps for the rest of the stream (a later
+  // operator short of operands takes them back). Only the last MAX_OPERANDS
+  // are kept, as many as one operator can be given before "Too many arguments".
+  ["            while (argsLength > numArgs) {\n              nonProcessedArgs.push(args.shift());\n              argsLength--;\n            }\n",
+    "            while (argsLength > numArgs) {\n              nonProcessedArgs.push(args.shift());\n              argsLength--;\n            }\n" +
+    `            if (nonProcessedArgs.length > ${MAX_OPERANDS}) nonProcessedArgs.splice(0, nonProcessedArgs.length - ${MAX_OPERANDS});\n`],
+  // OperatorList.addOp / PartialEvaluator.buildPath: an operator list pdf.js
+  // keeps (a Type3 font's CharProcs, built when the font loads for text) holds
+  // every operator, its operands and its path points.
+  ["  addOp(fn, args) {\n    this.optimizer.push(fn, args);\n    this.weight++;", `  addOp(fn, args) {\n    ${G}("oplist", null, ${OPERATOR_WEIGHT});\n    this.optimizer.push(fn, args);\n    this.weight++;`],
+  ["  buildPath(fn, args, state) {\n    const {\n      pathMinMax: minMax,\n      pathBuffer\n    } = state;",
+    `  buildPath(fn, args, state) {\n    ${G}("oplist", null, 1);\n    const {\n      pathMinMax: minMax,\n      pathBuffer\n    } = state;`],
   // Name.get / Cmd.get
   ["    return NameCache[name] ||= new Name(name);", `    return NameCache[name] ||= (${G}("primitive"), new Name(name));`],
   ["    return CmdCache[cmd] ||= new Cmd(cmd);", `    return CmdCache[cmd] ||= (${G}("primitive"), new Cmd(cmd));`],

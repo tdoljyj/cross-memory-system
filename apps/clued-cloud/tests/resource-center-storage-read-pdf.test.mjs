@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build, stop } from "esbuild";
 import { pdfDecodeGuardEsbuildPlugin } from "../build/pdfjs-decode-guard.mjs";
 import { brotliBombPdf, encryptedPdf, flateLatinPdf, identityPdf, latinPdf, longStringPdf, operatorBombPdf, predefinedCjkPdf, repeatedStreamPdf, scannedPdf,
-  textBombPdf, textPagesPdf, toUnicodeBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
+  realisticTextPdf, textBombPdf, textPagesPdf, textThenDrawingPdf, toUnicodeBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
 
 // StorageNormalUse.v0.1 §4.5: pdf.js text extraction for clued_storage_read.
 // The module imports pdf.js and the generated CMaps extensionless, so it is
@@ -17,7 +17,7 @@ await build({ entryPoints: [fileURLToPath(new URL("../worker/storage-read-pdf.ts
   bundle: true, platform: "node", format: "esm", logLevel: "silent", plugins: [pdfDecodeGuardEsbuildPlugin()] });
 stop();
 const { extractPdfText, looksGarbled, readExactBody, classifyPdfError, pdfOffsetPastText, pdfTimeBudget, PDF_MAX_BYTES, PDF_PAGES_PER_CALL, PDF_TEXT_MAX,
-  PDF_TIME_MS, PDF_TIME_CUT_HINT, withPdfSlot, PdfBusyError, PDF_SLOT_WAIT_MS } =
+  PDF_TIME_MS, PDF_TIME_CUT_HINT, withPdfSlot, PdfBusyError, PDF_SLOT_WAIT_MS, PDF_CONTENT_OBJECTS_MAX, PDF_DEADLINE_CHECK_EVERY } =
   await import(pathToFileURL(path.join(directory, "pdf.mjs")).href);
 const extract = (bytes, options = {}) => extractPdfText(bytes, { page_start: 1, page_count: 20, max_text_bytes: PDF_TEXT_MAX, ...options });
 const ZH = "资料中心存储读取测试：这是一个包含中文字符的页面。";
@@ -146,6 +146,27 @@ test("page text is streamed: the text limit cancels inside a page and the text i
   assert.ok(size > 64 * 1024 && size < 96 * 1024, `stops within one chunk of the limit: ${size}`);
   const more = await extract(pdf.slice(), { max_text_bytes: 256 * 1024 });
   assert.ok(more.text.startsWith(cut.text));
+});
+
+test("the guard's deadline check ends a page without text chunks the same way: page dropped, selection ends, first page unavailable", async () => {
+  // Page 2 only draws (about 1.8 M content tokens, no text chunk to check the time at); the guard
+  // reads the clock every PDF_DEADLINE_CHECK_EVERY calls, and each reading advances it 1 s.
+  const pdf = textThenDrawingPdf("Short first page", 7 * MiB);
+  let now = 0;
+  const cut = await extract(pdf.slice(), { clock: () => (now += 1000), time_ms: 10000 });
+  assert.deepEqual({ text: cut.text, pages: cut.pages_extracted, complete: cut.complete, time_limited: cut.time_limited },
+    { text: "# Page 1\nShort first page", pages: 1, complete: true, time_limited: true });
+  now = 0;
+  await assert.rejects(extract(pdf.slice(), { page_start: 2, clock: () => (now += 1000), time_ms: 10000 }), error => error.code === "storage_read_unavailable");
+  assert.equal(PDF_DEADLINE_CHECK_EVERY, 4096);
+});
+
+test("a realistic 20-page kerned text document extracts whole, within the content-object limit", async () => {
+  const result = await extract(realisticTextPdf(20));
+  assert.equal(result.page_count, 20); assert.equal(result.pages_extracted, 20); assert.equal(result.complete, true); assert.equal(result.text_layer, "present");
+  assert.ok(result.text.startsWith("# Page 1\nSection 1: Findings\n"), result.text.slice(0, 80));
+  assert.ok(result.text.includes("# Page 20\nSection 20: Findings\n")); assert.ok(result.text.length > 90000);
+  assert.equal(PDF_CONTENT_OBJECTS_MAX, 512 * 1024);
 });
 
 test("time limit inside a page drops that page and ends the selection; on the first page it is storage_read_unavailable", async () => {

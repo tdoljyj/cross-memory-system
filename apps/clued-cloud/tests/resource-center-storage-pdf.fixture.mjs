@@ -212,3 +212,59 @@ export const imageFilterBombPdf = ({ width = 30000, height = 30000, filter = "DC
   const imageStream = `<< /Length ${data.length} /Filter /${filter} /Width ${width} /Height ${height} >>\nstream\n${data}\nendstream`;
   return buildPdf([...catalog, ...(target === "tounicode" ? identityFont("8 0 R") : identityFont("", "8 0 R")), imageStream]);
 };
+
+// Operands held at once and CPU without text (independent review of 26ee7e4e).
+const DICTS_70K = "[" + "<<>>".repeat(70000) + "]";
+/** H2: `operands` arrays of `perArray` `<<>>` each before one TJ: pdf.js holds every one until the operator. */
+export const heldOperandsBombPdf = (perArray = 70000, operands = 26) =>
+  repeatedUnitPage("BT /F1 12 Tf ", "[" + "<<>>".repeat(perArray) + "] ", operands, " TJ ET\n");
+/** I2 / I3: `[<<>>×perArray] n` × `lines`, then text. `n` takes no operand, so each array is
+ * shifted into EvaluatorPreprocessor.nonProcessedArgs. */
+export const extraOperandsBombPdf = (perArray = 70000, lines = 10) =>
+  repeatedUnitPage("", "[" + "<<>>".repeat(perArray) + "] n\n", lines, "BT /F1 12 Tf 50 700 Td (after the operands) Tj ET\n");
+/** K: one page that draws `forms` Flate form XObjects, each `unit` repeated to about `decodedBytes`. */
+export function formXObjectsBombPdf({ forms = 6, unit = DICTS_70K + " n\n", decodedBytes = Math.round(7.8 * 1024 * 1024) } = {}) {
+  const names = Array.from({ length: forms }, (_, i) => `/X${i + 1} ${6 + i} 0 R`).join(" ");
+  const count = Math.max(1, Math.floor(decodedBytes / unit.length));
+  const objects = [...catalog, HELVETICA, ...onePage("5 0 R", `/Font << /F1 3 0 R >> /XObject << ${names} >>`),
+    stream("BT /F1 12 Tf 50 700 Td (before the forms) Tj ET\n" + Array.from({ length: forms }, (_, i) => `q /X${i + 1} Do Q`).join("\n"))];
+  for (let i = 0; i < forms; i++) {
+    const data = deflateSync(Buffer.alloc(unit.length * count, unit, "latin1"), { level: 9 }).toString("latin1");
+    objects.push(`<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] /Length ${data.length} /Filter /FlateDecode >>\nstream\n${data}\nendstream`);
+  }
+  return buildPdf(objects);
+}
+/** A Type3 font whose one CharProc is `d0` then `unit` × `count` (Flate): pdf.js builds and keeps
+ * the CharProc's operator list (operands included) when it loads the font for text. */
+export function type3CharProcBombPdf({ unit = DICTS_70K + " 0 d\n", count = 26 } = {}) {
+  const data = deflateSync(Buffer.concat([Buffer.from("1000 0 d0\n", "latin1"), Buffer.alloc(unit.length * count, unit, "latin1")]), { level: 9 }).toString("latin1");
+  return buildPdf([...catalog,
+    "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /a 6 0 R >> " +
+      "/Encoding << /Type /Encoding /Differences [97 /a] >> /FirstChar 97 /LastChar 97 /Widths [1000] >>",
+    ...onePage("5 0 R"), stream("BT /F1 12 Tf 50 700 Td (aaa) Tj ET"),
+    `<< /Length ${data.length} /Filter /FlateDecode >>\nstream\n${data}\nendstream`]);
+}
+/** Page 1 shows `text`; page 2 only draws: a Flate stream of `q Q` operators decoding to `decodedBytes`. */
+export const textThenDrawingPdf = (text, decodedBytes) => buildPdf(["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>", HELVETICA,
+  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>",
+  stream(`BT /F1 11 Tf 50 740 Td ${literal(text)} Tj ET`),
+  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>",
+  repeatedFlate("", "q Q\n", decodedBytes)]);
+/** A realistic multi-page text document: `pageCount` Flate pages of kerned TJ lines (typeset
+ * output: a kern every three characters), a bold heading, a rule and a page number. */
+export function realisticTextPdf(pageCount = 20, linesPerPage = 55) {
+  const words = "the quick brown fox jumps over lazy dogs while storage extraction reads every kerned line of this realistic report".split(" ");
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", `<< /Type /Pages /Kids [${Array.from({ length: pageCount }, (_, i) => `${5 + i * 2} 0 R`).join(" ")}] /Count ${pageCount} >>`,
+    HELVETICA, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"];
+  for (let p = 0; p < pageCount; p++) {
+    const lines = [`BT /F2 14 Tf 50 760 Td (Section ${p + 1}: Findings) Tj ET`, "BT /F1 10 Tf 50 740 Td 12 TL"];
+    for (let l = 0; l < linesPerPage; l++) {
+      const text = Array.from({ length: 14 }, (_, w) => words[(p * 7 + l * 3 + w) % words.length]).join(" ");
+      lines.push(`[${text.match(/.{1,3}/g).map((s, i) => `${literal(s)} ${i % 2 ? -18 : 12}`).join(" ")}] TJ T*`);
+    }
+    lines.push("ET", "0.5 w 50 40 m 562 40 l S", `BT /F1 8 Tf 300 25 Td (${p + 1}) Tj ET`);
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${6 + p * 2} 0 R >>`);
+    objects.push(flateStream(lines.join("\n")));
+  }
+  return buildPdf(objects);
+}

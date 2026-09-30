@@ -22,15 +22,17 @@ import { StorageFormatError } from "./storage-read-formats";
  * decoded bytes, and a 70 KB deflate bomb decodes to hundreds of MB. So
  * (1) build/pdfjs-decode-guard.mjs patches the pinned worker to call the
  * guard below for every decoded-byte allocation, content-stream token, new
- * cached name, CMap entry, parsed array / Dict element and lexed string
- * character, and for every image decode (refused: text never needs one), and
- * the guard refuses past the PDF_DECODE_* / PDF_TOKENS_MAX /
+ * cached name, CMap entry, parsed array / Dict element, kept operator and
+ * lexed string character, and for every image decode (refused: text never
+ * needs one), and the guard refuses past the PDF_DECODE_* / PDF_TOKENS_MAX /
  * PDF_PRIMITIVES_MAX / PDF_CMAP_ENTRIES_MAX / PDF_OBJECT_* / PDF_OBJECTS_MAX /
- * PDF_STRING_CHARS_MAX limits of this call (archive_limit_exceeded); pdf.js
- * decodes a page's content stream whole before it evaluates it, so these also
- * bound text bombs; (2) page text is read as a stream and cancelled once the
- * call's text limit or deadline is passed, so one page can neither grow the
- * text nor run on. */
+ * PDF_CONTENT_OBJECTS_MAX / PDF_STRING_CHARS_MAX limits of this call
+ * (archive_limit_exceeded); pdf.js decodes a page's content stream whole
+ * before it evaluates it, so these also bound text bombs; the guard also
+ * checks the call's deadline every PDF_DEADLINE_CHECK_EVERY calls, so a page,
+ * form or CharProc without text cannot run on either; (2) page text is read as
+ * a stream and cancelled once the call's text limit or deadline is passed, so
+ * one page can neither grow the text nor run on. */
 
 export const PDF_MAX_BYTES = 20 * 1024 * 1024;
 /** Pages per call (contract §5.1: at most 20). */
@@ -39,7 +41,8 @@ export const PDF_PAGES_PER_CALL = 20;
 export const PDF_TEXT_MAX = 8 * 1024 * 1024;
 /** Wall time for extraction in one call (the caller may pass less). Checked
  * between pages and every few text chunks, after a timer yield (a Worker's
- * clock advances only across I/O and timers). */
+ * clock advances only across I/O and timers), and inside pdf.js by the guard
+ * (PDF_DEADLINE_CHECK_EVERY). */
 export const PDF_TIME_MS = 10000;
 /** Decoded-byte buffers one pdf.js stream may allocate. Buffers grow by
  * doubling, so this keeps any one decoded stream under 8 MiB (at most 12 MiB
@@ -95,11 +98,22 @@ export const PDF_CMAP_ENTRIES_MAX = 400_000;
 /** Weighted size of one top-level object pdf.js parses (a content-stream
  * operand such as a TJ array, or one indirect object): arrays and their
  * elements and Dict entries weigh 1, each Dict 6 (build/pdfjs-decode-guard.mjs
- * DICT_WEIGHT). Operands are dropped after their operator, so this bounds
- * what content-stream parsing holds at once: about 36 bytes of heap per unit,
- * some 18 MB. Real objects are far smaller (a CJK font's /W array has some
+ * DICT_WEIGHT); at most about 38 bytes of heap per unit (a Dict in an array),
+ * some 19 MB. Real objects are far smaller (a CJK font's /W array has some
  * 10–100 thousand elements). */
 export const PDF_OBJECT_TREE_MAX = 512 * 1024;
+/** Weighted units of all content-stream objects one call parses (pages, form
+ * XObjects, Type3 CharProcs, annotation appearances: parsers without
+ * allowStreams), plus 6 per operator and 1 per path operator added to an
+ * operator list pdf.js keeps (Type3 CharProcs; build/pdfjs-decode-guard.mjs
+ * OPERATOR_WEIGHT: an operator's operand array costs about a Dict). Cumulative, not per operand: pdf.js
+ * holds up to 33 operands before an operator, keeps extra operands for the
+ * rest of the stream, and keeps a CharProc's operators with its font, so only
+ * a running total bounds what content parsing can hold at once (about 19 MB
+ * at 38 bytes per unit), and it also bounds the CPU spent building objects.
+ * A kerned text page (a TJ element every few characters) uses some 3–10
+ * thousand units, so 20 such pages stay far below it. */
+export const PDF_CONTENT_OBJECTS_MAX = 512 * 1024;
 /** Weighted units of all indirect objects one call parses (parsers with
  * allowStreams: the xref, object streams, trailers). pdf.js caches parsed
  * objects for the document, so these stay alive: about 36 MB. */
@@ -110,8 +124,16 @@ export const PDF_OBJECTS_MAX = 1_000_000;
  * thousand characters. */
 export const PDF_STRING_CHARS_MAX = 4 * 1024 * 1024;
 
-type DecodeBudget = { allocated: number; tokens: number; primitives: number; cmap: number; objects: number; chars: number; exceeded: boolean;
-  streams: WeakMap<object, number> };
+/** The guard compares the call's clock with its deadline once every this many
+ * guard calls (tokens, objects, strings, operators, decoded buffers ...), so a
+ * page, form or CharProc without text cannot run past the deadline. A Worker's
+ * clock advances only across I/O and timers, so inside workerd this check sees
+ * the time as of pdf.js's last await; the cumulative limits above are what
+ * bound CPU there (a few seconds at most). */
+export const PDF_DEADLINE_CHECK_EVERY = 4096;
+
+type DecodeBudget = { allocated: number; tokens: number; primitives: number; cmap: number; objects: number; content: number; chars: number;
+  exceeded: boolean; calls: number; clock: () => number; deadline: number; timedOut: boolean; streams: WeakMap<object, number> };
 const decodeBudgets = new AsyncLocalStorage<DecodeBudget>();
 class DecodeLimit extends Error {}
 /** Called by the patched pdf.js worker (build/pdfjs-decode-guard.mjs): before
@@ -120,19 +142,26 @@ class DecodeLimit extends Error {}
  * ("primitive"), before CMap `stream` gets `bytes` entries up to `code`
  * ("cmap", weighted: PDF_CMAP_ENTRIES_MAX), before parser `stream` builds an
  * array, element, Dict or Dict entry of weight `bytes` ("object":
- * PDF_OBJECT_TREE_MAX / PDF_OBJECTS_MAX), for the `bytes` characters of each
+ * PDF_OBJECT_TREE_MAX / PDF_OBJECTS_MAX / PDF_CONTENT_OBJECTS_MAX), for each
+ * operator or path operator added to a kept operator list ("oplist":
+ * PDF_CONTENT_OBJECTS_MAX), for the `bytes` characters of each
  * lexed string or name ("chars": PDF_STRING_CHARS_MAX), and where a
  * hard limit is hit ("limit", which includes every image decode). Outside an
  * extraction (no budget in the async context) nothing may be decoded. pdf.js
  * may swallow the throw (stopAtErrors: false skips a failing stream), so the
  * budget records it and the extraction fails with archive_limit_exceeded
- * instead of returning partial text. */
-function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "object" | "chars" | "limit", stream?: object | null, bytes = 0, code = 0): void {
+ * instead of returning partial text; past the deadline (timedOut) it fails
+ * with the time-limit semantics of extractPdfText instead. */
+function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "object" | "oplist" | "chars" | "limit", stream?: object | null, bytes = 0, code = 0): void {
   const budget = decodeBudgets.getStore();
   if (!budget) {
     // Module evaluation creates a few Names before any extraction runs.
     if (kind === "token" || kind === "primitive") return;
     throw new DecodeLimit("pdf decode outside an extraction");
+  }
+  if (budget.timedOut || (++budget.calls % PDF_DEADLINE_CHECK_EVERY === 0 && budget.clock() > budget.deadline)) {
+    budget.timedOut = true;
+    throw new DecodeLimit("pdf time limit");
   }
   if (!budget.exceeded) {
     if (kind === "token") { if (++budget.tokens <= PDF_TOKENS_MAX) return; }
@@ -145,10 +174,14 @@ function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "object" 
     else if (kind === "object" && stream) {
       // __cluedTree: the size of the top-level object this parser is building
       // (reset by the patched Parser.getObj at depth 0).
+      // allowStreams: an indirect-object parser (PDF_OBJECTS_MAX); any other
+      // parser reads a content stream (PDF_CONTENT_OBJECTS_MAX).
       const parser = stream as { __cluedTree?: number; allowStreams?: unknown };
       const tree = parser.__cluedTree = (parser.__cluedTree ?? 0) + bytes;
-      if (tree <= PDF_OBJECT_TREE_MAX && (parser.allowStreams !== true || (budget.objects += bytes) <= PDF_OBJECTS_MAX)) return;
+      if (tree <= PDF_OBJECT_TREE_MAX && (parser.allowStreams === true ? (budget.objects += bytes) <= PDF_OBJECTS_MAX
+        : (budget.content += bytes) <= PDF_CONTENT_OBJECTS_MAX)) return;
     }
+    else if (kind === "oplist") { if ((budget.content += bytes) <= PDF_CONTENT_OBJECTS_MAX) return; }
     else if (kind === "chars") { if ((budget.chars += bytes) <= PDF_STRING_CHARS_MAX) return; }
     else if (kind === "decode" && stream) {
       const used = (budget.streams.get(stream) ?? 0) + bytes;
@@ -329,7 +362,8 @@ export async function extractPdfText(bytes: Uint8Array, options: { page_start: n
       throw new Error("unavailable");
     }
   }
-  const budget: DecodeBudget = { allocated: 0, tokens: 0, primitives: 0, cmap: 0, objects: 0, chars: 0, exceeded: false, streams: new WeakMap() };
+  const budget: DecodeBudget = { allocated: 0, tokens: 0, primitives: 0, cmap: 0, objects: 0, content: 0, chars: 0, exceeded: false,
+    calls: 0, clock, deadline, timedOut: false, streams: new WeakMap() };
   // pdf.js's in-thread worker runs in promise jobs started from here, so all
   // decoding for this document sees this budget through the async context.
   return decodeBudgets.run(budget, async (): Promise<PdfExtraction> => {
@@ -342,8 +376,10 @@ export async function extractPdfText(bytes: Uint8Array, options: { page_start: n
     try {
       let doc: Awaited<typeof task.promise>;
       // Wrong or required password, damaged structure, not a PDF: fixed code, no parser text.
-      try { doc = await task.promise; } catch (error) { throw classifyPdfError(error, budget.exceeded); }
+      try { doc = await task.promise; } catch (error) { throw budget.timedOut && !budget.exceeded ? new StorageFormatError("storage_read_unavailable") : classifyPdfError(error, budget.exceeded); }
       if (budget.exceeded) throw new StorageFormatError("archive_limit_exceeded");
+      // The deadline passed inside the guard before any page: nothing whole to return.
+      if (budget.timedOut) throw new StorageFormatError("storage_read_unavailable");
       const pageCount = doc.numPages;
       const end = Math.min(start + wanted - 1, pageCount);
       const parts: string[] = [], unreliable: number[] = [];
@@ -373,8 +409,13 @@ export async function extractPdfText(bytes: Uint8Array, options: { page_start: n
             if (cut) await reader.cancel(new Error(`pdf ${cut} limit`)).catch(() => {});
             page.cleanup();
           }
-        } catch (error) { throw classifyPdfError(error, budget.exceeded); }
+        } catch (error) {
+          if (!budget.timedOut || budget.exceeded) throw classifyPdfError(error, budget.exceeded);
+        }
         if (budget.exceeded) throw new StorageFormatError("archive_limit_exceeded");
+        // The guard saw the deadline pass inside the page (pdf.js may have
+        // swallowed its throw and returned part of the page): a time cut.
+        if (budget.timedOut) cut = "time";
         if (cut === "time") {
           // Mid-page: the page is dropped and the selection ends before it. If
           // not even the first page finished in time there is nothing whole to return.

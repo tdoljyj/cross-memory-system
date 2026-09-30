@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,7 +8,9 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { build, stop } from "esbuild";
 import { patchPdfWorker, pdfDecodeGuardEsbuildPlugin } from "../build/pdfjs-decode-guard.mjs";
-import { catalogDictBombPdf, cmapRangeBombPdf, dictArrayBombPdf, emptyArrayBombPdf, flateLatinPdf, stringArrayBombPdf, imageFilterBombPdf, longStringPdf, operatorBombPdf, predefinedCjkFontsPdf, repeatedStreamPdf, textBombPdf, toUnicodeBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
+import { catalogDictBombPdf, cmapRangeBombPdf, dictArrayBombPdf, emptyArrayBombPdf, extraOperandsBombPdf, flateLatinPdf, formXObjectsBombPdf, heldOperandsBombPdf,
+  stringArrayBombPdf, imageFilterBombPdf, longStringPdf, operatorBombPdf, predefinedCjkFontsPdf, realisticTextPdf, repeatedStreamPdf, textBombPdf, toUnicodeBombPdf,
+  type3CharProcBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
 
 // StorageNormalUse.v0.1 §4.5 resource bounds (independent review MAJOR): small
 // deflate bombs must not exhaust a Worker isolate. Each case runs in its own
@@ -26,9 +28,9 @@ const child = path.join(directory, "child.mjs");
 await writeFile(child, `
 import { readFile } from "node:fs/promises";
 import v8 from "node:v8";
-const [bundle, file, maxText] = process.argv.slice(2);
+const [bundle, file, maxText, timeMs] = process.argv.slice(2);
 const { extractPdfText } = await import(bundle);
-const run = bytes => extractPdfText(bytes, { page_start: 1, page_count: 20, max_text_bytes: Number(maxText) });
+const run = bytes => extractPdfText(bytes, { page_start: 1, page_count: 20, max_text_bytes: Number(maxText), ...(timeMs ? { time_ms: Number(timeMs) } : {}) });
 let peakBuffers = 0, peakHeap = 0, cmapCalls = 0;
 try { await run(new Uint8Array(await readFile(file + ".warm"))); } catch {}
 const guard = globalThis.__cluedPdfDecodeGuard;
@@ -49,11 +51,11 @@ process.stdout.write(JSON.stringify({ ...outcome, wall_ms: Math.round(performanc
 await writeFile(path.join(directory, "warm"), flateLatinPdf([["warm up"]]));
 
 let seq = 0;
-async function measure(pdf, { bundle = "guarded.mjs", maxText = 256 * 1024 } = {}) {
+async function measure(pdf, { bundle = "guarded.mjs", maxText = 256 * 1024, timeMs } = {}) {
   const file = path.join(directory, `case-${++seq}.pdf`);
   await writeFile(file, pdf); await writeFile(file + ".warm", flateLatinPdf([["warm up"]]));
   const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; delete env.NODE_OPTIONS;
-  const { stdout } = await promisify(execFile)(process.execPath, ["--max-old-space-size=64", child, path.join(directory, bundle), file, String(maxText)],
+  const { stdout } = await promisify(execFile)(process.execPath, ["--max-old-space-size=64", child, path.join(directory, bundle), file, String(maxText), ...(timeMs ? [String(timeMs)] : [])],
     { env, timeout: 60000, maxBuffer: 1 << 20 });
   return JSON.parse(stdout.slice(stdout.indexOf("{")));
 }
@@ -95,6 +97,21 @@ for (const [name, pdf, expect, seconds] of [
   ["S: 8.5 KB page, [ (a x 200 000) x 40 ] TJ", () => stringArrayBombPdf(), r => r.code === "archive_limit_exceeded", 5],
   ["an operand just under the object limit still fits", () => dictArrayBombPdf(74000, 1), r => r.ok && r.complete, 5],
   ["a Catalog just under the object limit still fits", () => catalogDictBombPdf(74000, 1), r => r.ok && r.complete && r.text_bytes > 0, 5],
+  // Independent review of 26ee7e4e (operands held at once, kept operands, CPU without text). Before, measured
+  // with a 2 GB heap: H2 peaked at 481 MB, I2 at 482 MB, I3 at 196 MB, K at 1 056 MB after 5.1 s wall / 9.5 s
+  // CPU; all four ran out of memory under this 64 MB heap. The Type3 CharProcs peaked at 219 MB (d operands,
+  // completed after 5 s at 64 MB) and 476 MB (2 M kept `w` operators, out of memory at 64 MB).
+  ["H2: 7.8 KB page, 26 operands of 70 000 <<>> each before one TJ", () => heldOperandsBombPdf(), r => r.code === "archive_limit_exceeded", 5],
+  ["I2: 7.9 KB page, ([<<>> x 70 000] n) x 26 (extra operands kept in nonProcessedArgs)", () => extraOperandsBombPdf(70000, 26), r => r.code === "archive_limit_exceeded", 5],
+  ["I3: 3.4 KB page, ([<<>> x 70 000] n) x 10, then text", () => extraOperandsBombPdf(70000, 10), r => r.code === "archive_limit_exceeded", 5],
+  ["K: 49 KB page drawing 6 form XObjects of 7.8 MiB ([<<>> x 70 000] n) lines each", () => formXObjectsBombPdf(), r => r.code === "archive_limit_exceeded", 5],
+  ["Type3 CharProc keeping 26 d operands of 70 000 <<>> each in its operator list", () => type3CharProcBombPdf(), r => r.code === "archive_limit_exceeded", 5],
+  ["Type3 CharProc keeping 2 M `1 w` operators in its operator list", () => type3CharProcBombPdf({ unit: "1 w\n", count: 2_000_000 }),
+    r => r.code === "archive_limit_exceeded", 5],
+  ["Type3 CharProc with one path of 1.4 M lineto", () => type3CharProcBombPdf({ unit: "1 1 l\n", count: 1_400_000 }), r => r.code === "archive_limit_exceeded", 5],
+  ["60 000 x 33 extra numeric operands before `n` (nonProcessedArgs keeps only the last 33)", () => type3CharProcBombPdf({
+    unit: Array.from({ length: 33 }, (_, i) => i + 1).join(" ") + " n\n", count: 60000 }), r => r.ok && r.complete, 5],
+  ["20 dense kerned text pages extract whole", () => realisticTextPdf(20), r => r.ok && r.complete && r.pages === 20 && r.text_bytes > 90000, 5],
 ]) {
   test(`bounded under a 64 MB heap: ${name}`, { timeout: 90000 }, async t => {
     const result = await measure(pdf());
@@ -107,6 +124,29 @@ for (const [name, pdf, expect, seconds] of [
     // V8 lets garbage accumulate close to the limit before a full collection.
   });
 }
+
+// The guard checks the call's deadline inside pdf.js, so a page whose form XObjects only draw (no text
+// chunk, no page boundary, every limit but tokens far away) still stops at the deadline.
+test("bounded under a 64 MB heap: 6 form XObjects of 7 MiB `q Q` each stop at the call's deadline", { timeout: 90000 }, async t => {
+  const pdf = formXObjectsBombPdf({ unit: "q Q\n", decodedBytes: 7 * MiB });
+  const whole = await measure(pdf);
+  t.diagnostic(JSON.stringify(whole));
+  // With the default 10 s deadline the token limit ends it first (about 3 s).
+  assert.equal(whole.code, "archive_limit_exceeded"); assert.ok(whole.wall_ms < 10000, JSON.stringify(whole));
+  const cut = await measure(pdf, { timeMs: 500 });
+  t.diagnostic(JSON.stringify(cut));
+  // A time cut inside the first page: storage_read_unavailable (nothing whole to return), at about the deadline.
+  assert.equal(cut.code, "storage_read_unavailable");
+  assert.ok(cut.wall_ms >= 450 && cut.wall_ms < 1500, JSON.stringify(cut));
+  // K (object-heavy forms): the content-object limit ends it well before the default deadline, and a
+  // shorter deadline ends it at about that deadline if the limit has not already.
+  const k = await measure(formXObjectsBombPdf());
+  t.diagnostic(JSON.stringify(k));
+  assert.equal(k.code, "archive_limit_exceeded"); assert.ok(k.wall_ms < 2000, JSON.stringify(k));
+  const kShort = await measure(formXObjectsBombPdf(), { timeMs: 100 });
+  t.diagnostic(JSON.stringify(kShort));
+  assert.ok(["archive_limit_exceeded", "storage_read_unavailable"].includes(kShort.code) && kShort.wall_ms < 1000, JSON.stringify(kShort));
+});
 
 test("a bundle whose pdf.js worker lacks the decode guard refuses every PDF (storage_read_unavailable)", { timeout: 90000 }, async () => {
   const result = await measure(flateLatinPdf([["Hello"]]), { bundle: "unguarded.mjs" });
@@ -140,6 +180,15 @@ test("native workerd: guarded pdf.js reads FlateDecode text and refuses a decode
   } finally { await runtime.dispose(); }
 });
 
-test("the patch fails the build when pdf.js does not match the pinned anchors", () => {
+test("the patch fails the build when pdf.js does not match the pinned anchors", async () => {
   assert.throws(() => patchPdfWorker("export const WorkerMessageHandler = {};"), /does not match the pinned pdfjs-dist/);
+  // Every anchor matches the pinned worker exactly once; a second copy of any new anchor fails the build.
+  const source = await readFile(fileURLToPath(new URL("../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs", import.meta.url)), "utf8");
+  const patched = patchPdfWorker(source);
+  for (const inserted of ["nonProcessedArgs.splice(0, nonProcessedArgs.length - 33)", '__cluedPdfDecodeGuard("oplist", null, 6);\n    this.optimizer.push',
+    '__cluedPdfDecodeGuard("oplist", null, 1);\n    const {\n      pathMinMax'])
+    assert.equal(patched.split(inserted).length, 2, inserted);
+  for (const anchor of ["  addOp(fn, args) {\n    this.optimizer.push(fn, args);\n    this.weight++;",
+    "            while (argsLength > numArgs) {\n              nonProcessedArgs.push(args.shift());\n              argsLength--;\n            }\n"])
+    assert.throws(() => patchPdfWorker(source + "\n" + anchor), /does not match the pinned pdfjs-dist/);
 });
