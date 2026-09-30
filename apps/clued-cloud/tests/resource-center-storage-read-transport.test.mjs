@@ -80,6 +80,13 @@ function harness(options = {}) {
           ...("admitContentProfile" in options ? (options.admitContentProfile === undefined ? {} : { content_profile: options.admitContentProfile })
             : { content_profile: "text/1" }) });
       }
+      if (body.p_input.action === "reserve") {
+        // §7.2 reservation extension: recorded in call order with the Google requests made so far.
+        state.reserves = [...(state.reserves ?? []), { ...body.p_input, googleRequestsBefore: state.direct.filter(d => d.verb !== "detail").length }];
+        if (options.reserveError) return new Response(JSON.stringify({ message: options.reserveError }), { status: 403 });
+        return Response.json(options.reserveReply?.(body.p_input) ?? { contract: "clued.storage-read-reservation/1", receipt_id: body.p_input.receipt_id,
+          reserved_bytes: body.p_input.max_bytes, extended: true });
+      }
       return Response.json({ receipt_id: body.p_input.receipt_id, state: "finalized", replayed: false });
     }
     state.googleRequests++;
@@ -705,7 +712,10 @@ test("N1b docx: extracted text by range, untrusted, with a receipt of delivered 
     assert.ok(calls < 100);
   }
   assert.equal(text, expected);
-  assert.equal((await readBody({ object_id: "docxFile00000001", offset: 8 * 1024 * 1024 }, await normalOptions({ drive }))).value.error, "archive_limit_exceeded");
+  // An offset past 8 MiB on a complete, shorter text is an empty chunk with eof, not a limit error.
+  const past = await readBody({ object_id: "docxFile00000001", offset: 8 * 1024 * 1024 }, await normalOptions({ drive }));
+  assert.equal(past.isError, false); assert.equal(past.value.content, ""); assert.equal(past.value.eof, true);
+  assert.deepEqual(past.value.range, { offset: 8 * 1024 * 1024, length: 0 }); assert.equal(past.h.calls.at(-1).p_input.byte_count, 0);
 });
 
 test("N1b xlsx, pptx, Google Sheets (xlsx export) and Google Slides (text export) read as text", async () => {
@@ -844,4 +854,109 @@ test("N1b tool description states the formats honestly", async () => {
   for (const phrase of [".docx", ".xlsx", ".pptx", "png / jpeg / gif / webp", "5 MiB", "PDF text extraction is not available yet", "metadata only", "untrusted"])
     assert.ok(description.includes(phrase), phrase);
   assert.equal(description.includes("Text files (text/*, JSON, XML) and Google Docs (exported as plain text) only"), false);
+});
+
+test("N4 budget: an image above 256 KiB extends the reservation on the same receipt before any media request", async () => {
+  const big = pngOf(800, 600, 3 * 1024 * 1024), small = pngOf(20, 20, 4096);
+  const drive = formatTree([["bigImage00000001", "big.png", "image/png", big], ["smallImage000001", "small.png", "image/png", small],
+    ["docxBudget000001", "Plan.docx", MIME.docx, await docxOf(["text"])]]);
+  const read = await readRaw({ object_id: "bigImage00000001" }, await normalOptions({ drive }));
+  assert.equal(read.result.isError, false); assert.equal(read.value.delivered_as, "image");
+  const admit = read.h.calls.find(c => c.p_input.action === "admit");
+  assert.deepEqual(read.h.reserves.map(r => [r.action, r.connection_id, r.receipt_id, r.max_bytes, r.googleRequestsBefore]),
+    [["reserve", CONNECTION, read.h.calls.at(-1).p_input.receipt_id, big.length, 0]], "reserve names the admitted receipt and precedes the body");
+  assert.ok(admit); assert.deepEqual(read.h.calls.map(c => c.p_input.action), ["admit", "reserve", "finalize"]);
+  assert.equal(read.h.calls.at(-1).p_input.byte_count, big.length, "finalize settles to the delivered bytes");
+  // Small images and text/Office reads stay inside the 256 KiB admission reservation: no reserve call.
+  for (const object_id of ["smallImage000001", "docxBudget000001"]) {
+    const other = await readBody({ object_id }, await normalOptions({ drive }));
+    assert.equal(other.isError, false, object_id); assert.equal(other.h.reserves, undefined, object_id);
+  }
+  const legacy = await readBody({ object_id: "planAFile0000001" }, {});
+  assert.equal(legacy.isError, false); assert.equal(legacy.h.reserves, undefined, "legacy / text/1 reads never reserve");
+});
+
+test("N4 budget: a refused extension is budget_exhausted with no media request; a bad reply fails closed", async () => {
+  const big = pngOf(800, 600, 1024 * 1024);
+  const drive = formatTree([["bigImage00000001", "big.png", "image/png", big]]);
+  const spent = await readRaw({ object_id: "bigImage00000001" }, await normalOptions({ drive, reserveError: "storage_read_budget_exhausted" }));
+  assert.equal(spent.value.error, "budget_exhausted"); assert.match(spent.value.message, /256 MiB per rolling hour/);
+  assert.equal(bodyRequests(spent.h).length, 0, "no body is fetched without the reservation");
+  assert.equal(spent.result.content.length, 1);
+  assert.equal(spent.h.calls.at(-1).p_input.action, "finalize"); assert.equal(spent.h.calls.at(-1).p_input.byte_count, 0, "finalize releases the reservation");
+  for (const reserveReply of [input => ({ contract: "clued.storage-read-reservation/1", receipt_id: input.receipt_id, reserved_bytes: input.max_bytes - 1 }),
+    input => ({ contract: "clued.storage-read-reservation/1", receipt_id: "30000000-0000-4000-8000-000000000000", reserved_bytes: input.max_bytes }),
+    () => ({ receipt_id: "x", state: "finalized" })]) {
+    const bad = await readRaw({ object_id: "bigImage00000001" }, await normalOptions({ drive, reserveReply }));
+    assert.equal(bad.value.error, "storage_read_unavailable"); assert.equal(bodyRequests(bad.h).length, 0);
+  }
+  const denied = await readRaw({ object_id: "bigImage00000001" }, await normalOptions({ drive, reserveError: "storage_read_denied" }));
+  assert.equal(denied.value.error, "storage_read_unavailable");
+  // A server that sends more than the reserved file size delivers nothing.
+  const lying = formatTree([["bigImage00000001", "big.png", "image/png", big]]);
+  lying.files.get("bigImage00000001").size = String(big.length - 10);
+  const over = await readRaw({ object_id: "bigImage00000001" }, await normalOptions({ drive: lying }));
+  assert.equal(over.value.error, "storage_read_unavailable"); assert.equal(over.h.calls.at(-1).p_input.byte_count, 0);
+  assert.equal(over.h.reserves[0].max_bytes, big.length - 10);
+});
+
+test("N1b post-read re-check: an Office read and a range-mode read drop the bytes when the file leaves the root", async () => {
+  const pad = new Uint8Array(11 * 1024 * 1024).map((_, i) => (i * 7919) & 0xff);
+  const drive = formatTree([["docxMoved0000001", "Plan.docx", MIME.docx, await docxOf(["secret plan"])],
+    ["bigDocxMoved0001", "Big.docx", MIME.docx, await docxOf(["big secret"], { extra: [{ name: "word/media/pad.bin", data: pad, method: 0 }] })]]);
+  for (const object_id of ["docxMoved0000001", "bigDocxMoved0001"]) {
+    const fresh = formatTree([]);
+    fresh.add(object_id, drive.files.get(object_id).name, ["trackFolder00001"], MIME.docx);
+    fresh.contents.set(object_id, drive.contents.get(object_id)); fresh.files.get(object_id).size = drive.files.get(object_id).size;
+    const moved = await readBody({ object_id }, await normalOptions({ drive: fresh, afterBody: d => { d.files.get("trackFolder00001").parents = [OUTSIDE]; } }));
+    assert.equal(moved.value.error, "not_found_in_scope", object_id);
+    assert.ok(bodyRequests(moved.h).length >= 1, object_id);
+    assert.equal(moved.h.calls.at(-1).p_input.byte_count, 0, object_id);
+    assert.equal(JSON.stringify(moved.value).includes("secret"), false);
+  }
+});
+
+test("N1b range mode: running out of the 50-subrequest budget is request_limit_exceeded with a hint", async () => {
+  // 60 sheets, each behind a 300 KiB stored pad: every sheet needs its own range request.
+  const sheets = Array.from({ length: 60 }, (_, i) => ({ name: `S${i}`, rows: [[`v${i}`]] }));
+  const base = await xlsxOf(sheets);
+  const { buildZip } = await import("./resource-center-zip.fixture.mjs");
+  const { openZip } = await import("../../../kernel/host/resource-center-zip-reader.mjs");
+  const zip = await openZip({ bytes: base });
+  const entries = [];
+  for (const entry of zip.entries) {
+    if (entry.name.startsWith("xl/worksheets/")) entries.push({ name: `pad/${entry.name}.bin`, data: new Uint8Array(300 * 1024), method: 0 });
+    entries.push({ name: entry.name, data: await zip.readEntry(entry.name) });
+  }
+  const bytes = await buildZip(entries);
+  assert.ok(bytes.length > 10 * 1024 * 1024);
+  const drive = formatTree([["manySheets000001", "Many.xlsx", MIME.xlsx, bytes]]);
+  const read = await readBody({ object_id: "manySheets000001" }, await normalOptions({ drive }));
+  assert.equal(read.value.error, "request_limit_exceeded");
+  assert.match(read.value.message, /smaller offset \+ length/);
+  assert.ok(read.h.googleRequests <= 50, `never more than the budget (${read.h.googleRequests})`);
+  assert.equal(read.h.calls.at(-1).p_input.byte_count, 0);
+});
+
+test("N1b chunks: a file changed between chunk calls shows a different head_revision_id", async () => {
+  const drive = formatTree([["docxChanging0001", "Plan.docx", MIME.docx, await docxOf(Array.from({ length: 200 }, (_, i) => `line ${i}`))]]);
+  const first = await readBody({ object_id: "docxChanging0001", length: 100 }, await normalOptions({ drive }));
+  assert.equal(first.value.eof, false); assert.equal(first.value.head_revision_id, "rev-docxChanging0001");
+  const changed = await docxOf(Array.from({ length: 200 }, (_, i) => `changed ${i}`));
+  drive.contents.set("docxChanging0001", changed); drive.files.get("docxChanging0001").size = String(changed.length);
+  drive.files.get("docxChanging0001").detail = { headRevisionId: "rev-2" };
+  const second = await readBody({ object_id: "docxChanging0001", offset: 100, length: 100 }, await normalOptions({ drive }));
+  assert.equal(second.isError, false);
+  assert.notEqual(second.value.head_revision_id, first.value.head_revision_id, "the caller can see the file changed");
+  assert.ok(second.value.content.includes("changed"));
+});
+
+test("N4 tool description states the 256 MiB budget, the reservation and the revision comparison honestly", async () => {
+  const tools = (await (await worker.fetch(new Request(origin + "/mcp", { method: "POST",
+    headers: { "content-type": "application/json", origin, authorization: "Bearer " + token },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) }), env)).json()).result.tools;
+  const description = tools.find(t => t.name === "clued_storage_read").description;
+  for (const phrase of ["256 MiB of content per rolling hour", "reserves its file size", "settled to the bytes actually returned", "head_revision_id", "modified_time"])
+    assert.ok(description.includes(phrase), phrase);
+  assert.equal(description.includes("8 MiB of content per hour"), false);
 });

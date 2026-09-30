@@ -1898,7 +1898,8 @@ async function callTool(
         : code === "shortcut_not_followed" ? "Shortcuts are not followed. Read the target file inside the root instead."
         : code === "content_not_accessible" ? "This file's content is not readable with the current Google permission."
         : code === "scope_upgrade_required" ? "Reading files Clued did not create, and searching by content, need the Owner to turn on normal use on the Clued storage page. Retrying will not help."
-        : code === "budget_exhausted" ? "This connection has used its hourly content budget (8 MiB). Try again later; retrying now will not help."
+        : code === "budget_exhausted" ? "This connection has used its hourly content budget (256 MiB per rolling hour, reserved before each body request and settled to the bytes returned). Try again later; retrying now will not help."
+        : code === "request_limit_exceeded" ? "This large Office file needs more provider requests than one call may make. Retrying will not help; read an earlier or shorter range (a smaller offset + length), since each call extracts the text up to offset + length."
         : "Storage read unavailable." };
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
     }

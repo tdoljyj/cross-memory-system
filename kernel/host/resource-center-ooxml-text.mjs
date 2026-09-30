@@ -27,6 +27,8 @@ export const OOXML_TEXT_LIMITS = Object.freeze({
   maxPartBytes: XML_LIMITS.maxPartBytes,
   maxColumns: 16_384,
   maxRows: 1_048_576,
+  // Cells held at once while streaming a sheet: the current row plus out-of-order rows.
+  maxBufferedCells: 65_536,
 });
 
 const REL_OFFICE_DOCUMENT = /\/officeDocument$/;
@@ -68,7 +70,11 @@ export function resolvePartTarget(sourcePart, target) {
   if (typeof target !== "string" || target === "" || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(target)) return null;
   const clean = target.replace(/\\/g, "/").split("#")[0];
   const base = clean.startsWith("/") ? [] : sourcePart.split("/").slice(0, -1);
-  for (const segment of clean.split("/")) {
+  for (const encoded of clean.split("/")) {
+    // Targets are URIs: percent-decode each segment; a decoded separator, NUL or a bad escape is ignored.
+    let segment;
+    try { segment = decodeURIComponent(encoded); } catch { return null; }
+    if (/[\/\\\u0000]/.test(segment)) return null;
     if (segment === "" || segment === ".") continue;
     if (segment === "..") { if (base.length === 0) return null; base.pop(); } else base.push(segment);
   }
@@ -218,9 +224,35 @@ function readSharedStrings(xml) {
   return strings;
 }
 
+/** One sheet as CSV, streamed: a row is emitted as soon as a cell of a higher row arrives, so
+ * memory holds only the current row plus rows that arrive out of order (at most
+ * `maxBufferedCells` cells). Parsing stops as soon as the output budget is spent. A cell for a
+ * row that was already emitted (rows out of order across an emitted row) is `document_invalid`;
+ * the spec requires ascending rows, and silently dropping or reordering it would change the
+ * text. Gaps between rows become empty lines. */
 function sheetCsv(xml, sharedStrings, budget, limits) {
-  const rows = new Map();
+  const parts = [];
+  const buffer = new Map();
+  let buffered = 0, emitted = 0, high = 0;
   let rowIndex = 0, colIndex = 0, cell = null, inValue = 0, inInline = 0, inInlineT = 0, inPhonetic = 0;
+  // Emit every buffered row below `limit` in order; false once the budget is spent.
+  const flushBelow = (limit) => {
+    const order = [...buffer.keys()].filter((r) => r < limit).sort((a, b) => a - b);
+    for (const r of order) {
+      const row = buffer.get(r);
+      buffer.delete(r);
+      buffered -= row.size;
+      const gap = r - emitted - 1;
+      emitted = r;
+      if (gap > 0 && !budget.push(parts, "\n".repeat(Math.min(gap, budget.left + 1)))) return false;
+      let maxCol = 0;
+      for (const c of row.keys()) if (c > maxCol) maxCol = c;
+      const fields = [];
+      for (let c = 1; c <= maxCol; c += 1) fields.push(csvField(row.get(c) ?? ""));
+      if (!budget.push(parts, `${fields.join(",")}\n`)) return false;
+    }
+    return true;
+  };
   parseXml(xml, {
     onOpen(name, attrs, selfClosing) {
       switch (localName(name)) {
@@ -262,12 +294,19 @@ function sheetCsv(xml, sharedStrings, budget, limits) {
           else if (cell.type === "inlineStr") value = cell.inline.join("");
           else if (cell.type === "b") value = raw === "1" ? "TRUE" : raw === "0" ? "FALSE" : raw;
           else value = raw;
-          if (value !== "") {
-            let row = rows.get(rowIndex);
-            if (!row) rows.set(rowIndex, (row = new Map()));
-            row.set(colIndex, value);
-          }
           cell = null;
+          if (value === "") break;
+          if (rowIndex <= emitted) throw new OoxmlTextError("document_invalid", "rows out of order");
+          if (rowIndex > high) {
+            if (!flushBelow(rowIndex)) return false;
+            high = rowIndex;
+          }
+          let row = buffer.get(rowIndex);
+          if (!row) buffer.set(rowIndex, (row = new Map()));
+          if (!row.has(colIndex)) {
+            if (++buffered > limits.maxBufferedCells) throw new OoxmlTextError("archive_limit_exceeded", "too many buffered cells");
+          }
+          row.set(colIndex, value);
           break;
         }
         default: break;
@@ -281,19 +320,7 @@ function sheetCsv(xml, sharedStrings, budget, limits) {
       return true;
     },
   });
-  const parts = [];
-  const order = [...rows.keys()].sort((a, b) => a - b);
-  let previous = 0;
-  for (const r of order) {
-    // Preserve row positions: gaps become empty lines (bounded by the output budget).
-    for (let gap = previous + 1; gap < r; gap += 1) if (!budget.push(parts, "\n")) return parts.join("");
-    previous = r;
-    const row = rows.get(r);
-    const maxCol = Math.max(...row.keys());
-    const fields = [];
-    for (let c = 1; c <= maxCol; c += 1) fields.push(csvField(row.get(c) ?? ""));
-    if (!budget.push(parts, `${fields.join(",")}\n`)) return parts.join("");
-  }
+  if (!budget.truncated) flushBelow(Infinity);
   return parts.join("");
 }
 

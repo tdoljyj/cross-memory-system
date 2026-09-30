@@ -111,7 +111,8 @@ export function imageInfo(bytes: Uint8Array): ImageInfo | null {
 export const EXTRACT_TEXT_MAX: number = OOXML_TEXT_LIMITS.maxExtractBytes;
 export const IN_MEMORY_ZIP_MAX: number = ZIP_LIMITS.inMemoryMaxBytes;
 
-type StorageFormatCode = "document_invalid" | "archive_limit_exceeded" | "binary_too_large" | "content_not_accessible" | "storage_read_unavailable";
+type StorageFormatCode = "document_invalid" | "archive_limit_exceeded" | "binary_too_large" | "content_not_accessible" | "storage_read_unavailable" |
+  "request_limit_exceeded";
 export class StorageFormatError extends Error {
   readonly code: StorageFormatCode;
   constructor(code: StorageFormatCode) { super(code); this.code = code; }
@@ -121,11 +122,14 @@ export class StorageFormatError extends Error {
  * `join(budget B' > B)`, so byte offsets from an earlier call stay valid.
  * xlsx sheets and pptx slides get a header line; separators go BEFORE a header,
  * never after a (possibly truncated) segment. */
-export async function extractOfficeText(source: { bytes: Uint8Array } | { size: number; readRange: (offset: number, length: number) => Promise<Uint8Array> },
+export async function extractOfficeText(source: { bytes: Uint8Array } |
+  { size: number; readRange: (offset: number, length: number) => Promise<Uint8Array>; release?: () => void },
   kind: "docx" | "xlsx" | "pptx", maxTextBytes: number): Promise<{ text: string; complete: boolean }> {
   let result: { segments: { name: string; text: string }[]; truncated: boolean };
   try {
     const zip = await openZip(source);
+    // The tail and central directory are parsed: a range reader may drop its cached blocks.
+    if ("release" in source) source.release?.();
     result = await extractOoxmlText(zip, { kind, maxTextBytes });
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error ? String((error as { code: unknown }).code) : "";
@@ -136,7 +140,9 @@ export async function extractOfficeText(source: { bytes: Uint8Array } | { size: 
       throw new StorageFormatError("document_invalid");
     throw new StorageFormatError("storage_read_unavailable");
   }
+  // Headers are single lines: a sheet name cannot inject a line break. A pptx header is the
+  // segment name ("Slide N" in presentation order, also when a listed slide part is missing).
   const text = result.segments.map((segment, index) => (index ? "\n" : "") +
-    (kind === "xlsx" ? `# Sheet: ${segment.name}\n` : kind === "pptx" ? `# Slide ${index + 1}\n` : "") + segment.text).join("");
+    (kind === "xlsx" ? `# Sheet: ${segment.name.replace(/[\r\n]+/g, " ")}\n` : kind === "pptx" ? `# ${segment.name}\n` : "") + segment.text).join("");
   return { text, complete: !result.truncated };
 }

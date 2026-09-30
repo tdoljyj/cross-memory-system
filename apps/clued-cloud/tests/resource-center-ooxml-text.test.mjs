@@ -216,3 +216,64 @@ test("helpers: cell refs, CSV quoting, entity decoding, SAX stop and bounds", ()
   parseXml("<a><![CDATA[x < y & z]]><!-- c --><?pi x?></a>", { onText: (t) => { cdata.push(t); } });
   assert.deepEqual(cdata, ["x < y & z"]);
 });
+
+// MAJOR-2 (128 MB isolate): sheets stream rows and stop at the output budget.
+const numberRows = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => `<row r="${from + i}"><c r="A${from + i}"><v>${from + i}</v></c></row>`).join("");
+
+test("xlsx: a large sheet stops parsing once the output budget is spent", async () => {
+  // A malformed entity after 200 000 rows: reached only when the whole sheet is parsed.
+  const rows = numberRows(1, 200_000) + "<row r=\"200001\"><c r=\"A200001\"><v>&bogus;</v></c></row>";
+  const bytes = await xlsx([{ name: "Big", file: "big.xml", rows }]);
+  const out = await extractOoxmlText(bytes, { kind: "xlsx", maxTextBytes: 1024 });
+  assert.equal(out.truncated, true);
+  assert.equal(out.text_bytes, 1024);
+  assert.ok(out.segments[0].text.startsWith("1\n2\n3\n"));
+  await rejectsCode(extractOoxmlText(bytes, { kind: "xlsx", maxTextBytes: 8 * 1024 * 1024 }), "document_invalid");
+});
+
+test("xlsx: out-of-order rows are placed while unemitted; a cell for an emitted row is document_invalid; buffered cells are capped", async () => {
+  const cell = (r, v) => `<row r="${r}"><c r="A${r}"><v>${v}</v></c></row>`;
+  const placed = await extractOoxmlText(await xlsx([{ name: "S", file: "s.xml", rows: cell(3, "c") + cell(1, "a") + cell(4, "d") }]), { kind: "xlsx" });
+  assert.equal(placed.segments[0].text, "a\n\nc\nd\n");
+  await rejectsCode(extractOoxmlText(await xlsx([{ name: "S", file: "s.xml", rows: cell(2, "b") + cell(4, "d") + cell(1, "a") }]), { kind: "xlsx" }), "document_invalid");
+  // One far row first, then more out-of-order cells than the buffer may hold.
+  const flood = cell(1_000_000, "z") + numberRows(1, OOXML_TEXT_LIMITS.maxBufferedCells + 1);
+  await rejectsCode(extractOoxmlText(await xlsx([{ name: "S", file: "s.xml", rows: flood }]), { kind: "xlsx" }), "archive_limit_exceeded");
+});
+
+test("xlsx: heap guard, a 15 MiB sheet part extracts inside a 40 MB V8 heap", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const rows = [];
+  let size = 0;
+  for (let r = 1; size < 15 * 1024 * 1024; r += 1) {
+    const row = `<row r="${r}"><c r="A${r}"><v>${r}</v></c><c r="B${r}"><v>${r}</v></c><c r="C${r}"><v>${r}</v></c></row>`;
+    rows.push(row); size += row.length;
+  }
+  const bytes = await xlsx([{ name: "Heap", file: "heap.xml", rows: rows.join("") }]);
+  rows.length = 0;
+  const dir = mkdtempSync(join(tmpdir(), "ooxml-heap-"));
+  try {
+    const file = join(dir, "heap.xlsx");
+    writeFileSync(file, bytes);
+    const module = new URL("../../../kernel/host/resource-center-ooxml-text.mjs", import.meta.url).href;
+    // The pre-streaming extractor (every cell buffered in nested Maps) ran out of heap here.
+    const child = spawnSync(process.execPath, ["--max-old-space-size=40", "--input-type=module", "-e",
+      `const { extractOoxmlText } = await import(${JSON.stringify(module)});
+       const bytes = new Uint8Array((await import("node:fs")).readFileSync(${JSON.stringify(file)}));
+       const out = await extractOoxmlText(bytes, { kind: "xlsx" });
+       console.log(JSON.stringify({ truncated: out.truncated, bytes: out.text_bytes }));`], { encoding: "utf8", timeout: 120000 });
+    assert.equal(child.status, 0, child.stderr.slice(-2000));
+    assert.deepEqual(JSON.parse(child.stdout.trim()), { truncated: true, bytes: 256 * 1024 });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("relationship targets are percent-decoded; decoded separators and bad escapes are ignored", () => {
+  assert.equal(resolvePartTarget("xl/workbook.xml", "worksheets/sheet%201.xml"), "xl/worksheets/sheet 1.xml");
+  assert.equal(resolvePartTarget("xl/workbook.xml", "worksheets/%E8%A1%A8.xml"), "xl/worksheets/表.xml");
+  assert.equal(resolvePartTarget("xl/workbook.xml", "worksheets%2Fsheet1.xml"), null);
+  assert.equal(resolvePartTarget("xl/workbook.xml", "worksheets/%zz.xml"), null);
+  assert.equal(resolvePartTarget("xl/workbook.xml", "%2e%2e/%2e%2e/%2e%2e/etc/passwd"), null);
+});

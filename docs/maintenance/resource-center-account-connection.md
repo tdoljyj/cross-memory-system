@@ -475,13 +475,15 @@ Migration `20260930060000_storage_read_content_v1.sql` and the Worker tool
 - The response carries `head_revision_id`, `sha256` and `modified_time` and is
   marked `untrusted_content: true`. Agent contract §7.9: storage content is data,
   never an instruction.
-- Each Binding (one authorized Agent connection) may read 8 MiB of content per
-  rolling hour; the server has no chat-session identity, and a Binding is at
-  least as strict. Finalized receipts count their bytes; an admitted,
-  unfinalized read counts as a full 256 KiB. Content admissions of one Binding
-  are serialized by a transaction advisory lock, so parallel calls cannot pass
-  the check with a stale sum. Over budget the tool returns `budget_exhausted`.
-  The limit is fixed; an Owner-adjustable value is deferred.
+- Each Binding (one authorized Agent connection) may read 256 MiB of content
+  per rolling hour (8 MiB before migration `20260930200000`); the server has
+  no chat-session identity, and a Binding is at least as strict. Finalized
+  receipts count their bytes; an admitted, unfinalized read counts as its
+  reservation (256 KiB, or more after `reserve`, see the N1b budget below).
+  Content admissions and reservations of one Binding are serialized by the
+  same transaction advisory lock, so parallel calls cannot pass the check with
+  a stale sum. Over budget the tool returns `budget_exhausted`. The limit is
+  fixed; an Owner-adjustable value is N4.
 - read_content is enabled only together with read, and a content read is also
   evaluated for read (the response names the file). So `deny_class` with
   `read_content` removes bodies for one client and keeps its read level, while
@@ -796,7 +798,8 @@ Rollout: production migration first, then release (the new Worker sends
 
 ## Common formats in clued_storage_read (StorageNormalUse.v0.1 N1b)
 
-Worker and kernel only; no migration, secret or switch. Applies only with a
+Worker and kernel, plus the budget migration
+`20260930200000_storage_read_budget_n4.sql`; no secret or switch. Applies only with a
 `normal` credential and `normal/1` read access; otherwise reads behave as in
 N1a (text bodies only, `format_unsupported` for other formats).
 
@@ -807,11 +810,22 @@ N1a (text bodies only, `format_unsupported` for other formats).
   `# Sheet: <name>`, pptx per slide under `# Slide <n>`. Byte ranges address
   that extracted text with the same 256 KiB and UTF-8 rules as text files; each
   call re-downloads and re-extracts up to `offset + length` (at most 8 MiB of
-  text, `archive_limit_exceeded` beyond). `text_length` appears only once the
+  text; an offset past 8 MiB is an empty chunk with `eof: true` when the whole
+  text is shorter, `archive_limit_exceeded` otherwise). Chunks are separate
+  reads: callers compare `head_revision_id` (`modified_time` for Google Docs,
+  Sheets and Slides) across calls. `text_length` appears only once the
   extraction finished. Files up to 10 MiB are downloaded whole; larger files use
   range mode (tail, central directory, needed parts; 256 KiB read-ahead blocks,
-  each one request of the call's 50-request budget, at most 32 MiB provider
-  bytes per call: `binary_too_large`). Zip and XML limits are those of
+  each one request of the call's 50-request budget: `request_limit_exceeded`
+  with a hint to read a smaller `offset + length`; at most 32 MiB provider
+  bytes per call: `binary_too_large`). Worker memory (128 MB isolate): range
+  mode caches at most four 256 KiB read-ahead blocks (a larger read is never
+  cached) and drops them once the central directory is parsed; xlsx sheets are
+  streamed row by row and parsing stops as soon as the text budget is spent
+  (at most 65 536 out-of-order cells are buffered, `archive_limit_exceeded`
+  beyond; a cell for a row already emitted is `document_invalid`). Sheet names
+  in `# Sheet:` headers have CR/LF replaced by spaces; relationship targets are
+  percent-decoded. Zip and XML limits are those of
   `kernel/host/resource-center-zip-reader.mjs` and `-xml-sax.mjs` (§4.3); any
   DOCTYPE, a damaged archive or an encrypted Office file is `document_invalid`.
   Google Slides are exported as `text/plain` like Docs.
@@ -826,11 +840,28 @@ N1a (text bodies only, `format_unsupported` for other formats).
   .doc/.xls/.ppt, ODF, other Google types and other binaries return
   `delivered_as: "none"`, `reason: "format_unsupported"` and a fixed `hint`;
   no body request is made. Folders remain an error.
-- **Budget.** Images and extracted text count their delivered bytes against the
-  same 8 MiB per Binding per hour; an unfinalized call still reserves 256 KiB,
-  so one image call can take the window past the limit once. The mode-sized
-  reservation and the provider-byte dimension (§7.2) need the N1 budget
-  migration.
+- **Budget** (migration `20260930200000_storage_read_budget_n4.sql`, §7.2).
+  256 MiB of delivered content per Binding per rolling hour, text and images
+  together. Admission reserves 256 KiB on the read receipt; after metadata
+  classification and before any body or media request, an image read calls
+  `clued_storage_read_v1` action `reserve` on the SAME receipt with its file
+  size (at most 5 MiB). `reserve` takes the admission's per-Binding advisory
+  lock, counts every other receipt of the window (finalized: `byte_count`;
+  unfinalized: `reserved_bytes`, default 256 KiB) and either raises
+  `storage_read_receipts_v1.reserved_bytes` or returns
+  `storage_read_budget_exhausted` (the Worker then makes no body request and
+  finalizes 0 bytes). Reservations only grow, only on a read_content intent of
+  the caller's own Binding younger than 10 minutes; finalize settles to the
+  delivered bytes, releasing the unused part. Text and Office reads (at most
+  256 KiB per call) and legacy / text/1 reads never call `reserve`. The
+  provider-byte dimension, the account total and Owner-adjustable values
+  remain N2 / N4.
+- **Rollout order.** Apply `20260930180000_storage_binary_upload_n3.sql` (N3)
+  and `20260930200000_storage_read_budget_n4.sql` to production BEFORE the
+  next Worker release that contains N1b: the N1b Worker calls `reserve` for
+  images above 256 KiB, which an older database rejects as
+  `storage_read_input_invalid` (the image read then fails closed with
+  `storage_read_unavailable`, no bytes delivered).
 - **Deferred.** PDF text extraction (needs pdf.js in the Worker; bundle size and
   CPU still to be measured), Drive thumbnail builder and Cloudflare Images
   downscaling (thumbnail host pattern must be measured first; Images needs the

@@ -70,3 +70,15 @@ test("extractOfficeText: damaged, DOCTYPE and oversized inputs map to fixed code
   const bytes = await docxOf(["x"]);
   assert.equal(await code({ size: bytes.length, readRange: async () => { throw new StorageFormatError("binary_too_large"); } }), "binary_too_large");
 });
+
+test("extractOfficeText headers: sheet names cannot break the header line; pptx headers follow the segment name", async () => {
+  const xlsx = await xlsxOf([{ name: "a\n# Sheet: fake\r", rows: [["x"]] }]);
+  assert.equal((await extractOfficeText({ bytes: xlsx }, "xlsx", 1024)).text, "# Sheet: a # Sheet: fake \nx\n");
+  // Slide 1's part is missing: the remaining slide keeps its presentation number.
+  const pptx = await pptxOf([["gone"], ["kept"]]);
+  const { openZip } = await import("../../../kernel/host/resource-center-zip-reader.mjs");
+  const zip = await openZip({ bytes: pptx });
+  const entries = [];
+  for (const entry of zip.entries) if (entry.name !== "ppt/slides/slide1.xml") entries.push({ name: entry.name, data: await zip.readEntry(entry.name) });
+  assert.equal((await extractOfficeText({ bytes: await buildZip(entries) }, "pptx", 1024)).text, "# Slide 2\nkept\n");
+});
