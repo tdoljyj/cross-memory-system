@@ -123,6 +123,18 @@ export function checkRunFor({ sha, evaluation, receiptSha256, targetUrl }) {
   };
 }
 
+// Each required check's completion re-runs the gate, so a terminal verdict
+// would be announced again for every later completion. Announce it only when
+// the latest verdict check run on the candidate does not already carry it.
+export function verdictAlreadyAnnounced(checkRuns, evaluation) {
+  const conclusion = evaluation.state === "PASS" ? "success" : "failure";
+  const latest = checkRuns
+    .filter((run) => run.name === GATE_CHECK_RUN_NAME)
+    .sort((a, b) => String(b.started_at ?? b.created_at ?? "")
+      .localeCompare(String(a.started_at ?? a.created_at ?? "")))[0];
+  return latest?.status === "completed" && latest.conclusion === conclusion;
+}
+
 function parseInteger(value, fallback, minimum) {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed >= minimum ? parsed : fallback;
@@ -230,8 +242,9 @@ async function main() {
     requestTimeoutSeconds,
   });
   let evaluation;
+  let checkRuns = [];
   if (once) {
-    const checkRuns = await readChecks();
+    checkRuns = await readChecks();
     if (!gateApplies(checkRuns)) {
       console.log(JSON.stringify({ verdict: "NOT_APPLICABLE", candidate_sha: sha }));
       return;
@@ -267,13 +280,15 @@ async function main() {
     });
     // The status above is the gate; the check run only announces it, so a
     // failure here is reported without changing the verdict.
-    try {
-      await postCheckRun({
-        apiUrl, repository, token, requestTimeoutSeconds,
-        checkRun: checkRunFor({ sha, evaluation, receiptSha256, targetUrl }),
-      });
-    } catch (error) {
-      console.error(`GATE_CHECK_RUN_NOT_POSTED ${error instanceof Error ? error.message : ""}`);
+    if (!verdictAlreadyAnnounced(checkRuns, evaluation)) {
+      try {
+        await postCheckRun({
+          apiUrl, repository, token, requestTimeoutSeconds,
+          checkRun: checkRunFor({ sha, evaluation, receiptSha256, targetUrl }),
+        });
+      } catch (error) {
+        console.error(`GATE_CHECK_RUN_NOT_POSTED ${error instanceof Error ? error.message : ""}`);
+      }
     }
   }
   console.log(JSON.stringify({
