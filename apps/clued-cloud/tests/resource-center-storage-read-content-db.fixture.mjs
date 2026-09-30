@@ -6,10 +6,11 @@ const READ = "public.clued_storage_read_v1";
 const ACCESS = "public.clued_storage_read_access_v1";
 const DISCLOSURE = "clued.storage-read-disclosure/1";
 const CONTENT_DISCLOSURE = "clued.storage-read-content-disclosure/1";
-const CHUNK = 262144, BUDGET = 8 * 1024 * 1024;
+const CHUNK = 262144, MIB = 1024 * 1024, IMAGE = 5 * MIB, BUDGET = 256 * MIB;
 
 // StorageFullCapability.v0.1 P2 read_content at the database layer: its own
-// disclosure, one object per read, the per-class deny and the hourly budget.
+// disclosure, one object per read, the per-class deny and the hourly budget
+// (256 MiB per Binding with reservation extension, 20260930200000).
 // Synthetic, disposable PostgreSQL only.
 export async function testStorageReadContent(t, admin, server, user, decision) {
   const clients = [], session = randomUUID(), issuer = sha(randomUUID()), clientIssuer = sha(randomUUID());
@@ -90,6 +91,9 @@ export async function testStorageReadContent(t, admin, server, user, decision) {
   };
   const finalize = (client, admitted, bytes) => call(client, { action: "finalize", connection_id: connection, receipt_id: admitted.receipt_id,
     item_count: 1, byte_count: bytes, complete: true });
+  // StorageNormalUse §7.2 (20260930200000): extend the reservation of an admitted receipt.
+  const reserve = (client, admitted, bytes, database) => call(client, { action: "reserve", connection_id: connection, receipt_id: admitted.receipt_id,
+    max_bytes: bytes }, database);
   const receipts = async () => (await admin.query("select count(*)::int n from clued_private.storage_read_receipts_v1 where connection_id=$1", [connection])).rows[0].n;
 
   try {
@@ -134,29 +138,102 @@ export async function testStorageReadContent(t, admin, server, user, decision) {
       await assert.rejects(admit(third), /storage_read_denied/);
     });
 
-    await t.test("each Binding has an 8 MiB hourly content budget; unfinalized reads count as a full chunk", async () => {
+    await t.test("each Binding has a 256 MiB hourly content budget; unfinalized reads count their reservation", async () => {
       const fresh = await bind();
-      for (let used = 0; used + CHUNK <= BUDGET; used += CHUNK) {
+      // 51 image reads of 5 MiB: 255 MiB used.
+      for (let i = 0; i < 51; i++) {
         const admitted = await admit(fresh);
-        assert.equal((await finalize(fresh, admitted, CHUNK)).state, "finalized");
+        const reserved = await reserve(fresh, admitted, IMAGE);
+        assert.deepEqual([reserved.contract, reserved.receipt_id, reserved.reserved_bytes, reserved.extended],
+          ["clued.storage-read-reservation/1", admitted.receipt_id, IMAGE, true]);
+        assert.equal((await finalize(fresh, admitted, IMAGE)).state, "finalized");
       }
-      await assert.rejects(admit(fresh), /storage_read_budget_exhausted/);
+      const last = await admit(fresh);
+      await assert.rejects(reserve(fresh, last, MIB + 1), /storage_read_budget_exhausted/, "an extension past the window is refused");
+      assert.equal((await admin.query("select reserved_bytes from clued_private.storage_read_receipts_v1 where id=$1", [last.receipt_id])).rows[0].reserved_bytes,
+        null, "a refused extension changes nothing");
+      assert.equal((await reserve(fresh, last, MIB)).reserved_bytes, MIB, "exactly up to the window");
+      await finalize(fresh, last, 0);
+      // Text reads keep the 256 KiB admission reservation: four more fit in the last MiB.
+      for (let i = 0; i < 4; i++) await admit(fresh);
+      await assert.rejects(admit(fresh), /storage_read_budget_exhausted/, "in-flight reads cannot overrun the budget");
       assert.equal((await admit(client)).class, "read_content", "the budget is per Binding");
+      assert.equal((await call(fresh, { action: "admit", connection_id: connection, operation: "list" })).class, "read", "browse has no content budget");
+    });
+
+    await t.test("reserve extends only a fresh intent of the caller's own read_content receipt, and never shrinks it", async () => {
+      const owner = await bind(), stranger = await bind();
+      const admitted = await admit(owner);
+      await assert.rejects(reserve(owner, admitted, IMAGE + 1), /storage_read_input_invalid/);
+      await assert.rejects(call(owner, { action: "reserve", connection_id: connection, receipt_id: admitted.receipt_id, max_bytes: IMAGE, extra: 1 }), /storage_read_input_invalid/);
+      await assert.rejects(call(owner, { action: "reserve", connection_id: connection, receipt_id: admitted.receipt_id, max_bytes: "5" }), /storage_read_input_invalid/);
+      await assert.rejects(reserve(stranger, admitted, 2 * MIB), /storage_read_denied/, "another Binding cannot extend it");
+      assert.equal((await reserve(owner, admitted, 2 * MIB)).extended, true);
+      const smaller = await reserve(owner, admitted, MIB);
+      assert.deepEqual([smaller.extended, smaller.reserved_bytes], [false, 2 * MIB], "a reservation only grows");
+      assert.equal((await reserve(owner, admitted, CHUNK)).extended, false);
+      await assert.rejects(admin.query("update clued_private.storage_read_receipts_v1 set reserved_bytes=$2 where id=$1", [admitted.receipt_id, MIB]),
+        /storage_read_receipt_immutable/, "the guard refuses a shrink");
+      await finalize(owner, admitted, 1000);
+      await assert.rejects(reserve(owner, admitted, 3 * MIB), /storage_read_denied/, "a finalized receipt cannot be extended");
+      const browse = await call(owner, { action: "admit", connection_id: connection, operation: "list" });
+      await assert.rejects(reserve(owner, browse, 3 * MIB), /storage_read_denied/, "a read-class receipt has no content reservation");
+      // A receipt older than a Worker call cannot carry a reservation out of the window.
+      const stale = (await admin.query(`insert into clued_private.storage_read_receipts_v1(owner_id,connection_id,lineage_id,binding_id,account_policy_id,
+          read_access_id,read_generation,class,operation,object_id,created_at)
+        select owner_id,connection_id,lineage_id,binding_id,account_policy_id,read_access_id,read_generation,class,operation,object_id,clock_timestamp()-interval '20 minutes'
+        from clued_private.storage_read_receipts_v1 where id=$1 returning id`, [admitted.receipt_id])).rows[0].id;
+      await assert.rejects(reserve(owner, { receipt_id: stale }, 2 * MIB), /storage_read_denied/);
+    });
+
+    await t.test("finalize never settles more than the receipt reserved; a revoked Binding cannot reserve", async () => {
+      const owner = await bind();
+      const plain = await admit(owner);
+      await assert.rejects(finalize(owner, plain, CHUNK + 1), /storage_read_receipt_conflict/, "no reserve: at most 256 KiB");
+      assert.equal((await finalize(owner, plain, CHUNK)).state, "finalized");
+      const image = await admit(owner);
+      await reserve(owner, image, 2 * MIB);
+      await assert.rejects(finalize(owner, image, 2 * MIB + 1), /storage_read_receipt_conflict/, "at most the reservation");
+      assert.equal((await finalize(owner, image, 2 * MIB)).state, "finalized");
+      const late = await admit(owner);
+      await admin.query("update public.clued_agent_bindings set revoked_at=clock_timestamp() where id=$1", [owner.id]);
+      await assert.rejects(reserve(owner, late, 2 * MIB), /storage_read_denied/);
+    });
+
+    await t.test("settle releases the unused reservation", async () => {
       const pending = await bind();
-      for (let i = 0; i < BUDGET / CHUNK; i++) await admit(pending);
-      await assert.rejects(admit(pending), /storage_read_budget_exhausted/, "in-flight reads cannot overrun the budget");
-      // Two concurrent admissions with one chunk of budget left: the second waits, then sees the first.
+      const open = [];
+      for (let i = 0; i < 51; i++) { const admitted = await admit(pending); await reserve(pending, admitted, IMAGE); open.push(admitted); }
+      const next = await admit(pending);
+      await assert.rejects(reserve(pending, next, IMAGE), /storage_read_budget_exhausted/, "unfinalized reservations count in full");
+      for (const admitted of open) await finalize(pending, admitted, 1000);
+      assert.equal((await reserve(pending, next, IMAGE)).extended, true, "finalize settled each to 1000 bytes");
+    });
+
+    await t.test("concurrent reservations and admissions serialize on the Binding lock and cannot exceed the window", async () => {
       const racing = await bind();
-      for (let used = 0; used + 2 * CHUNK <= BUDGET; used += CHUNK) await finalize(racing, await admit(racing), CHUNK);
+      for (let i = 0; i < 50; i++) { const admitted = await admit(racing); await reserve(racing, admitted, IMAGE); await finalize(racing, admitted, IMAGE); }
+      // 250 MiB used; two in-flight text reads of 256 KiB each.
+      const first = await admit(racing), second = await admit(racing);
       await caller.query("begin");
       try {
-        assert.equal((await admit(racing)).class, "read_content", "the last chunk is admitted");
-        const second = admit(racing, {}, racer);
+        assert.equal((await reserve(racing, first, IMAGE)).extended, true, "the first extension fits (255.25 MiB)");
+        const racer2 = reserve(racing, second, IMAGE, racer);
         await waitForLock(racer);
         await caller.query("commit");
-        await assert.rejects(second, /storage_read_budget_exhausted/, "a concurrent call cannot pass the budget check with a stale sum");
+        await assert.rejects(racer2, /storage_read_budget_exhausted/, "the second extension sees the first and is refused");
       } catch (error) { await caller.query("rollback").catch(() => {}); throw error; }
-      assert.equal((await call(fresh, { action: "admit", connection_id: connection, operation: "list" })).class, "read", "browse has no content budget");
+      await caller.query("begin");
+      try {
+        assert.equal((await reserve(racing, second, MIB)).extended, true, "exactly 256 MiB reserved");
+        const admission = admit(racing, {}, racer);
+        await waitForLock(racer);
+        await caller.query("commit");
+        await assert.rejects(admission, /storage_read_budget_exhausted/, "an admission cannot pass with a stale sum");
+      } catch (error) { await caller.query("rollback").catch(() => {}); throw error; }
+      const total = (await admin.query(`select sum(case when state='finalized' then byte_count else coalesce(reserved_bytes,262144) end)::bigint total
+        from clued_private.storage_read_receipts_v1 where binding_id=$1 and class='read_content'`, [racing.id])).rows[0].total;
+      assert.ok(Number(total) <= BUDGET, `the window holds (${total})`);
     });
 
     await t.test("turning read_content off stops bodies but not the read level", async () => {

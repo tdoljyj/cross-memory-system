@@ -203,6 +203,14 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 
 **Worker 资源**：单次调用 provider 下载 ≤ 32 MiB（含 export、zip 条目、Office 部件、PDF、原图）。流式读取、超限即取消（沿用 `capped`，`storage-read-agent.ts:313-326`）。
 
+### 4.5 N1b 实施状态（Worker / kernel + 读额度迁移 `20260930200000`）
+
+- **已实现**（仅 `normal` 凭据 + `normal/1`；否则与 N1a 相同）：docx / xlsx / pptx 与 Google 表格（export xlsx）→ 抽取文本，字节范围作用于抽取后的 UTF-8 文本（xlsx 每表 `# Sheet: <名>` + CSV，pptx 每页 `# Slide <n>`），单次抽取 ≤ 8 MiB 文本；≤ 10 MiB 整份下载，更大文件用 §4.3 Range 模式（256 KiB 预读块，计入同一 `SUBREQUEST_BUDGET = 50`，provider 字节 ≤ 32 MiB）；Google 幻灯片 export `text/plain`；png / jpeg / gif / webp ≤ 5 MiB 且长边 ≤ 8000 px → MCP image（`structuredContent` 不含 base64）；其余格式 `delivered_as: "none"` + `reason`（`format_unsupported` / `image_too_large`）+ 固定 `hint` + 元数据，不发正文请求。新增固定错误码 `document_invalid`、`archive_limit_exceeded`、`binary_too_large`、`request_limit_exceeded`（Range 模式用尽 50 次子请求，提示缩小 `offset + length`）。
+- **内存（128 MB isolate）**：Range 模式只缓存 256 KiB 预读块（LRU 至多 4 块；大于一块的读取不缓存），中央目录解析完即清空缓存；xlsx 按行流式输出，文本预算用尽即停止 SAX 解析；只缓冲乱序行，至多 65 536 个单元格（超出 `archive_limit_exceeded`），已输出行的迟到单元格为 `document_invalid`（ECMA-376 要求行号递增；Excel 会把这类文件判为损坏并修复。是否报错取决于读到哪里：前段读取可能成功，后段才报 `document_invalid`。已知限制，失败即拒绝、不静默错位）。读取结算：`finalize` 的 `byte_count` 不得超过该回执的预留（默认 256 KiB，`reserve` 可扩到 ≤ 5 MiB），超出为 `storage_read_receipt_conflict`；`reserve` 只接受未撤销的 Binding。表头中表名的 CR/LF 替换为空格；pptx 表头与段名一致（`# Slide <n>`，n 为 `sldIdLst` 序号）；关系目标按 URI 百分号解码。
+- **分块一致性**：offset ≥ 8 MiB 且全文已抽完且更短 → 空内容 + `eof: true`；否则 `archive_limit_exceeded`。分块调用各自独立，调用方比较 `head_revision_id`（Google 文档 / 表格 / 幻灯片比较 `modified_time`）判断文件是否变化。
+- **读额度（§7.2，迁移 `20260930200000_storage_read_budget_n4.sql`）**：每 Binding 每滚动小时 256 MiB 交付字节（Owner 决定：读取 256 MiB / 小时）。admission 仍预占 256 KiB；图片在元数据分类之后、任何正文请求之前，对**同一**读回执调用 `reserve`，把预占扩到文件大小（≤ 5 MiB），与 admission 共用同一 Binding advisory 锁并计入全部在途预占，超出即 `budget_exhausted` 且不发正文请求；结算仍按实际交付字节，释放未用部分。文本 / Office（≤ 256 KiB）与 legacy / `text/1` 不调用 `reserve`。上线顺序：先把 N3 迁移 `20260930180000` 与本迁移应用到生产，再发布含 N1b 的 Worker。
+- **延后**：PDF 文字提取（pdf.js 在 Worker 内的包体与 CPU 尚未实测，暂返回元数据 + hint）；缩略图 builder 与 Cloudflare Images（host 模式须先实测；Images 需月度计数列）；zip 列目录 / 条目、ODF、`resource_link` 下载端点；provider 字节维度、账号合计与 Owner 可调额度（§7.2 / §7.3，N2 / N4）。
+
 ## 5. MCP 工具面
 
 ### 5.1 `clued_storage_read`（仍为 `read_content` 等级）
@@ -296,6 +304,7 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 ### 7.2 计量（M9）
 
 - 沿用 P2 做法（`…/20260930060000_storage_read_content_v1.sql:57-63`）：同一 Binding 的正文 admission 用事务级 advisory 锁串行，窗口滚动 1 小时。
+- **N1b 已实现（`20260930200000_storage_read_budget_n4.sql`）**：交付字节维度，每 Binding 256 MiB / 小时（固定）。读回执新增 `reserved_bytes`；admission 预占 256 KiB，`clued_storage_read_v1` 新增 `reserve` 动作：Worker 在元数据分类后、正文请求前对同一回执把预占扩到本次最大交付字节（图片 = 文件大小 ≤ 5 MiB），与 admission 取同一 advisory 锁，汇总窗口内其他回执（已结算按 `byte_count`，未结算按 `reserved_bytes`，缺省 256 KiB），超出返回 `storage_read_budget_exhausted`；预占只增不减，仅限本 Binding、10 分钟内的 `read_content` intent；结算按实际交付字节。下述 provider 字节维度、账号合计与新增回执列仍待 N2 / N4。
 - **admission 同时预占两项**：交付字节按本次模式单次上限；**provider 下载字节按 32 MiB 全额**。未结算调用在两个维度上都按全额计入；结算后改为实际值。下载链接的预占与结算见 §4.4（签发时预占、端点只结算、过期释放，不双重计费）。
 - **账号合计**（N2）：admission 另取 owner 级 advisory 锁（先 owner、后 Binding，固定顺序防死锁），按同样规则预占。
 - 读回执新增 `delivered_bytes`、`provider_bytes`、`format`、`mode`、`image_transform`；不记录正文、文件名或条目名（SFC §5.5）。
