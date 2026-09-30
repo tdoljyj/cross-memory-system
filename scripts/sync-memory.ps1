@@ -4,7 +4,6 @@ param(
     [switch]$AlignAndVerify,
     [switch]$Doctor,
     [switch]$Bootstrap,
-    [switch]$CommitRepo,
     [ValidateSet("NONE", "IDENTITY", "PREFERENCE", "PROJECT", "HISTORY", "CONSTRAINT", "MULTI")]
     [string]$Access = "MULTI"
 )
@@ -23,7 +22,6 @@ $env:CROSS_MEMORY_LOCAL_DIR = $MemoryDir
 $pythonArgs = @((Join-Path $repoRoot "scripts/sync-memory.py"))
 if ($Doctor) { $pythonArgs += "doctor" }
 elseif ($Bootstrap) { $pythonArgs += "bootstrap" }
-elseif ($CommitRepo) { $pythonArgs += "commit-repo" }
 elseif ($Pull -or $AlignAndVerify) { $pythonArgs += @("align-and-verify", $Access) }
 else { $pythonArgs += "push" }
 

@@ -340,6 +340,9 @@ class ManifestBoundaryRegression(unittest.TestCase):
 
 
 class UnifiedEntryContract(unittest.TestCase):
+    def setUp(self):
+        self.sync = load_sync_module()
+
     def test_consumer_contract_uses_unified_entry_without_external_preflight(self):
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         entry = (ROOT / "sync-memory.ps1").read_text(encoding="utf-8")
@@ -349,12 +352,27 @@ class UnifiedEntryContract(unittest.TestCase):
         self.assertIn('"scripts/sync-memory.ps1") @PSBoundParameters', entry)
         self.assertIn('@("align-and-verify", $Access)', ps1)
 
-    def test_post_push_remote_verification_is_retained(self):
+    def test_sync_entry_has_no_git_write_path(self):
+        # Every change reaches main through a merged PR (#292); sync-memory only reads.
         entry = SYNC_PATH.read_text(encoding="utf-8")
-        source = (ROOT / "scripts" / "sync-memory.py").read_text(encoding="utf-8")
         self.assertIn('_CluedPath(__file__).resolve().parent / "scripts" / "sync-memory.py"', entry)
-        self.assertIn('remote_after = run("git", "ls-remote", "origin", "refs/heads/main")', source)
-        self.assertIn('run("git", "merge-base", "--is-ancestor", head_after, remote_after', source)
+        source = (ROOT / "scripts" / "sync-memory.py").read_text(encoding="utf-8")
+        for forbidden in ('"push", "origin"', "HEAD:main", '"add", "-A"', '"commit", "-m"'):
+            self.assertNotIn(forbidden, source)
+        self.assertFalse(hasattr(self.sync, "cmd_commit_repo"))
+        for ps1 in (ROOT / "sync-memory.ps1", ROOT / "scripts" / "sync-memory.ps1"):
+            self.assertNotIn("CommitRepo", ps1.read_text(encoding="utf-8"))
+
+    def test_removed_commit_repo_mode_is_rejected(self):
+        # Git and validation are stubbed so a regression can never touch the real repository.
+        git_calls = []
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(self.sync.sys, "argv", ["sync-memory.py", "commit-repo"]))
+            stack.enter_context(mock.patch.object(self.sync, "run", side_effect=lambda *args, **_: git_calls.append(args)))
+            stack.enter_context(mock.patch.object(self.sync, "validate", return_value=({}, ["stubbed"])))
+            with self.assertRaisesRegex(RuntimeError, "unknown mode: commit-repo"):
+                self.sync.main()
+        self.assertEqual([], git_calls)
 
 
 if __name__ == "__main__":
