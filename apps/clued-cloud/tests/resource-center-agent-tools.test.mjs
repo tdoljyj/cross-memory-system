@@ -230,3 +230,67 @@ test('replace passes with new content or a restore job in its exact shape and re
     }
   } finally { globalThis.fetch = before; }
 });
+
+test('root-relative and full paths both reach the jobs RPC as given; malformed paths are storage_path_invalid before any RPC', async () => {
+  const before = globalThis.fetch; const calls = []; let refusal = null;
+  globalThis.fetch = async (_url, init) => {
+    calls.push(JSON.parse(init.body));
+    return refusal ? Response.json({ message: refusal, code: '22023' }, { status: 400 }) : Response.json(status());
+  };
+  const full = 'G:/My Drive/Clued_资料中心';
+  const good = [
+    { operation: 'create', target_kind: 'file', destination_path: '90_待归类/笔记.md', content: 'x' },
+    { operation: 'create', target_kind: 'directory', destination_path: '90_待归类/新主题', directory_semantics: 'topic' },
+    { operation: 'rename', target_kind: 'file', source_path: '90_待归类/a.md', destination_path: '90_待归类/b.md', source_file_version: '3' },
+    { operation: 'rename', target_kind: 'file', source_path: 'a.md', destination_path: 'b.md', source_file_version: '3' },
+    { operation: 'rename', target_kind: 'file', source_path: full + '/90_待归类/a.md', destination_path: '90_待归类/b.md', source_file_version: '3' },
+    { operation: 'move', target_kind: 'file', source_path: '90_待归类/a.md', destination_path: full + '/20_P/a.md', source_file_version: '3' },
+    { operation: 'replace', target_kind: 'file', destination_path: '90_待归类/a.md', destination_file_version: '4', content: 'y' },
+  ];
+  const invalid = ['90_待归类/../x.md', '../x.md', './x.md', '90_待归类//x.md', '90_待归类/', 'a\\b.md', 'a\u0001b.md', full + '/../x.md'];
+  try {
+    for (const path of invalid) {
+      for (const input of [{ ...mutation, destination_path: path },
+        { operation: 'rename', target_kind: 'file', source_path: path, destination_path: '90_待归类/b.md', source_file_version: '3' }]) {
+        const pending = [];
+        const reply = (await (await submit({ ...ref, mutation: input }, env, { waitUntil: p => pending.push(p) })).json()).result;
+        assert.equal(reply.isError, true, path);
+        assert.equal(reply.structuredContent.error, 'storage_path_invalid', path);
+        assert.match(reply.structuredContent.message, /relative to the connection's registered root/);
+        assert.equal(pending.length, 0);
+      }
+    }
+    // Mixed forms still keep the rename (new name) / move (same name) distinction.
+    for (const input of [
+      { operation: 'rename', target_kind: 'file', source_path: full + '/90_待归类/a.md', destination_path: '90_待归类/a.md', source_file_version: '3' },
+      { operation: 'move', target_kind: 'file', source_path: full + '/90_待归类/a.md', destination_path: '20_P/b.md', source_file_version: '3' }]) {
+      assert.equal((await (await submit({ ...ref, mutation: input })).json()).result.isError, true, JSON.stringify(input));
+    }
+    assert.equal(calls.length, 0);
+    for (const input of good) {
+      const reply = (await (await submit({ ...ref, mutation: input })).json()).result;
+      assert.equal(reply.isError, false, JSON.stringify(input));
+      assert.deepEqual(calls.at(-1).p_input, { ...ref, mutation: input, action: 'submit' }, 'the database canonicalizes, not the Worker');
+    }
+    // The database's fixed refusals are passed on as the same fixed codes, never as storage_job_unavailable.
+    for (const code of ['storage_path_outside_root', 'storage_path_invalid']) {
+      refusal = code;
+      const pending = [];
+      const reply = (await (await submit({ ...ref, mutation: { ...mutation, destination_path: 'G:/Other/x.md' } }, env, { waitUntil: p => pending.push(p) })).json()).result;
+      assert.equal(reply.isError, true); assert.equal(reply.structuredContent.error, code);
+      assert.equal(JSON.stringify(reply).includes('G:/Other'), false, 'no path in the refusal');
+      assert.equal(pending.length, 0);
+    }
+  } finally { globalThis.fetch = before; }
+});
+
+test('tool descriptions say both relative and full paths are accepted', async () => {
+  const tools = (await (await worker.fetch(rpc('tools/list', {}), env)).json()).result.tools;
+  const submitTool = tools.find(x => x.name === 'clued_storage_submit');
+  assert.match(submitTool.description, /relative to the connection's registered root/);
+  for (const variant of submitTool.inputSchema.properties.mutation.oneOf) {
+    for (const key of ['destination_path', 'source_path']) {
+      if (variant.properties[key]) assert.match(variant.properties[key].description, /relative to the connection's registered root.*full path/, key);
+    }
+  }
+});

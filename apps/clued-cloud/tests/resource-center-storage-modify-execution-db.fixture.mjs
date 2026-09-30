@@ -304,7 +304,9 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
       for (const mutation of bad) {
         await assert.rejects(caller.query(`select ${JOBS}($1,$2::jsonb)`, [enabled.client.token, JSON.stringify({ action: "submit",
           connection_id: enabled.target.connection, job_id: randomUUID(),
-          mutation: JSON.parse(JSON.stringify(mutation).replaceAll(target.root, enabled.target.root)) })]), /storage_job_input_invalid/, JSON.stringify(mutation));
+          mutation: JSON.parse(JSON.stringify(mutation).replaceAll(target.root, enabled.target.root)) })]),
+          // A ".." segment is refused by path canonicalization (20260930233000) with its own fixed code.
+          JSON.stringify(mutation).includes("/../") ? /storage_path_invalid/ : /storage_job_input_invalid/, JSON.stringify(mutation));
       }
     });
 
