@@ -1,10 +1,10 @@
 {
   "schema": "clued.ci-health-report/v1",
   "repository": "tdoljyj/cross-memory-system",
-  "observed_at": "2026-09-30T06:47:31.032912Z",
+  "observed_at": "2026-09-30T13:49:01.478873Z",
   "status": "ANOMALY",
   "notify_model": true,
-  "fingerprint": "847ff914f90e93d07cbeeb46492f9ad788bb62a7ecceac2b2e60e0283668e0ab",
+  "fingerprint": "d360ff676f29633320a5caeb07c0f7a3abcb43703f367673a4f2ce2807a77936",
   "thresholds": {
     "startup_delay_seconds": 300,
     "minimum_repeats": 2,
@@ -13,52 +13,49 @@
   "anomalies": [
     {
       "code": "REPEATED_STARTUP_DELAY",
-      "key": "pool:linux-docker-wsl2-v1:startup-delay-repeated",
-      "message": "linux-docker-wsl2-v1 exceeded the startup-delay threshold at least 2 times.",
+      "key": "pool:linux-docker-wsl2-v1:startup-delay-repeated:startup_delay_needs_investigation",
+      "message": "linux-docker-wsl2-v1 has repeated startup waits with incomplete occupation evidence; investigate before inferring an outage.",
       "details": {
         "pool": "linux-docker-wsl2-v1",
+        "classification": "startup_delay_needs_investigation",
+        "severity": "warning",
+        "occupation_evidence": "sampled_jobs_only",
         "threshold_seconds": 300,
         "minimum_repeats": 2,
-        "occurrences": 5,
+        "occurrences": 7,
         "wait_causes": {
-          "runner_occupied": 2,
+          "runner_occupied": 4,
           "unexplained": 3
         },
         "jobs": [
           {
-            "job_id": "109436988774",
-            "run_id": 36577560569,
-            "name": "runner-heartbeat / clued-ci-company-linux-02",
-            "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-09-29T13:46:13Z",
-            "started_at": "2026-09-29T13:52:38Z",
-            "delay_seconds": 385,
-            "kind": "started",
-            "wait_cause": "unexplained",
-            "idle_seconds": 385
-          },
-          {
-            "job_id": "109436989056",
-            "run_id": 36577560569,
-            "name": "runner-heartbeat / clued-ci-company-linux-01",
-            "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-09-29T13:46:13Z",
-            "started_at": "2026-09-29T13:53:58Z",
-            "delay_seconds": 465,
-            "kind": "started",
-            "wait_cause": "unexplained",
-            "idle_seconds": 465
-          },
-          {
             "job_id": "109440568543",
             "run_id": 36578604462,
             "name": "public-mcp-behavior",
-            "runner_name": null,
+            "runner_name": "clued-ci-company-linux-02",
             "created_at": "2026-09-29T13:54:28Z",
             "started_at": "2026-09-29T14:02:33Z",
             "delay_seconds": 485,
             "kind": "started",
-            "wait_cause": "unexplained"
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 13,
+            "occupied_by": [
+              {
+                "job_id": 109440566826,
+                "run_id": 36578604500,
+                "name": "isolated-candidate"
+              },
+              {
+                "job_id": 109440566131,
+                "run_id": 36578604210,
+                "name": "trivy"
+              },
+              {
+                "job_id": 109440566964,
+                "run_id": 36578604234,
+                "name": "public-mcp-protocol"
+              }
+            ]
           },
           {
             "job_id": "109768650438",
@@ -105,6 +102,61 @@
                 "job_id": 109768590758,
                 "run_id": 36678461040,
                 "name": "public-mcp-protocol"
+              }
+            ]
+          },
+          {
+            "job_id": "109911548273",
+            "run_id": 36722682160,
+            "name": "gitleaks",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-09-30T13:35:02Z",
+            "started_at": "2026-09-30T13:41:07Z",
+            "delay_seconds": 365,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 102
+          },
+          {
+            "job_id": "109911548789",
+            "run_id": 36722682212,
+            "name": "trivy",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-09-30T13:35:02Z",
+            "started_at": "2026-09-30T13:41:34Z",
+            "delay_seconds": 392,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 106
+          },
+          {
+            "job_id": "109911858118",
+            "run_id": 36722682213,
+            "name": "Information Flow E2E over the local Worker and Supabase stack",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-09-30T13:35:46Z",
+            "started_at": "2026-09-30T13:41:58Z",
+            "delay_seconds": 372,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 66
+          },
+          {
+            "job_id": "109912211964",
+            "run_id": 36722682267,
+            "name": "public-mcp-behavior",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-09-30T13:36:36Z",
+            "started_at": "2026-09-30T13:44:25Z",
+            "delay_seconds": 469,
+            "kind": "started",
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 4,
+            "occupied_by": [
+              {
+                "job_id": 109911544915,
+                "run_id": 36722682102,
+                "name": "Supabase migration, RLS, transaction, and pgTAP"
               }
             ]
           }
@@ -132,7 +184,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-09-30T01:55:17Z",
+          "last_verified_at": "2026-09-30T08:06:28Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -150,7 +202,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-09-30T01:55:17Z",
+          "last_verified_at": "2026-09-30T08:06:28Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -167,7 +219,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-09-30T01:55:17Z",
+          "last_verified_at": "2026-09-30T08:06:28Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -184,7 +236,7 @@
             "site-home",
             "trust-internal"
           ],
-          "last_verified_at": "2026-09-30T01:55:17Z",
+          "last_verified_at": "2026-09-30T08:06:28Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -201,7 +253,7 @@
             "site-home",
             "trust-internal"
           ],
-          "last_verified_at": "2026-09-30T01:55:17Z",
+          "last_verified_at": "2026-09-30T08:06:28Z",
           "slow_queued_probes": [],
           "state": "routable"
         }
@@ -211,42 +263,37 @@
       "lookback_hours": 24,
       "threshold_seconds": 300,
       "minimum_repeats": 2,
+      "idle_seconds_semantics": "time_not_covered_by_collected_jobs_not_proof_of_online_idle",
       "slow_occurrences_by_pool": {
         "linux-docker-wsl2-v1": [
-          {
-            "job_id": "109436988774",
-            "run_id": 36577560569,
-            "name": "runner-heartbeat / clued-ci-company-linux-02",
-            "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-09-29T13:46:13Z",
-            "started_at": "2026-09-29T13:52:38Z",
-            "delay_seconds": 385,
-            "kind": "started",
-            "wait_cause": "unexplained",
-            "idle_seconds": 385
-          },
-          {
-            "job_id": "109436989056",
-            "run_id": 36577560569,
-            "name": "runner-heartbeat / clued-ci-company-linux-01",
-            "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-09-29T13:46:13Z",
-            "started_at": "2026-09-29T13:53:58Z",
-            "delay_seconds": 465,
-            "kind": "started",
-            "wait_cause": "unexplained",
-            "idle_seconds": 465
-          },
           {
             "job_id": "109440568543",
             "run_id": 36578604462,
             "name": "public-mcp-behavior",
-            "runner_name": null,
+            "runner_name": "clued-ci-company-linux-02",
             "created_at": "2026-09-29T13:54:28Z",
             "started_at": "2026-09-29T14:02:33Z",
             "delay_seconds": 485,
             "kind": "started",
-            "wait_cause": "unexplained"
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 13,
+            "occupied_by": [
+              {
+                "job_id": 109440566826,
+                "run_id": 36578604500,
+                "name": "isolated-candidate"
+              },
+              {
+                "job_id": 109440566131,
+                "run_id": 36578604210,
+                "name": "trivy"
+              },
+              {
+                "job_id": 109440566964,
+                "run_id": 36578604234,
+                "name": "public-mcp-protocol"
+              }
+            ]
           },
           {
             "job_id": "109768650438",
@@ -295,20 +342,61 @@
                 "name": "public-mcp-protocol"
               }
             ]
-          }
-        ],
-        "windows-general-v1": [
+          },
           {
-            "job_id": "109436989175",
-            "run_id": 36577560569,
-            "name": "runner-heartbeat / clued-ci-company-win-01",
-            "runner_name": "clued-ci-company-win-01",
-            "created_at": "2026-09-29T13:46:13Z",
-            "started_at": "2026-09-29T13:52:51Z",
-            "delay_seconds": 398,
+            "job_id": "109911548273",
+            "run_id": 36722682160,
+            "name": "gitleaks",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-09-30T13:35:02Z",
+            "started_at": "2026-09-30T13:41:07Z",
+            "delay_seconds": 365,
             "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 398
+            "idle_seconds": 102
+          },
+          {
+            "job_id": "109911548789",
+            "run_id": 36722682212,
+            "name": "trivy",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-09-30T13:35:02Z",
+            "started_at": "2026-09-30T13:41:34Z",
+            "delay_seconds": 392,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 106
+          },
+          {
+            "job_id": "109911858118",
+            "run_id": 36722682213,
+            "name": "Information Flow E2E over the local Worker and Supabase stack",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-09-30T13:35:46Z",
+            "started_at": "2026-09-30T13:41:58Z",
+            "delay_seconds": 372,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 66
+          },
+          {
+            "job_id": "109912211964",
+            "run_id": 36722682267,
+            "name": "public-mcp-behavior",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-09-30T13:36:36Z",
+            "started_at": "2026-09-30T13:44:25Z",
+            "delay_seconds": 469,
+            "kind": "started",
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 4,
+            "occupied_by": [
+              {
+                "job_id": 109911544915,
+                "run_id": 36722682102,
+                "name": "Supabase migration, RLS, transaction, and pgTAP"
+              }
+            ]
           }
         ]
       }
