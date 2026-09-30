@@ -73,6 +73,10 @@
 继承不等于任何持账号 ID 或 context token 的应用都能访问网盘。私有可信能力登记绑定**由已验证 authorization request 解析出的服务端客户端注册身份**：不可复用 registration lineage ID、registration generation、issuer/resource、exact client ID，以及 approved redirect/metadata digest；包含 capability ID/version、支持的受控协议版本与撤销状态。client ID 复用或注册元数据变更不是原资格：代次/digest 不符立即拒绝，不按名称或 client ID 单独继承；原 lineage 的拒绝记录不会因换 Binding 或重注册而被抹掉。
 
 - 资格只由平台部署管理边界的专用 `storage_client_capability_admin_v2` 合同登记/撤销：复用现有平台管理凭据保管边界，仅授予既有受控部署角色调用，普通 native/Agent/Google issuer/客户端无此权限。登记输入须引用服务端已验证的 OAuth/DCR 注册对象和受审资格结果，CAS exact registration generation + approved metadata digest；服务端核对后同事务输出 qualification Event/Receipt，记录管理员主体和审核依据。若注册源没有可靠的不可复用 identity/generation，则先只读解析并登记审核过的注册快照，未经核验的动态注册不得入列；不依靠客户端自报 manifest、client_name、名称前缀或 Agent 参数。
+- **回调地址身份继承（2026-09-30 修订，Owner Decision `96141c2f-4415-45da-972e-da0e4cb6dde1`）。** 托管连接器（如 claude.ai、chatgpt.com）每次重连都会做新的 DCR 注册，client ID 随之改变，按 client ID 逐请求审核会让每次重连都失去存储能力。因此：已批准、但没有人工审核 link 的 authorization request，若其“回调地址身份”与**恰好一个** active 资格 lineage 的锚点登记（该登记的 `source_request_id`）完全相同，即继承该 lineage 的资格。回调地址身份是 exact issuer、resource、排序后的 requested scopes 与 exact redirect URI 的确定性摘要（`clued.storage-client-redirect-identity/1`）。理由：OAuth 授权码只会送到登记的 redirect URI，仿冒同名客户端的一方拿不到 token；因此它比自报的 client ID/名称更稳定，且不依赖 client_name。
+  - 只有 `https`、公网 DNS 主机名（小写、至少一个点、无端口或 443、无 query/fragment/userinfo）的 redirect URI 可继承。loopback、IP 字面量、`localhost`/`.localhost`、`.local` 等本机地址任何本地程序都能注册，**永不继承**，仍须逐请求审核 link。
+  - 继承只在判定时派生，不写 link 行；lineage 与读取等级拒绝、资格撤销、账号策略与 Binding/authorization 生命周期照常生效。已有人工审核 link 的请求始终按原 exact client ID 合同判定，不被继承替代。匹配到两个及以上 active lineage 时视为歧义，一律不继承。
+  - Owner 按客户端拒绝或撤销时作用于整个 lineage，即同一应用的所有重连会话；这是预期语义。
 - 资格标准对兼容客户端一致，不做厂商名称白名单，也不要求普通用户为每个设备设置。
 - 登记一个应用的技术资格不等于给它用户委托；每个请求仍需实际用户的有效 Binding/authorization 和账号策略。
 - **唯一 storage authority 就是 Owner 的账号策略 consent/transition Receipt**：其一次连接说明明确涵盖“本账号已连接且合格的应用可按账号设置使用所选网盘”。它不是逐 Binding grant，v12 只证明同账号应用身份与委托生命周期；不得要求新 per-Binding storage Receipt，不改冻结 v12 scope，也不从 `context:write` 推导 storage 权限。已有连接从未披露/同意这一用途时，不能仅靠 context token 升级；未有账号策略 consent 的普通 context-only 客户端，以及技术资格未通过的客户端仍然拒绝。用户完成该账号层一次同意之后，其合格且有效的应用自然继承，不再次弹客户端存储授权页。
