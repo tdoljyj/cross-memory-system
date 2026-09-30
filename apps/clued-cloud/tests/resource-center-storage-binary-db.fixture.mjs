@@ -470,11 +470,14 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       assert.equal((await staging(inline, client.token)).state, "consumed", "a retry after the submit sees the consumed row");
       assert.equal((await submitRaw(client, target, mutation, job)).replayed, true, "and the submit replays the same job");
       assert.equal((await admin.query("select count(*)::int n from clued_private.storage_staging_v1 where binding_id=$1", [client.id])).rows[0].n, 1, "no orphan rows");
-      // Other content under the same job_id is refused; another Binding gets its own row.
+      // Other content under the same job_id is refused; once the job exists another Binding cannot
+      // stage under its job_id either, while for a job not yet submitted each Binding gets its own row.
       const other = pngBytes(1501);
       await assert.rejects(staging({ ...inline, size: other.length, content_sha256: sha(other) }, client.token), /storage_job_input_invalid/);
       const second = await bind(target);
-      assert.notEqual((await staging(inline, second.token)).staging_id, first.staging_id);
+      await assert.rejects(staging(inline, second.token), /storage_job_input_invalid/);
+      const fresh = { ...inline, job_id: randomUUID() };
+      assert.notEqual((await staging(fresh, second.token)).staging_id, (await staging(fresh, client.token)).staging_id);
       // Shape: inline requires job_id, URL begin refuses it.
       await assert.rejects(staging({ ...beginInput(target, bytes), job_id: job }, client.token), /storage_staging_input_invalid/);
       await assert.rejects(staging({ ...beginInput(target, bytes), transport: "inline" }, client.token), /storage_staging_input_invalid/);
