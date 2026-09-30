@@ -10,7 +10,7 @@ import { build, stop } from "esbuild";
 import { PDF_WORKER_MODULE, patchPdfWorker, pdfDecodeGuardEsbuildPlugin } from "../build/pdfjs-decode-guard.mjs";
 import { catalogDictBombPdf, cffProgram, cmapRangeBombPdf, dictArrayBombPdf, embeddedFontPdf, emptyArrayBombPdf, extraOperandsBombPdf, flateLatinPdf, formXObjectsBombPdf,
   heldOperandsBombPdf, stringArrayBombPdf, imageFilterBombPdf, longStringPdf, operatorBombPdf, predefinedCjkFontsPdf, realisticTextPdf, repeatedStreamPdf, textBombPdf,
-  textItemsBombPdf, toUnicodeBombPdf, trueTypeProgram, type3CharProcBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
+  textItemsBombPdf, toUnicodeBombPdf, trueTypeProgram, type3CharProcBombPdf, cidFontsPdf, cidToGidMapStream } from "./resource-center-storage-pdf.fixture.mjs";
 
 // StorageNormalUse.v0.1 §4.5 resource bounds (independent review MAJOR): small
 // deflate bombs must not exhaust a Worker isolate. Each case runs in its own
@@ -120,6 +120,26 @@ for (const [name, pdf, expect, seconds] of [
   ["60 000 x 33 extra numeric operands before `n` (nonProcessedArgs keeps only the last 33)", () => type3CharProcBombPdf({
     unit: Array.from({ length: 33 }, (_, i) => i + 1).join(" ") + " n\n", count: 60000 }), r => r.ok && r.complete, 5],
   ["20 dense kerned text pages extract whole", () => realisticTextPdf(20), r => r.ok && r.complete && r.pages === 20 && r.text_bytes > 90000, 5],
+  // Independent review of 06d2251a (glyph tables): pdf.js fills width, vertical-metric, CIDToGIDMap and Identity Unicode
+  // tables one entry per code from a few numbers of a font dictionary, which no object or CMap limit sees. Each range is
+  // now clamped to CIDs 0..0xFFFF and charged to PDF_GLYPH_ENTRIES_MAX. Before, under this 64 MB heap: the /W, /W2,
+  // negative /W, 6-font /W (the review: out of memory at 128 MB too), /LastChar, 40-font and 100-font cases ran out of
+  // memory; the three 7 MiB CIDToGIDMaps completed after 1.0 s holding a 51 MB heap (the review measured a 76 MB peak).
+  ["1 KB CIDFont with /W [0 30000000 500]", () => cidFontsPdf(1, { entries: () => "/W [0 30000000 500]" }), r => r.ok && r.complete && r.text_bytes === 11, 3],
+  ["1 KB Identity-V CIDFont with /W2 [0 30000000 -1000 500 880]", () => cidFontsPdf(1, { vertical: true, entries: () => "/W2 [0 30000000 -1000 500 880]" }),
+    r => r.ok && r.complete && r.text_bytes === 11, 3],
+  ["1 KB CIDFont with /W [-30000000 0 500]", () => cidFontsPdf(1, { entries: () => "/W [-30000000 0 500]" }), r => r.ok && r.complete && r.text_bytes === 11, 3],
+  ["6 CIDFonts with /W [0 4000000 500] each", () => cidFontsPdf(6, { entries: () => "/W [0 4000000 500]" }), r => r.ok && r.complete && r.text_bytes === 9 + 12, 3],
+  ["3 CIDFonts with a 7 MiB CIDToGIDMap each", () => cidFontsPdf(3, { entries: (i, ref) => `/CIDToGIDMap ${ref} 0 R`, extra: () => cidToGidMapStream(7 * MiB) }),
+    r => r.ok && r.complete && r.text_bytes === 9 + 6, 5],
+  ["1 KB non-Adobe CIDFont without ToUnicode and /LastChar 30000000", () => cidFontsPdf(1, { ordering: "Custom", entries: () => "/FirstChar 0 /LastChar 30000000" }),
+    r => r.ok && r.complete && r.text_bytes === 11, 3],
+  ["30 Identity fonts without ToUnicode stay inside the glyph limit", () => cidFontsPdf(30, { entries: i => `/W [${i} [500]]` }),
+    r => r.ok && r.complete && r.text_bytes === 9 + 60, 5],
+  ["100 Identity fonts without ToUnicode (65 KB) pass the glyph limit", () => cidFontsPdf(100, { entries: i => `/W [${i} [500]]` }),
+    r => r.code === "archive_limit_exceeded", 5],
+  ["40 CIDFonts whose /W and /W2 each span all 65 536 CIDs pass the glyph limit", () => cidFontsPdf(40, { vertical: true,
+    entries: i => `/W [0 65535 ${500 + i}] /W2 [0 65535 -1000 500 880]` }), r => r.code === "archive_limit_exceeded", 5],
 ]) {
   test(`bounded under a 64 MB heap: ${name}`, { timeout: 90000 }, async t => {
     const result = await measure(pdf());

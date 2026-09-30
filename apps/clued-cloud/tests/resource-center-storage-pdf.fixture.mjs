@@ -47,8 +47,11 @@ export const predefinedCjkPdf = (pages, encoding = "UniGB-UCS2-H") => pagesPdf(
 
 /** Identity-H font whose glyph codes are 1..n in order of first use; with
  * `toUnicode` a ToUnicode CMap maps them back (Word / pdf-lib style), without
- * it pdf.js can only emit the codes themselves. `codes` overrides the glyph codes. */
-export function identityPdf(pages, { toUnicode = true, codes } = {}) {
+ * it pdf.js can only emit the codes themselves. `codes` overrides the glyph codes.
+ * `widths` replaces the CIDFont's `/DW 1000 /CIDToGIDMap /Identity` (e.g. /W, /W2
+ * or a /CIDToGIDMap stream among `extras`, which become objects 7.. of the file);
+ * `vertical` uses Identity-V; `baseFont` names the font. */
+export function identityPdf(pages, { toUnicode = true, codes, widths = "/DW 1000 /CIDToGIDMap /Identity", extras = [], vertical = false, baseFont = "Embedded" } = {}) {
   const map = new Map();
   const codeOf = c => { if (!map.has(c)) map.set(c, codes?.[map.size] ?? map.size + 1); return map.get(c); };
   const shows = pages.map(lines => lines.map(text => "<" + [...text].map(c => hex4(codeOf(c))).join("") + ">"));
@@ -57,10 +60,10 @@ export function identityPdf(pages, { toUnicode = true, codes } = {}) {
     "1 begincodespacerange <0000> <FFFF> endcodespacerange", `${map.size} beginbfchar`,
     ...[...map].map(([c, code]) => `<${hex4(code)}> <${hex4(c.charCodeAt(0))}>`), "endbfchar endcmap CMapName currentdict /CMap defineresource pop end end"].join("\n");
   return pagesPdf(shows,
-    `<< /Type /Font /Subtype /Type0 /BaseFont /Embedded /Encoding /Identity-H /DescendantFonts [4 0 R]${toUnicode ? " /ToUnicode 6 0 R" : ""} >>`,
-    ["<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Embedded /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 5 0 R /DW 1000 /CIDToGIDMap /Identity >>",
-      "<< /Type /FontDescriptor /FontName /Embedded /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 900 /Descent -200 /CapHeight 700 /StemV 80 >>",
-      stream(cmap)]);
+    `<< /Type /Font /Subtype /Type0 /BaseFont /${baseFont} /Encoding /Identity-${vertical ? "V" : "H"} /DescendantFonts [4 0 R]${toUnicode ? " /ToUnicode 6 0 R" : ""} >>`,
+    [`<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${baseFont} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 5 0 R ${widths} >>`,
+      `<< /Type /FontDescriptor /FontName /${baseFont} /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 900 /Descent -200 /CapHeight 700 /StemV 80 >>`,
+      stream(cmap), ...extras]);
 }
 
 /** Pages with an image and no text operators (a scan). */
@@ -376,3 +379,25 @@ export function textItemsBombPdf(count = 1_100_000, perColumn = 300_000) {
   const data = deflateSync(content, { level: 9 }).toString("latin1");
   return buildPdf([...catalog, HELVETICA, ...onePage("5 0 R"), `<< /Length ${data.length} /Filter /FlateDecode >>\nstream\n${data}\nendstream`]);
 }
+
+/** Glyph-table bombs (review of 06d2251a): one page showing <00410042> ("AB" as Identity codes, no ToUnicode) in each of
+ * `count` Identity-H (`vertical`: Identity-V) CIDFontType2 fonts whose CIDFont dictionary adds `entries(i, ref)`;
+ * `extra(i)` is one more object per font, at `ref`. pdf.js fills its width, vertical-metric, CIDToGIDMap and Unicode
+ * tables one entry per code from a few numbers of these dictionaries. */
+export function cidFontsPdf(count, { entries = () => "", extra = () => stream(""), vertical = false, ordering = "Identity", baseFont = "CIDFont", type0Entries = "" } = {}) {
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << ${Array.from({ length: count }, (_, i) => `/F${i} ${5 + i * 4} 0 R`).join(" ")} >> >> /Contents 4 0 R >>`,
+    stream(Array.from({ length: count }, (_, i) => `BT /F${i} 11 Tf 50 ${740 - i * 2} Td <00410042> Tj ET`).join("\n"))];
+  for (let i = 0; i < count; i++) {
+    const ref = 5 + i * 4;
+    objects.push(`<< /Type /Font /Subtype /Type0 /BaseFont /${baseFont}${i} /Encoding /Identity-${vertical ? "V" : "H"} /DescendantFonts [${ref + 1} 0 R] ${type0Entries}>>`,
+      `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${baseFont}${i} /CIDSystemInfo << /Registry (Adobe) /Ordering (${ordering}) /Supplement 0 >> /FontDescriptor ${ref + 2} 0 R ${entries(i, ref + 3)} >>`,
+      `<< /Type /FontDescriptor /FontName /${baseFont}${i} /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 900 /Descent -200 /CapHeight 700 /StemV 80 >>`, extra(i));
+  }
+  return buildPdf(objects);
+}
+/** A FlateDecode CIDToGIDMap stream of `bytes` bytes (GID 1 for every CID). */
+export const cidToGidMapStream = bytes => {
+  const data = deflateSync(Buffer.alloc(bytes, Buffer.from([0, 1])), { level: 9 }).toString("latin1");
+  return `<< /Length ${data.length} /Filter /FlateDecode >>\nstream\n${data}\nendstream`;
+};

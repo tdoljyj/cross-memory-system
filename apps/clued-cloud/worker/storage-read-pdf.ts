@@ -22,11 +22,12 @@ import { StorageFormatError } from "./storage-read-formats";
  * decoded bytes, and a 70 KB deflate bomb decodes to hundreds of MB. So
  * (1) build/pdfjs-decode-guard.mjs patches the pinned worker to call the
  * guard below for every decoded-byte allocation, content-stream token, new
- * cached name, CMap entry, parsed array / Dict element, kept operator and
- * lexed string character, and for every image decode (refused: text never
+ * cached name, CMap entry, parsed array / Dict element, kept operator,
+ * lexed string character and per-font glyph-table entry (/W, /W2,
+ * CIDToGIDMap, Identity Unicode map; clamped to CIDs 0..0xFFFF), and for every image decode (refused: text never
  * needs one), and the guard refuses past the PDF_DECODE_* / PDF_TOKENS_MAX /
  * PDF_PRIMITIVES_MAX / PDF_CMAP_ENTRIES_MAX / PDF_OBJECT_* / PDF_OBJECTS_MAX /
- * PDF_CONTENT_OBJECTS_MAX / PDF_STRING_CHARS_MAX limits of this call
+ * PDF_CONTENT_OBJECTS_MAX / PDF_STRING_CHARS_MAX / PDF_GLYPH_ENTRIES_MAX limits of this call
  * (archive_limit_exceeded); pdf.js decodes a page's content stream whole
  * before it evaluates it, so these also bound text bombs; the guard also
  * checks the call's deadline every PDF_DEADLINE_CHECK_EVERY calls, so a page,
@@ -128,6 +129,18 @@ export const PDF_OBJECTS_MAX = 1_000_000;
  * capped at 256 Ki). Real text is far less: 20 dense pages hold some 100–200
  * thousand characters. */
 export const PDF_STRING_CHARS_MAX = 4 * 1024 * 1024;
+/** Per-font glyph-table entries pdf.js may fill in one call from a few numbers
+ * of a font dictionary: each code of a CIDFont /W or /W2 range, each CID of a
+ * CIDToGIDMap stream, and each code an IdentityToUnicodeMap visits (an
+ * Identity font without ToUnicode: 65 536 per font). Each range is first
+ * clamped to CIDs 0..0xFFFF (build/pdfjs-decode-guard.mjs), so one font adds
+ * at most 65 536 per table; this bound keeps many fonts from multiplying it.
+ * Measured under Node (pdfjs-dist 6.3.289): about 8-10 bytes of heap per
+ * entry, some 16-20 MB at the limit. A call may load some 30 Identity fonts
+ * without ToUnicode, or 10 whose /W and /W2 each span all 65 536 CIDs; before
+ * the bound, 100 such fonts (a 65 KB file) or one `/W [0 30000000 500]` (1 KB)
+ * exhausted a 64 MB heap. */
+export const PDF_GLYPH_ENTRIES_MAX = 2_000_000;
 
 /** The guard compares the call's clock with its deadline once every this many
  * guard calls (tokens, objects, strings, operators, decoded buffers ...), so a
@@ -150,7 +163,7 @@ export const PDF_DEADLINE_CHECK_EVERY = 4096;
  * read fewer pages per call). */
 export const PDF_TEXT_ITEMS_MAX = 200_000;
 
-type DecodeBudget = { allocated: number; tokens: number; primitives: number; cmap: number; objects: number; content: number; chars: number;
+type DecodeBudget = { allocated: number; tokens: number; primitives: number; cmap: number; objects: number; content: number; chars: number; glyphs: number;
   exceeded: boolean; calls: number; clock: () => number; deadline: number; timedOut: boolean; streams: WeakMap<object, number> };
 const decodeBudgets = new AsyncLocalStorage<DecodeBudget>();
 class DecodeLimit extends Error {}
@@ -163,14 +176,15 @@ class DecodeLimit extends Error {}
  * PDF_OBJECT_TREE_MAX / PDF_OBJECTS_MAX / PDF_CONTENT_OBJECTS_MAX), for each
  * operator or path operator added to a kept operator list ("oplist":
  * PDF_CONTENT_OBJECTS_MAX), for the `bytes` characters of each
- * lexed string or name ("chars": PDF_STRING_CHARS_MAX), and where a
+ * lexed string or name ("chars": PDF_STRING_CHARS_MAX), before a font's
+ * glyph table gets `bytes` entries ("glyphs": PDF_GLYPH_ENTRIES_MAX), and where a
  * hard limit is hit ("limit", which includes every image decode). Outside an
  * extraction (no budget in the async context) nothing may be decoded. pdf.js
  * may swallow the throw (stopAtErrors: false skips a failing stream), so the
  * budget records it and the extraction fails with archive_limit_exceeded
  * instead of returning partial text; past the deadline (timedOut) it fails
  * with the time-limit semantics of extractPdfText instead. */
-function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "object" | "oplist" | "chars" | "limit", stream?: object | null, bytes = 0, code = 0): void {
+function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "object" | "oplist" | "chars" | "glyphs" | "limit", stream?: object | null, bytes = 0, code = 0): void {
   const budget = decodeBudgets.getStore();
   if (!budget) {
     // Module evaluation creates a few Names before any extraction runs.
@@ -201,6 +215,7 @@ function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "object" 
     }
     else if (kind === "oplist") { if ((budget.content += bytes) <= PDF_CONTENT_OBJECTS_MAX) return; }
     else if (kind === "chars") { if ((budget.chars += bytes) <= PDF_STRING_CHARS_MAX) return; }
+    else if (kind === "glyphs") { if (Number.isFinite(bytes) && (budget.glyphs += Math.max(0, bytes)) <= PDF_GLYPH_ENTRIES_MAX) return; }
     else if (kind === "decode" && stream) {
       const used = (budget.streams.get(stream) ?? 0) + bytes;
       if (used <= PDF_DECODE_STREAM_MAX && budget.allocated + bytes <= PDF_DECODE_TOTAL_MAX) {
@@ -382,7 +397,7 @@ export async function extractPdfText(bytes: Uint8Array, options: { page_start: n
       throw new Error("unavailable");
     }
   }
-  const budget: DecodeBudget = { allocated: 0, tokens: 0, primitives: 0, cmap: 0, objects: 0, content: 0, chars: 0, exceeded: false,
+  const budget: DecodeBudget = { allocated: 0, tokens: 0, primitives: 0, cmap: 0, objects: 0, content: 0, chars: 0, glyphs: 0, exceeded: false,
     calls: 0, clock, deadline, timedOut: false, streams: new WeakMap() };
   // pdf.js's in-thread worker runs in promise jobs started from here, so all
   // decoding for this document sees this budget through the async context.

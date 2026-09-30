@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build, stop } from "esbuild";
 import { pdfDecodeGuardEsbuildPlugin } from "../build/pdfjs-decode-guard.mjs";
 import { brotliBombPdf, embeddedFontPdf, encryptedPdf, flateLatinPdf, identityPdf, latinPdf, type3CharProcBombPdf, longStringPdf, operatorBombPdf, predefinedCjkPdf, repeatedStreamPdf, scannedPdf,
-  realisticTextPdf, textBombPdf, textPagesPdf, textThenDrawingPdf, toUnicodeBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
+  realisticTextPdf, textBombPdf, textPagesPdf, textThenDrawingPdf, toUnicodeBombPdf, cidToGidMapStream } from "./resource-center-storage-pdf.fixture.mjs";
 
 // StorageNormalUse.v0.1 §4.5: pdf.js text extraction for clued_storage_read.
 // The module imports pdf.js and the generated CMaps extensionless, so it is
@@ -17,7 +17,7 @@ await build({ entryPoints: [fileURLToPath(new URL("../worker/storage-read-pdf.ts
   bundle: true, platform: "node", format: "esm", logLevel: "silent", plugins: [pdfDecodeGuardEsbuildPlugin()] });
 stop();
 const { extractPdfText, looksGarbled, readExactBody, classifyPdfError, pdfOffsetPastText, pdfTimeBudget, PDF_MAX_BYTES, PDF_PAGES_PER_CALL, PDF_TEXT_MAX,
-  PDF_TIME_MS, PDF_TIME_CUT_HINT, withPdfSlot, PdfBusyError, PDF_SLOT_WAIT_MS, PDF_CONTENT_OBJECTS_MAX, PDF_DEADLINE_CHECK_EVERY } =
+  PDF_TIME_MS, PDF_TIME_CUT_HINT, withPdfSlot, PdfBusyError, PDF_SLOT_WAIT_MS, PDF_CONTENT_OBJECTS_MAX, PDF_DEADLINE_CHECK_EVERY, PDF_GLYPH_ENTRIES_MAX } =
   await import(pathToFileURL(path.join(directory, "pdf.mjs")).href);
 const extract = (bytes, options = {}) => extractPdfText(bytes, { page_start: 1, page_count: 20, max_text_bytes: PDF_TEXT_MAX, ...options });
 const ZH = "资料中心存储读取测试：这是一个包含中文字符的页面。";
@@ -56,6 +56,24 @@ test("CJK: predefined UniGB-UCS2-H CMap (non-embedded STSong-Light) and ToUnicod
   assert.equal(predefined.text, `# Page 1\n${ZH}\n# Page 2\n第二页：逐页读取。`); assert.equal(predefined.cmap_missing, false);
   const mapped = await extract(identityPdf([[ZH, "Mixed English 与中文 123"]]));
   assert.equal(mapped.text, `# Page 1\n${ZH}\nMixed English 与中文 123`); assert.deepEqual(mapped.unreliable_pages, []);
+});
+
+// Glyph-table bounds (review of 06d2251a): /W, /W2 and CIDToGIDMap ranges are clamped to CIDs 0..0xFFFF and charged to
+// PDF_GLYPH_ENTRIES_MAX; realistic CID fonts extract exactly as before (compared against the build without the clamp).
+test("CID fonts with realistic /W, /W2 and CIDToGIDMap extract exactly", async () => {
+  const W = "/DW 1000 /W [1 [600 650 500 720] 5 18 1000 19 [250 333 278] 22 30 556] /CIDToGIDMap 7 0 R";
+  const horizontal = await extract(identityPdf([[ZH, "Mixed English 与中文 123"]], { widths: W, extras: [cidToGidMapStream(64)] }));
+  assert.equal(horizontal.text, `# Page 1\n${ZH}\nMixed English 与中文 123`); assert.deepEqual(horizontal.unreliable_pages, []);
+  // A standard font name takes pdf.js's CIDToGIDMap branch of the non-embedded font path; ToUnicode still maps every code.
+  const arial = await extract(identityPdf([["Arial text 123 with widths"]], { widths: W, extras: [cidToGidMapStream(64)], baseFont: "ArialMT" }));
+  assert.equal(arial.text, "# Page 1\nArial text 123 with widths");
+  const vertical = await extract(identityPdf([["竖排文字测试"]], { vertical: true,
+    widths: "/DW 1000 /W [1 30 1000] /DW2 [880 -1000] /W2 [1 [-1000 500 880 -1000 500 880] 3 30 -1000 500 880]" }));
+  assert.equal(vertical.text, "# Page 1\n竖排文字测试");
+  // No ToUnicode: an Identity font's codes are the text (IdentityToUnicodeMap, charged 65 536 entries).
+  const identity = await extract(identityPdf([["ABC abc"]], { toUnicode: false, codes: [..."ABC abc"].map(c => c.charCodeAt(0)), widths: "/W [32 126 500]" }));
+  assert.equal(identity.text, "# Page 1\nABC abc");
+  assert.equal(PDF_GLYPH_ENTRIES_MAX, 2_000_000);
 });
 
 test("a CJK encoding whose CMap is not bundled is reported, never silent", async () => {

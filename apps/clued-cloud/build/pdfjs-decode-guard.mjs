@@ -27,6 +27,13 @@ import { readFile } from "node:fs/promises";
  *   highest code before the range is filled): the CMap parser reads with the
  *   Lexer directly, and one `<000000> <FFFFFF> <4100>` bfrange would otherwise
  *   fill 16 M entries;
+ * - "glyphs": per-font glyph-table entries filled code by code from a few
+ *   numbers of the font dictionary (each `c_first c_last w` range of a CIDFont
+ *   /W and each /W2 range, each CID of a CIDToGIDMap stream, each code an
+ *   IdentityToUnicodeMap visits). Every such range is first clamped to CIDs
+ *   0..0xFFFF (so one font adds at most 65 536 entries per table), and the
+ *   clamped count is charged before the table is filled: one
+ *   `/W [0 30000000 500]` is 3 array elements;
  * - "limit": BrotliStream (its decoder has no output bound, so it is refused
  *   before decoding), every image decoder (JpegStream / Jbig2Stream /
  *   JpxStream / CCITTFaxStream.decodeImage allocate the whole image outside
@@ -130,6 +137,33 @@ const PATCHES = [
     `throw new Error("${name} - ignoring data above MAX_MAP_RANGE.");\n    }\n    ${G}("cmap", this, high - low + 1, high);`]),
   ["throw new Error(\"mapBfRangeToArray - ignoring data above MAX_MAP_RANGE.\");\n    }\n    const ii = array.length;",
     `throw new Error("mapBfRangeToArray - ignoring data above MAX_MAP_RANGE.");\n    }\n    const ii = array.length;\n    ${G}("cmap", this, Math.min(high - low + 1, ii), high);`],
+  // Per-font glyph tables, filled one entry per code from a few numbers of the
+  // font dictionary (so neither the object nor the CMap limit sees them):
+  // PartialEvaluator.extractWidths expands each `c_first c_last w` range of a
+  // CIDFont's /W and each `c_first c_last w1y v1x v1y` range of /W2 code by
+  // code; readCidToGidMap builds one entry per 2 bytes of the decoded
+  // CIDToGIDMap stream; IdentityToUnicodeMap.forEach visits every code from
+  // FirstChar to LastChar (Font.fallbackToSystemFont builds a map entry per
+  // code of an Identity font without ToUnicode). A CID is at most 0xFFFF
+  // (ISO 32000-1 §9.7.4, Annex C), so each range is clamped to 0..0xFFFF
+  // (codes outside it are never looked up) and the clamped count is charged
+  // before the table is filled.
+  ["            for (let j = start; j <= code; j++) {\n              glyphsWidths[j] = width;\n            }",
+    `            const cluedLast = Math.min(code, 0xffff);\n            start = Math.max(start, 0);\n            if (start <= cluedLast) ${G}("glyphs", null, cluedLast - start + 1);\n` +
+    "            for (let j = start; j <= cluedLast; j++) {\n              glyphsWidths[j] = width;\n            }"],
+  ["              for (let j = start; j <= code; j++) {\n                glyphsVMetrics[j] = vmetric;\n              }",
+    `              const cluedLast = Math.min(code, 0xffff);\n              start = Math.max(start, 0);\n              if (start <= cluedLast) ${G}("glyphs", null, cluedLast - start + 1);\n` +
+    "              for (let j = start; j <= cluedLast; j++) {\n                glyphsVMetrics[j] = vmetric;\n              }"],
+  // readCidToGidMap: 2 bytes per CID 0..0xFFFF; bytes past 0x20000 name no valid CID.
+  ["  readCidToGidMap(glyphsData, toUnicode) {\n    const result = [];\n    for (let j = 0, jj = glyphsData.length; j < jj; j++) {",
+    `  readCidToGidMap(glyphsData, toUnicode) {\n    const result = [];\n    const cluedBytes = Math.min(glyphsData.length, 0x20000);\n    ${G}("glyphs", null, (cluedBytes + 1) >> 1);\n` +
+    "    for (let j = 0, jj = cluedBytes; j < jj; j++) {"],
+  // PartialEvaluator.buildToUnicode: a composite font without a Unicode map
+  // spans FirstChar..LastChar straight from its dictionary.
+  ["    return new IdentityToUnicodeMap(properties.firstChar, properties.lastChar);",
+    "    return new IdentityToUnicodeMap(Math.max(properties.firstChar, 0), Math.min(properties.lastChar, 0xffff));"],
+  ["  forEach(callback) {\n    for (let i = this.firstChar, ii = this.lastChar; i <= ii; i++) {",
+    `  forEach(callback) {\n    if (this.firstChar <= this.lastChar) ${G}("glyphs", null, this.lastChar - this.firstChar + 1);\n    for (let i = this.firstChar, ii = this.lastChar; i <= ii; i++) {`],
   // Image decoders (DCT, JBIG2, JPX, CCITTFax) decode the whole image at once
   // outside DecodeStream.ensureBuffer. Text extraction never paints images, so
   // any image decode (e.g. a ToUnicode or font stream with /Filter /DCTDecode) is refused.
