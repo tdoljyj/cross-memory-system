@@ -3,7 +3,7 @@
 ## 0. 文档边界与实施门槛
 
 - **类型**：与实现、迁移和验收直接绑定的工程合同。它不是上线证明，也不是任何阶段的实施授权。
-- **状态**：**CANDIDATE（r4）**。r3 独立审查（FAILED：2 个 MAJOR、12 个 MINOR、1 个 NIT）已按 §0.2 处理；Owner 决定不变（Decision `7dbb4c09-c425-4e62-8aca-479dff482acc`，§11）；待再次独立审查。
+- **状态**：**CANDIDATE（r4.1）**。r3 独立审查（FAILED：2 个 MAJOR、12 个 MINOR、1 个 NIT）已按 §0.2 处理；r4 复审 **PASS**（0 BLOCKER / 0 MAJOR），其 5 个 MINOR 按 §8.1.9 并入；Owner 决定不变（Decision `7dbb4c09-c425-4e62-8aca-479dff482acc`，§11）。
 - **源码基线**：`25cfe793`（`main`，PR #415 合并后）。P3 A/B 与 **P4 `replace` 均已合并并部署生产**（迁移 `20260930120000_storage_overwrite_v1.sql` 已应用）。本文件所有行号按该提交核对。
 - **延续 Task**：`2aa57e7c-9960-45bc-a6f2-ba0c7d74ec9a`；不新建 Program。
 - **Owner 决定**：
@@ -383,6 +383,14 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 | N-T12 | revoke 连带断开 | 只在撤回 / 断开时 revoke，文案明示；N1 前真实账号核实（§2.4 第 7 项）；Picker token 范围不符只丢弃不 revoke（§8.1 第 3 步） |
 | N-T13 | 上传 URL 进入模型上下文后被转发 | 10 分钟、单次使用、绑定 Binding / sha256 / size / mime；只能写暂存，提交仍须同一 Binding 经 MCP（§6.2） |
 | N-T14 | refresh token 名额被挤出、接入孤儿 | 按账号 × 客户端计数与阈值（§2.4 第 8 项）；接入 effect 幂等并记录孤儿（§8.1 第 5 步） |
+
+### 8.1.9 r4 复审补充（实现 PR 必须满足）
+
+1. **N0 自带 scope 基础件**：§2.2 的 `scopeProfile` 模块（Worker 与 kernel）、连接行 `provider_scope_profile`、读取授权 `content_profile` 与 `normal/1`、正常使用说明，以及读 agent（`storage-read-agent.ts:218`）、执行器（`storage-cloud-executor.ts:42`）、刷新（`storage-google-refresh.ts:56, 77, 89`）三处改为“属于允许集合”，**并入 N0**。否则预先勾选“正常使用”的新连接会因 scope 不等于 `legacy` 而读取失败，首次刷新即进入 `reauthorization_required`。N1 保留重新同意、任意文件读取与 R1–R11。
+2. **onboard OAuth 路径复述被绕过包装器的检查**：`storage_onboard_oauth_v1` 必须自行执行 083521 包装器在等锁后的最终会话 / issuer / 过期复核（`083521:246-252`）和一次性 claim 语义，claim 同样计入 §2.4 第 8 项计数。
+3. **锁序**：§2.4 第 3 项的延续包装器先取 owner‖root advisory 锁，再 `FOR UPDATE` 连接，最后锁委托行，与 `clued_storage_refresh_manage_v1`（连接 → 委托）一致，避免死锁后留下已换取的孤儿 token。
+4. **Canonical 写入必须检查结果并抛错**：激活事务调用 native records API 使用的入口 `record_mutation_with_terminal_guard`（`20260922140000`），不直接调用被多次 `pg_get_functiondef` 修补的原始 core；Project 同理使用其当前入口。每一步检查返回的 receipt `status='committed'`，否则 `raise` 使整个事务回滚（`record_mutation_core` 在 `20260825171129` 约第 455 行捕获异常并返回失败信封，不会自行抛错）。
+5. **`issuer_hash` 来源**：激活写 `storage_refresh_delegations_v1` 所需的连接器 `issuer_hash` 取自分派器的 `p_issuer_hash`，记录在接入 attempt 行，并在激活时对照 `storage_oauth_apps_v1`（`execution_enabled` 与 `read_enabled` 为真）复核。
 
 ## 10. 分期
 
