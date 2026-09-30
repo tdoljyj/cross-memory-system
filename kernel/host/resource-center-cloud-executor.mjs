@@ -8,6 +8,8 @@ import { createGoogleDriveNativeCreateEffect } from "./resource-center-google-dr
 import { createGoogleDriveCreatePostconditionVerifier } from "./resource-center-google-drive-postcondition.mjs";
 import { createGoogleDriveNativeModifyEffect, modifyShape } from "./resource-center-google-drive-modify-effect.mjs";
 import { createGoogleDriveModifyPostconditionVerifier } from "./resource-center-google-drive-modify-postcondition.mjs";
+import { createGoogleDriveNativeReplaceEffect, replaceShape, sha256Hex, md5Hex } from "./resource-center-google-drive-replace-effect.mjs";
+import { createGoogleDriveReplacePostconditionVerifier } from "./resource-center-google-drive-replace-postcondition.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "./resource-center-governed-tool-surface.mjs";
 import { RESOURCE_CENTER_POLICY_VERSION, bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 
@@ -27,7 +29,8 @@ const providerAuthorityCodes = new Set([
   "PROVIDER_PROFILE_ROOT_MISMATCH", "PROVIDER_ROOT_ID_MISMATCH", "PROVIDER_ROOT_MUTATION_FORBIDDEN",
   "DRIVE_CREDENTIAL_UNAVAILABLE", "DRIVE_LIST_INVALID", "DRIVE_METADATA_MISMATCH",
   "DRIVE_METADATA_UNAVAILABLE", "DRIVE_NAMESPACE_VISIBILITY_UNPROVEN", "DRIVE_PAGINATION_INVALID",
-  "DRIVE_PAGINATION_LIMIT", "SOURCE_VERSION_MISMATCH",
+  "DRIVE_PAGINATION_LIMIT", "SOURCE_VERSION_MISMATCH", "DESTINATION_VERSION_MISMATCH", "REVISION_KEEP_LIMIT",
+  "REPLACE_TARGET_UNSUPPORTED",
 ]);
 // Fixed denial labels from public.clued_resource_center_authority_v1; each names a failed check, never a value.
 const authorityDenialReasons = new Set([
@@ -108,7 +111,20 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       // Rename and file move (StorageFullCapability P3) run only in the
       // verified-result (account policy) mode, whose server proof names them.
       const modify=mutation?.operation==="rename" || mutation?.operation==="move";
-      if(modify){
+      // Replace and revert (P4) likewise; the server names the Clued-pinned
+      // revisions to release and, for a revert, the pinned revision to restore.
+      const replace=mutation?.operation==="replace";
+      const revisionIdOk=value=>typeof value==="string" && /^[A-Za-z0-9_-]{1,200}$/.test(value);
+      if(replace){
+        if(!verifiedResultMode || !replaceShape(mutation) || mutation.target_kind!=="file" ||
+          Object.keys(mutation).some(k=>!["operation","destination_path","target_kind","destination_file_version","content","restore_job_id"].includes(k)) ||
+          !Array.isArray(descriptor.revision_releases) || descriptor.revision_releases.length>200 || !descriptor.revision_releases.every(revisionIdOk) ||
+          (mutation.restore_job_id===undefined ? descriptor.restore!=null :
+            (!descriptor.restore || !revisionIdOk(descriptor.restore.revision_id) ||
+              !/^[A-Za-z0-9_-]{1,160}$/.test(descriptor.restore.provider_file_id??"") ||
+              !/^(0|[1-9]\d{0,19})$/.test(descriptor.restore.size??"") ||
+              (descriptor.restore.sha256==null && descriptor.restore.md5==null)))) fail();
+      }else if(modify){
         if(!verifiedResultMode || !modifyShape(mutation) || mutation.target_kind!=="file" ||
           Object.keys(mutation).some(k=>!["operation","source_path","destination_path","target_kind","source_file_version"].includes(k))) fail();
       }else if(mutation?.operation!=="create" ||
@@ -178,6 +194,26 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           logAuthorityFailure(phase,"provider_identity","SOURCE_VERSION_MISMATCH");
           fail();
         }
+        if(replace && request.provider_identity.destination_file_version!==input.destination_file_version){
+          logAuthorityFailure(phase,"provider_identity","DESTINATION_VERSION_MISMATCH");
+          fail();
+        }
+        // Keeping the current head forever must stay within Drive's 200 limit.
+        if(replace && phase==="initial" && await metadata.countKeptRevisions(request.provider_identity.destination_file_id)>=200){
+          logAuthorityFailure(phase,"provider_identity","REVISION_KEEP_LIMIT");
+          fail();
+        }
+        // The level covers text files whose kept content can be reverted:
+        // a text type, at most 1 MiB, with a sha256 to check a restore by.
+        if(replace && phase==="initial"){
+          const target=await metadata.getFile(request.provider_identity.destination_file_id);
+          if(!/^(text\/[a-z0-9.+-]+|application\/(json|xml))$/.test(target?.mimeType??"") ||
+            !/^[0-9a-f]{64}$/.test(target.sha256Checksum??"") || !/^(0|[1-9]\d{0,19})$/.test(target.size??"") ||
+            Number(target.size)>1024*1024){
+            logAuthorityFailure(phase,"provider_identity","REPLACE_TARGET_UNSUPPORTED");
+            fail();
+          }
+        }
         return Object.freeze({...result.authority,workspace_version:"provider+canonical:"+hash([result.authority.workspace_version,request.provider_identity])});
       };
       let startedProvider=null, saved=null;
@@ -189,16 +225,30 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           const result=await invoke({action:"provider_attempt",attempt});
           if(result?.status!=="committed" || result.attempt_recorded!==true || !uuid(result.receipt_id) || !isDeepStrictEqual(result.attempt,attempt)) fail();
         }};
-      const effect=modify ? createGoogleDriveNativeModifyEffect({...effectConfig,get_file:metadata.getFile})
+      // The replacement bytes are fixed before any reservation: the new text,
+      // or a restored revision read back and checked against its pin.
+      let replacement=null;
+      if(replace && mutation.content!==undefined) replacement=new Uint8Array(Buffer.from(mutation.content,"utf8"));
+      else if(replace){
+        const restore=descriptor.restore;
+        replacement=await metadata.downloadRevision(restore.provider_file_id,restore.revision_id,1024*1024);
+        if(String(replacement.byteLength)!==restore.size || (restore.sha256!=null && sha256Hex(replacement)!==restore.sha256) ||
+          (restore.md5!=null && md5Hex(replacement)!==restore.md5)) fail();
+      }
+      const effect=replace ? createGoogleDriveNativeReplaceEffect({...effectConfig,get_file:metadata.getFile,get_revision:metadata.getRevision,replacement,
+          release_revision_ids:descriptor.revision_releases})
+        : modify ? createGoogleDriveNativeModifyEffect({...effectConfig,get_file:metadata.getFile})
         : createGoogleDriveNativeCreateEffect(effectConfig);
       const verifierConfig={managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         include_verified_proof:verifiedResultMode,clock};
-      const verify=modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
+      const verify=replace ? createGoogleDriveReplacePostconditionVerifier({...verifierConfig,get_revision:metadata.getRevision})
+        : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
         : createGoogleDriveCreatePostconditionVerifier({...verifierConfig,require_effect_provider_id:true});
-      const proofContract=modify ? `clued.storage-${mutation.operation}-verified/1` : "clued.storage-create-verified/2";
+      const proofContract=replace ? "clued.storage-replace-verified/1"
+        : modify ? `clued.storage-${mutation.operation}-verified/1` : "clued.storage-create-verified/2";
       const host=createResourceCenterOnlineToolHost({trusted_profile:profile,resolve_artifact_online:resolveAuthority,
-        mutation_effect:effect,scan_boundary:scan,clock,qualified_operations:modify?[mutation.operation]:["create"],
+        mutation_effect:effect,scan_boundary:scan,clock,qualified_operations:modify||replace?[mutation.operation]:["create"],
         prepare_write:async({mutation:input,binding})=>{
           const request=await authorityRequest(input);
           const result=await invoke({action:"begin",prepare:{action:"prepare",request_key:"account-job:"+ref.job_id,

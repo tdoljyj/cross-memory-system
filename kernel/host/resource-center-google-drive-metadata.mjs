@@ -111,6 +111,81 @@ export function createGoogleDriveMetadataApi({
     return { id: result.id, shared: result.shared, permissionIds: result.permissionIds };
   }
 
+  // One revision's retention flag and content identity (P4 replace/revert).
+  async function getRevision(fileId, revisionId, {signal} = {}) {
+    if (typeof fileId !== "string" || !/^[A-Za-z0-9_-]+$/.test(fileId) ||
+      typeof revisionId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(revisionId)) {
+      throw new TypeError("Invalid Drive revision ID.");
+    }
+    const url = new URL(`${DRIVE_API}/${encodeURIComponent(fileId)}/revisions/${encodeURIComponent(revisionId)}`);
+    url.searchParams.set("fields", "id,keepForever,size,md5Checksum");
+    signal?.throwIfAborted();
+    const result = await read(url.href, await credential(false), signal);
+    if (!result || result.id !== revisionId) throw new Error("DRIVE_METADATA_MISMATCH");
+    return result;
+  }
+
+  // The bytes of one revision, at most maxBytes (P4 revert). Read-only.
+  async function downloadRevision(fileId, revisionId, maxBytes, {signal} = {}) {
+    if (typeof fileId !== "string" || !/^[A-Za-z0-9_-]+$/.test(fileId) ||
+      typeof revisionId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(revisionId) ||
+      !Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > 10 * 1024 * 1024) throw new TypeError("Invalid Drive revision download.");
+    const url = new URL(`${DRIVE_API}/${encodeURIComponent(fileId)}/revisions/${encodeURIComponent(revisionId)}`);
+    url.searchParams.set("alt", "media");
+    const token = await credential(false);
+    let response;
+    try {
+      response = await fetchImpl(url.href, { method: "GET", headers: { authorization: `Bearer ${token}`, "cache-control": "no-store" },
+        cache: "no-store", redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) });
+    } catch (error) {
+      if (error?.name === "TimeoutError") throw new Error("DRIVE_METADATA_TIMEOUT");
+      if (subrequestLimit(error)) throw new Error("DRIVE_METADATA_SUBREQUEST_LIMIT");
+      throw new Error("DRIVE_METADATA_REQUEST_FAILED");
+    }
+    if (!response.ok || !response.body) throw new Error("DRIVE_METADATA_UNAVAILABLE");
+    const reader = response.body.getReader(), chunks = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) { await reader.cancel().catch(() => {}); throw new Error("DRIVE_REVISION_TOO_LARGE"); }
+        chunks.push(value);
+      }
+    } catch (error) {
+      if (error?.message === "DRIVE_REVISION_TOO_LARGE") throw error;
+      throw new Error("DRIVE_METADATA_RESPONSE_INVALID");
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return bytes;
+  }
+
+  // Number of revisions of one file that Drive keeps forever (limit 200).
+  async function countKeptRevisions(fileId, {signal} = {}) {
+    if (typeof fileId !== "string" || !/^[A-Za-z0-9_-]+$/.test(fileId)) throw new TypeError("Invalid Drive file ID.");
+    const token = await credential(false);
+    let pageToken = null, kept = 0;
+    const seenTokens = new Set();
+    for (let page = 0; page < 20; page += 1) {
+      const url = new URL(`${DRIVE_API}/${encodeURIComponent(fileId)}/revisions`);
+      url.searchParams.set("fields", "nextPageToken,revisions(id,keepForever)");
+      url.searchParams.set("pageSize", "1000");
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      const result = await read(url.href, token, signal);
+      if (!Array.isArray(result?.revisions)) throw new Error("DRIVE_LIST_INVALID");
+      kept += result.revisions.filter((revision) => revision?.keepForever === true).length;
+      const next = result.nextPageToken;
+      if (!next) return kept;
+      if (typeof next !== "string" || seenTokens.has(next)) throw new Error("DRIVE_PAGINATION_INVALID");
+      seenTokens.add(next);
+      pageToken = next;
+    }
+    throw new Error("DRIVE_PAGINATION_LIMIT");
+  }
+
   async function list({ parent_id: parentId, name }, enumerate, signal) {
     const q = `${driveLiteral(parentId)} in parents${enumerate ? "" : ` and name = ${driveLiteral(name)}`} and trashed = false`;
     // drive.file silently omits files created by other applications, even
@@ -146,6 +221,6 @@ export function createGoogleDriveMetadataApi({
     throw new Error("DRIVE_PAGINATION_LIMIT");
   }
 
-  return Object.freeze({ getFile, getSharing, listChildren: (input, {signal} = {}) => list(input, false, signal),
+  return Object.freeze({ getFile, getSharing, getRevision, countKeptRevisions, downloadRevision, listChildren: (input, {signal} = {}) => list(input, false, signal),
     listFolder: (parentId, {signal} = {}) => list({ parent_id: parentId }, true, signal) });
 }
