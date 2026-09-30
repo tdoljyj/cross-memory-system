@@ -22,6 +22,7 @@ DEFAULT_REPOSITORY = "tdoljyj/cross-memory-system"
 DEFAULT_STARTUP_DELAY_SECONDS = 300
 DEFAULT_MINIMUM_REPEATS = 2
 DEFAULT_LOOKBACK_HOURS = 24
+OCCUPATION_DISPATCH_GRACE_SECONDS = 30
 HEARTBEAT_WORKFLOW = "clued-ci-runner-heartbeat.yml"
 HEARTBEAT_PREFIX = "runner-heartbeat / "
 TRANSPORT_REF = "automation/clued-ci-health-event"
@@ -353,11 +354,11 @@ def classify_wait(
 ) -> dict[str, Any]:
     """Explain a slow start on runner R from the collected jobs.
 
-    runner_occupied: other collected jobs kept R busy for all but at most the
-    threshold of the wait. runner_idle_while_work_queued: R ran no collected job
+    runner_occupied: collected jobs cover the wait except a short dispatch
+    grace. runner_idle_while_work_queued: R ran no collected job
     for longer than the threshold while another job R could serve was waiting
-    for that long, which points at R being offline or suspended rather than
-    busy. Jobs outside the collected runs are invisible, so both are best-effort.
+    for that long. Missing observed occupation is not proof of online/idleness,
+    suspension or an outage. Jobs outside the sample are invisible.
     """
     runner = str(job.get("runner_name") or "")
     labels = runner_labels.get(runner)
@@ -406,7 +407,7 @@ def classify_wait(
             "idle_seconds": idle_seconds,
             "queued_eligible_jobs": evidence[:10],
         }
-    if idle_seconds <= threshold_seconds:
+    if occupying and idle_seconds <= min(threshold_seconds, OCCUPATION_DISPATCH_GRACE_SECONDS):
         return {"wait_cause": "runner_occupied", "idle_seconds": idle_seconds, "occupied_by": occupying[:5]}
     return {"wait_cause": "unexplained", "idle_seconds": idle_seconds}
 
@@ -446,7 +447,9 @@ def evaluate_startup_delays(
             continue
         if delay_seconds <= threshold_seconds:
             continue
-        if job.get("wait_cause"):
+        if (job.get("wait_cause") == "runner_occupied" and job.get("occupied_by")
+                and isinstance(job.get("idle_seconds"), int)
+                and 0 <= job["idle_seconds"] <= min(threshold_seconds, OCCUPATION_DISPATCH_GRACE_SECONDS)):
             # Carried forward from an earlier report, whose job context is gone.
             cause = {
                 key: job[key]
@@ -457,6 +460,12 @@ def evaluate_startup_delays(
             cause = {"wait_cause": "unassigned"}
         else:
             cause = classify_wait(job, created, started, jobs, runner_labels, now, threshold_seconds)
+            if (cause["wait_cause"] == "unexplained"
+                    and job.get("wait_cause") in {"unexplained", "runner_idle_while_work_queued"}):
+                # Keep previously collected evidence if new context adds none.
+                cause = {key: job[key] for key in (
+                    "wait_cause", "idle_seconds", "occupied_by", "queued_eligible_jobs"
+                ) if key in job}
         slow_by_pool.setdefault(pool, []).append({
             "job_id": job_id,
             "run_id": job.get("run_id"),
@@ -482,11 +491,18 @@ def evaluate_startup_delays(
                 for queued in item.get("queued_eligible_jobs", []):
                     entry["queued"][str(queued["job_id"])] = queued
         if len(slow_jobs) >= minimum_repeats:
+            capacity_only = causes.get("runner_occupied", 0) == len(slow_jobs)
+            classification = "capacity_pressure" if capacity_only else "startup_delay_needs_investigation"
             anomalies.append(anomaly(
                 "REPEATED_STARTUP_DELAY",
-                f"pool:{pool}:startup-delay-repeated",
-                f"{pool} exceeded the startup-delay threshold at least {minimum_repeats} times.",
+                f"pool:{pool}:startup-delay-repeated:{classification}",
+                (f"{pool} has repeated startup waits explained by observed runner occupation."
+                 if capacity_only else
+                 f"{pool} has repeated startup waits with incomplete occupation evidence; investigate before inferring an outage."),
                 pool=pool,
+                classification=classification,
+                severity="info" if capacity_only else "warning",
+                occupation_evidence="sampled_jobs_only",
                 threshold_seconds=threshold_seconds,
                 minimum_repeats=minimum_repeats,
                 occurrences=len(slow_jobs),
@@ -495,15 +511,18 @@ def evaluate_startup_delays(
             ))
 
     # A runner that sat idle while at least minimum_repeats jobs it could serve
-    # each waited past the threshold was unavailable, not merely busy.
+    # each waited past the threshold needs investigation. A sample cannot
+    # establish whether it was offline, suspended, or doing uncollected work.
     for runner, entry in sorted(idle_evidence.items()):
         if len(entry["queued"]) < minimum_repeats:
             continue
         anomalies.append(anomaly(
             "RUNNER_IDLE_WHILE_WORK_QUEUED",
             f"runner:{runner}:idle-while-work-queued",
-            f"{runner} ran no job while at least {minimum_repeats} jobs it could serve waited past the threshold; it was likely offline or suspended.",
+            f"No collected job explains {runner}'s wait while at least {minimum_repeats} eligible jobs queued; online/idleness and the cause remain unverified.",
             runner=runner,
+            severity="warning",
+            occupation_evidence="sampled_jobs_only",
             pool=entry["pool"],
             threshold_seconds=threshold_seconds,
             minimum_repeats=minimum_repeats,
@@ -515,6 +534,7 @@ def evaluate_startup_delays(
         "lookback_hours": lookback_hours,
         "threshold_seconds": threshold_seconds,
         "minimum_repeats": minimum_repeats,
+        "idle_seconds_semantics": "time_not_covered_by_collected_jobs_not_proof_of_online_idle",
         "slow_occurrences_by_pool": {
             pool: entries for pool, entries in sorted(slow_by_pool.items())
         },
@@ -643,14 +663,15 @@ def previous_delay_jobs(report: dict[str, Any]) -> list[dict[str, Any]]:
             if created is None:
                 continue
             started_at = entry.get("started_at")
-            if not started_at:
+            queued = entry.get("kind") == "queued"
+            if not started_at and not queued:
                 started_at = isoformat(created + timedelta(seconds=int(entry.get("delay_seconds") or 0)))
             job = {
                 "id": entry.get("job_id"),
                 "run_id": entry.get("run_id"),
                 "name": entry.get("name"),
-                "status": "completed",
-                "conclusion": "success",
+                "status": "queued" if queued else "completed",
+                "conclusion": None if queued else "success",
                 "labels": labels,
                 "created_at": entry.get("created_at"),
                 "started_at": started_at,
@@ -661,6 +682,63 @@ def previous_delay_jobs(report: dict[str, Any]) -> list[dict[str, Any]]:
                 if key in entry:
                     job[key] = entry[key]
             result.append(job)
+    return result
+
+
+def collect_delay_context_jobs(
+    client: GitHubClient,
+    repository: str,
+    prior_jobs: list[dict[str, Any]],
+    known_jobs: list[dict[str, Any]],
+    since: datetime,
+    max_runs: int,
+) -> list[dict[str, Any]]:
+    """Recover bounded occupation context around carried, unexplained waits.
+
+    Recent runs alone can evict older occupying jobs. Re-read the slow job's
+    exact run (also recovering its runner assignment), then older runs anchored
+    at the wait end. At most max_runs additional job-list requests are made.
+    The resulting sample still cannot prove that a runner was online and idle.
+    """
+    unresolved = [job for job in prior_jobs
+                  if job.get("wait_cause") != "runner_occupied"
+                  and (created := parse_time(job.get("created_at"))) is not None
+                  and created >= since]
+    if not unresolved or max_runs <= 0:
+        return []
+    known_runs = {str(job["run_id"]) for job in known_jobs if job.get("run_id") is not None}
+    fetched: set[str] = set()
+    result: list[dict[str, Any]] = []
+
+    def fetch_run(run_id: Any) -> None:
+        key = str(run_id)
+        if run_id is None or key in known_runs or key in fetched or len(fetched) >= max_runs:
+            return
+        page = client.get(f"/repos/{repository}/actions/runs/{run_id}/jobs", {"filter": "all", "per_page": 100})
+        fetched.add(key)
+        for job in page.get("jobs", []):
+            job.setdefault("run_id", run_id)
+            result.append(job)
+
+    for job in unresolved:
+        fetch_run(job.get("run_id"))
+    # Nearby waits share an anchor, avoiding repeated listings of the same runs.
+    anchors: set[str] = set()
+    for job in sorted(unresolved, key=lambda item: item.get("created_at") or "", reverse=True):
+        end = parse_time(job.get("started_at")) or parse_time(job.get("created_at"))
+        if end is None or len(fetched) >= max_runs:
+            continue
+        anchor = end.replace(minute=0, second=0, microsecond=0)
+        key = isoformat(anchor)
+        if key in anchors:
+            continue
+        anchors.add(key)
+        runs = client.get(f"/repos/{repository}/actions/runs", {
+            "created": f"{isoformat(since - timedelta(hours=24))}..{isoformat(end)}",
+            "per_page": max_runs,
+        }).get("workflow_runs", [])
+        for run in runs:
+            fetch_run(run["id"])
     return result
 
 
@@ -782,6 +860,16 @@ def main() -> int:
             )
             known_job_ids.update(str(job.get("id")) for job in heartbeat_jobs)
             prior_jobs = collect_previous_delay_jobs(client, args.repository)
+            context_jobs = collect_delay_context_jobs(
+                client, args.repository, prior_jobs, jobs,
+                now - timedelta(hours=args.lookback_hours), args.max_runs,
+            )
+            # Fresh job objects supersede historical pseudo-jobs and restore
+            # runner identity, completion times, and present queue state.
+            by_id = {str(job.get("id")): job for job in context_jobs}
+            jobs = [by_id.pop(str(job.get("id")), job) for job in jobs]
+            jobs.extend(by_id.values())
+            known_job_ids = {str(job.get("id")) for job in jobs}
             jobs.extend(
                 job for job in prior_jobs
                 if str(job.get("id")) not in known_job_ids
