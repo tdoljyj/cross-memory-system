@@ -235,6 +235,19 @@ test("boundary watcher is quiet for the managed root and unrelated system files"
   assert.deepEqual(violations, []);
 });
 
+test("island rule counts only app-authorized Clued-named entries; a missing field still counts", () => {
+  const outside = "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/Clued_\u5355\u4e00\u6570\u636e\u6e90\u65b9\u6848";
+  const paths = (entries) => detectResourceCenterBoundaryViolations({ profile, observed_entries: entries }).map((v) => v.path);
+  assert.deepEqual(paths([{ path: outside, is_app_authorized: false }]), []);
+  assert.deepEqual(paths([{ path: outside, is_app_authorized: true }]), [outside]);
+  assert.deepEqual(paths([{ path: outside }]), [outside]);
+  assert.deepEqual(paths([{ path: outside, is_app_authorized: "false" }]), [outside]);
+  assert.deepEqual(paths([outside]), [outside]);
+  // An explicit Clued resource role is not the island rule and is never exempt.
+  const role = "G:/\u6211\u7684\u4e91\u7aef\u786c\u76d8/notes.md";
+  assert.deepEqual(paths([{ path: role, artifact_role: "clued_resource", is_app_authorized: false }]), [role]);
+});
+
 test("boundary watcher reports sibling and parent-root Clued islands", () => {
   const violations = detectResourceCenterBoundaryViolations({
     profile,

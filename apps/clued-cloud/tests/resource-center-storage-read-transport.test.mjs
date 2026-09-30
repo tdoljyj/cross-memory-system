@@ -126,6 +126,10 @@ function harness(options = {}) {
     }
     assert.equal(String(url), "https://www.googleapis.com/batch/drive/v3");
     assert.equal(new Headers(init.headers).get("authorization"), "Bearer fixture-read-access-token");
+    // Injected transient Drive faults by batch number (1-based, counted across calls on this harness).
+    state.batches = (state.batches ?? 0) + 1;
+    const fault = options.batchFault?.(state.batches, String(init.body));
+    if (fault) return fault;
     const parts = [...String(init.body).matchAll(/Content-ID: <([^>]+)>\r\n\r\nGET ([^ ]+) HTTP/g)].map(([, id, path]) => {
       const request = new URL("https://www.googleapis.com" + path);
       state.batchPaths.push(path);
@@ -259,6 +263,72 @@ test("search stays inside the root subtree and reports no filtered counts", asyn
   assert.equal((await browse({ operation: "search", name_contains: "plan", within: OUTSIDE })).value.error, "not_found_in_scope");
   const md = await browse({ operation: "search", mime_type: "text/markdown" });
   assert.deepEqual(names(md.value), ["Plan A.md", "Readme.md"]);
+});
+
+// A part-level 429 for every request in the batch (fixed status, no provider text).
+const partFault = (body, status = 429) => {
+  const boundary = "batch_" + randomUUID();
+  const ids = [...body.matchAll(/Content-ID: <([^>]+)>/g)].map(([, id]) => id);
+  return new Response(ids.map(id => `--${boundary}\r\nContent-Type: application/http\r\nContent-ID: <response-${id}>\r\n\r\n` +
+    `HTTP/1.1 ${status} Fault\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{}`).join("\r\n") + `\r\n--${boundary}--\r\n`,
+    { status: 200, headers: { "content-type": `multipart/mixed; boundary=${boundary}` } });
+};
+async function withWarnings(run) {
+  const warnings = [], warn = console.warn;
+  console.warn = w => warnings.push(w);
+  try { return { result: await run(), warnings }; } finally { console.warn = warn; }
+}
+const fixedWarnings = warnings => {
+  for (const w of warnings) {
+    assert.deepEqual(Object.keys(w).sort(), ["code", "event", "outcome"]);
+    assert.equal(w.event, "storage_read_drive_transient");
+    assert.match(w.code, /^DRIVE_BATCH_(TIMEOUT|HTTP_429|HTTP_500)$/);
+  }
+  assert.equal(JSON.stringify(warnings).includes("Folder"), false, "no provider IDs in logs");
+};
+
+test("search retries a transient Drive batch once and still completes; the retry counts as a Google request", async () => {
+  const baseline = await browse({ operation: "search", name_contains: "plan" });
+  for (const fault of [() => new Response("rate limited", { status: 429 }), body => partFault(body)]) {
+    const { result: found, warnings } = await withWarnings(() => browse({ operation: "search", name_contains: "plan" },
+      { batchFault: (n, body) => n === 1 ? fault(body) : undefined }));
+    assert.equal(found.isError, false);
+    assert.deepEqual(names(found.value), names(baseline.value));
+    assert.equal(found.value.complete, true); assert.equal(found.value.next_cursor, null);
+    assert.equal(found.h.googleRequests, baseline.h.googleRequests + 1, "the retry is one more budgeted subrequest");
+    const fin = found.h.calls.at(-1).p_input;
+    assert.equal(fin.action, "finalize"); assert.equal(fin.complete, true);
+    fixedWarnings(warnings);
+    assert.deepEqual(warnings.map(w => w.outcome), ["retried"]);
+  }
+});
+
+test("a transient Drive failure that survives the retry after round 1 ends search with a cursor, not an error", async () => {
+  const drive = tree();
+  // Round 1 (the root) succeeds; every later batch returns 503.
+  const { result: partial, warnings } = await withWarnings(() => browse({ operation: "search", mime_type: "text/markdown" },
+    { drive, batchFault: n => n >= 2 ? new Response("unavailable", { status: 503 }) : undefined }));
+  assert.equal(partial.isError, false);
+  assert.equal(partial.value.complete, false); assert.ok(partial.value.next_cursor);
+  assert.deepEqual(names(partial.value), ["Readme.md"]);
+  assert.equal(partial.h.googleRequests, 3, "round 1, then the failed round 2 and its one retry");
+  const fin = partial.h.calls.at(-1).p_input;
+  assert.equal(fin.action, "finalize"); assert.equal(fin.complete, false);
+  fixedWarnings(warnings);
+  assert.deepEqual(warnings.map(w => [w.code, w.outcome]), [["DRIVE_BATCH_HTTP_500", "retried"], ["DRIVE_BATCH_HTTP_500", "absorbed"]]);
+  // The requeued folder is searched on the next page once Drive recovers.
+  const resumed = await browse({ operation: "search", mime_type: "text/markdown", cursor: partial.value.next_cursor }, { drive });
+  assert.equal(resumed.isError, false); assert.equal(resumed.value.complete, true);
+  assert.deepEqual(names(resumed.value), ["Plan A.md"]);
+  // Round 1 still fails closed, and list/stat/resolve are unchanged.
+  for (const args of [{ operation: "search", name_contains: "plan" }, { operation: "list" }]) {
+    const { result: failed, warnings: logged } = await withWarnings(() => browse(args,
+      { drive, batchFault: () => new Response("unavailable", { status: 503 }) }));
+    assert.equal(failed.value.error, "storage_read_unavailable", args.operation);
+    assert.equal(failed.h.googleRequests, 2, "one retry only");
+    fixedWarnings(logged);
+    assert.deepEqual(logged.map(w => w.outcome), ["retried", "fatal"]);
+  }
 });
 
 test("cursors are sealed, bound and re-checked: tampering, cross-binding and moved folders fail closed", async () => {

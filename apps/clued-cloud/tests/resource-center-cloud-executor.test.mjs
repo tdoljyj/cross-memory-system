@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fixture, ids, root } from "./resource-center-cloud-executor.fixture.mjs";
+import { fixture, ids, root, normalScope } from "./resource-center-cloud-executor.fixture.mjs";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 test('cloud composition runs scan, admission, one durable start, one POST and verified receipt without a mounted disk',async()=>{
   const f=fixture(),executor=f.run();const result=await executor.run(f.reference);
@@ -321,4 +321,84 @@ test('batched boundary scan keeps post-write verify inside the subrequest budget
   assert.equal(after.posts,1);
   assert.deepEqual(after.logs,[]);
   assert.ok(after.used<=52,String(after.used));
+});
+
+// StorageNormalUse.v0.1 §3.1 / Clued Decision fd94bd2f. Both credential profiles hold
+// drive.metadata.readonly, so both list the Owner's own and other tools' entries
+// (isAppAuthorized: false). Production writes were denied because the island rule
+// counted the Owner's "Clued_*" documents beside the root. Only the island rule now
+// counts app-authorized entries; structural and absence checks see everything.
+const FOLDER='application/vnd.google-apps.folder';
+const ownerEntry=(id,name,parent,mimeType=FOLDER)=>({id,name,parents:[parent],version:'1',trashed:false,mimeType});
+const ownerCluedMaterial=()=>[
+  ownerEntry('o-doc','Clued_单一数据源方案','parent','application/vnd.google-apps.document'),
+  ownerEntry('o-folder','Clued 旧资料','parent'),ownerEntry('o-inner','notes.txt','o-folder','text/plain')];
+const withBatch=(f,{strip=false}={})=>{
+  // The batch transport's fields include isAppAuthorized for reads and listings.
+  const view=x=>{const {isAppAuthorized=true,...rest}=structuredClone(x);return strip?rest:{...rest,isAppAuthorized};};
+  f.config.metadata_batch=async()=>({getFiles:async ids=>ids.map(id=>view(f.files.get(id))),
+    listFolders:async ids=>ids.map(id=>[...f.files.values()].filter(x=>x.parents.includes(id)).map(view))});
+};
+const quietRun=async f=>{
+  const logs=[],original=console.warn;console.warn=message=>logs.push(JSON.parse(message));
+  try{return {result:await f.run().run(f.reference),logs};}finally{console.warn=original;}
+};
+const credentials={legacy:undefined,normal:{scope:normalScope}};
+for(const mode of ['single','batched'])for(const [profile,credential] of Object.entries(credentials)){
+  const make=(options={})=>{const f=fixture({credential,...options});if(mode==='batched')withBatch(f);return f;};
+  test(`${mode}/${profile}: Owner Clued-named material outside the root no longer denies a create`,async()=>{
+    const f=make({owner:ownerCluedMaterial()});const {result,logs}=await quietRun(f);
+    assert.deepEqual(result,{status:'committed',job_id:ids.job,receipt_id:ids.receipt,execution_permitted:false});
+    assert.equal(f.info().starts,1);assert.equal(f.info().posts,1);assert.deepEqual(logs,[]);
+  });
+  test(`${mode}/${profile}: an app-authorized Clued-named stray outside the root is still denied`,async()=>{
+    const f=make({owner:ownerCluedMaterial(),island:true});const {result,logs}=await quietRun(f);
+    assert.equal(result.status,'deny');assert.equal(result.error_code,'UNAUTHORIZED_WORKSPACE_MUTATION');
+    assert.equal(f.info().starts,0);assert.equal(f.info().posts,0);
+    assert.deepEqual(logs,[{event:'storage_cloud_denied',error_code:'UNAUTHORIZED_WORKSPACE_MUTATION'}]);
+  });
+  test(`${mode}/${profile}: an Owner same-name file in the destination folder fails exactly as a Clued one`,async()=>{
+    const owner=make({owner:[ownerEntry('o-same','new.txt','track','text/plain')]});
+    const own=make();own.files.set('c-same',ownerEntry('c-same','new.txt','track','text/plain'));
+    const a=await quietRun(owner),b=await quietRun(own);
+    assert.notEqual(a.result.status,'committed');assert.deepEqual(a.result,b.result);assert.deepEqual(a.logs,b.logs);
+    assert.equal(owner.info().posts,0);assert.equal(own.info().posts,0);
+  });
+  test(`${mode}/${profile}: Owner duplicates, shortcuts, root impersonation and limits keep their failures`,async()=>{
+    const cases=[
+      [/^DRIVE_BOUNDARY_PATH_AMBIGUOUS$/,[ownerEntry('o-a','same','parent','text/plain'),ownerEntry('o-b','same','parent','text/plain')]],
+      [/^DRIVE_BOUNDARY_PATH_AMBIGUOUS$/,[ownerEntry('o-spoof','Clued_资料中心','parent')]],
+      [/^DRIVE_BOUNDARY_SHORTCUT_UNQUALIFIED$/,[ownerEntry('o-link','link','parent','application/vnd.google-apps.shortcut')]],
+      [/^DRIVE_BOUNDARY_DEPTH_LIMIT$/,[ownerEntry('o-d0','d0','parent'),...Array.from({length:9},(_,i)=>ownerEntry('o-d'+(i+1),'d'+(i+1),'o-d'+i))]],
+      [/^DRIVE_(BOUNDARY_ENTRY|ENUMERATION)_LIMIT$/,Array.from({length:10001},(_,i)=>ownerEntry('o-n'+i,'n'+i+'.png','parent','image/png'))],
+    ];
+    for(const [expected,owner] of cases){
+      const f=make({owner});const {result,logs}=await quietRun(f);
+      assert.equal(result.status,'unavailable',String(expected));assert.equal(f.info().starts,0);assert.equal(f.info().posts,0);
+      assert.equal(logs.length,1);assert.equal(logs[0].event,'storage_cloud_unavailable');assert.match(logs[0].error_code,expected);
+    }
+  });
+}
+test('a listing without isAppAuthorized counts an Owner Clued-named entry (fail closed)',async()=>{
+  const f=fixture({owner:ownerCluedMaterial()});withBatch(f,{strip:true});
+  const {result}=await quietRun(f);
+  assert.equal(result.status,'deny');assert.equal(result.error_code,'UNAUTHORIZED_WORKSPACE_MUTATION');assert.equal(f.info().posts,0);
+});
+test('unavailable runs log one fixed code: shape checks, boundary scan refusals, never inputs',async()=>{
+  const cases=[
+    ['CLOUD_MUTATION_SHAPE_INVALID',f=>{const load=f.config.load_job;f.config.load_job=async r=>({...await load(r),mutation:{operation:'create',target_kind:'file',destination_path:root+'/track/x.txt'}});}],
+    ['CLOUD_DESCRIPTOR_INVALID',f=>{const load=f.config.load_job;f.config.load_job=async r=>({...await load(r),request_digest:'private '+root});}],
+    ['CLOUD_PROFILE_INVALID',f=>{const load=f.config.load_job;f.config.load_job=async r=>{const d=await load(r);d.profile.policy_version='other';return d;};}],
+    ['DRIVE_BOUNDARY_PATH_AMBIGUOUS',f=>{f.files.set('dup',ownerEntry('dup','track','parent'));f.files.set('dup2',ownerEntry('dup2','track','parent'));}],
+    ['UNSPECIFIED',f=>{f.config.load_job=async()=>{throw new Error('private database detail '+ids.job);};}],
+  ];
+  for(const [code,arrange] of cases){
+    const f=fixture();arrange(f);
+    const logs=[],original=console.warn;console.warn=message=>logs.push(message);
+    let result;
+    try{result=await f.run().run(f.reference);}finally{console.warn=original;}
+    assert.equal(result.status,'unavailable',code);assert.equal(f.info().starts,0,code);assert.equal(f.info().posts,0,code);
+    assert.deepEqual(logs.map(m=>JSON.parse(m)),[{event:'storage_cloud_unavailable',error_code:code}],code);
+    assert.equal(logs.join('').includes(root),false);assert.equal(logs.join('').includes(ids.job),false);
+  }
 });

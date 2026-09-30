@@ -144,6 +144,19 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 | R10 | `normal` token + `text/1` 授权 + 非 Clued 文件 | `scope_upgrade_required`；media / export 请求数 = 0 |
 | R11 | 复核预算不足 | `storage_read_unavailable`；media 请求数 = 0 |
 
+### 3.1 写路径的孤岛规则只计应用已授权条目
+
+**原因（2026-09-30，作业 `b9d6db9d`）。** 两种凭据档位都能列出整个 Drive 的元数据：`legacy` 一直持有 `drive.metadata.readonly`（`kernel/host/resource-center-google-scopes.mjs`），`normal` 另加 `drive.readonly`。元数据 API 的不存在 / 唯一性证明正依赖这一完整视图（`resource-center-google-drive-metadata.mjs` 的 `NAMESPACE_READ_SCOPES`）。云端执行器的边界扫描从 `root_parent_id`（My Drive）起枚举，`detectResourceCenterBoundaryViolations`（`kernel/policy/resource-center-mutation-policy.mjs`）的孤岛规则把资料根之外任何名称含 `clued` 的条目判为 `UNAUTHORIZED_WORKSPACE_MUTATION`。Owner 自己的 `Clued_*` 文档、文件夹，以及其他工具在 My Drive 中的同名资料因此被当作孤岛，所有写作业在预留前被拒绝。这与凭据档位无关：Drive 中一旦存在这类 Owner 资料，两种档位同样受影响。
+
+**修复（Clued Decision `fd94bd2f-ff3d-43ad-9520-5c8d8cd5ee84`）。** 只有孤岛规则收窄，其余一律不变。
+
+1. **孤岛规则只计 `isAppAuthorized === true` 的条目。** 边界扫描（`kernel/host/resource-center-google-drive-boundary.mjs`，逐目录与批量两种模式）的列举在 `fields` 中带上 `isAppAuthorized`：逐目录模式由执行器以 `listFolder(id, {app_authorized: true})` 请求，批量传输（`storage-google-metadata-batch.ts`）的 `fields` 本来就含该字段。扫描把每个观察到的条目连同 `is_app_authorized` 交给 `detectResourceCenterBoundaryViolations`；资料根之外、名称含 `clued` 的条目只有在 Clued 应用创建或打开过（`isAppAuthorized === true`）时才构成 `UNAUTHORIZED_WORKSPACE_MUTATION`。只有显式的 `is_app_authorized: false` 才豁免；字段缺失或取其他值按应用已授权处理，仍被标记（失败关闭）。显式 `artifact_role: "clued_resource"` 不属于孤岛规则，不因该字段豁免。
+2. **列举不过滤。** 扫描、provider 身份解析、创建 / 改名移动 / 覆盖的后置核验与唯一性检查、恢复结算看到的仍是完整列举，Owner 与其他工具的条目照常参与：同名 / `PATH_AMBIGUOUS`、快捷方式、根冒充 / `ROOT_CHANGED`、深度与条目上限（10000）以及身份解析和后置核验的不存在 / 唯一性证明全部保持原样。目标目录中存在 Owner 的同名文件时，结果与该文件由 Clued 创建时完全相同（失败关闭）。
+3. **形状比较忽略该字段。** 列举条目带 `isAppAuthorized`，而逐目录模式的 `getFile` 不带；扫描在比较目录与根的身份 / 版本时只去掉这一个字段，其余字段逐一比较。
+4. **诊断。** 执行器每个拒绝以 `console.warn({event:"storage_cloud_denied",error_code})` 记录固定码；描述符 / 形状检查（`CLOUD_DESCRIPTOR_INVALID`、`CLOUD_PROFILE_INVALID`、`CLOUD_MUTATION_SHAPE_INVALID`、`CLOUD_METADATA_BATCH_INVALID`）、`DRIVE_BOUNDARY_*` 扫描拒绝、凭据与 Drive 传输失败导致的 `unavailable`（作业报告为 `attention_required`）以 `storage_cloud_unavailable` 记录固定码（`CLOUD_*`、`DRIVE_*`、`PROVIDER_*`、`STORAGE_*`，其余为 `UNSPECIFIED`）。日志不含作业 ID、路径、扫描发现或 provider 文本。
+
+**测试（必过）**：合成 Drive 按现实建模，`legacy` 与 `normal` 凭据都列出 Owner 条目（`isAppAuthorized: false`）。资料根之外的 Owner `Clued_*` 文档 / 文件夹：扫描为空，创建照常提交（逐目录与批量两种模式，两种凭据；改名 / 覆盖的 DB 夹具同样放入该 Owner 文档）。应用授权的 Clued 命名意外条目仍被标记；字段缺失仍被标记。Owner 的重名、快捷方式、根冒充、深度与条目上限仍按原码失败；目标目录中的 Owner 同名文件与 Clued 同名文件结果相同。
+
 ## 4. 读取格式矩阵
 
 判定顺序：先按 Drive `mimeType`；通用类型再按扩展名与魔数；魔数与声明不符按魔数处理，响应带 `declared_mime_type`。所有交付带 `untrusted_content: true`。
@@ -242,7 +255,7 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 - `search` 增加 `text`（≤ 200 字符，转义 `\` 与 `'`）。现有 search 是 Worker 侧目录遍历：每轮取 ≤ `SEARCH_CHUNK = 32` 个目录，用一个 batch 请求列出子项（`'<id>' in parents`，`storage-google-metadata-batch.ts:159`），在 Worker 内按名称 / 类型过滤（`storage-read-agent.ts:410-446`）。
 - **选定方案：按父目录分块查询**（m-i）。`text` 存在时，每轮在原有子项列表 batch（继续承担目录遍历、名称与类型过滤）之外，再发一个 batch：同一块中每个目录一部分，查询 `'<id>' in parents and fullText contains '<text>' and trashed = false`（分页规则同 `listFolders`）。命中项是已判定在根内目录的直接子项，仍经 `scopedChildren` 处理多父对象（`storage-read-agent.ts:278-285`）。结果 = 全文命中 ∩ 名称 / 类型条件。
 - **不采用全账号查询再用 `inRoot` 过滤**：`drive.readonly` 下它会枚举整个 Drive 的命中，根外命中的元数据进入 Worker，且分页无上界、预算不可预测。
-- **预算**：`text` 搜索每轮消耗 2 个子请求（外加分页与多父复核），轮数上限仍为 `SEARCH_ROUNDS = 8`，保留 `SEARCH_RESERVE = 10`（`storage-read-agent.ts:18-21`）；预算或轮数耗尽时返回游标（`complete: false`），与现有语义一致。全文检索只覆盖 Drive 已建立索引的文件，响应带 `text_index: "provider"` 并在工具描述中说明可能漏检。
+- **预算**：`text` 搜索每轮消耗 2 个子请求（外加分页与多父复核），轮数上限仍为 `SEARCH_ROUNDS = 8`，保留 `SEARCH_RESERVE = 10`（`storage-read-agent.ts:18-21`）；预算或轮数耗尽时返回游标（`complete: false`），与现有语义一致。瞬时失败：Drive 批量请求超时、429 或 5xx 时，读取路径（仅读取，资格探测和执行器不重试）会在 250–750 ms 抖动后重试一次，重试计入 `SUBREQUEST_BUDGET` 并受整次调用 25 s 截止约束；重试后仍失败，搜索在第 1 轮之后把它当作预算耗尽处理（该块回队，返回 `complete: false` 与游标），第 1 轮以及 list / stat / resolve / read 仍失败即拒绝（`storage_read_unavailable`）。祖先遍历（`getFiles`）中的瞬时失败目前仍是致命的（已知限制）。日志只写固定标签 `{event: "storage_read_drive_transient", code, outcome}`。全文检索只覆盖 Drive 已建立索引的文件，响应带 `text_index: "provider"` 并在工具描述中说明可能漏检。
 - 因为命中本身泄露正文信息，`text` 需要 `normal` profile 且读取授权 `normal/1` 含 `read_content`，否则 `scope_upgrade_required`。N1。
 
 ### 5.3 `clued_storage_submit` 与 `clued_storage_upload_begin`

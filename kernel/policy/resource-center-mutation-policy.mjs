@@ -195,7 +195,12 @@ export function detectResourceCenterBoundaryViolations(input) {
     if (registeredExternalRoots.some((root) => isWithin(path, root))) continue;
 
     const explicitRole = typeof entry === "object" && entry?.artifact_role === "clued_resource";
-    const cluedNamed = path.split("/").some((segment) => /clued/i.test(segment));
+    // Island rule (Clued Decision fd94bd2f, StorageNormalUse §3.1): a Clued-named
+    // entry outside the managed root counts only when the Clued app created or
+    // opened it. Only an explicit `is_app_authorized: false` (Drive's
+    // isAppAuthorized) exempts it; a missing or other value still counts.
+    const appAuthorized = !(typeof entry === "object" && entry?.is_app_authorized === false);
+    const cluedNamed = appAuthorized && path.split("/").some((segment) => /clued/i.test(segment));
     const inManagedParent = parent ? isWithin(path, parent) : false;
     if (!explicitRole && !cluedNamed) continue;
 

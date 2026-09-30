@@ -1,5 +1,5 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
-import { createStorageGoogleMetadataBatch } from "./storage-google-metadata-batch";
+import { createStorageGoogleMetadataBatch, isDriveTransient } from "./storage-google-metadata-batch";
 import { createStorageFetch } from "./storage-fetch";
 import { isStorageScopeProfile, scopeProfile } from "./storage-google-scopes";
 import { bytesToBase64, bytesToBase64Url } from "./storage-base64";
@@ -74,6 +74,14 @@ export class StorageReadError extends Error {
     readonly detail?: { hint: string; next_page_start: number }) { super(code); }
 }
 function fail(code: StorageReadError["code"]): never { throw new StorageReadError(code); }
+/** Fixed-label log for a transient Drive batch failure (after its one retry):
+ * absorbed by search into complete:false, or fatal. No IDs or provider text. */
+function driveTransient(error: unknown, outcome: "absorbed" | "fatal"): boolean {
+  const code = error instanceof Error ? error.message : "";
+  if (!isDriveTransient(code)) return false;
+  console.warn({ event: "storage_read_drive_transient", code, outcome });
+  return true;
+}
 
 export const storageReadTool = {
   name: "clued_storage_browse",
@@ -291,7 +299,9 @@ export async function createStorageReadAgent(config: {
         if (++used > SUBREQUEST_BUDGET) throw new Error("DRIVE_READ_BUDGET");
         return base(url, init);
       };
-      const drive = createStorageGoogleMetadataBatch({ access_token: String(token.access_token), fetch: budgeted, signal: AbortSignal.timeout(25000) });
+      // §5.3: one bounded retry of a transient batch, counted in `used`.
+      const drive = createStorageGoogleMetadataBatch({ access_token: String(token.access_token), fetch: budgeted, signal: AbortSignal.timeout(25000),
+        transient_retry: true });
 
       // Parent-chain root scope (§5.2): every chain of every object must reach
       // the root by provider ID within MAX_DEPTH; otherwise out of scope. A
@@ -310,12 +320,16 @@ export async function createStorageReadAgent(config: {
             catch (error) {
               // A missing or invisible object is out of scope, like one outside
               // the root. A batch fails as a whole, so isolate each ID once.
-              if (!(error instanceof Error && error.message === "DRIVE_BATCH_HTTP_404") || !isolate) return fail("storage_read_unavailable");
+              if (!(error instanceof Error && error.message === "DRIVE_BATCH_HTTP_404") || !isolate) {
+                driveTransient(error, "fatal");
+                return fail("storage_read_unavailable");
+              }
               values = [];
               for (const id of chunk) {
                 try { values.push(...await drive.getFiles([id])); }
                 catch (single) {
                   if (single instanceof Error && single.message === "DRIVE_BATCH_HTTP_404") { missing404.add(id); continue; }
+                  driveTransient(single, "fatal");
                   return fail("storage_read_unavailable");
                 }
               }
@@ -347,11 +361,21 @@ export async function createStorageReadAgent(config: {
         return { known, fetchAll, inRoot };
       };
       const { known, fetchAll, inRoot } = walker();
-      // `null` only when this call's subrequest budget ran out: search then ends
-      // the page with a cursor instead of failing (list/stat/resolve fail closed).
-      const listChildren = async (folders: string[], fullText?: string): Promise<unknown[][] | null> => {
+      // `null` when this call's subrequest budget ran out, or (search only) when
+      // a transient Drive failure (timeout, 429, 5xx) survived the batch's one
+      // retry: search then ends the page with a cursor instead of failing
+      // (list/stat/resolve fail closed). `lastTransient` tells the search loop
+      // which, so a round-1 failure is still logged as fatal.
+      let lastTransient: unknown = null;
+      const listChildren = async (folders: string[], fullText?: string, search = false): Promise<unknown[][] | null> => {
+        lastTransient = null;
         try { return await drive.listFolders(folders, fullText === undefined ? {} : { fullText }); }
-        catch (error) { return error instanceof Error && error.message === "DRIVE_READ_BUDGET" ? null : fail("storage_read_unavailable"); }
+        catch (error) {
+          if (error instanceof Error && error.message === "DRIVE_READ_BUDGET") return null;
+          if (search && error instanceof Error && isDriveTransient(error.message)) { lastTransient = error; return null; }
+          driveTransient(error, "fatal");
+          return fail("storage_read_unavailable");
+        }
       };
       const children = async (folders: string[]) => (await listChildren(folders)) ?? fail("storage_read_unavailable");
       // A child of an in-root folder is in root unless another parent leads out.
@@ -714,15 +738,17 @@ export async function createStorageReadAgent(config: {
           // A round is all or nothing. When the budget runs out inside it (the
           // full-text batch comes last), the chunk goes back to the front of the
           // queue and the page ends with complete:false and a cursor. A page that
-          // cannot finish even its first round still fails closed.
-          const listed = await listChildren(chunk);
+          // cannot finish even its first round still fails closed. A transient
+          // Drive failure that survived its one retry is treated the same way.
+          const listed = await listChildren(chunk, undefined, true);
           const lists = listed && await scopedChildren(listed);
           // m-i: per-folder `fullText contains` queries on folders already
           // decided in-root (never an account-wide query). Hits count only as
           // an intersection with the scoped child list above, so multi-parent
           // objects with an outside chain stay excluded.
-          const found = lists && input.text ? await listChildren(chunk, input.text) : undefined;
+          const found = lists && input.text ? await listChildren(chunk, input.text, true) : undefined;
           if (!lists || found === null) {
+            if (lastTransient) driveTransient(lastTransient, rounds === 1 ? "fatal" : "absorbed");
             if (rounds === 1) fail("storage_read_unavailable");
             queue.unshift(...chunk); break;
           }

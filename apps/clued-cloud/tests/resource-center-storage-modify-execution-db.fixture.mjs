@@ -121,7 +121,10 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
   const provider = target => {
     const directory = (id, name, parent) => ({ id, name, parents: parent ? [parent] : [], version: "1", trashed: false, mimeType: "application/vnd.google-apps.folder" });
     const files = new Map([[target.parentId, directory(target.parentId, target.root.split("/").at(-2))],
-      [target.rootId, directory(target.rootId, "Clued_资料中心", target.parentId)], [target.trackId, directory(target.trackId, "20_P_产品与体验", target.rootId)]]);
+      [target.rootId, directory(target.rootId, "Clued_资料中心", target.parentId)], [target.trackId, directory(target.trackId, "20_P_产品与体验", target.rootId)],
+      // The Owner's own Clued-named doc beside the root (StorageNormalUse §3.1): listed, not app-authorized.
+      ["owner-clued-doc", { id: "owner-clued-doc", name: "Clued_单一数据源方案", parents: [target.parentId], version: "1", trashed: false,
+        mimeType: "application/vnd.google-apps.document", isAppAuthorized: false }]]);
     const state = { posts: 0, patches: 0, losePost: false, losePatch: false, files };
     state.fetch = async (url, init = {}) => {
       const u = new URL(url); assert.equal(new Headers(init.headers).get("authorization"), "Bearer fixture-modify-exec-access");
