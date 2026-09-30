@@ -1,5 +1,6 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
+import { bytesToBase64Url } from "./storage-base64";
 import { isStorageScopeProfile, scopeProfile, scopeString, type StorageScopeProfile } from "./storage-google-scopes";
 
 const encoder = new TextEncoder();
@@ -12,7 +13,12 @@ export class StorageGoogleConnectionError extends Error {
 class TokenExchangeFailure extends Error {
   constructor(readonly reason: string) { super("storage_google_token_exchange_failed"); }
 }
-const base64 = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+const base64 = (b: Uint8Array) => bytesToBase64Url(b);
+// Database labels that the page maps to fixed text (StorageNormalUse §2.4).
+const startReason: Record<string, string> = Object.freeze({
+  storage_root_has_unresolved_mutation: "storage_root_busy",
+  storage_refresh_token_limit: "refresh_token_limit",
+}) as Record<string, string>;
 const hash = async (s: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(s))), b => b.toString(16).padStart(2, "0")).join("");
 type RecordValue = Record<string, unknown>;
 type Descriptor = {
@@ -84,17 +90,28 @@ export async function createStorageGoogleOAuth(configuration: {
         (result.status === "completed" && result.receipt_id === null)) fail();
       return { status: result.status as string, receipt_id: result.receipt_id as string | null, execution_permitted: false };
     },
-    /** scopeRequest "legacy" asks for the legacy set (N0a default for connection
-     * consent). "sealed" asks for exactly the profile the connection row records,
-     * as credential recovery must: recovery never upgrades or downgrades. */
-    async start(connectionId: string, defaultRefresh = false, scopeRequest: "legacy" | "sealed" = "legacy"): Promise<{ authorization_url: string }> {
+    /** scopeRequest (StorageNormalUse §2.2-§2.4):
+     * - "legacy": the legacy set;
+     * - "keep": the profile the connection row records (a plain reconnect never
+     *   downgrades a normal connection);
+     * - "normal": the normal set, for normal use on an existing connection
+     *   (re-consent, §2.4); `normalUse` binds the disclosure the Owner confirmed;
+     * - "sealed": exactly the recorded profile, as credential recovery must:
+     *   recovery never upgrades or downgrades. Its prepare contract takes no
+     *   extra key, so nothing but the base fields is sent.
+     * Connection consent binds the requested profile to the attempt; complete
+     * then accepts only that profile or legacy (the Owner may untick a scope). */
+    async start(connectionId: string, defaultRefresh = false, scopeRequest: "legacy" | "keep" | "normal" | "sealed" = "legacy",
+      normalUse?: { disclosure_version: string }): Promise<{ authorization_url: string }> {
       try {
-        if (!id.test(connectionId) || (scopeRequest !== "legacy" && scopeRequest !== "sealed")) fail();
+        if (!id.test(connectionId) || !["legacy", "keep", "normal", "sealed"].includes(scopeRequest) ||
+          (normalUse !== undefined && (scopeRequest !== "normal" || !normalUse || Object.keys(normalUse).length !== 1 ||
+            typeof normalUse.disclosure_version !== "string" || !/^[A-Za-z0-9._/-]{1,160}$/.test(normalUse.disclosure_version)))) fail();
         const described = await rpc({ action: "describe", connection_id: connectionId });
         const d = descriptor(described, client, redirect);
         if (d.connection_id !== connectionId) fail();
-        let requested: StorageScopeProfile = "legacy";
-        if (scopeRequest === "sealed") {
+        let requested: StorageScopeProfile = scopeRequest === "normal" ? "normal" : "legacy";
+        if (scopeRequest === "sealed" || scopeRequest === "keep") {
           if (!isStorageScopeProfile(described.provider_scope_profile)) fail();
           requested = described.provider_scope_profile as StorageScopeProfile;
         }
@@ -104,27 +121,41 @@ export async function createStorageGoogleOAuth(configuration: {
         const sealed = await vault.seal(verifier, context(d, "oauth_" + attempt));
         const stored = await rpc({ action: "prepare", connection_id: d.connection_id, connection_version: d.connection_version,
           attempt_id: attempt, state_hash: await hash(state), verifier_envelope: sealed,
+          ...(scopeRequest === "sealed" ? {} : { requested_scope_profile: requested }),
+          ...(normalUse ? { normal_use: { disclosure_version: normalUse.disclosure_version } } : {}),
           ...(defaultRefresh ? { default_refresh_consent: (d as Descriptor & { default_refresh_eligible?: boolean }).default_refresh_eligible === true } : {}) });
         if (stored.status !== "prepared") fail();
         const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
         url.search = new URLSearchParams({ client_id: client, redirect_uri: redirect, response_type: "code", scope: scopeString(requested),
           state, code_challenge: challenge, code_challenge_method: "S256", access_type: "offline", prompt: "consent", include_granted_scopes: "false" }).toString();
         return { authorization_url: url.href };
-      } catch { return fail(); }
+      } catch (error) {
+        // Fixed database labels only (§2.4 items 3 and 8); everything else stays generic.
+        const known = error instanceof Error ? startReason[error.message] : undefined;
+        if (known) throw new StorageGoogleConnectionError(known);
+        return fail();
+      }
     },
-    async complete(input: { state: string; code: string }): Promise<{ status: "completed"; receipt_id: string; refresh_enabled?: boolean; purpose?: "credential_recovery" }> {
+    async complete(input: { state: string; code: string }): Promise<{ status: "completed"; receipt_id: string; refresh_enabled?: boolean;
+      purpose?: "credential_recovery"; provider_scope_profile?: StorageScopeProfile; requested_scope_profile?: StorageScopeProfile;
+      normal_use_enabled?: boolean }> {
       // Only these fixed local stage names leave this boundary. Never expose an
       // upstream body, exception, code, state, token, subject or provider file ID.
       let stage = "callback_invalid";
+      // A completion, or its replay after a lost reply: only typed, known fields.
+      const completed = (result: RecordValue) => ({ status: "completed" as const, receipt_id: String(result.receipt_id),
+        ...(result.purpose === "credential_recovery" ? { purpose: "credential_recovery" as const } : {
+          ...(typeof result.refresh_enabled === "boolean" ? { refresh_enabled: result.refresh_enabled } : {}),
+          ...(isStorageScopeProfile(result.provider_scope_profile) ? { provider_scope_profile: result.provider_scope_profile } : {}),
+          ...(isStorageScopeProfile(result.requested_scope_profile) ? { requested_scope_profile: result.requested_scope_profile } : {}),
+          ...(typeof result.normal_use_enabled === "boolean" ? { normal_use_enabled: result.normal_use_enabled } : {}) }) });
       try {
         if (!input || Object.keys(input).length !== 2 || !/^[A-Za-z0-9_-]{43}$/.test(input.state) ||
             typeof input.code !== "string" || input.code.length < 8 || input.code.length > 4096 || /[\r\n]/.test(input.code)) fail();
         const stateHash = await hash(input.state);
         stage = "attempt_unavailable";
         const claimed = await rpc({ action: "claim", state_hash: stateHash });
-        if (claimed.status === "completed" && id.test(String(claimed.receipt_id))) return { status: "completed", receipt_id: String(claimed.receipt_id),
-          ...(claimed.purpose === "credential_recovery" ? { purpose: "credential_recovery" as const } :
-            typeof claimed.refresh_enabled === "boolean" ? { refresh_enabled: claimed.refresh_enabled } : {}) };
+        if (claimed.status === "completed" && id.test(String(claimed.receipt_id))) return completed(claimed);
         const d = descriptor(claimed, client, redirect);
         if (claimed.status !== "claimed" || !id.test(String(claimed.attempt_id))) fail();
         stage = "verifier_unavailable";
@@ -142,13 +173,19 @@ export async function createStorageGoogleOAuth(configuration: {
         stage = "refresh_token_missing";
         if (typeof tokens.refresh_token !== "string" || tokens.refresh_token.length < 16) fail();
         stage = "scope_mismatch";
-        // Either allowed profile is accepted and recorded as granted (the user may
-        // untick a scope on the consent page). Credential recovery must return
-        // exactly the sealed profile; the database checks the same (§2.2 item 7).
+        // Connection consent accepts the requested profile or legacy (the user may
+        // untick a scope on the consent page) and records what was granted; the
+        // requested profile is bound to the attempt (§2.3). Credential recovery
+        // must return exactly the sealed profile (§2.2 item 7). The database
+        // checks the same.
         const granted = scopeProfile(tokens.scope);
         if (granted === null) fail();
-        if (claimed.purpose === "credential_recovery" &&
-          (!isStorageScopeProfile(claimed.provider_scope_profile) || claimed.provider_scope_profile !== granted)) fail();
+        if (claimed.purpose === "credential_recovery") {
+          if (!isStorageScopeProfile(claimed.provider_scope_profile) || claimed.provider_scope_profile !== granted) fail();
+        } else {
+          const requested = claimed.requested_scope_profile ?? "legacy";
+          if (!isStorageScopeProfile(requested) || (granted !== requested && granted !== "legacy")) fail();
+        }
         const headers = { authorization: "Bearer " + tokens.access_token };
         stage = "provider_identity_unconfirmed";
         const about = await json("https://www.googleapis.com/drive/v3/about?fields=user(permissionId,me)", { headers });
@@ -174,12 +211,17 @@ export async function createStorageGoogleOAuth(configuration: {
         const sealed = await vault.seal(JSON.stringify({ access_token: tokens.access_token, refresh_token: tokens.refresh_token,
           token_type: "Bearer", scope: scopeString(granted!), expires_at_ms: expiresAt }), context(d, subject));
         stage = "credential_commit_unconfirmed";
-        const result = await rpc({ action: "complete", state_hash: stateHash, provider_subject: subject, credential_envelope: sealed,
-          provider_scope_profile: granted });
+        let result: RecordValue;
+        try {
+          result = await rpc({ action: "complete", state_hash: stateHash, provider_subject: subject, credential_envelope: sealed,
+            provider_scope_profile: granted });
+        } catch (error) {
+          // A fixed database refusal is a rolled-back commit, not an unknown one.
+          if (error instanceof Error && startReason[error.message]) stage = startReason[error.message];
+          throw error;
+        }
         if (result.status !== "completed" || !id.test(String(result.receipt_id))) fail();
-        return { status: "completed", receipt_id: String(result.receipt_id),
-          ...(result.purpose === "credential_recovery" ? { purpose: "credential_recovery" as const } :
-            typeof result.refresh_enabled === "boolean" ? { refresh_enabled: result.refresh_enabled } : {}) };
+        return completed(result);
       } catch (error) { throw new StorageGoogleConnectionError(error instanceof TokenExchangeFailure ? error.reason : stage); }
     },
   });

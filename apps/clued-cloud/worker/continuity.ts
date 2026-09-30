@@ -1890,7 +1890,8 @@ async function callTool(
         : code === "format_unsupported" ? "Only text files (text/*, JSON, XML) and Google Docs can be read."
         : code === "export_too_large" ? "The Google Doc is larger than the 10 MB export limit."
         : code === "shortcut_not_followed" ? "Shortcuts are not followed. Read the target file inside the root instead."
-        : code === "content_not_accessible" ? "This file's content is not readable with the current Google permission; only files Clued created are readable."
+        : code === "content_not_accessible" ? "This file's content is not readable with the current Google permission."
+        : code === "scope_upgrade_required" ? "Reading files Clued did not create, and searching by content, need the Owner to turn on normal use on the Clued storage page. Retrying will not help."
         : code === "budget_exhausted" ? "This connection has used its hourly content budget (8 MiB). Try again later; retrying now will not help."
         : "Storage read unavailable." };
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
@@ -2726,10 +2727,18 @@ async function handleContinuityRequestInner(
           if (Object.keys(input).length !== 1 || typeof input.state !== "string") throw new Error("Invalid");
           result = await (await createStorageGoogleOAuth(configuration)).inspectRecovery(input.state);
         } else if (url.pathname.endsWith("/start")) {
-          if (Object.keys(input).some(key => !["connection_id", "default_refresh"].includes(key)) || typeof input.connection_id !== "string" ||
-              ("default_refresh" in input && typeof input.default_refresh !== "boolean")) throw new Error("Invalid");
+          // normal_use (StorageNormalUse §2.4, §8.2): re-consent with the normal
+          // set; the disclosure version the Owner confirmed is bound to the attempt
+          // and checked by the database. Otherwise keep the recorded profile.
+          const normalUse = input.normal_use;
+          if (Object.keys(input).some(key => !["connection_id", "default_refresh", "normal_use"].includes(key)) || typeof input.connection_id !== "string" ||
+              ("default_refresh" in input && typeof input.default_refresh !== "boolean") ||
+              ("normal_use" in input && (!normalUse || typeof normalUse !== "object" || Array.isArray(normalUse) ||
+                Object.keys(normalUse).length !== 1 || typeof (normalUse as Record<string, unknown>).disclosure_version !== "string"))) throw new Error("Invalid");
           if (input.default_refresh === true && env.CLUED_STORAGE_REFRESH_V1 !== "true") throw new Error("Unavailable");
-          result = await (await createStorageGoogleOAuth(configuration)).start(input.connection_id, input.default_refresh === true);
+          result = await (await createStorageGoogleOAuth(configuration)).start(input.connection_id, input.default_refresh === true,
+            normalUse ? "normal" : "keep",
+            normalUse ? { disclosure_version: String((normalUse as Record<string, unknown>).disclosure_version) } : undefined);
         } else {
           if (Object.keys(input).length !== 2 || typeof input.state !== "string" || typeof input.code !== "string") throw new Error("Invalid");
           result = await (await createStorageGoogleOAuth(configuration)).complete({ state: input.state, code: input.code });
@@ -2779,11 +2788,12 @@ async function handleContinuityRequestInner(
         return json({ error: "Storage owner operation unavailable." }, 403, headers);
       }
     }
-    if (url.pathname === "/v1/storage/read-access" || url.pathname === "/v1/storage/write-access") {
+    if (url.pathname === "/v1/storage/read-access" || url.pathname === "/v1/storage/write-access" || url.pathname === "/v1/storage/normal-use") {
       // StorageFullCapability.v0.1: native Owner control of the read level (P1)
-      // and the modify write level (P3).
+      // and the modify write level (P3); StorageNormalUse.v0.1 §8.2 normal use.
       // The RPC checks the live auth session itself; never a Binding or service role.
-      const rpc = url.pathname === "/v1/storage/read-access" ? "clued_storage_read_access_v1" : "clued_storage_write_access_v1";
+      const rpc = url.pathname === "/v1/storage/read-access" ? "clued_storage_read_access_v1"
+        : url.pathname === "/v1/storage/normal-use" ? "clued_storage_normal_use_v1" : "clued_storage_write_access_v1";
       validateOrigin(request, env);
       const headers = { ...corsHeaders(request), "cache-control": "no-store" };
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true") return json({ error: "Not found." }, 404, headers);

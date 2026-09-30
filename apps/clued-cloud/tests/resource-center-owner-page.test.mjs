@@ -168,3 +168,47 @@ test("overwrite is its own toggle with its own disclosure and keeps rename/move 
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});await f.settle();
   assert.match(f.text(),/已允许 Agent 覆盖文件内容。回执：fixture-overwrite-receipt/);assert.match(f.text(),/覆盖文件内容/);
 });
+// StorageNormalUse.v0.1 §8.2: one "正常使用" toggle; the four toggles stay under 高级.
+const normalStatus=(profile,on,extra={})=>({connection_id:active.id,read_generation:on?3:1,disclosure_version:"clued.storage-normal-use-disclosure/1",
+  provider_scope_profile:profile,normal_use:on,reconsent_required:profile!=="normal",refresh_token_count:2,refresh_token_warning:false,
+  refresh_token_blocked:false,...extra});
+test("normal use with a normal credential is one native CAS mutation under the versioned disclosure",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
+  assert.equal(f.calls.length,1,"normal use is loaded on demand");assert.match(f.text(),/正常使用：未读取/);assert.match(f.text(),/高级/);
+  f.button("读取正常使用设置").props.onClick();await f.settle();
+  assert.equal(f.calls[1].url,"/v1/storage/normal-use");assert.deepEqual(JSON.parse(f.calls[1].init.body),{action:"status",connection_id:active.id});
+  f.respond(1,normalStatus("normal",false));await f.settle();
+  assert.match(f.text(),/正常使用：未开启/);
+  const on=f.button("开启正常使用");on.props.onClick();on.props.onClick();await f.settle();
+  assert.equal(f.calls.length,3);
+  assert.match(f.prompts.at(-1),/读取「Clued_资料中心」内的全部文件，包括你手动上传的文件/);
+  assert.match(f.prompts.at(-1),/查看你 Google 云端硬盘中的所有文件/);assert.match(f.prompts.at(-1),/这个限制由 Clued 保证，不由 Google 保证/);
+  assert.equal(f.prompts.at(-1).includes("前往 Google 授权页面"),false);
+  assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:"enable",connection_id:active.id,base_generation:1,
+    disclosure_version:"clued.storage-normal-use-disclosure/1",idempotency_key:"fixture-id"});
+  f.respond(2,{status:"committed",receipt_id:"fixture-normal-receipt"});await f.settle();
+  f.respond(3,normalStatus("normal",true));await f.settle();
+  assert.match(f.text(),/已开启正常使用。回执：fixture-normal-receipt/);assert.match(f.text(),/正常使用：已开启/);
+  f.button("关闭正常使用").props.onClick();await f.settle();
+  assert.match(f.prompts.at(-1),/不会收回 Google 授权/);
+  assert.equal(JSON.parse(f.calls[4].init.body).action,"disable");assert.equal(JSON.parse(f.calls[4].init.body).base_generation,3);
+  f.respond(4,{error:"private"},403);await f.settle();
+  assert.match(f.text(),/正常使用设置结果未确认/);assert.match(f.text(),/正常使用：未读取/);assert.equal(f.calls.length,5,"never resent");
+});
+test("normal use on a legacy connection starts Google re-consent with the normal set; busy and token limits are explained",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
+  f.button("读取正常使用设置").props.onClick();await f.settle();f.respond(1,normalStatus("legacy",false));await f.settle();
+  assert.match(f.text(),/开启需要重新授权 Google/);
+  f.button("开启正常使用").props.onClick();await f.settle();
+  assert.match(f.prompts.at(-1),/前往 Google 授权页面/);
+  assert.equal(f.calls[2].url,"/v1/storage/google/start");
+  assert.deepEqual(JSON.parse(f.calls[2].init.body),{connection_id:active.id,normal_use:{disclosure_version:"clued.storage-normal-use-disclosure/1"}});
+  f.respond(2,{error:"Storage Google connection unavailable.",reason:"storage_root_busy"},403);await f.settle();
+  assert.match(f.text(),/该目录还有尚未完成的文件操作，稍后再试/);
+  f.button("读取正常使用设置").props.onClick();await f.settle();
+  f.respond(3,normalStatus("legacy",false,{refresh_token_count:90,refresh_token_warning:true,refresh_token_blocked:true}));await f.settle();
+  assert.match(f.text(),/授权次数已达上限/);
+  const before=f.calls.length;f.button("开启正常使用").props.onClick();await f.settle();
+  assert.equal(f.calls.length,before,"a blocked account starts no consent");assert.match(f.text(),/暂时不能通过重新授权开启正常使用/);
+  assert.equal(f.text().includes("请先撤回全部文件读取授权"),false,"never points to a control that does not exist");
+});

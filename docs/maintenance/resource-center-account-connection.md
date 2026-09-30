@@ -688,6 +688,112 @@ Rollout: production migration first, then release (the released read agent
 requires both admission fields). Rollback of the release alone is safe: the
 previous Worker ignores the new fields and writes no profile.
 
+## Normal use on an existing connection (StorageNormalUse.v0.1 N1a)
+
+Migration `20260930160000_storage_normal_use_n1a.sql` with the Worker and page
+changes. Existing connections keep working unchanged until the Owner turns on
+"正常使用"; nothing upgrades automatically (Q10).
+
+- **Re-consent.** On a `legacy` connection the page shows the
+  `clued.storage-normal-use-disclosure/1` text and then starts Google consent to
+  the normal set on the same connection (`/v1/storage/google/start` with
+  `normal_use.disclosure_version`). The attempt records the requested profile,
+  `normal_use_requested`, the disclosure version, the read generation at
+  prepare and the delegation carry snapshot. `complete` accepts only the
+  requested profile or `legacy`; `normal` granted -> the same transaction writes
+  `{read, read_content}` + `normal/1` read access (unless the read access
+  changed since prepare); `legacy` granted -> only the credential is replaced
+  and the callback says "未授予……正常使用未开启". A plain reconnect requests
+  the profile the row records, so it never downgrades by itself; if the Owner
+  unticks the scope while reconnecting a `normal` connection, the credential
+  follows what Google granted (`legacy`) and the callback shows the same
+  message (it compares `requested_scope_profile` with `provider_scope_profile`).
+  A carried delegation is reset like `refresh_manage` enable (`failures=0`,
+  due now). A replayed `claim` also returns the current profile and, for a
+  normal-use attempt, the current `normal_use_enabled`.
+- **No revoke on upgrade (Q11).** The `complete` UPDATE overwrites
+  `credential_envelope`; no other table holds an envelope (the DB fixture scans
+  every text/jsonb/bytea column in `public` and `clued_private` for fragments
+  of every replaced envelope). Overwritten row versions stay in the heap until
+  VACUUM and in PITR backups for their retention period; the old refresh token
+  stays valid at Google, but Clued keeps no decryptable copy of it.
+- **Busy root.** Prepare calls `storage_root_quiet_v1` once for an early
+  answer and complete checks it again; the page maps it to `storage_root_busy`
+  ("稍后再试"). Any refusal rolls back: the old credential and connection stay.
+  Queued jobs read the current `credential_version` at `load`; a job loaded
+  before and prepared after a credential change fails closed on the version
+  check (no provider request).
+- **Delegation carry.** `public.clued_storage_oauth_v1` is now the outermost
+  wrapper (the 211632 dispatcher is `clued_private.storage_oauth_dispatch_v1`).
+  For a connection-purpose `complete` it locks owner||root, the connection and
+  the delegation row (in that order) and, after the inner wrappers disabled
+  every delegation of the root, re-enables this connection's delegation only
+  when it was enabled before and subject, OAuth client and root equal the
+  prepare snapshot and the completed row (same issuer). It writes its own
+  receipt `storage_refresh_delegation_carry` and Event
+  `extension:storage:refresh_delegation_carry`.
+- **Refresh-token count.** Every OAuth claim (any purpose) inserts one row into
+  `storage_refresh_token_issuance_v1` before the token exchange. The count is
+  per owner x provider subject x OAuth client (claims whose subject is unknown
+  count for every subject). The page warns at 50. At 90 only a normal-use
+  re-consent (prepare with `normal_use`) is refused (`refresh_token_limit`); a
+  plain reconnect and credential recovery are counted but never refused, so an
+  Owner is not locked out while "撤回全部文件读取授权" (the revoke slice, which
+  will write `cleared_at`) does not exist. The page and callback tell the Owner
+  to contact a maintainer instead of pointing to that control.
+- **Operator step: resetting the refresh-token count.** Only after the Owner
+  has removed Clued's access for that Google account at
+  <https://myaccount.google.com/permissions> (which invalidates every refresh
+  token of that account x client; each affected connection then needs a plain
+  reconnect), run in the production SQL editor, with the owner ID, the Google
+  provider subject from the connection row and the OAuth client ID:
+
+  ```sql
+  update clued_private.storage_refresh_token_issuance_v1
+     set cleared_at = clock_timestamp()
+   where owner_id = '<owner uuid>' and oauth_client_id = '<oauth client id>'
+     and cleared_at is null and (provider_subject = '<provider subject>' or provider_subject is null);
+  ```
+
+  Confirm with `clued_storage_normal_use_v1` `status` (the page's "读取正常使用
+  设置") that `refresh_token_count` is 0 and record the change in the ops log.
+  Never clear rows without that Google-side removal: the count exists because
+  Google silently drops the oldest tokens past its limit.
+- **Native RPC `clued_storage_normal_use_v1`** (`/v1/storage/normal-use`):
+  `status` (both profiles, CAS base, token count), `enable` (needs a `normal`
+  credential, otherwise `reconsent_required` and no write) and `disable`
+  (back to `{read}` / `text/1`, Q8; the Google grant is not narrowed). Both
+  are CAS on `read_generation` and carry the disclosure version. `set_classes`
+  refuses to keep `read_content` on a `normal/1` row
+  (`storage_normal_use_managed`) instead of silently rewriting it as `text/1`.
+- **Reads (§3).** With a `normal` credential and `normal/1`, any in-root
+  text/JSON/XML file and Google Doc is readable; otherwise the read agent
+  requires `isAppAuthorized` from metadata before any body request and answers
+  `scope_upgrade_required`. All body requests go through one content gateway
+  that only accepts IDs that passed the root check in the same call. After the
+  body is fetched the whole ancestor chain is walked again with an empty cache
+  (bytes dropped on failure); if the budget cannot hold that re-check, no body
+  is requested (`storage_read_unavailable`).
+- **Full-text search (§5.2).** `clued_storage_browse` `search` with `text`
+  queries `fullText contains` per in-root folder and intersects the hits with
+  the scoped child list; the admission (`content_search`) requires `normal/1`,
+  a `normal` credential and the `read_content` class (per-client deny applies).
+  Responses carry `text_index: "provider"`. A search round (child list, then
+  the full-text batch) is all or nothing: when the call's 50-request budget
+  runs out inside a round, the page ends with `complete: false` and a cursor
+  that repeats that folder chunk; only a page that cannot finish its first
+  round answers `storage_read_unavailable`.
+- **Known follow-up (PR #418 review, minor 4).** The disclosure names the root
+  by the registered profile's `managed_root` path, not by the folder name read
+  from Drive; a folder renamed in Drive keeps showing the registered path.
+
+Before N1 acceptance (§2.4 items 7-8, not verifiable here): verify with a real
+Google account whether revoking the legacy token invalidates the normal one and
+the account's other connections, and the refresh-token limit behaviour; record
+the results here. Submit the Google restricted-scope verification (§2.5).
+Rollout: production migration first, then release (the new Worker sends
+`requested_scope_profile` and expects the new wrapper).
+
 ## Binary upload (StorageNormalUse.v0.1 N3)
 
 Migration `20260930180000_storage_binary_upload_n3.sql`, the Worker staging
