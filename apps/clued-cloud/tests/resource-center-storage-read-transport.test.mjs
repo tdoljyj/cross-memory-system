@@ -51,7 +51,8 @@ function tree() {
 // Fake Supabase RPC + Drive batch endpoint. Records every call for assertions.
 function harness(options = {}) {
   const drive = options.drive ?? tree(), calls = [];
-  const state = { calls, drive, googleRequests: 0, admitError: options.admitError, direct: [], batchPaths: [], fullText: [] };
+  const state = { calls, drive, googleRequests: 0, admitError: options.admitError, direct: [], batchPaths: [], fullText: [],
+    textPagesLeft: options.textPages ?? 0 };
   const reply = parts => {
     const boundary = "batch_" + randomUUID();
     const body = parts.map(({ id, status, json }) => `--${boundary}\r\nContent-Type: application/http\r\nContent-ID: <response-${id}>\r\n\r\n` +
@@ -121,6 +122,9 @@ function harness(options = {}) {
         const [, parent, text] = /^'([^']+)' in parents(?: and fullText contains '((?:[^'\\]|\\.)*)')? and trashed = false$/.exec(q);
         const needle = text?.replace(/\\(.)/g, "$1");
         if (text !== undefined) state.fullText.push({ parent, text });
+        // Empty extra pages on one folder's full-text query, shared across calls.
+        if (text !== undefined && parent === options.pagedTextParent && state.textPagesLeft > 0)
+          return { id, status: 200, json: { files: [], nextPageToken: "page-" + state.textPagesLeft-- } };
         return { id, status: 200, json: { files: [...drive.files.values()].filter(f => f.parents.includes(parent) && !f.trashed &&
           (needle === undefined || (drive.contents.get(f.id) ?? "").includes(needle))) } };
       }
@@ -591,6 +595,25 @@ test("full-text search: normal use only, per in-root folder, intersected with sc
     const invalid = await browse({ operation: "search", text }, await normalOptions({ drive }));
     assert.equal(invalid.value.error, "storage_read_input_invalid"); assert.equal(invalid.h.calls.length, 0);
   }
+});
+
+test("full-text search: a spent subrequest budget ends the page with complete:false and a cursor, then resumes", async () => {
+  const drive = normalTree();
+  // Round 1 (root) fits; round 2's full-text batch for the track folder pages
+  // past the 50-request call budget. The next page gets a fresh budget.
+  const h = harness(await normalOptions({ drive, pagedTextParent: "trackFolder00001", textPages: 50 }));
+  const first = await browse({ operation: "search", text: "整理" }, { harness: h });
+  assert.equal(first.isError, false, JSON.stringify(first.value));
+  assert.deepEqual(names(first.value), ["Doc"], "only the finished round is reported");
+  assert.equal(first.value.complete, false); assert.equal(typeof first.value.next_cursor, "string");
+  assert.equal(h.calls.at(-1).p_input.action, "finalize"); assert.equal(h.calls.at(-1).p_input.complete, false);
+  const second = await browse({ operation: "search", text: "整理", cursor: first.value.next_cursor }, { harness: h });
+  assert.equal(second.isError, false, JSON.stringify(second.value));
+  assert.deepEqual(names(second.value), ["Plan A.md", "plan b.txt"], "the interrupted folder is searched again, nothing is lost");
+  assert.equal(second.value.complete, true); assert.equal(second.value.next_cursor, null);
+  // A page that cannot finish even its first round still fails closed.
+  const stuck = await browse({ operation: "search", text: "整理" }, await normalOptions({ drive, pagedTextParent: ROOT, textPages: 1000 }));
+  assert.equal(stuck.value.error, "storage_read_unavailable");
 });
 
 test("R8: the content gateway builds no request for an ID that was not admitted in this call", async () => {

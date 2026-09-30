@@ -73,7 +73,9 @@ const normalUseDisclosure = (root: string) =>
 const normalUseOff = "关闭“正常使用”？会立即停止读正文、按内容搜索和上传，仍可查看文件名和目录结构。这不会收回 Google 授权（Google 页面上的授权范围不变）；已经返回给 Agent 的内容无法收回。";
 const startReasons: Record<string, string> = {
   storage_root_busy: "该目录还有尚未完成的文件操作，稍后再试。",
-  refresh_token_limit: "该 Google 账号在 Clued 中的授权次数已达上限，请先撤回全部文件读取授权后再开启。",
+  // Until "撤回全部文件读取授权" exists, only a maintainer can reset the count
+  // (runbook); a plain reconnect is never refused.
+  refresh_token_limit: "该 Google 账号在 Clued 中的授权次数已达上限，暂时不能通过重新授权开启正常使用。请联系维护者处理；现有功能和重新连接不受影响。",
 };
 type WriteAccess = { active: boolean; policy_generation: number; disclosure_version: string;
   overwrite_disclosure_version: string; classes: string[] };
@@ -357,7 +359,7 @@ export default function StorageConnections() {
           {normalUse[c.id] && !normalUse[c.id].normal_use && normalUse[c.id].reconsent_required &&
             <p className="my-1 text-sm">开启需要重新授权 Google（增加“查看你 Google 云端硬盘中的所有文件”）；授权完成前，现有功能照常可用。</p>}
           {normalUse[c.id]?.refresh_token_warning && <p role="status" className="my-1 text-sm">{normalUse[c.id].refresh_token_blocked
-            ? "该 Google 账号在 Clued 中的授权次数已达上限，不能再次授权；请先撤回全部文件读取授权。"
+            ? "该 Google 账号在 Clued 中的授权次数已达上限，暂时不能通过重新授权开启正常使用；请联系维护者处理。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因，重新连接仍可使用。"
             : `该 Google 账号在 Clued 中的授权次数已较多（${normalUse[c.id].refresh_token_count} 次）。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因。`}</p>}
           <p className="mt-3 text-sm font-semibold">高级</p>
           <p>Agent 查看目录结构：{readAccess[c.id] ? (readAccess[c.id].active

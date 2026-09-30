@@ -209,5 +209,6 @@ test("normal use on a legacy connection starts Google re-consent with the normal
   f.respond(3,normalStatus("legacy",false,{refresh_token_count:90,refresh_token_warning:true,refresh_token_blocked:true}));await f.settle();
   assert.match(f.text(),/授权次数已达上限/);
   const before=f.calls.length;f.button("开启正常使用").props.onClick();await f.settle();
-  assert.equal(f.calls.length,before,"a blocked account starts no consent");assert.match(f.text(),/请先撤回全部文件读取授权/);
+  assert.equal(f.calls.length,before,"a blocked account starts no consent");assert.match(f.text(),/暂时不能通过重新授权开启正常使用/);
+  assert.equal(f.text().includes("请先撤回全部文件读取授权"),false,"never points to a control that does not exist");
 });

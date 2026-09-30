@@ -42,15 +42,14 @@ export async function testStorageOAuth(t, admin, server, user, decision) {
       await assert.rejects(rpc({ action: "claim", state_hash }), /storage_oauth_denied/);
       const result = await complete(state_hash);
       assert.equal(result.status, "completed");
-      // A replayed claim returns the receipt (the granted profile is read from the connection).
-      const { provider_scope_profile: _granted, ...replayed } = result;
-      assert.deepEqual(await rpc({ action: "claim", state_hash }), replayed);
+      // A replayed claim returns the receipt and the connection's current profile.
+      assert.deepEqual(await rpc({ action: "claim", state_hash }), result);
       await assert.rejects(complete(state_hash), /storage_oauth_denied/);
       const stored = (await admin.query("select * from clued_private.storage_connections_v1 where id=$1", [connection])).rows[0];
       assert.equal(stored.state, "active"); assert.equal(stored.credential_version, "1");
       assert.deepEqual(stored.credential_envelope, envelope);
-      assert.equal(Object.keys(result).sort().join(), "provider_scope_profile,receipt_id,refresh_enabled,status");
-      assert.equal(result.provider_scope_profile, "legacy");
+      assert.equal(Object.keys(result).sort().join(), "provider_scope_profile,receipt_id,refresh_enabled,requested_scope_profile,status");
+      assert.equal(result.provider_scope_profile, "legacy"); assert.equal(result.requested_scope_profile, "legacy");
       assert.equal(result.refresh_enabled, false);
       const receipt = (await admin.query("select status from public.clued_audit_receipts where id=$1", [result.receipt_id])).rows[0];
       assert.equal(receipt.status, "committed");

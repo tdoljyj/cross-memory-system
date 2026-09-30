@@ -137,19 +137,25 @@ export async function createStorageGoogleOAuth(configuration: {
       }
     },
     async complete(input: { state: string; code: string }): Promise<{ status: "completed"; receipt_id: string; refresh_enabled?: boolean;
-      purpose?: "credential_recovery"; provider_scope_profile?: StorageScopeProfile; normal_use_enabled?: boolean }> {
+      purpose?: "credential_recovery"; provider_scope_profile?: StorageScopeProfile; requested_scope_profile?: StorageScopeProfile;
+      normal_use_enabled?: boolean }> {
       // Only these fixed local stage names leave this boundary. Never expose an
       // upstream body, exception, code, state, token, subject or provider file ID.
       let stage = "callback_invalid";
+      // A completion, or its replay after a lost reply: only typed, known fields.
+      const completed = (result: RecordValue) => ({ status: "completed" as const, receipt_id: String(result.receipt_id),
+        ...(result.purpose === "credential_recovery" ? { purpose: "credential_recovery" as const } : {
+          ...(typeof result.refresh_enabled === "boolean" ? { refresh_enabled: result.refresh_enabled } : {}),
+          ...(isStorageScopeProfile(result.provider_scope_profile) ? { provider_scope_profile: result.provider_scope_profile } : {}),
+          ...(isStorageScopeProfile(result.requested_scope_profile) ? { requested_scope_profile: result.requested_scope_profile } : {}),
+          ...(typeof result.normal_use_enabled === "boolean" ? { normal_use_enabled: result.normal_use_enabled } : {}) }) });
       try {
         if (!input || Object.keys(input).length !== 2 || !/^[A-Za-z0-9_-]{43}$/.test(input.state) ||
             typeof input.code !== "string" || input.code.length < 8 || input.code.length > 4096 || /[\r\n]/.test(input.code)) fail();
         const stateHash = await hash(input.state);
         stage = "attempt_unavailable";
         const claimed = await rpc({ action: "claim", state_hash: stateHash });
-        if (claimed.status === "completed" && id.test(String(claimed.receipt_id))) return { status: "completed", receipt_id: String(claimed.receipt_id),
-          ...(claimed.purpose === "credential_recovery" ? { purpose: "credential_recovery" as const } :
-            typeof claimed.refresh_enabled === "boolean" ? { refresh_enabled: claimed.refresh_enabled } : {}) };
+        if (claimed.status === "completed" && id.test(String(claimed.receipt_id))) return completed(claimed);
         const d = descriptor(claimed, client, redirect);
         if (claimed.status !== "claimed" || !id.test(String(claimed.attempt_id))) fail();
         stage = "verifier_unavailable";
@@ -215,11 +221,7 @@ export async function createStorageGoogleOAuth(configuration: {
           throw error;
         }
         if (result.status !== "completed" || !id.test(String(result.receipt_id))) fail();
-        return { status: "completed", receipt_id: String(result.receipt_id),
-          ...(result.purpose === "credential_recovery" ? { purpose: "credential_recovery" as const } : {
-            ...(typeof result.refresh_enabled === "boolean" ? { refresh_enabled: result.refresh_enabled } : {}),
-            ...(isStorageScopeProfile(result.provider_scope_profile) ? { provider_scope_profile: result.provider_scope_profile } : {}),
-            ...(typeof result.normal_use_enabled === "boolean" ? { normal_use_enabled: result.normal_use_enabled } : {}) }) };
+        return completed(result);
       } catch (error) { throw new StorageGoogleConnectionError(error instanceof TokenExchangeFailure ? error.reason : stage); }
     },
   });

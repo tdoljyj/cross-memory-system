@@ -34,7 +34,6 @@ export function createStorageContentGateway(config: { access_token: string; fetc
       if (typeof id !== "string" || !fileId.test(id)) throw new StorageContentGatewayError("content_request_invalid");
       admitted.add(id);
     },
-    admitted: (id: string) => admitted.has(id),
     detail(id: string, fields: string[]) {
       if (!Array.isArray(fields) || !fields.length || fields.some(field => typeof field !== "string" || !FIELD.test(field)))
         throw new StorageContentGatewayError("content_request_invalid");

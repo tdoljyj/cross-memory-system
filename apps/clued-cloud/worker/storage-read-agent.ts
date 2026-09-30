@@ -296,9 +296,13 @@ export async function createStorageReadAgent(config: {
         return { known, fetchAll, inRoot };
       };
       const { known, fetchAll, inRoot } = walker();
-      const children = async (folders: string[], fullText?: string) => {
-        try { return await drive.listFolders(folders, fullText === undefined ? {} : { fullText }); } catch { return fail("storage_read_unavailable"); }
+      // `null` only when this call's subrequest budget ran out: search then ends
+      // the page with a cursor instead of failing (list/stat/resolve fail closed).
+      const listChildren = async (folders: string[], fullText?: string): Promise<unknown[][] | null> => {
+        try { return await drive.listFolders(folders, fullText === undefined ? {} : { fullText }); }
+        catch (error) { return error instanceof Error && error.message === "DRIVE_READ_BUDGET" ? null : fail("storage_read_unavailable"); }
       };
+      const children = async (folders: string[]) => (await listChildren(folders)) ?? fail("storage_read_unavailable");
       // A child of an in-root folder is in root unless another parent leads out.
       const scopedChildren = async (lists: unknown[][]) => {
         const all = lists.flat().filter(valid) as Data[];
@@ -476,16 +480,26 @@ export async function createStorageReadAgent(config: {
           if (stale.length) { const ok = await inRoot(stale); chunk = chunk.filter(id => !resumed.has(id) || id === rootId || ok.has(id)); }
           if (!chunk.length) continue;
           rounds++;
-          const lists = await scopedChildren(await children(chunk));
+          // A round is all or nothing. When the budget runs out inside it (the
+          // full-text batch comes last), the chunk goes back to the front of the
+          // queue and the page ends with complete:false and a cursor. A page that
+          // cannot finish even its first round still fails closed.
+          const listed = await listChildren(chunk);
+          const lists = listed && await scopedChildren(listed);
           // m-i: per-folder `fullText contains` queries on folders already
           // decided in-root (never an account-wide query). Hits count only as
           // an intersection with the scoped child list above, so multi-parent
           // objects with an outside chain stay excluded.
+          const found = lists && input.text ? await listChildren(chunk, input.text) : undefined;
+          if (!lists || found === null) {
+            if (rounds === 1) fail("storage_read_unavailable");
+            queue.unshift(...chunk); break;
+          }
           let hits: Set<string> | null = null;
-          if (input.text) {
-            const found = (await children(chunk, input.text)).flat();
-            if (!found.every(valid)) fail("storage_read_unavailable");
-            hits = new Set((found as Data[]).map(raw => String(raw.id)));
+          if (found) {
+            const flat = found.flat();
+            if (!flat.every(valid)) fail("storage_read_unavailable");
+            hits = new Set((flat as Data[]).map(raw => String(raw.id)));
           }
           for (const raw of lists.flat()) {
             const it = item(raw, rootId);

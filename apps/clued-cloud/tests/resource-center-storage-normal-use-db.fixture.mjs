@@ -12,7 +12,9 @@ const READ_DISCLOSURE = "clued.storage-read-disclosure/1";
 // set_classes not downgrading normal/1, and the content-search admission.
 // Synthetic, disposable PostgreSQL only.
 export async function testStorageNormalUse(t, admin, server, user, decision) {
-  const clients = [], session = randomUUID(), issuer = sha(randomUUID()), clientIssuer = sha(randomUUID());
+  // The Worker calls claim/complete through clued_storage_oauth_callback_v2 with
+  // the issuer SECRET; the database hashes it to this issuer hash.
+  const clients = [], session = randomUUID(), issuerSecret = randomBytes(32).toString("hex"), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
   const oauthClient = `normal-use-${randomUUID()}`, resource = "https://normal-use.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
   const connect = async role => {
@@ -71,6 +73,7 @@ export async function testStorageNormalUse(t, admin, server, user, decision) {
   const activated = await complete(first.state_hash, OLD, "legacy");
   assert.equal(activated.status, "completed"); assert.equal(activated.provider_scope_profile, "legacy");
   assert.equal(activated.refresh_enabled, false); assert.equal("normal_use_enabled" in activated, false);
+  assert.equal(activated.requested_scope_profile, "legacy");
   assert.equal((await admin.query("select provider_subject from clued_private.storage_refresh_token_issuance_v1 where oauth_attempt_id=$1", [first.attempt_id])).rows[0].provider_subject,
     "normal-subject", "completion attaches the provider subject to the counted claim");
 
@@ -242,7 +245,8 @@ export async function testStorageNormalUse(t, admin, server, user, decision) {
       assert.equal(read.disclosure_version, NORMAL_DISCLOSURE);
       const normalReceipt = (await admin.query("select operation,status from public.clued_audit_receipts where id=$1", [done.normal_use_receipt_id])).rows[0];
       assert.deepEqual(normalReceipt, { operation: "storage_normal_use_v1", status: "committed" });
-      assert.deepEqual(await oauth({ action: "claim", state_hash }), { status: "completed", receipt_id: done.receipt_id, refresh_enabled: true });
+      assert.deepEqual(await oauth({ action: "claim", state_hash }), { status: "completed", receipt_id: done.receipt_id, refresh_enabled: true,
+        requested_scope_profile: "normal", provider_scope_profile: "normal", normal_use_enabled: true }, "a replayed claim reports the current profile and normal use");
       const current = await status();
       assert.equal(current.normal_use, true); assert.equal(current.reconsent_required, false);
       // §2.4 item 5: no copy of an old envelope anywhere (digests excepted).
@@ -339,11 +343,66 @@ export async function testStorageNormalUse(t, admin, server, user, decision) {
       const blocked = await status();
       assert.equal(blocked.refresh_token_count, 90); assert.equal(blocked.refresh_token_blocked, true);
       await assert.rejects(prepare({ requested_scope_profile: "normal", normal_use: { disclosure_version: NORMAL_DISCLOSURE } }), /storage_refresh_token_limit/);
+      // Until "withdraw all file read access" exists, only the normal-use upgrade
+      // is refused; a plain reconnect (either profile) is counted, not refused.
+      for (const requested_scope_profile of ["legacy", "normal"]) {
+        const plain = await prepare({ requested_scope_profile });
+        await oauth({ action: "claim", state_hash: plain.state_hash });
+      }
+      assert.equal((await status()).refresh_token_count, 92, "both reconnect claims were counted");
       // Another Google account of the same owner is counted separately.
       assert.equal((await admin.query("select clued_private.storage_refresh_token_count_v1($1,'someone-else',$2) n", [user, oauthClient])).rows[0].n, 0);
-      await admin.query("update clued_private.storage_refresh_token_issuance_v1 set cleared_at=clock_timestamp() where owner_id=$1 and oauth_client_id=$2", [user, oauthClient]);
+      // The operator runbook step (resource-center-account-connection.md) after
+      // the Owner revoked Clued at Google: set cleared_at for this account x client.
+      await admin.query("update clued_private.storage_refresh_token_issuance_v1 set cleared_at=clock_timestamp() where owner_id=$1 and oauth_client_id=$2 and cleared_at is null and (provider_subject=$3 or provider_subject is null)",
+        [user, oauthClient, "normal-subject"]);
       assert.equal((await status()).refresh_token_count, 0);
       await assert.rejects(native.query("select * from clued_private.storage_refresh_token_issuance_v1"), /permission denied/);
+    });
+
+    await t.test("production callback path: clued_storage_oauth_callback_v2 reaches the N1a wrapper for a partial grant and for normal-use enable with carry", async () => {
+      const callback = async input => (await native.query("select public.clued_storage_oauth_callback_v2($1,$2::jsonb) value",
+        [issuerSecret, JSON.stringify(input)])).rows[0].value;
+      const refresh = async () => (await admin.query("select enabled,failures,next_refresh_at<=clock_timestamp() due,receipt_id from clued_private.storage_refresh_delegations_v1 where connection_id=$1",
+        [connection])).rows[0];
+      assert.equal((await status()).normal_use, true); assert.equal((await delegation()).enabled, true);
+      // A failing delegation is reset by the carry, as refresh_manage enable does.
+      await admin.query("update clued_private.storage_refresh_delegations_v1 set failures=3,next_refresh_at=clock_timestamp()+interval '1 day' where connection_id=$1", [connection]);
+      // 1. Reconnect of this NORMAL connection ("keep": normal requested, normal
+      //    use not part of the request) where the Owner unticks the scope.
+      const keep = await prepare({ requested_scope_profile: "normal" });
+      assert.equal((await callback({ action: "claim", state_hash: keep.state_hash })).requested_scope_profile, "normal");
+      const down = await callback({ action: "complete", state_hash: keep.state_hash, provider_subject: "normal-subject",
+        credential_envelope: envelope("DOWNenv"), provider_scope_profile: "legacy" });
+      assert.equal(down.status, "completed"); assert.equal(down.provider_scope_profile, "legacy");
+      assert.equal(down.requested_scope_profile, "normal", "the page shows the partial-grant message from these two fields");
+      assert.equal("normal_use_enabled" in down, false); assert.equal(down.refresh_enabled, true);
+      assert.ok(down.refresh_carry_receipt_id);
+      assert.deepEqual(await refresh(), { enabled: true, failures: 0, due: true, receipt_id: down.refresh_carry_receipt_id });
+      assert.equal((await row()).provider_scope_profile, "legacy"); assert.equal((await status()).normal_use, false);
+      // 2. Normal-use re-consent through the same production path. Turn the
+      //    stale normal/1 access off first so the completion has to enable it.
+      assert.equal((await toggle("disable")).status, "committed");
+      const up = await prepare({ requested_scope_profile: "normal", normal_use: { disclosure_version: NORMAL_DISCLOSURE } });
+      assert.equal((await callback({ action: "claim", state_hash: up.state_hash })).requested_scope_profile, "normal");
+      await admin.query("update clued_private.storage_refresh_delegations_v1 set failures=2 where connection_id=$1", [connection]);
+      const done = await callback({ action: "complete", state_hash: up.state_hash, provider_subject: "normal-subject",
+        credential_envelope: envelope("UPenv"), provider_scope_profile: "normal" });
+      assert.equal(done.status, "completed"); assert.equal(done.provider_scope_profile, "normal"); assert.equal(done.requested_scope_profile, "normal");
+      assert.equal(done.normal_use_enabled, true); assert.equal(done.refresh_enabled, true);
+      assert.deepEqual((await admin.query("select operation,status from public.clued_audit_receipts where id=$1", [done.normal_use_receipt_id])).rows[0],
+        { operation: "storage_normal_use_v1", status: "committed" });
+      assert.deepEqual(await refresh(), { enabled: true, failures: 0, due: true, receipt_id: done.refresh_carry_receipt_id });
+      const read = await activeRead();
+      assert.deepEqual(read.classes, ["read", "read_content"]); assert.equal(read.content_profile, "normal/1"); assert.equal(read.disclosure_version, NORMAL_DISCLOSURE);
+      const event = (await admin.query("select change_summary from public.clued_context_events where receipt_id=$1", [done.normal_use_receipt_id])).rows[0].change_summary;
+      assert.equal(event.source, "oauth_reconsent");
+      assert.equal((await status()).normal_use, true); assert.equal((await row()).provider_scope_profile, "normal");
+      // A replay through the callback returns the committed receipt and the current state.
+      assert.deepEqual(await callback({ action: "claim", state_hash: up.state_hash }), { status: "completed", receipt_id: done.receipt_id, refresh_enabled: true,
+        requested_scope_profile: "normal", provider_scope_profile: "normal", normal_use_enabled: true });
+      await assert.rejects(native.query("select public.clued_storage_oauth_callback_v2($1,$2::jsonb)", ["short", JSON.stringify({ action: "claim", state_hash: up.state_hash })]),
+        /storage_oauth_denied/);
     });
   } finally {
     for (const database of clients) await database.end();

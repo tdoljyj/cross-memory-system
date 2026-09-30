@@ -46,7 +46,11 @@ alter table clued_private.storage_oauth_attempts_v1
 -- §2.4 item 8 (m-k): Google keeps a limited number of refresh tokens per
 -- account x client and silently drops the oldest. Every claim may lead to a
 -- token (orphans included), so it is counted before the exchange. cleared_at is
--- reserved for "withdraw all file read access" (revoke), a later slice.
+-- reserved for "withdraw all file read access" (revoke), a later slice; until
+-- then it is set only by the operator runbook step (resource-center-account-
+-- connection.md) after the Owner revoked Clued's access at Google. Until that
+-- slice lands, the 90 limit refuses only normal-use re-consent (an upgrade that
+-- adds a token by choice); plain reconnect and recovery are counted, not refused.
 create table clued_private.storage_refresh_token_issuance_v1 (
   oauth_attempt_id uuid primary key references clued_private.storage_oauth_attempts_v1(id),
   owner_id uuid not null references auth.users(id),
@@ -234,7 +238,9 @@ begin
     perform clued_private.storage_root_quiet_v1(u,root);
     select * into c from clued_private.storage_connections_v1 where id=(p_input->>'connection_id')::uuid and owner_id=u for update;
     select * into app from clued_private.storage_oauth_apps_v1 where issuer_hash=p_issuer_hash and revoked_at is null;
-    if app.issuer_hash is not null and clued_private.storage_refresh_token_count_v1(u,c.provider_subject,app.oauth_client_id)>=90 then
+    -- §2.4 item 8 (b), scoped: only a normal-use upgrade is refused at 90
+    -- (see the ledger comment); a plain reconnect is never locked out.
+    if normal and app.issuer_hash is not null and clued_private.storage_refresh_token_count_v1(u,c.provider_subject,app.oauth_client_id)>=90 then
       raise exception 'storage_refresh_token_limit' using errcode='42501'; end if;
     result:=clued_private.storage_oauth_dispatch_v1(p_issuer_hash,p_input-'requested_scope_profile'-'normal_use');
     if result->>'status'='prepared' then
@@ -270,6 +276,17 @@ begin
   result:=clued_private.storage_oauth_dispatch_v1(p_issuer_hash,p_input);
   if op='claim' and x.purpose='connection' and result->>'status'='claimed' then
     result:=result||jsonb_build_object('requested_scope_profile',coalesce(x.requested_scope_profile,'legacy'));
+  elsif op='claim' and x.purpose='connection' and result->>'status'='completed' then
+    -- Replay after a lost reply: the page shows the CURRENT profile and normal
+    -- use state (read-only; the committed completion receipt is unchanged).
+    select * into after from clued_private.storage_connections_v1 where id=x.connection_id and owner_id=u;
+    result:=result||jsonb_build_object('requested_scope_profile',coalesce(x.requested_scope_profile,'legacy'),
+      'provider_scope_profile',after.provider_scope_profile);
+    if x.normal_use_requested then
+      result:=result||jsonb_build_object('normal_use_enabled',exists(select 1 from clued_private.storage_read_access_v1 ra0
+        where ra0.connection_id=after.id and ra0.owner_id=u and ra0.state='active' and ra0.content_profile='normal/1'
+          and ra0.account_policy_id=after.account_policy_id and after.provider_scope_profile='normal'));
+    end if;
   end if;
   if op='complete' and x.purpose='connection' and result->>'status'='completed' then
     select * into after from clued_private.storage_connections_v1 where id=c.id;
@@ -286,7 +303,10 @@ begin
         'oauth_receipt_id',result->>'receipt_id','delegation_version',d.version);
       r:=clued_private.m1_begin_receipt(u,null,'storage_refresh_delegation_carry',req,clued_private.m1_sha256(req));
       if r.status<>'pending' then raise exception 'storage_oauth_denied' using errcode='42501'; end if;
-      update clued_private.storage_refresh_delegations_v1 set enabled=true,version=version+1,receipt_id=r.id
+      -- Same reset as clued_storage_refresh_manage_v1 enable: the new credential
+      -- starts with no failure history and is due for refresh now.
+      update clued_private.storage_refresh_delegations_v1 set enabled=true,version=version+1,failures=0,
+        next_refresh_at=clock_timestamp(),receipt_id=r.id
         where connection_id=c.id and issuer_hash=p_issuer_hash and not enabled;
       if not found then raise exception 'storage_oauth_denied' using errcode='42501'; end if;
       refs:=jsonb_build_array(jsonb_build_object('kind','system','role','primary','id',c.id));
@@ -322,7 +342,7 @@ begin
       end if;
       result:=result||jsonb_build_object('normal_use_enabled',normal_enabled);
     end if;
-    result:=result||jsonb_build_object('provider_scope_profile',after.provider_scope_profile,
+    result:=result||jsonb_build_object('provider_scope_profile',after.provider_scope_profile,'requested_scope_profile',requested,
       'refresh_enabled',exists(select 1 from clued_private.storage_refresh_delegations_v1 where connection_id=after.id and enabled));
   end if;
   -- Lock waits above can cross session or attempt expiry: check them LAST.

@@ -7,7 +7,7 @@ import { supabase } from "../../../supabase-browser";
 // One in-memory delivery across React remounts. Never persist the Google code,
 // state or provider credentials in browser storage; never feed it to Clued auth.
 type Delivery = { receipt: string; owner: string; refreshEnabled?: boolean; recovery?: boolean; originalReceipt?: string; originalUnconfirmed?: boolean;
-  scopeProfile?: "legacy" | "normal"; normalUse?: boolean };
+  scopeProfile?: "legacy" | "normal"; requestedProfile?: "legacy" | "normal"; normalUse?: boolean };
 let delivery: Promise<Delivery> | undefined;
 class CallbackFailure extends Error {}
 const reasons: Record<string, string> = {
@@ -36,7 +36,7 @@ const reasons: Record<string, string> = {
   credential_seal_unavailable: "服务端凭据加密未完成",
   credential_commit_unconfirmed: "凭据保存回执未确认，请先返回连接页核对状态，不要重复授权",
   storage_root_busy: "该目录还有尚未完成的文件操作，稍后再试；原有授权保持不变",
-  refresh_token_limit: "该 Google 账号在 Clued 中的授权次数已达上限，请先撤回全部文件读取授权后再试",
+  refresh_token_limit: "该 Google 账号在 Clued 中的授权次数已达上限，暂时不能通过重新授权开启正常使用；原有授权保持不变，请联系维护者处理",
 };
 async function settleOriginal(state: string, token: string, owner: string, receipt: string): Promise<Delivery> {
   const current = await supabase.auth.getSession();
@@ -85,7 +85,7 @@ function finish(): Promise<Delivery> {
     }).catch(() => null);
     const body: unknown = await response?.json().catch(() => null);
     const result = body as { status?: unknown; receipt_id?: unknown; refresh_enabled?: unknown; purpose?: unknown;
-      provider_scope_profile?: unknown; normal_use_enabled?: unknown } | null;
+      provider_scope_profile?: unknown; requested_scope_profile?: unknown; normal_use_enabled?: unknown } | null;
     if (!response?.ok || result?.status !== "completed" || typeof result.receipt_id !== "string") {
       // Render only our fixed allowlist, never raw server/Google error text.
       const reason = body && typeof body === "object" && "reason" in body ? body.reason : null;
@@ -112,6 +112,7 @@ function finish(): Promise<Delivery> {
     return { receipt: result.receipt_id, owner: data.session.user.id,
       ...(typeof result.refresh_enabled === "boolean" ? { refreshEnabled: result.refresh_enabled } : {}),
       ...(result.provider_scope_profile === "legacy" || result.provider_scope_profile === "normal" ? { scopeProfile: result.provider_scope_profile } : {}),
+      ...(result.requested_scope_profile === "legacy" || result.requested_scope_profile === "normal" ? { requestedProfile: result.requested_scope_profile } : {}),
       ...(typeof result.normal_use_enabled === "boolean" ? { normalUse: result.normal_use_enabled } : {}) };
   })();
   return delivery;
@@ -139,10 +140,13 @@ export default function StorageGoogleCallback() {
           "。连接停用状态、Agent 权限和后台续签设置未改变；没有重新创建文件。" :
           "连接凭据已安全保存。回执：" + result.receipt +
           (typeof result.refreshEnabled === "boolean" ? (result.refreshEnabled ? "。后台续签已开启" : "。后台续签保持关闭") : "") +
-          // StorageNormalUse §2.3: a partial grant keeps normal use off and says why.
-          (result.normalUse === true ? "。正常使用已开启" : result.normalUse === false
-            ? (result.scopeProfile === "legacy" ? "。未授予“查看你 Google 云端硬盘中的所有文件”，正常使用未开启"
-              : "。正常使用未自动开启，请返回连接页开启") : "") +
+          // StorageNormalUse §2.3: a partial grant keeps normal use off and says
+          // why, whether normal use was requested or a normal connection was only
+          // reconnected (the saved credential follows what Google granted).
+          (result.scopeProfile === "legacy" && (result.requestedProfile === "normal" || result.normalUse !== undefined)
+            ? "。未授予“查看你 Google 云端硬盘中的所有文件”，正常使用未开启"
+            : result.normalUse === true ? "。正常使用已开启"
+              : result.normalUse === false ? "。正常使用未自动开启，请返回连接页开启" : "") +
           "。文件操作仍需独立授权与执行验收。");
     }, error => { if (active && !changed) setMessage(error instanceof CallbackFailure ? error.message : "连接尚未确认，请返回连接页检查状态。正式写入不会因此开启。"); });
     return () => { active = false; data.subscription.unsubscribe(); };

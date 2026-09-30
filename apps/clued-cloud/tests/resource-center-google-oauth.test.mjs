@@ -25,7 +25,7 @@ async function fixture(changes = {}) {
       if (input.action === "prepare") { if (changes.prepareError) throw new Error(changes.prepareError); pending = input; return { status: "prepared" }; }
       if (input.action === "claim") {
         claims++; if (!pending || pending.state_hash !== input.state_hash || changes.denied) throw new Error("no state");
-        if (complete) return { status: "completed", receipt_id: complete.receipt_id };
+        if (complete) return { status: "completed", receipt_id: complete.receipt_id, ...(changes.replayResult ?? {}) };
         if (claims > 1) throw new Error("already claimed");
         return { ...d, ...(changes.descriptor ?? {}), status: "claimed", attempt_id: pending.attempt_id, verifier_envelope: pending.verifier_envelope,
           ...(pending.requested_scope_profile ? { requested_scope_profile: pending.requested_scope_profile } : {}) };
@@ -266,7 +266,9 @@ test("re-consent: a normal start binds the requested profile and the confirmed d
 test("re-consent: granted must be the requested profile or legacy; the result names the granted profile and normal use", async () => {
   for (const [mode, granted, ok] of [["legacy", normalScope, false], ["legacy", scope, true], ["normal", normalScope, true], ["normal", scope, true]]) {
     const f = await fixture({ tokens: { scope: granted }, completeResult: { provider_scope_profile: granted === scope ? "legacy" : "normal",
-      normal_use_enabled: granted !== scope, refresh_enabled: true, unexpected_private_field: "x" } });
+      normal_use_enabled: granted !== scope, refresh_enabled: true, requested_scope_profile: mode, unexpected_private_field: "x" },
+      replayResult: { refresh_enabled: true, provider_scope_profile: granted === scope ? "legacy" : "normal", requested_scope_profile: mode,
+        normal_use_enabled: granted !== scope, unexpected_private_field: "x" } });
     const state = new URL((await f.oauth.start(d.connection_id, false, mode, mode === "normal" ? { disclosure_version: NORMAL_DISCLOSURE } : undefined))
       .authorization_url).searchParams.get("state");
     if (!ok) {
@@ -275,8 +277,10 @@ test("re-consent: granted must be the requested profile or legacy; the result na
       continue;
     }
     const result = await f.oauth.complete({ state, code: "fixture-auth-code" });
-    assert.deepEqual(Object.keys(result).sort(), ["normal_use_enabled", "provider_scope_profile", "receipt_id", "refresh_enabled", "status"]);
-    assert.equal(result.provider_scope_profile, granted === scope ? "legacy" : "normal");
+    assert.deepEqual(Object.keys(result).sort(), ["normal_use_enabled", "provider_scope_profile", "receipt_id", "refresh_enabled", "requested_scope_profile", "status"]);
+    assert.equal(result.provider_scope_profile, granted === scope ? "legacy" : "normal"); assert.equal(result.requested_scope_profile, mode);
+    // A replay after a lost reply carries the same typed fields, never others.
+    assert.deepEqual(await f.oauth.complete({ state, code: "fixture-auth-code" }), result);
     assert.equal(f.complete().provider_scope_profile, granted === scope ? "legacy" : "normal");
   }
 });

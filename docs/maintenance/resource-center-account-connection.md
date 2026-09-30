@@ -704,7 +704,13 @@ changes. Existing connections keep working unchanged until the Owner turns on
   `{read, read_content}` + `normal/1` read access (unless the read access
   changed since prepare); `legacy` granted -> only the credential is replaced
   and the callback says "未授予……正常使用未开启". A plain reconnect requests
-  the profile the row records, so it never downgrades.
+  the profile the row records, so it never downgrades by itself; if the Owner
+  unticks the scope while reconnecting a `normal` connection, the credential
+  follows what Google granted (`legacy`) and the callback shows the same
+  message (it compares `requested_scope_profile` with `provider_scope_profile`).
+  A carried delegation is reset like `refresh_manage` enable (`failures=0`,
+  due now). A replayed `claim` also returns the current profile and, for a
+  normal-use attempt, the current `normal_use_enabled`.
 - **No revoke on upgrade (Q11).** The `complete` UPDATE overwrites
   `credential_envelope`; no other table holds an envelope (the DB fixture scans
   every text/jsonb/bytea column in `public` and `clued_private` for fragments
@@ -729,9 +735,30 @@ changes. Existing connections keep working unchanged until the Owner turns on
 - **Refresh-token count.** Every OAuth claim (any purpose) inserts one row into
   `storage_refresh_token_issuance_v1` before the token exchange. The count is
   per owner x provider subject x OAuth client (claims whose subject is unknown
-  count for every subject). The page warns at 50; at 90 a new re-consent is
-  refused (`refresh_token_limit`). `cleared_at` is reserved for "撤回全部文件读取
-  授权" (not in N1a).
+  count for every subject). The page warns at 50. At 90 only a normal-use
+  re-consent (prepare with `normal_use`) is refused (`refresh_token_limit`); a
+  plain reconnect and credential recovery are counted but never refused, so an
+  Owner is not locked out while "撤回全部文件读取授权" (the revoke slice, which
+  will write `cleared_at`) does not exist. The page and callback tell the Owner
+  to contact a maintainer instead of pointing to that control.
+- **Operator step: resetting the refresh-token count.** Only after the Owner
+  has removed Clued's access for that Google account at
+  <https://myaccount.google.com/permissions> (which invalidates every refresh
+  token of that account x client; each affected connection then needs a plain
+  reconnect), run in the production SQL editor, with the owner ID, the Google
+  provider subject from the connection row and the OAuth client ID:
+
+  ```sql
+  update clued_private.storage_refresh_token_issuance_v1
+     set cleared_at = clock_timestamp()
+   where owner_id = '<owner uuid>' and oauth_client_id = '<oauth client id>'
+     and cleared_at is null and (provider_subject = '<provider subject>' or provider_subject is null);
+  ```
+
+  Confirm with `clued_storage_normal_use_v1` `status` (the page's "读取正常使用
+  设置") that `refresh_token_count` is 0 and record the change in the ops log.
+  Never clear rows without that Google-side removal: the count exists because
+  Google silently drops the oldest tokens past its limit.
 - **Native RPC `clued_storage_normal_use_v1`** (`/v1/storage/normal-use`):
   `status` (both profiles, CAS base, token count), `enable` (needs a `normal`
   credential, otherwise `reconsent_required` and no write) and `disable`
@@ -751,7 +778,14 @@ changes. Existing connections keep working unchanged until the Owner turns on
   queries `fullText contains` per in-root folder and intersects the hits with
   the scoped child list; the admission (`content_search`) requires `normal/1`,
   a `normal` credential and the `read_content` class (per-client deny applies).
-  Responses carry `text_index: "provider"`.
+  Responses carry `text_index: "provider"`. A search round (child list, then
+  the full-text batch) is all or nothing: when the call's 50-request budget
+  runs out inside a round, the page ends with `complete: false` and a cursor
+  that repeats that folder chunk; only a page that cannot finish its first
+  round answers `storage_read_unavailable`.
+- **Known follow-up (PR #418 review, minor 4).** The disclosure names the root
+  by the registered profile's `managed_root` path, not by the folder name read
+  from Drive; a folder renamed in Drive keeps showing the registered path.
 
 Before N1 acceptance (§2.4 items 7-8, not verifiable here): verify with a real
 Google account whether revoking the legacy token invalidates the normal one and
