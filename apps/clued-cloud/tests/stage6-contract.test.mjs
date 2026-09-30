@@ -50,6 +50,37 @@ test("agent contract makes stable ids and one transactional write explicit", asy
   assert.match(contract, /side-effect function zero times/);
 });
 
+test("current-state answers are sourced from Clued on every injected surface (contract, MCP instructions, Skill)", async () => {
+  // BUG-20260930-004: a Host answered "latest logo?" from its own memory without calling Clued.
+  // The guard must live on Clued's own surfaces that every Host receives, not in any Host's memory.
+  const worker = await loadWorker();
+  const [contract, skill, init] = await Promise.all([
+    worker.fetch(new Request("https://clued.test/clued-agent.md"), baseEnv, ctx).then((r) => r.text()),
+    readFile(new URL("../../../skills/clued/SKILL.md", import.meta.url), "utf8"),
+    worker
+      .fetch(
+        new Request("https://clued.test/mcp", {
+          method: "POST",
+          headers: { authorization: `Bearer clued_bnd_${"a".repeat(43)}`, "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+        }),
+        baseEnv,
+        ctx,
+      )
+      .then((r) => r.json()),
+  ]);
+  assert.match(contract, /Contract version: 4/);
+  assert.match(contract, /Current-state answers come only from Clued/);
+  assert.match(contract, /Host's own memory, Host-side conversation summaries, earlier replies, cached files, repository snapshots and old checkpoints are not sources/);
+  assert.match(contract, /say that the current state is unknown/);
+  assert.match(skill, /Required for any question about the current or latest state/);
+  assert.match(skill, /must come from Clued/);
+  const instructions = init.result?.instructions ?? "";
+  assert.match(instructions, /answered only from records read in this session after clued_session_resume/);
+  assert.match(instructions, /host memory, chat summaries, earlier replies, cached files and old checkpoints are not sources/);
+  assert.match(instructions, /say the current state is unknown/);
+});
+
 test("repository Skill, project rules and root snapshot share the v1.6 authority boundary", async () => {
   const [skill, contract, agents, rootAgents, manifestText] = await Promise.all([
     readFile(new URL("../../../skills/clued/SKILL.md", import.meta.url), "utf8"),
@@ -87,7 +118,7 @@ test("the Worker serves the single agent contract and advertises capture", async
   const generated = await readFile(new URL("../worker/generated/agent-contract.ts", import.meta.url), "utf8");
   assert.equal(generated, await renderAgentContractModule(), "run node scripts/generate-agent-contract.mjs");
   const lifecycle = (await bootstrap.json()).lifecycle;
-  assert.equal(lifecycle.contract.version, 3);
+  assert.equal(lifecycle.contract.version, 4);
   assert.equal(lifecycle.contract.url, "https://clued.test/clued-agent.md");
   assert.equal(lifecycle.durable_changes.capture, "material_outcomes_in_same_turn_before_reporting");
 });
