@@ -182,8 +182,10 @@ begin
   -- blocks the switch. Work admitted under the old policy is never re-authorized.
   perform clued_private.storage_root_quiet_v1(u,root);
   -- Queued jobs have no intent and no effect. Cancel them as the Worker's
-  -- report would (same idempotency key, so a late report is refused); begin
-  -- runs under this root lock and refuses a job with a dispatch outcome.
+  -- report would (same idempotency key; a late report returns the job status
+  -- unchanged). A Worker that already loaded the job waits on this root lock,
+  -- then fails its snapshot check, and the cloud worker refuses any job with a
+  -- dispatch outcome before begin.
   for queued in select * from clued_private.storage_jobs_v1 j where j.owner_id=u and j.connection_id=c.id
     and j.intent_id is null and j.dispatch_outcome is null order by j.job_id for update loop
     qreq:=jsonb_build_object('idempotency_key','cloud-dispatch-outcome:'||queued.job_id::text,'job_id',queued.job_id,

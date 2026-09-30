@@ -182,6 +182,8 @@ export default function StorageConnections() {
       // refresh() starts a new revision and clears busy; the readback belongs
       // to that revision, and the operation keeps the page busy until it ends.
       const reloadedList = await refresh();
+      // undefined: a newer revision (sign-in change) superseded this reload.
+      if (reloadedList === undefined) return;
       const reloaded = revision.current;
       settled = reloaded; setBusy(true);
       if (reloadedList === null) throw new Error("连接摘要未确认。");
