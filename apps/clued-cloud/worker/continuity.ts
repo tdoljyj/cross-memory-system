@@ -213,7 +213,7 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
       required: true,
       start: "clued_session_resume",
       reconcile_when_required: "clued_session_reconcile",
-      contract: { version: 3, url: `${origin}/clued-agent.md` },
+      contract: { version: 4, url: `${origin}/clued-agent.md` },
       durable_changes: {
         condition: "authorized_business_change_only",
         capture: "material_outcomes_in_same_turn_before_reporting",
@@ -1996,7 +1996,7 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "Clued Continuity", version: KERNEL_VERSION },
           instructions:
-            `Follow the Clued Agent Contract at ${new URL(request.url).origin}/clued-agent.md. Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. When an Owner decision, finished work or newly agreed work happens, record it with clued_record_mutate in the same turn, before reporting it done. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown. Checkpoint before ending.`,
+            `Follow the Clued Agent Contract at ${new URL(request.url).origin}/clued-agent.md. Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Any question about the current or latest state of the user's projects or of Clued (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) is answered only from records read in this session after clued_session_resume: host memory, chat summaries, earlier replies, cached files and old checkpoints are not sources for it, even when they seem to contain the answer; if Clued cannot be read, say the current state is unknown. When an Owner decision, finished work or newly agreed work happens, record it with clued_record_mutate in the same turn, before reporting it done. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown. Checkpoint before ending.`,
         }),
         200,
         corsHeaders(request),
