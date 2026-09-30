@@ -28,7 +28,7 @@ test('discovery and guessed calls require both existing account/jobs flags; no p
       assert.equal(tools[0].annotations.readOnlyHint, false);
       assert.equal(tools[1].annotations.readOnlyHint, true);
       assert.equal(tools[0].inputSchema.additionalProperties, false);
-      assert.equal(tools[0].inputSchema.properties.mutation.oneOf.length, 2);
+      assert.equal(tools[0].inputSchema.properties.mutation.oneOf.length, 3);
     }
   }
   for (const name of ['clued_storage_begin', 'clued_storage_admission', 'clued_storage_grant', 'clued_storage_credential']) {
@@ -59,7 +59,7 @@ test('MCP requires an actual Binding transport and rejects caller authority befo
   } finally { globalThis.fetch = before; }
 });
 
-test('well-shaped write, replace, move, rename and delete are rejected before any RPC or dispatch', async () => {
+test('write, replace, delete and rename/move without a source version are rejected before any RPC or dispatch', async () => {
   const before = globalThis.fetch; let count = 0;
   const source = mutation.destination_path;
   const cases = [
@@ -151,5 +151,33 @@ test('only server-returned same-job references schedule fixed executor, inspect 
     mismatch = true;
     assert.equal((await (await submit(undefined, enabled, ctx)).json()).result.isError, true);
     assert.equal(pending.length, 1);
+  } finally { globalThis.fetch = before; }
+});
+
+test('rename and file move pass only in their exact shape and reach the same jobs RPC unchanged', async () => {
+  const before = globalThis.fetch; const calls = [];
+  globalThis.fetch = async (_url, init) => { calls.push(JSON.parse(init.body)); return Response.json(status()); };
+  const root = 'G:/My Drive/Clued_资料中心/track';
+  const good = [
+    { operation: 'rename', target_kind: 'file', source_path: root + '/topic/a.md', destination_path: root + '/topic/b.md', source_file_version: '7' },
+    { operation: 'move', target_kind: 'file', source_path: root + '/topic/a.md', destination_path: root + '/other/a.md', source_file_version: '12' },
+  ];
+  const bad = [
+    { ...good[0], destination_path: root + '/other/b.md' }, { ...good[0], destination_path: good[0].source_path },
+    { ...good[1], destination_path: root + '/other/b.md' }, { ...good[1], destination_path: good[1].source_path },
+    { ...good[0], target_kind: 'directory' }, { ...good[0], source_file_version: '0' }, { ...good[0], source_file_version: 7 },
+    { ...good[0], content: 'x' }, { ...good[1], directory_semantics: 'topic' },
+  ];
+  try {
+    for (const input of bad) {
+      const reply = await (await submit({ ...ref, mutation: input })).json();
+      assert.ok(reply.result?.isError === true || reply.error, JSON.stringify(input));
+    }
+    assert.equal(calls.length, 0);
+    for (const input of good) {
+      const reply = (await (await submit({ ...ref, mutation: input })).json()).result;
+      assert.equal(reply.isError, false);
+      assert.deepEqual(calls.at(-1).p_input, { ...ref, mutation: input, action: 'submit' });
+    }
   } finally { globalThis.fetch = before; }
 });

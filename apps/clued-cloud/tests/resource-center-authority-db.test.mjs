@@ -27,6 +27,7 @@ import { testStorageRead } from "./resource-center-storage-read-db.fixture.mjs";
 import { testStorageClientRedirectIdentity } from "./resource-center-client-redirect-identity-db.fixture.mjs";
 import { testStorageReadContent } from "./resource-center-storage-read-content-db.fixture.mjs";
 import { testStorageModifyLevel } from "./resource-center-storage-modify-level-db.fixture.mjs";
+import { testStorageModifyExecution } from "./resource-center-storage-modify-execution-db.fixture.mjs";
 import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refresh-upgrade-db.fixture.mjs";
 
 const USER = "10000000-0000-4000-8000-000000000071";
@@ -136,6 +137,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead ? ["lega
       await testStorageClientRedirectIdentity(t, admin, server, USER, DECISION);
       await testStorageReadContent(t, admin, server, USER, DECISION);
       await testStorageModifyLevel(t, admin, server, USER, DECISION);
+      await testStorageModifyExecution(t, admin, server, USER, DECISION);
       return;
     }
 
@@ -804,6 +806,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead ? ["lega
     await testStorageClientRedirectIdentity(t, admin, server, USER, DECISION);
     await testStorageReadContent(t, admin, server, USER, DECISION);
     await testStorageModifyLevel(t, admin, server, USER, DECISION);
+    await testStorageModifyExecution(t, admin, server, USER, DECISION);
     await t.test("a directory with a recorded sharing digest is matched by sharing, not Drive version", async () => {
       const shared = "d".repeat(64), changed = "e".repeat(64);
       const rowVersion = async (id) => Number((await admin.query(

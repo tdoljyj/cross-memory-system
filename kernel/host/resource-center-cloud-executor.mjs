@@ -6,6 +6,8 @@ import { createGoogleDriveProviderIdentityResolver } from "./resource-center-goo
 import { createGoogleDriveBoundaryScanner } from "./resource-center-google-drive-boundary.mjs";
 import { createGoogleDriveNativeCreateEffect } from "./resource-center-google-drive-create-effect.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "./resource-center-google-drive-postcondition.mjs";
+import { createGoogleDriveNativeModifyEffect, modifyShape } from "./resource-center-google-drive-modify-effect.mjs";
+import { createGoogleDriveModifyPostconditionVerifier } from "./resource-center-google-drive-modify-postcondition.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "./resource-center-governed-tool-surface.mjs";
 import { RESOURCE_CENTER_POLICY_VERSION, bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 
@@ -25,7 +27,7 @@ const providerAuthorityCodes = new Set([
   "PROVIDER_PROFILE_ROOT_MISMATCH", "PROVIDER_ROOT_ID_MISMATCH", "PROVIDER_ROOT_MUTATION_FORBIDDEN",
   "DRIVE_CREDENTIAL_UNAVAILABLE", "DRIVE_LIST_INVALID", "DRIVE_METADATA_MISMATCH",
   "DRIVE_METADATA_UNAVAILABLE", "DRIVE_NAMESPACE_VISIBILITY_UNPROVEN", "DRIVE_PAGINATION_INVALID",
-  "DRIVE_PAGINATION_LIMIT",
+  "DRIVE_PAGINATION_LIMIT", "SOURCE_VERSION_MISMATCH",
 ]);
 // Fixed denial labels from public.clued_resource_center_authority_v1; each names a failed check, never a value.
 const authorityDenialReasons = new Set([
@@ -102,7 +104,14 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       if(descriptor.provider!=="google-drive" || typeof descriptor.provider_subject!=="string" || !descriptor.provider_subject ||
         !Number.isSafeInteger(descriptor.credential_version)||descriptor.credential_version<1) fail();
       const profile=structuredClone(descriptor.profile), mutation=structuredClone(descriptor.mutation);
-      if(!uuid(profile?.profile_id) || profile.policy_version!==RESOURCE_CENTER_POLICY_VERSION || mutation?.operation!=="create" ||
+      if(!uuid(profile?.profile_id) || profile.policy_version!==RESOURCE_CENTER_POLICY_VERSION) fail();
+      // Rename and file move (StorageFullCapability P3) run only in the
+      // verified-result (account policy) mode, whose server proof names them.
+      const modify=mutation?.operation==="rename" || mutation?.operation==="move";
+      if(modify){
+        if(!verifiedResultMode || !modifyShape(mutation) || mutation.target_kind!=="file" ||
+          Object.keys(mutation).some(k=>!["operation","source_path","destination_path","target_kind","source_file_version"].includes(k))) fail();
+      }else if(mutation?.operation!=="create" ||
         !["file","directory"].includes(mutation.target_kind) ||
         Object.keys(mutation).some(k=>!["operation","destination_path","target_kind","directory_semantics","content"].includes(k)) ||
         bindResourceCenterMutation(mutation).destination_path!==mutation.destination_path ||
@@ -163,22 +172,33 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           logAuthorityFailure(phase,"canonical_result","AUTHORITY_RESPONSE_MISMATCH");
           fail();
         }
+        // §6.1 version precondition: the Agent names the version it observed.
+        // A change since then is refused before any durable reservation.
+        if(modify && request.provider_identity.source_file_version!==input.source_file_version){
+          logAuthorityFailure(phase,"provider_identity","SOURCE_VERSION_MISMATCH");
+          fail();
+        }
         return Object.freeze({...result.authority,workspace_version:"provider+canonical:"+hash([result.authority.workspace_version,request.provider_identity])});
       };
       let startedProvider=null, saved=null;
-      const effect=createGoogleDriveNativeCreateEffect({trusted_profile:profile,get_credential:credential,resolve_provider_identity:resolveProvider,
+      const effectConfig={trusted_profile:profile,get_credential:credential,resolve_provider_identity:resolveProvider,
         fetch:driveFetch,clock,consume_started_provider:binding=>{
           const current=startedProvider;startedProvider=null;
           return current?.request_sha256===binding.request_sha256?current:null;
         },persist_provider_attempt:async attempt=>{
           const result=await invoke({action:"provider_attempt",attempt});
           if(result?.status!=="committed" || result.attempt_recorded!==true || !uuid(result.receipt_id) || !isDeepStrictEqual(result.attempt,attempt)) fail();
-        }});
-      const verify=createGoogleDriveCreatePostconditionVerifier({managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
+        }};
+      const effect=modify ? createGoogleDriveNativeModifyEffect({...effectConfig,get_file:metadata.getFile})
+        : createGoogleDriveNativeCreateEffect(effectConfig);
+      const verifierConfig={managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
-        require_effect_provider_id:true,include_verified_proof:verifiedResultMode,clock});
+        include_verified_proof:verifiedResultMode,clock};
+      const verify=modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
+        : createGoogleDriveCreatePostconditionVerifier({...verifierConfig,require_effect_provider_id:true});
+      const proofContract=modify ? `clued.storage-${mutation.operation}-verified/1` : "clued.storage-create-verified/2";
       const host=createResourceCenterOnlineToolHost({trusted_profile:profile,resolve_artifact_online:resolveAuthority,
-        mutation_effect:effect,scan_boundary:scan,clock,
+        mutation_effect:effect,scan_boundary:scan,clock,qualified_operations:modify?[mutation.operation]:["create"],
         prepare_write:async({mutation:input,binding})=>{
           const request=await authorityRequest(input);
           const result=await invoke({action:"begin",prepare:{action:"prepare",request_key:"account-job:"+ref.job_id,
@@ -203,7 +223,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
             let finished;
             if(verifiedResultMode){
               stage="proof";
-              if(proof?.contract!=="clued.storage-create-verified/2") fail();
+              if(proof?.contract!==proofContract) fail();
               stage="verified_record_rpc";
               const recorded=await invoke({action:"verified_record",finish,proof});
               stage="verified_record_result";

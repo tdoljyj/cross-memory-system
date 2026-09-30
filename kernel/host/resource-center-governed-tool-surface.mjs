@@ -9,6 +9,8 @@ const MUTATION_CALLER_FIELDS = new Set([
   "directory_semantics",
   "duplicate_bytes",
   "content",
+  // The caller's observed Drive version of the source (rename/move precondition).
+  "source_file_version",
 ]);
 
 function deepFreeze(value) {
@@ -29,6 +31,7 @@ const mutationInputSchema = deepFreeze({
     directory_semantics: { type: "string", enum: ["track", "topic", "asset_collection"] },
     duplicate_bytes: { type: "boolean" },
     content: { type: "string" },
+    source_file_version: { type: "string", pattern: "^[1-9][0-9]{0,39}$" },
   },
 });
 

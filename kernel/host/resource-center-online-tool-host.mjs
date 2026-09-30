@@ -42,6 +42,7 @@ export function createResourceCenterOnlineToolHost({
   admission_ttl_ms: admissionTtlMs,
   mutation_effect: mutationEffect,
   scan_boundary: scanBoundary,
+  qualified_operations: qualifiedOperations = ["create"],
 } = {}) {
   if (typeof resolveArtifactOnline !== "function") {
     throw new TypeError("A trusted online Artifact/Currentness resolver is required.");
@@ -51,6 +52,14 @@ export function createResourceCenterOnlineToolHost({
   }
   if (scanBoundary !== undefined && (typeof scanBoundary !== "function" || typeof mutationEffect !== "function")) {
     throw new TypeError("A remote boundary scanner requires a Host-owned provider effect.");
+  }
+  // Only operations whose journal/finalization contract the caller wires are
+  // qualified. Rename and file move have one only in the account-policy
+  // cloud executor (verified settlement); every other Host keeps create only.
+  const qualified = new Set(Array.isArray(qualifiedOperations) ? qualifiedOperations : [null]);
+  const single = qualified.size === 1 && qualifiedOperations.length === 1 ? qualifiedOperations[0] : null;
+  if (single !== "create" && !(["rename", "move"].includes(single) && typeof mutationEffect === "function")) {
+    throw new TypeError("Qualified operations must be create, or one Host-owned rename/move effect.");
   }
 
   const profile = structuredClone(trustedProfile);
@@ -81,9 +90,8 @@ export function createResourceCenterOnlineToolHost({
   }
 
   async function executeMutation(mutation) {
-    // Only create has a qualified journal/finalization contract. A definite
-    // unsupported operation has not reserved anything and must not quarantine.
-    if (mutation.operation !== "create") return deny("WRITER_OPERATION_NOT_QUALIFIED");
+    // A definite unsupported operation has not reserved anything and must not quarantine.
+    if (!qualified.has(mutation.operation)) return deny("WRITER_OPERATION_NOT_QUALIFIED");
     let authority;
     const request = Object.freeze({
       profile: Object.freeze(structuredClone(profile)),

@@ -532,3 +532,61 @@ enabling modify grants nothing executable.
 Rollout: production migration, then release. No new secret or switch; the
 page shows the toggle only when the write-access status loads, and read
 settings stay usable if it does not.
+
+## Rename and file move (StorageFullCapability.v0.1 P3, part B)
+
+Migration `20260930100000_storage_modify_execution_v1.sql` and the executor
+changes run rename and file move on the existing account-policy job chain.
+There is no new permission path: submit evaluates the `modify` level (part A),
+then the same begin, provider attempt, verified record and verified settle
+steps run with operation-specific checks.
+
+- `clued_storage_submit` accepts
+  `{operation: "rename" | "move", target_kind: "file", source_path,
+  destination_path, source_file_version}`. A rename keeps the parent folder
+  and changes the name; a move keeps the name and changes the folder.
+  Directories are not moved (P6).
+- `source_file_version` is the Drive version the Agent last saw with
+  `clued_storage_browse` stat. A file that changed since is refused before any
+  reservation (`SOURCE_VERSION_MISMATCH` in the executor log; the job is
+  reported `denied`). The Artifact authority also requires the registered
+  source at that exact version, so only files Clued registered can be changed.
+  A file whose Drive version advanced after registration is therefore refused
+  even with a fresh stat (authority reason `source_mismatch`); it fails closed
+  until the Owner re-registers it with `artifact_update`.
+- An existing destination name, a destination outside the root or in a status
+  directory, and a missing modify level are refused with zero provider updates.
+- The executor records `clued.storage-modify-attempt/1` (file ID, both paths,
+  both parents, and the content identity: size, head revision, checksums)
+  before the single `files.update` call, and re-reads the source before and
+  after that durable flush. Drive has no conditional update; the verifier
+  re-reads afterwards and requires the same content identity, so a concurrent
+  edit is left fenced (`DRIVE_POSTCONDITION_CONTENT_CHANGED`) instead of being
+  settled. Only stored files with a head revision and a checksum qualify;
+  Google-native documents do not.
+- The verifier proves `clued.storage-rename-verified/1` or
+  `clued.storage-move-verified/1`:
+  - the file is the only entry of its new name, with exactly the destination
+    parent;
+  - the ancestor chain has the same folder IDs (folder versions are not
+    pinned, since Drive may advance them when children change);
+  - its content identity is unchanged;
+  - for a rename, the old name no longer lists it; for a move, its only
+    parent is the destination;
+  - two reads agree on its version.
+  A version that jumps by more than one is recorded, not treated as failure.
+- Settlement updates the same Artifact by CAS on the version the authority saw
+  (`artifact_update`); it never registers a second Artifact. As for create,
+  the Artifact's `source_decision_id` becomes the writer's Decision. The plain
+  journal `finalize` stays create-only. The journal accepts a rename or move
+  intent from any writer binding, but only the account-policy executor can
+  settle one (by verified settlement), and only after the modify evaluation.
+- An uncertain outcome (for example a lost update reply) leaves the intent
+  fenced. Scheduled and native recovery load rename and move descriptors,
+  re-verify by GET only, and settle through the same verified record; they
+  never repeat the update.
+
+Rollout: production migration, then release. Execution still needs the write
+switches (`execution_enabled` plus the executor window) and the Owner's modify
+level.
+

@@ -1,5 +1,5 @@
 const DRIVE_API = "https://www.googleapis.com/drive/v3/files";
-const FIELDS = "id,name,mimeType,parents,version,trashed,size,sha256Checksum";
+const FIELDS = "id,name,mimeType,parents,version,trashed,size,sha256Checksum,md5Checksum,headRevisionId";
 const NAMESPACE_READ_SCOPES = new Set([
   "https://www.googleapis.com/auth/drive.metadata.readonly",
   "https://www.googleapis.com/auth/drive.metadata",
