@@ -1,6 +1,7 @@
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-postcondition.mjs";
 import { createGoogleDriveModifyPostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-modify-postcondition.mjs";
+import { createGoogleDriveReplacePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-replace-postcondition.mjs";
 import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
 
@@ -86,25 +87,36 @@ export async function createStorageCloudRecovery(config: {
         const url = new URL(String(input));
         if (init?.method !== "GET" || init.body != null || url.origin !== "https://www.googleapis.com" ||
             url.username || url.password || url.hash ||
-            !/^\/drive\/v3\/files(?:\/[A-Za-z0-9_-]+)?$/.test(url.pathname) ||
+            !/^\/drive\/v3\/files(?:\/[A-Za-z0-9_-]+(?:\/revisions\/[A-Za-z0-9_-]+)?)?$/.test(url.pathname) ||
             [...url.searchParams.keys()].some(key => !["fields", "supportsAllDrives", "includeItemsFromAllDrives", "q", "pageSize", "pageToken"].includes(key))) throw denied();
         return bounded(fetcher(input, { ...init, signal: AbortSignal.any([abort.signal, ...(init.signal ? [init.signal] : [])]) }));
       }});
       // Rename and file move (P3) settle only through the verified record.
       const operation = String(d.mutation.operation);
       const modify = operation === "rename" || operation === "move";
+      const replace = operation === "replace";
       if (modify && (!config.verified || d.attempt.contract !== "clued.storage-modify-attempt/1" ||
           d.attempt.operation !== operation || d.attempt.source_path !== d.mutation.source_path)) throw denied();
+      if (replace && (!config.verified || d.attempt.contract !== "clued.storage-replace-attempt/1" ||
+          d.attempt.operation !== "replace")) throw denied();
       const verifierConfig = {
         managed_root: String(d.profile.managed_root), root_folder_id: String(d.root_folder_id), root_parent_id: String(d.root_parent_id),
         get_file: (id: string) => metadata.getFile(id, { signal: abort.signal }),
         list_children: (input: Data) => metadata.listChildren(input, { signal: abort.signal }),
         include_verified_proof: !!config.verified, timeout_ms: timeout, poll_ms: Math.min(1000, timeout), clock,
       };
-      const verify = modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
+      const verify = replace
+        ? createGoogleDriveReplacePostconditionVerifier({ ...verifierConfig,
+          get_revision: (fileId: string, revisionId: string) => metadata.getRevision(fileId, revisionId, { signal: abort.signal }) })
+        : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
         : createGoogleDriveCreatePostconditionVerifier({ ...verifierConfig, require_effect_provider_id: true });
       const postcondition = await bounded(verify({ profile: d.profile, mutation: d.mutation, provider_before: d.provider_before,
-        effect_result: modify
+        effect_result: replace
+          ? { operation: "replace", destination_path: d.mutation.destination_path, provider_file_id: d.attempt.provider_file_id,
+              content_before: d.attempt.content_before, content_after: d.attempt.content_after,
+              pinned_revision_id: d.attempt.pinned_revision_id, release_revision_ids: d.attempt.release_revision_ids,
+              restore_job_id: d.attempt.restore_job_id }
+          : modify
           ? { operation, source_path: d.mutation.source_path, destination_path: d.mutation.destination_path,
               provider_file_id: d.attempt.provider_file_id, content: d.attempt.content }
           : { operation: "create", destination_path: d.mutation.destination_path, provider_file_id: d.attempt.provider_file_id } }));
@@ -112,7 +124,8 @@ export async function createStorageCloudRecovery(config: {
       let done: Data;
       if (config.verified) {
         const verifiedPost: unknown = postcondition;
-        const contract = modify ? `clued.storage-${operation}-verified/1` : "clued.storage-create-verified/2";
+        const contract = replace ? "clued.storage-replace-verified/1"
+          : modify ? `clued.storage-${operation}-verified/1` : "clued.storage-create-verified/2";
         if (!object(verifiedPost) || !object(verifiedPost.verified_proof) ||
             verifiedPost.verified_proof.contract !== contract) throw denied();
         const { verified_proof: proof, ...post } = verifiedPost;

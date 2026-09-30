@@ -400,6 +400,7 @@
 - `replace` 结算后，保留最近 K 个由 Clued 设为永久保存的 revision（K 由实现 PR 提出，Owner 批准）。更早的 revision 取消永久保存，交回 Google 默认的保留策略。
 - 每次取消都写 Receipt。
 - 如果达到 200 个上限，就拒绝 `replace`，不静默跳过保护。
+- **P4 实现说明（2026-09-30，Owner Decision `cc671d13`）**：`replace` 使用单独的 `overwrite` 写入等级（独立开关与说明 `clued.storage-overwrite-disclosure/1`），K = 10。提交带调用方观测到的 `destination_file_version`，执行器在预留前比对；provider attempt 为 `clued.storage-replace-attempt/1`（旧内容标识、要保留的 head revision、新内容的大小与 sha256、要取消的旧 pin），核验合同为 `clued.storage-replace-verified/1`（identity、ancestors、stable_state、content、revision_changed、previous_revision_kept、releases_applied）。effect 顺序：旧 head revision 设 `keepForever=true` → 上传 → 取消更早的 Clued pin。Clued 设的永久 revision 记在 `storage_revision_pins_v1`，每个文件最多 10 个，每次 replace 在同一作业里取消最新 9 个以外的全部；取消不单独写 Receipt，由结算 Receipt（其核验证明列出这些 revision）覆盖，被取消的行记该 Receipt ID。Owner 自己在 Drive 里设的永久 revision 不受影响。`revert` 为带 `restore_job_id` 的 replace：下载该作业保留的 revision，大小、sha256、md5 与 pin 一致才上传；pin 已取消则拒绝。结果不确定时定时 / 原生恢复只读核验后走同一核验记录结算，绝不重复上传。
 
 **Provider 限制（必须写入回执）：**
 

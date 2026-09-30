@@ -11,6 +11,9 @@ const MUTATION_CALLER_FIELDS = new Set([
   "content",
   // The caller's observed Drive version of the source (rename/move precondition).
   "source_file_version",
+  // The caller's observed version of the replace target, and a revert's job.
+  "destination_file_version",
+  "restore_job_id",
 ]);
 
 function deepFreeze(value) {
@@ -32,6 +35,8 @@ const mutationInputSchema = deepFreeze({
     duplicate_bytes: { type: "boolean" },
     content: { type: "string" },
     source_file_version: { type: "string", pattern: "^[1-9][0-9]{0,39}$" },
+    destination_file_version: { type: "string", pattern: "^[1-9][0-9]{0,39}$" },
+    restore_job_id: { type: "string", format: "uuid" },
   },
 });
 

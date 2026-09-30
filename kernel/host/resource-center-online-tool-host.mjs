@@ -54,12 +54,13 @@ export function createResourceCenterOnlineToolHost({
     throw new TypeError("A remote boundary scanner requires a Host-owned provider effect.");
   }
   // Only operations whose journal/finalization contract the caller wires are
-  // qualified. Rename and file move have one only in the account-policy
-  // cloud executor (verified settlement); every other Host keeps create only.
+  // qualified. Rename, file move and replace have one only in the
+  // account-policy cloud executor (verified settlement); every other Host
+  // keeps create only.
   const qualified = new Set(Array.isArray(qualifiedOperations) ? qualifiedOperations : [null]);
   const single = qualified.size === 1 && qualifiedOperations.length === 1 ? qualifiedOperations[0] : null;
-  if (single !== "create" && !(["rename", "move"].includes(single) && typeof mutationEffect === "function")) {
-    throw new TypeError("Qualified operations must be create, or one Host-owned rename/move effect.");
+  if (single !== "create" && !(["rename", "move", "replace"].includes(single) && typeof mutationEffect === "function")) {
+    throw new TypeError("Qualified operations must be create, or one Host-owned rename/move/replace effect.");
   }
 
   const profile = structuredClone(trustedProfile);
