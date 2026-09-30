@@ -142,3 +142,45 @@ export const toUnicodeBombPdf = decodedBytes => buildPdf([...catalog,
   "<< /Type /FontDescriptor /FontName /Embedded /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 900 /Descent -200 /CapHeight 700 /StemV 80 >>",
   repeatedFlate("/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n1 begincodespacerange <0000> <FFFF> endcodespacerange\n", "% padding padding padding\n",
     decodedBytes, "2 beginbfchar\n<0001> <0041>\n<0002> <0042>\nendbfchar endcmap CMapName currentdict /CMap defineresource pop end end\n")]);
+
+// Bombs without compression (independent re-review): allocation that no decoded-byte limit sees.
+const identityFont = (toUnicodeRef, fontFileRef = "") => [
+  `<< /Type /Font /Subtype /Type0 /BaseFont /Embedded /Encoding /Identity-H /DescendantFonts [6 0 R]${toUnicodeRef ? ` /ToUnicode ${toUnicodeRef}` : ""} >>`,
+  ...onePage("5 0 R"), stream("BT /F1 11 Tf 50 700 Td <00010002> Tj ET"),
+  "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Embedded /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R /DW 1000 /CIDToGIDMap /Identity >>",
+  `<< /Type /FontDescriptor /FontName /Embedded /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 900 /Descent -200 /CapHeight 700 /StemV 80${fontFileRef ? ` /FontFile2 ${fontFileRef}` : ""} >>`];
+/** A plain (unfiltered) ToUnicode CMap whose `ranges` ([low, high, dst] hex strings) are
+ * bfrange (`<dst>`) or cidrange (a CID number) entries: pdf.js fills one map entry per code. */
+export const cmapRangeBombPdf = (ranges = [["000000", "FFFFFF", "4100"]], { kind = "bfrange" } = {}) => buildPdf([...catalog, ...identityFont("8 0 R"),
+  stream(["/CIDInit /ProcSet findresource begin 12 dict begin begincmap", "1 begincodespacerange <000000> <FFFFFF> endcodespacerange",
+    `${ranges.length} begin${kind}`, ...ranges.map(([low, high, dst]) => `<${low}> <${high}> ${kind === "bfrange" ? `<${dst}>` : Number.parseInt(dst, 16)}`),
+    `end${kind} endcmap CMapName currentdict /CMap defineresource pop end end`].join("\n"))]);
+/** One page in `count` distinct non-embedded STSong-Light fonts with the predefined `encoding`:
+ * pdf.js parses the bundled encoding and Adobe-GB1-UCS2 CMaps once per font. */
+export function predefinedCjkFontsPdf(count, encoding = "UniGB-UCS2-H") {
+  const fonts = Array.from({ length: count }, (_, i) => `/F${i + 1} ${5 + i * 2} 0 R`).join(" ");
+  const hex = text => "<" + [...text].map(c => hex4(c.charCodeAt(0))).join("") + ">";
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << ${fonts} >> >> /Contents 4 0 R >>`,
+    stream(Array.from({ length: count }, (_, i) => `BT /F${i + 1} 11 Tf 50 ${740 - i * 14} Td ${hex(`中文${i + 1}`)} Tj ET`).join("\n"))];
+  for (let i = 0; i < count; i++) objects.push(`<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /${encoding} /DescendantFonts [${6 + i * 2} 0 R] >>`,
+    "<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 4 >> /DW 1000 >>");
+  return buildPdf(objects);
+}
+/** A baseline JPEG header claiming `width` x `height` (three components, no scan data worth decoding). */
+export function jpegHeader(width, height) {
+  const segment = (marker, body) => Buffer.concat([Buffer.from([0xff, marker, (body.length + 2) >> 8, (body.length + 2) & 0xff]), body]);
+  const dqt = segment(0xdb, Buffer.concat([Buffer.from([0x00]), Buffer.alloc(64, 1)]));
+  const sof = segment(0xc0, Buffer.from([8, height >> 8, height & 0xff, width >> 8, width & 0xff, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]));
+  // One DC and one AC Huffman table with a single 1-bit code each.
+  const dht = segment(0xc4, Buffer.concat([Buffer.from([0x00, 1]), Buffer.alloc(15), Buffer.from([0]), Buffer.from([0x10, 1]), Buffer.alloc(15), Buffer.from([0])]));
+  const sos = segment(0xda, Buffer.from([3, 1, 0x00, 2, 0x00, 3, 0x00, 0, 63, 0]));
+  return Buffer.concat([Buffer.from([0xff, 0xd8]), dqt, sof, dht, sos, Buffer.alloc(256, 0), Buffer.from([0xff, 0xd9])]);
+}
+/** A ToUnicode CMap (`target: "tounicode"`) or FontFile2 (`"fontfile"`) stream with an image filter (default
+ * /DCTDecode) whose data is a JPEG header claiming `width` x `height`: pdf.js decodes it as an image on the text path. */
+export const imageFilterBombPdf = ({ width = 30000, height = 30000, filter = "DCTDecode", target = "tounicode" } = {}) => {
+  const data = jpegHeader(width, height).toString("latin1");
+  const imageStream = `<< /Length ${data.length} /Filter /${filter} /Width ${width} /Height ${height} >>\nstream\n${data}\nendstream`;
+  return buildPdf([...catalog, ...(target === "tounicode" ? identityFont("8 0 R") : identityFont("", "8 0 R")), imageStream]);
+};

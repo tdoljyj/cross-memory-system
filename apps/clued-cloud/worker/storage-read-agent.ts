@@ -6,7 +6,7 @@ import { bytesToBase64, bytesToBase64Url } from "./storage-base64";
 import { createStorageContentGateway } from "./storage-content-gateway";
 import { classifyFormat, extractOfficeText, imageInfo, StorageFormatError, EXTRACT_TEXT_MAX, IMAGE_MAX_BYTES, IMAGE_MAX_EDGE,
   IN_MEMORY_ZIP_MAX } from "./storage-read-formats";
-import { extractPdfText, pdfOffsetPastText, pdfTimeBudget, readExactBody, PDF_MAX_BYTES, PDF_PAGES_PER_CALL } from "./storage-read-pdf";
+import { extractPdfText, pdfOffsetPastText, pdfTimeBudget, readExactBody, withPdfSlot, PdfBusyError, PDF_BUSY_HINT, PDF_MAX_BYTES, PDF_PAGES_PER_CALL } from "./storage-read-pdf";
 
 /** StorageFullCapability.v0.1 P1 read level (list / stat / search / resolve)
  * and P2 read_content (read: one text file body, by byte range), with
@@ -547,19 +547,28 @@ export async function createStorageReadAgent(config: {
         if (pdf) {
           // §4.5: whole file (at most 20 MiB, one budgeted request) into one
           // buffer of exactly its size, then text of the selected pages only.
-          const media = await call(() => content.media(id));
-          if (media.status === 403 || media.status === 404) fail("content_not_accessible");
-          if (media.status !== 200) fail("storage_read_unavailable");
+          // One PDF download + extraction at a time per isolate (withPdfSlot):
+          // two would together approach the isolate's memory.
           let pages: Awaited<ReturnType<typeof extractPdfText>>;
           try {
-            const body = await readExactBody(media, fileSize);
-            // Extraction gets what is left of the call's 25 s signal after the
-            // download, minus a reserve for the post-read scope recheck.
-            const time = pdfTimeBudget(Date.now() - signalStarted);
-            if (time === null) return fail("storage_read_unavailable");
-            pages = await extractPdfText(body, { page_start: input.page_start ?? 1, page_count: input.page_count ?? PDF_PAGES_PER_CALL,
-              max_text_bytes: Math.min(offset + length, EXTRACT_TEXT_MAX), time_ms: time });
-          } catch (error) { return fail(error instanceof StorageFormatError ? error.code : "storage_read_unavailable"); }
+            pages = await withPdfSlot(async () => {
+              const media = await call(() => content.media(id));
+              if (media.status === 403 || media.status === 404) fail("content_not_accessible");
+              if (media.status !== 200) fail("storage_read_unavailable");
+              try {
+                const body = await readExactBody(media, fileSize);
+                // Extraction gets what is left of the call's 25 s signal after the
+                // wait and the download, minus a reserve for the post-read scope recheck.
+                const time = pdfTimeBudget(Date.now() - signalStarted);
+                if (time === null) return fail("storage_read_unavailable");
+                return await extractPdfText(body, { page_start: input.page_start ?? 1, page_count: input.page_count ?? PDF_PAGES_PER_CALL,
+                  max_text_bytes: Math.min(offset + length, EXTRACT_TEXT_MAX), time_ms: time });
+              } catch (error) { return fail(error instanceof StorageFormatError ? error.code : "storage_read_unavailable"); }
+            });
+          } catch (error) {
+            if (error instanceof PdfBusyError) throw new StorageReadError("storage_read_unavailable", { hint: PDF_BUSY_HINT, next_page_start: input.page_start ?? 1 });
+            throw error;
+          }
           const text = encoder.encode(pages.text);
           const past = pdfOffsetPastText(pages, text.length, offset);
           if (past?.code === "storage_read_unavailable") throw new StorageReadError(past.code, { hint: past.hint, next_page_start: past.next_page_start });

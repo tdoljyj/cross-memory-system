@@ -21,9 +21,11 @@ import { StorageFormatError } from "./storage-read-formats";
  * Small hostile files (§4.5 resource bounds): pdf.js itself has no limit on
  * decoded bytes, and a 70 KB deflate bomb decodes to hundreds of MB. So
  * (1) build/pdfjs-decode-guard.mjs patches the pinned worker to call the
- * guard below for every decoded-byte allocation, content-stream token and new
- * cached name, and the guard refuses past the PDF_DECODE_* / PDF_TOKENS_MAX /
- * PDF_PRIMITIVES_MAX limits of this call (archive_limit_exceeded); pdf.js
+ * guard below for every decoded-byte allocation, content-stream token, new
+ * cached name and CMap entry, and for every image decode (refused: text never
+ * needs one), and the guard refuses past the PDF_DECODE_* / PDF_TOKENS_MAX /
+ * PDF_PRIMITIVES_MAX / PDF_CMAP_ENTRIES_MAX limits of this call
+ * (archive_limit_exceeded); pdf.js
  * decodes a page's content stream whole before it evaluates it, so these also
  * bound text bombs; (2) page text is read as a stream and cancelled once the
  * call's text limit or deadline is passed, so one page can neither grow the
@@ -73,19 +75,37 @@ export const PDF_TOKENS_MAX = 4_000_000;
 /** New entries in pdf.js's isolate-wide Name / Cmd caches in one call (a real
  * document has a few thousand distinct names). */
 export const PDF_PRIMITIVES_MAX = 200_000;
+/** Weighted CMap entries pdf.js may create in one call (CMap.mapOne, and every
+ * code of each cidrange / bfrange, charged before the range is filled: one
+ * range may name up to 2^24 codes). An entry of a bundled predefined CMap
+ * weighs 1; an entry of a CMap embedded in the PDF weighs 4 (each bfrange code
+ * becomes its own string, and a ToUnicode map is copied once more into the
+ * font); either weighs twice as much at a code above 0xFFFF (the map becomes a
+ * sparse dictionary). Measured under Node (pdfjs-dist 6.3.289): about 45
+ * bytes of heap per predefined entry (its font's Unicode map included) and
+ * 70–250 bytes per embedded entry, so the limit keeps CMaps to about 16–20 MB
+ * of the isolate. The largest bundled CMap (GBK2K-V with its usecmap parent)
+ * has about 60 thousand entries and a typical non-embedded CJK font
+ * (UniGB-UCS2-H plus Adobe-GB1-UCS2) about 59 thousand, so a call may load
+ * some 6 such fonts (an Identity-H font with an Adobe CIDSystemInfo and no
+ * ToUnicode loads only the 18–30 thousand of the UCS2 map); a document that
+ * needs more fails archive_limit_exceeded rather than exhausting the isolate. */
+export const PDF_CMAP_ENTRIES_MAX = 400_000;
 
-type DecodeBudget = { allocated: number; tokens: number; primitives: number; exceeded: boolean; streams: WeakMap<object, number> };
+type DecodeBudget = { allocated: number; tokens: number; primitives: number; cmap: number; exceeded: boolean; streams: WeakMap<object, number> };
 const decodeBudgets = new AsyncLocalStorage<DecodeBudget>();
 class DecodeLimit extends Error {}
 /** Called by the patched pdf.js worker (build/pdfjs-decode-guard.mjs): before
  * it allocates `bytes` of decoded data for `stream` ("decode"), for each
  * content-stream token ("token"), for each new cached Name / Cmd
- * ("primitive"), and where a hard limit is hit ("limit"). Outside an
+ * ("primitive"), before CMap `stream` gets `bytes` entries up to `code`
+ * ("cmap", weighted: PDF_CMAP_ENTRIES_MAX), and where a
+ * hard limit is hit ("limit", which includes every image decode). Outside an
  * extraction (no budget in the async context) nothing may be decoded. pdf.js
  * may swallow the throw (stopAtErrors: false skips a failing stream), so the
  * budget records it and the extraction fails with archive_limit_exceeded
  * instead of returning partial text. */
-function decodeGuard(kind: "decode" | "token" | "primitive" | "limit", stream?: object, bytes = 0): void {
+function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "limit", stream?: object, bytes = 0, code = 0): void {
   const budget = decodeBudgets.getStore();
   if (!budget) {
     // Module evaluation creates a few Names before any extraction runs.
@@ -95,6 +115,11 @@ function decodeGuard(kind: "decode" | "token" | "primitive" | "limit", stream?: 
   if (!budget.exceeded) {
     if (kind === "token") { if (++budget.tokens <= PDF_TOKENS_MAX) return; }
     else if (kind === "primitive") { if (++budget.primitives <= PDF_PRIMITIVES_MAX) return; }
+    else if (kind === "cmap") {
+      // A range with high < low fills nothing; anything not a count is refused.
+      const weight = ((stream as { builtInCMap?: unknown } | undefined)?.builtInCMap === true ? 1 : 4) * (code > 0xffff ? 2 : 1);
+      if (Number.isFinite(bytes) && (budget.cmap += Math.max(0, bytes) * weight) <= PDF_CMAP_ENTRIES_MAX) return;
+    }
     else if (kind === "decode" && stream) {
       const used = (budget.streams.get(stream) ?? 0) + bytes;
       if (used <= PDF_DECODE_STREAM_MAX && budget.allocated + bytes <= PDF_DECODE_TOTAL_MAX) {
@@ -199,6 +224,30 @@ export function classifyPdfError(error: unknown, limitHit: boolean): StorageForm
   return new StorageFormatError("document_invalid");
 }
 
+/** How long a PDF read waits for the isolate's PDF slot before it gives up. */
+export const PDF_SLOT_WAIT_MS = 2000;
+export const PDF_BUSY_HINT = "Another PDF is being read by this server instance right now. Retry the same read in a few seconds.";
+/** The PDF slot stayed busy for PDF_SLOT_WAIT_MS (storage_read_unavailable with PDF_BUSY_HINT). */
+export class PdfBusyError extends Error { constructor() { super("pdf slot busy"); } }
+let pdfSlot: Promise<void> | null = null;
+/** Runs `fn` (a PDF download and extraction) when no other PDF read runs in
+ * this isolate: each may hold a 20 MiB file plus pdf.js's working set (about
+ * 20-60 MB under the limits above), so two at once could approach the 128 MB
+ * isolate. A read waits at most `waitMs` for the slot, then fails
+ * PdfBusyError. Waiters are not queued in order; each takes the slot if it is
+ * free when it wakes. */
+export async function withPdfSlot<T>(fn: () => Promise<T>, waitMs = PDF_SLOT_WAIT_MS): Promise<T> {
+  if (pdfSlot) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<"timeout">(resolve => { timer = setTimeout(() => resolve("timeout"), waitMs); });
+    try { while (pdfSlot) if (await Promise.race([pdfSlot, timeout]) === "timeout") throw new PdfBusyError(); }
+    finally { clearTimeout(timer); }
+  }
+  let release!: () => void;
+  pdfSlot = new Promise<void>(resolve => { release = resolve; });
+  try { return await fn(); } finally { pdfSlot = null; release(); }
+}
+
 /** The read's Drive calls share one 25 s signal; the post-read scope recheck
  * (a fresh ancestor walk) needs time after extraction. */
 export const PDF_CALL_MS = 25000, PDF_RECHECK_RESERVE_MS = 5000, PDF_MIN_TIME_MS = 1000;
@@ -250,7 +299,7 @@ export async function extractPdfText(bytes: Uint8Array, options: { page_start: n
       throw new Error("unavailable");
     }
   }
-  const budget: DecodeBudget = { allocated: 0, tokens: 0, primitives: 0, exceeded: false, streams: new WeakMap() };
+  const budget: DecodeBudget = { allocated: 0, tokens: 0, primitives: 0, cmap: 0, exceeded: false, streams: new WeakMap() };
   // pdf.js's in-thread worker runs in promise jobs started from here, so all
   // decoding for this document sees this budget through the async context.
   return decodeBudgets.run(budget, async (): Promise<PdfExtraction> => {

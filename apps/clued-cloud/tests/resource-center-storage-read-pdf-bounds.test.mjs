@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { build, stop } from "esbuild";
 import { patchPdfWorker, pdfDecodeGuardEsbuildPlugin } from "../build/pdfjs-decode-guard.mjs";
-import { flateLatinPdf, longStringPdf, operatorBombPdf, repeatedStreamPdf, textBombPdf, toUnicodeBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
+import { cmapRangeBombPdf, flateLatinPdf, imageFilterBombPdf, longStringPdf, operatorBombPdf, predefinedCjkFontsPdf, repeatedStreamPdf, textBombPdf, toUnicodeBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
 
 // StorageNormalUse.v0.1 §4.5 resource bounds (independent review MAJOR): small
 // deflate bombs must not exhaust a Worker isolate. Each case runs in its own
@@ -29,12 +29,13 @@ import v8 from "node:v8";
 const [bundle, file, maxText] = process.argv.slice(2);
 const { extractPdfText } = await import(bundle);
 const run = bytes => extractPdfText(bytes, { page_start: 1, page_count: 20, max_text_bytes: Number(maxText) });
-let peakBuffers = 0, peakHeap = 0;
+let peakBuffers = 0, peakHeap = 0, cmapCalls = 0;
 try { await run(new Uint8Array(await readFile(file + ".warm"))); } catch {}
 const guard = globalThis.__cluedPdfDecodeGuard;
-if (typeof guard === "function") globalThis.__cluedPdfDecodeGuard = (kind, stream, bytes) => {
-  if (kind === "decode") { peakBuffers = Math.max(peakBuffers, process.memoryUsage().arrayBuffers); peakHeap = Math.max(peakHeap, v8.getHeapStatistics().used_heap_size); }
-  return guard(kind, stream, bytes);
+if (typeof guard === "function") globalThis.__cluedPdfDecodeGuard = (kind, ...args) => {
+  // CMap entries are charged one by one: sample every 256th.
+  if (kind === "decode" || (kind === "cmap" && cmapCalls++ % 256 === 0)) { peakBuffers = Math.max(peakBuffers, process.memoryUsage().arrayBuffers); peakHeap = Math.max(peakHeap, v8.getHeapStatistics().used_heap_size); }
+  return guard(kind, ...args);
 };
 const bytes = new Uint8Array(await readFile(file));
 const started = performance.now(), cpu = process.cpuUsage();
@@ -67,6 +68,24 @@ for (const [name, pdf, expect, seconds] of [
   ["200 references to one 1 MB stream", () => repeatedStreamPdf(200, MiB), r => r.code === "archive_limit_exceeded", 5],
   ["200 MB ToUnicode CMap bomb (native DecompressionStream)", () => toUnicodeBombPdf(200 * MiB), r => r.code === "archive_limit_exceeded", 5],
   ["7 MB single string", () => longStringPdf(7 * MiB), r => r.code === "archive_limit_exceeded", 5],
+  // Independent re-review: allocation outside every decoded-byte path, from files under 1.6 KB.
+  // Before: a 16 M-code bfrange crashed a 1 GB heap after 29 s; the cidrange took 9 s and 850 MB.
+  ["1.4 KB ToUnicode with one <000000> <FFFFFF> bfrange (CMap range bomb)", () => cmapRangeBombPdf(), r => r.code === "archive_limit_exceeded", 3],
+  ["1.4 KB ToUnicode with one 16 M-code cidrange", () => cmapRangeBombPdf([["000000", "FFFFFF", "0001"]], { kind: "cidrange" }), r => r.code === "archive_limit_exceeded", 3],
+  ["many small bfranges that together pass the CMap limit", () => cmapRangeBombPdf(Array.from({ length: 64 }, (_, i) => [(i * 0x1000).toString(16).padStart(6, "0"),
+    (i * 0x1000 + 0xfff).toString(16).padStart(6, "0"), "4100"])), r => r.code === "archive_limit_exceeded", 3],
+  ["a sparse bfrange just under the CMap limit still fits", () => cmapRangeBombPdf([["100000", (0x100000 + 49000).toString(16), "4100"]]), r => r.ok && r.complete, 5],
+  // Before: 5.2 GB RSS and 28 s CPU for the 30000 x 30000 JPEG header.
+  ["1.6 KB ToUnicode stream with /Filter /DCTDecode claiming a 30000 x 30000 image", () => imageFilterBombPdf(), r => r.code === "archive_limit_exceeded", 3],
+  ["1.6 KB FontFile2 stream with /Filter /DCTDecode claiming a 30000 x 30000 image", () => imageFilterBombPdf({ target: "fontfile" }), r => r.code === "archive_limit_exceeded", 3],
+  // These decoders have no readBlock: a byte read on the text path throws before
+  // anything is decoded (pdf.js drops that ToUnicode), and decodeImage is refused.
+  ...["JBIG2Decode", "JPXDecode", "CCITTFaxDecode"].map(filter => [`ToUnicode stream with /Filter /${filter} decodes nothing`, () => imageFilterBombPdf({ filter }),
+    r => r.ok || r.code === "archive_limit_exceeded", 3]),
+  ["four predefined CJK fonts (bundled CMaps) stay inside the CMap limit", () => predefinedCjkFontsPdf(4),
+    r => r.ok && r.complete && r.text_bytes > 0, 5],
+  // Before the CMap limit, 30 such fonts (a 12 KB file) exhausted this 64 MB heap.
+  ["eight predefined CJK fonts pass the CMap limit", () => predefinedCjkFontsPdf(8), r => r.code === "archive_limit_exceeded", 5],
 ]) {
   test(`bounded under a 64 MB heap: ${name}`, { timeout: 90000 }, async t => {
     const result = await measure(pdf());

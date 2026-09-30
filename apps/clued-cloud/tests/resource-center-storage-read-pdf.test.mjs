@@ -17,7 +17,7 @@ await build({ entryPoints: [fileURLToPath(new URL("../worker/storage-read-pdf.ts
   bundle: true, platform: "node", format: "esm", logLevel: "silent", plugins: [pdfDecodeGuardEsbuildPlugin()] });
 stop();
 const { extractPdfText, looksGarbled, readExactBody, classifyPdfError, pdfOffsetPastText, pdfTimeBudget, PDF_MAX_BYTES, PDF_PAGES_PER_CALL, PDF_TEXT_MAX,
-  PDF_TIME_MS, PDF_TIME_CUT_HINT } =
+  PDF_TIME_MS, PDF_TIME_CUT_HINT, withPdfSlot, PdfBusyError, PDF_SLOT_WAIT_MS } =
   await import(pathToFileURL(path.join(directory, "pdf.mjs")).href);
 const extract = (bytes, options = {}) => extractPdfText(bytes, { page_start: 1, page_count: 20, max_text_bytes: PDF_TEXT_MAX, ...options });
 const ZH = "资料中心存储读取测试：这是一个包含中文字符的页面。";
@@ -187,4 +187,21 @@ test("failures that are not about the file are storage_read_unavailable; a hit l
   assert.equal(code(Object.assign(new Error("Invalid PDF structure."), { name: "InvalidPDFException" })), "document_invalid");
   assert.equal(code(Object.assign(new Error("Bad FCHECK in flate stream"), { name: "UnknownErrorException", details: "FormatError: Bad FCHECK in flate stream" })), "document_invalid");
   assert.equal(code(new Error("anything"), true), "archive_limit_exceeded");
+});
+
+test("one PDF read per isolate: a second read waits for the slot, one that waits too long is PdfBusyError", async () => {
+  assert.equal(PDF_SLOT_WAIT_MS, 2000);
+  const order = [];
+  let finishFirst;
+  const first = withPdfSlot(() => new Promise(resolve => { order.push("first start"); finishFirst = () => { order.push("first end"); resolve(1); }; }));
+  const second = withPdfSlot(async () => { order.push("second start"); return 2; }, 1000);
+  const third = withPdfSlot(async () => 3, 20);
+  await assert.rejects(third, error => error instanceof PdfBusyError);
+  assert.deepEqual(order, ["first start"]);
+  finishFirst();
+  assert.deepEqual(await Promise.all([first, second]), [1, 2]);
+  assert.deepEqual(order, ["first start", "first end", "second start"]);
+  // A failing read releases the slot.
+  await assert.rejects(withPdfSlot(async () => { throw new Error("boom"); }), /boom/);
+  assert.equal(await withPdfSlot(async () => 4, 0), 4);
 });

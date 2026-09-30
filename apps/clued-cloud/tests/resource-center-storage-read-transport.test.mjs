@@ -1058,6 +1058,14 @@ test("§4.5 PDF: extracted text of up to 20 pages, untrusted, one whole-file bod
   assert.equal(byName.value.next_page_start, undefined, "the last page is included");
 });
 
+test("§4.5 PDF: concurrent reads in one isolate run one at a time and both succeed", async () => {
+  const drive = formatTree([["pdfOne0000000001", "One.pdf", PDF, latinPdf(latinPages(3))], ["pdfTwo0000000001", "Two.pdf", PDF, latinPdf(latinPages(2))]]);
+  const [one, two] = await Promise.all([readBody({ object_id: "pdfOne0000000001" }, await normalOptions({ drive })),
+    readBody({ object_id: "pdfTwo0000000001" }, await normalOptions({ drive }))]);
+  assert.equal(one.value.content, [1, 2, 3].map(pageText).join("\n"));
+  assert.equal(two.value.content, [1, 2].map(pageText).join("\n"));
+});
+
 test("§4.5 PDF: page_start / page_count select pages; offset / length chunk that text exactly", async () => {
   const drive = formatTree([["pdfPages00000001", "Pages.pdf", PDF, latinPdf(latinPages(9))]]);
   const two = await readBody({ object_id: "pdfPages00000001", page_start: 3, page_count: 2 }, await normalOptions({ drive }));

@@ -13,9 +13,17 @@ import { readFile } from "node:fs/promises";
  * - "token": each object EvaluatorPreprocessor reads from a content stream, so
  *   operator bombs are bounded by count, not only by decoded size;
  * - "primitive": each new entry in pdf.js's isolate-wide Name / Cmd caches;
+ * - "cmap": CMap entries (CMap.mapOne, and the codes of each mapCidRange /
+ *   mapBfRange / mapBfRangeToArray range, charged with the CMap and its
+ *   highest code before the range is filled): the CMap parser reads with the
+ *   Lexer directly, and one `<000000> <FFFFFF> <4100>` bfrange would otherwise
+ *   fill 16 M entries;
  * - "limit": BrotliStream (its decoder has no output bound, so it is refused
- *   before decoding), and a string, hex string, name or array past 256 Ki
- *   elements (pdf.js collects them one element at a time).
+ *   before decoding), every image decoder (JpegStream / Jbig2Stream /
+ *   JpxStream / CCITTFaxStream.decodeImage allocate the whole image outside
+ *   ensureBuffer; text extraction never needs one), and a string, hex
+ *   string, name or array past 256 Ki elements (pdf.js collects them one
+ *   element at a time).
  *
  * worker/storage-read-pdf.ts installs the guard, charges each call to the
  * extraction running in the current async context and throws once a limit is
@@ -58,6 +66,22 @@ const PATCHES = [
   // Parser.getObj arrays
   ["            array.push(this.getObj(cipherTransform));",
     `            if (array.length > ${MAX_ELEMENTS}) ${G}("limit");\n            array.push(this.getObj(cipherTransform));`],
+  // CMap.mapOne / mapCidRange / mapBfRange / mapBfRangeToArray: each fills one
+  // map entry per code (a string per code for bfrange), up to 2^24 per range.
+  ["  mapOne(src, dst) {\n    this._map[src] = dst;", `  mapOne(src, dst) {\n    ${G}("cmap", this, 1, src);\n    this._map[src] = dst;`],
+  ...["mapCidRange", "mapBfRange"].map(name => [`throw new Error("${name} - ignoring data above MAX_MAP_RANGE.");\n    }`,
+    `throw new Error("${name} - ignoring data above MAX_MAP_RANGE.");\n    }\n    ${G}("cmap", this, high - low + 1, high);`]),
+  ["throw new Error(\"mapBfRangeToArray - ignoring data above MAX_MAP_RANGE.\");\n    }\n    const ii = array.length;",
+    `throw new Error("mapBfRangeToArray - ignoring data above MAX_MAP_RANGE.");\n    }\n    const ii = array.length;\n    ${G}("cmap", this, Math.min(high - low + 1, ii), high);`],
+  // Image decoders (DCT, JBIG2, JPX, CCITTFax) decode the whole image at once
+  // outside DecodeStream.ensureBuffer. Text extraction never paints images, so
+  // any image decode (e.g. a ToUnicode or font stream with /Filter /DCTDecode) is refused.
+  ["  decodeImage(bytes) {\n    if (this.eof) {\n      return this.buffer;\n    }\n    bytes = this.#skipUselessBytes(bytes || this.bytes);",
+    `  decodeImage(bytes) {\n    ${G}("limit");\n    if (this.eof) {\n      return this.buffer;\n    }\n    bytes = this.#skipUselessBytes(bytes || this.bytes);`],
+  ["    bytes = Jbig2Stream.stripFileHeader(bytes || this.bytes);", `    ${G}("limit");\n    bytes = Jbig2Stream.stripFileHeader(bytes || this.bytes);`],
+  ["    bytes ||= this.bytes;\n    this.buffer = await JpxImage.instance.decode(", `    ${G}("limit");\n    bytes ||= this.bytes;\n    this.buffer = await JpxImage.instance.decode(`],
+  ["    bytes ??= this.stream.isAsync ? (await this.stream.asyncGetBytes()) || this.bytes : this.bytes;\n    this.buffer = await JBig2CCITTFaxImage.instance.decode(bytes, this.dict.get(\"W\", \"Width\")",
+    `    ${G}("limit");\n    bytes ??= this.stream.isAsync ? (await this.stream.asyncGetBytes()) || this.bytes : this.bytes;\n    this.buffer = await JBig2CCITTFaxImage.instance.decode(bytes, this.dict.get("W", "Width")`],
 ];
 
 export function patchPdfWorker(source) {
