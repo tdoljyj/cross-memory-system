@@ -338,3 +338,68 @@ Transport regression tests use a synthetic RPC/provider. They do not prove a
 live Owner storage grant, qualified cloud runtime/root, manual OAuth recovery or
 real file acceptance. Keep production jobs/executor flags off until those gates
 pass; this increment alone does not complete the account storage entry.
+
+## Read access (StorageFullCapability.v0.1 P1, database layer)
+
+Migration `20260930010000_storage_read_access_v1.sql` adds the read level from
+`development/contracts/storage/StorageFullCapability.v0.1.md` §3.3, §5.1 and §5.5.
+It is closed by default: `storage_oauth_apps_v1.read_enabled` defaults to false,
+no read access row is seeded, and `read_content` cannot be enabled before P2.
+
+- `storage_read_access_v1` holds the read classes for one connection, bound to its
+  active account policy. It is separate from the write policy, so toggling read
+  never changes the policy row, its digest, `auth_generation` or queued jobs.
+  Disconnect or policy revocation stops reads; a read access row never revives.
+- `storage_read_client_denies_v1` removes one read class for one client lineage.
+  The whole-storage client deny still applies to reads.
+- `storage_read_receipts_v1` records every admitted read: an `intent` row commits
+  with the admission, before any provider request, and `finalize` records counts.
+  It stores no body, file names or search terms, only a Worker-computed HMAC.
+- `public.clued_storage_read_v1(issuer, binding hash, input)` is the Worker-only
+  transport (`anon`): `admit` runs the read evaluator and returns the sealed
+  credential descriptor; `finalize` closes the same Binding's receipt.
+- `public.clued_storage_read_access_v1(input)` is native Owner control
+  (`authenticated` with a live session): `status`, `set_classes` (CAS on
+  `read_generation`, disclosure `clued.storage-read-disclosure/1`) and
+  `deny_class` (CAS on the deny generation).
+
+The read evaluator takes lineage guard S, then the root advisory **shared**, then
+the same identity/policy row locks as the write evaluator, without a job lock.
+Disconnect, policy revoke and read toggles (root X) and client revoke or class
+deny (lineage X) serialize with it; the admit commit is the linearization point.
+
+The migration itself adds no MCP tool, Worker route or Google call.
+
+### `clued_storage_browse` (P1 Worker tool)
+
+`worker/storage-read-agent.ts` adds the read-only MCP tool `clued_storage_browse`
+(`list`, `stat`, `search`, `resolve`). It is listed and callable only when
+`CLUED_STORAGE_ACCOUNT_V1`, `CLUED_STORAGE_GOOGLE_V1` and `CLUED_STORAGE_READ_V1`
+are all `true`, independent of the write/job flags. It also needs the secrets
+`CLUED_STORAGE_READ_RECEIPT_KEYS` (`{"current":"k1","keys":{"k1":"<base64 32 bytes>"}}`)
+and `CLUED_STORAGE_READ_CURSOR_KEY` (base64 32 bytes), plus the existing issuer,
+vault and Google client ID.
+
+- Every call is admitted by `clued_storage_read_v1` first; the intent receipt is
+  committed before any Google request and finalized in `finally`.
+- Google access is metadata-only through the existing batch transport (no
+  `alt=media`, no scope change). Root scope is the provider-ID parent chain;
+  a multi-parent object with any chain outside the root, missing objects and
+  outside objects all return `not_found_in_scope`.
+- Search walks only the root subtree breadth-first and never reports how many
+  results were filtered. `next_cursor` is AES-GCM sealed and bound to the
+  connection, read generation, root, operation and condition HMAC; folders
+  carried in a cursor are re-checked on the page that uses them.
+- The condition HMAC is domain-separated by connection ID (each connection
+  belongs to exactly one owner), with the key ID stored on the receipt.
+- Cursors are also bound to the admitted Binding. A search that had to drop
+  folders (queue limit 256) seals `lossy` into every later cursor, so no later
+  page reports `complete: true`.
+- Each call has a budget of 50 Google batch requests. Search stops early with a
+  cursor; list, stat and resolve fail closed. Folders with more than 10,000
+  children cannot be listed in P1.
+- Known P1 limitation: shared-drive objects are not detected by `driveId`; the
+  registered root must be in My Drive, as the existing connection flow requires.
+
+Production application, the read switch, the secrets and the Owner's first
+`set_classes` each need separate Owner approval.
