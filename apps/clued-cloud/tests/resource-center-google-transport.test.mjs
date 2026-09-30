@@ -36,8 +36,12 @@ test("native OAuth route adds only server issuer and returns no native/provider 
     const body = JSON.parse(init.body); calls.push(body);
     assert.equal(body.p_issuer_hash, createHash("sha256").update(issuer).digest("hex"));
     if (body.p_input.action === "describe") return Response.json({ owner_id: randomUUID(), connection_id: connection, connection_version: 1, credential_version: 1,
-      provider_subject: null, oauth_client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID, redirect_uri: env.CLUED_STORAGE_GOOGLE_REDIRECT_URI, root_folder_id: "root", root_parent_id: "parent" });
-    assert.equal(body.p_input.action, "prepare"); return Response.json({ status: "prepared" });
+      provider_subject: null, oauth_client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID, redirect_uri: env.CLUED_STORAGE_GOOGLE_REDIRECT_URI, root_folder_id: "root", root_parent_id: "parent",
+      provider_scope_profile: "legacy" });
+    assert.equal(body.p_input.action, "prepare");
+    // A plain reconnect keeps the recorded profile and binds it to the attempt (StorageNormalUse §2.3).
+    assert.equal(body.p_input.requested_scope_profile, "legacy"); assert.equal("normal_use" in body.p_input, false);
+    return Response.json({ status: "prepared" });
   };
   try {
     const response = await worker.fetch(request("start", { connection_id: connection }), env);
@@ -140,4 +144,36 @@ test('automatic recovery is explicitly marked for one original job before return
     assert.equal(target.status,200);assert.equal(calls[3].body.p_input.action,'target');
     assert.equal(calls[3].body.p_input.state_hash,calls[2].body.p_input.state_hash);
   }finally{globalThis.fetch=original;}
+});
+
+test("normal-use start (StorageNormalUse §2.4) requests the normal set and binds the confirmed disclosure; bad shapes never reach the RPC", async () => {
+  const original = globalThis.fetch, calls = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith("/auth/v1/user")) return Response.json({ id: "fixture-owner" });
+    const body = JSON.parse(init.body); calls.push(body);
+    if (body.p_input.action === "describe") return Response.json({ owner_id: randomUUID(), connection_id: connection, connection_version: 1, credential_version: 2,
+      provider_subject: "subject", oauth_client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID, redirect_uri: env.CLUED_STORAGE_GOOGLE_REDIRECT_URI, root_folder_id: "root", root_parent_id: "parent",
+      provider_scope_profile: "legacy" });
+    if (body.p_input.normal_use?.disclosure_version === "busy/1") return Response.json({ message: "storage_root_has_unresolved_mutation" }, { status: 403 });
+    return Response.json({ status: "prepared" });
+  };
+  try {
+    const disclosure = "clued.storage-normal-use-disclosure/1";
+    const response = await worker.fetch(request("start", { connection_id: connection, normal_use: { disclosure_version: disclosure } }), env);
+    assert.equal(response.status, 200);
+    const url = new URL((await response.json()).authorization_url);
+    assert.equal(url.searchParams.get("scope").split(" ").length, 3);
+    assert.ok(url.searchParams.get("scope").includes("auth/drive.readonly"));
+    assert.equal(calls[1].p_input.requested_scope_profile, "normal");
+    assert.deepEqual(calls[1].p_input.normal_use, { disclosure_version: disclosure });
+    const before = calls.length;
+    for (const normal_use of [true, "x", null, [], {}, { disclosure_version: disclosure, extra: 1 }, { disclosure_version: 1 }]) {
+      const refused = await worker.fetch(request("start", { connection_id: connection, normal_use }), env);
+      assert.equal(refused.status, 403, JSON.stringify(normal_use));
+    }
+    assert.equal(calls.length, before, "no RPC for an invalid shape");
+    const busy = await worker.fetch(request("start", { connection_id: connection, normal_use: { disclosure_version: "busy/1" } }), env);
+    assert.equal(busy.status, 403);
+    assert.deepEqual(await busy.json(), { error: "Storage Google connection unavailable.", reason: "storage_root_busy" });
+  } finally { globalThis.fetch = original; }
 });

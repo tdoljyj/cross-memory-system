@@ -22,14 +22,18 @@ async function fixture(changes = {}) {
     vault: vaultConfig, clock: changes.clock,
     rpc: async input => {
       if (input.action === "describe") return { ...d, ...(changes.descriptor ?? {}) };
-      if (input.action === "prepare") { pending = input; return { status: "prepared" }; }
+      if (input.action === "prepare") { if (changes.prepareError) throw new Error(changes.prepareError); pending = input; return { status: "prepared" }; }
       if (input.action === "claim") {
         claims++; if (!pending || pending.state_hash !== input.state_hash || changes.denied) throw new Error("no state");
-        if (complete) return { status: "completed", receipt_id: complete.receipt_id };
+        if (complete) return { status: "completed", receipt_id: complete.receipt_id, ...(changes.replayResult ?? {}) };
         if (claims > 1) throw new Error("already claimed");
-        return { ...d, ...(changes.descriptor ?? {}), status: "claimed", attempt_id: pending.attempt_id, verifier_envelope: pending.verifier_envelope };
+        return { ...d, ...(changes.descriptor ?? {}), status: "claimed", attempt_id: pending.attempt_id, verifier_envelope: pending.verifier_envelope,
+          ...(pending.requested_scope_profile ? { requested_scope_profile: pending.requested_scope_profile } : {}) };
       }
-      if (input.action === "complete") { complete = { ...input, receipt_id: randomUUID() }; return { status: "completed", receipt_id: complete.receipt_id }; }
+      if (input.action === "complete") {
+        if (changes.completeError) throw new Error(changes.completeError);
+        complete = { ...input, receipt_id: randomUUID() }; return { status: "completed", receipt_id: complete.receipt_id, ...(changes.completeResult ?? {}) };
+      }
       throw new Error("unknown operation");
     },
     fetch: async (url, init) => {
@@ -182,8 +186,8 @@ test("scope profiles: complete seals the granted set and records its profile", a
     ["https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly", "normal", normalScope],
   ]) {
     const f = await fixture({ tokens: { scope: granted } });
-    const url = new URL((await f.oauth.start(d.connection_id)).authorization_url);
-    assert.equal(url.searchParams.get("scope"), scope, "N0a start requests the legacy set");
+    const url = new URL((await f.oauth.start(d.connection_id, false, profile === "normal" ? "normal" : "legacy")).authorization_url);
+    assert.equal(url.searchParams.get("scope"), profile === "normal" ? normalScope : scope, "start requests the profile it asks for");
     await f.oauth.complete({ state: url.searchParams.get("state"), code: "fixture-auth-code" });
     assert.equal(f.complete().provider_scope_profile, profile);
     const plain = JSON.parse(await f.vault.open(f.complete().credential_envelope, sealedContext));
@@ -213,7 +217,8 @@ test("scope profiles: a sealed-profile start requests exactly the recorded profi
     assert.equal(f.pending(), undefined);
   }
   const f = await fixture();
-  await assert.rejects(f.oauth.start(d.connection_id, false, "normal"), /unavailable/);
+  await assert.rejects(f.oauth.start(d.connection_id, false, "full"), /unavailable/);
+  assert.equal(f.pending(), undefined);
 });
 test("scope profiles: credential recovery fails unless the granted profile equals the sealed one", async () => {
   for (const [sealedProfile, granted, ok] of [["legacy", scope, true], ["normal", normalScope, true],
@@ -228,4 +233,68 @@ test("scope profiles: credential recovery fails unless the granted profile equal
       assert.equal(f.complete(), undefined, "the credential is unchanged");
     }
   }
+});
+
+// StorageNormalUse.v0.1 N1a (§2.3, §2.4): re-consent of an existing connection.
+const NORMAL_DISCLOSURE = "clued.storage-normal-use-disclosure/1";
+test("re-consent: a normal start binds the requested profile and the confirmed disclosure to the attempt", async () => {
+  const f = await fixture({ descriptor: { provider_scope_profile: "legacy" } });
+  const url = new URL((await f.oauth.start(d.connection_id, false, "normal", { disclosure_version: NORMAL_DISCLOSURE })).authorization_url);
+  assert.equal(url.searchParams.get("scope"), normalScope);
+  assert.equal(url.searchParams.get("include_granted_scopes"), "false"); assert.equal(url.searchParams.get("prompt"), "consent");
+  assert.equal(f.pending().requested_scope_profile, "normal");
+  assert.deepEqual(f.pending().normal_use, { disclosure_version: NORMAL_DISCLOSURE });
+  const plain = await fixture();
+  await plain.oauth.start(d.connection_id);
+  assert.equal(plain.pending().requested_scope_profile, "legacy"); assert.equal("normal_use" in plain.pending(), false);
+  for (const profile of ["legacy", "normal"]) {
+    const kept = await fixture({ descriptor: { provider_scope_profile: profile } });
+    const keptUrl = new URL((await kept.oauth.start(d.connection_id, false, "keep")).authorization_url);
+    assert.equal(keptUrl.searchParams.get("scope"), profile === "normal" ? normalScope : scope, "a plain reconnect never downgrades");
+    assert.equal(kept.pending().requested_scope_profile, profile);
+  }
+  const sealed = await fixture({ descriptor: { provider_scope_profile: "normal" } });
+  await sealed.oauth.start(d.connection_id, false, "sealed");
+  assert.equal("requested_scope_profile" in sealed.pending(), false, "recovery prepare takes no extra key");
+  for (const [mode, normalUse] of [["legacy", { disclosure_version: NORMAL_DISCLOSURE }], ["keep", { disclosure_version: NORMAL_DISCLOSURE }],
+    ["normal", { disclosure_version: "bad version!" }], ["normal", { disclosure_version: NORMAL_DISCLOSURE, extra: 1 }], ["normal", null]]) {
+    const bad = await fixture({ descriptor: { provider_scope_profile: "legacy" } });
+    await assert.rejects(bad.oauth.start(d.connection_id, false, mode, normalUse), /unavailable/, JSON.stringify([mode, normalUse]));
+    assert.equal(bad.pending(), undefined);
+  }
+});
+test("re-consent: granted must be the requested profile or legacy; the result names the granted profile and normal use", async () => {
+  for (const [mode, granted, ok] of [["legacy", normalScope, false], ["legacy", scope, true], ["normal", normalScope, true], ["normal", scope, true]]) {
+    const f = await fixture({ tokens: { scope: granted }, completeResult: { provider_scope_profile: granted === scope ? "legacy" : "normal",
+      normal_use_enabled: granted !== scope, refresh_enabled: true, requested_scope_profile: mode, unexpected_private_field: "x" },
+      replayResult: { refresh_enabled: true, provider_scope_profile: granted === scope ? "legacy" : "normal", requested_scope_profile: mode,
+        normal_use_enabled: granted !== scope, unexpected_private_field: "x" } });
+    const state = new URL((await f.oauth.start(d.connection_id, false, mode, mode === "normal" ? { disclosure_version: NORMAL_DISCLOSURE } : undefined))
+      .authorization_url).searchParams.get("state");
+    if (!ok) {
+      await assert.rejects(f.oauth.complete({ state, code: "fixture-auth-code" }), error => error.reason === "scope_mismatch");
+      assert.equal(f.complete(), undefined, "the old credential is unchanged");
+      continue;
+    }
+    const result = await f.oauth.complete({ state, code: "fixture-auth-code" });
+    assert.deepEqual(Object.keys(result).sort(), ["normal_use_enabled", "provider_scope_profile", "receipt_id", "refresh_enabled", "requested_scope_profile", "status"]);
+    assert.equal(result.provider_scope_profile, granted === scope ? "legacy" : "normal"); assert.equal(result.requested_scope_profile, mode);
+    // A replay after a lost reply carries the same typed fields, never others.
+    assert.deepEqual(await f.oauth.complete({ state, code: "fixture-auth-code" }), result);
+    assert.equal(f.complete().provider_scope_profile, granted === scope ? "legacy" : "normal");
+  }
+});
+test("re-consent: a busy root or the refresh-token limit is a fixed reason, never a generic or unknown result", async () => {
+  for (const [message, reason] of [["storage_root_has_unresolved_mutation", "storage_root_busy"], ["storage_refresh_token_limit", "refresh_token_limit"]]) {
+    const f = await fixture({ prepareError: message });
+    await assert.rejects(f.oauth.start(d.connection_id, false, "normal", { disclosure_version: NORMAL_DISCLOSURE }), error => error.reason === reason);
+  }
+  const other = await fixture({ prepareError: "fixture-private-database-text" });
+  await assert.rejects(other.oauth.start(d.connection_id), error => error.reason === undefined && !String(error.message).includes("fixture-private"));
+  const busy = await fixture({ completeError: "storage_root_has_unresolved_mutation" });
+  const state = new URL((await busy.oauth.start(d.connection_id)).authorization_url).searchParams.get("state");
+  await assert.rejects(busy.oauth.complete({ state, code: "fixture-auth-code" }), error => error.reason === "storage_root_busy");
+  const lost = await fixture({ completeError: "fixture-private-database-text" });
+  const lostState = new URL((await lost.oauth.start(d.connection_id)).authorization_url).searchParams.get("state");
+  await assert.rejects(lost.oauth.complete({ state: lostState, code: "fixture-auth-code" }), error => error.reason === "credential_commit_unconfirmed");
 });

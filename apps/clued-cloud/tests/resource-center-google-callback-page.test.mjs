@@ -116,3 +116,25 @@ test('unconfirmed original result stops after one comparison and one original-jo
   assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:'inspect',connection_id:connection,job_id:job});
   assert.match(f.message(),/原任务结果尚未确认/);await f.remount();assert.equal(f.calls.length,4);
 });
+test("normal-use re-consent: the callback reports the granted profile and whether normal use is on (StorageNormalUse §2.3)",async()=>{
+  const on=await fixture({status:"completed",receipt_id:"fixture-receipt",provider_scope_profile:"normal",normal_use_enabled:true},true);
+  assert.match(on.message(),/正常使用已开启/);
+  const partial=await fixture({status:"completed",receipt_id:"fixture-receipt",provider_scope_profile:"legacy",normal_use_enabled:false},true);
+  assert.match(partial.message(),/未授予“查看你 Google 云端硬盘中的所有文件”，正常使用未开启/);
+  const off=await fixture({status:"completed",receipt_id:"fixture-receipt",provider_scope_profile:"normal",normal_use_enabled:false},true);
+  assert.match(off.message(),/正常使用未自动开启/);
+  const plain=await fixture({status:"completed",receipt_id:"fixture-receipt",provider_scope_profile:"legacy"},true);
+  assert.equal(plain.message().includes("正常使用"),false,"a plain reconnect says nothing about normal use");
+  const legacyReconnect=await fixture({status:"completed",receipt_id:"fixture-receipt",provider_scope_profile:"legacy",requested_scope_profile:"legacy"},true);
+  assert.equal(legacyReconnect.message().includes("正常使用"),false,"a legacy reconnect of a legacy connection says nothing either");
+  // Reconnect of a NORMAL connection (normal requested, normal use not part of
+  // the request) where the Owner unticked the scope: same §2.3 message.
+  const downgraded=await fixture({status:"completed",receipt_id:"fixture-receipt",provider_scope_profile:"legacy",requested_scope_profile:"normal"},true);
+  assert.match(downgraded.message(),/未授予“查看你 Google 云端硬盘中的所有文件”，正常使用未开启/);
+  const kept=await fixture({status:"completed",receipt_id:"fixture-receipt",provider_scope_profile:"normal",requested_scope_profile:"normal"},true);
+  assert.equal(kept.message().includes("正常使用"),false);
+  const limit=await fixture({reason:"refresh_token_limit"});
+  assert.match(limit.message(),/联系维护者/); assert.equal(limit.message().includes("撤回全部文件读取授权"),false,"never points to a control that does not exist");
+  const busy=await fixture({reason:"storage_root_busy"});
+  assert.match(busy.message(),/尚未完成的文件操作/);
+});

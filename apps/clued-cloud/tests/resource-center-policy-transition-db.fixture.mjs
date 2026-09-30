@@ -150,12 +150,42 @@ export async function testStoragePolicyTransition(t, admin, server, user, decisi
       await admin.query("update clued_private.storage_oauth_apps_v1 set execution_enabled=false,revoked_at=clock_timestamp() where issuer_hash=any($1::text[])", [otherIssuers]);
     }
   };
-  const waitForLock = async client => {
-    for (let i = 0; i < 200; i++) {
-      if ((await admin.query("select exists(select 1 from pg_locks where pid=$1 and not granted) waiting", [client.fixturePid])).rows[0].waiting) return;
-      await new Promise(resolve => setTimeout(resolve, 10));
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  // True while the backend is blocked on the exact transaction advisory lock
+  // hashtextextended(key,0) (bigint key split into classid/objid, objsubid 1).
+  const waitingAtAdvisory = async (client, key) => (await admin.query(`select exists(select 1 from pg_locks l
+    cross join (select hashtextextended($2,0) k) h where l.pid=$1 and not l.granted and l.locktype='advisory' and l.objsubid=1
+      and l.database=(select oid from pg_database where datname=current_database())
+      and l.classid::bigint=((h.k>>32)&4294967295) and l.objid::bigint=(h.k&4294967295)) waiting`, [client.fixturePid, key])).rows[0].waiting;
+  // Without `advisoryKey` any ungranted lock counts. With it, only that exact
+  // advisory lock does, so a transient wait elsewhere (autovacuum, relation
+  // extension, a row lock) is never mistaken for the intended wait. `pending`
+  // (a promise that never rejects) makes an operation that finished without
+  // reaching the wait fail loudly instead of timing out.
+  const waitForLock = async (client, { advisoryKey, pending } = {}) => {
+    let settled = false; pending?.then(() => { settled = true; });
+    for (let i = 0; i < 800; i++) {
+      if (advisoryKey === undefined
+        ? (await admin.query("select exists(select 1 from pg_locks where pid=$1 and not granted) waiting", [client.fixturePid])).rows[0].waiting
+        : await waitingAtAdvisory(client, advisoryKey)) return;
+      if (settled) assert.fail(`transition operation finished before its intended lock wait: ${JSON.stringify(await pending)}`);
+      await sleep(10);
     }
     assert.fail("transition operation did not reach its intended lock wait");
+  };
+  // Expiry is decided by the database clock on both sides. Node timers are
+  // monotonic but clock_timestamp() is wall time, and the self-hosted WSL2 CI
+  // runners step their wall clock backwards by seconds; a fixed setTimeout is
+  // therefore no proof that a database deadline has passed.
+  const dbDeadline = async ms => (await admin.query(
+    "select clock_timestamp()+make_interval(secs=>$1::double precision/1000) value", [ms])).rows[0].value;
+  const waitPastDeadline = async (deadline, marginMs = 250) => {
+    for (let i = 0; i < 1200; i++) {
+      if ((await admin.query("select clock_timestamp()>$1::timestamptz+make_interval(secs=>$2::double precision/1000) passed",
+        [deadline, marginMs])).rows[0].passed) return;
+      await sleep(25);
+    }
+    assert.fail("database clock did not pass the expiry deadline");
   };
   try {
     await t.test("transition manifests are offline-operator only and native cutover requires both the live Owner and fixed issuer", async () => {
@@ -540,16 +570,23 @@ export async function testStoragePolicyTransition(t, admin, server, user, decisi
     });
     await t.test("native-session and manifest expiry while waiting at the root roll back cutover and both receipts", async () => {
       for (const boundary of ["native-session", "manifest"]) {
-        const target = await root(), client = await binding(target); await grant(target, client);
-        const item = await manifest(target, boundary === "manifest" ? { expires_at: new Date(Date.now() + 1200).toISOString() } : {});
-        if (boundary === "native-session") await admin.query("update auth.sessions set not_after=clock_timestamp()+interval '1 second' where id=$1", [sessionId]);
+        const target = await root(), client = await binding(target), rootKey = `${user}:${target.rootId}`; await grant(target, client);
+        // Both deadlines leave the contender time to pass every check before
+        // the root lock; they must then expire while it waits there.
+        const manifestDeadline = boundary === "manifest" ? await dbDeadline(2000) : null;
+        const item = await manifest(target, manifestDeadline ? { expires_at: manifestDeadline.toISOString() } : {});
         const before = await effects(), input = transition(item);
         await operator.query("begin"); let pending;
         try {
-          await operator.query("select pg_advisory_xact_lock(hashtextextended($1,0))", [`${user}:${target.rootId}`]);
+          await operator.query("select pg_advisory_xact_lock(hashtextextended($1,0))", [rootKey]);
+          const deadline = manifestDeadline ?? await dbDeadline(1500);
+          if (boundary === "native-session") await admin.query("update auth.sessions set not_after=$2 where id=$1", [sessionId, deadline]);
           pending = rpc(input, contender).then(value => ({ value }), error => ({ error }));
-          await waitForLock(contender); await new Promise(resolve => setTimeout(resolve, 1300)); await operator.query("commit");
-          const outcome = await pending; assert.ok(outcome.error);
+          await waitForLock(contender, { advisoryKey: rootKey, pending });
+          await waitPastDeadline(deadline);
+          assert.ok(await waitingAtAdvisory(contender, rootKey), "the contender must still be waiting at the root lock when the deadline has passed");
+          await operator.query("commit");
+          const outcome = await pending; assert.ok(outcome.error, JSON.stringify(outcome));
           assert.match(outcome.error.message, /storage_native_session_required|storage_transition_conflict|storage_transition_denied/);
           assert.deepEqual(await effects(), before);
           assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts where user_id=$1 and idempotency_key=$2 and status='committed'", [user, input.idempotency_key])).rows[0].n, 0);
