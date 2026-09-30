@@ -9,6 +9,8 @@ const destination = { type: "string", minLength: 1, maxLength: 1000, description
 const source = { type: "string", minLength: 1, maxLength: 1000, description: "Exact current path of a file Clued registered (one it created) under the registered root." };
 const sourceVersion = { type: "string", pattern: "^[1-9][0-9]{0,39}$", description: "The file's Drive version as last observed with clued_storage_browse stat. If the file changed since, the job is refused; stat it again first. If it is refused again with the version stat returns, Clued's registered version is older than Drive's and only the Owner can re-register the file; do not retry." };
 const targetVersion = { type: "string", pattern: "^[1-9][0-9]{0,39}$", description: "The target file's Drive version as last observed with clued_storage_browse stat; a changed file is refused." };
+const binaryMime = { type: "string", minLength: 3, maxLength: 255, description: "MIME type bound to the destination extension (png, jpg/jpeg, gif, webp, pdf, zip, docx, xlsx, pptx, odt, ods, odp, doc, xls, ppt)." };
+const binarySha = { type: "string", pattern: "^[0-9a-f]{64}$", description: "sha256 of the exact file bytes; Clued checks it on staging and against Drive's checksum after the write." };
 const pathParent = (path: string) => path.slice(0, path.lastIndexOf("/"));
 const pathName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
@@ -21,7 +23,7 @@ export const storageAgentTools = [
       properties: { ...reference, mutation: { oneOf: [
         { type: "object", required: ["operation", "target_kind", "destination_path", "content"], additionalProperties: false,
           properties: { operation: { const: "create" }, target_kind: { const: "file" }, destination_path: destination,
-            content: { type: "string", maxLength: 1048576, description: "UTF-8 text; the full JSON request must also fit the transport size limit. Binary upload is not supported." } } },
+            content: { type: "string", maxLength: 1048576, description: "UTF-8 text, stored as text/plain; the full JSON request must also fit the transport size limit. HTML and SVG are accepted only this way." } } },
         { type: "object", required: ["operation", "target_kind", "destination_path", "directory_semantics"], additionalProperties: false,
           properties: { operation: { const: "create" }, target_kind: { const: "directory" }, destination_path: destination,
             directory_semantics: { type: "string", enum: ["topic", "asset_collection"] } } },
@@ -50,8 +52,33 @@ export const storageAgentTools = [
   },
 ].map(tool => ({ ...tool, outputSchema: { type: "object", additionalProperties: true } }));
 
-export function isStorageAgentTool(name: unknown): name is "clued_storage_submit" | "clued_storage_inspect" {
-  return name === "clued_storage_submit" || name === "clued_storage_inspect";
+// StorageNormalUse N3: published only when binary upload is configured (CLUED_STORAGE_BINARY_V1).
+const binaryVariants = [
+  { type: "object", required: ["operation", "target_kind", "destination_path", "mime_type", "content_sha256", "staging_id"], additionalProperties: false,
+    properties: { operation: { const: "create" }, target_kind: { const: "file" }, destination_path: destination,
+      mime_type: binaryMime, content_sha256: binarySha,
+      staging_id: { ...idSchema, description: "The staging_id returned by clued_storage_upload_begin after the PUT succeeded; destination_path, mime_type and content_sha256 must repeat the declared values." } } },
+  { type: "object", required: ["operation", "target_kind", "destination_path", "mime_type", "content_sha256", "content_base64"], additionalProperties: false,
+    properties: { operation: { const: "create" }, target_kind: { const: "file" }, destination_path: destination,
+      mime_type: binaryMime, content_sha256: binarySha,
+      content_base64: { type: "string", maxLength: 1048576, description: "Standard base64 of the file bytes, for clients without a shell; the whole JSON request must fit in 1 MiB (about 700 KiB of file)." } } },
+];
+const binaryNote = " A binary file (images, PDF, zip, Office/ODF, at most 20 MiB) needs the Owner's create_file level with normal use, and is sent either as staging_id from clued_storage_upload_begin or inline as content_base64 (whole request at most 1 MiB), with mime_type and content_sha256. Macro-enabled Office files, executables, scripts, HTML and SVG are refused in binary form. Files the Owner uploaded by hand cannot be renamed, moved or deleted.";
+
+export function storageAgentToolsFor(binary: boolean) {
+  if (!binary) return storageAgentTools;
+  return storageAgentTools.map(tool => tool.name !== "clued_storage_submit" ? tool : {
+    ...tool, description: tool.description + binaryNote,
+    inputSchema: { ...tool.inputSchema, properties: { ...tool.inputSchema.properties,
+      mutation: { oneOf: [...(tool.inputSchema.properties as { mutation: { oneOf: unknown[] } }).mutation.oneOf, ...binaryVariants] } } },
+  });
+}
+
+/** Storage agent tools whose authority is the Owner's storage grant (checked by the storage RPC),
+ * not a context scope. clued_storage_upload_begin (N3) belongs here too: delegated OAuth uses this
+ * predicate to require no context scope for it; the continuity router handles it before submit/inspect. */
+export function isStorageAgentTool(name: unknown): name is "clued_storage_submit" | "clued_storage_inspect" | "clued_storage_upload_begin" {
+  return name === "clued_storage_submit" || name === "clued_storage_inspect" || name === "clued_storage_upload_begin";
 }
 
 export function storageAgentInput(name: "clued_storage_submit" | "clued_storage_inspect", args: unknown): Data {
@@ -79,6 +106,14 @@ export function storageAgentInput(name: "clued_storage_submit" | "clued_storage_
       if ("restore_job_id" in m && !uuid(m.restore_job_id)) return fail();
       allowed.push("destination_file_version", "content" in m ? "content" : "restore_job_id");
     } else if (m.operation !== "create") return fail();
+    else if (m.target_kind === "file" && ("staging_id" in m || "content_base64" in m)) {
+      // Binary create (N3): shape only here; staging, gate and type checks are server-owned.
+      if (("staging_id" in m) === ("content_base64" in m) || "content" in m || typeof m.mime_type !== "string" ||
+        m.mime_type.length < 3 || m.mime_type.length > 255 || typeof m.content_sha256 !== "string" || !/^[0-9a-f]{64}$/.test(m.content_sha256) ||
+        ("staging_id" in m && !uuid(m.staging_id)) ||
+        ("content_base64" in m && (typeof m.content_base64 !== "string" || m.content_base64.length > 1048576))) return fail();
+      allowed.push("mime_type", "content_sha256", "staging_id" in m ? "staging_id" : "content_base64");
+    }
     else if (m.target_kind === "file") {
       allowed.push("content");
       if (typeof m.content !== "string" || new TextEncoder().encode(m.content).length > 1048576) return fail();

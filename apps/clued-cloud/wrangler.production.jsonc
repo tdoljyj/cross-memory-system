@@ -17,6 +17,9 @@
     "directory": "./dist/client"
   },
   "images": { "binding": "IMAGES" },
+  "r2_buckets": [
+    { "binding": "CLUED_STORAGE_STAGING", "bucket_name": "clued-storage-staging" }
+  ],
   "kv_namespaces": [
     { "binding": "OAUTH_KV", "id": "d7e56a5789854d42b191333d8b545a97" }
   ],
