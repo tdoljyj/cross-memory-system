@@ -121,7 +121,8 @@ test("K-CONT-01 resolves resume record targets by primary key", () => {
 
 test("K-CONT-05 advertises the create mutation shape", () => {
   assert.match(records, /Create requires mutation, source_refs, and source_unavailable_reason/);
-  assert.match(records, /type_fields: \{ type: "object" \}/);
+  // Object schemas may advertise descriptions and per-field guidance as well.
+  assert.match(records, /type_fields: \{ type: "object"(?:,| \})/);
   assert.match(records, /relations: \{ type: "object" \}/);
 });
 
