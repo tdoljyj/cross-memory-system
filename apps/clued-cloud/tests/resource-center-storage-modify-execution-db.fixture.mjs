@@ -143,7 +143,8 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
         const raw = init.body, match = /\{[^\r\n]+"appProperties":\{[^\r\n]+\}\}/.exec(raw), metadata = JSON.parse(match?.[0] ?? raw);
         const attempt = (await admin.query("select provider_attempt from clued_private.resource_center_mutations_v1 where id=$1", [metadata.appProperties.clued_intent_id])).rows[0].provider_attempt;
         assert.equal(attempt.provider_file_id, metadata.id);
-        const created = { ...metadata, version: "1", trashed: false, size: attempt.size, sha256Checksum: attempt.sha256 };
+        const created = { ...metadata, version: "1", trashed: false, size: attempt.size, sha256Checksum: attempt.sha256,
+          md5Checksum: "f".repeat(32), headRevisionId: "rev-" + randomUUID() };
         files.set(metadata.id, created);
         if (state.losePost) throw new Error("synthetic lost provider response");
         return Response.json(created);
@@ -245,6 +246,23 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
       assert.equal((await journal(move)).verified_result_v2.proof.contract, "clued.storage-move-verified/1");
     });
 
+    await t.test("a content edit racing the update is never settled into the registry", async () => {
+      const { target, client, storage } = await setup();
+      const created = await createFile(target, client, storage, "raced.txt");
+      const fetch = storage.fetch;
+      storage.fetch = async (url, init = {}) => {
+        const reply = await fetch(url, init);
+        // Someone edits the file in Drive right after Clued's update.
+        if (init.method === "PATCH") storage.files.get(created.provider_file_id).headRevisionId = "rev-concurrent";
+        return reply;
+      };
+      const job = await submitJob(target, client, modify("rename", created.path, `${target.root}/${TRACK}/raced-renamed.txt`, storage.files.get(created.provider_file_id).version));
+      const result = await executor(target, storage).run(job.reference);
+      assert.equal(result.status, "unreconciled", JSON.stringify(result));
+      assert.equal((await journal(job)).state, "started", "left fenced for inspection");
+      assert.equal((await artifact(target, created.path)).provider_file_version, created.provider_file_version, "the registry keeps the version Clued saw");
+    });
+
     await t.test("a stale source version, a name conflict or a status-directory destination is refused with zero provider updates", async () => {
       const { target, client, storage } = await setup();
       const first = await createFile(target, client, storage, "one.txt"), second = await createFile(target, client, storage, "two.txt");
@@ -277,11 +295,13 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
         { ...modify("rename", source, `${target.root}/${TRACK}/b.txt`, "3"), content: "x" },
         { ...modify("rename", source, `${target.root}/${TRACK}/b.txt`, "3"), target_kind: "directory" },
         modify("rename", source, `${target.root}/${TRACK}/../b.txt`, "3"), modify("rename", source, `${target.root}/${TRACK}/b.txt`, "03"),
+        { operation: "create", target_kind: "file", destination_path: `${target.root}/${TRACK}/c.txt`, content: "x", source_path: source },
+        { operation: "create", target_kind: "file", destination_path: `${target.root}/${TRACK}/c.txt`, content: "x", source_file_version: "3" },
       ];
       for (const mutation of bad) {
         await assert.rejects(caller.query(`select ${JOBS}($1,$2::jsonb)`, [enabled.client.token, JSON.stringify({ action: "submit",
-          connection_id: enabled.target.connection, job_id: randomUUID(), mutation: { ...mutation, source_path: mutation.source_path.replace(target.root, enabled.target.root),
-            destination_path: mutation.destination_path.replace(target.root, enabled.target.root) } })]), /storage_job_input_invalid/, JSON.stringify(mutation));
+          connection_id: enabled.target.connection, job_id: randomUUID(),
+          mutation: JSON.parse(JSON.stringify(mutation).replaceAll(target.root, enabled.target.root)) })]), /storage_job_input_invalid/, JSON.stringify(mutation));
       }
     });
 
@@ -312,7 +332,7 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
         root_parent_id: descriptor.root_parent_id, get_file: metadata.getFile, list_children: metadata.listChildren, include_verified_proof: true });
       const { verified_proof: proof, ...postcondition } = await verify({ profile: descriptor.profile, mutation: descriptor.mutation,
         provider_before: descriptor.provider_before, effect_result: { operation: "rename", source_path: descriptor.mutation.source_path,
-          destination_path: descriptor.mutation.destination_path, provider_file_id: descriptor.attempt.provider_file_id } });
+          destination_path: descriptor.mutation.destination_path, provider_file_id: descriptor.attempt.provider_file_id, content: descriptor.attempt.content } });
       const finish = { action: "finalize", intent_id: descriptor.intent_id, base_version: descriptor.version, request_sha256: descriptor.request_sha256,
         idempotency_key: `account-job:${job.reference.job_id}:finalize`, postcondition };
       const recorded = await cloud({ action: "verified_record", ...job.reference, credential_version: descriptor.credential_version, finish, proof });

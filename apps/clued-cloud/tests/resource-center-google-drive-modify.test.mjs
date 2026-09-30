@@ -10,12 +10,14 @@ const ROOT = "G:/test/Clued_资料中心", TRACK = ROOT + "/20_P_产品与体验
 const profile = { profile_id: "modify-test", profile_version: "test/1", managed_root: ROOT };
 const intent = "10000000-0000-4000-8000-000000000001";
 const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
+const CONTENT = Object.freeze({ size: "12", sha256: "c".repeat(64), md5: "d".repeat(32), head_revision_id: "rev-1" });
+const CONTENT_FIELDS = Object.freeze({ size: "12", sha256Checksum: "c".repeat(64), md5Checksum: "d".repeat(32), headRevisionId: "rev-1" });
 const folder = (id, name, parent) => ({ id, name, parents: [parent], version: "1", trashed: false, mimeType: "application/vnd.google-apps.folder" });
 
 function drive() {
   const files = new Map([["root", folder("root", "Clued_资料中心", "container")], ["track", folder("track", "20_P_产品与体验", "root")],
     ["topic", folder("topic", "topic", "track")],
-    ["file", { id: "file", name: "a.txt", parents: ["track"], version: "5", trashed: false, mimeType: "text/plain" }]]);
+    ["file", { id: "file", name: "a.txt", parents: ["track"], version: "5", trashed: false, mimeType: "text/plain", ...CONTENT_FIELDS }]]);
   return { files, getFile: async id => structuredClone(files.get(id)),
     listChildren: async ({ parent_id, name }) => [...files.values()].filter(f => f.parents.includes(parent_id) && f.name === name).map(f => structuredClone(f)) };
 }
@@ -63,9 +65,10 @@ test("rename records the exact attempt, then renames by one PATCH and returns th
   assert.deepEqual(f.events, ["persist", "patch"]);
   assert.deepEqual(f.attempt(), { contract: "clued.storage-modify-attempt/1", intent_id: intent, request_sha256: f.request.admission.binding.request_sha256,
     profile_id: profile.profile_id, operation: "rename", provider_file_id: "file", source_path: renameMutation.source_path, source_file_version: "5",
-    source_parent_id: "track", destination_path: renameMutation.destination_path, parent_id: "track", target_kind: "file", binding: f.request.admission.binding });
+    source_parent_id: "track", destination_path: renameMutation.destination_path, parent_id: "track", target_kind: "file", content: CONTENT,
+    binding: f.request.admission.binding });
   assert.deepEqual(result, { operation: "rename", source_path: renameMutation.source_path, destination_path: renameMutation.destination_path,
-    provider_file_id: "file", provider_file_version: "7", intent_id: intent });
+    provider_file_id: "file", provider_file_version: "7", content: CONTENT, intent_id: intent });
   assert.equal(f.d.files.get("file").name, "b.txt");
 });
 
@@ -86,6 +89,8 @@ test("a changed source, a missing durable start or a changed identity never reac
     ["DRIVE_NATIVE_SOURCE_VERSION_MISMATCH", f => { f.d.files.get("file").version = "6"; }],
     ["DRIVE_NATIVE_SOURCE_MISMATCH", f => { f.d.files.get("file").trashed = true; }],
     ["DRIVE_NATIVE_SOURCE_MISMATCH", f => { f.d.files.get("file").parents = ["topic"]; }],
+    ["DRIVE_NATIVE_SOURCE_CONTENT_UNPROVEN", f => { delete f.d.files.get("file").headRevisionId; }],
+    ["DRIVE_NATIVE_SOURCE_CONTENT_UNPROVEN", f => { Object.assign(f.d.files.get("file"), { sha256Checksum: undefined, md5Checksum: undefined }); }],
     ["DRIVE_NATIVE_REQUEST_MISMATCH", f => { f.request = { ...f.request, mutation: { ...renameMutation, destination_path: TRACK + "/topic/b.txt" } }; }],
   ];
   for (const [code, mutate] of cases) {
@@ -112,12 +117,14 @@ function verifier(d, extra = {}) {
     clock: () => now, sleep: async ms => { now += ms; }, ...extra });
 }
 const effectResult = (mutation, version) => ({ operation: mutation.operation, source_path: mutation.source_path,
-  destination_path: mutation.destination_path, provider_file_id: "file", provider_file_version: version });
+  destination_path: mutation.destination_path, provider_file_id: "file", provider_file_version: version, content: CONTENT });
 
 test("the verifier proves a rename and a move from metadata, recording a jumped version", async () => {
   const d = drive(); Object.assign(d.files.get("file"), { name: "b.txt", version: "8" });
   const renamed = await verifier(d)({ profile, mutation: renameMutation, provider_before: before(), effect_result: effectResult(renameMutation, "8") });
-  assert.deepEqual(renamed.verified_proof.checks, { identity: true, ancestors: true, stable_state: true, unique_name: true, source_vacated: true });
+  assert.deepEqual(renamed.verified_proof.checks, { identity: true, ancestors: true, stable_state: true, unique_name: true, source_vacated: true,
+    content_unchanged: true });
+  assert.deepEqual(renamed.verified_proof.content, CONTENT);
   assert.equal(renamed.verified_proof.contract, "clued.storage-rename-verified/1");
   assert.deepEqual({ ...renamed, verified_proof: undefined }, { path: renameMutation.destination_path, parent_id: "track",
     provider_file_id: "file", provider_file_version: "8", verified_proof: undefined });
@@ -129,8 +136,10 @@ test("the verifier proves a rename and a move from metadata, recording a jumped 
 test("the verifier fails closed on a wrong parent, a changed ancestor, a leftover old name or no change", async () => {
   const cases = [
     ["DRIVE_POSTCONDITION_IDENTITY_MISMATCH", d => { Object.assign(d.files.get("file"), { name: "b.txt", parents: ["track", "topic"] }); }],
-    ["DRIVE_POSTCONDITION_ANCESTOR_CHANGED", d => { Object.assign(d.files.get("file"), { name: "b.txt" }); d.files.get("track").version = "2"; }],
-    ["DRIVE_POSTCONDITION_SOURCE_NOT_VACATED", d => { Object.assign(d.files.get("file"), { name: "b.txt" });
+    ["DRIVE_POSTCONDITION_CONTENT_CHANGED", d => { Object.assign(d.files.get("file"), { name: "b.txt", headRevisionId: "rev-2", sha256Checksum: "e".repeat(64) }); }],
+    ["DRIVE_POSTCONDITION_ANCESTOR_CHANGED", d => { Object.assign(d.files.get("file"), { name: "b.txt" }); d.files.get("track").parents = ["elsewhere"];
+      d.files.set("track2", folder("track2", "20_P_产品与体验", "root")); }],
+    ["DRIVE_POSTCONDITION_SYNC_TIMEOUT", d => { Object.assign(d.files.get("file"), { name: "b.txt" });
       d.listChildren = async ({ parent_id, name }) => name === "a.txt" ? [{ id: "file", name: "a.txt", parents: [parent_id], version: "5" }]
         : [...d.files.values()].filter(f => f.parents.includes(parent_id) && f.name === name).map(f => structuredClone(f)); }],
     ["DRIVE_POSTCONDITION_SYNC_TIMEOUT", () => {}],
@@ -151,4 +160,23 @@ test("a version still settling is re-read until two observations agree", async (
   d.getFile = async id => { const f = await getFile(id); if (id === "file" && ++reads === 1) f.version = "9"; return f; };
   const result = await verifier(d, { get_file: d.getFile })({ profile, mutation: renameMutation, provider_before: before(), effect_result: effectResult(renameMutation, "8") });
   assert.equal(result.provider_file_version, "8"); assert.ok(reads >= 3);
+});
+
+test("a folder version advanced by the change itself does not fail verification", async () => {
+  const d = drive(); Object.assign(d.files.get("file"), { name: "b.txt", version: "8" }); d.files.get("track").version = "4"; d.files.get("root").version = "3";
+  const result = await verifier(d)({ profile, mutation: renameMutation, provider_before: before(), effect_result: effectResult(renameMutation, "8") });
+  assert.equal(result.provider_file_version, "8");
+});
+
+test("an edit between the effect's reads, or a content change in the reply, never reaches settlement", async () => {
+  let reads = 0;
+  const d = drive(), getFile = d.getFile;
+  d.getFile = async id => { const f = await getFile(id); if (id === "file" && ++reads === 2) f.headRevisionId = "rev-2"; return f; };
+  const f = effectFixture(renameMutation, d);
+  await assert.rejects(f.effect(f.request), /DRIVE_NATIVE_SOURCE_MISMATCH/);
+  assert.deepEqual(f.events, ["persist"], "the change after the durable flush stops before the update");
+  const r = drive(), g = effectFixture(renameMutation, r, { fetch: async () => {
+    const file = r.files.get("file"); file.name = "b.txt"; file.version = "8"; file.headRevisionId = "rev-9"; return Response.json(file);
+  } });
+  await assert.rejects(g.effect(g.request), /DRIVE_NATIVE_RESPONSE_MISMATCH/);
 });

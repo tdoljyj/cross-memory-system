@@ -10,7 +10,10 @@
 --   file before any reservation, and the authority requires the registered
 --   source (a Clued-created or otherwise registered file) at that version.
 -- * The provider attempt (clued.storage-modify-attempt/1) names the file,
---   both paths and both parents before the one files.update call.
+--   both paths, both parents and the file's content identity (size, head
+--   revision, checksums) before the one files.update call. The proof must
+--   show the same content identity afterwards: a concurrent edit is never
+--   settled into the registry (§6.1, T5).
 -- * The verified proof is clued.storage-rename-verified/1 or
 --   clued.storage-move-verified/1. Settlement updates the source Artifact by
 --   CAS on the version the authority saw (artifact_update), never registers a
@@ -48,12 +51,21 @@ end $$;
 
 -- Expected provider attempt for a rename or move. The source parent is the
 -- registered directory at the source path's parent; null (no match) fails the
--- caller's equality check.
-create function clued_private.storage_modify_attempt_v1(m clued_private.resource_center_mutations_v1,j clued_private.storage_jobs_v1)
+-- caller's equality check. The content identity is observed by the executor
+-- and can only be shape-checked here; the proof must repeat it exactly.
+create function clued_private.storage_modify_attempt_v1(m clued_private.resource_center_mutations_v1,j clued_private.storage_jobs_v1,p_content jsonb)
 returns jsonb language plpgsql stable security definer set search_path='' as $$
 declare sp text:=j.mutation->>'source_path'; source_parent text;
 begin
-  if j.mutation->>'source_file_version' is distinct from m.authority_request->'provider_identity'->>'source_file_version' then
+  if j.mutation->>'source_file_version' is distinct from m.authority_request->'provider_identity'->>'source_file_version'
+    or jsonb_typeof(p_content) is distinct from 'object'
+    or (select array_agg(k order by k) from jsonb_object_keys(p_content) k) is distinct from array['head_revision_id','md5','sha256','size']
+    or jsonb_typeof(p_content->'size') is distinct from 'string' or p_content->>'size' !~ '^(0|[1-9][0-9]{0,19})$'
+    or jsonb_typeof(p_content->'head_revision_id') is distinct from 'string' or p_content->>'head_revision_id' !~ '^[A-Za-z0-9_-]{1,200}$'
+    or jsonb_typeof(p_content->'sha256') not in ('string','null') or jsonb_typeof(p_content->'md5') not in ('string','null')
+    or coalesce(p_content->>'sha256','0'||repeat('a',63)) !~ '^[0-9a-f]{64}$'
+    or coalesce(p_content->>'md5',repeat('a',32)) !~ '^[0-9a-f]{32}$'
+    or (p_content->>'sha256' is null and p_content->>'md5' is null) then
     return null; end if;
   select a.provider_file_id into source_parent from clued_private.resource_center_artifacts_v1 a
     where a.profile_id=m.profile_id and a.user_id=m.user_id and a.state='active' and a.target_kind='directory'
@@ -64,7 +76,7 @@ begin
     'source_path',sp,'source_file_version',j.mutation->>'source_file_version','source_parent_id',source_parent,
     'destination_path',j.mutation->>'destination_path',
     'parent_id',m.authority_request->'provider_identity'->>'destination_parent_id',
-    'target_kind','file','binding',m.exact_request->'binding');
+    'target_kind','file','content',p_content,'binding',m.exact_request->'binding');
 end $$;
 
 -- The authority result settlement must still reproduce: the parent for a
@@ -138,6 +150,8 @@ begin
       wanted:='modify';
       if not clued_private.storage_modify_shape_v1(m) then
         raise exception 'storage_job_input_invalid' using errcode='22023'; end if;
+    elsif m ?| array['source_path','source_file_version'] then
+      raise exception 'storage_job_input_invalid' using errcode='22023';
     elsif m->>'target_kind'='file' then$r$,1),
     ('clued_private.storage_cloud_job_current_v2(uuid,uuid)',
      $a$  wanted:=case j.mutation->>'target_kind' when 'file' then 'create_file' when 'directory' then 'create_topic' end;$a$,
@@ -161,7 +175,7 @@ begin
     ('clued_private.storage_job_provider_attempt_v2(uuid,uuid,text,jsonb)',
      $a$  expected:=jsonb_build_object('contract','clued.resource-center-provider-attempt/1',$a$,
      $r$  if j.mutation->>'operation' in ('rename','move') then
-    expected:=clued_private.storage_modify_attempt_v1(m,j);
+    expected:=clued_private.storage_modify_attempt_v1(m,j,p_attempt->'content');
   else
   expected:=jsonb_build_object('contract','clued.resource-center-provider-attempt/1',$r$,1),
     ('clued_private.storage_job_provider_attempt_v2(uuid,uuid,text,jsonb)',
@@ -207,7 +221,7 @@ begin
     ('clued_private.storage_verified_result_v2(text,jsonb)',
      $a$    attempt_expected:=jsonb_build_object('contract','clued.resource-center-provider-attempt/1','intent_id',m.id,$a$,
      $r$    if j.mutation->>'operation' in ('rename','move') then
-      attempt_expected:=clued_private.storage_modify_attempt_v1(m,j);
+      attempt_expected:=clued_private.storage_modify_attempt_v1(m,j,m.provider_attempt->'content');
     else
     attempt_expected:=jsonb_build_object('contract','clued.resource-center-provider-attempt/1','intent_id',m.id,$r$,1),
     ('clued_private.storage_verified_result_v2(text,jsonb)',
@@ -219,8 +233,10 @@ begin
      $r$    if j.mutation->>'operation' in ('rename','move') then
       expected:=post||jsonb_build_object('contract','clued.storage-'||(j.mutation->>'operation')||'-verified/1',
         'operation',j.mutation->>'operation','source_path',j.mutation->>'source_path',
-        'source_file_version',j.mutation->>'source_file_version','provider_before',m.authority_request->'provider_identity',
-        'checks',jsonb_build_object('identity',true,'ancestors',true,'stable_state',true,'unique_name',true,'source_vacated',true));
+        'source_file_version',j.mutation->>'source_file_version','content',attempt_expected->'content',
+        'provider_before',m.authority_request->'provider_identity',
+        'checks',jsonb_build_object('identity',true,'ancestors',true,'stable_state',true,'unique_name',true,'source_vacated',true,
+          'content_unchanged',true));
     else
     expected:=post||jsonb_build_object('contract','clued.storage-create-verified/2','target_kind',j.mutation->>'target_kind',$r$,1),
     ('clued_private.storage_verified_result_v2(text,jsonb)',
@@ -250,7 +266,7 @@ begin
 end $migration$;
 
 revoke all on function clued_private.storage_modify_shape_v1(jsonb),
-  clued_private.storage_modify_attempt_v1(clued_private.resource_center_mutations_v1,clued_private.storage_jobs_v1),
+  clued_private.storage_modify_attempt_v1(clued_private.resource_center_mutations_v1,clued_private.storage_jobs_v1,jsonb),
   clued_private.storage_settle_authority_v1(uuid,clued_private.resource_center_profiles_v1,clued_private.resource_center_mutations_v1,jsonb,clued_private.resource_center_artifacts_v1),
   clued_private.storage_settle_input_v1(uuid,clued_private.resource_center_mutations_v1,jsonb)
   from public,anon,authenticated,service_role;

@@ -3,11 +3,22 @@ import { isDeepStrictEqual } from "node:util";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 
 const API = "https://www.googleapis.com/drive/v3/files";
-const FIELDS = "id,name,mimeType,parents,version,trashed";
+const FIELDS = "id,name,mimeType,parents,version,trashed,size,sha256Checksum,md5Checksum,headRevisionId";
 const FOLDER = "application/vnd.google-apps.folder";
 const fail = (code) => { throw new Error(code); };
 const parentOf = (path) => path.slice(0, path.lastIndexOf("/"));
 const nameOf = (path) => path.slice(path.lastIndexOf("/") + 1);
+
+/** Content identity of a stored (non Google-native) file: size, head
+ * revision and at least one checksum. A rename or move must not change it;
+ * a concurrent edit would, and is then never settled (§6.1, T5). */
+export function contentIdentity(file) {
+  const value = { size: file?.size ?? null, sha256: file?.sha256Checksum ?? null, md5: file?.md5Checksum ?? null,
+    head_revision_id: file?.headRevisionId ?? null };
+  return /^(0|[1-9]\d{0,19})$/.test(value.size ?? "") && /^[A-Za-z0-9_-]{1,200}$/.test(value.head_revision_id ?? "") &&
+    (value.sha256 === null || /^[0-9a-f]{64}$/.test(value.sha256)) && (value.md5 === null || /^[0-9a-f]{32}$/.test(value.md5)) &&
+    (value.sha256 !== null || value.md5 !== null) ? Object.freeze(value) : null;
+}
 
 /** The rename/move shape shared by the effect and the verifier
  * (StorageFullCapability §6.1): one registered file, a rename keeps the parent
@@ -69,6 +80,7 @@ export function createGoogleDriveNativeModifyEffect({
       !Array.isArray(file.parents) || file.parents.length !== 1 || typeof file.parents[0] !== "string" ||
       !file.mimeType || file.mimeType === FOLDER || typeof file.version !== "string") fail("DRIVE_NATIVE_SOURCE_MISMATCH");
     if (file.version !== shape.source_file_version) fail("DRIVE_NATIVE_SOURCE_VERSION_MISMATCH");
+    if (!contentIdentity(file)) fail("DRIVE_NATIVE_SOURCE_CONTENT_UNPROVEN");
     return file;
   }
   return async function effect({ mutation, admission, profile_identity: identity }) {
@@ -86,25 +98,25 @@ export function createGoogleDriveNativeModifyEffect({
     if (!/^[A-Za-z0-9_-]{1,160}$/.test(before.source_file_id ?? "") || before.source_file_version !== shape.source_file_version ||
       !before.destination_parent_id || before.destination_file_id !== null) fail("DRIVE_NATIVE_PROVIDER_CHANGED");
     const file = await sourceFile(before.source_file_id, shape);
-    const sourceParent = file.parents[0], destinationParent = before.destination_parent_id;
+    const sourceParent = file.parents[0], destinationParent = before.destination_parent_id, content = contentIdentity(file);
     if ((shape.operation === "rename") !== (sourceParent === destinationParent)) fail("DRIVE_NATIVE_SOURCE_MISMATCH");
     const attempt = Object.freeze({ contract: "clued.storage-modify-attempt/1", intent_id: started.intent_id,
       request_sha256: requestHash, profile_id: profile.profile_id, operation: shape.operation,
       provider_file_id: file.id, source_path: shape.source, source_file_version: shape.source_file_version,
       source_parent_id: sourceParent, destination_path: shape.destination, parent_id: destinationParent,
-      target_kind: "file", binding: structuredClone(binding) });
+      target_kind: "file", content, binding: structuredClone(binding) });
     await persistProviderAttempt(attempt);
     // Recheck after the durable flush, still before the only storage update.
     if (!isDeepStrictEqual(await resolveProviderIdentity({ profile, mutation }), before)) fail("DRIVE_NATIVE_PROVIDER_CHANGED");
     const again = await sourceFile(file.id, shape);
-    if (again.parents[0] !== sourceParent) fail("DRIVE_NATIVE_SOURCE_MISMATCH");
+    if (again.parents[0] !== sourceParent || !isDeepStrictEqual(contentIdentity(again), content)) fail("DRIVE_NATIVE_SOURCE_MISMATCH");
     const url = `${API}/${encodeURIComponent(file.id)}?fields=${FIELDS}` + (shape.operation === "move"
       ? `&addParents=${encodeURIComponent(destinationParent)}&removeParents=${encodeURIComponent(sourceParent)}` : "");
     const result = await patch(url, shape.operation === "rename" ? { name: shape.destination_name } : {}, admission.expires_at_ms);
     if (result?.id !== file.id || result.name !== shape.destination_name || result.trashed !== false ||
       !isDeepStrictEqual(result.parents, [destinationParent]) || result.mimeType !== file.mimeType ||
-      !/^[1-9]\d*$/.test(result.version ?? "")) fail("DRIVE_NATIVE_RESPONSE_MISMATCH");
+      !/^[1-9]\d*$/.test(result.version ?? "") || !isDeepStrictEqual(contentIdentity(result), content)) fail("DRIVE_NATIVE_RESPONSE_MISMATCH");
     return Object.freeze({ operation: shape.operation, source_path: shape.source, destination_path: shape.destination,
-      provider_file_id: file.id, provider_file_version: result.version, intent_id: started.intent_id });
+      provider_file_id: file.id, provider_file_version: result.version, content, intent_id: started.intent_id });
   };
 }

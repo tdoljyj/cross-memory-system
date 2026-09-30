@@ -105,7 +105,8 @@ export async function createStorageCloudRecovery(config: {
         : createGoogleDriveCreatePostconditionVerifier({ ...verifierConfig, require_effect_provider_id: true });
       const postcondition = await bounded(verify({ profile: d.profile, mutation: d.mutation, provider_before: d.provider_before,
         effect_result: modify
-          ? { operation, source_path: d.mutation.source_path, destination_path: d.mutation.destination_path, provider_file_id: d.attempt.provider_file_id }
+          ? { operation, source_path: d.mutation.source_path, destination_path: d.mutation.destination_path,
+              provider_file_id: d.attempt.provider_file_id, content: d.attempt.content }
           : { operation: "create", destination_path: d.mutation.destination_path, provider_file_id: d.attempt.provider_file_id } }));
       check();
       let done: Data;

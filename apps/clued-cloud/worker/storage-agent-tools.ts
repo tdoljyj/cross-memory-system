@@ -7,7 +7,7 @@ const idSchema = { type: "string", format: "uuid" };
 const reference = { connection_id: idSchema, job_id: { ...idSchema, description: "Stable caller-created job UUID. Keep it for the same request, including after a lost reply; never create another ID to retry an unknown effect." } };
 const destination = { type: "string", minLength: 1, maxLength: 1000, description: "Exact destination under the connection's registered root. A path is a requested target, never authority to change the registered profile." };
 const source = { type: "string", minLength: 1, maxLength: 1000, description: "Exact current path of a file Clued registered (one it created) under the registered root." };
-const sourceVersion = { type: "string", pattern: "^[1-9][0-9]{0,39}$", description: "The file's Drive version as last observed with clued_storage_browse stat. If the file changed since, the job is refused (source version mismatch); stat it again first." };
+const sourceVersion = { type: "string", pattern: "^[1-9][0-9]{0,39}$", description: "The file's Drive version as last observed with clued_storage_browse stat. If the file changed since, the job is refused; stat it again first. If it is refused again with the version stat returns, Clued's registered version is older than Drive's and only the Owner can re-register the file; do not retry." };
 const pathParent = (path: string) => path.slice(0, path.lastIndexOf("/"));
 const pathName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
