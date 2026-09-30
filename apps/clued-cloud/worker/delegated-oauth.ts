@@ -2,6 +2,7 @@
 import { OAuthProvider, OAuthError, type AuthRequest, type OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import { handleContinuityRequest, publicToolPolicies, type ContinuityEnv } from './continuity';
 import { isStorageAgentTool } from './storage-agent-tools';
+import { storageReadTool } from './storage-read-agent';
 
 const SCOPES = ['context:read', 'context:write', 'audit:read'];
 const PENDING_TTL = 600;
@@ -238,7 +239,9 @@ export function requiredToolScopes(name: string, args: Json = {}): readonly stri
   // Storage authority is a separate native-Owner grant, not context:write.
   // scopedApi still checks the live v12 Binding before the storage RPC performs
   // its exact connection/action grant check. This does not issue any grant.
-  if (isStorageAgentTool(name)) return [];
+  // The read tool is gated the same way: its read evaluator checks the Binding,
+  // the Owner's read access row and the issuer read switch.
+  if (isStorageAgentTool(name) || name === storageReadTool.name) return [];
   if (name === 'clued_context') {
     const operation = String(args.op);
     if (['context_list', 'record_list'].includes(operation)) return ['context:read'];
