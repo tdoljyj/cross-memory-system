@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 4
+Contract version: 5
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -57,7 +57,7 @@ Rules for every capture:
 | `terminal_record_read_only` | The record is completed, cancelled or archived | Follow-up note (§3) |
 | `record_version_conflict` | Someone changed the record | Re-read and reconcile meaning; never overwrite a newer decision |
 | `stale_base_version` (checkpoint) | Wrong counter | Use the session version from resume or the last checkpoint |
-| `resume_required_or_session_expired` | The token expired or was used by a checkpoint | Resume, reconcile if asked, retry with the new token (§5) |
+| `resume_required_or_session_expired` | The token expired or already ended with a committed checkpoint | Use the renewed token from that checkpoint if you have it; otherwise resume, reconcile if asked, and retry with the new token (§5) |
 | `current_truth_changed_since_resume` (checkpoint) | A write changed current state after resume or the last reconcile | Reconcile with the same token, then retry the checkpoint (§5) |
 | `checkpoint_event_not_authorized` (checkpoint) | `coverage.event_ids` lists an event of another context | Checkpoint each context in its own session (§5) |
 | `lifecycle_action_cannot_edit_record_content` | A close or restore carried content fields | Send only `closure_summary` / `closed_reason` |
@@ -70,7 +70,7 @@ Rules for every capture:
 
 1. Before ending or handing off a supported, authorized and admitted session, call `clued_session_checkpoint` with the session version, explicit coverage (contexts, tracks and the event IDs your writes created), a summary and one next action. Uncovered events remain pending. Respect returned checkpoint thresholds. When resume requires `clued_session_reconcile`, use that authorized tool first.
 2. The session remembers the current state it saw at resume or at its last reconcile. Any write since then, including your own §3 writes, makes the checkpoint fail with `current_truth_changed_since_resume`. So when you have written anything since resume or the last reconcile, call `clued_session_reconcile` with the same token before the checkpoint.
-3. A committed checkpoint ends that session token. To checkpoint again later in the same conversation, resume again, reconcile if the resume asks for it or you have written since, then checkpoint with the new token and the new session version.
+3. A committed checkpoint ends that session token and returns `session_renewal`: a new `session_token` and session `version` for the same Binding and context, valid for another 3600 seconds. Keep working with them; to checkpoint again later in the same conversation, reconcile if you have written since (rule 2), then checkpoint with the renewed token and version, with no second resume. The renewal lists every resident constraint you may read (`active_constraint_refs`, id and version) and carries in full only those changed since the ended session started (`active_constraints_changed`); treat those as read. It also lists work-log events written after that session started that the checkpoint left unabsorbed (`unabsorbed_events_since_session_start`). When any of them has `from_this_binding: false`, another client wrote to this context: resume to read those events before relying on your view. When a checkpoint returns no renewal (a replay or an older service), resume as before.
 4. A checkpoint never replaces a §3 write, and a §3 write never needs a separate event to mirror it.
 5. A checkpoint covers only events of its own `context_key`. Project-scope writes belong to that project's context: resume with `context_key` `project:<id>`, reconcile, and checkpoint there with those writes' event IDs. Global writes are checkpointed in a global session. Never list one context's events in another context's checkpoint; when a context has nothing to absorb, pass an empty `event_ids`.
 6. Hosts with end-of-session hooks should enforce §3 and §5 there. Hosts without hooks rely on this text; the next resume reports capture state as unknown.

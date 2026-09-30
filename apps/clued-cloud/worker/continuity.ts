@@ -220,7 +220,7 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
       required: true,
       start: "clued_session_resume",
       reconcile_when_required: "clued_session_reconcile",
-      contract: { version: 4, url: `${origin}/clued-agent.md` },
+      contract: { version: 5, url: `${origin}/clued-agent.md` },
       durable_changes: {
         condition: "authorized_business_change_only",
         capture: "material_outcomes_in_same_turn_before_reporting",
