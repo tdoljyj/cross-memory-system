@@ -122,7 +122,10 @@ export async function testStorageReplace(t, admin, server, user, decision) {
   const provider = target => {
     const directory = (id, name, parent) => ({ id, name, parents: parent ? [parent] : [], version: "1", trashed: false, mimeType: "application/vnd.google-apps.folder" });
     const files = new Map([[target.parentId, directory(target.parentId, target.root.split("/").at(-2))],
-      [target.rootId, directory(target.rootId, "Clued_资料中心", target.parentId)], [target.trackId, directory(target.trackId, "20_P_产品与体验", target.rootId)]]);
+      [target.rootId, directory(target.rootId, "Clued_资料中心", target.parentId)], [target.trackId, directory(target.trackId, "20_P_产品与体验", target.rootId)],
+      // The Owner's own Clued-named doc beside the root (StorageNormalUse §3.1): listed, not app-authorized.
+      ["owner-clued-doc", { id: "owner-clued-doc", name: "Clued_单一数据源方案", parents: [target.parentId], version: "1", trashed: false,
+        mimeType: "application/vnd.google-apps.document", isAppAuthorized: false }]]);
     const revisions = new Map(); // file id -> Map(revision id -> {id, keepForever, bytes})
     const state = { posts: 0, writes: 0, losePost: false, loseUpload: false, loseRelease: false, keptExtra: 0, files, revisions };
     const newRevision = (file, bytes) => {
@@ -182,8 +185,7 @@ export async function testStorageReplace(t, admin, server, user, decision) {
       const query = u.searchParams.get("q");
       if (query) {
         const parent = /'([^']+)' in parents/.exec(query)?.[1], name = /name = '([^']+)'/.exec(query)?.[1];
-        return Response.json({ files: [...files.values()].filter(file => file.parents.includes(parent) && (!name || name === file.name))
-          .map(file => ({ ...file, isAppAuthorized: file.isAppAuthorized ?? true })), incompleteSearch: false });
+        return Response.json({ files: [...files.values()].filter(file => file.parents.includes(parent) && (!name || name === file.name)), incompleteSearch: false });
       }
       const found = files.get(parts.at(-1));
       return found ? Response.json(found) : new Response("", { status: 404 });

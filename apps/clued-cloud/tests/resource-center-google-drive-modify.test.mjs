@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { LEGACY_SCOPE, NORMAL_SCOPE, normalScopeDrive } from "./normal-scope-drive.fixture.mjs";
 import { createGoogleDriveNativeModifyEffect, modifyShape } from "../../../kernel/host/resource-center-google-drive-modify-effect.mjs";
 import { createGoogleDriveModifyPostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-modify-postcondition.mjs";
 
@@ -193,33 +192,4 @@ test("scope profiles: rename accepts legacy and normal grants and refuses every 
     await assert.rejects(f.effect(f.request), /DRIVE_NATIVE_GRANT_UNAVAILABLE/, String(scope));
     assert.equal(f.events.includes("patch"), false, String(scope));
   }
-});
-
-// StorageNormalUse.v0.1 §3.1: with a normal (drive.readonly) credential the
-// verifier lists through the write-path metadata API and never sees the Owner's
-// own files, so an Owner "a.txt" or "b.txt" beside the file changes nothing.
-test("normal scope: a rename and a move verify although the Owner has same-named files", async () => {
-  const owner = [{ id: "o-a", name: "a.txt", parents: ["track"], version: "1", trashed: false, mimeType: "text/plain" },
-    { id: "o-b", name: "b.txt", parents: ["track"], version: "1", trashed: false, mimeType: "text/plain" },
-    { id: "o-topic-file", name: "a.txt", parents: ["topic"], version: "1", trashed: false, mimeType: "text/plain" },
-    folder("o-track", "20_P_产品与体验", "root"), folder("o-topic", "topic", "track")];
-  for (const scope of [LEGACY_SCOPE, NORMAL_SCOPE]) {
-    const d = drive(); Object.assign(d.files.get("file"), { name: "b.txt", version: "8" });
-    const api = normalScopeDrive(d.files, owner, { scope });
-    const renamed = await verifier(d, { get_file: api.getFile, list_children: api.listChildren })({ profile, mutation: renameMutation,
-      provider_before: before(), effect_result: effectResult(renameMutation, "8") });
-    assert.equal(renamed.verified_proof.checks.unique_name, true, scope);
-    assert.equal(renamed.verified_proof.checks.source_vacated, true, scope);
-    const m = drive(); Object.assign(m.files.get("file"), { parents: ["topic"], version: "12" });
-    const moveApi = normalScopeDrive(m.files, owner, { scope });
-    const moved = await verifier(m, { get_file: moveApi.getFile, list_children: moveApi.listChildren })({ profile, mutation: moveMutation,
-      provider_before: before("topic"), effect_result: effectResult(moveMutation, "12") });
-    assert.equal(moved.parent_id, "topic", scope);
-  }
-  // A second Clued-created "b.txt" is still ambiguity, exactly as before.
-  const d = drive(); Object.assign(d.files.get("file"), { name: "b.txt", version: "8" });
-  d.files.set("other", { id: "other", name: "b.txt", parents: ["track"], version: "1", trashed: false, mimeType: "text/plain" });
-  const api = normalScopeDrive(d.files, owner);
-  await assert.rejects(verifier(d, { get_file: api.getFile, list_children: api.listChildren })({ profile, mutation: renameMutation,
-    provider_before: before(), effect_result: effectResult(renameMutation, "8") }), /DRIVE_POSTCONDITION_DESTINATION_AMBIGUOUS/);
 });

@@ -652,11 +652,10 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead ? ["lega
               });
             }
             const query = parsed.searchParams.get("q") ?? "";
-            // Listed entries carry isAppAuthorized; the write path keeps only Clued's own.
             if (query.includes("'temp-root-id' in parents")) return Response.json({ files: [{
                 id: "temp-track-id", name: "20_P_产品与体验",
                 parents: ["temp-root-id"], version: "2", trashed: false,
-                mimeType: "application/vnd.google-apps.folder", isAppAuthorized: true,
+                mimeType: "application/vnd.google-apps.folder",
               }] });
             let topicExists = false;
             try { topicExists = (await fs.stat(nativeTopic)).isDirectory(); } catch { /* Not yet created. */ }
@@ -664,7 +663,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead ? ["lega
               version: "1", trashed: false, mimeType: "application/vnd.google-apps.folder" };
             if (parsed.pathname.endsWith("/temp-new-topic-id") && topicExists) return Response.json(topicMetadata);
             if (query.includes("'temp-track-id' in parents") && query.includes("视觉探索") && topicExists) {
-              return Response.json({ files: [{ ...topicMetadata, isAppAuthorized: true }] });
+              return Response.json({ files: [topicMetadata] });
             }
             return Response.json({ files: [] });
           },
@@ -731,7 +730,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead ? ["lega
             }
             if (parsed.pathname.endsWith("/native-id")) return Response.json(nativeMetadata);
             if ((parsed.searchParams.get("q") ?? "").includes("name = 'native.txt'")) {
-              return Response.json({ files: nativeMetadata ? [{ ...nativeMetadata, isAppAuthorized: true }] : [] });
+              return Response.json({ files: nativeMetadata ? [nativeMetadata] : [] });
             }
             return hostOptions.drive_fetch(url, options);
           },

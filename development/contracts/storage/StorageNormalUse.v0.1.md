@@ -144,20 +144,18 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 | R10 | `normal` token + `text/1` 授权 + 非 Clued 文件 | `scope_upgrade_required`；media / export 请求数 = 0 |
 | R11 | 复核预算不足 | `storage_read_unavailable`；media 请求数 = 0 |
 
-### 3.1 写路径的命名空间：`normal` 凭据等同 `drive.file` 视图
+### 3.1 写路径的孤岛规则只计应用已授权条目
 
-`drive.readonly` 只用于读取（§3、§4、§5.1–§5.2）。写路径（云端执行器的创建文本 / 二进制、改名、移动、覆盖、恢复结算）在 `normal` 凭据下的行为必须与 `legacy`（`drive.file`）完全相同。2026-09-30 回归：Owner 重新同意 `normal` 后，同一 token 能列出整个 Drive，边界扫描从 `root_parent_id`（My Drive）起把 Owner 自己的 `Clued_*` 文档判为 `UNAUTHORIZED_WORKSPACE_MUTATION`，所有写作业在预留前被拒绝（作业 `b9d6db9d`）。
+**原因（2026-09-30，作业 `b9d6db9d`）。** 两种凭据档位都能列出整个 Drive 的元数据：`legacy` 一直持有 `drive.metadata.readonly`（`kernel/host/resource-center-google-scopes.mjs`），`normal` 另加 `drive.readonly`。元数据 API 的不存在 / 唯一性证明正依赖这一完整视图（`resource-center-google-drive-metadata.mjs` 的 `NAMESPACE_READ_SCOPES`）。云端执行器的边界扫描从 `root_parent_id`（My Drive）起枚举，`detectResourceCenterBoundaryViolations`（`kernel/policy/resource-center-mutation-policy.mjs`）的孤岛规则把资料根之外任何名称含 `clued` 的条目判为 `UNAUTHORIZED_WORKSPACE_MUTATION`。Owner 自己的 `Clued_*` 文档、文件夹，以及其他工具在 My Drive 中的同名资料因此被当作孤岛，所有写作业在预留前被拒绝。这与凭据档位无关：Drive 中一旦存在这类 Owner 资料，两种档位同样受影响。
 
-1. **只看应用已授权条目。** 写路径使用的每一次 Drive **列举**——边界扫描（逐目录与批量两种模式，`kernel/host/resource-center-google-drive-boundary.mjs`）、provider 身份解析、创建 / 改名移动 / 覆盖的后置核验与唯一性检查、恢复结算——都在 `fields` 中请求 `isAppAuthorized`，并在任何检查、计数（条目上限 10000）之前丢弃 `isAppAuthorized !== true` 的条目（字段缺失同样丢弃）。实现：`resource-center-google-drive-metadata.mjs` 的 `listChildren` / `listFolder`（`appAuthorizedEntries`，过滤后去掉该字段，使列举条目与 `getFile` 形状一致）；`storage-google-metadata-batch.ts` 的 `listFolders(…, {appAuthorizedOnly: true})`，执行器对批量结果再过滤一次。
-2. **统一一条代码路径。** 过滤对 `legacy` 凭据同样生效且无副作用：`drive.file` 能列出的条目按定义就是本应用创建或经 Picker 打开的条目，Drive 对这些条目返回 `isAppAuthorized: true`（N0 目录探测与 OAuth 完成时已依赖同一字段校验根与登记目录，`storage-google-oauth.ts`、`resource-center-google-drive-qualification.mjs`）。
-3. **按固定 ID 的直接读取不过滤。** 根、登记目录、刚创建或被改动文件的 `getFile` / `getFiles` 保持原样；它们的授权由登记与作业约束保证。
-4. **同名语义保持 `drive.file` 语义。** Drive 允许同名。Clued 写入不会因为同一目录下存在 Owner 自己的同名文件（非应用授权）而拒绝，也不会把它当作歧义或“目标已存在”；在 `drive.file` 下 Clued 同样看不到这些文件。Clued 自己创建的条目之间的重名、歧义、快捷方式、深度与条目上限仍按原规则失败关闭。Owner 在资料根内手工建立的目录对写路径仍不可见（写入该路径得到 `PROVIDER_PATH_UNREGISTERED`，与 `legacy` 相同）。
-5. **读取路径不过滤。** `storage-read-agent.ts` 的浏览、读取与全文搜索有意看到根内全部文件（§3 的根范围约束照旧）。
-6. **诊断。** 执行器每个拒绝以 `console.warn({event:"storage_cloud_denied",error_code})` 记录固定码；描述符 / 形状检查、`DRIVE_BOUNDARY_*` 扫描拒绝、凭据与 Drive 传输失败导致的 `unavailable`（作业报告为 `attention_required`）以 `storage_cloud_unavailable` 记录固定码（`CLOUD_*`、`DRIVE_*`、`PROVIDER_*`、`STORAGE_*`，其余为 `UNSPECIFIED`）。日志不含作业 ID、路径、扫描发现或 provider 文本。
+**修复（Clued Decision `fd94bd2f-ff3d-43ad-9520-5c8d8cd5ee84`）。** 只有孤岛规则收窄，其余一律不变。
 
-**测试（必过）**：`normal` 凭据下的合成 Drive 同时列出 Owner 条目（资料根旁的 `Clued_*` 文档、`allowed_root_children` 之外的根子目录如 `00_从这里开始`、重名、快捷方式、超过深度与超过 10000 条的 Owner 条目、目标目录中的同名文件）时，扫描为空，创建 / 改名 / 移动 / 覆盖照常进行；应用授权的意外条目仍按原规则被标记；`legacy` 行为不变。
+1. **孤岛规则只计 `isAppAuthorized === true` 的条目。** 边界扫描（`kernel/host/resource-center-google-drive-boundary.mjs`，逐目录与批量两种模式）的列举在 `fields` 中带上 `isAppAuthorized`：逐目录模式由执行器以 `listFolder(id, {app_authorized: true})` 请求，批量传输（`storage-google-metadata-batch.ts`）的 `fields` 本来就含该字段。扫描把每个观察到的条目连同 `is_app_authorized` 交给 `detectResourceCenterBoundaryViolations`；资料根之外、名称含 `clued` 的条目只有在 Clued 应用创建或打开过（`isAppAuthorized === true`）时才构成 `UNAUTHORIZED_WORKSPACE_MUTATION`。只有显式的 `is_app_authorized: false` 才豁免；字段缺失或取其他值按应用已授权处理，仍被标记（失败关闭）。显式 `artifact_role: "clued_resource"` 不属于孤岛规则，不因该字段豁免。
+2. **列举不过滤。** 扫描、provider 身份解析、创建 / 改名移动 / 覆盖的后置核验与唯一性检查、恢复结算看到的仍是完整列举，Owner 与其他工具的条目照常参与：同名 / `PATH_AMBIGUOUS`、快捷方式、根冒充 / `ROOT_CHANGED`、深度与条目上限（10000）以及身份解析和后置核验的不存在 / 唯一性证明全部保持原样。目标目录中存在 Owner 的同名文件时，结果与该文件由 Clued 创建时完全相同（失败关闭）。
+3. **形状比较忽略该字段。** 列举条目带 `isAppAuthorized`，而逐目录模式的 `getFile` 不带；扫描在比较目录与根的身份 / 版本时只去掉这一个字段，其余字段逐一比较。
+4. **诊断。** 执行器每个拒绝以 `console.warn({event:"storage_cloud_denied",error_code})` 记录固定码；描述符 / 形状检查（`CLOUD_DESCRIPTOR_INVALID`、`CLOUD_PROFILE_INVALID`、`CLOUD_MUTATION_SHAPE_INVALID`、`CLOUD_METADATA_BATCH_INVALID`）、`DRIVE_BOUNDARY_*` 扫描拒绝、凭据与 Drive 传输失败导致的 `unavailable`（作业报告为 `attention_required`）以 `storage_cloud_unavailable` 记录固定码（`CLOUD_*`、`DRIVE_*`、`PROVIDER_*`、`STORAGE_*`，其余为 `UNSPECIFIED`）。日志不含作业 ID、路径、扫描发现或 provider 文本。
 
-**未覆盖（后续）**：N0 / 重新探测使用的目录探测（`createGoogleDriveDirectoryProbe`，列举 `root_parent_id` 的子项）不是写作业路径，本节未对其过滤；`normal` 凭据下它仍可能因 My Drive 根的重名或条目上限失败，需单独决定。
+**测试（必过）**：合成 Drive 按现实建模，`legacy` 与 `normal` 凭据都列出 Owner 条目（`isAppAuthorized: false`）。资料根之外的 Owner `Clued_*` 文档 / 文件夹：扫描为空，创建照常提交（逐目录与批量两种模式，两种凭据；改名 / 覆盖的 DB 夹具同样放入该 Owner 文档）。应用授权的 Clued 命名意外条目仍被标记；字段缺失仍被标记。Owner 的重名、快捷方式、根冒充、深度与条目上限仍按原码失败；目标目录中的 Owner 同名文件与 Clued 同名文件结果相同。
 
 ## 4. 读取格式矩阵
 

@@ -149,15 +149,9 @@ export function createStorageGoogleMetadataBatch(config: {
     },
     /** Direct children of each folder. With fullText (StorageNormalUse §5.2)
      * only children whose indexed content matches; the caller intersects the
-     * result with its own scoped child list. `\` and `'` are escaped.
-     * With appAuthorizedOnly (the write path, StorageNormalUse §3.1) only
-     * children with isAppAuthorized === true are kept, before the entry limit
-     * is counted, so a drive.readonly token sees the drive.file namespace.
-     * The read path (storage-read-agent.ts) never sets it. */
-    async listFolders(folderIds: string[], { signal, fullText, appAuthorizedOnly }:
-      { signal?: AbortSignal; fullText?: string; appAuthorizedOnly?: boolean } = {}) {
+     * result with its own scoped child list. `\` and `'` are escaped. */
+    async listFolders(folderIds: string[], { signal, fullText }: { signal?: AbortSignal; fullText?: string } = {}) {
       ids(folderIds);
-      if (appAuthorizedOnly !== undefined && typeof appAuthorizedOnly !== "boolean") invalid();
       if (fullText !== undefined && (typeof fullText !== "string" || !fullText.length || fullText.length > 200 ||
         /[\u0000-\u001f\u007f]/.test(fullText))) invalid();
       const textClause = fullText === undefined ? ""
@@ -176,11 +170,9 @@ export function createStorageGoogleMetadataBatch(config: {
         }), signal);
         values.forEach((value, index) => {
           if (!object(value) || !Array.isArray(value.files) || value.incompleteSearch === true) throw new Error("DRIVE_LIST_INVALID");
-          const files = appAuthorizedOnly === true
-            ? value.files.filter(file => object(file) && file.isAppAuthorized === true) : value.files;
-          count += files.length;
+          count += value.files.length;
           if (count > 10000) throw new Error("DRIVE_ENUMERATION_LIMIT");
-          const state = current[index]; state.files.push(...files);
+          const state = current[index]; state.files.push(...value.files);
           if (value.nextPageToken !== undefined && value.nextPageToken !== "") {
             if (typeof value.nextPageToken !== "string" || value.nextPageToken.length > 4096 || state.seen.has(value.nextPageToken)) throw new Error("DRIVE_PAGINATION_INVALID");
             state.seen.add(value.nextPageToken); state.token = value.nextPageToken; next.push(state);

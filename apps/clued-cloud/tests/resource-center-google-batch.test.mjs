@@ -69,17 +69,6 @@ test("cycles, incompleteSearch, pagination exhaustion and global entry limits fa
   const f=fixture((parts,_,n)=>batchReply(parts.map(p=>({...p,value:{files:[],nextPageToken:"page"+n}}))));
   await assert.rejects(f.api.listFolders(["a"]),/PAGINATION_LIMIT/);assert.equal(f.calls.length,100);
 });
-test("appAuthorizedOnly keeps only Clued's entries before the entry limit; the read path keeps everything",async()=>{
-  // StorageNormalUse §3.1: a normal (drive.readonly) token lists the Owner's files too.
-  const owner=Array.from({length:5001},(_,i)=>({id:"owner"+i,isAppAuthorized:false}));
-  const reply=()=>fixture(parts=>batchReply(parts.map(p=>({...p,value:{files:[...owner,{id:"clued-"+p.path.match(/%27([a-z])%27/)[1],isAppAuthorized:true},{id:"unmarked"}]}}))));
-  const write=reply();
-  assert.deepEqual(await write.api.listFolders(["a","b"],{appAuthorizedOnly:true}),
-    [[{id:"clued-a",isAppAuthorized:true}],[{id:"clued-b",isAppAuthorized:true}]]);
-  for(const part of write.calls[0])assert.match(new URL(part.path,"https://www.googleapis.com").searchParams.get("fields"),/files\([^)]*isAppAuthorized/);
-  await assert.rejects(reply().api.listFolders(["a","b"]),/ENUMERATION_LIMIT/);
-  await assert.rejects(reply().api.listFolders(["a"],{appAuthorizedOnly:"yes"}),/DRIVE_BATCH_INVALID/);
-});
 test("actual streamed-byte and per-part bounds reject before parsing or accepting a prefix",async()=>{
   const f=fixture(parts=>batchReply(parts.map(p=>({...p,value:{id:"a",padding:"x".repeat(2*1024*1024)}}))));
   await assert.rejects(f.api.getFiles(["a"]),/SIZE_LIMIT/);

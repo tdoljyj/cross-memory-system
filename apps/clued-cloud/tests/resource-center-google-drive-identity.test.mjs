@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createGoogleDriveProviderIdentityResolver } from "../../../kernel/host/resource-center-google-drive-identity.mjs";
-import { LEGACY_SCOPE, NORMAL_SCOPE, normalScopeDrive } from "./normal-scope-drive.fixture.mjs";
 
 const root = "G:/我的云端硬盘/Clued_资料中心";
 const folderMime = "application/vnd.google-apps.folder";
@@ -126,48 +125,4 @@ test("Drive identity carries root and parent sharing digests that change with pe
   const plain = await withoutSharing({ profile: { managed_root: root }, mutation });
   assert.equal(plain.root_sharing_digest, null);
   assert.equal(plain.destination_parent_sharing_digest, null);
-});
-
-// StorageNormalUse.v0.1 §3.1: through the write-path metadata API a normal
-// (drive.readonly) credential resolves exactly what a drive.file credential did.
-test("normal-scope identity ignores the Owner's same-named files and folders", async () => {
-  const clued = new Map([
-    ["root-id", file("root-id", "Clued_资料中心", "drive-root", "1", true)],
-    ["inbox", file("inbox", "90_待归类", "root-id", "2", true)],
-    ["track", file("track", "20_P_产品与体验", "root-id", "3", true)],
-    ["topic", file("topic", "品牌与视觉", "track", "4", true)],
-    ["source", file("source", "a.md", "inbox", "5")],
-    ["target", file("target", "t.md", "track", "6")],
-  ]);
-  // Duplicates of every path segment and of each destination name, plus a root child outside the layout.
-  const owner = [file("o-start", "00_从这里开始", "root-id", "1", true), file("o-inbox", "90_待归类", "root-id", "1", true),
-    file("o-track", "20_P_产品与体验", "root-id", "1", true), file("o-topic", "品牌与视觉", "track", "1", true),
-    file("o-source", "a.md", "inbox", "1"), file("o-new", "new.png", "inbox", "1"), file("o-moved", "a.md", "topic", "1"),
-    file("o-renamed", "b.md", "inbox", "1"), file("o-target", "t.md", "track", "1")];
-  const mutations = [
-    { operation: "create", target_kind: "file", destination_path: `${root}/90_待归类/new.png` },
-    { operation: "rename", target_kind: "file", source_path: `${root}/90_待归类/a.md`, destination_path: `${root}/90_待归类/b.md` },
-    { operation: "move", target_kind: "file", source_path: `${root}/90_待归类/a.md`, destination_path: `${root}/20_P_产品与体验/品牌与视觉/a.md` },
-    { operation: "replace", target_kind: "file", destination_path: `${root}/20_P_产品与体验/t.md` },
-  ];
-  for (const scope of [LEGACY_SCOPE, NORMAL_SCOPE]) {
-    const metadata = normalScopeDrive(clued, owner, { scope });
-    const resolve = createGoogleDriveProviderIdentityResolver({ managed_root: root, root_folder_id: "root-id",
-      root_parent_id: "drive-root", get_file: metadata.getFile, list_children: metadata.listChildren });
-    const results = [];
-    for (const mutation of mutations) results.push(await resolve({ profile: { managed_root: root }, mutation }));
-    assert.deepEqual(results.map((r) => [r.source_file_id, r.destination_parent_id, r.destination_file_id]), [
-      [null, "inbox", null], ["source", "inbox", null], ["source", "topic", null], [null, "track", "target"]], scope);
-  }
-  // Clued's own entries keep every check: an app-authorized duplicate is ambiguous
-  // and an app-authorized destination exists.
-  const build = (extra) => {
-    const metadata = normalScopeDrive(new Map([...clued, ...extra]), owner);
-    return createGoogleDriveProviderIdentityResolver({ managed_root: root, root_folder_id: "root-id",
-      root_parent_id: "drive-root", get_file: metadata.getFile, list_children: metadata.listChildren });
-  };
-  await assert.rejects(build([["dup", file("dup", "a.md", "inbox", "9")]])({ profile: { managed_root: root }, mutation: mutations[1] }),
-    /PROVIDER_PATH_AMBIGUOUS/);
-  await assert.rejects(build([["taken", file("taken", "new.png", "inbox", "9")]])({ profile: { managed_root: root }, mutation: mutations[0] }),
-    /PROVIDER_DESTINATION_EXISTS/);
 });

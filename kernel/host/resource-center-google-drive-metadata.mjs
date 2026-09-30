@@ -17,16 +17,6 @@ const SUBREQUEST_LIMIT_HINT = "Too many subrequests by single Worker invocation.
 const subrequestLimit = (error) => error instanceof Error &&
   (SUBREQUEST_LIMIT_MESSAGE.test(error.message) || error.message === SUBREQUEST_LIMIT_HINT);
 
-/** Write-path listing view (StorageNormalUse §3.1). Drive's `isAppAuthorized`
- * is true only for files this OAuth client created or the Owner opened with it.
- * A `drive.file` credential can list nothing else, so keeping exactly these
- * entries gives a `normal` (drive.readonly) credential the same namespace the
- * legacy credential observed. Anything else, including a missing field, is
- * dropped: Owner files are invisible to every write-path check, as before.
- * Direct reads of pinned IDs (getFile) are never filtered.
- */
-export const appAuthorizedEntries = (entries) => entries.filter((entry) => entry?.isAppAuthorized === true);
-
 /** Host-held Drive metadata-only access; never accepts a caller credential. */
 /** @param {{get_credential?: Function, get_access_token?: Function, fetch?: typeof fetch, timeout_ms?: number, authorization_details?: boolean}} config */
 export function createGoogleDriveMetadataApi({
@@ -45,14 +35,6 @@ export function createGoogleDriveMetadataApi({
   }
   if (typeof authorizationDetails !== "boolean") throw new TypeError("authorization_details must be boolean.");
   const fields = FIELDS + (authorizationDetails ? ",isAppAuthorized,capabilities(canAddChildren)" : "");
-  // Listings always request isAppAuthorized to filter by it; without
-  // authorization details the field is removed again after filtering so a
-  // listed entry keeps exactly the shape getFile returns for the same ID.
-  const listFields = authorizationDetails ? fields : FIELDS + ",isAppAuthorized";
-  const listed = (entries) => {
-    const visible = appAuthorizedEntries(entries);
-    return authorizationDetails ? visible : visible.map(({ isAppAuthorized: _, ...entry }) => entry);
-  };
 
   async function credential(requireNamespace) {
     // The token and its granted scope must be obtained together from the
@@ -200,13 +182,16 @@ export function createGoogleDriveMetadataApi({
     throw new Error("DRIVE_PAGINATION_LIMIT");
   }
 
-  async function list({ parent_id: parentId, name }, enumerate, signal) {
+  // The boundary scanner's listings also request isAppAuthorized: its island
+  // rule (StorageNormalUse §3.1) counts only app-authorized Clued-named
+  // entries. The listing itself is never filtered; every entry is returned.
+  const scanFields = authorizationDetails ? fields : FIELDS + ",isAppAuthorized";
+
+  async function list({ parent_id: parentId, name }, enumerate, signal, withAppAuthorization = false) {
     const q = `${driveLiteral(parentId)} in parents${enumerate ? "" : ` and name = ${driveLiteral(name)}`} and trashed = false`;
     // drive.file silently omits files created by other applications, even
     // when incompleteSearch is false. An empty list is NOT proof of absence.
     // Pin one token across pagination and recheck grants on the next lookup.
-    // Every credential profile observes only app-authorized entries (see
-    // appAuthorizedEntries): drive.readonly must not widen the write path.
     signal?.throwIfAborted();
     const token = await credential(true);
     const matches = [];
@@ -216,7 +201,7 @@ export function createGoogleDriveMetadataApi({
       signal?.throwIfAborted();
       const url = new URL(DRIVE_API);
       url.searchParams.set("q", q);
-      url.searchParams.set("fields", `nextPageToken,incompleteSearch,files(${listFields})`);
+      url.searchParams.set("fields", `nextPageToken,incompleteSearch,files(${withAppAuthorization ? scanFields : fields})`);
       url.searchParams.set("pageSize", "1000");
       url.searchParams.set("supportsAllDrives", "true");
       url.searchParams.set("includeItemsFromAllDrives", "true");
@@ -225,7 +210,7 @@ export function createGoogleDriveMetadataApi({
       if (!Array.isArray(result?.files) || result.incompleteSearch === true) {
         throw new Error("DRIVE_LIST_INVALID");
       }
-      matches.push(...listed(result.files));
+      matches.push(...result.files);
       if (enumerate && matches.length > 10000) throw new Error("DRIVE_ENUMERATION_LIMIT");
       if (!enumerate && matches.length > 1) return matches;
       const next = result.nextPageToken;
@@ -238,5 +223,8 @@ export function createGoogleDriveMetadataApi({
   }
 
   return Object.freeze({ getFile, getSharing, getRevision, countKeptRevisions, downloadRevision, listChildren: (input, {signal} = {}) => list(input, false, signal),
-    listFolder: (parentId, {signal} = {}) => list({ parent_id: parentId }, true, signal) });
+    listFolder: (parentId, {signal, app_authorized: appAuthorized = false} = {}) => {
+      if (typeof appAuthorized !== "boolean") throw new TypeError("app_authorized must be boolean.");
+      return list({ parent_id: parentId }, true, signal, appAuthorized);
+    } });
 }

@@ -50,7 +50,7 @@ test('folder enumeration exhausts empty and multi-result pages; partial search o
   const build=fetch=>createGoogleDriveMetadataApi({get_credential:async()=>({access_token:'synthetic-test-token',scope:scopes}),fetch});
   const api=build(async url=>{
     const u=new URL(url);assert.equal(u.searchParams.get('q'),"'parent' in parents and trashed = false");calls++;
-    return Response.json(calls===1?{files:[],nextPageToken:'two',incompleteSearch:false}:{files:[item('a','a','parent'),item('b','b','parent')].map(f=>({...f,isAppAuthorized:true})),incompleteSearch:false});
+    return Response.json(calls===1?{files:[],nextPageToken:'two',incompleteSearch:false}:{files:[item('a','a','parent'),item('b','b','parent')],incompleteSearch:false});
   });
   assert.equal((await api.listFolder('parent')).length,2);assert.equal(calls,2);
   await assert.rejects(build(async()=>Response.json({files:[],incompleteSearch:true})).listFolder('parent'),/LIST_INVALID/);
@@ -58,65 +58,6 @@ test('folder enumeration exhausts empty and multi-result pages; partial search o
   const narrow=createGoogleDriveMetadataApi({get_credential:async()=>({access_token:'synthetic-test-token',scope:'https://www.googleapis.com/auth/drive.file'}),fetch:async()=>{assert.fail('no request');}});
   await assert.rejects(narrow.listFolder('parent'),/NAMESPACE_VISIBILITY_UNPROVEN/);
 });
-// StorageNormalUse §3.1: a normal (drive.readonly) credential lists the Owner's
-// whole Drive. The write-path metadata API keeps only app-authorized entries, so
-// the scan observes the same namespace a drive.file credential observed.
-function driveFixture(scope){
-  const files=[item('parent','My Drive'),item('root','Clued_资料中心','parent'),item('track','track','root')]
-    .map(f=>({...f,isAppAuthorized:true}));
-  const owner=(id,name,parent,mimeType)=>files.push({...item(id,name,parent,mimeType),isAppAuthorized:false});
-  const fetch=async url=>{
-    const u=new URL(url),q=u.searchParams.get('q'),wants=(u.searchParams.get('fields')??'').includes('isAppAuthorized');
-    const project=({isAppAuthorized,...rest})=>wants?{...rest,isAppAuthorized}:rest;
-    if(q){
-      const parent=/'([^']+)' in parents/.exec(q)[1];
-      return Response.json({files:files.filter(f=>f.parents.includes(parent)).map(project),incompleteSearch:false});
-    }
-    const found=files.find(f=>f.id===u.pathname.split('/').at(-1));
-    return found?Response.json(project(found)):new Response('',{status:404});
-  };
-  const api=createGoogleDriveMetadataApi({get_credential:async()=>({access_token:'synthetic-test-token',scope}),fetch});
-  const scanner=mode=>createGoogleDriveBoundaryScanner({
-    trusted_profile:{registration_status:'registered',managed_root:'/My Drive/Clued_资料中心',allowed_root_children:['track']},
-    root_folder_id:'root',root_parent_id:'parent',scan_roots:[{folder_id:'parent',path:'/My Drive'}],
-    get_file:api.getFile,list_folder:api.listFolder,
-    ...(mode==='batched'?{get_files:ids=>Promise.all(ids.map(id=>api.getFile(id))),list_folders:ids=>Promise.all(ids.map(id=>api.listFolder(id)))}:{})});
-  return {files,owner,scan:mode=>scanner(mode)()};
-}
-const NORMAL='https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly';
-const LEGACY='https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly';
-for(const mode of ['single','batched']){
-test(mode+': normal-scope scan ignores Owner files that drive.file never listed',async()=>{
-  const f=driveFixture(NORMAL);
-  // Owner material everywhere: Clued-named documents beside the root, a root child
-  // outside allowed_root_children, duplicate names, a shortcut, a deep tree and many entries.
-  f.owner('doc','Clued_单一数据源方案.gdoc','parent','application/vnd.google-apps.document');
-  f.owner('dup1','Clued_单一数据源方案.gdoc','parent','application/vnd.google-apps.document');
-  f.owner('start','00_从这里开始','root');f.owner('dupTrack','track','root');
-  f.owner('link','shortcut','parent','application/vnd.google-apps.shortcut');
-  let deep='parent';for(let i=0;i<12;i++){f.owner('deep'+i,'level'+i,deep);deep='deep'+i;}
-  f.owner('island','Clued-old','deep3');
-  for(let i=0;i<120;i++)f.owner('bulk'+i,'photo.png','track','image/png');
-  f.owner('spoof','Clued_资料中心','parent');
-  assert.deepEqual(await f.scan(mode),[]);
-});
-test(mode+': normal-scope scan still flags app-authorized unexpected entries exactly as before',async()=>{
-  const normal=driveFixture(NORMAL),legacy=driveFixture(LEGACY);
-  for(const f of [normal,legacy]){
-    f.files.push({...item('drop','Clued_说明.md','parent','text/plain'),isAppAuthorized:true});
-    f.files.push({...item('work','work','parent'),isAppAuthorized:true},{...item('nest','Clued-old','work'),isAppAuthorized:true});
-    f.owner('ownerDoc','Clued_notes','parent','text/plain');
-  }
-  const paths=async f=>(await f.scan(mode)).map(r=>[r.code,r.path]).sort();
-  const expected=[['UNAUTHORIZED_WORKSPACE_MUTATION','/My Drive/Clued_说明.md'],['UNAUTHORIZED_WORKSPACE_MUTATION','/My Drive/work/Clued-old']];
-  assert.deepEqual(await paths(normal),expected);assert.deepEqual(await paths(legacy),expected);
-  // An app-authorized duplicate or shortcut still fails closed.
-  const dup=driveFixture(NORMAL);dup.files.push({...item('w1','work','parent'),isAppAuthorized:true},{...item('w2','work','parent'),isAppAuthorized:true});
-  await assert.rejects(dup.scan(mode),/PATH_AMBIGUOUS/);
-  const spoof=driveFixture(NORMAL);spoof.files.push({...item('spoof','Clued_资料中心','parent'),isAppAuthorized:true});
-  await assert.rejects(spoof.scan(mode),/PATH_AMBIGUOUS|ROOT_CHANGED/);
-});
-}
 test('batched scan covers a level of folders per call and matches the single-item result',async()=>{
   // 3 levels: 12 top-level folders under the scan root, 3 children each, one file per child.
   const build=mode=>{
@@ -140,4 +81,70 @@ test('batched scan covers a level of folders per call and matches the single-ite
   assert.equal(single.calls(),2+3*50);
   // Batched mode: root read, then one read and one list per level (4 levels), one recheck, one root recheck.
   assert.equal(batched.calls(),1+2*4+1+1);
+});
+
+// StorageNormalUse.v0.1 §3.1 / Clued Decision fd94bd2f: both credential profiles list
+// the whole Drive's metadata. The island rule counts only Clued-named entries the
+// Clued app created or opened (isAppAuthorized === true); a missing field still
+// counts. Every structural check applies to every listed entry, whoever owns it.
+const ownerFixture=(mode,{noFlag=false,overrides={}}={})=>{
+  const f=fixture(overrides,mode);f.files.splice(2);
+  const owner=new Set();
+  const add=(entry,at)=>{owner.add(entry.id);if(at===undefined)f.files.push(entry);else f.files.splice(at,0,entry);return entry;};
+  // Listings carry isAppAuthorized; the direct read (get_file) does not, as with
+  // the unbatched metadata API. Owner entries are false, Clued's own true.
+  f.config.list_folder=async id=>structuredClone(f.files.filter(x=>x.parents.includes(id)))
+    .map(x=>noFlag?x:{...x,isAppAuthorized:!owner.has(x.id)});
+  return {f,add};
+};
+for(const mode of ['single','batched']){
+test(mode+': Owner Clued-named doc and folder outside the root (isAppAuthorized false) scan clean',async()=>{
+  const {f,add}=ownerFixture(mode);
+  add(item('o-doc','Clued_单一数据源方案','parent','application/vnd.google-apps.document'));
+  add(item('o-folder','Clued 旧资料','parent'));add(item('o-inner','notes.txt','o-folder','text/plain'));
+  assert.deepEqual(await f.scan(),[]);
+});
+test(mode+': an app-authorized Clued-named stray outside the root is still flagged',async()=>{
+  const {f,add}=ownerFixture(mode);add(item('o-doc','Clued_单一数据源方案','parent','application/vnd.google-apps.document'));
+  f.files.push(item('stray','Clued_说明.md','parent','text/plain'));
+  assert.deepEqual((await f.scan()).map(r=>[r.code,r.path]),[['UNAUTHORIZED_WORKSPACE_MUTATION','/drive/Clued_说明.md']]);
+});
+test(mode+': a listing without isAppAuthorized is treated as app-authorized (fail closed)',async()=>{
+  const {f,add}=ownerFixture(mode,{noFlag:true});
+  add(item('o-doc','Clued_单一数据源方案','parent','application/vnd.google-apps.document'));
+  assert.deepEqual((await f.scan()).map(r=>r.path),['/drive/Clued_单一数据源方案']);
+});
+test(mode+': Owner entries keep every structural failure',async()=>{
+  const cases=[
+    [/PATH_AMBIGUOUS/,add=>{add(item('o-a','same','parent','text/plain'));add(item('o-b','same','parent','text/plain'));}],
+    [/PATH_AMBIGUOUS/,add=>add(item('o-spoof','Clued_资料中心','parent'))],
+    [/ROOT_CHANGED/,add=>add(item('o-spoof','Clued_资料中心','parent'),1)],
+    [/SHORTCUT_UNQUALIFIED/,add=>add(item('o-link','link','parent','application/vnd.google-apps.shortcut'))],
+    [/DEPTH_LIMIT/,add=>{add(item('o-d0','d0','parent'));for(let i=1;i<=9;i++)add(item('o-d'+i,'d'+i,'o-d'+(i-1)));}],
+    [/ENTRY_LIMIT/,add=>{for(let i=0;i<3;i++)add(item('o-n'+i,'n'+i+'.png','parent','image/png'));},{boundary_scan_max_entries:3}],
+  ];
+  for(const [expected,arrange,overrides] of cases){
+    const {f,add}=ownerFixture(mode,{overrides});arrange(add);
+    await assert.rejects(f.scan(),expected,String(expected));
+  }
+});
+test(mode+': identity comparisons ignore only the listed isAppAuthorized field',async()=>{
+  const {f,add}=ownerFixture(mode);add(item('o-folder','work','parent'));add(item('o-inner','a.txt','o-folder','text/plain'));
+  assert.deepEqual(await f.scan(),[]);
+  const get=f.config.get_file;f.config.get_file=async id=>{const v=await get(id);if(id==='o-folder')v.version='2';return v;};
+  await assert.rejects(f.scan(),/BOUNDARY_CHANGED/);
+});
+}
+test('the scanner listing requests isAppAuthorized and returns every entry unfiltered',async()=>{
+  const scope='https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly';
+  const seen=[];
+  const api=createGoogleDriveMetadataApi({get_credential:async()=>({access_token:'synthetic-test-token',scope}),fetch:async url=>{
+    const u=new URL(url);seen.push(u.searchParams.get('fields'));
+    const listed=[{...item('mine','mine','parent'),isAppAuthorized:true},{...item('owner','Clued_x','parent'),isAppAuthorized:false}];
+    return Response.json({files:/isAppAuthorized/.test(u.searchParams.get('fields'))?listed:listed.map(({isAppAuthorized:_,...x})=>x),incompleteSearch:false});
+  }});
+  assert.deepEqual((await api.listFolder('parent',{app_authorized:true})).map(x=>[x.id,x.isAppAuthorized]),[['mine',true],['owner',false]]);
+  assert.match(seen[0],/files\([^)]*isAppAuthorized/);
+  assert.equal((await api.listFolder('parent')).length,2);assert.doesNotMatch(seen[1],/isAppAuthorized/);
+  assert.throws(()=>api.listFolder('parent',{app_authorized:'yes'}),/app_authorized must be boolean/);
 });

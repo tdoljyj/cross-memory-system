@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { createResourceCenterOnlineToolHost } from "./resource-center-online-tool-host.mjs";
-import { createGoogleDriveMetadataApi, appAuthorizedEntries } from "./resource-center-google-drive-metadata.mjs";
+import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-metadata.mjs";
 import { scopeProfile } from "./resource-center-google-scopes.mjs";
 import { createGoogleDriveProviderIdentityResolver } from "./resource-center-google-drive-identity.mjs";
 import { createGoogleDriveBoundaryScanner } from "./resource-center-google-drive-boundary.mjs";
@@ -170,16 +170,14 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       if(metadataBatch){
         const batch=await metadataBatch(Object.freeze({access_token:(await credential()).access_token}));
         if(typeof batch?.getFiles!=="function" || typeof batch?.listFolders!=="function") fail("CLOUD_METADATA_BATCH_INVALID");
-        // Write-path view (StorageNormalUse §3.1): only app-authorized children,
-        // filtered by the transport before its entry limit and again here, so a
-        // normal (drive.readonly) credential scans the legacy drive.file namespace.
-        batched={get_files:ids=>batch.getFiles(ids),list_folders:async ids=>{
-          const listings=await batch.listFolders(ids,Object.freeze({appAuthorizedOnly:true}));
-          return Array.isArray(listings) ? listings.map(children=>Array.isArray(children)?appAuthorizedEntries(children):children) : listings;
-        }};
+        // The batch transport's fields already include isAppAuthorized.
+        batched={get_files:ids=>batch.getFiles(ids),list_folders:ids=>batch.listFolders(ids)};
       }
+      // Full, unfiltered listings; each entry also carries isAppAuthorized for
+      // the island rule only (StorageNormalUse §3.1).
       const scan=createGoogleDriveBoundaryScanner({trusted_profile:profile,root_folder_id:descriptor.root_folder_id,root_parent_id:descriptor.root_parent_id,
-        scan_roots:descriptor.scan_roots,get_file:metadata.getFile,list_folder:metadata.listFolder,...batched});
+        scan_roots:descriptor.scan_roots,get_file:metadata.getFile,
+        list_folder:id=>metadata.listFolder(id,{app_authorized:true}),...batched});
       const findings=await scan();
       if(findings.length) {
         logDiagnostic("deny","UNAUTHORIZED_WORKSPACE_MUTATION");
