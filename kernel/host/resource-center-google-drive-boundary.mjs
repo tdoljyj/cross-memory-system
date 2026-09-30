@@ -6,7 +6,15 @@ const SHORTCUT = "application/vnd.google-apps.shortcut";
 // Folder IDs per batched call; the provider transport splits each call further.
 const BATCH_IDS = 256;
 const fail = code => { throw new Error(code); };
-const normalized = path => bindResourceCenterMutation({ destination_path: path }).destination_path;
+// Listings carry isAppAuthorized for the island rule (StorageNormalUse §3.1); a
+// direct read may not. Identity/version comparisons ignore only that field.
+const withoutAppAuthorization = file => {
+  if (!file || typeof file !== "object") return file;
+  const { isAppAuthorized: _, ...rest } = file;
+  return rest;
+};
+const sameListed = (a, b) => isDeepStrictEqual(withoutAppAuthorization(a), withoutAppAuthorization(b));
+const normalized = path =>bindResourceCenterMutation({ destination_path: path }).destination_path;
 function identity(file, id) {
   if (!file || file.id !== id || !/^[A-Za-z0-9_-]{1,160}$/.test(id ?? "") || file.trashed !== false ||
       typeof file.name !== "string" || !file.name || /[/\\]/.test(file.name) || [".",".."].includes(file.name) ||
@@ -18,6 +26,9 @@ function identity(file, id) {
  * No full-Drive search, model, file content, shortcut following or guessed
  * clean result on partial scans. Paths are only projections of pinned IDs.
  * This is detection at scan time, not a lock against external Drive writers.
+ * Every listed entry, whoever created it, goes through every structural check
+ * (ambiguity, shortcut, root impersonation, depth, entry limit). Each observed
+ * entry carries the listing's isAppAuthorized value to the island rule only.
  */
 export function createGoogleDriveBoundaryScanner({ trusted_profile: trustedProfile,
   root_folder_id: rootId, root_parent_id: parentId, scan_roots: scanRoots,
@@ -65,7 +76,7 @@ export function createGoogleDriveBoundaryScanner({ trusted_profile: trustedProfi
       level.forEach((n,i)=>{
         const before=identity(befores[i],n.folderId);
         if(before.mimeType!==FOLDER) fail("DRIVE_BOUNDARY_FOLDER_INVALID");
-        if(n.expected && !isDeepStrictEqual(before,n.expected)) fail("DRIVE_BOUNDARY_CHANGED");
+        if(n.expected && !sameListed(before,n.expected)) fail("DRIVE_BOUNDARY_CHANGED");
         n.before=before;
       });
       const listings=await chunked(listFolders,level.map(n=>n.folderId)), next=[];
@@ -81,11 +92,11 @@ export function createGoogleDriveBoundaryScanner({ trusted_profile: trustedProfi
           const childPath=path+"/"+file.name;
           if(normalized(childPath)!==childPath) fail("DRIVE_BOUNDARY_PATH_AMBIGUOUS");
           if(file.id===rootId){
-            if(childPath!==managed || !isDeepStrictEqual(file,expectedRoot)) fail("DRIVE_BOUNDARY_ROOT_CHANGED");
+            if(childPath!==managed || !sameListed(file,expectedRoot)) fail("DRIVE_BOUNDARY_ROOT_CHANGED");
             sawRoot=true;continue;
           }
           if(childPath===managed) fail("DRIVE_BOUNDARY_ROOT_CHANGED");
-          observed.push({path:childPath});
+          observed.push({path:childPath,is_app_authorized:raw.isAppAuthorized});
           if(file.mimeType===SHORTCUT) fail("DRIVE_BOUNDARY_SHORTCUT_UNQUALIFIED");
           if(file.mimeType===FOLDER){
             if(depth>=maxDepth) fail("DRIVE_BOUNDARY_DEPTH_LIMIT");
@@ -112,7 +123,7 @@ export function createGoogleDriveBoundaryScanner({ trusted_profile: trustedProfi
       if(visited.has(folderId)) fail("DRIVE_BOUNDARY_ALIAS_OR_CYCLE"); visited.add(folderId);
       const before=identity(await getFile(folderId),folderId);
       if(before.mimeType!==FOLDER) fail("DRIVE_BOUNDARY_FOLDER_INVALID");
-      if(expected && !isDeepStrictEqual(before,expected)) fail("DRIVE_BOUNDARY_CHANGED");
+      if(expected && !sameListed(before,expected)) fail("DRIVE_BOUNDARY_CHANGED");
       const children=await listFolder(folderId);
       if(!Array.isArray(children)) fail("DRIVE_BOUNDARY_ENUMERATION_INVALID");
       const names=new Set(), ids=new Set();
@@ -124,12 +135,12 @@ export function createGoogleDriveBoundaryScanner({ trusted_profile: trustedProfi
         const childPath=path+"/"+file.name;
         if(normalized(childPath)!==childPath) fail("DRIVE_BOUNDARY_PATH_AMBIGUOUS");
         if(file.id===rootId){
-          if(childPath!==managed || !isDeepStrictEqual(file,expectedRoot)) fail("DRIVE_BOUNDARY_ROOT_CHANGED");
+          if(childPath!==managed || !sameListed(file,expectedRoot)) fail("DRIVE_BOUNDARY_ROOT_CHANGED");
           sawRoot=true;continue;
         }
         // Same name/path with another ID must not impersonate the managed root.
         if(childPath===managed) fail("DRIVE_BOUNDARY_ROOT_CHANGED");
-        observed.push({path:childPath});
+        observed.push({path:childPath,is_app_authorized:raw.isAppAuthorized});
         if(file.mimeType===SHORTCUT) fail("DRIVE_BOUNDARY_SHORTCUT_UNQUALIFIED");
         if(file.mimeType===FOLDER){
           if(depth>=maxDepth) fail("DRIVE_BOUNDARY_DEPTH_LIMIT");

@@ -182,7 +182,12 @@ export function createGoogleDriveMetadataApi({
     throw new Error("DRIVE_PAGINATION_LIMIT");
   }
 
-  async function list({ parent_id: parentId, name }, enumerate, signal) {
+  // The boundary scanner's listings also request isAppAuthorized: its island
+  // rule (StorageNormalUse §3.1) counts only app-authorized Clued-named
+  // entries. The listing itself is never filtered; every entry is returned.
+  const scanFields = authorizationDetails ? fields : FIELDS + ",isAppAuthorized";
+
+  async function list({ parent_id: parentId, name }, enumerate, signal, withAppAuthorization = false) {
     const q = `${driveLiteral(parentId)} in parents${enumerate ? "" : ` and name = ${driveLiteral(name)}`} and trashed = false`;
     // drive.file silently omits files created by other applications, even
     // when incompleteSearch is false. An empty list is NOT proof of absence.
@@ -196,7 +201,7 @@ export function createGoogleDriveMetadataApi({
       signal?.throwIfAborted();
       const url = new URL(DRIVE_API);
       url.searchParams.set("q", q);
-      url.searchParams.set("fields", `nextPageToken,incompleteSearch,files(${fields})`);
+      url.searchParams.set("fields", `nextPageToken,incompleteSearch,files(${withAppAuthorization ? scanFields : fields})`);
       url.searchParams.set("pageSize", "1000");
       url.searchParams.set("supportsAllDrives", "true");
       url.searchParams.set("includeItemsFromAllDrives", "true");
@@ -218,5 +223,8 @@ export function createGoogleDriveMetadataApi({
   }
 
   return Object.freeze({ getFile, getSharing, getRevision, countKeptRevisions, downloadRevision, listChildren: (input, {signal} = {}) => list(input, false, signal),
-    listFolder: (parentId, {signal} = {}) => list({ parent_id: parentId }, true, signal) });
+    listFolder: (parentId, {signal, app_authorized: appAuthorized = false} = {}) => {
+      if (typeof appAuthorized !== "boolean") throw new TypeError("app_authorized must be boolean.");
+      return list({ parent_id: parentId }, true, signal, appAuthorized);
+    } });
 }

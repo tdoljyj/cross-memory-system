@@ -788,6 +788,22 @@ changes. Existing connections keep working unchanged until the Owner turns on
 - **Known follow-up (PR #418 review, minor 4).** The disclosure names the root
   by the registered profile's `managed_root` path, not by the folder name read
   from Drive; a folder renamed in Drive keeps showing the registered path.
+- **Boundary island rule and Owner material (StorageNormalUse §3.1).** Both
+  credential profiles list the whole Drive's metadata (`legacy` has always
+  held `drive.metadata.readonly`). The write-path boundary scan flagged any
+  Clued-named entry outside the managed root, so the Owner's own `Clued_*`
+  docs and folders, or another tool's, in My Drive denied every write job
+  with `UNAUTHORIZED_WORKSPACE_MUTATION` before any intent. Per Clued Decision
+  `fd94bd2f`, only that island rule now counts entries the Clued app created
+  or opened (`isAppAuthorized === true`; a missing field still counts).
+  Listings stay unfiltered: duplicate names, shortcuts, root impersonation,
+  depth and entry limits, and the identity and postcondition absence and
+  uniqueness checks see every entry and fail exactly as before. Diagnose
+  from Worker logs: `storage_cloud_denied` (a deny, e.g.
+  `UNAUTHORIZED_WORKSPACE_MUTATION`) or `storage_cloud_unavailable` (the job
+  becomes `attention_required`; fixed codes such as `DRIVE_BOUNDARY_*`,
+  `CLOUD_MUTATION_SHAPE_INVALID`, `STORAGE_CREDENTIAL_*`, else `UNSPECIFIED`).
+  Neither event carries IDs, paths or provider text.
 
 Before N1 acceptance (§2.4 items 7-8, not verifiable here): verify with a real
 Google account whether revoking the legacy token invalidates the normal one and
