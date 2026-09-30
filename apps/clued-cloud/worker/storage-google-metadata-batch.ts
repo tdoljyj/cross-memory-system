@@ -94,7 +94,7 @@ function parse(raw: string, contentType: string | null, expected: string[]): unk
  */
 export function createStorageGoogleMetadataBatch(config: {
   access_token: string; fetch?: typeof fetch; signal: AbortSignal;
-  /** Storage reads only (StorageNormalUse §5.3): retry a transient batch once.
+  /** Storage reads only (StorageNormalUse §5.2): retry a transient batch once.
    * Off by default: the qualification probe never turns a diagnosis into a retry. */
   transient_retry?: boolean;
   /** Per-attempt batch timeout (default 10 s). Injectable for tests. */
