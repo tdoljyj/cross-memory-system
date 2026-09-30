@@ -98,6 +98,7 @@ export async function createStorageCloudRecovery(config: {
           d.attempt.operation !== operation || d.attempt.source_path !== d.mutation.source_path)) throw denied();
       if (replace && (!config.verified || d.attempt.contract !== "clued.storage-replace-attempt/1" ||
           d.attempt.operation !== "replace")) throw denied();
+      if ("content_ref" in d.mutation && !config.verified) throw denied();
       const verifierConfig = {
         managed_root: String(d.profile.managed_root), root_folder_id: String(d.root_folder_id), root_parent_id: String(d.root_parent_id),
         get_file: (id: string) => metadata.getFile(id, { signal: abort.signal }),
@@ -124,8 +125,10 @@ export async function createStorageCloudRecovery(config: {
       let done: Data;
       if (config.verified) {
         const verifiedPost: unknown = postcondition;
+        // A binary create (content_ref, StorageNormalUse N3) settles only with the /3 proof.
         const contract = replace ? "clued.storage-replace-verified/1"
-          : modify ? `clued.storage-${operation}-verified/1` : "clued.storage-create-verified/2";
+          : modify ? `clued.storage-${operation}-verified/1`
+          : object(d.mutation.content_ref) ? "clued.storage-create-verified/3" : "clued.storage-create-verified/2";
         if (!object(verifiedPost) || !object(verifiedPost.verified_proof) ||
             verifiedPost.verified_proof.contract !== contract) throw denied();
         const { verified_proof: proof, ...post } = verifiedPost;

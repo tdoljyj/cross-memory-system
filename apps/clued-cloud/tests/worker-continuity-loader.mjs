@@ -22,7 +22,8 @@ export function loadContinuityWorker() {
     });
     stop();
     const { handleContinuityRequest, runProjectionRefreshPipeline,
-      runProjectionRefreshScheduled, runStorageRefreshScheduled, runStorageRecoveryScheduled, runStorageJobQueue } = await import(pathToFileURL(output).href);
+      runProjectionRefreshScheduled, runStorageRefreshScheduled, runStorageRecoveryScheduled, runStorageJobQueue,
+      runStorageStagingScheduled } = await import(pathToFileURL(output).href);
     return {
       fetch: (request, env, ctx) => handleContinuityRequest(request, env, ctx),
       runProjectionRefreshPipeline,
@@ -30,6 +31,7 @@ export function loadContinuityWorker() {
       runStorageRefreshScheduled,
       runStorageRecoveryScheduled,
       runStorageJobQueue,
+      runStorageStagingScheduled,
     };
   })();
   return workerPromise;

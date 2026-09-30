@@ -41,7 +41,9 @@ import { createStorageGoogleProbe, storageProbeDiagnostic } from "./storage-goog
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
-import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentTools } from "./storage-agent-tools";
+import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor } from "./storage-agent-tools";
+import { createStagingRuntime, handleStagingPut, loadStagedContent, stageInline, stagingErrorCode, storageUploadBeginTool,
+  sweepStaging, uploadBegin, uploadErrorBody, StorageUploadError, type StagingBucket } from "./storage-staging";
 import { createStorageReadAgent, storageReadTool, storageContentTool, StorageReadError, STORAGE_IMAGE } from "./storage-read-agent";
 
 declare const __CLUED_BUILD_SHA__: string | null;
@@ -89,6 +91,11 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6Feature
   CLUED_STORAGE_READ_V1?: string;
   CLUED_STORAGE_READ_RECEIPT_KEYS?: string;
   CLUED_STORAGE_READ_CURSOR_KEY?: string;
+  // StorageNormalUse N3 binary upload: flag, R2 staging bucket, URL signing key, staging keyring.
+  CLUED_STORAGE_BINARY_V1?: string;
+  CLUED_STORAGE_STAGING?: StagingBucket;
+  CLUED_STORAGE_STAGING_URL_KEY?: string;
+  CLUED_STORAGE_STAGING_KEYS?: string;
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   CLUED_ALLOWED_ORIGINS?: string;
@@ -675,12 +682,42 @@ export async function runStorageCloudJob(env: ContinuityEnv, reference: {connect
       vault:JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),rpc:async input => await supabaseRequest(env,"/rest/v1/rpc/clued_storage_refresh_worker_v1",{
         method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_input:input}),signal:AbortSignal.timeout(10000),redirect:"manual",
       }) as Record<string,unknown>}) : null;
+    let staging: Awaited<ReturnType<typeof createStagingRuntime>> | null = null;
+    if (storageBinaryEnabled(env)) { try { staging = await stagingRuntime(env, issuerHash); } catch { staging = null; } }
     const executor=await createStorageCloudWorker({client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID??"",
       vault:JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),rpc,
       account_policy_v2:env.CLUED_STORAGE_JOBS_V2==="true",
+      ...(staging ? { load_staged_content: (input: Record<string, unknown>) =>
+        loadStagedContent(staging, input as Parameters<typeof loadStagedContent>[1]) } : {}),
       recovery_refresh:recoveryRefresh ? ref=>recoveryRefresh.run(ref.connection_id,ref.job_id) : undefined});
     return await executor.run(reference);
   } catch { return {status:"unavailable"}; }
+}
+
+// StorageNormalUse N3: binary upload is available only in account-policy mode, with every
+// deployment piece present; anything missing fails closed.
+function storageBinaryEnabled(env: Pick<ContinuityEnv, "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_BINARY_V1">) {
+  return storageJobsEnabled(env) && env.CLUED_STORAGE_GOOGLE_V1 === "true" && env.CLUED_STORAGE_JOBS_V2 === "true" &&
+    env.CLUED_STORAGE_BINARY_V1 === "true";
+}
+
+async function stagingRuntime(env: ContinuityEnv, issuerHash?: string) {
+  const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+  if (!issuer || issuer.length < 32) throw new StorageUploadError("storage_upload_unavailable");
+  const hash = issuerHash ?? await sha256(issuer);
+  return createStagingRuntime({ bucket: env.CLUED_STORAGE_STAGING, url_key: env.CLUED_STORAGE_STAGING_URL_KEY,
+    staging_keys: env.CLUED_STORAGE_STAGING_KEYS,
+    rpc: async (input, tokenHash) => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_staging_v1", {
+      method: "POST", body: JSON.stringify({ p_issuer_hash: hash, p_token_hash: tokenHash ?? null, p_input: input }),
+      signal: AbortSignal.timeout(10000), redirect: "manual",
+    }) as Record<string, unknown> });
+}
+
+// Cron: staging TTLs, 12 h cancellation of unstarted binary jobs, R2 object deletion.
+export async function runStorageStagingScheduled(env: ContinuityEnv) {
+  if (!storageBinaryEnabled(env) || env.CLUED_STORAGE_EXECUTOR_V1 !== "true") return { status: "disabled" };
+  try { return await sweepStaging(await stagingRuntime(env)); }
+  catch { return { status: "unavailable" }; }
 }
 
 export async function runStorageRefreshScheduled(env: ContinuityEnv) {
@@ -1509,13 +1546,15 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {
   };
 }
 
-export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1">) {
+export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1">) {
   const existing = tools.filter((tool) =>
     (!(tool.name in recordRpcByTool || tool.name in informationFlowRpcByTool) || recordsV2Enabled(env))
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
     && (!(tool.name in contextRpcByTool) || contextsEnabled(env))
   ).map(publishTool);
-  return [...existing, ...(storageJobsEnabled(env) ? storageAgentTools : []), ...(storageReadEnabled(env) ? [storageReadTool, storageContentTool] : [])];
+  const binary = storageBinaryEnabled(env);
+  return [...existing, ...(storageJobsEnabled(env) ? storageAgentToolsFor(binary) : []), ...(binary ? [storageUploadBeginTool] : []),
+    ...(storageReadEnabled(env) ? [storageReadTool, storageContentTool] : [])];
 }
 
 // StorageFullCapability.v0.1 P1. Independent of the write/job flags: turning
@@ -1864,13 +1903,53 @@ async function callTool(
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
     }
   }
+  if (name === storageUploadBeginTool.name) {
+    if (!storageBinaryEnabled(env)) throw new HttpError(404, "Storage binary upload is disabled.");
+    try {
+      const token = bearerToken(request);
+      if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new StorageUploadError("storage_binary_upload_disabled");
+      const result = await uploadBegin(await stagingRuntime(env), await sha256(token), args, new URL(request.url).origin);
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
+    } catch (error) {
+      // Fixed codes only: no database, provider, key or path details.
+      const result = uploadErrorBody(stagingErrorCode(error));
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+    }
+  }
   if (isStorageAgentTool(name)) {
     if (!storageJobsEnabled(env)) throw new HttpError(404, "Storage jobs are disabled.");
+    let binary = false;
     try {
-      const input = storageAgentInput(name, args);
+      // clued_storage_upload_begin was routed above; only submit and inspect reach this point.
+      let input = storageAgentInput(name as "clued_storage_submit" | "clued_storage_inspect", args);
+      const m = input.mutation as Record<string, unknown> | undefined;
+      binary = !!m && ("staging_id" in m || "content_base64" in m);
+      if (binary) {
+        if (!storageBinaryEnabled(env)) throw new StorageUploadError("storage_binary_upload_disabled");
+        if ("content_base64" in m!) {
+          const token = bearerToken(request);
+          if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new StorageUploadError("storage_binary_upload_disabled");
+          // The inline staging_id is derived from (Binding, connection, job_id) by the database, so a
+          // retry of the same job reuses its row (ready / consumed) instead of staging an orphan.
+          const staged = await stageInline(await stagingRuntime(env), await sha256(token), {
+            connection_id: String(input.connection_id), job_id: String(input.job_id),
+            destination_path: String(m!.destination_path), mime_type: String(m!.mime_type),
+            content_sha256: String(m!.content_sha256), content_base64: m!.content_base64 });
+          const { content_base64: _inline, ...rest } = m!;
+          void _inline;
+          input = { ...input, mutation: { ...rest, staging_id: staged.staging_id } };
+        }
+      }
       const result = await callStorageJob(request, env, input, ctx, storageAgentResult);
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
-    } catch {
+    } catch (error) {
+      if (binary) {
+        const code = stagingErrorCode(error);
+        if (code !== "storage_upload_unavailable") {
+          const result = uploadErrorBody(code);
+          return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+        }
+      }
       // No provider, issuer, credentials, paths or database diagnostics in errors.
       const result = { error: "storage_job_unavailable", message: "Storage job unavailable. Check the same job ID; do not create another job to retry an unknown effect." };
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
@@ -2023,7 +2102,7 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
       const args = rpc.params?.arguments;
       const result = await callTool(request, env, name, args, ctx);
       return json(rpcResult(rpc.id, result), 200, {
-        ...corsHeaders(request), ...(isStorageAgentTool(name) || name === storageReadTool.name || name === storageContentTool.name ? { "cache-control": "no-store" } : {}),
+        ...corsHeaders(request), ...(isStorageAgentTool(name) || name === storageUploadBeginTool.name || name === storageReadTool.name || name === storageContentTool.name ? { "cache-control": "no-store" } : {}),
       });
     }
     return json(rpcError(rpc.id, -32601, "Method not found"), 404, corsHeaders(request));
@@ -2493,6 +2572,13 @@ async function handleContinuityRequestInner(
       });
     }
     if (url.pathname === "/mcp") return await handleMcp(request, env, ctx);
+    // StorageNormalUse N3 signed upload URL: the HMAC token is the only credential (no Binding bearer).
+    if (url.pathname.startsWith("/storage/staging/")) {
+      if (!storageBinaryEnabled(env)) return json({ error: "not_found" }, 404, { "cache-control": "no-store" });
+      let runtime: Awaited<ReturnType<typeof stagingRuntime>> | null = null;
+      try { runtime = await stagingRuntime(env); } catch { runtime = null; }
+      return await handleStagingPut(request, runtime, url.pathname.slice("/storage/staging/".length));
+    }
     if (url.pathname === "/v1/storage/recovery") {
       validateOrigin(request, env);
       // Recovery remains available when new jobs/execution are disabled. It is

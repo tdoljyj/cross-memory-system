@@ -14,7 +14,10 @@ const MUTATION_CALLER_FIELDS = new Set([
   // The caller's observed version of the replace target, and a revert's job.
   "destination_file_version",
   "restore_job_id",
+  // Binary create (StorageNormalUse §6.2): the staged object's exact reference.
+  "content_ref",
 ]);
+const CONTENT_REF_FIELDS = ["mime_type", "sha256", "size", "staging_id"];
 
 function deepFreeze(value) {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
@@ -37,6 +40,15 @@ const mutationInputSchema = deepFreeze({
     source_file_version: { type: "string", pattern: "^[1-9][0-9]{0,39}$" },
     destination_file_version: { type: "string", pattern: "^[1-9][0-9]{0,39}$" },
     restore_job_id: { type: "string", format: "uuid" },
+    content_ref: {
+      type: "object", additionalProperties: false, required: CONTENT_REF_FIELDS,
+      properties: {
+        staging_id: { type: "string", format: "uuid" },
+        sha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        size: { type: "integer", minimum: 1, maximum: 20971520 },
+        mime_type: { type: "string", minLength: 3, maxLength: 255 },
+      },
+    },
   },
 });
 
@@ -79,6 +91,20 @@ function snapshotCallerArguments(value) {
       return invalidArguments({ field: name });
     }
     const item = descriptor.value;
+    if (name === "content_ref") {
+      // The only structured field: a plain object with exactly the four scalar reference fields.
+      if (!item || typeof item !== "object" || Array.isArray(item) || Object.getPrototypeOf(item) !== Object.prototype) {
+        return invalidArguments({ field: name });
+      }
+      const inner = Object.getOwnPropertyDescriptors(item);
+      if (Object.keys(inner).sort().join(",") !== CONTENT_REF_FIELDS.join(",") || CONTENT_REF_FIELDS.some(key =>
+        !inner[key].enumerable || typeof inner[key].get === "function" || typeof inner[key].set === "function" ||
+        (key === "size" ? !Number.isSafeInteger(inner[key].value) : typeof inner[key].value !== "string"))) {
+        return invalidArguments({ field: name });
+      }
+      result[name] = Object.freeze(Object.fromEntries(CONTENT_REF_FIELDS.map(key => [key, inner[key].value])));
+      continue;
+    }
     if (item !== null && !["string", "boolean", "number"].includes(typeof item)) {
       return invalidArguments({ field: name });
     }
