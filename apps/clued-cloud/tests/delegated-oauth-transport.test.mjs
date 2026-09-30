@@ -69,6 +69,10 @@ function fixture() {
         request_digest: 'a'.repeat(64), status: 'queued', intent_id: null,
         receipt_id: '30000000-0000-4000-8000-000000000001', execution_permitted: false });
     }
+    if (name === 'clued_storage_read_v1') {
+      // No Owner read access in this fixture: the read evaluator denies every admit.
+      return Response.json({ message: 'storage_read_denied', code: '42501' }, { status: 403 });
+    }
     if (name === 'clued_mcp_projection_refresh_claim') return Response.json({ status: 'idle' });
     throw new Error(`Unexpected storage route: ${name}`);
   };
@@ -140,6 +144,38 @@ test('real OAuth MCP storage tools retain live Binding and separate storage gran
     before = f.calls.filter(x => x.name === 'clued_storage_jobs_v1').length;
     assert.equal((await f.run('/mcp', storageCall(narrowed.access_token, 'clued_storage_inspect', ref))).status, 400);
     assert.equal(f.calls.filter(x => x.name === 'clued_storage_jobs_v1').length, before);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('real OAuth MCP clued_storage_browse reaches the read evaluator with any memory scope', async () => {
+  const f = fixture();
+  try {
+    Object.assign(f.env, { CLUED_STORAGE_ACCOUNT_V1: 'true', CLUED_STORAGE_GOOGLE_V1: 'true', CLUED_STORAGE_READ_V1: 'true',
+      CLUED_STORAGE_CONNECTOR_ISSUER: 'i'.repeat(40), CLUED_STORAGE_GOOGLE_CLIENT_ID: 'read-client',
+      CLUED_STORAGE_VAULT_KEYS: JSON.stringify({ current_key_id: 'v1', keys: { v1: Buffer.alloc(32, 7).toString('base64url') } }),
+      CLUED_STORAGE_READ_CURSOR_KEY: btoa('c'.repeat(32)), CLUED_STORAGE_READ_RECEIPT_KEYS: JSON.stringify({ current: 'k1', keys: { k1: btoa('h'.repeat(32)) } }) });
+    const id = await client(f), token = await approve(f, id, await begin(f, id));
+    const refresh = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, scope: 'context:read', resource }) });
+    assert.equal(refresh.status, 200); const narrowed = await refresh.json();
+    const bindingHash = [...f.bindings.keys()][0];
+    const browse = access => ({ ...call(access, 'clued_storage_browse'), body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'clued_storage_browse', arguments: { connection_id: '20000000-0000-4000-8000-000000000001', operation: 'list' } } }) });
+    const reads = () => f.calls.filter(x => x.name === 'clued_storage_read_v1');
+    for (const access of [token.access_token, narrowed.access_token]) {
+      const before = reads().length;
+      const response = await f.run('/mcp', browse(access));
+      // Not the OAuth scope gate's 403: the call reaches the read evaluator, whose denial is a tool error.
+      assert.equal(response.status, 200, await response.clone().text());
+      const body = (await response.json()).result;
+      assert.equal(body.isError, true); assert.equal(body.structuredContent.error, 'storage_read_unavailable');
+      assert.equal(reads().length, before + 1);
+      assert.equal(reads().at(-1).body.p_token_hash, bindingHash); assert.equal(reads().at(-1).body.p_input.action, 'admit');
+    }
+    f.env.CLUED_STORAGE_READ_V1 = 'false';
+    const before = reads().length;
+    assert.equal((await f.run('/mcp', browse(narrowed.access_token))).status, 404);
+    assert.equal(reads().length, before);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -221,6 +257,7 @@ test('context write requires an explicit write scope and unknown tools fail clos
   assert.deepEqual(requiredToolScopes('clued_projection_rebuild'), ['context:write']);
   assert.deepEqual(requiredToolScopes('clued_full_global_reconcile'), ['context:write']);
   assert.deepEqual(requiredToolScopes('clued_currentness_g6_gate'), ['context:read']);
+  assert.deepEqual(requiredToolScopes('clued_storage_browse'), []);
   assert.equal(requiredToolScopes('clued_context', { op: 'publish' }), null);
   assert.equal(requiredToolScopes('clued_mcp_event_carrier_transition'), null);
   assert.equal(requiredToolScopes('invented_admin_tool'), null);
