@@ -11,12 +11,36 @@ const fail = (code) => { throw new Error(code); };
 const MULTIPART_MAX = 5 * 1024 * 1024;
 const BINARY_MAX = 20 * 1024 * 1024;
 const encoder = new TextEncoder();
-const concat = (...parts) => {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.byteLength, 0));
-  let at = 0;
-  for (const part of parts) { out.set(part, at); at += part.byteLength; }
-  return out;
-};
+/** The staged content a binary create uploads: a bounded-memory source the executor has already
+ * run through a full decrypt + sha256 pass (`verified`). `stream()` yields the plaintext and
+ * errors before its final bytes if the running digest differs, so a mismatch never completes
+ * an upload body. */
+export function contentSourceShape(source, ref) {
+  return !!source && typeof source === "object" && source.verified === true && typeof source.stream === "function" &&
+    !!ref && source.size === ref.size && source.sha256 === ref.sha256;
+}
+/** One request body of exactly `length` bytes: prefix, the source stream, suffix. Workers get a
+ * FixedLengthStream (so Drive sees a Content-Length); elsewhere a plain half-duplex stream. */
+function uploadBody(prefix, source, suffix, length) {
+  const reader = source.stream().getReader();
+  let stage = 0;
+  const body = new ReadableStream({
+    async pull(controller) {
+      if (stage === 0) { stage = 1; if (prefix.byteLength) { controller.enqueue(prefix); return; } }
+      if (stage === 1) {
+        const { done, value } = await reader.read();
+        if (!done) { controller.enqueue(value); return; }
+        stage = 2;
+      }
+      if (suffix.byteLength) controller.enqueue(suffix);
+      controller.close();
+    },
+    cancel(reason) { return reader.cancel(reason); },
+  }, { highWaterMark: 0 });
+  const Fixed = globalThis.FixedLengthStream;
+  if (typeof Fixed === "function") return { body: body.pipeThrough(new Fixed(length)) };
+  return { body, duplex: "half" };
+}
 /** The exact content reference a binary create job carries (§6.2); anything else is not binary. */
 export function contentRefShape(ref) {
   return !!ref && typeof ref === "object" && !Array.isArray(ref) &&
@@ -39,13 +63,13 @@ export function createGoogleDriveNativeCreateEffect({
   persist_provider_attempt: persistProviderAttempt,
   fetch: fetchImpl = globalThis.fetch,
   clock = Date.now,
-  // Binary create only: the staged bytes, already decrypted and checked by the caller.
-  content_bytes: contentBytes,
+  // Binary create only: the staged content source, already verified by the caller.
+  content_source: contentSource,
 } = {}) {
   if (!trustedProfile || typeof getCredential !== "function" || typeof resolveProviderIdentity !== "function" ||
     typeof consumeStartedProvider !== "function" || typeof persistProviderAttempt !== "function" ||
     typeof fetchImpl !== "function" || typeof clock !== "function" ||
-    (contentBytes !== undefined && !(contentBytes instanceof Uint8Array))) throw new TypeError("A private native writer and durable attempt store are required.");
+    (contentSource !== undefined && (!contentSource || typeof contentSource !== "object"))) throw new TypeError("A private native writer and durable attempt store are required.");
   const profile = structuredClone(trustedProfile);
   async function request(url, options = {}, expiresAt, { raw = false, timeoutMs = 10000 } = {}) {
     const credential = await getCredential();
@@ -76,8 +100,8 @@ export function createGoogleDriveNativeCreateEffect({
       !["directory", "file"].includes(mutation.target_kind ?? "file") ||
       (mutation.content !== undefined && typeof mutation.content !== "string") ||
       (mutation.content_ref !== undefined && (mutation.content !== undefined || mutation.target_kind !== "file" ||
-        !contentRefShape(mutation.content_ref) || !contentBytes)) ||
-      (mutation.content_ref === undefined && contentBytes !== undefined)) fail("DRIVE_NATIVE_REQUEST_MISMATCH");
+        !contentRefShape(mutation.content_ref) || !contentSource)) ||
+      (mutation.content_ref === undefined && contentSource !== undefined)) fail("DRIVE_NATIVE_REQUEST_MISMATCH");
     const started = consumeStartedProvider(binding);
     if (!started || started.request_sha256 !== requestHash || !started.intent_id) fail("DRIVE_NATIVE_DURABLE_START_REQUIRED");
     const before = await resolveProviderIdentity({ profile, mutation });
@@ -86,9 +110,9 @@ export function createGoogleDriveNativeCreateEffect({
     const ref = mutation.content_ref;
     const content = mutation.content ?? "";
     if (!ref && Buffer.byteLength(content, "utf8") > 1024 * 1024) fail("DRIVE_NATIVE_CONTENT_LIMIT");
-    // Re-check the staged bytes against the job's content reference before any provider call.
-    if (ref && (contentBytes.byteLength !== ref.size ||
-      createHash("sha256").update(contentBytes).digest("hex") !== ref.sha256)) fail("STORAGE_CONTENT_STAGING_MISMATCH");
+    // The staged content must match the job's content reference and have passed the caller's
+    // full verification pass before any provider call.
+    if (ref && !contentSourceShape(contentSource, ref)) fail("STORAGE_CONTENT_STAGING_MISMATCH");
     const generated = await request(`${API}/generateIds?count=1&space=drive&type=files&fields=ids`);
     const id = generated?.ids?.[0];
     if (!Array.isArray(generated?.ids) || generated.ids.length !== 1 || !/^[A-Za-z0-9_-]{1,160}$/.test(id ?? "")) {
@@ -125,14 +149,15 @@ export function createGoogleDriveNativeCreateEffect({
       if (location.protocol !== "https:" || location.host !== "www.googleapis.com" || location.username || location.password ||
         location.pathname !== "/upload/drive/v3/files" || location.searchParams.get("uploadType") !== "resumable" ||
         !/^[A-Za-z0-9_-]{1,512}$/.test(location.searchParams.get("upload_id") ?? "")) fail("DRIVE_NATIVE_REQUEST_OUTCOME_UNKNOWN");
-      result = await request(location.href, { method: "PUT", headers: { "content-type": ref.mime_type }, body: contentBytes },
-        admission.expires_at_ms, { timeoutMs: 120000 });
+      result = await request(location.href, { method: "PUT", headers: { "content-type": ref.mime_type },
+        ...uploadBody(new Uint8Array(0), contentSource, new Uint8Array(0), ref.size) }, admission.expires_at_ms, { timeoutMs: 120000 });
     } else if (ref) {
       const boundary = `clued_${randomUUID()}`;
-      const body = concat(encoder.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
-        `--${boundary}\r\nContent-Type: ${ref.mime_type}\r\n\r\n`), contentBytes, encoder.encode(`\r\n--${boundary}--\r\n`));
+      const prefix = encoder.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+        `--${boundary}\r\nContent-Type: ${ref.mime_type}\r\n\r\n`), suffix = encoder.encode(`\r\n--${boundary}--\r\n`);
       result = await request(`${UPLOAD}?uploadType=multipart&fields=${FIELDS}`, { method: "POST",
-        headers: { "content-type": `multipart/related; boundary=${boundary}` }, body }, admission.expires_at_ms, { timeoutMs: 60000 });
+        headers: { "content-type": `multipart/related; boundary=${boundary}` },
+        ...uploadBody(prefix, contentSource, suffix, prefix.byteLength + ref.size + suffix.byteLength) }, admission.expires_at_ms, { timeoutMs: 60000 });
     } else {
       const boundary = `clued_${randomUUID()}`;
       const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +

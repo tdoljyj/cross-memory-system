@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { createGoogleDriveNativeCreateEffect } from "../../../kernel/host/resource-center-google-drive-create-effect.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-postcondition.mjs";
-import { parseMultipart, pngBytes, pdfBytes, sha256Hex } from "./resource-center-storage-binary.fixture.mjs";
+import { bodyBytes, bytesContentSource, parseMultipart, pngBytes, pdfBytes, sha256Hex } from "./resource-center-storage-binary.fixture.mjs";
 
 const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const profile = { profile_id: "binary-test", profile_version: "test/1", managed_root: "G:/test/Clued_资料中心" };
@@ -15,16 +15,18 @@ const intent = "10000000-0000-4000-8000-000000000002";
 const STAGING = "50000000-0000-4000-8000-000000000002";
 const ref = (bytes, mime = "image/png") => ({ staging_id: STAGING, sha256: sha256Hex(bytes), size: bytes.length, mime_type: mime });
 
-function fixture(bytes, options = {}) {
+async function fixture(bytes, options = {}) {
   const { mime = "image/png", name = "photo.png", drive = {} } = options;
-  const content = "content" in options ? options.content : bytes;
+  // The executor hands the effect a source it has already verified (full decrypt + sha256 pass).
+  const content = "source" in options ? options.source : bytesContentSource(bytes);
+  if (!("source" in options)) await content.verify();
   const mutation = { operation: "create", destination_path: profile.managed_root + "/20_P_产品与体验/" + name, target_kind: "file",
     content_ref: ref(bytes, mime), artifact_role: "clued_resource" };
   const binding = { profile_id: profile.profile_id, operation: "create", destination_path: mutation.destination_path,
     request_sha256: createHash("sha256").update(JSON.stringify(mutation)).digest("hex") };
   const calls = [];
   let attempt, consumed = false;
-  const effect = createGoogleDriveNativeCreateEffect({ trusted_profile: profile, content_bytes: content,
+  const effect = createGoogleDriveNativeCreateEffect({ trusted_profile: profile, content_source: content,
     get_credential: async () => ({ access_token: "binary-test-access-token", scope: SCOPE }),
     resolve_provider_identity: async () => ({ ...provider }),
     consume_started_provider: () => consumed ? null : (consumed = true, { intent_id: intent, request_sha256: binding.request_sha256, provider }),
@@ -36,7 +38,8 @@ function fixture(bytes, options = {}) {
       assert.equal(calls.at(-1) === "persist" || calls.at(-1) === "session", true, "attempt is durable before any upload request");
       if (init.method === "POST" && u.searchParams.get("uploadType") === "multipart") {
         calls.push("multipart");
-        const part = parseMultipart(init.body, new Headers(init.headers).get("content-type"));
+        assert.equal(init.duplex, "half", "the body is streamed, never buffered whole");
+        const part = parseMultipart(await bodyBytes(init.body), new Headers(init.headers).get("content-type"));
         drive.received = part;
         if (drive.lose) throw new Error("synthetic lost reply");
         return Response.json({ id: part.metadata.id, name: part.metadata.name, parents: part.metadata.parents, mimeType: part.mediaType, version: "1", trashed: false });
@@ -52,7 +55,8 @@ function fixture(bytes, options = {}) {
         calls.push("put");
         assert.equal(url, "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=SESSION_1");
         assert.equal(new Headers(init.headers).get("content-type"), mime);
-        drive.received = { bytes: Buffer.from(init.body), mediaType: mime, metadata: drive.metadata };
+        assert.equal(init.duplex, "half", "the body is streamed, never buffered whole");
+        drive.received = { bytes: await bodyBytes(init.body), mediaType: mime, metadata: drive.metadata };
         if (drive.lose) throw new Error("synthetic lost reply");
         return Response.json({ id: drive.metadata.id, name: drive.metadata.name, parents: drive.metadata.parents, mimeType: mime, version: "1", trashed: false });
       }
@@ -64,7 +68,7 @@ function fixture(bytes, options = {}) {
 test("binary up to 5 MiB: one multipart POST with the requested MIME and exact bytes", async () => {
   const bytes = pngBytes(5 * 1024 * 1024);
   const drive = {};
-  const f = fixture(bytes, { drive });
+  const f = await fixture(bytes, { drive });
   const result = await f.effect(f.request);
   assert.equal(result.provider_file_id, "generated-id");
   assert.deepEqual(f.calls, ["generate", "persist", "multipart"]);
@@ -78,7 +82,7 @@ test("binary up to 5 MiB: one multipart POST with the requested MIME and exact b
 test("above 5 MiB: one resumable session, the whole body in a single PUT, session URI never returned", async () => {
   const bytes = pdfBytes(5 * 1024 * 1024 + 1);
   const drive = {};
-  const f = fixture(bytes, { mime: "application/pdf", name: "report.pdf", drive });
+  const f = await fixture(bytes, { mime: "application/pdf", name: "report.pdf", drive });
   const result = await f.effect(f.request);
   assert.deepEqual(f.calls, ["generate", "persist", "session", "put"]);
   assert.equal(drive.metadata.id, "generated-id"); assert.equal(drive.metadata.mimeType, "application/pdf");
@@ -90,24 +94,44 @@ test("above 5 MiB: one resumable session, the whole body in a single PUT, sessio
 test("a lost reply is an unknown outcome and is never retried; a foreign session host is refused before bytes", async () => {
   for (const size of [1024, 6 * 1024 * 1024]) {
     const bytes = pngBytes(size), drive = { lose: true };
-    const f = fixture(bytes, { drive });
+    const f = await fixture(bytes, { drive });
     await assert.rejects(f.effect(f.request), /DRIVE_NATIVE_REQUEST_OUTCOME_UNKNOWN/);
     assert.equal(f.calls.filter(c => c === "multipart" || c === "put").length, 1, "exactly one upload request");
     await assert.rejects(f.effect(f.request), /DURABLE_START_REQUIRED/, "the same admission cannot upload again");
   }
   const drive = { location: "https://evil.example/upload?uploadType=resumable&upload_id=x" };
-  const f = fixture(pngBytes(6 * 1024 * 1024), { drive });
+  const f = await fixture(pngBytes(6 * 1024 * 1024), { drive });
   await assert.rejects(f.effect(f.request), /DRIVE_NATIVE_REQUEST_OUTCOME_UNKNOWN/);
   assert.equal(f.calls.includes("put"), false);
 });
 
-test("staged bytes that differ from the content reference are refused before any provider request", async () => {
+test("staged content that is unverified or differs from the content reference is refused before any provider request", async () => {
   const bytes = pngBytes(4096), other = Buffer.from(bytes); other[100] ^= 1;
-  const f = fixture(bytes, { content: new Uint8Array(other) });
+  const declared = { size: bytes.length, sha256: sha256Hex(bytes) };
+  // Not verified by the executor (its verify() would fail on these bytes).
+  const f = await fixture(bytes, { source: bytesContentSource(new Uint8Array(other), declared) });
   await assert.rejects(f.effect(f.request), /STORAGE_CONTENT_STAGING_MISMATCH/);
   assert.deepEqual(f.calls, []);
-  const missing = fixture(bytes, { content: undefined });
+  // Verified, but declaring another digest than the job's content reference.
+  const wrong = bytesContentSource(bytes); await wrong.verify();
+  const g = await fixture(pngBytes(4097), { source: wrong });
+  await assert.rejects(g.effect(g.request), /STORAGE_CONTENT_STAGING_MISMATCH/);
+  assert.deepEqual(g.calls, []);
+  const missing = await fixture(bytes, { source: undefined });
   await assert.rejects(missing.effect(missing.request), /DRIVE_NATIVE_REQUEST_MISMATCH/);
+});
+
+test("bytes that change after verification never complete an upload body (multipart and resumable)", async () => {
+  for (const size of [4096, 6 * 1024 * 1024]) {
+    const bytes = pngBytes(size), other = Buffer.from(bytes); other[size - 1] ^= 1;
+    const declared = { size, sha256: sha256Hex(bytes) };
+    // The object is swapped between the executor's verification pass and the upload stream.
+    const swapped = { ...declared, verified: true, stream: () => bytesContentSource(new Uint8Array(other), declared).stream() };
+    const drive = {};
+    const f = await fixture(bytes, { source: swapped, drive });
+    await assert.rejects(f.effect(f.request), /DRIVE_NATIVE_REQUEST_OUTCOME_UNKNOWN/);
+    assert.equal(drive.received, undefined, "the provider never receives a complete body");
+  }
 });
 
 function verifierFixture(file, { bytes = pngBytes(2048), mime = "image/png" } = {}) {

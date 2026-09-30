@@ -11,8 +11,13 @@
 --   (with the caller's Binding token; policy evaluation + binary gate + upload
 --   budget reserved at URL issue), `receive` (signed-URL claims; single-use
 --   issued -> receiving CAS; gate re-evaluated for the row's Binding),
---   `received`, `validated`, `sweep` (TTL expiry, 12 h job cancel, deletable
---   objects) and `object_deleted`.
+--   `received`, `validated`, `sweep` (12 h job cancel first, then TTL expiry
+--   with SKIP LOCKED, 2 h stall window, 7-day retention purge of terminal rows
+--   whose object is gone, deletable objects) and `object_deleted`. Inline begin
+--   takes the job_id and derives the staging_id from it (retry-safe).
+-- * Upload budget per rolling hour: bytes (256 MiB per Binding, 1 GiB per
+--   owner) and staging rows (60 per Binding, 200 per owner).
+-- * Legacy Office (doc / xls / ppt, CFB) is not in the allow table.
 -- * Binary gate (§6.1, M3, m-c): create_file in the active write policy AND
 --   active read access with content_profile 'normal/1' (read_content) AND
 --   provider_scope_profile 'normal'. Checked at begin, at the PUT, at submit
@@ -59,10 +64,24 @@ create table clued_private.storage_staging_v1 (
   check(released_at is null or not bytes_received),
   check(state not in ('ready','consumed') or (ready_at is not null and ready_expires_at is not null and key_id is not null))
 );
-create index storage_staging_binding_window_v1 on clued_private.storage_staging_v1(binding_id,created_at) where released_at is null;
-create index storage_staging_owner_window_v1 on clued_private.storage_staging_v1(owner_id,created_at) where released_at is null;
+-- Rolling-hour windows (bytes and row counts, §7.2 / m1) and the sweep / retention scans.
+create index storage_staging_binding_window_v1 on clued_private.storage_staging_v1(binding_id,created_at);
+create index storage_staging_owner_window_v1 on clued_private.storage_staging_v1(owner_id,created_at);
 create index storage_staging_sweep_v1 on clued_private.storage_staging_v1(state,expires_at) where object_deleted_at is null;
+create index storage_staging_retention_v1 on clued_private.storage_staging_v1(created_at) where state in ('rejected','expired','consumed');
 create unique index storage_staging_job_v1 on clued_private.storage_staging_v1(job_id) where job_id is not null;
+
+-- Retention (m1): a terminal row whose R2 object is gone (or never existed) and which is older
+-- than 7 days may be deleted by the sweep; a consumed row only once its job started or was
+-- settled out (it can then never execute again). Every other row is non-terminal and the sweep
+-- moves it to a terminal state within hours, so rows never pin auth.users / Binding FKs forever.
+create function clued_private.storage_staging_purgeable_v1(s clued_private.storage_staging_v1)
+returns boolean language sql stable security definer set search_path='' as $$
+  select s.created_at<=clock_timestamp()-interval '7 days' and (s.object_deleted_at is not null or not s.bytes_received)
+    and (s.state in ('rejected','expired') or (s.state='consumed' and exists(
+      select 1 from clued_private.storage_jobs_v1 j where j.owner_id=s.owner_id and j.job_id=s.job_id
+        and (j.intent_id is not null or j.dispatch_outcome is not null))))
+$$;
 
 -- Identity and reservation are immutable; only the listed lifecycle moves.
 create function clued_private.storage_staging_guard_v1()
@@ -70,7 +89,10 @@ returns trigger language plpgsql security definer set search_path='' as $$
 declare mutable constant text[]:=array['state','key_id','job_id','released_at','received_at','ready_at','ready_expires_at',
   'reject_reason','object_deleted_at','bytes_received'];
 begin
-  if tg_op='DELETE' then raise exception 'storage_staging_immutable' using errcode='42501'; end if;
+  if tg_op='DELETE' then
+    if clued_private.storage_staging_purgeable_v1(old) then return old; end if;
+    raise exception 'storage_staging_immutable' using errcode='42501';
+  end if;
   if (to_jsonb(new)-mutable) is distinct from (to_jsonb(old)-mutable)
     or (new.state<>old.state and (old.state,new.state) not in (('issued','receiving'),('issued','expired'),
       ('receiving','validating'),('receiving','rejected'),('validating','ready'),('validating','rejected'),
@@ -108,9 +130,7 @@ begin
     when 'pptx' then 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
     when 'odt' then 'application/vnd.oasis.opendocument.text'
     when 'ods' then 'application/vnd.oasis.opendocument.spreadsheet'
-    when 'odp' then 'application/vnd.oasis.opendocument.presentation'
-    when 'doc' then 'application/msword' when 'xls' then 'application/vnd.ms-excel'
-    when 'ppt' then 'application/vnd.ms-powerpoint' end,false);
+    when 'odp' then 'application/vnd.oasis.opendocument.presentation' end,false);
 end $$;
 
 -- §6.1 binary gate for one connection (the create_file half is the policy evaluation).
@@ -125,11 +145,18 @@ $$;
 
 -- §7.1 / §7.2: upload bytes per rolling hour, reserved at URL issue (inline: at
 -- request start). Owner lock before Binding lock, both after policy evaluation.
+-- m1: staging rows per rolling hour are capped too (60 per Binding, 200 per owner),
+-- counting released rows, so unused URLs cannot grow the table without bound.
 create function clued_private.storage_upload_budget_v1(p_owner uuid,p_binding uuid,p_size bigint)
 returns void language plpgsql security definer set search_path='' as $$
 begin
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('storage-upload-budget-owner:'||p_owner::text,0));
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('storage-upload-budget:'||p_binding::text,0));
+  if (select count(*) from clued_private.storage_staging_v1
+        where binding_id=p_binding and created_at>clock_timestamp()-interval '1 hour')>=60
+    or (select count(*) from clued_private.storage_staging_v1
+        where owner_id=p_owner and created_at>clock_timestamp()-interval '1 hour')>=200 then
+    raise exception 'storage_upload_budget_exhausted' using errcode='42501'; end if;
   if (select coalesce(sum(reserved_bytes),0) from clued_private.storage_staging_v1
         where binding_id=p_binding and released_at is null and created_at>clock_timestamp()-interval '1 hour')+p_size>268435456
     or (select coalesce(sum(reserved_bytes),0) from clued_private.storage_staging_v1
@@ -251,7 +278,7 @@ create function public.clued_storage_staging_v1(p_issuer_hash text,p_token_hash 
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare op text:=p_input->>'action'; app clued_private.storage_oauth_apps_v1; c clued_private.storage_connections_v1;
   s clued_private.storage_staging_v1; b public.clued_agent_bindings; snapshot jsonb; sid uuid;
-  expired int:=0; stalled int:=0; cancelled int:=0; marked int:=0; job record; deletable jsonb;
+  expired int:=0; stalled int:=0; cancelled int:=0; marked int:=0; purged int:=0; job record; deletable jsonb; deterministic text;
   uuid_re constant text:='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 begin
   if coalesce(p_issuer_hash,'') !~ '^[0-9a-f]{64}$' or jsonb_typeof(p_input) is distinct from 'object'
@@ -264,8 +291,12 @@ begin
   if not found then raise exception 'storage_staging_denied' using errcode='42501'; end if;
 
   if op='begin' then
-    if (p_input-array['action','connection_id','destination_path','mime_type','size','content_sha256','transport'])<>'{}'::jsonb
+    -- Inline (m3): job_id is required and derives the staging_id, so a retried submit of the
+    -- same job by the same Binding on the same connection finds its row instead of a new one.
+    if (p_input-array['action','connection_id','destination_path','mime_type','size','content_sha256','transport','job_id'])<>'{}'::jsonb
       or not (p_input ?& array['action','connection_id','destination_path','mime_type','size','content_sha256','transport'])
+      or (p_input ? 'job_id') is distinct from (p_input->>'transport'='inline')
+      or (p_input ? 'job_id' and (jsonb_typeof(p_input->'job_id') is distinct from 'string' or p_input->>'job_id' !~ uuid_re))
       or coalesce(p_input->>'connection_id','') !~ uuid_re
       or jsonb_typeof(p_input->'destination_path') is distinct from 'string' or jsonb_typeof(p_input->'mime_type') is distinct from 'string'
       or jsonb_typeof(p_input->'size') is distinct from 'number' or p_input->>'size' !~ '^[1-9][0-9]{0,7}$'
@@ -275,18 +306,35 @@ begin
       raise exception 'storage_staging_input_invalid' using errcode='22023'; end if;
     if not clued_private.storage_binary_mime_v1(p_input->>'destination_path',p_input->>'mime_type') then
       raise exception 'content_type_mismatch' using errcode='22023'; end if;
-    sid:=gen_random_uuid();
+    if p_input->>'transport'='inline' then
+      deterministic:=encode(sha256(convert_to('clued.storage-staging-inline/1:'||p_token_hash||':'||(p_input->>'connection_id')||':'||
+        (p_input->>'job_id'),'UTF8')),'hex');
+      sid:=(substr(deterministic,1,8)||'-'||substr(deterministic,9,4)||'-'||substr(deterministic,13,4)||'-'||
+        substr(deterministic,17,4)||'-'||substr(deterministic,21,12))::uuid;
+    else
+      sid:=gen_random_uuid();
+    end if;
     snapshot:=clued_private.storage_policy_evaluate_v2(p_token_hash,(p_input->>'connection_id')::uuid,'create_file',sid);
     select * into c from clued_private.storage_connections_v1 where id=(snapshot->>'connection_id')::uuid for share;
     if c.oauth_client_id is distinct from app.oauth_client_id then raise exception 'storage_staging_denied' using errcode='42501'; end if;
     if not clued_private.storage_binary_gate_v1(c.id) then raise exception 'storage_binary_upload_disabled' using errcode='42501'; end if;
-    perform clued_private.storage_upload_budget_v1(c.owner_id,(snapshot->>'binding_id')::uuid,(p_input->>'size')::bigint);
-    insert into clued_private.storage_staging_v1(id,owner_id,connection_id,binding_id,destination_path,mime_type,size,sha256,
-      transport,reserved_bytes,expires_at)
-    values(sid,c.owner_id,c.id,(snapshot->>'binding_id')::uuid,p_input->>'destination_path',p_input->>'mime_type',
-      (p_input->>'size')::bigint,p_input->>'content_sha256',p_input->>'transport',(p_input->>'size')::bigint,
-      date_trunc('second',clock_timestamp())+interval '10 minutes')
-    returning * into s;
+    -- Inline replay: the same job's row, whatever its state, with no second reservation. Any
+    -- other content under the same job_id is refused (a job_id names exactly one upload).
+    select * into s from clued_private.storage_staging_v1 where id=sid for update;
+    if found then
+      if s.owner_id<>c.owner_id or s.connection_id<>c.id or s.binding_id<>(snapshot->>'binding_id')::uuid or s.transport<>'inline'
+        or s.destination_path<>p_input->>'destination_path' or s.mime_type<>p_input->>'mime_type'
+        or s.size<>(p_input->>'size')::bigint or s.sha256<>p_input->>'content_sha256' then
+        raise exception 'storage_job_input_invalid' using errcode='22023'; end if;
+    else
+      perform clued_private.storage_upload_budget_v1(c.owner_id,(snapshot->>'binding_id')::uuid,(p_input->>'size')::bigint);
+      insert into clued_private.storage_staging_v1(id,owner_id,connection_id,binding_id,destination_path,mime_type,size,sha256,
+        transport,reserved_bytes,expires_at)
+      values(sid,c.owner_id,c.id,(snapshot->>'binding_id')::uuid,p_input->>'destination_path',p_input->>'mime_type',
+        (p_input->>'size')::bigint,p_input->>'content_sha256',p_input->>'transport',(p_input->>'size')::bigint,
+        date_trunc('second',clock_timestamp())+interval '10 minutes')
+      returning * into s;
+    end if;
     return jsonb_build_object('contract','clued.storage-staging/1','staging_id',s.id,'owner_id',s.owner_id,'connection_id',s.connection_id,
       'binding_id',s.binding_id,'destination_path',s.destination_path,'mime_type',s.mime_type,'size',s.size,'sha256',s.sha256,
       'transport',s.transport,'state',s.state,'expires_at',extract(epoch from s.expires_at)::bigint);
@@ -346,29 +394,49 @@ begin
 
   if op='sweep' then
     if p_input<>'{"action":"sweep"}'::jsonb then raise exception 'storage_staging_input_invalid' using errcode='22023'; end if;
-    -- Unused URLs: no byte arrived, so the reservation is released.
-    with x as (update clued_private.storage_staging_v1 s0 set state='expired',released_at=clock_timestamp()
-      from clued_private.storage_connections_v1 c0 where c0.id=s0.connection_id and c0.oauth_client_id=app.oauth_client_id
-        and s0.state='issued' and s0.expires_at<=clock_timestamp() returning 1) select count(*) into expired from x;
-    -- Ready but never submitted within 1 hour: bytes arrived, the reservation stays.
-    with x as (update clued_private.storage_staging_v1 s0 set state='expired'
-      from clued_private.storage_connections_v1 c0 where c0.id=s0.connection_id and c0.oauth_client_id=app.oauth_client_id
-        and s0.state='ready' and s0.ready_expires_at<=clock_timestamp() returning 1) select expired+count(*) into expired from x;
-    with x as (update clued_private.storage_staging_v1 s0 set state='rejected',reject_reason='stalled'
-      from clued_private.storage_connections_v1 c0 where c0.id=s0.connection_id and c0.oauth_client_id=app.oauth_client_id
-        and s0.state in ('receiving','validating') and s0.received_at<=clock_timestamp()-interval '30 minutes' returning 1)
-      select count(*) into stalled from x;
+    -- m4: job cancellations first. Each takes the job and root advisory locks and then the job
+    -- row, the same order as submit / receive (policy evaluation's root lock before any staging
+    -- row). The staging updates below never wait: SKIP LOCKED leaves a row that a concurrent
+    -- receive / consume holds for the next minute's sweep, so no lock cycle can form.
     for job in select j.owner_id,j.job_id from clued_private.storage_jobs_v1 j
         join clued_private.storage_connections_v1 c0 on c0.id=j.connection_id and c0.owner_id=j.owner_id and c0.oauth_client_id=app.oauth_client_id
         where j.mutation ? 'content_ref' and j.intent_id is null and j.dispatch_outcome is null
           and j.created_at<=clock_timestamp()-interval '12 hours' order by j.created_at limit 20 loop
       if clued_private.storage_staging_cancel_job_v1(job.owner_id,job.job_id) then cancelled:=cancelled+1; end if;
     end loop;
+    -- Unused URLs: no byte arrived, so the reservation is released.
+    with x as (update clued_private.storage_staging_v1 s0 set state='expired',released_at=clock_timestamp()
+      where s0.id in (select s1.id from clued_private.storage_staging_v1 s1 join clued_private.storage_connections_v1 c0
+          on c0.id=s1.connection_id and c0.oauth_client_id=app.oauth_client_id
+        where s1.state='issued' and s1.expires_at<=clock_timestamp() limit 500 for update of s1 skip locked) returning 1)
+      select count(*) into expired from x;
+    -- Ready but never submitted within 1 hour: bytes arrived, the reservation stays.
+    with x as (update clued_private.storage_staging_v1 s0 set state='expired'
+      where s0.id in (select s1.id from clued_private.storage_staging_v1 s1 join clued_private.storage_connections_v1 c0
+          on c0.id=s1.connection_id and c0.oauth_client_id=app.oauth_client_id
+        where s1.state='ready' and s1.ready_expires_at<=clock_timestamp() limit 500 for update of s1 skip locked) returning 1)
+      select expired+count(*) into expired from x;
+    -- m5: a receiving / validating row is stalled only after 2 hours, well past the 10-minute
+    -- URL TTL plus a slow 20 MiB upload; a Worker that still finishes later finds the row
+    -- rejected, and deletes the object it wrote.
+    with x as (update clued_private.storage_staging_v1 s0 set state='rejected',reject_reason='stalled'
+      where s0.id in (select s1.id from clued_private.storage_staging_v1 s1 join clued_private.storage_connections_v1 c0
+          on c0.id=s1.connection_id and c0.oauth_client_id=app.oauth_client_id
+        where s1.state in ('receiving','validating') and s1.received_at<=clock_timestamp()-interval '2 hours'
+        limit 500 for update of s1 skip locked) returning 1)
+      select count(*) into stalled from x;
+    -- m1 retention: terminal rows with no object left, older than 7 days.
+    with x as (delete from clued_private.storage_staging_v1 s0
+      where s0.id in (select s1.id from clued_private.storage_staging_v1 s1 join clued_private.storage_connections_v1 c0
+          on c0.id=s1.connection_id and c0.oauth_client_id=app.oauth_client_id
+        where s1.state in ('rejected','expired','consumed') and s1.created_at<=clock_timestamp()-interval '7 days'
+          and clued_private.storage_staging_purgeable_v1(s1) limit 200 for update of s1 skip locked) returning 1)
+      select count(*) into purged from x;
     select coalesce(jsonb_agg(s0.id order by s0.created_at),'[]'::jsonb) into deletable from (
       select s1.* from clued_private.storage_staging_v1 s1 join clued_private.storage_connections_v1 c0
         on c0.id=s1.connection_id and c0.oauth_client_id=app.oauth_client_id
       where clued_private.storage_staging_deletable_v1(s1) order by s1.created_at limit 50) s0;
-    return jsonb_build_object('status','ok','expired',expired,'stalled',stalled,'cancelled_jobs',cancelled,'delete',deletable);
+    return jsonb_build_object('status','ok','expired',expired,'stalled',stalled,'cancelled_jobs',cancelled,'purged',purged,'delete',deletable);
   end if;
 
   -- object_deleted: the Worker deleted these R2 objects (idempotent).
@@ -414,8 +482,8 @@ begin
   receipt:=clued_private.m1_begin_receipt((snapshot->>'owner_id')::uuid,(snapshot->>'binding_id')::uuid,$r$,1),
     ('clued_private.storage_jobs_policy_core_v2(text,jsonb)',
      $a$      'capability_id',snapshot->'capability_id','scope_digest',snapshot->'scope_digest'),$a$,
-     $r$      'capability_id',snapshot->'capability_id','scope_digest',snapshot->'scope_digest',
-      'upload_bytes',m->'content_ref'->'size'),$r$,1),
+     $r$      'capability_id',snapshot->'capability_id','scope_digest',snapshot->'scope_digest')
+      ||case when m ? 'content_ref' then jsonb_build_object('upload_bytes',m->'content_ref'->'size') else '{}'::jsonb end,$r$,1),
     -- Execution admission of a queued binary job.
     ('clued_private.storage_cloud_job_current_v2(uuid,uuid)',
      $a$    raise exception 'storage_cloud_snapshot_changed' using errcode='42501'; end if;
@@ -481,7 +549,8 @@ revoke all on function clued_private.storage_staging_guard_v1(),
   clued_private.storage_binary_execution_v1(clued_private.storage_jobs_v1),
   clued_private.storage_staging_descriptor_v1(clued_private.storage_jobs_v1),
   clued_private.storage_staging_cancel_job_v1(uuid,uuid),
-  clued_private.storage_staging_deletable_v1(clued_private.storage_staging_v1)
+  clued_private.storage_staging_deletable_v1(clued_private.storage_staging_v1),
+  clued_private.storage_staging_purgeable_v1(clued_private.storage_staging_v1)
   from public,anon,authenticated,service_role;
 revoke all on function public.clued_storage_staging_v1(text,text,jsonb) from public,anon,authenticated,service_role;
 grant execute on function public.clued_storage_staging_v1(text,text,jsonb) to anon;

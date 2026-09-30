@@ -1922,8 +1922,11 @@ async function callTool(
         if ("content_base64" in m!) {
           const token = bearerToken(request);
           if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new StorageUploadError("storage_binary_upload_disabled");
+          // The inline staging_id is derived from (Binding, connection, job_id) by the database, so a
+          // retry of the same job reuses its row (ready / consumed) instead of staging an orphan.
           const staged = await stageInline(await stagingRuntime(env), await sha256(token), {
-            connection_id: String(input.connection_id), destination_path: String(m!.destination_path), mime_type: String(m!.mime_type),
+            connection_id: String(input.connection_id), job_id: String(input.job_id),
+            destination_path: String(m!.destination_path), mime_type: String(m!.mime_type),
             content_sha256: String(m!.content_sha256), content_base64: m!.content_base64 });
           const { content_base64: _inline, ...rest } = m!;
           void _inline;

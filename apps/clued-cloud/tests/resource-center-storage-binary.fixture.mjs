@@ -1,6 +1,6 @@
-/** Minimal binary fixtures for StorageNormalUse N3 tests: PNG / PDF bytes, a tiny Compound File
- * (CFB, one FAT sector + one directory sector), an in-memory R2 bucket and a fake Drive that
- * accepts multipart and single-PUT resumable uploads. */
+/** Minimal binary fixtures for StorageNormalUse N3 tests: PNG / PDF bytes, an in-memory R2 bucket
+ * that records every read (so tests can assert bounded, ranged processing), a bytes-backed
+ * content source with the executor's verify / stream contract, and a multipart parser. */
 import { createHash, randomUUID } from "node:crypto";
 
 export function pngBytes(size = 256) {
@@ -15,38 +15,13 @@ export function pdfBytes(size = 256) {
   return out;
 }
 
-/** entries: [name, type] pairs after the root (type 1 = storage, 2 = stream). */
-export function buildCfb(...entries) {
-  const out = new Uint8Array(512 * 3);
-  const dv = new DataView(out.buffer);
-  out.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
-  dv.setUint16(0x18, 0x3e, true); dv.setUint16(0x1a, 3, true); dv.setUint16(0x1c, 0xfffe, true);
-  dv.setUint16(0x1e, 9, true); dv.setUint16(0x20, 6, true);
-  dv.setUint32(0x2c, 1, true); dv.setUint32(0x30, 1, true); dv.setUint32(0x38, 4096, true);
-  dv.setUint32(0x3c, 0xfffffffe, true); dv.setUint32(0x44, 0xfffffffe, true);
-  for (let i = 0; i < 109; i++) dv.setUint32(0x4c + i * 4, 0xffffffff, true);
-  dv.setUint32(0x4c, 0, true);
-  const fat = 512;
-  for (let i = 0; i < 128; i++) dv.setUint32(fat + i * 4, 0xffffffff, true);
-  dv.setUint32(fat, 0xfffffffd, true); dv.setUint32(fat + 4, 0xfffffffe, true);
-  const dir = 1024;
-  const put = (index, name, type) => {
-    const at = dir + index * 128;
-    for (let i = 0; i < name.length; i++) dv.setUint16(at + i * 2, name.charCodeAt(i), true);
-    dv.setUint16(at + 0x40, (name.length + 1) * 2, true);
-    out[at + 0x42] = type;
-    dv.setUint32(at + 0x44, 0xffffffff, true); dv.setUint32(at + 0x48, 0xffffffff, true); dv.setUint32(at + 0x4c, 0xffffffff, true);
-  };
-  put(0, "Root Entry", 5);
-  entries.forEach(([name, type], i) => put(i + 1, name, type));
-  return out;
-}
-
-/** In-memory R2: put consumes streams concurrently, like the binding. */
+/** In-memory R2: put consumes streams concurrently, like the binding; get honours `range`
+ * (with R2's `size` = whole object) and records the largest body handed out and any
+ * whole-object read. */
 export function memoryBucket() {
   const objects = new Map();
   const bucket = {
-    objects, puts: 0, deletes: [],
+    objects, puts: 0, deletes: [], reads: 0, maxReadBytes: 0, wholeReads: 0,
     async put(key, value) {
       bucket.puts++;
       let bytes;
@@ -55,9 +30,17 @@ export function memoryBucket() {
       objects.set(key, bytes);
       return { key, size: bytes.length };
     },
-    async get(key) {
+    async get(key, options = {}) {
       const bytes = objects.get(key);
-      return bytes ? { size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) } : null;
+      if (!bytes) return null;
+      const range = options.range;
+      const offset = range ? range.offset : 0, length = range ? range.length : bytes.length;
+      if (!range) bucket.wholeReads++;
+      if (offset < 0 || length < 0 || offset + length > bytes.length) throw new Error("range outside the object");
+      return { size: bytes.length, arrayBuffer: async () => {
+        bucket.reads++; bucket.maxReadBytes = Math.max(bucket.maxReadBytes, length);
+        return bytes.buffer.slice(bytes.byteOffset + offset, bytes.byteOffset + offset + length);
+      } };
     },
     async delete(keys) { for (const key of [keys].flat()) { bucket.deletes.push(key); objects.delete(key); } },
   };
@@ -65,6 +48,39 @@ export function memoryBucket() {
 }
 
 export const sha256Hex = bytes => createHash("sha256").update(bytes).digest("hex");
+
+/** The executor's content-source contract over plain bytes: `size` / `sha256` are the declared
+ * values, `verify()` hashes the bytes, `stream()` yields 64 KiB pieces and errors before the
+ * last piece if the bytes differ from the declared digest. */
+export function bytesContentSource(bytes, declared = { size: bytes.length, sha256: sha256Hex(bytes) }) {
+  let verified = false;
+  return {
+    size: declared.size, sha256: declared.sha256,
+    get verified() { return verified; },
+    async verify() {
+      if (bytes.length !== declared.size || sha256Hex(bytes) !== declared.sha256) throw new Error("staged content mismatch");
+      verified = true;
+    },
+    stream() {
+      let at = 0;
+      const digest = createHash("sha256");
+      return new ReadableStream({ pull(controller) {
+        const piece = bytes.subarray(at, at + 65536); at += piece.length;
+        digest.update(piece);
+        if (at >= bytes.length && digest.digest("hex") !== declared.sha256) return controller.error(new Error("digest"));
+        controller.enqueue(piece);
+        if (at >= bytes.length) controller.close();
+      } }, { highWaterMark: 0 });
+    },
+  };
+}
+
+/** Read a fetch body (bytes, string or stream) into a Buffer. */
+export async function bodyBytes(body) {
+  if (typeof body === "string") return Buffer.from(body, "utf8");
+  if (body instanceof Uint8Array) return Buffer.from(body);
+  return Buffer.from(await new Response(body).arrayBuffer());
+}
 
 /** Parse a Drive multipart/related upload body (JSON metadata part + media part) into bytes. */
 export function parseMultipart(body, contentType) {

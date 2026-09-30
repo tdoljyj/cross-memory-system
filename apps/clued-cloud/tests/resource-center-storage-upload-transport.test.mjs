@@ -34,10 +34,12 @@ function database() {
       jobs.push(body);
       const m = body.p_input.mutation;
       const row = rows.get(m.staging_id);
-      if (!row || row.state !== "ready") return error("staging_expired");
-      row.state = "consumed";
+      // Job history: the same job with the same staging row replays.
+      const replay = row?.state === "consumed" && row.job_id === body.p_input.job_id;
+      if (!row || (row.state !== "ready" && !replay)) return error("staging_expired");
+      row.state = "consumed"; row.job_id = body.p_input.job_id;
       return Response.json({ job_id: body.p_input.job_id, connection_id: body.p_input.connection_id, request_digest: "c".repeat(64),
-        status: "queued", intent_id: null, receipt_id: randomUUID(), execution_permitted: false, replayed: false });
+        status: "queued", intent_id: null, receipt_id: randomUUID(), execution_permitted: false, replayed: replay });
     }
     assert.equal(String(url), "https://db.example.invalid/rest/v1/rpc/clued_storage_staging_v1");
     assert.equal(body.p_issuer_hash, issuerHash);
@@ -45,11 +47,17 @@ function database() {
     if (input.action === "begin") {
       assert.equal(body.p_token_hash, tokenHash);
       if (database.gateOff) return error("storage_binary_upload_disabled");
-      const id = randomUUID(), exp = Math.floor(Date.now() / 1000) + (database.expired ? -1 : 600);
-      rows.set(id, { ...input, id, state: "issued", exp });
+      assert.equal("job_id" in input, input.transport === "inline", "inline begin carries the job_id, URL begin does not");
+      // Inline: the staging_id is derived from (token, connection, job_id); a replay returns the same row.
+      const id = input.transport === "inline" ? createHash("sha256").update(`${body.p_token_hash}:${input.connection_id}:${input.job_id}`).digest("hex")
+        .replace(/^(.{8})(.{4})(.{4})(.{4})(.{12}).*$/, "$1-$2-$3-$4-$5") : randomUUID();
+      const existing = rows.get(id);
+      if (existing && (existing.content_sha256 !== input.content_sha256 || existing.destination_path !== input.destination_path)) return error("storage_job_input_invalid", 400);
+      const exp = existing?.exp ?? Math.floor(Date.now() / 1000) + (database.expired ? -1 : 600);
+      if (!existing) rows.set(id, { ...input, id, state: "issued", exp });
       return Response.json({ contract: "clued.storage-staging/1", staging_id: id, owner_id: OWNER, connection_id: input.connection_id, binding_id: BINDING,
         destination_path: input.destination_path, mime_type: input.mime_type, size: input.size, sha256: input.content_sha256,
-        transport: input.transport, state: "issued", expires_at: exp });
+        transport: input.transport, state: rows.get(id).state, expires_at: exp });
     }
     assert.equal(body.p_token_hash, null, "only begin carries the Binding token");
     const row = rows.get(input.staging_id);
@@ -85,8 +93,9 @@ const rpc = (method, params, bearer = token) => new Request(origin + "/mcp", { m
 const call = async (env, name, args) => (await (await worker.fetch(rpc("tools/call", { name, arguments: args }), env)).json()).result;
 const begin = (env, bytes, extra = {}) => call(env, "clued_storage_upload_begin", { connection_id: CONNECTION, destination_path: ROOT + "/photo.png",
   mime_type: "image/png", size: bytes.length, content_sha256: sha256Hex(bytes), ...extra });
-const put = (url, bytes, headers = {}) => worker.fetch(new Request(url, { method: "PUT", body: bytes,
-  headers: { "content-type": "image/png", "content-length": String(bytes.length), ...headers } }), put.env);
+// The token travels in X-Clued-Upload-Token, never in the URL.
+const put = (out, bytes, headers = {}, url = out.upload_url) => worker.fetch(new Request(url, { method: "PUT", body: bytes,
+  headers: { "content-type": "image/png", "content-length": String(bytes.length), "x-clued-upload-token": out.upload_token, ...headers } }), put.env);
 
 async function withDatabase(fn) {
   const before = globalThis.fetch, db = database();
@@ -99,7 +108,7 @@ test("discovery: upload_begin and binary submit variants exist only with every b
     const tools = (await (await worker.fetch(rpc("tools/list", {}), env)).json()).result.tools;
     assert.equal(tools.some(t => t.name === "clued_storage_upload_begin"), expected);
     assert.equal(tools.find(t => t.name === "clued_storage_submit").inputSchema.properties.mutation.oneOf.length, expected ? 7 : 5);
-    if (!expected) assert.equal((await worker.fetch(new Request(origin + "/storage/staging/" + randomUUID() + "?t=x", { method: "PUT", body: "x" }), env)).status, 404);
+    if (!expected) assert.equal((await worker.fetch(new Request(origin + "/storage/staging/" + randomUUID(), { method: "PUT", body: "x", headers: { "x-clued-upload-token": "x" } }), env)).status, 404);
   }
 });
 
@@ -110,10 +119,11 @@ test("upload_begin signs a single-use URL; the PUT stores only ciphertext and ma
   assert.equal(started.isError, false, JSON.stringify(started));
   const out = started.structuredContent;
   assert.equal(out.method, "PUT");
-  assert.deepEqual(out.required_headers, { "Content-Type": "image/png", "Content-Length": String(bytes.length) });
-  assert.match(out.upload_url, new RegExp(`^${origin}/storage/staging/${out.staging_id}\\?t=[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]{43}$`));
+  assert.match(out.upload_token, /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/);
+  assert.deepEqual(out.required_headers, { "Content-Type": "image/png", "Content-Length": String(bytes.length), "X-Clued-Upload-Token": out.upload_token });
+  assert.equal(out.upload_url, `${origin}/storage/staging/${out.staging_id}`, "no token (or any query) in the URL");
   assert.equal(db.calls[0].body.p_input.transport, "url");
-  const response = await put(out.upload_url, bytes);
+  const response = await put(out, bytes);
   assert.equal(response.status, 200, await response.clone().text());
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual((await response.json()).state, "ready");
@@ -123,7 +133,7 @@ test("upload_begin signs a single-use URL; the PUT stores only ciphertext and ma
   assert.deepEqual(db.calls.slice(1).map(c => c.body.p_input.action + ":" + (c.body.p_input.outcome ?? "")), ["receive:", "received:validating", "validated:ready"]);
   assert.equal(db.calls[1].body.p_input.key_id, "s1");
   // Single use: the second PUT is refused by the database CAS.
-  const again = await put(out.upload_url, bytes);
+  const again = await put(out, bytes);
   assert.equal(again.status, 409); assert.equal((await again.json()).error, "upload_url_used");
 }));
 
@@ -131,26 +141,30 @@ test("signature is the only credential; declared headers are checked before the 
   const env = baseEnv(); put.env = env;
   const bytes = pngBytes(512);
   const { structuredContent: out } = await begin(env, bytes);
-  const [base, tokenValue] = out.upload_url.split("?t=");
+  const base = out.upload_url, tokenValue = out.upload_token;
   const before = db.calls.length;
   for (const [url, headers, status, code] of [
-    [base + "?t=" + tokenValue.slice(0, -2) + "AA", {}, 403, "upload_url_invalid"],
-    [base.replace(out.staging_id, randomUUID()) + "?t=" + tokenValue, {}, 403, "upload_url_invalid"],
-    [out.upload_url + "&extra=1", {}, 403, "upload_url_invalid"],
-    [out.upload_url, { authorization: "Bearer " + token }, 403, "upload_url_invalid"],
-    [out.upload_url, { "content-type": "image/jpeg" }, 400, "storage_job_input_invalid"],
+    [base, { "x-clued-upload-token": tokenValue.slice(0, -2) + "AA" }, 403, "upload_url_invalid"],
+    [base.replace(out.staging_id, randomUUID()), {}, 403, "upload_url_invalid"],
+    // The token in the query string (the old form) is refused, with or without the header.
+    [base + "?t=" + tokenValue, { "x-clued-upload-token": "" }, 403, "upload_url_invalid"],
+    [base + "?t=" + tokenValue, {}, 403, "upload_url_invalid"],
+    [base + "?extra=1", {}, 403, "upload_url_invalid"],
+    [base, { "x-clued-upload-token": "" }, 403, "upload_url_invalid"],
+    [base, { authorization: "Bearer " + token }, 403, "upload_url_invalid"],
+    [base, { "content-type": "image/jpeg" }, 400, "storage_job_input_invalid"],
   ]) {
-    const response = await put(url, bytes, headers);
-    assert.equal(response.status, status, url); assert.equal((await response.json()).error, code);
+    const response = await put(out, bytes, headers, url);
+    assert.equal(response.status, status, url + " " + JSON.stringify(headers)); assert.equal((await response.json()).error, code);
   }
   const shortLength = await worker.fetch(new Request(out.upload_url, { method: "PUT", body: bytes.subarray(1),
-    headers: { "content-type": "image/png", "content-length": String(bytes.length - 1) } }), env);
+    headers: { "content-type": "image/png", "content-length": String(bytes.length - 1), "x-clued-upload-token": tokenValue } }), env);
   assert.equal(shortLength.status, 400);
   assert.equal(db.calls.length, before, "no RPC and no single-use claim for a refused request");
-  assert.equal((await put(out.upload_url, bytes)).status, 200, "the URL still works after client mistakes");
+  assert.equal((await put(out, bytes)).status, 200, "the URL still works after client mistakes");
   database.expired = true;
   const { structuredContent: late } = await begin(env, bytes);
-  const expired = await put(late.upload_url, bytes);
+  const expired = await put(late, bytes);
   assert.equal(expired.status, 410); assert.equal((await expired.json()).error, "staging_expired");
 }));
 
@@ -158,21 +172,21 @@ test("content checks: denylisted magic, digest mismatch and zip macros reject th
   const env = baseEnv(); put.env = env;
   const exe = new Uint8Array(4096); exe.set([0x4d, 0x5a]);
   const { structuredContent: a } = await begin(env, exe);
-  let response = await put(a.upload_url, exe);
+  let response = await put(a, exe);
   assert.equal(response.status, 415); assert.equal((await response.json()).error, "content_type_mismatch");
   assert.equal(db.rows.get(a.staging_id).state, "rejected"); assert.equal(db.rows.get(a.staging_id).reason, "content_type_mismatch");
   assert.equal(env.CLUED_STORAGE_STAGING.objects.has("staging/" + a.staging_id), false);
 
   const bytes = pngBytes(70000), other = pngBytes(70000); other[69999] ^= 1;
   const { structuredContent: b } = await begin(env, bytes);
-  response = await put(b.upload_url, other);
+  response = await put(b, other);
   assert.equal(response.status, 400); assert.equal((await response.json()).error, "storage_job_input_invalid");
   assert.equal(db.rows.get(b.staging_id).reason, "digest_mismatch");
   assert.equal(env.CLUED_STORAGE_STAGING.objects.has("staging/" + b.staging_id), false);
 
   const docx = await buildZip([{ name: "[Content_Types].xml", data: "<Types/>" }, { name: "word/vbaProject.bin", data: "macro" }]);
   const { structuredContent: c } = await begin(env, docx, { destination_path: ROOT + "/report.docx", mime_type: DOCX });
-  response = await put(c.upload_url, docx, { "content-type": DOCX });
+  response = await put(c, docx, { "content-type": DOCX });
   assert.equal(response.status, 415);
   assert.equal(db.rows.get(c.staging_id).state, "rejected");
   assert.equal(db.calls.filter(x => x.body.p_input.staging_id === c.staging_id).map(x => x.body.p_input.outcome ?? x.body.p_input.action).join(","),
@@ -200,7 +214,7 @@ test("missing R2 binding or keys fail closed", async () => withDatabase(async db
     const env = { ...baseEnv(), [missing]: undefined };
     const result = await begin(env, pngBytes());
     assert.equal(result.structuredContent.error, "storage_upload_unavailable", missing);
-    const response = await worker.fetch(new Request(origin + "/storage/staging/" + randomUUID() + "?t=a.b", { method: "PUT", body: "x" }), env);
+    const response = await worker.fetch(new Request(origin + "/storage/staging/" + randomUUID(), { method: "PUT", body: "x", headers: { "x-clued-upload-token": "a.b" } }), env);
     assert.equal(response.status, 503, missing);
   }
   assert.equal(db.calls.length, 0);
@@ -218,6 +232,22 @@ test("inline content_base64 stages through the same pipeline, then submits only 
   const submitted = db.jobs[0].p_input.mutation;
   assert.deepEqual(Object.keys(submitted).sort(), ["content_sha256", "destination_path", "mime_type", "operation", "staging_id", "target_kind"]);
   assert.equal(JSON.stringify(db.jobs[0]).includes(Buffer.from(bytes).toString("base64").slice(0, 40)), false, "no content in the job");
+  assert.equal(db.calls[0].body.p_input.job_id, job);
+  // m3: a retry of the same job (e.g. after a lost reply) reuses the job's staging row: no second
+  // receive / validation, no new row, and the submit replays the same job.
+  const rowsBefore = db.rows.size, stagingCalls = db.calls.filter(c => c.url.endsWith("clued_storage_staging_v1")).length;
+  const retried = await call(env, "clued_storage_submit", { connection_id: CONNECTION, job_id: job, mutation: { operation: "create", target_kind: "file",
+    destination_path: ROOT + "/inline.png", mime_type: "image/png", content_sha256: sha256Hex(bytes), content_base64: Buffer.from(bytes).toString("base64") } });
+  assert.equal(retried.isError, false, JSON.stringify(retried));
+  assert.equal(retried.structuredContent.replayed, true);
+  assert.equal(db.rows.size, rowsBefore, "no orphan staging row");
+  assert.deepEqual(db.calls.filter(c => c.url.endsWith("clued_storage_staging_v1")).slice(stagingCalls).map(c => c.body.p_input.action), ["begin"]);
+  assert.equal(db.jobs[1].p_input.mutation.staging_id, submitted.staging_id);
+  // Other content under the same job_id is refused.
+  const other = pngBytes(3001);
+  const conflict = await call(env, "clued_storage_submit", { connection_id: CONNECTION, job_id: job, mutation: { operation: "create", target_kind: "file",
+    destination_path: ROOT + "/inline.png", mime_type: "image/png", content_sha256: sha256Hex(other), content_base64: Buffer.from(other).toString("base64") } });
+  assert.equal(conflict.structuredContent.error, "storage_job_input_invalid");
   // A wrong declared sha256 is refused before any RPC.
   const before = db.calls.length;
   const wrong = await call(env, "clued_storage_submit", { connection_id: CONNECTION, job_id: randomUUID(), mutation: { operation: "create", target_kind: "file",
@@ -231,6 +261,29 @@ test("inline content_base64 stages through the same pipeline, then submits only 
   assert.equal(db.calls.length, before);
 }));
 
+test("a transition the database refuses (row already swept as stalled) deletes the object this request wrote", async () => withDatabase(async db => {
+  const env = baseEnv(); put.env = env;
+  for (const phase of ["receiving", "validating"]) {
+    const bytes = pngBytes(90000);
+    const { structuredContent: out } = await begin(env, bytes);
+    const realFetch = db.fetch;
+    // The sweep rejects the row while the bytes are still being stored / validated.
+    globalThis.fetch = async (url, init) => {
+      const input = JSON.parse(init.body).p_input;
+      if ((phase === "receiving" && input.action === "received" && input.outcome === "validating") ||
+        (phase === "validating" && input.action === "validated" && input.outcome === "ready")) {
+        db.rows.get(input.staging_id).state = "rejected";
+      }
+      return realFetch(url, init);
+    };
+    try {
+      const response = await put(out, bytes);
+      assert.equal(response.status, 503, phase);
+    } finally { globalThis.fetch = realFetch; }
+    assert.equal(env.CLUED_STORAGE_STAGING.objects.has("staging/" + out.staging_id), false, `${phase}: no orphan object`);
+  }
+}));
+
 test("large uploads stream in pieces; the sweep deletes objects the database lists", async () => withDatabase(async db => {
   const env = baseEnv(); put.env = env;
   const bytes = pngBytes(6 * 1024 * 1024 + 5);
@@ -241,7 +294,7 @@ test("large uploads stream in pieces; the sweep deletes objects the database lis
     const size = 1000 + (offset % 70001); controller.enqueue(bytes.slice(offset, offset + size)); offset += size;
   } });
   const response = await worker.fetch(new Request(out.upload_url, { method: "PUT", body, duplex: "half",
-    headers: { "content-type": "image/png", "content-length": String(bytes.length) } }), env);
+    headers: { "content-type": "image/png", "content-length": String(bytes.length), "x-clued-upload-token": out.upload_token } }), env);
   assert.equal(response.status, 200, await response.clone().text());
   db.rows.get(out.staging_id).state = "consumed";
   const swept = await worker.runStorageStagingScheduled(env);

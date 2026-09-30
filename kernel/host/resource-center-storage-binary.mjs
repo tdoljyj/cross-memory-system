@@ -4,13 +4,21 @@
  * and tests. No provider access, no storage, no secrets.
  *
  * - `binaryUploadTarget(path, mime)`: the destination extension must map to exactly this MIME
- *   in the allow table; macro-enabled, executable/script, HTML/XHTML/SVG and Google-native
- *   types are never accepted in binary form.
+ *   in the allow table; macro-enabled, legacy Office (CFB: doc / xls / ppt), executable/script,
+ *   HTML/XHTML/SVG and Google-native types are never accepted in binary form.
  * - `firstChunkCheck(bytes, mime)`: the denylisted magic numbers (MZ, ELF, Mach-O / fat, `#!`)
  *   are refused whatever the declared type, and the leading bytes must match the MIME's magic.
- * - `validateStagedContent(bytes, mime)`: the post-staging (`validating`) checks that need the
- *   whole object: zip / OOXML / ODF central directory (`vbaProject.bin`, `macroEnabled`
- *   content types, ODF Basic/Scripts) and CFB storages (`VBA`, `Macros`, `_VBA_PROJECT_CUR`).
+ * - `validateStagedContent(source, mime)`: the post-staging (`validating`) checks. `source` is
+ *   either the bytes or a range reader `{ size, readRange(offset, length) }`, so the Worker never
+ *   needs the whole object in memory: the zip reader's range mode reads the tail, the central
+ *   directory (capped) and only the XML parts inspected below.
+ *   zip / OOXML / ODF: entries named `vbaProject.bin` and ODF `Basic/` / `Scripts/` folders are
+ *   refused; `[Content_Types].xml` and every `.rels` part is decoded strictly (UTF-8 only, BOM
+ *   or declaration naming anything else refused, UTF-16 refused, no DOCTYPE / entity
+ *   declarations, no character references, only the five predefined entities, which are
+ *   resolved), then any content type or relationship type naming a VBA project, VBA data,
+ *   ActiveX, a macro sheet, key-map customizations or a macro-enabled main type refuses the
+ *   file whatever the part is called.
  *
  * Every refusal is the fixed code `content_type_mismatch`. */
 import { openZip } from "./resource-center-zip-reader.mjs";
@@ -19,6 +27,8 @@ export const BINARY_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
 export const BINARY_MULTIPART_MAX_BYTES = 5 * 1024 * 1024;
 export const BINARY_INLINE_MAX_BYTES = 1024 * 1024;
 export const CONTENT_TYPE_MISMATCH = "content_type_mismatch";
+/** Leading bytes the first-chunk check looks at (one staging chunk). */
+export const FIRST_CHUNK_BYTES = 64 * 1024;
 
 const OOXML = "application/vnd.openxmlformats-officedocument.";
 const ODF = "application/vnd.oasis.opendocument.";
@@ -38,9 +48,6 @@ export const BINARY_EXTENSION_MIME = Object.freeze({
   odt: ODF + "text",
   ods: ODF + "spreadsheet",
   odp: ODF + "presentation",
-  doc: "application/msword",
-  xls: "application/vnd.ms-excel",
-  ppt: "application/vnd.ms-powerpoint",
 });
 
 const MIME_MAGIC = Object.freeze({
@@ -56,14 +63,13 @@ const MIME_MAGIC = Object.freeze({
   [ODF + "text"]: "zip",
   [ODF + "spreadsheet"]: "zip",
   [ODF + "presentation"]: "zip",
-  "application/msword": "cfb",
-  "application/vnd.ms-excel": "cfb",
-  "application/vnd.ms-powerpoint": "cfb",
 });
 
-// Never accepted in binary form, even if a later table edit maps them.
+// Never accepted in binary form, even if a later table edit maps them. Legacy Office (CFB)
+// is excluded because its macro storages cannot be checked without reading arbitrary sectors.
 const EXCLUDED_EXTENSIONS = new Set([
   "docm", "xlsm", "pptm", "dotm", "xltm", "potm", "ppsm", "xlam", "xlsb", "sldm", "ppam",
+  "doc", "dot", "xls", "xlt", "xla", "ppt", "pot", "pps", "msg",
   "html", "htm", "xhtml", "xht", "svg", "svgz", "shtml", "mht", "mhtml",
   "exe", "dll", "com", "scr", "msi", "msp", "bat", "cmd", "ps1", "psm1", "vbs", "vbe", "js", "jse", "mjs", "cjs",
   "wsf", "wsh", "hta", "jar", "sh", "bash", "zsh", "csh", "py", "pl", "rb", "php", "app", "dmg", "pkg", "deb", "rpm",
@@ -72,6 +78,7 @@ const EXCLUDED_EXTENSIONS = new Set([
 const EXCLUDED_MIME = [
   /^application\/vnd\.google-apps\./,
   /macroenabled/i,
+  /^application\/(msword|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.ms-outlook|x-ole-storage|x-cfb)$/,
   /^text\/html$/, /^application\/xhtml\+xml$/, /^image\/svg\+xml$/,
   /^application\/(x-)?(msdownload|msdos-program|dosexec|executable|elf|mach-binary|sh|shellscript|javascript|ecmascript|java-archive|x-msi|vnd\.microsoft\.portable-executable)$/,
   /^text\/(javascript|ecmascript|x-shellscript|x-python|x-perl)$/,
@@ -128,14 +135,52 @@ export function firstChunkCheck(bytes, mimeType) {
   return wanted;
 }
 
-const MACRO_STORAGES = new Set(["vba", "macros", "_vba_project_cur"]);
+// Range-mode limits for validation: tighter than the read contract so a request never holds
+// more than about 2 MiB of archive structure or one XML part at a time.
+const VALIDATION_ZIP_LIMITS = Object.freeze({
+  centralDirectoryMaxBytes: 2 * 1024 * 1024,
+  maxEntryCompressedBytes: 1024 * 1024,
+  maxEntryUncompressedBytes: 1024 * 1024,
+});
+const XML_PART_MAX_BYTES = 1024 * 1024;
+// Lower-cased markers of content types / relationship types that carry or enable macros or
+// active content (vbaProject, vbaProjectSignature, wordVbaData / vbaData+xml, activeX /
+// activeXControlBinary, (intl)macrosheet, keyMapCustomizations, *.macroEnabled.main+xml).
+const ACTIVE_CONTENT_MARKERS = ["vbaproject", "vbadata", "activex", "macrosheet", "keymapcustomizations", "macroenabled"];
+const PREDEFINED_ENTITIES = Object.freeze({ amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'" });
+const utf8Strict = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
-async function checkZip(bytes) {
+/** Strict decode of an OOXML package part used for the macro checks. */
+export function decodePackageXml(bytes) {
+  if (!(bytes instanceof Uint8Array)) fail();
+  // UTF-16 / UTF-32 (with or without a BOM) is refused outright: a NUL byte never occurs in UTF-8 XML.
+  if (starts(bytes, [0xff, 0xfe]) || starts(bytes, [0xfe, 0xff]) || bytes.includes(0)) fail();
+  const body = starts(bytes, [0xef, 0xbb, 0xbf]) ? bytes.subarray(3) : bytes;
+  let text;
+  try { text = utf8Strict.decode(body); } catch { fail(); }
+  const declaration = /^\s*<\?xml\b([^?]*)\?>/.exec(text);
+  if (declaration) {
+    const encoding = /\bencoding\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(declaration[1]);
+    if (encoding && !/^utf-?8$/i.test(encoding[1] ?? encoding[2])) fail();
+  } else if (/<\?xml\b/i.test(text)) fail();
+  // No DTD, entity declarations or CDATA; no character references at all.
+  if (/<!doctype|<!entity|<!\[cdata\[/i.test(text) || text.includes("&#")) fail();
+  return text.replace(/&([^;&\s]{0,16});?/g, (match, name) => {
+    if (!match.endsWith(";") || !Object.hasOwn(PREDEFINED_ENTITIES, name)) fail();
+    return PREDEFINED_ENTITIES[name];
+  });
+}
+
+function refuseActiveContent(text) {
+  const lower = text.toLowerCase();
+  if (ACTIVE_CONTENT_MARKERS.some(marker => lower.includes(marker))) fail();
+}
+
+async function checkZip(source, mimeType) {
   let zip;
-  try {
-    zip = await openZip({ size: bytes.byteLength, readRange: async (offset, length) => bytes.subarray(offset, offset + length) });
-  } catch { fail(); }
+  try { zip = await openZip(source, { limits: VALIDATION_ZIP_LIMITS }); } catch { fail(); }
   let contentTypes = null;
+  const rels = [];
   for (const entry of zip.entries) {
     const name = entry.name.toLowerCase();
     const last = name.slice(name.lastIndexOf("/") + 1);
@@ -145,71 +190,37 @@ async function checkZip(bytes) {
     if (name === "[content_types].xml") {
       if (contentTypes) fail();
       contentTypes = entry;
-    }
+    } else if (last.endsWith(".rels") && !entry.directory) rels.push(entry);
   }
-  if (contentTypes) {
-    let xml;
-    try { xml = new TextDecoder("utf-8", { fatal: false }).decode(await zip.readEntry(contentTypes, { maxBytes: 1024 * 1024 })); }
-    catch { fail(); }
-    if (/macroenabled/i.test(xml)) fail();
-  }
-}
-
-/** Minimal Compound File Binary directory walk: any storage named VBA / Macros /
- * _VBA_PROJECT_CUR refuses the file. Structural damage refuses it too. */
-function checkCfb(bytes) {
-  if (bytes.byteLength < 512) fail();
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const shift = dv.getUint16(0x1e, true);
-  if (shift !== 9 && shift !== 12) fail();
-  const sectorSize = 1 << shift;
-  const sectorOffset = (sector) => (sector + 1) * sectorSize;
-  const fatSectors = dv.getUint32(0x2c, true);
-  const firstDirectory = dv.getUint32(0x30, true);
-  let difatSector = dv.getUint32(0x44, true);
-  const difatCount = dv.getUint32(0x48, true);
-  const maxSectors = Math.floor(bytes.byteLength / sectorSize);
-  if (fatSectors > maxSectors || difatCount > maxSectors) fail();
-  const fatList = [];
-  for (let i = 0; i < 109 && fatList.length < fatSectors; i += 1) fatList.push(dv.getUint32(0x4c + i * 4, true));
-  for (let hops = 0; fatList.length < fatSectors; hops += 1) {
-    if (hops > difatCount || difatSector >= 0xfffffffa) fail();
-    const base = sectorOffset(difatSector);
-    if (base + sectorSize > bytes.byteLength) fail();
-    for (let i = 0; i < sectorSize / 4 - 1 && fatList.length < fatSectors; i += 1) fatList.push(dv.getUint32(base + i * 4, true));
-    difatSector = dv.getUint32(base + sectorSize - 4, true);
-  }
-  const next = (sector) => {
-    const perSector = sectorSize / 4;
-    const fatSector = fatList[Math.floor(sector / perSector)];
-    if (fatSector === undefined || fatSector >= 0xfffffffa) fail();
-    const at = sectorOffset(fatSector) + (sector % perSector) * 4;
-    if (at + 4 > bytes.byteLength) fail();
-    return dv.getUint32(at, true);
+  // Every OOXML package has exactly one content types part.
+  if (mimeType.startsWith(OOXML) && !contentTypes) fail();
+  const read = async (entry) => {
+    try { return await zip.readEntry(entry, { maxBytes: XML_PART_MAX_BYTES }); } catch { return fail(); }
   };
-  const seen = new Set();
-  const decoder = new TextDecoder("utf-16le");
-  for (let sector = firstDirectory; sector !== 0xfffffffe;) {
-    if (sector >= 0xfffffffa || seen.has(sector) || seen.size > maxSectors) fail();
-    seen.add(sector);
-    const base = sectorOffset(sector);
-    if (base + sectorSize > bytes.byteLength) fail();
-    for (let at = base; at < base + sectorSize; at += 128) {
-      const type = bytes[at + 0x42];
-      const nameLength = dv.getUint16(at + 0x40, true);
-      if (type === 0) continue;
-      if (nameLength < 2 || nameLength > 64 || nameLength % 2) fail();
-      const name = decoder.decode(bytes.subarray(at, at + nameLength - 2)).toLowerCase();
-      if (type === 1 && MACRO_STORAGES.has(name)) fail();
-    }
-    sector = next(sector);
+  if (contentTypes) refuseActiveContent(decodePackageXml(await read(contentTypes)));
+  for (const entry of rels) {
+    // Relationship targets are data (e.g. hyperlinks); the Type / Id / TargetMode carry the meaning.
+    const text = decodePackageXml(await read(entry)).replace(/\bTarget\s*=\s*(?:"[^"]*"|'[^']*')/g, "Target=\"\"");
+    refuseActiveContent(text);
   }
 }
 
-/** `validating` stage (§6.3): runs on the decrypted staged object before it becomes `ready`. */
-export async function validateStagedContent(bytes, mimeType) {
-  const kind = firstChunkCheck(bytes, mimeType);
-  if (kind === "zip") await checkZip(bytes);
-  else if (kind === "cfb") checkCfb(bytes);
+function rangeSource(input) {
+  if (input instanceof Uint8Array) {
+    if (!input.byteLength) fail();
+    return { size: input.byteLength, readRange: async (offset, length) => input.subarray(offset, offset + length) };
+  }
+  if (!input || typeof input !== "object" || !Number.isSafeInteger(input.size) || input.size < 1 ||
+    typeof input.readRange !== "function") fail();
+  return { size: input.size, readRange: (offset, length) => input.readRange(offset, length) };
+}
+
+/** `validating` stage (§6.3): runs on the staged object (bytes or a range reader) before `ready`. */
+export async function validateStagedContent(input, mimeType) {
+  const source = rangeSource(input);
+  let head;
+  try { head = await source.readRange(0, Math.min(source.size, FIRST_CHUNK_BYTES)); } catch { fail(); }
+  const kind = firstChunkCheck(head, mimeType);
+  if (kind === "zip") await checkZip(source, mimeType);
   return true;
 }

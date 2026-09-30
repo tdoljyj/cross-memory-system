@@ -703,28 +703,48 @@ runs only in account-policy mode (`CLUED_STORAGE_JOBS_V2=true`).
   `provider_scope_profile = normal`. Otherwise `storage_binary_upload_disabled`
   and no effect. Text `create` is unchanged.
 - **Types** (§6.3): the destination extension must map to exactly the declared
-  MIME (png, jpg/jpeg, gif, webp, pdf, zip, docx, xlsx, pptx, odt, ods, odp,
-  doc, xls, ppt; the same table is in the kernel module and
-  `clued_private.storage_binary_mime_v1`). Macro-enabled, executable, script,
-  HTML/XHTML/SVG and Google-native types are never accepted in binary form
-  (HTML/SVG only as text `content`, stored `text/plain`). The first chunk is
-  refused on `MZ`, ELF, Mach-O / fat or `#!`, and must carry the MIME's magic.
-  After staging (`validating`) the object is decrypted and checked whole: zip /
-  OOXML / ODF entries named `vbaProject.bin`, a `[Content_Types].xml` with a
-  `macroEnabled` type, ODF `Basic/` or `Scripts/` folders, and CFB storages
-  `VBA`, `Macros`, `_VBA_PROJECT_CUR` are refused (`content_type_mismatch`); a
-  damaged archive is refused too.
+  MIME (png, jpg/jpeg, gif, webp, pdf, zip, docx, xlsx, pptx, odt, ods, odp;
+  the same table is in the kernel module and
+  `clued_private.storage_binary_mime_v1`). Legacy Office (doc, xls, ppt: CFB
+  containers, whose macro storages cannot be checked without walking arbitrary
+  sectors), macro-enabled, executable, script, HTML/XHTML/SVG and Google-native
+  types are never accepted in binary form (HTML/SVG only as text `content`,
+  stored `text/plain`). The first chunk is refused on `MZ`, ELF, Mach-O / fat
+  or `#!`, and must carry the MIME's magic (CFB magic matches no accepted type).
+  After staging (`validating`) the archive is read **by range** (tail, a central
+  directory of at most 2 MiB, and only the XML parts below, each at most
+  1 MiB): entries named `vbaProject.bin` and ODF `Basic/` / `Scripts/` folders
+  are refused; `[Content_Types].xml` (required for docx / xlsx / pptx) and
+  every `*.rels` part are decoded strictly — UTF-8 only (a UTF-8 BOM is fine;
+  a UTF-16 / UTF-32 BOM, any NUL byte, invalid UTF-8 or a declaration naming
+  another encoding is refused), no DOCTYPE / ENTITY / CDATA, no character
+  references (`&#…;`), only the five predefined entities (resolved) — and any
+  content type or relationship type naming `vbaProject` (incl. the signature),
+  `vbaData`, `activeX`, a (intl) macro sheet, `keyMapCustomizations` or a
+  `macroEnabled` type refuses the file whatever the part is called (relationship
+  `Target` values are data and not matched). A damaged or encrypted archive is
+  refused too. Every refusal is `content_type_mismatch`.
 - **Signed PUT URL** (MAJOR-2): `upload_begin` inserts a
   `clued_private.storage_staging_v1` row (`issued`, 10 minutes) and reserves the
   declared size against the hourly upload budget (256 MiB per Binding, 1 GiB
-  per owner) in the same transaction. The URL is
-  `https://<host>/storage/staging/<staging_id>?t=<token>`; the token is
-  HMAC-SHA256 under `CLUED_STORAGE_STAGING_URL_KEY` over owner, connection,
-  Binding, staging_id, sha256, size, MIME and expiry. The endpoint accepts that
-  signature only (a request carrying `Authorization` is refused), checks that
-  `Content-Length` and `Content-Type` equal the declared values *before* using
-  the URL, then claims it once (`issued → receiving` CAS; a second PUT gets
-  `upload_url_used`) and re-evaluates the row's Binding and the gate.
+  per owner; at most 60 staging rows per Binding and 200 per owner per rolling
+  hour, released rows included) in the same transaction. It returns
+  `upload_url = https://<host>/storage/staging/<staging_id>` and a separate
+  `upload_token` that the client sends as the `X-Clued-Upload-Token` header:
+  `curl -T <file> -H "Content-Type: <mime>" -H "X-Clued-Upload-Token: <upload_token>" "<upload_url>"`.
+  The token never appears in a URL, so request-URL logging (Workers invocation
+  logs) cannot record it; any query string on the PUT is refused, and the Worker
+  never logs request headers. The token is HMAC-SHA256 under
+  `CLUED_STORAGE_STAGING_URL_KEY` over owner, connection, Binding, staging_id,
+  sha256, size, MIME and expiry, in canonical unpadded base64url only. The
+  endpoint accepts that signature only (a request carrying `Authorization` is
+  refused), checks that `Content-Length` and `Content-Type` equal the declared
+  values *before* using the URL, then claims it once (`issued → receiving` CAS;
+  a second PUT gets `upload_url_used`) and re-evaluates the row's Binding and
+  the gate. (Contract §5.3 / §6.2 still describe `?t=<token>` and the doc / xls
+  / ppt types; this implementation deliberately narrows both, pending a
+  contract amendment.) Before enabling, confirm in the Workers Logs UI that
+  invocation logs do not capture the `X-Clued-Upload-Token` request header.
 - **Staging encryption** (m-l): 64 KiB AES-256-GCM chunks under
   `K = HKDF-SHA256(master, salt = staging_id, info = "clued.storage-staging/1")`,
   nonce = 96-bit big-endian chunk index, AAD = owner ‖ connection ‖ staging_id
@@ -732,22 +752,44 @@ runs only in account-policy mode (`CLUED_STORAGE_JOBS_V2=true`).
   is separate from the credential vault; the row records `key_id`. The R2 key
   is `staging/<staging_id>` (no file name). The digest is computed while
   streaming; a mismatch deletes the object and rejects the row.
+- **Bounded memory** (Workers isolates are 128 MB and serve concurrent
+  requests): no path holds a staged object whole. The PUT encrypts 64 KiB at a
+  time into the R2 write stream; every read is a ranged R2 get of at most 4
+  chunks (≈ 256 KiB), decrypted chunk by chunk with an incremental sha256. The
+  `validating` stage runs a full streaming decrypt + sha256 pass over what R2
+  holds, then the archive checks by range. Peak per request is a few MiB (the
+  central directory cap plus one XML part), independent of file size.
 - **Inline**: `clued_storage_submit` with `content_base64` (inside the existing
   1 MiB MCP body, about 700 KiB of file) runs the same begin / encrypted
   staging / validation in the request and submits the resulting `staging_id`.
+  The database derives the inline `staging_id` from (Binding token, connection,
+  `job_id`), so a retried submit of the same job reuses its row: `ready` /
+  `consumed` rows are not staged again (the submit then replays the job), no
+  second reservation is taken, and other content under the same `job_id` is
+  refused (`storage_job_input_invalid`). A retry that finds the row `rejected`
+  / `expired` gets `staging_expired` and needs a new `job_id`.
 - **Submit** stores `{create, file, destination_path, content_ref: {staging_id,
   sha256, size, mime_type}}`; the request digest covers `content_ref`. The
   staging row must be `ready`, unexpired and of the same Binding, connection,
   path, MIME and sha256; it becomes `consumed` by that job (single use). The
-  submit event records `upload_bytes`.
-- **Execution** (§6.4): the executor reads the staged object back, decrypts it
-  and re-checks size and sha256 before any reservation
-  (`STORAGE_CONTENT_STAGING_MISMATCH`, no effect). Up to 5 MiB it uploads one
-  multipart request with the declared MIME; above that it opens one resumable
-  session and sends the whole body in a single PUT (no 308 chunk loop, so the
-  redirect guard stays on). The session URI stays in memory. A lost reply is
-  an unknown outcome: the journal stays fenced and recovery only reads (by the
-  generated ID); nothing re-uploads.
+  submit event of a binary job records `upload_bytes` (text jobs carry no such
+  key).
+- **Execution** (§6.4): before any reservation the executor runs one full
+  streaming pass over the staged object (ranged reads, per-chunk AEAD, running
+  sha256) and requires size and sha256 to equal `content_ref`
+  (`STORAGE_CONTENT_STAGING_MISMATCH`, no effect, no provider byte). The upload
+  then streams the decrypted chunks again straight into the request body
+  (`FixedLengthStream`, so Drive sees an exact `Content-Length`) while hashing;
+  the final window is withheld unless the running digest matches again, so
+  bytes that changed after the first pass never complete an upload body (the
+  request fails as an unknown outcome and Drive finalises nothing).
+  Independently, verification requires Drive's `sha256Checksum` to equal the
+  declared sha256. Up to 5 MiB it uploads one multipart request with the
+  declared MIME; above that it opens one resumable session and sends the whole
+  body in a single PUT (no 308 chunk loop, so the redirect guard stays on). The
+  session URI stays in memory. A lost reply is an unknown outcome: the journal
+  stays fenced and recovery only reads (by the generated ID); nothing
+  re-uploads.
 - **Verification**: `clued.storage-create-verified/3` — size and sha256 from
   `content_ref`, `mimeType` equal to the declared MIME, and Drive's
   `sha256Checksum` equal to the declared sha256 (absent keeps polling, then
@@ -756,34 +798,64 @@ runs only in account-policy mode (`CLUED_STORAGE_JOBS_V2=true`).
   from `mutation.content` (`storage_job_provider_attempt_v2`,
   `storage_verified_result_v2`) takes `content_ref` for a binary job (a test
   checks the function definitions).
-- **Lifecycle** (cron, `runStorageStagingScheduled`): an `issued` row unused for
-  10 minutes expires and releases its reservation (no byte arrived); a `ready`
-  row not submitted within 1 hour expires (reservation kept); a `receiving` /
-  `validating` row stalled for 30 minutes is rejected; a binary job not started
-  within 12 hours is cancelled (`denied`). The Worker deletes R2 objects the
-  database lists as deletable (rejected / expired rows that received bytes, and
-  consumed rows whose job started or was settled out) and records
-  `object_deleted_at`.
+- **Lifecycle** (cron, `runStorageStagingScheduled`): the sweep first cancels
+  binary jobs not started within 12 hours (`denied`; job and root advisory
+  locks, then the job row — the same order as submit / receive); only then
+  does it touch staging rows, and those updates use `FOR UPDATE SKIP LOCKED`,
+  so a row a concurrent receive / consume holds is left for the next minute
+  and no lock cycle can form. An `issued` row unused for 10 minutes expires and
+  releases its reservation (no byte arrived); a `ready` row not submitted
+  within 1 hour expires (reservation kept); a `receiving` / `validating` row
+  is rejected as stalled only after **2 hours** (well past the 10-minute URL
+  TTL plus a slow 20 MiB upload). A Worker whose `received` / `validated`
+  transition is refused (e.g. the row was swept meanwhile) deletes the object
+  it wrote. The Worker deletes R2 objects the database lists as deletable
+  (rejected / expired rows that received bytes, and consumed rows whose job
+  started or was settled out) and records `object_deleted_at`.
+- **Retention** (m1): the sweep deletes up to 200 staging rows per run that are
+  terminal (`rejected` / `expired`, or `consumed` with its job started or
+  settled out), have no R2 object left (`object_deleted_at` set, or no byte
+  ever arrived) and are older than **7 days**. The immutability trigger allows
+  exactly that delete and refuses every other. Staging rows reference
+  `auth.users` and `clued_agent_bindings` without cascade; because every row
+  becomes terminal within about 15 hours (10 min URL + 2 h stall + 1 h ready +
+  12 h job start) and is purged 7 days later, an account or Binding erasure is
+  delayed by at most that window, never blocked forever. Shortening it needs a
+  reviewed migration; an erasure must never delete rows whose object may still
+  exist.
 
 Rollout (in order; nothing here is enabled by the migration alone):
 
 1. Create the R2 bucket `clued-storage-staging` (private, no public access, no
    custom domain) with an object lifecycle rule that deletes objects older than
-   **3 days** (backstop only; the cron deletes by database state). The Worker
-   config already binds it as `CLUED_STORAGE_STAGING`
-   (`wrangler.production.jsonc`); deploying that config before the bucket
-   exists fails.
+   **3 days** (backstop only; the cron deletes by database state).
+   **This PR does not bind the bucket**: `wrangler.production.jsonc` has no
+   `r2_buckets` entry, because deploying a binding to a bucket that does not
+   exist fails the whole deploy. Without the binding the code fails closed
+   (`storage_upload_unavailable`; binary jobs refused before any effect). A
+   follow-up PR adds
+   `"r2_buckets": [{ "binding": "CLUED_STORAGE_STAGING", "bucket_name": "clued-storage-staging" }]`
+   only after the bucket exists. Binding preflight for that PR: confirm the
+   bucket is listed (`wrangler r2 bucket list`) in the production account,
+   has no public access / custom domain, and carries the 3-day lifecycle rule;
+   then deploy and check that `clued_storage_upload_begin` no longer returns
+   `storage_upload_unavailable` with the flag on for a test connection.
 2. Set two new Worker secrets:
    - `CLUED_STORAGE_STAGING_URL_KEY`: base64url of 32 random bytes (URL HMAC key).
    - `CLUED_STORAGE_STAGING_KEYS`: `{"current_key_id":"<id>","keys":{"<id>":"<base64url 32 bytes>"}}`
-     (at most 4 keys). Rotate by adding a key and switching `current_key_id`;
-     keep the old key until every row that names it is deleted (at most 12 h
-     for a queued job plus recovery).
+     (at most 4 keys). Rotate by adding a key and switching `current_key_id`.
+     Keep the old key for **at least 16 hours** after the switch (a row can
+     still need it for 10 min URL + 2 h stall + 1 h ready + 12 h until its job
+     starts), and remove it only when no row that names it still has an
+     object, i.e. `select count(*) from clued_private.storage_staging_v1 where
+     key_id = '<old id>' and object_deleted_at is null and bytes_received`
+     returns 0. Recovery never reads the object, so it does not extend this.
    Missing bucket or either secret fails closed (`storage_upload_unavailable`,
    and binary jobs are refused before any effect).
 3. Apply the production migration, then release the Worker.
-4. Set `CLUED_STORAGE_BINARY_V1=true` (with `CLUED_STORAGE_JOBS_V2=true`). The
-   Owner still needs create_file plus normal use (N1) on the connection.
+4. Set `CLUED_STORAGE_BINARY_V1=true` (with `CLUED_STORAGE_JOBS_V2=true`) only
+   after the binding PR from step 1 is deployed. The Owner still needs
+   create_file plus normal use (N1) on the connection.
 
 Rollback: unset `CLUED_STORAGE_BINARY_V1` (tools disappear, the PUT endpoint
 returns 404, binary submits are refused). With the flag off the executor has

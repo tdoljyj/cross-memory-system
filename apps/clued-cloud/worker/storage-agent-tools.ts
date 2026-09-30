@@ -9,7 +9,7 @@ const destination = { type: "string", minLength: 1, maxLength: 1000, description
 const source = { type: "string", minLength: 1, maxLength: 1000, description: "Exact current path of a file Clued registered (one it created) under the registered root." };
 const sourceVersion = { type: "string", pattern: "^[1-9][0-9]{0,39}$", description: "The file's Drive version as last observed with clued_storage_browse stat. If the file changed since, the job is refused; stat it again first. If it is refused again with the version stat returns, Clued's registered version is older than Drive's and only the Owner can re-register the file; do not retry." };
 const targetVersion = { type: "string", pattern: "^[1-9][0-9]{0,39}$", description: "The target file's Drive version as last observed with clued_storage_browse stat; a changed file is refused." };
-const binaryMime = { type: "string", minLength: 3, maxLength: 255, description: "MIME type bound to the destination extension (png, jpg/jpeg, gif, webp, pdf, zip, docx, xlsx, pptx, odt, ods, odp, doc, xls, ppt)." };
+const binaryMime = { type: "string", minLength: 3, maxLength: 255, description: "MIME type bound to the destination extension (png, jpg/jpeg, gif, webp, pdf, zip, docx, xlsx, pptx, odt, ods, odp; legacy doc/xls/ppt and macro-carrying packages are refused)." };
 const binarySha = { type: "string", pattern: "^[0-9a-f]{64}$", description: "sha256 of the exact file bytes; Clued checks it on staging and against Drive's checksum after the write." };
 const pathParent = (path: string) => path.slice(0, path.lastIndexOf("/"));
 const pathName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
@@ -63,7 +63,7 @@ const binaryVariants = [
       mime_type: binaryMime, content_sha256: binarySha,
       content_base64: { type: "string", maxLength: 1048576, description: "Standard base64 of the file bytes, for clients without a shell; the whole JSON request must fit in 1 MiB (about 700 KiB of file)." } } },
 ];
-const binaryNote = " A binary file (images, PDF, zip, Office/ODF, at most 20 MiB) needs the Owner's create_file level with normal use, and is sent either as staging_id from clued_storage_upload_begin or inline as content_base64 (whole request at most 1 MiB), with mime_type and content_sha256. Macro-enabled Office files, executables, scripts, HTML and SVG are refused in binary form. Files the Owner uploaded by hand cannot be renamed, moved or deleted.";
+const binaryNote = " A binary file (images, PDF, zip, OOXML/ODF Office files, at most 20 MiB) needs the Owner's create_file level with normal use, and is sent either as staging_id from clued_storage_upload_begin or inline as content_base64 (whole request at most 1 MiB), with mime_type and content_sha256. Legacy Office (doc, xls, ppt), macro-enabled Office files, packages declaring VBA, ActiveX or macro sheets, executables, scripts, HTML and SVG are refused in binary form. Files the Owner uploaded by hand cannot be renamed, moved or deleted.";
 
 export function storageAgentToolsFor(binary: boolean) {
   if (!binary) return storageAgentTools;

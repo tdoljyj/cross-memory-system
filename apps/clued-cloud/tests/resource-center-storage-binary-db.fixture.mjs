@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-postcondition.mjs";
-import { parseMultipart, pngBytes, pdfBytes } from "./resource-center-storage-binary.fixture.mjs";
+import { bodyBytes, bytesContentSource, parseMultipart, pngBytes, pdfBytes } from "./resource-center-storage-binary.fixture.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const CLOUD = "public.clued_storage_cloud_worker_router_v2";
@@ -151,7 +151,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       }
       if (method === "POST" && u.searchParams.get("uploadType") === "multipart") {
         state.writes++;
-        const part = parseMultipart(init.body, new Headers(init.headers).get("content-type"));
+        const part = parseMultipart(await bodyBytes(init.body), new Headers(init.headers).get("content-type"));
         const file = createFile(part.metadata, part.mediaType, part.bytes);
         if (state.loseUpload) throw new Error("synthetic lost provider response");
         return Response.json(file);
@@ -164,7 +164,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       if (method === "PUT") {
         state.writes++;
         assert.equal(u.searchParams.get("upload_id"), "FIXTURE");
-        const file = createFile(pendingSession.metadata, new Headers(init.headers).get("content-type"), Buffer.from(init.body));
+        const file = createFile(pendingSession.metadata, new Headers(init.headers).get("content-type"), await bodyBytes(init.body));
         if (state.loseUpload) throw new Error("synthetic lost provider response");
         return Response.json(file);
       }
@@ -190,7 +190,8 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       },
       load_staged_content: async ({ content_ref, staging: descriptor }) => {
         assert.equal(descriptor.key_id, "k1");
-        return staged(content_ref);
+        // The executor contract: a content source it verifies before any reservation.
+        return bytesContentSource(staged(content_ref), content_ref);
       },
       get_credential: async expected => ({ ...expected, access_token: "fixture-binary-exec-access", scope: SCOPES, expires_at_ms: Date.now() + 3600000 }),
       drive_fetch: storage.fetch,
@@ -225,7 +226,8 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       const issued = await staging(beginInput(target, bytes), client.token);
       assert.equal(issued.state, "issued"); assert.equal(issued.binding_id, client.id);
       for (const [name, mime] of [["photo.jpg", "image/png"], ["page.html", "text/html"], ["logo.svg", "image/svg+xml"],
-        ["m.docm", "application/vnd.ms-word.document.macroEnabled.12"], ["noext", "image/png"]]) {
+        ["m.docm", "application/vnd.ms-word.document.macroEnabled.12"], ["noext", "image/png"],
+        ["old.doc", "application/msword"], ["old.xls", "application/vnd.ms-excel"], ["old.ppt", "application/vnd.ms-powerpoint"]]) {
         await assert.rejects(staging(beginInput(target, bytes, name, mime), client.token), /content_type_mismatch/, name);
       }
       await assert.rejects(staging({ ...beginInput(target, bytes), size: 20 * MiB + 1 }, client.token), /storage_staging_input_invalid/);
@@ -297,6 +299,11 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       await assert.rejects(submitRaw(client, target, mutation), /staging_expired/, "single use");
       const event = (await admin.query("select change_summary from public.clued_context_events where canonical_event_type='extension:storage:job_submitted' and change_summary->>'job_id'=$1", [job])).rows[0];
       assert.equal(event.change_summary.upload_bytes, 3000, "upload bytes are accounted in the submit event");
+      // m2: a text create's submit event carries no upload_bytes key at all.
+      const textJob = randomUUID();
+      assert.equal((await submitRaw(client, target, { operation: "create", target_kind: "file", destination_path: pathFor(target, "t.txt"), content: "x" }, textJob)).status, "queued");
+      const textEvent = (await admin.query("select change_summary from public.clued_context_events where canonical_event_type='extension:storage:job_submitted' and change_summary->>'job_id'=$1", [textJob])).rows[0];
+      assert.equal(Object.hasOwn(textEvent.change_summary, "upload_bytes"), false);
       // The legacy v1 job path never accepts a staging reference.
       await assert.rejects(caller.query("select public.clued_storage_jobs_v1($1,$2::jsonb)", [client.token, JSON.stringify({ action: "submit",
         connection_id: target.connection, job_id: randomUUID(), mutation })]), /storage_job_input_invalid|denied|mode/);
@@ -431,13 +438,106 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       await assert.rejects(admin.query("update clued_private.storage_staging_v1 set state='ready' where id=$1", [issued.staging_id]), /storage_staging_immutable|check/);
       await assert.rejects(admin.query("delete from clued_private.storage_staging_v1 where id=$1", [issued.staging_id]), /storage_staging_immutable/);
       await staging(claimsOf(issued));
+      // m5: 31 minutes is a slow upload, not a stalled one; the window is 2 hours.
       await timeTravel("update clued_private.storage_staging_v1 set received_at=clock_timestamp()-interval '31 minutes' where id=$1", [issued.staging_id]);
+      await staging({ action: "sweep" });
+      assert.equal((await row(issued.staging_id)).state, "receiving");
+      await timeTravel("update clued_private.storage_staging_v1 set received_at=clock_timestamp()-interval '121 minutes' where id=$1", [issued.staging_id]);
       const swept = await staging({ action: "sweep" });
       assert.ok(swept.stalled >= 1);
       const stalled = await row(issued.staging_id);
       assert.equal(stalled.state, "rejected"); assert.equal(stalled.reject_reason, "stalled"); assert.equal(stalled.released_at, null);
       assert.ok(swept.delete.includes(issued.staging_id));
       await assert.rejects(staging({ action: "received", staging_id: issued.staging_id, outcome: "validating" }), /storage_staging_state_conflict/);
+    });
+
+    await t.test("inline begin is retry-safe: the job_id derives one row per Binding, replay never re-reserves", async () => {
+      const { target, client } = await setup();
+      const bytes = pngBytes(1500), job = randomUUID();
+      const inline = { ...beginInput(target, bytes, "i.png"), transport: "inline", job_id: job };
+      const first = await staging(inline, client.token);
+      assert.equal(first.state, "issued");
+      const again = await staging(inline, client.token);
+      assert.equal(again.staging_id, first.staging_id); assert.equal(again.state, "issued");
+      assert.equal((await admin.query("select count(*)::int n from clued_private.storage_staging_v1 where binding_id=$1", [client.id])).rows[0].n, 1);
+      assert.equal((await staging(claimsOf(first))).state, "receiving");
+      await staging({ action: "received", staging_id: first.staging_id, outcome: "validating" });
+      await staging({ action: "validated", staging_id: first.staging_id, outcome: "ready" });
+      assert.equal((await staging(inline, client.token)).state, "ready");
+      const mutation = binaryMutation(target, first.staging_id, bytes, "i.png");
+      assert.equal((await submitRaw(client, target, mutation, job)).status, "queued");
+      assert.equal((await staging(inline, client.token)).state, "consumed", "a retry after the submit sees the consumed row");
+      assert.equal((await submitRaw(client, target, mutation, job)).replayed, true, "and the submit replays the same job");
+      assert.equal((await admin.query("select count(*)::int n from clued_private.storage_staging_v1 where binding_id=$1", [client.id])).rows[0].n, 1, "no orphan rows");
+      // Other content under the same job_id is refused; another Binding gets its own row.
+      const other = pngBytes(1501);
+      await assert.rejects(staging({ ...inline, size: other.length, content_sha256: sha(other) }, client.token), /storage_job_input_invalid/);
+      const second = await bind(target);
+      assert.notEqual((await staging(inline, second.token)).staging_id, first.staging_id);
+      // Shape: inline requires job_id, URL begin refuses it.
+      await assert.rejects(staging({ ...beginInput(target, bytes), job_id: job }, client.token), /storage_staging_input_invalid/);
+      await assert.rejects(staging({ ...beginInput(target, bytes), transport: "inline" }, client.token), /storage_staging_input_invalid/);
+    });
+
+    await t.test("staging rows per rolling hour are capped per Binding, released rows included", async () => {
+      const { target, client } = await setup();
+      const input = beginInput(target, pngBytes(10), "c.png");
+      for (let i = 0; i < 60; i++) await staging(input, client.token);
+      await assert.rejects(staging(input, client.token), /storage_upload_budget_exhausted/);
+      await timeTravel("update clued_private.storage_staging_v1 set expires_at=clock_timestamp()-interval '1 second' where binding_id=$1", [client.id]);
+      await staging({ action: "sweep" });
+      assert.ok((await admin.query("select bool_and(released_at is not null) v from clued_private.storage_staging_v1 where binding_id=$1", [client.id])).rows[0].v);
+      await assert.rejects(staging(input, client.token), /storage_upload_budget_exhausted/, "released rows still count toward the row cap");
+      await timeTravel("update clued_private.storage_staging_v1 set created_at=created_at-interval '2 hours' where binding_id=$1", [client.id]);
+      assert.equal((await staging(input, client.token)).state, "issued");
+    });
+
+    await t.test("retention: terminal rows whose object is gone are purged after 7 days; nothing else can be deleted", async () => {
+      const { target, client } = await setup();
+      const bytes = pngBytes();
+      const unused = await staging(beginInput(target, bytes, "p1.png"), client.token);
+      const rejected = await staging(beginInput(target, bytes, "p2.png"), client.token);
+      await staging(claimsOf(rejected));
+      await staging({ action: "received", staging_id: rejected.staging_id, outcome: "rejected", reason: "digest_mismatch" });
+      await timeTravel("update clued_private.storage_staging_v1 set expires_at=clock_timestamp()-interval '1 second' where id=$1", [unused.staging_id]);
+      await staging({ action: "sweep" });
+      assert.equal((await row(unused.staging_id)).state, "expired");
+      await assert.rejects(admin.query("delete from clued_private.storage_staging_v1 where id=$1", [unused.staging_id]), /storage_staging_immutable/, "too young");
+      await timeTravel("update clued_private.storage_staging_v1 set created_at=created_at-interval '8 days' where id = any($1::uuid[])",
+        [[unused.staging_id, rejected.staging_id]]);
+      let swept = await staging({ action: "sweep" });
+      assert.equal(await row(unused.staging_id), undefined, "expired without bytes: purged");
+      assert.ok(await row(rejected.staging_id), "rejected with its object still in R2: kept");
+      assert.ok(swept.delete.includes(rejected.staging_id));
+      await assert.rejects(admin.query("delete from clued_private.storage_staging_v1 where id=$1", [rejected.staging_id]), /storage_staging_immutable/);
+      await staging({ action: "object_deleted", staging_ids: [rejected.staging_id] });
+      swept = await staging({ action: "sweep" });
+      assert.ok(swept.purged >= 1);
+      assert.equal(await row(rejected.staging_id), undefined);
+      // A live row is never purgeable, however old.
+      const live = await staging(beginInput(target, bytes, "p3.png"), client.token);
+      await staging(claimsOf(live));
+      await timeTravel("update clued_private.storage_staging_v1 set created_at=created_at-interval '8 days' where id=$1", [live.staging_id]);
+      await staging({ action: "sweep" });
+      assert.equal((await row(live.staging_id)).state, "receiving");
+      await assert.rejects(admin.query("delete from clued_private.storage_staging_v1 where id=$1", [live.staging_id]), /storage_staging_immutable/);
+    });
+
+    await t.test("the sweep skips staging rows a concurrent transaction holds instead of waiting on them", async () => {
+      const { target, client } = await setup();
+      const issued = await staging(beginInput(target, pngBytes(), "lock.png"), client.token);
+      await timeTravel("update clued_private.storage_staging_v1 set expires_at=clock_timestamp()-interval '1 second' where id=$1", [issued.staging_id]);
+      const holder = await connect(null);
+      await holder.query("begin");
+      try {
+        await holder.query("select 1 from clued_private.storage_staging_v1 where id=$1 for update", [issued.staging_id]);
+        await caller.query("set statement_timeout='3s'");
+        const swept = await staging({ action: "sweep" });
+        assert.equal(swept.status, "ok");
+        assert.equal((await row(issued.staging_id)).state, "issued", "locked row left for the next sweep");
+      } finally { await holder.query("rollback"); await caller.query("set statement_timeout='10s'"); }
+      await staging({ action: "sweep" });
+      assert.equal((await row(issued.staging_id)).state, "expired");
     });
 
     await t.test("no live size / sha256 derivation reads mutation.content without a content_ref guard", async () => {

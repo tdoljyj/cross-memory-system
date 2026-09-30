@@ -5,7 +5,7 @@ import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-met
 import { scopeProfile } from "./resource-center-google-scopes.mjs";
 import { createGoogleDriveProviderIdentityResolver } from "./resource-center-google-drive-identity.mjs";
 import { createGoogleDriveBoundaryScanner } from "./resource-center-google-drive-boundary.mjs";
-import { createGoogleDriveNativeCreateEffect, contentRefShape } from "./resource-center-google-drive-create-effect.mjs";
+import { createGoogleDriveNativeCreateEffect, contentRefShape, contentSourceShape } from "./resource-center-google-drive-create-effect.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "./resource-center-google-drive-postcondition.mjs";
 import { createGoogleDriveNativeModifyEffect, modifyShape } from "./resource-center-google-drive-modify-effect.mjs";
 import { createGoogleDriveModifyPostconditionVerifier } from "./resource-center-google-drive-modify-postcondition.mjs";
@@ -83,8 +83,9 @@ const logPostWriteFailure = (stage,error) => {
  * The caller never receives a credential, admission or durable execution grant.
  * metadata_batch, when supplied, returns {getFiles, listFolders} bound to one
  * validated access token; the boundary scan then reads a folder level per call.
- * load_staged_content, when supplied, returns the decrypted, integrity-checked bytes of a binary
- * create job's staged object (StorageNormalUse §6.2); without it binary jobs are refused.
+ * load_staged_content, when supplied, opens a binary create job's staged object (StorageNormalUse
+ * §6.2) as a bounded-memory source {size, sha256, verify(), stream()}; the executor runs verify()
+ * (full decrypt + sha256) before any reservation. Without it binary jobs are refused.
  * @param {{load_job: Function, rpc: Function, get_credential: Function, drive_fetch?: typeof fetch, clock?: () => number, verified_result_mode?: boolean, metadata_batch?: Function, load_staged_content?: Function}} config
  */
 export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_credential:getCredential,
@@ -244,8 +245,12 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         try{
           staged=await loadStagedContent(Object.freeze({owner_id:descriptor.owner_id,connection_id:descriptor.connection_id,
             staging:structuredClone(descriptor.staging),content_ref:structuredClone(mutation.content_ref)}));
-          if(!(staged instanceof Uint8Array) || staged.byteLength!==mutation.content_ref.size ||
-            createHash("sha256").update(staged).digest("hex")!==mutation.content_ref.sha256) throw new Error("mismatch");
+          // A bounded-memory source: one full streaming decrypt + sha256 pass here, before any
+          // reservation or provider byte; the effect streams it again and re-checks the digest.
+          if(!staged || typeof staged!=="object" || typeof staged.verify!=="function" || typeof staged.stream!=="function" ||
+            staged.size!==mutation.content_ref.size || staged.sha256!==mutation.content_ref.sha256) throw new Error("mismatch");
+          await staged.verify();
+          if(!contentSourceShape(staged,mutation.content_ref)) throw new Error("mismatch");
         }catch{
           logDiagnostic("deny","STORAGE_CONTENT_STAGING_MISMATCH");
           return {status:"deny",error_code:"STORAGE_CONTENT_STAGING_MISMATCH",side_effects:0,execution_permitted:false};
@@ -262,7 +267,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const effect=replace ? createGoogleDriveNativeReplaceEffect({...effectConfig,get_file:metadata.getFile,get_revision:metadata.getRevision,replacement,
           release_revision_ids:descriptor.revision_releases})
         : modify ? createGoogleDriveNativeModifyEffect({...effectConfig,get_file:metadata.getFile})
-        : createGoogleDriveNativeCreateEffect(binary ? {...effectConfig,content_bytes:staged} : effectConfig);
+        : createGoogleDriveNativeCreateEffect(binary ? {...effectConfig,content_source:staged} : effectConfig);
       const verifierConfig={managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         include_verified_proof:verifiedResultMode,clock};

@@ -20,8 +20,8 @@ export async function createStorageCloudWorker(config: {
   rpc: (input: Data) => Promise<Data>; fetch?: typeof fetch; clock?: () => number;
   recovery_refresh?: (reference: Reference) => Promise<{status:string}>;
   account_policy_v2?: boolean;
-  // Binary create (StorageNormalUse N3): decrypts and checks the staged object. Absent = binary jobs refused.
-  load_staged_content?: (input: Data) => Promise<Uint8Array>;
+  // Binary create (StorageNormalUse N3), absent = binary jobs refused. Opens a binary job's staged object as a bounded-memory source (verify + stream), never the whole bytes.
+  load_staged_content?: (input: Data) => Promise<{ size: number; sha256: string; readonly verified: boolean; verify(): Promise<void>; stream(): ReadableStream<Uint8Array> }>;
 }) {
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id)) throw denied();
   const vault = await createStorageCredentialVault(config.vault);
