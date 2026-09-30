@@ -248,6 +248,7 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
         constraints: "active_decision_type_fields_constraint_true",
         conflict_signal: "newer_active_decisions_require_reconciliation",
         resume_response_views: ["structured", "work_log"],
+        resume_constraint_views: { values: ["index", "full"], default: "index", full_text_by_id_max: 50 },
         resume_event_budget_bytes: { default: 65536, maximum: 262144 },
         search_budget_bytes: { default: 65536, maximum: 262144 },
         checkpoint_thresholds: { pending_events: 20, pending_bytes: 32768 },
@@ -1125,7 +1126,7 @@ const tools = [
   {
     name: "clued_session_resume",
     description:
-      "Call at the start of every authorized session. Restores the latest canonical Clued checkpoint plus subsequent events, provenance, version and the next expected action.",
+      "Call at the start of every authorized session. Restores the latest canonical Clued checkpoint plus subsequent events, provenance, version and the next expected action. Resident constraints come as an index by default (id, title, scope, version, updated_at and a one-line summary; summary_is_full_text marks a summary that is the whole text). Before acting in an area a constraint covers, read its full text by resuming with constraint_ids.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1146,6 +1147,19 @@ const tools = [
         event_cursor: { type: "integer", minimum: 0, default: 0 },
         event_limit: { type: "integer", minimum: 1, maximum: 100, default: 25 },
         event_budget_bytes: { type: "integer", minimum: 4096, maximum: 262144, default: 65536 },
+        constraint_view: {
+          type: "string",
+          enum: ["index", "full"],
+          default: "index",
+          description: "index returns each resident constraint as an index entry; full returns every constraint's full text.",
+        },
+        constraint_ids: {
+          type: "array",
+          items: { type: "string", format: "uuid" },
+          maxItems: 50,
+          uniqueItems: true,
+          description: "Resident constraints to return in full inside an index response. Ids that are not resident constraints you may read are ignored.",
+        },
       },
       additionalProperties: false,
     },
