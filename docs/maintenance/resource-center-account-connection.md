@@ -532,3 +532,47 @@ enabling modify grants nothing executable.
 Rollout: production migration, then release. No new secret or switch; the
 page shows the toggle only when the write-access status loads, and read
 settings stay usable if it does not.
+
+## Rename and file move (StorageFullCapability.v0.1 P3, part B)
+
+Migration `20260930100000_storage_modify_execution_v1.sql` and the executor
+changes run rename and file move on the existing account-policy job chain.
+There is no new permission path: submit evaluates the `modify` level (part A),
+then the same begin, provider attempt, verified record and verified settle
+steps run with operation-specific checks.
+
+- `clued_storage_submit` accepts
+  `{operation: "rename" | "move", target_kind: "file", source_path,
+  destination_path, source_file_version}`. A rename keeps the parent folder
+  and changes the name; a move keeps the name and changes the folder.
+  Directories are not moved (P6).
+- `source_file_version` is the Drive version the Agent last saw with
+  `clued_storage_browse` stat. A file that changed since is refused before any
+  reservation (`SOURCE_VERSION_MISMATCH` in the executor log; the job is
+  reported `denied`). The Artifact authority also requires the registered
+  source at that exact version, so only files Clued registered can be changed.
+- An existing destination name, a destination outside the root or in a status
+  directory, and a missing modify level are refused with zero provider updates.
+- The executor records `clued.storage-modify-attempt/1` (file ID, both paths,
+  both parents) before the single `files.update` call, and re-reads the source
+  before and after that durable flush. Drive has no conditional update; the
+  verifier re-reads afterwards.
+- The verifier proves `clued.storage-rename-verified/1` or
+  `clued.storage-move-verified/1`:
+  - the file is the only entry of its new name, with exactly the destination
+    parent;
+  - the registered ancestor chain is unchanged;
+  - the old name no longer names it;
+  - two reads agree on its version.
+  A version that jumps by more than one is recorded, not treated as failure.
+- Settlement updates the same Artifact by CAS on the version the authority saw
+  (`artifact_update`); it never registers a second Artifact. The plain journal
+  `finalize` stays create-only.
+- An uncertain outcome (for example a lost update reply) leaves the intent
+  fenced. Scheduled and native recovery still handle only create, so an
+  uncertain rename or move needs inspection before the root accepts new work.
+
+Rollout: production migration, then release. Execution still needs the write
+switches (`execution_enabled` plus the executor window) and the Owner's modify
+level.
+
