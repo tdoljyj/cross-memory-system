@@ -69,6 +69,7 @@ async function fixture(options={}) {
       return {files:files.filter(f=>f.parents?.includes(parent)),incompleteSearch:options.incomplete??(options.boundaryIncomplete && calls.length>=5)??false};
     }
     const result=structuredClone(files.find(f=>f.id===u.pathname.split("/").at(-1)));
+    if(u.searchParams.get("fields")==="id,shared,permissionIds")return {id:result.id,shared:false,permissionIds:["owner-"+result.id]};
     if(result.id===options.unauthorized)result.isAppAuthorized=false;
     if(options.boundaryDrift && calls.length>=9 && result.id==='root')result.version='2';
     return result;
@@ -100,7 +101,9 @@ test("server directory observation uses pinned secret, fixed GET-only batches an
   assert.equal(boundary.contract,'clued.storage-boundary-observation/1');assert.equal(boundary.status,'clean');
   assert.match(boundary.descriptor_sha256,/^[a-f0-9]{64}$/);assert.match(boundary.scan_config_sha256,/^[a-f0-9]{64}$/);
   assert.equal(f.rpcs[1].observation.boundary_observation,undefined);
-  assert.equal(f.rpcs.length,2); assert.equal(f.calls.length,9);
+  // One more batch reads each registered directory's sharing state.
+  assert.equal(f.rpcs.length,2); assert.equal(f.calls.length,10);
+  for(const directory of f.rpcs[1].observation.directories)assert.match(directory.provider_sharing_digest,/^[0-9a-f]{64}$/);
   assert.equal(JSON.stringify(f.rpcs[1]).includes("synthetic-private"),false);
   assert.equal(JSON.stringify(result).includes("credential"),false);
 });
@@ -137,7 +140,7 @@ test("subject, topic application grant, incomplete namespace and redirect failur
 test("post-read CAS rejection has no refresh, activation, retry or success response",async()=>{
   const f=await fixture({commitError:true});await assert.rejects(f.probe.run({connection_id:f.connection}),/^Error: storage_directory_probe_unavailable$/);
   assert.deepEqual(f.rpcs.map(r=>r.action),["prepare","complete"]);
-  assert.deepEqual(f.calls.map(c=>c.method),["GET",...Array(8).fill("POST")]);
+  assert.deepEqual(f.calls.map(c=>c.method),["GET",...Array(9).fill("POST")]);
 });
 test("time spent checking identity is part of the shared observation deadline",async()=>{
   let now=Date.now(); const f=await fixture({clock:()=>now,delay:()=>{now+=60001;}});
@@ -217,8 +220,8 @@ test("actual per-request timeout is classified using the private abort signal an
 test("31 registered directories preserve directory batches plus a complete independent parent boundary scan",async()=>{
   const complete=await fixture({fullSize:true});
   assert.equal((await complete.probe.run({connection_id:complete.connection})).status,"metadata_observed");
-  assert.equal(complete.calls.length,9);assert.equal(complete.rpcs.length,2);
-  assert.deepEqual(complete.calls.map(c=>c.innerGets??1),[1,32,32,32,1,1,1,1,1]);
+  assert.equal(complete.calls.length,10);assert.equal(complete.rpcs.length,2);
+  assert.deepEqual(complete.calls.map(c=>c.innerGets??1),[1,32,32,32,31,1,1,1,1,1]);
   for(const limitMessage of ["Too many subrequests.",
     "Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits"]) {
     const limited=await fixture({fullSize:true,fetchLimit:2,limitMessage});let error;

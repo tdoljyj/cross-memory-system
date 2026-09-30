@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
+import { googleDriveSharingDigest } from "./resource-center-google-drive-sharing.mjs";
 
 const FOLDER = "application/vnd.google-apps.folder";
 const SHORTCUT = "application/vnd.google-apps.shortcut";
@@ -28,10 +29,12 @@ function identity(file, allowParentlessBoundary = false) {
  * grant, admission or receipt. Its editable output alone cannot enable a writer.
  * Exact-ID authorization is checked independently for every registered directory;
  * root permission is never treated as inherited drive.file application access.
- * @param {{trusted_layout?: unknown, get_file?: Function, list_folder?: Function, get_files?: Function, list_folders?: Function, clock?: Function, timeout_ms?: number}} config
+ * get_sharings, when given, adds each directory's provider_sharing_digest (null
+ * when Drive omits the sharing fields) so the Owner can record it in the registry.
+ * @param {{trusted_layout?: unknown, get_file?: Function, list_folder?: Function, get_files?: Function, list_folders?: Function, get_sharings?: Function, clock?: Function, timeout_ms?: number}} config
  */
 export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: getFile,
-  list_folder: listFolder, get_files: getFiles, list_folders: listFolders,
+  list_folder: listFolder, get_files: getFiles, list_folders: listFolders, get_sharings: getSharings,
   clock = Date.now, timeout_ms: timeoutMs = 60000} = {}) {
   const batched = getFiles !== undefined || listFolders !== undefined;
   const layout = structuredClone(raw), directories = layout?.directories;
@@ -46,7 +49,8 @@ export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: 
         name.trim() !== name || /[/\\]/.test(name) || [".","..","00_从这里开始"].includes(name)) ||
       !Array.isArray(directories) || !directories.length || directories.length > 1024 ||
       (batched ? typeof getFiles !== "function" || typeof listFolders !== "function"
-        : typeof getFile !== "function" || typeof listFolder !== "function") || typeof clock !== "function" ||
+        : typeof getFile !== "function" || typeof listFolder !== "function") ||
+      (getSharings !== undefined && typeof getSharings !== "function") || typeof clock !== "function" ||
       !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000) deny("LAYOUT_INVALID");
   const byPath = new Map(), ids = new Set([layout.root_parent_id]);
   for (const entry of directories) {
@@ -130,6 +134,14 @@ export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: 
     // Detect observed metadata drift, not an atomic provider namespace snapshot.
     const final = batched ? await phase(getFiles) : null;
     for (const [fileId,file] of before) if (!isDeepStrictEqual(final ? final.get(fileId) : await read(getFile, fileId),file)) deny("DIRECTORY_CHANGED");
+    if (getSharings) {
+      const sharing = await read(getSharings, observed.map(entry => entry.provider_file_id));
+      if (!Array.isArray(sharing) || sharing.length !== observed.length) deny("ENUMERATION_INVALID");
+      observed.forEach((entry, i) => {
+        if (sharing[i]?.id !== entry.provider_file_id) deny("DIRECTORY_CHANGED");
+        entry.provider_sharing_digest = googleDriveSharingDigest(sharing[i]);
+      });
+    }
     const finished = checkTime();
     return {contract:"clued.storage-directory-observation/1",status:"metadata_observed",
       execution_permitted:false,observed_at_ms:finished,directories:observed};

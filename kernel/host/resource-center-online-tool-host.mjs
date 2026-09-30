@@ -247,6 +247,7 @@ export function createResourceCenterGoogleDriveOnlineToolHost({
       root_parent_id: rootParentId,
       get_file: metadata.getFile,
       list_children: metadata.listChildren,
+      get_sharing: metadata.getSharing,
     }),
   });
 }
@@ -270,7 +271,7 @@ export function createResourceCenterGoogleDriveNativeWriterToolHost({
   const metadata = createGoogleDriveMetadataApi({ get_credential: getDriveCredential, fetch: driveFetch });
   const pinned = { managed_root: trustedProfile?.managed_root, root_folder_id: rootFolderId,
     root_parent_id: rootParentId, get_file: metadata.getFile, list_children: metadata.listChildren };
-  const resolve = createGoogleDriveProviderIdentityResolver(pinned);
+  const resolve = createGoogleDriveProviderIdentityResolver({ ...pinned, get_sharing: metadata.getSharing });
   const startedProviders = new Map();
   let preparedProvider;
   const writer = createResourceCenterWriteClient({ endpoint: writerEndpoint, binding_token: writerBindingToken,

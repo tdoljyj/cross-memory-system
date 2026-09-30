@@ -87,10 +87,12 @@ if(process.env.CLUED_QUALIFICATION_RUNTIME_CHILD!=='1') {
     const response=await runtime.dispatchFetch('http://localhost/');assert.equal(response.status,200);
     const result=await response.json();assert.equal(result.result.status,'metadata_observed');
     assert.equal(result.result.execution_permitted,false);assert.equal(result.result.directories.length,2);
-    assert.ok(result.calls>0);assert.equal(result.writes,0);assert.equal(outbound,9);
+    assert.ok(result.calls>0);assert.equal(result.writes,0);
+    // Includes one batch reading the registered directories' sharing state.
+    assert.equal(outbound,10);
     assert.equal(result.aborted,true);assert.equal(result.timeout,true);
     assert.equal(result.serverResult.status,'metadata_observed');assert.equal(result.serverResult.execution_permitted,false);
-    assert.equal(result.serverCommits,1);assert.equal(result.serverGets,1);assert.equal(result.serverBatches,8);
+    assert.equal(result.serverCommits,1);assert.equal(result.serverGets,1);assert.equal(result.serverBatches,9);
     assert.equal(result.serverResult.boundary_observation.status,'clean');
     assert.equal(JSON.stringify(result).includes('synthetic-access-token'),false);
   } finally {await runtime.dispose();}

@@ -25,6 +25,9 @@ function endpointUrl(value) {
  * captured in this closure; neither is accepted from a mutation tool call.
  * A service response is usable only for the exact request just sent.
  */
+// A directory sharing digest is optional (null or absent) or a SHA-256 hex digest.
+const sharingDigest = (value) => value == null || (typeof value === "string" && /^[0-9a-f]{64}$/.test(value));
+
 export function createResourceCenterAuthorityClient({
   endpoint,
   binding_token: bindingToken,
@@ -68,7 +71,10 @@ export function createResourceCenterAuthorityClient({
       typeof providerIdentity.root_folder_version !== "string" || !/^\d+$/.test(providerIdentity.root_folder_version) ||
       typeof providerIdentity.root_parent_id !== "string" || !providerIdentity.root_parent_id ||
       typeof providerIdentity.provider_version !== "string" || !/^[0-9a-f]{64}$/.test(providerIdentity.provider_version) ||
-      typeof providerIdentity.root_folder_id !== "string" || !providerIdentity.root_folder_id) {
+      typeof providerIdentity.root_folder_id !== "string" || !providerIdentity.root_folder_id ||
+      !sharingDigest(providerIdentity.root_sharing_digest) ||
+      !sharingDigest(providerIdentity.destination_parent_sharing_digest) ||
+      (providerIdentity.destination_parent_id === null && providerIdentity.destination_parent_sharing_digest != null)) {
       throw new Error("PROVIDER_IDENTITY_UNAVAILABLE");
     }
     const request = Object.freeze({
@@ -88,6 +94,8 @@ export function createResourceCenterAuthorityClient({
         destination_file_id: providerIdentity.destination_file_id,
         destination_file_version: providerIdentity.destination_file_version,
         provider_version: providerIdentity.provider_version,
+        root_sharing_digest: providerIdentity.root_sharing_digest ?? null,
+        destination_parent_sharing_digest: providerIdentity.destination_parent_sharing_digest ?? null,
       }),
       mutation: bindResourceCenterMutation(mutation),
     });

@@ -46,7 +46,8 @@ test("dedicated resolver binds the exact request and keeps its token out of tool
   assert.equal(calls[0].options.body.includes(TOKEN), false);
   assert.equal(JSON.parse(calls[0].options.body).request.mutation.destination_path.toLowerCase(),
     mutation.destination_path.toLowerCase());
-  assert.deepEqual(JSON.parse(calls[0].options.body).request.provider_identity, providerIdentity);
+  assert.deepEqual(JSON.parse(calls[0].options.body).request.provider_identity,
+    { ...providerIdentity, root_sharing_digest: null, destination_parent_sharing_digest: null });
   await resolve({ profile, mutation });
   assert.notEqual(JSON.parse(calls[0].options.body).request.nonce,
     JSON.parse(calls[1].options.body).request.nonce);

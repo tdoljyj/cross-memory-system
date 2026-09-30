@@ -96,6 +96,21 @@ export function createGoogleDriveMetadataApi({
     return result;
   }
 
+  // Sharing state is read separately so every other metadata object keeps its
+  // existing shape; see resource-center-google-drive-sharing.mjs.
+  async function getSharing(id, {signal} = {}) {
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]+$/.test(id)) {
+      throw new TypeError("Invalid Drive file ID.");
+    }
+    const url = new URL(`${DRIVE_API}/${encodeURIComponent(id)}`);
+    url.searchParams.set("fields", "id,shared,permissionIds");
+    url.searchParams.set("supportsAllDrives", "true");
+    signal?.throwIfAborted();
+    const result = await read(url.href, await credential(false), signal);
+    if (!result || result.id !== id) throw new Error("DRIVE_METADATA_MISMATCH");
+    return { id: result.id, shared: result.shared, permissionIds: result.permissionIds };
+  }
+
   async function list({ parent_id: parentId, name }, enumerate, signal) {
     const q = `${driveLiteral(parentId)} in parents${enumerate ? "" : ` and name = ${driveLiteral(name)}`} and trashed = false`;
     // drive.file silently omits files created by other applications, even
@@ -131,6 +146,6 @@ export function createGoogleDriveMetadataApi({
     throw new Error("DRIVE_PAGINATION_LIMIT");
   }
 
-  return Object.freeze({ getFile, listChildren: (input, {signal} = {}) => list(input, false, signal),
+  return Object.freeze({ getFile, getSharing, listChildren: (input, {signal} = {}) => list(input, false, signal),
     listFolder: (parentId, {signal} = {}) => list({ parent_id: parentId }, true, signal) });
 }

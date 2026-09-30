@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
+import { googleDriveSharingDigest } from "./resource-center-google-drive-sharing.mjs";
 
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 
@@ -45,11 +46,13 @@ export function createGoogleDriveProviderIdentityResolver({
   root_parent_id: rootParentId,
   get_file: getFile,
   list_children: listChildren,
+  get_sharing: getSharing,
 } = {}) {
   const root = pathOf(managedRoot);
   if (!root || typeof rootFolderId !== "string" || !rootFolderId ||
     typeof rootParentId !== "string" || !rootParentId ||
-    typeof getFile !== "function" || typeof listChildren !== "function") {
+    typeof getFile !== "function" || typeof listChildren !== "function" ||
+    (getSharing !== undefined && typeof getSharing !== "function")) {
     throw new TypeError("A pinned Drive root and Host-owned metadata API are required.");
   }
   const rootName = root.slice(root.lastIndexOf("/") + 1);
@@ -100,6 +103,17 @@ export function createGoogleDriveProviderIdentityResolver({
       if (!mustExist && destinationFile) fail("PROVIDER_DESTINATION_EXISTS");
     }
 
+    // Registered directories are matched by sharing state instead of their
+    // Drive version when the registry holds a digest (see authority_v1).
+    // Without get_sharing, or when Drive omits the fields, the digest is null.
+    const sharing = async (file) => {
+      if (!getSharing || !file) return null;
+      const result = await getSharing(file.id);
+      return result?.id === file.id ? googleDriveSharingDigest(result) : null;
+    };
+    const rootSharingDigest = await sharing(rootFile);
+    const destinationParentSharingDigest = await sharing(destinationParent);
+
     return Object.freeze({
       root_folder_id: rootFolderId,
       root_parent_id: rootParentId,
@@ -111,6 +125,8 @@ export function createGoogleDriveProviderIdentityResolver({
       destination_file_id: destinationFile?.id ?? null,
       destination_file_version: destinationFile?.version ?? null,
       provider_version: createHash("sha256").update(JSON.stringify(versions)).digest("hex"),
+      root_sharing_digest: rootSharingDigest,
+      destination_parent_sharing_digest: destinationParentSharingDigest,
     });
   };
 }

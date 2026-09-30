@@ -192,7 +192,16 @@ returns a fixed `reason` label (for example `root_version_mismatch`,
 `decision_not_current`) and the cloud executor adds it to its
 `storage_cloud_authority_failed` log line. The label names the failed check and
 never carries a path, version or provider ID; a version mismatch means the
-registry needs the directory check and a CAS `artifact_update`. Failed preflight records a
+registry needs the directory check and a CAS `artifact_update`.
+A registered directory may also hold `provider_sharing_digest` (SHA-256 of its
+Drive `shared` flag and sorted `permissionIds`). For the managed root and the
+destination parent, a recorded digest replaces the Drive version comparison:
+ordinary Drive activity no longer blocks writes, while a sharing or permission
+change is denied (`root_sharing_changed`, `parent_sharing_changed`; `*_sharing_unavailable`
+when Drive returned no sharing fields). Without a digest the exact version is
+still required. Files keep the exact version. The directory check returns each
+directory's digest; recording it is an Owner-approved `artifact_update` with
+`provider_sharing_digest`. Failed preflight records a
 terminal denied/attention outcome instead of leaving an apparently queued job.
 An existing original mutation always takes precedence, including a lost reply.
 

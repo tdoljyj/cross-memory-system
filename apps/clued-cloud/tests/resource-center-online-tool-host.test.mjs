@@ -414,7 +414,8 @@ test("pinned Drive metadata and Clued service compose without exposing authority
   assert.equal(result.status, "committed");
   assert.equal(result.canonical_receipt_id, "00000000-0000-4000-8000-000000000001");
   assert.equal(authorityReads, 3);
-  assert.equal(driveReads, 6);
+  // Each identity resolution also reads root and parent sharing state.
+  assert.equal(driveReads, 12);
   assert.equal((await fs.stat(destination)).isDirectory(), true);
 });
 

@@ -62,6 +62,14 @@ export async function testDirectoryProbe(t, admin, server, user, decision) {
       assert.equal(receipt.status,"committed"); assert.equal(JSON.stringify(receipt).includes(envelope.ciphertext),false);
       await assert.rejects(finish(p,{...o,observed_at_ms:o.observed_at_ms+1}),/probe_conflict/);
     });
+    await t.test("directory observation may carry each directory's sharing digest",async()=>{
+      const p=await prepare(), o=observation(p);
+      const withDigest={...o,directories:o.directories.map((e,i)=>({...e,provider_sharing_digest:i?null:"a".repeat(64)}))};
+      assert.equal((await finish(p,withDigest)).status,"metadata_observed");
+      const q=await prepare(), base=observation(q);
+      for(const digest of ["not-hex",{},"A".repeat(64)])
+        await assert.rejects(finish(q,{...base,directories:base.directories.map((e,i)=>i?e:{...e,provider_sharing_digest:digest})}),/probe_invalid/);
+    });
     await t.test("browser-editable or incomplete observations cannot become evidence",async()=>{
       const p=await prepare(), o=observation(p);
       for(const bad of [{...o,execution_permitted:true},{...o,credential_envelope:envelope},
