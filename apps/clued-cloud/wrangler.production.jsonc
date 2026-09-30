@@ -27,6 +27,9 @@
       "environment": "production"
     }
   ],
+  "r2_buckets": [
+    { "binding": "CLUED_STORAGE_STAGING", "bucket_name": "clued-storage-staging" }
+  ],
   "queues": {
     "producers": [
       { "binding": "CLUED_STORAGE_JOB_QUEUE", "queue": "clued-storage-jobs" }

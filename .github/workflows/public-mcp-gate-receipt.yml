@@ -6,8 +6,10 @@ name: public-mcp-gate-receipt
 # 2026-09-29). Each run reads the candidate's check runs once and reports the
 # verdict as the `public-mcp-gate-receipt` commit status on the candidate. It is
 # a no-op for candidates public-mcp-behavior does not run for, which keeps the
-# gate on the same paths as before. The job runs the default branch's gate code
-# and never checks out the pull request.
+# gate on the same paths as before. A terminal verdict is also written as the
+# completed check run `public-mcp-gate-receipt-verdict`, because commit statuses
+# raise no check-suite events for pull request watchers. The job runs the default
+# branch's gate code and never checks out the pull request.
 on:
   workflow_run:
     workflows: [public-mcp-protocol, public-mcp-behavior, gitleaks, trivy]
@@ -15,7 +17,7 @@ on:
 
 permissions:
   actions: read
-  checks: read
+  checks: write
   contents: read
   statuses: write
 
