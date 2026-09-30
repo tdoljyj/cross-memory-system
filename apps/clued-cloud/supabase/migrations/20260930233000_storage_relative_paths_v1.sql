@@ -61,7 +61,7 @@ revoke all on function clued_private.storage_path_canonical_v1(text,text) from p
 -- Root lookup only (the connection's registered profile, for this Binding's
 -- owner). Authorization stays with storage_policy_evaluate_v2. The root is
 -- resolved only for a live storage client Binding (not revoked, with an
--- unrevoked v12 authorization linked to a storage client request), so a
+-- unrevoked, unexpired v12 authorization linked to a storage client request), so a
 -- revoked or non-storage token cannot use the distinct path refusals to
 -- confirm a guessed managed_root; for any other caller the path is left as
 -- given and the unchanged policy evaluator denies it as before.
@@ -71,6 +71,7 @@ declare root text;
 begin
   select p.managed_root into root from public.clued_agent_bindings b
     join clued_private.authorizations_v12 a on a.binding_id=b.id and a.owner_id=b.user_id and a.revoked_at is null
+      and a.expires_at>now()
     join clued_private.storage_client_request_links_v2 l on l.request_id=a.request_id
     join clued_private.storage_connections_v1 c on c.owner_id=b.user_id and c.id=p_connection
     join clued_private.resource_center_profiles_v1 p on p.id=c.profile_id and p.user_id=b.user_id
