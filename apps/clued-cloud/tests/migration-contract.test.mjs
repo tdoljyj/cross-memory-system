@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("continuity migration preserves ownership, revocation, conflict and audit invariants", async () => {
@@ -158,4 +158,15 @@ test("Data API wrappers translate optimistic conflicts to HTTP 409-compatible SQ
   assert.equal((sql.match(/errcode='23505'/g) ?? []).length, 4);
   assert.match(sql, /revoke all on function public\.clued_user_record_write\(jsonb\) from public,anon/);
   assert.match(sql, /revoke all on function public\.clued_user_project_update\(jsonb\) from public,anon/);
+});
+
+test("every migration has a unique version prefix", async () => {
+  // supabase db reset keys schema_migrations on the version, so two files with
+  // the same prefix stop the migration replay in CI.
+  const versions = (await readdir(new URL("../supabase/migrations/", import.meta.url)))
+    .filter((name) => name.endsWith(".sql"))
+    .map((name) => /^(\d+)_/.exec(name)?.[1]);
+  assert.ok(versions.every(Boolean));
+  const duplicates = versions.filter((version, index) => versions.indexOf(version) !== index);
+  assert.deepEqual(duplicates, []);
 });
