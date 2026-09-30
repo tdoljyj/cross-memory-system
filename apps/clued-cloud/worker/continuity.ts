@@ -1634,6 +1634,14 @@ const rpcByTool = {
 } as const;
 
 
+const RECORD_TYPE_REQUIRED_FIELDS: Readonly<Record<string, { field: string; error: string }>> = {
+  decision: { field: "rationale", error: "decision_rationale_required" },
+  state: { field: "state_kind", error: "state_state_kind_required" },
+  task: { field: "execution_bucket", error: "task_execution_bucket_required" },
+  profile_fact: { field: "fact_kind", error: "profile_fact_fact_kind_required" },
+  note: { field: "note_kind", error: "note_note_kind_required" },
+};
+
 function validateRecordMutationInput(args: unknown) {
   if (!args || Array.isArray(args) || typeof args !== "object") {
     throw new HttpError(422, "Record mutation must be a JSON object.", {
@@ -1666,14 +1674,7 @@ function validateRecordMutationInput(args: unknown) {
   const fields = typeFields && !Array.isArray(typeFields) && typeof typeFields === "object"
     ? typeFields as Record<string, unknown>
     : null;
-  const requiredTypeField: Record<string, { field: string; error: string }> = {
-    decision: { field: "rationale", error: "decision_rationale_required" },
-    state: { field: "state_kind", error: "state_state_kind_required" },
-    task: { field: "execution_bucket", error: "task_execution_bucket_required" },
-    profile_fact: { field: "fact_kind", error: "profile_fact_fact_kind_required" },
-    note: { field: "note_kind", error: "note_note_kind_required" },
-  };
-  const required = requiredTypeField[typeof input.record_type === "string" ? input.record_type : ""];
+  const required = RECORD_TYPE_REQUIRED_FIELDS[typeof input.record_type === "string" ? input.record_type : ""];
   if (required && fields && !(required.field in fields)) {
     invalid.push({ field: `mutation.type_fields.${required.field}`, error: required.error });
   }
@@ -1687,7 +1688,7 @@ function validateRecordMutationInput(args: unknown) {
       invalid_fields: invalid,
       create_contract: {
         required_envelope_fields: ["mutation", "source_refs", "source_unavailable_reason"],
-        type_specific_fields: requiredTypeField,
+        type_specific_fields: RECORD_TYPE_REQUIRED_FIELDS,
       },
     });
   }
@@ -1852,6 +1853,44 @@ const REQUEST_RULE_REJECTIONS: Readonly<Record<string, string | null>> = {
   terminal_restore_requires_explicit_authorization: null,
 };
 
+// BUG-20261001-001: Hosts discard JSON-RPC data on non-200 responses. Project
+// only server-defined paths/codes; never forward a body, value or raw details.
+function recordValidationRejection(error: unknown) {
+  if (!(error instanceof HttpError) || error.status !== 422) return null;
+  const details = error.details as Record<string, unknown> | null | undefined;
+  if (details?.error_code !== "INVALID_RECORD_FIELDS") return null;
+  const missingFields = new Set(["operation", "record_type", "mutation", "source_refs", "source_unavailable_reason"]);
+  const invalidFields = new Map([
+    ["source_refs", "must_be_array"],
+    ["mutation", "must_be_object"],
+    ["mutation.type_fields", "must_be_object"],
+    ["user_confirmed", "authority_escalation_forbidden"],
+    ...Object.values(RECORD_TYPE_REQUIRED_FIELDS).map(({ field, error }) =>
+      [`mutation.type_fields.${field}`, error] as [string, string]),
+  ]);
+  const invalid = Array.isArray(details.invalid_fields) ? details.invalid_fields.flatMap(item => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const { field, error } = item as Record<string, unknown>;
+    return typeof field === "string" && typeof error === "string" && invalidFields.get(field) === error
+      ? [{ field, error }] : [];
+  }) : [];
+  return {
+    status: "rejected",
+    error: {
+      code: "INVALID_RECORD_FIELDS",
+      category: "request_validation",
+      message: "Record mutation has invalid fields; fix the listed fields and retry once.",
+      missing_fields: Array.isArray(details.missing_fields)
+        ? details.missing_fields.filter((field): field is string => typeof field === "string" && missingFields.has(field)) : [],
+      invalid_fields: invalid,
+      ...(details.create_contract ? { create_contract: { type_specific_fields: RECORD_TYPE_REQUIRED_FIELDS } } : {}),
+      ...(invalid.some(item => item.error === "authority_escalation_forbidden") ? {
+        hint: "authority=user_explicit requires user_confirmed=true (only when the user explicitly confirmed this exact record); otherwise use observed/inferred.",
+      } : {}),
+    },
+  };
+}
+
 function requestRuleRejection(error: unknown) {
   if (!(error instanceof HttpError) || error.status !== 403) return null;
   const details = error.details as Record<string, unknown> | null | undefined;
@@ -1979,7 +2018,7 @@ async function callTool(
   try {
     rawResult = await callRpc(request, env, name as keyof typeof rpcByTool, args);
   } catch (error) {
-    const rejection = requestRuleRejection(error);
+    const rejection = (name === "clued_record_mutate" ? recordValidationRejection(error) : null) ?? requestRuleRejection(error);
     if (!rejection) throw error;
     return { content: [{ type: "text", text: JSON.stringify(rejection) }],
       structuredContent: rejection, isError: true };
