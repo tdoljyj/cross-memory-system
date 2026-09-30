@@ -281,7 +281,10 @@ export async function testAccountCloud(t, admin, server, user, decision) {
       const receipt = (await admin.query("select operation,status from public.clued_audit_receipts where id=$1", [row.dispatch_outcome_receipt_id])).rows[0];
       assert.deepEqual(receipt, { operation: "storage_dispatch_outcome", status: "committed" });
       const event = (await admin.query("select canonical_event_type,change_summary from public.clued_context_events where receipt_id=$1", [row.dispatch_outcome_receipt_id])).rows[0];
-      assert.equal(event.canonical_event_type, "extension:storage:dispatch_outcome"); assert.deepEqual(event.change_summary.outcome, outcome);
+      assert.equal(event.canonical_event_type, "extension:storage:dispatch_outcome");
+      // The exported event never carries Drive paths: code and finding count only.
+      assert.deepEqual(event.change_summary.outcome, { status: "denied", reason: { code, finding_count: 3 } });
+      assert.equal(JSON.stringify(event.change_summary).includes("岛"), false); assert.equal(JSON.stringify(event.change_summary).includes("xxxx"), false);
       // The first journal wins; a later report never rewrites the stored reason.
       const again = await report(job.reference, { status: "attention_required" });
       assert.equal(again.status, "denied"); assert.deepEqual((await jobRow(job)).dispatch_outcome, outcome);

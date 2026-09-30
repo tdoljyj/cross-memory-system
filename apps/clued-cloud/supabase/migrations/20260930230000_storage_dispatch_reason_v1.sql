@@ -3,9 +3,9 @@
 -- The account-policy cloud Worker reports a job it denied or could not run
 -- before any reservation (op='report'). Until now only {status} was stored and
 -- the reason lived in a Worker log line. The report now accepts an optional
--- fixed-shape reason, stored in the job's dispatch_outcome and, through the
--- same request, in the dispatch_outcome event's change_summary (the receipt
--- binds it through its request hash):
+-- fixed-shape reason, stored in the job's dispatch_outcome; the dispatch_outcome
+-- event's change_summary carries the code and finding_count only (no paths),
+-- and the receipt binds the full request through its request hash:
 --
 --   {"status":"denied"|"attention_required",
 --    "reason":{"code":"<^[A-Z][A-Z0-9_]{2,63}$>",
@@ -48,6 +48,21 @@ begin
 end $$;
 revoke all on function clued_private.storage_dispatch_outcome_valid_v1(jsonb) from public,anon,authenticated,service_role;
 
+-- The dispatch_outcome event is exported (canonical export) to readers with
+-- context:read, so it never carries Drive paths: findings stay only in the
+-- Owner's job row; the event keeps the code and the number of findings. The
+-- receipt still binds the full request through its request hash.
+create function clued_private.storage_dispatch_event_summary_v1(p_req jsonb)
+returns jsonb language sql immutable set search_path='' as $$
+  select case when jsonb_typeof(p_req->'outcome'->'reason'->'findings')='array'
+    then (p_req #- '{outcome,reason,findings}')
+      || jsonb_build_object('outcome',(p_req->'outcome') #- '{reason,findings}'
+        || jsonb_build_object('reason',((p_req->'outcome'->'reason') - 'findings')
+          || jsonb_build_object('finding_count',jsonb_array_length(p_req->'outcome'->'reason'->'findings'))))
+    else p_req end
+$$;
+revoke all on function clued_private.storage_dispatch_event_summary_v1(jsonb) from public,anon,authenticated,service_role;
+
 -- Anchored patches on the latest definitions (every edit of one function
 -- first, then one CREATE OR REPLACE), as in 20260930160000.
 do $migration$
@@ -60,6 +75,12 @@ begin
       or p_input->'outcome' is null then raise exception 'storage_cloud_denied' using errcode='42501'; end if;$a$,
      $r$    if not clued_private.storage_dispatch_outcome_valid_v1(p_input->'outcome') then
       raise exception 'storage_cloud_denied' using errcode='42501'; end if;$r$,1),
+    -- The event summary never carries finding paths (see storage_dispatch_event_summary_v1).
+    ('clued_private.storage_cloud_worker_v2(text,jsonb)',
+     $a$'extension:storage:dispatch_outcome',
+      refs,'project:'||p.project_id::text,null,req,req->>'idempotency_key',$a$,
+     $r$'extension:storage:dispatch_outcome',
+      refs,'project:'||p.project_id::text,null,clued_private.storage_dispatch_event_summary_v1(req),req->>'idempotency_key',$r$,1),
     -- Job status carries the fixed code only, and only when one was stored.
     ('clued_private.storage_job_status_v1(clued_private.storage_jobs_v1)',
      $a$    'execution_permitted',false)$a$,
