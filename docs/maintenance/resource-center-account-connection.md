@@ -516,11 +516,19 @@ enabling modify grants nothing executable.
   `/3` policy is activated with `consent_source=native_level_change`, and the
   connection's `auth_generation` goes up by one. The source Decision and
   expiry are copied.
-- The switch runs only while the root is quiet. An unresolved intent returns
-  `storage_root_has_unresolved_mutation`, and a queued job returns
-  `storage_root_has_queued_job`. Work admitted under the old policy is never
-  re-authorized. If the current policy's scope has drifted, the switch returns
-  `storage_owner_scope_changed` instead of re-consenting it.
+- An unresolved intent (prepared, started or uncertain) may have a provider
+  effect: it blocks the switch with `storage_root_has_unresolved_mutation` and
+  keeps its policy. Jobs of this connection that are still queued have no
+  effect; the switch cancels them with the same `storage_dispatch_outcome`
+  receipt (`denied`, key `cloud-dispatch-outcome:<job_id>`) the Worker would
+  write, so a job that can never be dispatched cannot block the Owner. Work
+  admitted under the old policy is never re-authorized. If the current
+  policy's scope has drifted, the switch returns `storage_owner_scope_changed`
+  instead of re-consenting it.
 - In the same transaction the active read access moves to the new policy
   (same classes, disclosure and consent receipt, `read_generation`+1), so
   browse and content reads are not interrupted.
+
+Rollout: production migration, then release. No new secret or switch; the
+page shows the toggle only when the write-access status loads, and read
+settings stay usable if it does not.

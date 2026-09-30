@@ -171,7 +171,7 @@ export async function testStorageModifyLevel(t, admin, server, user, decision) {
       await assert.rejects(wset([]), /storage_owner_version_conflict/, "nothing to change");
     });
 
-    await t.test("a queued job or an unresolved intent blocks the switch and is never re-authorized", async () => {
+    await t.test("the switch cancels queued jobs of this connection; they keep their original policy", async () => {
       const job = randomUUID();
       const snapshot = await evaluate(client, "create_file");
       const policy = await active();
@@ -179,19 +179,57 @@ export async function testStorageModifyLevel(t, admin, server, user, decision) {
         request_digest,mutation,receipt_id,authority_snapshot_v2)
         select $1,$2,$3,$4,$5,$6,$7,'{"operation":"create","target_kind":"file","destination_path":"x","content":"y"}'::jsonb,$5,$8::jsonb`,
       [user, job, connection, snapshot.binding_id, receipt, snapshot.authorization_version, sha(job), JSON.stringify(snapshot)]);
-      await assert.rejects(wset(["modify"]), /storage_root_has_queued_job/);
-      assert.equal((await active()).id, policy.id, "the policy did not change");
-      await admin.query("update clued_private.storage_jobs_v1 set dispatch_outcome='{\"status\":\"denied\"}'::jsonb where job_id=$1", [job]);
-      assert.equal((await wset(["modify"])).status, "committed", "a settled job no longer blocks");
-      assert.equal((await admin.query("select authority_snapshot_v2->>'policy_id' id from clued_private.storage_jobs_v1 where job_id=$1", [job])).rows[0].id, policy.id,
-        "the settled job keeps its original policy");
+      const done = await wset(["modify"]);
+      assert.equal(done.status, "committed", JSON.stringify(done));
+      const row = (await admin.query("select dispatch_outcome,dispatch_outcome_receipt_id,intent_id,authority_snapshot_v2->>'policy_id' policy from clued_private.storage_jobs_v1 where job_id=$1", [job])).rows[0];
+      assert.deepEqual(row.dispatch_outcome, { status: "denied" }); assert.equal(row.intent_id, null);
+      assert.equal(row.policy, policy.id, "the cancelled job keeps its original policy");
+      const outcome = (await admin.query("select operation,status,idempotency_key from public.clued_audit_receipts where id=$1", [row.dispatch_outcome_receipt_id])).rows[0];
+      assert.deepEqual(outcome, { operation: "storage_dispatch_outcome", status: "committed", idempotency_key: "cloud-dispatch-outcome:" + job },
+        "the same receipt key as the Worker's report, so a late report is refused");
+      assert.notEqual((await active()).id, policy.id);
     });
 
-    await t.test("scope drift or a revoked connection refuses the switch and native session is required", async () => {
+    await t.test("an unresolved intent blocks the switch and keeps the policy", async () => {
+      const policy = await active();
+      const intent = (await admin.query(`insert into clued_private.resource_center_mutations_v1(user_id,profile_id,request_key,request_sha256,exact_request,
+        authority_request,authority_result,authority_token_hash,profile_version,source_decision_id,state,expires_at,receipt_id)
+        select $1,p.id,'modify-level-intent',$2,'{}'::jsonb,'{}'::jsonb,'{}'::jsonb,$2,p.version,$3,'started',clock_timestamp()+interval '1 minute',$4
+        from clued_private.resource_center_profiles_v1 p where p.id=$5 returning id`, [user, sha(randomUUID()), decision, receipt, profile])).rows[0].id;
+      try {
+        await assert.rejects(wset([]), /storage_root_has_unresolved_mutation/);
+        assert.equal((await active()).id, policy.id);
+      } finally {
+        await admin.query("update clued_private.resource_center_mutations_v1 set state='cancelled' where id=$1", [intent]);
+      }
+    });
+
+    await t.test("a switch serializes with a concurrent read admission on the root lock", async () => {
+      const before = await active();
+      await native.query("begin");
+      let pending;
+      try {
+        assert.equal((await native.query(`select ${WRITE}($1::jsonb) value`, [JSON.stringify({ action: "set_classes", connection_id: connection,
+          classes: [], base_generation: before.policy_generation, disclosure_version: MODIFY_DISCLOSURE, idempotency_key: randomUUID() })])).rows[0].value.status, "committed");
+        pending = call(client, { action: "admit", connection_id: connection, operation: "list" }, racer);
+        await waitForLock(racer);
+        await native.query("commit");
+      } catch (error) { await native.query("rollback").catch(() => {}); throw error; }
+      const admitted = await pending;
+      assert.equal(admitted.class, "read");
+      assert.equal((await admin.query("select account_policy_id from clued_private.storage_read_receipts_v1 where id=$1", [admitted.receipt_id])).rows[0].account_policy_id,
+        (await active()).id, "the waiting read is admitted under the new policy");
+    });
+
+    await t.test("scope drift, a revoked connection or a missing native session refuses the switch", async () => {
       await assert.rejects(caller.query(`select ${WRITE}($1::jsonb)`, [JSON.stringify({ action: "status", connection_id: connection })]), /permission denied|storage_native_session_required/);
       await admin.query("update clued_private.storage_connections_v1 set state='reauthorization_required' where id=$1", [connection]);
-      await assert.rejects(wset([]), /storage_owner_version_conflict/);
+      await assert.rejects(wset(["modify"]), /storage_owner_version_conflict/);
       await admin.query("update clued_private.storage_connections_v1 set state='active' where id=$1", [connection]);
+      // Last: revoke the registered track, so the current policy's scope no longer evaluates.
+      const track = (await admin.query("select id,version from clued_private.resource_center_artifacts_v1 where profile_id=$1 and path like '%/20_P_产品与体验'", [profile])).rows[0];
+      await register({ action: "artifact_revoke", profile_id: profile, artifact_id: track.id, base_version: Number(track.version) });
+      await assert.rejects(wset(["modify"]), /storage_owner_scope_changed/);
     });
   } finally {
     for (const database of clients.reverse()) await database.end().catch(() => {});

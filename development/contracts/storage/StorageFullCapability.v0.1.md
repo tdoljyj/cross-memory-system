@@ -183,7 +183,7 @@
 - 新增摘要合同 `clued.storage-account-scope/3`，把写入等级集合纳入摘要。策略表新增不可变列 `scope_contract`（默认 `clued.storage-account-scope/2`，由迁移补齐；不可变触发器按原规则覆盖该列）。判定器按该列选择算法，绝不用新算法去重算旧行。
 - 开关写入等级 = 换一份策略（新 `policy_id`，`auth_generation` +1）。前提是该根处于 quiet 状态，即没有 queued / prepared / started / uncertain 的作业；不 quiet 就拒绝，与 AccountStorageInheritance §7 的 legacy→account-policy 切换采用同一锁顺序和 quiet 复核。已消费或结果未知的作业绝不重新授权。
 - 旧模式 `storage_client_grants_v1` 不扩展。新等级只在 `account_policy` 模式下提供；legacy 连接须先迁移。
-- **P3 实现说明（2026-09-30，Owner Decision `12bc7e24-e54c-4e80-9238-7d6d46705676`）**：分两步交付。A 部分（迁移 `20260930080000`）只加 `modify` 等级、`scope_contract` 列、`/3` 摘要和原生换策略事务 `clued_storage_write_access_v1`，提交接口仍只收 `create`；改名与文件移动的执行在 B 部分。换策略时 quiet 判定为：没有 prepared / started / uncertain 的意图，且该连接没有既无意图也无派发结果的排队作业。关闭 `modify` 同样换策略，新策略仍为 `/3`。换策略前先复核当前策略摘要，范围已漂移时拒绝，不借换等级重新同意范围。
+- **P3 实现说明（2026-09-30，Owner Decision `12bc7e24-e54c-4e80-9238-7d6d46705676`）**：分两步交付。A 部分（迁移 `20260930080000`）只加 `modify` 等级、`scope_contract` 列、`/3` 摘要和原生换策略事务 `clued_storage_write_access_v1`，提交接口仍只收 `create`；改名与文件移动的执行在 B 部分。换策略只持 root advisory 锁（与各判定器、提交、begin 串行），不是上文所说 legacy→account-policy 切换的完整锁序。没有 prepared / started / uncertain 的意图才可换策略；该连接仍在排队（既无意图也无派发结果、没有 provider effect）的作业在同一事务内按 Worker 相同的派发结果回执取消为 `denied`，不会被新策略重新授权，也不会让 Owner 因一个永远无法派发的作业而无法关闭等级。关闭 `modify` 同样换策略，新策略仍为 `/3`。换策略前先复核当前策略摘要，范围已漂移时拒绝，不借换等级重新同意范围。
 
 **四、运行开关**
 

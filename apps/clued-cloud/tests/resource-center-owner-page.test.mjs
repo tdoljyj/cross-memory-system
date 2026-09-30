@@ -132,7 +132,7 @@ test("rename and move is its own write-level toggle; it replaces the policy and 
   assert.match(f.text(),/Agent 改名和移动文件：未允许/);
   const allow=f.button("允许 Agent 改名和移动文件");allow.props.onClick();allow.props.onClick();await f.settle();
   assert.equal(f.calls.length,4);
-  assert.match(f.prompts.at(-1),/由 Clued 创建的文件/);assert.match(f.prompts.at(-1),/没有排队或未完成的存储任务/);
+  assert.match(f.prompts.at(-1),/由 Clued 创建的文件/);assert.match(f.prompts.at(-1),/尚未开始的排队任务会被取消/);
   assert.equal(f.calls[3].url,"/v1/storage/write-access");
   assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set_classes",connection_id:active.id,classes:["modify"],
     base_generation:1,disclosure_version:"clued.storage-modify-disclosure/1",idempotency_key:"fixture-id"});

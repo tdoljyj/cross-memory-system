@@ -116,13 +116,14 @@ export default function StorageConnections() {
     operation.current = true; setBusy(true);
     const epoch = revision.current;
     try {
+      // The write level is optional here: its failure never hides the read settings.
       const [result, write] = await Promise.all([
         accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access"),
-        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/write-access")]);
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/write-access").catch(() => null)]);
       if (epoch !== revision.current) return;
-      if (!isReadAccess(result) || !isWriteAccess(write)) throw new Error("查看设置未确认。");
+      if (!isReadAccess(result)) throw new Error("查看设置未确认。");
       setReadAccess(current => ({ ...current, [c.id]: result }));
-      setWriteAccess(current => ({ ...current, [c.id]: write }));
+      if (isWriteAccess(write)) setWriteAccess(current => ({ ...current, [c.id]: write }));
     } catch { if (epoch === revision.current) setMessage("Agent 查看设置未确认，请稍后重试。"); }
     finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
@@ -167,19 +168,23 @@ export default function StorageConnections() {
     if (operation.current || busy || !current?.active) return;
     const enable = !current.classes.includes("modify");
     if (!window.confirm(enable
-      ? "允许已授权的 Agent 在此目录内改名和移动由 Clued 创建的文件？每次操作都会留下回执，可以再改回原名或原位置；不会删除或覆盖文件内容。需要此目录当前没有排队或未完成的存储任务；可随时停止。"
-      : "停止 Agent 改名和移动文件？需要此目录当前没有排队或未完成的存储任务。新建文件和查看设置不受影响。")) return;
+      ? "允许已授权的 Agent 在此目录内改名和移动由 Clued 创建的文件？每次操作都会留下回执，可以再改回原名或原位置；不会删除或覆盖文件内容。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。"
+      : "停止 Agent 改名和移动文件？尚未开始的排队任务会被取消，已开始但未完成的任务需先结束。新建文件和查看设置不受影响。")) return;
     operation.current = true; setBusy(true);
     const epoch = revision.current;
+    let settled = epoch;
     try {
       const result = await accountRequest({ action: "set_classes", connection_id: c.id, classes: enable ? ["modify"] : [],
         base_generation: current.policy_generation, disclosure_version: current.disclosure_version,
         idempotency_key: crypto.randomUUID() }, "/v1/storage/write-access");
       if (epoch !== revision.current) return;
       if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
-      // refresh() starts a new revision; the readback belongs to that one.
-      if (await refresh() === null) throw new Error("连接摘要未确认。");
+      // refresh() starts a new revision and clears busy; the readback belongs
+      // to that revision, and the operation keeps the page busy until it ends.
+      const reloadedList = await refresh();
       const reloaded = revision.current;
+      settled = reloaded; setBusy(true);
+      if (reloadedList === null) throw new Error("连接摘要未确认。");
       const [latest, read] = await Promise.all([
         accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/write-access"),
         accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access")]);
@@ -190,10 +195,13 @@ export default function StorageConnections() {
       setMessage(latest.classes.includes("modify") === enable
         ? `${enable ? "已允许" : "已停止"} Agent 改名和移动文件。回执：${result.receipt_id}` : "已提交，但最新状态未确认。请核对原回执。");
     } catch {
-      // Also after a reload: the policy may have changed, so drop the stale setting.
+      // The policy (and the read access bound to it) may have changed: drop both.
       setWriteAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
-      setMessage("Agent 修改设置结果未确认。若此目录有排队或未完成的任务，请等它结束后再试。请重新读取设置并核对，勿重复提交。");
-    } finally { operation.current = false; setBusy(false); }
+      setReadAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
+      if (settled === revision.current) {
+        setMessage("Agent 修改设置结果未确认。若此目录有已开始但未完成的任务，请等它结束后再试。请重新读取设置并核对，勿重复提交。");
+      }
+    } finally { operation.current = false; if (settled === revision.current) setBusy(false); }
   }
   async function disconnect(c: Connection) {
     if (operation.current || busy || c.state === "revoked") return;

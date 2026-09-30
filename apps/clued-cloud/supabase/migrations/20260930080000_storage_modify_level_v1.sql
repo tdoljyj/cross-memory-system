@@ -12,8 +12,11 @@
 --   it to be in the active policy's action set.
 -- * public.clued_storage_write_access_v1 is the native Owner switch. Changing
 --   the write level replaces the policy (new policy_id, auth_generation+1) only
---   while the root is quiet: no prepared/started/uncertain intent and no queued
---   job. In the same transaction the active read access moves to the new
+--   while no prepared/started/uncertain intent exists. Jobs of this connection
+--   that are still queued (no intent, no dispatch outcome) have no provider
+--   effect; the switch cancels them with the same dispatch-outcome receipt the
+--   Worker would write, so a job that can never be dispatched cannot block the
+--   Owner. In the same transaction the active read access moves to the new
 --   policy with unchanged classes and disclosure, so reads do not stop.
 
 alter table clued_private.storage_account_policies_v2
@@ -105,6 +108,7 @@ declare u uuid:=clued_private.storage_owner_v1(); op text:=p_input->>'action';
   c clued_private.storage_connections_v1; p clued_private.resource_center_profiles_v1;
   policy clued_private.storage_account_policies_v2; fresh clued_private.storage_account_policies_v2;
   ra clued_private.storage_read_access_v1; moved clued_private.storage_read_access_v1;
+  queued clued_private.storage_jobs_v1; qr public.clued_audit_receipts; qreq jsonb; qrefs jsonb; qev text; cancelled jsonb:='[]'::jsonb;
   root text; expected bigint; wanted text[]; actions text[]; digest text;
   r public.clued_audit_receipts; refs jsonb; ev text; result jsonb;
   base_actions constant text[]:=array['inspect','create_file','create_topic'];
@@ -163,6 +167,9 @@ begin
   end if;
   if c.id is null or c.auth_mode<>'account_policy' or c.state<>'active' or c.revoked_at is not null
     or policy.id is null or policy.state<>'active' or p.root_folder_id is distinct from root
+    or p.state<>'active' or p.version<>c.profile_version
+    or exists(select 1 from clued_private.storage_root_denies_v2 where owner_id=u and provider=c.provider
+      and provider_subject=c.provider_subject and root_folder_id=root and lineage_id is null and denied)
     or policy.policy_generation<>expected
     or ('modify'=any(policy.actions))=(cardinality(wanted)>0) then
     raise exception 'storage_owner_version_conflict' using errcode='40001'; end if;
@@ -171,12 +178,26 @@ begin
   if policy.scope_digest is distinct from clued_private.storage_policy_scope_digest_v3(c.id,policy.scope_contract,policy.actions)
     or coalesce(policy.expires_at<=clock_timestamp(),false) then
     raise exception 'storage_owner_scope_changed' using errcode='42501'; end if;
-  -- Quiet root: queued or unresolved work was admitted under the old policy.
-  -- It is never re-authorized, and a switch does not strand it.
+  -- An unresolved intent may have a provider effect: it keeps its policy and
+  -- blocks the switch. Work admitted under the old policy is never re-authorized.
   perform clued_private.storage_root_quiet_v1(u,root);
-  if exists(select 1 from clued_private.storage_jobs_v1 j where j.owner_id=u and j.connection_id=c.id
-    and j.intent_id is null and j.dispatch_outcome is null) then
-    raise exception 'storage_root_has_queued_job' using errcode='42501'; end if;
+  -- Queued jobs have no intent and no effect. Cancel them as the Worker's
+  -- report would (same idempotency key, so a late report is refused); begin
+  -- runs under this root lock and refuses a job with a dispatch outcome.
+  for queued in select * from clued_private.storage_jobs_v1 j where j.owner_id=u and j.connection_id=c.id
+    and j.intent_id is null and j.dispatch_outcome is null order by j.job_id for update loop
+    qreq:=jsonb_build_object('idempotency_key','cloud-dispatch-outcome:'||queued.job_id::text,'job_id',queued.job_id,
+      'outcome',jsonb_build_object('status','denied'));
+    qr:=clued_private.m1_begin_receipt(u,null,'storage_dispatch_outcome',qreq,clued_private.m1_sha256(qreq));
+    if qr.status<>'pending' then raise exception 'storage_owner_version_conflict' using errcode='40001'; end if;
+    update clued_private.storage_jobs_v1 set dispatch_outcome=qreq->'outcome',dispatch_outcome_receipt_id=qr.id
+      where owner_id=u and job_id=queued.job_id;
+    qrefs:=jsonb_build_array(jsonb_build_object('kind','system','role','primary','id',queued.job_id));
+    qev:=clued_private.m1_append_event_row(u,null,qr.id,qr.canonical_version,'extension:storage:dispatch_outcome',
+      qrefs,'project:'||p.project_id::text,null,qreq,qreq->>'idempotency_key',qr.request_sha256,'success','audit_only','{}'::uuid[],'[]'::jsonb,null);
+    perform clued_private.m1_finish_receipt(qr.id,'committed',qrefs,'{}'::jsonb,'{}'::jsonb,array[qev],'{}'::uuid[],null);
+    cancelled:=cancelled||to_jsonb(queued.job_id);
+  end loop;
   actions:=case when cardinality(wanted)>0 then base_actions||'modify'::text else base_actions end;
   digest:=clued_private.storage_policy_scope_digest_v3(c.id,'clued.storage-account-scope/3',actions);
   if digest is null then raise exception 'storage_owner_scope_changed' using errcode='42501'; end if;
@@ -194,9 +215,12 @@ begin
   update clued_private.storage_connections_v1 set account_policy_id=fresh.id,auth_generation=auth_generation+1
     where id=c.id returning * into c;
   -- §3.3 part 1: the read access follows the new policy with the same classes
-  -- and disclosure; the Owner's original read consent receipt is kept.
+  -- and disclosure; the Owner's original read consent receipt is kept. A row
+  -- bound to any other policy was already inert and is only revoked.
   if ra.id is not null then
     update clued_private.storage_read_access_v1 set state='revoked',revoked_at=clock_timestamp(),revocation_receipt_id=r.id where id=ra.id;
+  end if;
+  if ra.id is not null and ra.account_policy_id=policy.id then
     insert into clued_private.storage_read_access_v1(owner_id,connection_id,account_policy_id,classes,read_generation,disclosure_version,consent_receipt_id)
     values(u,c.id,fresh.id,ra.classes,(select max(read_generation) from clued_private.storage_read_access_v1 where connection_id=c.id)+1,
       ra.disclosure_version,ra.consent_receipt_id)
@@ -206,10 +230,10 @@ begin
   ev:=clued_private.m1_append_event_row(u,null,r.id,r.canonical_version,'extension:storage:owner_write_access_v1',
     refs,'project:'||p.project_id::text,null,jsonb_build_object('connection_id',c.id,'classes',to_jsonb(wanted),
       'policy_id',fresh.id,'policy_generation',fresh.policy_generation,'previous_policy_id',policy.id,
-      'auth_generation',c.auth_generation,'read_generation',moved.read_generation),
+      'auth_generation',c.auth_generation,'read_generation',moved.read_generation,'cancelled_jobs',cancelled),
     p_input->>'idempotency_key',r.request_sha256,'success','audit_only','{}'::uuid[],'[]'::jsonb,null);
-  result:=clued_private.m1_finish_receipt(r.id,'committed',refs,jsonb_build_object(c.id::text,expected),
-    jsonb_build_object(c.id::text,fresh.policy_generation),array[ev],'{}'::uuid[],null);
+  result:=clued_private.m1_finish_receipt(r.id,'committed',refs,jsonb_build_object(policy.id::text,expected),
+    jsonb_build_object(fresh.id::text,fresh.policy_generation),array[ev],'{}'::uuid[],null);
   perform clued_private.storage_owner_v1();
   return result;
 end $$;
