@@ -133,3 +133,55 @@ test("Worker credential closure labels a post-write expiry without changing the 
   assert.deepEqual(JSON.parse(logs[0]), {event:"storage_cloud_postcondition_failed",stage:"verify",error_code:"STORAGE_CREDENTIAL_EXPIRING"});
   assert.equal(logs.join("").includes(f.reference.job_id), false);
 });
+
+test("Worker report stores the fixed deny reason in account-policy mode only, never logs paths, and falls back to the plain outcome", async () => {
+  const { outputFiles } = await build({
+    stdin: { contents: `
+      export { fixture } from './tests/resource-center-cloud-executor.fixture.mjs';
+      export { createStorageCloudWorker } from './worker/storage-cloud-executor.ts';
+      export { createStorageCredentialVault } from './worker/storage-credential-vault.ts';`,
+      resolveDir: fileURLToPath(new URL("../", import.meta.url)), sourcefile: "cloud-dispatch-reason.mjs" },
+    bundle: true, platform: "node", format: "esm", write: false,
+  });
+  const { fixture, createStorageCloudWorker, createStorageCredentialVault } =
+    await import("data:text/javascript;base64," + Buffer.from(outputFiles[0].text).toString("base64"));
+  const keys = {current_key_id:'test',keys:{test:btoa('b'.repeat(32)).replace(/=+$/,'')}};
+  const vault = await createStorageCredentialVault(keys);
+  const scenario = async ({ v2, rejectReason = false }) => {
+    const f = fixture({island:true}), descriptor = await f.config.load_job(f.reference), token = await f.config.get_credential();
+    const envelope = await vault.seal(JSON.stringify({...token,token_type:'Bearer'}),{owner_id:descriptor.owner_id,
+      connection_id:descriptor.connection_id,provider:'google-drive',provider_subject:descriptor.provider_subject,
+      credential_version:descriptor.credential_version,oauth_client_id:'test-client'});
+    const reports = [];
+    const bridge = await createStorageCloudWorker({client_id:'test-client',vault:keys,fetch:f.config.drive_fetch,clock:f.config.clock,
+      account_policy_v2:v2,rpc:async input=>{
+        if(input.action==='verified_inspect') return {status:'none',connection_id:f.reference.connection_id,job_id:f.reference.job_id,execution_permitted:false};
+        if(input.action==='recovery_load') throw Error('no recovery');
+        if(input.action==='load') return {...descriptor,credential_envelope:envelope,oauth_client_id:'test-client'};
+        if(input.action==='report'){
+          reports.push(structuredClone(input));
+          if(rejectReason && input.outcome.reason) throw Error('storage_cloud_denied');
+          return {status:input.outcome.status};
+        }
+        throw Error('unexpected action '+input.action);
+      }});
+    const logs = [], original = console.warn;
+    console.warn = message => logs.push(message);
+    let result;
+    try { result = await bridge.run(f.reference); } finally { console.warn = original; }
+    assert.equal(result.status, "deny"); assert.equal(f.info().starts, 0); assert.equal(f.info().posts, 0);
+    assert.deepEqual(logs.map(m=>JSON.parse(m)), [{event:"storage_cloud_denied",error_code:"UNAUTHORIZED_WORKSPACE_MUTATION"}]);
+    assert.equal(logs.join("").includes("Clued_品牌说明"), false);
+    return { reports, reference: f.reference };
+  };
+  const reason = {code:"UNAUTHORIZED_WORKSPACE_MUTATION",
+    findings:[{path:"G:/My Drive/Clued_品牌说明.md",reason:"resource_center_parent_or_sibling_island"}]};
+  const v2 = await scenario({ v2: true });
+  assert.deepEqual(v2.reports, [{...v2.reference,action:"report",credential_version:1,outcome:{status:"denied",reason}}]);
+  // The legacy bridge keeps its exact {status} contract.
+  const legacy = await scenario({ v2: false });
+  assert.deepEqual(legacy.reports.map(r=>r.outcome), [{status:"denied"}]);
+  // A server that predates the reason still records the plain outcome.
+  const old = await scenario({ v2: true, rejectReason: true });
+  assert.deepEqual(old.reports.map(r=>r.outcome), [{status:"denied",reason},{status:"denied"}]);
+});
