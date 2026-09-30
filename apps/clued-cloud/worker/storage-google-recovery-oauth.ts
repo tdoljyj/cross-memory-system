@@ -18,7 +18,8 @@ export async function createStorageGoogleRecoveryOAuth(
     if (input.action === "describe") {
       const result = await configuration.rpc({ ...input, job_id: job });
       if (typeof result.recovery_binding !== "string" || !/^[0-9a-f]{64}$/.test(result.recovery_binding) ||
-        typeof result.provider_subject !== "string" || result.provider_subject.length === 0) throw new Error("storage_google_connection_unavailable");
+        typeof result.provider_subject !== "string" || result.provider_subject.length === 0 ||
+        (result.provider_scope_profile !== "legacy" && result.provider_scope_profile !== "normal")) throw new Error("storage_google_connection_unavailable");
       binding = result.recovery_binding;
       return result;
     }
@@ -30,6 +31,7 @@ export async function createStorageGoogleRecoveryOAuth(
   return Object.freeze({ start: async () => {
     if (used) throw new Error("storage_google_connection_unavailable");
     used = true;
-    return connector.start(connection, false);
+    // Recovery requests exactly the sealed profile's set (StorageNormalUse §2.2 item 7).
+    return connector.start(connection, false, "sealed");
   } });
 }

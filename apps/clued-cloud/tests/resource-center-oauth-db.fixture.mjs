@@ -61,6 +61,26 @@ export async function testStorageOAuth(t, admin, server, user, decision) {
       try { await assert.rejects(complete(next.state_hash), /storage_oauth_denied/); }
       finally { await admin.query("update public.clued_memories set lifecycle_status='active' where id=$1", [decision]); }
     });
+    await t.test("scope profile: complete records the Worker-computed profile with the credential revision", async () => {
+      const profileOf = async () => (await admin.query("select provider_scope_profile,credential_version from clued_private.storage_connections_v1 where id=$1", [connection])).rows[0];
+      const { state_hash } = await setup();
+      assert.equal((await rpc({ action: "describe", connection_id: connection })).provider_scope_profile, "legacy");
+      assert.equal((await rpc({ action: "claim", state_hash })).provider_scope_profile, "legacy");
+      for (const bad of ["full", "LEGACY", 1, null, true]) {
+        await assert.rejects(rpc({ action: "complete", state_hash, provider_subject: "fixture-subject", credential_envelope: envelope, provider_scope_profile: bad }),
+          /storage_oauth_denied/, JSON.stringify(bad));
+      }
+      assert.deepEqual(await profileOf(), { provider_scope_profile: "legacy", credential_version: "0" });
+      const done = await rpc({ action: "complete", state_hash, provider_subject: "fixture-subject", credential_envelope: envelope, provider_scope_profile: "normal" });
+      assert.equal(done.status, "completed");
+      assert.deepEqual(await profileOf(), { provider_scope_profile: "normal", credential_version: "1" });
+      // A Worker released before this migration sends no profile: it accepts only the legacy set.
+      const next = await setup(); await rpc({ action: "claim", state_hash: next.state_hash });
+      assert.equal((await complete(next.state_hash)).status, "completed");
+      assert.deepEqual(await profileOf(), { provider_scope_profile: "legacy", credential_version: "1" });
+      await assert.rejects(admin.query("update clued_private.storage_connections_v1 set provider_scope_profile='full' where id=$1", [connection]),
+        /storage_connections_scope_profile_v1/);
+    });
     await t.test("expired OAuth attempt and logged-out session cannot activate or expose credentials", async () => {
       const { state_hash, attempt_id } = await setup(); await rpc({ action: "claim", state_hash });
       await admin.query("update clued_private.storage_oauth_attempts_v1 set expires_at=clock_timestamp()-interval '1 second' where id=$1", [attempt_id]);

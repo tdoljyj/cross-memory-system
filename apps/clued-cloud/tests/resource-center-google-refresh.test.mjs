@@ -105,3 +105,26 @@ test("invalid stored credentials and forged claim identity never leave the serve
     assert.equal(f.requests.at(-1).reason, "credential_invalid");
   }
 });
+
+// StorageNormalUse.v0.1 §2.2 item 4: a refresh never changes the sealed profile.
+const normalScope = scope + " https://www.googleapis.com/auth/drive.readonly";
+test("scope profiles: refresh keeps the sealed profile and seals its normalized set", async () => {
+  for (const [previous, tokens, sealed] of [
+    [scope, {}, scope], [normalScope, {}, normalScope], [normalScope, { scope: normalScope }, normalScope],
+    ["https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.file",
+      { scope: "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.metadata.readonly" }, normalScope],
+  ]) {
+    const f = await fixture({ previous: { scope: previous }, tokens });
+    assert.deepEqual(await f.run(), { status: "committed" });
+    assert.equal((await f.plain()).scope, sealed);
+  }
+});
+test("scope profiles: a refresh reply that changes the profile fails and requires fresh consent", async () => {
+  for (const [previous, replied] of [[scope, normalScope], [normalScope, scope], [normalScope, normalScope + " https://www.googleapis.com/auth/drive"],
+    [normalScope, "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly"]]) {
+    const f = await fixture({ previous: { scope: previous }, tokens: { scope: replied } });
+    assert.deepEqual(await f.run(), { status: "unavailable" });
+    assert.equal(f.requests.some(x => x.action === "commit"), false);
+    assert.equal(f.requests.at(-1).action, "fail"); assert.equal(f.requests.at(-1).reason, "provider_rejected");
+  }
+});

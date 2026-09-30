@@ -5,11 +5,11 @@ import { createHash } from "node:crypto";
 import { createStorageGoogleMetadataBatch } from "./storage-google-metadata-batch";
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
+import { scopeProfile } from "./storage-google-scopes";
 
 type Data = Record<string, unknown>;
 const object = (v: unknown): v is Data => !!v && typeof v === "object" && !Array.isArray(v);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const scopes = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 function fail(): never { throw new Error("storage_directory_probe_unavailable"); }
 type ProbeStage = "request" | "prepare" | "descriptor" | "credential" | "identity" | "directories" | "boundary" | "receipt";
 // Versioned, deterministic JSON digest for separately retained review Evidence.
@@ -80,7 +80,7 @@ export async function createStorageGoogleProbe(config: {
       stage = "credential";
       const secret: unknown = JSON.parse(await vault.open(prepared.credential_envelope as StorageCredentialEnvelope, context));
       if (!object(secret) || secret.token_type !== "Bearer" || typeof secret.access_token !== "string" || secret.access_token.length < 16 ||
-        typeof secret.scope !== "string" || [...new Set(secret.scope.split(/\s+/))].sort().join(" ") !== scopes ||
+        scopeProfile(secret.scope) === null ||
         !Number.isFinite(secret.expires_at_ms) || Number(secret.expires_at_ms) < deadline + 10000) fail();
       const accessToken = secret.access_token;
       const checkTime = () => { const now = clock(); if (!Number.isFinite(now) || now < started || now >= deadline) fail(); return now; };

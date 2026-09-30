@@ -121,6 +121,14 @@ export async function testStorageModifyLevel(t, admin, server, user, decision) {
       await assert.rejects(wset(["modify"], { disclosure_version: DISCLOSURE }), /storage_write_disclosure_changed/);
       await assert.rejects(wset(["replace"]), /storage_owner_input_invalid/);
       await assert.rejects(wset(["modify"], { base_generation: 99 }), /storage_owner_version_conflict/);
+      // StorageNormalUse N0a: moving read access copies content_profile. No API
+      // writes normal/1 yet, so the fixture sets it with triggers bypassed.
+      const setContentProfile = async value => {
+        await admin.query("set session_replication_role=replica");
+        try { await admin.query("update clued_private.storage_read_access_v1 set content_profile=$2 where connection_id=$1 and state='active'", [connection, value]); }
+        finally { await admin.query("set session_replication_role=origin"); }
+      };
+      await setContentProfile("normal/1");
       const done = await wset(["modify"]);
       assert.equal(done.status, "committed", JSON.stringify(done));
       const after = await active();
@@ -138,6 +146,10 @@ export async function testStorageModifyLevel(t, admin, server, user, decision) {
       assert.equal(readAfter.bound_to_active_policy, true, "reads follow the new policy");
       assert.equal(readAfter.read_generation, readBefore.read_generation + 1);
       assert.equal((await admin.query("select disclosure_version,consent_receipt_id from clued_private.storage_read_access_v1 where connection_id=$1 and state='active'", [connection])).rows[0].disclosure_version, DISCLOSURE);
+      assert.equal((await admin.query("select content_profile from clued_private.storage_read_access_v1 where connection_id=$1 and state='active'", [connection])).rows[0].content_profile,
+        "normal/1", "the moved read access keeps its content profile");
+      assert.equal((await call(client, { action: "admit", connection_id: connection, operation: "list" })).content_profile, "normal/1");
+      await setContentProfile("text/1");
       const snapshot = await evaluate(client, "modify");
       assert.equal(snapshot.scope_digest, after.scope_digest); assert.equal(snapshot.policy_id, after.id);
       assert.ok(snapshot.actions.includes("modify"));

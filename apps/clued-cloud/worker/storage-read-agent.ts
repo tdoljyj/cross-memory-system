@@ -1,6 +1,7 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageGoogleMetadataBatch } from "./storage-google-metadata-batch";
 import { createStorageFetch } from "./storage-fetch";
+import { isStorageScopeProfile, scopeProfile } from "./storage-google-scopes";
 
 /** StorageFullCapability.v0.1 P1 read level (list / stat / search / resolve)
  * and P2 read_content (read: one text file body, by byte range). No write and
@@ -13,7 +14,6 @@ type Data = Record<string, unknown>;
 const object = (v: unknown): v is Data => !!v && typeof v === "object" && !Array.isArray(v);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const fileId = /^[A-Za-z0-9_-]{1,160}$/;
-const scopes = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const FOLDER = "application/vnd.google-apps.folder", SHORTCUT = "application/vnd.google-apps.shortcut";
 const PAGE = 200, MAX_DEPTH = 32, SEARCH_CHUNK = 32, SEARCH_ROUNDS = 8, SEARCH_RESULTS = 200, QUEUE_LIMIT = 256;
 // §5.3 provider budget: batch HTTP requests per call. Search stops early with
@@ -204,7 +204,8 @@ export async function createStorageReadAgent(config: {
         admitted.connection_id !== input.connection_id || admitted.oauth_client_id !== config.client_id || !uuid.test(String(admitted.owner_id)) ||
         !uuid.test(String(admitted.binding_id)) || typeof admitted.root_folder_id !== "string" || !fileId.test(admitted.root_folder_id) ||
         typeof admitted.provider_subject !== "string" || !Number.isSafeInteger(admitted.credential_version) ||
-        !Number.isSafeInteger(admitted.read_generation)) fail("storage_read_unavailable");
+        !Number.isSafeInteger(admitted.read_generation) || !isStorageScopeProfile(admitted.provider_scope_profile) ||
+        (admitted.content_profile !== "text/1" && admitted.content_profile !== "normal/1")) fail("storage_read_unavailable");
       const rootId = String(admitted.root_folder_id);
       // Cursors are bound to the exact Binding, not only the connection.
       const bind = { connection_id: input.connection_id, binding_id: admitted.binding_id, read_generation: admitted.read_generation, root: rootId,
@@ -215,7 +216,9 @@ export async function createStorageReadAgent(config: {
       try { token = JSON.parse(await vault.open(admitted.credential_envelope as StorageCredentialEnvelope, context)); }
       catch { return fail("storage_read_unavailable"); }
       if (!object(token) || token.token_type !== "Bearer" || typeof token.access_token !== "string" || token.access_token.length < 16 ||
-        typeof token.scope !== "string" || [...new Set(token.scope.split(/\s+/))].sort().join(" ") !== scopes ||
+        // The sealed set must have an allowed profile equal to the connection
+        // row's recorded profile (StorageNormalUse §2.2 item 6).
+        scopeProfile(token.scope) === null || scopeProfile(token.scope) !== admitted.provider_scope_profile ||
         !Number.isFinite(token.expires_at_ms) || Number(token.expires_at_ms) - clock() <= 60000) fail("storage_read_unavailable");
       let used = 0;
       const base = createStorageFetch(config.fetch);
@@ -301,14 +304,20 @@ export async function createStorageReadAgent(config: {
           try { return await budgeted(url, { method: "GET", headers: { ...authorization, ...headers }, signal }); }
           catch { return fail("storage_read_unavailable"); }
         };
+        // Until N1, a normal (drive.readonly) token reads bodies exactly like
+        // drive.file: only files this app is authorized for, confirmed from
+        // metadata before any media or export request (StorageNormalUse §3 item 3).
+        const appAuthorizedOnly = scopeProfile(token.scope) === "normal";
         // Revision identity for a later replace precondition (§5.4).
         const detailResponse = await get("https://www.googleapis.com/drive/v3/files/" + id + "?" +
-          new URLSearchParams({ fields: "id,headRevisionId,modifiedTime,size,sha256Checksum", supportsAllDrives: "true" }));
+          new URLSearchParams({ fields: "id,headRevisionId,modifiedTime,size,sha256Checksum" + (appAuthorizedOnly ? ",isAppAuthorized" : ""),
+            supportsAllDrives: "true" }));
         if (detailResponse.status === 404) fail("not_found_in_scope");
         if (!detailResponse.ok) fail("storage_read_unavailable");
         let detail: unknown;
         try { detail = await detailResponse.json(); } catch { return fail("storage_read_unavailable"); }
         if (!object(detail) || detail.id !== id) fail("storage_read_unavailable");
+        if (appAuthorizedOnly && detail.isAppAuthorized !== true) fail("content_not_accessible");
         // Reads at most cap+1 bytes, so an oversized or range-ignoring reply is bounded.
         const capped = async (response: Response, cap: number) => {
           const reader = response.body?.getReader();

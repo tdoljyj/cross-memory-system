@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 import { contentIdentity } from "./resource-center-google-drive-modify-effect.mjs";
+import { scopeProfile } from "./resource-center-google-scopes.mjs";
 
 const API = "https://www.googleapis.com/drive/v3/files";
 const UPLOAD = "https://www.googleapis.com/upload/drive/v3/files";
@@ -63,10 +64,9 @@ export function createGoogleDriveNativeReplaceEffect({
   const releases = Object.freeze([...releaseRevisionIds]);
   async function write(url, { method = "PATCH", body, contentType = "application/json" }, expiresAt) {
     const credential = await getCredential();
-    const grants = new Set(credential?.scope?.split(/\s+/));
+    // Writes accept either allowed profile (StorageNormalUse §2.2); any other set is refused.
     if (typeof credential?.access_token !== "string" || credential.access_token.length < 16 ||
-      !grants.has("https://www.googleapis.com/auth/drive.file") ||
-      !grants.has("https://www.googleapis.com/auth/drive.metadata.readonly")) fail("DRIVE_NATIVE_GRANT_UNAVAILABLE");
+      scopeProfile(credential.scope) === null) fail("DRIVE_NATIVE_GRANT_UNAVAILABLE");
     // Nothing awaited may intervene between this TTL check and the write.
     const now = Number(clock());
     if (!Number.isFinite(now) || !Number.isFinite(expiresAt) || now >= expiresAt) fail("DRIVE_NATIVE_ADMISSION_EXPIRED");

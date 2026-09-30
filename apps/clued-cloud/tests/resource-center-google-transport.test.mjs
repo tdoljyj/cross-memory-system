@@ -100,7 +100,7 @@ test('recovery start pins one job and describe fingerprint, without new executio
     assert.equal(body.p_input.job_id,job);assert.equal(body.p_input.connection_id,connection);
     if(body.p_input.action==='describe')return Response.json({owner_id:randomUUID(),connection_id:connection,connection_version:9,credential_version:4,
       provider_subject:'fixture-subject',oauth_client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID,redirect_uri:env.CLUED_STORAGE_GOOGLE_REDIRECT_URI,
-      root_folder_id:'root',root_parent_id:'parent',recovery_binding:'e'.repeat(64),default_refresh_eligible:true});
+      root_folder_id:'root',root_parent_id:'parent',recovery_binding:'e'.repeat(64),provider_scope_profile:'legacy',default_refresh_eligible:true});
     assert.equal(body.p_input.recovery_binding,'e'.repeat(64));assert.equal(body.p_input.connection_version,9);
     assert.equal(Object.hasOwn(body.p_input,'default_refresh_consent'),false);
     return Response.json({status:'prepared'});
@@ -124,7 +124,7 @@ test('automatic recovery is explicitly marked for one original job before return
     const body=JSON.parse(init.body);calls.push({url:String(url),body});
     if(body.p_input.action==='describe')return Response.json({owner_id:randomUUID(),connection_id:connection,connection_version:9,credential_version:4,
       provider_subject:'fixture-subject',oauth_client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID,redirect_uri:env.CLUED_STORAGE_GOOGLE_REDIRECT_URI,
-      root_folder_id:'root',root_parent_id:'parent',recovery_binding:'e'.repeat(64)});
+      root_folder_id:'root',root_parent_id:'parent',recovery_binding:'e'.repeat(64),provider_scope_profile:'legacy'});
     if(body.p_input.action==='prepare')return Response.json({status:'prepared'});
     assert.equal(String(url),env.SUPABASE_URL+'/rest/v1/rpc/clued_storage_recovery_auto_target_v1');
     if(body.p_input.action==='target')return Response.json({status:'ready',connection_id:connection,job_id:job,execution_permitted:false});

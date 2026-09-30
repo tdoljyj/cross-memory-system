@@ -1,7 +1,7 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
+import { isStorageScopeProfile, scopeProfile, scopeString, type StorageScopeProfile } from "./storage-google-scopes";
 
-const scopes = ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive.metadata.readonly"];
 const encoder = new TextEncoder();
 const id = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const fail = (): never => { throw new Error("storage_google_connection_unavailable"); };
@@ -84,11 +84,20 @@ export async function createStorageGoogleOAuth(configuration: {
         (result.status === "completed" && result.receipt_id === null)) fail();
       return { status: result.status as string, receipt_id: result.receipt_id as string | null, execution_permitted: false };
     },
-    async start(connectionId: string, defaultRefresh = false): Promise<{ authorization_url: string }> {
+    /** scopeRequest "legacy" asks for the legacy set (N0a default for connection
+     * consent). "sealed" asks for exactly the profile the connection row records,
+     * as credential recovery must: recovery never upgrades or downgrades. */
+    async start(connectionId: string, defaultRefresh = false, scopeRequest: "legacy" | "sealed" = "legacy"): Promise<{ authorization_url: string }> {
       try {
-        if (!id.test(connectionId)) fail();
-        const d = descriptor(await rpc({ action: "describe", connection_id: connectionId }), client, redirect);
+        if (!id.test(connectionId) || (scopeRequest !== "legacy" && scopeRequest !== "sealed")) fail();
+        const described = await rpc({ action: "describe", connection_id: connectionId });
+        const d = descriptor(described, client, redirect);
         if (d.connection_id !== connectionId) fail();
+        let requested: StorageScopeProfile = "legacy";
+        if (scopeRequest === "sealed") {
+          if (!isStorageScopeProfile(described.provider_scope_profile)) fail();
+          requested = described.provider_scope_profile as StorageScopeProfile;
+        }
         const attempt = crypto.randomUUID(), state = base64(crypto.getRandomValues(new Uint8Array(32)));
         const verifier = base64(crypto.getRandomValues(new Uint8Array(32)));
         const challenge = base64(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(verifier))));
@@ -98,7 +107,7 @@ export async function createStorageGoogleOAuth(configuration: {
           ...(defaultRefresh ? { default_refresh_consent: (d as Descriptor & { default_refresh_eligible?: boolean }).default_refresh_eligible === true } : {}) });
         if (stored.status !== "prepared") fail();
         const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-        url.search = new URLSearchParams({ client_id: client, redirect_uri: redirect, response_type: "code", scope: scopes.join(" "),
+        url.search = new URLSearchParams({ client_id: client, redirect_uri: redirect, response_type: "code", scope: scopeString(requested),
           state, code_challenge: challenge, code_challenge_method: "S256", access_type: "offline", prompt: "consent", include_granted_scopes: "false" }).toString();
         return { authorization_url: url.href };
       } catch { return fail(); }
@@ -133,7 +142,13 @@ export async function createStorageGoogleOAuth(configuration: {
         stage = "refresh_token_missing";
         if (typeof tokens.refresh_token !== "string" || tokens.refresh_token.length < 16) fail();
         stage = "scope_mismatch";
-        if (typeof tokens.scope !== "string" || [...new Set(tokens.scope.split(/\s+/))].sort().join(" ") !== scopes.slice().sort().join(" ")) fail();
+        // Either allowed profile is accepted and recorded as granted (the user may
+        // untick a scope on the consent page). Credential recovery must return
+        // exactly the sealed profile; the database checks the same (§2.2 item 7).
+        const granted = scopeProfile(tokens.scope);
+        if (granted === null) fail();
+        if (claimed.purpose === "credential_recovery" &&
+          (!isStorageScopeProfile(claimed.provider_scope_profile) || claimed.provider_scope_profile !== granted)) fail();
         const headers = { authorization: "Bearer " + tokens.access_token };
         stage = "provider_identity_unconfirmed";
         const about = await json("https://www.googleapis.com/drive/v3/about?fields=user(permissionId,me)", { headers });
@@ -157,9 +172,10 @@ export async function createStorageGoogleOAuth(configuration: {
         if (!Number.isFinite(now) || now < requestedAt || expiresAt - now < 60000) fail();
         stage = "credential_seal_unavailable";
         const sealed = await vault.seal(JSON.stringify({ access_token: tokens.access_token, refresh_token: tokens.refresh_token,
-          token_type: "Bearer", scope: scopes.join(" "), expires_at_ms: expiresAt }), context(d, subject));
+          token_type: "Bearer", scope: scopeString(granted!), expires_at_ms: expiresAt }), context(d, subject));
         stage = "credential_commit_unconfirmed";
-        const result = await rpc({ action: "complete", state_hash: stateHash, provider_subject: subject, credential_envelope: sealed });
+        const result = await rpc({ action: "complete", state_hash: stateHash, provider_subject: subject, credential_envelope: sealed,
+          provider_scope_profile: granted });
         if (result.status !== "completed" || !id.test(String(result.receipt_id))) fail();
         return { status: "completed", receipt_id: String(result.receipt_id),
           ...(result.purpose === "credential_recovery" ? { purpose: "credential_recovery" as const } :

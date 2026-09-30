@@ -147,6 +147,42 @@ export async function testCredentialRecoveryOAuth(t,admin,server,{user,connectio
         await assert.rejects(call({action:'claim',state_hash:prepared.state_hash},true),/denied/);
       }finally{await db.query('rollback');}
     });
+    await t.test('recovery requests the sealed scope profile and can neither upgrade nor downgrade it',async()=>{
+      for(const sealed of ['legacy','normal']){
+        await begin();try{
+          await db.query('update clued_private.storage_connections_v1 set provider_scope_profile=$2 where id=$1',[connection,sealed]);
+          assert.equal((await call({action:'describe',...lost},true)).provider_scope_profile,sealed);
+          const factory=await createStorageGoogleRecoveryOAuth({...config,rpc:async input=>{
+            if(input.action==='prepare')prepared=input;return call(input,true);
+          }},lost);
+          const url=new URL((await factory.start()).authorization_url);
+          assert.equal(url.searchParams.get('scope').split(' ').length,sealed==='normal'?3:2,'only the sealed profile is requested');
+          assert.equal(url.searchParams.get('scope').includes('drive.readonly'),sealed==='normal');
+          const input={state:url.searchParams.get('state'),code:'fixture-fresh-code'},before=await state();
+          // The fixture's Google always grants the legacy set.
+          const oauth=await createStorageGoogleOAuth(config);
+          if(sealed==='legacy'){
+            assert.equal((await oauth.complete(input)).status,'completed');
+            assert.equal((await state()).c.provider_scope_profile,'legacy');
+            continue;
+          }
+          await assert.rejects(oauth.complete(input),error=>error.reason==='scope_mismatch');
+          assert.deepEqual(await state(),before,'the credential is unchanged');
+          // The database enforces the same rule on its own.
+          for(const profile of [undefined,'legacy',1]){
+            await db.query('savepoint mismatch');
+            await assert.rejects(call({action:'complete',state_hash:sha(input.state),provider_subject:'fixture-subject',
+              credential_envelope:prepared.verifier_envelope,...(profile===undefined?{}:{provider_scope_profile:profile})}),/denied/);
+            await db.query('rollback to savepoint mismatch');
+          }
+          const done=await call({action:'complete',state_hash:sha(input.state),provider_subject:'fixture-subject',
+            credential_envelope:prepared.verifier_envelope,provider_scope_profile:'normal'});
+          assert.equal(done.status,'completed');
+          const after=await state();
+          assert.equal(after.c.provider_scope_profile,'normal');assert.equal(after.c.credential_version,before.c.credential_version+1);
+        }finally{await db.query('rollback');}
+      }
+    });
     await t.test('each recovery step rechecks original job, credential, pending refresh and native session CAS',async()=>{
       for(const phase of ['prepare','claim','complete'])for(const fault of ['credential','journal','pending_new','pending_finished','connection','session','settled']){
         await begin();try{

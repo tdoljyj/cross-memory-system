@@ -647,3 +647,43 @@ K = 10 Clued-pinned revisions per file).
 Rollout: production migration, then release. Execution needs the write
 switches (`execution_enabled` plus the executor window) and the Owner's
 overwrite level.
+
+## Scope profiles (StorageNormalUse.v0.1 N0a)
+
+Migration `20260930140000_storage_scope_profile_v1.sql` and the Worker and
+kernel changes lay the scope foundation for normal use. Nothing changes for
+existing connections: every row is `legacy` / `text/1`, the consent page still
+requests only the legacy set, and nothing can create `normal/1` yet.
+
+- The only accepted Google scope sets live in
+  `apps/clued-cloud/worker/storage-google-scopes.ts` and its kernel mirror
+  `kernel/host/resource-center-google-scopes.mjs`:
+  `legacy` = `drive.file` + `drive.metadata.readonly`; `normal` = legacy +
+  `drive.readonly`. `scopeProfile()` compares the deduplicated, sorted set
+  exactly; a set with `drive`, `drive.metadata`, anything unknown or a missing
+  member has no profile and is refused. A CI test fails when a scope URL
+  literal appears anywhere else (tests, the local pilot credential and prose
+  excepted) or when the two modules differ.
+- OAuth `complete` accepts either profile, seals the granted normalized set
+  (not a constant) and records `storage_connections_v1.provider_scope_profile`
+  in the same update that advances `credential_version`. A `complete` without
+  the field (a Worker released before the migration) records `legacy`.
+- Refresh never changes the profile: a token reply with a `scope` whose
+  profile differs from the sealed one fails as `provider_rejected`, and the
+  connection needs fresh consent (`reauthorization_required`).
+- Credential recovery requests exactly the sealed profile's set, and both the
+  Worker and the database refuse a grant of the other profile; the credential
+  is unchanged.
+- Executor, recovery, probe and read agent accept either profile. The read
+  admission returns `provider_scope_profile` and the read access
+  `content_profile`; the read agent refuses (`storage_read_unavailable`) a
+  sealed set whose profile differs from the row. Until N1 a `normal` token
+  reads bodies exactly like `drive.file`: before any media or export request
+  the read agent requires `isAppAuthorized === true` from metadata
+  (`content_not_accessible` otherwise).
+- `storage_read_access_v1.content_profile` (`text/1` | `normal/1`) is
+  immutable with the row; moving read access to a new write policy copies it.
+
+Rollout: production migration first, then release (the released read agent
+requires both admission fields). Rollback of the release alone is safe: the
+previous Worker ignores the new fields and writes no profile.

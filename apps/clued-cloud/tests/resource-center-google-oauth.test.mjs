@@ -168,3 +168,64 @@ test("token errors expose only fixed classes, retain single exchange and never c
     assert.equal(f.calls.length, 1);
   }
 });
+
+// StorageNormalUse.v0.1 N0a (§2.2, §2.3): start still requests legacy; complete
+// accepts either allowed profile, seals the granted set and records its profile.
+const normalScope = scope + " https://www.googleapis.com/auth/drive.readonly";
+const sealedContext = { owner_id: d.owner_id, connection_id: d.connection_id, provider: "google-drive", provider_subject: "provider-user",
+  oauth_client_id: d.oauth_client_id, credential_version: 1 };
+test("scope profiles: complete seals the granted set and records its profile", async () => {
+  for (const [granted, profile, sealed] of [
+    [scope, "legacy", scope],
+    ["https://www.googleapis.com/auth/drive.metadata.readonly  https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.file", "legacy", scope],
+    [normalScope, "normal", normalScope],
+    ["https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly", "normal", normalScope],
+  ]) {
+    const f = await fixture({ tokens: { scope: granted } });
+    const url = new URL((await f.oauth.start(d.connection_id)).authorization_url);
+    assert.equal(url.searchParams.get("scope"), scope, "N0a start requests the legacy set");
+    await f.oauth.complete({ state: url.searchParams.get("state"), code: "fixture-auth-code" });
+    assert.equal(f.complete().provider_scope_profile, profile);
+    const plain = JSON.parse(await f.vault.open(f.complete().credential_envelope, sealedContext));
+    assert.equal(plain.scope, sealed, "the normalized granted set is sealed, not a constant");
+  }
+});
+test("scope profiles: partial, unknown and broader grants are scope_mismatch", async () => {
+  for (const granted of ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive.metadata.readonly",
+    "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly",
+    normalScope + " https://www.googleapis.com/auth/drive", scope + " https://www.googleapis.com/auth/drive.metadata",
+    "https://www.googleapis.com/auth/drive", "", undefined]) {
+    const f = await fixture({ tokens: { scope: granted } });
+    const state = new URL((await f.oauth.start(d.connection_id)).authorization_url).searchParams.get("state");
+    await assert.rejects(f.oauth.complete({ state, code: "fixture-auth-code" }), error => error.reason === "scope_mismatch");
+    assert.equal(f.complete(), undefined);
+  }
+});
+test("scope profiles: a sealed-profile start requests exactly the recorded profile", async () => {
+  for (const profile of ["legacy", "normal"]) {
+    const f = await fixture({ descriptor: { provider_scope_profile: profile } });
+    const url = new URL((await f.oauth.start(d.connection_id, false, "sealed")).authorization_url);
+    assert.equal(url.searchParams.get("scope"), profile === "normal" ? normalScope : scope);
+  }
+  for (const profile of [undefined, "full", null]) {
+    const f = await fixture({ descriptor: { provider_scope_profile: profile } });
+    await assert.rejects(f.oauth.start(d.connection_id, false, "sealed"), /unavailable/);
+    assert.equal(f.pending(), undefined);
+  }
+  const f = await fixture();
+  await assert.rejects(f.oauth.start(d.connection_id, false, "normal"), /unavailable/);
+});
+test("scope profiles: credential recovery fails unless the granted profile equals the sealed one", async () => {
+  for (const [sealedProfile, granted, ok] of [["legacy", scope, true], ["normal", normalScope, true],
+    ["legacy", normalScope, false], ["normal", scope, false], [undefined, scope, false]]) {
+    const f = await fixture({ descriptor: { purpose: "credential_recovery", provider_scope_profile: sealedProfile }, tokens: { scope: granted } });
+    const state = new URL((await f.oauth.start(d.connection_id, false, sealedProfile ? "sealed" : "legacy")).authorization_url).searchParams.get("state");
+    if (ok) {
+      await f.oauth.complete({ state, code: "fixture-auth-code" });
+      assert.equal(f.complete().provider_scope_profile, sealedProfile);
+    } else {
+      await assert.rejects(f.oauth.complete({ state, code: "fixture-auth-code" }), error => error.reason === "scope_mismatch");
+      assert.equal(f.complete(), undefined, "the credential is unchanged");
+    }
+  }
+});

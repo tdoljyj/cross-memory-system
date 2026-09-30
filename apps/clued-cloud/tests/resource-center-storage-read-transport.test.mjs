@@ -71,7 +71,11 @@ function harness(options = {}) {
         return Response.json({ contract: "clued.storage-read-admission/1", receipt_id: randomUUID(),
           class: options.admitClass ?? (body.p_input.operation === "read" ? "read_content" : "read"), owner_id: OWNER,
           connection_id: body.p_input.connection_id, binding_id: BINDINGS[body.p_token_hash], provider: "google-drive", provider_subject: "subject-1", oauth_client_id: "read-client",
-          credential_version: 3, credential_envelope: options.envelope ?? await envelope(), root_folder_id: ROOT, read_generation: options.generation ?? 1 });
+          credential_version: 3, credential_envelope: options.envelope ?? await envelope(), root_folder_id: ROOT, read_generation: options.generation ?? 1,
+          ...("admitScopeProfile" in options ? (options.admitScopeProfile === undefined ? {} : { provider_scope_profile: options.admitScopeProfile })
+            : { provider_scope_profile: "legacy" }),
+          ...("admitContentProfile" in options ? (options.admitContentProfile === undefined ? {} : { content_profile: options.admitContentProfile })
+            : { content_profile: "text/1" }) });
       }
       return Response.json({ receipt_id: body.p_input.receipt_id, state: "finalized", replayed: false });
     }
@@ -82,7 +86,8 @@ function harness(options = {}) {
       assert.equal(headers.get("authorization"), "Bearer fixture-read-access-token");
       assert.equal(init.method, "GET");
       const u2 = new URL(String(url)), [, , , , id, verb] = u2.pathname.split("/");
-      state.direct.push({ id, verb: verb ?? (u2.searchParams.get("alt") === "media" ? "media" : "detail"), range: headers.get("range") });
+      state.direct.push({ id, verb: verb ?? (u2.searchParams.get("alt") === "media" ? "media" : "detail"), range: headers.get("range"),
+        fields: u2.searchParams.get("fields") });
       const file = drive.files.get(id);
       if (!file) return Response.json({ error: { code: 404 } }, { status: 404 });
       if (verb === "export") {
@@ -99,6 +104,8 @@ function harness(options = {}) {
           headers: { "content-range": `bytes ${start}-${to}/${bytes.length}` } });
       }
       return Response.json({ id, size: file.size, headRevisionId: "rev-" + id, modifiedTime: "2026-09-30T00:00:00.000Z",
+        ...((u2.searchParams.get("fields") ?? "").split(",").includes("isAppAuthorized")
+          ? { isAppAuthorized: !options.notAppAuthorized?.has(id) } : {}),
         ...(drive.contents.has(id) ? { sha256Checksum: sha(drive.contents.get(id)) } : {}) });
     }
     assert.equal(String(url), "https://www.googleapis.com/batch/drive/v3");
@@ -399,5 +406,50 @@ test("read_content: an offset inside a 4-byte character never loses it", async (
       joined += next.value.content; at += next.value.range.length;
     }
     assert.equal(joined, Buffer.from(text).subarray(first.value.range.offset).toString(), `${offset}/${length} joins exactly from the reported offset`);
+  }
+});
+
+// StorageNormalUse.v0.1 N0a: the admission names the connection's recorded scope
+// profile and the read access content profile; the sealed set must match.
+const LEGACY_SCOPE = "https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.file";
+const NORMAL_SCOPE = LEGACY_SCOPE + " https://www.googleapis.com/auth/drive.readonly";
+
+test("scope profile: admission profile must be present, allowed and equal to the sealed set", async () => {
+  for (const [options, why] of [
+    [{ admitScopeProfile: undefined }, "missing provider_scope_profile"],
+    [{ admitScopeProfile: "full" }, "unknown provider_scope_profile"],
+    [{ admitContentProfile: undefined }, "missing content_profile"],
+    [{ admitContentProfile: "binary/1" }, "unknown content_profile"],
+    [{ admitScopeProfile: "normal" }, "legacy token, normal row"],
+    [{ admitScopeProfile: "legacy", envelope: await envelope({ scope: NORMAL_SCOPE }) }, "normal token, legacy row"],
+    [{ admitScopeProfile: "normal", envelope: await envelope({ scope: NORMAL_SCOPE + " https://www.googleapis.com/auth/drive" }) }, "superset of normal"],
+  ]) {
+    const { h, value } = await browse({ operation: "list" }, options);
+    assert.equal(value.error, "storage_read_unavailable", why); assert.equal(h.googleRequests, 0, why);
+    assert.equal(h.calls.at(-1).p_input.action, "finalize", why);
+  }
+  const legacy = await browse({ operation: "list" }, { envelope: await envelope({ scope: LEGACY_SCOPE + " " + LEGACY_SCOPE }) });
+  assert.equal(legacy.isError, false, "a duplicated legacy set is still legacy");
+});
+
+test("scope profile: a normal token lists like legacy and reads only app-authorized bodies before N1", async () => {
+  const options = { admitScopeProfile: "normal", envelope: await envelope({ scope: NORMAL_SCOPE }) };
+  const listed = await browse({ operation: "list", folder_id: "trackFolder00001" }, options);
+  assert.equal(listed.isError, false);
+  assert.deepEqual(names(listed.value), names((await browse({ operation: "list", folder_id: "trackFolder00001" })).value));
+  const text = tree().contents.get("planAFile0000001");
+  const read = await readBody({ object_id: "planAFile0000001" }, options);
+  assert.equal(read.isError, false); assert.equal(read.value.content, text);
+  assert.ok(read.h.direct.find(d => d.verb === "detail").fields.split(",").includes("isAppAuthorized"));
+  const legacyRead = await readBody({ object_id: "planAFile0000001" });
+  assert.equal(legacyRead.h.direct.find(d => d.verb === "detail").fields.includes("isAppAuthorized"), false, "legacy requests are unchanged");
+  const drive = tree();
+  drive.add("googleDoc0000001", "Doc", [ROOT], "application/vnd.google-apps.document");
+  drive.contents.set("googleDoc0000001", "Exported text");
+  for (const object_id of ["planAFile0000001", "googleDoc0000001"]) {
+    const refused = await readBody({ object_id }, { ...options, drive, notAppAuthorized: new Set([object_id]) });
+    assert.equal(refused.value.error, "content_not_accessible", object_id);
+    assert.equal(refused.h.direct.some(d => d.verb === "media" || d.verb === "export"), false, "no body request without app authorization");
+    assert.equal(refused.h.calls.at(-1).p_input.action, "finalize");
   }
 });

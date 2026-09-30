@@ -253,7 +253,7 @@ test('Owner recovery start and callback inspect use the secret-bound account-pol
   const vault={current_key_id:'fixture',keys:{fixture:btoa(String.fromCharCode(...new Uint8Array(32).fill(7))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')}};
   const descriptor={owner_id:owner,connection_id:connection,connection_version:1,credential_version:2,
     provider_subject:'fixture-subject',oauth_client_id:client,redirect_uri:redirect,
-    root_folder_id:'fixture-root',root_parent_id:'fixture-parent',recovery_binding:'e'.repeat(64)};
+    root_folder_id:'fixture-root',root_parent_id:'fixture-parent',recovery_binding:'e'.repeat(64),provider_scope_profile:'legacy'};
   const env={CLUED_STORAGE_ACCOUNT_V1:'true',CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_CONNECTOR_ISSUER:issuer,
     CLUED_STORAGE_GOOGLE_CLIENT_ID:client,CLUED_STORAGE_GOOGLE_CLIENT_SECRET:'fixture-google-secret-very-long',
     CLUED_STORAGE_GOOGLE_REDIRECT_URI:redirect,CLUED_STORAGE_VAULT_KEYS:JSON.stringify(vault),
