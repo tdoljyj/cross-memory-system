@@ -10,6 +10,7 @@ import {
   gateApplies,
   evaluateCheckRuns,
   validateCandidate,
+  verdictAlreadyAnnounced,
   waitForRequiredChecks,
 } from "./gate-receipt.mjs";
 
@@ -166,4 +167,19 @@ test("the verdict check run never counts as one of the required checks", () => {
   const withVerdict = [...runs(), { id: 99, name: GATE_CHECK_RUN_NAME, status: "completed",
     conclusion: "failure", started_at: "2026-08-29T00:00:09Z" }];
   assert.equal(evaluateCheckRuns(withVerdict).state, "PASS");
+});
+
+test("a verdict already announced on the candidate is not announced again", () => {
+  const verdict = (conclusion, minute) => ({ id: 100 + minute, name: GATE_CHECK_RUN_NAME, status: "completed",
+    conclusion, started_at: `2026-08-29T00:0${minute}:00Z` });
+  const pass = evaluateCheckRuns(runs());
+  const fail = evaluateCheckRuns(runs("failure"));
+  assert.equal(verdictAlreadyAnnounced(runs(), pass), false);
+  assert.equal(verdictAlreadyAnnounced([...runs(), verdict("success", 1)], pass), true);
+  assert.equal(verdictAlreadyAnnounced([...runs(), verdict("failure", 1)], fail), true);
+  // A changed verdict (a failed check re-run to green) is announced; only the
+  // latest announcement counts.
+  assert.equal(verdictAlreadyAnnounced([...runs(), verdict("failure", 1)], pass), false);
+  assert.equal(verdictAlreadyAnnounced([...runs(), verdict("success", 1), verdict("failure", 2)], pass), false);
+  assert.equal(verdictAlreadyAnnounced([...runs(), verdict("failure", 1), verdict("success", 2)], pass), true);
 });
