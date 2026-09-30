@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 3
+Contract version: 4
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -18,6 +18,7 @@ This file is the single normative source for how any Agent, on any Host, uses Cl
 3. Unknown, stale, conflicting or incomplete results never mean no work; never recover current actions from old Markdown, pointers or checkpoint prose. A checkpoint `next_action` is a dated note; reconcile it with later records and evidence before acting on it. When an old checkpoint or active Task conflicts with later terminal evidence, report the conflict, verify the exact subject and repair the records (§3) before recommending anything; never recommend repeating completed work because an old Task still ranks high.
 4. Resolve Projects by canonical ID. A mention is not a Project. To find something whose scope you do not know, call `clued_search_context` without `context_key` (or with `scope: "all"`): it searches Global and every project you may read. A search with no match is not evidence that the record does not exist; say so rather than reporting it as absent.
 5. Report `sources_read` for every current-status answer.
+6. Current-state answers come only from Clued. Any question about the current or latest state of the user's projects, records or of Clued itself — what is the latest or current version, what is frozen, fixed, accepted or cancelled, the current task, the latest decision, what changed — is answered only from records read in this session after `clued_session_resume` (§2.1). The Host's own memory, Host-side conversation summaries, earlier replies, cached files, repository snapshots and old checkpoints are not sources for such an answer, even when they appear to contain it; use them at most to decide what to search. Answering from them without the read above is a contract violation. When Clued cannot be read (no Binding, denied scope, unavailable service), say that the current state is unknown and why, instead of answering from those sources.
 
 ## 3. Capture
 
