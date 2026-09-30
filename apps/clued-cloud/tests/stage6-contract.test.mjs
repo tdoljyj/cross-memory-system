@@ -71,6 +71,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
   ]);
   assert.match(contract, /Contract version: 5/);
   assert.match(contract, /returns `session_renewal`/);
+  assert.match(contract, /Retry with the `expected_version` the error returns; your session token stays valid/);
   assert.match(contract, /with no second resume/);
   assert.match(contract, /When `foreign_event_count` is above zero, another client wrote to this context: resume/);
   assert.match(contract, /When `reconciliation_required` is true, call `clued_session_reconcile` with the renewed token/);
