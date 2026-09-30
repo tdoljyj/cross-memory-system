@@ -275,6 +275,78 @@ class CluedCiHealthTests(unittest.TestCase):
         ])
         self.assertEqual(report["status"], "HEALTHY")
 
+    def test_old_unexplained_wait_is_corrected_by_recovered_occupation(self):
+        name = "clued-ci-company-linux-02"
+        t0 = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc)
+        probe = self.routed_job(2, name, t0, t0 + timedelta(seconds=385), t0 + timedelta(seconds=395))
+        probe.update(wait_cause="unexplained", idle_seconds=385)
+        occupier = self.routed_job(1, name, t0 - timedelta(minutes=1), t0 - timedelta(minutes=1), t0 + timedelta(seconds=381))
+        entry = self.slow_entries(self.report(jobs=[probe, occupier]))["2"]
+        self.assertEqual(entry["wait_cause"], "runner_occupied")
+        self.assertEqual(entry["idle_seconds"], 4)
+
+    def test_partial_occupation_does_not_explain_a_five_minute_wait(self):
+        name = "clued-ci-company-linux-02"
+        t0 = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc)
+        probe = self.routed_job(2, name, t0, t0 + timedelta(seconds=304), t0 + timedelta(seconds=310))
+        occupier = self.routed_job(1, name, t0, t0, t0 + timedelta(seconds=5))
+        entry = self.slow_entries(self.report(jobs=[probe, occupier]))["2"]
+        self.assertEqual(entry["wait_cause"], "unexplained")
+
+    def test_capacity_classification_changes_fingerprint_without_hiding_threshold(self):
+        jobs = [self.slow_job(1, "linux-docker-wsl2-v1"), self.slow_job(2, "linux-docker-wsl2-v1")]
+        unknown = self.report(jobs=jobs)
+        for job in jobs:
+            job.update(wait_cause="runner_occupied", idle_seconds=4, occupied_by=[{"job_id": 100}])
+        capacity = self.report(jobs=jobs)
+        self.assertEqual(capacity["status"], "ANOMALY")
+        self.assertTrue(capacity["notify_model"])
+        self.assertEqual(capacity["anomalies"][0]["details"]["classification"], "capacity_pressure")
+        self.assertEqual(capacity["anomalies"][0]["details"]["severity"], "info")
+        self.assertNotEqual(capacity["fingerprint"], unknown["fingerprint"])
+        jobs[0]["wait_cause"] = "unexplained"
+        mixed = self.report(jobs=jobs)
+        self.assertEqual(mixed["anomalies"][0]["details"]["severity"], "warning")
+
+    def test_missing_occupation_details_cannot_be_capacity_only(self):
+        jobs = [self.slow_job(1, "linux-docker-wsl2-v1"), self.slow_job(2, "linux-docker-wsl2-v1")]
+        for job in jobs:
+            job["wait_cause"] = "runner_occupied"
+        report = self.report(jobs=jobs)
+        self.assertEqual(report["anomalies"][0]["details"]["classification"], "startup_delay_needs_investigation")
+
+    def test_carried_queued_job_keeps_waiting_instead_of_becoming_success(self):
+        jobs = [self.slow_job(1, "linux-docker-wsl2-v1"), self.slow_job(2, "linux-docker-wsl2-v1")]
+        for job in jobs:
+            job.update(status="queued", started_at=job["created_at"])
+        report = self.report(jobs=jobs)
+        restored = health.previous_delay_jobs(report)
+        self.assertTrue(all(job["status"] == "queued" and job["conclusion"] is None for job in restored))
+        self.assertTrue(all(entry["kind"] == "queued" for entry in self.slow_entries(self.report(jobs=restored)).values()))
+
+    def test_context_recovery_fetches_old_run_assignment_and_obeys_budget(self):
+        calls = []
+        old = self.slow_job(1, "linux-docker-wsl2-v1")
+        old.update(wait_cause="unexplained", runner_name="")
+        class Client:
+            def get(self, path, params):
+                calls.append((path, params))
+                if path.endswith("/actions/runs"):
+                    return {"workflow_runs": [{"id": 200}, {"id": 201}, {"id": 202}]}
+                return {"jobs": [{"id": old["id"], "runner_name": "clued-ci-company-linux-02"}]}
+        recovered = health.collect_delay_context_jobs(Client(), "tdoljyj/cross-memory-system", [old], [],
+                                                     datetime(2026, 9, 23, tzinfo=timezone.utc), 2)
+        self.assertEqual(sum(path.endswith("/jobs") for path, _ in calls), 2)
+        self.assertEqual(recovered[0]["runner_name"], "clued-ci-company-linux-02")
+        self.assertIn("..", next(params["created"] for path, params in calls if path.endswith("/actions/runs")))
+
+    def test_capacity_only_history_does_not_trigger_extra_collection(self):
+        class Client:
+            def get(self, *_):
+                raise AssertionError("capacity-only history must not add requests")
+        self.assertEqual(health.collect_delay_context_jobs(Client(), "repo", [{"wait_cause": "runner_occupied"}], [],
+                                                         datetime(2026, 9, 23, tzinfo=timezone.utc), 20), [])
+
     def test_fingerprint_ignores_observation_timestamps(self):
         first = self.report(jobs=[self.slow_job(1, "windows-general-v1"), self.slow_job(2, "windows-general-v1")])
         second = json.loads(json.dumps(first))
