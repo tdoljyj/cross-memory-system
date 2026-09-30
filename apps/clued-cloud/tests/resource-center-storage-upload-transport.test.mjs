@@ -43,10 +43,14 @@ function database() {
     }
     assert.equal(String(url), "https://db.example.invalid/rest/v1/rpc/clued_storage_staging_v1");
     assert.equal(body.p_issuer_hash, issuerHash);
-    const input = body.p_input;
+    const input = { ...body.p_input };
     if (input.action === "begin") {
       assert.equal(body.p_token_hash, tokenHash);
       if (database.gateOff) return error("storage_binary_upload_disabled");
+      if (database.pathRefusal) return error(database.pathRefusal, 400);
+      // The database stores the full path under the managed root (20260930233000_storage_relative_paths_v1).
+      if (database.root && !input.destination_path.startsWith(database.root + "/")) input.destination_path = database.root + "/" + input.destination_path;
+      if (database.wrongPath) input.destination_path = database.root + "/elsewhere.png";
       assert.equal("job_id" in input, input.transport === "inline", "inline begin carries the job_id, URL begin does not");
       // Inline: the staging_id is derived from (token, connection, job_id); a replay returns the same row.
       const id = input.transport === "inline" ? createHash("sha256").update(`${body.p_token_hash}:${input.connection_id}:${input.job_id}`).digest("hex")
@@ -100,6 +104,7 @@ const put = (out, bytes, headers = {}, url = out.upload_url) => worker.fetch(new
 async function withDatabase(fn) {
   const before = globalThis.fetch, db = database();
   globalThis.fetch = db.fetch; database.gateOff = false; database.expired = false;
+  database.root = null; database.pathRefusal = null; database.wrongPath = false;
   try { return await fn(db); } finally { globalThis.fetch = before; }
 }
 
@@ -207,6 +212,32 @@ test("upload_begin refuses types before any RPC and maps gate refusals to fixed 
   const gated = await begin(env, pngBytes());
   assert.equal(gated.structuredContent.error, "storage_binary_upload_disabled");
   assert.equal(JSON.stringify(gated).includes("db.example"), false);
+}));
+
+test("upload_begin takes a root-relative path, returns the full path the database stored, and refuses bad paths with fixed codes", async () => withDatabase(async db => {
+  const env = baseEnv(); put.env = env;
+  database.root = "G:/我的云端硬盘/Clued_资料中心";
+  const bytes = pngBytes(4096);
+  const started = await begin(env, bytes, { destination_path: "90_待归类/照片.png" });
+  assert.equal(started.isError, false, JSON.stringify(started));
+  assert.equal(db.calls[0].body.p_input.destination_path, "90_待归类/照片.png", "the Worker sends the path as given");
+  assert.equal(started.structuredContent.destination_path, database.root + "/90_待归类/照片.png");
+  assert.equal((await put(started.structuredContent, bytes)).status, 200);
+  // Syntax refusals before any RPC.
+  const calls = db.calls.length;
+  for (const bad of ["90_待归类/../照片.png", "./照片.png", "90_待归类//照片.png", "a\\照片.png"]) {
+    const refused = await begin(env, bytes, { destination_path: bad });
+    assert.equal(refused.isError, true, bad); assert.equal(refused.structuredContent.error, "storage_path_invalid", bad);
+  }
+  assert.equal(db.calls.length, calls);
+  // The database's outside-root refusal is the same fixed code, with no path in it.
+  database.pathRefusal = "storage_path_outside_root";
+  const outside = await begin(env, bytes, { destination_path: "C:/Users/x/照片.png" });
+  assert.equal(outside.structuredContent.error, "storage_path_outside_root");
+  assert.equal(JSON.stringify(outside).includes("Users"), false);
+  // A stored path naming another target is never accepted.
+  database.pathRefusal = null; database.wrongPath = true;
+  assert.equal((await begin(env, bytes, { destination_path: "90_待归类/照片2.png" })).structuredContent.error, "storage_upload_unavailable");
 }));
 
 test("missing R2 binding or keys fail closed", async () => withDatabase(async db => {

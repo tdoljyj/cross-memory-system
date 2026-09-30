@@ -41,7 +41,7 @@ import { createStorageGoogleProbe, storageProbeDiagnostic } from "./storage-goog
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
-import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor } from "./storage-agent-tools";
+import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages } from "./storage-agent-tools";
 import { createStagingRuntime, handleStagingPut, loadStagedContent, stageInline, stagingErrorCode, storageUploadBeginTool,
   sweepStaging, uploadBegin, uploadErrorBody, StorageUploadError, type StagingBucket } from "./storage-staging";
 import { createStorageReadAgent, storageReadTool, storageContentTool, StorageReadError, STORAGE_IMAGE } from "./storage-read-agent";
@@ -1990,6 +1990,12 @@ async function callTool(
           const result = uploadErrorBody(code);
           return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
         }
+      }
+      // A refused path is a fixed code decided before any job exists (Worker syntax or database canonicalization).
+      const pathCode = storagePathCode(error);
+      if (pathCode) {
+        const result = { error: pathCode, message: storagePathMessages[pathCode] };
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
       }
       // No provider, issuer, credentials, paths or database diagnostics in errors.
       const result = { error: "storage_job_unavailable", message: "Storage job unavailable. Check the same job ID; do not create another job to retry an unknown effect." };
