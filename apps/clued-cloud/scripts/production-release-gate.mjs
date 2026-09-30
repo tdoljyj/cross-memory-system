@@ -115,6 +115,36 @@ export function builderRunInProgress(watchdog, now = new Date()) {
     now.getTime() - startedAt <= 120_000 && startedAt <= now.getTime() + 10_000;
 }
 
+export function onlyProjectionLag(errors) {
+  return errors.length > 0 &&
+    errors.every((error) => error.startsWith('projection_not_current:'));
+}
+
+// A Clued write between two Builder runs leaves a projection stale until the
+// next run, which starts every minute. When that staleness is the only finding,
+// wait for up to `maxRuns` newer completed Builder runs and evaluate again; any
+// other finding, or no newer run within `runTimeoutMs`, returns as it stands.
+export async function settleProjectionLag({ errors, watchdog, readWatchdog,
+  evaluate, maxRuns = 3, pollMs = 10_000, runTimeoutMs = 120_000,
+  sleep = (ms) => new Promise((done) => setTimeout(done, ms)),
+  now = () => Date.now() }) {
+  let current = { errors, watchdog };
+  for (let run = 0; run < maxRuns && onlyProjectionLag(current.errors); run += 1) {
+    const previous = current.watchdog?.heartbeat?.last_finished_at;
+    const deadline = now() + runTimeoutMs;
+    let next = current.watchdog;
+    const settled = () => next?.heartbeat?.last_finished_at !== previous &&
+      !builderRunInProgress(next, new Date(now()));
+    while (!settled() && now() < deadline) {
+      await sleep(pollMs);
+      next = await readWatchdog();
+    }
+    if (!settled()) break;
+    current = { errors: evaluate(next), watchdog: next };
+  }
+  return current;
+}
+
 async function readWatchdog(dbUrl) {
   const client = new pg.Client({ connectionString: dbUrl });
   await client.connect();
@@ -202,8 +232,13 @@ async function main() {
     watchdog = await readWatchdog(dbUrl);
   }
 
-  const errors = verifyReleaseState({ baseline, sourceSql, history, changedPaths,
-    migrationFiles, migrationSources, frontierDefinition, watchdog, minHeartbeatAt });
+  const evaluate = (snapshot) => verifyReleaseState({ baseline, sourceSql, history,
+    changedPaths, migrationFiles, migrationSources, frontierDefinition,
+    watchdog: snapshot, minHeartbeatAt });
+  const settled = await settleProjectionLag({ errors: evaluate(watchdog), watchdog,
+    readWatchdog: () => readWatchdog(dbUrl), evaluate });
+  watchdog = settled.watchdog;
+  const { errors } = settled;
   if (errors.length) throw new Error(`production_release_blocked:${errors.join(',')}`);
   const result = {
     status: 'passed', source_commit: commit,

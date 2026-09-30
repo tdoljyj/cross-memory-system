@@ -12,6 +12,10 @@ export const REQUIRED_CHECKS = Object.freeze([
 // The gate applies to exactly the pull requests public-mcp-behavior runs for.
 export const GATE_APPLICABILITY_CHECK = "public-mcp-behavior";
 export const GATE_STATUS_CONTEXT = "public-mcp-gate-receipt";
+// Commit statuses do not raise check-suite events, so watchers of a pull request
+// never learn the verdict. A terminal verdict is also written as a completed
+// check run under its own name; the commit status stays the gate.
+export const GATE_CHECK_RUN_NAME = "public-mcp-gate-receipt-verdict";
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -102,6 +106,23 @@ export function commitStatusFor({ evaluation, receiptSha256, targetUrl }) {
   };
 }
 
+export function checkRunFor({ sha, evaluation, receiptSha256, targetUrl }) {
+  if (evaluation.state === "PENDING") throw new Error("GATE_CHECK_RUN_PENDING");
+  const summary = evaluation.checks
+    .map(({ name, conclusion }) => `- ${name}: ${conclusion}`).join("\n");
+  return {
+    name: GATE_CHECK_RUN_NAME,
+    head_sha: sha,
+    status: "completed",
+    conclusion: evaluation.state === "PASS" ? "success" : "failure",
+    ...(targetUrl ? { details_url: targetUrl } : {}),
+    output: {
+      title: `${evaluation.state} receipt sha256:${receiptSha256.slice(0, 16)}`,
+      summary,
+    },
+  };
+}
+
 function parseInteger(value, fallback, minimum) {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed >= minimum ? parsed : fallback;
@@ -140,6 +161,22 @@ async function postCommitStatus({ apiUrl, repository, sha, token, requestTimeout
     signal: AbortSignal.timeout(requestTimeoutSeconds * 1000),
   });
   if (!response.ok) throw new Error(`GATE_STATUS_API_${response.status}`);
+}
+
+async function postCheckRun({ apiUrl, repository, token, requestTimeoutSeconds, checkRun }) {
+  const response = await fetch(`${apiUrl}/repos/${repository}/check-runs`, {
+    method: "POST",
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "x-github-api-version": "2022-11-28",
+      "user-agent": "clued-public-mcp-gate-receipt-v1.1",
+    },
+    body: JSON.stringify(checkRun),
+    signal: AbortSignal.timeout(requestTimeoutSeconds * 1000),
+  });
+  if (!response.ok) throw new Error(`GATE_CHECK_RUN_API_${response.status}`);
 }
 
 async function writeReceipt(output, receipt) {
@@ -228,6 +265,16 @@ async function main() {
       apiUrl, repository, sha, token, requestTimeoutSeconds,
       status: commitStatusFor({ evaluation, receiptSha256, targetUrl }),
     });
+    // The status above is the gate; the check run only announces it, so a
+    // failure here is reported without changing the verdict.
+    try {
+      await postCheckRun({
+        apiUrl, repository, token, requestTimeoutSeconds,
+        checkRun: checkRunFor({ sha, evaluation, receiptSha256, targetUrl }),
+      });
+    } catch (error) {
+      console.error(`GATE_CHECK_RUN_NOT_POSTED ${error instanceof Error ? error.message : ""}`);
+    }
   }
   console.log(JSON.stringify({
     verdict: receipt.verdict,

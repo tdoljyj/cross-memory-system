@@ -149,7 +149,7 @@ jobs:
       - name: Verify projection and MTPE behavior
         if: ${{ !inputs.backup_only && !inputs.source_capture_only }}
         run: |
-          node --test tests/production-release-gate.test.mjs
+          node --test tests/production-release-gate.test.mjs tests/served-agent-contract.test.mjs
           npm run test:projection:refresh
           npm run test:mtpe:intake
           npm run typecheck
@@ -199,6 +199,9 @@ jobs:
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: node scripts/verify-currentness-transport.mjs --production --evidence-out .sites-runtime/release-evidence/currentness-attestation.json
+      - name: Verify production serves the repository Agent contract
+        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
+        run: node scripts/verify-served-agent-contract.mjs --evidence-out .sites-runtime/release-evidence/served-agent-contract.json
       - name: Verify projection currentness after deployment
         if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
         env:
@@ -221,6 +224,7 @@ jobs:
           path: |
             apps/clued-cloud/.sites-runtime/release-evidence/production-preflight.json
             apps/clued-cloud/.sites-runtime/release-evidence/currentness-attestation.json
+            apps/clued-cloud/.sites-runtime/release-evidence/served-agent-contract.json
             apps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json
             apps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc
             apps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json

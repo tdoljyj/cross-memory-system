@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
-import { builderRunInProgress, verifyReleaseState } from '../scripts/production-release-gate.mjs';
+import { builderRunInProgress, onlyProjectionLag, settleProjectionLag, verifyReleaseState }
+  from '../scripts/production-release-gate.mjs';
 
 const baseline = JSON.parse(await readFile(new URL(
   '../scripts/production-release-baseline.json', import.meta.url), 'utf8'));
@@ -172,6 +173,59 @@ test('post-deploy readback requires a heartbeat from the newly deployed cycle', 
   assert.deepEqual(verifyReleaseState(state), [
     'worker_has_not_run_after_deployment',
   ]);
+});
+
+test('projection lag alone is waited out for a newer Builder run; other findings are not', () => {
+  assert.equal(onlyProjectionLag(['projection_not_current:global.priority_frontier',
+    'projection_not_current:global.__aggregate__']), true);
+  assert.equal(onlyProjectionLag([]), false);
+  assert.equal(onlyProjectionLag(['projection_not_current:global.priority_frontier',
+    'worker_heartbeat_not_healthy']), false);
+  assert.equal(onlyProjectionLag(['worker_has_not_run_after_deployment']), false);
+});
+
+function lagClock() {
+  let t = Date.parse('2026-09-23T05:12:49Z');
+  return { now: () => t, sleep: async (ms) => { t += ms; } };
+}
+const lagged = ['projection_not_current:global.priority_frontier'];
+const idleAt = (finished) => ({ heartbeat: { last_result: 'idle', last_finished_at: finished } });
+
+test('stale projections re-evaluate after the next completed Builder run', async () => {
+  const clock = lagClock();
+  const first = idleAt('2026-09-23T05:11:59Z');
+  const reads = [first, { heartbeat: { last_result: 'running',
+    last_started_at: '2026-09-23T05:13:00Z', last_finished_at: '2026-09-23T05:11:59Z' } },
+    idleAt('2026-09-23T05:13:05Z')];
+  const evaluated = [];
+  const result = await settleProjectionLag({ errors: lagged, watchdog: first,
+    readWatchdog: async () => reads.shift(),
+    evaluate: (snapshot) => { evaluated.push(snapshot); return []; }, ...clock });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.watchdog.heartbeat.last_finished_at, '2026-09-23T05:13:05Z');
+  assert.equal(evaluated.length, 1);
+});
+
+test('lag that outlasts the run budget, or no newer run, still blocks the release', async () => {
+  const first = idleAt('2026-09-23T05:11:59Z');
+  let finished = Date.parse(first.heartbeat.last_finished_at);
+  const clock = lagClock();
+  const stillStale = await settleProjectionLag({ errors: lagged, watchdog: first,
+    readWatchdog: async () => { finished += 60_000; return idleAt(new Date(finished).toISOString()); },
+    evaluate: () => lagged, maxRuns: 3, ...clock });
+  assert.deepEqual(stillStale.errors, lagged);
+
+  const quiet = await settleProjectionLag({ errors: lagged, watchdog: first,
+    readWatchdog: async () => first, evaluate: () => [], ...lagClock() });
+  assert.deepEqual(quiet.errors, lagged);
+  assert.equal(quiet.watchdog, first);
+
+  let reads = 0;
+  const other = await settleProjectionLag({ errors: ['worker_heartbeat_not_healthy'],
+    watchdog: first, readWatchdog: async () => { reads += 1; return first; },
+    evaluate: () => [], ...lagClock() });
+  assert.deepEqual(other.errors, ['worker_heartbeat_not_healthy']);
+  assert.equal(reads, 0);
 });
 
 test('production backup mode encrypts and verifies the dump before removing plaintext', () => {
