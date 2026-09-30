@@ -835,7 +835,25 @@ N1a (text bodies only, `format_unsupported` for other formats).
   never the base64. The magic bytes decide the type (`declared_mime_type` when
   Drive disagrees). Larger images (by size, Drive `imageMediaMetadata`, or the
   decoded header) return `reason: "image_too_large"` with metadata and no bytes.
-- **Metadata only.** PDF, zip and other archives, video (with
+- **PDF text** (`apps/clued-cloud/worker/storage-read-pdf.ts`, contract §4.5
+  PDF paragraph). PDFs up to 20 MiB are downloaded whole in one request into a
+  buffer of exactly the Drive `size` and run through pdf.js (`pdfjs-dist`,
+  pinned exact, legacy build, in-thread worker, no canvas, no font loading, no
+  network). `page_start` (default 1) and `page_count` (1–20, default 20) pick
+  pages; each page is `# Page N` plus its text, and `offset` / `length` address
+  that text like Office text. Responses carry `page_count`, `pages`,
+  `next_page_start`, `text_layer` (`none` = scan, no OCR) and, when a page's
+  text is glyph codes (font without a Unicode map) or a needed CJK CMap is not
+  bundled, `text_unreliable` (that page's text is omitted). Password-protected
+  or damaged files are `document_invalid`; larger files return
+  `reason: "pdf_too_large"` with no body request. A PDF above 256 KiB reserves
+  `min(size, 5 MiB)` before the download. pdf.js and the CMaps load on the first
+  PDF read only (separate chunks, about +1 MiB gzip on the Worker upload).
+  Upgrading `pdfjs-dist`: bump the exact version, run
+  `node scripts/generate-pdf-cmaps.mjs`, and rerun
+  `tests/resource-center-storage-read-pdf.test.mjs` (it fails when the CMap
+  module does not match the installed version).
+- **Metadata only.** Zip and other archives, video (with
   `media_metadata` or `processing: true`), audio, HEIC/TIFF/BMP, legacy
   .doc/.xls/.ppt, ODF, other Google types and other binaries return
   `delivered_as: "none"`, `reason: "format_unsupported"` and a fixed `hint`;
@@ -862,8 +880,8 @@ N1a (text bodies only, `format_unsupported` for other formats).
   images above 256 KiB, which an older database rejects as
   `storage_read_input_invalid` (the image read then fails closed with
   `storage_read_unavailable`, no bytes delivered).
-- **Deferred.** PDF text extraction (needs pdf.js in the Worker; bundle size and
-  CPU still to be measured), Drive thumbnail builder and Cloudflare Images
+- **Deferred.** PDFs above 20 MiB (range loading), raw download links
+  (`resource_link`), Drive thumbnail builder and Cloudflare Images
   downscaling (thumbnail host pattern must be measured first; Images needs the
   monthly counter column), zip listing / entries, ODF, `resource_link` raw
   download, owner-level budget.

@@ -79,6 +79,7 @@
     "drizzle-orm": "0.45.2",
     "js-tiktoken": "1.0.21",
     "next": "16.3.3",
+    "pdfjs-dist": "6.3.289",
     "pg": "8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
@@ -86,8 +87,8 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.53.1",
     "@cloudflare/workers-types": "5.20260823.1",
-    "@modelcontextprotocol/sdk": "1.30.0",
     "@modelcontextprotocol/inspector": "2.4.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",

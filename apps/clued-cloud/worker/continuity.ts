@@ -1892,8 +1892,8 @@ async function callTool(
         : code === "cursor_invalid" ? "The cursor is invalid or expired. Start the listing or search again."
         : code === "storage_read_input_invalid" ? `Invalid input for ${String(name)}.`
         : code === "format_unsupported" ? "This object has no readable content: folders are never read, and without the Owner's normal use only text files and Google Docs are."
-        : code === "document_invalid" ? "The file is damaged or not what its type says (for example an encrypted Office file or an XML part with a DOCTYPE). Retrying will not help."
-        : code === "archive_limit_exceeded" ? "The file exceeds a safety limit for Office files (parts, entries, decompressed size, or more than 8 MiB of extracted text). Retrying will not help."
+        : code === "document_invalid" ? "The file is damaged or not what its type says (for example an encrypted Office file, a password-protected PDF, or an XML part with a DOCTYPE). Retrying will not help."
+        : code === "archive_limit_exceeded" ? "The file exceeds a safety limit for Office or PDF files (parts, entries, decompressed size, or more than 8 MiB of extracted text in one call). Retrying will not help."
         : code === "binary_too_large" ? "Reading this file would download more than 32 MiB in one call. Retrying will not help."
         : code === "export_too_large" ? "The Google Doc is larger than the 10 MB export limit."
         : code === "shortcut_not_followed" ? "Shortcuts are not followed. Read the target file inside the root instead."
