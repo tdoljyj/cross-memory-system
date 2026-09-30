@@ -6,7 +6,7 @@ import { bytesToBase64, bytesToBase64Url } from "./storage-base64";
 import { createStorageContentGateway } from "./storage-content-gateway";
 import { classifyFormat, extractOfficeText, imageInfo, StorageFormatError, EXTRACT_TEXT_MAX, IMAGE_MAX_BYTES, IMAGE_MAX_EDGE,
   IN_MEMORY_ZIP_MAX } from "./storage-read-formats";
-import { extractPdfText, readExactBody, PDF_MAX_BYTES, PDF_PAGES_PER_CALL } from "./storage-read-pdf";
+import { extractPdfText, pdfOffsetPastText, pdfTimeBudget, readExactBody, PDF_MAX_BYTES, PDF_PAGES_PER_CALL } from "./storage-read-pdf";
 
 /** StorageFullCapability.v0.1 P1 read level (list / stat / search / resolve)
  * and P2 read_content (read: one text file body, by byte range), with
@@ -69,7 +69,9 @@ const encoder = new TextEncoder(), decoder = new TextDecoder("utf-8", { fatal: t
 export class StorageReadError extends Error {
   constructor(readonly code: "storage_read_input_invalid" | "storage_read_unavailable" | "not_found_in_scope" | "cursor_invalid" |
     "format_unsupported" | "export_too_large" | "shortcut_not_followed" | "content_not_accessible" | "budget_exhausted" |
-    "scope_upgrade_required" | "document_invalid" | "archive_limit_exceeded" | "binary_too_large" | "request_limit_exceeded") { super(code); }
+    "scope_upgrade_required" | "document_invalid" | "archive_limit_exceeded" | "binary_too_large" | "request_limit_exceeded",
+    /** Fixed fields added to the error result (a fixed hint and where to continue), never provider text. */
+    readonly detail?: { hint: string; next_page_start: number }) { super(code); }
 }
 function fail(code: StorageReadError["code"]): never { throw new StorageReadError(code); }
 
@@ -387,7 +389,7 @@ export async function createStorageReadAgent(config: {
         const image = format === "png" || format === "jpeg" || format === "gif" || format === "webp";
         const office = format === "docx" || format === "xlsx" || format === "pptx" || format === "google_sheet";
         const pdf = format === "pdf";
-        const signal = AbortSignal.timeout(25000);
+        const signal = AbortSignal.timeout(25000), signalStarted = Date.now();
         // The single content channel: only this ID, which passed inRoot above.
         const content = createStorageContentGateway({ access_token: String(token.access_token), fetch: budgeted, signal });
         content.admit(id);
@@ -526,11 +528,18 @@ export async function createStorageReadAgent(config: {
           if (media.status !== 200) fail("storage_read_unavailable");
           let pages: Awaited<ReturnType<typeof extractPdfText>>;
           try {
-            pages = await extractPdfText(await readExactBody(media, fileSize), { page_start: input.page_start ?? 1,
-              page_count: input.page_count ?? PDF_PAGES_PER_CALL, max_text_bytes: Math.min(offset + length, EXTRACT_TEXT_MAX) });
+            const body = await readExactBody(media, fileSize);
+            // Extraction gets what is left of the call's 25 s signal after the
+            // download, minus a reserve for the post-read scope recheck.
+            const time = pdfTimeBudget(Date.now() - signalStarted);
+            if (time === null) return fail("storage_read_unavailable");
+            pages = await extractPdfText(body, { page_start: input.page_start ?? 1, page_count: input.page_count ?? PDF_PAGES_PER_CALL,
+              max_text_bytes: Math.min(offset + length, EXTRACT_TEXT_MAX), time_ms: time });
           } catch (error) { return fail(error instanceof StorageFormatError ? error.code : "storage_read_unavailable"); }
           const text = encoder.encode(pages.text);
-          if (offset >= text.length && !pages.complete) fail("archive_limit_exceeded");
+          const past = pdfOffsetPastText(pages, text.length, offset);
+          if (past?.code === "storage_read_unavailable") throw new StorageReadError(past.code, { hint: past.hint, next_page_start: past.next_page_start });
+          if (past) fail(past.code);
           // An unfinished extraction (text or time limit) has an unknown total: never claim eof.
           total = pages.complete ? text.length : Number.MAX_SAFE_INTEGER;
           slice = text.subarray(Math.min(offset, text.length), Math.min(offset + length, text.length));

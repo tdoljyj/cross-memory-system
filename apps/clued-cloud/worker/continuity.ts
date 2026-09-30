@@ -1901,7 +1901,9 @@ async function callTool(
         : code === "scope_upgrade_required" ? "Reading files Clued did not create, and searching by content, need the Owner to turn on normal use on the Clued storage page. Retrying will not help."
         : code === "budget_exhausted" ? "This connection has used its hourly content budget (256 MiB per rolling hour, reserved before each body request and settled to the bytes returned). Try again later; retrying now will not help."
         : code === "request_limit_exceeded" ? "This large Office file needs more provider requests than one call may make. Retrying will not help; read an earlier or shorter range (a smaller offset + length), since each call extracts the text up to offset + length."
-        : "Storage read unavailable." };
+        : "Storage read unavailable.",
+        // A fixed hint and a page number (StorageNormalUse §4.5: PDF time cut on a continuation).
+        ...(error instanceof StorageReadError && error.detail ? { hint: error.detail.hint, next_page_start: error.detail.next_page_start } : {}) };
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
     }
   }

@@ -5,16 +5,19 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build, stop } from "esbuild";
-import { encryptedPdf, identityPdf, latinPdf, predefinedCjkPdf, scannedPdf } from "./resource-center-storage-pdf.fixture.mjs";
+import { pdfDecodeGuardEsbuildPlugin } from "../build/pdfjs-decode-guard.mjs";
+import { brotliBombPdf, encryptedPdf, flateLatinPdf, identityPdf, latinPdf, longStringPdf, operatorBombPdf, predefinedCjkPdf, repeatedStreamPdf, scannedPdf,
+  textBombPdf, textPagesPdf, toUnicodeBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
 
 // StorageNormalUse.v0.1 §4.5: pdf.js text extraction for clued_storage_read.
 // The module imports pdf.js and the generated CMaps extensionless, so it is
 // bundled first, as the continuity route tests do.
 const directory = await mkdtemp(path.join(os.tmpdir(), "clued-storage-pdf-"));
 await build({ entryPoints: [fileURLToPath(new URL("../worker/storage-read-pdf.ts", import.meta.url))], outfile: path.join(directory, "pdf.mjs"),
-  bundle: true, platform: "node", format: "esm", logLevel: "silent" });
+  bundle: true, platform: "node", format: "esm", logLevel: "silent", plugins: [pdfDecodeGuardEsbuildPlugin()] });
 stop();
-const { extractPdfText, looksGarbled, readExactBody, PDF_MAX_BYTES, PDF_PAGES_PER_CALL, PDF_TEXT_MAX } =
+const { extractPdfText, looksGarbled, readExactBody, classifyPdfError, pdfOffsetPastText, pdfTimeBudget, PDF_MAX_BYTES, PDF_PAGES_PER_CALL, PDF_TEXT_MAX,
+  PDF_TIME_MS, PDF_TIME_CUT_HINT } =
   await import(pathToFileURL(path.join(directory, "pdf.mjs")).href);
 const extract = (bytes, options = {}) => extractPdfText(bytes, { page_start: 1, page_count: 20, max_text_bytes: PDF_TEXT_MAX, ...options });
 const ZH = "资料中心存储读取测试：这是一个包含中文字符的页面。";
@@ -110,4 +113,78 @@ test("the generated CMap module matches the pinned pdfjs-dist and leaves out onl
   for (const name of ["UniGB-UCS2-H", "Adobe-GB1-UCS2", "Adobe-Japan1-UCS2", "Adobe-Korea1-UCS2", "Adobe-CNS1-UCS2", "GBK-EUC-H", "90ms-RKSJ-H", "UniKS-UTF16-H"])
     assert.ok(committed.includes(`"${name}": "`), name);
   assert.equal(excludedCMap("UniGB-UTF8-H"), true); assert.equal(excludedCMap("UniGB-UCS2-H"), false);
+});
+
+// §4.5 resource bounds (independent review MAJOR). Memory and time under a
+// 64 MB heap are measured in resource-center-storage-read-pdf-bounds.test.mjs.
+const MiB = 1024 * 1024;
+
+test("FlateDecode content (the common case) decodes inside the guarded budget; bidi controls are stripped", async () => {
+  const result = await extract(flateLatinPdf([["Hello flate world"], ["Second page"]]));
+  assert.equal(result.text, "# Page 1\nHello flate world\n# Page 2\nSecond page"); assert.equal(result.complete, true); assert.equal(result.time_limited, false);
+  // U+202A-202E embeddings / overrides and U+2066-2069 isolates.
+  const [lre, rlo, pdf, lri, pdi] = [0x202a, 0x202e, 0x202c, 0x2066, 0x2069].map(code => String.fromCharCode(code));
+  const bidi = await extract(identityPdf([[`abc ${rlo}def${pdf} ${lre}ghi${pdf} ${lri}jkl${pdi} mno`]]));
+  assert.equal(bidi.text, "# Page 1\nabc def ghi jkl mno");
+});
+
+test("decode bombs, operator bombs, oversized tokens and BrotliDecode fail with archive_limit_exceeded instead of partial text", async () => {
+  for (const [name, pdf] of [["operator bomb 100 MB", operatorBombPdf(100 * MiB)], ["text bomb 300 MB", textBombPdf(300 * MiB)],
+    ["ToUnicode bomb 200 MB (native DecompressionStream path)", toUnicodeBombPdf(200 * MiB)], ["200 references to one 1 MB stream", repeatedStreamPdf(200, MiB)],
+    ["one 1 MiB string", longStringPdf(MiB)], ["BrotliDecode 100 MB", brotliBombPdf(100 * MiB)]]) {
+    const started = Date.now();
+    await assert.rejects(extract(pdf), error => error.code === "archive_limit_exceeded", name);
+    assert.ok(Date.now() - started < 5000, `${name}: ${Date.now() - started} ms`);
+  }
+});
+
+test("page text is streamed: the text limit cancels inside a page and the text is a prefix of the full text", async () => {
+  const pdf = textBombPdf(2 * MiB);
+  const cut = await extract(pdf.slice(), { max_text_bytes: 64 * 1024 });
+  assert.equal(cut.complete, false); assert.equal(cut.pages_extracted, 1);
+  const size = Buffer.byteLength(cut.text);
+  assert.ok(size > 64 * 1024 && size < 96 * 1024, `stops within one chunk of the limit: ${size}`);
+  const more = await extract(pdf.slice(), { max_text_bytes: 256 * 1024 });
+  assert.ok(more.text.startsWith(cut.text));
+});
+
+test("time limit inside a page drops that page and ends the selection; on the first page it is storage_read_unavailable", async () => {
+  // Page 1 is short; page 2 streams hundreds of chunks, and the clock advances 1 s per reading.
+  const pdf = textPagesPdf([200, MiB, 200]);
+  let now = 0;
+  const cut = await extract(pdf.slice(), { clock: () => (now += 1000), time_ms: 10000 });
+  assert.equal(cut.pages_extracted, 1); assert.equal(cut.complete, true); assert.equal(cut.time_limited, true);
+  assert.ok(cut.text.startsWith("# Page 1\nPage 1 starts here\n")); assert.equal(cut.text.includes("# Page 2"), false);
+  now = 0;
+  await assert.rejects(extract(pdf.slice(), { page_start: 2, clock: () => (now += 1000), time_ms: 10000 }), error => error.code === "storage_read_unavailable");
+  // The caller may pass less time, never more than PDF_TIME_MS.
+  now = 0;
+  const capped = await extract(pdf.slice(), { page_start: 3, clock: () => (now += 1000), time_ms: 10 * PDF_TIME_MS });
+  assert.equal(capped.pages_extracted, 1);
+});
+
+test("the extraction deadline comes from what is left of the call's 25 s signal after the 5 s recheck reserve", () => {
+  assert.equal(pdfTimeBudget(0), PDF_TIME_MS); assert.equal(pdfTimeBudget(12000), 8000); assert.equal(pdfTimeBudget(19000), 1000);
+  assert.equal(pdfTimeBudget(19001), null); assert.equal(pdfTimeBudget(-5), PDF_TIME_MS);
+});
+
+test("an offset past the text: eof when whole, archive_limit_exceeded when the text limit cut it, re-read hint when the time limit cut a continuation", () => {
+  const pages = { page_count: 9, page_start: 3, pages_extracted: 2, text: "", complete: true, time_limited: false, text_layer: "present", unreliable_pages: [], cmap_missing: false };
+  assert.equal(pdfOffsetPastText(pages, 100, 50), null);
+  assert.equal(pdfOffsetPastText(pages, 100, 100), null, "whole and shorter: empty eof");
+  assert.deepEqual(pdfOffsetPastText({ ...pages, complete: false }, 100, 100), { code: "archive_limit_exceeded" });
+  assert.deepEqual(pdfOffsetPastText({ ...pages, time_limited: true }, 100, 150), { code: "storage_read_unavailable", hint: PDF_TIME_CUT_HINT, next_page_start: 5 });
+  assert.equal(pdfOffsetPastText({ ...pages, time_limited: true }, 0, 0), null, "offset 0 is not a continuation");
+  assert.equal(pdfOffsetPastText({ ...pages, time_limited: true }, 100, 40), null, "inside the text");
+});
+
+test("failures that are not about the file are storage_read_unavailable; a hit limit is archive_limit_exceeded; parser errors are document_invalid", () => {
+  const code = (error, hit = false) => classifyPdfError(error, hit).code;
+  assert.equal(code(new RangeError("Array buffer allocation failed")), "storage_read_unavailable");
+  // pdf.js passes worker errors on as UnknownErrorException with the original in `details`.
+  assert.equal(code(Object.assign(new Error("Invalid typed array length: 99999999999"), { name: "UnknownErrorException", details: "RangeError: Invalid typed array length" })), "storage_read_unavailable");
+  assert.equal(code(Object.assign(new Error("Maximum call stack size exceeded"), { name: "UnknownErrorException", details: "RangeError: Maximum call stack size exceeded" })), "storage_read_unavailable");
+  assert.equal(code(Object.assign(new Error("Invalid PDF structure."), { name: "InvalidPDFException" })), "document_invalid");
+  assert.equal(code(Object.assign(new Error("Bad FCHECK in flate stream"), { name: "UnknownErrorException", details: "FormatError: Bad FCHECK in flate stream" })), "document_invalid");
+  assert.equal(code(new Error("anything"), true), "archive_limit_exceeded");
 });

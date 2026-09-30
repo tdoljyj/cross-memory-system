@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build, stop } from "esbuild";
+import { pdfDecodeGuardEsbuildPlugin } from "../build/pdfjs-decode-guard.mjs";
 
 let workerPromise;
 
@@ -19,6 +20,8 @@ export function loadContinuityWorker() {
       bundle: true,
       platform: "node",
       format: "esm",
+      // The production build patches pdf.js with the decode guard; so does this one.
+      plugins: [pdfDecodeGuardEsbuildPlugin()],
     });
     stop();
     const { handleContinuityRequest, runProjectionRefreshPipeline,

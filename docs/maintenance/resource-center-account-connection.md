@@ -849,10 +849,35 @@ N1a (text bodies only, `format_unsupported` for other formats).
   `reason: "pdf_too_large"` with no body request. A PDF above 256 KiB reserves
   `min(size, 5 MiB)` before the download. pdf.js and the CMaps load on the first
   PDF read only (separate chunks, about +1 MiB gzip on the Worker upload).
+  Every call downloads the whole file again (page ranges and offset
+  continuations included): up to 20 MiB of provider bytes per call that the
+  content budget does not count (it counts delivered text only; the
+  provider-byte dimension is N4).
+  Hostile files: pdf.js has no decoded-size limit, so the build patches the
+  pinned worker (`apps/clued-cloud/build/pdfjs-decode-guard.mjs`, applied by
+  `vite.config.ts` and by the esbuild test bundles) to call a per-extraction
+  guard: at most 16 MiB of decoded-buffer allocations per stream (a decoded
+  stream stays under 8 MiB) and 48 MiB per call, 4 000 000 content-stream
+  tokens, 200 000 new cached names, strings / names / arrays up to 256 Ki
+  elements, and no synchronous BrotliDecode decoding (a native
+  `DecompressionStream` brotli path is counted like Flate); past any of them the read fails with
+  `archive_limit_exceeded`. Page text is streamed and cancelled once the call's
+  text limit or deadline is passed. The extraction deadline is what remains of
+  the call's 25 s Drive signal minus 5 s for the scope recheck (at most 10 s;
+  under 1 s left is `storage_read_unavailable`). A time cut ends the selection
+  at a whole page; a continuation whose offset lies past that cut is
+  `storage_read_unavailable` with `next_page_start` and a hint to restart from
+  there. Allocation / stack failures inside pdf.js are
+  `storage_read_unavailable`, not `document_invalid`. The Worker refuses to
+  parse PDFs if the patched worker's `CLUED_PDF_DECODE_GUARD` marker is missing.
+  `tests/resource-center-storage-read-pdf-bounds.test.mjs` runs deflate bombs
+  in a child with `--max-old-space-size=64`.
   Upgrading `pdfjs-dist`: bump the exact version, run
-  `node scripts/generate-pdf-cmaps.mjs`, and rerun
-  `tests/resource-center-storage-read-pdf.test.mjs` (it fails when the CMap
-  module does not match the installed version).
+  `node scripts/generate-pdf-cmaps.mjs`, re-check the patch anchors in
+  `build/pdfjs-decode-guard.mjs` (the build fails when one does not match), and
+  rerun `tests/resource-center-storage-read-pdf.test.mjs` and
+  `tests/resource-center-storage-read-pdf-bounds.test.mjs` (the first fails
+  when the CMap module does not match the installed version).
 - **Metadata only.** Zip and other archives, video (with
   `media_metadata` or `processing: true`), audio, HEIC/TIFF/BMP, legacy
   .doc/.xls/.ppt, ODF, other Google types and other binaries return
