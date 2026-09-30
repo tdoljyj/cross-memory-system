@@ -2693,9 +2693,11 @@ async function handleContinuityRequestInner(
         return json({ error: "Storage owner operation unavailable." }, 403, headers);
       }
     }
-    if (url.pathname === "/v1/storage/read-access") {
-      // StorageFullCapability.v0.1 P1: native Owner control of the read level.
+    if (url.pathname === "/v1/storage/read-access" || url.pathname === "/v1/storage/write-access") {
+      // StorageFullCapability.v0.1: native Owner control of the read level (P1)
+      // and the modify write level (P3).
       // The RPC checks the live auth session itself; never a Binding or service role.
+      const rpc = url.pathname === "/v1/storage/read-access" ? "clued_storage_read_access_v1" : "clued_storage_write_access_v1";
       validateOrigin(request, env);
       const headers = { ...corsHeaders(request), "cache-control": "no-store" };
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true") return json({ error: "Not found." }, 404, headers);
@@ -2704,12 +2706,12 @@ async function handleContinuityRequestInner(
       const { token } = await requireSupabaseUser(request, env);
       try {
         const input = await parseBody(request);
-        const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_read_access_v1", {
+        const result = await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
           method: "POST", userToken: token, body: JSON.stringify({ p_input: input }),
         });
         return json(result, 200, headers);
       } catch {
-        return json({ error: "Storage read access operation unavailable." }, 403, headers);
+        return json({ error: "Storage access operation unavailable." }, 403, headers);
       }
     }
     if (url.pathname === "/v1/storage/account" || url.pathname === "/v1/storage/refresh") {

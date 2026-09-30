@@ -495,3 +495,32 @@ Migration `20260930060000_storage_read_content_v1.sql` and the Worker tool
 Rollout: production migration, then release. No new secret or switch: the
 tool is listed with `clued_storage_browse` and every call still needs the read
 switch, the Owner's read access row with `read_content`, and a qualified client.
+
+## Modify level (StorageFullCapability.v0.1 P3, part A)
+
+Migration `20260930080000_storage_modify_level_v1.sql` adds the `modify` write
+level and the policy switch that carries it (§3.3 part 3). Rename and file move
+execution is part B; until it lands, submit still accepts only `create`, so
+enabling modify grants nothing executable.
+
+- Policies have an immutable `scope_contract`. Existing rows keep
+  `clued.storage-account-scope/2` and are evaluated with the v2 digest.
+  `clued.storage-account-scope/3` adds the policy's own action set to the
+  digest: the create set, optionally plus `modify`.
+- The evaluator accepts `modify` and, like every action, requires it to be in
+  the active policy's action set.
+- The Owner switches it on `/storage/connections` with "允许 Agent 改名和移动文件"
+  (native RPC `clued_storage_write_access_v1`, route `/v1/storage/write-access`,
+  disclosure `clued.storage-modify-disclosure/1`, CAS on `policy_generation`).
+- Changing the level replaces the policy: the old one is revoked, a new
+  `/3` policy is activated with `consent_source=native_level_change`, and the
+  connection's `auth_generation` goes up by one. The source Decision and
+  expiry are copied.
+- The switch runs only while the root is quiet. An unresolved intent returns
+  `storage_root_has_unresolved_mutation`, and a queued job returns
+  `storage_root_has_queued_job`. Work admitted under the old policy is never
+  re-authorized. If the current policy's scope has drifted, the switch returns
+  `storage_owner_scope_changed` instead of re-consenting it.
+- In the same transaction the active read access moves to the new policy
+  (same classes, disclosure and consent receipt, `read_generation`+1), so
+  browse and content reads are not interrupted.

@@ -11,6 +11,8 @@ const compiled=ts.transpileModule(source,{compilerOptions:{
 const active={id:"fixture-connection",version:4,provider:"google-drive",state:"active",auth_mode:"account_policy",
   root_name:"Clued_资料中心",policy_active:true,actions:["inspect","create_file","create_topic"],
   refresh_enabled:true,database_execution_enabled:false,profile_current:true};
+const writeStatus=classes=>({active:true,policy_generation:classes.length+1,
+  disclosure_version:"clued.storage-modify-disclosure/1",classes});
 function fixture() {
   const hooks=[],effects=[],calls=[],prompts=[];let cursor=0,tree,authCallback,owner="owner";
   const equal=(a,b)=>a&&b&&a.length===b.length&&a.every((v,i)=>Object.is(v,b[i]));
@@ -79,42 +81,72 @@ test("Agent read level is loaded on demand and toggled by one native CAS mutatio
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
   assert.equal(f.calls[1].url,"/v1/storage/read-access");
   assert.deepEqual(JSON.parse(f.calls[1].init.body),{action:"status",connection_id:active.id});
+  assert.equal(f.calls[2].url,"/v1/storage/write-access");
+  assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:"status",connection_id:active.id});
   f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
-    content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});await f.settle();
+    content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});
+  f.respond(2,writeStatus([]));await f.settle();
   assert.equal(f.text().includes("允许 Agent 读正文"),false,"bodies are offered only while read is on");
   const allow=f.button("允许 Agent 查看目录结构");allow.props.onClick();allow.props.onClick();await f.settle();
-  assert.equal(f.calls.length,3);assert.match(f.prompts.at(-1),/不读取文件内容，不修改任何文件/);
-  assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:"set_classes",connection_id:active.id,classes:["read"],
+  assert.equal(f.calls.length,4);assert.match(f.prompts.at(-1),/不读取文件内容，不修改任何文件/);
+  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set_classes",connection_id:active.id,classes:["read"],
     base_generation:0,disclosure_version:"clued.storage-read-disclosure/1",idempotency_key:"fixture-id"});
-  f.respond(2,{status:"committed",receipt_id:"fixture-read-receipt"});await f.settle();
-  f.respond(3,{active:true,read_generation:1,disclosure_version:"clued.storage-read-disclosure/1",
+  f.respond(3,{status:"committed",receipt_id:"fixture-read-receipt"});await f.settle();
+  f.respond(4,{active:true,read_generation:1,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:["read"]});await f.settle();
   assert.match(f.text(),/已允许 Agent 查看目录结构。回执：fixture-read-receipt/);
   assert.match(f.text(),/已允许（只看文件名和目录，不读内容）/);
   const stop=f.button("停止 Agent 查看目录结构");stop.props.onClick();await f.settle();
-  assert.deepEqual(JSON.parse(f.calls[4].init.body).classes,[]);assert.equal(JSON.parse(f.calls[4].init.body).base_generation,1);
-  f.respond(4,{error:"private"},403);await f.settle();
+  assert.deepEqual(JSON.parse(f.calls[5].init.body).classes,[]);assert.equal(JSON.parse(f.calls[5].init.body).base_generation,1);
+  f.respond(5,{error:"private"},403);await f.settle();
   assert.match(f.text(),/Agent 查看设置结果未确认/);assert.match(f.text(),/Agent 查看目录结构：未读取/);
-  assert.equal(f.calls.length,5,"an unknown result is never resent");
+  assert.equal(f.calls.length,6,"an unknown result is never resent");
 });
 test("reading bodies is a separate toggle with its own disclosure, and stopping it keeps the read level",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
   const status=classes=>({active:true,read_generation:classes.length+1,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes});
-  f.respond(1,status(["read"]));await f.settle();
+  f.respond(1,status(["read"]));f.respond(2,writeStatus([]));await f.settle();
   assert.match(f.text(),/Agent 读正文：未允许/);
   f.button("允许 Agent 读正文").props.onClick();await f.settle();
   assert.match(f.prompts.at(-1),/由 Clued 创建的文本文件正文/);assert.match(f.prompts.at(-1),/发送给该 Agent 所用的模型服务/);
-  assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:"set_classes",connection_id:active.id,classes:["read","read_content"],
+  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set_classes",connection_id:active.id,classes:["read","read_content"],
     base_generation:2,disclosure_version:"clued.storage-read-content-disclosure/1",idempotency_key:"fixture-id"});
-  f.respond(2,{status:"committed",receipt_id:"fixture-content-receipt"});await f.settle();
-  f.respond(3,status(["read","read_content"]));await f.settle();
+  f.respond(3,{status:"committed",receipt_id:"fixture-content-receipt"});await f.settle();
+  f.respond(4,status(["read","read_content"]));await f.settle();
   assert.match(f.text(),/已允许 Agent 读正文。回执：fixture-content-receipt/);assert.match(f.text(),/Agent 读正文：已允许/);
   f.button("停止 Agent 读正文").props.onClick();await f.settle();
-  assert.deepEqual(JSON.parse(f.calls[4].init.body),{action:"set_classes",connection_id:active.id,classes:["read"],
+  assert.deepEqual(JSON.parse(f.calls[5].init.body),{action:"set_classes",connection_id:active.id,classes:["read"],
     base_generation:3,disclosure_version:"clued.storage-read-disclosure/1",idempotency_key:"fixture-id"});
-  f.respond(4,{status:"committed",receipt_id:"fixture-stop-receipt"});await f.settle();
-  f.respond(5,status(["read"]));await f.settle();
+  f.respond(5,{status:"committed",receipt_id:"fixture-stop-receipt"});await f.settle();
+  f.respond(6,status(["read"]));await f.settle();
   assert.match(f.text(),/已停止 Agent 读正文/);assert.match(f.text(),/已允许（只看文件名和目录，不读内容）/);
+});
+test("rename and move is its own write-level toggle; it replaces the policy and reloads everything",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
+  f.button("读取 Agent 查看设置").props.onClick();await f.settle();
+  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+    content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});
+  f.respond(2,writeStatus([]));await f.settle();
+  assert.match(f.text(),/Agent 改名和移动文件：未允许/);
+  const allow=f.button("允许 Agent 改名和移动文件");allow.props.onClick();allow.props.onClick();await f.settle();
+  assert.equal(f.calls.length,4);
+  assert.match(f.prompts.at(-1),/由 Clued 创建的文件/);assert.match(f.prompts.at(-1),/没有排队或未完成的存储任务/);
+  assert.equal(f.calls[3].url,"/v1/storage/write-access");
+  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set_classes",connection_id:active.id,classes:["modify"],
+    base_generation:1,disclosure_version:"clued.storage-modify-disclosure/1",idempotency_key:"fixture-id"});
+  f.respond(3,{status:"committed",receipt_id:"fixture-modify-receipt"});await f.settle();
+  assert.equal(f.calls[4].url,"/v1/storage/owner","the connection list is reloaded");
+  f.respond(4,{connections:[{...active,actions:[...active.actions,"modify"]}],worker_execution_enabled:false});await f.settle();
+  assert.equal(f.calls[5].url,"/v1/storage/write-access");assert.equal(f.calls[6].url,"/v1/storage/read-access");
+  f.respond(5,writeStatus(["modify"]));
+  f.respond(6,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+    content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});await f.settle();
+  assert.match(f.text(),/已允许 Agent 改名和移动文件。回执：fixture-modify-receipt/);
+  assert.match(f.text(),/改名、移动文件/);
+  f.button("停止 Agent 改名和移动文件").props.onClick();await f.settle();
+  assert.deepEqual(JSON.parse(f.calls[7].init.body).classes,[]);assert.equal(JSON.parse(f.calls[7].init.body).base_generation,2);
+  f.respond(7,{error:"private"},403);await f.settle();
+  assert.match(f.text(),/Agent 修改设置结果未确认/);assert.equal(f.calls.length,8,"an unknown result is never resent");
 });
