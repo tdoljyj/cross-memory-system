@@ -255,6 +255,39 @@ test("a committed checkpoint renews the session without a second resume", { time
     assert.equal(busyCheckpoint.session_renewal.new_unabsorbed_events_truncated, true);
     assert.equal(Number(busyCheckpoint.session_renewal.new_unabsorbed_events[0].id), Number(busyForeign.event_id));
 
+    // A constraint that becomes visible without changing (here: the Binding
+    // gains Global read after its resume) arrives in full.
+    const widened = await call(projectToken, "clued_mcp_restore", { context_key: projectContext, response_view: "structured" });
+    await admin.query("update public.clued_agent_bindings set context_keys=array['global',$2] where token_hash=$1",
+      [projectToken, projectContext]);
+    let widenedCheckpoint = await call(projectToken, "clued_mcp_commit_checkpoint", {
+      context_key: projectContext, session_token: widened.session_token, base_version: widened.version,
+      snapshot: { stage: "renewal" }, summary: "Widened renewal.", next_action: "Continue.", idempotency_key: uuid(),
+      coverage: { mode: "explicit", contexts: [projectContext], tracks: ["renewal"], event_ids: [] },
+    });
+    if (widenedCheckpoint.status === "conflict") {
+      await call(projectToken, "clued_mcp_session_reconcile", { context_key: projectContext, session_token: widened.session_token });
+      widenedCheckpoint = await call(projectToken, "clued_mcp_commit_checkpoint", {
+        context_key: projectContext, session_token: widened.session_token, base_version: widened.version,
+        snapshot: { stage: "renewal" }, summary: "Widened renewal.", next_action: "Continue.", idempotency_key: uuid(),
+        coverage: { mode: "explicit", contexts: [projectContext], tracks: ["renewal"], event_ids: [] },
+      });
+    }
+    assert.equal(widenedCheckpoint.status, "committed", JSON.stringify(widenedCheckpoint));
+    assert.deepEqual(widenedCheckpoint.session_renewal.active_constraints_delivered.map((item) => item.id), [constraintId]);
+    assert.equal(widenedCheckpoint.session_renewal.active_constraint_refs.length, 2);
+
+    // A session without a delivered set (created before the migration) gets
+    // every constraint in full.
+    const legacy = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
+    await admin.query(`update public.clued_continuity_sessions set delivered_constraint_refs=null
+      where token_hash=encode(extensions.digest($1,'sha256'),'hex')`, [legacy.session_token]);
+    const legacyCheckpoint = await checkpoint(legacy.session_token, legacy.version, []);
+    assert.equal(legacyCheckpoint.status, "committed");
+    assert.deepEqual(legacyCheckpoint.session_renewal.active_constraints_delivered.map((item) => item.id),
+      legacyCheckpoint.session_renewal.active_constraint_refs.map((item) => item.id));
+    assert.ok(legacyCheckpoint.session_renewal.active_constraints_delivered.length >= 1);
+
     // A Binding that lost read admission still checkpoints but gets no renewal.
     const readable = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
     await admin.query("update public.clued_agent_bindings set scopes=array['context:write','audit:read'] where token_hash=$1", [tokenHash]);

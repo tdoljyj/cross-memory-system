@@ -20,12 +20,15 @@
 -- with counts and a truncation flag. Sessions created before this migration
 -- have no delivered set and receive every constraint in full.
 --
--- Record, decision and Event-carrier writes take the user currentness lock
--- that resume and checkpoint hold, so they cannot interleave with the
--- high-water read; a plain note append does not, so a note whose transaction
--- began before a resume and committed after it may be missing from renewals
--- until the next full resume shows it. Duplicate and conflicting checkpoints
--- issue nothing. Reconcile and the checkpoint currentness gate are unchanged.
+-- The renewal's high-water read runs under the stream row lock and the user
+-- currentness lock the checkpoint holds, which every event append and record
+-- write also takes. Resume holds only the user lock, so a note append that
+-- already allocated its id may commit after a resume whose high-water mark
+-- passed it (for example behind a later record Event); such a note is missing
+-- from renewals until the next full resume shows it. Resume does not take the
+-- stream lock because appends take stream then user, and resume takes user
+-- first. Duplicate and conflicting checkpoints issue nothing. Reconcile and
+-- the checkpoint currentness gate are unchanged.
 
 alter table public.clued_continuity_sessions
   add column if not exists delivered_constraint_refs jsonb,
