@@ -8,12 +8,23 @@ export const ids={job:"10000000-0000-4000-8000-000000000001",connection:"2000000
 export const root="G:/My Drive/Clued_资料中心";
 const folder="application/vnd.google-apps.folder";
 const scope="https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
+export const normalScope=scope+" https://www.googleapis.com/auth/drive.readonly";
 const sha=s=>createHash("sha256").update(s).digest("hex");
+// Drive returns isAppAuthorized only when `fields` names it. Items are
+// app-authorized (created or opened by Clued) unless they say otherwise.
+export const project=(u,item)=>{
+  const {isAppAuthorized=true,...rest}=item;
+  return (u.searchParams.get('fields')??'').includes('isAppAuthorized')?{...rest,isAppAuthorized}:rest;
+};
 export function fixture(options={}){
   let now=100000,status="queued",starts=0,posts=0,loads=0,batches=0;const trace=[];
   const file=(id,name,parent)=>({id,name,parents:parent?[parent]:[],version:"1",trashed:false,mimeType:folder});
   const files=new Map([['parent',file('parent','My Drive')],['root',file('root','Clued_资料中心','parent')],['track',file('track','track','root')]]);
   if(options.island) files.set('island',{...file('island','Clued_品牌说明.md','parent'),mimeType:'text/plain'});
+  // The Owner's own entries (StorageNormalUse §3.1): only a normal (drive.readonly)
+  // credential lists them, as isAppAuthorized: false; drive.file never does.
+  const normal=options.credential?.scope===normalScope;
+  for(const entry of options.owner??[]) files.set(entry.id,{...entry,isAppAuthorized:false});
   const mutation={operation:'create',target_kind:'file',destination_path:root+'/track/new.txt',content:'hello cloud',...options.mutation};
   const descriptor={contract:'clued.storage-job-execution/1',owner_id:ids.owner,job_id:ids.job,connection_id:ids.connection,request_digest:'a'.repeat(64),
     provider:'google-drive',provider_subject:'subject',credential_version:1,mutation,
@@ -73,9 +84,10 @@ export function fixture(options={}){
     const q=u.searchParams.get('q');
     if(q){
       const parent=/'([^']+)' in parents/.exec(q)?.[1],name=/name = '([^']+)'/.exec(q)?.[1];
-      return {status:200,value:{files:[...files.values()].filter(f=>f.parents.includes(parent)&&(!name||f.name===name)),incompleteSearch:false}};
+      return {status:200,value:{files:[...files.values()].filter(f=>f.parents.includes(parent)&&(!name||f.name===name)&&(normal||f.isAppAuthorized!==false))
+        .map(f=>project(u,f)),incompleteSearch:false}};
     }
-    const item=files.get(u.pathname.split('/').at(-1));return item?{status:200,value:item}:{status:404,value:{}};
+    const item=files.get(u.pathname.split('/').at(-1));return item?{status:200,value:project(u,item)}:{status:404,value:{}};
   }
   return {config,reference:{job_id:ids.job,connection_id:ids.connection},run:()=>createResourceCenterCloudExecutor(config),
     info:()=>({starts,posts,loads,batches,status,trace,currentRequest}),files};

@@ -788,6 +788,17 @@ changes. Existing connections keep working unchanged until the Owner turns on
 - **Known follow-up (PR #418 review, minor 4).** The disclosure names the root
   by the registered profile's `managed_root` path, not by the folder name read
   from Drive; a folder renamed in Drive keeps showing the registered path.
+- **Write path under a `normal` credential (StorageNormalUse §3.1).** Every
+  Drive listing the cloud executor uses (boundary scan, provider identity,
+  create/rename/move/replace postconditions, recovery) keeps only entries with
+  `isAppAuthorized === true`, so writes see the same namespace as with
+  `drive.file`; the read path is not filtered. Symptom of the pre-fix
+  regression: every write job `denied` within seconds with no intent. Diagnose
+  from Worker logs: `storage_cloud_denied` (a deny, e.g.
+  `UNAUTHORIZED_WORKSPACE_MUTATION`) or `storage_cloud_unavailable` (the job
+  becomes `attention_required`; fixed codes such as `DRIVE_BOUNDARY_*`,
+  `CLOUD_MUTATION_SHAPE_INVALID`, `STORAGE_CREDENTIAL_*`, else `UNSPECIFIED`).
+  Neither event carries IDs, paths or provider text.
 
 Before N1 acceptance (§2.4 items 7-8, not verifiable here): verify with a real
 Google account whether revoking the legacy token invalidates the normal one and

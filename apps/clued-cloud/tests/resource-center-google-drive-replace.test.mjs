@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { LEGACY_SCOPE, NORMAL_SCOPE, normalScopeDrive } from "./normal-scope-drive.fixture.mjs";
 import { contentAfter, createGoogleDriveNativeReplaceEffect, md5Hex, replaceShape, sha256Hex } from "../../../kernel/host/resource-center-google-drive-replace-effect.mjs";
 import { createGoogleDriveReplacePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-replace-postcondition.mjs";
 
@@ -236,4 +237,22 @@ test("scope profiles: replace accepts legacy and normal grants and refuses every
     await assert.rejects(f.effect(f.request), /DRIVE_NATIVE_GRANT_UNAVAILABLE/, String(scope));
     assert.deepEqual(f.events, ["persist"], String(scope));
   }
+});
+
+// StorageNormalUse.v0.1 §3.1: the replace verifier lists through the write-path
+// metadata API; the Owner's own same-named file or folders are not ambiguity.
+test("normal scope: a replace verifies although the Owner has a same-named file and folders", async () => {
+  const owner = [{ id: "o-a", name: "a.txt", parents: ["track"], version: "1", trashed: false, mimeType: "text/plain" },
+    folder("o-track", "20_P_产品与体验", "root")];
+  for (const scope of [LEGACY_SCOPE, NORMAL_SCOPE]) {
+    const d = replaced(), api = normalScopeDrive(d.files, owner, { scope });
+    const result = await verifier(d, { get_file: api.getFile, list_children: api.listChildren })({ profile, mutation: contentMutation,
+      provider_before: before(), effect_result: effectResult() });
+    assert.equal(result.provider_file_version, "7", scope);
+  }
+  const d = replaced();
+  d.files.set("clued-dup", { ...d.files.get("file"), id: "clued-dup" });
+  const api = normalScopeDrive(d.files, owner);
+  await assert.rejects(verifier(d, { get_file: api.getFile, list_children: api.listChildren })({ profile, mutation: contentMutation,
+    provider_before: before(), effect_result: effectResult() }), /DRIVE_POSTCONDITION_/);
 });

@@ -38,11 +38,13 @@ export async function testCloudBridge(t,admin,server,{user,profile,decision,conn
   const files=new Map([['account-parent',file('account-parent','account')],['account-root',file('account-root','Clued_资料中心','account-parent')],
     ['account-track',file('account-track','20_P_产品与体验','account-root','2')]]);
   let posts=0;let latestId;let losePost=false;
+  // Drive returns isAppAuthorized only when `fields` names it; these entries are Clued's own.
+  const project=(u,f)=>(u.searchParams.get('fields')??'').includes('isAppAuthorized')?{...f,isAppAuthorized:f.isAppAuthorized??true}:f;
   const read=u=>{
     const q=u.searchParams.get('q');
     if(q){const parent=/'([^']+)' in parents/.exec(q)?.[1],name=/name = '([^']+)'/.exec(q)?.[1];
-      return {status:200,value:{files:[...files.values()].filter(f=>f.parents.includes(parent)&&(!name||name===f.name)),incompleteSearch:false}};}
-    const found=files.get(u.pathname.split('/').at(-1));return found?{status:200,value:found}:{status:404,value:{}};
+      return {status:200,value:{files:[...files.values()].filter(f=>f.parents.includes(parent)&&(!name||name===f.name)).map(f=>project(u,f)),incompleteSearch:false}};}
+    const found=files.get(u.pathname.split('/').at(-1));return found?{status:200,value:project(u,found)}:{status:404,value:{}};
   };
   const provider=async(url,init)=>{
     const u=new URL(url);assert.equal(new Headers(init.headers).get('authorization'),'Bearer '+tokens.access_token);

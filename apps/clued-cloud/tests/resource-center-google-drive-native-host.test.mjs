@@ -45,8 +45,9 @@ test("prepare's third provider traversal cannot replace the admitted intermediat
       }
       if (u.pathname.endsWith("/root")) { walks++; return Response.json(info("root", "Clued_资料中心", "container")); }
       const q = u.searchParams.get("q") ?? "";
-      if (q.includes("'root' in parents")) return Response.json({ files: [info("track", "track", "root", walks >= 3 ? "2" : "1")] });
-      if (q.includes("'track' in parents")) return Response.json({ files: [info("topic", "topic", "track")] });
+      // Listed entries carry isAppAuthorized: the write path keeps only Clued's own entries.
+      if (q.includes("'root' in parents")) return Response.json({ files: [{ ...info("track", "track", "root", walks >= 3 ? "2" : "1"), isAppAuthorized: true }] });
+      if (q.includes("'track' in parents")) return Response.json({ files: [{ ...info("topic", "topic", "track"), isAppAuthorized: true }] });
       return Response.json({ files: [] });
     },
   });

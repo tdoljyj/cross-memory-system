@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { createResourceCenterOnlineToolHost } from "./resource-center-online-tool-host.mjs";
-import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-metadata.mjs";
+import { createGoogleDriveMetadataApi, appAuthorizedEntries } from "./resource-center-google-drive-metadata.mjs";
 import { scopeProfile } from "./resource-center-google-scopes.mjs";
 import { createGoogleDriveProviderIdentityResolver } from "./resource-center-google-drive-identity.mjs";
 import { createGoogleDriveBoundaryScanner } from "./resource-center-google-drive-boundary.mjs";
@@ -16,12 +16,22 @@ import { RESOURCE_CENTER_POLICY_VERSION, bindResourceCenterMutation } from "../p
 
 const uuid = value => typeof value==="string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-const fail = () => { throw new Error("CLOUD_EXECUTOR_UNAVAILABLE"); };
+// Each refusal names the failed check with a fixed label; the default keeps the legacy label.
+const fail = (code="CLOUD_EXECUTOR_UNAVAILABLE") => { throw new Error(code); };
 const unavailable = () => ({status:"unavailable",execution_permitted:false});
 const logDiagnostic = (status,errorCode) => {
   // Never log the job, credential, path, scan findings or provider reply.
   const code=typeof errorCode==="string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(errorCode) ? errorCode : "UNSPECIFIED";
-  console.warn(JSON.stringify({event:status==="deny"?"storage_cloud_denied":"storage_cloud_unreconciled",error_code:code}));
+  const event=status==="deny"?"storage_cloud_denied":status==="unavailable"?"storage_cloud_unavailable":"storage_cloud_unreconciled";
+  console.warn(JSON.stringify({event,error_code:code}));
+};
+// Only Clued's own fixed labels (never an exception or provider text) name an
+// unavailable run: descriptor/shape checks, DRIVE_BOUNDARY_* scan refusals,
+// Drive transport categories, credential closure labels and provider identity codes.
+const unavailableCode = error => {
+  const message=error?.message;
+  return typeof message==="string" && message.length<=64 &&
+    /^(CLOUD|DRIVE|PROVIDER|STORAGE)_[A-Z0-9_]+$/.test(message) ? message : "UNSPECIFIED";
 };
 const providerAuthorityCodes = new Set([
   "PROVIDER_DESTINATION_EXISTS", "PROVIDER_LIST_UNAVAILABLE", "PROVIDER_METADATA_MISMATCH",
@@ -106,12 +116,12 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
     try{
       descriptor=structuredClone(await loadJob(ref));
       if(descriptor?.contract!=="clued.storage-job-execution/1" || descriptor.job_id!==ref.job_id || descriptor.connection_id!==ref.connection_id ||
-        !uuid(descriptor.owner_id) || !/^[0-9a-f]{64}$/.test(descriptor.request_digest??"")) fail();
+        !uuid(descriptor.owner_id) || !/^[0-9a-f]{64}$/.test(descriptor.request_digest??"")) fail("CLOUD_DESCRIPTOR_INVALID");
       if(descriptor.status!=="queued") return {status:"inspection_required",execution_permitted:false};
       if(descriptor.provider!=="google-drive" || typeof descriptor.provider_subject!=="string" || !descriptor.provider_subject ||
-        !Number.isSafeInteger(descriptor.credential_version)||descriptor.credential_version<1) fail();
+        !Number.isSafeInteger(descriptor.credential_version)||descriptor.credential_version<1) fail("CLOUD_DESCRIPTOR_INVALID");
       const profile=structuredClone(descriptor.profile), mutation=structuredClone(descriptor.mutation);
-      if(!uuid(profile?.profile_id) || profile.policy_version!==RESOURCE_CENTER_POLICY_VERSION) fail();
+      if(!uuid(profile?.profile_id) || profile.policy_version!==RESOURCE_CENTER_POLICY_VERSION) fail("CLOUD_PROFILE_INVALID");
       // Rename and file move (StorageFullCapability P3) run only in the
       // verified-result (account policy) mode, whose server proof names them.
       const modify=mutation?.operation==="rename" || mutation?.operation==="move";
@@ -127,22 +137,22 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
             (!descriptor.restore || !revisionIdOk(descriptor.restore.revision_id) ||
               !/^[A-Za-z0-9_-]{1,160}$/.test(descriptor.restore.provider_file_id??"") ||
               !/^(0|[1-9]\d{0,19})$/.test(descriptor.restore.size??"") ||
-              (descriptor.restore.sha256==null && descriptor.restore.md5==null)))) fail();
+              (descriptor.restore.sha256==null && descriptor.restore.md5==null)))) fail("CLOUD_MUTATION_SHAPE_INVALID");
       }else if(modify){
         if(!verifiedResultMode || !modifyShape(mutation) || mutation.target_kind!=="file" ||
-          Object.keys(mutation).some(k=>!["operation","source_path","destination_path","target_kind","source_file_version"].includes(k))) fail();
+          Object.keys(mutation).some(k=>!["operation","source_path","destination_path","target_kind","source_file_version"].includes(k))) fail("CLOUD_MUTATION_SHAPE_INVALID");
       }else if(mutation?.operation==="create" && mutation.content_ref!==undefined){
         // Binary create (N3): account-policy mode only, exact content reference, staged bytes loader.
         if(!verifiedResultMode || !loadStagedContent || mutation.target_kind!=="file" ||
           Object.keys(mutation).sort().join(",")!=="content_ref,destination_path,operation,target_kind" ||
           bindResourceCenterMutation(mutation).destination_path!==mutation.destination_path ||
-          !contentRefShape(mutation.content_ref) || descriptor.staging?.staging_id!==mutation.content_ref.staging_id) fail();
+          !contentRefShape(mutation.content_ref) || descriptor.staging?.staging_id!==mutation.content_ref.staging_id) fail("CLOUD_MUTATION_SHAPE_INVALID");
       }else if(mutation?.operation!=="create" ||
         !["file","directory"].includes(mutation.target_kind) ||
         Object.keys(mutation).some(k=>!["operation","destination_path","target_kind","directory_semantics","content"].includes(k)) ||
         bindResourceCenterMutation(mutation).destination_path!==mutation.destination_path ||
         (mutation.target_kind==="file" && (typeof mutation.content!=="string" || "directory_semantics" in mutation)) ||
-        (mutation.target_kind==="directory" && ("content" in mutation || !["topic","asset_collection"].includes(mutation.directory_semantics)))) fail();
+        (mutation.target_kind==="directory" && ("content" in mutation || !["topic","asset_collection"].includes(mutation.directory_semantics)))) fail("CLOUD_MUTATION_SHAPE_INVALID");
       const credential=async()=>{
         const c=await getCredential(Object.freeze({owner_id:descriptor.owner_id,connection_id:descriptor.connection_id,
           provider_subject:descriptor.provider_subject,credential_version:descriptor.credential_version}));
@@ -159,8 +169,14 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       let batched={};
       if(metadataBatch){
         const batch=await metadataBatch(Object.freeze({access_token:(await credential()).access_token}));
-        if(typeof batch?.getFiles!=="function" || typeof batch?.listFolders!=="function") fail();
-        batched={get_files:ids=>batch.getFiles(ids),list_folders:ids=>batch.listFolders(ids)};
+        if(typeof batch?.getFiles!=="function" || typeof batch?.listFolders!=="function") fail("CLOUD_METADATA_BATCH_INVALID");
+        // Write-path view (StorageNormalUse §3.1): only app-authorized children,
+        // filtered by the transport before its entry limit and again here, so a
+        // normal (drive.readonly) credential scans the legacy drive.file namespace.
+        batched={get_files:ids=>batch.getFiles(ids),list_folders:async ids=>{
+          const listings=await batch.listFolders(ids,Object.freeze({appAuthorizedOnly:true}));
+          return Array.isArray(listings) ? listings.map(children=>Array.isArray(children)?appAuthorizedEntries(children):children) : listings;
+        }};
       }
       const scan=createGoogleDriveBoundaryScanner({trusted_profile:profile,root_folder_id:descriptor.root_folder_id,root_parent_id:descriptor.root_parent_id,
         scan_roots:descriptor.scan_roots,get_file:metadata.getFile,list_folder:metadata.listFolder,...batched});
@@ -337,6 +353,9 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       // public job result. Recovery reads the original durable service state.
       return result.status==="committed" ? {status:"committed",job_id:ref.job_id,receipt_id:result.canonical_receipt_id,execution_permitted:false} :
         {status:result.status,error_code:result.error_code,side_effects:result.side_effects,execution_permitted:false};
-    }catch{return unavailable();}
+    }catch(error){
+      logDiagnostic("unavailable",unavailableCode(error));
+      return unavailable();
+    }
   }});
 }

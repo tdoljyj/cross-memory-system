@@ -173,7 +173,8 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       const query = u.searchParams.get("q");
       if (query) {
         const parent = /'([^']+)' in parents/.exec(query)?.[1], name = /name = '([^']+)'/.exec(query)?.[1];
-        return Response.json({ files: [...files.values()].filter(file => file.parents.includes(parent) && (!name || name === file.name)), incompleteSearch: false });
+        return Response.json({ files: [...files.values()].filter(file => file.parents.includes(parent) && (!name || name === file.name))
+          .map(file => ({ ...file, isAppAuthorized: file.isAppAuthorized ?? true })), incompleteSearch: false });
       }
       const found = files.get(u.pathname.split("/").at(-1));
       return found ? Response.json(found) : new Response("", { status: 404 });

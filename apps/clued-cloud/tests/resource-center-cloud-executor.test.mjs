@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fixture, ids, root } from "./resource-center-cloud-executor.fixture.mjs";
+import { fixture, ids, root, normalScope } from "./resource-center-cloud-executor.fixture.mjs";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 test('cloud composition runs scan, admission, one durable start, one POST and verified receipt without a mounted disk',async()=>{
   const f=fixture(),executor=f.run();const result=await executor.run(f.reference);
@@ -300,8 +300,9 @@ test('batched boundary scan keeps post-write verify inside the subrequest budget
     f.config.drive_fetch=async(url,init)=>{spend();return fetch(url,init);};
     f.config.rpc=async input=>{spend();return rpc(input);};
     if(batched){
-      const byId=id=>structuredClone(f.files.get(id));
-      const children=id=>[...f.files.values()].filter(x=>x.parents.includes(id)).map(x=>structuredClone(x));
+      // The batch transport's fields include isAppAuthorized for reads and listings.
+      const byId=id=>({...structuredClone(f.files.get(id)),isAppAuthorized:true});
+      const children=id=>[...f.files.values()].filter(x=>x.parents.includes(id)).map(x=>({...structuredClone(x),isAppAuthorized:true}));
       const chunk=async(ids,read)=>{for(let i=0;i<ids.length;i+=32)spend();return ids.map(read);};
       f.config.metadata_batch=async({access_token})=>{
         assert.equal(access_token,'synthetic-cloud-token');
@@ -321,4 +322,82 @@ test('batched boundary scan keeps post-write verify inside the subrequest budget
   assert.equal(after.posts,1);
   assert.deepEqual(after.logs,[]);
   assert.ok(after.used<=52,String(after.used));
+});
+
+// StorageNormalUse.v0.1 §3.1 (regression): after re-consent to the normal profile the
+// same token lists the Owner's whole Drive. Before the write path kept only
+// app-authorized entries, the boundary scan from My Drive reported the Owner's own
+// "Clued_*" documents as UNAUTHORIZED_WORKSPACE_MUTATION and every write was denied
+// before any reservation.
+const FOLDER='application/vnd.google-apps.folder';
+const ownerEntry=(id,name,parent,mimeType=FOLDER)=>({id,name,parents:[parent],version:'1',trashed:false,mimeType});
+const ownerDrive=()=>[
+  ownerEntry('o-doc','Clued_单一数据源方案','parent','application/vnd.google-apps.document'),
+  ownerEntry('o-doc2','Clued_单一数据源方案','parent','application/vnd.google-apps.document'),
+  ownerEntry('o-start','00_从这里开始','root'),ownerEntry('o-track','track','root'),
+  ownerEntry('o-same','new.txt','track','text/plain'),ownerEntry('o-link','link','parent','application/vnd.google-apps.shortcut'),
+  ownerEntry('o-deep0','deep0','parent'),...Array.from({length:10},(_,i)=>ownerEntry('o-deep'+(i+1),'deep'+(i+1),'o-deep'+i)),
+  ownerEntry('o-island','Clued-old','o-deep4'),
+  ...Array.from({length:10050},(_,i)=>ownerEntry('o-bulk'+i,'photo'+i+'.png','parent','image/png'))];
+for(const mode of ['single','batched']){
+  test(mode+': a normal-scope credential writes exactly as the legacy drive.file view',async()=>{
+    const f=fixture({credential:{scope:normalScope},owner:ownerDrive()});
+    const options=[];
+    if(mode==='batched'){
+      // A transport that ignores appAuthorizedOnly is still filtered by the executor.
+      const byId=id=>({...structuredClone(f.files.get(id)),isAppAuthorized:f.files.get(id).isAppAuthorized??true});
+      const children=id=>[...f.files.values()].filter(x=>x.parents.includes(id)).map(x=>byId(x.id));
+      f.config.metadata_batch=async()=>({getFiles:async ids=>ids.map(byId),
+        listFolders:async(ids,option)=>{options.push(option);return ids.map(children);}});
+    }
+    const logs=[],original=console.warn;console.warn=message=>logs.push(message);
+    let result;
+    try{result=await f.run().run(f.reference);}finally{console.warn=original;}
+    assert.deepEqual(result,{status:'committed',job_id:ids.job,receipt_id:ids.receipt,execution_permitted:false});
+    assert.equal(f.info().starts,1);assert.equal(f.info().posts,1);assert.deepEqual(logs,[]);
+    if(mode==='batched'){assert.ok(options.length>0);assert.ok(options.every(o=>o?.appAuthorizedOnly===true));}
+  });
+  test(mode+': a normal-scope credential still denies an app-authorized sibling island',async()=>{
+    const f=fixture({credential:{scope:normalScope},owner:ownerDrive(),island:true});
+    if(mode==='batched'){
+      const byId=id=>({...structuredClone(f.files.get(id)),isAppAuthorized:f.files.get(id).isAppAuthorized??true});
+      f.config.metadata_batch=async()=>({getFiles:async ids=>ids.map(byId),
+        listFolders:async ids=>ids.map(id=>[...f.files.values()].filter(x=>x.parents.includes(id)).map(x=>byId(x.id)))});
+    }
+    const logs=[],original=console.warn;console.warn=message=>logs.push(message);
+    let result;
+    try{result=await f.run().run(f.reference);}finally{console.warn=original;}
+    assert.equal(result.status,'deny');assert.equal(result.error_code,'UNAUTHORIZED_WORKSPACE_MUTATION');
+    assert.equal(f.info().starts,0);assert.equal(f.info().posts,0);
+    assert.deepEqual(logs.map(m=>JSON.parse(m)),[{event:'storage_cloud_denied',error_code:'UNAUTHORIZED_WORKSPACE_MUTATION'}]);
+  });
+}
+test('incident b9d6db9d: one Owner "Clued_*" document beside the root no longer denies a normal-scope create',async()=>{
+  // Minimal reproduction: the pre-fix executor returned deny/UNAUTHORIZED_WORKSPACE_MUTATION here.
+  const f=fixture({credential:{scope:normalScope},owner:[ownerEntry('o-doc','Clued_单一数据源方案','parent','application/vnd.google-apps.document'),
+    ownerEntry('o-start','00_从这里开始','root')]});
+  assert.equal((await f.run().run(f.reference)).status,'committed');assert.equal(f.info().posts,1);
+});
+test('legacy credential behaviour is unchanged: the Owner entries are never listed',async()=>{
+  const f=fixture({owner:ownerDrive()});
+  assert.equal((await f.run().run(f.reference)).status,'committed');assert.equal(f.info().posts,1);
+});
+test('unavailable runs log one fixed code: shape checks, boundary scan refusals, never inputs',async()=>{
+  const cases=[
+    ['CLOUD_MUTATION_SHAPE_INVALID',f=>{const load=f.config.load_job;f.config.load_job=async r=>({...await load(r),mutation:{operation:'create',target_kind:'file',destination_path:root+'/track/x.txt'}});}],
+    ['CLOUD_DESCRIPTOR_INVALID',f=>{const load=f.config.load_job;f.config.load_job=async r=>({...await load(r),request_digest:'private '+root});}],
+    ['CLOUD_PROFILE_INVALID',f=>{const load=f.config.load_job;f.config.load_job=async r=>{const d=await load(r);d.profile.policy_version='other';return d;};}],
+    ['DRIVE_BOUNDARY_PATH_AMBIGUOUS',f=>{f.files.set('dup',{id:'dup',name:'track',parents:['parent'],version:'1',trashed:false,mimeType:FOLDER});
+      f.files.set('dup2',{id:'dup2',name:'track',parents:['parent'],version:'1',trashed:false,mimeType:FOLDER});}],
+    ['UNSPECIFIED',f=>{f.config.load_job=async()=>{throw new Error('private database detail '+ids.job);};}],
+  ];
+  for(const [code,arrange] of cases){
+    const f=fixture();arrange(f);
+    const logs=[],original=console.warn;console.warn=message=>logs.push(message);
+    let result;
+    try{result=await f.run().run(f.reference);}finally{console.warn=original;}
+    assert.equal(result.status,'unavailable',code);assert.equal(f.info().starts,0,code);assert.equal(f.info().posts,0,code);
+    assert.deepEqual(logs.map(m=>JSON.parse(m)),[{event:'storage_cloud_unavailable',error_code:code}],code);
+    assert.equal(logs.join('').includes(root),false);assert.equal(logs.join('').includes(ids.job),false);
+  }
 });

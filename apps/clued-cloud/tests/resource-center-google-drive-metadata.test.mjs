@@ -99,11 +99,12 @@ test("Drive metadata lookup uses only a Host credential and checks every page", 
       return { ok: true, json: async () => urls.length === 1
         ? { files: [], nextPageToken: "page-2" }
         : { files: [{ id: "child", name: "a.md", parents: ["parent"],
-          version: "1", mimeType: "text/markdown", trashed: false }] } };
+          version: "1", mimeType: "text/markdown", trashed: false, isAppAuthorized: true }] } };
     },
   });
   const result = await api.listChildren({ parent_id: "parent", name: "a.md" });
   assert.equal(result[0].id, "child");
+  assert.equal("isAppAuthorized" in result[0], false);
   assert.equal(urls.length, 2);
   assert.equal(urls[1].searchParams.get("pageToken"), "page-2");
   assert.match(urls[0].searchParams.get("fields"), /incompleteSearch/);
@@ -127,4 +128,51 @@ test("Drive metadata search escapes quotes and rejects incomplete/looped results
     fetch: async () => ({ ok: true, json: async () => ({ files: [], incompleteSearch: true }) }),
   });
   await assert.rejects(incomplete.listChildren({ parent_id: "parent", name: "a.md" }), /DRIVE_LIST_INVALID/);
+});
+
+test("write-path listings keep only app-authorized entries for legacy and normal credentials", async () => {
+  // StorageNormalUse §3.1: a drive.readonly token also lists the Owner's own
+  // files. Every write-path listing observes exactly what drive.file observed.
+  const entry = (id, name, isAppAuthorized) => ({ id, name, parents: ["parent"], version: "1",
+    mimeType: "text/plain", trashed: false, ...(isAppAuthorized === undefined ? {} : { isAppAuthorized }) });
+  const scopes = {
+    legacy: "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly",
+    normal: "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly",
+  };
+  for (const [profile, scope] of Object.entries(scopes)) {
+    const urls = [];
+    const listing = profile === "legacy"
+      ? [entry("clued", "a.md", true)]
+      : [entry("owner", "a.md", false), entry("clued", "a.md", true), entry("unknown", "a.md")];
+    const build = (authorizationDetails) => createGoogleDriveMetadataApi({
+      get_credential: async () => ({ access_token: "synthetic-test-token", scope }),
+      authorization_details: authorizationDetails,
+      fetch: async (url) => {
+        urls.push(new URL(url));
+        return Response.json({ files: structuredClone(listing), incompleteSearch: false });
+      },
+    });
+    const children = await build(false).listChildren({ parent_id: "parent", name: "a.md" });
+    // A same-named Owner file is not a duplicate the write path can see.
+    assert.deepEqual(children, [entry("clued", "a.md")], profile);
+    assert.deepEqual((await build(false).listFolder("parent")).map((file) => file.id), ["clued"], profile);
+    assert.deepEqual((await build(true).listFolder("parent")).map((file) => [file.id, file.isAppAuthorized]), [["clued", true]], profile);
+    for (const url of urls) assert.match(url.searchParams.get("fields"), /files\([^)]*isAppAuthorized/, profile);
+  }
+});
+
+test("the enumeration limit counts only app-authorized entries", async () => {
+  const many = Array.from({ length: 1000 }, (_, i) => ({ id: "owner" + i, name: "o" + i, parents: ["parent"],
+    version: "1", mimeType: "text/plain", trashed: false, isAppAuthorized: false }));
+  let page = 0;
+  const api = createGoogleDriveMetadataApi({
+    get_credential: getCredential,
+    fetch: async () => {
+      page += 1;
+      const files = page === 11 ? [{ ...many[0], id: "clued", name: "c", isAppAuthorized: true }] : structuredClone(many);
+      return Response.json({ files, incompleteSearch: false, ...(page < 11 ? { nextPageToken: "p" + page } : {}) });
+    },
+  });
+  assert.deepEqual((await api.listFolder("parent")).map((file) => file.id), ["clued"]);
+  assert.equal(page, 11);
 });
