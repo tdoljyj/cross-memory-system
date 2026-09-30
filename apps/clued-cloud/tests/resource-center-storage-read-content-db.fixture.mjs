@@ -186,6 +186,20 @@ export async function testStorageReadContent(t, admin, server, user, decision) {
       await assert.rejects(reserve(owner, { receipt_id: stale }, 2 * MIB), /storage_read_denied/);
     });
 
+    await t.test("finalize never settles more than the receipt reserved; a revoked Binding cannot reserve", async () => {
+      const owner = await bind();
+      const plain = await admit(owner);
+      await assert.rejects(finalize(owner, plain, CHUNK + 1), /storage_read_receipt_conflict/, "no reserve: at most 256 KiB");
+      assert.equal((await finalize(owner, plain, CHUNK)).state, "finalized");
+      const image = await admit(owner);
+      await reserve(owner, image, 2 * MIB);
+      await assert.rejects(finalize(owner, image, 2 * MIB + 1), /storage_read_receipt_conflict/, "at most the reservation");
+      assert.equal((await finalize(owner, image, 2 * MIB)).state, "finalized");
+      const late = await admit(owner);
+      await admin.query("update public.clued_agent_bindings set revoked_at=clock_timestamp() where id=$1", [owner.id]);
+      await assert.rejects(reserve(owner, late, 2 * MIB), /storage_read_denied/);
+    });
+
     await t.test("settle releases the unused reservation", async () => {
       const pending = await bind();
       const open = [];

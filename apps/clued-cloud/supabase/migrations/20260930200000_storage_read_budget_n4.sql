@@ -54,7 +54,7 @@ begin
   if wanted>5242880 then raise exception 'storage_read_input_invalid' using errcode='22023'; end if;
   select * into app from clued_private.storage_oauth_apps_v1 where issuer_hash=p_issuer_hash and revoked_at is null and read_enabled for share;
   if not found then raise exception 'storage_read_denied' using errcode='42501'; end if;
-  select * into b from public.clued_agent_bindings where token_hash=p_token_hash;
+  select * into b from public.clued_agent_bindings where token_hash=p_token_hash and revoked_at is null;
   if b.id is null then raise exception 'storage_read_denied' using errcode='42501'; end if;
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('storage-read-budget:'||b.id::text,0));
   select * into rr from clued_private.storage_read_receipts_v1 where id=(p_input->>'receipt_id')::uuid for update;
@@ -101,6 +101,13 @@ begin
     return clued_private.storage_read_reserve_v1(p_issuer_hash,p_token_hash,p_input);
   end if;
   if (p_input-array['action','connection_id','receipt_id','item_count','byte_count','complete'])<>'{}'::jsonb$r$,1),
+    -- Finalize never settles more than the receipt reserved (the Worker caps
+    -- delivery; the database enforces it too).
+    ('public.clued_storage_read_v1(text,text,jsonb)',
+     $a$  update clued_private.storage_read_receipts_v1 set state='finalized',item_count=(p_input->>'item_count')::integer,$a$,
+     $r$  if rr.class='read_content' and (p_input->>'byte_count')::bigint>coalesce(rr.reserved_bytes,262144) then
+    raise exception 'storage_read_receipt_conflict' using errcode='40001'; end if;
+  update clued_private.storage_read_receipts_v1 set state='finalized',item_count=(p_input->>'item_count')::integer,$r$,1),
     -- Admission: 256 MiB per Binding per rolling hour; unfinalized receipts
     -- count their reservation (default 256 KiB, or as extended by reserve).
     ('public.clued_storage_read_v1(text,text,jsonb)',
