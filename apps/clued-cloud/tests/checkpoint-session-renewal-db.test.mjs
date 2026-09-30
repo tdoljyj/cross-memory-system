@@ -114,6 +114,14 @@ test("a committed checkpoint renews the session without a second resume", { time
     });
     assert.equal(constraint.status, "committed");
     const constraintId = constraint.target_refs[0].id;
+
+    // While the vector is not admission-eligible, the renewal says so, as a
+    // fresh resume would.
+    const staleSession = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
+    assert.equal(staleSession.currentness_evaluation.reconciliation_required, true);
+    const staleCheckpoint = await checkpoint(staleSession.session_token, staleSession.version, []);
+    assert.equal(staleCheckpoint.currentness_admission_status, "CONTINUITY_COMMITTED_NOT_CURRENT");
+    assert.equal(staleCheckpoint.session_renewal.reconciliation_required, true);
     await drainProjections();
 
     // First checkpoint of a resumed session renews it; the old token ends.
@@ -129,8 +137,10 @@ test("a committed checkpoint renews the session without a second resume", { time
     assert.equal(renewal.session_expires_in, 3600);
     assert.equal(renewal.reconciliation_required, false);
     assert.deepEqual(renewal.active_constraint_refs, [{ id: constraintId, version: 1 }]);
-    assert.deepEqual(renewal.active_constraints_changed, []);
-    assert.deepEqual(renewal.unabsorbed_events_since_session_start, []);
+    assert.deepEqual(renewal.active_constraints_delivered, []);
+    assert.deepEqual(renewal.new_unabsorbed_events, []);
+    assert.equal(renewal.new_unabsorbed_event_count, 0);
+    assert.equal(renewal.new_unabsorbed_events_truncated, false);
     await assert.rejects(append(restored.session_token, committed.version, "ended-token"), /resume_required/);
 
     // The renewed token writes and checkpoints again without a resume. An
@@ -141,10 +151,13 @@ test("a committed checkpoint renews the session without a second resume", { time
     const foreign = await append(otherSession.session_token, otherSession.version, "other-client", otherTokenHash);
     const again = await checkpoint(renewal.session_token, foreign.version, [Number(second.event_id)]);
     assert.equal(again.status, "committed");
-    assert.deepEqual(again.session_renewal.unabsorbed_events_since_session_start.map((event) =>
+    // Other clients' events come first.
+    assert.deepEqual(again.session_renewal.new_unabsorbed_events.map((event) =>
       [Number(event.id), event.from_this_binding]),
-    [[Number(uncovered.event_id), true], [Number(foreign.event_id), false]]);
-    assert.deepEqual(again.session_renewal.active_constraints_changed, []);
+    [[Number(foreign.event_id), false], [Number(uncovered.event_id), true]]);
+    assert.equal(again.session_renewal.new_unabsorbed_event_count, 2);
+    assert.equal(again.session_renewal.foreign_event_count, 1);
+    assert.deepEqual(again.session_renewal.active_constraints_delivered, []);
 
     // A constraint changed after the session started arrives in full.
     const renewed = again.session_renewal;
@@ -164,13 +177,24 @@ test("a committed checkpoint renews the session without a second resume", { time
     const afterChange = await checkpoint(renewed.session_token, renewed.version, [], "renewal-replay-key");
     assert.equal(afterChange.status, "committed");
     assert.deepEqual(afterChange.session_renewal.active_constraint_refs, [{ id: constraintId, version: 2 }]);
-    assert.equal(afterChange.session_renewal.active_constraints_changed.length, 1);
-    assert.equal(afterChange.session_renewal.active_constraints_changed[0].content, "Changed during the session.");
+    assert.equal(afterChange.session_renewal.active_constraints_delivered.length, 1);
+    assert.equal(afterChange.session_renewal.active_constraints_delivered[0].content, "Changed during the session.");
+    // Events reported by the previous renewal are not reported again; only the
+    // constraint update's own record Event is new.
+    assert.equal(afterChange.session_renewal.foreign_event_count, 0);
+    assert.ok(afterChange.session_renewal.new_unabsorbed_events.every((event) => event.from_this_binding));
+    assert.ok(afterChange.session_renewal.new_unabsorbed_events.every((event) =>
+      ![Number(uncovered.event_id), Number(foreign.event_id)].includes(Number(event.id))));
 
     // The committed checkpoint ended its token, so a replay is refused before
-    // it can issue a second session.
+    // it can issue a second session; a replay under a live token of the same
+    // Binding returns the original checkpoint and no renewal.
     await assert.rejects(checkpoint(renewed.session_token, renewed.version, [], "renewal-replay-key"),
       /resume_required/);
+    const live = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
+    const duplicate = await checkpoint(live.session_token, renewed.version, [], "renewal-replay-key");
+    assert.equal(duplicate.status, "duplicate");
+    assert.equal("session_renewal" in duplicate, false);
 
     // A renewed token stays bound to its Binding and context.
     const latest = afterChange.session_renewal.session_token;
@@ -185,9 +209,59 @@ test("a committed checkpoint renews the session without a second resume", { time
 
     const receipts = (await admin.query(`select metadata from public.clued_audit_receipts
       where user_id=$1 and operation='session_renew' order by created_at`, [userId])).rows;
-    assert.equal(receipts.length, 3);
-    assert.equal(receipts[2].metadata.constraints_changed_count, 1);
+    assert.equal(receipts.length, 4);
+    assert.equal(receipts[3].metadata.constraints_delivered_count, 1);
     assert.ok(receipts.every((row) => row.metadata.predecessor_session_id && row.metadata.checkpoint_id));
+
+    // A Binding without Global read renews a project session with only the
+    // project's constraints, as its resume would return.
+    const projectConstraint = await rpc("clued_record_mutate", {
+      operation: "create", record_type: "decision", record_schema_version: 1, lifecycle_status: "active",
+      scope: projectContext, idempotency_key: uuid(), authority: "user_explicit", user_confirmed: true,
+      confidence_reason: "renewal fixture", source_refs: [], source_unavailable_reason: null,
+      mutation: { title: "Project constraint", content: "Project only.", type_fields: { rationale: "fixture", constraint: true }, relations: {} },
+    });
+    assert.equal(projectConstraint.status, "committed");
+    const projectToken = hash();
+    await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic','Project-only client',$2,array['context:read','context:write'],array[$3])`,
+    [userId, projectToken, projectContext]);
+    const projectSession = await call(projectToken, "clued_mcp_restore", { context_key: projectContext, response_view: "structured" });
+    assert.deepEqual(projectSession.active_constraints.map((item) => item.title), ["Project constraint"]);
+    const projectCheckpoint = await call(projectToken, "clued_mcp_commit_checkpoint", {
+      context_key: projectContext, session_token: projectSession.session_token, base_version: projectSession.version,
+      snapshot: { stage: "renewal" }, summary: "Project renewal.", next_action: "Continue.", idempotency_key: uuid(),
+      coverage: { mode: "explicit", contexts: [projectContext], tracks: ["renewal"], event_ids: [] },
+    });
+    assert.equal(projectCheckpoint.status, "committed");
+    assert.deepEqual(projectCheckpoint.session_renewal.active_constraint_refs,
+      [{ id: projectConstraint.target_refs[0].id, version: 1 }]);
+    assert.deepEqual(projectCheckpoint.session_renewal.active_constraints_delivered, []);
+
+    // More than 100 new events: counts and the truncation flag stay exact, and
+    // another client's event is listed ahead of this Binding's own.
+    const busy = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
+    let busyVersion = busy.version;
+    for (let index = 0; index < 101; index += 1) {
+      busyVersion = (await append(busy.session_token, busyVersion, `busy-${index}`)).version;
+    }
+    const busyOther = await call(otherTokenHash, "clued_mcp_restore", { context_key: "global", response_view: "structured" });
+    const busyForeign = await append(busyOther.session_token, busyVersion, "busy-foreign", otherTokenHash);
+    const busyCheckpoint = await checkpoint(busy.session_token, busyForeign.version, []);
+    assert.equal(busyCheckpoint.status, "committed");
+    assert.equal(busyCheckpoint.session_renewal.new_unabsorbed_events.length, 100);
+    assert.equal(busyCheckpoint.session_renewal.new_unabsorbed_event_count, 102);
+    assert.equal(busyCheckpoint.session_renewal.foreign_event_count, 1);
+    assert.equal(busyCheckpoint.session_renewal.new_unabsorbed_events_truncated, true);
+    assert.equal(Number(busyCheckpoint.session_renewal.new_unabsorbed_events[0].id), Number(busyForeign.event_id));
+
+    // A Binding that lost read admission still checkpoints but gets no renewal.
+    const readable = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
+    await admin.query("update public.clued_agent_bindings set scopes=array['context:write','audit:read'] where token_hash=$1", [tokenHash]);
+    const writeOnly = await checkpoint(readable.session_token, readable.version, []);
+    assert.equal(writeOnly.status, "committed");
+    assert.equal(writeOnly.session_renewal, null);
+    assert.equal(writeOnly.session_renewal_unavailable, "context_read_not_authorized");
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

@@ -1825,7 +1825,8 @@ const REQUEST_RULE_REJECTIONS: Readonly<Record<string, string | null>> = {
   lifecycle_action_cannot_edit_record_content:
     "close and restore may only carry mutation.closure_summary and mutation.closed_reason; omit source_refs, source_unavailable_reason, observed_at, confidence and other content fields.",
   resume_required: "Call clued_session_resume and retry with the returned session_token.",
-  resume_required_or_session_expired: "Call clued_session_resume and retry with the returned session_token.",
+  resume_required_or_session_expired:
+    "Use session_renewal.session_token from your last committed checkpoint if you have it; otherwise call clued_session_resume and retry with the returned session_token.",
   session_not_found: "Call clued_session_resume and retry with the returned session_token.",
   requested_context_not_authorized:
     "context_key must be \"global\" or \"project:<canonical_project_id>\", not a bare project ID. Retry with the prefixed key.",
