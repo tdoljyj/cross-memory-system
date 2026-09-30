@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fixture, ids, root, normalScope } from "./resource-center-cloud-executor.fixture.mjs";
-import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
+import { cloudDispatchOutcome, createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 test('cloud composition runs scan, admission, one durable start, one POST and verified receipt without a mounted disk',async()=>{
   const f=fixture(),executor=f.run();const result=await executor.run(f.reference);
   assert.deepEqual(result,{status:'committed',job_id:ids.job,receipt_id:ids.receipt,execution_permitted:false});
@@ -194,6 +194,27 @@ test('early boundary scan denial logs a code without scan findings',async()=>{
   assert.equal(result.error_code,'UNAUTHORIZED_WORKSPACE_MUTATION');
   assert.equal(island.info().starts,0);assert.equal(island.info().posts,0);
   assert.deepEqual(logs.map(message=>JSON.parse(message)),[{event:'storage_cloud_denied',error_code:'UNAUTHORIZED_WORKSPACE_MUTATION'}]);
+});
+test('dispatch outcome carries a fixed reason code and bounded boundary findings only',async()=>{
+  const island=fixture({island:true});
+  const denied=await island.run().run(island.reference);
+  assert.deepEqual(cloudDispatchOutcome(denied),{status:'denied',reason:{code:'UNAUTHORIZED_WORKSPACE_MUTATION',
+    findings:[{path:'G:/My Drive/Clued_品牌说明.md',reason:'resource_center_parent_or_sibling_island'}]}});
+  const many=Array.from({length:12},(_,i)=>({code:'UNAUTHORIZED_WORKSPACE_MUTATION',path:'G:/My Drive/Clued_'+i+'x'.repeat(1200),
+    reason:'unregistered_clued_resource_location',managed_root:root}));
+  const bounded=cloudDispatchOutcome({status:'deny',error_code:'UNAUTHORIZED_WORKSPACE_MUTATION',findings:[
+    {path:'bad\u0000path',reason:'unregistered_clued_resource_location'},{path:'x',reason:'Not A Label'},...many]});
+  assert.equal(bounded.reason.findings.length,10);
+  assert.ok(bounded.reason.findings.every(f=>Array.from(f.path).length===1000 && Object.keys(f).join()==='path,reason'));
+  assert.equal(bounded.reason.findings[0].path.startsWith('G:/My Drive/Clued_0'),true);
+  assert.deepEqual(cloudDispatchOutcome({status:'deny',error_code:'STORAGE_CONTENT_STAGING_MISMATCH'}),{status:'denied',reason:{code:'STORAGE_CONTENT_STAGING_MISMATCH'}});
+  // attention_required carries the code only, never findings.
+  assert.deepEqual(cloudDispatchOutcome({status:'unavailable',error_code:'DRIVE_BOUNDARY_CHANGED',findings:many}),
+    {status:'attention_required',reason:{code:'DRIVE_BOUNDARY_CHANGED'}});
+  assert.deepEqual(cloudDispatchOutcome({status:'unreconciled',error_code:'PROVIDER_EFFECT_UNKNOWN'}),
+    {status:'attention_required',reason:{code:'PROVIDER_EFFECT_UNKNOWN'}});
+  for(const error_code of [undefined,'lower_case','AB','X'.repeat(65),'CODE WITH SPACE'])
+    assert.deepEqual(cloudDispatchOutcome({status:'unavailable',error_code}),{status:'attention_required'});
 });
 test('authority failures identify the failed stage using fixed labels without exposing inputs',async()=>{
   for(const scenario of ['provider','provider_unknown','rpc','denied','mismatch']){
@@ -400,5 +421,8 @@ test('unavailable runs log one fixed code: shape checks, boundary scan refusals,
     assert.equal(result.status,'unavailable',code);assert.equal(f.info().starts,0,code);assert.equal(f.info().posts,0,code);
     assert.deepEqual(logs.map(m=>JSON.parse(m)),[{event:'storage_cloud_unavailable',error_code:code}],code);
     assert.equal(logs.join('').includes(root),false);assert.equal(logs.join('').includes(ids.job),false);
+    // The same fixed label (never an exception text) names the result for the dispatch report.
+    assert.deepEqual(result,code==='UNSPECIFIED'?{status:'unavailable',execution_permitted:false}:
+      {status:'unavailable',execution_permitted:false,error_code:code},code);
   }
 });
