@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
-import { verifyReleaseState } from '../scripts/production-release-gate.mjs';
+import { builderRunInProgress, verifyReleaseState } from '../scripts/production-release-gate.mjs';
 
 const baseline = JSON.parse(await readFile(new URL(
   '../scripts/production-release-baseline.json', import.meta.url), 'utf8'));
@@ -144,6 +144,26 @@ test('release checks only tenants the Builder serves and fails closed without on
     'projection_not_current:global.priority_frontier',
     'projection_not_current:global.__aggregate__',
   ]);
+});
+
+test('a Builder run in progress is waited out, never accepted as healthy', () => {
+  // Release run 36656117945 read the heartbeat while the per-minute run was active.
+  const running = { heartbeat: { last_result: 'running',
+    last_started_at: '2026-09-23T05:12:48Z', last_finished_at: '2026-09-23T05:11:59Z' } };
+  assert.equal(builderRunInProgress(running, now), true);
+  const state = healthy();
+  state.watchdog.heartbeat = { ...running.heartbeat };
+  assert.deepEqual(verifyReleaseState(state), ['worker_heartbeat_not_healthy']);
+
+  const stuck = { heartbeat: { ...running.heartbeat, last_started_at: '2026-09-23T05:10:40Z' } };
+  assert.equal(builderRunInProgress(stuck, now), false);
+  const future = { heartbeat: { ...running.heartbeat, last_started_at: '2026-09-23T05:13:10Z' } };
+  assert.equal(builderRunInProgress(future, now), false);
+  for (const last_result of ['idle', 'exception', 'cycle_limit']) {
+    assert.equal(builderRunInProgress({ heartbeat: { ...running.heartbeat, last_result } }, now), false);
+  }
+  assert.equal(builderRunInProgress(undefined, now), false);
+  assert.equal(builderRunInProgress({ heartbeat: { last_result: 'running' } }, now), false);
 });
 
 test('post-deploy readback requires a heartbeat from the newly deployed cycle', () => {

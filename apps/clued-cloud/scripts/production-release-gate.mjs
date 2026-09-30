@@ -107,6 +107,26 @@ export function verifyReleaseState({ baseline, sourceSql, history, changedPaths,
   return errors;
 }
 
+// The Builder runs every minute and marks the heartbeat 'running' while it
+// works, so a snapshot read in that window is not a settled state.
+export function builderRunInProgress(watchdog, now = new Date()) {
+  const startedAt = Date.parse(watchdog?.heartbeat?.last_started_at);
+  return watchdog?.heartbeat?.last_result === 'running' && Number.isFinite(startedAt) &&
+    now.getTime() - startedAt <= 120_000 && startedAt <= now.getTime() + 10_000;
+}
+
+async function readWatchdog(dbUrl) {
+  const client = new pg.Client({ connectionString: dbUrl });
+  await client.connect();
+  try {
+    const result = await client.query(
+      'select clued_watchdog.projection_watchdog_snapshot() as snapshot');
+    return result.rows[0]?.snapshot;
+  } finally {
+    await client.end();
+  }
+}
+
 async function main() {
   if (process.argv.includes('--help')) {
     process.stdout.write('Usage: node scripts/production-release-gate.mjs --pre-deploy [--min-heartbeat-at ISO] [--evidence-out PATH]\n');
@@ -174,6 +194,12 @@ async function main() {
     throw error;
   } finally {
     await client.end();
+  }
+  // Wait out a Builder run in progress (at most six re-reads, 5 s apart) and
+  // evaluate the snapshot taken after it; every check below stays unchanged.
+  for (let reads = 0; reads < 6 && builderRunInProgress(watchdog); reads += 1) {
+    await new Promise((done) => setTimeout(done, 5_000));
+    watchdog = await readWatchdog(dbUrl);
   }
 
   const errors = verifyReleaseState({ baseline, sourceSql, history, changedPaths,
