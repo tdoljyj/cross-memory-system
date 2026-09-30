@@ -7,14 +7,18 @@
  *   request-URL logging cannot record it. The PUT endpoint accepts only that signature, never a
  *   Binding bearer, and nothing here logs a header.
  * - The staged object is AES-256-GCM in 64 KiB chunks under a per-object key
- *   K = HKDF-SHA256(master, salt = staging_id, info = "clued.storage-staging/1"), a 96-bit
+ *   K = HKDF-SHA256(master, salt = staging_id ‖ ":" ‖ key_salt, info = "clued.storage-staging/1"),
+ *   where key_salt is 128 random bits the database draws for each staging row (so an inline
+ *   staging_id that recurs after the row's 7-day purge never recurs with the same key), a 96-bit
  *   big-endian chunk counter as nonce, and AAD = owner_id ‖ connection_id ‖ staging_id ‖
  *   chunk_index (u64 BE) ‖ is_final (u8): truncation, reordering and cross-object splicing fail.
  *   The master keyring (CLUED_STORAGE_STAGING_KEYS) is separate from the credential vault and
  *   rotatable (the row records key_id). R2 keys never contain a file name.
  * - Bounded memory: the object is never held whole. Writes encrypt chunk by chunk into the R2
  *   stream; reads use ranged R2 gets of at most STAGING_WINDOW_CHUNKS chunks, decrypt them one at
- *   a time and hash incrementally. Validation reads the archive by range; execution first runs a
+ *   a time and hash incrementally. Validation reads the archive by range through window-aligned
+ *   gets with a small LRU (STAGING_RANGE_CACHE_WINDOWS), so the number of R2 gets for validation
+ *   is bounded by the object's window count, not by its entry count; execution first runs a
  *   full decrypt + sha256 pass, then streams the decrypted chunks to the provider, withholding
  *   the final window until the running digest matches again.
  * - The database row (public.clued_storage_staging_v1) owns every state change; this module
@@ -28,6 +32,8 @@ type Data = Record<string, unknown>;
 export const STAGING_CHUNK = 64 * 1024;
 /** Chunks per ranged R2 read: at most 256 KiB of plaintext (plus tags) in flight per request. */
 export const STAGING_WINDOW_CHUNKS = 4;
+/** Decrypted windows kept by `readRange` (LRU): at most 1 MiB of plaintext per staged object. */
+export const STAGING_RANGE_CACHE_WINDOWS = 4;
 export const UPLOAD_TOKEN_HEADER = "x-clued-upload-token";
 const TAG = 16;
 const URL_CONTRACT = "clued.storage-staging-url/1";
@@ -35,6 +41,7 @@ const KEY_INFO = "clued.storage-staging/1";
 const encoder = new TextEncoder();
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const keyIdPattern = /^[A-Za-z0-9_-]{1,64}$/;
+const keySaltPattern = /^[0-9a-f]{32}$/;
 
 /** Fixed, caller-safe error codes (§5.3). Nothing else leaves this module. */
 export type StorageUploadCode = "storage_binary_upload_disabled" | "upload_url_invalid" | "upload_url_used" |
@@ -169,8 +176,11 @@ export async function verifyUploadToken(key: CryptoKey, token: unknown, stagingI
 
 export type StagingContext = { owner_id: string; connection_id: string; staging_id: string };
 
-export async function stagingObjectKeyMaterial(master: CryptoKey, stagingId: string) {
-  return crypto.subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: encoder.encode(stagingId), info: encoder.encode(KEY_INFO) },
+/** Per-object key. `keySalt` is the staging row's random key_salt (32 lower-case hex digits). */
+export async function stagingObjectKeyMaterial(master: CryptoKey, stagingId: string, keySalt: string) {
+  if (typeof stagingId !== "string" || !uuid.test(stagingId) || typeof keySalt !== "string" || !keySaltPattern.test(keySalt))
+    return refuse("storage_upload_unavailable");
+  return crypto.subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: encoder.encode(`${stagingId}:${keySalt}`), info: encoder.encode(KEY_INFO) },
     master, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
 }
 function chunkNonce(index: number) {
@@ -234,7 +244,18 @@ export function openStagedObject(bucket: StagingBucket, stagingId: string, key: 
     }
     return out;
   }
-  let cached: { index: number; bytes: Uint8Array } | null = null;
+  // Window-aligned LRU for readRange: a window is chunks [w * STAGING_WINDOW_CHUNKS, ...) and is
+  // fetched with one ranged get; nearby local headers and parts then hit the cache.
+  const cache = new Map<number, Uint8Array[]>();
+  async function cachedWindow(w: number) {
+    const hit = cache.get(w);
+    if (hit) { cache.delete(w); cache.set(w, hit); return hit; }
+    const first = w * STAGING_WINDOW_CHUNKS;
+    const chunks = await window(first, Math.min(STAGING_WINDOW_CHUNKS, count - first));
+    cache.set(w, chunks);
+    while (cache.size > STAGING_RANGE_CACHE_WINDOWS) cache.delete(cache.keys().next().value as number);
+    return chunks;
+  }
   let verified = false;
   const content: StagedContent = {
     size, sha256, mime_type: mimeType,
@@ -248,13 +269,13 @@ export function openStagedObject(bucket: StagingBucket, stagingId: string, key: 
         const start = index * STAGING_CHUNK, from = Math.max(offset, start), to = Math.min(offset + length, start + bytes.byteLength);
         out.set(bytes.subarray(from - start, to - start), from - offset);
       };
-      for (let index = firstChunk; index <= lastChunk;) {
-        if (cached?.index === index) { place(index, cached.bytes); index += 1; continue; }
-        const n = Math.min(STAGING_WINDOW_CHUNKS, lastChunk - index + 1);
-        const chunks = await window(index, n);
-        chunks.forEach((bytes, k) => place(index + k, bytes));
-        cached = { index: index + n - 1, bytes: chunks[n - 1] };
-        index += n;
+      const firstWindow = Math.floor(firstChunk / STAGING_WINDOW_CHUNKS), lastWindow = Math.floor(lastChunk / STAGING_WINDOW_CHUNKS);
+      for (let w = firstWindow; w <= lastWindow; w += 1) {
+        const chunks = await cachedWindow(w);
+        chunks.forEach((bytes, k) => {
+          const index = w * STAGING_WINDOW_CHUNKS + k;
+          if (index >= firstChunk && index <= lastChunk) place(index, bytes);
+        });
       }
       return out;
     },
@@ -303,7 +324,8 @@ async function* bytesOf(source: ReadableStream<Uint8Array> | Uint8Array): AsyncG
   } finally { reader.releaseLock(); }
 }
 
-type Received = { staging_id: string; owner_id: string; connection_id: string; size: number; sha256: string; mime_type: string; key_id: string };
+type Received = { staging_id: string; owner_id: string; connection_id: string; size: number; sha256: string; mime_type: string; key_id: string;
+  key_salt: string };
 
 /** Encrypt-and-store one staged object from a byte stream (§6.2 steps 3-5). The first chunk is
  * type-checked before anything is written; digest and length are checked at the end; the stored
@@ -314,7 +336,7 @@ async function storeAndValidate(runtime: StagingRuntime, row: Received, source: 
   const context = { owner_id: row.owner_id, connection_id: row.connection_id, staging_id: row.staging_id };
   const master = runtime.keyring.keys.get(row.key_id);
   if (!master) return refuse("storage_upload_unavailable");
-  const key = await stagingObjectKeyMaterial(master, row.staging_id);
+  const key = await stagingObjectKeyMaterial(master, row.staging_id, row.key_salt);
   const objectKey = stagingObjectKey(row.staging_id);
   const count = stagingChunkCount(row.size);
   const dropObject = () => runtime.bucket.delete(objectKey).catch(() => {});
@@ -402,7 +424,8 @@ export async function receiveStaged(runtime: StagingRuntime, claims: UploadClaim
   } catch (error) { return refuse(stagingErrorCode(error)); }
   if (received.staging_id !== claims.staging_id || received.owner_id !== claims.owner_id || received.connection_id !== claims.connection_id ||
     received.size !== claims.size || received.sha256 !== claims.sha256 || received.mime_type !== claims.mime_type ||
-    received.key_id !== runtime.keyring.current_key_id || received.state !== "receiving") return refuse("storage_upload_unavailable");
+    received.key_id !== runtime.keyring.current_key_id || typeof received.key_salt !== "string" || !keySaltPattern.test(received.key_salt) ||
+    received.state !== "receiving") return refuse("storage_upload_unavailable");
   try {
     return await storeAndValidate(runtime, received as unknown as Received, source);
   } catch (error) { return refuse(stagingErrorCode(error)); }
@@ -540,10 +563,10 @@ export async function loadStagedContent(runtime: Pick<StagingRuntime, "bucket" |
 }): Promise<StagedContent> {
   const staging = input.staging as Data | null;
   if (!staging || staging.staging_id !== input.content_ref.staging_id || typeof staging.key_id !== "string" ||
-    staging.size !== input.content_ref.size || staging.sha256 !== input.content_ref.sha256) return refuse("storage_upload_unavailable");
+    typeof staging.key_salt !== "string" || !keySaltPattern.test(staging.key_salt) || staging.size !== input.content_ref.size || staging.sha256 !== input.content_ref.sha256) return refuse("storage_upload_unavailable");
   const master = runtime.keyring.keys.get(staging.key_id);
   if (!master) return refuse("storage_upload_unavailable");
-  const key = await stagingObjectKeyMaterial(master, input.content_ref.staging_id);
+  const key = await stagingObjectKeyMaterial(master, input.content_ref.staging_id, staging.key_salt);
   return openStagedObject(runtime.bucket, input.content_ref.staging_id, key,
     { owner_id: input.owner_id, connection_id: input.connection_id, staging_id: input.content_ref.staging_id },
     input.content_ref.size, input.content_ref.sha256, input.content_ref.mime_type);

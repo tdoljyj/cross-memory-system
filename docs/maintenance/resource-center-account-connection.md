@@ -722,8 +722,9 @@ runs only in account-policy mode (`CLUED_STORAGE_JOBS_V2=true`).
   content type or relationship type naming `vbaProject` (incl. the signature),
   `vbaData`, `activeX`, a (intl) macro sheet, `keyMapCustomizations` or a
   `macroEnabled` type refuses the file whatever the part is called (relationship
-  `Target` values are data and not matched). A damaged or encrypted archive is
-  refused too. Every refusal is `content_type_mismatch`.
+  `Target` values are data and not matched). At most **1024** `*.rels` parts
+  are read (`RELS_PARTS_MAX`); a package with more is refused. A damaged or
+  encrypted archive is refused too. Every refusal is `content_type_mismatch`.
 - **Signed PUT URL** (MAJOR-2): `upload_begin` inserts a
   `clued_private.storage_staging_v1` row (`issued`, 10 minutes) and reserves the
   declared size against the hourly upload budget (256 MiB per Binding, 1 GiB
@@ -743,10 +744,27 @@ runs only in account-policy mode (`CLUED_STORAGE_JOBS_V2=true`).
   a second PUT gets `upload_url_used`) and re-evaluates the row's Binding and
   the gate. (Contract §5.3 / §6.2 still describe `?t=<token>` and the doc / xls
   / ppt types; this implementation deliberately narrows both, pending a
-  contract amendment.) Before enabling, confirm in the Workers Logs UI that
-  invocation logs do not capture the `X-Clued-Upload-Token` request header.
+  contract amendment.)
+  *Header logging*: `wrangler.production.jsonc` enables Workers Logs with
+  `invocation_logs: true` (head sampling 1, persisted), and invocation logs
+  do record request metadata **including request headers**. Cloudflare redacts
+  a header value to `REDACTED` when its (case-insensitive) name is `cookie` /
+  `set-cookie` or contains `auth`, `key`, `secret`, `token` or `jwt`;
+  `X-Clued-Upload-Token` contains `token` (a unit test pins the name), so its
+  value is redacted, and `Authorization` is refused on this route anyway. The
+  URL's staging_id (32 hex digits) is itself redacted by the URL heuristic.
+  Request bodies (the file, or inline `content_base64`) are never in invocation
+  logs. The staging module never calls `console.*` (also pinned by a test),
+  every `console.*` elsewhere in the Worker logs fixed event objects, never a
+  request or its headers, and no Tail Worker / Logpush is configured. Never
+  rename the header to a name without one of those substrings, and never add a
+  Tail Worker that calls `getUnredacted()`. Before enabling, still confirm once
+  in the Workers Logs UI that a test PUT shows the header as `REDACTED`.
 - **Staging encryption** (m-l): 64 KiB AES-256-GCM chunks under
-  `K = HKDF-SHA256(master, salt = staging_id, info = "clued.storage-staging/1")`,
+  `K = HKDF-SHA256(master, salt = staging_id ‖ ":" ‖ key_salt, info = "clued.storage-staging/1")`,
+  where `key_salt` is 128 random bits drawn by the database for each staging
+  row (immutable; handed to the Worker by `receive` and in the execution
+  descriptor), so no two rows ever share a key even if a `staging_id` recurred,
   nonce = 96-bit big-endian chunk index, AAD = owner ‖ connection ‖ staging_id
   ‖ chunk index ‖ final flag. The master keyring `CLUED_STORAGE_STAGING_KEYS`
   is separate from the credential vault; the row records `key_id`. The R2 key
@@ -759,6 +777,14 @@ runs only in account-policy mode (`CLUED_STORAGE_JOBS_V2=true`).
   `validating` stage runs a full streaming decrypt + sha256 pass over what R2
   holds, then the archive checks by range. Peak per request is a few MiB (the
   central directory cap plus one XML part), independent of file size.
+  *Subrequests*: range reads during validation are window-aligned (4 chunks)
+  and served through a 4-window LRU, and the `.rels` parts are read in
+  local-header order, so each 256 KiB window of the archive is fetched about
+  once: validation costs roughly one R2 get per 256 KiB of archive (≈ 80 for
+  20 MiB) plus the tail and central directory, whatever the number of parts,
+  and the verify pass another ≈ 80. That stays far below the Workers Paid
+  subrequest limit; a test pins a 400-`.rels` package at window count + 1
+  gets.
 - **Inline**: `clued_storage_submit` with `content_base64` (inside the existing
   1 MiB MCP body, about 700 KiB of file) runs the same begin / encrypted
   staging / validation in the request and submits the resulting `staging_id`.
@@ -767,7 +793,10 @@ runs only in account-policy mode (`CLUED_STORAGE_JOBS_V2=true`).
   `consumed` rows are not staged again (the submit then replays the job), no
   second reservation is taken, and other content under the same `job_id` is
   refused (`storage_job_input_invalid`). A retry that finds the row `rejected`
-  / `expired` gets `staging_expired` and needs a new `job_id`.
+  / `expired` gets `staging_expired` and needs a new `job_id`. Once the row has
+  been purged (7-day retention, below), an inline begin whose `job_id` already
+  names a storage job of this owner is refused (`storage_job_input_invalid`):
+  the same derived `staging_id` is never staged a second time.
 - **Submit** stores `{create, file, destination_path, content_ref: {staging_id,
   sha256, size, mime_type}}`; the request digest covers `content_ref`. The
   staging row must be `ready`, unexpired and of the same Binding, connection,

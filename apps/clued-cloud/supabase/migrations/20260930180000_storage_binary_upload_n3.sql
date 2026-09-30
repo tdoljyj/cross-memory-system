@@ -14,7 +14,11 @@
 --   `received`, `validated`, `sweep` (12 h job cancel first, then TTL expiry
 --   with SKIP LOCKED, 2 h stall window, 7-day retention purge of terminal rows
 --   whose object is gone, deletable objects) and `object_deleted`. Inline begin
---   takes the job_id and derives the staging_id from it (retry-safe).
+--   takes the job_id and derives the staging_id from it (retry-safe); once the
+--   row is gone (7-day purge) an inline begin for a job_id that already names a
+--   storage job of this owner is refused, so a purged staging_id is never
+--   staged again. Each row also carries key_salt (128 random bits) that the
+--   Worker mixes into the per-object key derivation.
 -- * Upload budget per rolling hour: bytes (256 MiB per Binding, 1 GiB per
 --   owner) and staging rows (60 per Binding, 200 per owner).
 -- * Legacy Office (doc / xls / ppt, CFB) is not in the allow table.
@@ -48,6 +52,8 @@ create table clued_private.storage_staging_v1 (
   state text not null default 'issued'
     check(state in ('issued','receiving','validating','ready','consumed','rejected','expired')),
   key_id text check(key_id ~ '^[A-Za-z0-9_-]{1,64}$'),
+  -- Random per-row HKDF salt input (never a secret on its own; the master key is in the Worker).
+  key_salt text not null default replace(gen_random_uuid()::text,'-','') check(key_salt ~ '^[0-9a-f]{32}$'),
   reject_reason text check(reject_reason in ('digest_mismatch','length_mismatch','content_type_mismatch','storage_failed','stalled')),
   job_id uuid,
   reserved_bytes bigint not null check(reserved_bytes=size),
@@ -229,7 +235,7 @@ end $$;
 create function clued_private.storage_staging_descriptor_v1(j clued_private.storage_jobs_v1)
 returns jsonb language sql stable security definer set search_path='' as $$
   select case when j.mutation ? 'content_ref' then (select jsonb_build_object('staging_id',s.id,'key_id',s.key_id,
-      'size',s.size,'sha256',s.sha256,'mime_type',s.mime_type)
+      'key_salt',s.key_salt,'size',s.size,'sha256',s.sha256,'mime_type',s.mime_type)
     from clued_private.storage_staging_v1 s where s.id=(j.mutation->'content_ref'->>'staging_id')::uuid and s.job_id=j.job_id) end
 $$;
 
@@ -327,6 +333,12 @@ begin
         or s.size<>(p_input->>'size')::bigint or s.sha256<>p_input->>'content_sha256' then
         raise exception 'storage_job_input_invalid' using errcode='22023'; end if;
     else
+      -- The inline staging_id is a function of (token, connection, job_id). A job_id that already
+      -- names a storage job of this owner, with no staging row left (purged after 7 days), is
+      -- refused: the same staging_id is never staged twice (fail closed, no key or nonce reuse).
+      if p_input->>'transport'='inline' and exists(select 1 from clued_private.storage_jobs_v1 j
+        where j.owner_id=c.owner_id and j.job_id=(p_input->>'job_id')::uuid) then
+        raise exception 'storage_job_input_invalid' using errcode='22023'; end if;
       perform clued_private.storage_upload_budget_v1(c.owner_id,(snapshot->>'binding_id')::uuid,(p_input->>'size')::bigint);
       insert into clued_private.storage_staging_v1(id,owner_id,connection_id,binding_id,destination_path,mime_type,size,sha256,
         transport,reserved_bytes,expires_at)
@@ -368,7 +380,7 @@ begin
     update clued_private.storage_staging_v1 set state='receiving',key_id=p_input->>'key_id',bytes_received=true,
       received_at=clock_timestamp() where id=s.id returning * into s;
     return jsonb_build_object('staging_id',s.id,'owner_id',s.owner_id,'connection_id',s.connection_id,'size',s.size,
-      'sha256',s.sha256,'mime_type',s.mime_type,'key_id',s.key_id,'state',s.state);
+      'sha256',s.sha256,'mime_type',s.mime_type,'key_id',s.key_id,'key_salt',s.key_salt,'state',s.state);
   end if;
 
   if op in ('received','validated') then

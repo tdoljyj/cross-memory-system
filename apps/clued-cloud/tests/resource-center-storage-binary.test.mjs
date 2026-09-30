@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { build } from "esbuild";
-import { binaryUploadTarget, deniedMagic, firstChunkCheck, validateStagedContent, BINARY_EXTENSION_MIME }
+import { binaryUploadTarget, deniedMagic, firstChunkCheck, validateStagedContent, BINARY_EXTENSION_MIME, RELS_PARTS_MAX }
   from "../../../kernel/host/resource-center-storage-binary.mjs";
 import { buildZip } from "./resource-center-zip.fixture.mjs";
 import { memoryBucket, pngBytes, pdfBytes } from "./resource-center-storage-binary.fixture.mjs";
@@ -23,6 +23,7 @@ const DOCX = BINARY_EXTENSION_MIME.docx;
 const b64url = bytes => Buffer.from(bytes).toString("base64url");
 const sha = bytes => createHash("sha256").update(bytes).digest("hex");
 const ids = () => ({ owner_id: randomUUID(), connection_id: randomUUID(), staging_id: randomUUID() });
+const SALT = "5a".repeat(16);
 const runtime = async (keys = { current_key_id: "k1", keys: { k1: b64url(Buffer.alloc(32, 3)) } }) => staging.createStagingRuntime({
   bucket: { put: async () => {}, get: async () => null, delete: async () => {} }, url_key: b64url(Buffer.alloc(32, 9)),
   staging_keys: JSON.stringify(keys), rpc: async () => ({}) });
@@ -69,7 +70,7 @@ test("configuration fails closed without the bucket, the URL key or a well-forme
 test("chunked AEAD: per-object HKDF key, counter nonce, AAD binds position, finality and identity", async () => {
   const rt = await runtime(); const master = rt.keyring.keys.get("k1"); const context = ids();
   const size = 3 * staging.STAGING_CHUNK + 17, plain = new Uint8Array(size).map((_, i) => (i * 31) & 0xff);
-  const key = await staging.stagingObjectKeyMaterial(master, context.staging_id);
+  const key = await staging.stagingObjectKeyMaterial(master, context.staging_id, SALT);
   const count = staging.stagingChunkCount(size); assert.equal(count, 4);
   const chunks = [];
   for (let i = 0; i < count; i++) chunks.push(await staging.encryptStagingChunk(key, context, i, i === count - 1,
@@ -93,7 +94,13 @@ test("chunked AEAD: per-object HKDF key, counter nonce, AAD binds position, fina
   await fails(joined, { ...context, connection_id: randomUUID() });
   await fails(joined, { ...context, owner_id: randomUUID() });
   // Another staging_id derives another key (HKDF salt) even under the same master.
-  await fails(joined, context, await staging.stagingObjectKeyMaterial(master, randomUUID()));
+  await fails(joined, context, await staging.stagingObjectKeyMaterial(master, randomUUID(), SALT));
+  // The same staging_id with another row's key_salt (e.g. a purged inline staging_id staged again)
+  // derives another key too; a missing or malformed salt refuses.
+  await fails(joined, context, await staging.stagingObjectKeyMaterial(master, context.staging_id, "a5".repeat(16)));
+  for (const bad of [undefined, "", "5A".repeat(16), "5a".repeat(15)]) {
+    await assert.rejects(staging.stagingObjectKeyMaterial(master, context.staging_id, bad), e => e.code === "storage_upload_unavailable");
+  }
   await fails(joined, context, key, size, "0".repeat(64));
   // The nonce is a big-endian chunk counter: the same chunk sealed at index 0 and 1 differs.
   const a = await staging.encryptStagingChunk(key, context, 0, false, new Uint8Array(8));
@@ -198,7 +205,7 @@ test("bounded memory: staging, validation and execution touch the object only in
     rpc: async input => {
       calls.push(input.action + ":" + (input.outcome ?? ""));
       if (input.action === "receive") return { staging_id: input.staging_id, owner_id: input.owner_id, connection_id: input.connection_id,
-        size: input.size, sha256: input.sha256, mime_type: input.mime_type, key_id: input.key_id, state: "receiving" };
+        size: input.size, sha256: input.sha256, mime_type: input.mime_type, key_id: input.key_id, key_salt: SALT, state: "receiving" };
       return { staging_id: input.staging_id, state: input.outcome };
     } });
   // A 6 MiB docx: a clean package plus one large stored media part.
@@ -224,7 +231,7 @@ test("bounded memory: staging, validation and execution touch the object only in
   bucket.reads = 0; bucket.maxReadBytes = 0;
   const ref = { staging_id: context.staging_id, sha256: claims.sha256, size: claims.size, mime_type: DOCX };
   const load = () => staging.loadStagedContent(rt, { owner_id: context.owner_id, connection_id: context.connection_id,
-    staging: { staging_id: context.staging_id, key_id: "k1", size: claims.size, sha256: claims.sha256 }, content_ref: ref });
+    staging: { staging_id: context.staging_id, key_id: "k1", key_salt: SALT, size: claims.size, sha256: claims.sha256 }, content_ref: ref });
   const content = await load();
   assert.equal(content.verified, false);
   await content.verify();
@@ -244,7 +251,7 @@ test("bounded memory: staging, validation and execution touch the object only in
   // A stored object whose bytes decrypt but no longer match the declared digest (simulated by a
   // wrong declared sha256): verify refuses, and the stream errors before its final window.
   const wrong = staging.openStagedObject(bucket, context.staging_id,
-    await staging.stagingObjectKeyMaterial(rt.keyring.keys.get("k1"), context.staging_id), context, claims.size, "0".repeat(64));
+    await staging.stagingObjectKeyMaterial(rt.keyring.keys.get("k1"), context.staging_id, SALT), context, claims.size, "0".repeat(64));
   await assert.rejects(wrong.verify(), e => e.code === "storage_upload_unavailable");
   const wrongReader = wrong.stream().getReader();
   let delivered = 0, failed = false;
@@ -256,9 +263,58 @@ test("bounded memory: staging, validation and execution touch the object only in
   // A tampered ciphertext byte fails authentication in the pass that reaches it.
   const object = bucket.objects.get("staging/" + context.staging_id); object[object.length - 3] ^= 1;
   await assert.rejects((await load()).verify(), e => e.code === "storage_upload_unavailable");
+  // A descriptor without the row's key_salt cannot open the object.
+  await assert.rejects(staging.loadStagedContent(rt, { owner_id: context.owner_id, connection_id: context.connection_id,
+    staging: { staging_id: context.staging_id, key_id: "k1", size: claims.size, sha256: claims.sha256 }, content_ref: ref }),
+  e => e.code === "storage_upload_unavailable");
+});
+
+test("validation of a many-.rels package uses a bounded number of R2 gets; above the cap it is refused", async () => {
+  const rt = await runtime(), master = rt.keyring.keys.get("k1");
+  // A pptx-like package: 400 slide parts, each with its own .rels, interleaved with stored media
+  // so the .rels parts are spread over several MiB.
+  const slideRels = '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>';
+  const parts = (n, media) => {
+    const out = [{ name: "[Content_Types].xml", data: TYPES }, { name: "_rels/.rels", data: ROOT_RELS }];
+    for (let i = 1; i <= n; i++) {
+      out.push({ name: `ppt/slides/slide${i}.xml`, data: "<p:sld/>" }, { name: `ppt/slides/_rels/slide${i}.xml.rels`, data: slideRels });
+      if (media && i % 10 === 0) out.push({ name: `ppt/media/image${i}.png`, data: pngBytes(96 * 1024), method: 0 });
+    }
+    return out;
+  };
+  const stage = async (archive) => {
+    const context = ids(), key = await staging.stagingObjectKeyMaterial(master, context.staging_id, SALT);
+    const count = staging.stagingChunkCount(archive.length), chunks = [];
+    for (let i = 0; i < count; i++) chunks.push(await staging.encryptStagingChunk(key, context, i, i === count - 1,
+      archive.subarray(i * staging.STAGING_CHUNK, Math.min(archive.length, (i + 1) * staging.STAGING_CHUNK))));
+    const bucket = memoryBucket(); bucket.objects.set("staging/" + context.staging_id, Buffer.concat(chunks));
+    return { bucket, windows: Math.ceil(count / staging.STAGING_WINDOW_CHUNKS),
+      content: staging.openStagedObject(bucket, context.staging_id, key, context, archive.length, sha(archive)) };
+  };
+  const PPTX = BINARY_EXTENSION_MIME.pptx;
+  const archive = await buildZip(parts(400, true));
+  assert.ok(archive.length > 3 * 1024 * 1024);
+  const { bucket, windows, content } = await stage(archive);
+  assert.equal(await validateStagedContent(content, PPTX), true);
+  // Tail + central directory + one pass over the data area: never one get per .rels part.
+  assert.ok(bucket.reads <= windows + 4, `R2 gets ${bucket.reads} <= ${windows + 4} (400 .rels parts)`);
+  assert.equal(bucket.wholeReads, 0);
+  // More .rels parts than RELS_PARTS_MAX refuses the file with the fixed code.
+  const over = await stage(await buildZip(parts(RELS_PARTS_MAX, false).concat([{ name: "ppt/_rels/presentation.xml.rels", data: slideRels }])));
+  await assert.rejects(validateStagedContent(over.content, PPTX), /content_type_mismatch/);
 });
 
 test("inline content_base64 decoding is strict", () => {
   assert.deepEqual([...staging.decodeContentBase64(Buffer.from([1, 2, 3, 250]).toString("base64"))], [1, 2, 3, 250]);
   for (const bad of ["", "abc", "ab=c", "a-b_", 5, null, "YWJj\n"]) assert.throws(() => staging.decodeContentBase64(bad), e => e.code === "storage_job_input_invalid");
+});
+
+test("upload token is never logged: header name is redacted by Workers Logs and the staging module has no console calls", async () => {
+  // Workers invocation logs record request headers but redact values whose name contains
+  // auth / key / secret / token / jwt; the token header must keep such a name.
+  assert.match(staging.UPLOAD_TOKEN_HEADER, /token/i);
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../worker/storage-staging.ts", import.meta.url), "utf8");
+  assert.equal(/\bconsole\s*\./.test(source), false, "storage-staging.ts never logs");
 });

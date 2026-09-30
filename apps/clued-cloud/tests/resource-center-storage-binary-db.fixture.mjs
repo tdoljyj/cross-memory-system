@@ -190,6 +190,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       },
       load_staged_content: async ({ content_ref, staging: descriptor }) => {
         assert.equal(descriptor.key_id, "k1");
+        assert.equal(descriptor.key_salt, (await row(content_ref.staging_id)).key_salt, "the descriptor carries the row's key_salt");
         // The executor contract: a content source it verifies before any reservation.
         return bytesContentSource(staged(content_ref), content_ref);
       },
@@ -477,6 +478,31 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       // Shape: inline requires job_id, URL begin refuses it.
       await assert.rejects(staging({ ...beginInput(target, bytes), job_id: job }, client.token), /storage_staging_input_invalid/);
       await assert.rejects(staging({ ...beginInput(target, bytes), transport: "inline" }, client.token), /storage_staging_input_invalid/);
+    });
+
+    await t.test("inline staging_id is never staged twice: after the row is purged a retry of the job is refused; key_salt is per row", async () => {
+      const { target, client } = await setup();
+      const bytes = pngBytes(1600), job = randomUUID();
+      const inline = { ...beginInput(target, bytes, "k.png"), transport: "inline", job_id: job };
+      const first = await staging(inline, client.token);
+      const received = await staging(claimsOf(first));
+      const stored = await row(first.staging_id);
+      assert.match(stored.key_salt, /^[0-9a-f]{32}$/);
+      assert.equal(received.key_salt, stored.key_salt, "receive hands the Worker the row's key_salt");
+      await assert.rejects(admin.query("update clued_private.storage_staging_v1 set key_salt=$2 where id=$1", [first.staging_id, "0".repeat(32)]),
+        /storage_staging_immutable/);
+      const otherRow = await staging(beginInput(target, bytes, "k2.png"), client.token);
+      assert.notEqual((await row(otherRow.staging_id)).key_salt, stored.key_salt);
+      await staging({ action: "received", staging_id: first.staging_id, outcome: "validating" });
+      await staging({ action: "validated", staging_id: first.staging_id, outcome: "ready" });
+      assert.equal((await submitRaw(client, target, binaryMutation(target, first.staging_id, bytes, "k.png"), job)).status, "queued");
+      // Simulate the 7-day retention purge of the row (its object gone), then retry the same job.
+      await timeTravel("delete from clued_private.storage_staging_v1 where id=$1", [first.staging_id]);
+      assert.equal(await row(first.staging_id), undefined);
+      const before = (await admin.query("select count(*)::int n from clued_private.storage_staging_v1 where binding_id=$1", [client.id])).rows[0].n;
+      await assert.rejects(staging(inline, client.token), /storage_job_input_invalid/, "a purged inline staging_id is never re-staged");
+      assert.equal(await row(first.staging_id), undefined, "no row, no reservation for the refused retry");
+      assert.equal((await admin.query("select count(*)::int n from clued_private.storage_staging_v1 where binding_id=$1", [client.id])).rows[0].n, before);
     });
 
     await t.test("staging rows per rolling hour are capped per Binding, released rows included", async () => {

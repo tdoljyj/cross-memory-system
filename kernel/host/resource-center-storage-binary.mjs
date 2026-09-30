@@ -18,7 +18,9 @@
  *   declarations, no character references, only the five predefined entities, which are
  *   resolved), then any content type or relationship type naming a VBA project, VBA data,
  *   ActiveX, a macro sheet, key-map customizations or a macro-enabled main type refuses the
- *   file whatever the part is called.
+ *   file whatever the part is called. At most RELS_PARTS_MAX `.rels` parts are read (more refuses
+ *   the file), and they are read in local-header order so a range reader with a small window
+ *   cache fetches each window of the archive at most once.
  *
  * Every refusal is the fixed code `content_type_mismatch`. */
 import { openZip } from "./resource-center-zip-reader.mjs";
@@ -143,6 +145,8 @@ const VALIDATION_ZIP_LIMITS = Object.freeze({
   maxEntryUncompressedBytes: 1024 * 1024,
 });
 const XML_PART_MAX_BYTES = 1024 * 1024;
+/** Cap on `.rels` parts inspected per package; a package with more is refused (fail closed). */
+export const RELS_PARTS_MAX = 1024;
 // Lower-cased markers of content types / relationship types that carry or enable macros or
 // active content (vbaProject, vbaProjectSignature, wordVbaData / vbaData+xml, activeX /
 // activeXControlBinary, (intl)macrosheet, keyMapCustomizations, *.macroEnabled.main+xml).
@@ -194,6 +198,9 @@ async function checkZip(source, mimeType) {
   }
   // Every OOXML package has exactly one content types part.
   if (mimeType.startsWith(OOXML) && !contentTypes) fail();
+  if (rels.length > RELS_PARTS_MAX) fail();
+  // Archive order: consecutive reads stay inside the range reader's cached windows.
+  rels.sort((a, b) => a.local_header_offset - b.local_header_offset);
   const read = async (entry) => {
     try { return await zip.readEntry(entry, { maxBytes: XML_PART_MAX_BYTES }); } catch { return fail(); }
   };

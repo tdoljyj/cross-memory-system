@@ -54,7 +54,7 @@ function database() {
       const existing = rows.get(id);
       if (existing && (existing.content_sha256 !== input.content_sha256 || existing.destination_path !== input.destination_path)) return error("storage_job_input_invalid", 400);
       const exp = existing?.exp ?? Math.floor(Date.now() / 1000) + (database.expired ? -1 : 600);
-      if (!existing) rows.set(id, { ...input, id, state: "issued", exp });
+      if (!existing) rows.set(id, { ...input, id, state: "issued", exp, key_salt: randomUUID().replaceAll("-", "") });
       return Response.json({ contract: "clued.storage-staging/1", staging_id: id, owner_id: OWNER, connection_id: input.connection_id, binding_id: BINDING,
         destination_path: input.destination_path, mime_type: input.mime_type, size: input.size, sha256: input.content_sha256,
         transport: input.transport, state: rows.get(id).state, expires_at: exp });
@@ -66,7 +66,7 @@ function database() {
       if (row.state !== "issued") return error("upload_url_used");
       row.state = "receiving"; row.key_id = input.key_id;
       return Response.json({ staging_id: row.id, owner_id: OWNER, connection_id: row.connection_id, size: row.size, sha256: row.content_sha256,
-        mime_type: row.mime_type, key_id: input.key_id, state: "receiving" });
+        mime_type: row.mime_type, key_id: input.key_id, key_salt: row.key_salt, state: "receiving" });
     }
     if (input.action === "received" || input.action === "validated") {
       const from = input.action === "received" ? "receiving" : "validating";
