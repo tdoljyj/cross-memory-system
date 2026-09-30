@@ -178,7 +178,10 @@ test("a committed checkpoint renews the session without a second resume", { time
     assert.equal(afterChange.status, "committed");
     assert.deepEqual(afterChange.session_renewal.active_constraint_refs, [{ id: constraintId, version: 2 }]);
     assert.equal(afterChange.session_renewal.active_constraints_delivered.length, 1);
-    assert.equal(afterChange.session_renewal.active_constraints_delivered[0].content, "Changed during the session.");
+    assert.equal(afterChange.session_renewal.constraint_view, "index");
+    assert.equal(afterChange.session_renewal.active_constraints_delivered[0].summary, "Changed during the session.");
+    assert.equal(afterChange.session_renewal.active_constraints_delivered[0].summary_is_full_text, true);
+    assert.equal("content" in afterChange.session_renewal.active_constraints_delivered[0], false);
     // Events reported by the previous renewal are not reported again; only the
     // constraint update's own record Event is new.
     assert.equal(afterChange.session_renewal.foreign_event_count, 0);
@@ -277,16 +280,25 @@ test("a committed checkpoint renews the session without a second resume", { time
     assert.deepEqual(widenedCheckpoint.session_renewal.active_constraints_delivered.map((item) => item.id), [constraintId]);
     assert.equal(widenedCheckpoint.session_renewal.active_constraint_refs.length, 2);
 
-    // A session without a delivered set (created before the migration) gets
-    // every constraint in full.
+    // A session without a delivered set or constraint view (created before
+    // those migrations) gets every constraint in full, and so does its chain.
     const legacy = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
-    await admin.query(`update public.clued_continuity_sessions set delivered_constraint_refs=null
+    await admin.query(`update public.clued_continuity_sessions set delivered_constraint_refs=null,constraint_view=null
       where token_hash=encode(extensions.digest($1,'sha256'),'hex')`, [legacy.session_token]);
     const legacyCheckpoint = await checkpoint(legacy.session_token, legacy.version, []);
     assert.equal(legacyCheckpoint.status, "committed");
     assert.deepEqual(legacyCheckpoint.session_renewal.active_constraints_delivered.map((item) => item.id),
       legacyCheckpoint.session_renewal.active_constraint_refs.map((item) => item.id));
     assert.ok(legacyCheckpoint.session_renewal.active_constraints_delivered.length >= 1);
+    assert.equal(legacyCheckpoint.session_renewal.constraint_view, "full");
+    assert.ok(legacyCheckpoint.session_renewal.active_constraints_delivered.every((item) => typeof item.content === "string"));
+
+    // A chain resumed with constraint_view full keeps that view.
+    const fullChain = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured", constraint_view: "full" });
+    assert.equal(fullChain.constraint_view, "full");
+    const fullCheckpoint = await checkpoint(fullChain.session_token, fullChain.version, []);
+    assert.equal(fullCheckpoint.status, "committed");
+    assert.equal(fullCheckpoint.session_renewal.constraint_view, "full");
 
     // A Binding that lost read admission still checkpoints but gets no renewal.
     const readable = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });

@@ -319,6 +319,80 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       assert.equal((await row(ready)).state, "ready");
     });
 
+    await t.test("root-relative paths: canonicalized before the digest, relative == full, bad paths refused before any row", async () => {
+      // Pure canonicalization on a Windows-style managed root with CJK names.
+      const win = "G:/我的云端硬盘/Clued_资料中心";
+      const canonical = async (root, path) => (await admin.query("select clued_private.storage_path_canonical_v1($1,$2) value", [root, path])).rows[0].value;
+      assert.equal(await canonical(win, "90_待归类/x.md"), win + "/90_待归类/x.md");
+      assert.equal(await canonical(win, win + "/90_待归类/x.md"), win + "/90_待归类/x.md", "the full path passes unchanged");
+      assert.equal(await canonical(win, "笔记.md"), win + "/笔记.md");
+      for (const bad of ["90_待归类/../x.md", "../x.md", "./x.md", "90_待归类/./x.md", "90_待归类//x.md", "90_待归类/", "90\\x.md", "a\tb.md", win, win + "/", win + "/../x.md", win + "//x.md"]) {
+        await assert.rejects(canonical(win, bad), /storage_path_invalid/, bad);
+      }
+      for (const outside of ["G:/我的云端硬盘/Other/x.md", "g:/我的云端硬盘/Clued_资料中心/x.md", "G:/我的云端硬盘/Clued_资料中心_2/x.md", "/x.md", "\\x.md", "C:x.md", "https://drive.google.com/x"]) {
+        await assert.rejects(canonical(win, outside), /storage_path_outside_root/, outside);
+      }
+      assert.equal((await admin.query("select clued_private.storage_mutation_paths_v1($1,$2,$3::jsonb) value", [sha("nobody"), randomUUID(),
+        JSON.stringify({ destination_path: "a/b.md" })])).rows[0].value.destination_path, "a/b.md", "no root for an unknown connection: left for the policy to deny");
+
+      const { target, client, storage } = await setup();
+      const relative = `${TRACK}/相对路径.txt`, full = `${target.root}/${relative}`;
+      // The root is resolved only for a live storage client Binding: a revoked token gets its
+      // path back unchanged (the policy denies it), so path refusals cannot confirm a guessed root.
+      const clientHash = (await admin.query("select token_hash from public.clued_agent_bindings where id=$1", [client.id])).rows[0].token_hash;
+      const pathsFor = async () => (await admin.query("select clued_private.storage_mutation_paths_v1($1,$2,$3::jsonb) value",
+        [clientHash, target.connection, JSON.stringify({ destination_path: relative })])).rows[0].value.destination_path;
+      assert.equal(await pathsFor(), full, "a live storage client Binding resolves the root");
+      await admin.query("update public.clued_agent_bindings set revoked_at=now() where id=$1", [client.id]);
+      assert.equal(await pathsFor(), relative, "a revoked Binding resolves no root");
+      await admin.query("update public.clued_agent_bindings set revoked_at=null where id=$1", [client.id]);
+      const text = path => ({ operation: "create", target_kind: "file", destination_path: path, content: "相对" });
+      const job = randomUUID();
+      const first = await submitRaw(client, target, text(relative), job);
+      assert.equal(first.status, "queued", JSON.stringify(first)); assert.equal(first.replayed, false);
+      assert.equal((await jobRow(job)).mutation.destination_path, full, "the stored job binds the full path");
+      const again = await submitRaw(client, target, text(full), job);
+      assert.equal(again.replayed, true, "the full path replays the relative submit");
+      assert.equal(again.request_digest, first.request_digest, "relative and full give one digest");
+      assert.equal((await submitRaw(client, target, text(relative), job)).replayed, true);
+      await assert.rejects(submitRaw(client, target, text(`${TRACK}/other.txt`), job), /storage_job_identity_conflict/);
+
+      const jobs = async () => (await admin.query("select count(*)::int n from clued_private.storage_jobs_v1 where owner_id=$1", [user])).rows[0].n;
+      const receipts = async () => (await admin.query("select count(*)::int n from public.clued_audit_receipts where operation='storage_job_submit'")).rows[0].n;
+      const before = [await jobs(), await receipts()];
+      for (const [bad, code] of [[`${TRACK}/../x.txt`, /storage_path_invalid/], [`${TRACK}//x.txt`, /storage_path_invalid/], [`${TRACK}/x/`, /storage_path_invalid/],
+        [target.root, /storage_path_invalid/], ["/elsewhere/Clued_资料中心/x.txt", /storage_path_outside_root/], ["G:/我的云端硬盘/x.txt", /storage_path_outside_root/]]) {
+        const refusedJob = randomUUID();
+        await assert.rejects(submitRaw(client, target, text(bad), refusedJob), code, bad);
+        assert.equal(await jobRow(refusedJob), undefined, bad);
+      }
+      await assert.rejects(submitRaw(client, target, { operation: "rename", target_kind: "file", source_path: `${TRACK}/../a.txt`,
+        destination_path: `${TRACK}/b.txt`, source_file_version: "1" }), /storage_path_invalid/, "source_path is canonicalized too");
+      assert.deepEqual([await jobs(), await receipts()], before, "no job or receipt for a refused path");
+
+      // Binary: upload_begin with a relative path stores and returns the full path; a relative
+      // submit matches it; the real executor commits at the full path (the production failure).
+      const bytes = pngBytes(2048);
+      const stagingRows = async () => (await admin.query("select count(*)::int n from clued_private.storage_staging_v1 where connection_id=$1", [target.connection])).rows[0].n;
+      const rowsBefore = await stagingRows();
+      await assert.rejects(staging({ ...beginInput(target, bytes), destination_path: `${TRACK}/../photo.png` }, client.token), /storage_path_invalid/);
+      await assert.rejects(staging({ ...beginInput(target, bytes), destination_path: "/elsewhere/photo.png" }, client.token), /storage_path_outside_root/);
+      assert.equal(await stagingRows(), rowsBefore, "no staging row or reservation for a refused path");
+      const issued = await staging({ ...beginInput(target, bytes), destination_path: `${TRACK}/图片.png` }, client.token);
+      assert.equal(issued.destination_path, pathFor(target, "图片.png"));
+      assert.equal((await staging(claimsOf(issued))).state, "receiving");
+      assert.equal((await staging({ action: "received", staging_id: issued.staging_id, outcome: "validating" })).state, "validating");
+      assert.equal((await staging({ action: "validated", staging_id: issued.staging_id, outcome: "ready" })).state, "ready");
+      const binaryJob = randomUUID();
+      const submitted = await submitRaw(client, target, { ...binaryMutation(target, issued.staging_id, bytes, "图片.png"), destination_path: `${TRACK}/图片.png` }, binaryJob);
+      assert.equal(submitted.status, "queued", JSON.stringify(submitted));
+      assert.equal((await jobRow(binaryJob)).mutation.destination_path, pathFor(target, "图片.png"));
+      assert.equal((await submitRaw(client, target, binaryMutation(target, issued.staging_id, bytes, "图片.png"), binaryJob)).replayed, true);
+      const result = await executor(storage, () => bytes).run({ connection_id: target.connection, job_id: binaryJob });
+      assert.equal(result.status, "committed", JSON.stringify(result));
+      assert.ok(await artifact(target, pathFor(target, "图片.png")));
+    });
+
     await t.test("multipart binary create commits with a create-verified/3 proof and a deletable staging object", async () => {
       const { target, client, storage } = await setup();
       const bytes = pngBytes(64 * 1024 + 3);

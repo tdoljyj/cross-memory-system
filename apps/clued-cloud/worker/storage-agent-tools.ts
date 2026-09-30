@@ -5,19 +5,40 @@ const object = (v: unknown): v is Data => !!v && typeof v === "object" && !Array
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v);
 const idSchema = { type: "string", format: "uuid" };
 const reference = { connection_id: idSchema, job_id: { ...idSchema, description: "Stable caller-created job UUID. Keep it for the same request, including after a lost reply; never create another ID to retry an unknown effect." } };
-const destination = { type: "string", minLength: 1, maxLength: 1000, description: "Exact destination under the connection's registered root. A path is a requested target, never authority to change the registered profile." };
-const source = { type: "string", minLength: 1, maxLength: 1000, description: "Exact current path of a file Clued registered (one it created) under the registered root." };
+const pathForms = "Either relative to the connection's registered root (for example 90_待归类/note.md, the same form clued_storage_browse resolve takes) or the full path under that root; both name the same target and give the same job. No empty, '.' or '..' segments, trailing '/' or backslash; an absolute path outside the root is refused (storage_path_outside_root).";
+const destination = { type: "string", minLength: 1, maxLength: 1000, description: `Destination under the connection's registered root. ${pathForms} A path is a requested target, never authority to change the registered profile.` };
+const source = { type: "string", minLength: 1, maxLength: 1000, description: `Current path of a file Clued registered (one it created) under the registered root. ${pathForms}` };
 const sourceVersion = { type: "string", pattern: "^[1-9][0-9]{0,39}$", description: "The file's Drive version as last observed with clued_storage_browse stat. If the file changed since, the job is refused; stat it again first. If it is refused again with the version stat returns, Clued's registered version is older than Drive's and only the Owner can re-register the file; do not retry." };
 const targetVersion = { type: "string", pattern: "^[1-9][0-9]{0,39}$", description: "The target file's Drive version as last observed with clued_storage_browse stat; a changed file is refused." };
 const binaryMime = { type: "string", minLength: 3, maxLength: 255, description: "MIME type bound to the destination extension (png, jpg/jpeg, gif, webp, pdf, zip, docx, xlsx, pptx, odt, ods, odp; legacy doc/xls/ppt and macro-carrying packages are refused)." };
 const binarySha = { type: "string", pattern: "^[0-9a-f]{64}$", description: "sha256 of the exact file bytes; Clued checks it on staging and against Drive's checksum after the write." };
-const pathParent = (path: string) => path.slice(0, path.lastIndexOf("/"));
+const pathParent = (path: string) => path.lastIndexOf("/") < 0 ? "" : path.slice(0, path.lastIndexOf("/"));
 const pathName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+/** Relative to the registered root: no leading "/" or "\\", drive prefix or scheme. */
+const relativePath = (path: string) => !/^([/\\]|[A-Za-z]:|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/.test(path);
+
+/** Fixed path refusals. The database canonicalizes a relative path to the full path under the
+ * connection's managed root before the request digest (20260930233000_storage_relative_paths_v1)
+ * and decides outside-root; the Worker refuses the syntax early with the same code. */
+export type StoragePathCode = "storage_path_invalid" | "storage_path_outside_root";
+export const storagePathMessages: Record<StoragePathCode, string> = {
+  storage_path_invalid: "The path is not valid. Use a path relative to the connection's registered root (for example 90_待归类/note.md) or the full path under it, with no empty, '.' or '..' segments, no trailing '/' and no backslash. Retrying the same path will not help.",
+  storage_path_outside_root: "The path is absolute but not under the connection's registered root. Use a path relative to the root (for example 90_待归类/note.md) or the full path under it. Retrying the same path will not help.",
+};
+export function storagePathCode(error: unknown): StoragePathCode | null {
+  const message = error instanceof Error ? error.message : "";
+  return message === "storage_path_invalid" || message === "storage_path_outside_root" ? message : null;
+}
+/** Syntax only (the root is known to the database): the same segment rules as storage_path_canonical_v1. */
+export function storagePathSyntaxValid(path: string): boolean {
+  return path.length >= 1 && path.length <= 1000 && !/(^|\/)\.{1,2}(\/|$)/.test(path) && !path.includes("//") &&
+    !path.endsWith("/") && !path.includes("\\") && !/[\u0000-\u001f\u007f]/.test(path);
+}
 
 export const storageAgentTools = [
   {
     name: "clued_storage_submit",
-    description: "Submit an explicitly authorized storage job using this client's existing Clued Binding and an Owner-granted storage permission. context:write is insufficient. create makes a new file or directory. rename (same folder, new name) and move (new folder, same name) apply to one file Clued registered and need the Owner's modify level. replace overwrites one registered text file with new content (at most 1 MiB), or with restore_job_id restores the content that an earlier committed replace job kept; both need the Owner's overwrite level, and the previous content is kept as a Drive revision. Reuse job_id and identical payload for correlation; queued/started/uncertain is NOT completion. On a lost reply inspect the same job; never re-dispatch with another ID. Policy, single-use admission and provider execution remain server-owned. No directory move or delete.",
+    description: "Submit an explicitly authorized storage job using this client's existing Clued Binding and an Owner-granted storage permission. context:write is insufficient. create makes a new file or directory. rename (same folder, new name) and move (new folder, same name) apply to one file Clued registered and need the Owner's modify level. replace overwrites one registered text file with new content (at most 1 MiB), or with restore_job_id restores the content that an earlier committed replace job kept; both need the Owner's overwrite level, and the previous content is kept as a Drive revision. Reuse job_id and identical payload for correlation; queued/started/uncertain is NOT completion. On a lost reply inspect the same job; never re-dispatch with another ID. destination_path and source_path may be relative to the connection's registered root (90_待归类/note.md) or full paths under it; a malformed or outside-root path is refused at submit with storage_path_invalid or storage_path_outside_root, before any job exists. Policy, single-use admission and provider execution remain server-owned. No directory move or delete.",
     inputSchema: {
       type: "object", required: ["connection_id", "job_id", "mutation"], additionalProperties: false,
       properties: { ...reference, mutation: { oneOf: [
@@ -90,14 +111,20 @@ export function storageAgentInput(name: "clued_storage_submit" | "clued_storage_
     const m = args.mutation;
     if (!object(m) || typeof m.destination_path !== "string" ||
       m.destination_path.length < 1 || m.destination_path.length > 1000) return fail();
+    if (!storagePathSyntaxValid(m.destination_path) || (typeof m.source_path === "string" && !storagePathSyntaxValid(m.source_path)))
+      throw new Error("storage_path_invalid");
     const allowed = ["operation", "target_kind", "destination_path"];
     if (m.operation === "rename" || m.operation === "move") {
       // Shape only; the server re-validates it and the registered source.
       if (m.target_kind !== "file" || typeof m.source_path !== "string" || m.source_path.length < 1 || m.source_path.length > 1000 ||
         typeof m.source_file_version !== "string" || !/^[1-9][0-9]{0,39}$/.test(m.source_file_version)) return fail();
-      const sameParent = pathParent(m.source_path) === pathParent(m.destination_path);
+      // Parents are comparable here only when both paths use the same form; the database
+      // re-checks rename/move after both are canonicalized to full paths.
       const sameName = pathName(m.source_path) === pathName(m.destination_path);
-      if (m.operation === "rename" ? !sameParent || sameName : sameParent || !sameName) return fail();
+      if (relativePath(m.source_path) === relativePath(m.destination_path)) {
+        const sameParent = pathParent(m.source_path) === pathParent(m.destination_path);
+        if (m.operation === "rename" ? !sameParent || sameName : sameParent || !sameName) return fail();
+      } else if (m.operation === "rename" ? sameName : !sameName) return fail();
       allowed.push("source_path", "source_file_version");
     } else if (m.operation === "replace") {
       if (m.target_kind !== "file" || typeof m.destination_file_version !== "string" ||

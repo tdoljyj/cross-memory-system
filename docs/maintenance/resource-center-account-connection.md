@@ -343,6 +343,17 @@ supports completion. Directory requests are limited to topic/asset-collection
 semantics; deterministic policy independently rejects status folders and islands.
 The full JSON request must fit the existing transport byte limit.
 
+Paths (`destination_path`, `source_path`, and `clued_storage_upload_begin`'s
+`destination_path`) may be relative to the registered root (`90_待归类/x.md`, the
+form `clued_storage_browse` resolve uses) or the full path under it. Migration
+`20260930233000_storage_relative_paths_v1.sql` canonicalizes them to the full
+path under the connection profile's `managed_root` before the request digest,
+so the job, receipt and staging row bind the full path and both forms give the
+same digest. Empty, `.` or `..` segments, a trailing `/`, a backslash or the
+root itself return `storage_path_invalid`; an absolute path outside the root
+returns `storage_path_outside_root`. Both are refused at submit / upload_begin,
+before any row exists (StorageNormalUse.v0.1 §5.3).
+
 Transport regression tests use a synthetic RPC/provider. They do not prove a
 live Owner storage grant, qualified cloud runtime/root, manual OAuth recovery or
 real file acceptance. Keep production jobs/executor flags off until those gates
