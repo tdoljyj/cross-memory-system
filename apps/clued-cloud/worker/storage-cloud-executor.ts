@@ -20,6 +20,8 @@ export async function createStorageCloudWorker(config: {
   rpc: (input: Data) => Promise<Data>; fetch?: typeof fetch; clock?: () => number;
   recovery_refresh?: (reference: Reference) => Promise<{status:string}>;
   account_policy_v2?: boolean;
+  // Binary create (StorageNormalUse N3), absent = binary jobs refused. Opens a binary job's staged object as a bounded-memory source (verify + stream), never the whole bytes.
+  load_staged_content?: (input: Data) => Promise<{ size: number; sha256: string; readonly verified: boolean; verify(): Promise<void>; stream(): ReadableStream<Uint8Array> }>;
 }) {
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id)) throw denied();
   const vault = await createStorageCredentialVault(config.vault);
@@ -65,6 +67,7 @@ export async function createStorageCloudWorker(config: {
       metadata_batch: ({ access_token }: { access_token: string }) =>
         createStorageGoogleMetadataBatch({ access_token, fetch: config.fetch, signal: AbortSignal.timeout(60000) }),
       verified_result_mode: config.account_policy_v2 === true,
+      ...(config.load_staged_content ? { load_staged_content: config.load_staged_content } : {}),
       load_job: async (ref: Reference) => {
         const result = await config.rpc({...ref, action:"load"});
         if (result.status === "queued" && result.oauth_client_id !== config.client_id) throw denied();

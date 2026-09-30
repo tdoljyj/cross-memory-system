@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
+import { contentRefShape } from "./resource-center-google-drive-create-effect.mjs";
 
 const FOLDER = "application/vnd.google-apps.folder";
 const normalized = (value) => bindResourceCenterMutation({ destination_path: value }).destination_path;
@@ -26,11 +27,12 @@ export function createGoogleDriveCreatePostconditionVerifier({
     typeof includeVerifiedProof !== "boolean" || (includeVerifiedProof && !requireEffectProviderId)) {
     throw new TypeError("Pinned Drive identity, metadata API and bounded polling are required.");
   }
-  function check(file, id, name, parent, folder) {
+  function check(file, id, name, parent, folder, mimeType) {
     if (!file || file.id !== id || file.name !== name || file.trashed !== false ||
       !Array.isArray(file.parents) || file.parents.length !== 1 || file.parents[0] !== parent ||
       typeof file.version !== "string" || !/^[1-9]\d*$/.test(file.version) ||
-      (folder ? file.mimeType !== FOLDER : !file.mimeType || file.mimeType.startsWith("application/vnd.google-apps."))) {
+      (folder ? file.mimeType !== FOLDER : !file.mimeType || file.mimeType.startsWith("application/vnd.google-apps.")) ||
+      (mimeType !== undefined && file.mimeType !== mimeType)) {
       fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
     }
   }
@@ -49,10 +51,15 @@ export function createGoogleDriveCreatePostconditionVerifier({
     const parts = destination.slice(root.length + 1).split("/");
     const name = parts.pop();
     const folder = mutation.target_kind === "directory";
+    // Binary create (StorageNormalUse §6.4): size, sha256 and MIME come from the job's content
+    // reference, Drive's sha256Checksum must equal it, and the proof is create-verified/3.
+    const ref = mutation.content_ref;
+    if (ref !== undefined && (folder || mutation.content !== undefined || !contentRefShape(ref))) fail("DRIVE_POSTCONDITION_REQUEST_MISMATCH");
     const content = mutation.content ?? "";
-    if (!folder && typeof content !== "string") fail("DRIVE_POSTCONDITION_CONTENT_REQUIRED");
-    const size = folder ? null : String(Buffer.byteLength(content, "utf8"));
-    const digest = folder ? null : createHash("sha256").update(content, "utf8").digest("hex");
+    if (!folder && !ref && typeof content !== "string") fail("DRIVE_POSTCONDITION_CONTENT_REQUIRED");
+    const size = folder ? null : ref ? String(ref.size) : String(Buffer.byteLength(content, "utf8"));
+    const digest = folder ? null : ref ? ref.sha256 : createHash("sha256").update(content, "utf8").digest("hex");
+    const mimeType = ref ? ref.mime_type : undefined;
     async function parentIdentity() {
       let node = await getFile(rootId);
       check(node, rootId, root.slice(root.lastIndexOf("/") + 1), rootParentId, true);
@@ -93,7 +100,7 @@ export function createGoogleDriveCreatePostconditionVerifier({
         if (effect.provider_file_id && listed.id !== effect.provider_file_id) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
         if (typeof listed.id !== "string" || !listed.id) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
         const file = await getFile(listed.id);
-        check(file, listed.id, name, parent.id, folder);
+        check(file, listed.id, name, parent.id, folder, mimeType);
         if (!folder && ((file.size != null && file.size !== size) ||
           (file.sha256Checksum != null && file.sha256Checksum !== "" && file.sha256Checksum !== digest)))
           fail("DRIVE_POSTCONDITION_CONTENT_MISMATCH");
@@ -128,7 +135,12 @@ export function createGoogleDriveCreatePostconditionVerifier({
         // This is emitted only after the complete metadata/content/ancestor and
         // uniqueness checks above. The fixed server bridge, never an Agent,
         // may persist it against the original started journal before revoke.
-        const verifiedProof = Object.freeze({ contract: "clued.storage-create-verified/2",
+        const verifiedProof = ref ? Object.freeze({ contract: "clued.storage-create-verified/3",
+          ...postcondition, target_kind: "file", size, sha256: digest, mime_type: ref.mime_type,
+          provider_before: structuredClone(before),
+          checks: Object.freeze({ identity: true, content: true, ancestors: true,
+            unique_name: true, stable_version: true, mime_type: true, sha256_checksum: true }) })
+          : Object.freeze({ contract: "clued.storage-create-verified/2",
           ...postcondition, target_kind: mutation.target_kind, size, sha256: digest,
           provider_before: structuredClone(before),
           checks: Object.freeze({ identity: true, content: true, ancestors: true,

@@ -5,7 +5,7 @@ import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-met
 import { scopeProfile } from "./resource-center-google-scopes.mjs";
 import { createGoogleDriveProviderIdentityResolver } from "./resource-center-google-drive-identity.mjs";
 import { createGoogleDriveBoundaryScanner } from "./resource-center-google-drive-boundary.mjs";
-import { createGoogleDriveNativeCreateEffect } from "./resource-center-google-drive-create-effect.mjs";
+import { createGoogleDriveNativeCreateEffect, contentRefShape, contentSourceShape } from "./resource-center-google-drive-create-effect.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "./resource-center-google-drive-postcondition.mjs";
 import { createGoogleDriveNativeModifyEffect, modifyShape } from "./resource-center-google-drive-modify-effect.mjs";
 import { createGoogleDriveModifyPostconditionVerifier } from "./resource-center-google-drive-modify-postcondition.mjs";
@@ -30,7 +30,7 @@ const providerAuthorityCodes = new Set([
   "DRIVE_CREDENTIAL_UNAVAILABLE", "DRIVE_LIST_INVALID", "DRIVE_METADATA_MISMATCH",
   "DRIVE_METADATA_UNAVAILABLE", "DRIVE_NAMESPACE_VISIBILITY_UNPROVEN", "DRIVE_PAGINATION_INVALID",
   "DRIVE_PAGINATION_LIMIT", "SOURCE_VERSION_MISMATCH", "DESTINATION_VERSION_MISMATCH", "REVISION_KEEP_LIMIT",
-  "REPLACE_TARGET_UNSUPPORTED",
+  "REPLACE_TARGET_UNSUPPORTED", "STORAGE_CONTENT_STAGING_MISMATCH",
 ]);
 // Fixed denial labels from public.clued_resource_center_authority_v1; each names a failed check, never a value.
 const authorityDenialReasons = new Set([
@@ -83,13 +83,17 @@ const logPostWriteFailure = (stage,error) => {
  * The caller never receives a credential, admission or durable execution grant.
  * metadata_batch, when supplied, returns {getFiles, listFolders} bound to one
  * validated access token; the boundary scan then reads a folder level per call.
- * @param {{load_job: Function, rpc: Function, get_credential: Function, drive_fetch?: typeof fetch, clock?: () => number, verified_result_mode?: boolean, metadata_batch?: Function}} config
+ * load_staged_content, when supplied, opens a binary create job's staged object (StorageNormalUse
+ * §6.2) as a bounded-memory source {size, sha256, verify(), stream()}; the executor runs verify()
+ * (full decrypt + sha256) before any reservation. Without it binary jobs are refused.
+ * @param {{load_job: Function, rpc: Function, get_credential: Function, drive_fetch?: typeof fetch, clock?: () => number, verified_result_mode?: boolean, metadata_batch?: Function, load_staged_content?: Function}} config
  */
 export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_credential:getCredential,
   drive_fetch:driveFetch=globalThis.fetch,clock=Date.now,verified_result_mode:verifiedResultMode=false,
-  metadata_batch:metadataBatch}={}){
+  metadata_batch:metadataBatch,load_staged_content:loadStagedContent}={}){
   if([loadJob,rpc,getCredential,driveFetch,clock].some(fn=>typeof fn!=="function") ||
     (metadataBatch!==undefined && typeof metadataBatch!=="function") ||
+    (loadStagedContent!==undefined && typeof loadStagedContent!=="function") ||
     typeof verifiedResultMode!=="boolean") throw new TypeError("Private server dependencies required.");
   const seen=new Set();
   return Object.freeze({async run(reference){
@@ -127,6 +131,12 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       }else if(modify){
         if(!verifiedResultMode || !modifyShape(mutation) || mutation.target_kind!=="file" ||
           Object.keys(mutation).some(k=>!["operation","source_path","destination_path","target_kind","source_file_version"].includes(k))) fail();
+      }else if(mutation?.operation==="create" && mutation.content_ref!==undefined){
+        // Binary create (N3): account-policy mode only, exact content reference, staged bytes loader.
+        if(!verifiedResultMode || !loadStagedContent || mutation.target_kind!=="file" ||
+          Object.keys(mutation).sort().join(",")!=="content_ref,destination_path,operation,target_kind" ||
+          bindResourceCenterMutation(mutation).destination_path!==mutation.destination_path ||
+          !contentRefShape(mutation.content_ref) || descriptor.staging?.staging_id!==mutation.content_ref.staging_id) fail();
       }else if(mutation?.operation!=="create" ||
         !["file","directory"].includes(mutation.target_kind) ||
         Object.keys(mutation).some(k=>!["operation","destination_path","target_kind","directory_semantics","content"].includes(k)) ||
@@ -227,6 +237,25 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         }};
       // The replacement bytes are fixed before any reservation: the new text,
       // or a restored revision read back and checked against its pin.
+      // Binary create: the staged object is read back, decrypted and checked against the job's
+      // content reference before any reservation; a mismatch is refused with no effect.
+      let staged;
+      const binary=mutation.content_ref!==undefined;
+      if(binary){
+        try{
+          staged=await loadStagedContent(Object.freeze({owner_id:descriptor.owner_id,connection_id:descriptor.connection_id,
+            staging:structuredClone(descriptor.staging),content_ref:structuredClone(mutation.content_ref)}));
+          // A bounded-memory source: one full streaming decrypt + sha256 pass here, before any
+          // reservation or provider byte; the effect streams it again and re-checks the digest.
+          if(!staged || typeof staged!=="object" || typeof staged.verify!=="function" || typeof staged.stream!=="function" ||
+            staged.size!==mutation.content_ref.size || staged.sha256!==mutation.content_ref.sha256) throw new Error("mismatch");
+          await staged.verify();
+          if(!contentSourceShape(staged,mutation.content_ref)) throw new Error("mismatch");
+        }catch{
+          logDiagnostic("deny","STORAGE_CONTENT_STAGING_MISMATCH");
+          return {status:"deny",error_code:"STORAGE_CONTENT_STAGING_MISMATCH",side_effects:0,execution_permitted:false};
+        }
+      }
       let replacement=null;
       if(replace && mutation.content!==undefined) replacement=new Uint8Array(Buffer.from(mutation.content,"utf8"));
       else if(replace){
@@ -238,7 +267,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const effect=replace ? createGoogleDriveNativeReplaceEffect({...effectConfig,get_file:metadata.getFile,get_revision:metadata.getRevision,replacement,
           release_revision_ids:descriptor.revision_releases})
         : modify ? createGoogleDriveNativeModifyEffect({...effectConfig,get_file:metadata.getFile})
-        : createGoogleDriveNativeCreateEffect(effectConfig);
+        : createGoogleDriveNativeCreateEffect(binary ? {...effectConfig,content_source:staged} : effectConfig);
       const verifierConfig={managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         include_verified_proof:verifiedResultMode,clock};
@@ -246,7 +275,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
         : createGoogleDriveCreatePostconditionVerifier({...verifierConfig,require_effect_provider_id:true});
       const proofContract=replace ? "clued.storage-replace-verified/1"
-        : modify ? `clued.storage-${mutation.operation}-verified/1` : "clued.storage-create-verified/2";
+        : modify ? `clued.storage-${mutation.operation}-verified/1`
+        : binary ? "clued.storage-create-verified/3" : "clued.storage-create-verified/2";
       const host=createResourceCenterOnlineToolHost({trusted_profile:profile,resolve_artifact_online:resolveAuthority,
         mutation_effect:effect,scan_boundary:scan,clock,qualified_operations:modify||replace?[mutation.operation]:["create"],
         prepare_write:async({mutation:input,binding})=>{

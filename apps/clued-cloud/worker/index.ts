@@ -6,6 +6,7 @@ import {
   runProjectionRefreshScheduled,
   runStorageRefreshScheduled,
   runStorageRecoveryScheduled,
+  runStorageStagingScheduled,
   runStorageJobQueue,
   type ContinuityEnv,
   type StorageJobQueueMessage,
@@ -81,6 +82,9 @@ const worker = {
     ctx.waitUntil(runStorageRecoveryScheduled(env).then(result => {
       if (result.status === "unavailable" || result.status === "attention_required")
         console.warn(JSON.stringify({ event: "storage_recovery_attention_required", status: result.status }));
+    }));
+    ctx.waitUntil(runStorageStagingScheduled(env).then(result => {
+      if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_staging_sweep_unavailable" }));
     }));
   },
   async queue(batch: { readonly messages: readonly StorageJobQueueMessage[] }, env: Env) {
