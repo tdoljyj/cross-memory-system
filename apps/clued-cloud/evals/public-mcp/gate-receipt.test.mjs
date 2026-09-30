@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  GATE_CHECK_RUN_NAME,
   GATE_STATUS_CONTEXT,
   REQUIRED_CHECKS,
   buildReceipt,
+  checkRunFor,
   commitStatusFor,
   gateApplies,
   evaluateCheckRuns,
@@ -135,4 +137,33 @@ test("commit status mirrors the verdict and names the receipt digest", () => {
   assert.equal(pending.state, "pending");
   assert.equal(pending.description, "Waiting for public-mcp-protocol");
   assert(pending.description.length <= 140);
+});
+
+test("a terminal verdict is announced as a completed check run on the candidate", () => {
+  const digest = "c".repeat(64);
+  const pass = checkRunFor({ sha: SHA, evaluation: evaluateCheckRuns(runs()),
+    receiptSha256: digest, targetUrl: "https://example.invalid/run" });
+  assert.equal(pass.name, GATE_CHECK_RUN_NAME);
+  assert.notEqual(pass.name, GATE_STATUS_CONTEXT);
+  assert.equal(pass.head_sha, SHA);
+  assert.equal(pass.status, "completed");
+  assert.equal(pass.conclusion, "success");
+  assert.equal(pass.details_url, "https://example.invalid/run");
+  assert.equal(pass.output.title, `PASS receipt sha256:${"c".repeat(16)}`);
+  assert.match(pass.output.summary, /- public-mcp-behavior: success/);
+
+  const fail = checkRunFor({ sha: SHA, evaluation: evaluateCheckRuns(runs("failure")), receiptSha256: digest });
+  assert.equal(fail.conclusion, "failure");
+  assert.equal("details_url" in fail, false);
+
+  const active = runs();
+  active[0] = { ...active[0], status: "queued", conclusion: null };
+  assert.throws(() => checkRunFor({ sha: SHA, evaluation: evaluateCheckRuns(active), receiptSha256: digest }),
+    /GATE_CHECK_RUN_PENDING/);
+});
+
+test("the verdict check run never counts as one of the required checks", () => {
+  const withVerdict = [...runs(), { id: 99, name: GATE_CHECK_RUN_NAME, status: "completed",
+    conclusion: "failure", started_at: "2026-08-29T00:00:09Z" }];
+  assert.equal(evaluateCheckRuns(withVerdict).state, "PASS");
 });

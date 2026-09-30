@@ -14,7 +14,7 @@
     "test:context:v2": "node --test --test-force-exit tests/context-v2-terminal-restore-db.test.mjs tests/context-v2-legacy-continuity-manifest.test.mjs tests/currentness-retained-all.test.mjs tests/currentness-transport.test.mjs tests/home-record-currentness.test.mjs tests/user-memory-bundle.test.mjs tests/continuity.test.mjs tests/stage6-contract.test.mjs",
     "test:projection:refresh": "node --test --test-force-exit tests/projection-refresh-pipeline-db.test.mjs tests/global-scope-projection-invalidation-db.test.mjs tests/projection-refresh-transport.test.mjs tests/projection-watchdog.test.mjs",
     "test:project:lifecycle:v2": "node --test --test-force-exit tests/project-lifecycle-successor-v2-db.test.mjs tests/project-api.test.mjs tests/home-project-create.test.mjs tests/rendered-html.test.mjs tests/user-memory-bundle.test.mjs tests/two-level-snapshot.test.mjs",
-    "test:production:release-gate": "node --test tests/production-release-gate.test.mjs",
+    "test:production:release-gate": "node --test tests/production-release-gate.test.mjs tests/served-agent-contract.test.mjs",
     "test:information-flow:candidates": "node --test --test-force-exit tests/information-flow-candidate-store-db.test.mjs",
     "test:information-flow:intake": "node --test --test-force-exit tests/information-flow-intake-transport-db.test.mjs tests/information-flow-transport.test.mjs",
     "test:information-flow:promotion": "node --test --test-force-exit tests/information-flow-promotion-db.test.mjs tests/information-flow-transport.test.mjs",
