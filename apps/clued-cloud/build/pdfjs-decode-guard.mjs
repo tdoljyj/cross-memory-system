@@ -35,7 +35,12 @@ import { readFile } from "node:fs/promises";
  *   element at a time).
  *
  * It also bounds EvaluatorPreprocessor.nonProcessedArgs (the extra operands
- * pdf.js keeps for the rest of a content stream) to the last 33.
+ * pdf.js keeps for the rest of a content stream) to the last 33, and removes
+ * embedded font programs from the text path altogether: translateFont never
+ * reads FontFile / FontFile2 / FontFile3, so no Type1 / CFF / TrueType /
+ * OpenType program is decoded or converted. The module exports
+ * CLUED_PDF_FONT_PROGRAMS = "skipped" (kept in the built Worker because
+ * storage-read-pdf.ts requires it before it parses any PDF).
  *
  * worker/storage-read-pdf.ts installs the guard, charges each call to the
  * extraction running in the current async context and throws once a limit is
@@ -134,6 +139,25 @@ const PATCHES = [
   ["    bytes ||= this.bytes;\n    this.buffer = await JpxImage.instance.decode(", `    ${G}("limit");\n    bytes ||= this.bytes;\n    this.buffer = await JpxImage.instance.decode(`],
   ["    bytes ??= this.stream.isAsync ? (await this.stream.asyncGetBytes()) || this.bytes : this.bytes;\n    this.buffer = await JBig2CCITTFaxImage.instance.decode(bytes, this.dict.get(\"W\", \"Width\")",
     `    ${G}("limit");\n    bytes ??= this.stream.isAsync ? (await this.stream.asyncGetBytes()) || this.bytes : this.bytes;\n    this.buffer = await JBig2CCITTFaxImage.instance.decode(bytes, this.dict.get("W", "Width")`],
+  // Embedded font programs (FontFile / FontFile2 / FontFile3: Type1, CFF,
+  // TrueType, OpenType) are never fetched, decoded or converted: text mapping
+  // needs only the font dictionary (Encoding / Differences, ToUnicode, W /
+  // Widths, predefined CMaps), while conversion (glyph, hmtx and charstring
+  // loops, rebuilt output tables) is unbounded work text never needs.
+  // PartialEvaluator.translateFont reads no FontFile entry, so every
+  // non-Type3 font takes pdf.js's non-embedded path (Font.fallbackToSystemFont)
+  // and Type3 fonts (content streams, budgeted above) are untouched.
+  // cluedEmbeddedFontFile keeps what the dictionary says: the font counts as
+  // embedded for encoding selection (nonEmbeddedFont) and is not marked
+  // missingFile, which would make a Type1 code without a StandardEncoding name
+  // a space even when ToUnicode maps it.
+  ["    let fontFile, fontFileN, subtype, length1, length2, length3;\n    try {\n      for (const n of [\"FontFile\", \"FontFile2\", \"FontFile3\"]) {\n        fontFile = descriptor.get(n);",
+    `    let fontFile, fontFileN, subtype, length1, length2, length3;\n    const cluedEmbeddedFontFile = !isType3Font && ["FontFile", "FontFile2", "FontFile3"].some(n => descriptor.has(n));\n    try {\n      for (const n of []) {\n        fontFile = descriptor.get(n);`],
+  ["      fontFileN,\n      length1,\n      length2,\n      length3,", "      fontFileN,\n      cluedEmbeddedFontFile,\n      length1,\n      length2,\n      length3,"],
+  ["    const nonEmbeddedFont = !properties.file || properties.isInternalFont,",
+    "    const nonEmbeddedFont = !properties.file && !properties.cluedEmbeddedFontFile || properties.isInternalFont,"],
+  ["      this.fallbackToSystemFont(properties);\n      return;\n    }\n    [type, subtype] = getFontFileType(file, properties);",
+    "      this.fallbackToSystemFont(properties);\n      if (properties.cluedEmbeddedFontFile) this.missingFile = false;\n      return;\n    }\n    [type, subtype] = getFontFileType(file, properties);"],
 ];
 
 export function patchPdfWorker(source) {
@@ -142,7 +166,7 @@ export function patchPdfWorker(source) {
     if (out.split(anchor).length !== 2) throw new Error("pdfjs-decode-guard: pdf.worker.mjs does not match the pinned pdfjs-dist; re-check the patch anchors");
     out = out.replace(anchor, () => replacement);
   }
-  return out + "\nexport const CLUED_PDF_DECODE_GUARD = true;\n";
+  return out + "\nexport const CLUED_PDF_DECODE_GUARD = true;\nexport const CLUED_PDF_FONT_PROGRAMS = \"skipped\";\n";
 }
 
 const clean = id => id.split("?")[0];

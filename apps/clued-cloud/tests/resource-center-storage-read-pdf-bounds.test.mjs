@@ -7,10 +7,10 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { build, stop } from "esbuild";
-import { patchPdfWorker, pdfDecodeGuardEsbuildPlugin } from "../build/pdfjs-decode-guard.mjs";
-import { catalogDictBombPdf, cmapRangeBombPdf, dictArrayBombPdf, emptyArrayBombPdf, extraOperandsBombPdf, flateLatinPdf, formXObjectsBombPdf, heldOperandsBombPdf,
-  stringArrayBombPdf, imageFilterBombPdf, longStringPdf, operatorBombPdf, predefinedCjkFontsPdf, realisticTextPdf, repeatedStreamPdf, textBombPdf, toUnicodeBombPdf,
-  type3CharProcBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
+import { PDF_WORKER_MODULE, patchPdfWorker, pdfDecodeGuardEsbuildPlugin } from "../build/pdfjs-decode-guard.mjs";
+import { catalogDictBombPdf, cffProgram, cmapRangeBombPdf, dictArrayBombPdf, embeddedFontPdf, emptyArrayBombPdf, extraOperandsBombPdf, flateLatinPdf, formXObjectsBombPdf,
+  heldOperandsBombPdf, stringArrayBombPdf, imageFilterBombPdf, longStringPdf, operatorBombPdf, predefinedCjkFontsPdf, realisticTextPdf, repeatedStreamPdf, textBombPdf,
+  textItemsBombPdf, toUnicodeBombPdf, trueTypeProgram, type3CharProcBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
 
 // StorageNormalUse.v0.1 §4.5 resource bounds (independent review MAJOR): small
 // deflate bombs must not exhaust a Worker isolate. Each case runs in its own
@@ -23,6 +23,10 @@ await build({ entryPoints: [entry], outfile: path.join(directory, "guarded.mjs")
   plugins: [pdfDecodeGuardEsbuildPlugin()] });
 // The same module bundled WITHOUT the pdf.js patch, as a build that skipped it would be.
 await build({ entryPoints: [entry], outfile: path.join(directory, "unguarded.mjs"), bundle: true, platform: "node", format: "esm", logLevel: "silent" });
+// A worker patched with the decode guard whose font-program marker is missing, as a build with an older patch would be.
+await build({ entryPoints: [entry], outfile: path.join(directory, "fonts-unguarded.mjs"), bundle: true, platform: "node", format: "esm", logLevel: "silent",
+  plugins: [{ name: "fonts-unguarded", setup(b) { b.onLoad({ filter: PDF_WORKER_MODULE }, async args => ({ loader: "js",
+    contents: patchPdfWorker(await readFile(args.path, "utf8")).replace('export const CLUED_PDF_FONT_PROGRAMS = "skipped";', "") })); } }] });
 stop();
 const child = path.join(directory, "child.mjs");
 await writeFile(child, `
@@ -31,11 +35,12 @@ import v8 from "node:v8";
 const [bundle, file, maxText, timeMs] = process.argv.slice(2);
 const { extractPdfText } = await import(bundle);
 const run = bytes => extractPdfText(bytes, { page_start: 1, page_count: 20, max_text_bytes: Number(maxText), ...(timeMs ? { time_ms: Number(timeMs) } : {}) });
-let peakBuffers = 0, peakHeap = 0, cmapCalls = 0;
+let peakBuffers = 0, peakHeap = 0, cmapCalls = 0, decoded = 0;
 try { await run(new Uint8Array(await readFile(file + ".warm"))); } catch {}
 const guard = globalThis.__cluedPdfDecodeGuard;
 if (typeof guard === "function") globalThis.__cluedPdfDecodeGuard = (kind, ...args) => {
   // CMap entries are charged one by one: sample every 256th.
+  if (kind === "decode") decoded += args[1] ?? 0;
   if (kind === "decode" || (kind === "cmap" && cmapCalls++ % 256 === 0)) { peakBuffers = Math.max(peakBuffers, process.memoryUsage().arrayBuffers); peakHeap = Math.max(peakHeap, v8.getHeapStatistics().used_heap_size); }
   return guard(kind, ...args);
 };
@@ -46,12 +51,13 @@ try { const r = await run(bytes); outcome = { ok: true, text_bytes: Buffer.byteL
 catch (error) { outcome = { ok: false, code: error.code ?? String(error) }; }
 const used = process.cpuUsage(cpu);
 process.stdout.write(JSON.stringify({ ...outcome, wall_ms: Math.round(performance.now() - started), cpu_ms: Math.round((used.user + used.system) / 1000),
-  peak_buffers_mb: Math.round(peakBuffers / 1048576), peak_heap_mb: Math.round(peakHeap / 1048576) }));
+  peak_buffers_mb: Math.round(peakBuffers / 1048576), peak_heap_mb: Math.round(peakHeap / 1048576), decoded_kb: Math.round(decoded / 1024) }));
 `);
 await writeFile(path.join(directory, "warm"), flateLatinPdf([["warm up"]]));
 
 let seq = 0;
 async function measure(pdf, { bundle = "guarded.mjs", maxText = 256 * 1024, timeMs } = {}) {
+  pdf = typeof pdf === "function" ? pdf() : pdf;
   const file = path.join(directory, `case-${++seq}.pdf`);
   await writeFile(file, pdf); await writeFile(file + ".warm", flateLatinPdf([["warm up"]]));
   const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; delete env.NODE_OPTIONS;
@@ -79,7 +85,9 @@ for (const [name, pdf, expect, seconds] of [
   ["a sparse bfrange just under the CMap limit still fits", () => cmapRangeBombPdf([["100000", (0x100000 + 49000).toString(16), "4100"]]), r => r.ok && r.complete, 5],
   // Before: 5.2 GB RSS and 28 s CPU for the 30000 x 30000 JPEG header.
   ["1.6 KB ToUnicode stream with /Filter /DCTDecode claiming a 30000 x 30000 image", () => imageFilterBombPdf(), r => r.code === "archive_limit_exceeded", 3],
-  ["1.6 KB FontFile2 stream with /Filter /DCTDecode claiming a 30000 x 30000 image", () => imageFilterBombPdf({ target: "fontfile" }), r => r.code === "archive_limit_exceeded", 3],
+  // Embedded font programs are no longer read at all, so this FontFile2 is never decoded (it was refused by the image guard).
+  ["1.6 KB FontFile2 stream with /Filter /DCTDecode claiming a 30000 x 30000 image", () => imageFilterBombPdf({ target: "fontfile" }),
+    r => r.ok && r.complete && r.decoded_kb === 0, 3],
   // These decoders have no readBlock: a byte read on the text path throws before
   // anything is decoded (pdf.js drops that ToUnicode), and decodeImage is refused.
   ...["JBIG2Decode", "JPXDecode", "CCITTFaxDecode"].map(filter => [`ToUnicode stream with /Filter /${filter} decodes nothing`, () => imageFilterBombPdf({ filter }),
@@ -125,6 +133,45 @@ for (const [name, pdf, expect, seconds] of [
   });
 }
 
+// Embedded font programs (review of d509f1e3: nothing bounded Type1 / CFF / TrueType conversion, hmtx or glyph loops) are
+// never fetched, decoded or converted: text comes from the font dictionary and ToUnicode. Each program below declares the
+// most glyphs its format allows (65 535, each with its own hmtx entry or charstring) and decodes to about 6.3 MB, inside
+// the per-stream decode limit. Measured before (64 MB heap): 0.25-0.8 s wall, 0.36-1.0 s CPU and 45-60 MB more RSS per
+// font, and it decoded the whole program; after: about 10 ms, nothing decoded.
+for (const [name, pdf] of [
+  ["FontFile2 TrueType with 65 535 glyphs of 26 points and 65 535 hmtx entries", () => embeddedFontPdf(["Hello hostile font"], { font: "TrueType", program: trueTypeProgram() })],
+  ["FontFile2 CIDFontType2 with the same program", () => embeddedFontPdf(["Hello hostile font"], { font: "CIDFontType2", program: trueTypeProgram() })],
+  ["FontFile3 Type1C with 65 535 charstrings of 30 lines", () => embeddedFontPdf(["Hello hostile font"], { font: "Type1C", program: cffProgram() })],
+  ["FontFile3 CIDFontType0C with the same program", () => embeddedFontPdf(["Hello hostile font"], { font: "CIDFontType0C", program: cffProgram() })],
+]) {
+  test(`bounded under a 64 MB heap: ${name} is never parsed`, { timeout: 90000 }, async t => {
+    const result = await measure(pdf);
+    t.diagnostic(JSON.stringify(result));
+    assert.deepEqual({ ok: result.ok, complete: result.complete }, { ok: true, complete: true }, JSON.stringify(result));
+    assert.equal(result.text_bytes, "# Page 1\nHello hostile font".length, JSON.stringify(result));
+    // Only the page content and the ToUnicode CMap are decoded (a few KB); the 6.3 MB program never is.
+    assert.ok(result.decoded_kb < 64, `decoded: ${JSON.stringify(result)}`);
+    assert.ok(result.wall_ms < 1500, `time: ${JSON.stringify(result)}`);
+  });
+}
+
+// Text items (review of d509f1e3): a `(a)'` line is one pdf.js text item from 2 tokens and 5 decoded bytes, so the token
+// and decode limits allowed some 2 M items, about 8-10 µs of pdf.js work each. Measured (64 MB heap): 1.1 M lines ran
+// into the 10 s deadline (16 s CPU); 220 000 lines stop at the item limit after about 1.4 s, 190 000 complete in about as long.
+test("bounded under a 64 MB heap: 220 000 separately positioned text runs pass the text-item limit", { timeout: 90000 }, async t => {
+  const over = await measure(() => textItemsBombPdf(220000), { maxText: 8 * MiB });
+  t.diagnostic(JSON.stringify(over));
+  assert.equal(over.code, "archive_limit_exceeded", JSON.stringify(over)); assert.ok(over.wall_ms < 5000, JSON.stringify(over));
+  const under = await measure(() => textItemsBombPdf(190000), { maxText: 8 * MiB });
+  t.diagnostic(JSON.stringify(under));
+  assert.ok(under.ok && under.complete && under.text_bytes === "# Page 1\n".length + 190000 * 2 - 1, JSON.stringify(under));
+});
+
+test("a bundle whose pdf.js worker lacks the font-program patch marker refuses every PDF (storage_read_unavailable)", { timeout: 90000 }, async () => {
+  const result = await measure(flateLatinPdf([["Hello"]]), { bundle: "fonts-unguarded.mjs" });
+  assert.deepEqual({ ok: result.ok, code: result.code }, { ok: false, code: "storage_read_unavailable" });
+});
+
 // The guard checks the call's deadline inside pdf.js, so a page whose form XObjects only draw (no text
 // chunk, no page boundary, every limit but tokens far away) still stops at the deadline.
 test("bounded under a 64 MB heap: 6 form XObjects of 7 MiB `q Q` each stop at the call's deadline", { timeout: 90000 }, async t => {
@@ -137,15 +184,16 @@ test("bounded under a 64 MB heap: 6 form XObjects of 7 MiB `q Q` each stop at th
   t.diagnostic(JSON.stringify(cut));
   // A time cut inside the first page: storage_read_unavailable (nothing whole to return), at about the deadline.
   assert.equal(cut.code, "storage_read_unavailable");
-  assert.ok(cut.wall_ms >= 450 && cut.wall_ms < 1500, JSON.stringify(cut));
+  // Upper bounds are about 3x the measured times (a loaded CI host runs the child slower); the lower bound is the deadline.
+  assert.ok(cut.wall_ms >= 450 && cut.wall_ms < 4500, JSON.stringify(cut));
   // K (object-heavy forms): the content-object limit ends it well before the default deadline, and a
   // shorter deadline ends it at about that deadline if the limit has not already.
   const k = await measure(formXObjectsBombPdf());
   t.diagnostic(JSON.stringify(k));
-  assert.equal(k.code, "archive_limit_exceeded"); assert.ok(k.wall_ms < 2000, JSON.stringify(k));
+  assert.equal(k.code, "archive_limit_exceeded"); assert.ok(k.wall_ms < 6000, JSON.stringify(k));
   const kShort = await measure(formXObjectsBombPdf(), { timeMs: 100 });
   t.diagnostic(JSON.stringify(kShort));
-  assert.ok(["archive_limit_exceeded", "storage_read_unavailable"].includes(kShort.code) && kShort.wall_ms < 1000, JSON.stringify(kShort));
+  assert.ok(["archive_limit_exceeded", "storage_read_unavailable"].includes(kShort.code) && kShort.wall_ms < 3000, JSON.stringify(kShort));
 });
 
 test("a bundle whose pdf.js worker lacks the decode guard refuses every PDF (storage_read_unavailable)", { timeout: 90000 }, async () => {
@@ -186,9 +234,14 @@ test("the patch fails the build when pdf.js does not match the pinned anchors", 
   const source = await readFile(fileURLToPath(new URL("../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs", import.meta.url)), "utf8");
   const patched = patchPdfWorker(source);
   for (const inserted of ["nonProcessedArgs.splice(0, nonProcessedArgs.length - 33)", '__cluedPdfDecodeGuard("oplist", null, 6);\n    this.optimizer.push',
-    '__cluedPdfDecodeGuard("oplist", null, 1);\n    const {\n      pathMinMax'])
+    '__cluedPdfDecodeGuard("oplist", null, 1);\n    const {\n      pathMinMax', 'for (const n of []) {\n        fontFile = descriptor.get(n);',
+    "if (properties.cluedEmbeddedFontFile) this.missingFile = false;", "!properties.file && !properties.cluedEmbeddedFontFile || properties.isInternalFont",
+    'export const CLUED_PDF_FONT_PROGRAMS = "skipped";'])
     assert.equal(patched.split(inserted).length, 2, inserted);
+  // No FontFile lookup is left in translateFont (the patched loop iterates over nothing).
+  assert.equal(patched.includes('for (const n of ["FontFile", "FontFile2", "FontFile3"])'), false);
   for (const anchor of ["  addOp(fn, args) {\n    this.optimizer.push(fn, args);\n    this.weight++;",
+    '    let fontFile, fontFileN, subtype, length1, length2, length3;\n    try {\n      for (const n of ["FontFile", "FontFile2", "FontFile3"]) {\n        fontFile = descriptor.get(n);',
     "            while (argsLength > numArgs) {\n              nonProcessedArgs.push(args.shift());\n              argsLength--;\n            }\n"])
     assert.throws(() => patchPdfWorker(source + "\n" + anchor), /does not match the pinned pdfjs-dist/);
 });

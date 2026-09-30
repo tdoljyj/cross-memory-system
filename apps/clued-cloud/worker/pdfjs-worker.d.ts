@@ -4,4 +4,5 @@
 declare module "pdfjs-dist/legacy/build/pdf.worker.mjs" {
   export const WorkerMessageHandler: unknown;
   export const CLUED_PDF_DECODE_GUARD: true | undefined;
+  export const CLUED_PDF_FONT_PROGRAMS: "skipped" | undefined;
 }

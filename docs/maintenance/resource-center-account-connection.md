@@ -899,8 +899,11 @@ N1a (text bodies only, `format_unsupported` for other formats).
   at a whole page; a continuation whose offset lies past that cut is
   `storage_read_unavailable` with `next_page_start` and a hint to restart from
   there. Allocation / stack failures inside pdf.js are
-  `storage_read_unavailable`, not `document_invalid`. The Worker refuses to
-  parse PDFs if the patched worker's `CLUED_PDF_DECODE_GUARD` marker is missing.
+  `storage_read_unavailable`, not `document_invalid`. Embedded font programs
+  (FontFile / FontFile2 / FontFile3) are never read or converted: text comes
+  from Encoding / Differences / ToUnicode, and a call past 200 000 text items is
+  `archive_limit_exceeded`. The Worker refuses to parse PDFs if the patched
+  worker's `CLUED_PDF_DECODE_GUARD` or `CLUED_PDF_FONT_PROGRAMS` marker is missing.
   `tests/resource-center-storage-read-pdf-bounds.test.mjs` runs deflate bombs
   in a child with `--max-old-space-size=64`.
   Upgrading `pdfjs-dist`: bump the exact version, run

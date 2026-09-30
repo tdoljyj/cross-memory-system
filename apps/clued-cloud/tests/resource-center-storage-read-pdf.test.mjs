@@ -6,7 +6,7 @@ import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build, stop } from "esbuild";
 import { pdfDecodeGuardEsbuildPlugin } from "../build/pdfjs-decode-guard.mjs";
-import { brotliBombPdf, encryptedPdf, flateLatinPdf, identityPdf, latinPdf, longStringPdf, operatorBombPdf, predefinedCjkPdf, repeatedStreamPdf, scannedPdf,
+import { brotliBombPdf, embeddedFontPdf, encryptedPdf, flateLatinPdf, identityPdf, latinPdf, type3CharProcBombPdf, longStringPdf, operatorBombPdf, predefinedCjkPdf, repeatedStreamPdf, scannedPdf,
   realisticTextPdf, textBombPdf, textPagesPdf, textThenDrawingPdf, toUnicodeBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
 
 // StorageNormalUse.v0.1 §4.5: pdf.js text extraction for clued_storage_read.
@@ -73,6 +73,35 @@ test("no Unicode map: glyph codes are omitted as unreliable instead of returned 
   assert.deepEqual(wide.unreliable_pages, [1]); assert.equal(wide.text, "# Page 1\n");
   // Only the garbled page is dropped.
   assert.equal(wide.text_layer, "present");
+});
+
+// §4.5: embedded font programs are never parsed; the font dictionary (Encoding / Differences, ToUnicode) maps the text.
+// Measured against the unpatched worker with real fonts (Liberation Serif TrueType, a CFF built from it, Bitstream
+// Charter Type 1) and reportlab / fpdf2 / pdf-lib / pdfkit output: identical text except a Type1 / Type1C font whose
+// codes only its own built-in encoding names (no /Encoding, no ToUnicode), which is now unreliable (the false negative).
+test("embedded fonts: text comes from the font dictionary, the program is never needed", async () => {
+  const lines = ["Embedded font text, 123!", "Second line."];
+  const expected = `# Page 1\n${lines.join("\n")}`;
+  for (const font of ["TrueType", "Type1C", "Type1", "CIDFontType2", "CIDFontType0C"]) {
+    const mapped = await extract(embeddedFontPdf(lines, { font }));
+    assert.deepEqual({ font, text: mapped.text, unreliable: mapped.unreliable_pages }, { font, text: expected, unreliable: [] }, "ToUnicode, subset codes 1..n");
+  }
+  for (const font of ["TrueType", "Type1C", "Type1"]) {
+    for (const [what, options] of [["/Differences", { codes: "subset", encoding: "differences" }], ["WinAnsiEncoding", { codes: "ascii", encoding: "/WinAnsiEncoding" }],
+      ["no Encoding, ASCII codes", { codes: "ascii" }]]) {
+      const result = await extract(embeddedFontPdf(lines, { font, toUnicode: false, ...options }));
+      assert.deepEqual({ font, what, text: result.text }, { font, what, text: expected });
+    }
+  }
+  // The documented false negative: codes that only the program's built-in encoding names.
+  for (const font of ["Type1C", "Type1"]) {
+    const builtIn = await extract(embeddedFontPdf(lines, { font, toUnicode: false }));
+    assert.deepEqual({ font, text: builtIn.text, unreliable: builtIn.unreliable_pages }, { font, text: "# Page 1\n", unreliable: [1] });
+  }
+  // Without ToUnicode an Identity-H font gives glyph IDs, as before: omitted as unreliable.
+  for (const font of ["CIDFontType2", "CIDFontType0C"]) assert.deepEqual((await extract(embeddedFontPdf(lines, { font, toUnicode: false }))).unreliable_pages, [1]);
+  // Type3 fonts are content streams (budgeted), not font programs: unaffected.
+  assert.equal((await extract(type3CharProcBombPdf({ unit: "0 0 m\n", count: 1 }))).text, "# Page 1\naaa");
 });
 
 test("looksGarbled: real text of many scripts passes; codes and script sprays do not", () => {

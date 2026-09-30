@@ -32,7 +32,12 @@ import { StorageFormatError } from "./storage-read-formats";
  * checks the call's deadline every PDF_DEADLINE_CHECK_EVERY calls, so a page,
  * form or CharProc without text cannot run on either; (2) page text is read as
  * a stream and cancelled once the call's text limit or deadline is passed, so
- * one page can neither grow the text nor run on. */
+ * one page can neither grow the text nor run on, and a call stops past
+ * PDF_TEXT_ITEMS_MAX text items; (3) embedded font programs are never parsed
+ * (the patch removes the FontFile lookup): text comes from the font
+ * dictionary (Encoding / Differences, ToUnicode, predefined CMaps), so a
+ * Type1 / CFF font whose codes only its own built-in encoding names, without
+ * ToUnicode, yields an unreliable page (§4.5 false negative). */
 
 export const PDF_MAX_BYTES = 20 * 1024 * 1024;
 /** Pages per call (contract §5.1: at most 20). */
@@ -131,6 +136,19 @@ export const PDF_STRING_CHARS_MAX = 4 * 1024 * 1024;
  * the time as of pdf.js's last await; the cumulative limits above are what
  * bound CPU there (a few seconds at most). */
 export const PDF_DEADLINE_CHECK_EVERY = 4096;
+/** Text-content items one call may receive from pdf.js, counted in
+ * extractPdfText's item loop. pdf.js builds each item (a text run, an
+ * end-of-line marker) with its own transform and layout work, some 8-10 µs
+ * each under Node with a 64 MB heap, so this bounds that work to about 2 s
+ * whatever the other limits allow (a `(a)'` line is only 2 tokens and 5
+ * decoded bytes, so the token and decode limits would allow 2 million).
+ * pdf.js merges the glyphs of one run into one item, and glyphs placed one by
+ * one at their natural advance too: 20 dense kerned pages yield about 1 200
+ * items, and a page of individually positioned words or table cells some
+ * 1-5 thousand, so only a call whose pages average more than 10 000
+ * separately positioned runs is a false positive (archive_limit_exceeded;
+ * read fewer pages per call). */
+export const PDF_TEXT_ITEMS_MAX = 200_000;
 
 type DecodeBudget = { allocated: number; tokens: number; primitives: number; cmap: number; objects: number; content: number; chars: number;
   exceeded: boolean; calls: number; clock: () => number; deadline: number; timedOut: boolean; streams: WeakMap<object, number> };
@@ -204,6 +222,8 @@ function loadPdfJs(): Promise<PdfJs> {
     const worker = await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
     // Only the worker patched with the decode guard may parse a PDF.
     if (worker.CLUED_PDF_DECODE_GUARD !== true) throw new Error("pdf.js worker without the decode guard");
+    // ... and only one that never parses embedded font programs.
+    if (worker.CLUED_PDF_FONT_PROGRAMS !== "skipped") throw new Error("pdf.js worker that parses embedded font programs");
     (globalThis as { pdfjsWorker?: unknown }).pdfjsWorker = worker;
     return await import("pdfjs-dist/legacy/build/pdf.mjs");
   })();
@@ -383,7 +403,7 @@ export async function extractPdfText(bytes: Uint8Array, options: { page_start: n
       const pageCount = doc.numPages;
       const end = Math.min(start + wanted - 1, pageCount);
       const parts: string[] = [], unreliable: number[] = [];
-      let size = 0, empty = 0, extracted = 0, complete = start > end, timeLimited = false;
+      let size = 0, empty = 0, extracted = 0, items = 0, complete = start > end, timeLimited = false;
       for (let number = start; number <= end; number++) {
         // Out of time: the selection ends at the pages already extracted (whole
         // pages, so `complete` stays true and next_page_start continues after them).
@@ -397,6 +417,7 @@ export async function extractPdfText(bytes: Uint8Array, options: { page_start: n
               const { done, value } = await reader.read();
               if (done) break;
               for (const item of value.items) {
+                if (++items > PDF_TEXT_ITEMS_MAX) { budget.exceeded = true; throw new StorageFormatError("archive_limit_exceeded"); }
                 if (!("str" in item)) continue;
                 const piece = item.str + (item.hasEOL ? "\n" : "");
                 raw += piece; pageBytes += utf8Length(piece);
@@ -406,7 +427,7 @@ export async function extractPdfText(bytes: Uint8Array, options: { page_start: n
               if (chunks % 16 === 0) { await pause(); if (clock() > deadline) { cut = "time"; break; } }
             }
           } finally {
-            if (cut) await reader.cancel(new Error(`pdf ${cut} limit`)).catch(() => {});
+            if (cut || budget.exceeded) await reader.cancel(new Error(`pdf ${cut ?? "resource"} limit`)).catch(() => {});
             page.cleanup();
           }
         } catch (error) {

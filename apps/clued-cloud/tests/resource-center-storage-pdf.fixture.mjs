@@ -268,3 +268,111 @@ export function realisticTextPdf(pageCount = 20, linesPerPage = 55) {
   }
   return buildPdf(objects);
 }
+
+// Embedded font programs (FontFile / FontFile2 / FontFile3). The text path
+// never parses them (build/pdfjs-decode-guard.mjs), so text comes from the
+// font dictionary only: Encoding / Differences, ToUnicode, predefined CMaps.
+const u16 = n => { const b = Buffer.alloc(2); b.writeUInt16BE(n & 0xffff); return b; };
+const u32 = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };
+/** An sfnt (TrueType) file of `tables` ({ tag: Buffer }). */
+function sfnt(tables) {
+  const tags = Object.keys(tables).sort(), header = 12 + 16 * tags.length;
+  let offset = header;
+  const dir = [], bodies = [];
+  for (const tag of tags) {
+    const data = tables[tag], padded = Buffer.concat([data, Buffer.alloc((4 - data.length % 4) % 4)]);
+    dir.push(Buffer.from(tag.padEnd(4), "latin1"), u32(0), u32(offset), u32(data.length)); bodies.push(padded); offset += padded.length;
+  }
+  return Buffer.concat([u32(0x00010000), u16(tags.length), u16(0), u16(0), u16(0), ...dir, ...bodies]);
+}
+/** A TrueType program of `glyphs` simple glyphs of `points` on-curve points each, every glyph
+ * with its own hmtx entry (numberOfHMetrics = glyphs), a (1,0) cmap for codes 0..255 and a (3,1)
+ * cmap for U+0020..U+007E. With the defaults (65 535 glyphs, the most an sfnt can declare, and
+ * as many hmtx entries) the program is about 6.3 MB, inside the per-stream decode limit, and
+ * compresses to some 20 KB. */
+export function trueTypeProgram({ glyphs = 65535, points = 26 } = {}) {
+  const glyph = Buffer.concat([u16(1), u16(0), u16(0), u16(1000), u16(1000), u16(points - 1), u16(0),
+    Buffer.alloc(points, 0x01 | 0x02 | 0x04 | 0x10 | 0x20), Buffer.alloc(points * 2, 10)]);
+  const glyphData = Buffer.concat([glyph, Buffer.alloc(glyph.length % 2)]);
+  const loca = Buffer.alloc((glyphs + 1) * 4);
+  for (let i = 0; i <= glyphs; i++) loca.writeUInt32BE(i * glyphData.length, i * 4);
+  const glyf = Buffer.alloc(glyphData.length * glyphs, glyphData);
+  const hmtx = Buffer.alloc(glyphs * 4); for (let i = 0; i < glyphs; i++) hmtx.writeUInt16BE(600, i * 4);
+  const head = Buffer.concat([u32(0x00010000), u32(0x00010000), u32(0), u32(0x5f0f3cf5), u16(0), u16(1000), Buffer.alloc(16), u16(0), u16(0), u16(1000), u16(1000),
+    u16(0), u16(8), u16(2), u16(1), u16(0)]);
+  const hhea = Buffer.concat([u32(0x00010000), u16(900), u16(0x10000 - 200), u16(0), u16(1000), u16(0), u16(0), u16(1000), u16(1), u16(0), u16(0), Buffer.alloc(8), u16(0), u16(glyphs)]);
+  const maxp = Buffer.concat([u32(0x00010000), u16(glyphs), u16(points), u16(1), u16(0), u16(0), u16(2), u16(0), u16(0), u16(0), u16(0), u16(0), u16(0), u16(0), u16(0)]);
+  const fmt0 = Buffer.concat([u16(0), u16(262), u16(0), Buffer.from(Array.from({ length: 256 }, (_, c) => Math.min(c + 1, glyphs - 1, 255)))]);
+  const fmt4 = Buffer.concat([u16(4), u16(32), u16(0), u16(4), u16(4), u16(1), u16(0), u16(0x7e), u16(0xffff), u16(0), u16(0x20), u16(0xffff),
+    u16(0x10000 - 31), u16(1), u16(0), u16(0)]);
+  const cmap = Buffer.concat([u16(0), u16(2), u16(1), u16(0), u32(20), u16(3), u16(1), u32(20 + fmt0.length), fmt0, fmt4]);
+  const post = Buffer.concat([u32(0x00030000), Buffer.alloc(28)]);
+  return sfnt({ head, hhea, maxp, hmtx, loca, glyf, cmap, post });
+}
+/** CFF DICT integer operand (always 5 bytes). */
+const cffInt = n => Buffer.from([29, (n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]);
+function cffIndex(items) {
+  if (items.length === 0) return u16(0);
+  const offsets = Buffer.alloc((items.length + 1) * 4);
+  let at = 1; items.forEach((item, i) => { offsets.writeUInt32BE(at, i * 4); at += item.length; }); offsets.writeUInt32BE(at, items.length * 4);
+  return Buffer.concat([u16(items.length), Buffer.from([4]), offsets, ...items]);
+}
+/** A bare CFF (Type1C) program of `glyphs` charstrings, each a width, a moveto and `lines`
+ * rlineto segments, with a range charset. With the defaults (65 535 glyphs, the most a CFF
+ * INDEX can hold) the program is about 6.4 MB, inside the per-stream decode limit, and
+ * compresses to some 20 KB. */
+export function cffProgram({ glyphs = 65535, lines = 30 } = {}) {
+  const charstring = Buffer.concat([Buffer.from([139 + 100, 139, 139, 21]), Buffer.alloc(lines * 3, Buffer.from([149, 149, 5])), Buffer.from([14])]);
+  const charStrings = cffIndex([Buffer.from([139, 14]), ...Array(glyphs - 1).fill(charstring)]);
+  const charset = Buffer.concat([Buffer.from([2]), u16(391), u16(glyphs - 2)]);
+  const privateDict = Buffer.concat([cffInt(0), Buffer.from([20])]);
+  const name = cffIndex([Buffer.from("CluedHostile", "latin1")]), strings = cffIndex([]), gsubrs = cffIndex([]);
+  const top = o => Buffer.concat([cffInt(o.charset), Buffer.from([15]), cffInt(o.charStrings), Buffer.from([17]), cffInt(privateDict.length), cffInt(o.priv), Buffer.from([18])]);
+  const fixed = 4 + name.length + cffIndex([top({ charset: 0, charStrings: 0, priv: 0 })]).length + strings.length + gsubrs.length;
+  const offsets = { charset: fixed, charStrings: fixed + charset.length, priv: fixed + charset.length + charStrings.length };
+  return Buffer.concat([Buffer.from([1, 0, 4, 4]), name, cffIndex([top(offsets)]), strings, gsubrs, charset, charStrings, privateDict]);
+}
+/** One page in an embedded font. `font`: "TrueType" (FontFile2), "Type1C" (FontFile3 /Type1C), "Type1"
+ * (FontFile: a clear-text Type 1 header whose built-in encoding maps the codes), or "CIDFontType2" /
+ * "CIDFontType0C" (Type0, Identity-H). `codes`: "ascii" (code = character) or "subset" (codes 1..n in order
+ * of first use, as subsetting producers write). `encoding`: an /Encoding value, "differences" (/Differences
+ * naming each glyph), or null. `program` replaces the default small program; it is stored Flate-compressed. */
+export function embeddedFontPdf(lines, { font = "TrueType", codes = "subset", toUnicode = true, encoding = null, program } = {}) {
+  const chars = [...new Set(lines.join(""))];
+  const composite = font.startsWith("CID");
+  const codeOf = c => codes === "ascii" ? c.charCodeAt(0) : chars.indexOf(c) + 1;
+  const glyphName = c => /[A-Za-z]/.test(c) ? c : `uni${hex4(c.charCodeAt(0)).toUpperCase()}`;
+  const hexCode = c => composite ? hex4(codeOf(c)) : codeOf(c).toString(16).padStart(2, "0");
+  const cmap = ["/CIDInit /ProcSet findresource begin 12 dict begin begincmap", "/CMapName /Clued-UCS def /CMapType 2 def",
+    `1 begincodespacerange ${composite ? "<0000> <FFFF>" : "<00> <FF>"} endcodespacerange`, `${chars.length} beginbfchar`,
+    ...chars.map(c => `<${hexCode(c)}> <${hex4(c.charCodeAt(0))}>`), "endbfchar endcmap CMapName currentdict /CMap defineresource pop end end"].join("\n");
+  const truetype = font === "TrueType" || font === "CIDFontType2";
+  const bytes = program ?? (font === "Type1" ? Buffer.from("%!PS-AdobeFont-1.0: Clued\n11 dict begin\n/FontName /Clued def\n/Encoding 256 array\n" +
+    "0 1 255 {1 index exch /.notdef put} for\n" + chars.map(c => `dup ${codeOf(c)} /${glyphName(c)} put\n`).join("") + "readonly def\ncurrentdict end\ncurrentfile eexec\n", "latin1")
+    : truetype ? trueTypeProgram({ glyphs: 128, points: 8 }) : cffProgram({ glyphs: 128, lines: 4 }));
+  const fileKey = font === "Type1" ? "FontFile" : truetype ? "FontFile2" : "FontFile3";
+  const fileDict = font === "Type1C" ? "/Subtype /Type1C " : font === "CIDFontType0C" ? "/Subtype /CIDFontType0C " : font === "Type1" ? `/Length1 ${bytes.length} /Length2 0 /Length3 0 ` : `/Length1 ${bytes.length} `;
+  const data = deflateSync(bytes, { level: 9 }).toString("latin1");
+  const tu = toUnicode ? " /ToUnicode 8 0 R" : "";
+  const enc = encoding === "differences" ? ` /Encoding << /Type /Encoding /Differences [${chars.map(c => `${codeOf(c)} /${glyphName(c)}`).join(" ")}] >>` : encoding ? ` /Encoding ${encoding}` : "";
+  const first = Math.min(...chars.map(codeOf)), last = Math.max(...chars.map(codeOf));
+  const fontDict = composite
+    ? `<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+Clued /Encoding /Identity-H /DescendantFonts [5 0 R]${tu} >>`
+    : `<< /Type /Font /Subtype /${font === "TrueType" ? "TrueType" : "Type1"} /BaseFont /AAAAAA+Clued /FirstChar ${first} /LastChar ${last} /Widths [${Array(last - first + 1).fill(600).join(" ")}] /FontDescriptor 6 0 R${enc}${tu} >>`;
+  const descendant = composite ? `<< /Type /Font /Subtype /${font === "CIDFontType2" ? "CIDFontType2" : "CIDFontType0"} /BaseFont /AAAAAA+Clued /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 6 0 R /DW 600${font === "CIDFontType2" ? " /CIDToGIDMap /Identity" : ""} >>` : "<< >>";
+  // Objects: 1 catalog, 2 pages, 3 font, 4 page, 5 descendant, 6 descriptor, 7 program, 8 ToUnicode, 9 content.
+  return buildPdf([...catalog, fontDict, ...onePage("9 0 R"), descendant,
+    `<< /Type /FontDescriptor /FontName /AAAAAA+Clued /Flags ${encoding ? 32 : 4} /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 900 /Descent -200 /CapHeight 700 /StemV 80 /${fileKey} 7 0 R >>`,
+    `<< /Length ${data.length} /Filter /FlateDecode ${fileDict}>>\nstream\n${data}\nendstream`, stream(cmap),
+    stream(lines.map((line, i) => `BT /F1 12 Tf 50 ${740 - i * 16} Td <${[...line].map(hexCode).join("")}> Tj ET`).join("\n"))]);
+}
+/** One page of `count` lines `(a)'` (next line, show "a") in a 0.002 pt font, in columns of
+ * 300 000 lines so every line stays on the page (pdf.js drops text outside it): pdf.js returns
+ * one text item per line, from 2 content tokens and 5 decoded bytes each. */
+export function textItemsBombPdf(count = 1_100_000, perColumn = 300_000) {
+  const columns = Array.from({ length: Math.ceil(count / perColumn) }, (_, i) => Math.min(perColumn, count - i * perColumn));
+  const content = Buffer.concat(columns.flatMap((lines, i) => [Buffer.from(`BT /F1 0.002 Tf 0.002 TL ${50 + i * 20} 700 Td\n`, "latin1"),
+    Buffer.alloc(lines * 5, "(a)'\n", "latin1"), Buffer.from("ET\n", "latin1")]));
+  const data = deflateSync(content, { level: 9 }).toString("latin1");
+  return buildPdf([...catalog, HELVETICA, ...onePage("5 0 R"), `<< /Length ${data.length} /Filter /FlateDecode >>\nstream\n${data}\nendstream`]);
+}
