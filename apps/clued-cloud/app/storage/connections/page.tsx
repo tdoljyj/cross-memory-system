@@ -26,6 +26,8 @@ function isConnection(value: unknown): value is Connection {
     && typeof value.database_execution_enabled === "boolean" && typeof value.profile_current === "boolean"
     && Array.isArray(value.actions) && value.actions.every(action => typeof action === "string" && Object.hasOwn(actionName, action));
 }
+// A refused request keeps only a fixed reason label from our own allowlist.
+class RequestFailure extends Error { reason?: string; }
 async function accountRequest(body: object, path = "/v1/storage/owner") {
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session) throw new Error("请登录 Clued 后重新读取连接。");
@@ -33,7 +35,12 @@ async function accountRequest(body: object, path = "/v1/storage/owner") {
     method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
     body: JSON.stringify(body), cache: "no-store", redirect: "error",
   });
-  if (!response.ok) throw new Error("结果未确认，请重新读取连接状态；不要重复提交。");
+  if (!response.ok) {
+    const failure = new RequestFailure("结果未确认，请重新读取连接状态；不要重复提交。");
+    const detail: unknown = await response.json().catch(() => null);
+    if (isObject(detail) && typeof detail.reason === "string" && /^[a-z_]{1,64}$/.test(detail.reason)) failure.reason = detail.reason;
+    throw failure;
+  }
   const result: unknown = await response.json();
   const latest = await supabase.auth.getSession();
   if (latest.error || latest.data.session?.user.id !== data.session.user.id) throw new Error("账号已变化，请重新读取。");
@@ -46,6 +53,28 @@ function isReadAccess(value: unknown): value is ReadAccess {
     && typeof value.disclosure_version === "string" && typeof value.content_disclosure_version === "string"
     && Array.isArray(value.classes) && value.classes.every(item => typeof item === "string");
 }
+// StorageNormalUse.v0.1 §8.2: one "正常使用" toggle over the read level.
+type NormalUse = { read_generation: number; disclosure_version: string; provider_scope_profile: "legacy" | "normal";
+  normal_use: boolean; reconsent_required: boolean; refresh_token_count: number; refresh_token_warning: boolean; refresh_token_blocked: boolean };
+function isNormalUse(value: unknown): value is NormalUse {
+  return isObject(value) && Number.isSafeInteger(value.read_generation) && typeof value.disclosure_version === "string"
+    && (value.provider_scope_profile === "legacy" || value.provider_scope_profile === "normal")
+    && typeof value.normal_use === "boolean" && typeof value.reconsent_required === "boolean"
+    && Number.isSafeInteger(value.refresh_token_count) && typeof value.refresh_token_warning === "boolean"
+    && typeof value.refresh_token_blocked === "boolean";
+}
+// clued.storage-normal-use-disclosure/1 (StorageNormalUse §8.2). Any change to
+// this text needs a new disclosure version in the database first.
+const normalUseDisclosure = (root: string) =>
+  `开启后，你授权的 Agent 可以读取「${root}」内的全部文件，包括你手动上传的文件：文本、文档、表格、PDF 的文字，图片内容，压缩包的目录和其中单个文件；其他文件可通过几分钟内有效的下载链接取回原始内容。视频和音频只读取时长、分辨率、大小等信息。Agent 还可以按内容搜索文件，并在该目录中新建图片、PDF、压缩包等文件（每个最多 20 MB），不会覆盖或删除已有文件；你手动上传的文件 Agent 不能改名、移动或删除。\n` +
+  "读取到的内容会发送给该 Agent 所用的模型服务，已经返回的内容无法收回。\n" +
+  "Google 页面会显示“查看你 Google 云端硬盘中的所有文件”。Clued 服务端只允许访问所选目录，这个限制由 Clued 保证，不由 Google 保证。\n" +
+  "默认每小时额度：读取 256 MB、上传 256 MB。关闭“正常使用”会立即停止读正文、按内容搜索和上传，但不会收回 Google 授权；“撤回全部文件读取授权”会断开该 Google 账号在 Clued 中的所有连接。";
+const normalUseOff = "关闭“正常使用”？会立即停止读正文、按内容搜索和上传，仍可查看文件名和目录结构。这不会收回 Google 授权（Google 页面上的授权范围不变）；已经返回给 Agent 的内容无法收回。";
+const startReasons: Record<string, string> = {
+  storage_root_busy: "该目录还有尚未完成的文件操作，稍后再试。",
+  refresh_token_limit: "该 Google 账号在 Clued 中的授权次数已达上限，请先撤回全部文件读取授权后再开启。",
+};
 type WriteAccess = { active: boolean; policy_generation: number; disclosure_version: string;
   overwrite_disclosure_version: string; classes: string[] };
 function isWriteAccess(value: unknown): value is WriteAccess {
@@ -73,6 +102,8 @@ export default function StorageConnections() {
   // Write level (P3): changing it replaces the account policy, so the page
   // always reloads the connection list and both settings afterwards.
   const [writeAccess, setWriteAccess] = useState<Record<string, WriteAccess>>({});
+  // Normal use (StorageNormalUse §8.2), loaded on demand like the read level.
+  const [normalUse, setNormalUse] = useState<Record<string, NormalUse>>({});
   const [connections, setConnections] = useState<Connection[]>([]);
   const [workerEnabled, setWorkerEnabled] = useState(false);
   const [message, setMessage] = useState("正在读取连接……");
@@ -178,6 +209,68 @@ export default function StorageConnections() {
       }
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
+  async function loadNormalUse(c: Connection) {
+    if (operation.current || busy) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      const result = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use");
+      if (epoch !== revision.current) return;
+      if (!isNormalUse(result)) throw new Error("正常使用设置未确认。");
+      setNormalUse(current => ({ ...current, [c.id]: result }));
+    } catch { if (epoch === revision.current) setMessage("正常使用设置未确认，请稍后重试。"); }
+    finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  // Normal credential: one native CAS mutation. Legacy credential: the same
+  // disclosure, then Google consent to the normal set on this connection; the
+  // callback enables normal use in the same transaction when Google grants it.
+  async function toggleNormalUse(c: Connection) {
+    const current = normalUse[c.id];
+    if (operation.current || busy || !current) return;
+    const enable = !current.normal_use;
+    if (enable && current.reconsent_required && current.refresh_token_blocked) {
+      setMessage(startReasons.refresh_token_limit); return;
+    }
+    if (!window.confirm(enable ? normalUseDisclosure(c.root_name) +
+      (current.reconsent_required ? "\n确认后将前往 Google 授权页面，请勾选“查看你 Google 云端硬盘中的所有文件”。" : "") : normalUseOff)) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      if (enable && current.reconsent_required) {
+        const result = await accountRequest({ connection_id: c.id, normal_use: { disclosure_version: current.disclosure_version } },
+          "/v1/storage/google/start");
+        if (epoch !== revision.current || typeof result.authorization_url !== "string") return;
+        const url = new URL(result.authorization_url);
+        if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" || url.username || url.password)
+          throw new Error("授权地址未确认。");
+        window.location.assign(url.href);
+        return;
+      }
+      const result = await accountRequest({ action: enable ? "enable" : "disable", connection_id: c.id,
+        base_generation: current.read_generation, disclosure_version: current.disclosure_version, idempotency_key: crypto.randomUUID() },
+      "/v1/storage/normal-use");
+      if (epoch !== revision.current) return;
+      if (result.status === "reconsent_required") {
+        setNormalUse(state => { const next = { ...state }; delete next[c.id]; return next; });
+        setMessage("需要重新授权 Google 才能开启正常使用。请重新读取设置后再开启。"); return;
+      }
+      if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
+      const latest = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use");
+      if (epoch !== revision.current) return;
+      if (!isNormalUse(latest)) throw new Error("正常使用设置未确认。");
+      setNormalUse(state => ({ ...state, [c.id]: latest }));
+      // The read level changed too; drop its cached view so it is read again.
+      setReadAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
+      setMessage(latest.normal_use === enable ? `${enable ? "已开启" : "已关闭"}正常使用。回执：${result.receipt_id}`
+        : "已提交，但最新状态未确认。请核对原回执。");
+    } catch (error) {
+      if (epoch === revision.current) {
+        setNormalUse(state => { const next = { ...state }; delete next[c.id]; return next; });
+        const reason = error instanceof RequestFailure && error.reason ? startReasons[error.reason] : undefined;
+        setMessage(reason ?? "正常使用设置结果未确认。请重新读取设置并核对，勿重复提交。");
+      }
+    } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
   async function toggleWrite(c: Connection, level: "modify" | "overwrite") {
     const current = writeAccess[c.id];
     if (operation.current || busy || !current?.active) return;
@@ -257,6 +350,16 @@ export default function StorageConnections() {
         {["awaiting_provider", "reauthorization_required"].includes(c.state) &&
           <button disabled={busy} onClick={() => void connect(c)}>连接／重新授权 Google</button>}
         {c.state === "active" && c.auth_mode === "account_policy" && c.policy_active && <div className="my-2">
+          <p className="font-semibold">正常使用：{normalUse[c.id] ? (normalUse[c.id].normal_use ? "已开启（可读取目录内全部文件并按内容搜索）" : "未开启") : "未读取"}</p>
+          {normalUse[c.id]
+            ? <button disabled={busy} onClick={() => void toggleNormalUse(c)}>{normalUse[c.id].normal_use ? "关闭正常使用" : "开启正常使用"}</button>
+            : <button disabled={busy} onClick={() => void loadNormalUse(c)}>读取正常使用设置</button>}
+          {normalUse[c.id] && !normalUse[c.id].normal_use && normalUse[c.id].reconsent_required &&
+            <p className="my-1 text-sm">开启需要重新授权 Google（增加“查看你 Google 云端硬盘中的所有文件”）；授权完成前，现有功能照常可用。</p>}
+          {normalUse[c.id]?.refresh_token_warning && <p role="status" className="my-1 text-sm">{normalUse[c.id].refresh_token_blocked
+            ? "该 Google 账号在 Clued 中的授权次数已达上限，不能再次授权；请先撤回全部文件读取授权。"
+            : `该 Google 账号在 Clued 中的授权次数已较多（${normalUse[c.id].refresh_token_count} 次）。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因。`}</p>}
+          <p className="mt-3 text-sm font-semibold">高级</p>
           <p>Agent 查看目录结构：{readAccess[c.id] ? (readAccess[c.id].active
             ? (readAccess[c.id].classes.includes("read_content") ? "已允许" : "已允许（只看文件名和目录，不读内容）") : "未允许") : "未读取"}</p>
           {readAccess[c.id]

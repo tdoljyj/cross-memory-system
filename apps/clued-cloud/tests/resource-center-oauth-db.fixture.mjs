@@ -16,7 +16,7 @@ export async function testStorageOAuth(t, admin, server, user, decision) {
   // Synthetic ciphertext only. Actual AES-GCM authentication is tested at the trusted Worker boundary.
   const envelope = { contract: "clued.storage-credential/1", key_id: "fixture", nonce: "A".repeat(16), ciphertext: "A".repeat(24) };
   let connection;
-  const setup = async () => {
+  const setup = async (extra = {}) => {
     if (connection) {
       const previous = (await account({ action: "list" })).connections.find(c => c.id === connection);
       if (previous && previous.state !== "revoked") await account({ action: "revoke_connection", connection_id: connection, base_version: previous.version, idempotency_key: randomUUID() });
@@ -25,7 +25,7 @@ export async function testStorageOAuth(t, admin, server, user, decision) {
     connection = registered.target_refs[0].id;
     const descriptor = await rpc({ action: "describe", connection_id: connection });
     const state_hash = hash(randomUUID()), attempt_id = randomUUID();
-    await rpc({ action: "prepare", connection_id: connection, connection_version: descriptor.connection_version, state_hash, attempt_id, verifier_envelope: envelope });
+    await rpc({ action: "prepare", connection_id: connection, connection_version: descriptor.connection_version, state_hash, attempt_id, verifier_envelope: envelope, ...extra });
     return { state_hash, attempt_id };
   };
   const complete = state_hash => rpc({ action: "complete", state_hash, provider_subject: "fixture-subject", credential_envelope: envelope });
@@ -42,12 +42,15 @@ export async function testStorageOAuth(t, admin, server, user, decision) {
       await assert.rejects(rpc({ action: "claim", state_hash }), /storage_oauth_denied/);
       const result = await complete(state_hash);
       assert.equal(result.status, "completed");
-      assert.deepEqual(await rpc({ action: "claim", state_hash }), result);
+      // A replayed claim returns the receipt (the granted profile is read from the connection).
+      const { provider_scope_profile: _granted, ...replayed } = result;
+      assert.deepEqual(await rpc({ action: "claim", state_hash }), replayed);
       await assert.rejects(complete(state_hash), /storage_oauth_denied/);
       const stored = (await admin.query("select * from clued_private.storage_connections_v1 where id=$1", [connection])).rows[0];
       assert.equal(stored.state, "active"); assert.equal(stored.credential_version, "1");
       assert.deepEqual(stored.credential_envelope, envelope);
-      assert.equal(Object.keys(result).sort().join(), "receipt_id,refresh_enabled,status");
+      assert.equal(Object.keys(result).sort().join(), "provider_scope_profile,receipt_id,refresh_enabled,status");
+      assert.equal(result.provider_scope_profile, "legacy");
       assert.equal(result.refresh_enabled, false);
       const receipt = (await admin.query("select status from public.clued_audit_receipts where id=$1", [result.receipt_id])).rows[0];
       assert.equal(receipt.status, "committed");
@@ -63,9 +66,11 @@ export async function testStorageOAuth(t, admin, server, user, decision) {
     });
     await t.test("scope profile: complete records the Worker-computed profile with the credential revision", async () => {
       const profileOf = async () => (await admin.query("select provider_scope_profile,credential_version from clued_private.storage_connections_v1 where id=$1", [connection])).rows[0];
-      const { state_hash } = await setup();
+      // N1a: the requested profile is bound to the attempt; normal must be requested.
+      const { state_hash } = await setup({ requested_scope_profile: "normal" });
       assert.equal((await rpc({ action: "describe", connection_id: connection })).provider_scope_profile, "legacy");
-      assert.equal((await rpc({ action: "claim", state_hash })).provider_scope_profile, "legacy");
+      const claimed = await rpc({ action: "claim", state_hash });
+      assert.equal(claimed.provider_scope_profile, "legacy"); assert.equal(claimed.requested_scope_profile, "normal");
       for (const bad of ["full", "LEGACY", 1, null, true]) {
         await assert.rejects(rpc({ action: "complete", state_hash, provider_subject: "fixture-subject", credential_envelope: envelope, provider_scope_profile: bad }),
           /storage_oauth_denied/, JSON.stringify(bad));

@@ -51,7 +51,7 @@ function tree() {
 // Fake Supabase RPC + Drive batch endpoint. Records every call for assertions.
 function harness(options = {}) {
   const drive = options.drive ?? tree(), calls = [];
-  const state = { calls, drive, googleRequests: 0, admitError: options.admitError, direct: [] };
+  const state = { calls, drive, googleRequests: 0, admitError: options.admitError, direct: [], batchPaths: [], fullText: [] };
   const reply = parts => {
     const boundary = "batch_" + randomUUID();
     const body = parts.map(({ id, status, json }) => `--${boundary}\r\nContent-Type: application/http\r\nContent-ID: <response-${id}>\r\n\r\n` +
@@ -92,10 +92,12 @@ function harness(options = {}) {
       if (!file) return Response.json({ error: { code: 404 } }, { status: 404 });
       if (verb === "export") {
         if (options.exportTooLarge) return Response.json({ error: { code: 403, errors: [{ reason: "exportSizeLimitExceeded" }] } }, { status: 403 });
+        options.afterBody?.(drive);
         return new Response(drive.contents.get(id) ?? "", { status: 200 });
       }
       if (u2.searchParams.get("alt") === "media") {
         if (options.denyContent?.has(id) || !drive.contents.has(id)) return Response.json({ error: { code: 403 } }, { status: 403 });
+        options.afterBody?.(drive);
         const bytes = Buffer.from(drive.contents.get(id));
         if (options.ignoreRange) return new Response(bytes, { status: 200 });
         const [, from, to] = /^bytes=(\d+)-(\d+)$/.exec(headers.get("range"));
@@ -112,11 +114,15 @@ function harness(options = {}) {
     assert.equal(new Headers(init.headers).get("authorization"), "Bearer fixture-read-access-token");
     const parts = [...String(init.body).matchAll(/Content-ID: <([^>]+)>\r\n\r\nGET ([^ ]+) HTTP/g)].map(([, id, path]) => {
       const request = new URL("https://www.googleapis.com" + path);
+      state.batchPaths.push(path);
       assert.equal(request.searchParams.has("alt"), false, "metadata only, never file bodies");
       const q = request.searchParams.get("q");
       if (q) {
-        const parent = /^'([^']+)' in parents and trashed = false$/.exec(q)[1];
-        return { id, status: 200, json: { files: [...drive.files.values()].filter(f => f.parents.includes(parent) && !f.trashed) } };
+        const [, parent, text] = /^'([^']+)' in parents(?: and fullText contains '((?:[^'\\]|\\.)*)')? and trashed = false$/.exec(q);
+        const needle = text?.replace(/\\(.)/g, "$1");
+        if (text !== undefined) state.fullText.push({ parent, text });
+        return { id, status: 200, json: { files: [...drive.files.values()].filter(f => f.parents.includes(parent) && !f.trashed &&
+          (needle === undefined || (drive.contents.get(f.id) ?? "").includes(needle))) } };
       }
       const found = drive.files.get(request.pathname.split("/").at(-1));
       return found ? { id, status: 200, json: found } : { id, status: 404, json: { error: { code: 404 } } };
@@ -432,7 +438,7 @@ test("scope profile: admission profile must be present, allowed and equal to the
   assert.equal(legacy.isError, false, "a duplicated legacy set is still legacy");
 });
 
-test("scope profile: a normal token lists like legacy and reads only app-authorized bodies before N1", async () => {
+test("scope profile: a normal token under text/1 lists like legacy and reads only app-authorized bodies (R10)", async () => {
   const options = { admitScopeProfile: "normal", envelope: await envelope({ scope: NORMAL_SCOPE }) };
   const listed = await browse({ operation: "list", folder_id: "trackFolder00001" }, options);
   assert.equal(listed.isError, false);
@@ -442,14 +448,180 @@ test("scope profile: a normal token lists like legacy and reads only app-authori
   assert.equal(read.isError, false); assert.equal(read.value.content, text);
   assert.ok(read.h.direct.find(d => d.verb === "detail").fields.split(",").includes("isAppAuthorized"));
   const legacyRead = await readBody({ object_id: "planAFile0000001" });
-  assert.equal(legacyRead.h.direct.find(d => d.verb === "detail").fields.includes("isAppAuthorized"), false, "legacy requests are unchanged");
+  assert.ok(legacyRead.h.direct.find(d => d.verb === "detail").fields.split(",").includes("isAppAuthorized"),
+    "N1a: a legacy connection also confirms app authorization before any body request");
   const drive = tree();
   drive.add("googleDoc0000001", "Doc", [ROOT], "application/vnd.google-apps.document");
   drive.contents.set("googleDoc0000001", "Exported text");
   for (const object_id of ["planAFile0000001", "googleDoc0000001"]) {
     const refused = await readBody({ object_id }, { ...options, drive, notAppAuthorized: new Set([object_id]) });
-    assert.equal(refused.value.error, "content_not_accessible", object_id);
+    assert.equal(refused.value.error, "scope_upgrade_required", object_id);
     assert.equal(refused.h.direct.some(d => d.verb === "media" || d.verb === "export"), false, "no body request without app authorization");
     assert.equal(refused.h.calls.at(-1).p_input.action, "finalize");
   }
+});
+
+// StorageNormalUse.v0.1 N1a (§3, §5.2): any in-root file with a normal token and
+// normal/1; R1-R11 negative tests (R7, zip entry names, belongs to N2). The
+// synthetic Drive makes the token able to read files outside the root, so only
+// Clued's own scope checks stop those reads.
+const NORMAL = { admitScopeProfile: "normal", admitContentProfile: "normal/1" };
+const normalOptions = async (extra = {}) => ({ ...NORMAL, envelope: await envelope({ scope: NORMAL_SCOPE }), ...extra });
+const bodyRequests = h => h.direct.filter(d => d.verb === "media" || d.verb === "export");
+function normalTree() {
+  const drive = tree();
+  drive.contents.set("planBFile0000001", "hand uploaded: 整理 plan b\n"); drive.files.get("planBFile0000001").size = String(Buffer.byteLength(drive.contents.get("planBFile0000001")));
+  drive.contents.set("secretPlan000001", "outside secret 整理\n"); drive.files.get("secretPlan000001").size = "30";
+  drive.contents.set("multiParent00001", "shared 整理\n"); drive.files.get("multiParent00001").size = "20";
+  drive.add("googleDoc0000001", "Doc", [ROOT], "application/vnd.google-apps.document");
+  drive.contents.set("googleDoc0000001", "Exported 整理 text");
+  return drive;
+}
+
+test("normal use: a normal token with normal/1 reads any in-root text file and Google Doc without an app-authorization check", async () => {
+  const drive = normalTree(), notAppAuthorized = new Set(["planBFile0000001", "googleDoc0000001"]);
+  const read = await readBody({ object_id: "planBFile0000001" }, await normalOptions({ drive, notAppAuthorized }));
+  assert.equal(read.isError, false); assert.equal(read.value.content, drive.contents.get("planBFile0000001"));
+  assert.equal(read.value.untrusted_content, true);
+  assert.equal(read.h.direct.find(d => d.verb === "detail").fields.includes("isAppAuthorized"), false);
+  const before = read.h.batchPaths.length;
+  assert.ok(before >= 4, "first walk plus a fresh re-check walk");
+  const doc = await readBody({ object_id: "googleDoc0000001" }, await normalOptions({ drive, notAppAuthorized }));
+  assert.equal(doc.value.content, "Exported 整理 text"); assert.equal(doc.value.exported_as, "text/plain");
+  assert.equal((await readBody({ object_id: "pdfFile000000001" }, await normalOptions({ drive }))).value.error, "not_found_in_scope");
+});
+
+test("R9: a legacy connection reading a file Clued did not create gets scope_upgrade_required and no body request", async () => {
+  const drive = normalTree();
+  for (const object_id of ["planBFile0000001", "googleDoc0000001"]) {
+    const refused = await readBody({ object_id }, { drive, notAppAuthorized: new Set([object_id]) });
+    assert.equal(refused.value.error, "scope_upgrade_required", object_id); assert.match(refused.value.message, /normal use/);
+    assert.equal(bodyRequests(refused.h).length, 0);
+    assert.equal(refused.h.calls.at(-1).p_input.byte_count, 0);
+  }
+  // A normal credential whose connection has text/1 read access (R10) is covered above;
+  // normal/1 with a legacy credential is refused by the scope cross-check.
+  const mixed = await readBody({ object_id: "planBFile0000001" }, { drive, admitScopeProfile: "legacy", admitContentProfile: "normal/1", notAppAuthorized: new Set(["planBFile0000001"]) });
+  assert.equal(mixed.value.error, "scope_upgrade_required"); assert.equal(bodyRequests(mixed.h).length, 0);
+});
+
+test("R1/R2/R3: outside files, a multi-parent object with an outside chain and a shortcut to outside are refused without body requests", async () => {
+  const drive = normalTree();
+  drive.add("shortcutOut00001", "link out", [ROOT], "application/vnd.google-apps.shortcut");
+  drive.files.get("shortcutOut00001").shortcutDetails = { targetId: "secretPlan000001" };
+  for (const [object_id, code] of [["secretPlan000001", "not_found_in_scope"], ["multiParent00001", "not_found_in_scope"],
+    ["shortcutOut00001", "shortcut_not_followed"]]) {
+    const refused = await readBody({ object_id }, await normalOptions({ drive }));
+    assert.equal(refused.value.error, code, object_id);
+    assert.equal(bodyRequests(refused.h).length, 0, object_id);
+    assert.equal(refused.h.direct.length, 0, "no detail request either");
+    if (object_id === "shortcutOut00001")
+      assert.equal(refused.h.batchPaths.some(path => path.includes("secretPlan000001")), false, "the shortcut target is never requested");
+  }
+});
+
+test("R4/R5: shared-drive objects, chains deeper than 32 and cycles are outside the root", async () => {
+  const drive = normalTree();
+  drive.add("sharedDriveFile1", "in shared drive", [ROOT]); drive.files.get("sharedDriveFile1").driveId = "0AsharedDrive01";
+  drive.contents.set("sharedDriveFile1", "shared drive body"); drive.files.get("sharedDriveFile1").size = "17";
+  let parent = ROOT;
+  for (let i = 0; i < 33; i++) { const id = `deepChain${String(i).padStart(7, "0")}`; drive.add(id, "d" + i, [parent], FOLDER); parent = id; }
+  drive.add("tooDeepFile00001", "deep.txt", [parent]); drive.contents.set("tooDeepFile00001", "deep"); drive.files.get("tooDeepFile00001").size = "4";
+  drive.add("cycleA0000000001", "a", ["cycleB0000000001"], FOLDER); drive.add("cycleB0000000001", "b", ["cycleA0000000001"], FOLDER);
+  drive.add("cycleFile0000001", "c.txt", ["cycleA0000000001"]); drive.contents.set("cycleFile0000001", "loop"); drive.files.get("cycleFile0000001").size = "4";
+  for (const object_id of ["sharedDriveFile1", "tooDeepFile00001", "cycleFile0000001"]) {
+    const refused = await readBody({ object_id }, await normalOptions({ drive }));
+    assert.equal(refused.value.error, "not_found_in_scope", object_id);
+    assert.equal(bodyRequests(refused.h).length, 0, object_id);
+  }
+  assert.equal((await browse({ operation: "stat", object_id: "sharedDriveFile1" }, await normalOptions({ drive }))).value.error, "not_found_in_scope");
+});
+
+test("R6: an ancestor moved out of the root after the body was fetched drops the bytes (fresh re-check)", async () => {
+  const drive = normalTree();
+  const moved = await readBody({ object_id: "planBFile0000001" }, await normalOptions({ drive,
+    afterBody: d => { d.files.get("subFolder0000001").parents = [OUTSIDE]; } }));
+  assert.equal(moved.value.error, "not_found_in_scope");
+  assert.equal(JSON.stringify(moved.value).includes("hand uploaded"), false, "no byte is returned");
+  assert.equal(bodyRequests(moved.h).length, 1, "the body had been fetched");
+  assert.equal(moved.h.calls.at(-1).p_input.byte_count, 0);
+  const trashed = normalTree();
+  const gone = await readBody({ object_id: "googleDoc0000001" }, await normalOptions({ drive: trashed,
+    afterBody: d => { d.files.get("googleDoc0000001").trashed = true; } }));
+  assert.equal(gone.value.error, "not_found_in_scope", "trashed between fetch and return");
+});
+
+test("R11: when the re-check cannot fit the call budget, no body is requested", async () => {
+  const drive = normalTree();
+  let parent = ROOT;
+  for (let i = 0; i < 30; i++) { const id = `budgetChain${String(i).padStart(5, "0")}`; drive.add(id, "b" + i, [parent], FOLDER); parent = id; }
+  drive.add("budgetFile000001", "far.txt", [parent]); drive.contents.set("budgetFile000001", "far away"); drive.files.get("budgetFile000001").size = "8";
+  const refused = await readBody({ object_id: "budgetFile000001" }, await normalOptions({ drive }));
+  assert.equal(refused.value.error, "storage_read_unavailable");
+  assert.equal(bodyRequests(refused.h).length, 0);
+  let shallow = ROOT;
+  for (let i = 0; i < 20; i++) { const id = `okChain${String(i).padStart(9, "0")}`; drive.add(id, "o" + i, [shallow], FOLDER); shallow = id; }
+  drive.add("okDeepFile000001", "ok.txt", [shallow]); drive.contents.set("okDeepFile000001", "reachable"); drive.files.get("okDeepFile000001").size = "9";
+  assert.equal((await readBody({ object_id: "okDeepFile000001" }, await normalOptions({ drive }))).value.content, "reachable");
+});
+
+test("full-text search: normal use only, per in-root folder, intersected with scoped children, escaped", async () => {
+  const drive = normalTree();
+  const found = await browse({ operation: "search", text: "整理" }, await normalOptions({ drive }));
+  assert.equal(found.isError, false);
+  assert.deepEqual(names(found.value), ["Doc", "Plan A.md", "plan b.txt"], "outside and multi-parent matches never appear");
+  assert.equal(found.value.text_index, "provider"); assert.equal(found.value.complete, true);
+  assert.equal(found.h.calls[0].p_input.content_search, true); assert.match(found.h.calls[0].p_input.condition_hmac, /^[0-9a-f]{64}$/);
+  assert.equal(JSON.stringify(found.h.calls).includes("整理"), false, "the search text is HMAC-only in receipts");
+  assert.ok(found.h.fullText.length > 0);
+  assert.equal(found.h.fullText.some(q => q.parent === OUTSIDE || q.parent === MYDRIVE), false, "no account-wide or outside query");
+  const both = await browse({ operation: "search", text: "整理", name_contains: "plan" }, await normalOptions({ drive }));
+  assert.deepEqual(names(both.value), ["Plan A.md", "plan b.txt"]);
+  const quoted = await browse({ operation: "search", text: "it's a\\b" }, await normalOptions({ drive }));
+  assert.equal(quoted.isError, false);
+  assert.ok(quoted.h.fullText.every(q => q.text === "it\\'s a\\\\b"), JSON.stringify(quoted.h.fullText[0]));
+  for (const options of [{}, { admitScopeProfile: "normal", envelope: await envelope({ scope: NORMAL_SCOPE }) }, { admitContentProfile: "normal/1" }]) {
+    const refused = await browse({ operation: "search", text: "整理" }, { drive, ...options });
+    assert.equal(refused.value.error, "scope_upgrade_required", JSON.stringify(Object.keys(options)));
+    assert.equal(refused.h.googleRequests, 0);
+  }
+  const denied = await browse({ operation: "search", text: "整理" }, { drive, admitError: true, admitMessage: "storage_read_scope_upgrade_required" });
+  assert.equal(denied.value.error, "scope_upgrade_required"); assert.equal(denied.h.googleRequests, 0);
+  for (const text of ["", "x".repeat(201), "a\u0000b"]) {
+    const invalid = await browse({ operation: "search", text }, await normalOptions({ drive }));
+    assert.equal(invalid.value.error, "storage_read_input_invalid"); assert.equal(invalid.h.calls.length, 0);
+  }
+});
+
+test("R8: the content gateway builds no request for an ID that was not admitted in this call", async () => {
+  const { createStorageContentGateway } = await import("../worker/storage-content-gateway.ts");
+  const requests = [];
+  const gateway = createStorageContentGateway({ access_token: "fixture-read-access-token", signal: AbortSignal.timeout(1000),
+    fetch: async (url, init) => { requests.push({ url: String(url), init }); return new Response("", { status: 200 }); } });
+  await assert.rejects(async () => gateway.media("notAdmitted00001"), /content_not_admitted/);
+  await assert.rejects(async () => gateway.export("notAdmitted00001", "text/plain"), /content_not_admitted/);
+  await assert.rejects(async () => gateway.detail("notAdmitted00001", ["id"]), /content_not_admitted/);
+  assert.throws(() => gateway.admit("../../evil"), /content_request_invalid/);
+  assert.equal(requests.length, 0);
+  gateway.admit("admittedFile0001");
+  await assert.rejects(async () => gateway.export("admittedFile0001", "application/zip"), /content_request_invalid/);
+  await assert.rejects(async () => gateway.detail("admittedFile0001", ["id,webContentLink"]), /content_request_invalid/);
+  await gateway.media("admittedFile0001", { from: 0, to: 9 });
+  await gateway.export("admittedFile0001", "text/plain");
+  assert.deepEqual(requests.map(r => new URL(r.url).host), ["www.googleapis.com", "www.googleapis.com"]);
+  assert.equal(new URL(requests[0].url).pathname, "/drive/v3/files/admittedFile0001");
+  assert.equal(new URL(requests[1].url).pathname, "/drive/v3/files/admittedFile0001/export");
+  assert.equal(requests[0].init.headers.Range, "bytes=0-9"); assert.equal(requests[0].init.redirect, "manual");
+});
+
+test("§3 item 7: base64 helpers encode large arrays in chunks and round-trip exactly", async () => {
+  const { bytesToBase64, bytesToBase64Url, base64ToBytes } = await import("../worker/storage-base64.ts");
+  const big = new Uint8Array(3 * 1024 * 1024 + 7).map((_, i) => (i * 131 + 7) & 0xff);
+  assert.throws(() => btoa(String.fromCharCode(...big)), RangeError, "the old pattern fails at this size");
+  const encoded = bytesToBase64(big);
+  assert.equal(encoded, Buffer.from(big).toString("base64"));
+  assert.equal(bytesToBase64Url(big), Buffer.from(big).toString("base64url"));
+  assert.deepEqual(Buffer.from(base64ToBytes(encoded)), Buffer.from(big));
+  assert.deepEqual(Buffer.from(base64ToBytes(bytesToBase64Url(big))), Buffer.from(big));
+  assert.throws(() => base64ToBytes("not base64!"), TypeError);
 });

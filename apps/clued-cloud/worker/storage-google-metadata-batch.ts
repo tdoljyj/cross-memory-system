@@ -1,7 +1,7 @@
 import { createStorageFetch } from "./storage-fetch";
 
 const endpoint = "https://www.googleapis.com/batch/drive/v3";
-const fields = "id,name,mimeType,parents,version,trashed,size,sha256Checksum,isAppAuthorized,capabilities(canAddChildren)";
+const fields = "id,name,mimeType,parents,version,trashed,size,sha256Checksum,isAppAuthorized,driveId,capabilities(canAddChildren)";
 const maxParts = 32, maxBody = 16 * 1024 * 1024, maxPart = 2 * 1024 * 1024;
 const encoder = new TextEncoder();
 type Data = Record<string, unknown>;
@@ -147,8 +147,15 @@ export function createStorageGoogleMetadataBatch(config: {
       if (values.some((value, i) => !object(value) || value.id !== fileIds[i])) throw new Error("DRIVE_METADATA_MISMATCH");
       return values;
     },
-    async listFolders(folderIds: string[], { signal }: { signal?: AbortSignal } = {}) {
+    /** Direct children of each folder. With fullText (StorageNormalUse §5.2)
+     * only children whose indexed content matches; the caller intersects the
+     * result with its own scoped child list. `\` and `'` are escaped. */
+    async listFolders(folderIds: string[], { signal, fullText }: { signal?: AbortSignal; fullText?: string } = {}) {
       ids(folderIds);
+      if (fullText !== undefined && (typeof fullText !== "string" || !fullText.length || fullText.length > 200 ||
+        /[\u0000-\u001f\u007f]/.test(fullText))) invalid();
+      const textClause = fullText === undefined ? ""
+        : ` and fullText contains '${fullText.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
       const states = folderIds.map(id => ({ id, token: "", seen: new Set<string>(), files: [] as unknown[] }));
       let active = [...states], count = 0;
       for (let page = 0; page < 100 && active.length; page++) {
@@ -156,7 +163,7 @@ export function createStorageGoogleMetadataBatch(config: {
         for (let offset = 0; offset < active.length; offset += maxParts) {
         const current = active.slice(offset, offset + maxParts);
         const values = await batch(current.map(state => {
-          const params = new URLSearchParams({ q: `'${state.id}' in parents and trashed = false`,
+          const params = new URLSearchParams({ q: `'${state.id}' in parents${textClause} and trashed = false`,
             fields: `nextPageToken,incompleteSearch,files(${fields})`, pageSize: "1000", supportsAllDrives: "true", includeItemsFromAllDrives: "true" });
           if (state.token) params.set("pageToken", state.token);
           return "/drive/v3/files?" + params;
