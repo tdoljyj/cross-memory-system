@@ -1,8 +1,8 @@
 /** Plain-text extraction from docx / xlsx / pptx (StorageNormalUse.v0.1 §4.1, §4.3).
  *
  * Built on the bounded zip reader and the DOCTYPE-rejecting SAX tokenizer. Output is capped at
- * 256 KiB of UTF-8 across all segments (the contract's per-segment cap applied to the whole
- * call); once the cap is reached parsing stops, remaining parts are not decompressed, and
+ * `maxTextBytes` of UTF-8 across all segments (default 256 KiB, the contract's per-segment cap
+ * applied to the whole call; a range reader may extract up to 8 MiB and slice); once the cap is reached parsing stops, remaining parts are not decompressed, and
  * `truncated: true` is returned. Each XML part is read with a 16 MiB decompressed cap.
  *
  * - docx: main document part (via `_rels/.rels`, default `word/document.xml`); one segment.
@@ -21,6 +21,9 @@ import { localName, parseXml, XML_LIMITS } from "./resource-center-xml-sax.mjs";
 
 export const OOXML_TEXT_LIMITS = Object.freeze({
   maxTextBytes: 256 * 1024,
+  // Ceiling for an explicit `maxTextBytes`: a caller serving a byte range at an offset extracts
+  // up to offset + length and slices; it still returns at most 256 KiB per call.
+  maxExtractBytes: 8 * 1024 * 1024,
   maxPartBytes: XML_LIMITS.maxPartBytes,
   maxColumns: 16_384,
   maxRows: 1_048_576,
@@ -324,13 +327,16 @@ async function extractXlsx(zip, budget, limits, { segment } = {}) {
 }
 
 /** Extract text. `source` is a reader from `openZip` or the archive bytes (in-memory mode).
- * Options: `kind` ("docx" | "xlsx" | "pptx", required), `maxTextBytes` (≤ 256 KiB),
+ * Options: `kind` ("docx" | "xlsx" | "pptx", required), `maxTextBytes` (default 256 KiB,
+ * at most `maxExtractBytes` for range reads at an offset),
  * `segment` (xlsx sheet name to extract alone). Returns
- * `{ kind, segments: [{ name, part, text }], truncated, text_bytes, untrusted_content: true }`. */
+ * `{ kind, segments: [{ name, part, text }], truncated, text_bytes, untrusted_content: true }`.
+ * @param {any} source
+ * @param {{ kind?: string, maxTextBytes?: number, segment?: string }} [options] */
 export async function extractOoxmlText(source, { kind, maxTextBytes = OOXML_TEXT_LIMITS.maxTextBytes, segment } = {}) {
   if (!Object.hasOwn(DEFAULT_MAIN, kind)) throw new TypeError("kind must be docx, xlsx or pptx");
-  if (!Number.isSafeInteger(maxTextBytes) || maxTextBytes <= 0 || maxTextBytes > OOXML_TEXT_LIMITS.maxTextBytes) {
-    throw new RangeError(`maxTextBytes must be 1..${OOXML_TEXT_LIMITS.maxTextBytes}`);
+  if (!Number.isSafeInteger(maxTextBytes) || maxTextBytes <= 0 || maxTextBytes > OOXML_TEXT_LIMITS.maxExtractBytes) {
+    throw new RangeError(`maxTextBytes must be 1..${OOXML_TEXT_LIMITS.maxExtractBytes}`);
   }
   const zip = source instanceof Uint8Array ? await openZip({ bytes: source }) : source;
   if (!zip || typeof zip.readEntry !== "function") throw new TypeError("source must be a zip reader or Uint8Array");

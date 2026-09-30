@@ -793,3 +793,47 @@ the account's other connections, and the refresh-token limit behaviour; record
 the results here. Submit the Google restricted-scope verification (§2.5).
 Rollout: production migration first, then release (the new Worker sends
 `requested_scope_profile` and expects the new wrapper).
+
+## Common formats in clued_storage_read (StorageNormalUse.v0.1 N1b)
+
+Worker and kernel only; no migration, secret or switch. Applies only with a
+`normal` credential and `normal/1` read access; otherwise reads behave as in
+N1a (text bodies only, `format_unsupported` for other formats).
+
+- **Office text.** docx / xlsx / pptx (by Drive mimeType, or by extension when
+  the type is generic such as `application/octet-stream`) and Google Sheets
+  (exported as xlsx, 10 MB export cap) are returned as extracted text
+  (`extracted_as: "text/plain"`): xlsx / Sheets as CSV per sheet under
+  `# Sheet: <name>`, pptx per slide under `# Slide <n>`. Byte ranges address
+  that extracted text with the same 256 KiB and UTF-8 rules as text files; each
+  call re-downloads and re-extracts up to `offset + length` (at most 8 MiB of
+  text, `archive_limit_exceeded` beyond). `text_length` appears only once the
+  extraction finished. Files up to 10 MiB are downloaded whole; larger files use
+  range mode (tail, central directory, needed parts; 256 KiB read-ahead blocks,
+  each one request of the call's 50-request budget, at most 32 MiB provider
+  bytes per call: `binary_too_large`). Zip and XML limits are those of
+  `kernel/host/resource-center-zip-reader.mjs` and `-xml-sax.mjs` (§4.3); any
+  DOCTYPE, a damaged archive or an encrypted Office file is `document_invalid`.
+  Google Slides are exported as `text/plain` like Docs.
+- **Images.** png / jpeg / gif / webp up to 5 MiB and 8000 px on the long edge
+  are returned as an MCP `image` content item after the metadata text item;
+  `structuredContent` carries only `image: {mime_type, width, height, bytes}`,
+  never the base64. The magic bytes decide the type (`declared_mime_type` when
+  Drive disagrees). Larger images (by size, Drive `imageMediaMetadata`, or the
+  decoded header) return `reason: "image_too_large"` with metadata and no bytes.
+- **Metadata only.** PDF, zip and other archives, video (with
+  `media_metadata` or `processing: true`), audio, HEIC/TIFF/BMP, legacy
+  .doc/.xls/.ppt, ODF, other Google types and other binaries return
+  `delivered_as: "none"`, `reason: "format_unsupported"` and a fixed `hint`;
+  no body request is made. Folders remain an error.
+- **Budget.** Images and extracted text count their delivered bytes against the
+  same 8 MiB per Binding per hour; an unfinalized call still reserves 256 KiB,
+  so one image call can take the window past the limit once. The mode-sized
+  reservation and the provider-byte dimension (§7.2) need the N1 budget
+  migration.
+- **Deferred.** PDF text extraction (needs pdf.js in the Worker; bundle size and
+  CPU still to be measured), Drive thumbnail builder and Cloudflare Images
+  downscaling (thumbnail host pattern must be measured first; Images needs the
+  monthly counter column), zip listing / entries, ODF, `resource_link` raw
+  download, owner-level budget.
+

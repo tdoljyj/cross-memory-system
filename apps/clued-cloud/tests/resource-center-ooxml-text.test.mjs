@@ -92,7 +92,7 @@ test("docx: output is capped at maxTextBytes on a UTF-8 boundary with truncated=
   const big = await extractOoxmlText(await docx(docxXml(`<w:p><w:r><w:t>${"x".repeat(300 * 1024)}</w:t></w:r></w:p>`)), { kind: "docx" });
   assert.equal(big.truncated, true);
   assert.equal(big.text_bytes, 256 * 1024);
-  await assert.rejects(extractOoxmlText(await docx(docxXml("")), { kind: "docx", maxTextBytes: 256 * 1024 + 1 }), RangeError);
+  await assert.rejects(extractOoxmlText(await docx(docxXml("")), { kind: "docx", maxTextBytes: OOXML_TEXT_LIMITS.maxExtractBytes + 1 }), RangeError);
 });
 
 test("DOCTYPE, ENTITY and billion laughs are document_invalid with no expansion", async () => {

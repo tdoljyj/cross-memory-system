@@ -8,7 +8,8 @@
  * tool call; nothing is cached across calls. */
 const fileId = /^[A-Za-z0-9_-]{1,160}$/;
 const HOST = "https://www.googleapis.com";
-const EXPORT_TYPES = new Set(["text/plain", "text/markdown"]);
+// N1b: Sheets export as xlsx for text extraction (StorageNormalUse §4.1).
+const EXPORT_TYPES = new Set(["text/plain", "text/markdown", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]);
 const FIELD = /^[A-Za-z0-9]+$/;
 
 export class StorageContentGatewayError extends Error {

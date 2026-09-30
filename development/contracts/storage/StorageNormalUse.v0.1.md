@@ -203,6 +203,11 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 
 **Worker 资源**：单次调用 provider 下载 ≤ 32 MiB（含 export、zip 条目、Office 部件、PDF、原图）。流式读取、超限即取消（沿用 `capped`，`storage-read-agent.ts:313-326`）。
 
+### 4.5 N1b 实施状态（Worker / kernel，无迁移）
+
+- **已实现**（仅 `normal` 凭据 + `normal/1`；否则与 N1a 相同）：docx / xlsx / pptx 与 Google 表格（export xlsx）→ 抽取文本，字节范围作用于抽取后的 UTF-8 文本（xlsx 每表 `# Sheet: <名>` + CSV，pptx 每页 `# Slide <n>`），单次抽取 ≤ 8 MiB 文本；≤ 10 MiB 整份下载，更大文件用 §4.3 Range 模式（256 KiB 预读块，计入同一 `SUBREQUEST_BUDGET = 50`，provider 字节 ≤ 32 MiB）；Google 幻灯片 export `text/plain`；png / jpeg / gif / webp ≤ 5 MiB 且长边 ≤ 8000 px → MCP image（`structuredContent` 不含 base64）；其余格式 `delivered_as: "none"` + `reason`（`format_unsupported` / `image_too_large`）+ 固定 `hint` + 元数据，不发正文请求。新增固定错误码 `document_invalid`、`archive_limit_exceeded`、`binary_too_large`。
+- **延后**：PDF 文字提取（pdf.js 在 Worker 内的包体与 CPU 尚未实测，暂返回元数据 + hint）；缩略图 builder 与 Cloudflare Images（host 模式须先实测；Images 需月度计数列）；zip 列目录 / 条目、ODF、`resource_link` 下载端点；按模式预占与 provider 字节维度（§7.2，需迁移，现仍按 256 KiB 预占、按实际交付字节结算）。
+
 ## 5. MCP 工具面
 
 ### 5.1 `clued_storage_read`（仍为 `read_content` 等级）

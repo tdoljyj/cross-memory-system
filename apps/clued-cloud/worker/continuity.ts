@@ -42,7 +42,7 @@ import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
 import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentTools } from "./storage-agent-tools";
-import { createStorageReadAgent, storageReadTool, storageContentTool, StorageReadError } from "./storage-read-agent";
+import { createStorageReadAgent, storageReadTool, storageContentTool, StorageReadError, STORAGE_IMAGE } from "./storage-read-agent";
 
 declare const __CLUED_BUILD_SHA__: string | null;
 
@@ -1840,7 +1840,10 @@ async function callTool(
     if (!storageReadEnabled(env)) throw new HttpError(404, "Storage reads are disabled.");
     try {
       const result = await callStorageRead(request, env, args, name === storageContentTool.name ? "content" : "browse");
-      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
+      // StorageNormalUse §5.1: an image read appends one MCP image item after the metadata text.
+      const image = (result as Record<PropertyKey, unknown>)[STORAGE_IMAGE] as { data: string; mimeType: string } | undefined;
+      return { content: [{ type: "text", text: JSON.stringify(result) },
+        ...(image ? [{ type: "image", data: image.data, mimeType: image.mimeType }] : [])], structuredContent: result, isError: false };
     } catch (error) {
       // Fixed codes only: no provider text, IDs, paths, credentials or database details.
       const code = error instanceof StorageReadError ? error.code : "storage_read_unavailable";
@@ -1848,7 +1851,10 @@ async function callTool(
         ? "Not found inside the authorized root. This is not proof that it does not exist."
         : code === "cursor_invalid" ? "The cursor is invalid or expired. Start the listing or search again."
         : code === "storage_read_input_invalid" ? `Invalid input for ${String(name)}.`
-        : code === "format_unsupported" ? "Only text files (text/*, JSON, XML) and Google Docs can be read."
+        : code === "format_unsupported" ? "This object has no readable content: folders are never read, and without the Owner's normal use only text files and Google Docs are."
+        : code === "document_invalid" ? "The file is damaged or not what its type says (for example an encrypted Office file or an XML part with a DOCTYPE). Retrying will not help."
+        : code === "archive_limit_exceeded" ? "The file exceeds a safety limit for Office files (parts, entries, decompressed size, or more than 8 MiB of extracted text). Retrying will not help."
+        : code === "binary_too_large" ? "Reading this file would download more than 32 MiB in one call. Retrying will not help."
         : code === "export_too_large" ? "The Google Doc is larger than the 10 MB export limit."
         : code === "shortcut_not_followed" ? "Shortcuts are not followed. Read the target file inside the root instead."
         : code === "content_not_accessible" ? "This file's content is not readable with the current Google permission."
