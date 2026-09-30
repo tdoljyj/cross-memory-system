@@ -180,3 +180,16 @@ test("an edit between the effect's reads, or a content change in the reply, neve
   } });
   await assert.rejects(g.effect(g.request), /DRIVE_NATIVE_RESPONSE_MISMATCH/);
 });
+
+// StorageNormalUse.v0.1 §2.2: writes accept either allowed profile; any other set is refused before the update.
+test("scope profiles: rename accepts legacy and normal grants and refuses every other set", async () => {
+  const normal = SCOPE + " https://www.googleapis.com/auth/drive.readonly";
+  const ok = effectFixture(renameMutation, drive(), { get_credential: async () => ({ access_token: "modify-test-access-token", scope: normal }) });
+  assert.equal((await ok.effect(ok.request)).operation, "rename");
+  for (const scope of [SCOPE + " https://www.googleapis.com/auth/drive", SCOPE + " https://www.googleapis.com/auth/drive.metadata",
+    "https://www.googleapis.com/auth/drive.file", undefined]) {
+    const f = effectFixture(renameMutation, drive(), { get_credential: async () => ({ access_token: "modify-test-access-token", scope }) });
+    await assert.rejects(f.effect(f.request), /DRIVE_NATIVE_GRANT_UNAVAILABLE/, String(scope));
+    assert.equal(f.events.includes("patch"), false, String(scope));
+  }
+});

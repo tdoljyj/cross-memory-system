@@ -224,3 +224,16 @@ test("the verifier fails closed on unchanged or wrong content, an unkept or chan
       /DRIVE_POSTCONDITION_REQUEST_MISMATCH/);
   }
 });
+
+// StorageNormalUse.v0.1 §2.2: writes accept either allowed profile; any other set is refused before the first write.
+test("scope profiles: replace accepts legacy and normal grants and refuses every other set", async () => {
+  const normal = SCOPE + " https://www.googleapis.com/auth/drive.readonly";
+  const ok = effectFixture(contentMutation, drive(), { get_credential: async () => ({ access_token: "replace-test-access-token", scope: normal }) });
+  assert.equal((await ok.effect(ok.request)).operation, "replace");
+  for (const scope of [SCOPE + " https://www.googleapis.com/auth/drive", SCOPE + " https://www.googleapis.com/auth/drive.metadata",
+    "https://www.googleapis.com/auth/drive.file", undefined]) {
+    const f = effectFixture(contentMutation, drive(), { get_credential: async () => ({ access_token: "replace-test-access-token", scope }) });
+    await assert.rejects(f.effect(f.request), /DRIVE_NATIVE_GRANT_UNAVAILABLE/, String(scope));
+    assert.deepEqual(f.events, ["persist"], String(scope));
+  }
+});
