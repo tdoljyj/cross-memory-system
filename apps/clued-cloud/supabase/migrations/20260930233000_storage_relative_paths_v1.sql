@@ -49,7 +49,7 @@ begin
   else
     rel:=p_path;
   end if;
-  if rel='' or rel ~ '(^|/)\.{1,2}(/|$)' or strpos(rel,'//')>0 or right(rel,1)='/'
+  if rel='' or left(rel,1)='/' or rel ~ '(^|/)\.{1,2}(/|$)' or strpos(rel,'//')>0 or right(rel,1)='/'
     or strpos(rel,E'\\')>0 or rel ~ '[\x01-\x1f\x7f]' then
     raise exception 'storage_path_invalid' using errcode='22023'; end if;
   full_path:=p_root||'/'||rel;
@@ -59,15 +59,22 @@ end $$;
 revoke all on function clued_private.storage_path_canonical_v1(text,text) from public,anon,authenticated,service_role;
 
 -- Root lookup only (the connection's registered profile, for this Binding's
--- owner). Authorization stays with storage_policy_evaluate_v2.
+-- owner). Authorization stays with storage_policy_evaluate_v2. The root is
+-- resolved only for a live storage client Binding (not revoked, with an
+-- unrevoked v12 authorization linked to a storage client request), so a
+-- revoked or non-storage token cannot use the distinct path refusals to
+-- confirm a guessed managed_root; for any other caller the path is left as
+-- given and the unchanged policy evaluator denies it as before.
 create function clued_private.storage_connection_path_v1(p_hash text,p_connection uuid,p_path text)
 returns text language plpgsql stable security definer set search_path='' as $$
 declare root text;
 begin
   select p.managed_root into root from public.clued_agent_bindings b
+    join clued_private.authorizations_v12 a on a.binding_id=b.id and a.owner_id=b.user_id and a.revoked_at is null
+    join clued_private.storage_client_request_links_v2 l on l.request_id=a.request_id
     join clued_private.storage_connections_v1 c on c.owner_id=b.user_id and c.id=p_connection
     join clued_private.resource_center_profiles_v1 p on p.id=c.profile_id and p.user_id=b.user_id
-    where b.token_hash=p_hash;
+    where b.token_hash=p_hash and b.revoked_at is null;
   if root is null then return p_path; end if;
   return clued_private.storage_path_canonical_v1(root,p_path);
 end $$;

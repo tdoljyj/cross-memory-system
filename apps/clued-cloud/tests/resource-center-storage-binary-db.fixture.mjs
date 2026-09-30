@@ -326,7 +326,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       assert.equal(await canonical(win, "90_待归类/x.md"), win + "/90_待归类/x.md");
       assert.equal(await canonical(win, win + "/90_待归类/x.md"), win + "/90_待归类/x.md", "the full path passes unchanged");
       assert.equal(await canonical(win, "笔记.md"), win + "/笔记.md");
-      for (const bad of ["90_待归类/../x.md", "../x.md", "./x.md", "90_待归类/./x.md", "90_待归类//x.md", "90_待归类/", "90\\x.md", "a\tb.md", win, win + "/", win + "/../x.md"]) {
+      for (const bad of ["90_待归类/../x.md", "../x.md", "./x.md", "90_待归类/./x.md", "90_待归类//x.md", "90_待归类/", "90\\x.md", "a\tb.md", win, win + "/", win + "/../x.md", win + "//x.md"]) {
         await assert.rejects(canonical(win, bad), /storage_path_invalid/, bad);
       }
       for (const outside of ["G:/我的云端硬盘/Other/x.md", "g:/我的云端硬盘/Clued_资料中心/x.md", "G:/我的云端硬盘/Clued_资料中心_2/x.md", "/x.md", "\\x.md", "C:x.md", "https://drive.google.com/x"]) {
@@ -337,6 +337,15 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
 
       const { target, client, storage } = await setup();
       const relative = `${TRACK}/相对路径.txt`, full = `${target.root}/${relative}`;
+      // The root is resolved only for a live storage client Binding: a revoked token gets its
+      // path back unchanged (the policy denies it), so path refusals cannot confirm a guessed root.
+      const clientHash = (await admin.query("select token_hash from public.clued_agent_bindings where id=$1", [client.id])).rows[0].token_hash;
+      const pathsFor = async () => (await admin.query("select clued_private.storage_mutation_paths_v1($1,$2,$3::jsonb) value",
+        [clientHash, target.connection, JSON.stringify({ destination_path: relative })])).rows[0].value.destination_path;
+      assert.equal(await pathsFor(), full, "a live storage client Binding resolves the root");
+      await admin.query("update public.clued_agent_bindings set revoked_at=now() where id=$1", [client.id]);
+      assert.equal(await pathsFor(), relative, "a revoked Binding resolves no root");
+      await admin.query("update public.clued_agent_bindings set revoked_at=null where id=$1", [client.id]);
       const text = path => ({ operation: "create", target_kind: "file", destination_path: path, content: "相对" });
       const job = randomUUID();
       const first = await submitRaw(client, target, text(relative), job);
