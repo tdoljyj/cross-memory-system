@@ -23,6 +23,7 @@ import { testStoragePolicyTransition } from "./resource-center-policy-transition
 import { testStorageAdmin } from "./resource-center-storage-admin-db.fixture.mjs";
 import { testStorageSourceReader } from "./resource-center-storage-source-reader-db.fixture.mjs";
 import { testAccountCloud } from "./resource-center-account-cloud-db.fixture.mjs";
+import { testStorageRead } from "./resource-center-storage-read-db.fixture.mjs";
 import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refresh-upgrade-db.fixture.mjs";
 
 const USER = "10000000-0000-4000-8000-000000000071";
@@ -44,7 +45,8 @@ async function freePort() {
 
 const focusedCloud = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "account-cloud";
 const focusedAdmin = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-admin";
-for (const bindingSchema of focusedCloud || focusedAdmin ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
+const focusedRead = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-read";
+for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
@@ -123,6 +125,11 @@ for (const bindingSchema of focusedCloud || focusedAdmin ? ["legacy-expiry"] : [
     // schema shapes plus every existing Resource Center regression.
     if (focusedCloud) {
       await testAccountCloud(t, admin, server, USER, DECISION);
+      return;
+    }
+
+    if (focusedRead) {
+      await testStorageRead(t, admin, server, USER, DECISION);
       return;
     }
 
@@ -787,6 +794,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin ? ["legacy-expiry"] : [
     await testStorageSourceReader(t, admin);
     await testStoragePolicyTransition(t, admin, server, USER, DECISION);
     await testAccountCloud(t, admin, server, USER, DECISION);
+    await testStorageRead(t, admin, server, USER, DECISION);
     await t.test("a directory with a recorded sharing digest is matched by sharing, not Drive version", async () => {
       const shared = "d".repeat(64), changed = "e".repeat(64);
       const rowVersion = async (id) => Number((await admin.query(
