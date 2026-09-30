@@ -42,7 +42,7 @@ import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
 import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentTools } from "./storage-agent-tools";
-import { createStorageReadAgent, storageReadTool, StorageReadError } from "./storage-read-agent";
+import { createStorageReadAgent, storageReadTool, storageContentTool, StorageReadError } from "./storage-read-agent";
 
 declare const __CLUED_BUILD_SHA__: string | null;
 
@@ -1515,7 +1515,7 @@ export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
     && (!(tool.name in contextRpcByTool) || contextsEnabled(env))
   ).map(publishTool);
-  return [...existing, ...(storageJobsEnabled(env) ? storageAgentTools : []), ...(storageReadEnabled(env) ? [storageReadTool] : [])];
+  return [...existing, ...(storageJobsEnabled(env) ? storageAgentTools : []), ...(storageReadEnabled(env) ? [storageReadTool, storageContentTool] : [])];
 }
 
 // StorageFullCapability.v0.1 P1. Independent of the write/job flags: turning
@@ -1524,7 +1524,7 @@ function storageReadEnabled(env: Pick<ContinuityEnv, "CLUED_STORAGE_ACCOUNT_V1" 
   return env.CLUED_STORAGE_ACCOUNT_V1 === "true" && env.CLUED_STORAGE_GOOGLE_V1 === "true" && env.CLUED_STORAGE_READ_V1 === "true";
 }
 
-async function callStorageRead(request: Request, env: ContinuityEnv, args: unknown) {
+async function callStorageRead(request: Request, env: ContinuityEnv, args: unknown, tool: "browse" | "content") {
   const token = bearerToken(request);
   if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new StorageReadError("storage_read_unavailable");
   const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
@@ -1543,7 +1543,7 @@ async function callStorageRead(request: Request, env: ContinuityEnv, args: unkno
     if (error instanceof StorageReadError) throw error;
     throw new StorageReadError("storage_read_unavailable");
   }
-  return agent.run(await sha256(token), args);
+  return agent.run(await sha256(token), args, tool);
 }
 
 function storageJobsEnabled(env: Pick<ContinuityEnv, "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1">) {
@@ -1836,10 +1836,10 @@ async function callTool(
   args: unknown,
   ctx?: ContinuityExecutionContext,
 ) {
-  if (name === storageReadTool.name) {
+  if (name === storageReadTool.name || name === storageContentTool.name) {
     if (!storageReadEnabled(env)) throw new HttpError(404, "Storage reads are disabled.");
     try {
-      const result = await callStorageRead(request, env, args);
+      const result = await callStorageRead(request, env, args, name === storageContentTool.name ? "content" : "browse");
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
     } catch (error) {
       // Fixed codes only: no provider text, IDs, paths, credentials or database details.
@@ -1847,7 +1847,13 @@ async function callTool(
       const result = { error: code, message: code === "not_found_in_scope"
         ? "Not found inside the authorized root. This is not proof that it does not exist."
         : code === "cursor_invalid" ? "The cursor is invalid or expired. Start the listing or search again."
-        : code === "storage_read_input_invalid" ? "Invalid input for clued_storage_browse." : "Storage read unavailable." };
+        : code === "storage_read_input_invalid" ? `Invalid input for ${String(name)}.`
+        : code === "format_unsupported" ? "Only text files (text/*, JSON, XML) and Google Docs can be read."
+        : code === "export_too_large" ? "The Google Doc is larger than the 10 MB export limit."
+        : code === "shortcut_not_followed" ? "Shortcuts are not followed. Read the target file inside the root instead."
+        : code === "content_not_accessible" ? "This file's content is not readable with the current Google permission; only files Clued created are readable."
+        : code === "budget_exhausted" ? "This connection has used its hourly content budget (8 MiB). Try again later; retrying now will not help."
+        : "Storage read unavailable." };
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
     }
   }
@@ -2010,7 +2016,7 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
       const args = rpc.params?.arguments;
       const result = await callTool(request, env, name, args, ctx);
       return json(rpcResult(rpc.id, result), 200, {
-        ...corsHeaders(request), ...(isStorageAgentTool(name) || name === storageReadTool.name ? { "cache-control": "no-store" } : {}),
+        ...corsHeaders(request), ...(isStorageAgentTool(name) || name === storageReadTool.name || name === storageContentTool.name ? { "cache-control": "no-store" } : {}),
       });
     }
     return json(rpcError(rpc.id, -32601, "Method not found"), 404, corsHeaders(request));
