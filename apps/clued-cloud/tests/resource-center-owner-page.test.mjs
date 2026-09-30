@@ -79,13 +79,16 @@ test("Agent read level is loaded on demand and toggled by one native CAS mutatio
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
   assert.equal(f.calls[1].url,"/v1/storage/read-access");
   assert.deepEqual(JSON.parse(f.calls[1].init.body),{action:"status",connection_id:active.id});
-  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1"});await f.settle();
+  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+    content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});await f.settle();
+  assert.equal(f.text().includes("允许 Agent 读正文"),false,"bodies are offered only while read is on");
   const allow=f.button("允许 Agent 查看目录结构");allow.props.onClick();allow.props.onClick();await f.settle();
   assert.equal(f.calls.length,3);assert.match(f.prompts.at(-1),/不读取文件内容，不修改任何文件/);
   assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:"set_classes",connection_id:active.id,classes:["read"],
     base_generation:0,disclosure_version:"clued.storage-read-disclosure/1",idempotency_key:"fixture-id"});
   f.respond(2,{status:"committed",receipt_id:"fixture-read-receipt"});await f.settle();
-  f.respond(3,{active:true,read_generation:1,disclosure_version:"clued.storage-read-disclosure/1"});await f.settle();
+  f.respond(3,{active:true,read_generation:1,disclosure_version:"clued.storage-read-disclosure/1",
+    content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:["read"]});await f.settle();
   assert.match(f.text(),/已允许 Agent 查看目录结构。回执：fixture-read-receipt/);
   assert.match(f.text(),/已允许（只看文件名和目录，不读内容）/);
   const stop=f.button("停止 Agent 查看目录结构");stop.props.onClick();await f.settle();
@@ -93,4 +96,25 @@ test("Agent read level is loaded on demand and toggled by one native CAS mutatio
   f.respond(4,{error:"private"},403);await f.settle();
   assert.match(f.text(),/Agent 查看设置结果未确认/);assert.match(f.text(),/Agent 查看目录结构：未读取/);
   assert.equal(f.calls.length,5,"an unknown result is never resent");
+});
+test("reading bodies is a separate toggle with its own disclosure, and stopping it keeps the read level",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
+  f.button("读取 Agent 查看设置").props.onClick();await f.settle();
+  const status=classes=>({active:true,read_generation:classes.length+1,disclosure_version:"clued.storage-read-disclosure/1",
+    content_disclosure_version:"clued.storage-read-content-disclosure/1",classes});
+  f.respond(1,status(["read"]));await f.settle();
+  assert.match(f.text(),/Agent 读正文：未允许/);
+  f.button("允许 Agent 读正文").props.onClick();await f.settle();
+  assert.match(f.prompts.at(-1),/由 Clued 创建的文本文件正文/);assert.match(f.prompts.at(-1),/发送给该 Agent 所用的模型服务/);
+  assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:"set_classes",connection_id:active.id,classes:["read","read_content"],
+    base_generation:2,disclosure_version:"clued.storage-read-content-disclosure/1",idempotency_key:"fixture-id"});
+  f.respond(2,{status:"committed",receipt_id:"fixture-content-receipt"});await f.settle();
+  f.respond(3,status(["read","read_content"]));await f.settle();
+  assert.match(f.text(),/已允许 Agent 读正文。回执：fixture-content-receipt/);assert.match(f.text(),/Agent 读正文：已允许/);
+  f.button("停止 Agent 读正文").props.onClick();await f.settle();
+  assert.deepEqual(JSON.parse(f.calls[4].init.body),{action:"set_classes",connection_id:active.id,classes:["read"],
+    base_generation:3,disclosure_version:"clued.storage-read-disclosure/1",idempotency_key:"fixture-id"});
+  f.respond(4,{status:"committed",receipt_id:"fixture-stop-receipt"});await f.settle();
+  f.respond(5,status(["read"]));await f.settle();
+  assert.match(f.text(),/已停止 Agent 读正文/);assert.match(f.text(),/已允许（只看文件名和目录，不读内容）/);
 });

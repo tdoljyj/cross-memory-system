@@ -127,7 +127,8 @@ export async function testStorageRead(t, admin, server, user, decision) {
       const before = await connectionState(target);
       await assert.rejects(access({ action: "set_classes", connection_id: target.connection, classes: ["read"], base_generation: 0,
         disclosure_version: "stale", idempotency_key: randomUUID() }), /storage_read_disclosure_changed/);
-      await assert.rejects(setClasses(target, ["read", "read_content"], 0), /storage_read_class_unavailable/);
+      // P2: read_content has its own disclosure; the read-only text is not consent to bodies.
+      await assert.rejects(setClasses(target, ["read", "read_content"], 0), /storage_read_disclosure_changed/);
       await assert.rejects(setClasses(target, ["read", "read"], 0), /storage_owner_input_invalid/);
       const enabled = await setClasses(target, ["read"], 0);
       assert.equal(enabled.status, "committed", JSON.stringify(enabled));

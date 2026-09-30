@@ -2,7 +2,7 @@
 import { OAuthProvider, OAuthError, type AuthRequest, type OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import { handleContinuityRequest, publicToolPolicies, type ContinuityEnv } from './continuity';
 import { isStorageAgentTool } from './storage-agent-tools';
-import { storageReadTool } from './storage-read-agent';
+import { storageReadTool, storageContentTool } from './storage-read-agent';
 
 const SCOPES = ['context:read', 'context:write', 'audit:read'];
 const PENDING_TTL = 600;
@@ -241,7 +241,7 @@ export function requiredToolScopes(name: string, args: Json = {}): readonly stri
   // its exact connection/action grant check. This does not issue any grant.
   // The read tool is gated the same way: its read evaluator checks the Binding,
   // the Owner's read access row and the issuer read switch.
-  if (isStorageAgentTool(name) || name === storageReadTool.name) return [];
+  if (isStorageAgentTool(name) || name === storageReadTool.name || name === storageContentTool.name) return [];
   if (name === 'clued_context') {
     const operation = String(args.op);
     if (['context_list', 'record_list'].includes(operation)) return ['context:read'];
