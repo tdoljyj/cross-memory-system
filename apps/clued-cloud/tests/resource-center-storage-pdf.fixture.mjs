@@ -155,6 +155,34 @@ export const cmapRangeBombPdf = (ranges = [["000000", "FFFFFF", "4100"]], { kind
   stream(["/CIDInit /ProcSet findresource begin 12 dict begin begincmap", "1 begincodespacerange <000000> <FFFFFF> endcodespacerange",
     `${ranges.length} begin${kind}`, ...ranges.map(([low, high, dst]) => `<${low}> <${high}> ${kind === "bfrange" ? `<${dst}>` : Number.parseInt(dst, 16)}`),
     `end${kind} endcmap CMapName currentdict /CMap defineresource pop end end`].join("\n"))]);
+/** A text page whose content is one Flate stream `prefix + unit × count + suffix` (built
+ * without holding the repetition in one JS string twice). */
+function repeatedUnitPage(prefix, unit, count, suffix) {
+  const data = deflateSync(Buffer.concat([Buffer.from(prefix, "latin1"), Buffer.alloc(unit.length * count, unit, "latin1"), Buffer.from(suffix, "latin1")]),
+    { level: 9 }).toString("latin1");
+  return buildPdf([...catalog, HELVETICA, ...onePage("5 0 R"), `<< /Length ${data.length} /Filter /FlateDecode >>\nstream\n${data}\nendstream`]);
+}
+/** Object bombs (independent re-review): nested arrays of empty dictionaries in one TJ operand,
+ * `groups` arrays of `perGroup` `<<>>` each (`[ [<<>>...] ... ] TJ`). */
+export const dictArrayBombPdf = (perGroup = 250000, groups = 8) =>
+  repeatedUnitPage("BT /F1 12 Tf [ ", "[" + "<<>>".repeat(perGroup) + "] ", groups, "] TJ ET\n");
+/** `[ [[]×perGroup] ×groups ] TJ`: one operand of millions of empty arrays. */
+export const emptyArrayBombPdf = (perGroup = 250000, groups = 16) => repeatedUnitPage("BT /F1 12 Tf [ ", "[" + "[]".repeat(perGroup) + "] ", groups, "] TJ ET\n");
+/** `[ (a×length)×count ] TJ`: strings each under the per-string cap, together millions of characters. */
+export const stringArrayBombPdf = (length = 200000, count = 40) => repeatedUnitPage("BT /F1 12 Tf [ ", "(" + "a".repeat(length) + ") ", count, "] TJ ET\n");
+/** An uncompressed Catalog whose /Junk holds `groups` arrays of `perGroup` empty dictionaries (parsed through the xref path). */
+export const catalogDictBombPdf = (perGroup = 200000, groups = 5) => {
+  const pdf = Buffer.from(buildPdf(["<< /Type /Catalog /Pages 2 0 R /Junk [JUNK] >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    stream("BT /F1 12 Tf 50 700 Td (Hello) Tj ET"), HELVETICA])).toString("latin1");
+  // Offsets after the catalog shift by the junk: rebuild the xref instead of patching it.
+  const junk = Array(groups).fill("[" + "<<>>".repeat(perGroup) + "]").join(" ");
+  const text = pdf.replace("[JUNK]", `[${junk}]`);
+  const body = text.slice(0, text.indexOf("xref\n"));
+  const offsets = [...body.matchAll(/(\d+) 0 obj\n/g)].map(m => m.index);
+  return new Uint8Array(Buffer.from(body + `xref\n0 ${offsets.length + 1}\n0000000000 65535 f \n` + offsets.map(o => String(o).padStart(10, "0") + " 00000 n \n").join("") +
+    `trailer\n<< /Size ${offsets.length + 1} /Root 1 0 R >>\nstartxref\n${body.length}\n%%EOF\n`, "latin1"));
+};
 /** One page in `count` distinct non-embedded STSong-Light fonts with the predefined `encoding`:
  * pdf.js parses the bundled encoding and Adobe-GB1-UCS2 CMaps once per font. */
 export function predefinedCjkFontsPdf(count, encoding = "UniGB-UCS2-H") {

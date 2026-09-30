@@ -13,6 +13,12 @@ import { readFile } from "node:fs/promises";
  * - "token": each object EvaluatorPreprocessor reads from a content stream, so
  *   operator bombs are bounded by count, not only by decoded size;
  * - "primitive": each new entry in pdf.js's isolate-wide Name / Cmd caches;
+ * - "object": each array, array element, Dict (weight DICT_WEIGHT) and Dict
+ *   entry Parser.getObj / makeInlineImage builds, charged with the parser
+ *   (content streams, indirect objects, object streams, xref recovery), which
+ *   carries the size of the top-level object being parsed;
+ * - "chars": the characters of each string, hex string and name the Lexer
+ *   returns (content streams, objects and embedded CMaps alike);
  * - "cmap": CMap entries (CMap.mapOne, and the codes of each mapCidRange /
  *   mapBfRange / mapBfRangeToArray range, charged with the CMap and its
  *   highest code before the range is filled): the CMap parser reads with the
@@ -37,6 +43,8 @@ export const PDF_WORKER_MODULE = /[\\/]pdfjs-dist[\\/]legacy[\\/]build[\\/]pdf\.
 
 const G = "globalThis.__cluedPdfDecodeGuard";
 const MAX_ELEMENTS = 256 * 1024;
+/** A Dict (an object with its own Map) costs about as much heap as 6 array elements. */
+const DICT_WEIGHT = 6;
 const PATCHES = [
   // DecodeStream.ensureBuffer
   ["    while (size < requested) {\n      size *= 2;\n    }\n    const buffer2 = new Uint8Array(size);",
@@ -63,9 +71,27 @@ const PATCHES = [
   // Lexer.getHexString
   ["        } else {\n          strBuf.push(String.fromCharCode(firstDigit << 4 | digit));",
     `        } else {\n          if (strBuf.length > ${MAX_ELEMENTS}) ${G}("limit");\n          strBuf.push(String.fromCharCode(firstDigit << 4 | digit));`],
-  // Parser.getObj arrays
+  // Parser.getObj: a wrapper tracks the nesting depth, so the guard can bound
+  // each top-level object (a content-stream operand or one indirect object).
+  ["  getObj(cipherTransform = null) {\n    const buf1 = this.buf1;\n    this.shift();",
+    "  getObj(cipherTransform = null) {\n    if (!this.__cluedDepth) this.__cluedTree = 0;\n    this.__cluedDepth = (this.__cluedDepth || 0) + 1;\n" +
+    "    try {\n      return this.__cluedGetObj(cipherTransform);\n    } finally {\n      this.__cluedDepth--;\n    }\n  }\n" +
+    "  __cluedGetObj(cipherTransform = null) {\n    const buf1 = this.buf1;\n    this.shift();"],
+  // Parser.getObj arrays: each new array and each element.
+  ["        case \"[\":\n          const array = [];", `        case "[":\n          ${G}("object", this, 1);\n          const array = [];`],
   ["            array.push(this.getObj(cipherTransform));",
-    `            if (array.length > ${MAX_ELEMENTS}) ${G}("limit");\n            array.push(this.getObj(cipherTransform));`],
+    `            if (array.length > ${MAX_ELEMENTS}) ${G}("limit");\n            ${G}("object", this, 1);\n            array.push(this.getObj(cipherTransform));`],
+  // Parser.getObj dictionaries: each new Dict (a Map of its own) and each entry.
+  ["        case \"<<\":\n          const dict = new Dict(this.xref);", `        case "<<":\n          ${G}("object", this, ${DICT_WEIGHT});\n          const dict = new Dict(this.xref);`],
+  ["            dict.set(key, this.getObj(cipherTransform));", `            ${G}("object", this, 1);\n            dict.set(key, this.getObj(cipherTransform));`],
+  // Parser.makeInlineImage: the inline image dictionary.
+  ["    const dict = new Dict(this.xref);\n    let dictLength;", `    ${G}("object", this, ${DICT_WEIGHT});\n    const dict = new Dict(this.xref);\n    let dictLength;`],
+  ["      dict.set(key, this.getObj(cipherTransform));\n    }\n    if (lexer.beginInlineImagePos !== -1) {",
+    `      ${G}("object", this, 1);\n      dict.set(key, this.getObj(cipherTransform));\n    }\n    if (lexer.beginInlineImagePos !== -1) {`],
+  // Lexer.getString / getName / getHexString: characters per call.
+  ["    return strBuf.join(\"\");\n  }\n  getName() {", `    ${G}("chars", null, strBuf.length);\n    return strBuf.join("");\n  }\n  getName() {`],
+  ["    return Name.get(strBuf.join(\"\"));", `    ${G}("chars", null, strBuf.length);\n    return Name.get(strBuf.join(""));`],
+  ["    return strBuf.join(\"\");\n  }\n  getObj() {", `    ${G}("chars", null, strBuf.length);\n    return strBuf.join("");\n  }\n  getObj() {`],
   // CMap.mapOne / mapCidRange / mapBfRange / mapBfRangeToArray: each fills one
   // map entry per code (a string per code for bfrange), up to 2^24 per range.
   ["  mapOne(src, dst) {\n    this._map[src] = dst;", `  mapOne(src, dst) {\n    ${G}("cmap", this, 1, src);\n    this._map[src] = dst;`],

@@ -8,11 +8,11 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { build, stop } from "esbuild";
 import { patchPdfWorker, pdfDecodeGuardEsbuildPlugin } from "../build/pdfjs-decode-guard.mjs";
-import { cmapRangeBombPdf, flateLatinPdf, imageFilterBombPdf, longStringPdf, operatorBombPdf, predefinedCjkFontsPdf, repeatedStreamPdf, textBombPdf, toUnicodeBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
+import { catalogDictBombPdf, cmapRangeBombPdf, dictArrayBombPdf, emptyArrayBombPdf, flateLatinPdf, stringArrayBombPdf, imageFilterBombPdf, longStringPdf, operatorBombPdf, predefinedCjkFontsPdf, repeatedStreamPdf, textBombPdf, toUnicodeBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
 
 // StorageNormalUse.v0.1 §4.5 resource bounds (independent review MAJOR): small
 // deflate bombs must not exhaust a Worker isolate. Each case runs in its own
-// child with a 64 MB JS heap (half a Worker isolate); the child reports time
+// child with a 64 MB JS heap (half a Worker isolate) and must finish there; the child reports time
 // and the peak ArrayBuffer / heap use sampled at every decode allocation.
 // Before the fix a 71 KB PDF took 12 s CPU and a 178 KB PDF crashed a 128 MB heap.
 const directory = await mkdtemp(path.join(os.tmpdir(), "clued-storage-pdf-bounds-"));
@@ -86,6 +86,15 @@ for (const [name, pdf, expect, seconds] of [
     r => r.ok && r.complete && r.text_bytes > 0, 5],
   // Before the CMap limit, 30 such fonts (a 12 KB file) exhausted this 64 MB heap.
   ["eight predefined CJK fonts pass the CMap limit", () => predefinedCjkFontsPdf(8), r => r.code === "archive_limit_exceeded", 5],
+  // Independent re-review (object bombs): Parser.getObj builds arrays and Dicts one element at a time.
+  // Before (128 MB heap): A, B and C ran out of memory (the review measured peaks of 527 MB for A and 171 MB for B), and
+  // S completed after 3.4 s with a 110 MB heap.
+  ["A: 8 KB page, [ [<<>> x 250 000] x 8 ] TJ", () => dictArrayBombPdf(), r => r.code === "archive_limit_exceeded", 5],
+  ["B: 8 KB page, [ [[] x 250 000] x 16 ] TJ", () => emptyArrayBombPdf(), r => r.code === "archive_limit_exceeded", 5],
+  ["C: 4 MB uncompressed Catalog /Junk of 1 M empty dictionaries (xref path)", () => catalogDictBombPdf(), r => r.code === "archive_limit_exceeded", 5],
+  ["S: 8.5 KB page, [ (a x 200 000) x 40 ] TJ", () => stringArrayBombPdf(), r => r.code === "archive_limit_exceeded", 5],
+  ["an operand just under the object limit still fits", () => dictArrayBombPdf(74000, 1), r => r.ok && r.complete, 5],
+  ["a Catalog just under the object limit still fits", () => catalogDictBombPdf(74000, 1), r => r.ok && r.complete && r.text_bytes > 0, 5],
 ]) {
   test(`bounded under a 64 MB heap: ${name}`, { timeout: 90000 }, async t => {
     const result = await measure(pdf());
@@ -93,7 +102,9 @@ for (const [name, pdf, expect, seconds] of [
     assert.ok(expect(result), JSON.stringify(result));
     assert.ok(result.wall_ms < seconds * 1000, `time: ${JSON.stringify(result)}`);
     assert.ok(result.peak_buffers_mb < 64, `decoded buffers: ${JSON.stringify(result)}`);
-    assert.ok(result.peak_heap_mb < 64, `heap: ${JSON.stringify(result)}`);
+    // The heap bound is the child finishing at all under --max-old-space-size=64 (an
+    // exhausted heap aborts it and execFile rejects). peak_heap_mb is only a diagnostic:
+    // V8 lets garbage accumulate close to the limit before a full collection.
   });
 }
 

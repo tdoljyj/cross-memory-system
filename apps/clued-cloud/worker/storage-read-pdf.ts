@@ -22,10 +22,11 @@ import { StorageFormatError } from "./storage-read-formats";
  * decoded bytes, and a 70 KB deflate bomb decodes to hundreds of MB. So
  * (1) build/pdfjs-decode-guard.mjs patches the pinned worker to call the
  * guard below for every decoded-byte allocation, content-stream token, new
- * cached name and CMap entry, and for every image decode (refused: text never
- * needs one), and the guard refuses past the PDF_DECODE_* / PDF_TOKENS_MAX /
- * PDF_PRIMITIVES_MAX / PDF_CMAP_ENTRIES_MAX limits of this call
- * (archive_limit_exceeded); pdf.js
+ * cached name, CMap entry, parsed array / Dict element and lexed string
+ * character, and for every image decode (refused: text never needs one), and
+ * the guard refuses past the PDF_DECODE_* / PDF_TOKENS_MAX /
+ * PDF_PRIMITIVES_MAX / PDF_CMAP_ENTRIES_MAX / PDF_OBJECT_* / PDF_OBJECTS_MAX /
+ * PDF_STRING_CHARS_MAX limits of this call (archive_limit_exceeded); pdf.js
  * decodes a page's content stream whole before it evaluates it, so these also
  * bound text bombs; (2) page text is read as a stream and cancelled once the
  * call's text limit or deadline is passed, so one page can neither grow the
@@ -91,21 +92,42 @@ export const PDF_PRIMITIVES_MAX = 200_000;
  * ToUnicode loads only the 18–30 thousand of the UCS2 map); a document that
  * needs more fails archive_limit_exceeded rather than exhausting the isolate. */
 export const PDF_CMAP_ENTRIES_MAX = 400_000;
+/** Weighted size of one top-level object pdf.js parses (a content-stream
+ * operand such as a TJ array, or one indirect object): arrays and their
+ * elements and Dict entries weigh 1, each Dict 6 (build/pdfjs-decode-guard.mjs
+ * DICT_WEIGHT). Operands are dropped after their operator, so this bounds
+ * what content-stream parsing holds at once: about 36 bytes of heap per unit,
+ * some 18 MB. Real objects are far smaller (a CJK font's /W array has some
+ * 10–100 thousand elements). */
+export const PDF_OBJECT_TREE_MAX = 512 * 1024;
+/** Weighted units of all indirect objects one call parses (parsers with
+ * allowStreams: the xref, object streams, trailers). pdf.js caches parsed
+ * objects for the document, so these stay alive: about 36 MB. */
+export const PDF_OBJECTS_MAX = 1_000_000;
+/** String, hex-string and name characters the Lexer returns in one call (each
+ * string is collected one character per array element; one string is also
+ * capped at 256 Ki). Real text is far less: 20 dense pages hold some 100–200
+ * thousand characters. */
+export const PDF_STRING_CHARS_MAX = 4 * 1024 * 1024;
 
-type DecodeBudget = { allocated: number; tokens: number; primitives: number; cmap: number; exceeded: boolean; streams: WeakMap<object, number> };
+type DecodeBudget = { allocated: number; tokens: number; primitives: number; cmap: number; objects: number; chars: number; exceeded: boolean;
+  streams: WeakMap<object, number> };
 const decodeBudgets = new AsyncLocalStorage<DecodeBudget>();
 class DecodeLimit extends Error {}
 /** Called by the patched pdf.js worker (build/pdfjs-decode-guard.mjs): before
  * it allocates `bytes` of decoded data for `stream` ("decode"), for each
  * content-stream token ("token"), for each new cached Name / Cmd
  * ("primitive"), before CMap `stream` gets `bytes` entries up to `code`
- * ("cmap", weighted: PDF_CMAP_ENTRIES_MAX), and where a
+ * ("cmap", weighted: PDF_CMAP_ENTRIES_MAX), before parser `stream` builds an
+ * array, element, Dict or Dict entry of weight `bytes` ("object":
+ * PDF_OBJECT_TREE_MAX / PDF_OBJECTS_MAX), for the `bytes` characters of each
+ * lexed string or name ("chars": PDF_STRING_CHARS_MAX), and where a
  * hard limit is hit ("limit", which includes every image decode). Outside an
  * extraction (no budget in the async context) nothing may be decoded. pdf.js
  * may swallow the throw (stopAtErrors: false skips a failing stream), so the
  * budget records it and the extraction fails with archive_limit_exceeded
  * instead of returning partial text. */
-function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "limit", stream?: object, bytes = 0, code = 0): void {
+function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "object" | "chars" | "limit", stream?: object | null, bytes = 0, code = 0): void {
   const budget = decodeBudgets.getStore();
   if (!budget) {
     // Module evaluation creates a few Names before any extraction runs.
@@ -120,6 +142,14 @@ function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "limit", 
       const weight = ((stream as { builtInCMap?: unknown } | undefined)?.builtInCMap === true ? 1 : 4) * (code > 0xffff ? 2 : 1);
       if (Number.isFinite(bytes) && (budget.cmap += Math.max(0, bytes) * weight) <= PDF_CMAP_ENTRIES_MAX) return;
     }
+    else if (kind === "object" && stream) {
+      // __cluedTree: the size of the top-level object this parser is building
+      // (reset by the patched Parser.getObj at depth 0).
+      const parser = stream as { __cluedTree?: number; allowStreams?: unknown };
+      const tree = parser.__cluedTree = (parser.__cluedTree ?? 0) + bytes;
+      if (tree <= PDF_OBJECT_TREE_MAX && (parser.allowStreams !== true || (budget.objects += bytes) <= PDF_OBJECTS_MAX)) return;
+    }
+    else if (kind === "chars") { if ((budget.chars += bytes) <= PDF_STRING_CHARS_MAX) return; }
     else if (kind === "decode" && stream) {
       const used = (budget.streams.get(stream) ?? 0) + bytes;
       if (used <= PDF_DECODE_STREAM_MAX && budget.allocated + bytes <= PDF_DECODE_TOTAL_MAX) {
@@ -299,7 +329,7 @@ export async function extractPdfText(bytes: Uint8Array, options: { page_start: n
       throw new Error("unavailable");
     }
   }
-  const budget: DecodeBudget = { allocated: 0, tokens: 0, primitives: 0, cmap: 0, exceeded: false, streams: new WeakMap() };
+  const budget: DecodeBudget = { allocated: 0, tokens: 0, primitives: 0, cmap: 0, objects: 0, chars: 0, exceeded: false, streams: new WeakMap() };
   // pdf.js's in-thread worker runs in promise jobs started from here, so all
   // decoding for this document sees this budget through the async context.
   return decodeBudgets.run(budget, async (): Promise<PdfExtraction> => {
