@@ -964,9 +964,10 @@ Rollout (in order; nothing here is enabled by the migration alone):
 1. Create the R2 bucket `clued-storage-staging` (private, no public access, no
    custom domain) with an object lifecycle rule that deletes objects older than
    **3 days** (backstop only; the cron deletes by database state).
-   **This PR does not bind the bucket**: `wrangler.production.jsonc` has no
-   `r2_buckets` entry, because deploying a binding to a bucket that does not
-   exist fails the whole deploy. Without the binding the code fails closed
+   The binding was added separately, after the bucket existed (a deploy that
+   binds a missing bucket fails as a whole); it is now in
+   `wrangler.production.jsonc`. Before that, `wrangler.production.jsonc` had no
+   `r2_buckets` entry. Without the binding the code fails closed
    (`storage_upload_unavailable`; binary jobs refused before any effect). A
    follow-up PR adds
    `"r2_buckets": [{ "binding": "CLUED_STORAGE_STAGING", "bucket_name": "clued-storage-staging" }]`
