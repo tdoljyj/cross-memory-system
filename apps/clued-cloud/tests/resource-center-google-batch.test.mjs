@@ -10,9 +10,9 @@ import {batchRequests,batchReply} from "./google-batch-fixture.mjs";
 const dir=await mkdtemp(path.join(os.tmpdir(),"clued-metadata-batch-")),outfile=path.join(dir,"batch.mjs");
 await build({entryPoints:[fileURLToPath(new URL("../worker/storage-google-metadata-batch.ts",import.meta.url))],outfile,bundle:true,platform:"node",format:"esm"});
 const {createStorageGoogleMetadataBatch}=await import(pathToFileURL(outfile));
-function fixture(handler=parts=>batchReply(parts.map(p=>({...p,value:{id:p.path.split("?")[0].split("/").at(-1)}})))) {
+function fixture(handler=parts=>batchReply(parts.map(p=>({...p,value:{id:p.path.split("?")[0].split("/").at(-1)}}))),extra={}) {
   const calls=[], controller=new AbortController();
-  const api=createStorageGoogleMetadataBatch({access_token:"synthetic-batch-access",signal:controller.signal,fetch:async(url,init)=>{
+  const api=createStorageGoogleMetadataBatch({access_token:"synthetic-batch-access",signal:controller.signal,...extra,fetch:async(url,init)=>{
     assert.equal(url,"https://www.googleapis.com/batch/drive/v3");
     assert.equal(init.method,"POST");assert.equal(init.redirect,"manual");
     assert.equal(new Headers(init.headers).get("authorization"),"Bearer synthetic-batch-access");
@@ -93,10 +93,69 @@ test("shared deadline cancels a hung body, and an already expired signal dispatc
 });
 test("per-request budget includes response body consumption, not just response headers",async()=>{
   let cancelled=false;
-  const f=fixture(()=>new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{"content-type":"multipart/mixed; boundary=x"}}));
-  const keepAlive=setTimeout(()=>{},11000);
-  try{await assert.rejects(f.api.getFiles(["a"]),/DRIVE_BATCH_TIMEOUT/);assert.equal(cancelled,true);assert.equal(f.calls.length,1);}
+  const f=fixture(()=>new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{"content-type":"multipart/mixed; boundary=x"}}),
+    {batch_timeout_ms:50});
+  // Without transient_retry (the probe's default) a timeout is never retried.
+  // AbortSignal.timeout does not keep Node's event loop alive on its own.
+  const keepAlive=setTimeout(()=>{},5000);
+  try{await assert.rejects(f.api.getFiles(["a"]),/DRIVE_BATCH_TIMEOUT/);assert.equal(cancelled,true);assert.equal(f.calls.length,1);
+    // With transient_retry: timed out once, retried once (a new request), then fails closed.
+    cancelled=false;
+    const g=fixture(()=>new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{"content-type":"multipart/mixed; boundary=x"}}),
+      {batch_timeout_ms:50,transient_retry:true,retry_delay_ms:()=>0});
+    const warn=console.warn;console.warn=()=>{};
+    try{await assert.rejects(g.api.getFiles(["a"]),/DRIVE_BATCH_TIMEOUT/);}finally{console.warn=warn;}
+    assert.equal(cancelled,true);assert.equal(g.calls.length,2);}
   finally{clearTimeout(keepAlive);}
+  assert.throws(()=>createStorageGoogleMetadataBatch({access_token:"synthetic-batch-access",signal:AbortSignal.timeout(1000),batch_timeout_ms:20000}),/DRIVE_BATCH_INVALID/);
+});
+test("transient 429 / 5xx / timeout batches are retried exactly once; others are not",async()=>{
+  const warnings=[],warn=console.warn;console.warn=w=>warnings.push(w);
+  try{
+    const ok=parts=>batchReply(parts.map(p=>({...p,value:{id:p.path.split("?")[0].split("/").at(-1)}})));
+    // Envelope 429, part 429, envelope 503, part 500: one retry, then success.
+    for(const first of [()=>new Response("rate",{status:429}),parts=>batchReply(parts.map(p=>({...p,status:429,value:{error:{code:429}}}))),
+      ()=>new Response("down",{status:503}),parts=>batchReply([{...parts[0],status:500,value:{}},...parts.slice(1).map(p=>({...p,value:{id:"x"}}))])]){
+      const f=fixture((parts,init,n)=>n===1?first(parts):ok(parts),{transient_retry:true,retry_delay_ms:()=>0});
+      assert.deepEqual((await f.api.getFiles(["a"])).map(v=>v.id),["a"]);assert.equal(f.calls.length,2);
+    }
+    // Persistent 429: exactly two requests, then the closed code.
+    const p=fixture(()=>new Response("rate",{status:429}),{transient_retry:true,retry_delay_ms:()=>0});
+    await assert.rejects(p.api.getFiles(["a"]),/DRIVE_BATCH_HTTP_429/);assert.equal(p.calls.length,2);
+    // Non-transient codes are never retried.
+    for(const code of [401,403,404,400]){
+      const f=fixture(()=>new Response("no",{status:code}),{transient_retry:true,retry_delay_ms:()=>0});
+      await assert.rejects(f.api.getFiles(["a"]),new RegExp("DRIVE_BATCH_HTTP_"+code));assert.equal(f.calls.length,1);
+    }
+    // A fetch rejecting with a platform TimeoutError is retried once.
+    const t=fixture((parts,init,n)=>{if(n===1)throw new DOMException("timed out","TimeoutError");return ok(parts);},{transient_retry:true,retry_delay_ms:()=>0});
+    assert.deepEqual((await t.api.getFiles(["a"])).map(v=>v.id),["a"]);assert.equal(t.calls.length,2);
+    // A hung first attempt under the injected short timeout is retried once.
+    const h=fixture((parts,init,n)=>n===1?new Response(new ReadableStream({}),{headers:{"content-type":"multipart/mixed; boundary=x"}}):ok(parts),
+      {batch_timeout_ms:50,transient_retry:true,retry_delay_ms:()=>0});
+    const keepAlive=setTimeout(()=>{},5000);
+    try{assert.deepEqual((await h.api.getFiles(["a"])).map(v=>v.id),["a"]);assert.equal(h.calls.length,2);}
+    finally{clearTimeout(keepAlive);}
+    // The shared deadline wins over the retry delay: no second request.
+    const d=fixture(()=>new Response("rate",{status:429}),{transient_retry:true,retry_delay_ms:()=>1000});
+    const pending=d.api.getFiles(["a"]);setTimeout(()=>d.controller.abort(),20);
+    await assert.rejects(pending,/OBSERVATION_EXPIRED/);assert.equal(d.calls.length,1);
+    // Default (probe): a transient code is not retried.
+    const n=fixture(()=>new Response("rate",{status:429}));
+    await assert.rejects(n.api.getFiles(["a"]),/DRIVE_BATCH_HTTP_429/);assert.equal(n.calls.length,1);
+    assert.ok(warnings.length>0);
+    for(const w of warnings)assert.deepEqual(Object.keys(w).sort(),["code","event","outcome"]);
+    assert.ok(warnings.every(w=>w.event==="storage_read_drive_transient"&&w.outcome==="retried"&&/^DRIVE_BATCH_(TIMEOUT|HTTP_429|HTTP_500)$/.test(w.code)));
+  } finally{console.warn=warn;}
+});
+test("the retry goes through the caller's budgeted fetch",async()=>{
+  let used=0;
+  const api=createStorageGoogleMetadataBatch({access_token:"synthetic-batch-access",signal:AbortSignal.timeout(5000),transient_retry:true,retry_delay_ms:()=>0,fetch:async(url,init)=>{
+    if(++used>1)throw new Error("DRIVE_READ_BUDGET");
+    return new Response("rate",{status:429});
+  }});
+  const warn=console.warn;console.warn=()=>{};
+  try{await assert.rejects(api.getFiles(["a"]),/DRIVE_READ_BUDGET/);assert.equal(used,2);}finally{console.warn=warn;}
 });
 test("native workerd multipart roundtrip preserves metadata-only request envelope and rejects redirects",async()=>{
   const {outputFiles}=await build({stdin:{resolveDir:fileURLToPath(new URL("../",import.meta.url)),sourcefile:"batch-runtime.ts",contents:`

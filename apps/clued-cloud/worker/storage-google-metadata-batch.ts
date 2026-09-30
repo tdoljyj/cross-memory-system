@@ -26,6 +26,10 @@ function status(code: number): void {
   // Only closed codes, never provider text, IDs or response headers.
   throw new Error(`DRIVE_BATCH_HTTP_${[401, 403, 404, 429].includes(code) ? code : code >= 500 ? 500 : 400}`);
 }
+/** Transient batch failures: retried once by batch(); search may absorb them after that. */
+export function isDriveTransient(code: unknown): boolean {
+  return code === "DRIVE_BATCH_TIMEOUT" || code === "DRIVE_BATCH_HTTP_429" || code === "DRIVE_BATCH_HTTP_500";
+}
 async function body(response: Response, signal: AbortSignal, consume: (bytes: number) => void): Promise<string> {
   if (!response.body) invalid();
   const reader = response.body.getReader(), chunks: Uint8Array[] = [];
@@ -90,9 +94,19 @@ function parse(raw: string, contentType: string | null, expected: string[]): unk
  */
 export function createStorageGoogleMetadataBatch(config: {
   access_token: string; fetch?: typeof fetch; signal: AbortSignal;
+  /** Storage reads only (StorageNormalUse §5.3): retry a transient batch once.
+   * Off by default: the qualification probe never turns a diagnosis into a retry. */
+  transient_retry?: boolean;
+  /** Per-attempt batch timeout (default 10 s). Injectable for tests. */
+  batch_timeout_ms?: number;
+  /** Delay before the single transient retry (default 250-750 ms jitter). Injectable for tests. */
+  retry_delay_ms?: () => number;
 }) {
   if (typeof config.access_token !== "string" || config.access_token.length < 16 || /[\r\n]/.test(config.access_token) ||
     !(config.signal instanceof AbortSignal)) invalid();
+  const timeoutMs = config.batch_timeout_ms ?? 10000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000) invalid();
+  const retryDelay = config.retry_delay_ms ?? (() => 250 + Math.floor(Math.random() * 501));
   const fetcher = createStorageFetch(config.fetch);
   // One adapter belongs to one probe: count actual decompressed bytes across
   // all pages AND before/after phases, not only each individual HTTP envelope.
@@ -101,10 +115,33 @@ export function createStorageGoogleMetadataBatch(config: {
     totalBytes += bytes;
     if (totalBytes > 32 * 1024 * 1024) throw new Error("DRIVE_BATCH_SIZE_LIMIT");
   };
+  /** Metadata GETs are idempotent: with `transient_retry`, a timed-out,
+   * rate-limited (429) or 5xx batch (envelope or any part) is retried exactly
+   * once after a short jitter.
+   * The retry goes through the same (budgeted) fetch, so it counts against the
+   * caller's subrequest budget, and it never outlives the shared deadline. */
   async function batch(paths: string[], parentSignal?: AbortSignal): Promise<unknown[]> {
     if (!paths.length || paths.length > maxParts || paths.some(path => path.length > 8000 ||
       !/^\/drive\/v3\/files(?:\/[A-Za-z0-9_-]+)?\?[^\r\n ]+$/.test(path))) invalid();
-    const signal = AbortSignal.any([config.signal, AbortSignal.timeout(10000), ...(parentSignal ? [parentSignal] : [])]);
+    try { return await attempt(paths, parentSignal); }
+    catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      if (config.transient_retry !== true || !isDriveTransient(code) || config.signal.aborted || parentSignal?.aborted) throw error;
+      // Fixed labels only: no IDs, paths or provider text.
+      console.warn({ event: "storage_read_drive_transient", code, outcome: "retried" });
+      const deadline = parentSignal ? AbortSignal.any([config.signal, parentSignal]) : config.signal;
+      await new Promise<void>(resolve => {
+        const done = () => { clearTimeout(timer); deadline.removeEventListener("abort", done); resolve(); };
+        const timer = setTimeout(done, Math.max(0, Math.min(1000, retryDelay())));
+        deadline.addEventListener("abort", done, { once: true });
+      });
+      if (config.signal.aborted) throw new Error("DRIVE_QUALIFICATION_OBSERVATION_EXPIRED");
+      if (parentSignal?.aborted) throw error;
+      return await attempt(paths, parentSignal);
+    }
+  }
+  async function attempt(paths: string[], parentSignal?: AbortSignal): Promise<unknown[]> {
+    const signal = AbortSignal.any([config.signal, AbortSignal.timeout(timeoutMs), ...(parentSignal ? [parentSignal] : [])]);
     const nonce = crypto.randomUUID(), boundary = "clued_" + nonce;
     const requestIds = paths.map((_, index) => `clued-${nonce}-${index}`);
     const payload = paths.map((path, index) => `--${boundary}\r\nContent-Type: application/http\r\nContent-ID: <${requestIds[index]}>\r\n\r\nGET ${path} HTTP/1.1\r\nAccept: application/json\r\n\r\n`).join("") + `--${boundary}--\r\n`;
@@ -116,6 +153,7 @@ export function createStorageGoogleMetadataBatch(config: {
       return await Promise.race([aborted, (async () => {
         const response = await fetcher(endpoint, { method: "POST", redirect: "manual", cache: "no-store", signal,
           headers: { authorization: "Bearer " + config.access_token, "content-type": `multipart/mixed; boundary=${boundary}` }, body: payload });
+        if (response.status < 200 || response.status >= 300) void response.body?.cancel().catch(() => undefined);
         status(response.status);
         const raw = await body(response, signal, consume);
         signal.throwIfAborted();
@@ -124,6 +162,8 @@ export function createStorageGoogleMetadataBatch(config: {
     } catch (error) {
       if (config.signal.aborted) throw new Error("DRIVE_QUALIFICATION_OBSERVATION_EXPIRED");
       if (signal.aborted && signal.reason instanceof DOMException && signal.reason.name === "TimeoutError") throw new Error("DRIVE_BATCH_TIMEOUT");
+      // A platform-level fetch timeout is the same closed code.
+      if (error instanceof DOMException && error.name === "TimeoutError") throw new Error("DRIVE_BATCH_TIMEOUT");
       throw error;
     } finally { signal.removeEventListener("abort", onAbort); }
   }
