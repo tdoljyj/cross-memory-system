@@ -56,7 +56,7 @@ Rules for every capture:
 | `authority_escalation_forbidden` | `user_explicit` without `user_confirmed: true` | Add `user_confirmed: true` only if the Owner actually said it; otherwise use the true, lower authority |
 | `terminal_record_read_only` | The record is completed, cancelled or archived | Follow-up note (§3) |
 | `record_version_conflict` | Someone changed the record | Re-read and reconcile meaning; never overwrite a newer decision |
-| `stale_base_version` (checkpoint) | Wrong counter | Use the session version from resume or the last checkpoint |
+| `stale_base_version` (checkpoint) | Wrong counter, or another session checkpointed this context since your resume or last checkpoint | Retry with the `expected_version` the error returns; your session token stays valid |
 | `resume_required_or_session_expired` | The token expired or already ended with a committed checkpoint | Use the renewed token from that checkpoint if you have it; otherwise resume, reconcile if asked, and retry with the new token (§5) |
 | `current_truth_changed_since_resume` (checkpoint) | A write changed current state after resume or the last reconcile | Reconcile with the same token, then retry the checkpoint (§5) |
 | `checkpoint_event_not_authorized` (checkpoint) | `coverage.event_ids` lists an event of another context | Checkpoint each context in its own session (§5) |
