@@ -211,7 +211,7 @@ test('production capture workflow is owner-only on main and cannot qualify or mu
   assert.match(workflow, /--expected-release-sha "\$GITHUB_SHA"/);
   assert.match(workflow, /CLUED_STORAGE_SOURCE_DATABASE_URL/);
   assert.match(workflow, /CLUED_STORAGE_SOURCE_CLOUDFLARE_TOKEN/);
-  assert.match(workflow, /retention-days: \$\{\{ inputs\.source_capture_only && 1 \|\| 30 \}\}/);
+  assert.match(workflow, /retention-days: \$\{\{ inputs\.mode == 'source-capture' && 1 \|\| 30 \}\}/);
   const capture = workflow.slice(workflow.indexOf('- name: Capture exact nonsecret registration source'),
     workflow.indexOf('- name: Install embedded PostgreSQL ICU compatibility runtime'));
   assert.doesNotMatch(capture, /secrets\.CLUED_ATTESTATION_DATABASE_URL|secrets\.CLUED_CLOUDFLARE_DEPLOY_TOKEN|wrangler deploy/);
@@ -224,6 +224,7 @@ test('production capture workflow is owner-only on main and cannot qualify or mu
     'Verify projection currentness after deployment']) {
     const step = workflow.slice(workflow.indexOf(`- name: ${name}`),
       workflow.indexOf('- name:', workflow.indexOf(`- name: ${name}`) + 1));
-    assert.match(step, /!inputs\.source_capture_only/);
+    // Each of these runs only in preflight or deploy, never in source-capture.
+    assert.match(step, /if: \$\{\{ inputs\.mode == '(?:preflight' \|\| inputs\.mode == ')?deploy' \}\}/);
   }
 });

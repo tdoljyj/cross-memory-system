@@ -3,18 +3,19 @@ name: Clued Cloud production release
 on:
   workflow_dispatch:
     inputs:
-      preflight_only:
-        description: Run the read-only production gate without deploying
-        type: boolean
-        default: false
-      backup_only:
-        description: Create an encrypted pre-migration database backup without deploying
-        type: boolean
-        default: false
-      source_capture_only:
-        description: Capture one reviewed nonsecret storage client source without deploying
-        type: boolean
-        default: false
+      mode:
+        description: >-
+          Release mode. Only deploy changes production. preflight runs the read-only gate,
+          backup creates the encrypted pre-migration backup, source-capture captures one
+          reviewed storage client source.
+        type: choice
+        required: true
+        default: preflight
+        options:
+          - preflight
+          - backup
+          - source-capture
+          - deploy
       source_request_id:
         description: Exact approved authorization request UUID; source-capture mode only
         type: string
@@ -54,30 +55,33 @@ jobs:
           cache-dependency-path: apps/clued-cloud/package-lock.json
       - name: Validate exclusive release mode
         env:
-          PREFLIGHT_ONLY: ${{ inputs.preflight_only }}
-          BACKUP_ONLY: ${{ inputs.backup_only }}
-          SOURCE_CAPTURE_ONLY: ${{ inputs.source_capture_only }}
+          RELEASE_MODE: ${{ inputs.mode }}
           SOURCE_REQUEST_ID: ${{ inputs.source_request_id }}
           SOURCE_REQUEST_DIGEST: ${{ inputs.source_request_digest }}
         run: |
           set -euo pipefail
-          if [ "$SOURCE_CAPTURE_ONLY" = true ]; then
-            test "$PREFLIGHT_ONLY" = false
-            test "$BACKUP_ONLY" = false
-            test -n "$SOURCE_REQUEST_ID"
-            test -n "$SOURCE_REQUEST_DIGEST"
-          else
-            test -z "$SOURCE_REQUEST_ID"
-            test -z "$SOURCE_REQUEST_DIGEST"
-          fi
+          # Deploy is never implied: an unknown or missing mode stops here, before any
+          # production credential is read.
+          case "$RELEASE_MODE" in
+            preflight|backup|deploy)
+              test -z "$SOURCE_REQUEST_ID"
+              test -z "$SOURCE_REQUEST_DIGEST" ;;
+            source-capture)
+              test -n "$SOURCE_REQUEST_ID"
+              test -n "$SOURCE_REQUEST_DIGEST" ;;
+            *)
+              echo "::error::Unknown release mode '$RELEASE_MODE'" >&2
+              exit 1 ;;
+          esac
+          echo "Release mode: $RELEASE_MODE"
       - name: Check production database credential
-        if: ${{ !inputs.source_capture_only }}
+        if: ${{ inputs.mode != 'source-capture' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: |
           test -n "$CLUED_ATTESTATION_DATABASE_URL"
       - name: Check least-privilege source credentials
-        if: ${{ inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'source-capture' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_STORAGE_SOURCE_DATABASE_URL }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_STORAGE_SOURCE_CLOUDFLARE_TOKEN }}
@@ -87,12 +91,12 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
       - name: Check production backup encryption credential
-        if: ${{ inputs.backup_only }}
+        if: ${{ inputs.mode == 'backup' }}
         env:
           CLUED_PRODUCTION_BACKUP_KEY: ${{ secrets.CLUED_PRODUCTION_BACKUP_KEY }}
         run: test -n "$CLUED_PRODUCTION_BACKUP_KEY"
       - name: Create and verify encrypted pre-migration backup
-        if: ${{ inputs.backup_only }}
+        if: ${{ inputs.mode == 'backup' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
           CLUED_PRODUCTION_BACKUP_KEY: ${{ secrets.CLUED_PRODUCTION_BACKUP_KEY }}
@@ -124,10 +128,10 @@ jobs:
             "$GITHUB_SHA" "$dump_sha256" "$dump_bytes" "$encrypted_sha256" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > "$evidence_dir/production-backup-manifest.json"
           shred -u "$dump_path" "$verified_path"
-      - if: ${{ !inputs.backup_only }}
+      - if: ${{ inputs.mode != 'backup' }}
         run: npm ci --ignore-scripts
       - name: Capture exact nonsecret registration source
-        if: ${{ inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'source-capture' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_STORAGE_SOURCE_DATABASE_URL }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_STORAGE_SOURCE_CLOUDFLARE_TOKEN }}
@@ -142,22 +146,22 @@ jobs:
             --expected-release-sha "$GITHUB_SHA" \
             --output .sites-runtime/storage-client-source/registration.json
       - name: Install embedded PostgreSQL ICU compatibility runtime
-        if: ${{ !inputs.backup_only && !inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
         run: |
           curl -fsSLo /tmp/libicu60.deb https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
           sudo dpkg -i /tmp/libicu60.deb
       - name: Verify projection and MTPE behavior
-        if: ${{ !inputs.backup_only && !inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
         run: |
           node --test tests/production-release-gate.test.mjs tests/served-agent-contract.test.mjs
           npm run test:projection:refresh
           npm run test:mtpe:intake
           npm run typecheck
       - name: Build exact Worker source
-        if: ${{ !inputs.backup_only && !inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
         run: npm run build
       - name: Block release unless database and Worker heartbeat are ready
-        if: ${{ !inputs.backup_only && !inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: |
@@ -165,7 +169,7 @@ jobs:
           node scripts/production-release-gate.mjs --pre-deploy \
             --evidence-out .sites-runtime/release-evidence/production-preflight.json
       - name: Check Cloudflare deployment credential
-        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'deploy' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
@@ -173,7 +177,7 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
       - name: Ensure Storage job queue exists
-        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'deploy' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
@@ -184,26 +188,26 @@ jobs:
             npx wrangler queues create clued-storage-jobs
           fi
       - name: Deploy Clued production Worker
-        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'deploy' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --config wrangler.production.jsonc --keep-vars
       - name: Record deployment completion time
-        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'deploy' }}
         id: deployment_completion
         run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$GITHUB_OUTPUT"
       - name: Verify exact live commit and currentness transport
-        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'deploy' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: node scripts/verify-currentness-transport.mjs --production --evidence-out .sites-runtime/release-evidence/currentness-attestation.json
       - name: Verify production serves the repository Agent contract
-        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'deploy' }}
         run: node scripts/verify-served-agent-contract.mjs --evidence-out .sites-runtime/release-evidence/served-agent-contract.json
       - name: Verify projection currentness after deployment
-        if: ${{ !inputs.preflight_only && !inputs.backup_only && !inputs.source_capture_only }}
+        if: ${{ inputs.mode == 'deploy' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
         run: |
@@ -230,4 +234,4 @@ jobs:
             apps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json
             apps/clued-cloud/.sites-runtime/storage-client-source/registration.json
           if-no-files-found: ignore
-          retention-days: ${{ inputs.source_capture_only && 1 || 30 }}
+          retention-days: ${{ inputs.mode == 'source-capture' && 1 || 30 }}

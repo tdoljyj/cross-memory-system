@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 import { builderRunInProgress, onlyProjectionLag, settleProjectionLag, verifyReleaseState }
@@ -229,7 +230,7 @@ test('lag that outlasts the run budget, or no newer run, still blocks the releas
 });
 
 test('production backup mode encrypts and verifies the dump before removing plaintext', () => {
-  assert.match(productionWorkflow, /backup_only:/);
+  assert.match(productionWorkflow, /if: \$\{\{ inputs\.mode == 'backup' \}\}/);
   assert.match(productionWorkflow, /CLUED_PRODUCTION_BACKUP_KEY/);
   assert.match(productionWorkflow, /--user \"\$\(id -u\):\$\(id -g\)\"/);
   assert.match(productionWorkflow, /searchParams\.delete\(\"uselibpqcompat\"\)/);
@@ -241,4 +242,33 @@ test('production backup mode encrypts and verifies the dump before removing plai
   assert.match(productionWorkflow, /clued-production-pre-migration\.dump\.enc/);
   assert.doesNotMatch(productionWorkflow,
     /release-evidence\/clued-production-pre-migration\.dump\s*$/m);
+});
+
+test('production release deploys only when deploy is chosen explicitly', () => {
+  // A dispatch whose inputs are missing or misparsed must never fall through to a
+  // deploy (run 36738247464 deployed when a boolean backup_only was ignored).
+  assert.match(productionWorkflow,
+    /\n      mode:\n[\s\S]*?type: choice\n        required: true\n        default: preflight\n/);
+  assert.doesNotMatch(productionWorkflow, /preflight_only|backup_only|source_capture_only/);
+
+  const steps = productionWorkflow.split(/\n      - /).slice(1);
+  const deploySteps = steps.filter((step) =>
+    /wrangler deploy|CLUED_CLOUDFLARE_DEPLOY_TOKEN/.test(step));
+  assert.ok(deploySteps.length > 0);
+  for (const step of deploySteps) {
+    assert.match(step, /\n        if: \$\{\{ inputs\.mode == 'deploy' \}\}\n/, step.split('\n')[0]);
+  }
+
+  const validate = steps.find((step) => step.startsWith('name: Validate exclusive release mode'));
+  const script = validate.slice(validate.indexOf('run: |\n') + 'run: |\n'.length)
+    .split('\n').map((line) => line.replace(/^ {10}/, '')).join('\n');
+  const run = (env) => spawnSync('bash', ['-c', script],
+    { env: { PATH: process.env.PATH, SOURCE_REQUEST_ID: '', SOURCE_REQUEST_DIGEST: '', ...env } }).status;
+  for (const mode of ['preflight', 'backup', 'deploy']) assert.equal(run({ RELEASE_MODE: mode }), 0, mode);
+  for (const mode of ['', 'true', 'false', 'Deploy', 'deploy ', 'backup_only']) {
+    assert.notEqual(run({ RELEASE_MODE: mode }), 0, JSON.stringify(mode));
+  }
+  assert.notEqual(run({ RELEASE_MODE: 'source-capture' }), 0);
+  assert.equal(run({ RELEASE_MODE: 'source-capture', SOURCE_REQUEST_ID: 'r', SOURCE_REQUEST_DIGEST: 'd' }), 0);
+  assert.notEqual(run({ RELEASE_MODE: 'deploy', SOURCE_REQUEST_ID: 'r' }), 0);
 });
