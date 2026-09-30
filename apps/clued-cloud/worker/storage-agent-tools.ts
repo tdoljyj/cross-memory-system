@@ -8,13 +8,14 @@ const reference = { connection_id: idSchema, job_id: { ...idSchema, description:
 const destination = { type: "string", minLength: 1, maxLength: 1000, description: "Exact destination under the connection's registered root. A path is a requested target, never authority to change the registered profile." };
 const source = { type: "string", minLength: 1, maxLength: 1000, description: "Exact current path of a file Clued registered (one it created) under the registered root." };
 const sourceVersion = { type: "string", pattern: "^[1-9][0-9]{0,39}$", description: "The file's Drive version as last observed with clued_storage_browse stat. If the file changed since, the job is refused; stat it again first. If it is refused again with the version stat returns, Clued's registered version is older than Drive's and only the Owner can re-register the file; do not retry." };
+const targetVersion = { type: "string", pattern: "^[1-9][0-9]{0,39}$", description: "The target file's Drive version as last observed with clued_storage_browse stat; a changed file is refused." };
 const pathParent = (path: string) => path.slice(0, path.lastIndexOf("/"));
 const pathName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
 export const storageAgentTools = [
   {
     name: "clued_storage_submit",
-    description: "Submit an explicitly authorized storage job using this client's existing Clued Binding and an Owner-granted storage permission. context:write is insufficient. create makes a new file or directory. rename (same folder, new name) and move (new folder, same name) apply to one file Clued registered and need the Owner's modify level. Reuse job_id and identical payload for correlation; queued/started/uncertain is NOT completion. On a lost reply inspect the same job; never re-dispatch with another ID. Policy, single-use admission and provider execution remain server-owned. No overwrite, directory move or delete.",
+    description: "Submit an explicitly authorized storage job using this client's existing Clued Binding and an Owner-granted storage permission. context:write is insufficient. create makes a new file or directory. rename (same folder, new name) and move (new folder, same name) apply to one file Clued registered and need the Owner's modify level. replace overwrites one registered text file with new content (at most 1 MiB), or with restore_job_id restores the content that an earlier committed replace job kept; both need the Owner's overwrite level, and the previous content is kept as a Drive revision. Reuse job_id and identical payload for correlation; queued/started/uncertain is NOT completion. On a lost reply inspect the same job; never re-dispatch with another ID. Policy, single-use admission and provider execution remain server-owned. No directory move or delete.",
     inputSchema: {
       type: "object", required: ["connection_id", "job_id", "mutation"], additionalProperties: false,
       properties: { ...reference, mutation: { oneOf: [
@@ -27,10 +28,18 @@ export const storageAgentTools = [
         { type: "object", required: ["operation", "target_kind", "source_path", "destination_path", "source_file_version"], additionalProperties: false,
           properties: { operation: { enum: ["rename", "move"] }, target_kind: { const: "file" }, source_path: source,
             destination_path: destination, source_file_version: sourceVersion } },
+        { type: "object", required: ["operation", "target_kind", "destination_path", "destination_file_version", "content"], additionalProperties: false,
+          properties: { operation: { const: "replace" }, target_kind: { const: "file" }, destination_path: destination,
+            destination_file_version: targetVersion,
+            content: { type: "string", maxLength: 1048576, description: "The complete new UTF-8 text of the file." } } },
+        { type: "object", required: ["operation", "target_kind", "destination_path", "destination_file_version", "restore_job_id"], additionalProperties: false,
+          properties: { operation: { const: "replace" }, target_kind: { const: "file" }, destination_path: destination,
+            destination_file_version: targetVersion,
+            restore_job_id: { ...idSchema, description: "A committed replace job of this file whose kept previous content is restored (revert)." } } },
       ] } },
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    _meta: { "clued/requiredStorageGrant": ["create_file, create_topic or modify"], "clued/scopeEnforcement": "server-side" },
+    _meta: { "clued/requiredStorageGrant": ["create_file, create_topic, modify or overwrite"], "clued/scopeEnforcement": "server-side" },
   },
   {
     name: "clued_storage_inspect",
@@ -63,6 +72,12 @@ export function storageAgentInput(name: "clued_storage_submit" | "clued_storage_
       const sameName = pathName(m.source_path) === pathName(m.destination_path);
       if (m.operation === "rename" ? !sameParent || sameName : sameParent || !sameName) return fail();
       allowed.push("source_path", "source_file_version");
+    } else if (m.operation === "replace") {
+      if (m.target_kind !== "file" || typeof m.destination_file_version !== "string" ||
+        !/^[1-9][0-9]{0,39}$/.test(m.destination_file_version) || ("content" in m) === ("restore_job_id" in m)) return fail();
+      if ("content" in m && (typeof m.content !== "string" || new TextEncoder().encode(m.content).length > 1048576)) return fail();
+      if ("restore_job_id" in m && !uuid(m.restore_job_id)) return fail();
+      allowed.push("destination_file_version", "content" in m ? "content" : "restore_job_id");
     } else if (m.operation !== "create") return fail();
     else if (m.target_kind === "file") {
       allowed.push("content");

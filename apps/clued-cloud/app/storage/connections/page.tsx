@@ -11,6 +11,7 @@ type Connection = {
 };
 const actionName: Record<string, string> = {
   inspect: "查看任务状态", create_file: "新建文件", create_topic: "新建主题目录", modify: "改名、移动文件",
+  overwrite: "覆盖文件内容",
 };
 const stateName: Record<string, string> = {
   awaiting_provider: "等待 Google 授权", active: "已连接", reauthorization_required: "需要重新授权", revoked: "已断开",
@@ -45,12 +46,26 @@ function isReadAccess(value: unknown): value is ReadAccess {
     && typeof value.disclosure_version === "string" && typeof value.content_disclosure_version === "string"
     && Array.isArray(value.classes) && value.classes.every(item => typeof item === "string");
 }
-type WriteAccess = { active: boolean; policy_generation: number; disclosure_version: string; classes: string[] };
+type WriteAccess = { active: boolean; policy_generation: number; disclosure_version: string;
+  overwrite_disclosure_version: string; classes: string[] };
 function isWriteAccess(value: unknown): value is WriteAccess {
   return isObject(value) && typeof value.active === "boolean" && Number.isSafeInteger(value.policy_generation)
-    && typeof value.disclosure_version === "string"
-    && Array.isArray(value.classes) && value.classes.every(item => item === "modify");
+    && typeof value.disclosure_version === "string" && typeof value.overwrite_disclosure_version === "string"
+    && Array.isArray(value.classes) && value.classes.every(item => item === "modify" || item === "overwrite");
 }
+// One write class per change; each has its own confirmation text (P3 modify, P4 overwrite).
+const writeText = {
+  modify: {
+    name: "改名和移动文件",
+    on: "允许已授权的 Agent 在此目录内改名和移动由 Clued 创建的文件？每次操作都会留下回执，可以再改回原名或原位置；不会删除或覆盖文件内容。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。",
+    off: "停止 Agent 改名和移动文件？尚未开始的排队任务会被取消，已开始但未完成的任务需先结束。新建文件和查看设置不受影响。",
+  },
+  overwrite: {
+    name: "覆盖文件内容",
+    on: "允许已授权的 Agent 覆盖此目录内由 Clued 创建的文本文件的内容（每次最多 1 MB）？覆盖前的内容会保存为永久保留的 Google Drive 版本，可以撤回；每个文件保留最近 10 个。不会删除文件。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。",
+    off: "停止 Agent 覆盖文件内容？已保存的旧版本不受影响。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束。",
+  },
+} as const;
 export default function StorageConnections() {
   // Read level (StorageFullCapability P1) is loaded on demand per connection so
   // the everyday page stays one request; every change is a native CAS mutation.
@@ -163,19 +178,19 @@ export default function StorageConnections() {
       }
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
-  async function toggleModify(c: Connection) {
+  async function toggleWrite(c: Connection, level: "modify" | "overwrite") {
     const current = writeAccess[c.id];
     if (operation.current || busy || !current?.active) return;
-    const enable = !current.classes.includes("modify");
-    if (!window.confirm(enable
-      ? "允许已授权的 Agent 在此目录内改名和移动由 Clued 创建的文件？每次操作都会留下回执，可以再改回原名或原位置；不会删除或覆盖文件内容。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。"
-      : "停止 Agent 改名和移动文件？尚未开始的排队任务会被取消，已开始但未完成的任务需先结束。新建文件和查看设置不受影响。")) return;
+    const enable = !current.classes.includes(level);
+    if (!window.confirm(enable ? writeText[level].on : writeText[level].off)) return;
+    const classes = enable ? [...current.classes, level].sort() : current.classes.filter(item => item !== level);
     operation.current = true; setBusy(true);
     const epoch = revision.current;
     let settled = epoch;
     try {
-      const result = await accountRequest({ action: "set_classes", connection_id: c.id, classes: enable ? ["modify"] : [],
-        base_generation: current.policy_generation, disclosure_version: current.disclosure_version,
+      const result = await accountRequest({ action: "set_classes", connection_id: c.id, classes,
+        base_generation: current.policy_generation,
+        disclosure_version: level === "overwrite" ? current.overwrite_disclosure_version : current.disclosure_version,
         idempotency_key: crypto.randomUUID() }, "/v1/storage/write-access");
       if (epoch !== revision.current) return;
       if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
@@ -194,8 +209,8 @@ export default function StorageConnections() {
       if (!isWriteAccess(latest) || !isReadAccess(read)) throw new Error("修改设置未确认。");
       setWriteAccess(state => ({ ...state, [c.id]: latest }));
       setReadAccess(state => ({ ...state, [c.id]: read }));
-      setMessage(latest.classes.includes("modify") === enable
-        ? `${enable ? "已允许" : "已停止"} Agent 改名和移动文件。回执：${result.receipt_id}` : "已提交，但最新状态未确认。请核对原回执。");
+      setMessage(latest.classes.includes(level) === enable
+        ? `${enable ? "已允许" : "已停止"} Agent ${writeText[level].name}。回执：${result.receipt_id}` : "已提交，但最新状态未确认。请核对原回执。");
     } catch {
       // The policy (and the read access bound to it) may have changed: drop both.
       setWriteAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
@@ -252,11 +267,11 @@ export default function StorageConnections() {
             <button disabled={busy} onClick={() => void toggleRead(c, "read_content")}>
               {readAccess[c.id].classes.includes("read_content") ? "停止 Agent 读正文" : "允许 Agent 读正文"}</button>
           </>}
-          {writeAccess[c.id]?.active && <>
-            <p className="mt-2">Agent 改名和移动文件：{writeAccess[c.id].classes.includes("modify") ? "已允许（仅 Clued 创建的文件）" : "未允许"}</p>
-            <button disabled={busy} onClick={() => void toggleModify(c)}>
-              {writeAccess[c.id].classes.includes("modify") ? "停止 Agent 改名和移动文件" : "允许 Agent 改名和移动文件"}</button>
-          </>}
+          {writeAccess[c.id]?.active && (["modify", "overwrite"] as const).map(level => <div key={level}>
+            <p className="mt-2">Agent {writeText[level].name}：{writeAccess[c.id].classes.includes(level) ? "已允许（仅 Clued 创建的文件）" : "未允许"}</p>
+            <button disabled={busy} onClick={() => void toggleWrite(c, level)}>
+              {writeAccess[c.id].classes.includes(level) ? `停止 Agent ${writeText[level].name}` : `允许 Agent ${writeText[level].name}`}</button>
+          </div>)}
         </div>}
         {["active", "reauthorization_required"].includes(c.state) && <button disabled={busy} onClick={() => void disconnect(c)}>断开网盘连接</button>}
       </section>;

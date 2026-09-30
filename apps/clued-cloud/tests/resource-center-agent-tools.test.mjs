@@ -28,7 +28,7 @@ test('discovery and guessed calls require both existing account/jobs flags; no p
       assert.equal(tools[0].annotations.readOnlyHint, false);
       assert.equal(tools[1].annotations.readOnlyHint, true);
       assert.equal(tools[0].inputSchema.additionalProperties, false);
-      assert.equal(tools[0].inputSchema.properties.mutation.oneOf.length, 3);
+      assert.equal(tools[0].inputSchema.properties.mutation.oneOf.length, 5);
     }
   }
   for (const name of ['clued_storage_begin', 'clued_storage_admission', 'clued_storage_grant', 'clued_storage_credential']) {
@@ -59,12 +59,13 @@ test('MCP requires an actual Binding transport and rejects caller authority befo
   } finally { globalThis.fetch = before; }
 });
 
-test('write, replace, delete and rename/move without a source version are rejected before any RPC or dispatch', async () => {
+test('write, delete, replace without a file version or content, and rename/move without a source version are rejected before any RPC or dispatch', async () => {
   const before = globalThis.fetch; let count = 0;
   const source = mutation.destination_path;
   const cases = [
     { operation: 'write', target_kind: 'file', destination_path: source, content: 'changed bytes' },
     { operation: 'replace', target_kind: 'file', destination_path: source, content: 'replacement bytes' },
+    { operation: 'replace', target_kind: 'file', destination_path: source, destination_file_version: '3' },
     { operation: 'move', target_kind: 'file', source_path: source, destination_path: 'G:/My Drive/Clued_资料中心/track/other-topic/example.md' },
     { operation: 'rename', target_kind: 'file', source_path: source, destination_path: 'G:/My Drive/Clued_资料中心/track/topic/renamed.md' },
     { operation: 'delete', target_kind: 'file', source_path: source },
@@ -167,6 +168,33 @@ test('rename and file move pass only in their exact shape and reach the same job
     { ...good[1], destination_path: root + '/other/b.md' }, { ...good[1], destination_path: good[1].source_path },
     { ...good[0], target_kind: 'directory' }, { ...good[0], source_file_version: '0' }, { ...good[0], source_file_version: 7 },
     { ...good[0], content: 'x' }, { ...good[1], directory_semantics: 'topic' },
+  ];
+  try {
+    for (const input of bad) {
+      const reply = await (await submit({ ...ref, mutation: input })).json();
+      assert.ok(reply.result?.isError === true || reply.error, JSON.stringify(input));
+    }
+    assert.equal(calls.length, 0);
+    for (const input of good) {
+      const reply = (await (await submit({ ...ref, mutation: input })).json()).result;
+      assert.equal(reply.isError, false);
+      assert.deepEqual(calls.at(-1).p_input, { ...ref, mutation: input, action: 'submit' });
+    }
+  } finally { globalThis.fetch = before; }
+});
+
+test('replace passes with new content or a restore job in its exact shape and reaches the same jobs RPC unchanged', async () => {
+  const before = globalThis.fetch; const calls = [];
+  globalThis.fetch = async (_url, init) => { calls.push(JSON.parse(init.body)); return Response.json(status()); };
+  const path = 'G:/My Drive/Clued_资料中心/track/topic/a.md';
+  const good = [
+    { operation: 'replace', target_kind: 'file', destination_path: path, destination_file_version: '7', content: 'new text' },
+    { operation: 'replace', target_kind: 'file', destination_path: path, destination_file_version: '9', restore_job_id: ref.job_id },
+  ];
+  const bad = [
+    { ...good[0], restore_job_id: ref.job_id }, { ...good[0], destination_file_version: '0' }, { ...good[0], destination_file_version: 7 },
+    { ...good[0], content: '字'.repeat(350000) }, { ...good[0], source_path: path }, { ...good[0], target_kind: 'directory' },
+    { ...good[1], restore_job_id: 'not-a-uuid' }, { ...good[1], directory_semantics: 'topic' },
   ];
   try {
     for (const input of bad) {
