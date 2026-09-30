@@ -785,6 +785,13 @@ changes. Existing connections keep working unchanged until the Owner turns on
   runs out inside a round, the page ends with `complete: false` and a cursor
   that repeats that folder chunk; only a page that cannot finish its first
   round answers `storage_read_unavailable`.
+  A Drive batch that times out or answers 429/5xx is retried once (250-750 ms
+  jitter, counted in the same budget, within the call's 25 s deadline); if it
+  still fails after round 1, search treats it like budget exhaustion
+  (`complete: false` + cursor). Round 1, list/stat/resolve/read and the
+  ancestor walk still fail closed. Workers logs carry only
+  `{event: "storage_read_drive_transient", code, outcome}` (retried /
+  absorbed / fatal); the qualification probe and executor never retry.
 - **Known follow-up (PR #418 review, minor 4).** The disclosure names the root
   by the registered profile's `managed_root` path, not by the folder name read
   from Drive; a folder renamed in Drive keeps showing the registered path.

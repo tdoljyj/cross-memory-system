@@ -247,7 +247,7 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 - `search` 增加 `text`（≤ 200 字符，转义 `\` 与 `'`）。现有 search 是 Worker 侧目录遍历：每轮取 ≤ `SEARCH_CHUNK = 32` 个目录，用一个 batch 请求列出子项（`'<id>' in parents`，`storage-google-metadata-batch.ts:159`），在 Worker 内按名称 / 类型过滤（`storage-read-agent.ts:410-446`）。
 - **选定方案：按父目录分块查询**（m-i）。`text` 存在时，每轮在原有子项列表 batch（继续承担目录遍历、名称与类型过滤）之外，再发一个 batch：同一块中每个目录一部分，查询 `'<id>' in parents and fullText contains '<text>' and trashed = false`（分页规则同 `listFolders`）。命中项是已判定在根内目录的直接子项，仍经 `scopedChildren` 处理多父对象（`storage-read-agent.ts:278-285`）。结果 = 全文命中 ∩ 名称 / 类型条件。
 - **不采用全账号查询再用 `inRoot` 过滤**：`drive.readonly` 下它会枚举整个 Drive 的命中，根外命中的元数据进入 Worker，且分页无上界、预算不可预测。
-- **预算**：`text` 搜索每轮消耗 2 个子请求（外加分页与多父复核），轮数上限仍为 `SEARCH_ROUNDS = 8`，保留 `SEARCH_RESERVE = 10`（`storage-read-agent.ts:18-21`）；预算或轮数耗尽时返回游标（`complete: false`），与现有语义一致。全文检索只覆盖 Drive 已建立索引的文件，响应带 `text_index: "provider"` 并在工具描述中说明可能漏检。
+- **预算**：`text` 搜索每轮消耗 2 个子请求（外加分页与多父复核），轮数上限仍为 `SEARCH_ROUNDS = 8`，保留 `SEARCH_RESERVE = 10`（`storage-read-agent.ts:18-21`）；预算或轮数耗尽时返回游标（`complete: false`），与现有语义一致。瞬时失败：Drive 批量请求超时、429 或 5xx 时，读取路径（仅读取，资格探测和执行器不重试）会在 250–750 ms 抖动后重试一次，重试计入 `SUBREQUEST_BUDGET` 并受整次调用 25 s 截止约束；重试后仍失败，搜索在第 1 轮之后把它当作预算耗尽处理（该块回队，返回 `complete: false` 与游标），第 1 轮以及 list / stat / resolve / read 仍失败即拒绝（`storage_read_unavailable`）。祖先遍历（`getFiles`）中的瞬时失败目前仍是致命的（已知限制）。日志只写固定标签 `{event: "storage_read_drive_transient", code, outcome}`。全文检索只覆盖 Drive 已建立索引的文件，响应带 `text_index: "provider"` 并在工具描述中说明可能漏检。
 - 因为命中本身泄露正文信息，`text` 需要 `normal` profile 且读取授权 `normal/1` 含 `read_content`，否则 `scope_upgrade_required`。N1。
 
 ### 5.3 `clued_storage_submit` 与 `clued_storage_upload_begin`
