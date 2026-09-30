@@ -33,6 +33,13 @@ on:
       - 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql'
       - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'
       - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'
+      - 'apps/clued-cloud/tests/mtpe-*.test.mjs'
+      - 'apps/clued-cloud/tests/production-release-gate.test.mjs'
+      - 'apps/clued-cloud/tests/served-agent-contract.test.mjs'
+      - 'apps/clued-cloud/scripts/production-release-*'
+      - 'apps/clued-cloud/scripts/verify-served-agent-contract.mjs'
+      - 'skills/clued/references/agent-contract.md'
+      - '.github/workflows/clued-cloud-production-release.yml'
       - 'apps/clued-cloud/package*.json'
   push:
     branches: [main]
@@ -67,6 +74,13 @@ on:
       - 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql'
       - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'
       - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'
+      - 'apps/clued-cloud/tests/mtpe-*.test.mjs'
+      - 'apps/clued-cloud/tests/production-release-gate.test.mjs'
+      - 'apps/clued-cloud/tests/served-agent-contract.test.mjs'
+      - 'apps/clued-cloud/scripts/production-release-*'
+      - 'apps/clued-cloud/scripts/verify-served-agent-contract.mjs'
+      - 'skills/clued/references/agent-contract.md'
+      - '.github/workflows/clued-cloud-production-release.yml'
       - 'apps/clued-cloud/package*.json'
   workflow_dispatch:
 
@@ -128,6 +142,8 @@ jobs:
       - run: npm run test:information-flow:invalidation
       - run: npm run test:information-flow:hardening
       - run: npm run test:records:db
+      - run: npm run test:mtpe:intake
+      - run: npm run test:production:release-gate
       - run: npm run test:integration-runtime:db
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
@@ -183,6 +199,8 @@ jobs:
       - run: npm run test:information-flow:invalidation
       - run: npm run test:information-flow:hardening
       - run: npm run test:records:db
+      - run: npm run test:mtpe:intake
+      - run: npm run test:production:release-gate
       - run: npm run test:integration-runtime:db
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
