@@ -273,7 +273,8 @@ export async function testAccountCloud(t, admin, server, user, decision) {
         { status: "denied", reason: { code, findings: [finding({ path: 7 })] } }, { status: "committed", reason: { code } },
       ]) await assert.rejects(report(job.reference, outcome), /storage_cloud_denied/, JSON.stringify(outcome).slice(0, 120));
       assert.deepEqual(await counters(), before); assert.equal((await jobRow(job)).dispatch_outcome, null);
-      const outcome = { status: "denied", reason: { code, findings: [finding(), finding({ path: "路".repeat(1000) })] } };
+      // The embedded test cluster may use SQL_ASCII, where length() counts bytes; production is UTF8.
+      const outcome = { status: "denied", reason: { code, findings: [finding(), finding({ path: "x".repeat(1000) }), finding({ path: "资料/岛.md" })] } };
       const reported = await report(job.reference, outcome);
       assert.equal(reported.status, "denied"); assert.equal(reported.reason_code, code); assert.equal(reported.findings, undefined);
       const row = await jobRow(job); assert.deepEqual(row.dispatch_outcome, outcome); assert.equal(row.intent_id, null);
