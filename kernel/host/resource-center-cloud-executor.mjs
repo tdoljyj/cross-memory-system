@@ -25,6 +25,20 @@ const logDiagnostic = (status,errorCode) => {
   const event=status==="deny"?"storage_cloud_denied":status==="unavailable"?"storage_cloud_unavailable":"storage_cloud_unreconciled";
   console.warn(JSON.stringify({event,error_code:code}));
 };
+// The Owner-private reason stored with a pre-reservation dispatch outcome.
+// Only fixed labels and the boundary scan's own finding paths; never logged.
+const reasonCode = /^[A-Z][A-Z0-9_]{2,63}$/;
+const findingReason = /^[a-z][a-z0-9_]{2,63}$/;
+export function cloudDispatchOutcome(result) {
+  const status = result?.status==="deny" ? "denied" : "attention_required";
+  const code = result?.error_code;
+  if (typeof code!=="string" || !reasonCode.test(code)) return {status};
+  const findings = status==="denied" && Array.isArray(result.findings) ? result.findings
+    .filter(f=>typeof f?.path==="string" && f.path.length>0 && !f.path.includes("\u0000") &&
+      typeof f.reason==="string" && findingReason.test(f.reason))
+    .slice(0,10).map(f=>({path:Array.from(f.path).slice(0,1000).join(""),reason:f.reason})) : [];
+  return {status,reason:findings.length ? {code,findings} : {code}};
+}
 // Only Clued's own fixed labels (never an exception or provider text) name an
 // unavailable run: descriptor/shape checks, DRIVE_BOUNDARY_* scan refusals,
 // Drive transport categories, credential closure labels and provider identity codes.
@@ -352,8 +366,9 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       return result.status==="committed" ? {status:"committed",job_id:ref.job_id,receipt_id:result.canonical_receipt_id,execution_permitted:false} :
         {status:result.status,error_code:result.error_code,side_effects:result.side_effects,execution_permitted:false};
     }catch(error){
-      logDiagnostic("unavailable",unavailableCode(error));
-      return unavailable();
+      const code=unavailableCode(error);
+      logDiagnostic("unavailable",code);
+      return code==="UNSPECIFIED" ? unavailable() : {...unavailable(),error_code:code};
     }
   }});
 }

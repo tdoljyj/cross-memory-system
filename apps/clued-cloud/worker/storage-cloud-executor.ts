@@ -1,4 +1,4 @@
-import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
+import { cloudDispatchOutcome, createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-postcondition.mjs";
@@ -140,8 +140,18 @@ export async function createStorageCloudWorker(config: {
       }
       const result=await executor.run(reference);
       if (loaded && ["deny","unavailable","unreconciled"].includes(result.status)) {
-        try { await config.rpc({...reference,action:"report",credential_version:(loaded as Data).credential_version,
-          outcome:{status:result.status==="deny"?"denied":"attention_required"}}); }
+        // Account-policy mode stores the fixed reason (and, for a boundary denial, the
+        // scan's finding paths) in the Owner's private job row. It is never logged. A
+        // server that predates the reason, or refuses its shape, still gets the plain outcome.
+        const report=(outcome: Data) => config.rpc({...reference,action:"report",
+          credential_version:(loaded as Data).credential_version,outcome});
+        const outcome=cloudDispatchOutcome(result) as Data;
+        const plain={status:outcome.status};
+        try {
+          if (config.account_policy_v2 === true && "reason" in outcome) {
+            try { await report(outcome); } catch { await report(plain); }
+          } else await report(plain);
+        }
         catch { /* Never redispatch. Original Canonical journal remains authoritative. */ }
       }
       return result;

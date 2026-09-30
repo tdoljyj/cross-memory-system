@@ -804,6 +804,14 @@ changes. Existing connections keep working unchanged until the Owner turns on
   becomes `attention_required`; fixed codes such as `DRIVE_BOUNDARY_*`,
   `CLOUD_MUTATION_SHAPE_INVALID`, `STORAGE_CREDENTIAL_*`, else `UNSPECIFIED`).
   Neither event carries IDs, paths or provider text.
+  In account-policy mode the same fixed code is also stored in the database
+  (migration `20260930230000_storage_dispatch_reason_v1`): the job's
+  `dispatch_outcome` is `{status, reason:{code, findings?}}`, where `findings`
+  (a denial only, at most 10, each `{path, reason}`) are the boundary scan's
+  offending paths, e.g. `select dispatch_outcome from
+  clued_private.storage_jobs_v1 where job_id=...`. `clued_storage_inspect`
+  shows only `reason_code`; the paths stay in the Owner's rows. A Worker
+  released before the migration falls back to the plain `{status}`.
 
 Before N1 acceptance (§2.4 items 7-8, not verifiable here): verify with a real
 Google account whether revoking the legacy token invalidates the normal one and

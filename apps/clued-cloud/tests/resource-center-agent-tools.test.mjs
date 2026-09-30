@@ -114,6 +114,27 @@ test('inspect all durable states is read-only; repeated submit keeps the exact i
   } finally { globalThis.fetch = before; }
 });
 
+test('inspect exposes only the fixed reason_code of a denied or attention_required job', async () => {
+  const before = globalThis.fetch; let reply;
+  globalThis.fetch = async () => Response.json(reply);
+  const inspect = async () => (await (await call('clued_storage_inspect', ref, env, { waitUntil: () => {} })).json()).result;
+  try {
+    for (const state of ['denied', 'attention_required']) {
+      reply = { ...status(state), reason_code: 'UNAUTHORIZED_WORKSPACE_MUTATION',
+        findings: [{ path: 'G:/My Drive/Clued_private.md', reason: 'unregistered_clued_resource_location' }] };
+      const r = await inspect();
+      assert.equal(r.isError, false); assert.equal(r.structuredContent.reason_code, 'UNAUTHORIZED_WORKSPACE_MUTATION');
+      assert.equal(JSON.stringify(r).includes('Clued_private'), false);
+    }
+    for (const bad of [{ ...status('committed'), reason_code: 'UNAUTHORIZED_WORKSPACE_MUTATION' },
+      { ...status('denied'), reason_code: 'not a code' }, { ...status('denied'), reason_code: 7 }]) {
+      reply = bad; const r = await inspect();
+      assert.equal(r.isError, true); assert.equal(r.structuredContent.reason_code, undefined);
+    }
+    reply = status('denied'); assert.equal('reason_code' in (await inspect()).structuredContent, false);
+  } finally { globalThis.fetch = before; }
+});
+
 test('database denials/lost replies do not retry, disclose internal diagnostics or assert completion', async () => {
   const before = globalThis.fetch; let count = 0;
   try {
