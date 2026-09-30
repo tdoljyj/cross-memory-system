@@ -171,3 +171,21 @@ test("provider-attempt journal is durable, exact, single-append and recovery-onl
   await assert.rejects(restarted.read_provider_attempt(intent, "b".repeat(64)), /ATTEMPT_MISMATCH/);
   assert.equal(typeof restarted.start, "undefined");
 });
+
+// StorageNormalUse.v0.1 §2.2: writes accept either allowed profile; any other set is refused before any request.
+test("scope profiles: native create accepts legacy and normal grants and refuses every other set", async () => {
+  const legacy = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
+  for (const scope of [legacy + " https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.readonly " + legacy + " https://www.googleapis.com/auth/drive.file"]) {
+    const f = fixture({ get_credential: async () => ({ access_token: "native-test-access-token", scope }) });
+    assert.equal((await f.effect(f.request)).provider_file_id, "generated-id", scope);
+  }
+  for (const scope of [legacy + " https://www.googleapis.com/auth/drive", legacy + " https://www.googleapis.com/auth/drive.metadata",
+    "https://www.googleapis.com/auth/drive.file", undefined]) {
+    let requests = 0;
+    const f = fixture({ get_credential: async () => ({ access_token: "native-test-access-token", scope }),
+      fetch: async () => { requests++; throw new Error("must not call Drive"); } });
+    await assert.rejects(f.effect(f.request), /DRIVE_NATIVE_GRANT_UNAVAILABLE/, String(scope));
+    assert.equal(requests, 0);
+  }
+});

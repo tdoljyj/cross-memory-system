@@ -4,13 +4,13 @@ import { createGoogleDriveModifyPostconditionVerifier } from "../../../kernel/ho
 import { createGoogleDriveReplacePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-replace-postcondition.mjs";
 import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
+import { scopeProfile } from "./storage-google-scopes";
 
 type Data = Record<string, unknown>;
 type Reference = { connection_id: string; job_id: string };
 const object = (v: unknown): v is Data => !!v && typeof v === "object" && !Array.isArray(v);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const providerId = /^[A-Za-z0-9_-]{1,160}$/;
-const scopes = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const denied = () => new Error("storage_recovery_unavailable");
 
 /** Private settlement-only composition. The trusted RPC must independently
@@ -76,8 +76,7 @@ export async function createStorageCloudRecovery(config: {
           credential_version: Number(d.credential_version),
         })); check();
         if (!object(token) || token.token_type !== "Bearer" || typeof token.access_token !== "string" ||
-            token.access_token.length < 16 || typeof token.scope !== "string" ||
-            [...new Set(token.scope.split(/\s+/))].sort().join(" ") !== scopes ||
+            token.access_token.length < 16 || scopeProfile(token.scope) === null ||
             !Number.isFinite(token.expires_at_ms) || !Number.isFinite(clock()) ||
             Number(token.expires_at_ms) - clock() <= timeout + 1000) throw denied();
         return { access_token: token.access_token, scope: token.scope };

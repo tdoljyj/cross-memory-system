@@ -147,6 +147,11 @@ export async function testStorageRead(t, admin, server, user, decision) {
       assert.deepEqual(admitted.credential_envelope, { sealed: true }); assert.equal(admitted.credential_version, 1);
       assert.equal(admitted.oauth_client_id, oauthClient); assert.equal(admitted.provider_subject, "storage-read-subject");
       assert.equal(admitted.binding_id, client.id, "cursors are bound to the admitted Binding");
+      // StorageNormalUse N0a: the Worker cross-checks the sealed set against these.
+      assert.equal(admitted.provider_scope_profile, "legacy"); assert.equal(admitted.content_profile, "text/1");
+      const access = (await admin.query("select id,content_profile from clued_private.storage_read_access_v1 where connection_id=$1 and state='active'", [target.connection])).rows[0];
+      assert.equal(access.content_profile, "text/1");
+      await assert.rejects(admin.query("update clued_private.storage_read_access_v1 set content_profile='normal/1' where id=$1", [access.id]), /storage_read_access_immutable/);
       const row = (await admin.query("select * from clued_private.storage_read_receipts_v1 where id=$1", [admitted.receipt_id])).rows[0];
       assert.equal(row.state, "intent"); assert.equal(row.lineage_id, client.lineage); assert.equal(row.condition_hmac, hmac);
       assert.equal(row.operation, "search"); assert.equal(row.item_count, null);

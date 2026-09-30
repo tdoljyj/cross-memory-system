@@ -1,11 +1,7 @@
+import { NAMESPACE_READ_SCOPES as NAMESPACE_SCOPE_LIST } from "./resource-center-google-scopes.mjs";
 const DRIVE_API = "https://www.googleapis.com/drive/v3/files";
 const FIELDS = "id,name,mimeType,parents,version,trashed,size,sha256Checksum,md5Checksum,headRevisionId";
-const NAMESPACE_READ_SCOPES = new Set([
-  "https://www.googleapis.com/auth/drive.metadata.readonly",
-  "https://www.googleapis.com/auth/drive.metadata",
-  "https://www.googleapis.com/auth/drive.readonly",
-  "https://www.googleapis.com/auth/drive",
-]);
+const NAMESPACE_READ_SCOPES = new Set(NAMESPACE_SCOPE_LIST);
 
 function driveLiteral(value) {
   if (typeof value !== "string" || !value || value.length > 1000) {

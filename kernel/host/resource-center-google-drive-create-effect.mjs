@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
+import { scopeProfile } from "./resource-center-google-scopes.mjs";
 
 const API = "https://www.googleapis.com/drive/v3/files";
 const UPLOAD = "https://www.googleapis.com/upload/drive/v3/files";
@@ -25,10 +26,9 @@ export function createGoogleDriveNativeCreateEffect({
   const profile = structuredClone(trustedProfile);
   async function request(url, options = {}, expiresAt) {
     const credential = await getCredential();
-    const grants = new Set(credential?.scope?.split(/\s+/));
+    // Writes accept either allowed profile (StorageNormalUse §2.2); any other set is refused.
     if (typeof credential?.access_token !== "string" || credential.access_token.length < 16 ||
-      !grants.has("https://www.googleapis.com/auth/drive.file") ||
-      !grants.has("https://www.googleapis.com/auth/drive.metadata.readonly")) fail("DRIVE_NATIVE_GRANT_UNAVAILABLE");
+      scopeProfile(credential.scope) === null) fail("DRIVE_NATIVE_GRANT_UNAVAILABLE");
     // Credentials may refresh asynchronously. Nothing awaited may intervene
     // between this final TTL check and dispatch of the only storage POST.
     if (options.method === "POST") {

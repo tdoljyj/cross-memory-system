@@ -4,12 +4,12 @@ import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-cent
 import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-postcondition.mjs";
 import { createStorageFetch } from "./storage-fetch";
 import { createStorageGoogleMetadataBatch } from "./storage-google-metadata-batch";
+import { scopeProfile } from "./storage-google-scopes";
 
 type Data = Record<string, unknown>;
 type Reference = {connection_id: string; job_id: string};
 const object = (value: unknown): value is Data => !!value && typeof value === "object" && !Array.isArray(value);
 const denied = () => new Error("storage_cloud_unavailable");
-const scopes="https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 
 /** Private server bridge. The fixed RPC authenticates the issuer and derives
  * owner/profile/writer from Canonical job state. No raw result is an API reply.
@@ -39,7 +39,7 @@ export async function createStorageCloudWorker(config: {
       try { token = JSON.parse(await vault.open(loaded.credential_envelope as StorageCredentialEnvelope,context)); }
       catch { throw reject("STORAGE_CREDENTIAL_OPEN_FAILED"); }
       if (!object(token) || token.token_type !== "Bearer" || typeof token.access_token !== "string" || token.access_token.length<16 ||
-        typeof token.scope!=="string" || [...new Set(token.scope.split(/\s+/))].sort().join(" ")!==scopes ||
+        scopeProfile(token.scope)===null ||
         !Number.isFinite(token.expires_at_ms)) throw reject("STORAGE_CREDENTIAL_INVALID");
       if (Number(token.expires_at_ms)-(config.clock??Date.now)()<=60000) {
         if (!recoveryMode || refreshed || !config.recovery_refresh) throw reject("STORAGE_CREDENTIAL_EXPIRING");

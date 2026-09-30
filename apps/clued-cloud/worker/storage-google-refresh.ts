@@ -1,9 +1,8 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
+import { scopeProfile, scopeString, type StorageScopeProfile } from "./storage-google-scopes";
 
-const scope = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const scopesMatch = (value: unknown) => typeof value === "string" && [...new Set(value.split(/\s+/))].sort().join(" ") === scope.split(" ").sort().join(" ");
 type Data = Record<string, unknown>;
 const object = (value: unknown): value is Data => !!value && typeof value === "object" && !Array.isArray(value);
 const denied = () => new Error("storage_refresh_unavailable");
@@ -42,7 +41,7 @@ export async function createStorageGoogleRefresh(config: {
         catch { /* Unknown settlement remains fenced. Never log the upstream data. */ }
         return { status: "unavailable" };
       };
-      let context: StorageCredentialContext, previous: Data, deadline: number;
+      let context: StorageCredentialContext, previous: Data, deadline: number, profile: StorageScopeProfile | null = null;
       try {
         deadline = Date.parse(String(claimed.expires_at));
         if (claimed.connection_id !== connection || claimed.attempt_id !== attempt || !uuid.test(String(claimed.owner_id)) ||
@@ -53,7 +52,8 @@ export async function createStorageGoogleRefresh(config: {
         context = { owner_id: String(claimed.owner_id), connection_id: connection, provider: "google-drive", provider_subject: String(claimed.provider_subject),
           oauth_client_id: config.client_id, credential_version: Number(claimed.credential_version) };
         previous = JSON.parse(await vault.open(claimed.credential_envelope as StorageCredentialEnvelope, context));
-        if (!object(previous) || !scopesMatch(previous.scope) || previous.token_type !== "Bearer" || typeof previous.refresh_token !== "string" || previous.refresh_token.length < 16) throw denied();
+        if (object(previous)) profile = scopeProfile(previous.scope);
+        if (!object(previous) || profile === null || previous.token_type !== "Bearer" || typeof previous.refresh_token !== "string" || previous.refresh_token.length < 16) throw denied();
       } catch { return failure("credential_invalid"); }
       const start = clock();
       if (!Number.isFinite(start) || start >= deadline) return failure("credential_invalid");
@@ -70,11 +70,13 @@ export async function createStorageGoogleRefresh(config: {
         return { status: "uncertain" };
       }
       try {
-        // RFC 6749 allows omitted scope when unchanged. Never accept an explicit
-        // expansion/reduction; omitted refresh_token preserves the existing one.
+        // RFC 6749 allows omitted scope when unchanged. A refresh never changes
+        // the sealed profile (StorageNormalUse §2.2 item 4): any other explicit
+        // scope fails here and the connection needs fresh consent. An omitted
+        // refresh_token preserves the existing one.
         if (tokens.token_type !== "Bearer" || typeof tokens.access_token !== "string" || tokens.access_token.length < 16 ||
             !Number.isInteger(tokens.expires_in) || Number(tokens.expires_in) < 120 || Number(tokens.expires_in) > 86400 ||
-            (tokens.scope !== undefined && !scopesMatch(tokens.scope)) ||
+            (tokens.scope !== undefined && scopeProfile(tokens.scope) !== profile) ||
             (tokens.refresh_token !== undefined && (typeof tokens.refresh_token !== "string" || tokens.refresh_token.length < 16))) throw denied();
         const about = await metadata("https://www.googleapis.com/drive/v3/about?fields=user(permissionId,me)", tokens.access_token);
         if (!object(about.user) || about.user.me !== true || about.user.permissionId !== context.provider_subject) throw denied();
@@ -86,7 +88,7 @@ export async function createStorageGoogleRefresh(config: {
         const expires = start + Number(tokens.expires_in)*1000, now = clock();
         if (!Number.isFinite(now) || now < start || now >= deadline || expires - now <= 60000) throw denied();
         const envelope = await vault.seal(JSON.stringify({ access_token: tokens.access_token,
-          refresh_token: tokens.refresh_token ?? previous.refresh_token, token_type: "Bearer", scope, expires_at_ms: expires }),
+          refresh_token: tokens.refresh_token ?? previous.refresh_token, token_type: "Bearer", scope: scopeString(profile!), expires_at_ms: expires }),
           { ...context, credential_version: context.credential_version + 1 });
         const commit = { action: "commit", connection_id: connection, attempt_id: attempt, credential_envelope: envelope, expires_at: new Date(expires).toISOString() };
         // Only retry this exact ciphertext commit, which is CAS + receipt-backed.

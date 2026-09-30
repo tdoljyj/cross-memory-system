@@ -70,7 +70,7 @@ if(process.env.CLUED_RECOVERY_RUNTIME_CHILD!=='1') {
         }}});
       const verifiedResult=await verified.run(base.reference);
       let prepared,credentialDone=false,tokenPosts=0,oauthGets=0;
-      const descriptor={...d,connection_version:1,credential_version:2,redirect_uri:'https://example.invalid/storage/google/callback'};
+      const descriptor={...d,connection_version:1,credential_version:2,redirect_uri:'https://example.invalid/storage/google/callback',provider_scope_profile:'legacy'};
       const oauthConfig={client_id:'fixture-client',client_secret:'fixture-private-client-secret',redirect_uri:descriptor.redirect_uri,vault:vaultConfig,
         rpc:async input=>{
           if(input.action==='describe'){if(input.job_id!==ids.job)throw Error('wrong job');return descriptor;}

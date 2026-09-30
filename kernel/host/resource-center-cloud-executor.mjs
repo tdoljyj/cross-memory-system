@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { createResourceCenterOnlineToolHost } from "./resource-center-online-tool-host.mjs";
 import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-metadata.mjs";
+import { scopeProfile } from "./resource-center-google-scopes.mjs";
 import { createGoogleDriveProviderIdentityResolver } from "./resource-center-google-drive-identity.mjs";
 import { createGoogleDriveBoundaryScanner } from "./resource-center-google-drive-boundary.mjs";
 import { createGoogleDriveNativeCreateEffect } from "./resource-center-google-drive-create-effect.mjs";
@@ -15,7 +16,6 @@ import { RESOURCE_CENTER_POLICY_VERSION, bindResourceCenterMutation } from "../p
 
 const uuid = value => typeof value==="string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-const scopes = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const fail = () => { throw new Error("CLOUD_EXECUTOR_UNAVAILABLE"); };
 const unavailable = () => ({status:"unavailable",execution_permitted:false});
 const logDiagnostic = (status,errorCode) => {
@@ -138,7 +138,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           provider_subject:descriptor.provider_subject,credential_version:descriptor.credential_version}));
         if(!c || c.owner_id!==descriptor.owner_id || c.connection_id!==descriptor.connection_id || c.provider_subject!==descriptor.provider_subject ||
           c.credential_version!==descriptor.credential_version || typeof c.scope!=="string" ||
-          [...new Set(c.scope.split(/\s+/))].sort().join(" ")!==scopes ||
+          scopeProfile(c.scope)===null ||
           !Number.isFinite(c.expires_at_ms)||c.expires_at_ms-clock()<=60000) fail();
         return c;
       };
