@@ -37,7 +37,15 @@ async function accountRequest(body: object, path = "/v1/storage/owner") {
   if (!isObject(result)) throw new Error("连接状态未确认。");
   return result;
 }
+type ReadAccess = { active: boolean; read_generation: number; disclosure_version: string };
+function isReadAccess(value: unknown): value is ReadAccess {
+  return isObject(value) && typeof value.active === "boolean" && Number.isSafeInteger(value.read_generation)
+    && typeof value.disclosure_version === "string";
+}
 export default function StorageConnections() {
+  // Read level (StorageFullCapability P1) is loaded on demand per connection so
+  // the everyday page stays one request; every change is a native CAS mutation.
+  const [readAccess, setReadAccess] = useState<Record<string, ReadAccess>>({});
   const [connections, setConnections] = useState<Connection[]>([]);
   const [workerEnabled, setWorkerEnabled] = useState(false);
   const [message, setMessage] = useState("正在读取连接……");
@@ -91,6 +99,46 @@ export default function StorageConnections() {
     } catch { if (epoch === revision.current) setMessage("Google 连接请求未确认，请刷新状态后核对。"); }
     finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
+  async function loadReadAccess(c: Connection) {
+    if (operation.current || busy) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      const result = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access");
+      if (epoch !== revision.current) return;
+      if (!isReadAccess(result)) throw new Error("查看设置未确认。");
+      setReadAccess(current => ({ ...current, [c.id]: result }));
+    } catch { if (epoch === revision.current) setMessage("Agent 查看设置未确认，请稍后重试。"); }
+    finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  async function toggleRead(c: Connection) {
+    const current = readAccess[c.id];
+    if (operation.current || busy || !current) return;
+    const enable = !current.active;
+    if (!window.confirm(enable
+      ? "允许已授权的 Agent 查看此目录内的文件名、类型和目录结构？不读取文件内容，不修改任何文件；可随时停止。"
+      : "停止 Agent 查看此目录的文件名和目录结构？已经返回给 Agent 的结果无法收回。")) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      const result = await accountRequest({ action: "set_classes", connection_id: c.id, classes: enable ? ["read"] : [],
+        base_generation: current.read_generation, disclosure_version: current.disclosure_version, idempotency_key: crypto.randomUUID() },
+      "/v1/storage/read-access");
+      if (epoch !== revision.current) return;
+      if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
+      const latest = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access");
+      if (epoch !== revision.current) return;
+      if (!isReadAccess(latest)) throw new Error("查看设置未确认。");
+      setReadAccess(state => ({ ...state, [c.id]: latest }));
+      setMessage(latest.active === enable ? `${enable ? "已允许" : "已停止"} Agent 查看目录结构。回执：${result.receipt_id}`
+        : "已提交，但最新状态未确认。请核对原回执。");
+    } catch {
+      if (epoch === revision.current) {
+        setReadAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
+        setMessage("Agent 查看设置结果未确认。请重新读取设置并核对，勿重复提交。");
+      }
+    } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
   async function disconnect(c: Connection) {
     if (operation.current || busy || c.state === "revoked") return;
     if (!window.confirm("断开整个网盘连接？会停止此连接的后续存储操作与后台续签，不删除 Google Drive 文件。已开始的操作可能仍需核对原回执；断开后不再允许读取提供方来恢复未确认的结果。")) return;
@@ -127,6 +175,12 @@ export default function StorageConnections() {
           连接后开启后台续签</label>}
         {["awaiting_provider", "reauthorization_required"].includes(c.state) &&
           <button disabled={busy} onClick={() => void connect(c)}>连接／重新授权 Google</button>}
+        {c.state === "active" && c.auth_mode === "account_policy" && c.policy_active && <div className="my-2">
+          <p>Agent 查看目录结构：{readAccess[c.id] ? (readAccess[c.id].active ? "已允许（只看文件名和目录，不读内容）" : "未允许") : "未读取"}</p>
+          {readAccess[c.id]
+            ? <button disabled={busy} onClick={() => void toggleRead(c)}>{readAccess[c.id].active ? "停止 Agent 查看目录结构" : "允许 Agent 查看目录结构"}</button>
+            : <button disabled={busy} onClick={() => void loadReadAccess(c)}>读取 Agent 查看设置</button>}
+        </div>}
         {["active", "reauthorization_required"].includes(c.state) && <button disabled={busy} onClick={() => void disconnect(c)}>断开网盘连接</button>}
       </section>;
     })}
