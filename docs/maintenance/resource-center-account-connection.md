@@ -571,7 +571,8 @@ steps run with operation-specific checks.
   - the ancestor chain has the same folder IDs (folder versions are not
     pinned, since Drive may advance them when children change);
   - its content identity is unchanged;
-  - the old name no longer names it;
+  - for a rename, the old name no longer lists it; for a move, its only
+    parent is the destination;
   - two reads agree on its version.
   A version that jumps by more than one is recorded, not treated as failure.
 - Settlement updates the same Artifact by CAS on the version the authority saw

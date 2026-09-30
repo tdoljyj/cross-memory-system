@@ -15,7 +15,8 @@ const nameOf = (path) => path.slice(path.lastIndexOf("/") + 1);
 export function contentIdentity(file) {
   const value = { size: file?.size ?? null, sha256: file?.sha256Checksum ?? null, md5: file?.md5Checksum ?? null,
     head_revision_id: file?.headRevisionId ?? null };
-  return /^(0|[1-9]\d{0,19})$/.test(value.size ?? "") && /^[A-Za-z0-9_-]{1,200}$/.test(value.head_revision_id ?? "") &&
+  return typeof value.size === "string" && typeof value.head_revision_id === "string" &&
+    /^(0|[1-9]\d{0,19})$/.test(value.size) && /^[A-Za-z0-9_-]{1,200}$/.test(value.head_revision_id) &&
     (value.sha256 === null || /^[0-9a-f]{64}$/.test(value.sha256)) && (value.md5 === null || /^[0-9a-f]{32}$/.test(value.md5)) &&
     (value.sha256 !== null || value.md5 !== null) ? Object.freeze(value) : null;
 }

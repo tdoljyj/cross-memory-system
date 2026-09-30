@@ -42,6 +42,7 @@ export function createGoogleDriveModifyPostconditionVerifier({
       !shape.source.startsWith(root + "/") || effect?.operation !== shape.operation ||
       effect.source_path !== shape.source || effect.destination_path !== shape.destination ||
       !/^[A-Za-z0-9_-]{1,160}$/.test(effect.provider_file_id ?? "") ||
+      Object.keys(effect.content ?? {}).sort().join(",") !== "head_revision_id,md5,sha256,size" ||
       !contentIdentity(effect.content ? { size: effect.content.size, sha256Checksum: effect.content.sha256,
         md5Checksum: effect.content.md5, headRevisionId: effect.content.head_revision_id } : null) ||
       before?.root_folder_id !== rootId || before.root_parent_id !== rootParentId ||
@@ -87,8 +88,9 @@ export function createGoogleDriveModifyPostconditionVerifier({
       const parent = await parentIdentity();
       const seen = await observe(parent);
       if (seen && seen.listed.version === seen.file.version) {
-        // The old name must no longer name this file. For a rename the old
-        // entry is in the same parent; for a move it is in the source parent.
+        // The old name must no longer name this file. For a rename it is
+        // re-listed in the same parent; for a move, observe() already requires
+        // the file's only parent to be the destination.
         const oldParent = shape.operation === "rename" ? parent.id : null;
         const vacated = oldParent ? await listChildren({ parent_id: oldParent, name: shape.source_name }) : [];
         if (!Array.isArray(vacated)) fail("DRIVE_LIST_INVALID");
