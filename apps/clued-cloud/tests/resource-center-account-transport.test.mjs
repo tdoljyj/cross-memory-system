@@ -73,3 +73,27 @@ test("owner storage management fails closed on database rejection",async()=>{
     assert.equal(response.status,403);assert.equal((await response.text()).includes("private"),false);
   } finally {globalThis.fetch=original;}
 });
+test("Agent read-level control is native-only and routes to its exact RPC",async()=>{
+  const original=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,init)=>{
+    calls.push({url:String(url),headers:new Headers(init.headers),body:init.body});
+    if(String(url).endsWith("/auth/v1/user"))return Response.json({id:"fixture-owner"});
+    if(calls.length>2)return Response.json({message:"private",code:"42501"},{status:403});
+    return Response.json({active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1"});
+  };
+  const readRequest=(body,token="fixture-native-jwt")=>new Request(origin+"/v1/storage/read-access",{
+    method:"POST",headers:{"content-type":"application/json",origin,authorization:"Bearer "+token},body:JSON.stringify(body)});
+  try {
+    assert.equal((await worker.fetch(readRequest({action:"status"}),{})).status,404);
+    assert.equal((await worker.fetch(readRequest({action:"status"},"clued_bnd_"+"a".repeat(64)),env)).status,401);
+    assert.equal(calls.length,0);
+    const input={action:"status",connection_id:"20000000-0000-4000-8000-000000000001"};
+    const ok=await worker.fetch(readRequest(input),env);
+    assert.equal(ok.status,200);assert.equal(ok.headers.get("cache-control"),"no-store");
+    assert.equal(calls[1].url,env.SUPABASE_URL+"/rest/v1/rpc/clued_storage_read_access_v1");
+    assert.equal(calls[1].headers.get("authorization"),"Bearer fixture-native-jwt");
+    assert.deepEqual(JSON.parse(calls[1].body),{p_input:input});
+    const denied=await worker.fetch(readRequest(input),env);
+    assert.equal(denied.status,403);assert.equal((await denied.text()).includes("private"),false);
+  } finally {globalThis.fetch=original;}
+});

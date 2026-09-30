@@ -403,3 +403,45 @@ vault and Google client ID.
 
 Production application, the read switch, the secrets and the Owner's first
 `set_classes` each need separate Owner approval.
+
+### P1 rollout runbook
+
+Each step needs its own Owner approval, in this order. If a step fails, stop and
+report; never skip ahead or retry with different inputs.
+
+1. **Production migration.** Apply `20260930010000_storage_read_access_v1.sql`
+   byte-for-byte to the production database.
+   - Before: the migration is not registered and `storage_read_access_v1` does not exist.
+   - After: the registered statement's SHA-256 equals the repository file.
+   - Check ACLs: `clued_storage_read_v1` is `anon` only and
+     `clued_storage_read_access_v1` is `authenticated` only.
+   - Check the closed state: every `storage_oauth_apps_v1.read_enabled` is false,
+     and the three new tables are empty.
+2. **Production release.** Dispatch the Clued Cloud production release on `main`
+   and confirm the post-deploy attestation names the released commit. After this,
+   `/v1/storage/read-access` and the page control exist, but the read tool is
+   still hidden, because `CLUED_STORAGE_READ_V1` is unset.
+3. **Read keys.** Run `Clued Storage read config` with `provision_keys` and the
+   authorizing Decision ID. It creates the two keys only if they are missing, and
+   never prints them.
+4. **Owner enables read.** On `/storage/connections`, choose "读取 Agent 查看设置",
+   then "允许 Agent 查看目录结构". Keep the receipt ID.
+5. **Open both read switches.**
+   - Database: set `read_enabled=true` for the one fixed issuer row.
+   - Worker: run `Clued Storage read config` with `enable`.
+6. **Live read-only acceptance** with a qualified client's own Binding, against
+   the registered root:
+   - `list` the root and one track;
+   - `stat` one known file;
+   - `search` a known name;
+   - `resolve` one root-relative path;
+   - `stat` one ID outside the root, which must return `not_found_in_scope`.
+   
+   Then check that each call left one `finalized` read receipt with counts only,
+   and that no Drive object changed.
+7. **Rollback**, any time, in any order:
+   - `Clued Storage read config` with `disable`;
+   - `read_enabled=false`;
+   - the Owner chooses "停止 Agent 查看目录结构".
+   
+   None of these touches the write policy or queued jobs.

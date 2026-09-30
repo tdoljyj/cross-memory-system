@@ -72,3 +72,25 @@ test("unknown disconnect result does not resend or claim success",async()=>{
   assert.equal(f.calls.length,3);f.respond(2,{connections:[active],worker_execution_enabled:false});await f.settle();
   assert.match(f.text(),/断开结果未确认/);assert.equal(f.calls.length,3);
 });
+test("Agent read level is loaded on demand and toggled by one native CAS mutation with readback",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
+  assert.equal(f.calls.length,1,"the everyday page stays one request");
+  assert.match(f.text(),/Agent 查看目录结构：未读取/);
+  f.button("读取 Agent 查看设置").props.onClick();await f.settle();
+  assert.equal(f.calls[1].url,"/v1/storage/read-access");
+  assert.deepEqual(JSON.parse(f.calls[1].init.body),{action:"status",connection_id:active.id});
+  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1"});await f.settle();
+  const allow=f.button("允许 Agent 查看目录结构");allow.props.onClick();allow.props.onClick();await f.settle();
+  assert.equal(f.calls.length,3);assert.match(f.prompts.at(-1),/不读取文件内容，不修改任何文件/);
+  assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:"set_classes",connection_id:active.id,classes:["read"],
+    base_generation:0,disclosure_version:"clued.storage-read-disclosure/1",idempotency_key:"fixture-id"});
+  f.respond(2,{status:"committed",receipt_id:"fixture-read-receipt"});await f.settle();
+  f.respond(3,{active:true,read_generation:1,disclosure_version:"clued.storage-read-disclosure/1"});await f.settle();
+  assert.match(f.text(),/已允许 Agent 查看目录结构。回执：fixture-read-receipt/);
+  assert.match(f.text(),/已允许（只看文件名和目录，不读内容）/);
+  const stop=f.button("停止 Agent 查看目录结构");stop.props.onClick();await f.settle();
+  assert.deepEqual(JSON.parse(f.calls[4].init.body).classes,[]);assert.equal(JSON.parse(f.calls[4].init.body).base_generation,1);
+  f.respond(4,{error:"private"},403);await f.settle();
+  assert.match(f.text(),/Agent 查看设置结果未确认/);assert.match(f.text(),/Agent 查看目录结构：未读取/);
+  assert.equal(f.calls.length,5,"an unknown result is never resent");
+});
