@@ -73,11 +73,35 @@ Registration and request links are immutable. A source request cannot create
 two lineages or be reused as a later generation. A successor preserves exact
 issuer/resource/client ID, requires the prior active capability revoked, and
 uses a new reviewed request. Qualification has a new capability ID and monotonic
-version; it does not clear any account or root deny. Every new request requires
-its own reviewed link, even if client ID/name/digests look identical.
+version; it does not clear any account or root deny. A new request needs its
+own reviewed link unless it inherits by redirect identity (below); matching
+client ID, name or digests alone never qualify it.
 An existing issuer/resource/client ID must use its original lineage; a new
 request cannot register a parallel lineage to escape its deny history. Ambiguous
 pre-existing lineages fail closed instead of selecting one by name or age.
+
+## Redirect identity inheritance
+
+Migration `20260930040000_storage_client_redirect_identity_v3.sql`. Hosted
+connectors register a fresh DCR client on every reconnect. An approved request
+with no reviewed link inherits the one active qualified lineage whose anchor
+registration (`source_request_id`) has the same redirect identity: exact issuer,
+resource, sorted requested scopes and exact redirect URI. The authorization code
+only reaches that URI, so a look-alike registration cannot obtain the token.
+
+- Only `https` redirects on a public DNS host inherit. Loopback, IP-literal,
+  `localhost`, `.localhost` and `.local` redirects never do; those clients still
+  need a reviewed link per request.
+- Nothing is written. `clued_private.storage_client_request_link_v3(request)`
+  returns the reviewed link, or the derived one, or nothing; every storage
+  evaluator and Owner list reads links only through it, and
+  `storage_client_request_matches_v3` replaces the exact client-ID comparison.
+- A reviewed link always wins and keeps the exact client-ID contract. Two or
+  more matching active lineages inherit nothing. Capability revoke, lineage and
+  read-class denies, account policy and Binding lifecycle apply unchanged; an
+  Owner deny or revoke on one client covers every reconnect of that app.
+- The first registration of each app still follows the reviewed-snapshot
+  process above. Only its later reconnects inherit.
 
 ## Evidence and execution lifecycle
 
