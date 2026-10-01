@@ -162,7 +162,7 @@ test('resume folds in contract_version and the live claims; a failed claims read
   const expected = {
     ...resume,
     authority_capture_completeness: { state: 'unknown', basis: 'server_observes_only_writes_that_reached_clued', independent_of: 'currentness' },
-    contract_version: 7,
+    contract_version: 8,
     active_work_claims: claims.active_work_claims,
     active_work_claim_count: 1,
     work_claim_profile: claims.work_claim_profile,
@@ -226,7 +226,7 @@ test('resume folds in contract_version and the live claims; a failed claims read
       assert.equal(response.status, 200);
       const result = (await response.json()).result;
       assert.equal(result.isError, false);
-      assert.equal(result.structuredContent.contract_version, 7);
+      assert.equal(result.structuredContent.contract_version, 8);
       assert.equal(result.structuredContent.active_work_claims, null);
       assert.equal(result.structuredContent.active_work_claims_unavailable, true);
       assert.equal(result.structuredContent.session_token, 'session-test');
