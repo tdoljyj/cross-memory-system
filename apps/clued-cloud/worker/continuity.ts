@@ -1295,7 +1295,11 @@ const tools = [
       required: ["session_token"],
       properties: {
         session_token: { type: "string" },
-        context_key: { type: "string", minLength: 1, maxLength: 160, default: "global" },
+        context_key: {
+          type: "string", minLength: 1, maxLength: 160,
+          description:
+            "Context the session was resumed with. Omit it to use the session's own context; a different value is rejected with session_context_mismatch.",
+        },
       },
       additionalProperties: false,
     },
@@ -1388,7 +1392,11 @@ const tools = [
       type: "object",
       required: ["session_token", "base_version", "snapshot", "summary", "next_action", "coverage"],
       properties: {
-        context_key: { type: "string" },
+        context_key: {
+          type: "string",
+          description:
+            "Context the session was resumed with. Omit it to use the session's own context; a different value is rejected with session_context_mismatch.",
+        },
         session_token: {
           type: "string",
           description: "Short-lived token returned by clued_session_resume.",
@@ -1925,6 +1933,8 @@ const REQUEST_RULE_REJECTIONS: Readonly<Record<string, string | null>> = {
   resume_required_or_session_expired:
     "Use session_renewal.session_token from your last committed checkpoint if you have it; otherwise call clued_session_resume and retry with the returned session_token.",
   session_not_found: "Call clued_session_resume and retry with the returned session_token.",
+  session_context_mismatch:
+    "This session_token was resumed with a different context_key. Omit context_key to use the session's own context, or pass the context_key you resumed with; to work in another context, resume with that context_key.",
   requested_context_not_authorized:
     "context_key must be \"global\" or \"project:<canonical_project_id>\", not a bare project ID. Retry with the prefixed key.",
   checkpoint_event_not_authorized:
