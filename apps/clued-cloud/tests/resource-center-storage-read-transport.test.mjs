@@ -950,7 +950,7 @@ test("N4 budget: a refused extension is budget_exhausted with no media request; 
   const big = pngOf(800, 600, 1024 * 1024);
   const drive = formatTree([["bigImage00000001", "big.png", "image/png", big]]);
   const spent = await readRaw({ object_id: "bigImage00000001" }, await normalOptions({ drive, reserveError: "storage_read_budget_exhausted" }));
-  assert.equal(spent.value.error, "budget_exhausted"); assert.match(spent.value.message, /256 MiB per rolling hour/);
+  assert.equal(spent.value.error, "budget_exhausted"); assert.match(spent.value.message, /256 MiB per rolling hour/); assert.match(spent.value.message, /only the Owner can change them/);
   assert.equal(bodyRequests(spent.h).length, 0, "no body is fetched without the reservation");
   assert.equal(spent.result.content.length, 1);
   assert.equal(spent.h.calls.at(-1).p_input.action, "finalize"); assert.equal(spent.h.calls.at(-1).p_input.byte_count, 0, "finalize releases the reservation");
@@ -1026,7 +1026,7 @@ test("N4 tool description states the 256 MiB budget, the reservation and the rev
     headers: { "content-type": "application/json", origin, authorization: "Bearer " + token },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) }), env)).json()).result.tools;
   const description = tools.find(t => t.name === "clued_storage_read").description;
-  for (const phrase of ["256 MiB of content per rolling hour", "reserves its file size", "settled to the bytes actually returned", "head_revision_id", "modified_time"])
+  for (const phrase of ["256 MiB of content per rolling hour by default", "the Owner sets both on the Clued storage page", "reserves its file size", "settled to the bytes actually returned", "head_revision_id", "modified_time"])
     assert.ok(description.includes(phrase), phrase);
   assert.equal(description.includes("8 MiB of content per hour"), false);
 });
