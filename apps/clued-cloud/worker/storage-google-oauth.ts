@@ -7,7 +7,7 @@ const encoder = new TextEncoder();
 const id = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const fail = (): never => { throw new Error("storage_google_connection_unavailable"); };
 export class StorageGoogleConnectionError extends Error {
-  constructor(readonly reason: string) { super("storage_google_connection_unavailable"); }
+  constructor(readonly reason: string, readonly onboard_attempt_id?: string) { super("storage_google_connection_unavailable"); }
 }
 // Private, fixed classifications only: never retain an upstream body/cause.
 class TokenExchangeFailure extends Error {
@@ -48,6 +48,9 @@ export async function createStorageGoogleOAuth(configuration: {
   rpc: (input: RecordValue) => Promise<RecordValue>;
   fetch?: typeof fetch;
   clock?: () => number;
+  /** StorageNormalUse N0: completes a claimed purpose='onboard' attempt
+   * (storage-google-onboard.ts). Absent: onboard callbacks are refused. */
+  onboard?: { complete(claimed: RecordValue, code: string, stateHash: string): Promise<RecordValue> };
 }) {
   const { client_id: client, client_secret: clientSecret, redirect_uri: redirect, rpc } = configuration;
   const callback = new URL(redirect);
@@ -137,13 +140,15 @@ export async function createStorageGoogleOAuth(configuration: {
       }
     },
     async complete(input: { state: string; code: string }): Promise<{ status: "completed"; receipt_id: string; refresh_enabled?: boolean;
-      purpose?: "credential_recovery"; provider_scope_profile?: StorageScopeProfile; requested_scope_profile?: StorageScopeProfile;
-      normal_use_enabled?: boolean }> {
+      purpose?: "credential_recovery" | "onboard"; provider_scope_profile?: StorageScopeProfile; requested_scope_profile?: StorageScopeProfile;
+      normal_use_enabled?: boolean; connection_id?: string; onboard_attempt_id?: string }> {
       // Only these fixed local stage names leave this boundary. Never expose an
       // upstream body, exception, code, state, token, subject or provider file ID.
       let stage = "callback_invalid";
       // A completion, or its replay after a lost reply: only typed, known fields.
       const completed = (result: RecordValue) => ({ status: "completed" as const, receipt_id: String(result.receipt_id),
+        ...(result.purpose === "onboard" && id.test(String(result.connection_id)) && id.test(String(result.onboard_attempt_id))
+          ? { purpose: "onboard" as const, connection_id: String(result.connection_id), onboard_attempt_id: String(result.onboard_attempt_id) } : {}),
         ...(result.purpose === "credential_recovery" ? { purpose: "credential_recovery" as const } : {
           ...(typeof result.refresh_enabled === "boolean" ? { refresh_enabled: result.refresh_enabled } : {}),
           ...(isStorageScopeProfile(result.provider_scope_profile) ? { provider_scope_profile: result.provider_scope_profile } : {}),
@@ -156,6 +161,12 @@ export async function createStorageGoogleOAuth(configuration: {
         stage = "attempt_unavailable";
         const claimed = await rpc({ action: "claim", state_hash: stateHash });
         if (claimed.status === "completed" && id.test(String(claimed.receipt_id))) return completed(claimed);
+        if (claimed.purpose === "onboard") {
+          if (!configuration.onboard) fail();
+          const done = await configuration.onboard!.complete(claimed, input.code, stateHash);
+          if (done.status !== "completed" || done.purpose !== "onboard" || !id.test(String(done.receipt_id))) fail();
+          return completed(done);
+        }
         const d = descriptor(claimed, client, redirect);
         if (claimed.status !== "claimed" || !id.test(String(claimed.attempt_id))) fail();
         stage = "verifier_unavailable";
@@ -222,7 +233,11 @@ export async function createStorageGoogleOAuth(configuration: {
         }
         if (result.status !== "completed" || !id.test(String(result.receipt_id))) fail();
         return completed(result);
-      } catch (error) { throw new StorageGoogleConnectionError(error instanceof TokenExchangeFailure ? error.reason : stage); }
+      } catch (error) {
+        // An onboard completion already carries its own fixed page reason.
+        if (error instanceof StorageGoogleConnectionError) throw error;
+        throw new StorageGoogleConnectionError(error instanceof TokenExchangeFailure ? error.reason : stage);
+      }
     },
   });
 }

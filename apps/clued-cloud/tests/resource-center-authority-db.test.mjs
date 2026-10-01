@@ -31,6 +31,7 @@ import { testStorageModifyExecution } from "./resource-center-storage-modify-exe
 import { testStorageReplace } from "./resource-center-storage-replace-db.fixture.mjs";
 import { testStorageNormalUse } from "./resource-center-storage-normal-use-db.fixture.mjs";
 import { testStorageBinaryUpload } from "./resource-center-storage-binary-db.fixture.mjs";
+import { testStorageOnboard } from "./resource-center-storage-onboard-db.fixture.mjs";
 import { testStorageBudget } from "./resource-center-storage-budget-db.fixture.mjs";
 import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refresh-upgrade-db.fixture.mjs";
 
@@ -54,7 +55,8 @@ async function freePort() {
 const focusedCloud = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "account-cloud";
 const focusedAdmin = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-admin";
 const focusedRead = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-read";
-for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
+const focusedOnboard = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-onboard";
+for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focusedOnboard ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
@@ -146,6 +148,12 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead ? ["lega
       await testStorageNormalUse(t, admin, server, USER, DECISION);
       await testStorageBinaryUpload(t, admin, server, USER, DECISION);
       await testStorageBudget(t, admin, server, USER);
+      await testStorageOnboard(t, admin, server, USER, DECISION);
+      return;
+    }
+
+    if (focusedOnboard) {
+      await testStorageOnboard(t, admin, server, USER, DECISION);
       return;
     }
 
@@ -819,6 +827,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead ? ["lega
     await testStorageNormalUse(t, admin, server, USER, DECISION);
     await testStorageBinaryUpload(t, admin, server, USER, DECISION);
     await testStorageBudget(t, admin, server, USER);
+    await testStorageOnboard(t, admin, server, USER, DECISION);
     await t.test("a directory with a recorded sharing digest is matched by sharing, not Drive version", async () => {
       const shared = "d".repeat(64), changed = "e".repeat(64);
       const rowVersion = async (id) => Number((await admin.query(
