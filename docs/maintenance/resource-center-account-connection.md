@@ -1125,7 +1125,7 @@ pre-ticked "正常使用" and "后台自动续期授权" options. The click on
 (`worker/storage-onboard-disclosure.ts`); the Worker renders the same text and
 binds its SHA-256 to the attempt and to the Owner Decision.
 
-Migration `20261001020000_storage_onboard_n0.sql`:
+Migration `20261001040000_storage_onboard_n0.sql`:
 
 - `clued_private.storage_onboard_attempts_v1` (30 minutes; holds the staged
   credential envelope until activation or expiry, the Drive effects and the
