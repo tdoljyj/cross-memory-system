@@ -57,6 +57,20 @@ test("token failure classes show fixed guidance, never upstream error descriptio
     await f.remount();assert.equal(f.calls.length,2);
   }
 });
+test("N0 onboard callback: connection established message, partial grant, refresh state and fixed page-only reasons",async()=>{
+  const done=await fixture({status:"completed",purpose:"onboard",receipt_id:"fixture-receipt",connection_id:"c",onboard_attempt_id:"a",
+    provider_scope_profile:"normal",requested_scope_profile:"normal",normal_use_enabled:true,refresh_enabled:true},true);
+  assert.match(done.message(),/Google Drive 连接已建立/); assert.match(done.message(),/正常使用已开启/); assert.match(done.message(),/后台自动续期已开启/);
+  assert.equal(done.calls.length,1,"no recovery settlement for onboarding");
+  const partial=await fixture({status:"completed",purpose:"onboard",receipt_id:"fixture-receipt",connection_id:"c",onboard_attempt_id:"a",
+    provider_scope_profile:"legacy",requested_scope_profile:"normal",normal_use_enabled:false,refresh_enabled:false},true);
+  assert.match(partial.message(),/未授予“查看你 Google 云端硬盘中的所有文件”，正常使用未开启/); assert.match(partial.message(),/约 1 小时后读写都不可用/);
+  for(const [reason,text] of [["root_shared_drive",/共享云端硬盘/],["root_not_owned",/不属于你的 Google 账号/],["root_overlaps_existing",/已连接的资料根/],
+    ["root_name_changed",/名称已变化/],["onboard_track_name_conflict",/同名的文件夹/],["onboard_effect_ambiguous",/多个本次接入创建/],["root_multiple_parents",/多个上级目录/]]){
+    const f=await fixture({reason,onboard_attempt_id:"a",error:"fixture-private"});
+    assert.match(f.message(),text,reason); assert.equal(f.message().includes("fixture-private"),false);
+  }
+});
 test("confirmed callback displays receipt but does not claim file execution; account change wins",async()=>{
   const f=await fixture({status:"completed",receipt_id:"fixture-receipt"},true);
   assert.ok(f.message().includes("fixture-receipt"));assert.ok(f.message().includes("文件操作仍需独立授权"));

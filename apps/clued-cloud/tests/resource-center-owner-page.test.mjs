@@ -43,7 +43,9 @@ function fixture() {
   function button(label){let found;const walk=n=>{if(Array.isArray(n))return n.forEach(walk);if(!n||typeof n!=="object")return;
     if(n.type==="button"&&text(n)===label)found=n;walk(n.props?.children);};walk(tree);assert.ok(found,label);return found;}
   render();
-  return {calls,prompts,settle,button,text:()=>text(tree),
+  function labelled(label){let found;const walk=n=>{if(Array.isArray(n))return n.forEach(walk);if(!n||typeof n!=="object")return;
+    if(n.props?.["aria-label"]===label)found=n;walk(n.props?.children);};walk(tree);return found;}
+  return {calls,prompts,settle,button,labelled,render,text:()=>text(tree),
     respond(i,value,status=200){calls[i].resolve({ok:status<400,status,json:async()=>value});},
     change(id){owner=id;authCallback("SIGNED_IN",id?{user:{id}}:null);render();},
   };
@@ -211,4 +213,50 @@ test("normal use on a legacy connection starts Google re-consent with the normal
   const before=f.calls.length;f.button("开启正常使用").props.onClick();await f.settle();
   assert.equal(f.calls.length,before,"a blocked account starts no consent");assert.match(f.text(),/暂时不能通过重新授权开启正常使用/);
   assert.equal(f.text().includes("请先撤回全部文件读取授权"),false,"never points to a control that does not exist");
+});
+// StorageNormalUse.v0.1 §7.3 / §8.2 item 4 (N4): hourly budgets with presets and a bounded custom value.
+const MiB=1048576,GiB=1024*MiB;
+const budgetStatus=(connection={},account={})=>({contract:"clued.storage-budget/1",connection_id:active.id,
+  connection:{budget_generation:0,configured:false,read_bytes_per_hour:256*MiB,upload_bytes_per_hour:256*MiB,...connection},
+  account:{budget_generation:0,configured:false,read_bytes_per_hour:GiB,upload_bytes_per_hour:GiB,...account},
+  defaults:{connection:{read_bytes_per_hour:256*MiB,upload_bytes_per_hour:256*MiB},account:{read_bytes_per_hour:GiB,upload_bytes_per_hour:GiB}},
+  bounds:{step_bytes:MiB,connection:{min_bytes:32*MiB,max_bytes:2*GiB},account:{min_bytes:32*MiB,max_bytes:8*GiB}}});
+test("hourly budgets: presets and custom within bounds, one native CAS mutation, readback confirms immediate effect",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
+  assert.equal(f.calls.length,1,"budgets are loaded on demand");assert.match(f.text(),/每小时额度：未读取/);
+  f.button("读取额度设置").props.onClick();await f.settle();
+  assert.equal(f.calls[1].url,"/v1/storage/budget");assert.deepEqual(JSON.parse(f.calls[1].init.body),{action:"status",connection_id:active.id});
+  f.respond(1,budgetStatus());await f.settle();
+  assert.match(f.text(),/每个已授权 Agent 读取 256 MiB、上传 256 MiB；账号合计读取 1 GiB、上传 1 GiB/);
+  assert.match(f.text(),/可设 32 MiB–2 GiB/);assert.match(f.text(),/可设 32 MiB–8 GiB/);assert.match(f.text(),/256 MiB（默认）/);
+  const read=f.labelled("每个已授权 Agent（此连接）读取额度"),upload=f.labelled("每个已授权 Agent（此连接）上传额度");
+  assert.equal(read.props.value,"256");assert.deepEqual([...read.props.children[0].map(o=>o.props.value)],["64","256","1024"]);
+  assert.equal(f.labelled("每个已授权 Agent（此连接）上传自定义额度（MiB）"),undefined,"custom input only when chosen");
+  read.props.onChange({target:{value:"64"}});upload.props.onChange({target:{value:"custom"}});f.render();
+  const custom=f.labelled("每个已授权 Agent（此连接）上传自定义额度（MiB）");
+  assert.equal(custom.props.min,32);assert.equal(custom.props.max,2048);
+  custom.props.onChange({target:{value:"4096"}});f.render();
+  f.button("保存此连接的额度").props.onClick();await f.settle();
+  assert.equal(f.calls.length,2,"an out-of-bounds custom value sends nothing");assert.match(f.text(),/自定义额度须为 32 MiB 到 2 GiB 之间的整数 MiB/);
+  f.labelled("每个已授权 Agent（此连接）上传自定义额度（MiB）").props.onChange({target:{value:"100"}});f.render();
+  const save=f.button("保存此连接的额度");save.props.onClick();save.props.onClick();await f.settle();
+  assert.equal(f.calls.length,3);
+  assert.match(f.prompts.at(-1),/读取 64 MiB、上传 100 MiB/);assert.match(f.prompts.at(-1),/立即生效/);
+  assert.match(f.prompts.at(-1),/不改变任何授权、正常使用、写入设置或排队任务/);
+  assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:"set",scope:"connection",connection_id:active.id,base_generation:0,
+    read_bytes_per_hour:64*MiB,upload_bytes_per_hour:100*MiB,idempotency_key:"fixture-id"});
+  f.respond(2,{status:"committed",receipt_id:"fixture-budget-receipt"});await f.settle();
+  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"status",connection_id:active.id});
+  f.respond(3,budgetStatus({budget_generation:1,configured:true,read_bytes_per_hour:64*MiB,upload_bytes_per_hour:100*MiB}));await f.settle();
+  assert.match(f.text(),/已更新每个已授权 Agent（此连接）的每小时额度，立即生效。回执：fixture-budget-receipt/);
+  assert.match(f.text(),/每个已授权 Agent 读取 64 MiB、上传 100 MiB/);
+  // Account totals: their own CAS generation and no connection_id; an unknown result is never resent.
+  f.labelled("账号合计（全部 Agent 与连接）读取额度").props.onChange({target:{value:"custom"}});f.render();
+  f.labelled("账号合计（全部 Agent 与连接）读取自定义额度（MiB）").props.onChange({target:{value:"8192"}});f.render();
+  f.button("保存账号合计额度").props.onClick();await f.settle();
+  assert.match(f.prompts.at(-1),/账号合计（全部 Agent 与连接）的每小时额度改为：读取 8 GiB、上传 1 GiB/);
+  assert.deepEqual(JSON.parse(f.calls[4].init.body),{action:"set",scope:"account",base_generation:0,
+    read_bytes_per_hour:8*GiB,upload_bytes_per_hour:GiB,idempotency_key:"fixture-id"});
+  f.respond(4,{error:"private"},403);await f.settle();
+  assert.match(f.text(),/额度设置结果未确认/);assert.match(f.text(),/每小时额度：未读取/);assert.equal(f.calls.length,5,"never resent");
 });

@@ -77,6 +77,32 @@ const startReasons: Record<string, string> = {
   // (runbook); a plain reconnect is never refused.
   refresh_token_limit: "该 Google 账号在 Clued 中的授权次数已达上限，暂时不能通过重新授权开启正常使用。请联系维护者处理；现有功能和重新连接不受影响。",
 };
+// StorageNormalUse.v0.1 §7.3 / §8.2 item 4 (N4): hourly read / upload budgets,
+// per authorized Agent on this connection and for the whole account.
+type BudgetScope = "connection" | "account";
+type BudgetDimension = "read" | "upload";
+type BudgetValues = { budget_generation: number; configured: boolean; read_bytes_per_hour: number; upload_bytes_per_hour: number };
+type Budget = { connection: BudgetValues; account: BudgetValues;
+  bounds: { step_bytes: number; connection: { min_bytes: number; max_bytes: number }; account: { min_bytes: number; max_bytes: number } } };
+const MIB = 1048576;
+function isBudgetValues(value: unknown): value is BudgetValues {
+  return isObject(value) && Number.isSafeInteger(value.budget_generation) && typeof value.configured === "boolean"
+    && Number.isSafeInteger(value.read_bytes_per_hour) && Number.isSafeInteger(value.upload_bytes_per_hour);
+}
+function isBounds(value: unknown): value is { min_bytes: number; max_bytes: number } {
+  return isObject(value) && Number.isSafeInteger(value.min_bytes) && Number.isSafeInteger(value.max_bytes);
+}
+function isBudget(value: unknown): value is Budget {
+  return isObject(value) && value.contract === "clued.storage-budget/1" && isBudgetValues(value.connection) && isBudgetValues(value.account)
+    && isObject(value.bounds) && value.bounds.step_bytes === MIB && isBounds(value.bounds.connection) && isBounds(value.bounds.account);
+}
+// §8.2 item 4: three presets and a custom value in whole MiB within the scope's bounds.
+const budgetPresets = [64, 256, 1024];
+const budgetDefault: Record<BudgetScope, number> = { connection: 256, account: 1024 };
+const budgetScopeName: Record<BudgetScope, string> = { connection: "每个已授权 Agent（此连接）", account: "账号合计（全部 Agent 与连接）" };
+const budgetDimensionName: Record<BudgetDimension, string> = { read: "读取", upload: "上传" };
+const formatMib = (mib: number) => mib >= 1024 && mib % 1024 === 0 ? `${mib / 1024} GiB` : `${mib} MiB`;
+const formatBytes = (bytes: number) => formatMib(Math.floor(bytes / MIB));
 type WriteAccess = { active: boolean; policy_generation: number; disclosure_version: string;
   overwrite_disclosure_version: string; classes: string[] };
 function isWriteAccess(value: unknown): value is WriteAccess {
@@ -106,6 +132,10 @@ export default function StorageConnections() {
   const [writeAccess, setWriteAccess] = useState<Record<string, WriteAccess>>({});
   // Normal use (StorageNormalUse §8.2), loaded on demand like the read level.
   const [normalUse, setNormalUse] = useState<Record<string, NormalUse>>({});
+  // Hourly budgets (N4), loaded on demand. Drafts are "64" / "256" / "1024" or
+  // "custom" per connection, scope and dimension; custom values are whole MiB.
+  const [budget, setBudget] = useState<Record<string, Budget>>({});
+  const [budgetDraft, setBudgetDraft] = useState<Record<string, string>>({});
   const [connections, setConnections] = useState<Connection[]>([]);
   const [workerEnabled, setWorkerEnabled] = useState(false);
   const [message, setMessage] = useState("正在读取连接……");
@@ -273,6 +303,68 @@ export default function StorageConnections() {
       }
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
+  async function loadBudget(c: Connection) {
+    if (operation.current || busy) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      const result = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/budget");
+      if (epoch !== revision.current) return;
+      if (!isBudget(result)) throw new Error("额度设置未确认。");
+      setBudget(current => ({ ...current, [c.id]: result }));
+      setBudgetDraft(current => {
+        const next = { ...current };
+        for (const scope of ["connection", "account"] as const) for (const dimension of ["read", "upload"] as const) {
+          const mib = Math.floor(result[scope][`${dimension}_bytes_per_hour`] / MIB);
+          const key = `${c.id}:${scope}:${dimension}`;
+          next[key] = budgetPresets.includes(mib) ? String(mib) : "custom";
+          next[key + ":custom"] = String(mib);
+        }
+        return next;
+      });
+    } catch { if (epoch === revision.current) setMessage("额度设置未确认，请稍后重试。"); }
+    finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  // The chosen value in MiB, or null when a custom value is not a whole number within the bounds.
+  function budgetChoice(c: Connection, scope: BudgetScope, dimension: BudgetDimension, current: Budget) {
+    const key = `${c.id}:${scope}:${dimension}`;
+    const choice = budgetDraft[key] === "custom" ? budgetDraft[key + ":custom"] ?? "" : budgetDraft[key] ?? "";
+    if (!/^[1-9][0-9]{0,6}$/.test(choice)) return null;
+    const mib = Number(choice);
+    return mib * MIB >= current.bounds[scope].min_bytes && mib * MIB <= current.bounds[scope].max_bytes ? mib : null;
+  }
+  async function saveBudget(c: Connection, scope: BudgetScope) {
+    const current = budget[c.id];
+    if (operation.current || busy || !current) return;
+    const read = budgetChoice(c, scope, "read", current), upload = budgetChoice(c, scope, "upload", current);
+    if (read === null || upload === null) {
+      setMessage(`自定义额度须为 ${formatBytes(current.bounds[scope].min_bytes)} 到 ${formatBytes(current.bounds[scope].max_bytes)} 之间的整数 MiB。`);
+      return;
+    }
+    if (!window.confirm(`将${budgetScopeName[scope]}的每小时额度改为：读取 ${formatMib(read)}、上传 ${formatMib(upload)}？` +
+      "保存后立即生效：之后每次读取和上传都按新额度检查；调低到已用量以下时，新的读取或上传要等滚动一小时内的用量回落。" +
+      "已经返回的内容和已签发的上传链接不受影响；不改变任何授权、正常使用、写入设置或排队任务。")) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      const result = await accountRequest({ action: "set", scope, ...(scope === "connection" ? { connection_id: c.id } : {}),
+        base_generation: current[scope].budget_generation, read_bytes_per_hour: read * MIB, upload_bytes_per_hour: upload * MIB,
+        idempotency_key: crypto.randomUUID() }, "/v1/storage/budget");
+      if (epoch !== revision.current) return;
+      if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
+      const latest = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/budget");
+      if (epoch !== revision.current) return;
+      if (!isBudget(latest)) throw new Error("额度设置未确认。");
+      setBudget(state => ({ ...state, [c.id]: latest }));
+      setMessage(latest[scope].read_bytes_per_hour === read * MIB && latest[scope].upload_bytes_per_hour === upload * MIB
+        ? `已更新${budgetScopeName[scope]}的每小时额度，立即生效。回执：${result.receipt_id}` : "已提交，但最新状态未确认。请核对原回执。");
+    } catch {
+      if (epoch === revision.current) {
+        setBudget(state => { const next = { ...state }; delete next[c.id]; return next; });
+        setMessage("额度设置结果未确认。请重新读取额度设置并核对，勿重复提交。");
+      }
+    } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
   async function toggleWrite(c: Connection, level: "modify" | "overwrite") {
     const current = writeAccess[c.id];
     if (operation.current || busy || !current?.active) return;
@@ -361,6 +453,33 @@ export default function StorageConnections() {
           {normalUse[c.id]?.refresh_token_warning && <p role="status" className="my-1 text-sm">{normalUse[c.id].refresh_token_blocked
             ? "该 Google 账号在 Clued 中的授权次数已达上限，暂时不能通过重新授权开启正常使用；请联系维护者处理。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因，重新连接仍可使用。"
             : `该 Google 账号在 Clued 中的授权次数已较多（${normalUse[c.id].refresh_token_count} 次）。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因。`}</p>}
+          <div className="mt-3">
+            <p className="font-semibold">每小时额度：{budget[c.id]
+              ? `每个已授权 Agent 读取 ${formatBytes(budget[c.id].connection.read_bytes_per_hour)}、上传 ${formatBytes(budget[c.id].connection.upload_bytes_per_hour)}；` +
+                `账号合计读取 ${formatBytes(budget[c.id].account.read_bytes_per_hour)}、上传 ${formatBytes(budget[c.id].account.upload_bytes_per_hour)}`
+              : "未读取"}</p>
+            {budget[c.id] ? <>
+              <p className="my-1 text-sm">按滚动一小时计算；读取与上传分别计量，每个 Agent 和账号合计都不能超出。用完后 Agent 会收到“额度已用完”，一小时内逐步恢复。只有你可以在这里修改。</p>
+              {(["connection", "account"] as const).map(scope => <div key={scope} className="my-2">
+                <p className="text-sm">{budgetScopeName[scope]}（可设 {formatBytes(budget[c.id].bounds[scope].min_bytes)}–{formatBytes(budget[c.id].bounds[scope].max_bytes)}）</p>
+                {(["read", "upload"] as const).map(dimension => {
+                  const key = `${c.id}:${scope}:${dimension}`;
+                  return <label key={dimension} className="mr-4 text-sm">{budgetDimensionName[dimension]}{" "}
+                    <select aria-label={`${budgetScopeName[scope]}${budgetDimensionName[dimension]}额度`} disabled={busy} value={budgetDraft[key] ?? ""}
+                      onChange={event => { const value = event.target.value; setBudgetDraft(state => ({ ...state, [key]: value })); }}>
+                      {budgetPresets.map(mib => <option key={mib} value={String(mib)}>{formatMib(mib)}{mib === budgetDefault[scope] ? "（默认）" : ""}</option>)}
+                      <option value="custom">自定义</option>
+                    </select>
+                    {budgetDraft[key] === "custom" && <> <input aria-label={`${budgetScopeName[scope]}${budgetDimensionName[dimension]}自定义额度（MiB）`}
+                      type="number" inputMode="numeric" step={1} min={budget[c.id].bounds[scope].min_bytes / MIB} max={budget[c.id].bounds[scope].max_bytes / MIB}
+                      disabled={busy} value={budgetDraft[key + ":custom"] ?? ""}
+                      onChange={event => { const value = event.target.value; setBudgetDraft(state => ({ ...state, [key + ":custom"]: value })); }} /> MiB</>}
+                  </label>;
+                })}
+                <button disabled={busy} onClick={() => void saveBudget(c, scope)}>{scope === "connection" ? "保存此连接的额度" : "保存账号合计额度"}</button>
+              </div>)}
+            </> : <button disabled={busy} onClick={() => void loadBudget(c)}>读取额度设置</button>}
+          </div>
           <p className="mt-3 text-sm font-semibold">高级</p>
           <p>Agent 查看目录结构：{readAccess[c.id] ? (readAccess[c.id].active
             ? (readAccess[c.id].classes.includes("read_content") ? "已允许" : "已允许（只看文件名和目录，不读内容）") : "未允许") : "未读取"}</p>
@@ -382,6 +501,6 @@ export default function StorageConnections() {
       </section>;
     })}
     <div className="mt-6 flex gap-4"><button disabled={busy} onClick={() => void refresh()}>刷新状态</button>
-      <Link href="/storage/admin">存储管理</Link><Link href="/oauth/connections">已连接应用／客户端管理</Link></div>
+      <Link href="/storage/onboard">新建 Google Drive 连接</Link><Link href="/storage/admin">存储管理</Link><Link href="/oauth/connections">已连接应用／客户端管理</Link></div>
   </main>;
 }

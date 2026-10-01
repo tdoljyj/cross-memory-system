@@ -7,6 +7,7 @@ import {
   runStorageRefreshScheduled,
   runStorageRecoveryScheduled,
   runStorageStagingScheduled,
+  runStorageOnboardScheduled,
   runStorageJobQueue,
   type ContinuityEnv,
   type StorageJobQueueMessage,
@@ -99,6 +100,10 @@ const worker = {
     }));
     ctx.waitUntil(runStorageStagingScheduled(env).then(result => {
       if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_staging_sweep_unavailable" }));
+    }));
+    ctx.waitUntil(runStorageOnboardScheduled(env).then(result => {
+      if (result.status === "unavailable" && env.CLUED_STORAGE_ONBOARD_V1 === "true")
+        console.warn(JSON.stringify({ event: "storage_onboard_sweep_unavailable" }));
     }));
   },
   async queue(batch: { readonly messages: readonly StorageJobQueueMessage[] }, env: Env) {
