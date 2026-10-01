@@ -201,7 +201,7 @@ begin
     update clued_private.storage_refresh_token_issuance_v1 set provider_subject=o.provider_subject
       where oauth_attempt_id=x.id and provider_subject is null;
     result:=clued_private.storage_onboard_view_v1(o)||jsonb_build_object('status','credential_staged','purpose','onboard',
-      'active_roots',clued_private.storage_onboard_active_roots_v1(u,null));
+      'active_roots',clued_private.storage_onboard_active_roots_v1(u,o.provider_subject));
   end if;
   -- §8.1.9 item 2: lock waits can cross session, issuer or attempt expiry.
   perform clued_private.storage_owner_v1();
@@ -490,7 +490,7 @@ begin
       where id=o.id returning * into o;
     return clued_private.storage_onboard_view_v1(o)||jsonb_build_object('status','credential_staged','purpose','onboard',
       'owner_id',u,'provider_subject',o.provider_subject,'oauth_client_id',a.oauth_client_id,'credential_version',1,
-      'credential_envelope',o.credential_envelope,'active_roots',clued_private.storage_onboard_active_roots_v1(u,null));
+      'credential_envelope',o.credential_envelope,'active_roots',clued_private.storage_onboard_active_roots_v1(u,o.provider_subject));
   end if;
   if o.state<>'credential_staged' then raise exception 'storage_onboard_denied' using errcode='42501'; end if;
   role:=p_input->>'role';
