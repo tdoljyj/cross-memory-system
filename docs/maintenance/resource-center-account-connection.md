@@ -1114,3 +1114,81 @@ returns 404, binary submits are refused). With the flag off the executor has
 no staged-content loader, so a queued binary job is refused before any effect
 (reported `attention_required`), and the staging sweep does not run: leftover
 objects are removed by the bucket's 3-day lifecycle rule.
+
+## Self-service onboarding (StorageNormalUse.v0.1 N0)
+
+The page `/storage/onboard` creates a new Google Drive connection from zero:
+a new folder in My Drive (default `Clued_资料中心`) or an existing folder chosen
+with Google Picker, 1–32 tracks (default `资料` / `项目` / `归档`), and the
+pre-ticked "正常使用" and "后台自动续期授权" options. The click on
+"确认并连接 Google Drive" confirms `clued.storage-onboard-disclosure/1`
+(`worker/storage-onboard-disclosure.ts`); the Worker renders the same text and
+binds its SHA-256 to the attempt and to the Owner Decision.
+
+Migration `20261001040000_storage_onboard_n0.sql`:
+
+- `clued_private.storage_onboard_attempts_v1` (30 minutes; holds the staged
+  credential envelope until activation or expiry, the Drive effects and the
+  orphans). `begin` creates no canonical row.
+- `storage_oauth_attempts_v1.connection_id` is nullable; `purpose='onboard'`
+  attempts have no connection. The outermost `public.clued_storage_oauth_v1`
+  sends their claim / complete to `clued_private.storage_onboard_oauth_v1`
+  (one-shot claim, counted in the refresh-token ledger).
+- `public.clued_storage_onboard_v1(issuer secret, input)`: `begin`,
+  `stage_credential`, `resume`, `effect_intent`, `effect_result`,
+  `effect_stray`, `activate`, `fail`, `status`, `list`. `activate` creates in one transaction: Project →
+  Decision (`user_explicit`, `user_confirmed`) → profile
+  (`/clued-cloud/google-drive/<root_folder_id>`, `clued.storage-onboard/1`) and
+  root artifact → track artifacts → `cloud_runtime` → connection → policy
+  (`native_connection`) → read access (`normal/1` only if requested and granted,
+  otherwise `{read}` `text/1`) → default refresh delegation (145426 shape).
+  Any failure rolls every step back; the Worker then records `fail`, listing
+  the created folders as orphans. Clued never deletes or trashes them; the page
+  shows them as "已在 Drive 中创建但未启用".
+- Expiry: `public.clued_storage_onboard_sweep_v1(issuer hash)`, called by the
+  Worker cron every minute whenever `CLUED_STORAGE_ACCOUNT_V1` and
+  `CLUED_STORAGE_GOOGLE_V1` are on (also with the onboard page switched off),
+  expires attempts past their 30 minutes in its own transaction: the staged
+  envelope is dropped, created folders stay orphans. A failure the Worker
+  marks not retryable (for example `root_not_owned`) drops the envelope at
+  once. Log event `storage_onboard_sweep_unavailable` (only while
+  `CLUED_STORAGE_ONBOARD_V1=true`) means the sweep could not run.
+- One run per attempt: `stage_credential` and `resume` issue a run token with
+  a 5-minute lease; `resume` is refused (`onboard_run_active`) while the
+  callback or another resume holds it. A folder a run created but could not
+  record (`effect_stray`) is listed as an orphan, also on a completed attempt.
+- `clued_resource_center_admin_v1(profile_register)` refuses the
+  `/clued-cloud/` prefix.
+- Gate (§2.5, Q9): only owners in `clued_private.storage_onboard_allowlist_v1`
+  may begin, until the operator sets `storage_oauth_apps_v1.onboard_open=true`
+  after Google verification (and CASA) passed. Nothing is seeded.
+
+Owner configuration (names only; values never go in Git):
+
+1. Google Cloud console, the project that owns the storage OAuth client:
+   - Enable the **Google Picker API** (the Drive API is already enabled).
+   - Create a **browser API key** restricted to the Google Picker API and to
+     HTTP referrer `https://clued.pixelgrav.com/*`.
+   - Note the **project number** (Picker App ID; without it the picked folder
+     is not authorized for this app).
+   - OAuth client (Web application): add `https://clued.pixelgrav.com` to
+     **Authorized JavaScript origins** (Google Identity Services token client).
+     The redirect URI is unchanged.
+   - OAuth consent screen: add every allowlisted tester as a **test user**
+     while the app is in Testing.
+2. Worker vars (not secrets): `CLUED_STORAGE_ONBOARD_V1=true`,
+   `CLUED_STORAGE_GOOGLE_PICKER_API_KEY`, `CLUED_STORAGE_GOOGLE_CLOUD_PROJECT_NUMBER`.
+   Existing: `CLUED_STORAGE_ACCOUNT_V1`, `CLUED_STORAGE_GOOGLE_V1`,
+   `CLUED_STORAGE_GOOGLE_CLIENT_ID`, `CLUED_STORAGE_GOOGLE_REDIRECT_URI`,
+   `CLUED_STORAGE_REFRESH_V1` (needed for the default refresh delegation) and
+   the secrets `CLUED_STORAGE_GOOGLE_CLIENT_SECRET`,
+   `CLUED_STORAGE_CONNECTOR_ISSUER`, `CLUED_STORAGE_VAULT_KEYS`.
+3. Database (operator, reviewed): `storage_oauth_apps_v1.execution_enabled`
+   and `read_enabled` true for the issuer; one row per tester in
+   `clued_private.storage_onboard_allowlist_v1`.
+
+Without the Picker values the page offers only "新建目录" and the Worker
+refuses a picked root (`picker_unconfigured`). Without
+`CLUED_STORAGE_REFRESH_V1` the refresh option is unavailable and the page says
+the connection stops after about an hour. With the flag off the routes return
+404 and the page says onboarding is not open.
