@@ -24,3 +24,8 @@ timeout \
   --kill-after="${SITES_BUILD_KILL_AFTER:-10s}" \
   "${SITES_BUILD_TIMEOUT:-3m}" \
   "${vinext}" build
+
+# StorageNormalUse §4.5: the PDF extractor Worker (clued-storage-pdf) is built
+# from the same source, and the main Worker's bundle must not contain pdf.js.
+echo "Building PDF extractor Worker..."
+node "${SITES_PROJECT_ROOT}/scripts/build-pdf-extractor.mjs" --check-main

@@ -37,6 +37,8 @@ import { measurePack } from "./context-pack";
 import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION } from "./generated/agent-contract";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
 import { createStorageGoogleRecoveryOAuth } from "./storage-google-recovery-oauth";
+import { createStorageGoogleOnboard } from "./storage-google-onboard";
+import { ONBOARD_DISCLOSURE_VERSION } from "./storage-onboard-disclosure";
 import { createStorageGoogleProbe, storageProbeDiagnostic } from "./storage-google-probe";
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
@@ -86,11 +88,20 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6Feature
   CLUED_STORAGE_GOOGLE_CLIENT_ID?: string;
   CLUED_STORAGE_GOOGLE_CLIENT_SECRET?: string;
   CLUED_STORAGE_GOOGLE_REDIRECT_URI?: string;
+  // StorageNormalUse N0 self-service onboarding: flag, and the browser-side
+  // Google Picker configuration (public API key restricted to this site, and
+  // the Cloud project number used as the Picker App ID). Absent Picker values
+  // only disable "choose an existing folder".
+  CLUED_STORAGE_ONBOARD_V1?: string;
+  CLUED_STORAGE_GOOGLE_PICKER_API_KEY?: string;
+  CLUED_STORAGE_GOOGLE_CLOUD_PROJECT_NUMBER?: string;
   CLUED_STORAGE_CONNECTOR_ISSUER?: string;
   CLUED_STORAGE_VAULT_KEYS?: string;
   CLUED_STORAGE_READ_V1?: string;
   CLUED_STORAGE_READ_RECEIPT_KEYS?: string;
   CLUED_STORAGE_READ_CURSOR_KEY?: string;
+  /** Service binding to the PDF extractor Worker clued-storage-pdf (StorageNormalUse §4.5, RPC). */
+  PDF_EXTRACTOR?: unknown;
   // StorageNormalUse N3 binary upload: flag, R2 staging bucket, URL signing key, staging keyring.
   CLUED_STORAGE_BINARY_V1?: string;
   CLUED_STORAGE_STAGING?: StagingBucket;
@@ -721,6 +732,25 @@ export async function runStorageStagingScheduled(env: ContinuityEnv) {
   catch { return { status: "unavailable" }; }
 }
 
+// Cron: N0 onboarding expiry in its own transaction (§8.1 step 5): attempts
+// past their 30 minutes lose the staged credential, created folders stay
+// orphans. It runs whenever the storage account and Google features are on, so
+// switching the onboard page off never strands a staged credential; only an
+// unavailable sweep while onboarding is on is reported.
+export async function runStorageOnboardScheduled(env: ContinuityEnv) {
+  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return { status: "disabled" };
+  try {
+    const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+    if (!issuer || issuer.length < 32) return { status: "unavailable" };
+    const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_onboard_sweep_v1", {
+      method: "POST", body: JSON.stringify({ p_issuer_hash: await sha256(issuer) }),
+      signal: AbortSignal.timeout(10000), redirect: "manual",
+    }) as Record<string, unknown>;
+    if (result?.status !== "ok" || !Number.isSafeInteger(result.expired) || Number(result.expired) < 0) return { status: "unavailable" };
+    return { status: "ok", expired: Number(result.expired) };
+  } catch { return { status: "unavailable" }; }
+}
+
 export async function runStorageRefreshScheduled(env: ContinuityEnv) {
   if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true" || env.CLUED_STORAGE_REFRESH_V1 !== "true") return { status: "disabled" };
   try {
@@ -994,6 +1024,30 @@ async function callP5Mutation(
   const canonicalResult = p5ResolvedCanonicalResult(resolution);
   if (canonicalResult) return canonicalResult;
   return p5AttemptResolutionFailed(resolution);
+}
+
+function storageOnboardEnabled(env: ContinuityEnv) {
+  return env.CLUED_STORAGE_ACCOUNT_V1 === "true" && env.CLUED_STORAGE_GOOGLE_V1 === "true" && env.CLUED_STORAGE_ONBOARD_V1 === "true";
+}
+/** Browser Picker configuration, or null when the Owner has not configured it. */
+export function storagePickerConfiguration(env: ContinuityEnv) {
+  const apiKey = env.CLUED_STORAGE_GOOGLE_PICKER_API_KEY ?? "", appId = env.CLUED_STORAGE_GOOGLE_CLOUD_PROJECT_NUMBER ?? "";
+  const clientId = env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "";
+  if (!/^[A-Za-z0-9_-]{20,100}$/.test(apiKey) || !/^[0-9]{6,20}$/.test(appId) || !/^[A-Za-z0-9._-]{1,255}$/.test(clientId)) return null;
+  return { api_key: apiKey, app_id: appId, client_id: clientId };
+}
+async function storageOnboardRuntime(env: ContinuityEnv, token: string) {
+  const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+  if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS) throw new Error("Unavailable");
+  const rpc = async (value: Record<string, unknown>) => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_onboard_v1", {
+    method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(15000),
+    body: JSON.stringify({ p_issuer_secret: issuer, p_input: value }),
+  }) as Record<string, unknown>;
+  const onboard = await createStorageGoogleOnboard({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
+    client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "", redirect_uri: env.CLUED_STORAGE_GOOGLE_REDIRECT_URI ?? "",
+    vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS), rpc, picker_configured: storagePickerConfiguration(env) !== null,
+    refresh_available: env.CLUED_STORAGE_REFRESH_V1 === "true" });
+  return { rpc, onboard };
 }
 
 async function requireSupabaseUser(request: Request, env: ContinuityEnv) {
@@ -1588,6 +1642,8 @@ async function callStorageRead(request: Request, env: ContinuityEnv, args: unkno
   try {
     agent = await createStorageReadAgent({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
       receipt_keys: JSON.parse(env.CLUED_STORAGE_READ_RECEIPT_KEYS), cursor_key: env.CLUED_STORAGE_READ_CURSOR_KEY,
+      // §4.5: PDFs are parsed only by the extractor Worker behind this service binding.
+      pdf_extractor: env.PDF_EXTRACTOR,
       rpc: async ({ token_hash, input }) => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_read_v1", {
         method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_token_hash: token_hash, p_input: input }),
         signal: AbortSignal.timeout(10000), redirect: "manual",
@@ -1945,16 +2001,19 @@ async function callTool(
         : code === "cursor_invalid" ? "The cursor is invalid or expired. Start the listing or search again."
         : code === "storage_read_input_invalid" ? `Invalid input for ${String(name)}.`
         : code === "format_unsupported" ? "This object has no readable content: folders are never read, and without the Owner's normal use only text files and Google Docs are."
-        : code === "document_invalid" ? "The file is damaged or not what its type says (for example an encrypted Office file or an XML part with a DOCTYPE). Retrying will not help."
-        : code === "archive_limit_exceeded" ? "The file exceeds a safety limit for Office files (parts, entries, decompressed size, or more than 8 MiB of extracted text). Retrying will not help."
+        : code === "document_invalid" ? "The file is damaged or not what its type says (for example an encrypted Office file, a password-protected PDF, or an XML part with a DOCTYPE). Retrying will not help."
+        : code === "archive_limit_exceeded" ? "The file exceeds a safety limit for Office or PDF files (parts, entries, decompressed size, or more than 8 MiB of extracted text in one call). Retrying will not help."
         : code === "binary_too_large" ? "Reading this file would download more than 32 MiB in one call. Retrying will not help."
         : code === "export_too_large" ? "The Google Doc is larger than the 10 MB export limit."
         : code === "shortcut_not_followed" ? "Shortcuts are not followed. Read the target file inside the root instead."
         : code === "content_not_accessible" ? "This file's content is not readable with the current Google permission."
         : code === "scope_upgrade_required" ? "Reading files Clued did not create, and searching by content, need the Owner to turn on normal use on the Clued storage page. Retrying will not help."
-        : code === "budget_exhausted" ? "This connection has used its hourly content budget (256 MiB per rolling hour, reserved before each body request and settled to the bytes returned). Try again later; retrying now will not help."
+        : code === "budget_exhausted" ? "This connection has used its hourly content budget (by default 256 MiB per rolling hour per authorized client and 1 GiB per account; only the Owner can change them, on the Clued storage page; reserved before each body request and settled to the bytes returned). Try again later; retrying now will not help."
         : code === "request_limit_exceeded" ? "This large Office file needs more provider requests than one call may make. Retrying will not help; read an earlier or shorter range (a smaller offset + length), since each call extracts the text up to offset + length."
-        : "Storage read unavailable." };
+        : "Storage read unavailable.",
+        // A fixed hint and a page number (StorageNormalUse §4.5: PDF time cut on a continuation).
+        ...(error instanceof StorageReadError && error.detail ? { hint: error.detail.hint,
+          ...(error.detail.next_page_start !== undefined ? { next_page_start: error.detail.next_page_start } : {}) } : {}) };
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
     }
   }
@@ -2756,6 +2815,9 @@ async function handleContinuityRequestInner(
           client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "",
           redirect_uri: env.CLUED_STORAGE_GOOGLE_REDIRECT_URI ?? "",
           vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
+          // N0: a claimed onboard attempt completes through the onboard runtime.
+          ...(url.pathname === "/v1/storage/google/complete" && storageOnboardEnabled(env)
+            ? { onboard: (await storageOnboardRuntime(env, token)).onboard } : {}),
           rpc: async (value: Record<string, unknown>) => {
             const callback = value.action === "claim" || value.action === "complete" || value.action === "inspect";
             return await supabaseRequest(env, recoveryStart
@@ -2813,8 +2875,47 @@ async function handleContinuityRequestInner(
         return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });
       } catch (error) {
         return json({ error: "Storage Google connection unavailable.",
-          ...(error instanceof StorageGoogleConnectionError ? { reason: error.reason } : {}) },
+          ...(error instanceof StorageGoogleConnectionError ? { reason: error.reason,
+            ...(error.onboard_attempt_id ? { onboard_attempt_id: error.onboard_attempt_id } : {}) } : {}) },
           403, { ...corsHeaders(request), "cache-control": "no-store" });
+      }
+    }
+    // StorageNormalUse N0 (§8.1): self-service onboarding from the native page.
+    if (["/v1/storage/onboard/config", "/v1/storage/onboard/begin", "/v1/storage/onboard/resume",
+      "/v1/storage/onboard/status"].includes(url.pathname)) {
+      validateOrigin(request, env);
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
+      if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { allow: "POST, OPTIONS" });
+      const headers = { ...corsHeaders(request), "cache-control": "no-store" };
+      if (!storageOnboardEnabled(env)) {
+        // The page shows a fixed message; nothing else is disclosed.
+        return url.pathname.endsWith("/config")
+          ? json({ enabled: false, reason: "onboard_disabled" }, 200, headers) : json({ error: "Not found." }, 404);
+      }
+      const { user, token } = await requireSupabaseUser(request, env);
+      try {
+        const input = await parseBody(request);
+        const { rpc, onboard } = await storageOnboardRuntime(env, token);
+        let result: unknown;
+        if (url.pathname.endsWith("/config")) {
+          if (Object.keys(input).length) throw new Error("Invalid");
+          const listed = await rpc({ action: "list" });
+          const picker = storagePickerConfiguration(env);
+          result = { enabled: true, disclosure_version: ONBOARD_DISCLOSURE_VERSION, allowed: listed.allowed === true,
+            picker, ...(picker ? {} : { picker_reason: "picker_unconfigured" }), refresh_available: env.CLUED_STORAGE_REFRESH_V1 === "true",
+            refresh_token_count: listed.refresh_token_count, attempts: listed.attempts };
+        } else if (url.pathname.endsWith("/begin")) {
+          result = await onboard.begin(String(user.id), input as never);
+        } else {
+          if (Object.keys(input).length !== 1 || typeof input.onboard_attempt_id !== "string") throw new Error("Invalid");
+          result = url.pathname.endsWith("/resume") ? await onboard.resume(input.onboard_attempt_id)
+            : await rpc({ action: "status", onboard_attempt_id: input.onboard_attempt_id });
+        }
+        return json(result, 200, headers);
+      } catch (error) {
+        return json({ error: "Storage onboarding unavailable.",
+          ...(error instanceof StorageGoogleConnectionError ? { reason: error.reason,
+            ...(error.onboard_attempt_id ? { onboard_attempt_id: error.onboard_attempt_id } : {}) } : {}) }, 403, headers);
       }
     }
     if (url.pathname === "/v1/storage/jobs") {
@@ -2855,12 +2956,15 @@ async function handleContinuityRequestInner(
         return json({ error: "Storage owner operation unavailable." }, 403, headers);
       }
     }
-    if (url.pathname === "/v1/storage/read-access" || url.pathname === "/v1/storage/write-access" || url.pathname === "/v1/storage/normal-use") {
+    if (url.pathname === "/v1/storage/read-access" || url.pathname === "/v1/storage/write-access" || url.pathname === "/v1/storage/normal-use"
+      || url.pathname === "/v1/storage/budget") {
       // StorageFullCapability.v0.1: native Owner control of the read level (P1)
-      // and the modify write level (P3); StorageNormalUse.v0.1 §8.2 normal use.
+      // and the modify write level (P3); StorageNormalUse.v0.1 §8.2 normal use
+      // and §7.3 hourly budgets (N4).
       // The RPC checks the live auth session itself; never a Binding or service role.
       const rpc = url.pathname === "/v1/storage/read-access" ? "clued_storage_read_access_v1"
-        : url.pathname === "/v1/storage/normal-use" ? "clued_storage_normal_use_v1" : "clued_storage_write_access_v1";
+        : url.pathname === "/v1/storage/normal-use" ? "clued_storage_normal_use_v1"
+          : url.pathname === "/v1/storage/budget" ? "clued_storage_budget_v1" : "clued_storage_write_access_v1";
       validateOrigin(request, env);
       const headers = { ...corsHeaders(request), "cache-control": "no-store" };
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true") return json({ error: "Not found." }, 404, headers);

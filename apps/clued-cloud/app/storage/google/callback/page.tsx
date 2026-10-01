@@ -7,7 +7,7 @@ import { supabase } from "../../../supabase-browser";
 // One in-memory delivery across React remounts. Never persist the Google code,
 // state or provider credentials in browser storage; never feed it to Clued auth.
 type Delivery = { receipt: string; owner: string; refreshEnabled?: boolean; recovery?: boolean; originalReceipt?: string; originalUnconfirmed?: boolean;
-  scopeProfile?: "legacy" | "normal"; requestedProfile?: "legacy" | "normal"; normalUse?: boolean };
+  scopeProfile?: "legacy" | "normal"; requestedProfile?: "legacy" | "normal"; normalUse?: boolean; onboard?: boolean };
 let delivery: Promise<Delivery> | undefined;
 class CallbackFailure extends Error {}
 const reasons: Record<string, string> = {
@@ -37,6 +37,20 @@ const reasons: Record<string, string> = {
   credential_commit_unconfirmed: "凭据保存回执未确认，请先返回连接页核对状态，不要重复授权",
   storage_root_busy: "该目录还有尚未完成的文件操作，稍后再试；原有授权保持不变",
   refresh_token_limit: "该 Google 账号在 Clued 中的授权次数已达上限，暂时不能通过重新授权开启正常使用；原有授权保持不变，请联系维护者处理",
+  // StorageNormalUse N0 page-only labels (§5.3); retry from the new-connection page.
+  root_shared_drive: "所选目录在共享云端硬盘中，自助接入只支持“我的云端硬盘”里的目录",
+  root_not_owned: "所选目录不属于你的 Google 账号，请选择你自己的目录",
+  root_overlaps_existing: "所选目录与已连接的资料根相同、在其中或包含它",
+  root_name_changed: "所选目录的名称已变化，请返回新建连接页重新选择并确认",
+  onboard_track_name_conflict: "所选目录下已有与子目录同名的文件夹，请返回新建连接页修改子目录名称",
+  onboard_effect_ambiguous: "Drive 中找到多个本次接入创建的同名对象，请联系维护者",
+  root_multiple_parents: "所选目录有多个上级目录，不支持作为资料根",
+  root_ancestry_unavailable: "暂时无法核对目录的上级关系，可在新建连接页重试",
+  onboard_effect_unconfirmed: "Drive 目录创建结果未确认，可在新建连接页重试，不会重复创建",
+  activation_unconfirmed: "连接启用未确认，可在新建连接页核对并重试，不会重复创建目录",
+  onboard_expired: "本次接入已超过 30 分钟，请重新开始",
+  onboard_run_active: "这次接入仍在处理中，请几分钟后在新建连接页刷新状态",
+  onboard_run_superseded: "这次接入已由另一次重试接管，请在新建连接页核对状态",
 };
 async function settleOriginal(state: string, token: string, owner: string, receipt: string): Promise<Delivery> {
   const current = await supabase.auth.getSession();
@@ -109,6 +123,11 @@ function finish(): Promise<Delivery> {
     }
     if (result.purpose === "credential_recovery")
       return await settleOriginal(state, data.session.access_token, data.session.user.id, result.receipt_id);
+    if (result.purpose === "onboard") return { receipt: result.receipt_id, owner: data.session.user.id, onboard: true,
+      ...(typeof result.refresh_enabled === "boolean" ? { refreshEnabled: result.refresh_enabled } : {}),
+      ...(result.provider_scope_profile === "legacy" || result.provider_scope_profile === "normal" ? { scopeProfile: result.provider_scope_profile } : {}),
+      ...(result.requested_scope_profile === "legacy" || result.requested_scope_profile === "normal" ? { requestedProfile: result.requested_scope_profile } : {}),
+      ...(typeof result.normal_use_enabled === "boolean" ? { normalUse: result.normal_use_enabled } : {}) };
     return { receipt: result.receipt_id, owner: data.session.user.id,
       ...(typeof result.refresh_enabled === "boolean" ? { refreshEnabled: result.refresh_enabled } : {}),
       ...(result.provider_scope_profile === "legacy" || result.provider_scope_profile === "normal" ? { scopeProfile: result.provider_scope_profile } : {}),
@@ -133,7 +152,12 @@ export default function StorageGoogleCallback() {
     void finish().then(async result => {
       const current = await supabase.auth.getSession();
       if (active && !changed && !current.error && current.data.session?.user.id === result.owner)
-        setMessage(result.recovery ? "恢复凭据已安全保存。回执：" + result.receipt +
+        setMessage(result.onboard ? "Google Drive 连接已建立，资料根目录已登记。回执：" + result.receipt +
+          (result.normalUse === true ? "。正常使用已开启" : result.scopeProfile === "legacy" && result.requestedProfile === "normal"
+            ? "。未授予“查看你 Google 云端硬盘中的所有文件”，正常使用未开启，Agent 可查看目录结构" : "。Agent 可查看目录结构") +
+          (result.refreshEnabled === true ? "。后台自动续期已开启" : "。后台自动续期未开启：连接约 1 小时后读写都不可用") +
+          "。客户端仍须通过存储资格审核后才能使用。" :
+          result.recovery ? "恢复凭据已安全保存。回执：" + result.receipt +
           (result.originalReceipt ? "。原任务结果已自动核验并登记。回执：" + result.originalReceipt :
             result.originalUnconfirmed ? "。原任务结果尚未确认，请查询原任务回执；不会自动重试或重新授权" :
               "。本次授权沿用旧的凭据恢复流程，请返回查询原任务") +

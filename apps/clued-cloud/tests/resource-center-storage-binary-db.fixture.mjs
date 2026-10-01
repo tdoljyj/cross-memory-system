@@ -414,6 +414,34 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       assert.equal((await staging({ action: "sweep" })).delete.includes(id), false);
     });
 
+    await t.test("N4: an Owner upload budget change applies to the next upload_begin; policy, read access and a queued job are untouched", async () => {
+      const { target, client, storage } = await setup();
+      const bytes = pngBytes(2048);
+      const queuedStaging = await stage(target, client, bytes, "queued.png");
+      const job = randomUUID();
+      assert.equal((await submitRaw(client, target, binaryMutation(target, queuedStaging, bytes, "queued.png"), job)).status, "queued");
+      const governed = async () => (await admin.query(`select
+          (select to_jsonb(c) from clued_private.storage_connections_v1 c where c.id=$1) connection,
+          (select jsonb_agg(to_jsonb(p) order by p.id) from clued_private.storage_account_policies_v2 p where p.connection_id=$1) policies,
+          (select jsonb_agg(to_jsonb(a) order by a.id) from clued_private.storage_read_access_v1 a where a.connection_id=$1) read_access,
+          (select to_jsonb(j) from clued_private.storage_jobs_v1 j where j.owner_id=$2 and j.job_id=$3) job`, [target.connection, user, job])).rows[0];
+      const before = await governed();
+      const budget = async input => (await native.query("select public.clued_storage_budget_v1($1::jsonb) value", [JSON.stringify(input)])).rows[0].value;
+      const set = (base, upload) => budget({ action: "set", scope: "connection", connection_id: target.connection, base_generation: base,
+        read_bytes_per_hour: 256 * MiB, upload_bytes_per_hour: upload, idempotency_key: randomUUID() });
+      assert.equal((await set(0, 32 * MiB)).status, "committed");
+      const input = { ...beginInput(target, pngBytes(), "big.png"), size: 20 * MiB };
+      assert.equal((await staging(input, client.token)).state, "issued");
+      await assert.rejects(staging(input, client.token), /storage_upload_budget_exhausted/, "2 KiB + 20 MiB + 20 MiB > 32 MiB");
+      assert.equal((await set(1, 64 * MiB)).status, "committed");
+      assert.equal((await staging(input, client.token)).state, "issued", "the raised budget applies to the very next begin");
+      assert.deepEqual(await governed(), before, "connection, policy, read access and the queued job are unchanged");
+      const result = await executor(storage, () => bytes).run({ connection_id: target.connection, job_id: job });
+      assert.equal(result.status, "committed", "the queued job still executes");
+      // Keep the owner's rolling-hour row and byte counts for later tests unchanged.
+      await timeTravel("update clued_private.storage_staging_v1 set created_at=created_at-interval '2 hours' where binding_id=$1", [client.id]);
+    });
+
     await t.test("above 5 MiB: one resumable session and one PUT, verified /3", async () => {
       const { target, client, storage } = await setup();
       const bytes = pdfBytes(5 * MiB + 7);

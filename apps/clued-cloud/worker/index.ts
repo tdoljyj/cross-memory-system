@@ -7,12 +7,17 @@ import {
   runStorageRefreshScheduled,
   runStorageRecoveryScheduled,
   runStorageStagingScheduled,
+  runStorageOnboardScheduled,
   runStorageJobQueue,
   type ContinuityEnv,
   type StorageJobQueueMessage,
 } from "./continuity";
 
 import { delegatedOAuthEnabled, handleDelegatedOAuth, type DelegatedOAuthEnv } from "./delegated-oauth";
+import { createPdfExtractorCheckGate, PDF_EXTRACTOR_CHECK_PATH } from "./storage-read-pdf-client";
+
+/** One per isolate: caches the last check result and allows one check in flight (StorageNormalUse §4.5). */
+const pdfExtractorCheck = createPdfExtractorCheckGate();
 
 interface Env extends ContinuityEnv, DelegatedOAuthEnv {
   ASSETS: Fetcher;
@@ -40,6 +45,16 @@ interface ExecutionContext {
 const legacyWorker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // StorageNormalUse §4.5: release-time proof that the PDF_EXTRACTOR binding
+    // works (the extractor parses its fixed built-in check PDF outside the user
+    // PDF slot; nothing is read from the request, query parameters are ignored;
+    // results are cached per isolate, so the public route cannot flood it).
+    if (url.pathname === PDF_EXTRACTOR_CHECK_PATH) {
+      if (request.method !== "GET") return new Response(null, { status: 405, headers: { allow: "GET" } });
+      const check = await pdfExtractorCheck(env.PDF_EXTRACTOR);
+      return Response.json(check, { status: check.status === "ok" ? 200 : 503, headers: { "cache-control": "no-store" } });
+    }
 
     const continuityResponse = await handleContinuityRequest(request, env, ctx);
     if (continuityResponse) return continuityResponse;
@@ -85,6 +100,10 @@ const worker = {
     }));
     ctx.waitUntil(runStorageStagingScheduled(env).then(result => {
       if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_staging_sweep_unavailable" }));
+    }));
+    ctx.waitUntil(runStorageOnboardScheduled(env).then(result => {
+      if (result.status === "unavailable" && env.CLUED_STORAGE_ONBOARD_V1 === "true")
+        console.warn(JSON.stringify({ event: "storage_onboard_sweep_unavailable" }));
     }));
   },
   async queue(batch: { readonly messages: readonly StorageJobQueueMessage[] }, env: Env) {
