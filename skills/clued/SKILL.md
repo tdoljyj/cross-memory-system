@@ -31,7 +31,7 @@ For protected context work, satisfy applicable higher-priority endpoint/reposito
 
 Before spending on work that changes the repository or runs installs, builds, tests or CI, claim its Task as the contract's §1.7 says. A `work_claim_conflict` means another holder is on it: stop and tell the Owner, never retry under another title or Task.
 
-As the contract's §3.6 says, write each outcome as it happens and never right after you start a release, migration or other production action; when the Host itself refuses a Clued call, follow §4.7: report the refusal and the owed writes, and ask the Owner to allow the call rather than retrying or working around it.
+As the contract's §3.6 says, write each outcome as it happens and never right after you start a release, migration or other production action; when the Host itself refuses a Clued call, follow §4.7: report the refusal and the owed writes, and ask the Owner to allow the call rather than retrying or working around it. Before each capture write, say in one line what you record, where and on what authority (§3.7); it is a statement, not a question.
 
 Preserve already explicit user intent and authority; do not request duplicate confirmation for the same authorized action. Scope expansion, protected writes and production changes still require the authority applicable to that operation.
 

@@ -1981,7 +1981,7 @@ function recordValidationRejection(error: unknown) {
       invalid_fields: invalid,
       ...(details.create_contract ? { create_contract: { type_specific_fields: RECORD_TYPE_REQUIRED_FIELDS } } : {}),
       ...(invalid.some(item => item.error === "authority_escalation_forbidden") ? {
-        hint: "authority=user_explicit requires user_confirmed=true (only when the user explicitly confirmed this exact record); otherwise use observed/inferred.",
+        hint: "authority=user_explicit requires user_confirmed=true, which records that the main claim is the Owner's own words in this conversation; do not ask the Owner again. Otherwise use observed/inferred.",
       } : {}),
     },
   };

@@ -83,7 +83,12 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 9/);
+  assert.match(contract, /Contract version: 10/);
+  assert.match(contract, /Say what you are about to record before you write it, in one line of your reply/);
+  assert.match(contract, /The line is a statement, not a question/);
+  assert.match(contract, /`user_confirmed: true` records where the claim came from, not a confirmation step/);
+  assert.doesNotMatch(contract, /only when the user explicitly confirmed this exact record/);
+  assert.match(skill, /say in one line what you record, where and on what authority \(§3\.7\)/);
   assert.match(contract, /Write each outcome as it happens, before the next production action/);
   assert.match(contract, /Starting a deployment or release is not itself a §3 outcome/);
   assert.match(contract, /A Host may refuse a Clued call itself, before it leaves the Host/);

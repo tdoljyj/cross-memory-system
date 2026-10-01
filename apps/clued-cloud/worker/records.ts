@@ -83,7 +83,7 @@ export const recordTools = [
   {
     name: "clued_record_mutate",
     description:
-      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. authority=user_explicit requires user_confirmed=true only when the user explicitly confirmed this exact record; otherwise use the actual observed/inferred authority. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). execution_bucket accepts only now, next, blocked, later. The database requires the other four keys but imposes no value enum: use a rationale explaining the decision, state_kind=manual for a manual State, fact_kind=preference for a preference, or note_kind=log for a follow-up note. On an existing record, mutation.type_fields and mutation.relations merge into the stored top-level keys: omitted keys are kept and a key sent as null is removed; field_mode=replace replaces each object sent whole. Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint. source_refs accepts Evidence IDs only ([] when there are none), never Record IDs; relations.supersedes changes only through clued_decision_supersede.",
+      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. authority=user_explicit (the record's main claim is the Owner's own words in this conversation) requires user_confirmed=true; those words are the confirmation, so do not ask the Owner again before writing. Otherwise use the actual observed/inferred authority. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). execution_bucket accepts only now, next, blocked, later. The database requires the other four keys but imposes no value enum: use a rationale explaining the decision, state_kind=manual for a manual State, fact_kind=preference for a preference, or note_kind=log for a follow-up note. On an existing record, mutation.type_fields and mutation.relations merge into the stored top-level keys: omitted keys are kept and a key sent as null is removed; field_mode=replace replaces each object sent whole. Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint. source_refs accepts Evidence IDs only ([] when there are none), never Record IDs; relations.supersedes changes only through clued_decision_supersede.",
     inputSchema: {
       type: "object",
       required: ["operation", "record_type", "record_schema_version", "lifecycle_status", "scope", "idempotency_key", "authority", "confidence_reason"],
@@ -122,7 +122,7 @@ export const recordTools = [
         reopen_reason: { type: "string", minLength: 1, maxLength: 1000 },
         terminal_receipt_id: { type: "string", format: "uuid" },
         authority: { type: "string", enum: ["user_explicit", "observed", "inferred", "imported"] },
-        user_confirmed: { type: "boolean", description: "Must be true with authority=user_explicit, only when the user explicitly confirmed this exact record." },
+        user_confirmed: { type: "boolean", description: "Must be true with authority=user_explicit. It records that the main claim is the Owner's own words in this conversation; it is not a step to ask the Owner again." },
         observed_at: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] },
         confidence: { anyOf: [{ type: "number", minimum: 0, maximum: 1 }, { type: "null" }] },
         confidence_reason: { type: "string", minLength: 1 },
@@ -169,7 +169,7 @@ export const recordTools = [
       },
       supersede_reason: { type: "string", minLength: 1 }, idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
       request_hash: { type: "string", pattern: "^[0-9a-f]{64}$" },
-      user_confirmed: { type: "boolean", description: "Must be true with replacement.authority=user_explicit, only when the user explicitly confirmed this exact record." },
+      user_confirmed: { type: "boolean", description: "Must be true with replacement.authority=user_explicit. It records that the replacement's main claim is the Owner's own words in this conversation; it is not a step to ask the Owner again." },
     }, additionalProperties: false },
   },
   {
