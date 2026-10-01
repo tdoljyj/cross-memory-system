@@ -1,6 +1,7 @@
 export const RESOURCE_CENTER_POLICY_VERSION = "clued.resource-center-mutation-policy/1";
 
-const MUTATIONS = new Set(["create", "write", "move", "rename", "replace", "delete"]);
+// "restore" (StorageFullCapability P5) takes a trashed file out of the trash: source only, like delete.
+const MUTATIONS = new Set(["create", "write", "move", "rename", "replace", "delete", "restore"]);
 const DEFAULT_STATUS_DIRECTORY_NAMES = [
   "current",
   "current baseline",
@@ -102,20 +103,23 @@ export function evaluateResourceCenterMutation(input) {
   if (!MUTATIONS.has(operation)) return deny("MUTATION_OPERATION_INVALID");
   if (!managedRoot) return deny("MANAGED_ROOT_REQUIRED");
   if (artifactRole !== "clued_resource") return deny("ARTIFACT_ROLE_REQUIRED");
-  if (operation === "delete") {
+  if (operation === "delete" || operation === "restore") {
     if (!source) return deny("DELETE_TARGET_REQUIRED");
-    if (destination) return deny("DELETE_DESTINATION_FORBIDDEN");
+    // An untrash may name the final path the user chose (Decision 7f9daf68).
+    if (destination && operation === "delete") return deny("DELETE_DESTINATION_FORBIDDEN");
   } else if (operation === "move" || operation === "rename") {
     if (!source || !destination) return deny("SOURCE_AND_DESTINATION_REQUIRED");
   } else {
     if (!destination) return deny("DESTINATION_REQUIRED");
     if (source) return deny("SOURCE_PATH_FORBIDDEN_FOR_OPERATION", { operation });
   }
-  if (targetKind === "directory" && !["track", "topic", "asset_collection"].includes(directorySemantics)) {
+  // Trash and untrash of an empty directory (P5) carry no directory semantics.
+  if (targetKind === "directory" && operation !== "delete" && operation !== "restore" &&
+    !["track", "topic", "asset_collection"].includes(directorySemantics)) {
     return deny("DIRECTORY_SEMANTICS_REQUIRED");
   }
 
-  const target = operation === "delete" ? source : destination;
+  const target = operation === "delete" || (operation === "restore" && !destination) ? source : destination;
   if (artifactRole === "clued_resource" && !isWithin(target, managedRoot)) {
     return deny("SIBLING_ISLAND_FORBIDDEN", { managed_root: managedRoot });
   }

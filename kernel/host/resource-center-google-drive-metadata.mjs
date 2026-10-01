@@ -107,6 +107,22 @@ export function createGoogleDriveMetadataApi({
     return { id: result.id, shared: result.shared, permissionIds: result.permissionIds };
   }
 
+  // Ownership and trash capabilities of one file (P5 trash/untrash, §3.4 item 6).
+  // Read separately so every other metadata object keeps its existing shape.
+  async function getOwnership(id, {signal} = {}) {
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]+$/.test(id)) {
+      throw new TypeError("Invalid Drive file ID.");
+    }
+    const url = new URL(`${DRIVE_API}/${encodeURIComponent(id)}`);
+    url.searchParams.set("fields", "id,ownedByMe,capabilities(canTrash,canUntrash)");
+    url.searchParams.set("supportsAllDrives", "true");
+    signal?.throwIfAborted();
+    const result = await read(url.href, await credential(false), signal);
+    if (!result || result.id !== id) throw new Error("DRIVE_METADATA_MISMATCH");
+    return { id: result.id, owned_by_me: result.ownedByMe === true,
+      can_trash: result.capabilities?.canTrash === true, can_untrash: result.capabilities?.canUntrash === true };
+  }
+
   // One revision's retention flag and content identity (P4 replace/revert).
   async function getRevision(fileId, revisionId, {signal} = {}) {
     if (typeof fileId !== "string" || !/^[A-Za-z0-9_-]+$/.test(fileId) ||
@@ -222,7 +238,24 @@ export function createGoogleDriveMetadataApi({
     throw new Error("DRIVE_PAGINATION_LIMIT");
   }
 
-  return Object.freeze({ getFile, getSharing, getRevision, countKeptRevisions, downloadRevision, listChildren: (input, {signal} = {}) => list(input, false, signal),
+  // Whether a folder has ANY child, trashed ones included (P5 empty-directory
+  // trash/untrash). Needs namespace visibility: drive.file alone would hide
+  // other applications' files, so an empty answer is never trusted without it.
+  async function hasChildren(parentId, {signal} = {}) {
+    signal?.throwIfAborted();
+    const token = await credential(true);
+    const url = new URL(DRIVE_API);
+    url.searchParams.set("q", `${driveLiteral(parentId)} in parents`);
+    url.searchParams.set("fields", "nextPageToken,incompleteSearch,files(id)");
+    url.searchParams.set("pageSize", "1");
+    url.searchParams.set("supportsAllDrives", "true");
+    url.searchParams.set("includeItemsFromAllDrives", "true");
+    const result = await read(url.href, token, signal);
+    if (!Array.isArray(result?.files) || result.incompleteSearch === true) throw new Error("DRIVE_LIST_INVALID");
+    return result.files.length > 0 || (typeof result.nextPageToken === "string" && result.nextPageToken.length > 0);
+  }
+
+  return Object.freeze({ getFile, getSharing, getOwnership, hasChildren, getRevision, countKeptRevisions, downloadRevision, listChildren: (input, {signal} = {}) => list(input, false, signal),
     listFolder: (parentId, {signal, app_authorized: appAuthorized = false} = {}) => {
       if (typeof appAuthorized !== "boolean") throw new TypeError("app_authorized must be boolean.");
       return list({ parent_id: parentId }, true, signal, appAuthorized);

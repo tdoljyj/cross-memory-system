@@ -16,6 +16,9 @@ const MUTATION_CALLER_FIELDS = new Set([
   "restore_job_id",
   // Binary create (StorageNormalUse §6.2): the staged object's exact reference.
   "content_ref",
+  // Trash/untrash (P5): the item's Drive ID, and an untrash's opted-in relocation.
+  "source_file_id",
+  "restore_mode",
 ]);
 const CONTENT_REF_FIELDS = ["mime_type", "sha256", "size", "staging_id"];
 
@@ -30,7 +33,7 @@ const mutationInputSchema = deepFreeze({
   additionalProperties: false,
   required: ["operation"],
   properties: {
-    operation: { type: "string", enum: ["create", "write", "move", "rename", "replace", "delete"] },
+    operation: { type: "string", enum: ["create", "write", "move", "rename", "replace", "delete", "restore"] },
     source_path: { type: "string", minLength: 1 },
     destination_path: { type: "string", minLength: 1 },
     target_kind: { type: "string", enum: ["file", "directory"] },
@@ -40,6 +43,8 @@ const mutationInputSchema = deepFreeze({
     source_file_version: { type: "string", pattern: "^[1-9][0-9]{0,39}$" },
     destination_file_version: { type: "string", pattern: "^[1-9][0-9]{0,39}$" },
     restore_job_id: { type: "string", format: "uuid" },
+    source_file_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,160}$" },
+    restore_mode: { type: "string", enum: ["folder", "suffix"] },
     content_ref: {
       type: "object", additionalProperties: false, required: CONTENT_REF_FIELDS,
       properties: {
