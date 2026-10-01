@@ -6,7 +6,8 @@ It prepares part of M2-01/02/08/09; it does **not** close those tasks or issue M
 
 ## Run
 
-Use Python 3.12+ and the existing `jsonschema` dependency (Draft 2020-12):
+Use Python 3.12 and `jsonschema==4.25.1`, matching the existing CI pin. Its
+transitive `referencing` package resolves the installed local Draft 2020-12 schema:
 
 ```sh
 python3 scripts/model-program/validate_m2_dataset_foundation.py
