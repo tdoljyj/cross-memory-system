@@ -263,7 +263,9 @@ test('production release deploys the PDF extractor Worker first and verifies the
   const buildScript = await readFile(new URL('../scripts/build-verified.sh', import.meta.url), 'utf8');
   assert.match(buildScript, /scripts\/build-pdf-extractor\.mjs" --check-main/);
 
-  const { expectedExtractorOf, verifyPdfExtractorCheck, CHECK_PATH } = await import('../scripts/verify-pdf-extractor.mjs');
+  const { expectedExtractorOf, verifyPdfExtractorCheck, CHECK_PATH, ATTEMPTS } = await import('../scripts/verify-pdf-extractor.mjs');
+  // The attempts (10 s apart) outlast the check route's 60 s per-isolate cache of an OK result.
+  assert.ok((ATTEMPTS - 1) * 10 > 60);
   const expected = expectedExtractorOf(await readFile(new URL('../worker/storage-read-pdf-common.ts', import.meta.url), 'utf8'));
   assert.deepEqual(expected, { contract: 'clued.storage-pdf-extractor/1', version: 1 });
   assert.equal(CHECK_PATH, '/v1/storage/pdf-extractor/check');
@@ -272,6 +274,10 @@ test('production release deploys the PDF extractor Worker first and verifies the
   assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 503, body: { ...ok, status: 'unavailable', code: 'storage_read_unavailable' } }),
     ['pdf_extractor_check_http_503', 'pdf_extractor_check_storage_read_unavailable']);
   assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 200, body: { ...ok, extractor: { ...expected, version: 2 } } }), ['pdf_extractor_version_mismatch']);
+  // The release requires exactly the repository's version, even though reads accept N-1 during a deploy gap.
+  assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 200, body: { ...ok, extractor: { ...expected, version: 0 } } }), ['pdf_extractor_version_mismatch']);
+  assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 503, body: { ...ok, status: 'unavailable', extractor: null, code: 'check_in_progress' } }),
+    ['pdf_extractor_check_http_503', 'pdf_extractor_check_check_in_progress', 'pdf_extractor_version_mismatch']);
   assert.deepEqual(verifyPdfExtractorCheck({ expected: null, status: 0, body: null }),
     ['repository_extractor_contract_missing', 'pdf_extractor_check_http_0', 'pdf_extractor_check_contract_invalid', 'pdf_extractor_check_failed']);
 });

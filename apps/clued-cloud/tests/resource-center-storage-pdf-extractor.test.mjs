@@ -18,7 +18,8 @@ await build({ entryPoints: [path.join(root, "worker/storage-read-pdf-client.ts")
   platform: "node", format: "esm", logLevel: "silent" });
 stop();
 const client = await import(pathToFileURL(path.join(directory, "client.mjs")).href);
-const { connectPdfExtractor, checkPdfExtractor, validExtraction, PDF_EXTRACTOR_STOPPED_HINT, PDF_EXTRACTOR_UNAVAILABLE_HINT, PDF_EXTRACTOR_CHECK_TEXT } = client;
+const { connectPdfExtractor, checkPdfExtractor, createPdfExtractorCheckGate, validExtraction, validMarker, PDF_EXTRACTOR_STOPPED_HINT, PDF_EXTRACTOR_UNAVAILABLE_HINT,
+  PDF_EXTRACTOR_BUSY_HINT, PDF_EXTRACTOR_CHECK_TEXT } = client;
 const { core, binding } = await loadPdfExtractorBinding();
 const MiB = 1024 * 1024;
 const OPTIONS = { page_start: 1, page_count: 20, max_text_bytes: 262144, time_ms: 10000 };
@@ -53,14 +54,20 @@ test("client: a missing binding, a wrong marker, a failed or slow marker call ar
   assert.equal(sent, 0);
 });
 
-test("client: a crash, out of memory, CPU limit or timeout is one failed call with the fixed hint, never retried", async () => {
-  for (const [message, code] of [["Worker exceeded memory limit.", "archive_limit_exceeded"], ["Worker exceeded CPU time limit.", "archive_limit_exceeded"],
-    ["Worker exceeded resource limits", "archive_limit_exceeded"], ["Network connection lost.", "storage_read_unavailable"], ["internal error", "storage_read_unavailable"]]) {
+test("client: out of memory, a CPU limit or a timeout stops the read (same-way hint); any other failed call is unavailable (retry hint); never retried", async () => {
+  const stopped = { code: "archive_limit_exceeded", hint: PDF_EXTRACTOR_STOPPED_HINT }, down = { code: "storage_read_unavailable", hint: PDF_EXTRACTOR_UNAVAILABLE_HINT };
+  for (const [message, expected] of [["Worker exceeded memory limit.", stopped], ["Worker exceeded CPU time limit.", stopped], ["Exceeded CPU Limit", stopped],
+    ["Worker exceeded resource limits", stopped], ["RangeError: out of memory", stopped],
+    ["Network connection lost.", down], ["internal error", down], ["This script has been upgraded. Please send a new request to connect to the new version.", down],
+    ["The Workers runtime canceled this request because it detected that your Worker's code had hung and would never generate a response.", down],
+    ["Rate limit header missing", down], ["something unknown", down]]) {
     let calls = 0;
     const extractor = await connectPdfExtractor({ marker: binding.marker, extract: async () => { calls++; throw new Error(message); } });
-    assert.deepEqual(await failure(extractor.extract(latinPdf([["x"]]), OPTIONS)), { code, hint: PDF_EXTRACTOR_STOPPED_HINT }, message);
+    assert.deepEqual(await failure(extractor.extract(latinPdf([["x"]]), OPTIONS)), expected, message);
     assert.equal(calls, 1, message);
   }
+  const thrown = await connectPdfExtractor({ marker: binding.marker, extract: async () => { throw "dropped"; } });
+  assert.deepEqual(await failure(thrown.extract(latinPdf([["x"]]), OPTIONS)), down, "a non-Error rejection");
   // The call outlives its deadline plus the grace: stopped (archive_limit_exceeded), not awaited further.
   const slow = await connectPdfExtractor({ marker: binding.marker, extract: never }, { graceMs: 30 });
   const started = Date.now();
@@ -90,8 +97,11 @@ test("client: request and response are bounded; malformed or oversized results a
     const extractor = await connectPdfExtractor({ marker: binding.marker, extract: async () => ({ contract: good.contract, ok: false, code }) });
     assert.deepEqual(await failure(extractor.extract(latinPdf([["x"]]), OPTIONS)), { code, hint: undefined }, code);
   }
+  // Busy (the extractor's slot is still taken, e.g. by a read whose caller timed out) is unavailable with the short retry hint, not the same-way hint.
   const busy = await connectPdfExtractor({ marker: binding.marker, extract: async () => ({ contract: good.contract, ok: false, code: "storage_read_unavailable", busy: true }) });
-  assert.match((await failure(busy.extract(latinPdf([["x"]]), OPTIONS))).hint, /Another PDF is being read/);
+  assert.deepEqual(await failure(busy.extract(latinPdf([["x"]]), OPTIONS)), { code: "storage_read_unavailable", hint: PDF_EXTRACTOR_BUSY_HINT });
+  assert.match(PDF_EXTRACTOR_BUSY_HINT, /Retry the same read in a few seconds/);
+  assert.notEqual(PDF_EXTRACTOR_BUSY_HINT, PDF_EXTRACTOR_STOPPED_HINT);
   assert.equal(validExtraction(good.extraction, OPTIONS).text, "# Page 1\nbounded");
 });
 
@@ -111,26 +121,120 @@ test("extractor entry point: marker, option and byte validation, fixed failure c
   assert.equal((await core.runExtraction(latinPdf([["entry point"]]).buffer, OPTIONS)).ok, true, "an ArrayBuffer is accepted");
   assert.deepEqual(await core.runExtraction(encryptedPdf(), OPTIONS), { contract: "clued.storage-pdf-extractor/1", ok: false, code: "document_invalid" });
   assert.deepEqual(await core.runExtraction(operatorBombPdf(100 * MiB), OPTIONS), { contract: "clued.storage-pdf-extractor/1", ok: false, code: "archive_limit_exceeded" });
-  // A second PDF while one runs in this isolate is refused at once (busy), not queued.
+  // A second PDF while one runs in this isolate waits briefly for the slot (the wait taken off its time_ms), then is refused as busy.
+  const empty = { page_count: 1, page_start: 1, pages_extracted: 0, text: "", complete: true, time_limited: false, text_layer: "present", unreliable_pages: [], cmap_missing: false };
   let release;
   const held = core.runExtraction(latinPdf([["held"]]), OPTIONS, () => new Promise(resolve => { release = resolve; }));
   await new Promise(resolve => setTimeout(resolve, 5));
-  assert.deepEqual(await core.runExtraction(latinPdf([["second"]]), OPTIONS), { contract: "clued.storage-pdf-extractor/1", ok: false, code: "storage_read_unavailable", busy: true });
-  release({ page_count: 1, page_start: 1, pages_extracted: 0, text: "", complete: true, time_limited: false, text_layer: "present", unreliable_pages: [], cmap_missing: false });
+  assert.deepEqual(await core.runExtraction(latinPdf([["second"]]), OPTIONS, undefined, 30), { contract: "clued.storage-pdf-extractor/1", ok: false, code: "storage_read_unavailable", busy: true });
+  let seen;
+  const waiting = core.runExtraction(latinPdf([["third"]]), OPTIONS, async (bytes, options) => { seen = options; return empty; });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  release(empty);
   assert.equal((await held).ok, true);
+  assert.equal((await waiting).ok, true, "a read that finds the slot freed within the wait runs");
+  assert.ok(seen.time_ms < OPTIONS.time_ms && seen.time_ms > OPTIONS.time_ms - 2000, "the wait is taken off its time_ms");
   // An unexpected exception is classified, never passed through.
   assert.deepEqual(await core.runExtraction(latinPdf([["x"]]), OPTIONS, async () => { throw new RangeError("Array buffer allocation failed"); }),
     { contract: "clued.storage-pdf-extractor/1", ok: false, code: "storage_read_unavailable" });
 });
 
-test("release check: the fixed PDF round trip passes through a working binding and reports anything else", async () => {
+test("release check: the extractor's fixed check PDF passes through a working binding, reports the extractor's own marker, and reports anything else", async () => {
   assert.deepEqual(await checkPdfExtractor(binding), { contract: "clued.storage-pdf-extractor-check/1", status: "ok",
     extractor: { contract: "clued.storage-pdf-extractor/1", version: 1 } });
-  assert.equal((await checkPdfExtractor(undefined)).status, "unavailable");
-  assert.equal((await checkPdfExtractor({ marker: binding.marker, extract: async () => { throw new Error("Worker exceeded memory limit."); } })).code, "archive_limit_exceeded");
-  const wrong = await checkPdfExtractor({ marker: binding.marker, extract: async (b, o) => { const r = await binding.extract(b, o); r.extraction.text = "# Page 1\nother"; return r; } });
+  for (const raw of [undefined, null, {}, { marker: binding.marker, extract: binding.extract }])
+    assert.deepEqual(await checkPdfExtractor(raw), { contract: "clued.storage-pdf-extractor-check/1", status: "unavailable", extractor: null, code: "storage_read_unavailable" });
+  assert.equal((await checkPdfExtractor({ check: async () => { throw new Error("Worker exceeded memory limit."); } })).code, "archive_limit_exceeded");
+  assert.equal((await checkPdfExtractor({ check: async () => { throw new Error("Network connection lost."); } })).code, "storage_read_unavailable");
+  assert.equal((await checkPdfExtractor({ check: () => new Promise(() => {}) }, { timeoutMs: 20 })).code, "storage_read_unavailable");
+  const good = await binding.check();
+  // The extractor's own marker is reported, also when it is not accepted.
+  const older = await checkPdfExtractor({ check: async () => ({ ...good, marker: { ...good.marker, version: 0 } }) });
+  assert.deepEqual(older, { contract: "clued.storage-pdf-extractor-check/1", status: "unavailable", extractor: { contract: "clued.storage-pdf-extractor/1", version: 0 },
+    code: "extractor_marker_invalid" });
+  const wrong = await checkPdfExtractor({ check: async () => ({ ...good, result: { ...good.result, extraction: { ...good.result.extraction, text: "# Page 1\nother" } } }) });
   assert.deepEqual([wrong.status, wrong.code], ["unavailable", "check_text_mismatch"]);
+  const busy = await checkPdfExtractor({ check: async () => ({ ...good, result: { contract: good.result.contract, ok: false, code: "storage_read_unavailable", busy: true } }) });
+  assert.deepEqual([busy.status, busy.code], ["unavailable", "check_busy"]);
   assert.equal(PDF_EXTRACTOR_CHECK_TEXT, "# Page 1\nClued PDF extractor check");
+});
+
+test("release check: a check flood never takes the user PDF slot, so real extractions keep working", async () => {
+  // Twenty checks at once alongside a real extraction: the extraction succeeds; one check parses, the others are answered busy at once.
+  const [read, ...checks] = await Promise.all([binding.extract(flateLatinPdf([["real read"]]), OPTIONS), ...Array.from({ length: 20 }, () => binding.check())]);
+  assert.equal(read.ok, true); assert.equal(read.extraction.text, "# Page 1\nreal read");
+  assert.ok(checks.filter(c => c.result.ok === true).length >= 1);
+  assert.ok(checks.every(c => c.result.ok === true || c.result.busy === true));
+  // While a user extraction holds the slot, a check still runs (and does not wait for it); afterwards the slot is free for the next read.
+  let release;
+  const held = core.runExtraction(latinPdf([["held"]]), OPTIONS, () => new Promise(resolve => { release = resolve; }));
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal((await binding.check()).result.ok, true);
+  release({ page_count: 1, page_start: 1, pages_extracted: 1, text: "# Page 1\nheld", complete: true, time_limited: false, text_layer: "present", unreliable_pages: [], cmap_missing: false });
+  assert.equal((await held).ok, true);
+  assert.equal((await binding.extract(latinPdf([["after"]]), OPTIONS)).ok, true);
+  // A running check makes concurrent checks busy, never user reads.
+  let finish;
+  const slowCheck = core.runCheck(() => new Promise(resolve => { finish = resolve; }));
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal((await core.runCheck()).result.busy, true);
+  assert.equal((await binding.extract(latinPdf([["during check"]]), OPTIONS)).ok, true);
+  finish({ page_count: 1, page_start: 1, pages_extracted: 1, text: PDF_EXTRACTOR_CHECK_TEXT, complete: true, time_limited: false, text_layer: "present", unreliable_pages: [], cmap_missing: false });
+  assert.equal((await slowCheck).result.ok, true);
+});
+
+test("release check route: results are cached per isolate (OK 60 s, failure 5 s) and only one check is in flight; nothing bypasses it", async () => {
+  let clock = 1_000_000, calls = 0, next = "ok", gateOpen = null;
+  const run = async () => { calls++; if (gateOpen) await gateOpen; return next === "ok" ? { contract: "clued.storage-pdf-extractor-check/1", status: "ok",
+    extractor: { contract: "clued.storage-pdf-extractor/1", version: 1 } } : { contract: "clued.storage-pdf-extractor-check/1", status: "unavailable", extractor: null, code: "storage_read_unavailable" }; };
+  const gate = createPdfExtractorCheckGate({ now: () => clock, run });
+  const first = await gate(binding);
+  assert.deepEqual([first.status, first.cached, first.checked_at], ["ok", false, new Date(1_000_000).toISOString()]);
+  for (let i = 0; i < 100; i++) { clock += 500; assert.equal((await gate(binding)).cached, true); }
+  assert.equal(calls, 1, "a flood within 60 s is served from the cache");
+  const replay = await gate(binding);
+  assert.deepEqual([replay.status, replay.checked_at, replay.extractor.version], ["ok", new Date(1_000_000).toISOString(), 1]);
+  clock = 1_000_000 + 60_000;
+  assert.equal((await gate(binding)).cached, false); assert.equal(calls, 2, "after 60 s a real round trip runs again");
+  // A failure is cached for 5 s only.
+  next = "fail"; clock += 60_000;
+  assert.equal((await gate(binding)).status, "unavailable"); assert.equal(calls, 3);
+  clock += 4_000; assert.equal((await gate(binding)).cached, true); assert.equal(calls, 3);
+  clock += 1_000; next = "ok"; assert.equal((await gate(binding)).status, "ok"); assert.equal(calls, 4);
+  // Single flight: requests during a running check get the last result (or check_in_progress) without calling the extractor.
+  clock += 60_000;
+  let open; gateOpen = new Promise(resolve => { open = resolve; });
+  const leader = gate(binding);
+  const during = await Promise.all(Array.from({ length: 10 }, () => gate(binding)));
+  assert.ok(during.every(r => r.cached === true && r.status === "ok")); assert.equal(calls, 5);
+  open(); gateOpen = null; assert.equal((await leader).cached, false);
+  const fresh = createPdfExtractorCheckGate({ now: () => clock, run: () => new Promise(() => {}) });
+  void fresh(binding);
+  assert.deepEqual(await fresh(binding), { contract: "clued.storage-pdf-extractor-check/1", status: "unavailable", extractor: null, code: "check_in_progress", checked_at: null, cached: false });
+  // A check whose request was canceled (never settled) stops counting as in flight after its timeout.
+  let ran = false;
+  const recovered = createPdfExtractorCheckGate({ now: () => clock, run: async () => { if (!ran) { ran = true; return new Promise(() => {}); } return run(); } });
+  void recovered(binding); clock += 20_000;
+  assert.equal((await recovered(binding)).status, "ok");
+  // The route reads nothing from the request (no bypass parameter).
+  const index = await readFile(path.join(root, "worker/index.ts"), "utf8");
+  assert.match(index, /const pdfExtractorCheck = createPdfExtractorCheckGate\(\);/);
+  assert.match(index, /await pdfExtractorCheck\(env\.PDF_EXTRACTOR\)/);
+  const route = index.slice(index.indexOf("url.pathname === PDF_EXTRACTOR_CHECK_PATH"), index.indexOf("handleContinuityRequest(request"));
+  assert.doesNotMatch(route, /searchParams|request\.(?:json|text|arrayBuffer|headers)/);
+});
+
+test("version skew: the main Worker accepts its extractor version and the one before it, never others, with the strict contract and patch markers", async () => {
+  const good = await binding.marker();
+  assert.equal(validMarker(good), true);
+  assert.equal(validMarker({ ...good, version: 4 }, 5), true, "N-1");
+  assert.equal(validMarker({ ...good, version: 5 }, 5), true, "N");
+  for (const [name, marker] of [["N-2", { ...good, version: 3 }], ["N+1", { ...good, version: 6 }], ["string version", { ...good, version: "4" }],
+    ["other contract", { ...good, version: 4, contract: "clued.storage-pdf-extractor/2" }], ["no decode guard", { ...good, version: 4, decode_guard: false }],
+    ["font programs", { ...good, version: 4, font_programs: "parsed" }]])
+    assert.equal(validMarker(marker, 5), false, name);
+  // At version 1 there is no N-1: version 0 is refused.
+  assert.equal(validMarker({ ...good, version: 0 }), false);
 });
 
 test("configuration: the extractor Worker has no bindings, no public route and a CPU limit; the main Worker binds it by name", async () => {
@@ -197,11 +301,17 @@ test("workerd: the main side reads PDF text through a real service binding and f
     assert.deepEqual(await read(encryptedPdf()), { ok: false, code: "document_invalid", hint: null });
     assert.deepEqual(await read(latinPdf([["x"]]), "binding=CRASHING"), { ok: false, code: "archive_limit_exceeded", hint: PDF_EXTRACTOR_STOPPED_HINT });
     assert.deepEqual(await read(latinPdf([["x"]]), "binding=HANGING&time=100"), { ok: false, code: "archive_limit_exceeded", hint: PDF_EXTRACTOR_STOPPED_HINT });
-    assert.deepEqual(await read(latinPdf([["x"]]), "binding=DEADLOCKED"), { ok: false, code: "storage_read_unavailable", hint: PDF_EXTRACTOR_STOPPED_HINT });
+    assert.deepEqual(await read(latinPdf([["x"]]), "binding=DEADLOCKED"), { ok: false, code: "storage_read_unavailable", hint: PDF_EXTRACTOR_UNAVAILABLE_HINT });
     assert.deepEqual(await read(latinPdf([["x"]]), "binding=OLDER"), { ok: false, code: "storage_read_unavailable", hint: PDF_EXTRACTOR_UNAVAILABLE_HINT });
     assert.deepEqual(await read(latinPdf([["x"]]), "binding=MISSING"), { ok: false, code: "storage_read_unavailable", hint: PDF_EXTRACTOR_UNAVAILABLE_HINT });
     assert.equal((await (await runtime.dispatchFetch("http://localhost/check?binding=CRASHING")).json()).status, "unavailable");
     // The extractor still serves after the failures above.
     assert.equal((await read(latinPdf([["still serving"]]))).text, "# Page 1\nstill serving");
+    // A flood of checks through the real binding does not make a concurrent real read busy.
+    const [flooded, ...checks] = await Promise.all([read(flateLatinPdf([["during a check flood"]])),
+      ...Array.from({ length: 20 }, async () => (await runtime.dispatchFetch("http://localhost/check")).json())]);
+    assert.deepEqual(flooded, { ok: true, text: "# Page 1\nduring a check flood", complete: true });
+    assert.ok(checks.some(c => c.status === "ok"));
+    assert.ok(checks.every(c => c.status === "ok" || c.code === "check_busy"));
   } finally { await runtime.dispose(); }
 });

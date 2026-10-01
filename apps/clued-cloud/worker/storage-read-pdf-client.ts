@@ -1,6 +1,7 @@
 import { StorageFormatError } from "./storage-read-formats";
-import { PDF_BUSY_HINT, PDF_EXTRACTOR_CONTRACT, PDF_EXTRACTOR_VERSION, PDF_MAX_BYTES, PDF_RESULT_TEXT_MAX, type PdfExtraction,
-  type PdfExtractOptions } from "./storage-read-pdf-common";
+import { acceptedExtractorVersions, PDF_EXTRACTOR_CHECK_OPTIONS, PDF_EXTRACTOR_CHECK_TEXT, PDF_EXTRACTOR_CONTRACT, PDF_EXTRACTOR_VERSION, PDF_MAX_BYTES,
+  PDF_RESULT_TEXT_MAX, type PdfExtraction, type PdfExtractOptions } from "./storage-read-pdf-common";
+export { PDF_EXTRACTOR_CHECK_TEXT };
 
 /** StorageNormalUse.v0.1 §4.5, Owner decision 7210e5a5: the main Worker's
  * side of PDF text extraction. pdf.js never runs in the main Worker: this
@@ -14,8 +15,19 @@ import { PDF_BUSY_HINT, PDF_EXTRACTOR_CONTRACT, PDF_EXTRACTOR_VERSION, PDF_MAX_B
 
 export const PDF_EXTRACTOR_UNAVAILABLE_HINT = "The PDF reader service is unavailable right now, so no PDF text was read. " +
   "Other storage reads are not affected; retry this read later.";
-export const PDF_EXTRACTOR_STOPPED_HINT = "The PDF reader stopped on this file before it finished (it ran out of memory, CPU or time, or crashed). " +
+export const PDF_EXTRACTOR_STOPPED_HINT = "The PDF reader stopped on this file before it finished (it ran out of memory, CPU or time). " +
   "Reading the same pages again will stop the same way: read fewer pages per call (page_count) or skip this file.";
+/** The extractor isolate's one PDF slot stayed busy (for example with an
+ * earlier read whose caller already timed out). */
+export const PDF_EXTRACTOR_BUSY_HINT = "The PDF reader is still busy with another PDF, so no PDF text was read. Retry the same read in a few seconds.";
+/** Only an error text that clearly names an exhausted resource limit counts as
+ * the file stopping the reader (archive_limit_exceeded); a dropped connection,
+ * a redeploy, a canceled or unknown failure is the service being unavailable. */
+const RESOURCE_LIMIT = /exceeded (?:its |the )?(?:memory|cpu|resource)|(?:memory|cpu time|resource) limits?\b|out of memory/i;
+export function extractorCallFailure(error: unknown): PdfExtractorError {
+  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return RESOURCE_LIMIT.test(text) ? new PdfExtractorError("archive_limit_exceeded", PDF_EXTRACTOR_STOPPED_HINT) : unavailable();
+}
 /** How long the marker call may take (it loads pdf.js on a cold extractor isolate: about 0.1-0.3 s). */
 export const PDF_MARKER_TIMEOUT_MS = 5000;
 /** How much longer than its own deadline (time_ms) an extraction may take
@@ -41,11 +53,12 @@ async function within<T>(start: () => Promise<T>, ms: number): Promise<T | typeo
 }
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
-/** The marker must name exactly this contract and version, and report the
- * patched pdf.js worker (decode guard, no font programs). */
-export function validMarker(marker: unknown): boolean {
-  return record(marker) && marker.contract === PDF_EXTRACTOR_CONTRACT && marker.version === PDF_EXTRACTOR_VERSION &&
-    marker.decode_guard === true && marker.font_programs === "skipped";
+/** The marker must name exactly this contract, this version or the one before
+ * it (acceptedExtractorVersions: the deploy gap between the two Workers), and
+ * report the patched pdf.js worker (decode guard, no font programs). */
+export function validMarker(marker: unknown, current: number = PDF_EXTRACTOR_VERSION): boolean {
+  return record(marker) && marker.contract === PDF_EXTRACTOR_CONTRACT && typeof marker.version === "number" &&
+    acceptedExtractorVersions(current).includes(marker.version) && marker.decode_guard === true && marker.font_programs === "skipped";
 }
 
 /** The extraction as the read agent uses it, rebuilt field by field; null
@@ -86,14 +99,14 @@ export async function connectPdfExtractor(raw: unknown, { markerTimeoutMs = PDF_
       try { result = await within(() => binding.extract(bytes, request), request.time_ms + graceMs); }
       catch (error) {
         // The call itself failed: the extractor's isolate ran out of memory or
-        // CPU, crashed, or was torn down. Not retried with the same input.
-        const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-        throw new PdfExtractorError(/memory|cpu|exceeded|limit|resource/i.test(text) ? "archive_limit_exceeded" : "storage_read_unavailable", PDF_EXTRACTOR_STOPPED_HINT);
+        // CPU (archive_limit_exceeded), or the call was dropped, canceled or
+        // crashed for another reason (unavailable). Not retried here.
+        throw extractorCallFailure(error);
       }
       if (result === TIMEOUT) throw new PdfExtractorError("archive_limit_exceeded", PDF_EXTRACTOR_STOPPED_HINT);
       if (!record(result) || result.contract !== PDF_EXTRACTOR_CONTRACT) throw unavailable();
       if (result.ok === false) {
-        if (result.busy === true) throw new PdfExtractorError("storage_read_unavailable", PDF_BUSY_HINT);
+        if (result.busy === true) throw new PdfExtractorError("storage_read_unavailable", PDF_EXTRACTOR_BUSY_HINT);
         if (typeof result.code === "string" && FAILURES.has(result.code)) throw new StorageFormatError(result.code as "document_invalid");
         throw unavailable();
       }
@@ -104,38 +117,78 @@ export async function connectPdfExtractor(raw: unknown, { markerTimeoutMs = PDF_
   });
 }
 
-/** A one-page PDF reading "Clued PDF extractor check" (Helvetica, no
- * compression), built once: the release check sends it through the binding. */
-function checkPdf(): Uint8Array {
-  const content = "BT /F1 12 Tf 72 720 Td (Clued PDF extractor check) Tj ET";
-  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>", `<< /Length ${content.length} >>\nstream\n${content}\nendstream`];
-  let out = "%PDF-1.7\n";
-  const offsets = objects.map((body, i) => { const at = out.length; out += `${i + 1} 0 obj\n${body}\nendobj\n`; return at; });
-  const xref = out.length;
-  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n` + offsets.map(o => String(o).padStart(10, "0") + " 00000 n \n").join("") +
-    `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return new TextEncoder().encode(out);
-}
-export const PDF_EXTRACTOR_CHECK_TEXT = "# Page 1\nClued PDF extractor check";
-/** The main Worker's public GET route for checkPdfExtractor (scripts/verify-pdf-extractor.mjs). */
+/** The main Worker's public GET route for the release check (scripts/verify-pdf-extractor.mjs). */
 export const PDF_EXTRACTOR_CHECK_PATH = "/v1/storage/pdf-extractor/check";
 export type PdfExtractorCheck = { contract: "clued.storage-pdf-extractor-check/1"; status: "ok" | "unavailable";
-  extractor: { contract: string; version: number }; code?: string };
+  /** The extractor's own marker (contract and version) as its check() returned it; null when there was none. */
+  extractor: { contract: string; version: number } | null; code?: string };
+const CHECK_CONTRACT = "clued.storage-pdf-extractor-check/1" as const;
+/** How long the whole check() call may take: a cold pdf.js load plus the check extraction and the grace. */
+export const PDF_EXTRACTOR_CHECK_TIMEOUT_MS = PDF_MARKER_TIMEOUT_MS + PDF_EXTRACTOR_CHECK_OPTIONS.time_ms + PDF_EXTRACTOR_GRACE_MS;
 
-/** Release-time proof that the binding works: the fixed check PDF goes
- * through connectPdfExtractor and must come back as exactly
- * PDF_EXTRACTOR_CHECK_TEXT. No user data, no secret; a fixed input of a few
- * hundred bytes, so the public route that serves it costs one tiny extraction. */
-export async function checkPdfExtractor(raw: unknown): Promise<PdfExtractorCheck> {
-  const base = { contract: "clued.storage-pdf-extractor-check/1" as const, extractor: { contract: PDF_EXTRACTOR_CONTRACT, version: PDF_EXTRACTOR_VERSION } };
-  try {
-    const client = await connectPdfExtractor(raw);
-    const result = await client.extract(checkPdf(), { page_start: 1, page_count: 1, max_text_bytes: 4096, time_ms: 5000 });
-    if (result.text !== PDF_EXTRACTOR_CHECK_TEXT || result.page_count !== 1 || !result.complete) return { ...base, status: "unavailable", code: "check_text_mismatch" };
-    return { ...base, status: "ok" };
-  } catch (error) {
-    return { ...base, status: "unavailable", code: error instanceof StorageFormatError ? error.code : "storage_read_unavailable" };
-  }
+/** Release-time proof that the binding works: one check() call to the
+ * extractor, which parses its own fixed built-in check PDF outside the user
+ * PDF slot (so a check never makes a user read busy) and returns its marker
+ * with the extraction. The marker must pass validMarker and the text must be
+ * exactly PDF_EXTRACTOR_CHECK_TEXT. No user data, no secret, no request input. */
+export async function checkPdfExtractor(raw: unknown, { timeoutMs = PDF_EXTRACTOR_CHECK_TIMEOUT_MS } = {}): Promise<PdfExtractorCheck> {
+  const candidate = raw as { check?: unknown } | null | undefined;
+  if (!candidate || (typeof candidate !== "object" && typeof candidate !== "function") || typeof candidate.check !== "function")
+    return { contract: CHECK_CONTRACT, status: "unavailable", extractor: null, code: "storage_read_unavailable" };
+  const binding = candidate as { check(): Promise<unknown> };
+  let reply: unknown;
+  try { reply = await within(() => binding.check(), timeoutMs); }
+  catch (error) { return { contract: CHECK_CONTRACT, status: "unavailable", extractor: null, code: extractorCallFailure(error).code }; }
+  if (reply === TIMEOUT || !record(reply)) return { contract: CHECK_CONTRACT, status: "unavailable", extractor: null, code: "storage_read_unavailable" };
+  const marker = reply.marker;
+  const extractor = record(marker) && typeof marker.contract === "string" && marker.contract.length <= 128 && Number.isSafeInteger(marker.version)
+    ? { contract: marker.contract, version: Number(marker.version) } : null;
+  const base = { contract: CHECK_CONTRACT, extractor };
+  if (!validMarker(marker)) return { ...base, status: "unavailable", code: "extractor_marker_invalid" };
+  const result = reply.result;
+  if (!record(result) || result.contract !== PDF_EXTRACTOR_CONTRACT) return { ...base, status: "unavailable", code: "storage_read_unavailable" };
+  if (result.ok !== true) return { ...base, status: "unavailable", code: result.busy === true ? "check_busy"
+    : typeof result.code === "string" && FAILURES.has(result.code) ? result.code : "storage_read_unavailable" };
+  const extraction = validExtraction(result.extraction, PDF_EXTRACTOR_CHECK_OPTIONS);
+  if (!extraction || extraction.text !== PDF_EXTRACTOR_CHECK_TEXT || extraction.page_count !== 1 || !extraction.complete)
+    return { ...base, status: "unavailable", code: "check_text_mismatch" };
+  return { ...base, status: "ok" };
+}
+
+export type PdfExtractorCheckResponse = PdfExtractorCheck & {
+  /** When the round trip this answer reports ran (ISO 8601); null when none ran. */
+  checked_at: string | null;
+  /** True when the answer is a recent round trip's result served again without calling the extractor. */
+  cached: boolean };
+/** The public check route's guard in the main Worker isolate: an OK result is
+ * served again for okTtlMs (60 s) and a failure for failureTtlMs (5 s)
+ * without calling the extractor, and only one check per isolate is in flight
+ * (single flight: a request arriving meanwhile gets the last result, or
+ * check_in_progress, and never waits on another request's promise). So the
+ * public route calls the extractor at most about once a minute per main
+ * isolate while it works and once every 5 s while it does not, and there is
+ * no parameter that bypasses this. A newly deployed main Worker starts with
+ * new isolates and therefore an empty cache. */
+export function createPdfExtractorCheckGate({ okTtlMs = 60_000, failureTtlMs = 5_000, now = Date.now, run = checkPdfExtractor }:
+  { okTtlMs?: number; failureTtlMs?: number; now?: () => number; run?: (raw: unknown) => Promise<PdfExtractorCheck> } = {}) {
+  let last: { at: number; check: PdfExtractorCheck } | null = null;
+  // When the running check started; one older than the check timeout plus 5 s
+  // (its request was canceled before it could clear this) no longer counts.
+  let runningSince: number | null = null;
+  const replay = (entry: { at: number; check: PdfExtractorCheck }): PdfExtractorCheckResponse =>
+    ({ ...entry.check, checked_at: new Date(entry.at).toISOString(), cached: true });
+  return async (raw: unknown): Promise<PdfExtractorCheckResponse> => {
+    const started = now();
+    if (last && started >= last.at && started - last.at < (last.check.status === "ok" ? okTtlMs : failureTtlMs)) return replay(last);
+    if (runningSince !== null && started - runningSince < PDF_EXTRACTOR_CHECK_TIMEOUT_MS + 5000)
+      return last ? replay(last) : { contract: CHECK_CONTRACT, status: "unavailable", extractor: null, code: "check_in_progress", checked_at: null, cached: false };
+    runningSince = started;
+    let check: PdfExtractorCheck;
+    try { check = await run(raw); }
+    catch { check = { contract: CHECK_CONTRACT, status: "unavailable", extractor: null, code: "storage_read_unavailable" }; }
+    finally { if (runningSince === started) runningSince = null; }
+    const entry = { at: now(), check };
+    last = entry;
+    return { ...check, checked_at: new Date(entry.at).toISOString(), cached: false };
+  };
 }

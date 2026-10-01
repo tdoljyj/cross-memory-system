@@ -1172,13 +1172,14 @@ test("§4.5 PDF extractor: missing binding, wrong marker or a failed marker call
 
 test("§4.5 PDF extractor: a crash, CPU or memory limit of the extractor call is one failed read with a fixed hint, not retried", async () => {
   const { binding } = await loadPdfExtractorBinding();
-  for (const [name, error, code] of [["out of memory", new Error("Worker exceeded memory limit."), "archive_limit_exceeded"],
-    ["CPU limit", new Error("Worker exceeded CPU time limit."), "archive_limit_exceeded"], ["crash", new Error("Network connection lost."), "storage_read_unavailable"]]) {
+  for (const [name, error, code, hint] of [["out of memory", new Error("Worker exceeded memory limit."), "archive_limit_exceeded", /PDF reader stopped on this file/],
+    ["CPU limit", new Error("Worker exceeded CPU time limit."), "archive_limit_exceeded", /PDF reader stopped on this file/],
+    ["crash", new Error("Network connection lost."), "storage_read_unavailable", /PDF reader service is unavailable right now/]]) {
     let calls = 0;
     const extractor = { ...binding, extract: async () => { calls++; throw error; } };
     const read = await readBody({ object_id: "pdfCrash00000001" }, await normalOptions({ drive: formatTree([["pdfCrash00000001", "c.pdf", PDF, latinPdf(latinPages(1))]]) }),
       { ...env, PDF_EXTRACTOR: extractor });
-    assert.equal(read.value.error, code, name); assert.match(read.value.hint, /PDF reader stopped on this file/, name);
+    assert.equal(read.value.error, code, name); assert.match(read.value.hint, hint, name);
     assert.equal(calls, 1, `${name}: the same input is not sent again`);
     assert.equal(read.h.calls.at(-1).p_input.byte_count, 0, `${name}: nothing delivered`);
   }

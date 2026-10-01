@@ -936,23 +936,41 @@ N1a (text bodies only, `format_unsupported` for other formats).
   `limits.cpu_ms: 10000` (enforced only on Workers Paid / Standard usage; on
   Workers Free a Worker gets 10 ms of CPU per invocation and the extractor is
   unusable). Before any body request the main Worker calls `marker()`: a
-  missing binding, a failed or slow (5 s) marker call, another contract or
-  version (`clued.storage-pdf-extractor/1`, version 1), or a pdf.js without
-  the patch markers is `storage_read_unavailable` with a fixed hint, and the
-  read never falls back to parsing in the main Worker. If the `extract` call
-  itself fails (the extractor ran out of memory or CPU, crashed) or does not
-  return within `time_ms` + 2 s, that read fails once with a fixed hint
-  (`archive_limit_exceeded` for memory / CPU / time, otherwise
-  `storage_read_unavailable`) and is not retried. Results are rebuilt field by
-  field and refused above 16 Mi UTF-16 units of text. One extraction runs per
-  extractor isolate at a time; a second is refused at once (busy hint).
+  missing binding, a failed or slow (5 s) marker call, another contract, a
+  version other than `PDF_EXTRACTOR_VERSION` or the one before it
+  (`clued.storage-pdf-extractor/1`, version 1, so today only 1), or a pdf.js
+  without the patch markers is `storage_read_unavailable` with a fixed hint,
+  and the read never falls back to parsing in the main Worker. If the
+  `extract` call itself fails with an error that names a resource limit
+  (memory, CPU) or does not return within `time_ms` + 2 s, that read fails
+  once as `archive_limit_exceeded` with the "will stop the same way" hint; any
+  other failed call (dropped connection, redeploy, unknown) is
+  `storage_read_unavailable` with the normal retry hint. Neither is retried.
+  Results are rebuilt field by field and refused above 16 Mi UTF-16 units of
+  text. One user extraction runs per extractor isolate at a time; a second
+  waits up to 2 s (at most half its `time_ms`, taken off that time) and is
+  then refused as busy (`storage_read_unavailable`, "retry in a few seconds").
+  The public check route never takes that slot: the extractor's `check()`
+  parses its own fixed check PDF under a separate slot of one (a concurrent
+  check is answered busy at once), and the main Worker serves the last OK
+  check result per isolate for 60 s (a failure for 5 s) with one check in
+  flight; no query parameter bypasses the cache. The check response reports
+  the extractor's own marker (`extractor.contract` / `.version` from
+  `check()`) and `checked_at` of the round trip it reports.
+  **Rollback:** when `PDF_EXTRACTOR_VERSION` changed in the release being
+  rolled back, roll back the extractor (`clued-storage-pdf`) and the main
+  Worker together, to the same commit. The main Worker accepts only its own
+  version and the one before it, so a version bump must keep the previous
+  main Worker able to read the new extractor's results (otherwise rename the
+  contract), and an extractor two versions apart fails every PDF read closed.
   Deploy order: the production release workflow deploys the extractor
   (`npx wrangler deploy --config wrangler.pdf-extractor.jsonc`) with the same
   `CLUED_CLOUDFLARE_DEPLOY_TOKEN` before the main Worker, and after both are
   live `scripts/verify-pdf-extractor.mjs` requires
-  `GET /v1/storage/pdf-extractor/check` (a fixed built-in one-page PDF through
-  the binding) to return 200 with the expected text and the repository's
-  extractor version (evidence `release-evidence/pdf-extractor.json`). The
+  `GET /v1/storage/pdf-extractor/check` (the extractor's fixed built-in
+  one-page PDF through the binding) to return 200 with the expected text and
+  exactly the repository's extractor version, retrying 8 times 10 s apart to
+  outlast the route's 60 s cache (evidence `release-evidence/pdf-extractor.json`). The
   token's existing Workers Scripts Edit covers creating and updating the new
   script, its subdomain settings, CPU limit and the service binding; no new
   permission is expected. When the request, result or guard semantics change,

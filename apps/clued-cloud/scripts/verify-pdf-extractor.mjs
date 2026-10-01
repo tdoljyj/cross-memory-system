@@ -1,8 +1,9 @@
 // Run after both Workers are deployed and the live commit is attested
 // (StorageNormalUse.v0.1 §4.5, Owner decision 7210e5a5). Asks production's
 // main Worker to send its fixed built-in check PDF through the PDF_EXTRACTOR
-// service binding to clued-storage-pdf, and requires the expected text back
-// from an extractor of exactly the repository's contract and version. A
+// service binding to clued-storage-pdf (the extractor parses its fixed check
+// PDF outside the user PDF slot), and requires the expected text back and the
+// extractor's own marker to name exactly the repository's contract and version. A
 // missing binding, an extractor of another version or a failed round trip
 // blocks the release.
 import { readFile, writeFile } from 'node:fs/promises';
@@ -11,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 
 export const PRODUCTION_ORIGIN = 'https://clued.pixelgrav.com';
 export const CHECK_PATH = '/v1/storage/pdf-extractor/check';
+/** 8 attempts 10 s apart: longer than the route's 60 s per-isolate cache of an OK result. */
+export const ATTEMPTS = 8;
 const commonSource = new URL('../worker/storage-read-pdf-common.ts', import.meta.url);
 
 /** The extractor contract and version the repository's main Worker requires. */
@@ -45,13 +48,15 @@ async function main() {
   const commit = process.env.GITHUB_SHA ?? '';
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('source_commit_missing');
   const expected = expectedExtractorOf(await readFile(commonSource, 'utf8'));
-  // A freshly deployed version can take a few seconds to serve everywhere.
+  // A freshly deployed version can take a few seconds to serve everywhere, and
+  // a main Worker isolate serves its last check result again for up to 60 s
+  // (failures for 5 s), so the attempts span more than that window.
   let errors = [], last;
-  for (let attempt = 1; attempt <= 4; attempt += 1) {
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     last = await check(commit).catch(() => ({ status: 0, body: null }));
     errors = verifyPdfExtractorCheck({ expected, ...last });
     if (!errors.length) break;
-    if (attempt < 4) await new Promise((done) => setTimeout(done, 10_000));
+    if (attempt < ATTEMPTS) await new Promise((done) => setTimeout(done, 10_000));
   }
   if (errors.length) throw new Error(`pdf_extractor_blocked:${errors.join(',')}`);
   const result = { status: 'passed', source_commit: commit, extractor: expected, check: last.body, checked_at: new Date().toISOString() };

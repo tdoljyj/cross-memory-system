@@ -1,7 +1,8 @@
 import { StorageFormatError } from "./storage-read-formats";
 import { classifyPdfError, extractPdfText, pdfWorkerReady, withPdfSlot, PdfBusyError, PDF_EXTRACTOR_CONTRACT, PDF_EXTRACTOR_VERSION,
+  PDF_EXTRACTOR_CHECK_OPTIONS, PDF_EXTRACTOR_SLOT_WAIT_MS, pdfExtractorCheckPdf,
   PDF_MAX_BYTES, PDF_PAGES_PER_CALL, PDF_TEXT_MAX, PDF_TIME_MS, type PdfExtractFailure, type PdfExtractOptions, type PdfExtractResult,
-  type PdfExtractorMarker } from "./storage-read-pdf";
+  type PdfExtractorCheckResult, type PdfExtractorMarker } from "./storage-read-pdf";
 
 /** StorageNormalUse.v0.1 §4.5, Owner decision 7210e5a5: the PDF extractor
  * Worker (clued-storage-pdf). It takes the bytes of one PDF plus the
@@ -35,19 +36,50 @@ export function extractOptions(raw: unknown): PdfExtractOptions | null {
   return { page_start: Number(o.page_start), page_count: Number(o.page_count), max_text_bytes: Number(o.max_text_bytes), time_ms: Number(o.time_ms) };
 }
 
-/** One extraction. A second PDF arriving while one runs in this isolate is
- * refused at once (busy), never queued: each holds its file in this isolate. */
-export async function runExtraction(bytes: unknown, rawOptions: unknown, extract: typeof extractPdfText = extractPdfText): Promise<PdfExtractResult> {
+const classified = (error: unknown): PdfExtractResult =>
+  failure(error instanceof StorageFormatError ? error.code : classifyPdfError(error, false).code);
+
+/** One extraction. One user PDF runs in this isolate at a time (each holds its
+ * file here). A second waits for the slot at most PDF_EXTRACTOR_SLOT_WAIT_MS
+ * and at most half its time_ms (for example the first read's extraction still
+ * running after its caller timed out), with the wait taken off its time_ms,
+ * then is refused as busy. */
+export async function runExtraction(bytes: unknown, rawOptions: unknown, extract: typeof extractPdfText = extractPdfText,
+  slotWaitMs: number = PDF_EXTRACTOR_SLOT_WAIT_MS): Promise<PdfExtractResult> {
   const input = bytes instanceof Uint8Array ? bytes : bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : null;
   if (!input || input.length === 0) return failure("storage_read_unavailable");
   if (input.length > PDF_MAX_BYTES) return failure("binary_too_large");
   const options = extractOptions(rawOptions);
   if (!options) return failure("storage_read_unavailable");
+  const queued = Date.now();
   try {
-    const extraction = await withPdfSlot(() => extract(input, options), 0);
+    const extraction = await withPdfSlot(() => extract(input, { ...options, time_ms: Math.max(1, options.time_ms - (Date.now() - queued)) }),
+      Math.min(slotWaitMs, Math.floor(options.time_ms / 2)));
     return { contract: PDF_EXTRACTOR_CONTRACT, ok: true, extraction };
   } catch (error) {
     if (error instanceof PdfBusyError) return failure("storage_read_unavailable", true);
-    return failure(error instanceof StorageFormatError ? error.code : classifyPdfError(error, false).code);
+    return classified(error);
   }
+}
+
+/** When the running check started; a check older than its own time limit plus
+ * 5 s (its call was canceled before it could clear this) no longer counts. */
+let checkSince: number | null = null;
+const CHECK_STALE_MS = PDF_EXTRACTOR_CHECK_OPTIONS.time_ms + 5000;
+/** The release check: the marker plus the extraction of the fixed built-in
+ * check PDF (a few hundred bytes, no caller input). It never takes the user
+ * PDF slot, so checks cannot make user reads busy. It has its own slot of
+ * one: a check arriving while another runs in this isolate is answered busy at
+ * once (no promise is shared across calls), so at most one check PDF is parsed
+ * here at a time next to at most one user PDF. */
+export async function runCheck(extract: typeof extractPdfText = extractPdfText, ready: () => Promise<boolean> = pdfWorkerReady,
+  now: () => number = Date.now): Promise<PdfExtractorCheckResult> {
+  const marker = await extractorMarker(ready);
+  if (!marker.decode_guard) return { marker, result: failure("storage_read_unavailable") };
+  const started = now();
+  if (checkSince !== null && started - checkSince < CHECK_STALE_MS) return { marker, result: failure("storage_read_unavailable", true) };
+  checkSince = started;
+  try { return { marker, result: { contract: PDF_EXTRACTOR_CONTRACT, ok: true, extraction: await extract(pdfExtractorCheckPdf(), { ...PDF_EXTRACTOR_CHECK_OPTIONS }) } }; }
+  catch (error) { return { marker, result: classified(error) }; }
+  finally { if (checkSince === started) checkSince = null; }
 }

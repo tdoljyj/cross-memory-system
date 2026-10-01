@@ -134,3 +134,38 @@ export type PdfExtractResult = { contract: typeof PDF_EXTRACTOR_CONTRACT; ok: tr
  * of the text limit, plus the rest of the page chunk that crossed it): far
  * under the 32 MiB serialized RPC limit. A larger result is refused. */
 export const PDF_RESULT_TEXT_MAX = 16 * 1024 * 1024;
+
+/** Extractor versions the main Worker accepts: this one and the one before it
+ * (never below 1), so the gap between deploying the two Workers does not fail
+ * every PDF read. A version bump must therefore keep the request and result
+ * readable by the previous main Worker; a change that cannot is a new
+ * PDF_EXTRACTOR_CONTRACT name. When PDF_EXTRACTOR_VERSION changes, the two
+ * Workers are rolled back together. */
+export function acceptedExtractorVersions(current: number = PDF_EXTRACTOR_VERSION): number[] {
+  return current > 1 ? [current, current - 1] : [current];
+}
+/** How long an extraction waits inside the extractor isolate for that
+ * isolate's one PDF slot (at most half its own time_ms; the wait is taken off
+ * that time) before it is refused as busy. */
+export const PDF_EXTRACTOR_SLOT_WAIT_MS = 2000;
+
+/** What the extractor's check() returns: its own marker and the extraction of
+ * the fixed check PDF, which it runs outside the user PDF slot. */
+export type PdfExtractorCheckResult = { marker: unknown; result: PdfExtractResult };
+/** A one-page PDF reading "Clued PDF extractor check" (Helvetica, no
+ * compression, a few hundred bytes), built inside the extractor by check():
+ * nothing is taken from the caller. */
+export function pdfExtractorCheckPdf(): Uint8Array {
+  const content = "BT /F1 12 Tf 72 720 Td (Clued PDF extractor check) Tj ET";
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>", `<< /Length ${content.length} >>\nstream\n${content}\nendstream`];
+  let out = "%PDF-1.7\n";
+  const offsets = objects.map((body, i) => { const at = out.length; out += `${i + 1} 0 obj\n${body}\nendobj\n`; return at; });
+  const xref = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n` + offsets.map(o => String(o).padStart(10, "0") + " 00000 n \n").join("") +
+    `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new TextEncoder().encode(out);
+}
+export const PDF_EXTRACTOR_CHECK_TEXT = "# Page 1\nClued PDF extractor check";
+export const PDF_EXTRACTOR_CHECK_OPTIONS: Readonly<PdfExtractOptions> = Object.freeze({ page_start: 1, page_count: 1, max_text_bytes: 4096, time_ms: 5000 });

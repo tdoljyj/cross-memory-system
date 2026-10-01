@@ -13,7 +13,10 @@ import {
 } from "./continuity";
 
 import { delegatedOAuthEnabled, handleDelegatedOAuth, type DelegatedOAuthEnv } from "./delegated-oauth";
-import { checkPdfExtractor, PDF_EXTRACTOR_CHECK_PATH } from "./storage-read-pdf-client";
+import { createPdfExtractorCheckGate, PDF_EXTRACTOR_CHECK_PATH } from "./storage-read-pdf-client";
+
+/** One per isolate: caches the last check result and allows one check in flight (StorageNormalUse §4.5). */
+const pdfExtractorCheck = createPdfExtractorCheckGate();
 
 interface Env extends ContinuityEnv, DelegatedOAuthEnv {
   ASSETS: Fetcher;
@@ -43,10 +46,12 @@ const legacyWorker = {
     const url = new URL(request.url);
 
     // StorageNormalUse §4.5: release-time proof that the PDF_EXTRACTOR binding
-    // works (a fixed built-in PDF round trip; no input is read from the request).
+    // works (the extractor parses its fixed built-in check PDF outside the user
+    // PDF slot; nothing is read from the request, query parameters are ignored;
+    // results are cached per isolate, so the public route cannot flood it).
     if (url.pathname === PDF_EXTRACTOR_CHECK_PATH) {
       if (request.method !== "GET") return new Response(null, { status: 405, headers: { allow: "GET" } });
-      const check = await checkPdfExtractor(env.PDF_EXTRACTOR);
+      const check = await pdfExtractorCheck(env.PDF_EXTRACTOR);
       return Response.json(check, { status: check.status === "ok" ? 200 : 503, headers: { "cache-control": "no-store" } });
     }
 

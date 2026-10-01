@@ -56,6 +56,7 @@ export function loadPdfExtractorBinding() {
     return { core, binding: Object.freeze({
       async marker() { return structuredClone(await core.extractorMarker()); },
       async extract(bytes, options) { return structuredClone(await core.runExtraction(structuredClone(bytes), structuredClone(options))); },
+      async check() { return structuredClone(await core.runCheck()); },
     }) };
   })();
   return extractorPromise;
