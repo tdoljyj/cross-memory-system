@@ -159,6 +159,8 @@ jobs:
           npm run typecheck
       - name: Build exact Worker source
         if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+        # Builds the main Worker and the PDF extractor Worker (dist/pdf-extractor),
+        # and fails if the main Worker's bundle contains pdf.js.
         run: npm run build
       - name: Block release unless database and Worker heartbeat are ready
         if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
@@ -187,6 +189,16 @@ jobs:
           if ! npx wrangler queues info clued-storage-jobs >/dev/null; then
             npx wrangler queues create clued-storage-jobs
           fi
+      - name: Deploy Clued PDF extractor Worker
+        if: ${{ inputs.mode == 'deploy' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        # StorageNormalUse §4.5 (Owner decision 7210e5a5): clued-storage-pdf parses
+        # PDFs in its own isolate. It has no bindings, vars or secrets and no public
+        # route, and is deployed first because the main Worker's PDF_EXTRACTOR
+        # service binding names it.
+        run: npx wrangler deploy --config wrangler.pdf-extractor.jsonc
       - name: Deploy Clued production Worker
         if: ${{ inputs.mode == 'deploy' }}
         env:
@@ -206,6 +218,9 @@ jobs:
       - name: Verify production serves the repository Agent contract
         if: ${{ inputs.mode == 'deploy' }}
         run: node scripts/verify-served-agent-contract.mjs --evidence-out .sites-runtime/release-evidence/served-agent-contract.json
+      - name: Verify the PDF extractor service binding
+        if: ${{ inputs.mode == 'deploy' }}
+        run: node scripts/verify-pdf-extractor.mjs --evidence-out .sites-runtime/release-evidence/pdf-extractor.json
       - name: Verify projection currentness after deployment
         if: ${{ inputs.mode == 'deploy' }}
         env:
@@ -229,6 +244,7 @@ jobs:
             apps/clued-cloud/.sites-runtime/release-evidence/production-preflight.json
             apps/clued-cloud/.sites-runtime/release-evidence/currentness-attestation.json
             apps/clued-cloud/.sites-runtime/release-evidence/served-agent-contract.json
+            apps/clued-cloud/.sites-runtime/release-evidence/pdf-extractor.json
             apps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json
             apps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc
             apps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json
