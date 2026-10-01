@@ -9,6 +9,8 @@ import {
   PUBLIC_CONFIG_SOURCE,
   evaluate,
   globToRegExp,
+  renderReverifySummary,
+  reverify,
   main,
   parseClaimReference,
   parseWorkflowTriggers,
@@ -73,6 +75,10 @@ function fakeFetch(script) {
 }
 
 const FILES = `GET https://api.test/repos/o/r/pulls/452/files`;
+const PULL = `GET https://api.test/repos/o/r/pulls/452`;
+const OPEN_PULLS = `GET https://api.test/repos/o/r/pulls?state=open`;
+const ADMISSION_RUNS = `GET https://api.test/repos/o/r/actions/workflows/clued-work-admission.yml/runs`;
+const RERUN = `POST https://api.test/repos/o/r/actions/runs/`;
 const COMMIT = `GET https://api.test/repos/o/r/commits/`;
 const COMPARE = `GET https://api.test/repos/o/r/compare/`;
 const RUNS = `GET https://api.test/repos/o/r/actions/runs`;
@@ -107,7 +113,7 @@ test("enforced: the RPC is called on PostgREST with the publishable key and the 
   assert.match(PUBLIC.url, /^https:\/\/[a-z]+\.supabase\.co$/);
   assert.deepEqual(call.body, {
     p_token_hash: sha256Hex("clued_bnd_test"),
-    p_input: { scope: "global", claim_id: CLAIM, changed_paths: ["apps/clued-cloud/package.json", "docs/new.md", "docs/old.md"], head_sha: HEAD, base_sha: BASE },
+    p_input: { scope: "global", claim_id: CLAIM, changed_paths: ["apps/clued-cloud/package.json", "docs/new.md", "docs/old.md"], head_sha: HEAD, base_sha: BASE, pr_ref: "o/r#452" },
   });
   assert.equal(sha256Hex("clued_bnd_test").length, 64);
   assert.ok(!JSON.stringify(call.body).includes("clued_bnd_test"), "only the hash leaves the runner");
@@ -230,6 +236,13 @@ test("workflow filters: parser reads this repository and globs follow GitHub sem
   assert.ok(globToRegExp("docs/*").test("docs/a.md"));
   assert.ok(!globToRegExp("docs/*").test("docs/sub/a.md"));
 
+  // Both PR triggers: unfiltered if either is; otherwise either filter applies.
+  assert.deepEqual(parseWorkflowTriggers("on:\n  pull_request_target:\n    types: [opened]\n  pull_request:\n    paths:\n      - a/**\n").pull_request,
+    { paths: [], pathsIgnore: [] });
+  const both = parseWorkflowTriggers("on:\n  pull_request_target:\n    paths: [a/**]\n  pull_request:\n    paths:\n      - b/**\n").pull_request;
+  assert.equal(workflowApplies(both, ["b/x"]).applies, true);
+  assert.equal(workflowApplies(both, ["a/x"]).applies, true);
+  assert.equal(workflowApplies(both, ["c/x"]).applies, false);
   const parsed = parseWorkflowTriggers("name: x\non:\n  pull_request:\n    paths-ignore:\n      - 'docs/**'\n  push:\n    branches: [main]\n");
   assert.deepEqual(parsed.pull_request, { paths: [], pathsIgnore: ["docs/**"] });
   assert.equal(workflowApplies(parsed.pull_request, ["docs/a.md"]).applies, false);
@@ -298,5 +311,117 @@ test("main: exit codes and outputs in both modes, enforced and advisory", async 
   code = await main(["--mode", "required"], { ...base, GITHUB_EVENT_NAME: "push", GITHUB_OUTPUT: out("o6"), GITHUB_STEP_SUMMARY: out("s6") }, fakeFetch({}).fetchImpl);
   assert.equal(code, 0);
   assert.match(read("o6"), /^verdict=NOT_APPLICABLE$/m);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- Step 7 review fixes: base-branch target runs, PR binding, truncation, re-verification.
+
+const freshPull = (overrides = {}) => ({
+  number: 452, draft: false, changed_files: 2,
+  body: `Edited body\n\nClued-Work-Claim: ${CLAIM}`,
+  head: { sha: "d".repeat(40), repo: { full_name: "o/r" } }, base: { sha: BASE, ref: "main" },
+  ...overrides,
+});
+
+test("pull_request_target: the PR is read fresh, so an edited body or a re-run sees the current trailer and head", async () => {
+  // FILES must come before PULL: a fetch key matches by URL prefix.
+  const { fetchImpl, calls } = fakeFetch({ [FILES]: files, [PULL]: { body: freshPull() }, [COMPARE]: { body: { status: "ahead" } }, [VERIFY]: { body: admittedPayload } });
+  const outcome = await evaluateIn({ env: env(), event: event(), eventName: "pull_request_target", fetchImpl });
+  assert.equal(outcome.verdict, "ADMITTED");
+  assert.equal(outcome.head_sha, "d".repeat(40), "the head comes from the fresh read, not the payload");
+  assert.equal(outcome.pr_ref, "o/r#452");
+  const verifyCall = calls.find((c) => c.url === RPC_URL);
+  assert.equal(verifyCall.body.p_input.pr_ref, "o/r#452");
+  assert.equal(verifyCall.body.p_input.head_sha, "d".repeat(40));
+  assert.ok(!calls.some((c) => c.url.includes("/commits/")), "the trailer was found in the fresh body");
+});
+
+test("enforced: a claim bound to another PR is rejected and the binding is reported", async () => {
+  const payload = { ...admittedPayload, verdict: "REJECTED", reasons: ["claim_bound_to_other_pr"], bound_pr: "o/r#1",
+    claim: { ...admittedPayload.claim, bound_pr: "o/r#1" } };
+  const { fetchImpl } = fakeFetch({ [FILES]: files, [VERIFY]: { body: payload } });
+  const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
+  assert.equal(outcome.admitted, false);
+  assert.deepEqual(outcome.reasons, ["claim_bound_to_other_pr"]);
+  assert.equal(outcome.claim.bound_pr, "o/r#1");
+  assert.match(renderSummary(outcome), /Claim bound to:\*\* `o\/r#1`/);
+});
+
+test("a changed-file list shorter than the PR's changed_files fails closed when enforced", async () => {
+  const short = { pull_request: { ...withClaim().pull_request, changed_files: 3500 } };
+  let { fetchImpl, calls } = fakeFetch({ [FILES]: files, [VERIFY]: { body: admittedPayload } });
+  let outcome = await evaluateIn({ env: env(), event: short, eventName: "pull_request", fetchImpl });
+  assert.equal(outcome.admitted, false);
+  assert.deepEqual(outcome.reasons, ["changed_files_truncated:3500"]);
+  assert.ok(!calls.some((c) => c.method === "POST"), "no verify on a partial file list");
+  ({ fetchImpl } = fakeFetch({ [FILES]: files, [VERIFY]: { body: admittedPayload } }));
+  outcome = await evaluateIn({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), event: short, eventName: "pull_request", fetchImpl });
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "NOT_ENFORCED"]);
+  // A rename counts once in changed_files but contributes two paths.
+  ({ fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { body: { status: "ahead" } }, [VERIFY]: { body: admittedPayload } }));
+  outcome = await evaluateIn({ env: env(), event: { pull_request: { ...withClaim().pull_request, changed_files: 2 } }, eventName: "pull_request", fetchImpl });
+  assert.equal(outcome.verdict, "ADMITTED");
+});
+
+test("reverify: a passing run whose claim no longer admits is re-run; admitted, red, draft and errored PRs are left alone", async () => {
+  const pulls = [
+    freshPull({ number: 452 }), // claim expired since its check passed
+    freshPull({ number: 453, head: { sha: "e".repeat(40) } }), // still admitted
+    freshPull({ number: 454, head: { sha: "f".repeat(40) } }), // last run already failed
+    freshPull({ number: 455, draft: true }),
+    freshPull({ number: 456, head: { sha: "9".repeat(40) } }), // runs lookup fails
+  ];
+  const runsFor = (sha) => {
+    if (sha === "d".repeat(40)) return [
+      { id: 11, event: "pull_request_target", status: "completed", conclusion: "success", created_at: "2026-10-01T10:00:00Z" },
+      { id: 10, event: "pull_request_target", status: "completed", conclusion: "failure", created_at: "2026-10-01T09:00:00Z" },
+      { id: 12, event: "pull_request", status: "completed", conclusion: "success", created_at: "2026-10-01T10:00:01Z" },
+    ];
+    if (sha === "e".repeat(40)) return [{ id: 21, event: "pull_request_target", status: "completed", conclusion: "success", created_at: "2026-10-01T10:00:00Z" }];
+    if (sha === "f".repeat(40)) return [{ id: 31, event: "pull_request_target", status: "completed", conclusion: "failure", created_at: "2026-10-01T10:00:00Z" }];
+    return null;
+  };
+  const verdictFor = (claim) => claim === CLAIM ? { ...admittedPayload, verdict: "REJECTED", reasons: ["claim_not_current"] } : admittedPayload;
+  const other = "1f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
+  pulls[1].body = `x\n\nClued-Work-Claim: ${other}`;
+  const script = {
+    [OPEN_PULLS]: { body: pulls },
+    [ADMISSION_RUNS]: (call) => {
+      const runs = runsFor(new URL(call.url).searchParams.get("head_sha"));
+      return runs ? { body: { workflow_runs: runs } } : { status: 500, body: { message: "boom" } };
+    },
+    [RERUN]: { status: 201, body: null },
+    [COMPARE]: { body: { status: "ahead" } },
+    [VERIFY]: (call) => ({ body: verdictFor(call.body.p_input.claim_id) }),
+  };
+  for (const pull of pulls) {
+    script[`GET https://api.test/repos/o/r/pulls/${pull.number}/files`] = files;
+    script[`GET https://api.test/repos/o/r/pulls/${pull.number}`] = { body: pull };
+  }
+  const { fetchImpl, calls } = fakeFetch(script);
+  const result = await reverify({ env: env(), fetchImpl, workspace: ROOT });
+  assert.deepEqual(result.checked.map((c) => [c.pr, c.verdict]), [[452, "REJECTED"], [453, "ADMITTED"]]);
+  assert.deepEqual(result.reran.map((r) => [r.pr, r.run_id, r.event]), [[452, 11, "pull_request_target"], [452, 12, "pull_request"]]);
+  assert.deepEqual(result.errors.map((e) => e.pr), [456]);
+  assert.deepEqual(calls.filter((c) => c.method === "POST" && c.url.includes("/rerun")).map((c) => c.url),
+    ["https://api.test/repos/o/r/actions/runs/11/rerun", "https://api.test/repos/o/r/actions/runs/12/rerun"]);
+  assert.ok(!calls.some((c) => c.url.includes("/pulls/455")), "drafts are skipped");
+  assert.match(renderReverifySummary(result), /#452: run 11 \(pull_request_target\) re-run, REJECTED: claim_not_current/);
+
+  const advisory = await reverify({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), fetchImpl: fakeFetch({}).fetchImpl, workspace: ROOT });
+  assert.match(advisory.skipped, /advisory/);
+  assert.match(renderReverifySummary(advisory), /Skipped/);
+});
+
+test("main --mode reverify: exit 1 only when a PR could not be re-verified", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clued-work-admission-reverify-"));
+  const out = path.join(dir, "summary.md");
+  let code = await main(["--mode", "reverify"], { ...env(), GITHUB_WORKSPACE: ROOT, GITHUB_STEP_SUMMARY: out }, fakeFetch({ [OPEN_PULLS]: { body: [] } }).fetchImpl);
+  assert.equal(code, 0);
+  assert.match(fs.readFileSync(out, "utf8"), /re-runs requested: 0/);
+  code = await main(["--mode", "reverify"], { ...env(), GITHUB_WORKSPACE: ROOT, GITHUB_STEP_SUMMARY: out },
+    fakeFetch({ [OPEN_PULLS]: { body: [freshPull()] }, [ADMISSION_RUNS]: { status: 500, body: null } }).fetchImpl);
+  assert.equal(code, 1);
+  assert.equal(await main(["--mode", "nope"], env(), fakeFetch({}).fetchImpl), 2);
   fs.rmSync(dir, { recursive: true, force: true });
 });
