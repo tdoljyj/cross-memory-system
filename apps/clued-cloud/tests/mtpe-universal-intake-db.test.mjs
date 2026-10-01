@@ -125,12 +125,14 @@ test('Universal Intake routes every actionable kind and preserves priority, Owne
     const blockedPinKey = uuid();
     const blockedPin = await rpc(hostAToken, 'clued_mcp_mtpe_owner_pin', {
       operation: 'set', record_id: blockedId, base_version: 1,
+      expected_current_focus_id: null,
       idempotency_key: blockedPinKey, user_confirmed: true,
       reason: 'Owner explicitly selected the blocked task',
     });
     assert.equal(blockedPin.status, 'committed');
     const blockedPinReplay = await rpc(hostBToken, 'clued_mcp_mtpe_owner_pin', {
       operation: 'set', record_id: blockedId, base_version: 1,
+      expected_current_focus_id: null,
       idempotency_key: blockedPinKey, user_confirmed: true,
       reason: 'Owner explicitly selected the blocked task',
     });
@@ -166,10 +168,12 @@ test('Universal Intake routes every actionable kind and preserves priority, Owne
     assert.equal(blockedProjection.executability, 'BLOCKED_HARD_GATE');
     assert.equal(blockedProjection.selection_source, 'OWNER_PIN');
 
-    // A later explicit Pin switches the focus without changing either score.
+    // A later explicit Pin that names the focus it replaces switches the focus
+    // without changing either score.
     const beforeReadyScore = first.candidate_universe.find((row) => row.record_id === readyId).algorithm_priority;
     assert.equal((await rpc(hostBToken, 'clued_mcp_mtpe_owner_pin', {
       operation: 'set', record_id: readyId, base_version: 1,
+      expected_current_focus_id: blockedId,
       idempotency_key: uuid(), user_confirmed: true,
       reason: 'Owner chooses B despite the higher recommendation',
     })).status, 'committed');
@@ -282,10 +286,12 @@ test('Universal Intake routes every actionable kind and preserves priority, Owne
 
     const rejectedNonTaskPin = await rpc(hostAToken, 'clued_mcp_mtpe_owner_pin', {
       operation: 'set', record_id: incidentId, base_version: 2,
+      expected_current_focus_id: null,
       idempotency_key: uuid(), user_confirmed: true,
       reason: 'Non-Task focus must not violate the Task frontier contract',
     });
     assert.equal(rejectedNonTaskPin.status, 'rejected');
+    assert.match(JSON.stringify(rejectedNonTaskPin), /owner_pin_target_not_eligible/);
 
     // Unknown execution semantics and malformed blockers fail closed instead
     // of becoming READY through default coercion.
