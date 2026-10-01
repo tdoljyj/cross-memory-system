@@ -107,7 +107,14 @@ class SplitMappingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "plan.md"
             path.write_bytes(b"x" * mapping.PLAN_SIZE)
-            with patch.object(mapping.hashlib, "sha256", side_effect=[Digest(mapping.PLAN_SHA256), Digest("0" * 64)]):
+            real_sha256 = mapping.hashlib.sha256
+            def source_digest(raw):
+                if raw == b"x" * mapping.PLAN_SIZE:
+                    return Digest(mapping.PLAN_SHA256)
+                if raw == b"":  # The mock source has no lines at the bound range.
+                    return Digest("0" * 64)
+                return real_sha256(raw)  # Candidate JSON remains independently checked.
+            with patch.object(mapping.hashlib, "sha256", side_effect=source_digest):
                 with self.assertRaisesRegex(foundation.FoundationError, "PLAN_SOURCE_RANGE"):
                     mapping.verify_plan(path, foundation.load(mapping.CANDIDATE))
 
