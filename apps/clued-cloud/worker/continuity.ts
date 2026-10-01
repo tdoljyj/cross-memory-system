@@ -33,6 +33,16 @@ import {
   parseEvidenceWithdrawal,
   type UserInformationFlowRpc,
 } from "./information-flow";
+import {
+  WORK_CLAIMS_ACTIVE_OAUTH_TOOL,
+  WORK_CLAIMS_ACTIVE_RPC,
+  withWorkClaimContext,
+  workClaimRpcByTool,
+  workClaimToolPolicies,
+  workClaimTools,
+  workClaimsEnabled,
+  type WorkClaimFeatureEnv,
+} from "./work-claims";
 import { measurePack } from "./context-pack";
 import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION } from "./generated/agent-contract";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
@@ -74,7 +84,7 @@ const RESOURCE_CENTER_AUTHORITY_CONTRACT = "clued.resource-center-authority/1";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
-export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv {
+export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv {
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
@@ -1466,6 +1476,7 @@ const tools = [
   ...informationFlowTools,
   ...p5Tools,
   ...contextTools,
+  ...workClaimTools,
 ] as const;
 
 type PublicToolName = (typeof tools)[number]["name"];
@@ -1590,6 +1601,7 @@ export const publicToolPolicies = {
   clued_p5_git_divergence: {
     scopes: ["audit:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
   },
+  ...workClaimToolPolicies,
 } as const satisfies Record<PublicToolName, PublicToolPolicy>;
 
 function publishTool<T extends (typeof tools)[number]>(tool: T) {
@@ -1614,11 +1626,12 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {
   };
 }
 
-export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1">) {
+export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_WORK_CLAIMS_V1" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1">) {
   const existing = tools.filter((tool) =>
     (!(tool.name in recordRpcByTool || tool.name in informationFlowRpcByTool) || recordsV2Enabled(env))
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
     && (!(tool.name in contextRpcByTool) || contextsEnabled(env))
+    && (!(tool.name in workClaimRpcByTool) || workClaimsEnabled(env))
   ).map(publishTool);
   const binary = storageBinaryEnabled(env);
   return [...existing, ...(storageJobsEnabled(env) ? storageAgentToolsFor(binary) : []), ...(binary ? [storageUploadBeginTool] : []),
@@ -1701,6 +1714,7 @@ const rpcByTool = {
   ...recordRpcByTool,
   ...informationFlowRpcByTool,
   ...p5RpcByTool,
+  ...workClaimRpcByTool,
 } as const;
 
 
@@ -2090,6 +2104,9 @@ async function callTool(
   if (typeof name === "string" && name in p5RpcByTool && !p5TenantWritesEnabled(env)) {
     throw new HttpError(404, "Clued P5 tenant writes are disabled.");
   }
+  if (typeof name === "string" && name in workClaimRpcByTool && !workClaimsEnabled(env)) {
+    throw new HttpError(404, "Clued work claims are disabled.");
+  }
   if (typeof name !== "string" || !(name in rpcByTool)) {
     throw new HttpError(404, "Unknown Clued continuity tool.");
   }
@@ -2123,7 +2140,7 @@ async function callTool(
       : { status: "not_ready", gate: "G6_CURRENTNESS",
           missing_requirements: ["all_path_checkpoint_enforcement"] }
     : sanitized;
-  const result = withAuthorityCapture(name, gated);
+  const result = await withWorkClaims(request, env, name, args, withAuthorityCapture(name, gated));
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
     structuredContent: result,
@@ -2146,6 +2163,42 @@ function withAuthorityCapture(name: string, value: unknown): unknown {
   const record = value as Record<string, unknown>;
   if (record.error || "authority_capture_completeness" in record) return value;
   return { ...record, authority_capture_completeness: authorityCaptureUnknown };
+}
+
+// Work Claim Admission v0.1 §4.2: a resume carries the contract version the
+// Worker serves and this user's live work claims, so a compliant Agent sees a
+// conflict at its first Clued call. Only when CLUED_WORK_CLAIMS_V1 is on; a
+// failed claims read is reported in the result, never thrown into the resume.
+async function callWorkClaimsActive(request: Request, env: ContinuityEnv, scope: string) {
+  const token = bearerToken(request);
+  if (!token) throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
+  const input = { scope };
+  if (!token.startsWith("clued_bnd_")) {
+    return await supabaseRequest(env, "/rest/v1/rpc/clued_oauth_call", {
+      method: "POST",
+      userToken: token,
+      body: JSON.stringify({ p_tool: WORK_CLAIMS_ACTIVE_OAUTH_TOOL, p_input: input }),
+    });
+  }
+  return await supabaseRequest(env, `/rest/v1/rpc/${WORK_CLAIMS_ACTIVE_RPC}`, {
+    method: "POST",
+    body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
+  });
+}
+
+async function withWorkClaims(request: Request, env: ContinuityEnv, name: string, args: unknown, value: unknown): Promise<unknown> {
+  if (name !== "clued_session_resume" || !workClaimsEnabled(env)) return value;
+  if (!value || typeof value !== "object" || Array.isArray(value) || (value as Record<string, unknown>).error) return value;
+  const scope = args && typeof args === "object" && !Array.isArray(args)
+    && typeof (args as Record<string, unknown>).context_key === "string"
+    ? (args as Record<string, string>).context_key : "global";
+  let claims: unknown = null;
+  try {
+    claims = sanitizeCluedResult(await callWorkClaimsActive(request, env, scope));
+  } catch {
+    claims = null;
+  }
+  return withWorkClaimContext(value, AGENT_CONTRACT_VERSION, claims);
 }
 
 function rpcResult(id: JsonRpcId | undefined, result: unknown) {
@@ -2266,7 +2319,8 @@ async function handleRestContinuity(request: Request, env: ContinuityEnv) {
   const path = new URL(request.url).pathname as keyof typeof restToolByPath;
   const tool = restToolByPath[path];
   const input = await parseBody(request);
-  const result = withAuthorityCapture(tool, await callRpc(request, env, tool, input));
+  const result = await withWorkClaims(request, env, tool, input,
+    withAuthorityCapture(tool, await callRpc(request, env, tool, input)));
   return json(result, 200, corsHeaders(request));
 }
 
