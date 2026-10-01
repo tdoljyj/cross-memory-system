@@ -462,7 +462,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       assert.equal(first.status, 'appended');
       assert.equal(second.status, 'appended');
       const page = await f.restore('global', 'work_log', {
-        event_cursor: Number(first.event_id) - 1, event_limit: 1, event_budget_bytes: 4096,
+        event_order: 'oldest', event_cursor: Number(first.event_id) - 1, event_limit: 1, event_budget_bytes: 4096,
       });
       assert.equal(page.event_page.returned, 1);
       assert.equal(page.event_page.truncated, true);
