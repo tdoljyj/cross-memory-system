@@ -331,6 +331,31 @@ class DomainRecognitionTests(unittest.TestCase):
             domain.validate_recognition(self.request, self.service, clock=clock)
         self.assertEqual(caught.exception.code, "CLUED_MODEL_M2_DOMAIN_CLOCK_REGRESSED")
 
+    def test_clock_advance_then_rollback_after_entry_is_rejected_immediately(self):
+        start = datetime(2026, 10, 1, 9, 59, 50, tzinfo=timezone.utc)
+        expired = start + timedelta(seconds=11)
+        rollback = start + timedelta(seconds=5)
+        for rollback_sample in (9, 10):
+            self.service = SyntheticCanonicalService()
+            self.request = copy.deepcopy(self.service.request)
+            for view in (self.service.ctx, *self.service.records.values(),
+                         *self.service.receipts.values(), *self.service.events.values()):
+                view["evaluated_at"] = stamp(start)
+            samples = ([start] * 7 + [expired] * (rollback_sample - 8)
+                       + [rollback] * (11 - rollback_sample))
+            with self.subTest(rollback_sample=rollback_sample), patch.object(
+                    domain, "utc_now", side_effect=samples) as clock:
+                with self.assertRaises(FoundationError) as caught:
+                    domain.validate_recognition(self.request, self.service)
+                self.assertEqual(caught.exception.code, "CLUED_MODEL_M2_DOMAIN_CLOCK_REGRESSED")
+                self.assertEqual(clock.call_count, rollback_sample)
+                self.assertEqual(self.service.mutation_calls, 0)
+
+    def test_clock_monotonicity_state_is_local_to_each_request(self):
+        for value in (NOW + timedelta(seconds=1), NOW):
+            result = domain.validate_recognition(self.request, self.service, clock=lambda: value)
+            self.assertEqual(result["status"], "PASS_DOMAIN_RECOGNITION_ADAPTER_SYNTHETIC_ONLY")
+
     def test_updated_observation_during_a_record_read_is_not_future(self):
         clock = ControlledClock(NOW)
         original_read = self.service.read_record

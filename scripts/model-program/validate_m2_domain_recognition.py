@@ -232,8 +232,18 @@ def validate_recognition(request, reader=None, *, clock=None):
     """
     if clock is None:
         clock = utc_now
+    source_clock = clock
+    latest_sample = None
+
+    def monotonic_clock():
+        nonlocal latest_sample
+        value = clock_time(source_clock)
+        require(latest_sample is None or value >= latest_sample, "DOMAIN_CLOCK_REGRESSED")
+        latest_sample = value
+        return value
+
     try:
-        return _validate_recognition(copy.deepcopy(request), reader, clock)
+        return _validate_recognition(copy.deepcopy(request), reader, monotonic_clock)
     except FoundationError:
         raise
     except Exception:
