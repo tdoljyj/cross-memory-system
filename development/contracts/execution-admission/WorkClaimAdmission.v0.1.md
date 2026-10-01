@@ -38,6 +38,7 @@
 - Storage N4（`20260930200000_storage_read_budget_n4.sql`）已经实现了 admit → reserve → finalize 的每 Binding 滚动小时预算，并以 advisory lock 串行化。这正是纪要 §5.1 要的"同一原子边界预留额度"，只是绑在 Storage 读上。可直接复用其模式。
 - `kernel/policy/approval-lease.mjs` 的 reserve → issue → consume 带 fencing_token 与时间窗口，`external-invocation-ledger.mjs` 有 lease 与 fence 校验。它们只被 `evals/kernel-next/*` 引用，没有任何 Worker、迁移或 hook 使用。纪要说"内存参考实现"是对的，但没说清它们的 API 形状可以直接作为 claim RPC 的合同。
 - Claude Code 支持 PreToolUse hook，仓库现在只注册了 Stop hook。这是本仓库内 Claude Code 会话唯一能在**开销发生前**拦截的点。
+- 2026-10-01 根因审计还观察到：服务端合同已是 v6，但部分客户端暴露的工具参数仍是旧版，新读取方式需走替代路径。这与 #444 用到 v4 合同是同一类问题：版本一致性要在**真实客户端**验收，不能只看服务端自报。`contract_version` 比对（第 4.6 节 L2）只覆盖合同文本，不覆盖工具 schema；工具 schema 漂移需要另一条 bootstrap 侧校验，本设计不展开。
 
 ---
 
@@ -151,6 +152,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 判定：claim ACTIVE 或 DRAINING 且未过期；holder 不校验 GitHub 身份（都是 Owner），校验 fence 为该 task 当前最大；变更文件集 ⊆ write_set；base_sha 等于或晚于 claim.base_commit。任一不满足 → 失败并写明原因。
 - 范围扩张（变更文件超出 write_set）→ 失败，提示先 `clued_work_renew` 携带扩大的 write_set（扩大时重新做冲突判定）。
 - 加入 ruleset required 列表后，这条和 gitleaks、trivy 一样是无过滤 check，不会出现"等不到"的问题。
+- 同一 check 顺带输出一张汇总表：按本 PR 变更路径判定哪些路径过滤的 workflow **适用**、各自在当前 head 上的结论、哪些**不适用**。这就是 2026-10-01 根因审计第 4 项要的"始终返回结果的汇总检查"，不必另开一个。
 - 自报 JSON、同名 check、伪造签名不算：check 由 workflow 从 Clued 实时查询，Receipt 在 Clued 侧。
 
 **L0b：重任务 workflow 的 `admission-gate` job**
@@ -170,9 +172,11 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - `clued_session_resume` 返回 `contract_version`；Skill 比对本地 `agent-contract.md` 版本行，不一致则拒绝开工并说明。
 - Agent 在 PR body 与最后一个 commit 的 trailer 写 `Clued-Work-Claim: <id>`。
 
-**L3：Claude Code PreToolUse hook**
+**L3：Claude Code SessionStart + PreToolUse hook**
 
-- `.claude/settings.json` 增加 PreToolUse hook：匹配 Bash 中的 `git push`、`gh pr create`、`npm (ci|install|run build|test)`、`pytest`、`node --test`，以及 `mcp__github__create_pull_request`、`push_files`。没有 `CLUED_WORK_CLAIM` 环境变量或 `$CLAUDE_PROJECT_DIR/.clued/work-claim.json`（由 `clued_work_claim` 成功后写入）则阻止一次并提示先 claim。
+- SessionStart hook 调用 Clued 只读 API 取 `active_work_claims`，以附加上下文注入第一轮。模型在消耗第一个 token 之前就看到"谁在做什么、改哪些文件、何时到期"。这是本仓库内 Claude Code 会话能做到的最早一刻，仍属合规层：hook 可关、Host 可换。
+
+- PreToolUse hook：匹配 Bash 中的 `git push`、`gh pr create`、`npm (ci|install|run build|test)`、`pytest`、`node --test`，以及 `mcp__github__create_pull_request`、`push_files`。没有 `CLUED_WORK_CLAIM` 环境变量或 `$CLAUDE_PROJECT_DIR/.clued/work-claim.json`（由 `clued_work_claim` 成功后写入）则阻止一次并提示先 claim。
 - 与 Stop hook 同样可关、可删；标为 L3，不进任何"不可绕过"声明。
 
 ### 4.7 不保护什么（必须原样写进任何完成声明）
@@ -181,7 +185,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 在 Host 本机运行的 install／build／test（除 Claude Code + hook 未关闭的情况）。
 - 不调用 Clued、不开 PR 的工作（它们也不会消耗共享资源）。
 - Owner 临时禁用 ruleset 期间的合并。
-- 直接数据库／Storage／部署工具的管理员路径：各自有独立授权，本设计不覆盖。
+- 直接数据库／Storage／部署工具的管理员路径：各自有独立授权，本设计不覆盖。生产迁移的重复执行（2026-10-01 #435 迁移在 02:47 与 03:13 被两个会话各跑一次）由独立的迁移原子入口承接（Project Task `a15cb2d2`，候选、已暂停）；work claim 只保证改迁移文件的开发工作不重复，不保证迁移只被应用一次。两者互补，不合并。
 
 ---
 
