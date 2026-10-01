@@ -34,7 +34,7 @@ import {
   type UserInformationFlowRpc,
 } from "./information-flow";
 import { measurePack } from "./context-pack";
-import { AGENT_CONTRACT_MARKDOWN } from "./generated/agent-contract";
+import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION } from "./generated/agent-contract";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
 import { createStorageGoogleRecoveryOAuth } from "./storage-google-recovery-oauth";
 import { createStorageGoogleProbe, storageProbeDiagnostic } from "./storage-google-probe";
@@ -222,7 +222,7 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
       required: true,
       start: "clued_session_resume",
       reconcile_when_required: "clued_session_reconcile",
-      contract: { version: 5, url: `${origin}/clued-agent.md` },
+      contract: { version: AGENT_CONTRACT_VERSION, url: `${origin}/clued-agent.md` },
       durable_changes: {
         condition: "authorized_business_change_only",
         capture: "material_outcomes_in_same_turn_before_reporting",
