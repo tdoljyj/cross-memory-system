@@ -393,6 +393,25 @@ test('work claims: one live claim per task/write set/trigger, progress-gated ren
     assert.equal(capped.max_active_per_binding, 3);
     assert.equal(capped.active, 3);
 
+    // --- Step 2: the resume fold-in read lists this user's live claims, in
+    // the scopes the Binding may read, for a read-only Binding too. ---
+    const active = await call(verifier, 'clued_work_claims_active_v1', { scope: 'global' });
+    assert.equal(active.status, 'ok', JSON.stringify(active));
+    const liveIds = (await admin.query(`select claim_id from clued_private.work_claims_v1
+      where user_id=$1 and status in ('ACTIVE','DRAINING') and expires_at>clock_timestamp()
+      order by expires_at,claim_id`, [userId])).rows.map((r) => r.claim_id);
+    assert.deepEqual(active.active_work_claims.map((c) => c.claim_id), liveIds);
+    assert.ok(active.active_work_claims.length >= 4, 'C holds three capped claims plus A holds one');
+    assert.equal(active.work_claim_profile.max_active_per_binding, 3);
+    assert.ok(active.active_work_claims.every((c) => c.write_set.length > 0 && c.fence >= 1 && c.expires_at));
+    const foreign = await call(otherUser, 'clued_work_claims_active_v1', { scope: 'global' });
+    assert.deepEqual(foreign.active_work_claims, [], 'another user sees none of these claims');
+    // Delegated OAuth dispatch knows the six work-claim entries.
+    const oauthBody = (await admin.query(`select pg_get_functiondef('public.clued_oauth_call(text,jsonb)'::regprocedure) body`)).rows[0].body;
+    for (const tool of ['clued_work_claim', 'clued_work_renew', 'clued_work_release', 'clued_work_verify', 'clued_work_takeover', 'clued_work_claims_active']) {
+      assert.ok(oauthBody.includes(`when '${tool}' then`), `clued_oauth_call dispatches ${tool}`);
+    }
+
     // --- The table itself is not readable through the client role. ---
     await assert.rejects(() => anon.query('select * from clued_private.work_claims_v1'), /permission denied/);
 
