@@ -493,8 +493,9 @@ Migration `20260930060000_storage_read_content_v1.sql` and the Worker tool
   reservation (256 KiB, or more after `reserve`, see the N1b budget below).
   Content admissions and reservations of one Binding are serialized by the
   same transaction advisory lock, so parallel calls cannot pass the check with
-  a stale sum. Over budget the tool returns `budget_exhausted`. The limit is
-  fixed; an Owner-adjustable value is N4.
+  a stale sum. Over budget the tool returns `budget_exhausted`. Since N4 the
+  Owner can change the limit and an account total also applies (see "Hourly
+  budgets" below).
 - read_content is enabled only together with read, and a content read is also
   evaluated for read (the response names the file). So `deny_class` with
   `read_content` removes bodies for one client and keeps its read level, while
@@ -877,7 +878,115 @@ N1a (text bodies only, `format_unsupported` for other formats).
   never the base64. The magic bytes decide the type (`declared_mime_type` when
   Drive disagrees). Larger images (by size, Drive `imageMediaMetadata`, or the
   decoded header) return `reason: "image_too_large"` with metadata and no bytes.
-- **Metadata only.** PDF, zip and other archives, video (with
+- **PDF text** (`apps/clued-cloud/worker/storage-read-pdf.ts`, contract §4.5
+  PDF paragraph). PDFs up to 20 MiB are downloaded whole in one request into a
+  buffer of exactly the Drive `size` and sent to the separate PDF extractor
+  Worker, which runs pdf.js (`pdfjs-dist`, pinned exact, legacy build,
+  in-thread worker, no canvas, no font loading, no network). `page_start` (default 1) and `page_count` (1–20, default 20) pick
+  pages; each page is `# Page N` plus its text, and `offset` / `length` address
+  that text like Office text. Responses carry `page_count`, `pages`,
+  `next_page_start`, `text_layer` (`none` = scan, no OCR) and, when a page's
+  text is glyph codes (font without a Unicode map) or a needed CJK CMap is not
+  bundled, `text_unreliable` (that page's text is omitted). Password-protected
+  or damaged files are `document_invalid`; larger files return
+  `reason: "pdf_too_large"` with no body request. A PDF above 256 KiB reserves
+  `min(size, 5 MiB)` before the download. pdf.js and the CMaps live only in the
+  extractor Worker (about 1.2 MiB gzip) and load on its first PDF read.
+  Every call downloads the whole file again (page ranges and offset
+  continuations included): up to 20 MiB of provider bytes per call that the
+  content budget does not count (it counts delivered text only; the
+  provider-byte dimension is N4).
+  Hostile files: pdf.js has no decoded-size limit, so the build patches the
+  pinned worker (`apps/clued-cloud/build/pdfjs-decode-guard.mjs`, applied by
+  `scripts/build-pdf-extractor.mjs` and by the esbuild test bundles) to call a per-extraction
+  guard: at most 16 MiB of decoded-buffer allocations per stream (a decoded
+  stream stays under 8 MiB) and 48 MiB per call, 4 000 000 content-stream
+  tokens, 200 000 new cached names, strings / names / arrays up to 256 Ki
+  elements, and no synchronous BrotliDecode decoding (a native
+  `DecompressionStream` brotli path is counted like Flate); past any of them the read fails with
+  `archive_limit_exceeded`. Page text is streamed and cancelled once the call's
+  text limit or deadline is passed. The extraction deadline is what remains of
+  the call's 25 s Drive signal minus 5 s for the scope recheck (at most 10 s;
+  under 1 s left is `storage_read_unavailable`). A time cut ends the selection
+  at a whole page; a continuation whose offset lies past that cut is
+  `storage_read_unavailable` with `next_page_start` and a hint to restart from
+  there. Allocation / stack failures inside pdf.js are
+  `storage_read_unavailable`, not `document_invalid`. Embedded font programs
+  (FontFile / FontFile2 / FontFile3) are never read or converted: text comes
+  from Encoding / Differences / ToUnicode, and a call past 200 000 text items is
+  `archive_limit_exceeded`. Cross-reference entries (xref tables and streams,
+  reconstruction) are capped at 400 000 per call, an xref stream with zero entry
+  width or a range longer than its data and an object stream whose `/N` exceeds
+  a quarter of its decoded bytes are refused, a ToUnicode map above code 0x10000
+  is built sparse, and a CMap may declare at most 1 024 codespace ranges with
+  characters x ranges scanned capped at 32 Mi per call. The extractor refuses to
+  parse PDFs if the patched worker's `CLUED_PDF_DECODE_GUARD` or
+  `CLUED_PDF_FONT_PROGRAMS` marker is missing, and its marker then reports
+  `decode_guard: false`, which the main Worker refuses.
+  `tests/resource-center-storage-read-pdf-bounds.test.mjs` runs deflate bombs
+  in a child with `--max-old-space-size=64`.
+- **PDF extractor Worker** (Owner decision `7210e5a5`, contract §4.5
+  "隔离"). pdf.js never runs in the main Worker `clued-cloud`: a PDF read sends
+  the file and four options (`page_start`, `page_count`, `max_text_bytes`,
+  `time_ms`) through the service binding `PDF_EXTRACTOR` (RPC,
+  `worker/storage-read-pdf-client.ts`) to the Worker `clued-storage-pdf`
+  (`wrangler.pdf-extractor.jsonc`; entry `worker/storage-pdf-extractor.ts`,
+  built by `scripts/build-pdf-extractor.mjs` into `dist/pdf-extractor/index.js`).
+  The extractor has no bindings, vars or secrets, no workers.dev route or
+  preview URL, only the `nodejs_als` compatibility flag, and
+  `limits.cpu_ms: 10000` (enforced only on Workers Paid / Standard usage; on
+  Workers Free a Worker gets 10 ms of CPU per invocation and the extractor is
+  unusable). Before any body request the main Worker calls `marker()`: a
+  missing binding, a failed or slow (5 s) marker call, another contract, a
+  version other than `PDF_EXTRACTOR_VERSION` or the one before it
+  (`clued.storage-pdf-extractor/1`, version 1, so today only 1), or a pdf.js
+  without the patch markers is `storage_read_unavailable` with a fixed hint,
+  and the read never falls back to parsing in the main Worker. If the
+  `extract` call itself fails with an error that names a resource limit
+  (memory, CPU) or does not return within `time_ms` + 2 s, that read fails
+  once as `archive_limit_exceeded` with the "will stop the same way" hint; any
+  other failed call (dropped connection, redeploy, unknown) is
+  `storage_read_unavailable` with the normal retry hint. Neither is retried.
+  Results are rebuilt field by field and refused above 16 Mi UTF-16 units of
+  text. One user extraction runs per extractor isolate at a time; a second
+  waits up to 2 s (at most half its `time_ms`, taken off that time) and is
+  then refused as busy (`storage_read_unavailable`, "retry in a few seconds").
+  The public check route never takes that slot: the extractor's `check()`
+  parses its own fixed check PDF under a separate slot of one (a concurrent
+  check is answered busy at once), and the main Worker serves the last OK
+  check result per isolate for 60 s (a failure for 5 s) with one check in
+  flight; no query parameter bypasses the cache. The check response reports
+  the extractor's own marker (`extractor.contract` / `.version` from
+  `check()`) and `checked_at` of the round trip it reports.
+  **Rollback:** when `PDF_EXTRACTOR_VERSION` changed in the release being
+  rolled back, roll back the extractor (`clued-storage-pdf`) and the main
+  Worker together, to the same commit. The main Worker accepts only its own
+  version and the one before it, so a version bump must keep the previous
+  main Worker able to read the new extractor's results (otherwise rename the
+  contract), and an extractor two versions apart fails every PDF read closed.
+  Deploy order: the production release workflow deploys the extractor
+  (`npx wrangler deploy --config wrangler.pdf-extractor.jsonc`) with the same
+  `CLUED_CLOUDFLARE_DEPLOY_TOKEN` before the main Worker, and after both are
+  live `scripts/verify-pdf-extractor.mjs` requires
+  `GET /v1/storage/pdf-extractor/check` (the extractor's fixed built-in
+  one-page PDF through the binding) to return 200 with the expected text and
+  exactly the repository's extractor version, retrying 8 times 10 s apart to
+  outlast the route's 60 s cache (evidence `release-evidence/pdf-extractor.json`). The
+  token's existing Workers Scripts Edit covers creating and updating the new
+  script, its subdomain settings, CPU limit and the service binding; no new
+  permission is expected. When the request, result or guard semantics change,
+  bump `PDF_EXTRACTOR_VERSION` in `worker/storage-read-pdf-common.ts` (both
+  Workers ship from the same commit). Local `vite dev` has no extractor
+  binding, so PDF reads fail closed there.
+  Upgrading `pdfjs-dist`: bump the exact version, run
+  `node scripts/generate-pdf-cmaps.mjs`, re-check the patch anchors in
+  `build/pdfjs-decode-guard.mjs` (the build fails when one does not match), and
+  rerun `tests/resource-center-storage-read-pdf.test.mjs`,
+  `tests/resource-center-storage-read-pdf-bounds.test.mjs` (the first fails
+  when the CMap module does not match the installed version) and
+  `tests/resource-center-storage-pdf-extractor.test.mjs` (both Workers under
+  workerd with a real service binding).
+- **Metadata only.** Zip and other archives, video (with
   `media_metadata` or `processing: true`), audio, HEIC/TIFF/BMP, legacy
   .doc/.xls/.ppt, ODF, other Google types and other binaries return
   `delivered_as: "none"`, `reason: "format_unsupported"` and a fixed `hint`;
@@ -896,19 +1005,19 @@ N1a (text bodies only, `format_unsupported` for other formats).
   the caller's own Binding younger than 10 minutes; finalize settles to the
   delivered bytes, releasing the unused part. Text and Office reads (at most
   256 KiB per call) and legacy / text/1 reads never call `reserve`. The
-  provider-byte dimension, the account total and Owner-adjustable values
-  remain N2 / N4.
+  account total and Owner-adjustable values are N4 (see "Hourly budgets"
+  below); the provider-byte dimension is still open.
 - **Rollout order.** Apply `20260930180000_storage_binary_upload_n3.sql` (N3)
   and `20260930200000_storage_read_budget_n4.sql` to production BEFORE the
   next Worker release that contains N1b: the N1b Worker calls `reserve` for
   images above 256 KiB, which an older database rejects as
   `storage_read_input_invalid` (the image read then fails closed with
   `storage_read_unavailable`, no bytes delivered).
-- **Deferred.** PDF text extraction (needs pdf.js in the Worker; bundle size and
-  CPU still to be measured), Drive thumbnail builder and Cloudflare Images
+- **Deferred.** PDFs above 20 MiB (range loading), raw download links
+  (`resource_link`), Drive thumbnail builder and Cloudflare Images
   downscaling (thumbnail host pattern must be measured first; Images needs the
   monthly counter column), zip listing / entries, ODF, `resource_link` raw
-  download, owner-level budget.
+  download. (The owner-level read budget landed in N4.)
 
 ## Binary upload (StorageNormalUse.v0.1 N3)
 
@@ -949,8 +1058,8 @@ runs only in account-policy mode (`CLUED_STORAGE_JOBS_V2=true`).
   encrypted archive is refused too. Every refusal is `content_type_mismatch`.
 - **Signed PUT URL** (MAJOR-2): `upload_begin` inserts a
   `clued_private.storage_staging_v1` row (`issued`, 10 minutes) and reserves the
-  declared size against the hourly upload budget (256 MiB per Binding, 1 GiB
-  per owner; at most 60 staging rows per Binding and 200 per owner per rolling
+  declared size against the hourly upload budget (by default 256 MiB per Binding, 1 GiB
+  per owner, Owner-adjustable since N4; at most 60 staging rows per Binding and 200 per owner per rolling
   hour, released rows included) in the same transaction. It returns
   `upload_url = https://<host>/storage/staging/<staging_id>` and a separate
   `upload_token` that the client sends as the `X-Clued-Upload-Token` header:
@@ -1114,6 +1223,72 @@ returns 404, binary submits are refused). With the flag off the executor has
 no staged-content loader, so a queued binary job is refused before any effect
 (reported `attention_required`), and the staging sweep does not run: leftover
 objects are removed by the bucket's 3-day lifecycle rule.
+
+## Hourly budgets (StorageNormalUse.v0.1 N4)
+
+Migration `20261001020000_storage_budgets_n4.sql`, the Worker route
+`/v1/storage/budget` and the storage page control. No new secret or switch:
+the route sits behind `CLUED_STORAGE_ACCOUNT_V1` like the other native Owner
+controls, and the database enforces the configured values for every read and
+upload admission as soon as the migration is applied.
+
+- **Table** `clued_private.storage_budgets_v1` (§7.3): one active row per
+  `(owner_id, connection_id)`. A row with a connection holds the per-Binding
+  budgets used on that connection (`read_bytes_per_hour`,
+  `upload_bytes_per_hour`, each 32 MiB – 2 GiB); the row with
+  `connection_id IS NULL` holds the owner's account totals over all Bindings
+  (each 32 MiB – 8 GiB). Values are whole MiB; the bounds are table checks as
+  well as RPC checks. Rows are immutable: a change revokes the active row and
+  inserts the next `budget_generation`, both under one Receipt. No row means
+  the §7.1 default: per Binding 256 MiB read / 256 MiB upload, account 1 GiB
+  read / 1 GiB upload.
+- **RPC** `public.clued_storage_budget_v1` (native Owner session only, granted
+  to `authenticated`; Binding tokens and the service role cannot call it):
+  `status {connection_id}` returns the effective values, the CAS generations
+  (0 = defaults), the defaults and the bounds. `set {scope: "connection",
+  connection_id | scope: "account", base_generation, read_bytes_per_hour,
+  upload_bytes_per_hour, idempotency_key}` is CAS on `budget_generation`;
+  out-of-bounds values are `storage_budget_out_of_bounds` (no receipt), a
+  stale base is `storage_owner_version_conflict`. Each change writes Receipt
+  operation `storage_budget_v1` (versions keyed `storage_budget:<connection>`
+  or `storage_budget:account`) and Event `extension:storage:budget_v1`
+  (scope `project:<profile project>` for a connection, `profile` for the
+  account). It never touches a connection, write policy, read access,
+  `auth_generation`, client grant, deny, staging row or storage job.
+- **Reads**: admission and `reserve` of `clued_storage_read_v1` now take an
+  owner advisory lock (`storage-read-budget-owner:<owner>`) before the existing
+  per-Binding lock and check two sums: the Binding's read_content receipts in
+  the rolling hour against the per-Binding read budget of the connection being
+  read, and all read_content receipts of the owner against the account read
+  total (new in N4: §7.2 assigned the account total to N2, which had not built
+  it). A Binding that reads several connections is still metered as one
+  Binding; the limit applied is the one of the connection in the call.
+- **Uploads**: `upload_begin` reserves through `storage_upload_budget_v2`
+  (per-Binding upload budget of the connection, account upload total); the
+  row caps (60 per Binding, 200 per owner per rolling hour) are unchanged.
+  `storage_upload_budget_v1` lost its only caller and is dropped.
+- **Immediate effect**: every admission reads the committed row, so a change
+  applies to the next read or upload. Lowering a budget below what the window
+  already used or reserved refuses new admissions until the rolling hour frees
+  up; receipts, reservations and issued upload URLs are never rewritten.
+- **Page**: under 正常使用, "读取额度设置" loads the status; each scope (每个已授权
+  Agent on this connection, 账号合计) has read and upload selectors with the
+  64 MiB / 256 MiB / 1 GiB presets and 自定义 (whole MiB within the scope's
+  bounds, checked on the page and again by the database), saved after a
+  confirmation and read back.
+- **Not included**: the provider-download-bytes dimension (§7.1 row 2, 2× the
+  read budget) — the Worker does not meter provider bytes per receipt yet, so
+  it is neither enforced nor shown; `image_transforms_per_month` (§7.3) — the
+  Cloudflare Images path is deferred, so the column is not added and `set`
+  refuses the key; the "about N minutes" recovery hint in `budget_exhausted`
+  (§7.2). The normal-use disclosure still says "默认每小时额度" (it names the
+  defaults, which are unchanged), so its version is unchanged.
+
+Rollout: apply the production migration byte for byte, then release the
+Worker (the page and route need it). An older Worker keeps working against the
+new database (the RPC signatures it calls are unchanged). Rollback of the page
+alone: release the previous Worker; budgets already set stay enforced. To
+return an owner to defaults, set the default values (a new generation).
 
 ## Self-service onboarding (StorageNormalUse.v0.1 N0)
 
