@@ -33,6 +33,8 @@ Locate current accepted successors through the trusted source; do not copy priva
 
 Use existing explicit authorization for scoped reversible changes, normal commits and ordinary reviewed pushes. The endpoint edits only its own consumer configuration. Commit authorship follows the endpoint: local endpoints use `AI@machine`; hosted agents and connectors are identified by their authenticated host identity and attribution trailers. Fetch+merge before push, and verify the required post-push ancestry. Do not alter another endpoint's configuration.
 
+When the service offers work claims, claim the Task before the first edit, install, build, test or CI run (contract §1.7). Keep the claim's `write_set` covering every path the change touches, renew before the lease ends, put `Clued-Work-Claim: <claim_id>` in the pull request body and the head commit, and release the claim when the pull request merges or the work stops.
+
 Map each change to its affected acceptance requirements. Reuse reliable evidence for unchanged scope, run meaningful checks once, and broaden checks only for an actual gap or new failure. With parallel agents, assign disjoint files/resources and serialize shared state, credentials, integration and publication.
 
 ## Production and publication
