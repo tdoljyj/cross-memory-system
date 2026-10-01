@@ -47,6 +47,7 @@ class ServerCanonicalReader:
                 "DOMAIN_SERVER_LIVE_CAPABILITY_NOT_IMPLEMENTED")
         self.backend, self.contract = backend, contract
         self.principal, self.latest_auth, self.latest_sample = None, None, None
+        self.authentication_started = False
         self.source_clock = source_clock
 
     def check_auth(self, view, now):
@@ -70,12 +71,14 @@ class ServerCanonicalReader:
         value = domain.clock_time(self.source_clock)
         require(self.latest_sample is None or value >= self.latest_sample, "DOMAIN_CLOCK_REGRESSED")
         self.latest_sample = value
-        if self.latest_auth is not None:
+        if self.authentication_started:
             self.check_auth(self.latest_auth, value)
         return value
 
     def authenticate(self):
         # Current server authentication is never constructed from request JSON.
+        self.authentication_started = True
+        self.latest_auth = None  # Never retain an old authentication on failure.
         self.latest_auth = copy.deepcopy(self.backend.authenticated_context())
         self.clock()  # Also checks expiry/revocation at every later clock sample.
 

@@ -104,6 +104,32 @@ class DomainServerPreparationTests(unittest.TestCase):
         self.backend.authenticated_context = auth
         self.reject("DOMAIN_SERVER_PRINCIPAL_CHANGED")
 
+    def test_valid_authentication_followed_by_none_or_malformed_return_is_rejected_immediately(self):
+        for invalid in (None, {}, [], False, "AUTHENTICATED"):
+            self.backend = SyntheticServerBackend()
+            self.request = copy.deepcopy(self.backend.request)
+            def auth():
+                self.backend.authentication_reads += 1
+                return copy.deepcopy(self.backend.auth if self.backend.authentication_reads == 1 else invalid)
+            self.backend.authenticated_context = auth
+            with self.subTest(invalid=invalid), patch.object(
+                    self.backend, "read_record", wraps=self.backend.read_record) as read:
+                self.reject("DOMAIN_SERVER_AUTH_SHAPE")
+                self.assertEqual(self.backend.authentication_reads, 2)
+                read.assert_not_called()
+                self.assertEqual(self.backend.mutation_calls, 0)
+
+    def test_initial_missing_authentication_is_rejected(self):
+        self.backend.authenticated_context = lambda: None
+        self.reject("DOMAIN_SERVER_AUTH_SHAPE")
+
+    def test_authentication_exception_after_success_cannot_reuse_old_identity(self):
+        with patch.object(self.backend, "authenticated_context", side_effect=[
+                copy.deepcopy(self.backend.auth), RuntimeError("INTERNAL DETAIL")]), patch.object(
+                self.backend, "read_record") as read:
+            self.reject("DOMAIN_SERVICE_UNAVAILABLE_OR_INVALID")
+            read.assert_not_called()
+
     def test_owner_designation_is_exact_current_decision_not_a_domain_grant(self):
         self.backend.records[self.backend.policy_id]["version"] += 1
         self.reject()
