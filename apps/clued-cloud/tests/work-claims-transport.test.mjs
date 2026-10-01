@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
+import { contractVersionOf } from '../scripts/verify-served-agent-contract.mjs';
+
+const CONTRACT_VERSION = contractVersionOf(await readFile(new URL('../../../skills/clued/references/agent-contract.md', import.meta.url), 'utf8'));
 
 // Work Claim Admission v0.1, step 2: the five work-claim tools and the resume
 // fold-in over the Worker transport. The database side is covered by
@@ -162,7 +166,7 @@ test('resume folds in contract_version and the live claims; a failed claims read
   const expected = {
     ...resume,
     authority_capture_completeness: { state: 'unknown', basis: 'server_observes_only_writes_that_reached_clued', independent_of: 'currentness' },
-    contract_version: 8,
+    contract_version: CONTRACT_VERSION,
     active_work_claims: claims.active_work_claims,
     active_work_claim_count: 1,
     work_claim_profile: claims.work_claim_profile,
@@ -226,7 +230,7 @@ test('resume folds in contract_version and the live claims; a failed claims read
       assert.equal(response.status, 200);
       const result = (await response.json()).result;
       assert.equal(result.isError, false);
-      assert.equal(result.structuredContent.contract_version, 8);
+      assert.equal(result.structuredContent.contract_version, CONTRACT_VERSION);
       assert.equal(result.structuredContent.active_work_claims, null);
       assert.equal(result.structuredContent.active_work_claims_unavailable, true);
       assert.equal(result.structuredContent.session_token, 'session-test');

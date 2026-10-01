@@ -47,6 +47,15 @@
             "default": "structured",
             "description": "Choose structured pending events or the rendered work log; the response never duplicates both."
           },
+          "event_order": {
+            "type": "string",
+            "enum": [
+              "newest",
+              "oldest"
+            ],
+            "default": "newest",
+            "description": "Order of unabsorbed events: newest first (default) or oldest first. Page with event_cursor set to the returned next_cursor in the same order."
+          },
           "event_cursor": {
             "type": "integer",
             "minimum": 0,
@@ -652,6 +661,11 @@
                   "type": "integer",
                   "minimum": 1
                 }
+              },
+              "binding_events": {
+                "type": "string",
+                "const": "all",
+                "description": "Also absorb every unabsorbed event this Binding wrote in this context, without listing each id."
               }
             },
             "additionalProperties": false

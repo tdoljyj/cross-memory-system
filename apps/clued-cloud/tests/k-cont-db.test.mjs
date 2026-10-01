@@ -129,7 +129,7 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
       event_type: "note", payload: { marker: "bounded-second" }, idempotency_key: uuid(),
     });
     const workLog = await rpc("clued_mcp_restore", {
-      context_key: "global", response_view: "work_log", event_cursor: Number(boundedFirst.event_id) - 1, event_limit: 1, event_budget_bytes: 4096,
+      context_key: "global", response_view: "work_log", event_order: "oldest", event_cursor: Number(boundedFirst.event_id) - 1, event_limit: 1, event_budget_bytes: 4096,
     });
     assert.equal(typeof workLog.work_log, "string");
     assert.equal("events_after_checkpoint" in workLog, false);
@@ -409,7 +409,7 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     const pageCursor = (await admin.query(`select min(id)-1 as id from public.clued_context_events
       where user_id=$1 and canonical_event_type='extension:kcont:page_cost'`, [userId])).rows[0].id;
     const fullPage = await reducedRpc("clued_mcp_restore", {
-      context_key: projectContext, response_view: "structured", event_cursor: Number(pageCursor), event_limit: 100,
+      context_key: projectContext, response_view: "structured", event_order: "oldest", event_cursor: Number(pageCursor), event_limit: 100,
       event_budget_bytes: 262144,
     });
     await anon.query("reset statement_timeout");
