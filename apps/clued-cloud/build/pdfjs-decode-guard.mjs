@@ -1,0 +1,282 @@
+import { readFile } from "node:fs/promises";
+
+/** StorageNormalUse.v0.1 §4.5 resource bounds. pdf.js has no limit on decoded
+ * bytes, parsed tokens or token sizes, so a small PDF (a deflate bomb) can make
+ * it allocate far beyond a 128 MB Worker isolate or run for many seconds. This
+ * build step adds a call to globalThis.__cluedPdfDecodeGuard(kind, subject,
+ * bytes) at every place the pinned pdf.js worker grows without bound:
+ *
+ * - "decode": DecodeStream.ensureBuffer (every synchronous decoder: Flate, LZW,
+ *   RunLength, ASCII85/Hex, predictors, decryption, concatenated page content)
+ *   and asyncGetBytesFromDecompressionStream (the native DecompressionStream
+ *   path pdf.js takes for embedded CMaps / ToUnicode and images);
+ * - "token": each object EvaluatorPreprocessor reads from a content stream, so
+ *   operator bombs are bounded by count, not only by decoded size;
+ * - "primitive": each new entry in pdf.js's isolate-wide Name / Cmd caches;
+ * - "object": each array, array element, Dict (weight DICT_WEIGHT) and Dict
+ *   entry Parser.getObj / makeInlineImage builds, charged with the parser
+ *   (content streams, indirect objects, object streams, xref recovery), which
+ *   carries the size of the top-level object being parsed;
+ * - "oplist": each operator added to an OperatorList and each path operator
+ *   PartialEvaluator.buildPath records (text extraction builds operator lists
+ *   only for Type3 CharProcs, and keeps them with the font);
+ * - "chars": the characters of each string, hex string and name the Lexer
+ *   returns (content streams, objects and embedded CMaps alike);
+ * - "cmap": CMap entries (CMap.mapOne, and the codes of each mapCidRange /
+ *   mapBfRange / mapBfRangeToArray range, charged with the CMap and its
+ *   highest code before the range is filled): the CMap parser reads with the
+ *   Lexer directly, and one `<000000> <FFFFFF> <4100>` bfrange would otherwise
+ *   fill 16 M entries;
+ * - "glyphs": per-font glyph-table entries filled code by code from a few
+ *   numbers of the font dictionary (each `c_first c_last w` range of a CIDFont
+ *   /W and each /W2 range, each CID of a CIDToGIDMap stream, each code an
+ *   IdentityToUnicodeMap visits). Every such range is first clamped to CIDs
+ *   0..0xFFFF (so one font adds at most 65 536 entries per table), and the
+ *   clamped count is charged before the table is filled: one
+ *   `/W [0 30000000 500]` is 3 array elements;
+ * - "xref": each cross-reference entry pdf.js allocates (xref table lines,
+ *   xref stream entries, charged per range before it is read, and entries
+ *   found while reconstructing a damaged file); an xref stream whose entries
+ *   have no width, or whose range is longer than its data, and an object
+ *   stream whose /N exceeds a quarter of its decoded bytes are refused before
+ *   anything is allocated for them (object-stream headers are charged as
+ *   "object", 3 units per entry);
+ * - "scan": characters x codespace ranges, charged before Font.charsToGlyphs /
+ *   getCharPositions read the codes of a shown string (CMap.readCharCode scans
+ *   every range per character); a CMap with more than MAX_CODESPACE_RANGES
+ *   ranges is refused ("limit");
+ * - "limit": BrotliStream (its decoder has no output bound, so it is refused
+ *   before decoding), every image decoder (JpegStream / Jbig2Stream /
+ *   JpxStream / CCITTFaxStream.decodeImage allocate the whole image outside
+ *   ensureBuffer; text extraction never needs one), and a string, hex
+ *   string, name or array past 256 Ki elements (pdf.js collects them one
+ *   element at a time).
+ *
+ * It also bounds EvaluatorPreprocessor.nonProcessedArgs (the extra operands
+ * pdf.js keeps for the rest of a content stream) to the last 33, builds a
+ * ToUnicode map whose highest code is above 0x10000 sparse (pdf.js sized it by
+ * that code: one bfchar <00FFFFFF> asked for 16 M slots), and removes
+ * embedded font programs from the text path altogether: translateFont never
+ * reads FontFile / FontFile2 / FontFile3, so no Type1 / CFF / TrueType /
+ * OpenType program is decoded or converted. The module exports
+ * CLUED_PDF_FONT_PROGRAMS = "skipped" (kept in the built Worker because
+ * storage-read-pdf.ts requires it before it parses any PDF).
+ *
+ * worker/storage-read-pdf.ts installs the guard, charges each call to the
+ * extraction running in the current async context and throws once a limit is
+ * reached or, checked every few thousand calls, the call's deadline has
+ * passed (so CPU is bounded inside a page, a form or a CharProc). A missing guard throws (TypeError), so nothing is decoded unguarded.
+ * The patched module also exports CLUED_PDF_DECODE_GUARD, which
+ * storage-read-pdf.ts requires before it parses any PDF: a build that skipped
+ * this step fails closed. The anchors match pdfjs-dist 6.3.289 exactly; any
+ * other text fails the build. */
+
+export const PDF_WORKER_MODULE = /[\\/]pdfjs-dist[\\/]legacy[\\/]build[\\/]pdf\.worker\.mjs$/;
+
+const G = "globalThis.__cluedPdfDecodeGuard";
+const MAX_ELEMENTS = 256 * 1024;
+/** A Dict (an object with its own Map) costs about as much heap as 6 array elements. */
+const DICT_WEIGHT = 6;
+/** EvaluatorPreprocessor.read refuses a 34th operand ("Too many arguments"). */
+const MAX_OPERANDS = 33;
+/** An operator kept in an operator list (its operand array has room for 17
+ * elements) costs about as much heap as a Dict; a path operator adds 3–7
+ * numbers to one shared path buffer and weighs 1. */
+const OPERATOR_WEIGHT = 6;
+/** Codespace ranges one CMap may declare (CMap.readCharCode scans all of them for
+ * every shown character). Adobe's predefined CMaps and real embedded ones have
+ * at most a handful. */
+const MAX_CODESPACE_RANGES = 1024;
+const PATCHES = [
+  // DecodeStream.ensureBuffer
+  ["    while (size < requested) {\n      size *= 2;\n    }\n    const buffer2 = new Uint8Array(size);",
+    `    while (size < requested) {\n      size *= 2;\n    }\n    ${G}("decode", this, size);\n    const buffer2 = new Uint8Array(size);`],
+  // DecodeStream.asyncGetBytesFromDecompressionStream
+  ["      for await (const chunk of readable) {\n        chunks.push(chunk);",
+    // Twice the chunk: the chunks are joined into one more buffer of the same size at the end.
+    `      for await (const chunk of readable) {\n        ${G}("decode", this, 2 * chunk.byteLength);\n        chunks.push(chunk);`],
+  // BrotliStream.readBlock
+  ["  readBlock() {\n    const bytes = this.stream.getBytes();\n    const decodedData = BrotliDecode(",
+    `  readBlock() {\n    ${G}("limit");\n    const bytes = this.stream.getBytes();\n    const decodedData = BrotliDecode(`],
+  // EvaluatorPreprocessor.read
+  ["  read(operation) {\n    let args = operation.args;\n    while (true) {\n      const obj = this.parser.getObj();",
+    `  read(operation) {\n    let args = operation.args;\n    while (true) {\n      ${G}("token");\n      const obj = this.parser.getObj();`],
+  // EvaluatorPreprocessor.read: operands beyond an operator's count move to
+  // nonProcessedArgs, which pdf.js keeps for the rest of the stream (a later
+  // operator short of operands takes them back). Only the last MAX_OPERANDS
+  // are kept, as many as one operator can be given before "Too many arguments".
+  ["            while (argsLength > numArgs) {\n              nonProcessedArgs.push(args.shift());\n              argsLength--;\n            }\n",
+    "            while (argsLength > numArgs) {\n              nonProcessedArgs.push(args.shift());\n              argsLength--;\n            }\n" +
+    `            if (nonProcessedArgs.length > ${MAX_OPERANDS}) nonProcessedArgs.splice(0, nonProcessedArgs.length - ${MAX_OPERANDS});\n`],
+  // OperatorList.addOp / PartialEvaluator.buildPath: an operator list pdf.js
+  // keeps (a Type3 font's CharProcs, built when the font loads for text) holds
+  // every operator, its operands and its path points.
+  ["  addOp(fn, args) {\n    this.optimizer.push(fn, args);\n    this.weight++;", `  addOp(fn, args) {\n    ${G}("oplist", null, ${OPERATOR_WEIGHT});\n    this.optimizer.push(fn, args);\n    this.weight++;`],
+  ["  buildPath(fn, args, state) {\n    const {\n      pathMinMax: minMax,\n      pathBuffer\n    } = state;",
+    `  buildPath(fn, args, state) {\n    ${G}("oplist", null, 1);\n    const {\n      pathMinMax: minMax,\n      pathBuffer\n    } = state;`],
+  // Name.get / Cmd.get
+  ["    return NameCache[name] ||= new Name(name);", `    return NameCache[name] ||= (${G}("primitive"), new Name(name));`],
+  ["    return CmdCache[cmd] ||= new Cmd(cmd);", `    return CmdCache[cmd] ||= (${G}("primitive"), new Cmd(cmd));`],
+  // Lexer.getString
+  ["    let ch = this.nextChar();\n    while (true) {\n      let charBuffered = false;",
+    `    let ch = this.nextChar();\n    while (true) {\n      if (strBuf.length > ${MAX_ELEMENTS}) ${G}("limit");\n      let charBuffered = false;`],
+  // Lexer.getName
+  ["    while ((ch = this.nextChar()) >= 0 && !specialChars[ch]) {\n      if (ch === 0x23) {",
+    `    while ((ch = this.nextChar()) >= 0 && !specialChars[ch]) {\n      if (strBuf.length > ${MAX_ELEMENTS}) ${G}("limit");\n      if (ch === 0x23) {`],
+  // Lexer.getHexString
+  ["        } else {\n          strBuf.push(String.fromCharCode(firstDigit << 4 | digit));",
+    `        } else {\n          if (strBuf.length > ${MAX_ELEMENTS}) ${G}("limit");\n          strBuf.push(String.fromCharCode(firstDigit << 4 | digit));`],
+  // Parser.getObj: a wrapper tracks the nesting depth, so the guard can bound
+  // each top-level object (a content-stream operand or one indirect object).
+  ["  getObj(cipherTransform = null) {\n    const buf1 = this.buf1;\n    this.shift();",
+    "  getObj(cipherTransform = null) {\n    if (!this.__cluedDepth) this.__cluedTree = 0;\n    this.__cluedDepth = (this.__cluedDepth || 0) + 1;\n" +
+    "    try {\n      return this.__cluedGetObj(cipherTransform);\n    } finally {\n      this.__cluedDepth--;\n    }\n  }\n" +
+    "  __cluedGetObj(cipherTransform = null) {\n    const buf1 = this.buf1;\n    this.shift();"],
+  // Parser.getObj arrays: each new array and each element.
+  ["        case \"[\":\n          const array = [];", `        case "[":\n          ${G}("object", this, 1);\n          const array = [];`],
+  ["            array.push(this.getObj(cipherTransform));",
+    `            if (array.length > ${MAX_ELEMENTS}) ${G}("limit");\n            ${G}("object", this, 1);\n            array.push(this.getObj(cipherTransform));`],
+  // Parser.getObj dictionaries: each new Dict (a Map of its own) and each entry.
+  ["        case \"<<\":\n          const dict = new Dict(this.xref);", `        case "<<":\n          ${G}("object", this, ${DICT_WEIGHT});\n          const dict = new Dict(this.xref);`],
+  ["            dict.set(key, this.getObj(cipherTransform));", `            ${G}("object", this, 1);\n            dict.set(key, this.getObj(cipherTransform));`],
+  // Parser.makeInlineImage: the inline image dictionary.
+  ["    const dict = new Dict(this.xref);\n    let dictLength;", `    ${G}("object", this, ${DICT_WEIGHT});\n    const dict = new Dict(this.xref);\n    let dictLength;`],
+  ["      dict.set(key, this.getObj(cipherTransform));\n    }\n    if (lexer.beginInlineImagePos !== -1) {",
+    `      ${G}("object", this, 1);\n      dict.set(key, this.getObj(cipherTransform));\n    }\n    if (lexer.beginInlineImagePos !== -1) {`],
+  // Lexer.getString / getName / getHexString: characters per call.
+  ["    return strBuf.join(\"\");\n  }\n  getName() {", `    ${G}("chars", null, strBuf.length);\n    return strBuf.join("");\n  }\n  getName() {`],
+  ["    return Name.get(strBuf.join(\"\"));", `    ${G}("chars", null, strBuf.length);\n    return Name.get(strBuf.join(""));`],
+  ["    return strBuf.join(\"\");\n  }\n  getObj() {", `    ${G}("chars", null, strBuf.length);\n    return strBuf.join("");\n  }\n  getObj() {`],
+  // CMap.mapOne / mapCidRange / mapBfRange / mapBfRangeToArray: each fills one
+  // map entry per code (a string per code for bfrange), up to 2^24 per range.
+  ["  mapOne(src, dst) {\n    this._map[src] = dst;", `  mapOne(src, dst) {\n    ${G}("cmap", this, 1, src);\n    this._map[src] = dst;`],
+  ...["mapCidRange", "mapBfRange"].map(name => [`throw new Error("${name} - ignoring data above MAX_MAP_RANGE.");\n    }`,
+    `throw new Error("${name} - ignoring data above MAX_MAP_RANGE.");\n    }\n    ${G}("cmap", this, high - low + 1, high);`]),
+  ["throw new Error(\"mapBfRangeToArray - ignoring data above MAX_MAP_RANGE.\");\n    }\n    const ii = array.length;",
+    `throw new Error("mapBfRangeToArray - ignoring data above MAX_MAP_RANGE.");\n    }\n    const ii = array.length;\n    ${G}("cmap", this, Math.min(high - low + 1, ii), high);`],
+  // Per-font glyph tables, filled one entry per code from a few numbers of the
+  // font dictionary (so neither the object nor the CMap limit sees them):
+  // PartialEvaluator.extractWidths expands each `c_first c_last w` range of a
+  // CIDFont's /W and each `c_first c_last w1y v1x v1y` range of /W2 code by
+  // code; readCidToGidMap builds one entry per 2 bytes of the decoded
+  // CIDToGIDMap stream; IdentityToUnicodeMap.forEach visits every code from
+  // FirstChar to LastChar (Font.fallbackToSystemFont builds a map entry per
+  // code of an Identity font without ToUnicode). A CID is at most 0xFFFF
+  // (ISO 32000-1 §9.7.4, Annex C), so each range is clamped to 0..0xFFFF
+  // (codes outside it are never looked up) and the clamped count is charged
+  // before the table is filled.
+  ["            for (let j = start; j <= code; j++) {\n              glyphsWidths[j] = width;\n            }",
+    `            const cluedLast = Math.min(code, 0xffff);\n            start = Math.max(start, 0);\n            if (start <= cluedLast) ${G}("glyphs", null, cluedLast - start + 1);\n` +
+    "            for (let j = start; j <= cluedLast; j++) {\n              glyphsWidths[j] = width;\n            }"],
+  ["              for (let j = start; j <= code; j++) {\n                glyphsVMetrics[j] = vmetric;\n              }",
+    `              const cluedLast = Math.min(code, 0xffff);\n              start = Math.max(start, 0);\n              if (start <= cluedLast) ${G}("glyphs", null, cluedLast - start + 1);\n` +
+    "              for (let j = start; j <= cluedLast; j++) {\n                glyphsVMetrics[j] = vmetric;\n              }"],
+  // readCidToGidMap: 2 bytes per CID 0..0xFFFF; bytes past 0x20000 name no valid CID.
+  ["  readCidToGidMap(glyphsData, toUnicode) {\n    const result = [];\n    for (let j = 0, jj = glyphsData.length; j < jj; j++) {",
+    `  readCidToGidMap(glyphsData, toUnicode) {\n    const result = [];\n    const cluedBytes = Math.min(glyphsData.length, 0x20000);\n    ${G}("glyphs", null, (cluedBytes + 1) >> 1);\n` +
+    "    for (let j = 0, jj = cluedBytes; j < jj; j++) {"],
+  // PartialEvaluator.buildToUnicode: a composite font without a Unicode map
+  // spans FirstChar..LastChar straight from its dictionary.
+  ["    return new IdentityToUnicodeMap(properties.firstChar, properties.lastChar);",
+    "    return new IdentityToUnicodeMap(Math.max(properties.firstChar, 0), Math.min(properties.lastChar, 0xffff));"],
+  ["  forEach(callback) {\n    for (let i = this.firstChar, ii = this.lastChar; i <= ii; i++) {",
+    `  forEach(callback) {\n    if (this.firstChar <= this.lastChar) ${G}("glyphs", null, this.lastChar - this.firstChar + 1);\n    for (let i = this.firstChar, ii = this.lastChar; i <= ii; i++) {`],
+  // Image decoders (DCT, JBIG2, JPX, CCITTFax) decode the whole image at once
+  // outside DecodeStream.ensureBuffer. Text extraction never paints images, so
+  // any image decode (e.g. a ToUnicode or font stream with /Filter /DCTDecode) is refused.
+  ["  decodeImage(bytes) {\n    if (this.eof) {\n      return this.buffer;\n    }\n    bytes = this.#skipUselessBytes(bytes || this.bytes);",
+    `  decodeImage(bytes) {\n    ${G}("limit");\n    if (this.eof) {\n      return this.buffer;\n    }\n    bytes = this.#skipUselessBytes(bytes || this.bytes);`],
+  ["    bytes = Jbig2Stream.stripFileHeader(bytes || this.bytes);", `    ${G}("limit");\n    bytes = Jbig2Stream.stripFileHeader(bytes || this.bytes);`],
+  ["    bytes ||= this.bytes;\n    this.buffer = await JpxImage.instance.decode(", `    ${G}("limit");\n    bytes ||= this.bytes;\n    this.buffer = await JpxImage.instance.decode(`],
+  ["    bytes ??= this.stream.isAsync ? (await this.stream.asyncGetBytes()) || this.bytes : this.bytes;\n    this.buffer = await JBig2CCITTFaxImage.instance.decode(bytes, this.dict.get(\"W\", \"Width\")",
+    `    ${G}("limit");\n    bytes ??= this.stream.isAsync ? (await this.stream.asyncGetBytes()) || this.bytes : this.bytes;\n    this.buffer = await JBig2CCITTFaxImage.instance.decode(bytes, this.dict.get("W", "Width")`],
+  // Embedded font programs (FontFile / FontFile2 / FontFile3: Type1, CFF,
+  // TrueType, OpenType) are never fetched, decoded or converted: text mapping
+  // needs only the font dictionary (Encoding / Differences, ToUnicode, W /
+  // Widths, predefined CMaps), while conversion (glyph, hmtx and charstring
+  // loops, rebuilt output tables) is unbounded work text never needs.
+  // PartialEvaluator.translateFont reads no FontFile entry, so every
+  // non-Type3 font takes pdf.js's non-embedded path (Font.fallbackToSystemFont)
+  // and Type3 fonts (content streams, budgeted above) are untouched.
+  // cluedEmbeddedFontFile keeps what the dictionary says: the font counts as
+  // embedded for encoding selection (nonEmbeddedFont) and is not marked
+  // missingFile, which would make a Type1 code without a StandardEncoding name
+  // a space even when ToUnicode maps it.
+  ["    let fontFile, fontFileN, subtype, length1, length2, length3;\n    try {\n      for (const n of [\"FontFile\", \"FontFile2\", \"FontFile3\"]) {\n        fontFile = descriptor.get(n);",
+    `    let fontFile, fontFileN, subtype, length1, length2, length3;\n    const cluedEmbeddedFontFile = !isType3Font && ["FontFile", "FontFile2", "FontFile3"].some(n => descriptor.has(n));\n    try {\n      for (const n of []) {\n        fontFile = descriptor.get(n);`],
+  ["      fontFileN,\n      length1,\n      length2,\n      length3,", "      fontFileN,\n      cluedEmbeddedFontFile,\n      length1,\n      length2,\n      length3,"],
+  ["    const nonEmbeddedFont = !properties.file || properties.isInternalFont,",
+    "    const nonEmbeddedFont = !properties.file && !properties.cluedEmbeddedFontFile || properties.isInternalFont,"],
+  ["      this.fallbackToSystemFont(properties);\n      return;\n    }\n    [type, subtype] = getFontFileType(file, properties);",
+    "      this.fallbackToSystemFont(properties);\n      if (properties.cluedEmbeddedFontFile) this.missingFile = false;\n      return;\n    }\n    [type, subtype] = getFontFileType(file, properties);"],
+  // XRef.fetchCompressed: an object stream's /N sized three arrays (new Array(n))
+  // before its header was parsed, so `/N 10000000` in a 700 B file exhausted the
+  // heap. Each header entry is two integers and their separators (at least 4
+  // bytes), so /N is refused past a quarter of the decoded stream (decoded once,
+  // under the decode limit, then rewound) and the three arrays are charged
+  // (3 units per entry) to the parser that reads the header.
+  ["      throw new FormatError(\"invalid first and n parameters for ObjStm stream\");\n    }\n    let parser = new Parser({\n      lexer: new Lexer(stream),\n      xref: this,\n      allowStreams: true\n    });\n    const nums = new Array(n);",
+    "      throw new FormatError(\"invalid first and n parameters for ObjStm stream\");\n    }\n" +
+    "    const cluedObjStmBytes = stream.getBytes().length;\n    stream.reset();\n" +
+    "    if (n < 0 || n > cluedObjStmBytes / 4) throw new FormatError(\"ObjStm /N exceeds what its stream can hold\");\n" +
+    `    let parser = new Parser({\n      lexer: new Lexer(stream),\n      xref: this,\n      allowStreams: true\n    });\n    ${G}("object", parser, 3 * n);\n    const nums = new Array(n);`],
+  // XRef.readXRefStream: /Size (or /Index) entries were read whatever the stream
+  // held, one allocated entry each, with no guard call: `/W [0 0 0]` reads
+  // nothing per entry (10 M entries from a 560 B file) and `/W [1 0 0]` over
+  // 9 MB of Flate zeros is 9 M entries from 9 KB. A total field width of 0 is
+  // refused, each range is refused past the entries the rest of the decoded
+  // stream can hold, and its entries are charged ("xref") before any is read.
+  ["    const [typeFieldWidth, offsetFieldWidth, generationFieldWidth] = streamState.byteWidths;\n    const entryRanges = streamState.entryRanges;\n    while (entryRanges.length > 0) {\n      const [first, n] = entryRanges;\n      if (!Number.isInteger(first) || !Number.isInteger(n)) {\n        throw new FormatError(`Invalid XRef range fields: ${first}, ${n}`);\n      }\n      if (!Number.isInteger(typeFieldWidth) || !Number.isInteger(offsetFieldWidth) || !Number.isInteger(generationFieldWidth)) {\n        throw new FormatError(`Invalid XRef entry fields length: ${first}, ${n}`);\n      }\n",
+    "    const [typeFieldWidth, offsetFieldWidth, generationFieldWidth] = streamState.byteWidths;\n" +
+    "    const cluedEntryWidth = typeFieldWidth + offsetFieldWidth + generationFieldWidth;\n" +
+    "    if (![typeFieldWidth, offsetFieldWidth, generationFieldWidth].every(w => Number.isInteger(w) && w >= 0) || !(cluedEntryWidth > 0)) {\n" +
+    "      throw new FormatError(\"Invalid XRef entry fields length: no entry data\");\n    }\n" +
+    "    stream.getBytes();\n    const cluedXRefEnd = stream.pos;\n    stream.pos = streamState.streamPos;\n" +
+    "    const entryRanges = streamState.entryRanges;\n    while (entryRanges.length > 0) {\n      const [first, n] = entryRanges;\n      if (!Number.isInteger(first) || !Number.isInteger(n)) {\n        throw new FormatError(`Invalid XRef range fields: ${first}, ${n}`);\n      }\n      if (!Number.isInteger(typeFieldWidth) || !Number.isInteger(offsetFieldWidth) || !Number.isInteger(generationFieldWidth)) {\n        throw new FormatError(`Invalid XRef entry fields length: ${first}, ${n}`);\n      }\n" +
+    "      const cluedEntries = n - streamState.entryNum;\n" +
+    "      if (cluedEntries > Math.floor((cluedXRefEnd - stream.pos) / cluedEntryWidth)) throw new FormatError(\"XRef stream range exceeds its data\");\n" +
+    `      if (cluedEntries > 0) ${G}("xref", null, cluedEntries);\n`],
+  // XRef.readXRefTable / indexObjects: one entry object per table line or per
+  // `n g obj` found while reconstructing a damaged file.
+  ["        const entry = {\n          offset: parser.getObj(),\n          gen: parser.getObj(),\n          free: false,\n          uncompressed: false\n        };\n        const type = parser.getObj();",
+    `        ${G}("xref", null, 1);\n        const entry = {\n          offset: parser.getObj(),\n          gen: parser.getObj(),\n          free: false,\n          uncompressed: false\n        };\n        const type = parser.getObj();`],
+  ["        if (updateEntries) {\n          this.#entries[num] = {", `        if (updateEntries) {\n          ${G}("xref", null, 1);\n          this.#entries[num] = {`],
+  // PartialEvaluator.readToUnicode: the Unicode map was new Array(cmap.length),
+  // sized by the highest code, so one bfchar <00FFFFFF> (1.3 KB) asked for 16 M
+  // slots. Above 0x10000 codes the map is built sparse (ToUnicodeMap iterates
+  // with for...in and looks codes up by index, so it needs no length); every
+  // entry was already charged to the CMap limit.
+  ["        const map = new Array(cmap.length);", "        const map = cmap.length <= 0x10000 ? new Array(cmap.length) : [];"],
+  // CMap.addCodespaceRange / readCharCode: each shown character scanned every
+  // codespace range (400 000 ranges and a 200 KB string burned minutes of CPU).
+  // A CMap may have at most MAX_CODESPACE_RANGES ranges (real ones have a few),
+  // and Font.charsToGlyphs / getCharPositions charge characters x ranges
+  // ("scan") before they read a string's codes.
+  ["  addCodespaceRange(n, low, high) {\n    this.codespaceRanges[n - 1].push(low, high);",
+    `  addCodespaceRange(n, low, high) {\n    if (this.numCodespaceRanges >= ${MAX_CODESPACE_RANGES}) ${G}("limit");\n    this.codespaceRanges[n - 1].push(low, high);`],
+  ["    glyphs = [];\n    if (this.cMap) {\n      const c = Object.create(null),\n        ii = chars.length;",
+    `    glyphs = [];\n    if (this.cMap) {\n      ${G}("scan", null, chars.length * this.cMap.numCodespaceRanges);\n      const c = Object.create(null),\n        ii = chars.length;`],
+  // parseCMap skips any token that throws and reads on; a guard refusal ends the CMap.
+  ["      if (ex instanceof MissingDataException) {\n        throw ex;\n      }\n      warn(\"Invalid cMap data: \" + ex);",
+    "      if (ex instanceof MissingDataException || ex?.cluedPdfLimit === true) {\n        throw ex;\n      }\n      warn(\"Invalid cMap data: \" + ex);"],
+  ["    const positions = [];\n    if (this.cMap) {\n      const c = Object.create(null);",
+    `    const positions = [];\n    if (this.cMap) {\n      ${G}("scan", null, chars.length * this.cMap.numCodespaceRanges);\n      const c = Object.create(null);`],
+];
+
+export function patchPdfWorker(source) {
+  let out = source;
+  for (const [anchor, replacement] of PATCHES) {
+    if (out.split(anchor).length !== 2) throw new Error("pdfjs-decode-guard: pdf.worker.mjs does not match the pinned pdfjs-dist; re-check the patch anchors");
+    out = out.replace(anchor, () => replacement);
+  }
+  return out + "\nexport const CLUED_PDF_DECODE_GUARD = true;\nexport const CLUED_PDF_FONT_PROGRAMS = \"skipped\";\n";
+}
+
+/** esbuild: scripts/build-pdf-extractor.mjs builds the extractor Worker
+ * (clued-storage-pdf) with it, and the tests bundle worker/storage-read-pdf.ts
+ * the same way. The main Worker's Vite build never bundles pdf.js. */
+export function pdfDecodeGuardEsbuildPlugin() {
+  return { name: "clued-pdfjs-decode-guard", setup(build) {
+    build.onLoad({ filter: PDF_WORKER_MODULE }, async args => ({ contents: patchPdfWorker(await readFile(args.path, "utf8")), loader: "js" }));
+  } };
+}

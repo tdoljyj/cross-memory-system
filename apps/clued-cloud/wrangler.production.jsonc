@@ -25,7 +25,8 @@
       "binding": "CLUED_CONNECT_SERVICE",
       "service": "clued-connect",
       "environment": "production"
-    }
+    },
+    { "binding": "PDF_EXTRACTOR", "service": "clued-storage-pdf" }
   ],
   "r2_buckets": [
     { "binding": "CLUED_STORAGE_STAGING", "bucket_name": "clued-storage-staging" }
