@@ -32,6 +32,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
+      # Self-hosted workspaces persist between runs and checkout does not prune
+      # remote-tracking refs, so a branch deleted on GitHub stayed in the scanned
+      # history. Scan exactly the refs that exist on the remote.
+      - name: Drop remote-tracking refs of branches deleted on GitHub
+        run: git remote prune origin
       - name: Validate exact historical exceptions and detection regressions
         run: |
           python3 scripts/ci/reviewed_gitleaks.py \
@@ -66,6 +71,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
+      # Self-hosted workspaces persist between runs and checkout does not prune
+      # remote-tracking refs, so a branch deleted on GitHub stayed in the scanned
+      # history. Scan exactly the refs that exist on the remote.
+      - name: Drop remote-tracking refs of branches deleted on GitHub
+        run: git remote prune origin
       - name: Validate exact historical exceptions and detection regressions
         run: |
           python3 scripts/ci/reviewed_gitleaks.py \
