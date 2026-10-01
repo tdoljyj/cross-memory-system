@@ -6,8 +6,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  DEFAULT_SUPABASE_PUBLISHABLE_KEY,
-  DEFAULT_SUPABASE_URL,
+  PUBLIC_CONFIG_SOURCE,
   evaluate,
   globToRegExp,
   main,
@@ -15,6 +14,7 @@ import {
   parseWorkflowTriggers,
   readWorkflowTriggers,
   renderSummary,
+  resolvePublicSupabaseConfig,
   sha256Hex,
   workflowApplies,
 } from "./clued-work-admission.mjs";
@@ -24,7 +24,9 @@ const CLAIM = "0f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
 const HEAD = "a".repeat(40);
 const BASE = "b".repeat(40);
 const CLAIM_BASE = "c".repeat(40);
-const RPC_URL = `${DEFAULT_SUPABASE_URL}/rest/v1/rpc/clued_work_verify_v1`;
+// The public project values are read from the repository file, never copied here.
+const PUBLIC = resolvePublicSupabaseConfig({}, ROOT);
+const RPC_URL = `${PUBLIC.url}/rest/v1/rpc/clued_work_verify_v1`;
 
 function event(overrides = {}) {
   return {
@@ -78,10 +80,11 @@ const VERIFY = `POST ${RPC_URL}`;
 const files = { body: [{ filename: "apps/clued-cloud/package.json" }, { filename: "docs/new.md", previous_filename: "docs/old.md" }] };
 const admittedPayload = { status: "ok", verdict: "ADMITTED", reasons: [], paths_outside_write_set: [], current_fence: 1, claim: { claim_id: CLAIM, task_id: "t-1", status: "ACTIVE", fence: 1, expires_at: "2026-10-01T13:00:00Z", base_commit: CLAIM_BASE, write_set: ["apps/clued-cloud/**", "docs/**"], holder_binding_id: "should-not-leak" } };
 const withClaim = () => event({ body: `Body\n\nClued-Work-Claim: ${CLAIM}` });
+const evaluateIn = (options) => evaluate({ workspace: ROOT, ...options });
 
 test("non-PR events are not admission subjects", async () => {
   const { fetchImpl, calls } = fakeFetch({});
-  const outcome = await evaluate({ env: env(), event: null, eventName: "push", fetchImpl });
+  const outcome = await evaluateIn({ env: env(), event: null, eventName: "push", fetchImpl });
   assert.equal(outcome.admitted, true);
   assert.equal(outcome.verdict, "NOT_APPLICABLE");
   assert.equal(calls.length, 0);
@@ -89,7 +92,7 @@ test("non-PR events are not admission subjects", async () => {
 
 test("enforced: the RPC is called on PostgREST with the publishable key and the token hash, ADMITTED is admitted", async () => {
   const { fetchImpl, calls } = fakeFetch({ [FILES]: files, [COMPARE]: { body: { status: "ahead" } }, [VERIFY]: { body: admittedPayload } });
-  const outcome = await evaluate({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
+  const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
   assert.equal(outcome.admitted, true);
   assert.equal(outcome.verdict, "ADMITTED");
   assert.equal(outcome.enforced, true);
@@ -97,8 +100,11 @@ test("enforced: the RPC is called on PostgREST with the publishable key and the 
   assert.equal(outcome.claim.base_commit, CLAIM_BASE);
   assert.equal("holder_binding_id" in outcome.claim, false);
   const call = calls.find((c) => c.url === RPC_URL);
-  assert.equal(call.headers.apikey, DEFAULT_SUPABASE_PUBLISHABLE_KEY);
-  assert.equal(call.headers.authorization, `Bearer ${DEFAULT_SUPABASE_PUBLISHABLE_KEY}`);
+  assert.equal(call.headers.apikey, PUBLIC.key);
+  assert.equal(call.headers.authorization, `Bearer ${PUBLIC.key}`);
+  assert.equal(PUBLIC.source, PUBLIC_CONFIG_SOURCE);
+  assert.match(PUBLIC.key, /^sb_publishable_[A-Za-z0-9_-]+$/);
+  assert.match(PUBLIC.url, /^https:\/\/[a-z]+\.supabase\.co$/);
   assert.deepEqual(call.body, {
     p_token_hash: sha256Hex("clued_bnd_test"),
     p_input: { scope: "global", claim_id: CLAIM, changed_paths: ["apps/clued-cloud/package.json", "docs/new.md", "docs/old.md"], head_sha: HEAD, base_sha: BASE },
@@ -117,7 +123,7 @@ test("enforced: trailer in the head commit, project scope and a custom Supabase 
     [COMPARE]: { body: { status: "identical" } },
     [`POST ${custom}/rest/v1/rpc/clued_work_verify_v1`]: { body: admittedPayload },
   });
-  const outcome = await evaluate({ env: env({ CLUED_SUPABASE_URL: `${custom}/`, CLUED_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_x" }), event: event(), eventName: "pull_request", fetchImpl });
+  const outcome = await evaluateIn({ env: env({ CLUED_SUPABASE_URL: `${custom}/`, CLUED_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_x" }), event: event(), eventName: "pull_request", fetchImpl });
   assert.equal(outcome.admitted, true);
   assert.equal(outcome.scope, scope);
   const call = calls.find((c) => c.method === "POST");
@@ -127,7 +133,7 @@ test("enforced: trailer in the head commit, project scope and a custom Supabase 
 
 test("enforced: no trailer anywhere is REJECTED claim_trailer_missing", async () => {
   const { fetchImpl, calls } = fakeFetch({ [FILES]: files, [COMMIT]: { body: { commit: { message: "feat: no trailer" } } } });
-  const outcome = await evaluate({ env: env(), event: event(), eventName: "pull_request", fetchImpl });
+  const outcome = await evaluateIn({ env: env(), event: event(), eventName: "pull_request", fetchImpl });
   assert.equal(outcome.admitted, false);
   assert.deepEqual(outcome.reasons, ["claim_trailer_missing"]);
   assert.ok(!calls.some((c) => c.method === "POST"), "no verification without a claim");
@@ -136,7 +142,7 @@ test("enforced: no trailer anywhere is REJECTED claim_trailer_missing", async ()
 test("enforced: REJECTED with paths outside the write set is not admitted and lists them", async () => {
   const payload = { ...admittedPayload, verdict: "REJECTED", reasons: ["paths_outside_write_set"], paths_outside_write_set: ["docs/new.md"] };
   const { fetchImpl, calls } = fakeFetch({ [FILES]: files, [VERIFY]: { body: payload } });
-  const outcome = await evaluate({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
+  const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
   assert.equal(outcome.admitted, false);
   assert.deepEqual(outcome.reasons, ["paths_outside_write_set"]);
   assert.deepEqual(outcome.paths_outside_write_set, ["docs/new.md"]);
@@ -146,14 +152,14 @@ test("enforced: REJECTED with paths outside the write set is not admitted and li
 
 test("enforced: a claim taken on a newer base than the PR targets is rejected", async () => {
   const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { body: { status: "behind" } }, [VERIFY]: { body: admittedPayload } });
-  const outcome = await evaluate({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
+  const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
   assert.equal(outcome.admitted, false);
   assert.deepEqual(outcome.reasons, ["base_behind_claim:behind"]);
 });
 
 test("enforced: fail closed on missing token, missing RPC, refused Binding, rejection envelope, transport error", async () => {
   const base = { [FILES]: files };
-  const run = (extra, overrides = {}) => evaluate({ env: env(overrides), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch({ ...base, ...extra }).fetchImpl });
+  const run = (extra, overrides = {}) => evaluateIn({ env: env(overrides), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch({ ...base, ...extra }).fetchImpl });
   await assert.rejects(run({}, { CLUED_CONTEXT_READ_TOKEN: "" }), /CLUED_CONTEXT_READ_TOKEN is not set/);
   await assert.rejects(run({ [VERIFY]: { status: 404, body: { code: "PGRST202", message: "Could not find the function public.clued_work_verify_v1" } } }), /is not deployed \(404: code=PGRST202/);
   await assert.rejects(run({ [VERIFY]: { status: 400, body: { code: "P0001", message: "binding_not_found" } } }), /refused the verification request \(400: code=P0001 message=binding_not_found\)/);
@@ -165,7 +171,7 @@ test("enforced: fail closed on missing token, missing RPC, refused Binding, reje
 test("advisory (variable unset): a claimed PR gets its verdict in the summary and is admitted either way", async () => {
   const rejected = { ...admittedPayload, verdict: "REJECTED", reasons: ["claim_not_current"] };
   const { fetchImpl, calls } = fakeFetch({ [FILES]: files, [VERIFY]: { body: rejected } });
-  const outcome = await evaluate({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), event: withClaim(), eventName: "pull_request", fetchImpl });
+  const outcome = await evaluateIn({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), event: withClaim(), eventName: "pull_request", fetchImpl });
   assert.equal(outcome.enforced, false);
   assert.equal(outcome.admitted, true);
   assert.equal(outcome.advisory, true);
@@ -178,28 +184,28 @@ test("advisory (variable unset): a claimed PR gets its verdict in the summary an
 test("advisory: no trailer, no token, missing RPC, refused Binding or a transport error only report and admit", async () => {
   const quiet = { CLUED_WORK_ADMISSION_ENFORCE: "false" };
   const base = { [FILES]: files, [COMMIT]: { body: { commit: { message: "feat: no trailer" } } } };
-  let outcome = await evaluate({ env: env(quiet), event: event(), eventName: "pull_request", fetchImpl: fakeFetch(base).fetchImpl });
+  let outcome = await evaluateIn({ env: env(quiet), event: event(), eventName: "pull_request", fetchImpl: fakeFetch(base).fetchImpl });
   assert.equal(outcome.verdict, "NOT_ENFORCED");
   assert.equal(outcome.admitted, true);
   assert.match(outcome.reasons[0], /no Clued-Work-Claim trailer/);
 
-  outcome = await evaluate({ env: env({ ...quiet, CLUED_CONTEXT_READ_TOKEN: "" }), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch(base).fetchImpl });
+  outcome = await evaluateIn({ env: env({ ...quiet, CLUED_CONTEXT_READ_TOKEN: "" }), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch(base).fetchImpl });
   assert.equal(outcome.verdict, "NOT_ENFORCED");
   assert.match(outcome.reasons[0], /CLUED_CONTEXT_READ_TOKEN is not set/);
 
-  outcome = await evaluate({ env: env(quiet), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch({ ...base, [VERIFY]: { status: 404, body: { code: "PGRST202", message: "missing" } } }).fetchImpl });
+  outcome = await evaluateIn({ env: env(quiet), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch({ ...base, [VERIFY]: { status: 404, body: { code: "PGRST202", message: "missing" } } }).fetchImpl });
   assert.equal(outcome.verdict, "NOT_ENFORCED");
   assert.match(outcome.reasons[0], /not deployed yet/);
 
-  outcome = await evaluate({ env: env(quiet), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch({ ...base, [VERIFY]: { status: 400, body: { code: "P0001", message: "binding_not_found" } } }).fetchImpl });
+  outcome = await evaluateIn({ env: env(quiet), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch({ ...base, [VERIFY]: { status: 400, body: { code: "P0001", message: "binding_not_found" } } }).fetchImpl });
   assert.equal(outcome.verdict, "NOT_ENFORCED");
   assert.match(outcome.reasons[0], /refused the verification request/);
 
-  outcome = await evaluate({ env: env(quiet), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch({ ...base, [VERIFY]: { status: 502, body: null } }).fetchImpl });
+  outcome = await evaluateIn({ env: env(quiet), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch({ ...base, [VERIFY]: { status: 502, body: null } }).fetchImpl });
   assert.equal(outcome.verdict, "NOT_ENFORCED");
   assert.match(outcome.reasons[0], /advisory verification unavailable: Clued clued_work_verify_v1 returned 502/);
 
-  outcome = await evaluate({ env: env({ ...quiet, GITHUB_TOKEN: "" }), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch(base).fetchImpl });
+  outcome = await evaluateIn({ env: env({ ...quiet, GITHUB_TOKEN: "" }), event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch(base).fetchImpl });
   assert.equal(outcome.verdict, "NOT_ENFORCED");
   assert.equal(outcome.admitted, true);
   assert.match(outcome.reasons[0], /GITHUB_TOKEN is not set/);
@@ -229,6 +235,16 @@ test("workflow filters: parser reads this repository and globs follow GitHub sem
   assert.equal(workflowApplies(parsed.pull_request, ["docs/a.md"]).applies, false);
   assert.equal(workflowApplies(parsed.pull_request, ["docs/a.md", "src/a.ts"]).applies, true);
   assert.deepEqual(parseWorkflowTriggers("on: [push, pull_request]\n").pull_request, { paths: [], pathsIgnore: [] });
+});
+
+test("public Supabase config: repository file by default, env override only as a pair", () => {
+  assert.deepEqual(resolvePublicSupabaseConfig({ CLUED_SUPABASE_URL: "https://db.test/", CLUED_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_x" }, null), { url: "https://db.test", key: "sb_publishable_x", source: "env" });
+  assert.throws(() => resolvePublicSupabaseConfig({ CLUED_SUPABASE_URL: "https://db.test" }, ROOT), /must be set together/);
+  assert.throws(() => resolvePublicSupabaseConfig({}, null), /GITHUB_WORKSPACE is not set/);
+  assert.throws(() => resolvePublicSupabaseConfig({}, ROOT, () => "export const nothing = 1;"), /no recognizable public default/);
+  const fromFile = resolvePublicSupabaseConfig({}, ROOT);
+  assert.equal(fromFile.source, PUBLIC_CONFIG_SOURCE);
+  assert.equal(fromFile.url, PUBLIC.url);
 });
 
 test("claim trailer parsing", () => {

@@ -31,12 +31,26 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// The same public project values the web app and the Worker default to
-// (app/supabase-public-config.ts). A publishable key is not a secret; the
-// Binding token is, and only its hash leaves the runner.
-export const DEFAULT_SUPABASE_URL = "https://ccxsikzwxlolxqlosril.supabase.co";
-export const DEFAULT_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_tVKKh7Ok4FhBhHtHyZfwBA_i2RJD2Fg";
+// The public project URL and publishable key come from the repository's single
+// source for them, app/supabase-public-config.ts (the web app and the Worker
+// default to the same values), or from CLUED_SUPABASE_URL /
+// CLUED_SUPABASE_PUBLISHABLE_KEY when both are set. The script never carries a
+// copy of the key. A publishable key is not a secret; the Binding token is,
+// and only its hash leaves the runner.
+export const PUBLIC_CONFIG_SOURCE = "apps/clued-cloud/app/supabase-public-config.ts";
 export const VERIFY_RPC = "clued_work_verify_v1";
+
+export function resolvePublicSupabaseConfig(env, workspace, readFile = fs.readFileSync) {
+  const url = (env.CLUED_SUPABASE_URL ?? "").trim();
+  const key = (env.CLUED_SUPABASE_PUBLISHABLE_KEY ?? "").trim();
+  if (url && key) return { url: url.replace(/\/$/, ""), key, source: "env" };
+  if (url || key) throw new Error("CLUED_SUPABASE_URL and CLUED_SUPABASE_PUBLISHABLE_KEY must be set together.");
+  if (!workspace) throw new Error(`GITHUB_WORKSPACE is not set; cannot read ${PUBLIC_CONFIG_SOURCE}.`);
+  const text = readFile(path.join(workspace, PUBLIC_CONFIG_SOURCE), "utf8");
+  const match = /return \{ url: "(https:\/\/[^"]+)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};/.exec(text);
+  if (!match) throw new Error(`${PUBLIC_CONFIG_SOURCE} has no recognizable public default; set CLUED_SUPABASE_URL and CLUED_SUPABASE_PUBLISHABLE_KEY.`);
+  return { url: match[1].replace(/\/$/, ""), key: match[2], source: PUBLIC_CONFIG_SOURCE };
+}
 const CLAIM_TRAILER = /^Clued-Work-Claim:[ \t]*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})[ \t]*$/m;
 const SCOPE_TRAILER = /^Clued-Work-Scope:[ \t]*(global|project:[0-9a-fA-F-]{36})[ \t]*$/m;
 
@@ -254,9 +268,8 @@ function describe(status, body, text, headers) {
 //   { kind: "rpc_unavailable", detail }   the function is not deployed (PGRST202)
 //   { kind: "refused", detail }           the database refused the Binding or input
 // and throws on transport failures or unexpected answers.
-export async function verifyClaim(fetchImpl, env, args) {
-  const base = (env.CLUED_SUPABASE_URL || DEFAULT_SUPABASE_URL).replace(/\/$/, "");
-  const key = env.CLUED_SUPABASE_PUBLISHABLE_KEY || DEFAULT_SUPABASE_PUBLISHABLE_KEY;
+export async function verifyClaim(fetchImpl, env, args, workspace) {
+  const { url: base, key } = resolvePublicSupabaseConfig(env, workspace);
   const response = await fetchImpl(`${base}/rest/v1/rpc/${VERIFY_RPC}`, {
     method: "POST",
     headers: {
@@ -380,7 +393,7 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
       changed_paths: outcome.changed_paths,
       head_sha: pr.head.sha,
       base_sha: pr.base.sha,
-    });
+    }, workspace);
     if (verified.kind === "rpc_unavailable") {
       if (enforced) throw new Error(`Clued ${VERIFY_RPC} is not deployed (${verified.detail}); enforcement is on, so admission cannot be verified.`);
       return notEnforced(`${VERIFY_RPC} is not deployed yet (${verified.detail})`);
