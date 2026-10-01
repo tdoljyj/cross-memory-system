@@ -318,7 +318,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 160,
-            "default": "global"
+            "description": "Context the session was resumed with. Omit it to use the session's own context; a different value is rejected with session_context_mismatch."
           }
         },
         "additionalProperties": false
@@ -598,7 +598,8 @@
         ],
         "properties": {
           "context_key": {
-            "type": "string"
+            "type": "string",
+            "description": "Context the session was resumed with. Omit it to use the session's own context; a different value is rejected with session_context_mismatch."
           },
           "session_token": {
             "type": "string",
