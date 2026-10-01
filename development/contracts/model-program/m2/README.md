@@ -1,5 +1,21 @@
 # M2 synthetic dataset foundation candidate
 
+The current definition baseline is the Owner-adopted
+`clued.model-program.DatasetSplit / v0.1`. See
+[DatasetSplitAdoption.v0.1.md](DatasetSplitAdoption.v0.1.md) for exact source and
+derived digests, the real Canonical adoption Receipt, and the separate pending
+Domain Authority Receipt gate. Verify its non-production synthetic wiring with:
+
+```sh
+python scripts/model-program/validate_m2_adopted_definition.py
+python -m unittest tests.test_model_program_m2_adopted_definition -v
+```
+
+The original candidate artifacts and commands below remain reproducible historical
+source checks. Their `NOT_ADOPTED` result describes that candidate path; the new
+v0.1 path reports Owner baseline adoption while keeping domain receipt and actual
+data authority pending. Neither path issues M2 PASS or performs live Canonical reads.
+
 This is an independently executable, offline first slice for plan **v1.0.1**, SHA-256
 `a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4`.
 It prepares part of M2-01/02/08/09; it does **not** close those tasks or issue M2 PASS.
