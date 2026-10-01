@@ -22,7 +22,7 @@
     "test:information-flow:context": "node --test --test-force-exit tests/information-flow-context-db.test.mjs tests/information-flow-context-pack.test.mjs tests/information-flow-transport.test.mjs",
     "test:information-flow:invalidation": "node --test --test-force-exit tests/information-flow-invalidation-db.test.mjs tests/information-flow-transport.test.mjs",
     "test:information-flow:hardening": "node --test --test-force-exit tests/information-flow-token-hardening-db.test.mjs",
-    "test:records:db": "node --test --test-force-exit tests/record-update-field-merge-db.test.mjs tests/event-continuity-manifest-db.test.mjs tests/search-context-cross-scope-db.test.mjs tests/currentness-record-fence-db.test.mjs tests/task-dependency-guard-db.test.mjs",
+    "test:records:db": "node --test --test-force-exit tests/record-update-field-merge-db.test.mjs tests/event-continuity-manifest-db.test.mjs tests/search-context-cross-scope-db.test.mjs tests/currentness-record-fence-db.test.mjs tests/task-dependency-guard-db.test.mjs tests/decision-supersede-schema-guard-db.test.mjs",
     "test:integration-runtime:db": "node --test --test-force-exit tests/integration-runtime-derivation-db.test.mjs",
     "test:mtpe:intake": "node --test --test-force-exit tests/mtpe-universal-intake-db.test.mjs tests/mtpe-frontier-eligibility-v2-db.test.mjs tests/mtpe-frontier-eligibility-v2-1-db.test.mjs tests/mtpe-owner-pin-consistency-db.test.mjs tests/mtpe-universal-intake-transport.test.mjs",
     "test:v2:red": "node --test tests/v2-red/*.test.mjs",
