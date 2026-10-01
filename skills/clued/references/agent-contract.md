@@ -72,6 +72,7 @@ Rules for every capture:
 | `record_version_conflict` | Someone changed the record | Re-read and reconcile meaning; never overwrite a newer decision |
 | `stale_base_version` (checkpoint) | Wrong counter, or another session checkpointed this context since your resume or last checkpoint | Retry with the `expected_version` the error returns; your session token stays valid |
 | `resume_required_or_session_expired` | The token expired or already ended with a committed checkpoint | Use the renewed token from that checkpoint if you have it; otherwise resume, reconcile if asked, and retry with the new token (§5) |
+| `session_context_mismatch` (checkpoint, reconcile) | The `context_key` you sent is not the one this session was resumed with. Omitting it uses the session's own context | Send the `context_key` you resumed with, or omit it; to work in another context, resume with that `context_key` (§5) |
 | `current_truth_changed_since_resume` (checkpoint) | A write changed current state after resume or the last reconcile | Reconcile with the same token, then retry the checkpoint (§5) |
 | `checkpoint_event_not_authorized` (checkpoint) | `coverage.event_ids` lists an event of another context | Checkpoint each context in its own session (§5) |
 | `lifecycle_action_cannot_edit_record_content` | A close or restore carried content fields | Send only `closure_summary` / `closed_reason` |
