@@ -365,6 +365,19 @@ export async function testAccountCloud(t, admin, server, user, decision) {
       assert.equal(loaded.credential_envelope, undefined); assert.equal(loaded.mutation, undefined);
       assert.equal(loaded.execution_permitted, false); assert.equal(loaded.intent_id, row.id);
     });
+    await t.test("a root-relative text create is stored with the full path and commits (production relative-path denial)", async () => {
+      const initial = await createRoot(), client = await bind(initial), target = await activate(initial), storage = provider(target);
+      const name = `${randomUUID()}.txt`, full = target.root + `/20_P_产品与体验/${name}`;
+      const reference = { connection_id: target.connection, job_id: randomUUID() };
+      const mutation = { operation: "create", target_kind: "file", destination_path: `20_P_产品与体验/${name}`, content: "relative path fixture" };
+      const result = (await caller.query(`select ${JOBS}($1,$2::jsonb) value`, [client.token, JSON.stringify({ action: "submit", ...reference, mutation })])).rows[0].value;
+      assert.equal(result.status, "queued", JSON.stringify(result));
+      const job = { reference, mutation: { ...mutation, destination_path: full }, result };
+      assert.equal((await jobRow(job)).mutation.destination_path, full);
+      const ran = await executor(target, storage).run(reference);
+      assert.equal(ran.status, "committed", JSON.stringify(ran)); assert.equal(storage.posts, 1);
+      assert.equal((await journal(job)).state, "committed");
+    });
     await t.test("lost V2 provider reply retains original attempt and root fence across replay, conflicts and restart", async () => {
       const initial = await createRoot(), client = await bind(initial), target = await activate(initial), job = await submit(target, client), storage = provider(target);
       storage.losePost = true; const requests = [];

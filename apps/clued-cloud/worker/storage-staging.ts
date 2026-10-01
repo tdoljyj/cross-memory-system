@@ -27,6 +27,7 @@
 import { createHash } from "node:crypto";
 import { binaryUploadTarget, firstChunkCheck, validateStagedContent, BINARY_UPLOAD_MAX_BYTES,
   BINARY_INLINE_MAX_BYTES } from "../../../kernel/host/resource-center-storage-binary.mjs";
+import { storagePathMessages, storagePathSyntaxValid, type StoragePathCode } from "./storage-agent-tools";
 
 type Data = Record<string, unknown>;
 export const STAGING_CHUNK = 64 * 1024;
@@ -45,7 +46,8 @@ const keySaltPattern = /^[0-9a-f]{32}$/;
 
 /** Fixed, caller-safe error codes (§5.3). Nothing else leaves this module. */
 export type StorageUploadCode = "storage_binary_upload_disabled" | "upload_url_invalid" | "upload_url_used" |
-  "content_type_mismatch" | "staging_expired" | "storage_job_input_invalid" | "budget_exhausted" | "storage_upload_unavailable";
+  "content_type_mismatch" | "staging_expired" | "storage_job_input_invalid" | "budget_exhausted" | "storage_upload_unavailable" |
+  StoragePathCode;
 export class StorageUploadError extends Error {
   constructor(readonly code: StorageUploadCode) { super(code); this.name = "StorageUploadError"; }
 }
@@ -62,6 +64,7 @@ export function stagingErrorCode(error: unknown): StorageUploadCode {
       return message;
     case "storage_job_input_invalid": case "storage_staging_input_invalid": return "storage_job_input_invalid";
     case "storage_upload_budget_exhausted": return "budget_exhausted";
+    case "storage_path_invalid": case "storage_path_outside_root": return message;
     default: return "storage_upload_unavailable";
   }
 }
@@ -440,7 +443,7 @@ export const storageUploadBeginTool = {
     type: "object", additionalProperties: false, required: ["connection_id", "destination_path", "mime_type", "size", "content_sha256"],
     properties: {
       connection_id: { type: "string", format: "uuid" },
-      destination_path: { type: "string", minLength: 1, maxLength: 1000, description: "Exact new file path under the connection's registered root; its extension must match mime_type." },
+      destination_path: { type: "string", minLength: 1, maxLength: 1000, description: "New file path, either relative to the connection's registered root (for example 90_待归类/photo.png) or the full path under it; its extension must match mime_type. The reply's destination_path is the full path; clued_storage_submit may repeat either form. A malformed or outside-root path is refused (storage_path_invalid, storage_path_outside_root)." },
       mime_type: { type: "string", minLength: 3, maxLength: 255 },
       size: { type: "integer", minimum: 1, maximum: BINARY_UPLOAD_MAX_BYTES },
       content_sha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
@@ -459,9 +462,17 @@ export function uploadBeginInput(args: unknown) {
     typeof a.destination_path !== "string" || a.destination_path.length < 1 || a.destination_path.length > 1000 ||
     typeof a.mime_type !== "string" || !Number.isSafeInteger(a.size) || (a.size as number) < 1 || (a.size as number) > BINARY_UPLOAD_MAX_BYTES ||
     typeof a.content_sha256 !== "string" || !/^[0-9a-f]{64}$/.test(a.content_sha256)) return refuse("storage_job_input_invalid");
+  if (!storagePathSyntaxValid(a.destination_path)) refuse("storage_path_invalid");
   if (!binaryUploadTarget(a.destination_path, a.mime_type).ok) refuse("content_type_mismatch");
   return { connection_id: a.connection_id as string, destination_path: a.destination_path as string, mime_type: a.mime_type as string,
     size: a.size as number, content_sha256: a.content_sha256 as string };
+}
+
+/** The database stores the full path under the managed root (20260930233000); the caller may have
+ * declared it relative to the root. Either way the row must name the declared target. */
+function stagedPathMatches(stored: unknown, declared: string) {
+  return typeof stored === "string" && stored.length >= 1 && stored.length <= 1000 &&
+    (stored === declared || stored.endsWith("/" + declared));
 }
 
 const STAGING_STATES = ["issued", "receiving", "validating", "ready", "consumed", "rejected", "expired"];
@@ -477,18 +488,18 @@ async function begin(runtime: StagingRuntime, tokenHash: string, input: ReturnTy
   if (row.contract !== "clued.storage-staging/1" || typeof row.staging_id !== "string" || !uuid.test(row.staging_id) ||
     typeof row.owner_id !== "string" || row.connection_id !== input.connection_id || typeof row.binding_id !== "string" ||
     row.size !== input.size || row.sha256 !== input.content_sha256 || row.mime_type !== input.mime_type ||
-    row.destination_path !== input.destination_path || !Number.isSafeInteger(row.expires_at) ||
+    !stagedPathMatches(row.destination_path, input.destination_path) || !Number.isSafeInteger(row.expires_at) ||
     !STAGING_STATES.includes(String(row.state)) || (transport === "url" && row.state !== "issued")) return refuse("storage_upload_unavailable");
-  return { claims: { owner_id: row.owner_id, connection_id: input.connection_id, binding_id: row.binding_id as string, staging_id: row.staging_id,
+  return { destination_path: row.destination_path as string, claims: { owner_id: row.owner_id, connection_id: input.connection_id, binding_id: row.binding_id as string, staging_id: row.staging_id,
     sha256: input.content_sha256, size: input.size, mime_type: input.mime_type, exp: row.expires_at as number } as UploadClaims,
   state: row.state as string };
 }
 
 export async function uploadBegin(runtime: StagingRuntime, tokenHash: string, args: unknown, origin: string) {
   const input = uploadBeginInput(args);
-  const { claims } = await begin(runtime, tokenHash, input, "url");
+  const { claims, destination_path } = await begin(runtime, tokenHash, input, "url");
   const token = await signUploadToken(runtime.url_key, claims);
-  return { staging_id: claims.staging_id, upload_url: `${origin}/storage/staging/${claims.staging_id}`, method: "PUT", upload_token: token,
+  return { staging_id: claims.staging_id, destination_path, upload_url: `${origin}/storage/staging/${claims.staging_id}`, method: "PUT", upload_token: token,
     required_headers: { "Content-Type": claims.mime_type, "Content-Length": String(claims.size), "X-Clued-Upload-Token": token },
     expires_at: new Date(claims.exp * 1000).toISOString() };
 }
@@ -518,6 +529,7 @@ export async function stageInline(runtime: StagingRuntime, tokenHash: string, in
 const uploadStatus: Record<StorageUploadCode, number> = {
   upload_url_invalid: 403, storage_binary_upload_disabled: 403, upload_url_used: 409, staging_expired: 410,
   content_type_mismatch: 415, storage_job_input_invalid: 400, budget_exhausted: 429, storage_upload_unavailable: 503,
+  storage_path_invalid: 400, storage_path_outside_root: 400,
 };
 const uploadMessage: Record<StorageUploadCode, string> = {
   upload_url_invalid: "The upload URL or token is invalid. Call clued_storage_upload_begin again.",
@@ -528,6 +540,7 @@ const uploadMessage: Record<StorageUploadCode, string> = {
   storage_job_input_invalid: "Content-Length, Content-Type, the byte count or sha256 does not match the declared values.",
   budget_exhausted: "The hourly upload budget is used up. Try again later.",
   storage_upload_unavailable: "Storage upload unavailable.",
+  ...storagePathMessages,
 };
 export function uploadErrorBody(code: StorageUploadCode) { return { error: code, message: uploadMessage[code] }; }
 

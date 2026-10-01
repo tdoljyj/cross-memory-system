@@ -69,13 +69,17 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 5/);
+  assert.match(contract, /Contract version: 6/);
+  assert.match(contract, /Resume returns resident constraints \(`active_constraints`, decisions the Owner marked as standing rules\) as an index/);
+  assert.match(contract, /read its full text by resuming again with `constraint_ids`/);
+  assert.match(contract, /do not act on a summary alone/);
   assert.match(contract, /returns `session_renewal`/);
   assert.match(contract, /Retry with the `expected_version` the error returns; your session token stays valid/);
   assert.match(contract, /with no second resume/);
   assert.match(contract, /When `foreign_event_count` is above zero, another client wrote to this context: resume/);
   assert.match(contract, /When `reconciliation_required` is true, call `clued_session_reconcile` with the renewed token/);
-  assert.match(contract, /If a ref's id and version is not one you hold in full/);
+  assert.match(contract, /in the chain's `constraint_view`/);
+  assert.match(contract, /If a ref's id and version is not one you hold \(/);
   assert.match(contract, /Current-state answers come only from Clued/);
   assert.match(contract, /Host's own memory, Host-side conversation summaries, earlier replies, cached files, repository snapshots and old checkpoints are not sources/);
   assert.match(contract, /say that the current state is unknown/);
