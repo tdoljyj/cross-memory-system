@@ -1,6 +1,6 @@
 {
   "schema_version": "clued.model-m2-split-mapping-candidate/1",
-  "status": "CANDIDATE_REQUIRES_DOMAIN_OWNER",
+  "status": "CANDIDATE_DIRECTION_ACCEPTED_NOT_ADOPTED",
   "authority_effect": "NONE",
   "domain_mapping_status": "UNRESOLVED",
   "official_definition_status": "NOT_LOCATED_OR_VERIFIED",
@@ -30,7 +30,9 @@
         "weight_learning"
       ],
       "final_holdout": false,
-      "selection_report_allowed": false
+      "selection_report_allowed": false,
+      "candidate_purpose_id": "training",
+      "candidate_parent_boundary": "TRAINING"
     },
     {
       "purpose_description": "开发",
@@ -41,7 +43,9 @@
         "selection"
       ],
       "final_holdout": false,
-      "selection_report_allowed": true
+      "selection_report_allowed": true,
+      "candidate_purpose_id": "development",
+      "candidate_parent_boundary": "DEVELOPMENT"
     },
     {
       "purpose_description": "校准拟合",
@@ -51,7 +55,9 @@
         "calibration_fit"
       ],
       "final_holdout": false,
-      "selection_report_allowed": false
+      "selection_report_allowed": false,
+      "candidate_purpose_id": "calibration_fit",
+      "candidate_parent_boundary": "DEVELOPMENT"
     },
     {
       "purpose_description": "选型/策略验证",
@@ -61,7 +67,9 @@
         "selection"
       ],
       "final_holdout": false,
-      "selection_report_allowed": true
+      "selection_report_allowed": true,
+      "candidate_purpose_id": "selection_policy_validation",
+      "candidate_parent_boundary": "DEVELOPMENT"
     },
     {
       "purpose_description": "资格",
@@ -69,7 +77,9 @@
       "dataset_split_ref": null,
       "allowed_use_keys": [],
       "final_holdout": false,
-      "selection_report_allowed": false
+      "selection_report_allowed": false,
+      "candidate_purpose_id": "qualification",
+      "candidate_parent_boundary": "QUALIFICATION"
     },
     {
       "purpose_description": "最终 Holdout",
@@ -77,7 +87,9 @@
       "dataset_split_ref": null,
       "allowed_use_keys": [],
       "final_holdout": true,
-      "selection_report_allowed": false
+      "selection_report_allowed": false,
+      "candidate_purpose_id": "final_holdout",
+      "candidate_parent_boundary": "FINAL_HOLDOUT"
     }
   ]
 }

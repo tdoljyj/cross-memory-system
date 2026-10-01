@@ -1,0 +1,41 @@
+{
+  "schema_version": "clued.model-dataset-split-domain-reference-candidate/1",
+  "status": "DIRECTION_ACCEPTED_DEFINITION_NOT_ADOPTED",
+  "authority_effect": "NONE",
+  "domain_owner": "MODEL PROGRAM",
+  "definition": {
+    "path": "development/contracts/model-program/m2/DatasetSplitDefinition.candidate.json",
+    "sha256": "2c8e0196c4338cf9d0c6758eb78c8d57a05a2363aacb694f1c305c602b1288ba",
+    "size_bytes": 4481
+  },
+  "instance_schema": {
+    "path": "development/contracts/model-program/m2/schemas/DatasetSplit.candidate.schema.json",
+    "sha256": "f0359d6846fa6bff94994c145f7d7077132dc077054fe1b011edaf6c3789d95d",
+    "size_bytes": 5835
+  },
+  "direction_acceptance": {
+    "scope": "FOUR_BOUNDARIES_AND_ISOLATED_DEVELOPMENT_DIRECTION_ONLY",
+    "canonical_record_id": "46d3e8e1-81f7-43af-aa46-11a37a1fd584",
+    "record_version": 1,
+    "record_content_sha256": "7d424041b4a2a3856d4f71a79e792db517ffed2b0f7d493c5d233d483a2a86e3",
+    "canonical_receipt_id": "fd2576dc-a0c2-4769-aab8-b8d88abd967a",
+    "quote_evidence_id": "900b52e3-ff19-46b9-a214-421b66a3b7a8",
+    "quote_sha256": "53cdbb01ccff8875b0b110d507c5316dd169724b3a284b2818086bcdc117f211",
+    "quote_size_bytes": 33,
+    "corresponding_proposal": {
+      "version": "v0.1",
+      "commit": "7cdda75aba54c01cbc68bf4a269f1620dc0b349e",
+      "path": "development/contracts/model-program/m2/DatasetSplitDomainDecision.candidate.md",
+      "sha256": "182767f2be090681420ab43f75639158420a2a42cecc8efedfcaad5ed6e85ef1",
+      "size_bytes": 6957,
+      "binding_effect": "CORRESPONDING_DIRECTION_NOT_WHOLE_DOCUMENT_ADOPTION"
+    },
+    "offline_reference_status": "RECORDED_REFERENCE_NOT_LIVE_RECHECKED"
+  },
+  "domain_authority_receipt_ref": null,
+  "domain_adoption_status": "NOT_ADOPTED",
+  "formal_dataset_split_ref": null,
+  "formal_mapping_status": "UNRESOLVED",
+  "m2_verdict": "NOT_ISSUED",
+  "training_or_data_use_authorized": false
+}

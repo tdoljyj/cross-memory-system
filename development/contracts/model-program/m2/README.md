@@ -11,6 +11,7 @@ Use Python 3.12+ and the existing `jsonschema` dependency (Draft 2020-12):
 ```sh
 python3 scripts/model-program/validate_m2_dataset_foundation.py
 python3 scripts/model-program/validate_m2_split_mapping.py
+python3 scripts/model-program/validate_m2_dataset_split.py
 python3 -m unittest discover -s tests -p 'test_model_program_m2_*.py' -v
 python3 -m unittest discover -s tests -p 'test_model_program_m1_harness.py' -v
 ```
@@ -25,6 +26,10 @@ training, deployment, or paid work. Success means
 
 - Closed candidate schemas for source/license metadata, sample lineage and
   split metadata, and selection-report bindings
+- A machine DatasetSplit candidate with four parent boundaries and six purposes,
+  exact definition/schema/direction-source bindings and declared fixed-candidate
+  evaluation references; fit and selection remain isolated development partitions
+
 - Source/snapshot/sample/manifest digests, exact split membership, unique IDs,
   acyclic parent references, and no cross-split lineage
 - Fail-closed rejection of public, commercial, product-feedback, enterprise,
@@ -36,6 +41,15 @@ training, deployment, or paid work. Success means
   that reject holdout inputs even when the report contains only score digests
 - Repeated identical metadata validation, strict duplicate-key/non-finite JSON
   rejection, sanitized error codes, and positive/negative unit tests
+
+See [DatasetSplitDefinition.candidate.md](DatasetSplitDefinition.candidate.md) for
+the new machine contract and the recorded direction-only Decision/Receipt.
+`DatasetSplitDomainDecision.candidate.md` remains the unchanged v0.1 proposal source;
+its historical unchosen-Owner wording does not override the later Canonical Decision.
+The current schema/definition is **not adopted**. The separate command
+`python3 scripts/model-program/validate_m2_dataset_split.py --require-adoption`
+must fail with `DOMAIN_ADOPTION_REQUIRED`; ordinary candidate success supplies no
+data-use or training permission.
 
 ## Explicit limits
 

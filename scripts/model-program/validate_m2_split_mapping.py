@@ -27,12 +27,17 @@ SOURCE_RANGES = [
     {"start_line": 2709, "end_line": 2728,
      "sha256": "f69a0d689ee33cefdebe6c9c3792f968943e36f5af6488747c293f9c7480c14e"},
 ]
+PURPOSE_IDENTITIES = dict(zip((row[0] for row in RULES), (
+    ("training", "TRAINING"), ("development", "DEVELOPMENT"),
+    ("calibration_fit", "DEVELOPMENT"), ("selection_policy_validation", "DEVELOPMENT"),
+    ("qualification", "QUALIFICATION"), ("final_holdout", "FINAL_HOLDOUT"),
+)))
 
 
 def expected_candidate():
     return {
         "schema_version": "clued.model-m2-split-mapping-candidate/1",
-        "status": "CANDIDATE_REQUIRES_DOMAIN_OWNER",
+        "status": "CANDIDATE_DIRECTION_ACCEPTED_NOT_ADOPTED",
         "authority_effect": "NONE",
         "domain_mapping_status": "UNRESOLVED",
         "official_definition_status": "NOT_LOCATED_OR_VERIFIED",
@@ -41,7 +46,9 @@ def expected_candidate():
         "mappings": [
             {"purpose_description": purpose, "proposed_boundary": boundary,
              "dataset_split_ref": None, "allowed_use_keys": uses,
-             "final_holdout": holdout, "selection_report_allowed": selection}
+             "final_holdout": holdout, "selection_report_allowed": selection,
+             "candidate_purpose_id": PURPOSE_IDENTITIES[purpose][0],
+             "candidate_parent_boundary": PURPOSE_IDENTITIES[purpose][1]}
             for purpose, boundary, uses, holdout, selection in RULES
         ],
     }
@@ -78,8 +85,12 @@ def main(argv=None):
                 "PLAN_BINDING")
         candidate = load(args.candidate)
         validate_candidate(candidate)
+        from validate_m2_dataset_split import validate_domain_candidate
+        validate_domain_candidate()
         source_check = verify_plan(args.plan, candidate) if args.plan else "NOT_RUN_ORIGINAL_REQUIRED"
         result = {"status": "PASS_CANDIDATE_CHECKS_ONLY", "plan_source_check": source_check,
+                  "direction_acceptance": "RECORDED_CANONICAL_REFERENCE",
+                  "domain_adoption": "NOT_ADOPTED",
                   "dataset_split_authority_mapping": "UNRESOLVED", "m2_verdict": "NOT_ISSUED",
                   "training_or_data_use_authorized": False}
     except (FoundationError, OSError, ValueError, KeyError, TypeError) as exc:

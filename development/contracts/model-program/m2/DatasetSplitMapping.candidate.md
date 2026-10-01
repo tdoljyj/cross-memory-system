@@ -12,6 +12,11 @@ M0-A/B/C package is reproduced here.
 
 The proposed boundaries below are descriptions, not DatasetSplit enum values.
 Every official `dataset_split_ref` remains null and mapping remains UNRESOLVED.
+The Owner has accepted the four-boundary/development-isolation direction only.
+The new [machine definition candidate](DatasetSplitDefinition.candidate.md) binds
+that exact direction Decision/Receipt and adds local parent/purpose identities to
+the synthetic manifest. It remains unadopted; these identifiers are not claimed
+as a published domain enum.
 
 | Plan logical purpose | Proposed existing boundary | Synthetic guard restriction |
 | --- | --- | --- |
@@ -64,7 +69,9 @@ See [DatasetSplitDomainDecision.candidate.md](DatasetSplitDomainDecision.candida
 for the source scope, four data boundaries/six logical uses, recommended isolated
 fit/selection partitions within development, and one precise Owner decision.
 Any newly supplied authoritative definition takes precedence after verification.
-Until an exact definition, independent review and real existing-authority receipt
+The direction Decision is `46d3e8e1-81f7-43af-aa46-11a37a1fd584` v1; its real
+Canonical mutation receipt records direction assent, not definition adoption.
+Until exact definition adoption, independent review and a scoped existing-authority receipt
 are bound, mapping remains UNRESOLVED. Approving further candidate work cannot
 replace domain adoption or formal-package authority checks.
 

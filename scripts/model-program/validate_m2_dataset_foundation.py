@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / "development/contracts/model-program/m2"
@@ -58,7 +59,10 @@ def digest(value) -> str:
 def validate_schema(name: str, value) -> None:
     schema = load(BASE / "schemas" / name)
     Draft202012Validator.check_schema(schema)
-    require(not list(Draft202012Validator(schema).iter_errors(value)), "SCHEMA")
+    split_schema = load(BASE / "schemas" / "DatasetSplit.candidate.schema.json")
+    # Resolve only the installed local split contract. No network schema resolver.
+    registry = Registry().with_resource(split_schema["$id"], Resource.from_contents(split_schema))
+    require(not list(Draft202012Validator(schema, registry=registry).iter_errors(value)), "SCHEMA")
 
 
 def unique_index(rows, key, code):
@@ -91,7 +95,12 @@ def validate_manifest(manifest: dict, sources: dict) -> dict:
     # Import here to avoid a module cycle in the source-binding CLI.
     from validate_m2_split_mapping import CANDIDATE, validate_candidate
     profiles = validate_candidate(load(CANDIDATE))
+    from validate_m2_dataset_split import (DOMAIN_REFERENCE_SHA256, validate_domain_candidate,
+                                          validate_sample_binding, validate_split_binding)
+    domain_reference, definition = validate_domain_candidate()
     validate_schema("DatasetManifest.schema.json", manifest)
+    require(manifest["candidate_domain_reference_sha256"] == DOMAIN_REFERENCE_SHA256,
+            "MANIFEST_DOMAIN_BINDING")
     splits = unique_index(manifest["splits"], "split_id", "DUPLICATE_SPLIT")
     samples = unique_index(manifest["samples"], "sample_id", "DUPLICATE_SAMPLE")
     require(manifest["manifest_revision_sha256"] == digest({
@@ -120,6 +129,7 @@ def validate_manifest(manifest: dict, sources: dict) -> dict:
             sample["sample_id"] for sample in samples.values()
             if sample["split_id"] == split["split_id"]
         }, "SPLIT_MEMBERSHIP")
+        validate_split_binding(split, domain_reference, definition)
 
     # The same source can supply different groups, but sessions/projects and
     # semantic-near-duplicate groups must not straddle isolated splits.
@@ -143,6 +153,7 @@ def validate_manifest(manifest: dict, sources: dict) -> dict:
                     "CROSS_SPLIT_GROUP")
             group_partitions[key] = sample["split_id"]
         split = splits[sample["split_id"]]
+        validate_sample_binding(sample, split)
         if split["final_holdout"]:
             require(not sample["exposure_records"] and
                     sample["origin_kind"] == "NOVEL_SYNTHETIC_TEST_CASE", "HOLDOUT_RELABELED")
@@ -197,6 +208,9 @@ def validate_bundle(bundle: dict) -> dict:
         "sample_count": len(bundle["manifest"]["samples"]),
         "split_count": len(splits),
         "dataset_split_authority_mapping": "UNRESOLVED",
+        "dataset_split_candidate_wiring": "BOUND_LOCAL_CANDIDATE_ONLY",
+        "direction_acceptance": "RECORDED_CANONICAL_REFERENCE",
+        "domain_adoption": "NOT_ADOPTED",
         "m2_verdict": "NOT_ISSUED",
         "training_or_data_use_authorized": False,
         "real_holdout_secrecy_or_contamination_clearance": False,

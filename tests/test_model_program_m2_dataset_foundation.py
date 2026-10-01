@@ -1,5 +1,4 @@
 import copy
-import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -10,9 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/model-program/validate_m2_dataset_foundation.py"
 sys.path.insert(0, str(SCRIPT.parent))
-spec = importlib.util.spec_from_file_location("m2_foundation", SCRIPT)
-m = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(m)
+import validate_m2_dataset_foundation as m
 
 
 class ModelProgramM2FoundationTests(unittest.TestCase):
