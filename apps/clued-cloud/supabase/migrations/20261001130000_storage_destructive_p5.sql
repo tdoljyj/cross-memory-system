@@ -197,8 +197,9 @@ begin
     and clued_private.storage_suffixed_name_v1(regexp_replace(sp,'^.*/',''),regexp_replace(dp,'^.*/',''));
 end $$;
 
--- Registry checks at submit (unlocked hints; the authority decides again
--- under its locks): a track directory is never a target, and an untrash
+-- Registry checks at submit, only after the evaluator authenticated the
+-- Binding (unlocked hints; the authority decides again under its locks):
+-- a track directory is never a target, and an untrash
 -- whose final path is taken by an active item is a fixed, explanatory refusal.
 create function clued_private.storage_destructive_target_v1(p_connection uuid,m jsonb)
 returns void language plpgsql stable security definer set search_path='' as $$
@@ -344,7 +345,8 @@ $$;
 -- level, register one pending batch of 1..50 trash/untrash items, each
 -- matched against the registry (Artifact, Drive ID, path, version). The
 -- same batch_id and items return the batch's status; other items under the
--- same batch_id are refused. Never creates a job or permits execution.
+-- same batch_id are refused; at most 5 pending batches per client
+-- registration and connection. Never creates a job or permits execution.
 create function public.clued_storage_trash_batch_v1(p_token_hash text,p_input jsonb) returns jsonb
 language plpgsql security definer set search_path='' as $$
 declare v_connection uuid; v_batch uuid; items jsonb:='[]'::jsonb; e jsonb; m jsonb; snapshot jsonb; digest text;
@@ -376,6 +378,14 @@ begin
       raise exception 'storage_trash_batch_conflict' using errcode='40001'; end if;
     return clued_private.storage_trash_batch_view_v1(b,false)||jsonb_build_object('replayed',true);
   end if;
+  -- At most 5 pending (unconfirmed, unexpired, not voided) batches per client
+  -- registration and connection; refused before any receipt is written.
+  if (select count(*) from clued_private.storage_trash_batches_v1 b0
+      where b0.owner_id=owner_key and b0.connection_id=v_connection
+        and b0.registration_lineage=(snapshot->>'registration_lineage')::uuid
+        and b0.account_policy_id=(snapshot->>'policy_id')::uuid
+        and b0.confirmed_at is null and b0.expires_at>clock_timestamp())>=5 then
+    raise exception 'storage_trash_batch_pending_limit' using errcode='42501'; end if;
   select * into p from clued_private.resource_center_profiles_v1 where id=(snapshot->>'profile_id')::uuid and user_id=owner_key;
   r:=clued_private.m1_begin_receipt(owner_key,(snapshot->>'binding_id')::uuid,'storage_trash_batch_request',
     jsonb_build_object('idempotency_key','storage-trash-batch:'||v_batch::text,'batch_id',v_batch,'request_digest',digest),digest);
@@ -707,12 +717,11 @@ begin
     elsif m->>'operation' in ('rename','move') then
       wanted:='modify';$r$,1),
     ('clued_private.storage_jobs_policy_core_v2(text,jsonb)',
-     $a$  if op='inspect' then raise exception 'storage_job_unavailable' using errcode='42501'; end if;$a$,
-     $r$  if op='inspect' then raise exception 'storage_job_unavailable' using errcode='42501'; end if;
-  if m->>'operation' in ('delete','restore') then perform clued_private.storage_destructive_target_v1(connection_id,m); end if;$r$,1),
-    ('clued_private.storage_jobs_policy_core_v2(text,jsonb)',
      $a$  perform clued_private.storage_staging_consume_v1(m,$a$,
-     $r$  perform clued_private.storage_trash_admit_v1(m,snapshot,connection_id,v_job_id);
+     $r$  -- Registry hints only after the evaluator authenticated this Binding and
+  -- the destructive level (never a pre-authorization registry oracle).
+  if m->>'operation' in ('delete','restore') then perform clued_private.storage_destructive_target_v1(connection_id,m); end if;
+  perform clued_private.storage_trash_admit_v1(m,snapshot,connection_id,v_job_id);
   perform clued_private.storage_staging_consume_v1(m,$r$,1),
     ('clued_private.storage_cloud_job_current_v2(uuid,uuid)',
      $a$  wanted:=case when j.mutation->>'operation' in ('rename','move') then 'modify' when j.mutation->>'operation'='replace' then 'overwrite'$a$,

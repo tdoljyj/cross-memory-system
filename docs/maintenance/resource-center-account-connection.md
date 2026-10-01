@@ -742,7 +742,9 @@ existing function is changed by an anchored patch with an exact hit count.
   matched against the registry or the whole batch is refused
   (`storage_trash_batch_item_unavailable`); the same `batch_id` and items
   return the batch's status (`pending`, `confirmed`, `expired`, `voided`),
-  other items under that `batch_id` are refused. The Owner opens
+  other items under that `batch_id` are refused. At most 5 batches may wait
+  for the Owner per client lineage and connection; a sixth is refused with
+  `storage_trash_batch_pending_limit` before any receipt is written. The Owner opens
   `/storage/connections` → "读取回收站确认", sees each pending batch with every
   item's action, path, Drive ID and version, and presses "全部确认" once
   (native RPC `clued_storage_trash_confirmation_v1`, route
@@ -769,6 +771,14 @@ existing function is changed by an anchored patch with an exact hit count.
 - A lost update reply leaves the intent fenced. Scheduled and native recovery
   load trash and untrash descriptors, re-verify by GET only and settle
   through the same verified record; they never repeat the update.
+- Submit reads the registry for trash/untrash hints (track refusal,
+  `restore_name_conflict`) only after the evaluator has authenticated the
+  Binding and the destructive level, so an unauthorized token always gets
+  `storage_policy_denied`.
+- Follow-up (not in P5): Google permanently deletes a trashed item 30 days
+  after trashing. Clued does not reconcile that purge yet; the Artifact
+  stays `trashed` and a later untrash fails closed at the provider identity
+  check. A sweep that marks purged items is a separate change.
 
 Rollout: production migration, then release. Execution needs the write
 switches (`execution_enabled` plus the executor window) and the Owner's

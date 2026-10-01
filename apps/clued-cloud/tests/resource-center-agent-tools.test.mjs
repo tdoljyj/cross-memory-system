@@ -335,6 +335,9 @@ test('clued_storage_trash_batch registers one batch through its own RPC and retu
     globalThis.fetch = async () => Response.json({ message: 'storage_trash_batch_item_unavailable', code: '22023' }, { status: 400 });
     const refused = (await (await call('clued_storage_trash_batch', batch)).json()).result;
     assert.equal(refused.structuredContent.error, 'storage_trash_batch_item_unavailable');
+    globalThis.fetch = async () => Response.json({ message: 'storage_trash_batch_pending_limit', code: '42501' }, { status: 403 });
+    const limited = (await (await call('clued_storage_trash_batch', batch)).json()).result;
+    assert.equal(limited.structuredContent.error, 'storage_trash_batch_pending_limit'); assert.match(limited.structuredContent.message, /5 batches/);
   } finally { globalThis.fetch = before; }
 });
 

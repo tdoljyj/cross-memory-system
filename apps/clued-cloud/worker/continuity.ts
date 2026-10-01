@@ -2063,6 +2063,8 @@ async function callTool(
       const result = pathCode ? { error: pathCode, message: storagePathMessages[pathCode] }
         : message === "storage_trash_batch_item_unavailable"
           ? { error: "storage_trash_batch_item_unavailable", message: "An item does not match a Clued-registered item that can be moved to (or out of) the trash at that path, Drive file ID and version. Stat each item again; leave out the root, tracks, non-empty directories and governance files without delete authority." }
+          : message === "storage_trash_batch_pending_limit"
+            ? { error: "storage_trash_batch_pending_limit", message: "This client registration already has 5 batches waiting for the Owner on this connection. Ask the user to confirm or let them expire before registering another; put every remaining item in one batch." }
           : message === "storage_trash_batch_conflict"
             ? { error: "storage_trash_batch_conflict", message: "This batch_id already names a batch with other items. Use a new batch_id for a different list." }
             : { error: "storage_trash_batch_unavailable", message: "Storage trash batch unavailable. Send the same batch_id and items again to read its status." };

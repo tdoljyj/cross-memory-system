@@ -531,6 +531,39 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
       assert.equal((await batchOf(target, client, [trash(file, versionOf(storage, file))], batchId)).status, "pending");
     });
 
+    await t.test("a revoked Binding learns nothing about the registry: every destructive submit is storage_policy_denied", async () => {
+      const { target, client, storage } = await setup();
+      const a = await createFile(target, client, storage, "taken.txt");
+      const trashedA = await trashed(target, client, storage, a);
+      await createFile(target, client, storage, "taken.txt");
+      // With a live Binding the conflict is explained; after revocation it is not.
+      await assert.rejects(submitRaw(target, client, untrash(trashedA)), /restore_name_conflict/);
+      await admin.query("update public.clued_agent_bindings set revoked_at=now() where id=$1", [client.id]);
+      const track = await artifact(target, `${target.root}/${TRACK}`);
+      for (const mutation of [untrash(trashedA), untrash({ ...trashedA, path: `${target.root}/${TRACK}/never-existed.txt` }), trash(track, "1")]) {
+        await assert.rejects(submitRaw(target, client, mutation), error => /storage_policy_denied/.test(error.message), JSON.stringify(mutation));
+      }
+    });
+
+    await t.test("at most 5 batches wait for the Owner per client registration and connection", async () => {
+      const { target, client, storage } = await setup();
+      const file = await createFile(target, client, storage, "pending.txt");
+      const items = [trash(file, versionOf(storage, file))], ids = [];
+      for (let i = 0; i < 5; i++) { ids.push(randomUUID()); assert.equal((await batchOf(target, client, items, ids[i])).status, "pending"); }
+      const receipts = async () => (await admin.query("select count(*)::int n from public.clued_audit_receipts where user_id=$1", [user])).rows[0].n;
+      const before = await receipts();
+      await assert.rejects(batchRaw(target, client, items), /storage_trash_batch_pending_limit/);
+      assert.equal(await receipts(), before, "the refusal writes no receipt");
+      assert.equal((await batchOf(target, client, items, ids[0])).replayed, true, "an existing batch can still be read");
+      // Another client registration has its own allowance.
+      assert.equal((await batchOf(target, await bind(target), items)).status, "pending");
+      // Confirming one frees a place.
+      const status = await confirmation({ action: "status", connection_id: target.connection });
+      assert.equal((await confirmation({ action: "confirm", connection_id: target.connection, batch_id: ids[0],
+        base_generation: status.policy_generation, idempotency_key: randomUUID() })).status, "committed");
+      assert.equal((await batchOf(target, client, items)).status, "pending");
+    });
+
     await t.test("a lost update reply leaves the intent fenced; recovery re-verifies by GET and settles once", async () => {
       const { target, client, storage } = await setup();
       const created = await createFile(target, client, storage, "lost.txt");
