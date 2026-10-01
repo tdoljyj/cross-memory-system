@@ -117,20 +117,25 @@ const writeLevels = (access: WriteAccess): WriteLevel[] =>
   access.destructive_disclosure_version === undefined ? ["modify", "overwrite"] : ["modify", "overwrite", "destructive"];
 const writeDisclosure = (access: WriteAccess, level: WriteLevel) => level === "overwrite" ? access.overwrite_disclosure_version
   : level === "destructive" ? access.destructive_disclosure_version ?? "" : access.disclosure_version;
-// Native trash batch confirmation (P5, §3.4 item 4).
-type TrashFile = { artifact_id: string; artifact_version: number; path: string; provider_file_id: string; provider_file_version: string; trashable: boolean };
-type TrashOpen = { artifact_id: string; path: string; provider_file_id: string; provider_file_version: string; expires_at: string };
-type TrashConfirmation = { destructive: boolean; policy_generation: number; limit: number; window_hours: number; files: TrashFile[]; open_items: TrashOpen[] };
+// Native trash batch confirmation (P5, §3.4 item 4; Decision 7f9daf68): the Agent registers one batch,
+// the Owner confirms the whole list once.
+type TrashItem = { operation: "delete" | "restore"; target_kind: "file" | "directory"; path: string; provider_file_id: string;
+  provider_file_version: string; current: boolean; used: boolean };
+type TrashBatch = { batch_id: string; status: "pending" | "confirmed"; created_at: string; expires_at: string; items: TrashItem[] };
+type TrashConfirmation = { destructive: boolean; policy_generation: number; limit: number; window_hours: number;
+  batches: TrashBatch[]; batches_truncated: boolean };
 function isTrashConfirmation(value: unknown): value is TrashConfirmation {
   return isObject(value) && typeof value.destructive === "boolean" && Number.isSafeInteger(value.policy_generation)
-    && Number.isSafeInteger(value.limit) && Number.isSafeInteger(value.window_hours)
-    && Array.isArray(value.files) && value.files.every(item => isObject(item) && typeof item.artifact_id === "string"
-      && Number.isSafeInteger(item.artifact_version) && typeof item.path === "string" && typeof item.provider_file_id === "string"
-      && typeof item.provider_file_version === "string" && typeof item.trashable === "boolean")
-    && Array.isArray(value.open_items) && value.open_items.every(item => isObject(item) && typeof item.artifact_id === "string"
-      && typeof item.path === "string" && typeof item.provider_file_id === "string" && typeof item.provider_file_version === "string"
-      && typeof item.expires_at === "string");
+    && Number.isSafeInteger(value.limit) && Number.isSafeInteger(value.window_hours) && typeof value.batches_truncated === "boolean"
+    && Array.isArray(value.batches) && value.batches.every(batch => isObject(batch) && typeof batch.batch_id === "string"
+      && (batch.status === "pending" || batch.status === "confirmed") && typeof batch.created_at === "string" && typeof batch.expires_at === "string"
+      && Array.isArray(batch.items) && batch.items.every(item => isObject(item) && (item.operation === "delete" || item.operation === "restore")
+        && (item.target_kind === "file" || item.target_kind === "directory") && typeof item.path === "string"
+        && typeof item.provider_file_id === "string" && typeof item.provider_file_version === "string"
+        && typeof item.current === "boolean" && typeof item.used === "boolean"));
 }
+const trashItemText = (item: TrashItem) => `${item.operation === "delete" ? "移入回收站" : "从回收站恢复"}${item.target_kind === "directory" ? "（空目录）" : ""}：`
+  + `${item.path}（ID ${item.provider_file_id}，版本 ${item.provider_file_version}）`;
 // One write class per change; each has its own confirmation text (P3 modify, P4 overwrite, P5 destructive).
 const writeText = {
   modify: {
@@ -145,7 +150,7 @@ const writeText = {
   },
   destructive: {
     name: "把文件移入回收站",
-    on: "允许已授权的 Agent 把此目录内由 Clued 创建的文件移入 Google Drive 回收站，并可从回收站恢复 Clued 移入的文件？不会永久删除；但 Google 会在移入回收站 30 天后自动永久删除，之后无法恢复。每个任务只处理一个文件，不处理目录；同一 Agent 在 24 小时内超过 5 个文件时，需要您在本页逐个确认。您手动上传的文件不受影响。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。",
+    on: "允许已授权的 Agent 把此目录内由 Clued 创建的文件和空目录移入 Google Drive 回收站，并可从回收站恢复 Clued 移入的项目？不会永久删除；但 Google 会在移入回收站 30 天后自动永久删除，之后无法恢复。每个任务只处理一个文件或一个空目录，不处理非空目录；同一客户端登记在 24 小时内超过 5 项时，需要您在本页对 Agent 列出的整批项目一次确认。您手动上传的文件不受影响。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。",
     off: "停止 Agent 把文件移入回收站和从回收站恢复？已在回收站中的文件不受影响，仍会在 30 天后被 Google 永久删除。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束。",
   },
 } as const;
@@ -156,9 +161,8 @@ export default function StorageConnections() {
   // Write level (P3): changing it replaces the account policy, so the page
   // always reloads the connection list and both settings afterwards.
   const [writeAccess, setWriteAccess] = useState<Record<string, WriteAccess>>({});
-  // Trash batch confirmation (P5), loaded on demand; the selection is per connection.
+  // Trash batch confirmation (P5), loaded on demand per connection.
   const [trash, setTrash] = useState<Record<string, TrashConfirmation>>({});
-  const [trashSelected, setTrashSelected] = useState<Record<string, string[]>>({});
   // Normal use (StorageNormalUse §8.2), loaded on demand like the read level.
   const [normalUse, setNormalUse] = useState<Record<string, NormalUse>>({});
   // Hourly budgets (N4), loaded on demand. Drafts are "64" / "256" / "1024" or
@@ -403,32 +407,27 @@ export default function StorageConnections() {
       if (epoch !== revision.current) return;
       if (!isTrashConfirmation(result)) throw new Error("回收站确认设置未确认。");
       setTrash(state => ({ ...state, [c.id]: result }));
-      setTrashSelected(state => ({ ...state, [c.id]: [] }));
     } catch { if (epoch === revision.current) setMessage("回收站确认设置未确认，请稍后重试。"); }
     finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
-  // §3.4 item 4: the Owner confirms one batch, listing each file's ID, path and version.
-  async function confirmTrash(c: Connection) {
-    const current = trash[c.id], chosen = trashSelected[c.id] ?? [];
-    if (operation.current || busy || !current?.destructive || !chosen.length) return;
-    const files = current.files.filter(file => chosen.includes(file.artifact_id) && file.trashable);
-    if (files.length !== chosen.length) return;
-    if (!window.confirm(`确认允许 Agent 把以下 ${files.length} 个文件移入 Google Drive 回收站（24 小时内有效，每个文件只用一次）？Google 会在移入回收站 30 天后自动永久删除。\n\n`
-      + files.map(file => `${file.path}（ID ${file.provider_file_id}，版本 ${file.provider_file_version}）`).join("\n"))) return;
+  // §3.4 item 4: the Owner confirms a whole pending batch once ("全部确认").
+  async function confirmTrash(c: Connection, batch: TrashBatch) {
+    const current = trash[c.id];
+    if (operation.current || busy || !current?.destructive || batch.status !== "pending" || !batch.items.every(item => item.current)) return;
+    if (!window.confirm(`确认这批共 ${batch.items.length} 项（24 小时内有效，每项只用一次）？移入回收站的项目，Google 会在 30 天后自动永久删除。\n\n`
+      + batch.items.map(trashItemText).join("\n"))) return;
     operation.current = true; setBusy(true);
     const epoch = revision.current;
     try {
-      const result = await accountRequest({ action: "confirm", connection_id: c.id, base_generation: current.policy_generation,
-        items: files.map(file => ({ artifact_id: file.artifact_id, artifact_version: file.artifact_version })),
-        idempotency_key: crypto.randomUUID() }, "/v1/storage/trash-confirmation");
+      const result = await accountRequest({ action: "confirm", connection_id: c.id, batch_id: batch.batch_id,
+        base_generation: current.policy_generation, idempotency_key: crypto.randomUUID() }, "/v1/storage/trash-confirmation");
       if (epoch !== revision.current) return;
       if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
       const latest = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/trash-confirmation");
       if (epoch !== revision.current) return;
       if (!isTrashConfirmation(latest)) throw new Error("回收站确认设置未确认。");
       setTrash(state => ({ ...state, [c.id]: latest }));
-      setTrashSelected(state => ({ ...state, [c.id]: [] }));
-      setMessage(`已确认 ${files.length} 个文件可移入回收站。回执：${result.receipt_id}`);
+      setMessage(`已确认这批 ${batch.items.length} 项。回执：${result.receipt_id}`);
     } catch {
       if (epoch === revision.current) {
         setTrash(state => { const next = { ...state }; delete next[c.id]; return next; });
@@ -568,19 +567,17 @@ export default function StorageConnections() {
               {writeAccess[c.id].classes.includes(level) ? `停止 Agent ${writeText[level].name}` : `允许 Agent ${writeText[level].name}`}</button>
           </div>)}
           {writeAccess[c.id]?.active && writeAccess[c.id].classes.includes("destructive") && <div>
-            <p className="mt-2">回收站批量确认：同一 Agent 在 24 小时内移入回收站超过 5 个文件时，其余文件需要在这里逐个确认。</p>
+            <p className="mt-2">回收站批量确认：同一客户端登记在 24 小时内移入回收站超过 5 项时，Agent 会把其余项目列成一批，在这里一次确认。</p>
             {trash[c.id] ? <>
-              {trash[c.id].open_items.length > 0 && <p>已确认、尚未使用：{trash[c.id].open_items.map(item => item.path).join("、")}</p>}
-              {trash[c.id].files.length === 0 ? <p>此连接没有由 Clued 登记的文件。</p> : trash[c.id].files.map(file =>
-                <label key={file.artifact_id} className="block">
-                  <input type="checkbox" aria-label={`确认移入回收站：${file.path}`} disabled={busy || !file.trashable}
-                    checked={(trashSelected[c.id] ?? []).includes(file.artifact_id)}
-                    onChange={event => { const checked = event.target.checked; setTrashSelected(state => {
-                      const list = (state[c.id] ?? []).filter(id => id !== file.artifact_id);
-                      return { ...state, [c.id]: checked ? [...list, file.artifact_id] : list }; }); }} />
-                  {" "}{file.path}（ID {file.provider_file_id}，版本 {file.provider_file_version}）{file.trashable ? "" : "：治理文件，没有删除授权，不能移入回收站"}
-                </label>)}
-              <button disabled={busy || !(trashSelected[c.id] ?? []).length} onClick={() => void confirmTrash(c)}>确认所选文件可移入回收站</button>
+              {trash[c.id].batches.length === 0 ? <p>没有待确认或已确认的批次。</p> : trash[c.id].batches.map(batch =>
+                <div key={batch.batch_id} className="mt-2">
+                  <p>{batch.status === "pending" ? "待确认批次" : "已确认批次"}（{batch.items.length} 项，{batch.expires_at} 前有效）</p>
+                  {batch.items.map((item, index) => <p key={index}>{trashItemText(item)}
+                    {item.used ? "：已使用" : item.current ? "" : "：已变化，不能确认，请让 Agent 重新列出"}</p>)}
+                  {batch.status === "pending" && <button disabled={busy || !batch.items.every(item => item.current)}
+                    onClick={() => void confirmTrash(c, batch)}>全部确认</button>}
+                </div>)}
+              {trash[c.id].batches_truncated && <p>只显示最近 20 个批次。</p>}
             </> : <button disabled={busy} onClick={() => void loadTrash(c)}>读取回收站确认</button>}
           </div>}
         </div>}

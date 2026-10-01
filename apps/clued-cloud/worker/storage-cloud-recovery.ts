@@ -68,10 +68,10 @@ export async function createStorageCloudRecovery(config: {
           !providerId.test(String(d.root_parent_id)) || !object(d.profile) || !object(d.mutation) ||
           !object(d.provider_before) || !object(d.attempt) ||
           !providerId.test(String(d.attempt.provider_file_id)) ||
-          d.attempt.destination_path !== d.mutation.destination_path ||
-          // Trash and untrash (P5) have no destination: the attempt names the source's folder.
-          d.attempt.parent_id !== (d.mutation.operation === "delete" || d.mutation.operation === "restore"
-            ? d.provider_before.source_parent_id : d.provider_before.destination_parent_id)) throw denied();
+          (d.attempt.destination_path ?? null) !== (d.mutation.destination_path ?? null) ||
+          // Trash and in-place untrash (P5) have no destination: the attempt names the source's folder.
+          d.attempt.parent_id !== (d.provider_before.destination_parent_id ??
+            (d.mutation.operation === "delete" || d.mutation.operation === "restore" ? d.provider_before.source_parent_id : undefined))) throw denied();
       const credential = async () => {
         check();
         const token: unknown = JSON.parse(await vault.open(d.credential_envelope as StorageCredentialEnvelope, {
@@ -112,7 +112,8 @@ export async function createStorageCloudRecovery(config: {
         list_children: (input: Data) => metadata.listChildren(input, { signal: abort.signal }),
         include_verified_proof: !!config.verified, timeout_ms: timeout, poll_ms: Math.min(1000, timeout), clock,
       };
-      const verify = destructive ? createGoogleDriveDestructivePostconditionVerifier(verifierConfig)
+      const verify = destructive ? createGoogleDriveDestructivePostconditionVerifier({ ...verifierConfig,
+          has_children: (id: string) => metadata.hasChildren(id, { signal: abort.signal }) })
         : replace
         ? createGoogleDriveReplacePostconditionVerifier({ ...verifierConfig,
           get_revision: (fileId: string, revisionId: string) => metadata.getRevision(fileId, revisionId, { signal: abort.signal }) })
@@ -120,7 +121,8 @@ export async function createStorageCloudRecovery(config: {
         : createGoogleDriveCreatePostconditionVerifier({ ...verifierConfig, require_effect_provider_id: true });
       const postcondition = await bounded(verify({ profile: d.profile, mutation: d.mutation, provider_before: d.provider_before,
         effect_result: destructive
-          ? { operation, source_path: d.mutation.source_path, provider_file_id: d.attempt.provider_file_id, content: d.attempt.content }
+          ? { operation, source_path: d.mutation.source_path, destination_path: d.mutation.destination_path ?? null,
+              provider_file_id: d.attempt.provider_file_id, content: d.attempt.content }
           : replace
           ? { operation: "replace", destination_path: d.mutation.destination_path, provider_file_id: d.attempt.provider_file_id,
               content_before: d.attempt.content_before, content_after: d.attempt.content_after,

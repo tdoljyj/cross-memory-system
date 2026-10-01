@@ -45,7 +45,7 @@ function fixture() {
   render();
   function labelled(label){let found;const walk=n=>{if(Array.isArray(n))return n.forEach(walk);if(!n||typeof n!=="object")return;
     if(n.props?.["aria-label"]===label)found=n;walk(n.props?.children);};walk(tree);return found;}
-  return {calls,prompts,settle,button,labelled,render,text:()=>text(tree),
+  return {calls,prompts,settle,button,labelled,render,text:()=>text(tree),tree:()=>tree,
     respond(i,value,status=200){calls[i].resolve({ok:status<400,status,json:async()=>value});},
     change(id){owner=id;authCallback("SIGNED_IN",id?{user:{id}}:null);render();},
   };
@@ -180,7 +180,7 @@ test("moving files to the trash is its own toggle with its own disclosure; a ser
   f.respond(2,destructiveStatus([]));await f.settle();
   assert.match(f.text(),/Agent 把文件移入回收站：未允许/);
   f.button("允许 Agent 把文件移入回收站").props.onClick();await f.settle();
-  assert.match(f.prompts.at(-1),/30 天后自动永久删除/);assert.match(f.prompts.at(-1),/不会永久删除/);assert.match(f.prompts.at(-1),/5 个文件/);
+  assert.match(f.prompts.at(-1),/30 天后自动永久删除/);assert.match(f.prompts.at(-1),/不会永久删除/);assert.match(f.prompts.at(-1),/超过 5 项/);assert.match(f.prompts.at(-1),/空目录/);
   assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set_classes",connection_id:active.id,classes:["destructive"],
     base_generation:1,disclosure_version:"clued.storage-destructive-disclosure/1",idempotency_key:"fixture-id"});
   f.respond(3,{status:"committed",receipt_id:"fixture-destructive-receipt"});await f.settle();
@@ -190,26 +190,34 @@ test("moving files to the trash is its own toggle with its own disclosure; a ser
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});await f.settle();
   assert.match(f.text(),/已允许 Agent 把文件移入回收站。回执：fixture-destructive-receipt/);
   assert.match(f.text(),/移入回收站、从回收站恢复/);
-  // The batch confirmation lists each registered file with its ID and version.
+  // The Agent's pending batch is listed with each item's ID and version and confirmed once ("全部确认").
   f.button("读取回收站确认").props.onClick();await f.settle();
   assert.equal(f.calls[7].url,"/v1/storage/trash-confirmation");
   assert.deepEqual(JSON.parse(f.calls[7].init.body),{action:"status",connection_id:active.id});
-  const file={artifact_id:"artifact-a",artifact_version:3,path:"/Clued_资料中心/20_P/a.md",provider_file_id:"drive-a",provider_file_version:"9",trashable:true};
-  const governed={artifact_id:"artifact-g",artifact_version:1,path:"/Clued_资料中心/20_P/g.md",provider_file_id:"drive-g",provider_file_version:"2",trashable:false};
-  f.respond(7,{destructive:true,policy_generation:2,limit:5,window_hours:24,files:[file,governed],open_items:[]});await f.settle();
-  assert.match(f.text(),/drive-a，版本 9/);assert.match(f.text(),/没有删除授权/);
-  assert.equal(f.labelled("确认移入回收站："+governed.path).props.disabled,true);
-  f.labelled("确认移入回收站："+file.path).props.onChange({target:{checked:true}});f.render();
-  f.button("确认所选文件可移入回收站").props.onClick();await f.settle();
-  assert.match(f.prompts.at(-1),/\/Clued_资料中心\/20_P\/a\.md（ID drive-a，版本 9）/);
+  const item=(extra={})=>({operation:"delete",target_kind:"file",path:"/Clued_资料中心/20_P/a.md",provider_file_id:"drive-a",
+    provider_file_version:"9",current:true,used:false,...extra});
+  const batch=(status,items)=>({batch_id:"batch-1",status,created_at:"2026-10-01T00:00:00Z",expires_at:"2026-10-02T00:00:00Z",items});
+  const stale={...batch("pending",[item(),item({path:"/Clued_资料中心/20_P/b.md",provider_file_id:"drive-b",current:false})]),batch_id:"batch-0"};
+  const pending=batch("pending",[item(),item({operation:"restore",target_kind:"directory",path:"/Clued_资料中心/20_P/old",provider_file_id:"drive-d",provider_file_version:"2"})]);
+  f.respond(7,{destructive:true,policy_generation:2,limit:5,window_hours:24,batches_truncated:true,batches:[pending,stale]});await f.settle();
+  assert.match(f.text(),/移入回收站：\/Clued_资料中心\/20_P\/a\.md（ID drive-a，版本 9）/);
+  assert.match(f.text(),/从回收站恢复（空目录）：\/Clued_资料中心\/20_P\/old/);
+  assert.match(f.text(),/已变化，不能确认/);assert.match(f.text(),/只显示最近 20 个批次/);
+  assert.match(f.text(),/同一客户端登记/);assert.equal(f.text().includes("同一 Agent"),false);
+  // A batch with a changed item cannot be confirmed; the current one can, as a whole.
+  let buttons=[];const walk=n=>{if(Array.isArray(n))return n.forEach(walk);if(!n||typeof n!=="object")return;
+    if(n.type==="button"&&n.props?.children==="全部确认")buttons.push(n);walk(n.props?.children);};
+  const confirmButtons=()=>{buttons=[];walk(f.tree());return buttons;};
+  assert.equal(confirmButtons().length,2);assert.equal(confirmButtons()[1].props.disabled,true);
+  confirmButtons()[0].props.onClick();await f.settle();
+  assert.match(f.prompts.at(-1),/共 2 项/);assert.match(f.prompts.at(-1),/30 天后自动永久删除/);
   assert.equal(f.calls[8].url,"/v1/storage/trash-confirmation");
-  assert.deepEqual(JSON.parse(f.calls[8].init.body),{action:"confirm",connection_id:active.id,base_generation:2,
-    items:[{artifact_id:"artifact-a",artifact_version:3}],idempotency_key:"fixture-id"});
+  assert.deepEqual(JSON.parse(f.calls[8].init.body),{action:"confirm",connection_id:active.id,batch_id:"batch-1",base_generation:2,
+    idempotency_key:"fixture-id"});
   f.respond(8,{status:"committed",receipt_id:"fixture-trash-confirmation"});await f.settle();
-  f.respond(9,{destructive:true,policy_generation:2,limit:5,window_hours:24,files:[file,governed],
-    open_items:[{artifact_id:"artifact-a",path:file.path,provider_file_id:"drive-a",provider_file_version:"9",expires_at:"2026-10-02T00:00:00Z"}]});await f.settle();
-  assert.match(f.text(),/已确认 1 个文件可移入回收站。回执：fixture-trash-confirmation/);
-  assert.match(f.text(),/已确认、尚未使用：\/Clued_资料中心\/20_P\/a\.md/);
+  f.respond(9,{destructive:true,policy_generation:2,limit:5,window_hours:24,batches_truncated:false,batches:[batch("confirmed",pending.items)]});await f.settle();
+  assert.match(f.text(),/已确认这批 2 项。回执：fixture-trash-confirmation/);
+  assert.match(f.text(),/已确认批次/);assert.equal(confirmButtons().length,0);
 });
 test("without the destructive disclosure in the status, the page offers only rename/move and overwrite",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();

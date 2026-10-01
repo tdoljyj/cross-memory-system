@@ -1,31 +1,36 @@
 import { isDeepStrictEqual } from "node:util";
 import { contentIdentity } from "./resource-center-google-drive-modify-effect.mjs";
-import { DESTRUCTIVE_PROOF_CONTRACTS, destructiveShape } from "./resource-center-google-drive-destructive-effect.mjs";
+import { DESTRUCTIVE_PROOF_CONTRACTS, destructiveProviderBefore, destructiveShape } from "./resource-center-google-drive-destructive-effect.mjs";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 
 const FOLDER = "application/vnd.google-apps.folder";
 const normalized = (value) => bindResourceCenterMutation({ destination_path: value }).destination_path;
 const fail = (code) => { throw new Error(code); };
+const contentKeys = "head_revision_id,md5,sha256,size";
 
 /** Host-owned trash/untrash verifier (StorageFullCapability §6.1/§6.2). Reads
  * metadata only and never changes or retries storage. Success requires the
- * file, by its provider ID, to have the requested trashed state with exactly
- * its original parent, the same registered ancestor IDs, unchanged content
- * identity, the same name and a stable version across two reads. A trashed
- * file must no longer be listed under its name; a restored file must be the
- * only entry of its name in that folder. Drive's version may jump by more
- * than one; only the observed stable version is recorded. Folder versions are
- * not pinned. Anything else leaves the intent fenced.
- * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, list_children: Function, include_verified_proof?: boolean, timeout_ms?: number, poll_ms?: number, clock?: () => number, sleep?: Function}} config
+ * item, by its provider ID, to have the requested trashed state under exactly
+ * its expected folder (the original one, or the opted-in destination of a
+ * relocating untrash) with the same registered ancestor IDs, the expected
+ * name, unchanged content identity (a directory: still no children at all)
+ * and a stable version across two reads. A trashed item must no longer be
+ * listed under its name; an untrashed one must be the only entry of its name
+ * in that folder. Drive's version may jump by more than one; only the
+ * observed stable version is recorded. Folder versions are not pinned.
+ * Anything else leaves the intent fenced.
+ * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, list_children: Function, has_children?: Function, include_verified_proof?: boolean, timeout_ms?: number, poll_ms?: number, clock?: () => number, sleep?: Function}} config
  */
 export function createGoogleDriveDestructivePostconditionVerifier({
   managed_root: managedRoot, root_folder_id: rootId, root_parent_id: rootParentId,
-  get_file: getFile, list_children: listChildren, include_verified_proof: includeVerifiedProof = false,
+  get_file: getFile, list_children: listChildren, has_children: hasChildren,
+  include_verified_proof: includeVerifiedProof = false,
   timeout_ms: timeoutMs = 30_000, poll_ms: pollMs = 1000,
   clock = Date.now, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
   const root = normalized(managedRoot);
   if (!root || !rootId || !rootParentId || typeof getFile !== "function" || typeof listChildren !== "function" ||
+    (hasChildren !== undefined && typeof hasChildren !== "function") ||
     typeof clock !== "function" || typeof sleep !== "function" || typeof includeVerifiedProof !== "boolean" ||
     !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
     !Number.isInteger(pollMs) || pollMs < 1 || pollMs > timeoutMs) {
@@ -38,24 +43,23 @@ export function createGoogleDriveDestructivePostconditionVerifier({
   };
   return async function verify({ profile, mutation, provider_before: before, effect_result: effect }) {
     const shape = destructiveShape(mutation);
-    if (!shape || normalized(profile?.managed_root) !== root || !shape.source.startsWith(root + "/") ||
+    const content = effect?.content;
+    const contentOk = shape?.directory ? content === null
+      : !!content && Object.keys(content).sort().join(",") === contentKeys &&
+        !!contentIdentity({ size: content.size, sha256Checksum: content.sha256, md5Checksum: content.md5, headRevisionId: content.head_revision_id });
+    if (!shape || normalized(profile?.managed_root) !== root || !shape.final_path.startsWith(root + "/") ||
       effect?.operation !== shape.operation || effect.source_path !== shape.source ||
-      !/^[A-Za-z0-9_-]{1,160}$/.test(effect.provider_file_id ?? "") ||
-      Object.keys(effect.content ?? {}).sort().join(",") !== "head_revision_id,md5,sha256,size" ||
-      !contentIdentity(effect.content ? { size: effect.content.size, sha256Checksum: effect.content.sha256,
-        md5Checksum: effect.content.md5, headRevisionId: effect.content.head_revision_id } : null) ||
-      before?.root_folder_id !== rootId || before.root_parent_id !== rootParentId ||
-      before.source_file_id !== effect.provider_file_id || before.source_file_version !== shape.source_file_version ||
-      !/^[A-Za-z0-9_-]{1,160}$/.test(before.source_parent_id ?? "") ||
-      before.destination_parent_id !== null || before.destination_file_id !== null || before.destination_file_version !== null) {
+      (effect.destination_path ?? null) !== shape.destination || effect.provider_file_id !== shape.source_file_id ||
+      !contentOk || (shape.directory && !hasChildren) ||
+      before?.root_folder_id !== rootId || before.root_parent_id !== rootParentId || !destructiveProviderBefore(shape, before)) {
       fail("DRIVE_POSTCONDITION_REQUEST_MISMATCH");
     }
-    const fileId = effect.provider_file_id, name = shape.source_name, content = effect.content;
+    const fileId = shape.source_file_id, name = shape.final_name;
+    const expectedParent = shape.destination ? before.destination_parent_id : before.source_parent_id;
     const trashed = shape.operation === "delete";
-    const parts = shape.source.slice(root.length + 1).split("/");
-    parts.pop();
-    // The chain to the source folder is the same: root ID under its pinned
-    // parent, each folder by name and parent, the recorded parent ID.
+    const parts = shape.final_parent_path === root ? [] : shape.final_parent_path.slice(root.length + 1).split("/");
+    // The chain to the expected folder is the same: root ID under its pinned
+    // parent, each folder by name and parent, the recorded folder ID.
     async function parentIdentity() {
       let node = await getFile(rootId);
       folderCheck(node, rootId, root.slice(root.lastIndexOf("/") + 1), rootParentId);
@@ -65,20 +69,23 @@ export function createGoogleDriveDestructivePostconditionVerifier({
         folderCheck(matches[0], matches[0].id, part, node.id);
         node = matches[0];
       }
-      if (node.id !== before.source_parent_id) fail("DRIVE_POSTCONDITION_ANCESTOR_CHANGED");
+      if (node.id !== expectedParent) fail("DRIVE_POSTCONDITION_ANCESTOR_CHANGED");
       return node;
     }
     async function observe(parent) {
       const file = await getFile(fileId);
       if (!file || file.id !== fileId || file.name !== name ||
         !Array.isArray(file.parents) || file.parents.length !== 1 || file.parents[0] !== parent.id ||
-        !file.mimeType || file.mimeType === FOLDER || typeof file.version !== "string" || !/^[1-9]\d*$/.test(file.version)) {
+        !file.mimeType || (file.mimeType === FOLDER) !== shape.directory ||
+        typeof file.version !== "string" || !/^[1-9]\d*$/.test(file.version)) {
         fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
       }
-      if (!isDeepStrictEqual(contentIdentity(file), { ...content })) fail("DRIVE_POSTCONDITION_CONTENT_CHANGED");
+      if (shape.directory) {
+        if (await hasChildren(fileId)) fail("DRIVE_POSTCONDITION_DIRECTORY_NOT_EMPTY");
+      } else if (!isDeepStrictEqual(contentIdentity(file), { ...content })) fail("DRIVE_POSTCONDITION_CONTENT_CHANGED");
       if (file.trashed !== trashed) return null;
-      // The name listing excludes trashed entries: a trashed file must be gone
-      // from it; a restored file must be its only entry.
+      // The name listing excludes trashed entries: a trashed item must be gone
+      // from it; an untrashed item must be its only entry.
       const listed = await listChildren({ parent_id: parent.id, name });
       if (!Array.isArray(listed)) fail("DRIVE_LIST_INVALID");
       if (trashed) {
@@ -99,18 +106,17 @@ export function createGoogleDriveDestructivePostconditionVerifier({
         const again = await observe(parent);
         if (again && again.version === seen.version) {
           if (clock() > deadline) fail("DRIVE_POSTCONDITION_SYNC_TIMEOUT");
-          const postcondition = { path: shape.source, parent_id: parent.id,
+          const postcondition = { path: shape.final_path, parent_id: parent.id,
             provider_file_id: fileId, provider_file_version: seen.version };
           if (!includeVerifiedProof) return Object.freeze(postcondition);
+          const last = shape.directory ? { empty: true } : { content_unchanged: true };
           const verifiedProof = Object.freeze({ contract: DESTRUCTIVE_PROOF_CONTRACTS[shape.operation],
-            ...postcondition, operation: shape.operation, source_path: shape.source,
-            source_file_version: shape.source_file_version, trashed, content: { ...content },
-            provider_before: structuredClone(before),
+            ...postcondition, operation: shape.operation, target_kind: shape.target_kind, source_path: shape.source,
+            source_file_version: shape.source_file_version, restore_mode: shape.restore_mode, trashed,
+            content: content === null ? null : { ...content }, provider_before: structuredClone(before),
             checks: Object.freeze(trashed
-              ? { identity: true, ancestors: true, stable_state: true, trashed: true, parent_unchanged: true,
-                name_vacated: true, content_unchanged: true }
-              : { identity: true, ancestors: true, stable_state: true, untrashed: true, parent_unchanged: true,
-                unique_name: true, content_unchanged: true }) });
+              ? { identity: true, ancestors: true, stable_state: true, trashed: true, parent: true, name_vacated: true, ...last }
+              : { identity: true, ancestors: true, stable_state: true, untrashed: true, parent: true, unique_name: true, ...last }) });
           return Object.freeze({ ...postcondition, verified_proof: verifiedProof });
         }
       }

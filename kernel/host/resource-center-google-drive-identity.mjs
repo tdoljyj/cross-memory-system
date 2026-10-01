@@ -93,20 +93,29 @@ export function createGoogleDriveProviderIdentityResolver({
     if (mutation.source_path) {
       const parts = segmentsWithin(mutation.source_path, root);
       if (parts.length === 0) fail("PROVIDER_ROOT_MUTATION_FORBIDDEN");
-      const parent = await walk(parts.slice(0, -1));
+      // A relocating untrash (restore_mode folder/suffix) never needs the
+      // original folder's path: the trashed item names its own parent.
+      const relocating = mutation.operation === "restore" && !!mutation.destination_path;
+      const parent = relocating ? null : await walk(parts.slice(0, -1));
       sourceParent = parent;
       if (mutation.operation === "restore") {
-        // Only files are restored; the name must be free again in the parent.
-        if (!restoreSourceId || mutation.target_kind === "directory") fail("PROVIDER_PATH_UNREGISTERED");
+        // The registered, trashed item is read by its ID; in place, its name
+        // must be free again in its folder.
+        if (!restoreSourceId) fail("PROVIDER_PATH_UNREGISTERED");
+        const folder = mutation.target_kind === "directory";
         const trashed = await getFile(restoreSourceId);
         if (!trashed || trashed.id !== restoreSourceId || trashed.name !== parts.at(-1) || trashed.trashed !== true ||
-          !Array.isArray(trashed.parents) || trashed.parents.length !== 1 || trashed.parents[0] !== parent.id ||
-          typeof trashed.version !== "string" || !/^\d+$/.test(trashed.version) || trashed.mimeType === FOLDER_MIME) {
+          !Array.isArray(trashed.parents) || trashed.parents.length !== 1 ||
+          typeof trashed.parents[0] !== "string" || (parent && trashed.parents[0] !== parent.id) ||
+          typeof trashed.version !== "string" || !/^\d+$/.test(trashed.version) || (trashed.mimeType === FOLDER_MIME) !== folder) {
           fail("PROVIDER_METADATA_MISMATCH");
         }
-        const taken = await listChildren({ parent_id: parent.id, name: parts.at(-1) });
-        if (!Array.isArray(taken)) fail("PROVIDER_LIST_UNAVAILABLE");
-        if (taken.length > 0) fail("PROVIDER_DESTINATION_EXISTS");
+        if (!relocating) {
+          const taken = await listChildren({ parent_id: parent.id, name: parts.at(-1) });
+          if (!Array.isArray(taken)) fail("PROVIDER_LIST_UNAVAILABLE");
+          if (taken.length > 0) fail("PROVIDER_DESTINATION_EXISTS");
+        }
+        sourceParent = parent ?? { id: trashed.parents[0] };
         versions.push([trashed.id, trashed.version]);
         source = trashed;
       } else {

@@ -91,10 +91,11 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
     (select count(*)::int from clued_private.resource_center_mutations_v1) intents`)).rows[0];
   const journal = async job => (await admin.query("select m.* from clued_private.storage_jobs_v1 j join clued_private.resource_center_mutations_v1 m on m.id=j.intent_id where j.owner_id=$1 and j.job_id=$2", [user, job.reference.job_id])).rows[0];
   const provider = target => {
-    const directory = (id, name, parent) => ({ id, name, parents: parent ? [parent] : [], version: "1", trashed: false, mimeType: "application/vnd.google-apps.folder" });
+    const directory = (id, name, parent) => ({ id, name, parents: parent ? [parent] : [], version: "1", trashed: false,
+      mimeType: "application/vnd.google-apps.folder", ownedByMe: true, capabilities: { canTrash: true, canUntrash: true } });
     const files = new Map([[target.parentId, directory(target.parentId, target.root.split("/").at(-2))],
       [target.rootId, directory(target.rootId, "Clued_资料中心", target.parentId)], [target.trackId, directory(target.trackId, TRACK, target.rootId)]]);
-    const state = { patches: 0, deletes: 0, losePatch: false, files };
+    const state = { patches: 0, deletes: 0, losePatch: false, files, directory };
     state.fetch = async (url, init = {}) => {
       const u = new URL(url); assert.equal(new Headers(init.headers).get("authorization"), "Bearer fixture-destructive-access");
       assert.equal(u.hostname, "www.googleapis.com");
@@ -104,8 +105,10 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
         const id = u.pathname.split("/").at(-1), file = files.get(id), body = JSON.parse(init.body || "{}");
         const recorded = (await admin.query("select count(*)::int n from clued_private.resource_center_mutations_v1 where state='started' and provider_attempt->>'provider_file_id'=$1 and provider_attempt->>'contract'='clued.storage-destructive-attempt/1'", [id])).rows[0].n;
         assert.equal(recorded, 1, "the exact attempt is durable before the update");
-        assert.deepEqual(Object.keys(body), ["trashed"]);
+        assert.ok(Object.keys(body).every(key => key === "trashed" || key === "name"));
         file.trashed = body.trashed;
+        if (body.name) file.name = body.name;
+        if (u.searchParams.get("addParents")) { assert.deepEqual(file.parents, [u.searchParams.get("removeParents")]); file.parents = [u.searchParams.get("addParents")]; }
         file.version = String(Number(file.version) + 3); // Drive may jump by more than one.
         if (state.losePatch) throw new Error("synthetic lost provider response");
         return Response.json(file);
@@ -122,10 +125,11 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
       if (u.pathname.endsWith("/generateIds")) return Response.json({ ids: ["cloud-object-" + randomUUID()] });
       const query = u.searchParams.get("q");
       if (query) {
-        // As Drive: every query here asks trashed = false.
-        assert.match(query, /trashed = false/);
+        // As Drive: name and folder listings ask trashed = false; the emptiness
+        // check of a directory asks for every child, trashed ones included.
+        const all = !/trashed = false/.test(query);
         const parent = /'([^']+)' in parents/.exec(query)?.[1], name = /name = '([^']+)'/.exec(query)?.[1];
-        return Response.json({ files: [...files.values()].filter(file => file.parents.includes(parent) && !file.trashed && (!name || name === file.name)), incompleteSearch: false });
+        return Response.json({ files: [...files.values()].filter(file => file.parents.includes(parent) && (all || !file.trashed) && (!name || name === file.name)), incompleteSearch: false });
       }
       const found = files.get(u.pathname.split("/").at(-1));
       return found ? Response.json(found) : new Response("", { status: 404 });
@@ -149,13 +153,19 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
       },
     });
   };
+  // As the Worker does after a refusal: store the fixed outcome in the Owner's job row.
+  const report = async (job, result) => cloud({ action: "report", ...job.reference, credential_version: 1,
+    outcome: { status: result.status === "deny" ? "denied" : "attention_required", ...(result.error_code ? { reason: { code: result.error_code } } : {}) } });
   const writeStatus = async target => (await native.query(`select ${WRITE}($1::jsonb) value`, [JSON.stringify({ action: "status", connection_id: target.connection })])).rows[0].value;
   const setLevel = async (target, classes, disclosure = DISCLOSURE) => {
     const status = await writeStatus(target);
     return (await native.query(`select ${WRITE}($1::jsonb) value`, [JSON.stringify({ action: "set_classes", connection_id: target.connection,
       classes, base_generation: status.policy_generation, disclosure_version: disclosure, idempotency_key: randomUUID() })])).rows[0].value;
   };
-  const confirmation = async input => (await native.query(`select ${CONFIRM}($1::jsonb) value`, [JSON.stringify(input)])).rows[0].value;
+  const confirmation = async (input, database = native) => (await database.query(`select ${CONFIRM}($1::jsonb) value`, [JSON.stringify(input)])).rows[0].value;
+  const batchRaw = (target, client, items, batchId = randomUUID()) => caller.query("select public.clued_storage_trash_batch_v1($1,$2::jsonb) value",
+    [client.token, JSON.stringify({ connection_id: target.connection, batch_id: batchId, items })]);
+  const batchOf = async (target, client, items, batchId = randomUUID()) => (await batchRaw(target, client, items, batchId)).rows[0].value;
   const submitRaw = (target, client, mutation, jobId = randomUUID()) => caller.query(`select ${JOBS}($1,$2::jsonb) value`,
     [client.token, JSON.stringify({ action: "submit", connection_id: target.connection, job_id: jobId, mutation })]);
   const submitJob = async (target, client, mutation, jobId = randomUUID()) => {
@@ -165,11 +175,19 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
   };
   const artifact = async (target, path, state = "active") => (await admin.query(
     "select * from clued_private.resource_center_artifacts_v1 where profile_id=$1 and path=$2 and state=$3", [target.profile, path, state])).rows[0];
+  const artifactById = async id => (await admin.query("select * from clued_private.resource_center_artifacts_v1 where id=$1", [id])).rows[0];
   const createFile = async (target, client, storage, name) => {
     const job = await submitJob(target, client, { operation: "create", target_kind: "file", destination_path: `${target.root}/${TRACK}/${name}`, content: "destructive fixture" });
     const result = await executor(target, storage).run(job.reference);
     assert.equal(result.status, "committed", JSON.stringify(result));
     return artifact(target, job.mutation.destination_path);
+  };
+  const directoryIn = async (target, storage, name, parentPath = `${target.root}/${TRACK}`, parentId = target.trackId) => {
+    const id = `dx-dir-${randomUUID()}`, path = `${parentPath}/${name}`;
+    storage.files.set(id, storage.directory(id, name, parentId));
+    await register({ action: "artifact_register", profile_id: target.profile, path, provider_file_id: id, provider_file_version: "1",
+      target_kind: "directory", governance_class: "ordinary", delete_authority: false });
+    return artifact(target, path);
   };
   const setup = async () => {
     const initial = await createRoot(), client = await bind(initial), target = await activate(initial), storage = provider(target);
@@ -177,8 +195,17 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
     assert.equal(enabled.status, "committed", JSON.stringify(enabled));
     return { target, client, storage };
   };
-  const trash = (path, version) => ({ operation: "delete", target_kind: "file", source_path: path, source_file_version: version });
-  const untrash = (path, version) => ({ operation: "restore", target_kind: "file", source_path: path, source_file_version: version });
+  const versionOf = (storage, item) => storage.files.get(item.provider_file_id).version;
+  const trash = (item, version = item.provider_file_version, path = item.path) => ({ operation: "delete", target_kind: item.target_kind,
+    source_path: path, source_file_version: version, source_file_id: item.provider_file_id });
+  const untrash = (item, version = item.provider_file_version, extra = {}) => ({ operation: "restore", target_kind: item.target_kind,
+    source_path: item.path, source_file_version: version, source_file_id: item.provider_file_id, ...extra });
+  const trashed = async (target, client, storage, item) => {
+    const job = await submitJob(target, client, trash(item, versionOf(storage, item)));
+    const result = await executor(target, storage).run(job.reference);
+    assert.equal(result.status, "committed", JSON.stringify(result));
+    return artifactById(item.id);
+  };
 
   try {
     await t.test("the destructive level has its own disclosure and replaces the policy like modify and overwrite", async () => {
@@ -201,13 +228,13 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
       assert.equal(stopped.disclosure_version, "clued.storage-destructive-disabled/1");
     });
 
-    await t.test("trash then untrash a Clued-created file; the Artifact follows by CAS and nothing is ever deleted", async () => {
+    await t.test("trash then untrash a Clued-created file by its Drive ID; the Artifact follows by CAS and nothing is ever deleted", async () => {
       const { target, client, storage } = await setup();
       const created = await createFile(target, client, storage, "draft.txt");
       const file = storage.files.get(created.provider_file_id);
-      const job = await submitJob(target, client, trash(created.path, file.version));
-      const trashed = await executor(target, storage).run(job.reference);
-      assert.equal(trashed.status, "committed", JSON.stringify(trashed));
+      const job = await submitJob(target, client, trash(created, file.version));
+      const done = await executor(target, storage).run(job.reference);
+      assert.equal(done.status, "committed", JSON.stringify(done));
       assert.equal(storage.patches, 1); assert.equal(storage.deletes, 0); assert.equal(file.trashed, true);
       const afterTrash = await artifact(target, created.path, "trashed");
       assert.equal(afterTrash.id, created.id, "the same Artifact; nothing new was registered");
@@ -220,39 +247,129 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
       const retention = (await admin.query("select change_summary from public.clued_context_events where user_id=$1 and idempotency_key=$2",
         [user, "storage-settle-verified:" + intent.id])).rows[0].change_summary;
       assert.match(retention.trash_retention, /30 days/);
-      // The trashed file's own version is what untrash names.
-      const restore = await submitJob(target, client, untrash(created.path, file.version));
+      const restore = await submitJob(target, client, untrash(afterTrash, file.version));
       const restored = await executor(target, storage).run(restore.reference);
       assert.equal(restored.status, "committed", JSON.stringify(restored));
       assert.equal(storage.patches, 2); assert.equal(file.trashed, false);
       const afterRestore = await artifact(target, created.path);
       assert.equal(afterRestore.id, created.id); assert.equal(afterRestore.provider_file_version, file.version);
       assert.equal((await journal(restore)).verified_result_v2.proof.contract, "clued.storage-untrash-verified/1");
-      // Replaying the same job and payload returns the original job, no new effect.
       const replay = (await submitRaw(target, client, restore.mutation, restore.reference.job_id)).rows[0].value;
       assert.equal(replay.replayed, true); assert.equal(replay.status, "committed");
     });
 
-    await t.test("a governance file without delete authority, another owner's file, a stale version or the track is refused with zero updates", async () => {
+    await t.test("untrash names the item by Drive ID: trash A, a new B at the same path, trash B, then untrash A", async () => {
+      const { target, client, storage } = await setup();
+      const a = await createFile(target, client, storage, "same.txt");
+      const trashedA = await trashed(target, client, storage, a);
+      const b = await createFile(target, client, storage, "same.txt");
+      assert.notEqual(b.id, a.id);
+      const trashedB = await trashed(target, client, storage, b);
+      // Exactly one trashed row matches each untrash job.
+      const jobA = await submitJob(target, client, untrash(trashedA));
+      const descriptor = await cloud({ action: "load", ...jobA.reference });
+      assert.deepEqual(descriptor.untrash_source, { provider_file_id: a.provider_file_id, provider_file_version: trashedA.provider_file_version });
+      const result = await executor(target, storage).run(jobA.reference);
+      assert.equal(result.status, "committed", JSON.stringify(result));
+      assert.equal((await artifact(target, a.path)).id, a.id, "A is back; B stays trashed");
+      assert.equal((await artifactById(b.id)).state, "trashed");
+      assert.equal(storage.files.get(a.provider_file_id).trashed, false); assert.equal(storage.files.get(b.provider_file_id).trashed, true);
+      // B now conflicts with A: refused at submit with the fixed, explanatory code.
+      await assert.rejects(submitRaw(target, client, untrash(trashedB)), /restore_name_conflict/);
+      // A job naming an item ID that is not the registered one gets no source.
+      const wrong = await submitJob(target, client, { ...untrash(trashedB), source_file_id: a.provider_file_id, source_path: `${target.root}/${TRACK}/other.txt` });
+      assert.equal((await cloud({ action: "load", ...wrong.reference })).untrash_source, null);
+    });
+
+    await t.test("untrash after a name conflict: only the user's explicit folder or numbered-name option, both settle the same Artifact", async () => {
+      const { target, client, storage } = await setup();
+      const topic = await directoryIn(target, storage, "topic-b");
+      const one = await createFile(target, client, storage, "note.md"), two = await createFile(target, client, storage, "plan.md");
+      const t1 = await trashed(target, client, storage, one), t2 = await trashed(target, client, storage, two);
+      // A same-name file the Owner put in Drive by hand (not registered) blocks the in-place untrash at execution.
+      storage.files.set("owner-note", { id: "owner-note", name: "note.md", parents: [target.trackId], version: "1", trashed: false, mimeType: "text/plain" });
+      const blocked = await submitJob(target, client, untrash(t1));
+      const before = storage.patches;
+      const denied = await executor(target, storage).run(blocked.reference);
+      assert.equal(denied.status, "deny"); assert.equal(denied.error_code, "RESTORE_NAME_CONFLICT");
+      assert.equal(storage.patches, before);
+      assert.equal((await report(blocked, denied)).status, "denied");
+      const inspected = (await caller.query(`select ${JOBS}($1,$2::jsonb) value`, [client.token, JSON.stringify({ action: "inspect", ...blocked.reference })])).rows[0].value;
+      assert.equal(inspected.reason_code, "RESTORE_NAME_CONFLICT");
+      // Option 1: restore into another registered folder under the same name.
+      const moved = await submitJob(target, client, untrash(t1, t1.provider_file_version, { destination_path: `${topic.path}/note.md`, restore_mode: "folder" }));
+      assert.equal((await executor(target, storage).run(moved.reference)).status, "committed");
+      const afterMove = await artifactById(one.id);
+      assert.equal(afterMove.state, "active"); assert.equal(afterMove.path, `${topic.path}/note.md`);
+      assert.deepEqual(storage.files.get(one.provider_file_id).parents, [topic.provider_file_id]);
+      // Option 2: a numbered name in the original folder.
+      storage.files.set("owner-plan", { id: "owner-plan", name: "plan.md", parents: [target.trackId], version: "1", trashed: false, mimeType: "text/plain" });
+      const renamed = await submitJob(target, client, untrash(t2, t2.provider_file_version, { destination_path: `${target.root}/${TRACK}/plan (1).md`, restore_mode: "suffix" }));
+      const renamedResult = await executor(target, storage).run(renamed.reference);
+      assert.equal(renamedResult.status, "committed", JSON.stringify(renamedResult));
+      assert.equal((await artifactById(two.id)).path, `${target.root}/${TRACK}/plan (1).md`);
+      assert.equal(storage.files.get(two.provider_file_id).name, "plan (1).md");
+      assert.equal((await journal(renamed)).verified_result_v2.proof.restore_mode, "suffix");
+      // Any other shape of the options is refused at submit.
+      for (const extra of [{ destination_path: `${target.root}/${TRACK}/plan (0).md`, restore_mode: "suffix" },
+        { destination_path: `${topic.path}/other.md`, restore_mode: "folder" }, { destination_path: `${topic.path}/note.md` }]) {
+        await assert.rejects(submitRaw(target, client, untrash(t2, "9", extra)), /storage_job_input_invalid/, JSON.stringify(extra));
+      }
+      await assert.rejects(submitRaw(target, client, { ...trash(afterMove), destination_path: `${topic.path}/x.md`, restore_mode: "folder" }),
+        /storage_job_input_invalid/);
+    });
+
+    await t.test("an empty registered directory is trashed and untrashed; non-empty ones, tracks and the root are refused", async () => {
+      const { target, client, storage } = await setup();
+      const empty = await directoryIn(target, storage, "empty-topic");
+      const job = await submitJob(target, client, trash(empty, versionOf(storage, empty)));
+      const done = await executor(target, storage).run(job.reference);
+      assert.equal(done.status, "committed", JSON.stringify(done));
+      assert.equal(storage.files.get(empty.provider_file_id).trashed, true);
+      const proof = (await journal(job)).verified_result_v2.proof;
+      assert.equal(proof.target_kind, "directory"); assert.equal(proof.content, null); assert.equal(proof.checks.empty, true);
+      const back = await submitJob(target, client, untrash(await artifactById(empty.id), versionOf(storage, empty)));
+      assert.equal((await executor(target, storage).run(back.reference)).status, "committed");
+      assert.equal((await artifactById(empty.id)).state, "active");
+      // A registered item inside: refused by the authority before any reservation.
+      const full = await directoryIn(target, storage, "full-topic");
+      await directoryIn(target, storage, "inner", full.path, full.provider_file_id);
+      const before = await counters(), patches = storage.patches;
+      const registered = await submitJob(target, client, trash(full, versionOf(storage, full)));
+      assert.equal((await executor(target, storage).run(registered.reference)).status, "deny");
+      // Only an unregistered (even trashed) item in Drive: DIRECTORY_NOT_EMPTY, still before any reservation.
+      const hidden = await directoryIn(target, storage, "hidden-topic");
+      storage.files.set("hidden-child", { id: "hidden-child", name: "x.txt", parents: [hidden.provider_file_id], version: "1", trashed: true, mimeType: "text/plain" });
+      const driveOnly = await submitJob(target, client, trash(hidden, versionOf(storage, hidden)));
+      const refused = await executor(target, storage).run(driveOnly.reference);
+      assert.equal(refused.status, "deny"); assert.equal(refused.error_code, "DIRECTORY_NOT_EMPTY");
+      assert.equal(storage.patches, patches); assert.equal((await counters()).intents, before.intents);
+      // A track is refused at submit; the root is never a path.
+      const track = await artifact(target, `${target.root}/${TRACK}`);
+      await assert.rejects(submitRaw(target, client, trash(track, "1")), /storage_job_input_invalid/);
+      await assert.rejects(submitRaw(target, client, { ...trash(track, "1"), source_path: target.root }), /storage_path_invalid/);
+    });
+
+    await t.test("a governance file without delete authority, another owner's file, a stale version or another item's ID is refused with zero updates", async () => {
       const { target, client, storage } = await setup();
       const owned = await createFile(target, client, storage, "owned.txt");
+      const other = await createFile(target, client, storage, "other.txt");
       const foreign = await createFile(target, client, storage, "foreign.txt");
       Object.assign(storage.files.get(foreign.provider_file_id), { ownedByMe: false, capabilities: { canTrash: false, canUntrash: false } });
       const governance = await createFile(target, client, storage, "governed.txt");
       await register({ action: "artifact_update", profile_id: target.profile, artifact_id: governance.id, base_version: Number(governance.version),
         path: governance.path, provider_file_id: governance.provider_file_id, provider_file_version: governance.provider_file_version,
         governance_class: "governance", delete_authority: false });
-      const version = id => storage.files.get(id).version;
       const cases = [
-        [trash(governance.path, version(governance.provider_file_id)), "deny"],
-        [trash(foreign.path, version(foreign.provider_file_id)), "deny", "PROVIDER_OWNER_REQUIRED"],
-        [trash(owned.path, String(Number(version(owned.provider_file_id)) + 1)), "deny"],
-        [trash(`${target.root}/${TRACK}`, "1"), "deny"],
+        [trash(governance, versionOf(storage, governance))],
+        [trash(foreign, versionOf(storage, foreign)), "PROVIDER_OWNER_REQUIRED"],
+        [trash(owned, String(Number(versionOf(storage, owned)) + 1))],
+        [{ ...trash(owned, versionOf(storage, owned)), source_file_id: other.provider_file_id }],
       ];
-      for (const [mutation, status, code] of cases) {
+      for (const [mutation, code] of cases) {
         const before = await counters(), job = await submitJob(target, client, mutation);
         const result = await executor(target, storage).run(job.reference);
-        assert.equal(result.status, status, JSON.stringify({ mutation, result }));
+        assert.equal(result.status, "deny", JSON.stringify({ mutation, result }));
         if (code) assert.equal(result.error_code, code);
         assert.equal(storage.patches, 0, "no provider update was attempted");
         assert.equal((await counters()).intents, before.intents, "no durable reservation was made");
@@ -260,91 +377,165 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
       assert.equal((await artifact(target, owned.path)).id, owned.id);
     });
 
-    await t.test("untrash is refused while a new file holds the name; the trashed Artifact stays", async () => {
+    await t.test("artifact_trash settles only by CAS on the Artifact version", async () => {
       const { target, client, storage } = await setup();
-      const created = await createFile(target, client, storage, "taken.txt");
-      const job = await submitJob(target, client, trash(created.path, storage.files.get(created.provider_file_id).version));
-      assert.equal((await executor(target, storage).run(job.reference)).status, "committed");
-      const replacement = await createFile(target, client, storage, "taken.txt");
-      assert.notEqual(replacement.id, created.id);
-      const patches = storage.patches;
-      const restore = await submitJob(target, client, untrash(created.path, storage.files.get(created.provider_file_id).version));
-      const result = await executor(target, storage).run(restore.reference);
-      assert.equal(result.status, "deny", JSON.stringify(result));
-      assert.equal(storage.patches, patches);
-      assert.equal((await artifact(target, created.path, "trashed")).id, created.id);
+      const created = await createFile(target, client, storage, "cas.txt");
+      const input = { action: "artifact_trash", profile_id: target.profile, artifact_id: created.id, path: created.path,
+        provider_file_id: created.provider_file_id, provider_file_version: "9", source_decision_id: decision };
+      for (const bad of [{ base_version: Number(created.version) + 1 }, { base_version: Number(created.version), path: `${target.root}/${TRACK}/x.txt` },
+        { base_version: Number(created.version), provider_file_id: "other-id" }]) {
+        const result = (await admin.query("select public.clued_resource_center_admin_v1($1,$2::jsonb) value", [user,
+          JSON.stringify({ ...input, ...bad, idempotency_key: randomUUID() })])).rows[0].value;
+        assert.equal(result.status, "rejected", JSON.stringify(bad));
+      }
+      assert.equal((await artifactById(created.id)).state, "active");
     });
 
     await t.test("without the destructive level, or in another shape, submit is refused", async () => {
       const initial = await createRoot(), client = await bind(initial), target = await activate(initial);
-      const source = `${target.root}/${TRACK}/a.txt`;
-      await assert.rejects(submitRaw(target, client, trash(source, "3")), /storage_policy_denied/);
-      const enabled = await setup(), root = enabled.target.root;
-      const path = `${root}/${TRACK}/a.txt`;
-      for (const mutation of [{ ...trash(path, "3"), target_kind: "directory" }, { ...trash(path, "3"), destination_path: path },
-        { ...trash(path, "3"), content: "x" }, { ...trash(path, "03") }, { operation: "delete", target_kind: "file", source_path: path },
-        { ...untrash(path, "3"), directory_semantics: "topic" }]) {
+      const item = { path: `${target.root}/${TRACK}/a.txt`, provider_file_id: "drive-a", provider_file_version: "3", target_kind: "file" };
+      await assert.rejects(submitRaw(target, client, trash(item)), /storage_policy_denied/);
+      await assert.rejects(batchRaw(target, client, [trash(item)]), /storage_policy_denied/);
+      const enabled = await setup();
+      const path = `${enabled.target.root}/${TRACK}/a.txt`, good = trash({ ...item, path });
+      for (const mutation of [{ ...good, destination_path: path }, { ...good, content: "x" }, { ...good, source_file_version: "03" },
+        { operation: "delete", target_kind: "file", source_path: path, source_file_version: "3" }, { ...good, source_file_id: "bad id" },
+        { ...good, restore_mode: "folder" }, { ...untrash({ ...item, path }), directory_semantics: "topic" },
+        { operation: "create", target_kind: "file", destination_path: path, content: "x", source_file_id: "drive-a" }]) {
         await assert.rejects(submitRaw(enabled.target, enabled.client, mutation), /storage_job_input_invalid/, JSON.stringify(mutation));
       }
     });
 
-    await t.test("beyond 5 trash jobs in 24 hours each file needs the Owner's native confirmation, consumed once", async () => {
+    await t.test("beyond 5 trash jobs the Agent registers one batch and the Owner confirms it once; each item covers one job", async () => {
       const { target, client, storage } = await setup();
       const files = [];
-      for (let i = 0; i < 8; i++) files.push(await createFile(target, client, storage, `batch-${i}.txt`));
-      const mutationOf = file => trash(file.path, storage.files.get(file.provider_file_id).version);
+      for (let i = 0; i < 9; i++) files.push(await createFile(target, client, storage, `batch-${i}.txt`));
+      const mutationOf = file => trash(file, versionOf(storage, file));
       for (const file of files.slice(0, 5)) await submitJob(target, client, mutationOf(file));
       const before = await counters();
-      await assert.rejects(submitRaw(target, client, mutationOf(files[5])), /storage_trash_confirmation_required/);
+      await assert.rejects(submitRaw(target, client, mutationOf(files[5])), /owner_batch_confirmation_required/);
       assert.equal((await counters()).jobs, before.jobs, "the refusal creates no job");
-      // Another client lineage has its own count.
+      // Another client registration has its own count.
       const other = await bind(target);
-      await submitJob(target, other, mutationOf(files[7]));
-      // The Owner lists the registered files and confirms exactly one of them.
+      await submitJob(target, other, mutationOf(files[8]));
+      // The Agent lists the remaining items once; a wrong version is refused for the whole batch.
+      await assert.rejects(batchRaw(target, client, [mutationOf(files[5]), { ...mutationOf(files[6]), source_file_version: "999" }]),
+        /storage_trash_batch_item_unavailable/);
+      const batchId = randomUUID(), items = [mutationOf(files[5]), mutationOf(files[6])];
+      const pending = await batchOf(target, client, items, batchId);
+      assert.equal(pending.status, "pending"); assert.equal(pending.items.length, 2); assert.equal(pending.replayed, false);
+      assert.equal((await batchOf(target, client, items, batchId)).replayed, true, "same batch_id and items: the same batch");
+      await assert.rejects(batchRaw(target, client, [items[0]], batchId), /storage_trash_batch_conflict/);
+      // Still refused until the Owner confirms.
+      await assert.rejects(submitRaw(target, client, mutationOf(files[5])), /owner_batch_confirmation_required/);
       const status = await confirmation({ action: "status", connection_id: target.connection });
-      assert.equal(status.destructive, true); assert.equal(status.limit, 5);
-      const listed = status.files.find(file => file.artifact_id === files[5].id);
-      assert.equal(listed.path, files[5].path); assert.equal(listed.provider_file_version, files[5].provider_file_version);
-      await assert.rejects(confirmation({ action: "confirm", connection_id: target.connection, base_generation: status.policy_generation + 1,
-        items: [{ artifact_id: listed.artifact_id, artifact_version: listed.artifact_version }], idempotency_key: randomUUID() }), /storage_owner_version_conflict/);
+      assert.equal(status.destructive, true); assert.equal(status.limit, 5); assert.equal(status.batches_truncated, false);
+      const listed = status.batches.find(batch => batch.batch_id === batchId);
+      assert.equal(listed.status, "pending"); assert.deepEqual(listed.items.map(item => item.path), [files[5].path, files[6].path]);
+      assert.ok(listed.items.every(item => item.current && !item.used));
+      await assert.rejects(confirmation({ action: "confirm", connection_id: target.connection, batch_id: batchId,
+        base_generation: status.policy_generation + 1, idempotency_key: randomUUID() }), /storage_owner_version_conflict/);
       const key = randomUUID();
-      const confirmed = await confirmation({ action: "confirm", connection_id: target.connection, base_generation: status.policy_generation,
-        items: [{ artifact_id: listed.artifact_id, artifact_version: listed.artifact_version }], idempotency_key: key });
+      const confirmed = await confirmation({ action: "confirm", connection_id: target.connection, batch_id: batchId,
+        base_generation: status.policy_generation, idempotency_key: key });
       assert.equal(confirmed.status, "committed", JSON.stringify(confirmed));
-      const event = (await admin.query("select change_summary from public.clued_context_events where user_id=$1 and idempotency_key=$2",
-        [user, key])).rows[0].change_summary;
-      assert.deepEqual(event.items, [{ artifact_id: files[5].id, provider_file_id: files[5].provider_file_id, path: files[5].path,
-        provider_file_version: files[5].provider_file_version }]);
-      assert.equal((await confirmation({ action: "status", connection_id: target.connection })).open_items.length, 1);
+      const event = (await admin.query("select change_summary from public.clued_context_events where user_id=$1 and idempotency_key=$2", [user, key])).rows[0].change_summary;
+      assert.deepEqual(event.items.map(item => item.provider_file_id), [files[5].provider_file_id, files[6].provider_file_id]);
+      assert.equal(JSON.stringify(event).includes(files[5].path), false, "events carry Drive IDs and versions, never paths");
+      await assert.rejects(confirmation({ action: "confirm", connection_id: target.connection, batch_id: batchId,
+        base_generation: status.policy_generation, idempotency_key: randomUUID() }), /storage_owner_version_conflict/, "confirmed once");
+      assert.equal((await batchOf(target, client, items, batchId)).status, "confirmed");
+      // The other client registration cannot use this batch.
+      for (const file of files.slice(0, 4)) await submitJob(target, other, mutationOf(file), randomUUID()).catch(() => {});
+      await assert.rejects(submitRaw(target, other, mutationOf(files[5])), /owner_batch_confirmation_required/);
+      // Covered: the sixth job proceeds; replay needs nothing more; the item is used once.
       const jobId = randomUUID();
-      const sixth = await submitJob(target, client, mutationOf(files[5]), jobId);
-      assert.equal(sixth.result.status, "queued");
-      // Replay of the same job does not need (or consume) another confirmation.
+      await submitJob(target, client, mutationOf(files[5]), jobId);
       assert.equal((await submitRaw(target, client, mutationOf(files[5]), jobId)).rows[0].value.replayed, true);
-      assert.equal((await confirmation({ action: "status", connection_id: target.connection })).open_items.length, 0);
-      await assert.rejects(submitRaw(target, client, mutationOf(files[6])), /storage_trash_confirmation_required/);
-      await assert.rejects(submitRaw(target, client, mutationOf(files[5])), /storage_trash_confirmation_required/, "an item is consumed once");
+      await assert.rejects(submitRaw(target, client, mutationOf(files[5])), /owner_batch_confirmation_required/, "an item covers one job");
+      // Not reusable for another version or another item.
+      await assert.rejects(submitRaw(target, client, { ...mutationOf(files[6]), source_file_version: "999" }), /owner_batch_confirmation_required/);
+      await assert.rejects(submitRaw(target, client, mutationOf(files[7])), /owner_batch_confirmation_required/);
+      // A covered job refused before any reservation frees its item again.
+      storage.files.get(files[6].provider_file_id).ownedByMe = false;
+      const refusedJob = await submitJob(target, client, mutationOf(files[6]));
+      const refused = await executor(target, storage).run(refusedJob.reference);
+      assert.equal(refused.error_code, "PROVIDER_OWNER_REQUIRED");
+      await report(refusedJob, refused);
+      assert.equal((await batchOf(target, client, items, batchId)).items[1].used, false);
+      storage.files.get(files[6].provider_file_id).ownedByMe = true;
+      await submitJob(target, client, mutationOf(files[6]));
+      assert.equal((await batchOf(target, client, items, batchId)).items[1].used, true);
     });
 
-    await t.test("a governance file without delete authority cannot be confirmed for the trash", async () => {
+    await t.test("a confirmed batch expires after 24 hours and is voided by a policy replacement", async () => {
       const { target, client, storage } = await setup();
-      const governance = await createFile(target, client, storage, "governed.txt");
-      const updated = await register({ action: "artifact_update", profile_id: target.profile, artifact_id: governance.id, base_version: Number(governance.version),
-        path: governance.path, provider_file_id: governance.provider_file_id, provider_file_version: governance.provider_file_version,
-        governance_class: "governance", delete_authority: false });
-      assert.equal(updated.status, "committed");
-      const status = await confirmation({ action: "status", connection_id: target.connection });
-      const listed = status.files.find(file => file.artifact_id === governance.id);
-      assert.equal(listed.trashable, false);
-      await assert.rejects(confirmation({ action: "confirm", connection_id: target.connection, base_generation: status.policy_generation,
-        items: [{ artifact_id: listed.artifact_id, artifact_version: listed.artifact_version }], idempotency_key: randomUUID() }), /storage_owner_version_conflict/);
+      const files = [];
+      for (let i = 0; i < 8; i++) files.push(await createFile(target, client, storage, `expiry-${i}.txt`));
+      const mutationOf = file => trash(file, versionOf(storage, file));
+      for (const file of files.slice(0, 5)) await submitJob(target, client, mutationOf(file));
+      const confirm = async items => {
+        const batchId = randomUUID();
+        await batchOf(target, client, items, batchId);
+        const status = await confirmation({ action: "status", connection_id: target.connection });
+        const done = await confirmation({ action: "confirm", connection_id: target.connection, batch_id: batchId,
+          base_generation: status.policy_generation, idempotency_key: randomUUID() });
+        assert.equal(done.status, "committed");
+        return batchId;
+      };
+      const expiring = await confirm([mutationOf(files[5])]);
+      await admin.query("set session_replication_role=replica");
+      try {
+        await admin.query("update clued_private.storage_trash_batches_v1 set confirmed_at=confirmed_at-interval '25 hours',confirmed_expires_at=clock_timestamp()-interval '1 hour' where owner_id=$1 and id=$2", [user, expiring]);
+      } finally { await admin.query("set session_replication_role=origin"); }
+      assert.equal((await batchOf(target, client, [mutationOf(files[5])], expiring)).status, "expired");
+      await assert.rejects(submitRaw(target, client, mutationOf(files[5])), /owner_batch_confirmation_required/);
+      // An unconfirmed pending batch also expires and can no longer be confirmed.
+      const stale = randomUUID();
+      await batchOf(target, client, [mutationOf(files[7])], stale);
+      await admin.query("set session_replication_role=replica");
+      try {
+        await admin.query("update clued_private.storage_trash_batches_v1 set created_at=created_at-interval '25 hours',expires_at=clock_timestamp()-interval '1 hour' where owner_id=$1 and id=$2", [user, stale]);
+      } finally { await admin.query("set session_replication_role=origin"); }
+      const listed = await confirmation({ action: "status", connection_id: target.connection });
+      assert.equal(listed.batches.some(batch => batch.batch_id === stale), false);
+      await assert.rejects(confirmation({ action: "confirm", connection_id: target.connection, batch_id: stale,
+        base_generation: listed.policy_generation, idempotency_key: randomUUID() }), /storage_owner_version_conflict/);
+      const replaced = await confirm([mutationOf(files[6])]);
+      assert.equal((await setLevel(target, ["destructive", "modify"], "clued.storage-modify-disclosure/1")).status, "committed");
+      assert.equal((await batchOf(target, client, [mutationOf(files[6])], replaced)).status, "voided");
+      // The level change cancelled the queued jobs (they no longer count); five new ones reach the limit again.
+      for (const file of files.slice(0, 5)) await submitJob(target, client, mutationOf(file));
+      await assert.rejects(submitRaw(target, client, mutationOf(files[6])), /owner_batch_confirmation_required/);
+      assert.equal((await confirmation({ action: "status", connection_id: target.connection })).batches.length, 0);
+    });
+
+    await t.test("the confirmation RPC is native-session only and owner-scoped", async () => {
+      const { target, client, storage } = await setup();
+      const file = await createFile(target, client, storage, "auth.txt");
+      const batchId = randomUUID();
+      await batchOf(target, client, [trash(file, versionOf(storage, file))], batchId);
+      const input = { action: "confirm", connection_id: target.connection, batch_id: batchId, base_generation: 2, idempotency_key: randomUUID() };
+      await assert.rejects(caller.query(`select ${CONFIRM}($1::jsonb)`, [JSON.stringify(input)]), /permission denied/);
+      const sessionless = await connect("authenticated");
+      await sessionless.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)", [user, JSON.stringify({ sub: user })]);
+      await assert.rejects(confirmation(input, sessionless), /storage_native_session_required/);
+      const stranger = randomUUID(), strangerSession = randomUUID();
+      await admin.query("insert into auth.users(id,email) values($1,$2)", [stranger, `stranger-${stranger}@example.invalid`]);
+      await admin.query("insert into auth.sessions(id,user_id) values($1,$2)", [strangerSession, stranger]);
+      const outsider = await connect("authenticated");
+      await outsider.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+        [stranger, JSON.stringify({ sub: stranger, session_id: strangerSession })]);
+      await assert.rejects(confirmation({ action: "status", connection_id: target.connection }, outsider), /storage_owner_denied|storage_owner|42501|denied/);
+      await assert.rejects(confirmation(input, outsider), /storage_owner_denied|denied/);
+      assert.equal((await batchOf(target, client, [trash(file, versionOf(storage, file))], batchId)).status, "pending");
     });
 
     await t.test("a lost update reply leaves the intent fenced; recovery re-verifies by GET and settles once", async () => {
       const { target, client, storage } = await setup();
       const created = await createFile(target, client, storage, "lost.txt");
       storage.losePatch = true;
-      const job = await submitJob(target, client, trash(created.path, storage.files.get(created.provider_file_id).version));
+      const job = await submitJob(target, client, trash(created, versionOf(storage, created)));
       const result = await executor(target, storage).run(job.reference);
       assert.equal(result.status, "unreconciled");
       assert.equal(storage.patches, 1);
@@ -363,10 +554,11 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
       const metadata = createGoogleDriveMetadataApi({ get_credential: async () => ({ access_token: "fixture-destructive-access", scope: SCOPES }),
         fetch: async (url, init = {}) => { assert.equal(init.method ?? "GET", "GET"); return storage.fetch(url, init); } });
       const verify = createGoogleDriveDestructivePostconditionVerifier({ managed_root: descriptor.profile.managed_root, root_folder_id: descriptor.root_folder_id,
-        root_parent_id: descriptor.root_parent_id, get_file: metadata.getFile, list_children: metadata.listChildren, include_verified_proof: true });
+        root_parent_id: descriptor.root_parent_id, get_file: metadata.getFile, list_children: metadata.listChildren,
+        has_children: metadata.hasChildren, include_verified_proof: true });
       const { verified_proof: proof, ...postcondition } = await verify({ profile: descriptor.profile, mutation: descriptor.mutation,
         provider_before: descriptor.provider_before, effect_result: { operation: "delete", source_path: descriptor.mutation.source_path,
-          provider_file_id: descriptor.attempt.provider_file_id, content: descriptor.attempt.content } });
+          destination_path: null, provider_file_id: descriptor.attempt.provider_file_id, content: descriptor.attempt.content } });
       const finish = { action: "finalize", intent_id: descriptor.intent_id, base_version: descriptor.version, request_sha256: descriptor.request_sha256,
         idempotency_key: `account-job:${job.reference.job_id}:finalize`, postcondition };
       const recorded = await cloud({ action: "verified_record", ...job.reference, credential_version: descriptor.credential_version, finish, proof });

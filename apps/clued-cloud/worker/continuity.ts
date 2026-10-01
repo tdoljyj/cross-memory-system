@@ -54,7 +54,7 @@ import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
 import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages,
-  storageTrashConfirmationMessage, storageTrashConfirmationRequired } from "./storage-agent-tools";
+  storageDestructiveCode, storageDestructiveMessages, storageTrashBatchInput, storageTrashBatchResult } from "./storage-agent-tools";
 import { createStagingRuntime, handleStagingPut, loadStagedContent, stageInline, stagingErrorCode, storageUploadBeginTool,
   sweepStaging, uploadBegin, uploadErrorBody, StorageUploadError, type StagingBucket } from "./storage-staging";
 import { createStorageReadAgent, storageReadTool, storageContentTool, StorageReadError, STORAGE_IMAGE } from "./storage-read-agent";
@@ -2045,6 +2045,30 @@ async function callTool(
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
     }
   }
+  if (name === "clued_storage_trash_batch") {
+    if (!storageJobsEnabled(env)) throw new HttpError(404, "Storage jobs are disabled.");
+    // StorageFullCapability P5 (Decision 7f9daf68): one Owner-confirmed batch of trash/untrash items.
+    // Only registers a pending batch; never dispatches execution.
+    try {
+      const input = storageTrashBatchInput(args);
+      const token = bearerToken(request);
+      if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new HttpError(403, "A valid Clued Binding is required.");
+      const result = storageTrashBatchResult(await supabaseRequest(env, "/rest/v1/rpc/clued_storage_trash_batch_v1", {
+        method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
+      }), input);
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
+    } catch (error) {
+      const pathCode = storagePathCode(error);
+      const message = error instanceof Error ? error.message : "";
+      const result = pathCode ? { error: pathCode, message: storagePathMessages[pathCode] }
+        : message === "storage_trash_batch_item_unavailable"
+          ? { error: "storage_trash_batch_item_unavailable", message: "An item does not match a Clued-registered item that can be moved to (or out of) the trash at that path, Drive file ID and version. Stat each item again; leave out the root, tracks, non-empty directories and governance files without delete authority." }
+          : message === "storage_trash_batch_conflict"
+            ? { error: "storage_trash_batch_conflict", message: "This batch_id already names a batch with other items. Use a new batch_id for a different list." }
+            : { error: "storage_trash_batch_unavailable", message: "Storage trash batch unavailable. Send the same batch_id and items again to read its status." };
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+    }
+  }
   if (isStorageAgentTool(name)) {
     if (!storageJobsEnabled(env)) throw new HttpError(404, "Storage jobs are disabled.");
     let binary = false;
@@ -2086,8 +2110,9 @@ async function callTool(
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
       }
       // The trash limit (StorageFullCapability §3.4 item 4) is a fixed refusal decided before any job exists.
-      if (storageTrashConfirmationRequired(error)) {
-        const result = { error: "storage_trash_confirmation_required", message: storageTrashConfirmationMessage };
+      const destructiveCode = storageDestructiveCode(error);
+      if (destructiveCode) {
+        const result = { error: destructiveCode, message: storageDestructiveMessages[destructiveCode] };
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
       }
       // No provider, issuer, credentials, paths or database diagnostics in errors.

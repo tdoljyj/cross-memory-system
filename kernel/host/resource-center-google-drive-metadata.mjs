@@ -238,7 +238,24 @@ export function createGoogleDriveMetadataApi({
     throw new Error("DRIVE_PAGINATION_LIMIT");
   }
 
-  return Object.freeze({ getFile, getSharing, getOwnership, getRevision, countKeptRevisions, downloadRevision, listChildren: (input, {signal} = {}) => list(input, false, signal),
+  // Whether a folder has ANY child, trashed ones included (P5 empty-directory
+  // trash/untrash). Needs namespace visibility: drive.file alone would hide
+  // other applications' files, so an empty answer is never trusted without it.
+  async function hasChildren(parentId, {signal} = {}) {
+    signal?.throwIfAborted();
+    const token = await credential(true);
+    const url = new URL(DRIVE_API);
+    url.searchParams.set("q", `${driveLiteral(parentId)} in parents`);
+    url.searchParams.set("fields", "nextPageToken,incompleteSearch,files(id)");
+    url.searchParams.set("pageSize", "1");
+    url.searchParams.set("supportsAllDrives", "true");
+    url.searchParams.set("includeItemsFromAllDrives", "true");
+    const result = await read(url.href, token, signal);
+    if (!Array.isArray(result?.files) || result.incompleteSearch === true) throw new Error("DRIVE_LIST_INVALID");
+    return result.files.length > 0 || (typeof result.nextPageToken === "string" && result.nextPageToken.length > 0);
+  }
+
+  return Object.freeze({ getFile, getSharing, getOwnership, hasChildren, getRevision, countKeptRevisions, downloadRevision, listChildren: (input, {signal} = {}) => list(input, false, signal),
     listFolder: (parentId, {signal, app_authorized: appAuthorized = false} = {}) => {
       if (typeof appAuthorized !== "boolean") throw new TypeError("app_authorized must be boolean.");
       return list({ parent_id: parentId }, true, signal, appAuthorized);

@@ -32,7 +32,7 @@ async function setup(operation, { trashed = operation === "delete", parent = "tr
       size: "12", sha256Checksum: "c".repeat(64), md5Checksum: "d".repeat(32), headRevisionId: "rev-1" }]]);
   const vaultConfig = { current_key_id: "test", keys: { test: randomBytes(32).toString("base64url") } };
   const vault = await createStorageCredentialVault(vaultConfig);
-  const mutation = { operation, target_kind: "file", source_path: TRACK + "/a.txt", source_file_version: "5" };
+  const mutation = { operation, target_kind: "file", source_path: TRACK + "/a.txt", source_file_version: "5", source_file_id: "file" };
   const provider = { root_folder_id: "root", root_parent_id: "container", root_folder_version: "1", source_file_id: "file",
     source_file_version: "5", destination_parent_id: null, destination_parent_version: null, destination_file_id: null,
     destination_file_version: null, provider_version: "a".repeat(64), root_sharing_digest: null, destination_parent_sharing_digest: null,
@@ -42,7 +42,8 @@ async function setup(operation, { trashed = operation === "delete", parent = "tr
     request_sha256: "b".repeat(64), root_folder_id: "root", root_parent_id: "container",
     profile: { registration_status: "registered", profile_id: "p", profile_version: "1", managed_root: ROOT }, mutation, provider_before: provider,
     attempt: { contract: "clued.storage-destructive-attempt/1", intent_id: ids.intent, operation, provider_file_id: "file",
-      source_path: mutation.source_path, source_file_version: "5", parent_id: "track", target_kind: "file", content: CONTENT } };
+      source_path: mutation.source_path, source_file_version: "5", destination_path: null, restore_mode: null,
+      parent_id: "track", target_kind: "file", content: CONTENT } };
   descriptor.credential_envelope = await vault.seal(JSON.stringify({ access_token: "recovery-access-token-0001", scope: SCOPE,
     token_type: "Bearer", expires_at_ms: Date.now() + 3600000 }), { owner_id: ids.owner, connection_id: ids.connection, provider: "google-drive",
     provider_subject: "subject", oauth_client_id: "test-client", credential_version: 1 });
@@ -53,7 +54,8 @@ async function setup(operation, { trashed = operation === "delete", parent = "tr
       const u = new URL(String(url)), query = u.searchParams.get("q");
       if (query) {
         const parentId = /'([^']+)' in parents/.exec(query)[1], name = /name = '([^']+)'/.exec(query)?.[1];
-        return Response.json({ files: [...files.values()].filter(f => f.parents.includes(parentId) && !f.trashed && (!name || f.name === name)), incompleteSearch: false });
+        const all = !/trashed = false/.test(query); // hasChildren counts trashed children too
+        return Response.json({ files: [...files.values()].filter(f => f.parents.includes(parentId) && (all || !f.trashed) && (!name || f.name === name)), incompleteSearch: false });
       }
       const found = files.get(u.pathname.split("/").at(-1));
       return found ? Response.json(found) : new Response("", { status: 404 });

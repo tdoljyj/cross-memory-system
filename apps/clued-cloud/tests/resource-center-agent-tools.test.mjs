@@ -21,10 +21,10 @@ test('discovery and guessed calls require both existing account/jobs flags; no p
   for (const flags of [{}, { CLUED_STORAGE_ACCOUNT_V1: 'true' }, { CLUED_STORAGE_JOBS_V1: 'true' }, env]) {
     const result = await (await worker.fetch(rpc('tools/list', {}), flags)).json();
     const tools = result.result.tools.filter(x => x.name.startsWith('clued_storage_'));
-    assert.equal(tools.length, flags === env ? 2 : 0);
+    assert.equal(tools.length, flags === env ? 3 : 0);
     if (flags !== env) assert.equal((await submit(undefined, flags)).status, 404);
     else {
-      assert.deepEqual(tools.map(x => x.name), ['clued_storage_submit', 'clued_storage_inspect']);
+      assert.deepEqual(tools.map(x => x.name), ['clued_storage_submit', 'clued_storage_inspect', 'clued_storage_trash_batch']);
       assert.equal(tools[0].annotations.readOnlyHint, false);
       assert.equal(tools[1].annotations.readOnlyHint, true);
       assert.equal(tools[0].inputSchema.additionalProperties, false);
@@ -231,46 +231,110 @@ test('replace passes with new content or a restore job in its exact shape and re
   } finally { globalThis.fetch = before; }
 });
 
-test('trash and untrash pass only in their exact shape and reach the jobs RPC as delete and restore', async () => {
+test('trash and untrash pass only in their exact shape (Drive ID, path, version) and reach the jobs RPC as delete and restore', async () => {
   const before = globalThis.fetch; const calls = [];
   globalThis.fetch = async (_url, init) => { calls.push(JSON.parse(init.body)); return Response.json(status()); };
   const path = 'G:/My Drive/Clued_资料中心/track/topic/a.md';
+  const item = { target_kind: 'file', source_path: path, source_file_version: '7', source_file_id: 'drive-a' };
   const good = [
-    [{ operation: 'trash', target_kind: 'file', source_path: path, source_file_version: '7' }, 'delete'],
-    [{ operation: 'untrash', target_kind: 'file', source_path: '90_待归类/a.md', source_file_version: '8' }, 'restore'],
+    [{ operation: 'trash', ...item }, { operation: 'delete', ...item }],
+    [{ operation: 'trash', ...item, target_kind: 'directory', source_path: 'track/empty' }, { operation: 'delete', ...item, target_kind: 'directory', source_path: 'track/empty' }],
+    [{ operation: 'untrash', ...item, source_path: '90_待归类/a.md' }, { operation: 'restore', ...item, source_path: '90_待归类/a.md' }],
+    // The user's explicit choices after restore_name_conflict.
+    [{ operation: 'untrash', ...item, source_path: '90_待归类/a.md', restore_folder: '20_P/topic' },
+      { operation: 'restore', ...item, source_path: '90_待归类/a.md', destination_path: '20_P/topic/a.md', restore_mode: 'folder' }],
+    [{ operation: 'untrash', ...item, restore_name: 'a (2).md' },
+      { operation: 'restore', ...item, destination_path: 'G:/My Drive/Clued_资料中心/track/topic/a (2).md', restore_mode: 'suffix' }],
   ];
   const bad = [
-    { ...good[0][0], destination_path: path }, { ...good[0][0], source_file_version: '0' }, { ...good[0][0], source_file_version: 7 },
-    { ...good[0][0], target_kind: 'directory' }, { ...good[0][0], content: 'x' }, { operation: 'trash', target_kind: 'file', source_path: path },
-    { ...good[1][0], directory_semantics: 'topic' }, { operation: 'delete', target_kind: 'file', source_path: path, source_file_version: '7' },
-    { operation: 'restore', target_kind: 'file', source_path: path, source_file_version: '7' },
+    { operation: 'trash', ...item, destination_path: path }, { operation: 'trash', ...item, source_file_version: '0' },
+    { operation: 'trash', ...item, source_file_version: 7 }, { operation: 'trash', ...item, content: 'x' },
+    { operation: 'trash', target_kind: 'file', source_path: path, source_file_version: '7' },
+    { operation: 'trash', ...item, source_file_id: 'bad id' }, { operation: 'trash', ...item, restore_folder: 'x' },
+    { operation: 'untrash', ...item, directory_semantics: 'topic' }, { operation: 'untrash', ...item, restore_folder: 'x', restore_name: 'a (1).md' },
+    { operation: 'untrash', ...item, restore_name: 'b (1).md' }, { operation: 'untrash', ...item, restore_name: 'a (100).md' },
+    { operation: 'untrash', ...item, restore_name: 'x/a (1).md' }, { operation: 'untrash', ...item, target_kind: 'directory', restore_name: 'a (1).md' },
+    { operation: 'delete', ...item }, { operation: 'restore', ...item },
   ];
   try {
     for (const input of bad) {
       const reply = await (await submit({ ...ref, mutation: input })).json();
       assert.ok(reply.result?.isError === true || reply.error, JSON.stringify(input));
     }
-    const invalid = (await (await submit({ ...ref, mutation: { ...good[0][0], source_path: '90_待归类/../a.md' } })).json()).result;
+    const invalid = (await (await submit({ ...ref, mutation: { operation: 'trash', ...item, source_path: '90_待归类/../a.md' } })).json()).result;
     assert.equal(invalid.structuredContent.error, 'storage_path_invalid');
     assert.equal(calls.length, 0);
-    for (const [input, operation] of good) {
+    for (const [input, expected] of good) {
       const reply = (await (await submit({ ...ref, mutation: input })).json()).result;
-      assert.equal(reply.isError, false);
-      assert.deepEqual(calls.at(-1).p_input, { ...ref, mutation: { ...input, operation }, action: 'submit' });
+      assert.equal(reply.isError, false, JSON.stringify(input));
+      assert.deepEqual(calls.at(-1).p_input, { ...ref, mutation: expected, action: 'submit' });
     }
   } finally { globalThis.fetch = before; }
 });
 
-test('the trash limit refusal is a fixed code with guidance and schedules nothing', async () => {
-  const before = globalThis.fetch; const pending = [];
-  globalThis.fetch = async () => Response.json({ message: 'storage_trash_confirmation_required', code: '42501' }, { status: 403 });
+test('the trash limit and an untrash name conflict are fixed refusals with guidance that schedule nothing', async () => {
+  const before = globalThis.fetch; const pending = []; let code;
+  globalThis.fetch = async () => Response.json({ message: code, code: '42501' }, { status: 403 });
+  const mutationOf = operation => ({ operation, target_kind: 'file', source_path: '90_待归类/a.md', source_file_version: '3', source_file_id: 'drive-a' });
   try {
-    const reply = (await (await submit({ ...ref, mutation: { operation: 'trash', target_kind: 'file',
-      source_path: '90_待归类/a.md', source_file_version: '3' } }, env, { waitUntil: p => pending.push(p) })).json()).result;
-    assert.equal(reply.isError, true);
-    assert.equal(reply.structuredContent.error, 'storage_trash_confirmation_required');
-    assert.match(reply.structuredContent.message, /Owner/);
+    code = 'owner_batch_confirmation_required';
+    let reply = (await (await submit({ ...ref, mutation: mutationOf('trash') }, env, { waitUntil: p => pending.push(p) })).json()).result;
+    assert.equal(reply.isError, true); assert.equal(reply.structuredContent.error, 'owner_batch_confirmation_required');
+    assert.match(reply.structuredContent.message, /clued_storage_trash_batch/); assert.match(reply.structuredContent.message, /全部确认/);
+    code = 'restore_name_conflict';
+    reply = (await (await submit({ ...ref, mutation: mutationOf('untrash') }, env, { waitUntil: p => pending.push(p) })).json()).result;
+    assert.equal(reply.structuredContent.error, 'restore_name_conflict');
+    assert.match(reply.structuredContent.message, /ask the user/); assert.match(reply.structuredContent.message, /restore_folder/);
+    assert.match(reply.structuredContent.message, /restore_name/);
     assert.equal(pending.length, 0);
+  } finally { globalThis.fetch = before; }
+});
+
+test('inspect adds a fixed Worker hint for RESTORE_NAME_CONFLICT and DIRECTORY_NOT_EMPTY only', async () => {
+  const before = globalThis.fetch; let reason;
+  globalThis.fetch = async () => Response.json({ ...status('denied'), reason_code: reason, hint: 'database text must not pass' });
+  try {
+    for (reason of ['RESTORE_NAME_CONFLICT', 'DIRECTORY_NOT_EMPTY']) {
+      const r = (await (await call('clued_storage_inspect', ref, env, { waitUntil: () => {} })).json()).result;
+      assert.equal(r.structuredContent.reason_code, reason); assert.match(r.structuredContent.hint, reason === 'RESTORE_NAME_CONFLICT' ? /ask the user/ : /empty directory/);
+    }
+    reason = 'UNAUTHORIZED_WORKSPACE_MUTATION';
+    const r = (await (await call('clued_storage_inspect', ref, env, { waitUntil: () => {} })).json()).result;
+    assert.equal('hint' in r.structuredContent, false);
+  } finally { globalThis.fetch = before; }
+});
+
+test('clued_storage_trash_batch registers one batch through its own RPC and returns only fixed fields', async () => {
+  const before = globalThis.fetch; const calls = []; let reply;
+  globalThis.fetch = async (url, init) => { calls.push({ url: String(url), body: JSON.parse(init.body) }); return Response.json(reply); };
+  const batch = { connection_id: ref.connection_id, batch_id: '40000000-0000-4000-8000-000000000004',
+    items: [{ operation: 'trash', target_kind: 'file', source_path: '90_待归类/a.md', source_file_version: '3', source_file_id: 'drive-a' },
+      { operation: 'untrash', target_kind: 'directory', source_path: '90_待归类/old', source_file_version: '2', source_file_id: 'drive-d' }] };
+  const view = { batch_id: batch.batch_id, connection_id: ref.connection_id, status: 'pending', expires_at: '2026-10-02T00:00:00Z',
+    created_at: '2026-10-01T00:00:00Z', execution_permitted: false, replayed: false, private_owner_field: 'x',
+    items: [{ operation: 'delete', target_kind: 'file', path: '/r/90_待归类/a.md', provider_file_id: 'drive-a', provider_file_version: '3', used: false, current: true }] };
+  try {
+    for (const input of [{ ...batch, items: [] }, { ...batch, items: [{ ...batch.items[0], restore_name: 'a (1).md' }] },
+      { ...batch, items: [{ ...batch.items[0], operation: 'delete' }] }, { ...batch, extra: 1 }, { ...batch, batch_id: 'x' },
+      { ...batch, items: Array.from({ length: 51 }, () => batch.items[0]) }]) {
+      const r = (await (await call('clued_storage_trash_batch', input)).json()).result;
+      assert.equal(r.isError, true, JSON.stringify(input));
+    }
+    assert.equal(calls.length, 0);
+    reply = view;
+    const r = (await (await call('clued_storage_trash_batch', batch)).json()).result;
+    assert.equal(r.isError, false);
+    assert.equal(calls[0].url, env.SUPABASE_URL + '/rest/v1/rpc/clued_storage_trash_batch_v1');
+    assert.deepEqual(calls[0].body, { p_token_hash: createHash('sha256').update(token).digest('hex'), p_input: { ...batch,
+      items: [{ ...batch.items[0], operation: 'delete' }, { ...batch.items[1], operation: 'restore' }] } });
+    assert.deepEqual(r.structuredContent, { batch_id: batch.batch_id, connection_id: ref.connection_id, status: 'pending',
+      expires_at: view.expires_at, items: [{ operation: 'trash', target_kind: 'file', path: '/r/90_待归类/a.md', provider_file_id: 'drive-a',
+        provider_file_version: '3', used: false }], execution_permitted: false, replayed: false });
+    reply = { ...view, execution_permitted: true };
+    assert.equal((await (await call('clued_storage_trash_batch', batch)).json()).result.isError, true);
+    globalThis.fetch = async () => Response.json({ message: 'storage_trash_batch_item_unavailable', code: '22023' }, { status: 400 });
+    const refused = (await (await call('clued_storage_trash_batch', batch)).json()).result;
+    assert.equal(refused.structuredContent.error, 'storage_trash_batch_item_unavailable');
   } finally { globalThis.fetch = before; }
 });
 
