@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 7
+Contract version: 8
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -11,7 +11,17 @@ This file is the single normative source for how any Agent, on any Host, uses Cl
 3. Keep the returned `session_token` and `version`. That `version` is the session version, used only as the checkpoint `base_version`. Record mutations use each record's own `version`. The `canonical_version` in mutation results is neither.
 4. A session token expires after 3600 seconds. After expiry, or when you continue after a long wait (CI, scheduled checks), resume again instead of reusing old values.
 5. Resume returns resident constraints (`active_constraints`, decisions the Owner marked as standing rules) as an index: `id`, `title`, `scope`, `version`, `updated_at` and a one-line `summary`. `summary_is_full_text: true` means the summary is the whole text. Read the index in full. Before you act in an area a constraint covers, or when its title or summary may bear on your work, read its full text by resuming again with `constraint_ids` (up to 50 ids, returned in full inside the index); do not act on a summary alone. `constraint_view: "full"` returns every constraint in full.
-6. Resume lists unabsorbed work-log events newest first (`event_order: "newest"`, the default); to read older ones, resume again with `event_cursor` set to the returned `next_cursor`. `event_order: "oldest"` pages from the oldest instead. `pending_event_count` counts every unabsorbed event; `checkpoint_recommended` and `pending_event_count_recent` count only those of the last 24 hours.
+6. When the service offers work claims, resume also returns `contract_version`, the version it serves at `/clued-agent.md`. If it differs from the `Contract version` line of the copy you follow, read the served contract and follow it before doing any work; if you cannot, tell the Owner which versions differ and stop.
+7. Claim work before you spend on it. When the service offers `clued_work_claim`, any work that will change repository files, run an install, build or test, start CI, open a pull request or dispatch a subtask first claims its active Task. The work needs an active Task: when none exists, create it under §3 or ask the Owner.
+   - Read `active_work_claims` in the resume. If a live claim names the same Task, overlaps the paths you will change, or shares what set the work off, do not start: tell the Owner who holds it.
+   - Call `clued_work_claim` with the Task `id`, a `write_set` of the paths or globs you will change, `trigger_refs` for what set the work off (for example `ghsa:<id>`, `ci:<check>@<base_sha>`, `issue:<n>`, `pr:<n>`), `base_commit` and a stable `idempotency_key`. Keep the returned `claim_id`, `fence` and `lease_version`.
+   - On `work_claim_conflict`, stop and report the holder the error names. Never retry under another title, another Task, a new idempotency key or another Binding.
+   - Before the lease expires, call `clued_work_renew` with a new `progress_ref` (a pushed head SHA or a Receipt id). To change paths outside your `write_set`, renew with the wider `write_set` first; it is checked for conflicts again.
+   - Put `Clued-Work-Claim: <claim_id>` in the pull request body and as a trailer of the head commit, and add `Clued-Work-Scope: project:<id>` when the Task is not Global. The `clued-work-admission` check verifies the claim against the pull request's changed paths and, once the Owner turns enforcement on, rejects a pull request whose claim is missing, expired, superseded or too narrow.
+   - Release the claim when the work ends: `completed` with the merged pull request or commit as `evidence_ref`, `abandoned` when you stop, `draining` while an action you already started cannot be cancelled.
+   - `clued_work_takeover` is only for an expired claim whose holder is gone. A live claim is never preempted, whatever the priority.
+   - When the service does not offer the work-claim tools, claims are unavailable: say so in the pull request and continue. A claim does not cover model tokens spent before your first Clued call or work on a Host that never calls Clued.
+8. Resume lists unabsorbed work-log events newest first (`event_order: "newest"`, the default); to read older ones, resume again with `event_cursor` set to the returned `next_cursor`. `event_order: "oldest"` pages from the oldest instead. `pending_event_count` counts every unabsorbed event; `checkpoint_recommended` and `pending_event_count_recent` count only those of the last 24 hours.
 
 ## 2. Read
 
@@ -63,6 +73,9 @@ Rules for every capture:
 | `current_truth_changed_since_resume` (checkpoint) | A write changed current state after resume or the last reconcile | Reconcile with the same token, then retry the checkpoint (§5) |
 | `checkpoint_event_not_authorized` (checkpoint) | `coverage.event_ids` lists an event of another context | Checkpoint each context in its own session (§5) |
 | `lifecycle_action_cannot_edit_record_content` | A close or restore carried content fields | Send only `closure_summary` / `closed_reason` |
+| `work_claim_conflict` | A live claim of another holder names the same Task, overlaps your `write_set` or shares a trigger ref | Stop and report the holder to the Owner (§1.7); never retry under another title, Task, key or Binding |
+| `work_claim_no_progress` (renew) | The `progress_ref` was already sent | Renew only after real progress, with the new head SHA or Receipt id |
+| `work_claim_still_active` (takeover) | The claim's lease has not expired | Leave it to its holder; report to the Owner if you think it is stuck |
 | `INVALID_RECORD_FIELDS` | Missing or malformed fields; MCP returns an HTTP 200 `isError: true` rejected tool result | Read `error.missing_fields` and `error.invalid_fields`, fix the listed fields and retry once; field paths and error codes are returned without request values |
 
 5. Treat revoked or expired credentials as hard stops and resume again instead of overwriting; missing capability or failed admission remains unavailable. Report exactly what is unavailable and continue unrelated work.

@@ -358,6 +358,8 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 - 连接转入 `account_policy` 须满足模式守卫与延迟一致性触发器（`20260928051323_…:207-248`）；`storage_oauth_apps_v1.execution_enabled` 与 `read_enabled` 须为 true（`20260927104436_…:3`、`20260930010000_…:7`）。
 - 读 agent 拒绝离过期 ≤ 60 秒的 token（`storage-read-agent.ts:218-220`），因此没有刷新委托的连接约 1 小时后不可用。
 
+> 实施后变更（Owner Decision `ba02734a`，迁移 `20261001120000_storage_onboard_gate_v2.sql`）：N0 接入的 `begin` / `activate` 只要求 `read_enabled`；`execution_enabled` 仍只管写入任务，不再管接入。上面"现状约束"记录的是 N0 实施前的状态。
+
 所以“新建目录”路径在 OAuth 之前**不存在**可写入 profile 的根 ID，不能沿用“先 register 连接再 OAuth”。N0 采用独立的接入 attempt，所有 canonical 行在最后一个事务中创建。
 
 **对象与顺序**：

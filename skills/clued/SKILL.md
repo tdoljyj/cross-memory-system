@@ -29,6 +29,8 @@ For protected context work, satisfy applicable higher-priority endpoint/reposito
 
 ## Shared execution rules
 
+Before spending on work that changes the repository or runs installs, builds, tests or CI, claim its Task as the contract's §1.7 says. A `work_claim_conflict` means another holder is on it: stop and tell the Owner, never retry under another title or Task.
+
 Preserve already explicit user intent and authority; do not request duplicate confirmation for the same authorized action. Scope expansion, protected writes and production changes still require the authority applicable to that operation.
 
 Use the minimum relevant data. Authentication failure, missing capability, version conflict and uncertain completion are different failures. Preserve existing evidence, do one useful diagnosis or change the failing approach, and continue independent authorized work. Never turn a local failure into a blanket halt or an unsupported PASS.
