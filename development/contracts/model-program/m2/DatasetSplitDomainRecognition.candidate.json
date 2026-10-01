@@ -78,8 +78,8 @@
     },
     {
       "path": "apps/clued-cloud/worker/records.ts",
-      "size_bytes": 12150,
-      "sha256": "7c6296e10a8851b9336d7c7acb09abd2954405d6e9f5146bb8eb2dd6da87f6e9"
+      "size_bytes": 15667,
+      "sha256": "a249e025704edfea91a069d4ab278745b01a61c06f0b0fffd6a18ffab489073b"
     },
     {
       "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",

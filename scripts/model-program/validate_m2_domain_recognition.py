@@ -21,7 +21,7 @@ from validate_m2_dataset_foundation import BASE, FoundationError, digest, load, 
 from validate_m2_dataset_split import verify_artifact
 
 CONTRACT = BASE / "DatasetSplitDomainRecognition.candidate.json"
-CONTRACT_SHA256 = "5afbac3eb11f208fda3e2fe3d549badecf8b1703138b434ba0b99a2b1323be28"
+CONTRACT_SHA256 = "785e817d5a529bc0250d4c1feb1b4b155a481a1c841a6237f599bca969a16f87"
 SCHEMA_PATH = "development/contracts/model-program/m2/schemas/DatasetSplitDomainRecognitionRequest.schema.json"
 SCOPE = "project:0597aa60-9b98-4da6-a4ab-63d7705b632f"
 SERVICE = "clued-cloud/supabase"
@@ -32,6 +32,16 @@ MODE = "SYNTHETIC_TEST_DOUBLE"
 MAX_READ_AGE_SECONDS = 300
 MAX_PERMISSION_WINDOW_SECONDS = 3600
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+def clock_time(clock):
+    value = clock()
+    require(isinstance(value, datetime) and value.tzinfo == timezone.utc, "DOMAIN_CLOCK")
+    return value
 
 
 class CanonicalReader(Protocol):
@@ -83,14 +93,14 @@ def fresh(view, now):
     require(0 <= age <= MAX_READ_AGE_SECONDS, "DOMAIN_STALE_SERVICE_VIEW")
 
 
-def current_record(reader, ref, now, record_type, authority=None):
+def current_record(reader, ref, clock, record_type, authority=None):
     require(isinstance(ref, dict) and set(ref) == {"id", "version", "content_hash"}
             and isinstance(ref["id"], str) and re.fullmatch(UUID, ref["id"])
             and type(ref["version"]) is int and ref["version"] > 0
             and isinstance(ref["content_hash"], str)
             and re.fullmatch(r"[0-9a-f]{64}", ref["content_hash"]), "DOMAIN_RECORD_REFERENCE")
     row = reader.read_record(ref["id"])
-    fresh(row, now)
+    fresh(row, clock_time(clock))
     require(row.get("id") == ref["id"] and type(row.get("version")) is int
             and row["version"] == ref["version"]
             and row.get("content_hash") == ref["content_hash"], "DOMAIN_RECORD_BINDING")
@@ -103,9 +113,9 @@ def current_record(reader, ref, now, record_type, authority=None):
     return row
 
 
-def committed_receipt(reader, row, principal, now):
+def committed_receipt(reader, row, principal, clock):
     receipt = reader.read_receipt(row["receipt_id"])
-    fresh(receipt, now)
+    fresh(receipt, clock_time(clock))
     require(receipt.get("id") == row["receipt_id"]
             and receipt.get("status") == "committed"
             and receipt.get("operation_family") == "record_mutation", "DOMAIN_RECEIPT_STATUS_OR_OPERATION")
@@ -117,7 +127,7 @@ def committed_receipt(reader, row, principal, now):
     event_ids = receipt.get("event_ids")
     require(isinstance(event_ids, list) and len(event_ids) == 1, "DOMAIN_RECEIPT_EVENT")
     event = reader.read_event(event_ids[0])
-    fresh(event, now)
+    fresh(event, clock_time(clock))
     require(event.get("id") == event_ids[0]
             and event.get("canonical_event_type") in ("record_created", "record_updated")
             and event.get("result") == "success"
@@ -129,18 +139,19 @@ def committed_receipt(reader, row, principal, now):
             and event["committed_canonical_version"] == receipt.get("canonical_version")
             and event.get("actor_user_id") == principal["subject_id"]
             and event.get("actor_binding_id") == principal["binding_id"], "DOMAIN_EVENT_BINDING")
-    return receipt
+    return receipt, event
 
 
-def _validate_recognition(request, reader, now):
+def _validate_recognition(request, reader, clock):
     contract, schema = validate_contract()
     require(not list(Draft202012Validator(schema).iter_errors(request)), "DOMAIN_REQUEST_SCHEMA")
     require(request["contract_sha256"] == CONTRACT_SHA256
             and request["subject"] == contract["subject"], "DOMAIN_REQUEST_BINDING")
     require(reader is not None, "DOMAIN_AUTHORITY_NOT_CONFIGURED")
     require(getattr(reader, "mode", None) == MODE, "DOMAIN_LIVE_CAPABILITY_NOT_IMPLEMENTED")
+    started_at = clock_time(clock)
     ctx = reader.authorization_context()
-    fresh(ctx, now)
+    fresh(ctx, clock_time(clock))
     require(ctx.get("service") == SERVICE and ctx.get("domain_admission") == "AUTHORIZED"
             and ctx.get("environment") == "NON_PRODUCTION"
             and ctx.get("action") == ACTION and ctx.get("subject") == contract["subject"],
@@ -153,10 +164,10 @@ def _validate_recognition(request, reader, now):
     adoption = contract["owner_adoption"]
     owner = current_record(reader, {"id": adoption["canonical_record_id"],
         "version": adoption["record_version"], "content_hash": adoption["record_content_sha256"]},
-        now, "decision", "user_explicit")
+        clock, "decision", "user_explicit")
     require(owner.get("receipt_id") == adoption["canonical_receipt_id"], "DOMAIN_OWNER_RECEIPT_BINDING")
     grant_ref = ctx["permission_record_ref"]
-    grant_row = current_record(reader, grant_ref, now, "decision", "user_explicit")
+    grant_row = current_record(reader, grant_ref, clock, "decision", "user_explicit")
     grant = grant_row["type_fields"].get("domain_permission")
     require(isinstance(grant, dict) and set(grant) == {"status", "revoked_at", "not_before",
         "expires_at", "action", "effect", "environment", "canonical_scope", "subject",
@@ -164,7 +175,7 @@ def _validate_recognition(request, reader, now):
     require(grant.get("status") == "active" and grant.get("revoked_at") is None,
             "DOMAIN_PERMISSION_REVOKED")
     not_before, expires = timestamp(grant.get("not_before")), timestamp(grant.get("expires_at"))
-    require(not_before <= now < expires,
+    require(not_before <= clock_time(clock) < expires,
             "DOMAIN_PERMISSION_EXPIRED_OR_NOT_YET_VALID")
     require(0 < (expires - not_before).total_seconds() <= MAX_PERMISSION_WINDOW_SECONDS,
             "DOMAIN_PERMISSION_WINDOW")
@@ -174,13 +185,13 @@ def _validate_recognition(request, reader, now):
             and grant.get("subject") == contract["subject"]
             and grant.get("principal") == principal, "DOMAIN_PERMISSION_SCOPE")
     producer_ref = grant["producer_registration_ref"]
-    producer = current_record(reader, producer_ref, now, "state", "user_explicit")
+    producer = current_record(reader, producer_ref, clock, "state", "user_explicit")
     require(producer["type_fields"].get("domain_producer") == {
         "service": SERVICE, "role": ROLE, "domain_owner": "MODEL PROGRAM",
         "environment": "NON_PRODUCTION", "principal": principal,
         "authority_registry_sha256": contract["authority_registry_sha256"]}, "DOMAIN_PRODUCER_REGISTRATION")
     recognition_ref = request["recognition_record_ref"]
-    row = current_record(reader, recognition_ref, now, "state", "observed")
+    row = current_record(reader, recognition_ref, clock, "state", "observed")
     expected = {"contract_id": contract["contract_id"], "contract_version": contract["version"],
         "contract_sha256": CONTRACT_SHA256, "subject": contract["subject"],
         "owner_adoption": adoption, "permission_record_ref": grant_ref,
@@ -189,9 +200,15 @@ def _validate_recognition(request, reader, now):
     require(row["type_fields"].get("state_kind") == "model_dataset_split_domain_recognition"
             and row["type_fields"].get("domain_recognition") == expected, "DOMAIN_RECOGNITION_BINDING")
     require(row.get("receipt_id") == request["recognition_receipt_id"], "DOMAIN_RECOGNITION_RECEIPT_BINDING")
-    receipt = committed_receipt(reader, row, principal, now)
+    receipt, event = committed_receipt(reader, row, principal, clock)
     final_ctx = reader.authorization_context()
-    fresh(final_ctx, now)
+    # Sample after the final service read. Entry time is not an admission clock:
+    # a read can outlive its permission or return a newer service observation.
+    accepted_at = clock_time(clock)
+    require(accepted_at >= started_at, "DOMAIN_CLOCK_REGRESSED")
+    require(not_before <= accepted_at < expires, "DOMAIN_PERMISSION_EXPIRED_OR_NOT_YET_VALID")
+    for view in (ctx, owner, grant_row, producer, row, receipt, event, final_ctx):
+        fresh(view, accepted_at)
     require(digest({k:v for k,v in final_ctx.items() if k != "evaluated_at"}) ==
             digest({k:v for k,v in ctx.items() if k != "evaluated_at"}), "DOMAIN_PERMISSION_CHANGED")
     return {"status": "PASS_DOMAIN_RECOGNITION_ADAPTER_SYNTHETIC_ONLY",
@@ -204,18 +221,19 @@ def _validate_recognition(request, reader, now):
         "production_enabled": False}
 
 
-def validate_recognition(request, reader=None, *, now=None):
+def validate_recognition(request, reader=None, *, clock=None):
     """Read-only adapter. Every success remains explicitly synthetic.
 
-    `reader` is a Host dependency, not part of the JSON request. No function here
+    `reader` and the UTC clock are Host dependencies, not JSON request fields.
+    Tests inject a controllable clock; ordinary callers use the current UTC clock.
+    No function here
     invokes clued_record_mutate or emits an Event/Receipt. Service failures fail
     closed with a sanitized code. Source/fixture metadata is never permission.
     """
-    if now is None:
-        now = datetime.now(timezone.utc)
-    require(isinstance(now, datetime) and now.tzinfo == timezone.utc, "DOMAIN_CLOCK")
+    if clock is None:
+        clock = utc_now
     try:
-        return _validate_recognition(copy.deepcopy(request), reader, now)
+        return _validate_recognition(copy.deepcopy(request), reader, clock)
     except FoundationError:
         raise
     except Exception:

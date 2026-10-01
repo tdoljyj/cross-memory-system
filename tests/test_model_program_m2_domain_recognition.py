@@ -27,6 +27,14 @@ def reference(row):
     return {key: row[key] for key in ("id", "version", "content_hash")}
 
 
+class ControlledClock:
+    def __init__(self, value):
+        self.value = value
+
+    def __call__(self):
+        return self.value
+
+
 class SyntheticCanonicalService:
     """In-memory TEST DOUBLE, never a live authority or credential store.
 
@@ -129,14 +137,14 @@ class DomainRecognitionTests(unittest.TestCase):
 
     def reject(self, code=None):
         with self.assertRaises(FoundationError) as caught:
-            domain.validate_recognition(self.request, self.service, now=NOW)
+            domain.validate_recognition(self.request, self.service, clock=lambda: NOW)
         if code:
             self.assertEqual(caught.exception.code, "CLUED_MODEL_M2_" + code)
         return caught.exception
 
     def test_valid_chain_uses_existing_receipt_core_but_is_synthetic_and_read_only(self):
         before = copy.deepcopy(self.request)
-        result = domain.validate_recognition(self.request, self.service, now=NOW)
+        result = domain.validate_recognition(self.request, self.service, clock=lambda: NOW)
         self.assertEqual(result["status"], "PASS_DOMAIN_RECOGNITION_ADAPTER_SYNTHETIC_ONLY")
         self.assertEqual(result["receipt_operation_family"], "record_mutation")
         self.assertEqual(result["trust_boundary"], "SYNTHETIC_TEST_DOUBLE")
@@ -149,13 +157,13 @@ class DomainRecognitionTests(unittest.TestCase):
 
     def test_no_backend_and_live_backend_are_rejected(self):
         with self.assertRaises(FoundationError) as caught:
-            domain.validate_recognition(self.request, now=NOW)
+            domain.validate_recognition(self.request, clock=lambda: NOW)
         self.assertEqual(caught.exception.code, "CLUED_MODEL_M2_DOMAIN_AUTHORITY_NOT_CONFIGURED")
         self.service.mode = "AUTHENTICATED_LIVE_SERVICE"
         self.reject("DOMAIN_LIVE_CAPABILITY_NOT_IMPLEMENTED")
 
     def test_caller_cannot_supply_principal_permission_or_currentness(self):
-        for field in ("principal", "permission_record_ref", "domain_admission", "record_currentness", "mode"):
+        for field in ("principal", "permission_record_ref", "domain_admission", "record_currentness", "mode", "clock"):
             self.request = copy.deepcopy(self.service.request)
             self.request[field] = "AUTHORIZED"
             with self.subTest(field=field):
@@ -269,6 +277,72 @@ class DomainRecognitionTests(unittest.TestCase):
     def test_revocation_during_reads_is_rejected(self):
         self.service.deny_after_first_read = True
         self.reject("DOMAIN_PERMISSION_CHANGED")
+
+    def advancing_clock(self, start, end, *, refresh_final):
+        clock = ControlledClock(start)
+        for view in (self.service.ctx, *self.service.records.values(),
+                     *self.service.receipts.values(), *self.service.events.values()):
+            view["evaluated_at"] = stamp(start)
+        original_auth = self.service.authorization_context
+        def auth():
+            if self.service.auth_reads == 1:
+                clock.value = end
+            value = original_auth()
+            if refresh_final and self.service.auth_reads == 2:
+                value["evaluated_at"] = stamp(end)
+            return value
+        self.service.authorization_context = auth
+        return clock
+
+    def test_permission_expiring_during_reads_is_rejected_with_stale_or_refreshed_final_observation(self):
+        start = datetime(2026, 10, 1, 9, 59, 59, tzinfo=timezone.utc)
+        for refresh in (False, True):
+            self.service = SyntheticCanonicalService()
+            self.request = copy.deepcopy(self.service.request)
+            clock = self.advancing_clock(start, start + timedelta(seconds=2), refresh_final=refresh)
+            with self.subTest(refresh=refresh), self.assertRaises(FoundationError) as caught:
+                domain.validate_recognition(self.request, self.service, clock=clock)
+            self.assertEqual(caught.exception.code, "CLUED_MODEL_M2_DOMAIN_PERMISSION_EXPIRED_OR_NOT_YET_VALID")
+            self.assertEqual(self.service.mutation_calls, 0)
+
+    def test_unexpired_permission_with_refreshed_final_observation_passes(self):
+        start = datetime(2026, 10, 1, 9, 59, 50, tzinfo=timezone.utc)
+        clock = self.advancing_clock(start, start + timedelta(seconds=2), refresh_final=True)
+        result = domain.validate_recognition(self.request, self.service, clock=clock)
+        self.assertEqual(result["status"], "PASS_DOMAIN_RECOGNITION_ADAPTER_SYNTHETIC_ONLY")
+        self.assertEqual(result["domain_authority_receipt"], "NOT_ISSUED")
+
+    def test_default_host_clock_is_resampled_at_final_acceptance(self):
+        start = datetime(2026, 10, 1, 9, 59, 59, tzinfo=timezone.utc)
+        clock = self.advancing_clock(start, start + timedelta(seconds=2), refresh_final=False)
+        with patch.object(domain, "utc_now", clock), self.assertRaises(FoundationError) as caught:
+            domain.validate_recognition(self.request, self.service)
+        self.assertEqual(caught.exception.code, "CLUED_MODEL_M2_DOMAIN_PERMISSION_EXPIRED_OR_NOT_YET_VALID")
+
+    def test_observations_that_age_out_during_reads_are_rejected(self):
+        clock = self.advancing_clock(NOW, NOW + timedelta(seconds=301), refresh_final=True)
+        with self.assertRaises(FoundationError) as caught:
+            domain.validate_recognition(self.request, self.service, clock=clock)
+        self.assertEqual(caught.exception.code, "CLUED_MODEL_M2_DOMAIN_STALE_SERVICE_VIEW")
+
+    def test_clock_regression_at_final_acceptance_is_rejected(self):
+        clock = self.advancing_clock(NOW, NOW - timedelta(seconds=1), refresh_final=True)
+        with self.assertRaises(FoundationError) as caught:
+            domain.validate_recognition(self.request, self.service, clock=clock)
+        self.assertEqual(caught.exception.code, "CLUED_MODEL_M2_DOMAIN_CLOCK_REGRESSED")
+
+    def test_updated_observation_during_a_record_read_is_not_future(self):
+        clock = ControlledClock(NOW)
+        original_read = self.service.read_record
+        def read(record_id):
+            value = original_read(record_id)
+            if record_id == self.service.record_id:
+                clock.value = NOW + timedelta(seconds=2)
+                value["evaluated_at"] = stamp(clock.value)
+            return value
+        self.service.read_record = read
+        result = domain.validate_recognition(self.request, self.service, clock=clock)
+        self.assertEqual(result["status"], "PASS_DOMAIN_RECOGNITION_ADAPTER_SYNTHETIC_ONLY")
 
     def test_service_failure_is_sanitized_and_never_writes(self):
         with patch.object(self.service, "read_receipt", side_effect=RuntimeError("SECRET INTERNAL DETAIL")):
