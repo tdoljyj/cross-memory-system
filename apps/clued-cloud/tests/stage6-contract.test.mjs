@@ -83,7 +83,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 7/);
+  assert.match(contract, /Contract version: 8/);
   assert.match(contract, /Claim work before you spend on it/);
   assert.match(contract, /On `work_claim_conflict`, stop and report the holder/);
   assert.match(contract, /Never retry under another title, another Task, a new idempotency key or another Binding/);
@@ -91,6 +91,10 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /A live claim is never preempted/);
   assert.match(contract, /resume also returns `contract_version`/);
   assert.match(skill, /claim its Task as the contract's §1\.7 says/);
+  assert.match(contract, /Resume lists unabsorbed work-log events newest first \(`event_order: "newest"`, the default\)/);
+  assert.match(contract, /`checkpoint_recommended` and `pending_event_count_recent` count only those of the last 24 hours/);
+  assert.match(contract, /Set `coverage.binding_events: "all"` to also absorb every pending event your Binding wrote in this context/);
+  assert.match(contract, /returned in `already_absorbed_event_ids` and does not fail the checkpoint/);
   assert.match(contract, /Resume returns resident constraints \(`active_constraints`, decisions the Owner marked as standing rules\) as an index/);
   assert.match(contract, /read its full text by resuming again with `constraint_ids`/);
   assert.match(contract, /do not act on a summary alone/);
