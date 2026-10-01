@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 9
+Contract version: 10
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -56,6 +56,7 @@ Rules for every capture:
 4. Use a stable idempotency key built from the originating session, the subject and the outcome, for example `<origin-session>:<subject-id>:<outcome>`. Retries of the same outcome reuse it, including after an uncertain result such as a timeout, so the original operation is recovered rather than duplicated. A corrected request uses a new key.
 5. In the reply, name what you wrote in one line (record ID and Receipt). If a write fails, say that it failed and why; never describe the outcome as recorded, and never call a local file or Markdown note a saved Clued record.
 6. Write each outcome as it happens, before the next production action. When one turn merges a pull request, applies a migration and then starts a release, record the merge after the merge and the migration after the migration, and start the release last; do not batch the writes behind the release. Starting a deployment or release is not itself a §3 outcome: record it when its run has finished, from the run's result. Do not make a Clued call the next action after you start a deployment, release or other production action: Host-side permission checks judge a call by what happened just before it, and a Clued call made in that position has been refused as a production action although it changes nothing in production (§4.7). Verify a release through the release's own checks, not through an immediate Clued read.
+7. Say what you are about to record before you write it, in one line of your reply: what (the record and its main claim), where (the scope) and on what authority (the Owner's words in this turn, or this section's rule that the Owner's tracked work is recorded without a reminder). Host approval layers judge a write from the visible conversation and the request; they do not see this contract or the Owner's rules stored in Clued, and a write whose authority was not visible has been refused as unauthorized persistent storage (§4.7). The line is a statement, not a question: §3 writes need no further confirmation from the Owner, and `user_confirmed: true` records where the claim came from, not a confirmation step.
 
 ## 4. Write discipline
 
@@ -66,7 +67,7 @@ Rules for every capture:
 
 | Error | Meaning | Action |
 |---|---|---|
-| `authority_escalation_forbidden` | `user_explicit` without `user_confirmed: true`, including in `error.invalid_fields` | Add `user_confirmed: true` only when the user explicitly confirmed this exact record; otherwise use the actual `observed` / `inferred` authority |
+| `authority_escalation_forbidden` | `user_explicit` without `user_confirmed: true`, including in `error.invalid_fields` | Add `user_confirmed: true` when the record's main claim is the Owner's own words in this conversation (§3.1); do not ask the Owner again. Otherwise use the actual `observed` / `inferred` authority; never add the flag to get a write accepted |
 | `terminal_record_read_only` | The record is completed, cancelled or archived | Follow-up note (§3) |
 | `record_version_conflict` | Someone changed the record | Re-read and reconcile meaning; never overwrite a newer decision |
 | `stale_base_version` (checkpoint) | Wrong counter, or another session checkpointed this context since your resume or last checkpoint | Retry with the `expected_version` the error returns; your session token stays valid |
