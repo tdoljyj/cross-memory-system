@@ -10,12 +10,16 @@ name: clued-work-admission
 # changed-file set. It also prints which path-filtered workflows apply to the
 # changed paths and what each concluded on this head.
 #
-# While the Clued service does not expose the work-claim tools
-# (CLUED_WORK_CLAIMS_V1 off), the check reports NOT_ENFORCED and passes; every
-# other failure (no token, rejected token, transport error) fails closed.
-# Hosted runner on purpose: seconds of work, no self-hosted capacity, and no
-# code of the PR is executed (the script is checked out from the PR head but
-# only reads files; it has no dependencies to install).
+# The call goes to the Clued database's PostgREST endpoint (clued_work_verify_v1
+# with the public publishable key and the SHA-256 of the Binding token): the
+# production /mcp route is owned by the delegated OAuth provider and takes OAuth
+# access tokens only. Enforcement is the Owner's repository variable
+# CLUED_WORK_ADMISSION_ENFORCE=true; until then the check is advisory (verdicts
+# are printed, every PR is admitted). Once enforced, a missing claim, a
+# REJECTED verdict, a missing RPC, a refused token or a transport error all fail
+# closed. Hosted runner on purpose: seconds of work, no self-hosted capacity,
+# and no code of the PR is executed (the script is checked out from the PR head
+# but only reads files; it has no dependencies to install).
 
 on:
   pull_request:
@@ -46,5 +50,6 @@ jobs:
       - name: Verify the work claim with Clued and summarize applicable workflows
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_CONTEXT_READ_TOKEN }}
+          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode required

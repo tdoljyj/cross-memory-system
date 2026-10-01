@@ -44,8 +44,9 @@ concurrency:
 
 jobs:
   # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when
-  # Clued admits this pull request (or when admission is not enforced yet, or
-  # the event is not a pull request). Hosted runner, seconds, no install.
+  # Clued admits this pull request. Until the Owner sets the repository
+  # variable CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits;
+  # non-PR events are admitted. Hosted runner, seconds, no install.
   admission-gate:
     name: admission-gate
     runs-on: ubuntu-latest
@@ -64,6 +65,7 @@ jobs:
       - id: gate
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_CONTEXT_READ_TOKEN }}
+          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode gate
 
