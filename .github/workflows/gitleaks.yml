@@ -32,6 +32,16 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
+      # Self-hosted workspaces persist between runs. Checkout neither prunes
+      # remote-tracking refs of deleted branches nor removes the PR merge refs
+      # (refs/remotes/pull/*) that earlier runs of other PRs left behind, so
+      # closed or superseded history stayed in the scan. Scan exactly the
+      # remote's branches and tags plus this run's checked-out HEAD.
+      - name: Drop refs of deleted branches and of other PRs' earlier runs
+        run: |
+          git remote prune origin
+          git for-each-ref --format='%(refname)' refs/remotes/pull |
+            while read -r ref; do git update-ref -d "$ref"; done
       - name: Validate exact historical exceptions and detection regressions
         run: |
           python3 scripts/ci/reviewed_gitleaks.py \
@@ -66,6 +76,16 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
+      # Self-hosted workspaces persist between runs. Checkout neither prunes
+      # remote-tracking refs of deleted branches nor removes the PR merge refs
+      # (refs/remotes/pull/*) that earlier runs of other PRs left behind, so
+      # closed or superseded history stayed in the scan. Scan exactly the
+      # remote's branches and tags plus this run's checked-out HEAD.
+      - name: Drop refs of deleted branches and of other PRs' earlier runs
+        run: |
+          git remote prune origin
+          git for-each-ref --format='%(refname)' refs/remotes/pull |
+            while read -r ref; do git update-ref -d "$ref"; done
       - name: Validate exact historical exceptions and detection regressions
         run: |
           python3 scripts/ci/reviewed_gitleaks.py \
