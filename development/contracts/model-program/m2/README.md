@@ -1,5 +1,13 @@
 # M2 synthetic dataset foundation candidate
 
+The additional [domain-recognition contract and read-only adapter candidate](DatasetSplitDomainRecognition.candidate.md)
+exercise producer, scoped permission and existing M1 Record/Event/Receipt bindings
+with a synthetic service double. Run
+`python scripts/model-program/validate_m2_domain_recognition.py` and
+`python -m unittest tests.test_model_program_m2_domain_recognition -v`.
+No real producer/permission is registered: `--require-domain-authority` must fail.
+This does not change the adopted definition or issue a Domain Authority Receipt.
+
 The current definition baseline is the Owner-adopted
 `clued.model-program.DatasetSplit / v0.1`. See
 [DatasetSplitAdoption.v0.1.md](DatasetSplitAdoption.v0.1.md) for exact source and
@@ -63,7 +71,7 @@ See [DatasetSplitDefinition.candidate.md](DatasetSplitDefinition.candidate.md) f
 the new machine contract and the recorded direction-only Decision/Receipt.
 `DatasetSplitDomainDecision.candidate.md` remains the unchanged v0.1 proposal source;
 its historical unchosen-Owner wording does not override the later Canonical Decision.
-The current schema/definition is **not adopted**. The separate command
+The historical candidate schema/definition path remains **not adopted**. The separate command
 `python3 scripts/model-program/validate_m2_dataset_split.py --require-adoption`
 must fail with `DOMAIN_ADOPTION_REQUIRED`; ordinary candidate success supplies no
 data-use or training permission.

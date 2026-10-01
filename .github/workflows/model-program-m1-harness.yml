@@ -67,6 +67,7 @@ jobs:
         run: python scripts/model-program/validate_m2_dataset_foundation.py
       - run: python scripts/model-program/validate_m2_split_mapping.py
       - run: python scripts/model-program/validate_m2_adopted_definition.py
+      - run: python scripts/model-program/validate_m2_domain_recognition.py
       - run: python -m unittest discover -s tests -p "test_model_program_m2_*.py" -v
 
   validate-untrusted-hosted:
@@ -92,4 +93,5 @@ jobs:
         run: python scripts/model-program/validate_m2_dataset_foundation.py
       - run: python scripts/model-program/validate_m2_split_mapping.py
       - run: python scripts/model-program/validate_m2_adopted_definition.py
+      - run: python scripts/model-program/validate_m2_domain_recognition.py
       - run: python -m unittest discover -s tests -p "test_model_program_m2_*.py" -v
