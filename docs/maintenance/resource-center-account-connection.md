@@ -662,6 +662,85 @@ Rollout: production migration, then release. Execution needs the write
 switches (`execution_enabled` plus the executor window) and the Owner's
 overwrite level.
 
+## Trash and untrash (StorageFullCapability.v0.1 P5)
+
+Migration `20261001130000_storage_destructive_p5.sql` and the executor changes
+run trash and untrash on the same account-policy job chain, under a separate
+`destructive` level (Owner Decision `ba02734a`). Every existing function is
+changed by an anchored patch with an exact hit count.
+
+- Policies may carry `destructive` next to `modify` and `overwrite`. The
+  Owner turns it on at `/storage/connections` with "允许 Agent 把文件移入回收站"
+  (disclosure `clued.storage-destructive-disclosure/1`; turning it off stores
+  `clued.storage-destructive-disabled/1`). The switch toggles one level per
+  call; queued jobs are cancelled and read access moves exactly as for modify.
+  The page shows the toggle only when the write-access status names the
+  destructive disclosure, so a page released before the migration is applied
+  shows only the earlier levels.
+- `clued_storage_submit` accepts `{operation: "trash" | "untrash",
+  target_kind: "file", source_path, source_file_version}`. The Worker records
+  them as the Artifact authority's `delete` and `restore`; the job, intent,
+  receipts and proofs use those names. One file per job. Directories, the
+  root and tracks are refused (submit requires `target_kind: "file"`, and the
+  authority finds no file there). Files the Owner uploaded by hand are not
+  registered, so they cannot be trashed (P7).
+- Trash: the source is an active registered file at the version the Agent
+  last saw (`source_file_version`, refused before any reservation when
+  stale). Its folder must be its registered, current parent (provider
+  identity `source_parent_id`). A governance file needs `delete_authority`
+  (authority reason `delete_authority_required`); identical bytes are never a
+  reason. The provider effect is one `files.update {trashed: true}`; Clued
+  never calls `files.delete`. Settlement (`artifact_trash`, CAS on the
+  Artifact version) moves the Artifact to state `trashed` and records the
+  trashed file's Drive version. The settlement Event states that Google
+  permanently deletes a trashed file 30 days later.
+- Untrash: the source is a file Clued trashed (Artifact state `trashed`) at
+  its registered version; the Agent stats the trashed file by ID for the
+  version. The executor descriptor names its Drive ID (`untrash_source`),
+  because Drive never lists a trashed file by name. Its original folder must
+  still be registered and current, and its name must be free (a new file at
+  the same path refuses it: `destination_exists` / `PROVIDER_DESTINATION_EXISTS`).
+  The effect is one `files.update {trashed: false}`; settlement
+  (`artifact_untrash`) returns the same Artifact to `active`.
+- Ownership (§3.4 item 6): before any reservation the executor reads the
+  file's `ownedByMe` and `capabilities.canTrash` / `canUntrash`. A file
+  someone else owns, or one Drive will not let this account trash, is denied
+  with `PROVIDER_OWNER_REQUIRED` (the job's `reason_code`); there is no other
+  attempt.
+- Limit (§3.4 item 4, D4, N = 5): the server has no session or task
+  identity, so the unit is the client lineage on one connection over any 24
+  hours. Trash jobs refused before any reservation, and jobs that consumed a
+  confirmation, do not count. From the sixth trash job on, submit needs an
+  open Owner confirmation for exactly that file, path and version, or it is
+  refused with `storage_trash_confirmation_required` and no job exists.
+  Replaying the same job and payload returns the original job. Untrash has
+  no limit.
+- Native batch confirmation: `/storage/connections` → "读取回收站确认" lists
+  the connection's registered files (path, Drive ID, version); the Owner
+  ticks files and confirms (native RPC `clued_storage_trash_confirmation_v1`,
+  route `/v1/storage/trash-confirmation`, CAS on `policy_generation`, 1–50
+  files). One receipt covers the batch and its Event lists each file's
+  Artifact ID, Drive ID, path and version. An item is bound to the policy
+  active at confirmation, expires after 24 hours, is consumed by exactly one
+  trash job, and stops matching if the file's path, version or Artifact
+  version changes. A governance file without delete authority cannot be
+  confirmed.
+- The executor records `clued.storage-destructive-attempt/1` (file ID,
+  source path and version, parent, content identity) before the single
+  update and re-reads the file after that durable flush. The verifier proves
+  `clued.storage-trash-verified/1` (trashed, same parent, name, ancestor
+  folder IDs and content identity, no longer listed under its name, stable
+  version) or `clued.storage-untrash-verified/1` (untrashed, the only entry
+  of its name, same parent, ancestors and content, stable version). A
+  version that jumps by more than one is recorded, not treated as failure.
+- A lost update reply leaves the intent fenced. Scheduled and native recovery
+  load trash and untrash descriptors, re-verify by GET only and settle
+  through the same verified record; they never repeat the update.
+
+Rollout: production migration, then release. Execution needs the write
+switches (`execution_enabled` plus the executor window) and the Owner's
+destructive level.
+
 ## Scope profiles (StorageNormalUse.v0.1 N0a)
 
 Migration `20260930140000_storage_scope_profile_v1.sql` and the Worker and

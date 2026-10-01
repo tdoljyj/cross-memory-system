@@ -2,6 +2,8 @@ import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-cent
 import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-postcondition.mjs";
 import { createGoogleDriveModifyPostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-modify-postcondition.mjs";
 import { createGoogleDriveReplacePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-replace-postcondition.mjs";
+import { createGoogleDriveDestructivePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-destructive-postcondition.mjs";
+import { DESTRUCTIVE_PROOF_CONTRACTS } from "../../../kernel/host/resource-center-google-drive-destructive-effect.mjs";
 import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
@@ -67,7 +69,9 @@ export async function createStorageCloudRecovery(config: {
           !object(d.provider_before) || !object(d.attempt) ||
           !providerId.test(String(d.attempt.provider_file_id)) ||
           d.attempt.destination_path !== d.mutation.destination_path ||
-          d.attempt.parent_id !== d.provider_before.destination_parent_id) throw denied();
+          // Trash and untrash (P5) have no destination: the attempt names the source's folder.
+          d.attempt.parent_id !== (d.mutation.operation === "delete" || d.mutation.operation === "restore"
+            ? d.provider_before.source_parent_id : d.provider_before.destination_parent_id)) throw denied();
       const credential = async () => {
         check();
         const token: unknown = JSON.parse(await vault.open(d.credential_envelope as StorageCredentialEnvelope, {
@@ -94,6 +98,9 @@ export async function createStorageCloudRecovery(config: {
       const operation = String(d.mutation.operation);
       const modify = operation === "rename" || operation === "move";
       const replace = operation === "replace";
+      const destructive = operation === "delete" || operation === "restore";
+      if (destructive && (!config.verified || d.attempt.contract !== "clued.storage-destructive-attempt/1" ||
+          d.attempt.operation !== operation || d.attempt.source_path !== d.mutation.source_path)) throw denied();
       if (modify && (!config.verified || d.attempt.contract !== "clued.storage-modify-attempt/1" ||
           d.attempt.operation !== operation || d.attempt.source_path !== d.mutation.source_path)) throw denied();
       if (replace && (!config.verified || d.attempt.contract !== "clued.storage-replace-attempt/1" ||
@@ -105,13 +112,16 @@ export async function createStorageCloudRecovery(config: {
         list_children: (input: Data) => metadata.listChildren(input, { signal: abort.signal }),
         include_verified_proof: !!config.verified, timeout_ms: timeout, poll_ms: Math.min(1000, timeout), clock,
       };
-      const verify = replace
+      const verify = destructive ? createGoogleDriveDestructivePostconditionVerifier(verifierConfig)
+        : replace
         ? createGoogleDriveReplacePostconditionVerifier({ ...verifierConfig,
           get_revision: (fileId: string, revisionId: string) => metadata.getRevision(fileId, revisionId, { signal: abort.signal }) })
         : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
         : createGoogleDriveCreatePostconditionVerifier({ ...verifierConfig, require_effect_provider_id: true });
       const postcondition = await bounded(verify({ profile: d.profile, mutation: d.mutation, provider_before: d.provider_before,
-        effect_result: replace
+        effect_result: destructive
+          ? { operation, source_path: d.mutation.source_path, provider_file_id: d.attempt.provider_file_id, content: d.attempt.content }
+          : replace
           ? { operation: "replace", destination_path: d.mutation.destination_path, provider_file_id: d.attempt.provider_file_id,
               content_before: d.attempt.content_before, content_after: d.attempt.content_after,
               pinned_revision_id: d.attempt.pinned_revision_id, previously_kept: d.attempt.previously_kept,
@@ -126,7 +136,8 @@ export async function createStorageCloudRecovery(config: {
       if (config.verified) {
         const verifiedPost: unknown = postcondition;
         // A binary create (content_ref, StorageNormalUse N3) settles only with the /3 proof.
-        const contract = replace ? "clued.storage-replace-verified/1"
+        const contract = destructive ? DESTRUCTIVE_PROOF_CONTRACTS[operation as "delete" | "restore"]
+          : replace ? "clued.storage-replace-verified/1"
           : modify ? `clued.storage-${operation}-verified/1`
           : object(d.mutation.content_ref) ? "clued.storage-create-verified/3" : "clued.storage-create-verified/2";
         if (!object(verifiedPost) || !object(verifiedPost.verified_proof) ||

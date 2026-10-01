@@ -170,6 +170,55 @@ test("overwrite is its own toggle with its own disclosure and keeps rename/move 
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});await f.settle();
   assert.match(f.text(),/已允许 Agent 覆盖文件内容。回执：fixture-overwrite-receipt/);assert.match(f.text(),/覆盖文件内容/);
 });
+// StorageFullCapability P5: the destructive level and the native trash batch confirmation.
+const destructiveStatus=classes=>({...writeStatus(classes),destructive_disclosure_version:"clued.storage-destructive-disclosure/1"});
+test("moving files to the trash is its own toggle with its own disclosure; a server without it shows no toggle",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
+  f.button("读取 Agent 查看设置").props.onClick();await f.settle();
+  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+    content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});
+  f.respond(2,destructiveStatus([]));await f.settle();
+  assert.match(f.text(),/Agent 把文件移入回收站：未允许/);
+  f.button("允许 Agent 把文件移入回收站").props.onClick();await f.settle();
+  assert.match(f.prompts.at(-1),/30 天后自动永久删除/);assert.match(f.prompts.at(-1),/不会永久删除/);assert.match(f.prompts.at(-1),/5 个文件/);
+  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set_classes",connection_id:active.id,classes:["destructive"],
+    base_generation:1,disclosure_version:"clued.storage-destructive-disclosure/1",idempotency_key:"fixture-id"});
+  f.respond(3,{status:"committed",receipt_id:"fixture-destructive-receipt"});await f.settle();
+  f.respond(4,{connections:[{...active,actions:[...active.actions,"destructive"]}],worker_execution_enabled:false});await f.settle();
+  f.respond(5,destructiveStatus(["destructive"]));
+  f.respond(6,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+    content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});await f.settle();
+  assert.match(f.text(),/已允许 Agent 把文件移入回收站。回执：fixture-destructive-receipt/);
+  assert.match(f.text(),/移入回收站、从回收站恢复/);
+  // The batch confirmation lists each registered file with its ID and version.
+  f.button("读取回收站确认").props.onClick();await f.settle();
+  assert.equal(f.calls[7].url,"/v1/storage/trash-confirmation");
+  assert.deepEqual(JSON.parse(f.calls[7].init.body),{action:"status",connection_id:active.id});
+  const file={artifact_id:"artifact-a",artifact_version:3,path:"/Clued_资料中心/20_P/a.md",provider_file_id:"drive-a",provider_file_version:"9",trashable:true};
+  const governed={artifact_id:"artifact-g",artifact_version:1,path:"/Clued_资料中心/20_P/g.md",provider_file_id:"drive-g",provider_file_version:"2",trashable:false};
+  f.respond(7,{destructive:true,policy_generation:2,limit:5,window_hours:24,files:[file,governed],open_items:[]});await f.settle();
+  assert.match(f.text(),/drive-a，版本 9/);assert.match(f.text(),/没有删除授权/);
+  assert.equal(f.labelled("确认移入回收站："+governed.path).props.disabled,true);
+  f.labelled("确认移入回收站："+file.path).props.onChange({target:{checked:true}});f.render();
+  f.button("确认所选文件可移入回收站").props.onClick();await f.settle();
+  assert.match(f.prompts.at(-1),/\/Clued_资料中心\/20_P\/a\.md（ID drive-a，版本 9）/);
+  assert.equal(f.calls[8].url,"/v1/storage/trash-confirmation");
+  assert.deepEqual(JSON.parse(f.calls[8].init.body),{action:"confirm",connection_id:active.id,base_generation:2,
+    items:[{artifact_id:"artifact-a",artifact_version:3}],idempotency_key:"fixture-id"});
+  f.respond(8,{status:"committed",receipt_id:"fixture-trash-confirmation"});await f.settle();
+  f.respond(9,{destructive:true,policy_generation:2,limit:5,window_hours:24,files:[file,governed],
+    open_items:[{artifact_id:"artifact-a",path:file.path,provider_file_id:"drive-a",provider_file_version:"9",expires_at:"2026-10-02T00:00:00Z"}]});await f.settle();
+  assert.match(f.text(),/已确认 1 个文件可移入回收站。回执：fixture-trash-confirmation/);
+  assert.match(f.text(),/已确认、尚未使用：\/Clued_资料中心\/20_P\/a\.md/);
+});
+test("without the destructive disclosure in the status, the page offers only rename/move and overwrite",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
+  f.button("读取 Agent 查看设置").props.onClick();await f.settle();
+  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+    content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});
+  f.respond(2,writeStatus([]));await f.settle();
+  assert.match(f.text(),/Agent 覆盖文件内容：未允许/);assert.equal(f.text().includes("回收站"),false);
+});
 // StorageNormalUse.v0.1 §8.2: one "正常使用" toggle; the four toggles stay under 高级.
 const normalStatus=(profile,on,extra={})=>({connection_id:active.id,read_generation:on?3:1,disclosure_version:"clued.storage-normal-use-disclosure/1",
   provider_scope_profile:profile,normal_use:on,reconsent_required:profile!=="normal",refresh_token_count:2,refresh_token_warning:false,

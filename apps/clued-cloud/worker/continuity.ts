@@ -53,7 +53,8 @@ import { createStorageGoogleProbe, storageProbeDiagnostic } from "./storage-goog
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
-import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages } from "./storage-agent-tools";
+import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages,
+  storageTrashConfirmationMessage, storageTrashConfirmationRequired } from "./storage-agent-tools";
 import { createStagingRuntime, handleStagingPut, loadStagedContent, stageInline, stagingErrorCode, storageUploadBeginTool,
   sweepStaging, uploadBegin, uploadErrorBody, StorageUploadError, type StagingBucket } from "./storage-staging";
 import { createStorageReadAgent, storageReadTool, storageContentTool, StorageReadError, STORAGE_IMAGE } from "./storage-read-agent";
@@ -2084,6 +2085,11 @@ async function callTool(
         const result = { error: pathCode, message: storagePathMessages[pathCode] };
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
       }
+      // The trash limit (StorageFullCapability §3.4 item 4) is a fixed refusal decided before any job exists.
+      if (storageTrashConfirmationRequired(error)) {
+        const result = { error: "storage_trash_confirmation_required", message: storageTrashConfirmationMessage };
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+      }
       // No provider, issuer, credentials, paths or database diagnostics in errors.
       const result = { error: "storage_job_unavailable", message: "Storage job unavailable. Check the same job ID; do not create another job to retry an unknown effect." };
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
@@ -3011,14 +3017,15 @@ async function handleContinuityRequestInner(
       }
     }
     if (url.pathname === "/v1/storage/read-access" || url.pathname === "/v1/storage/write-access" || url.pathname === "/v1/storage/normal-use"
-      || url.pathname === "/v1/storage/budget") {
+      || url.pathname === "/v1/storage/budget" || url.pathname === "/v1/storage/trash-confirmation") {
       // StorageFullCapability.v0.1: native Owner control of the read level (P1)
       // and the modify write level (P3); StorageNormalUse.v0.1 §8.2 normal use
-      // and §7.3 hourly budgets (N4).
+      // and §7.3 hourly budgets (N4); the native trash batch confirmation (P5, §3.4 item 4).
       // The RPC checks the live auth session itself; never a Binding or service role.
       const rpc = url.pathname === "/v1/storage/read-access" ? "clued_storage_read_access_v1"
         : url.pathname === "/v1/storage/normal-use" ? "clued_storage_normal_use_v1"
-          : url.pathname === "/v1/storage/budget" ? "clued_storage_budget_v1" : "clued_storage_write_access_v1";
+          : url.pathname === "/v1/storage/budget" ? "clued_storage_budget_v1"
+            : url.pathname === "/v1/storage/trash-confirmation" ? "clued_storage_trash_confirmation_v1" : "clued_storage_write_access_v1";
       validateOrigin(request, env);
       const headers = { ...corsHeaders(request), "cache-control": "no-store" };
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true") return json({ error: "Not found." }, 404, headers);

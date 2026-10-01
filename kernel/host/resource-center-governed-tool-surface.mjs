@@ -30,7 +30,7 @@ const mutationInputSchema = deepFreeze({
   additionalProperties: false,
   required: ["operation"],
   properties: {
-    operation: { type: "string", enum: ["create", "write", "move", "rename", "replace", "delete"] },
+    operation: { type: "string", enum: ["create", "write", "move", "rename", "replace", "delete", "restore"] },
     source_path: { type: "string", minLength: 1 },
     destination_path: { type: "string", minLength: 1 },
     target_kind: { type: "string", enum: ["file", "directory"] },

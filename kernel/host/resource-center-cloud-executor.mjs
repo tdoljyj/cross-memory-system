@@ -11,6 +11,9 @@ import { createGoogleDriveNativeModifyEffect, modifyShape } from "./resource-cen
 import { createGoogleDriveModifyPostconditionVerifier } from "./resource-center-google-drive-modify-postcondition.mjs";
 import { createGoogleDriveNativeReplaceEffect, replaceShape, sha256Hex, md5Hex } from "./resource-center-google-drive-replace-effect.mjs";
 import { createGoogleDriveReplacePostconditionVerifier } from "./resource-center-google-drive-replace-postcondition.mjs";
+import { createGoogleDriveNativeDestructiveEffect, destructiveShape, destructiveOwnershipAllowed,
+  DESTRUCTIVE_PROOF_CONTRACTS } from "./resource-center-google-drive-destructive-effect.mjs";
+import { createGoogleDriveDestructivePostconditionVerifier } from "./resource-center-google-drive-destructive-postcondition.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "./resource-center-governed-tool-surface.mjs";
 import { RESOURCE_CENTER_POLICY_VERSION, bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 
@@ -63,7 +66,7 @@ const authorityDenialReasons = new Set([
   "root_sharing_changed", "root_sharing_unavailable", "parent_sharing_changed", "parent_sharing_unavailable",
   "source_mismatch", "destination_outside_root", "parent_version_mismatch", "parent_unregistered",
   "parent_path_not_current", "destination_mismatch", "destination_exists", "artifact_decision_not_current",
-  "internal_error",
+  "delete_authority_required", "internal_error",
 ]);
 const logAuthorityFailure = (phase,stage,errorCode,reason) => {
   // Emit only fixed labels. In particular, never serialize an exception, RPC response or provider identity.
@@ -142,6 +145,9 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       // Replace and revert (P4) likewise; the server names the Clued-pinned
       // revisions to release and, for a revert, the pinned revision to restore.
       const replace=mutation?.operation==="replace";
+      // Trash ("delete") and untrash ("restore", P5) likewise; for an untrash
+      // the server names the registered, trashed source's Drive ID.
+      const destructive=mutation?.operation==="delete" || mutation?.operation==="restore";
       const revisionIdOk=value=>typeof value==="string" && /^[A-Za-z0-9_-]{1,200}$/.test(value);
       if(replace){
         if(!verifiedResultMode || !replaceShape(mutation) || mutation.target_kind!=="file" ||
@@ -152,6 +158,14 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
               !/^[A-Za-z0-9_-]{1,160}$/.test(descriptor.restore.provider_file_id??"") ||
               !/^(0|[1-9]\d{0,19})$/.test(descriptor.restore.size??"") ||
               (descriptor.restore.sha256==null && descriptor.restore.md5==null)))) fail("CLOUD_MUTATION_SHAPE_INVALID");
+      }else if(destructive){
+        const source=descriptor.untrash_source;
+        if(!verifiedResultMode || !destructiveShape(mutation) || mutation.target_kind!=="file" ||
+          Object.keys(mutation).sort().join(",")!=="operation,source_file_version,source_path,target_kind" ||
+          (mutation.operation==="restore" ? (!source || typeof source!=="object" ||
+            Object.keys(source).sort().join(",")!=="provider_file_id,provider_file_version" ||
+            !/^[A-Za-z0-9_-]{1,160}$/.test(source.provider_file_id??"") || source.provider_file_version!==mutation.source_file_version)
+            : source!=null)) fail("CLOUD_MUTATION_SHAPE_INVALID");
       }else if(modify){
         if(!verifiedResultMode || !modifyShape(mutation) || mutation.target_kind!=="file" ||
           Object.keys(mutation).some(k=>!["operation","source_path","destination_path","target_kind","source_file_version"].includes(k))) fail("CLOUD_MUTATION_SHAPE_INVALID");
@@ -179,7 +193,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const metadata=createGoogleDriveMetadataApi({get_credential:credential,fetch:driveFetch});
       const resolveProvider=createGoogleDriveProviderIdentityResolver({managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
-        get_sharing:metadata.getSharing});
+        get_sharing:metadata.getSharing,
+        ...(mutation.operation==="restore" ? {restore_source_id:descriptor.untrash_source.provider_file_id} : {})});
       let batched={};
       if(metadataBatch){
         const batch=await metadataBatch(Object.freeze({access_token:(await credential()).access_token}));
@@ -228,7 +243,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         }
         // §6.1 version precondition: the Agent names the version it observed.
         // A change since then is refused before any durable reservation.
-        if(modify && request.provider_identity.source_file_version!==input.source_file_version){
+        if((modify||destructive) && request.provider_identity.source_file_version!==input.source_file_version){
           logAuthorityFailure(phase,"provider_identity","SOURCE_VERSION_MISMATCH");
           fail();
         }
@@ -292,21 +307,24 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         if(String(replacement.byteLength)!==restore.size || (restore.sha256!=null && sha256Hex(replacement)!==restore.sha256) ||
           (restore.md5!=null && md5Hex(replacement)!==restore.md5)) fail();
       }
-      const effect=replace ? createGoogleDriveNativeReplaceEffect({...effectConfig,get_file:metadata.getFile,get_revision:metadata.getRevision,replacement,
+      const effect=destructive ? createGoogleDriveNativeDestructiveEffect({...effectConfig,get_file:metadata.getFile,get_ownership:metadata.getOwnership})
+        : replace ? createGoogleDriveNativeReplaceEffect({...effectConfig,get_file:metadata.getFile,get_revision:metadata.getRevision,replacement,
           release_revision_ids:descriptor.revision_releases})
         : modify ? createGoogleDriveNativeModifyEffect({...effectConfig,get_file:metadata.getFile})
         : createGoogleDriveNativeCreateEffect(binary ? {...effectConfig,content_source:staged} : effectConfig);
       const verifierConfig={managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         include_verified_proof:verifiedResultMode,clock};
-      const verify=replace ? createGoogleDriveReplacePostconditionVerifier({...verifierConfig,get_revision:metadata.getRevision})
+      const verify=destructive ? createGoogleDriveDestructivePostconditionVerifier(verifierConfig)
+        : replace ? createGoogleDriveReplacePostconditionVerifier({...verifierConfig,get_revision:metadata.getRevision})
         : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
         : createGoogleDriveCreatePostconditionVerifier({...verifierConfig,require_effect_provider_id:true});
-      const proofContract=replace ? "clued.storage-replace-verified/1"
+      const proofContract=destructive ? DESTRUCTIVE_PROOF_CONTRACTS[mutation.operation]
+        : replace ? "clued.storage-replace-verified/1"
         : modify ? `clued.storage-${mutation.operation}-verified/1`
         : binary ? "clued.storage-create-verified/3" : "clued.storage-create-verified/2";
       const host=createResourceCenterOnlineToolHost({trusted_profile:profile,resolve_artifact_online:resolveAuthority,
-        mutation_effect:effect,scan_boundary:scan,clock,qualified_operations:modify||replace?[mutation.operation]:["create"],
+        mutation_effect:effect,scan_boundary:scan,clock,qualified_operations:modify||replace||destructive?[mutation.operation]:["create"],
         prepare_write:async({mutation:input,binding})=>{
           const request=await authorityRequest(input);
           const result=await invoke({action:"begin",prepare:{action:"prepare",request_key:"account-job:"+ref.job_id,
@@ -356,6 +374,21 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
             throw error;
           }
         }});
+      // §3.4 item 6: a file someone else owns (or that Drive will not let this
+      // account trash or untrash) is refused before any reservation, with its
+      // own fixed reason. A lookup failure falls through: the authority below
+      // resolves the same identity and fails closed.
+      if(destructive){
+        let owned=null;
+        try{
+          const identity=await resolveProvider({profile,mutation});
+          owned=destructiveOwnershipAllowed(mutation.operation,await metadata.getOwnership(identity.source_file_id));
+        }catch{ owned=null; }
+        if(owned===false){
+          logDiagnostic("deny","PROVIDER_OWNER_REQUIRED");
+          return {status:"deny",error_code:"PROVIDER_OWNER_REQUIRED",side_effects:0,execution_permitted:false};
+        }
+      }
       const result=await host.callTool(RESOURCE_CENTER_MUTATION_TOOL,mutation);
       if(result.status==="unreconciled" || result.status==="deny") {
         // Keep the original journal fenced, but leave a stable diagnostic.

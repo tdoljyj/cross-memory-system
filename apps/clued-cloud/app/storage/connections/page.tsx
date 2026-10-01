@@ -11,7 +11,7 @@ type Connection = {
 };
 const actionName: Record<string, string> = {
   inspect: "查看任务状态", create_file: "新建文件", create_topic: "新建主题目录", modify: "改名、移动文件",
-  overwrite: "覆盖文件内容",
+  overwrite: "覆盖文件内容", destructive: "移入回收站、从回收站恢复",
 };
 const stateName: Record<string, string> = {
   awaiting_provider: "等待 Google 授权", active: "已连接", reauthorization_required: "需要重新授权", revoked: "已断开",
@@ -103,14 +103,35 @@ const budgetScopeName: Record<BudgetScope, string> = { connection: "每个已授
 const budgetDimensionName: Record<BudgetDimension, string> = { read: "读取", upload: "上传" };
 const formatMib = (mib: number) => mib >= 1024 && mib % 1024 === 0 ? `${mib / 1024} GiB` : `${mib} MiB`;
 const formatBytes = (bytes: number) => formatMib(Math.floor(bytes / MIB));
+type WriteLevel = "modify" | "overwrite" | "destructive";
 type WriteAccess = { active: boolean; policy_generation: number; disclosure_version: string;
-  overwrite_disclosure_version: string; classes: string[] };
+  overwrite_disclosure_version: string; destructive_disclosure_version?: string; classes: string[] };
 function isWriteAccess(value: unknown): value is WriteAccess {
   return isObject(value) && typeof value.active === "boolean" && Number.isSafeInteger(value.policy_generation)
     && typeof value.disclosure_version === "string" && typeof value.overwrite_disclosure_version === "string"
-    && Array.isArray(value.classes) && value.classes.every(item => item === "modify" || item === "overwrite");
+    && (value.destructive_disclosure_version === undefined || typeof value.destructive_disclosure_version === "string")
+    && Array.isArray(value.classes) && value.classes.every(item => item === "modify" || item === "overwrite" || item === "destructive");
 }
-// One write class per change; each has its own confirmation text (P3 modify, P4 overwrite).
+// The destructive level is offered only by a server that names its disclosure (P5).
+const writeLevels = (access: WriteAccess): WriteLevel[] =>
+  access.destructive_disclosure_version === undefined ? ["modify", "overwrite"] : ["modify", "overwrite", "destructive"];
+const writeDisclosure = (access: WriteAccess, level: WriteLevel) => level === "overwrite" ? access.overwrite_disclosure_version
+  : level === "destructive" ? access.destructive_disclosure_version ?? "" : access.disclosure_version;
+// Native trash batch confirmation (P5, §3.4 item 4).
+type TrashFile = { artifact_id: string; artifact_version: number; path: string; provider_file_id: string; provider_file_version: string; trashable: boolean };
+type TrashOpen = { artifact_id: string; path: string; provider_file_id: string; provider_file_version: string; expires_at: string };
+type TrashConfirmation = { destructive: boolean; policy_generation: number; limit: number; window_hours: number; files: TrashFile[]; open_items: TrashOpen[] };
+function isTrashConfirmation(value: unknown): value is TrashConfirmation {
+  return isObject(value) && typeof value.destructive === "boolean" && Number.isSafeInteger(value.policy_generation)
+    && Number.isSafeInteger(value.limit) && Number.isSafeInteger(value.window_hours)
+    && Array.isArray(value.files) && value.files.every(item => isObject(item) && typeof item.artifact_id === "string"
+      && Number.isSafeInteger(item.artifact_version) && typeof item.path === "string" && typeof item.provider_file_id === "string"
+      && typeof item.provider_file_version === "string" && typeof item.trashable === "boolean")
+    && Array.isArray(value.open_items) && value.open_items.every(item => isObject(item) && typeof item.artifact_id === "string"
+      && typeof item.path === "string" && typeof item.provider_file_id === "string" && typeof item.provider_file_version === "string"
+      && typeof item.expires_at === "string");
+}
+// One write class per change; each has its own confirmation text (P3 modify, P4 overwrite, P5 destructive).
 const writeText = {
   modify: {
     name: "改名和移动文件",
@@ -122,6 +143,11 @@ const writeText = {
     on: "允许已授权的 Agent 覆盖此目录内由 Clued 创建的文本文件的内容（每次最多 1 MB）？覆盖前的内容会保存为永久保留的 Google Drive 版本，可以撤回；每个文件保留最近 10 个。不会删除文件。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。",
     off: "停止 Agent 覆盖文件内容？已保存的旧版本不受影响。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束。",
   },
+  destructive: {
+    name: "把文件移入回收站",
+    on: "允许已授权的 Agent 把此目录内由 Clued 创建的文件移入 Google Drive 回收站，并可从回收站恢复 Clued 移入的文件？不会永久删除；但 Google 会在移入回收站 30 天后自动永久删除，之后无法恢复。每个任务只处理一个文件，不处理目录；同一 Agent 在 24 小时内超过 5 个文件时，需要您在本页逐个确认。您手动上传的文件不受影响。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。",
+    off: "停止 Agent 把文件移入回收站和从回收站恢复？已在回收站中的文件不受影响，仍会在 30 天后被 Google 永久删除。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束。",
+  },
 } as const;
 export default function StorageConnections() {
   // Read level (StorageFullCapability P1) is loaded on demand per connection so
@@ -130,6 +156,9 @@ export default function StorageConnections() {
   // Write level (P3): changing it replaces the account policy, so the page
   // always reloads the connection list and both settings afterwards.
   const [writeAccess, setWriteAccess] = useState<Record<string, WriteAccess>>({});
+  // Trash batch confirmation (P5), loaded on demand; the selection is per connection.
+  const [trash, setTrash] = useState<Record<string, TrashConfirmation>>({});
+  const [trashSelected, setTrashSelected] = useState<Record<string, string[]>>({});
   // Normal use (StorageNormalUse §8.2), loaded on demand like the read level.
   const [normalUse, setNormalUse] = useState<Record<string, NormalUse>>({});
   // Hourly budgets (N4), loaded on demand. Drafts are "64" / "256" / "1024" or
@@ -365,7 +394,49 @@ export default function StorageConnections() {
       }
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
-  async function toggleWrite(c: Connection, level: "modify" | "overwrite") {
+  async function loadTrash(c: Connection) {
+    if (operation.current || busy) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      const result = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/trash-confirmation");
+      if (epoch !== revision.current) return;
+      if (!isTrashConfirmation(result)) throw new Error("回收站确认设置未确认。");
+      setTrash(state => ({ ...state, [c.id]: result }));
+      setTrashSelected(state => ({ ...state, [c.id]: [] }));
+    } catch { if (epoch === revision.current) setMessage("回收站确认设置未确认，请稍后重试。"); }
+    finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  // §3.4 item 4: the Owner confirms one batch, listing each file's ID, path and version.
+  async function confirmTrash(c: Connection) {
+    const current = trash[c.id], chosen = trashSelected[c.id] ?? [];
+    if (operation.current || busy || !current?.destructive || !chosen.length) return;
+    const files = current.files.filter(file => chosen.includes(file.artifact_id) && file.trashable);
+    if (files.length !== chosen.length) return;
+    if (!window.confirm(`确认允许 Agent 把以下 ${files.length} 个文件移入 Google Drive 回收站（24 小时内有效，每个文件只用一次）？Google 会在移入回收站 30 天后自动永久删除。\n\n`
+      + files.map(file => `${file.path}（ID ${file.provider_file_id}，版本 ${file.provider_file_version}）`).join("\n"))) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      const result = await accountRequest({ action: "confirm", connection_id: c.id, base_generation: current.policy_generation,
+        items: files.map(file => ({ artifact_id: file.artifact_id, artifact_version: file.artifact_version })),
+        idempotency_key: crypto.randomUUID() }, "/v1/storage/trash-confirmation");
+      if (epoch !== revision.current) return;
+      if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
+      const latest = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/trash-confirmation");
+      if (epoch !== revision.current) return;
+      if (!isTrashConfirmation(latest)) throw new Error("回收站确认设置未确认。");
+      setTrash(state => ({ ...state, [c.id]: latest }));
+      setTrashSelected(state => ({ ...state, [c.id]: [] }));
+      setMessage(`已确认 ${files.length} 个文件可移入回收站。回执：${result.receipt_id}`);
+    } catch {
+      if (epoch === revision.current) {
+        setTrash(state => { const next = { ...state }; delete next[c.id]; return next; });
+        setMessage("回收站确认结果未确认。请重新读取并核对，勿重复提交。");
+      }
+    } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  async function toggleWrite(c: Connection, level: WriteLevel) {
     const current = writeAccess[c.id];
     if (operation.current || busy || !current?.active) return;
     const enable = !current.classes.includes(level);
@@ -377,7 +448,7 @@ export default function StorageConnections() {
     try {
       const result = await accountRequest({ action: "set_classes", connection_id: c.id, classes,
         base_generation: current.policy_generation,
-        disclosure_version: level === "overwrite" ? current.overwrite_disclosure_version : current.disclosure_version,
+        disclosure_version: writeDisclosure(current, level),
         idempotency_key: crypto.randomUUID() }, "/v1/storage/write-access");
       if (epoch !== revision.current) return;
       if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
@@ -491,11 +562,27 @@ export default function StorageConnections() {
             <button disabled={busy} onClick={() => void toggleRead(c, "read_content")}>
               {readAccess[c.id].classes.includes("read_content") ? "停止 Agent 读正文" : "允许 Agent 读正文"}</button>
           </>}
-          {writeAccess[c.id]?.active && (["modify", "overwrite"] as const).map(level => <div key={level}>
+          {writeAccess[c.id]?.active && writeLevels(writeAccess[c.id]).map(level => <div key={level}>
             <p className="mt-2">Agent {writeText[level].name}：{writeAccess[c.id].classes.includes(level) ? "已允许（仅 Clued 创建的文件）" : "未允许"}</p>
             <button disabled={busy} onClick={() => void toggleWrite(c, level)}>
               {writeAccess[c.id].classes.includes(level) ? `停止 Agent ${writeText[level].name}` : `允许 Agent ${writeText[level].name}`}</button>
           </div>)}
+          {writeAccess[c.id]?.active && writeAccess[c.id].classes.includes("destructive") && <div>
+            <p className="mt-2">回收站批量确认：同一 Agent 在 24 小时内移入回收站超过 5 个文件时，其余文件需要在这里逐个确认。</p>
+            {trash[c.id] ? <>
+              {trash[c.id].open_items.length > 0 && <p>已确认、尚未使用：{trash[c.id].open_items.map(item => item.path).join("、")}</p>}
+              {trash[c.id].files.length === 0 ? <p>此连接没有由 Clued 登记的文件。</p> : trash[c.id].files.map(file =>
+                <label key={file.artifact_id} className="block">
+                  <input type="checkbox" aria-label={`确认移入回收站：${file.path}`} disabled={busy || !file.trashable}
+                    checked={(trashSelected[c.id] ?? []).includes(file.artifact_id)}
+                    onChange={event => { const checked = event.target.checked; setTrashSelected(state => {
+                      const list = (state[c.id] ?? []).filter(id => id !== file.artifact_id);
+                      return { ...state, [c.id]: checked ? [...list, file.artifact_id] : list }; }); }} />
+                  {" "}{file.path}（ID {file.provider_file_id}，版本 {file.provider_file_version}）{file.trashable ? "" : "：治理文件，没有删除授权，不能移入回收站"}
+                </label>)}
+              <button disabled={busy || !(trashSelected[c.id] ?? []).length} onClick={() => void confirmTrash(c)}>确认所选文件可移入回收站</button>
+            </> : <button disabled={busy} onClick={() => void loadTrash(c)}>读取回收站确认</button>}
+          </div>}
         </div>}
         {["active", "reauthorization_required"].includes(c.state) && <button disabled={busy} onClick={() => void disconnect(c)}>断开网盘连接</button>}
       </section>;

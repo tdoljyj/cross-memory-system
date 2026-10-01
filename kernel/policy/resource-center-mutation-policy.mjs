@@ -1,6 +1,7 @@
 export const RESOURCE_CENTER_POLICY_VERSION = "clued.resource-center-mutation-policy/1";
 
-const MUTATIONS = new Set(["create", "write", "move", "rename", "replace", "delete"]);
+// "restore" (StorageFullCapability P5) takes a trashed file out of the trash: source only, like delete.
+const MUTATIONS = new Set(["create", "write", "move", "rename", "replace", "delete", "restore"]);
 const DEFAULT_STATUS_DIRECTORY_NAMES = [
   "current",
   "current baseline",
@@ -102,7 +103,7 @@ export function evaluateResourceCenterMutation(input) {
   if (!MUTATIONS.has(operation)) return deny("MUTATION_OPERATION_INVALID");
   if (!managedRoot) return deny("MANAGED_ROOT_REQUIRED");
   if (artifactRole !== "clued_resource") return deny("ARTIFACT_ROLE_REQUIRED");
-  if (operation === "delete") {
+  if (operation === "delete" || operation === "restore") {
     if (!source) return deny("DELETE_TARGET_REQUIRED");
     if (destination) return deny("DELETE_DESTINATION_FORBIDDEN");
   } else if (operation === "move" || operation === "rename") {
@@ -115,7 +116,7 @@ export function evaluateResourceCenterMutation(input) {
     return deny("DIRECTORY_SEMANTICS_REQUIRED");
   }
 
-  const target = operation === "delete" ? source : destination;
+  const target = operation === "delete" || operation === "restore" ? source : destination;
   if (artifactRole === "clued_resource" && !isWithin(target, managedRoot)) {
     return deny("SIBLING_ISLAND_FORBIDDEN", { managed_root: managedRoot });
   }

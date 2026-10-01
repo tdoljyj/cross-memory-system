@@ -1,0 +1,597 @@
+-- StorageFullCapability.v0.1 P5 (§3.1, §3.4, §6.1, §6.2; Owner Decision
+-- ba02734a): trash and untrash of one Clued-registered file under a separate
+-- destructive write level. Built on the same account-policy job chain as the
+-- P3-B modify and P4 overwrite levels; every existing function is changed by
+-- an anchored patch with an exact hit count, never rewritten.
+--
+-- * Policies gain the action "destructive". A /3 policy's action set is the
+--   create set plus any of modify, overwrite, destructive (canonical order).
+--   clued_storage_write_access_v1 toggles it like the other levels: its own
+--   disclosure (clued.storage-destructive-disclosure/1), a policy replacement
+--   with auth_generation+1, queued jobs cancelled, read access moved.
+-- * Submit accepts {operation: delete | restore, target_kind: file,
+--   source_path, source_file_version}. The Agent tool calls them trash and
+--   untrash; they are recorded under the Artifact authority's names. Never a
+--   directory, the root or a track (§3.4 item 5), never a permanent delete
+--   (D3): the provider effect is files.update {trashed: true | false}.
+-- * The Artifact authority gains operation restore (source only, like
+--   delete). A trash source is an active registered file; an untrash source is
+--   a file Clued trashed (Artifact state trashed, new) whose original folder
+--   is still registered and current and whose name is free again. Both name
+--   the source's registered folder (provider identity source_parent_id). A
+--   governance file needs delete_authority to be trashed (§3.4 item 2,
+--   reason delete_authority_required); identical bytes are never a reason.
+-- * §3.4 item 4 (D4, N = 5): at most 5 trash jobs per client lineage and
+--   connection in any 24 hours. Beyond that each file needs an unconsumed,
+--   unexpired Owner confirmation item (native page, one receipt listing every
+--   file's ID, path and version), consumed by exactly one job at submit.
+--   Otherwise submit refuses with storage_trash_confirmation_required and no
+--   job exists. Replaying the same job and payload returns the original job.
+-- * The provider attempt is clued.storage-destructive-attempt/1 (file ID,
+--   source path and version, parent, content identity). The verified proofs
+--   are clued.storage-trash-verified/1 and clued.storage-untrash-verified/1.
+--   Settlement changes the same Artifact by CAS on the version the authority
+--   saw: artifact_trash (active -> trashed) or artifact_untrash (trashed ->
+--   active), keeping its path and governance and recording the observed
+--   Drive version. The trash settlement receipt states Drive's 30-day purge.
+-- * Scheduled and native recovery load trash and untrash descriptors; the
+--   Worker re-verifies by GET only and settles through the same verified
+--   record, never repeating the update.
+
+-- Action sets: the create set plus any of modify, overwrite, destructive.
+alter table clued_private.storage_account_policies_v2
+  drop constraint storage_account_policies_v2_actions_check,
+  add constraint storage_account_policies_v2_actions_check check(
+    actions=array['inspect','create_file','create_topic']::text[]
+    or (scope_contract='clued.storage-account-scope/3' and actions in (
+      array['inspect','create_file','create_topic','modify']::text[],
+      array['inspect','create_file','create_topic','overwrite']::text[],
+      array['inspect','create_file','create_topic','modify','overwrite']::text[],
+      array['inspect','create_file','create_topic','destructive']::text[],
+      array['inspect','create_file','create_topic','modify','destructive']::text[],
+      array['inspect','create_file','create_topic','overwrite','destructive']::text[],
+      array['inspect','create_file','create_topic','modify','overwrite','destructive']::text[])));
+
+-- A file Clued moved to the Drive trash keeps its Artifact in state trashed
+-- (§6.2 untrash row). Only files are ever trashed. The partial unique indexes
+-- cover active rows only, so a trashed path does not block a new file; its
+-- untrash is then refused while the name is taken.
+alter table clued_private.resource_center_artifacts_v1
+  drop constraint resource_center_artifacts_v1_state_check,
+  add constraint resource_center_artifacts_v1_state_check check(state in ('active','revoked','trashed')),
+  add constraint resource_center_artifacts_v1_trashed_file_check check(state<>'trashed' or target_kind='file');
+
+-- Owner confirmations of files beyond the trash limit (§3.4 item 4). One
+-- confirmation is one native receipt for a batch; each item names one
+-- registered file by Artifact, Drive ID, path and version, is bound to the
+-- policy active at confirmation, expires with it after 24 hours, and is
+-- consumed by at most one trash job.
+create table clued_private.storage_trash_confirmations_v1 (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id),
+  connection_id uuid not null references clued_private.storage_connections_v1(id),
+  account_policy_id uuid not null references clued_private.storage_account_policies_v2(id),
+  receipt_id uuid not null references public.clued_audit_receipts(id),
+  created_at timestamptz not null default clock_timestamp(),
+  expires_at timestamptz not null,
+  check(expires_at>created_at)
+);
+create table clued_private.storage_trash_confirmation_items_v1 (
+  id uuid primary key default gen_random_uuid(),
+  confirmation_id uuid not null references clued_private.storage_trash_confirmations_v1(id),
+  owner_id uuid not null references auth.users(id),
+  connection_id uuid not null references clued_private.storage_connections_v1(id),
+  artifact_id uuid not null references clued_private.resource_center_artifacts_v1(id),
+  artifact_version bigint not null check(artifact_version>0),
+  provider_file_id text not null check(provider_file_id ~ '^[A-Za-z0-9_-]{1,160}$'),
+  path text not null check(char_length(path) between 2 and 1000),
+  provider_file_version text not null check(provider_file_version ~ '^[0-9]{1,40}$'),
+  consumed_job_id uuid,
+  consumed_at timestamptz,
+  check((consumed_job_id is null)=(consumed_at is null)),
+  unique(confirmation_id,artifact_id)
+);
+create unique index storage_trash_confirmation_item_job_v1 on clued_private.storage_trash_confirmation_items_v1(owner_id,consumed_job_id)
+  where consumed_job_id is not null;
+create index storage_trash_confirmation_item_open_v1 on clued_private.storage_trash_confirmation_items_v1(owner_id,connection_id,path)
+  where consumed_job_id is null;
+create function clued_private.storage_trash_confirmations_guard_v1()
+returns trigger language plpgsql security definer set search_path='' as $$
+begin
+  -- Confirmations never change; an item only records its one consuming job.
+  if tg_table_name='storage_trash_confirmations_v1' or tg_op='DELETE' then
+    raise exception 'storage_trash_confirmation_immutable' using errcode='42501'; end if;
+  if (to_jsonb(old)->>'consumed_job_id') is not null or (to_jsonb(new)->>'consumed_job_id') is null
+    or (to_jsonb(new)-array['consumed_job_id','consumed_at']) is distinct from (to_jsonb(old)-array['consumed_job_id','consumed_at']) then
+    raise exception 'storage_trash_confirmation_immutable' using errcode='42501'; end if;
+  return new;
+end $$;
+create trigger storage_trash_confirmations_immutable_v1 before update or delete on clued_private.storage_trash_confirmations_v1
+  for each row execute function clued_private.storage_trash_confirmations_guard_v1();
+create trigger storage_trash_confirmation_items_immutable_v1 before update or delete on clued_private.storage_trash_confirmation_items_v1
+  for each row execute function clued_private.storage_trash_confirmations_guard_v1();
+alter table clued_private.storage_trash_confirmations_v1 enable row level security;
+alter table clued_private.storage_trash_confirmation_items_v1 enable row level security;
+revoke all on clued_private.storage_trash_confirmations_v1,clued_private.storage_trash_confirmation_items_v1
+  from public,anon,authenticated,service_role;
+
+-- Exact trash/untrash shape after path canonicalization: one file, its
+-- source path and the Drive version the caller observed. Nothing else.
+create function clued_private.storage_destructive_shape_v1(m jsonb)
+returns boolean language plpgsql immutable set search_path='' as $$
+declare sp text; bad constant text:='(\\|//|/\./|/\.\./|/\.$|/\.\.$|/$)';
+begin
+  if jsonb_typeof(m) is distinct from 'object'
+    or (select array_agg(k order by k) from jsonb_object_keys(m) k)
+      is distinct from array['operation','source_file_version','source_path','target_kind']
+    or coalesce(m->>'operation','') not in ('delete','restore') or m->>'target_kind' is distinct from 'file'
+    or jsonb_typeof(m->'source_path') is distinct from 'string'
+    or jsonb_typeof(m->'source_file_version') is distinct from 'string'
+    or coalesce(m->>'source_file_version','') !~ '^[1-9][0-9]{0,39}$' then return false; end if;
+  sp:=m->>'source_path';
+  return length(sp) between 1 and 1000 and sp !~ bad and strpos(sp,'/')>0;
+end $$;
+
+-- §3.4 item 4 at submit, under the evaluator's exclusive root lock: count
+-- this client lineage's trash jobs on this connection in the last 24 hours
+-- (a job refused before any reservation does not count, nor does one that
+-- consumed a confirmation). From the fifth on, the job must consume one open
+-- Owner confirmation item for exactly this file, path and version under the
+-- active policy, or the submit is refused and no job exists.
+create function clued_private.storage_trash_admit_v1(m jsonb,p_snapshot jsonb,p_connection uuid,p_job uuid)
+returns void language plpgsql security definer set search_path='' as $$
+declare owner_key uuid:=(p_snapshot->>'owner_id')::uuid; lineage text:=p_snapshot->>'registration_lineage';
+  used int; item clued_private.storage_trash_confirmation_items_v1;
+begin
+  if m->>'operation' is distinct from 'delete' then return; end if;
+  if owner_key is null or lineage is null then raise exception 'storage_policy_denied' using errcode='42501'; end if;
+  select count(*) into used from clued_private.storage_jobs_v1 j
+    where j.owner_id=owner_key and j.connection_id=p_connection and j.mutation->>'operation'='delete'
+      and j.authority_snapshot_v2->>'registration_lineage'=lineage
+      and j.created_at>clock_timestamp()-interval '24 hours'
+      and not (j.intent_id is null and coalesce(j.dispatch_outcome->>'status','')='denied')
+      and not exists(select 1 from clued_private.storage_trash_confirmation_items_v1 i
+        where i.owner_id=owner_key and i.consumed_job_id=j.job_id);
+  if used<5 then return; end if;
+  select i.* into item from clued_private.storage_trash_confirmation_items_v1 i
+    join clued_private.storage_trash_confirmations_v1 c on c.id=i.confirmation_id
+    join clued_private.resource_center_artifacts_v1 a on a.id=i.artifact_id
+    where i.owner_id=owner_key and i.connection_id=p_connection and i.consumed_job_id is null
+      and c.owner_id=owner_key and c.connection_id=p_connection and c.expires_at>clock_timestamp()
+      and c.account_policy_id=(p_snapshot->>'policy_id')::uuid
+      and i.path=m->>'source_path' and i.provider_file_version=m->>'source_file_version'
+      and a.state='active' and a.target_kind='file' and a.path=i.path and a.provider_file_id=i.provider_file_id
+      and a.provider_file_version=i.provider_file_version and a.version=i.artifact_version
+    order by c.created_at,i.id limit 1 for update of i;
+  if not found then raise exception 'storage_trash_confirmation_required' using errcode='42501'; end if;
+  update clued_private.storage_trash_confirmation_items_v1 set consumed_job_id=p_job,consumed_at=clock_timestamp()
+    where id=item.id;
+end $$;
+
+-- Expected provider attempt of a trash or untrash. The parent and the file
+-- are the authority's provider identity; the content identity is observed
+-- by the executor and only shape-checked here; the proof must repeat it.
+create function clued_private.storage_destructive_attempt_v1(m clued_private.resource_center_mutations_v1,
+  j clued_private.storage_jobs_v1,p_content jsonb)
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+begin
+  if j.mutation->>'source_file_version' is distinct from m.authority_request->'provider_identity'->>'source_file_version'
+    or coalesce(m.authority_request->'provider_identity'->>'source_parent_id','') !~ '^[A-Za-z0-9_-]{1,160}$'
+    or jsonb_typeof(p_content) is distinct from 'object'
+    or (select array_agg(k order by k) from jsonb_object_keys(p_content) k) is distinct from array['head_revision_id','md5','sha256','size']
+    or jsonb_typeof(p_content->'size') is distinct from 'string' or p_content->>'size' !~ '^(0|[1-9][0-9]{0,19})$'
+    or jsonb_typeof(p_content->'head_revision_id') is distinct from 'string' or p_content->>'head_revision_id' !~ '^[A-Za-z0-9_-]{1,200}$'
+    or jsonb_typeof(p_content->'sha256') not in ('string','null') or jsonb_typeof(p_content->'md5') not in ('string','null')
+    or coalesce(p_content->>'sha256','0'||repeat('a',63)) !~ '^[0-9a-f]{64}$'
+    or coalesce(p_content->>'md5',repeat('a',32)) !~ '^[0-9a-f]{32}$'
+    or (p_content->>'sha256' is null and p_content->>'md5' is null) then
+    return null; end if;
+  return jsonb_build_object('contract','clued.storage-destructive-attempt/1','intent_id',m.id,'request_sha256',m.request_sha256,
+    'profile_id',m.profile_id,'operation',j.mutation->>'operation',
+    'provider_file_id',m.authority_request->'provider_identity'->>'source_file_id',
+    'source_path',j.mutation->>'source_path','source_file_version',j.mutation->>'source_file_version',
+    'parent_id',m.authority_request->'provider_identity'->>'source_parent_id',
+    'target_kind','file','content',p_content,'binding',m.exact_request->'binding');
+end $$;
+
+-- The registered, trashed source of an untrash job (Drive ID and version),
+-- handed to the executor: a trashed file is never listed by name.
+create function clued_private.storage_untrash_source_v1(j clued_private.storage_jobs_v1)
+returns jsonb language sql stable security definer set search_path='' as $$
+  select case when j.mutation->>'operation'='restore' then (
+    select jsonb_build_object('provider_file_id',a.provider_file_id,'provider_file_version',a.provider_file_version)
+      from clued_private.resource_center_artifacts_v1 a
+      join clued_private.storage_connections_v1 c on c.id=j.connection_id and c.owner_id=j.owner_id
+      where a.profile_id=c.profile_id and a.user_id=j.owner_id and a.state='trashed' and a.target_kind='file'
+        and a.path=j.mutation->>'source_path') end
+$$;
+
+-- Native Owner confirmation of a trash batch (§3.4 item 4). status lists the
+-- registered files of the connection and the open confirmation items;
+-- confirm records one batch (1..50 files, each by Artifact ID and version,
+-- CAS on the policy generation) with one receipt whose Event lists every
+-- file's Drive ID, path and version.
+create function public.clued_storage_trash_confirmation_v1(p_input jsonb) returns jsonb
+language plpgsql security definer set search_path='' as $$
+declare u uuid:=clued_private.storage_owner_v1(); op text:=p_input->>'action';
+  c clued_private.storage_connections_v1; p clued_private.resource_center_profiles_v1;
+  policy clued_private.storage_account_policies_v2; confirmation clued_private.storage_trash_confirmations_v1;
+  a clued_private.resource_center_artifacts_v1; entry jsonb; listed jsonb:='[]'::jsonb; root text;
+  r public.clued_audit_receipts; refs jsonb; ev text; result jsonb;
+  uuid_re constant text:='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+begin
+  if jsonb_typeof(p_input) is distinct from 'object' or coalesce(op,'') not in ('status','confirm') then
+    raise exception 'storage_owner_input_invalid' using errcode='22023'; end if;
+  if op='status' then
+    if (p_input-array['action','connection_id'])<>'{}'::jsonb or coalesce(p_input->>'connection_id','') !~ uuid_re then
+      raise exception 'storage_owner_input_invalid' using errcode='22023'; end if;
+    select * into c from clued_private.storage_connections_v1 where id=(p_input->>'connection_id')::uuid and owner_id=u;
+    if not found then raise exception 'storage_owner_denied' using errcode='42501'; end if;
+    select * into p from clued_private.resource_center_profiles_v1 where id=c.profile_id and user_id=u;
+    select * into policy from clued_private.storage_account_policies_v2
+      where id=c.account_policy_id and connection_id=c.id and owner_id=u and state='active';
+    return jsonb_build_object('connection_id',c.id,'limit',5,'window_hours',24,
+      'destructive',policy.id is not null and 'destructive'=any(policy.actions) and c.auth_mode='account_policy' and c.state='active',
+      'policy_generation',coalesce(policy.policy_generation,0),
+      'files',coalesce((select jsonb_agg(jsonb_build_object('artifact_id',x.id,'artifact_version',x.version,'path',x.path,
+          'provider_file_id',x.provider_file_id,'provider_file_version',x.provider_file_version,
+          'trashable',x.governance_class='ordinary' or x.delete_authority) order by x.path collate "C")
+        from (select * from clued_private.resource_center_artifacts_v1 x0 where x0.profile_id=p.id and x0.user_id=u
+          and x0.state='active' and x0.target_kind='file' order by x0.path collate "C" limit 500) x),'[]'::jsonb),
+      'open_items',coalesce((select jsonb_agg(jsonb_build_object('artifact_id',i.artifact_id,'path',i.path,
+          'provider_file_id',i.provider_file_id,'provider_file_version',i.provider_file_version,'expires_at',k.expires_at)
+          order by i.path collate "C")
+        from clued_private.storage_trash_confirmation_items_v1 i join clued_private.storage_trash_confirmations_v1 k on k.id=i.confirmation_id
+        where i.owner_id=u and i.connection_id=c.id and i.consumed_job_id is null and k.expires_at>clock_timestamp()
+          and k.account_policy_id=policy.id),'[]'::jsonb));
+  end if;
+  if (p_input-array['action','connection_id','items','base_generation','idempotency_key'])<>'{}'::jsonb
+    or not(p_input ?& array['action','connection_id','items','base_generation','idempotency_key'])
+    or coalesce(p_input->>'connection_id','') !~ uuid_re
+    or jsonb_typeof(p_input->'items') is distinct from 'array' or jsonb_array_length(p_input->'items') not between 1 and 50
+    or jsonb_typeof(p_input->'base_generation') is distinct from 'number' or p_input->>'base_generation' !~ '^[1-9][0-9]{0,17}$'
+    or jsonb_typeof(p_input->'idempotency_key') is distinct from 'string'
+    or length(p_input->>'idempotency_key') not between 8 and 160 or p_input->>'idempotency_key'<>btrim(p_input->>'idempotency_key')
+    or exists(select 1 from jsonb_array_elements(p_input->'items') e where jsonb_typeof(e) is distinct from 'object'
+      or (e-array['artifact_id','artifact_version'])<>'{}'::jsonb or coalesce(e->>'artifact_id','') !~ uuid_re
+      or jsonb_typeof(e->'artifact_version') is distinct from 'number' or e->>'artifact_version' !~ '^[1-9][0-9]{0,17}$')
+    or (select count(distinct e->>'artifact_id') from jsonb_array_elements(p_input->'items') e)<>jsonb_array_length(p_input->'items') then
+    raise exception 'storage_owner_input_invalid' using errcode='22023'; end if;
+  -- Root advisory first, as the evaluators, submit and the level switch: a
+  -- confirmation serializes with every admission on this root.
+  select pr.root_folder_id into root from clued_private.storage_connections_v1 co
+    join clued_private.resource_center_profiles_v1 pr on pr.id=co.profile_id and pr.user_id=u
+    where co.id=(p_input->>'connection_id')::uuid and co.owner_id=u;
+  if root is null then raise exception 'storage_owner_denied' using errcode='42501'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(u::text||':'||root,0));
+  perform clued_private.storage_owner_v1();
+  perform clued_private.authorization_account_v12(u);
+  select * into c from clued_private.storage_connections_v1 where id=(p_input->>'connection_id')::uuid and owner_id=u for share;
+  select * into policy from clued_private.storage_account_policies_v2
+    where id=c.account_policy_id and connection_id=c.id and owner_id=u for share;
+  select * into p from clued_private.resource_center_profiles_v1 where id=c.profile_id and user_id=u for share;
+  r:=clued_private.m1_begin_receipt(u,null,'storage_owner_trash_confirmation_v1',p_input,clued_private.m1_sha256(p_input));
+  if r.status<>'pending' then
+    if r.status='committed' then return r.canonical_result; end if;
+    raise exception 'storage_owner_version_conflict' using errcode='40001';
+  end if;
+  if c.id is null or c.auth_mode<>'account_policy' or c.state<>'active' or c.revoked_at is not null
+    or policy.id is null or policy.state<>'active' or not ('destructive'=any(policy.actions))
+    or policy.policy_generation<>(p_input->>'base_generation')::bigint
+    or p.root_folder_id is distinct from root or p.state<>'active' then
+    raise exception 'storage_owner_version_conflict' using errcode='40001'; end if;
+  insert into clued_private.storage_trash_confirmations_v1(owner_id,connection_id,account_policy_id,receipt_id,expires_at)
+    values(u,c.id,policy.id,r.id,clock_timestamp()+interval '24 hours') returning * into confirmation;
+  for entry in select e from jsonb_array_elements(p_input->'items') e order by e->>'artifact_id' loop
+    select * into a from clued_private.resource_center_artifacts_v1 where id=(entry->>'artifact_id')::uuid
+      and profile_id=p.id and user_id=u for share;
+    -- A governance file without delete authority is never trashable (§3.4 item 2).
+    if a.id is null or a.state<>'active' or a.target_kind<>'file' or a.path=p.managed_root
+      or a.version<>(entry->>'artifact_version')::bigint
+      or not (a.governance_class='ordinary' or a.delete_authority) then
+      raise exception 'storage_owner_version_conflict' using errcode='40001'; end if;
+    insert into clued_private.storage_trash_confirmation_items_v1(confirmation_id,owner_id,connection_id,artifact_id,
+      artifact_version,provider_file_id,path,provider_file_version)
+    values(confirmation.id,u,c.id,a.id,a.version,a.provider_file_id,a.path,a.provider_file_version);
+    listed:=listed||jsonb_build_array(jsonb_build_object('artifact_id',a.id,'provider_file_id',a.provider_file_id,
+      'path',a.path,'provider_file_version',a.provider_file_version));
+  end loop;
+  refs:=jsonb_build_array(jsonb_build_object('kind','system','role','primary','id',confirmation.id));
+  ev:=clued_private.m1_append_event_row(u,null,r.id,r.canonical_version,'extension:storage:owner_trash_confirmation_v1',
+    refs,'project:'||p.project_id::text,null,jsonb_build_object('connection_id',c.id,'confirmation_id',confirmation.id,
+      'policy_id',policy.id,'expires_at',confirmation.expires_at,'items',listed),
+    p_input->>'idempotency_key',r.request_sha256,'success','audit_only','{}'::uuid[],'[]'::jsonb,null);
+  result:=clued_private.m1_finish_receipt(r.id,'committed',refs,'{}'::jsonb,
+    jsonb_build_object(confirmation.id::text,1),array[ev],'{}'::uuid[],null);
+  perform clued_private.storage_owner_v1();
+  return result;
+end $$;
+
+-- Native Owner write-level switch: destructive is a third class with its own
+-- disclosure; one class changes per call, exactly as for modify and overwrite.
+do $migration$
+declare patch record; body text; hits int; current text;
+begin
+  for patch in select * from (values
+    ('clued_private.storage_policy_scope_digest_v3(uuid,text,text[])',
+     $a$      array['inspect','create_file','create_topic','modify','overwrite']::text[]) then$a$,
+     $r$      array['inspect','create_file','create_topic','modify','overwrite']::text[],
+      array['inspect','create_file','create_topic','destructive']::text[],
+      array['inspect','create_file','create_topic','modify','destructive']::text[],
+      array['inspect','create_file','create_topic','overwrite','destructive']::text[],
+      array['inspect','create_file','create_topic','modify','overwrite','destructive']::text[]) then$r$,1),
+    ('clued_private.storage_policy_evaluate_v2(text,uuid,text,uuid)',
+     $a$    or coalesce(p_action,'') not in ('inspect','create_file','create_topic','modify','overwrite') then$a$,
+     $r$    or coalesce(p_action,'') not in ('inspect','create_file','create_topic','modify','overwrite','destructive') then$r$,1),
+    ('public.clued_storage_write_access_v1(jsonb)',
+     $a$  overwrite_disclosure constant text:='clued.storage-overwrite-disclosure/1';$a$,
+     $r$  overwrite_disclosure constant text:='clued.storage-overwrite-disclosure/1';
+  destructive_disclosure constant text:='clued.storage-destructive-disclosure/1';$r$,1),
+    ('public.clued_storage_write_access_v1(jsonb)',
+     $a$'overwrite_disclosure_version',overwrite_disclosure,$a$,
+     $r$'overwrite_disclosure_version',overwrite_disclosure,
+      'destructive_disclosure_version',destructive_disclosure,$r$,1),
+    ('public.clued_storage_write_access_v1(jsonb)',
+     $a$unnest(policy.actions) x where x in ('modify','overwrite')$a$,
+     $r$unnest(policy.actions) x where x in ('modify','overwrite','destructive')$r$,2),
+    ('public.clued_storage_write_access_v1(jsonb)',
+     $a$not (wanted <@ array['modify','overwrite']) then$a$,
+     $r$not (wanted <@ array['modify','overwrite','destructive']) then$r$,1),
+    ('public.clued_storage_write_access_v1(jsonb)',
+     $a$(case toggled when 'overwrite' then overwrite_disclosure else disclosure end)$a$,
+     $r$(case toggled when 'overwrite' then overwrite_disclosure when 'destructive' then destructive_disclosure else disclosure end)$r$,1),
+    ('public.clued_storage_write_access_v1(jsonb)',
+     $a$  actions:=base_actions||array(select x from unnest(array['modify','overwrite']) x where x=any(wanted));$a$,
+     $r$  actions:=base_actions||array(select x from unnest(array['modify','overwrite','destructive']) x where x=any(wanted));$r$,1),
+    -- Registry: trash and untrash keep the Artifact; CAS on its version.
+    ('public.clued_resource_center_admin_v1(uuid,jsonb)',
+     $a$    ('profile_register','artifact_register','artifact_update','artifact_revoke',$a$,
+     $r$    ('profile_register','artifact_register','artifact_update','artifact_revoke','artifact_trash','artifact_untrash',$r$,1),
+    ('public.clued_resource_center_admin_v1(uuid,jsonb)',
+     $a$    elsif v_action='binding_issue' then$a$,
+     $r$    elsif v_action in ('artifact_trash','artifact_untrash') then
+      -- StorageFullCapability P5: a file Clued moved to (or took out of) the
+      -- Drive trash keeps its Artifact, path and governance; only the state
+      -- and the observed Drive version change, by CAS on the Artifact version.
+      select * into v_artifact from clued_private.resource_center_artifacts_v1
+        where id=(p_input->>'artifact_id')::uuid and profile_id=v_profile.id and user_id=p_user_id
+          and state=case v_action when 'artifact_trash' then 'active' else 'trashed' end for update;
+      if not found or v_artifact.target_kind<>'file' or v_artifact.path=v_profile.managed_root or
+        v_artifact.version is distinct from (p_input->>'base_version')::bigint then
+        raise exception 'resource_center_artifact_conflict' using errcode='40001';
+      end if;
+      if p_input->>'path' is distinct from v_artifact.path or
+        p_input->>'provider_file_id' is distinct from v_artifact.provider_file_id or
+        coalesce(p_input->>'provider_file_version','') !~ '^[0-9]+$' then
+        raise exception 'resource_center_artifact_invalid' using errcode='22023';
+      end if;
+      if v_action='artifact_untrash' then
+        v_parent:=left(v_artifact.path,char_length(v_artifact.path)-strpos(reverse(v_artifact.path),'/'));
+        if not exists(select 1 from clued_private.resource_center_artifacts_v1 x
+          where x.profile_id=v_profile.id and x.path=v_parent and x.state='active'
+            and x.target_kind='directory') then
+          raise exception 'resource_center_parent_unregistered' using errcode='22023';
+        end if;
+      end if;
+      v_base:=jsonb_build_object(v_artifact.id::text,v_artifact.version);
+      update clued_private.resource_center_artifacts_v1
+        set state=case v_action when 'artifact_trash' then 'trashed' else 'active' end,
+          provider_file_version=p_input->>'provider_file_version',
+          version=version+1,updated_at=now(),
+          source_decision_id=v_decision_id,receipt_id=v_receipt.id
+        where id=v_artifact.id returning * into v_artifact;
+      v_target_id:=v_artifact.id; v_version:=v_artifact.version;
+    elsif v_action='binding_issue' then$r$,1),
+    -- Artifact authority: restore (untrash) is source only, like delete.
+    ('public.clued_resource_center_authority_v1(text,jsonb)',
+     $a$    v_operation not in ('create','write','replace','move','rename','delete') or$a$,
+     $r$    v_operation not in ('create','write','replace','move','rename','delete','restore') or$r$,1),
+    ('public.clued_resource_center_authority_v1(text,jsonb)',
+     $a$  if v_operation='delete' then
+    if v_source_path is null or v_destination_path is not null then$a$,
+     $r$  if v_operation in ('delete','restore') then
+    if v_source_path is null or v_destination_path is not null then$r$,1),
+    ('public.clued_resource_center_authority_v1(text,jsonb)',
+     $a$      where profile_id=v_profile.id and user_id=v_profile.user_id and state='active'
+        and path=v_source_path and path<>v_profile.managed_root$a$,
+     $r$      where profile_id=v_profile.id and user_id=v_profile.user_id
+        and state=case when v_operation='restore' then 'trashed' else 'active' end
+        and path=v_source_path and path<>v_profile.managed_root$r$,1),
+    ('public.clued_resource_center_authority_v1(text,jsonb)',
+     $a$      v_profile.managed_root,v_source_path) then
+      return jsonb_build_object('status','denied','reason','source_mismatch');$a$,
+     $r$      v_profile.managed_root,case when v_operation='restore'
+        then left(v_source_path,char_length(v_source_path)-strpos(reverse(v_source_path),'/')) else v_source_path end) then
+      return jsonb_build_object('status','denied','reason','source_mismatch');$r$,1),
+    ('public.clued_resource_center_authority_v1(text,jsonb)',
+     $a$  if v_destination_path is not null then
+    if left(v_destination_path,$a$,
+     $r$  -- Trash and untrash (P5): the source's folder is its registered,
+  -- current parent, as Drive reports it; an untrash needs its name free; a
+  -- governance file is trashed only with delete authority (§3.4 item 2).
+  if v_operation in ('delete','restore') then
+    v_parent_path:=left(v_source_path,char_length(v_source_path)-strpos(reverse(v_source_path),'/'));
+    select * into v_parent from clued_private.resource_center_artifacts_v1
+      where profile_id=v_profile.id and user_id=v_profile.user_id and state='active'
+        and path=v_parent_path and target_kind='directory'
+        and provider_file_id=v_provider->>'source_parent_id';
+    if not found then
+      return jsonb_build_object('status','denied','reason','parent_unregistered');
+    end if;
+    if not clued_private.resource_center_path_current_v1(
+      v_profile.user_id,v_profile.project_id,v_profile.id,
+      v_profile.managed_root,v_parent_path) then
+      return jsonb_build_object('status','denied','reason','parent_path_not_current');
+    end if;
+    if v_operation='restore' and exists(select 1 from clued_private.resource_center_artifacts_v1 a
+        where a.profile_id=v_profile.id and a.path=v_source_path and a.state='active') then
+      return jsonb_build_object('status','denied','reason','destination_exists');
+    end if;
+    if v_operation='delete' and v_source.governance_class='governance' and not v_source.delete_authority then
+      return jsonb_build_object('status','denied','reason','delete_authority_required');
+    end if;
+  end if;
+  if v_destination_path is not null then
+    if left(v_destination_path,$r$,1),
+    -- Settlement authority and registry change for trash / untrash.
+    ('clued_private.storage_settle_authority_v1(uuid,clued_private.resource_center_profiles_v1,clued_private.resource_center_mutations_v1,jsonb,clued_private.resource_center_artifacts_v1)',
+     $a$  existing:=p_mutation->>'operation' in ('rename','move','replace');$a$,
+     $r$  existing:=p_mutation->>'operation' in ('rename','move','replace','delete','restore');$r$,1),
+    ('clued_private.storage_settle_authority_v1(uuid,clued_private.resource_center_profiles_v1,clued_private.resource_center_mutations_v1,jsonb,clued_private.resource_center_artifacts_v1)',
+     $a$        and state='active' and target_kind='file'$a$,
+     $r$        and state=case when p_mutation->>'operation'='restore' then 'trashed' else 'active' end and target_kind='file'$r$,1),
+    ('clued_private.storage_settle_authority_v1(uuid,clued_private.resource_center_profiles_v1,clued_private.resource_center_mutations_v1,jsonb,clued_private.resource_center_artifacts_v1)',
+     $a$    if not found or not clued_private.resource_center_path_current_v1(p_owner,p.project_id,p.id,p.managed_root,selected.path)$a$,
+     $r$    if not found or not clued_private.resource_center_path_current_v1(p_owner,p.project_id,p.id,p.managed_root,
+        case when p_mutation->>'operation'='restore'
+          then left(selected.path,char_length(selected.path)-strpos(reverse(selected.path),'/')) else selected.path end)
+      or (p_mutation->>'operation'='restore' and exists(select 1 from clued_private.resource_center_artifacts_v1 x
+        where x.profile_id=p.id and x.path=selected.path and x.state='active'))$r$,1),
+    ('clued_private.storage_settle_input_v1(uuid,clued_private.resource_center_mutations_v1,jsonb)',
+     $a$  select case when m.authority_request->'mutation'->>'operation' in ('rename','move','replace') then$a$,
+     $r$  select case when m.authority_request->'mutation'->>'operation' in ('delete','restore') then
+    jsonb_build_object('action',case m.authority_request->'mutation'->>'operation' when 'delete' then 'artifact_trash' else 'artifact_untrash' end,
+      'profile_id',p_profile,'source_decision_id',m.source_decision_id,
+      'idempotency_key','resource-center-finalize:'||m.id::text,
+      'artifact_id',m.authority_result->'authority'->>'artifact_id',
+      'base_version',split_part(m.authority_result->'authority'->>'authority_version',':',2)::bigint,
+      'path',p_proof->>'path','provider_file_id',p_proof->>'provider_file_id','provider_file_version',p_proof->>'provider_file_version')
+  when m.authority_request->'mutation'->>'operation' in ('rename','move','replace') then$r$,1),
+    -- Submit: shape, level and the trash limit.
+    ('clued_private.storage_jobs_policy_core_v2(text,jsonb)',
+     $a$      or coalesce(m->>'operation','') not in ('create','rename','move','replace')
+      or coalesce(m->>'target_kind','') not in ('file','directory')
+      or jsonb_typeof(m->'destination_path') is distinct from 'string'
+      or length(m->>'destination_path') not between 1 and 1000 then$a$,
+     $r$      or coalesce(m->>'operation','') not in ('create','rename','move','replace','delete','restore')
+      or coalesce(m->>'target_kind','') not in ('file','directory')
+      or (m->>'operation' not in ('delete','restore') and (jsonb_typeof(m->'destination_path') is distinct from 'string'
+        or length(m->>'destination_path') not between 1 and 1000)) then$r$,1),
+    ('clued_private.storage_jobs_policy_core_v2(text,jsonb)',
+     $a$    if m->>'operation' in ('rename','move') then
+      wanted:='modify';$a$,
+     $r$    if m->>'operation' in ('delete','restore') then
+      wanted:='destructive';
+      if not clued_private.storage_destructive_shape_v1(m) then
+        raise exception 'storage_job_input_invalid' using errcode='22023'; end if;
+    elsif m->>'operation' in ('rename','move') then
+      wanted:='modify';$r$,1),
+    ('clued_private.storage_jobs_policy_core_v2(text,jsonb)',
+     $a$  perform clued_private.storage_staging_consume_v1(m,$a$,
+     $r$  perform clued_private.storage_trash_admit_v1(m,snapshot,connection_id,v_job_id);
+  perform clued_private.storage_staging_consume_v1(m,$r$,1),
+    ('clued_private.storage_cloud_job_current_v2(uuid,uuid)',
+     $a$  wanted:=case when j.mutation->>'operation' in ('rename','move') then 'modify' when j.mutation->>'operation'='replace' then 'overwrite'$a$,
+     $r$  wanted:=case when j.mutation->>'operation' in ('rename','move') then 'modify' when j.mutation->>'operation'='replace' then 'overwrite'
+    when j.mutation->>'operation' in ('delete','restore') then 'destructive'$r$,1),
+    ('clued_private.storage_cloud_job_current_v2(uuid,uuid)',
+     $a$    or coalesce(j.mutation->>'operation','') not in ('create','rename','move','replace')$a$,
+     $r$    or coalesce(j.mutation->>'operation','') not in ('create','rename','move','replace','delete','restore')$r$,1),
+    ('clued_private.storage_job_provider_attempt_v2(uuid,uuid,text,jsonb)',
+     $a$  elsif j.mutation->>'operation'='replace' then
+    expected:=clued_private.storage_replace_attempt_v1(m,j,p_attempt);$a$,
+     $r$  elsif j.mutation->>'operation'='replace' then
+    expected:=clued_private.storage_replace_attempt_v1(m,j,p_attempt);
+  elsif j.mutation->>'operation' in ('delete','restore') then
+    expected:=clued_private.storage_destructive_attempt_v1(m,j,p_attempt->'content');$r$,1),
+    ('public.clued_resource_center_mutation_journal_v1(uuid,jsonb)',
+     $a$        coalesce(v_request->'mutation'->>'operation','') not in ('create','rename','move','replace') then$a$,
+     $r$        coalesce(v_request->'mutation'->>'operation','') not in ('create','rename','move','replace','delete','restore') then$r$,1),
+    -- Verified record and settlement.
+    ('clued_private.storage_verified_result_v2(text,jsonb)',
+     $a$    or coalesce(j.mutation->>'operation','') not in ('create','rename','move','replace')$a$,
+     $r$    or coalesce(j.mutation->>'operation','') not in ('create','rename','move','replace','delete','restore')$r$,1),
+    ('clued_private.storage_verified_result_v2(text,jsonb)',
+     $a$  parent_path:=left(j.mutation->>'destination_path',char_length(j.mutation->>'destination_path')-strpos(reverse(j.mutation->>'destination_path'),'/'));$a$,
+     $r$  -- Trash and untrash have no destination: the parent is the source's folder.
+  parent_path:=left(coalesce(j.mutation->>'destination_path',j.mutation->>'source_path'),
+    char_length(coalesce(j.mutation->>'destination_path',j.mutation->>'source_path'))
+      -strpos(reverse(coalesce(j.mutation->>'destination_path',j.mutation->>'source_path')),'/'));$r$,1),
+    ('clued_private.storage_verified_result_v2(text,jsonb)',
+     $a$    or clued_private.resource_center_directory_match_v1(parent.provider_file_version,parent.provider_sharing_digest,
+      m.authority_request->'provider_identity'->>'destination_parent_version',
+      m.authority_request->'provider_identity'->>'destination_parent_sharing_digest') is distinct from 'match'$a$,
+     $r$    or (j.mutation->>'operation' not in ('delete','restore') and clued_private.resource_center_directory_match_v1(parent.provider_file_version,parent.provider_sharing_digest,
+      m.authority_request->'provider_identity'->>'destination_parent_version',
+      m.authority_request->'provider_identity'->>'destination_parent_sharing_digest') is distinct from 'match')
+    or (j.mutation->>'operation' in ('delete','restore')
+      and parent.provider_file_id is distinct from m.authority_request->'provider_identity'->>'source_parent_id')$r$,1),
+    ('clued_private.storage_verified_result_v2(text,jsonb)',
+     $a$    elsif j.mutation->>'operation'='replace' then
+      attempt_expected:=clued_private.storage_replace_attempt_v1(m,j,m.provider_attempt);$a$,
+     $r$    elsif j.mutation->>'operation'='replace' then
+      attempt_expected:=clued_private.storage_replace_attempt_v1(m,j,m.provider_attempt);
+    elsif j.mutation->>'operation' in ('delete','restore') then
+      attempt_expected:=clued_private.storage_destructive_attempt_v1(m,j,m.provider_attempt->'content');$r$,1),
+    ('clued_private.storage_verified_result_v2(text,jsonb)',
+     $a$    post:=jsonb_build_object('path',attempt_expected->>'destination_path',$a$,
+     $r$    post:=jsonb_build_object('path',coalesce(attempt_expected->>'destination_path',attempt_expected->>'source_path'),$r$,1),
+    ('clued_private.storage_verified_result_v2(text,jsonb)',
+     $a$    if j.mutation->>'operation'='replace' then
+      expected:=post||jsonb_build_object('contract','clued.storage-replace-verified/1',$a$,
+     $r$    if j.mutation->>'operation' in ('delete','restore') then
+      expected:=post||jsonb_build_object('contract',case j.mutation->>'operation' when 'delete'
+          then 'clued.storage-trash-verified/1' else 'clued.storage-untrash-verified/1' end,
+        'operation',j.mutation->>'operation','source_path',j.mutation->>'source_path',
+        'source_file_version',j.mutation->>'source_file_version','trashed',j.mutation->>'operation'='delete',
+        'content',attempt_expected->'content','provider_before',m.authority_request->'provider_identity',
+        'checks',case when j.mutation->>'operation'='delete'
+          then jsonb_build_object('identity',true,'ancestors',true,'stable_state',true,'trashed',true,
+            'parent_unchanged',true,'name_vacated',true,'content_unchanged',true)
+          else jsonb_build_object('identity',true,'ancestors',true,'stable_state',true,'untrashed',true,
+            'parent_unchanged',true,'unique_name',true,'content_unchanged',true) end);
+    elsif j.mutation->>'operation'='replace' then
+      expected:=post||jsonb_build_object('contract','clued.storage-replace-verified/1',$r$,1),
+    ('clued_private.storage_verified_result_v2(text,jsonb)',
+     $a$  req:=jsonb_build_object('idempotency_key','storage-settle-verified:'||m.id::text,'intent_id',m.id,'verified_digest',m.verified_digest_v2);$a$,
+     $r$  req:=jsonb_build_object('idempotency_key','storage-settle-verified:'||m.id::text,'intent_id',m.id,'verified_digest',m.verified_digest_v2)
+    -- §3.4 item 1: the trash receipt states that the recovery window ends.
+    ||case when j.mutation->>'operation'='delete' then jsonb_build_object('trash_retention',
+      'Google Drive permanently deletes a trashed file 30 days after it was trashed; after that it cannot be restored.')
+      else '{}'::jsonb end;$r$,1),
+    -- The executor descriptor names an untrash job's trashed source.
+    ('clued_private.storage_cloud_worker_v2(text,jsonb)',
+     $a$      'restore',clued_private.storage_restore_v1(j),'revision_releases',clued_private.storage_revision_releases_for_job_v1(j),$a$,
+     $r$      'restore',clued_private.storage_restore_v1(j),'revision_releases',clued_private.storage_revision_releases_for_job_v1(j),
+      'untrash_source',clued_private.storage_untrash_source_v1(j),$r$,1),
+    -- Recovery loads trash and untrash descriptors (GET-only re-verification).
+    ('public.clued_storage_scheduled_recovery_v2(text,jsonb)',
+     $a$    or coalesce(j.mutation->>'operation','') not in ('create','rename','move','replace')$a$,
+     $r$    or coalesce(j.mutation->>'operation','') not in ('create','rename','move','replace','delete','restore')$r$,1),
+    ('public.clued_storage_scheduled_recovery_v2(text,jsonb)',
+     $a$    or m.provider_attempt->>'parent_id' is distinct from
+      m.authority_request->'provider_identity'->>'destination_parent_id'$a$,
+     $r$    or m.provider_attempt->>'parent_id' is distinct from
+      coalesce(m.authority_request->'provider_identity'->>'destination_parent_id',m.authority_request->'provider_identity'->>'source_parent_id')$r$,1),
+    ('public.clued_storage_native_recovery_load_v2(text,jsonb)',
+     $a$    or coalesce(j.mutation->>'operation','') not in ('create','rename','move','replace')$a$,
+     $r$    or coalesce(j.mutation->>'operation','') not in ('create','rename','move','replace','delete','restore')$r$,1),
+    ('public.clued_storage_native_recovery_load_v2(text,jsonb)',
+     $a$    or m.provider_attempt->>'parent_id' is distinct from
+      m.authority_request->'provider_identity'->>'destination_parent_id'$a$,
+     $r$    or m.provider_attempt->>'parent_id' is distinct from
+      coalesce(m.authority_request->'provider_identity'->>'destination_parent_id',m.authority_request->'provider_identity'->>'source_parent_id')$r$,1)
+  ) v(sig,anchor,replacement,expected) loop
+    -- Paired edits are applied together: every edit of one function first,
+    -- then one CREATE OR REPLACE.
+    if current is distinct from patch.sig then
+      if current is not null then execute body; end if;
+      current:=patch.sig; body:=pg_get_functiondef(patch.sig::regprocedure);
+    end if;
+    hits:=(length(body)-length(replace(body,patch.anchor,'')))/length(patch.anchor);
+    if hits<>patch.expected then
+      raise exception 'storage_destructive_definition_mismatch: % (% of %) %',patch.sig,hits,patch.expected,left(patch.anchor,60);
+    end if;
+    body:=replace(body,patch.anchor,patch.replacement);
+  end loop;
+  execute body;
+end $migration$;
+
+revoke all on function clued_private.storage_trash_confirmations_guard_v1(),
+  clued_private.storage_destructive_shape_v1(jsonb),
+  clued_private.storage_trash_admit_v1(jsonb,jsonb,uuid,uuid),
+  clued_private.storage_destructive_attempt_v1(clued_private.resource_center_mutations_v1,clued_private.storage_jobs_v1,jsonb),
+  clued_private.storage_untrash_source_v1(clued_private.storage_jobs_v1)
+  from public,anon,authenticated,service_role;
+revoke all on function public.clued_storage_trash_confirmation_v1(jsonb) from public,anon,authenticated,service_role;
+grant execute on function public.clued_storage_trash_confirmation_v1(jsonb) to authenticated;

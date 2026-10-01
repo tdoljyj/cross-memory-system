@@ -28,7 +28,7 @@ test('discovery and guessed calls require both existing account/jobs flags; no p
       assert.equal(tools[0].annotations.readOnlyHint, false);
       assert.equal(tools[1].annotations.readOnlyHint, true);
       assert.equal(tools[0].inputSchema.additionalProperties, false);
-      assert.equal(tools[0].inputSchema.properties.mutation.oneOf.length, 5);
+      assert.equal(tools[0].inputSchema.properties.mutation.oneOf.length, 7);
     }
   }
   for (const name of ['clued_storage_begin', 'clued_storage_admission', 'clued_storage_grant', 'clued_storage_credential']) {
@@ -228,6 +228,49 @@ test('replace passes with new content or a restore job in its exact shape and re
       assert.equal(reply.isError, false);
       assert.deepEqual(calls.at(-1).p_input, { ...ref, mutation: input, action: 'submit' });
     }
+  } finally { globalThis.fetch = before; }
+});
+
+test('trash and untrash pass only in their exact shape and reach the jobs RPC as delete and restore', async () => {
+  const before = globalThis.fetch; const calls = [];
+  globalThis.fetch = async (_url, init) => { calls.push(JSON.parse(init.body)); return Response.json(status()); };
+  const path = 'G:/My Drive/Clued_资料中心/track/topic/a.md';
+  const good = [
+    [{ operation: 'trash', target_kind: 'file', source_path: path, source_file_version: '7' }, 'delete'],
+    [{ operation: 'untrash', target_kind: 'file', source_path: '90_待归类/a.md', source_file_version: '8' }, 'restore'],
+  ];
+  const bad = [
+    { ...good[0][0], destination_path: path }, { ...good[0][0], source_file_version: '0' }, { ...good[0][0], source_file_version: 7 },
+    { ...good[0][0], target_kind: 'directory' }, { ...good[0][0], content: 'x' }, { operation: 'trash', target_kind: 'file', source_path: path },
+    { ...good[1][0], directory_semantics: 'topic' }, { operation: 'delete', target_kind: 'file', source_path: path, source_file_version: '7' },
+    { operation: 'restore', target_kind: 'file', source_path: path, source_file_version: '7' },
+  ];
+  try {
+    for (const input of bad) {
+      const reply = await (await submit({ ...ref, mutation: input })).json();
+      assert.ok(reply.result?.isError === true || reply.error, JSON.stringify(input));
+    }
+    const invalid = (await (await submit({ ...ref, mutation: { ...good[0][0], source_path: '90_待归类/../a.md' } })).json()).result;
+    assert.equal(invalid.structuredContent.error, 'storage_path_invalid');
+    assert.equal(calls.length, 0);
+    for (const [input, operation] of good) {
+      const reply = (await (await submit({ ...ref, mutation: input })).json()).result;
+      assert.equal(reply.isError, false);
+      assert.deepEqual(calls.at(-1).p_input, { ...ref, mutation: { ...input, operation }, action: 'submit' });
+    }
+  } finally { globalThis.fetch = before; }
+});
+
+test('the trash limit refusal is a fixed code with guidance and schedules nothing', async () => {
+  const before = globalThis.fetch; const pending = [];
+  globalThis.fetch = async () => Response.json({ message: 'storage_trash_confirmation_required', code: '42501' }, { status: 403 });
+  try {
+    const reply = (await (await submit({ ...ref, mutation: { operation: 'trash', target_kind: 'file',
+      source_path: '90_待归类/a.md', source_file_version: '3' } }, env, { waitUntil: p => pending.push(p) })).json()).result;
+    assert.equal(reply.isError, true);
+    assert.equal(reply.structuredContent.error, 'storage_trash_confirmation_required');
+    assert.match(reply.structuredContent.message, /Owner/);
+    assert.equal(pending.length, 0);
   } finally { globalThis.fetch = before; }
 });
 

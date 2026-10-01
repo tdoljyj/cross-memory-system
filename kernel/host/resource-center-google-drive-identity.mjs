@@ -47,12 +47,17 @@ export function createGoogleDriveProviderIdentityResolver({
   get_file: getFile,
   list_children: listChildren,
   get_sharing: getSharing,
+  // Untrash (StorageFullCapability P5): the Drive ID of the registered,
+  // trashed source. A trashed file is never listed by name, so it is read by
+  // this server-supplied ID and must still sit, trashed, under its path's parent.
+  restore_source_id: restoreSourceId,
 } = {}) {
   const root = pathOf(managedRoot);
   if (!root || typeof rootFolderId !== "string" || !rootFolderId ||
     typeof rootParentId !== "string" || !rootParentId ||
     typeof getFile !== "function" || typeof listChildren !== "function" ||
-    (getSharing !== undefined && typeof getSharing !== "function")) {
+    (getSharing !== undefined && typeof getSharing !== "function") ||
+    (restoreSourceId !== undefined && (typeof restoreSourceId !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(restoreSourceId)))) {
     throw new TypeError("A pinned Drive root and Host-owned metadata API are required.");
   }
   const rootName = root.slice(root.lastIndexOf("/") + 1);
@@ -84,11 +89,29 @@ export function createGoogleDriveProviderIdentityResolver({
     }
 
     let source = null;
+    let sourceParent = null;
     if (mutation.source_path) {
       const parts = segmentsWithin(mutation.source_path, root);
       if (parts.length === 0) fail("PROVIDER_ROOT_MUTATION_FORBIDDEN");
       const parent = await walk(parts.slice(0, -1));
-      source = await child(parent, parts.at(-1), mutation.target_kind === "directory", true);
+      sourceParent = parent;
+      if (mutation.operation === "restore") {
+        // Only files are restored; the name must be free again in the parent.
+        if (!restoreSourceId || mutation.target_kind === "directory") fail("PROVIDER_PATH_UNREGISTERED");
+        const trashed = await getFile(restoreSourceId);
+        if (!trashed || trashed.id !== restoreSourceId || trashed.name !== parts.at(-1) || trashed.trashed !== true ||
+          !Array.isArray(trashed.parents) || trashed.parents.length !== 1 || trashed.parents[0] !== parent.id ||
+          typeof trashed.version !== "string" || !/^\d+$/.test(trashed.version) || trashed.mimeType === FOLDER_MIME) {
+          fail("PROVIDER_METADATA_MISMATCH");
+        }
+        const taken = await listChildren({ parent_id: parent.id, name: parts.at(-1) });
+        if (!Array.isArray(taken)) fail("PROVIDER_LIST_UNAVAILABLE");
+        if (taken.length > 0) fail("PROVIDER_DESTINATION_EXISTS");
+        versions.push([trashed.id, trashed.version]);
+        source = trashed;
+      } else {
+        source = await child(parent, parts.at(-1), mutation.target_kind === "directory", true);
+      }
     }
 
     let destinationParent = null;
@@ -127,6 +150,10 @@ export function createGoogleDriveProviderIdentityResolver({
       provider_version: createHash("sha256").update(JSON.stringify(versions)).digest("hex"),
       root_sharing_digest: rootSharingDigest,
       destination_parent_sharing_digest: destinationParentSharingDigest,
+      // Trash and untrash name the source's folder, which the authority and
+      // the verified settlement require to be its registered parent.
+      ...(mutation.operation === "delete" || mutation.operation === "restore"
+        ? { source_parent_id: sourceParent?.id ?? null } : {}),
     });
   };
 }

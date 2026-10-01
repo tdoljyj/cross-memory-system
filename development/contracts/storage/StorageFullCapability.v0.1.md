@@ -202,6 +202,7 @@
    - track 目录；
    - **经 provider 实测为非空**的目录。Google 移入回收站会级联到全部子孙，包括未登记的 Owner 文件。
 6. **只有文件所有者能在 My Drive 中 trash。** 根内由他人拥有的对象返回 `provider_owner_required`，不尝试其他办法绕过。
+7. **P5 实现说明（2026-10-01，Owner Decision `ba02734a`）**：`trash` / `untrash` 使用单独的 `destructive` 写入等级（独立开关与说明 `clued.storage-destructive-disclosure/1`），对外操作名为 `trash` / `untrash`，作业与判定器内记为 `delete` / `restore`。只处理已登记的**文件**；目录（包括空目录）一律拒绝，留给后续一期。第 4 项的“同一会话 / 同一任务”在服务端没有对应身份，实现为“同一客户端 lineage、同一连接、任意 24 小时内”，提交前已被拒绝的作业与消耗确认的作业不计入；第 6 个起，每个文件须有 Owner 在原生页面确认的条目（同一 Receipt 的 Event 逐个列出 Artifact ID、Drive ID、路径和版本；条目绑定确认时的策略，24 小时过期，只能被一个作业消耗），否则提交返回 `storage_trash_confirmation_required`、不建作业。第 6 项实现为 `PROVIDER_OWNER_REQUIRED`（作业 `reason_code`），同时要求 Drive 的 `capabilities.canTrash` / `canUntrash`。provider attempt 为 `clued.storage-destructive-attempt/1`，核验合同为 `clued.storage-trash-verified/1`（identity、ancestors、stable_state、trashed、parent_unchanged、name_vacated、content_unchanged）与 `clued.storage-untrash-verified/1`（identity、ancestors、stable_state、untrashed、parent_unchanged、unique_name、content_unchanged）。结算以 `artifact_trash` / `artifact_untrash` 按授权时的 Artifact 版本 CAS 改变同一 Artifact 的 `state`（`active` ↔ `trashed`），并记录 Drive 版本；trash 结算的 Event 写明 Google 30 天后永久删除。
 
 ## 4. Google 权限：需要 Owner 决定的关键事实
 
