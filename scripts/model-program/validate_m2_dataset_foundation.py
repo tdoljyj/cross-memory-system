@@ -87,6 +87,10 @@ def validate_source_registry(registry: dict) -> dict:
 
 
 def validate_manifest(manifest: dict, sources: dict) -> dict:
+    # Local policy proposals are checked separately from formal domain mapping.
+    # Import here to avoid a module cycle in the source-binding CLI.
+    from validate_m2_split_mapping import CANDIDATE, validate_candidate
+    profiles = validate_candidate(load(CANDIDATE))
     validate_schema("DatasetManifest.schema.json", manifest)
     splits = unique_index(manifest["splits"], "split_id", "DUPLICATE_SPLIT")
     samples = unique_index(manifest["samples"], "sample_id", "DUPLICATE_SAMPLE")
@@ -108,6 +112,10 @@ def validate_manifest(manifest: dict, sources: dict) -> dict:
         if uses["calibration_fit"]:
             require(not any(value for key, value in uses.items() if key != "calibration_fit"),
                     "CALIBRATION_SELECTION_OVERLAP")
+        require(split["purpose_description"] in profiles, "UNKNOWN_LOGICAL_PURPOSE")
+        profile = profiles[split["purpose_description"]]
+        require({key for key, value in uses.items() if value} == set(profile["allowed_use_keys"])
+                and split["final_holdout"] == profile["final_holdout"], "PURPOSE_USE_MISMATCH")
         require(set(split["sample_ids"]) == {
             sample["sample_id"] for sample in samples.values()
             if sample["split_id"] == split["split_id"]

@@ -10,7 +10,8 @@ Use Python 3.12+ and the existing `jsonschema` dependency (Draft 2020-12):
 
 ```sh
 python3 scripts/model-program/validate_m2_dataset_foundation.py
-python3 -m unittest discover -s tests -p 'test_model_program_m2_dataset_foundation.py' -v
+python3 scripts/model-program/validate_m2_split_mapping.py
+python3 -m unittest discover -s tests -p 'test_model_program_m2_*.py' -v
 python3 -m unittest discover -s tests -p 'test_model_program_m1_harness.py' -v
 ```
 
@@ -76,5 +77,10 @@ them under this directory.
 5. Bind M1-09 before M2-11 thresholds; complete Frozen Dataset, independent
    Data Gate and M2-13 against M1 PASS before any formal M2 verdict
 
-Storage, Canonical, runtime, device configuration and workflows are outside this
-change. Tests run locally; no shared-runner job or production action is needed.
+The source-bound mapping proposal and domain-owner decision are documented in
+[DatasetSplitMapping.candidate.md](DatasetSplitMapping.candidate.md). Its local
+synthetic profiles bind each purpose to the full use mask and holdout flag; they
+retain UNRESOLVED domain mapping and grant no data-use authority.
+
+The existing M1 harness CI also runs the M2 checks and tests. Storage, Canonical,
+runtime and device configuration remain outside this candidate work package.
