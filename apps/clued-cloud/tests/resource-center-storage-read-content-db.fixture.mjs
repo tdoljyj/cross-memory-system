@@ -84,7 +84,9 @@ export async function testStorageReadContent(t, admin, server, user, decision) {
   const admit = (client, extra = {}, database) => call(client, { action: "admit", connection_id: connection, operation: "read", object_id: "contentFile00001", ...extra }, database);
   const waitForLock = async database => {
     for (let i = 0; i < 200; i++) {
-      if ((await admin.query("select exists(select 1 from pg_locks where pid=$1 and not granted) waiting", [database.fixturePid])).rows[0].waiting) return;
+      // Only a wait on an advisory lock (the per-Binding budget lock) counts;
+      // a transient wait on another lock must not release the holder early.
+      if ((await admin.query("select exists(select 1 from pg_locks where pid=$1 and not granted and locktype='advisory') waiting", [database.fixturePid])).rows[0].waiting) return;
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     assert.fail("the second admission did not wait for the first");
@@ -211,25 +213,37 @@ export async function testStorageReadContent(t, admin, server, user, decision) {
     });
 
     await t.test("concurrent reservations and admissions serialize on the Binding lock and cannot exceed the window", async () => {
+      // Each step is labelled so a failure names the call; the racing call's
+      // outcome is captured at once, so it can never be an unhandled rejection.
+      const step = async (label, promise) => {
+        try { return await promise; } catch (error) { error.message = `${label}: ${error.message}`; throw error; }
+      };
+      const settle = promise => promise.then(value => ({ value }), error => ({ error }));
       const racing = await bind();
-      for (let i = 0; i < 50; i++) { const admitted = await admit(racing); await reserve(racing, admitted, IMAGE); await finalize(racing, admitted, IMAGE); }
+      for (let i = 0; i < 50; i++) {
+        const admitted = await step(`fill admit ${i}`, admit(racing));
+        await step(`fill reserve ${i}`, reserve(racing, admitted, IMAGE));
+        await step(`fill finalize ${i}`, finalize(racing, admitted, IMAGE));
+      }
       // 250 MiB used; two in-flight text reads of 256 KiB each.
-      const first = await admit(racing), second = await admit(racing);
+      const first = await step("admit first", admit(racing)), second = await step("admit second", admit(racing));
       await caller.query("begin");
       try {
-        assert.equal((await reserve(racing, first, IMAGE)).extended, true, "the first extension fits (255.25 MiB)");
-        const racer2 = reserve(racing, second, IMAGE, racer);
+        assert.equal((await step("reserve first", reserve(racing, first, IMAGE))).extended, true, "the first extension fits (255.25 MiB)");
+        const racer2 = settle(reserve(racing, second, IMAGE, racer));
         await waitForLock(racer);
         await caller.query("commit");
-        await assert.rejects(racer2, /storage_read_budget_exhausted/, "the second extension sees the first and is refused");
+        const outcome = await racer2;
+        assert.match(String(outcome.error?.message), /storage_read_budget_exhausted/, "the second extension sees the first and is refused");
       } catch (error) { await caller.query("rollback").catch(() => {}); throw error; }
       await caller.query("begin");
       try {
-        assert.equal((await reserve(racing, second, MIB)).extended, true, "exactly 256 MiB reserved");
-        const admission = admit(racing, {}, racer);
+        assert.equal((await step("reserve second", reserve(racing, second, MIB))).extended, true, "exactly 256 MiB reserved");
+        const admission = settle(admit(racing, {}, racer));
         await waitForLock(racer);
         await caller.query("commit");
-        await assert.rejects(admission, /storage_read_budget_exhausted/, "an admission cannot pass with a stale sum");
+        const outcome = await admission;
+        assert.match(String(outcome.error?.message), /storage_read_budget_exhausted/, "an admission cannot pass with a stale sum");
       } catch (error) { await caller.query("rollback").catch(() => {}); throw error; }
       const total = (await admin.query(`select sum(case when state='finalized' then byte_count else coalesce(reserved_bytes,262144) end)::bigint total
         from clued_private.storage_read_receipts_v1 where binding_id=$1 and class='read_content'`, [racing.id])).rows[0].total;
