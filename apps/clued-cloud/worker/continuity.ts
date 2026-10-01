@@ -1956,7 +1956,7 @@ async function callTool(
         : code === "shortcut_not_followed" ? "Shortcuts are not followed. Read the target file inside the root instead."
         : code === "content_not_accessible" ? "This file's content is not readable with the current Google permission."
         : code === "scope_upgrade_required" ? "Reading files Clued did not create, and searching by content, need the Owner to turn on normal use on the Clued storage page. Retrying will not help."
-        : code === "budget_exhausted" ? "This connection has used its hourly content budget (256 MiB per rolling hour, reserved before each body request and settled to the bytes returned). Try again later; retrying now will not help."
+        : code === "budget_exhausted" ? "This connection has used its hourly content budget (by default 256 MiB per rolling hour per authorized client and 1 GiB per account; only the Owner can change them, on the Clued storage page; reserved before each body request and settled to the bytes returned). Try again later; retrying now will not help."
         : code === "request_limit_exceeded" ? "This large Office file needs more provider requests than one call may make. Retrying will not help; read an earlier or shorter range (a smaller offset + length), since each call extracts the text up to offset + length."
         : "Storage read unavailable.",
         // A fixed hint and a page number (StorageNormalUse §4.5: PDF time cut on a continuation).
@@ -2862,12 +2862,15 @@ async function handleContinuityRequestInner(
         return json({ error: "Storage owner operation unavailable." }, 403, headers);
       }
     }
-    if (url.pathname === "/v1/storage/read-access" || url.pathname === "/v1/storage/write-access" || url.pathname === "/v1/storage/normal-use") {
+    if (url.pathname === "/v1/storage/read-access" || url.pathname === "/v1/storage/write-access" || url.pathname === "/v1/storage/normal-use"
+      || url.pathname === "/v1/storage/budget") {
       // StorageFullCapability.v0.1: native Owner control of the read level (P1)
-      // and the modify write level (P3); StorageNormalUse.v0.1 §8.2 normal use.
+      // and the modify write level (P3); StorageNormalUse.v0.1 §8.2 normal use
+      // and §7.3 hourly budgets (N4).
       // The RPC checks the live auth session itself; never a Binding or service role.
       const rpc = url.pathname === "/v1/storage/read-access" ? "clued_storage_read_access_v1"
-        : url.pathname === "/v1/storage/normal-use" ? "clued_storage_normal_use_v1" : "clued_storage_write_access_v1";
+        : url.pathname === "/v1/storage/normal-use" ? "clued_storage_normal_use_v1"
+          : url.pathname === "/v1/storage/budget" ? "clued_storage_budget_v1" : "clued_storage_write_access_v1";
       validateOrigin(request, env);
       const headers = { ...corsHeaders(request), "cache-control": "no-store" };
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true") return json({ error: "Not found." }, 404, headers);

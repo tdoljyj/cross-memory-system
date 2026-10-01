@@ -493,8 +493,9 @@ Migration `20260930060000_storage_read_content_v1.sql` and the Worker tool
   reservation (256 KiB, or more after `reserve`, see the N1b budget below).
   Content admissions and reservations of one Binding are serialized by the
   same transaction advisory lock, so parallel calls cannot pass the check with
-  a stale sum. Over budget the tool returns `budget_exhausted`. The limit is
-  fixed; an Owner-adjustable value is N4.
+  a stale sum. Over budget the tool returns `budget_exhausted`. Since N4 the
+  Owner can change the limit and an account total also applies (see "Hourly
+  budgets" below).
 - read_content is enabled only together with read, and a content read is also
   evaluated for read (the response names the file). So `deny_class` with
   `read_content` removes bodies for one client and keeps its read level, while
@@ -1004,8 +1005,8 @@ N1a (text bodies only, `format_unsupported` for other formats).
   the caller's own Binding younger than 10 minutes; finalize settles to the
   delivered bytes, releasing the unused part. Text and Office reads (at most
   256 KiB per call) and legacy / text/1 reads never call `reserve`. The
-  provider-byte dimension, the account total and Owner-adjustable values
-  remain N2 / N4.
+  account total and Owner-adjustable values are N4 (see "Hourly budgets"
+  below); the provider-byte dimension is still open.
 - **Rollout order.** Apply `20260930180000_storage_binary_upload_n3.sql` (N3)
   and `20260930200000_storage_read_budget_n4.sql` to production BEFORE the
   next Worker release that contains N1b: the N1b Worker calls `reserve` for
@@ -1016,7 +1017,7 @@ N1a (text bodies only, `format_unsupported` for other formats).
   (`resource_link`), Drive thumbnail builder and Cloudflare Images
   downscaling (thumbnail host pattern must be measured first; Images needs the
   monthly counter column), zip listing / entries, ODF, `resource_link` raw
-  download, owner-level budget.
+  download. (The owner-level read budget landed in N4.)
 
 ## Binary upload (StorageNormalUse.v0.1 N3)
 
@@ -1057,8 +1058,8 @@ runs only in account-policy mode (`CLUED_STORAGE_JOBS_V2=true`).
   encrypted archive is refused too. Every refusal is `content_type_mismatch`.
 - **Signed PUT URL** (MAJOR-2): `upload_begin` inserts a
   `clued_private.storage_staging_v1` row (`issued`, 10 minutes) and reserves the
-  declared size against the hourly upload budget (256 MiB per Binding, 1 GiB
-  per owner; at most 60 staging rows per Binding and 200 per owner per rolling
+  declared size against the hourly upload budget (by default 256 MiB per Binding, 1 GiB
+  per owner, Owner-adjustable since N4; at most 60 staging rows per Binding and 200 per owner per rolling
   hour, released rows included) in the same transaction. It returns
   `upload_url = https://<host>/storage/staging/<staging_id>` and a separate
   `upload_token` that the client sends as the `X-Clued-Upload-Token` header:
@@ -1222,3 +1223,69 @@ returns 404, binary submits are refused). With the flag off the executor has
 no staged-content loader, so a queued binary job is refused before any effect
 (reported `attention_required`), and the staging sweep does not run: leftover
 objects are removed by the bucket's 3-day lifecycle rule.
+
+## Hourly budgets (StorageNormalUse.v0.1 N4)
+
+Migration `20261001020000_storage_budgets_n4.sql`, the Worker route
+`/v1/storage/budget` and the storage page control. No new secret or switch:
+the route sits behind `CLUED_STORAGE_ACCOUNT_V1` like the other native Owner
+controls, and the database enforces the configured values for every read and
+upload admission as soon as the migration is applied.
+
+- **Table** `clued_private.storage_budgets_v1` (§7.3): one active row per
+  `(owner_id, connection_id)`. A row with a connection holds the per-Binding
+  budgets used on that connection (`read_bytes_per_hour`,
+  `upload_bytes_per_hour`, each 32 MiB – 2 GiB); the row with
+  `connection_id IS NULL` holds the owner's account totals over all Bindings
+  (each 32 MiB – 8 GiB). Values are whole MiB; the bounds are table checks as
+  well as RPC checks. Rows are immutable: a change revokes the active row and
+  inserts the next `budget_generation`, both under one Receipt. No row means
+  the §7.1 default: per Binding 256 MiB read / 256 MiB upload, account 1 GiB
+  read / 1 GiB upload.
+- **RPC** `public.clued_storage_budget_v1` (native Owner session only, granted
+  to `authenticated`; Binding tokens and the service role cannot call it):
+  `status {connection_id}` returns the effective values, the CAS generations
+  (0 = defaults), the defaults and the bounds. `set {scope: "connection",
+  connection_id | scope: "account", base_generation, read_bytes_per_hour,
+  upload_bytes_per_hour, idempotency_key}` is CAS on `budget_generation`;
+  out-of-bounds values are `storage_budget_out_of_bounds` (no receipt), a
+  stale base is `storage_owner_version_conflict`. Each change writes Receipt
+  operation `storage_budget_v1` (versions keyed `storage_budget:<connection>`
+  or `storage_budget:account`) and Event `extension:storage:budget_v1`
+  (scope `project:<profile project>` for a connection, `profile` for the
+  account). It never touches a connection, write policy, read access,
+  `auth_generation`, client grant, deny, staging row or storage job.
+- **Reads**: admission and `reserve` of `clued_storage_read_v1` now take an
+  owner advisory lock (`storage-read-budget-owner:<owner>`) before the existing
+  per-Binding lock and check two sums: the Binding's read_content receipts in
+  the rolling hour against the per-Binding read budget of the connection being
+  read, and all read_content receipts of the owner against the account read
+  total (new in N4: §7.2 assigned the account total to N2, which had not built
+  it). A Binding that reads several connections is still metered as one
+  Binding; the limit applied is the one of the connection in the call.
+- **Uploads**: `upload_begin` reserves through `storage_upload_budget_v2`
+  (per-Binding upload budget of the connection, account upload total); the
+  row caps (60 per Binding, 200 per owner per rolling hour) are unchanged.
+  `storage_upload_budget_v1` lost its only caller and is dropped.
+- **Immediate effect**: every admission reads the committed row, so a change
+  applies to the next read or upload. Lowering a budget below what the window
+  already used or reserved refuses new admissions until the rolling hour frees
+  up; receipts, reservations and issued upload URLs are never rewritten.
+- **Page**: under 正常使用, "读取额度设置" loads the status; each scope (每个已授权
+  Agent on this connection, 账号合计) has read and upload selectors with the
+  64 MiB / 256 MiB / 1 GiB presets and 自定义 (whole MiB within the scope's
+  bounds, checked on the page and again by the database), saved after a
+  confirmation and read back.
+- **Not included**: the provider-download-bytes dimension (§7.1 row 2, 2× the
+  read budget) — the Worker does not meter provider bytes per receipt yet, so
+  it is neither enforced nor shown; `image_transforms_per_month` (§7.3) — the
+  Cloudflare Images path is deferred, so the column is not added and `set`
+  refuses the key; the "about N minutes" recovery hint in `budget_exhausted`
+  (§7.2). The normal-use disclosure still says "默认每小时额度" (it names the
+  defaults, which are unchanged), so its version is unchanged.
+
+Rollout: apply the production migration byte for byte, then release the
+Worker (the page and route need it). An older Worker keeps working against the
+new database (the RPC signatures it calls are unchanged). Rollback of the page
+alone: release the previous Worker; budgets already set stay enforced. To
+return an owner to defaults, set the default values (a new generation).
