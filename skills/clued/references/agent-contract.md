@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 10
+Contract version: 11
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -20,6 +20,7 @@ This file is the single normative source for how any Agent, on any Host, uses Cl
    - Put `Clued-Work-Claim: <claim_id>` in the pull request body and as a trailer of the head commit, and add `Clued-Work-Scope: project:<id>` when the Task is not Global. The `clued-work-admission` check verifies the claim against the pull request's changed paths and, once the Owner turns enforcement on, rejects a pull request whose claim is missing, expired, superseded or too narrow.
    - Release the claim when the work ends: `completed` with the merged pull request or commit as `evidence_ref`, `abandoned` when you stop, `draining` while an action you already started cannot be cancelled.
    - `clued_work_takeover` is only for an expired claim whose holder is gone. A live claim is never preempted, whatever the priority.
+   - A claim is how work runs in parallel. Never set the Owner Pin (`clued_mtpe_owner_pin`) to register, start or hand off work: the Pin is the Owner's one current focus and changes only when the Owner chooses a new focus. A Pin `set` names the focus it replaces in `expected_current_focus_id`; on `owner_pin_focus_conflict` leave the current focus as it is and tell the Owner.
    - When the service does not offer the work-claim tools, claims are unavailable: say so in the pull request and continue. A claim does not cover model tokens spent before your first Clued call or work on a Host that never calls Clued.
 8. Resume lists unabsorbed work-log events newest first (`event_order: "newest"`, the default); to read older ones, resume again with `event_cursor` set to the returned `next_cursor`. `event_order: "oldest"` pages from the oldest instead. `pending_event_count` counts every unabsorbed event; `checkpoint_recommended` and `pending_event_count_recent` count only those of the last 24 hours.
 
@@ -79,6 +80,7 @@ Rules for every capture:
 | `work_claim_conflict` | A live claim of another holder names the same Task, overlaps your `write_set` or shares a trigger ref | Stop and report the holder to the Owner (§1.7); never retry under another title, Task, key or Binding |
 | `work_claim_no_progress` (renew) | The `progress_ref` was already sent | Renew only after real progress, with the new head SHA or Receipt id |
 | `work_claim_still_active` (takeover) | The claim's lease has not expired | Leave it to its holder; report to the Owner if you think it is stuck |
+| `owner_pin_focus_conflict` | The Owner focus is not the one `expected_current_focus_id` named | Keep the current focus (`supplemental.current_focus_id`); change it only when the Owner chooses to, naming the focus it replaces (§1.7) |
 | `INVALID_RECORD_FIELDS` | Missing or malformed fields; MCP returns an HTTP 200 `isError: true` rejected tool result | Read `error.missing_fields` and `error.invalid_fields`, fix the listed fields and retry once; field paths and error codes are returned without request values |
 
 5. Treat revoked or expired credentials as hard stops and resume again instead of overwriting; missing capability or failed admission remains unavailable. Report exactly what is unavailable and continue unrelated work.
