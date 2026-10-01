@@ -3031,8 +3031,13 @@ async function handleContinuityRequestInner(
           method: "POST", userToken: token, body: JSON.stringify({ p_input: input }),
         });
         return json(result, 200, headers);
-      } catch {
-        return json({ error: "Storage access operation unavailable." }, 403, headers);
+      } catch (error) {
+        // N4: a stale CAS base or an out-of-bounds value is refused before any
+        // receipt, so the page can say "not saved" instead of "unconfirmed".
+        const reason = rpc === "clued_storage_budget_v1" && error instanceof HttpError
+          && (error.message === "storage_owner_version_conflict" || error.message === "storage_budget_out_of_bounds")
+          ? error.message : undefined;
+        return json({ error: "Storage access operation unavailable.", ...(reason ? { reason } : {}) }, reason ? 409 : 403, headers);
       }
     }
     if (url.pathname === "/v1/storage/account" || url.pathname === "/v1/storage/refresh") {
