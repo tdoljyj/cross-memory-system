@@ -1,5 +1,26 @@
 # M2 synthetic dataset foundation candidate
 
+## Bounded offline pipeline candidate
+
+`OfflinePipeline.candidate.json` binds deterministic source-class C fixtures,
+finite input/Gold scrub rules, normalized exact and lexical connected-component
+deduplication, language/domain/risk/quality labels, adopted DatasetSplit v0.1
+references, and contamination comparisons against the known public fixture corpus.
+No external corpus is ingested. All generated samples stay in DEVELOPMENT.
+
+Run `python scripts/model-program/validate_m2_offline_pipeline.py` and
+`python -m unittest tests.test_model_program_m2_offline_pipeline -v`.
+The existing M2 CI discovery includes these tests. The fixed
+`tests/fixtures/model-program-m2/offline-pipeline-saved-outputs.json` is an
+author-generated synthetic scoring fixture, never a model evaluation result.
+Two scoring passes bind the same input, contract, implementation and saved bytes;
+`offline-pipeline-evidence.json` records the reproducible result and digests.
+
+Finite rules and token Jaccard are bounded preparation tools, not complete privacy
+or semantic duplicate clearance. Gold is not independently reviewed, public
+fixtures are not protected holdout material, and no frozen Eval/Threshold,
+IndependentDataGate or DomainAuthorityReceipt is issued. M2 remains NOT_ISSUED.
+
 The additional [domain-recognition contract and read-only adapter candidate](DatasetSplitDomainRecognition.candidate.md)
 exercise producer, scoped permission and existing M1 Record/Event/Receipt bindings
 with a synthetic service double. Run

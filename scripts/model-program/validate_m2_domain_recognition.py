@@ -21,7 +21,7 @@ from validate_m2_dataset_foundation import BASE, FoundationError, digest, load, 
 from validate_m2_dataset_split import verify_artifact
 
 CONTRACT = BASE / "DatasetSplitDomainRecognition.candidate.json"
-CONTRACT_SHA256 = "785e817d5a529bc0250d4c1feb1b4b155a481a1c841a6237f599bca969a16f87"
+CONTRACT_SHA256 = "d8599ca8148f63a7893133ad3b13426edab25f3f48bc5291b1fb7c038a04754f"
 SCHEMA_PATH = "development/contracts/model-program/m2/schemas/DatasetSplitDomainRecognitionRequest.schema.json"
 SCOPE = "project:0597aa60-9b98-4da6-a4ab-63d7705b632f"
 SERVICE = "clued-cloud/supabase"

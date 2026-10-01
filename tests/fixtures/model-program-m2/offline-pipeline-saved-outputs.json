@@ -1,0 +1,32 @@
+{
+  "schema_version": "clued.model-m2-saved-synthetic-outputs/1",
+  "origin": "DETERMINISTIC_SYNTHETIC_FIXTURE_WRITER",
+  "input_set_sha256": "7a106da932ad9a6c45e1dd3dc2847fd7bca34e8734b2160196104da5d3a4f266",
+  "contract_sha256": "37e32ff402d43804afb4dcd6652ed276e18aeaa41cfd1f45fb4719f7a27fd494",
+  "outputs": [
+    {
+      "sample_id": "dev-add-en-001",
+      "output_text": "{\"answer\":8}"
+    },
+    {
+      "sample_id": "dev-add-en-002",
+      "output_text": "{\"answer\":15}"
+    },
+    {
+      "sample_id": "dev-add-zh-001",
+      "output_text": "{\"answer\":8}"
+    },
+    {
+      "sample_id": "dev-add-zh-002",
+      "output_text": "{\"answer\":13}"
+    },
+    {
+      "sample_id": "dev-context-en-001",
+      "output_text": "{\"answer\":\"blue\"}"
+    },
+    {
+      "sample_id": "dev-context-zh-001",
+      "output_text": "{\"answer\":\"蓝色\"}"
+    }
+  ]
+}
