@@ -43,15 +43,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when
+  # Clued admits this pull request. Until the Owner sets the repository
+  # variable CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits;
+  # non-PR events are admitted. Hosted runner, seconds, no install.
+  admission-gate:
+    name: admission-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - id: gate
+        env:
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_CONTEXT_READ_TOKEN }}
+          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
   e2e-trusted-self-hosted:
+    needs: admission-gate
     if: >-
-      (github.event_name == 'workflow_dispatch' &&
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'workflow_dispatch' &&
        github.actor == github.repository_owner) ||
       (github.event_name == 'push' &&
        github.actor == github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       github.actor == github.repository_owner)
+       github.actor == github.repository_owner))
     name: Information Flow E2E over the local Worker and Supabase stack
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]
     timeout-minutes: 35
@@ -151,14 +179,16 @@ jobs:
         run: npx --yes supabase@2.115.0 stop --no-backup
 
   e2e-untrusted-hosted:
+    needs: admission-gate
     if: >-
-      (github.event_name == 'workflow_dispatch' &&
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'workflow_dispatch' &&
        github.actor != github.repository_owner) ||
       (github.event_name == 'push' &&
        github.actor != github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        (github.event.pull_request.head.repo.full_name != github.repository ||
-        github.actor != github.repository_owner))
+        github.actor != github.repository_owner)))
     name: Information Flow E2E over the local Worker and Supabase stack (hosted)
     runs-on: ubuntu-24.04
     timeout-minutes: 35

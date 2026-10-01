@@ -30,6 +30,9 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-ci-health.yml": (
         "The lightweight monitor must remain independent of the self-hosted pool so it can detect complete Windows/Linux capability-pool loss."
     ),
+    "clued-work-admission.yml": (
+        "Work Claim Admission L0a: an unfiltered required-check candidate that makes one read-only Clued call per pull request and must not wait on self-hosted capacity; it installs nothing and executes no PR code."
+    ),
     "phase2-naming-surface-inventory.yml": (
         "Frozen historical exact-byte inventory workflow; modifying its execution contract would invalidate bound evidence."
     ),
