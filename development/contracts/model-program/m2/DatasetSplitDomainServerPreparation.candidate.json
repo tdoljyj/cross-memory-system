@@ -1,0 +1,43 @@
+{
+  "schema_version": "clued.model-domain-server-preparation/1",
+  "status": "NON_PRODUCTION_SYNTHETIC_SERVER_CANDIDATE",
+  "subject": {
+    "version": "v0.1",
+    "definition_id": "clued.model-program.DatasetSplit",
+    "definition_sha256": "f51cefe8eccd0faa75b45e78380e5b389ed266ca4034b511a85f51771f2d4f77",
+    "instance_schema_sha256": "062860afd3dc16fa9ee1de27582439701a67b7c5976ad45981a7cca3e515468f"
+  },
+  "owner_final_recognizer": {
+    "record_ref": {
+      "id": "46b0ff1c-f608-4ff9-89b9-dc90a61ce70f",
+      "version": 1,
+      "content_hash": "74fb324321a23eaa4dbc7194b9ec9964a9e1d59d1ef12e6c6f3c7dfce6b91329"
+    },
+    "receipt_id": "4c9b9066-5146-4bd5-9e5d-8660624fdecb",
+    "expected_fields": {
+      "role": "OWNER",
+      "effect": "FINAL_RECOGNIZER_DESIGNATION_AND_NON_PRODUCTION_PREPARATION_ONLY",
+      "subject": {
+        "version": "v0.1",
+        "definition_id": "clued.model-program.DatasetSplit",
+        "definition_sha256": "f51cefe8eccd0faa75b45e78380e5b389ed266ca4034b511a85f51771f2d4f77",
+        "instance_schema_sha256": "062860afd3dc16fa9ee1de27582439701a67b7c5976ad45981a7cca3e515468f"
+      },
+      "owner_subject_id": null,
+      "production_enabled": false,
+      "domain_permission_granted": false,
+      "authenticated_identity_status": "NOT_EXPOSED_BY_CURRENT_MCP"
+    }
+  },
+  "authenticated_owner_subject_id": null,
+  "authenticated_binding_id": null,
+  "qualification": "UNKNOWN_CURRENT_MCP_REMOVES_ACTOR_FIELDS",
+  "read_action": "DatasetSplit.definition.verify",
+  "backend": "HOST_INJECTED_SYNTHETIC_ONLY",
+  "receipt_core": "EXISTING_M1_RECORD_EVENT_RECEIPT",
+  "route_registered": false,
+  "permissions_installed": false,
+  "production_enabled": false,
+  "domain_authority_receipt": "NOT_ISSUED",
+  "m2_verdict": "NOT_ISSUED"
+}
