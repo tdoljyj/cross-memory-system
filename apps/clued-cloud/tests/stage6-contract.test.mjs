@@ -83,7 +83,13 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 8/);
+  assert.match(contract, /Contract version: 9/);
+  assert.match(contract, /Write each outcome as it happens, before the next production action/);
+  assert.match(contract, /Starting a deployment or release is not itself a §3 outcome/);
+  assert.match(contract, /A Host may refuse a Clued call itself, before it leaves the Host/);
+  assert.match(contract, /It is not a Clued error, a Binding, scope or currentness failure, or evidence that Clued is unavailable/);
+  assert.match(contract, /Once the Owner allows it, make the owed writes first \(same idempotency keys\)/);
+  assert.match(skill, /write each outcome as it happens and never right after you start a release/);
   assert.match(contract, /Claim work before you spend on it/);
   assert.match(contract, /On `work_claim_conflict`, stop and report the holder/);
   assert.match(contract, /Never retry under another title, another Task, a new idempotency key or another Binding/);

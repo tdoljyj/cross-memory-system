@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 8
+Contract version: 9
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -55,6 +55,7 @@ Rules for every capture:
 3. Mutations of an existing record pass that record's `version` as `base_version`. Every operation on an existing record merges the top-level keys you send in `mutation.type_fields` and `mutation.relations` into the stored ones: omitted keys are kept, a key sent as `null` is removed, and nested values are replaced whole. Send `field_mode: "replace"` only when you mean to replace the object you send wholesale; an object you omit is kept either way. `relations.supersedes` changes only through `clued_decision_supersede`.
 4. Use a stable idempotency key built from the originating session, the subject and the outcome, for example `<origin-session>:<subject-id>:<outcome>`. Retries of the same outcome reuse it, including after an uncertain result such as a timeout, so the original operation is recovered rather than duplicated. A corrected request uses a new key.
 5. In the reply, name what you wrote in one line (record ID and Receipt). If a write fails, say that it failed and why; never describe the outcome as recorded, and never call a local file or Markdown note a saved Clued record.
+6. Write each outcome as it happens, before the next production action. When one turn merges a pull request, applies a migration and then starts a release, record the merge after the merge and the migration after the migration, and start the release last; do not batch the writes behind the release. Starting a deployment or release is not itself a §3 outcome: record it when its run has finished, from the run's result. Do not make a Clued call the next action after you start a deployment, release or other production action: Host-side permission checks judge a call by what happened just before it, and a Clued call made in that position has been refused as a production action although it changes nothing in production (§4.7). Verify a release through the release's own checks, not through an immediate Clued read.
 
 ## 4. Write discipline
 
@@ -80,6 +81,7 @@ Rules for every capture:
 
 5. Treat revoked or expired credentials as hard stops and resume again instead of overwriting; missing capability or failed admission remains unavailable. Report exactly what is unavailable and continue unrelated work.
 6. Some Hosts show every HTTP 403 as "blocked by a firewall or security service". Clued returns 403 for authorization denials and for contract-rule rejections it has not yet mapped to a tool error, so check your arguments against the tool's contract before calling it a network or infrastructure failure, and label any unverified cause as a guess.
+7. A Host may refuse a Clued call itself, before it leaves the Host: a permission classifier, a tool allowlist or a sandbox rule. The refusal comes from the Host, names the Host's reason (for example "denied by the Claude Code auto mode classifier"), and the call never reached Clued. It is not a Clued error, a Binding, scope or currentness failure, or evidence that Clued is unavailable. Do not retry it unchanged, do not reach the same effect through another tool, another Binding or a different call, and do not write the outcome anywhere else as a substitute (§3.5 and §6.1). Say which call the Host refused and the Host's stated reason, say which §3 writes or §5 checkpoint are still owed because of it, continue the work that does not depend on them, and ask the Owner to allow the call. Once the Owner allows it, make the owed writes first (same idempotency keys), then continue.
 
 ## 5. End
 
