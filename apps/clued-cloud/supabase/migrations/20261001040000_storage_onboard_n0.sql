@@ -29,6 +29,23 @@
 -- * Host profile_register refuses the /clued-cloud/ managed-root prefix, which
 --   only onboarding uses ('/clued-cloud/google-drive/<root_folder_id>').
 -- * Profiles gain display_name (the Drive folder name shown on the page).
+-- * Expiry is reliable: public.clued_storage_onboard_sweep_v1(issuer hash), run
+--   by the Worker cron every minute, expires attempts past their 30 minutes in
+--   its own transaction (staged envelope dropped, orphans kept). The in-call
+--   expiry still runs but can be rolled back by a later raise of that call.
+--   A failure the Worker marks not retryable drops the envelope at once; a
+--   retryable one keeps it only for resume within the 30-minute window.
+-- * One run at a time: stage_credential and resume issue a run token with a
+--   5-minute lease, refreshed by every effect call. effect_intent /
+--   effect_result / activate / fail need the current token; resume is refused
+--   while a lease is held (storage_onboard_run_active), so a callback and a
+--   resume never both create folders. A superseded run, or a created folder
+--   that could not be recorded, is reported with effect_stray and kept as an
+--   orphan (strays), also on a completed attempt.
+-- * Lock order on every onboard path: onboard row -> OAuth attempt row ->
+--   per-owner onboard advisory lock -> owner||root advisory lock. The refresh
+--   token limit (90) is re-checked at claim and the root overlap and the
+--   allowlist gate at activate, each under the per-owner lock.
 
 alter table clued_private.storage_oauth_apps_v1 add column onboard_open boolean not null default false;
 
@@ -66,6 +83,9 @@ create table clued_private.storage_onboard_attempts_v1 (
   effects jsonb not null default '{}'::jsonb check (jsonb_typeof(effects)='object'),
   orphans jsonb not null default '[]'::jsonb check (jsonb_typeof(orphans)='array'),
   failure_code text check (failure_code ~ '^[a-z_]{1,64}$'),
+  run_token uuid,
+  run_lease_until timestamptz,
+  strays jsonb not null default '[]'::jsonb check (jsonb_typeof(strays)='array' and jsonb_array_length(strays)<=64),
   result jsonb,
   expires_at timestamptz not null,
   created_at timestamptz not null default clock_timestamp(),
@@ -73,7 +93,8 @@ create table clued_private.storage_onboard_attempts_v1 (
   check ((root_mode='picked')=(picked_folder_id is not null)),
   check (credential_envelope is null or state in ('credential_staged','failed')),
   check (state not in ('credential_staged','completed') or (provider_subject is not null and granted_scope_profile is not null)),
-  check ((state='completed')=(result is not null))
+  check ((state='completed')=(result is not null)),
+  check ((state='credential_staged')=(run_token is not null) and (run_token is null)=(run_lease_until is null))
 );
 create index storage_onboard_attempt_owner_v1 on clued_private.storage_onboard_attempts_v1(owner_id,state);
 alter table clued_private.storage_onboard_attempts_v1 enable row level security;
@@ -112,17 +133,46 @@ begin
           or history.credential_version>0 or d.connection_id is not null));
 end $$;
 
--- Expired attempts lose their staged credential; created directories stay
--- recorded as orphans (the token is already counted as a possible orphan).
-create function clued_private.storage_onboard_expire_v1(p_owner uuid) returns void
+-- Every object an attempt created and did not activate: each recorded effect
+-- created by the attempt (an intent counts even without its result, unless a
+-- stray of that role names the folder), then the strays (created but never
+-- recorded as an effect).
+create function clued_private.storage_onboard_orphans_v1(o clued_private.storage_onboard_attempts_v1) returns jsonb
+language sql stable set search_path='' as $$
+  select coalesce((select jsonb_agg(jsonb_build_object('role',e.key,'provider_file_id',e.value->>'provider_file_id',
+      'recorded_at',coalesce(e.value->>'result_at',e.value->>'intent_at')) order by e.key)
+    from jsonb_each(o.effects) e where coalesce((e.value->>'created')::boolean,true) and (e.value ? 'intent_at')
+      and ((e.value ? 'provider_file_id') or not exists(select 1 from jsonb_array_elements(o.strays) x where x->>'role'=e.key))),'[]'::jsonb)||o.strays
+$$;
+
+-- Expired attempts lose their staged credential and run lease; created
+-- directories stay recorded as orphans (the token is already counted as a
+-- possible orphan). p_owner (in-call) or p_issuer (cron sweep) scopes the
+-- scan. SKIP LOCKED: a row held by a running call is left for the next pass,
+-- so expiry never waits on, or forms a lock cycle with, any onboard path.
+create function clued_private.storage_onboard_expire_v1(p_owner uuid,p_issuer text) returns integer
 language plpgsql security definer set search_path='' as $$
+declare n integer;
 begin
-  update clued_private.storage_onboard_attempts_v1 o set state='expired',credential_envelope=null,updated_at=clock_timestamp(),
-    orphans=case when o.state='failed' then o.orphans else coalesce((select jsonb_agg(jsonb_build_object('role',e.key,
-      'provider_file_id',e.value->>'provider_file_id','recorded_at',coalesce(e.value->>'result_at',e.value->>'intent_at')) order by e.key)
-      from jsonb_each(o.effects) e where coalesce((e.value->>'created')::boolean,true) and (e.value ? 'intent_at')),'[]'::jsonb) end
-    where o.owner_id=p_owner and o.state in ('begun','credential_staged','failed') and o.expires_at<=clock_timestamp();
+  if p_owner is null and p_issuer is null then raise exception 'storage_onboard_denied' using errcode='42501'; end if;
+  with due as (select o0.id from clued_private.storage_onboard_attempts_v1 o0
+      where (p_owner is null or o0.owner_id=p_owner) and (p_issuer is null or o0.issuer_hash=p_issuer)
+        and o0.state in ('begun','credential_staged','failed') and o0.expires_at<=clock_timestamp()
+      order by o0.expires_at limit 500 for update skip locked),
+    x as (update clued_private.storage_onboard_attempts_v1 o set state='expired',credential_envelope=null,run_token=null,
+        run_lease_until=null,orphans=clued_private.storage_onboard_orphans_v1(o),updated_at=clock_timestamp()
+      from due where o.id=due.id returning 1)
+  select count(*)::integer into n from x;
+  return n;
 end $$;
+
+-- Per-owner onboard lock: begin (token count), claim (token re-check) and
+-- activate (overlap and gate re-check). Taken after the attempt's row locks and
+-- before any owner||root lock.
+create function clued_private.storage_onboard_owner_lock_v1(p_owner uuid) returns void
+language sql security definer set search_path='' as $$
+  select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('storage-onboard:'||p_owner::text,0))
+$$;
 
 -- Track names: the 104436 qualification rule.
 create function clued_private.storage_onboard_tracks_valid_v1(p_tracks jsonb) returns boolean
@@ -144,13 +194,16 @@ $$;
 
 -- Public descriptor of an attempt for the Worker (never the envelope).
 create function clued_private.storage_onboard_view_v1(o clued_private.storage_onboard_attempts_v1) returns jsonb
-language sql stable security definer set search_path='' as $$
+language sql security definer set search_path='' as $$
   select jsonb_build_object('onboard_attempt_id',o.id,'connection_id',o.connection_id,'state',o.state,
     'root',jsonb_strip_nulls(jsonb_build_object('mode',o.root_mode,'name',o.root_name,'folder_id',o.picked_folder_id)),
     'tracks',o.tracks,'normal_use_requested',o.normal_use_requested,'default_refresh_requested',o.default_refresh_requested,
     'requested_scope_profile',case when o.normal_use_requested then 'normal' else 'legacy' end,
     'granted_scope_profile',o.granted_scope_profile,'effects',o.effects,'orphans',o.orphans,'failure_code',o.failure_code,
-    'expires_at',o.expires_at,'execution_permitted',false)
+    'expires_at',o.expires_at,'execution_permitted',false,
+    -- resume can succeed: staged credential kept, unexpired, and no run holding the lease.
+    'retryable',o.credential_envelope is not null and o.expires_at>clock_timestamp()
+      and (o.state='failed' or (o.state='credential_staged' and o.run_lease_until<=clock_timestamp())))
 $$;
 
 -- claim / complete (= stage the credential) of an onboard OAuth attempt.
@@ -181,6 +234,12 @@ begin
       -- A replay after a lost reply reads the committed result only.
       result:=o.result||jsonb_build_object('status','completed','purpose','onboard');
     elsif x.status='prepared' and o.state='begun' and x.expires_at>clock_timestamp() and o.expires_at>clock_timestamp() then
+      -- §2.4 item 8 (b): begin checked the limit without holding it; re-check
+      -- under the per-owner lock that this claim's count is inserted under, so
+      -- two concurrent claims of this owner cannot both pass at 89.
+      perform clued_private.storage_onboard_owner_lock_v1(u);
+      if clued_private.storage_refresh_token_count_v1(u,null,a.oauth_client_id)>=90 then
+        raise exception 'storage_refresh_token_limit' using errcode='42501'; end if;
       -- One-shot claim; the trigger counts it before any token exchange.
       update clued_private.storage_oauth_attempts_v1 set status='claimed' where id=x.id;
       result:=jsonb_build_object('status','claimed','purpose','onboard','attempt_id',x.id,'verifier_envelope',x.verifier_envelope,
@@ -195,13 +254,15 @@ begin
       or p_input->>'provider_scope_profile' is null or p_input->>'provider_scope_profile' not in (requested,'legacy')
       or not clued_private.storage_envelope_valid_v1(p_input->'credential_envelope') then
       raise exception 'storage_oauth_denied' using errcode='42501'; end if;
+    -- The callback's run holds the lease from here (resume is refused meanwhile).
     update clued_private.storage_onboard_attempts_v1 set state='credential_staged',provider_subject=p_input->>'provider_subject',
-      granted_scope_profile=p_input->>'provider_scope_profile',credential_envelope=p_input->'credential_envelope',updated_at=clock_timestamp()
+      granted_scope_profile=p_input->>'provider_scope_profile',credential_envelope=p_input->'credential_envelope',
+      run_token=gen_random_uuid(),run_lease_until=clock_timestamp()+interval '5 minutes',updated_at=clock_timestamp()
       where id=o.id returning * into o;
     update clued_private.storage_refresh_token_issuance_v1 set provider_subject=o.provider_subject
       where oauth_attempt_id=x.id and provider_subject is null;
     result:=clued_private.storage_onboard_view_v1(o)||jsonb_build_object('status','credential_staged','purpose','onboard',
-      'active_roots',clued_private.storage_onboard_active_roots_v1(u,o.provider_subject));
+      'run_token',o.run_token,'active_roots',clued_private.storage_onboard_active_roots_v1(u,o.provider_subject));
   end if;
   -- §8.1.9 item 2: lock waits can cross session, issuer or attempt expiry.
   perform clued_private.storage_owner_v1();
@@ -375,7 +436,8 @@ begin
     'content_profile',case when normal then 'normal/1' else 'text/1' end,'normal_use_enabled',normal,
     'read_receipt_id',read_result->>'receipt_id','refresh_enabled',refresh_receipt is not null,
     'refresh_eligible',eligible,'refresh_receipt_id',refresh_receipt,'execution_permitted',false);
-  update clued_private.storage_onboard_attempts_v1 set state='completed',credential_envelope=null,result=done,updated_at=clock_timestamp()
+  update clued_private.storage_onboard_attempts_v1 set state='completed',credential_envelope=null,run_token=null,run_lease_until=null,
+    orphans=strays,result=done,updated_at=clock_timestamp()
     where id=o.id;
   update clued_private.storage_oauth_attempts_v1 set status='completed',receipt_id=connection_receipt where id=o.oauth_attempt_id;
   update clued_private.storage_refresh_token_issuance_v1 set connection_id=c.id,provider_subject=coalesce(provider_subject,c.provider_subject)
@@ -392,12 +454,14 @@ declare u uuid:=clued_private.storage_owner_v1(); op text:=p_input->>'action'; i
   id_re constant text:='^[A-Za-z0-9_-]{1,160}$';
 begin
   if coalesce(length(p_issuer_secret),0)<32 or jsonb_typeof(p_input) is distinct from 'object'
-    or coalesce(op,'') not in ('begin','stage_credential','resume','effect_intent','effect_result','activate','fail','status','list') then
+    or coalesce(op,'') not in ('begin','stage_credential','resume','effect_intent','effect_result','effect_stray','activate','fail','status','list') then
     raise exception 'storage_onboard_denied' using errcode='42501'; end if;
   issuer:=encode(sha256(convert_to(p_issuer_secret,'UTF8')),'hex');
   select * into a from clued_private.storage_oauth_apps_v1 where issuer_hash=issuer and revoked_at is null for share;
   if not found then raise exception 'storage_onboard_denied' using errcode='42501'; end if;
-  perform clued_private.storage_onboard_expire_v1(u);
+  -- Best effort only: a later raise of this call rolls it back. The cron sweep
+  -- (clued_storage_onboard_sweep_v1) is the reliable path.
+  perform clued_private.storage_onboard_expire_v1(u,null);
   if op='list' then
     if p_input<>jsonb_build_object('action','list') then raise exception 'storage_onboard_denied' using errcode='42501'; end if;
     return jsonb_build_object('attempts',coalesce((select jsonb_agg(clued_private.storage_onboard_view_v1(x) order by x.created_at desc)
@@ -437,7 +501,8 @@ begin
       raise exception 'storage_onboard_not_allowed' using errcode='42501'; end if;
     if not (a.execution_enabled and a.read_enabled) then raise exception 'storage_onboard_unavailable' using errcode='42501'; end if;
     -- §2.4 item 8 (b): the Google account is unknown yet, so every claim of
-    -- this owner and client counts (conservative).
+    -- this owner and client counts (conservative). The claim re-checks it.
+    perform clued_private.storage_onboard_owner_lock_v1(u);
     tokens:=clued_private.storage_refresh_token_count_v1(u,null,a.oauth_client_id);
     if tokens>=90 then raise exception 'storage_refresh_token_limit' using errcode='42501'; end if;
     if p_input->'root'->>'mode'='picked' and (p_input->'root'->>'folder_id') in
@@ -470,29 +535,64 @@ begin
   if o.session_id is distinct from (auth.jwt()->>'session_id')::uuid or o.issuer_hash<>issuer then
     raise exception 'storage_onboard_denied' using errcode='42501'; end if;
   if op='fail' then
-    if (p_input-array['action','onboard_attempt_id','code'])<>'{}'::jsonb or coalesce(p_input->>'code','') !~ '^[a-z_]{1,64}$' then
+    if (p_input-array['action','onboard_attempt_id','code','run_token','retryable'])<>'{}'::jsonb or coalesce(p_input->>'code','') !~ '^[a-z_]{1,64}$'
+      or (p_input ? 'run_token' and coalesce(p_input->>'run_token','') !~ uuid_re)
+      or (p_input ? 'retryable' and jsonb_typeof(p_input->'retryable') is distinct from 'boolean') then
       raise exception 'storage_onboard_input_invalid' using errcode='22023'; end if;
-    if o.state in ('completed','expired') then return clued_private.storage_onboard_view_v1(o); end if;
-    -- Clued never deletes or trashes: every created object is an orphan.
-    update clued_private.storage_onboard_attempts_v1 set state='failed',failure_code=p_input->>'code',updated_at=clock_timestamp(),
-      orphans=coalesce((select jsonb_agg(jsonb_build_object('role',e.key,'provider_file_id',e.value->>'provider_file_id',
-        'recorded_at',coalesce(e.value->>'result_at',e.value->>'intent_at')) order by e.key)
-        from jsonb_each(o.effects) e where coalesce((e.value->>'created')::boolean,true) and (e.value ? 'intent_at')),'[]'::jsonb)
+    if o.state in ('completed','expired','failed') then return clued_private.storage_onboard_view_v1(o); end if;
+    -- A run that lost its lease never fails the run that holds it.
+    if o.state='credential_staged' and (p_input->>'run_token' is null or (p_input->>'run_token')::uuid<>o.run_token) then
+      raise exception 'storage_onboard_run_superseded' using errcode='40001'; end if;
+    -- Clued never deletes or trashes: every created object is an orphan. The
+    -- staged envelope stays only for resume (a retryable failure, 30 minutes at
+    -- most: the sweep drops it at expiry); otherwise it is dropped now.
+    update clued_private.storage_onboard_attempts_v1 set state='failed',failure_code=p_input->>'code',run_token=null,run_lease_until=null,
+      credential_envelope=case when coalesce((p_input->>'retryable')::boolean,true) then credential_envelope end,
+      orphans=clued_private.storage_onboard_orphans_v1(o),updated_at=clock_timestamp()
       where id=o.id returning * into o;
     return clued_private.storage_onboard_view_v1(o);
+  end if;
+  if op='effect_stray' then
+    -- A folder created for this attempt that no effect records (a superseded
+    -- run, an ambiguous or unconfirmed result): kept as an orphan in any state.
+    role:=p_input->>'role';
+    if (p_input-array['action','onboard_attempt_id','role','provider_file_id'])<>'{}'::jsonb
+      or coalesce(p_input->>'provider_file_id','') !~ id_re or (role='root' and o.root_mode='picked')
+      or coalesce(role,'') not in (select 'root' union all select 'track:'||x from jsonb_array_elements_text(o.tracks) x) then
+      raise exception 'storage_onboard_input_invalid' using errcode='22023'; end if;
+    if not exists(select 1 from jsonb_each(o.effects) e where e.value->>'provider_file_id'=p_input->>'provider_file_id')
+      and not exists(select 1 from jsonb_array_elements(o.strays) x where x->>'provider_file_id'=p_input->>'provider_file_id') then
+      if jsonb_array_length(o.strays)>=64 then raise exception 'storage_onboard_input_invalid' using errcode='22023'; end if;
+      effect:=jsonb_build_object('role',role,'provider_file_id',p_input->>'provider_file_id','recorded_at',clock_timestamp());
+      update clued_private.storage_onboard_attempts_v1 set strays=strays||effect,
+        orphans=case when state in ('completed','failed','expired') then orphans||effect else orphans end,updated_at=clock_timestamp()
+        where id=o.id returning * into o;
+    end if;
+    return jsonb_build_object('status','stray_recorded','role',role,'orphans',o.orphans);
   end if;
   if o.expires_at<=clock_timestamp() then raise exception 'storage_onboard_expired' using errcode='42501'; end if;
   if op='resume' then
     -- Retry within 30 minutes reuses the staged credential and every effect.
     if (p_input-array['action','onboard_attempt_id'])<>'{}'::jsonb or o.state not in ('credential_staged','failed')
       or o.credential_envelope is null then raise exception 'storage_onboard_denied' using errcode='42501'; end if;
-    update clued_private.storage_onboard_attempts_v1 set state='credential_staged',failure_code=null,orphans='[]'::jsonb,updated_at=clock_timestamp()
+    -- One run at a time: a held lease (the callback or another resume) refuses.
+    -- An expired lease (that Worker stopped) is taken over with a new token.
+    if o.state='credential_staged' and o.run_lease_until>clock_timestamp() then
+      raise exception 'storage_onboard_run_active' using errcode='40001'; end if;
+    update clued_private.storage_onboard_attempts_v1 set state='credential_staged',failure_code=null,orphans='[]'::jsonb,
+      run_token=gen_random_uuid(),run_lease_until=clock_timestamp()+interval '5 minutes',updated_at=clock_timestamp()
       where id=o.id returning * into o;
     return clued_private.storage_onboard_view_v1(o)||jsonb_build_object('status','credential_staged','purpose','onboard',
-      'owner_id',u,'provider_subject',o.provider_subject,'oauth_client_id',a.oauth_client_id,'credential_version',1,
+      'run_token',o.run_token,'owner_id',u,'provider_subject',o.provider_subject,'oauth_client_id',a.oauth_client_id,'credential_version',1,
       'credential_envelope',o.credential_envelope,'active_roots',clued_private.storage_onboard_active_roots_v1(u,o.provider_subject));
   end if;
   if o.state<>'credential_staged' then raise exception 'storage_onboard_denied' using errcode='42501'; end if;
+  -- Only the run holding the token drives effects and activation.
+  if coalesce(p_input->>'run_token','') !~ uuid_re or (p_input->>'run_token')::uuid<>o.run_token then
+    raise exception 'storage_onboard_run_superseded' using errcode='40001'; end if;
+  if op in ('effect_intent','effect_result') then
+    update clued_private.storage_onboard_attempts_v1 set run_lease_until=clock_timestamp()+interval '5 minutes' where id=o.id returning * into o;
+  end if;
   role:=p_input->>'role';
   if op in ('effect_intent','effect_result') then
     if coalesce(role,'') not in (select 'root' union all select 'track:'||x from jsonb_array_elements_text(o.tracks) x) then
@@ -500,7 +600,7 @@ begin
     effect:=o.effects->role;
   end if;
   if op='effect_intent' then
-    if (p_input-array['action','onboard_attempt_id','role'])<>'{}'::jsonb or (role='root' and o.root_mode='picked')
+    if (p_input-array['action','onboard_attempt_id','run_token','role'])<>'{}'::jsonb or (role='root' and o.root_mode='picked')
       or (role<>'root' and not coalesce(o.effects->'root' ? 'provider_file_id',false)) then
       raise exception 'storage_onboard_input_invalid' using errcode='22023'; end if;
     if effect is null then
@@ -510,7 +610,7 @@ begin
     return jsonb_build_object('status','intent','role',role,'effect',o.effects->role);
   end if;
   if op='effect_result' then
-    if (p_input-array['action','onboard_attempt_id','role','provider_file_id','version','parents','created'])<>'{}'::jsonb
+    if (p_input-array['action','onboard_attempt_id','run_token','role','provider_file_id','version','parents','created'])<>'{}'::jsonb
       or coalesce(p_input->>'provider_file_id','') !~ id_re or coalesce(p_input->>'version','') !~ '^[0-9]{1,40}$'
       or jsonb_typeof(p_input->'created') is distinct from 'boolean' or jsonb_typeof(p_input->'parents') is distinct from 'array'
       or jsonb_array_length(p_input->'parents')<>1 or coalesce(p_input->'parents'->>0,'') !~ id_re
@@ -529,12 +629,15 @@ begin
       raise exception 'storage_onboard_effect_ambiguous' using errcode='40001'; end if;
     update clued_private.storage_onboard_attempts_v1 set effects=effects||jsonb_build_object(role,coalesce(effect,'{}'::jsonb)||jsonb_build_object(
         'provider_file_id',p_input->>'provider_file_id','version',p_input->>'version','parents',p_input->'parents',
-        'created',(p_input->>'created')::boolean,'result_at',clock_timestamp())),updated_at=clock_timestamp()
+        'created',(p_input->>'created')::boolean,'result_at',clock_timestamp())),
+      -- A folder first reported as a stray and now found by its marker is this effect.
+      strays=coalesce((select jsonb_agg(x) from jsonb_array_elements(strays) x where x->>'provider_file_id'<>p_input->>'provider_file_id'),'[]'::jsonb),
+      updated_at=clock_timestamp()
       where id=o.id returning * into o;
     return jsonb_build_object('status','recorded','role',role,'effect',o.effects->role);
   end if;
   -- activate
-  if (p_input-array['action','onboard_attempt_id','ancestors'])<>'{}'::jsonb or jsonb_typeof(p_input->'ancestors') is distinct from 'array'
+  if (p_input-array['action','onboard_attempt_id','run_token','ancestors'])<>'{}'::jsonb or jsonb_typeof(p_input->'ancestors') is distinct from 'array'
     or jsonb_array_length(p_input->'ancestors') not between 1 and 32
     or exists(select 1 from jsonb_array_elements(p_input->'ancestors') x where jsonb_typeof(x)<>'string' or (x#>>'{}') !~ id_re) then
     raise exception 'storage_onboard_input_invalid' using errcode='22023'; end if;
@@ -543,19 +646,43 @@ begin
     or exists(select 1 from jsonb_array_elements_text(o.tracks) x where not coalesce(o.effects->('track:'||x) ? 'provider_file_id',false)) then
     raise exception 'storage_onboard_effect_incomplete' using errcode='42501'; end if;
   if not (a.execution_enabled and a.read_enabled) then raise exception 'storage_onboard_unavailable' using errcode='42501'; end if;
-  -- Same owner||root advisory key as the existing wrappers, then recheck.
+  -- Lock order: onboard row (held) -> per-owner onboard lock -> the same
+  -- owner||root advisory key as the existing wrappers. The per-owner lock makes
+  -- the overlap check and activation of two attempts of this owner serial, so a
+  -- parent and its child root cannot both pass the check; then recheck.
+  perform clued_private.storage_onboard_owner_lock_v1(u);
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(u::text||':'||root,0));
   select * into o from clued_private.storage_onboard_attempts_v1 where id=o.id for update;
-  if o.state<>'credential_staged' then raise exception 'storage_onboard_denied' using errcode='42501'; end if;
+  if o.state<>'credential_staged' or (p_input->>'run_token')::uuid<>o.run_token then
+    raise exception 'storage_onboard_denied' using errcode='42501'; end if;
   if exists(select 1 from jsonb_array_elements_text(clued_private.storage_onboard_active_roots_v1(u,null)) x
       where x=root or ancestors ? x) then
     raise exception 'storage_onboard_root_overlaps_existing' using errcode='42501'; end if;
+  -- §2.5 / Q9 gate again: the owner may have left the allowlist (or the opening
+  -- may have closed) since begin.
+  if not (a.onboard_open or exists(select 1 from clued_private.storage_onboard_allowlist_v1 where owner_id=u)) then
+    raise exception 'storage_onboard_not_allowed' using errcode='42501'; end if;
   result:=clued_private.storage_onboard_activate_v1(u,o,a,ancestors);
   -- Lock waits can cross session or attempt expiry: check them LAST.
   perform clued_private.storage_owner_v1();
   if not exists(select 1 from clued_private.storage_onboard_attempts_v1 where id=o.id and expires_at>clock_timestamp()) then
     raise exception 'storage_onboard_expired' using errcode='42501'; end if;
   return result;
+end $$;
+
+-- Cron sweep (Worker scheduled handler, every minute): expiry that no later
+-- raise can roll back. The fixed server issuer hash authenticates it, as for
+-- clued_storage_refresh_worker_v1 / clued_storage_staging_v1; a revoked issuer
+-- may still sweep its own attempts, since expiry only removes credentials.
+create function public.clued_storage_onboard_sweep_v1(p_issuer_hash text) returns jsonb
+language plpgsql security definer set search_path='' as $$
+declare n integer;
+begin
+  if coalesce(p_issuer_hash,'') !~ '^[0-9a-f]{64}$'
+    or not exists(select 1 from clued_private.storage_oauth_apps_v1 where issuer_hash=p_issuer_hash) then
+    raise exception 'storage_onboard_denied' using errcode='42501'; end if;
+  n:=clued_private.storage_onboard_expire_v1(null,p_issuer_hash);
+  return jsonb_build_object('status','ok','expired',n);
 end $$;
 
 -- Anchored patches on the latest definitions (every edit of one function
@@ -608,7 +735,9 @@ $r$,1),
 end $migration$;
 
 revoke all on function clued_private.storage_default_refresh_eligible_v1(uuid,uuid),
-  clued_private.storage_onboard_expire_v1(uuid),
+  clued_private.storage_onboard_orphans_v1(clued_private.storage_onboard_attempts_v1),
+  clued_private.storage_onboard_expire_v1(uuid,text),
+  clued_private.storage_onboard_owner_lock_v1(uuid),
   clued_private.storage_onboard_tracks_valid_v1(jsonb),
   clued_private.storage_onboard_active_roots_v1(uuid,text),
   clued_private.storage_onboard_view_v1(clued_private.storage_onboard_attempts_v1),
@@ -619,3 +748,5 @@ revoke all on function clued_private.storage_default_refresh_eligible_v1(uuid,uu
   from public,anon,authenticated,service_role;
 revoke all on function public.clued_storage_onboard_v1(text,jsonb) from public,anon,authenticated,service_role;
 grant execute on function public.clued_storage_onboard_v1(text,jsonb) to authenticated;
+revoke all on function public.clued_storage_onboard_sweep_v1(text) from public,anon,authenticated,service_role;
+grant execute on function public.clued_storage_onboard_sweep_v1(text) to anon;

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import test from "node:test";
 import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 
@@ -78,5 +78,31 @@ test("configured Picker and begin: exact RPC with the issuer secret and the nati
     // Refresh opt-in needs the refresh feature.
     const noRefresh = await worker.fetch(post("/v1/storage/onboard/begin", choice({ mode: "new", name: "x" })), { ...base, CLUED_STORAGE_REFRESH_V1: "false" });
     assert.equal((await noRefresh.json()).reason, "refresh_unavailable");
+  });
+});
+
+test("cron sweep: expiry through the issuer-hash RPC with the public key only; off without the storage features", async () => {
+  await withFetch((url, init) => Response.json({ status: "ok", expired: 2 }), async calls => {
+    const swept = await worker.runStorageOnboardScheduled(base);
+    assert.deepEqual(swept, { status: "ok", expired: 2 });
+    assert.equal(calls.length, 1); assert.equal(calls[0].url, base.SUPABASE_URL + "/rest/v1/rpc/clued_storage_onboard_sweep_v1");
+    assert.deepEqual(JSON.parse(calls[0].body), { p_issuer_hash: createHash("sha256").update(base.CLUED_STORAGE_CONNECTOR_ISSUER).digest("hex") });
+    assert.equal(calls[0].headers.get("authorization"), "Bearer " + base.SUPABASE_PUBLISHABLE_KEY, "no user token, no service role");
+    // The page switch off still drains staged credentials.
+    assert.equal((await worker.runStorageOnboardScheduled({ ...base, CLUED_STORAGE_ONBOARD_V1: undefined })).status, "ok");
+  });
+  await withFetch(() => { throw new Error("must not fetch"); }, async calls => {
+    assert.equal((await worker.runStorageOnboardScheduled({ ...base, CLUED_STORAGE_ACCOUNT_V1: undefined })).status, "disabled");
+    assert.equal((await worker.runStorageOnboardScheduled({ ...base, CLUED_STORAGE_GOOGLE_V1: "false" })).status, "disabled");
+    assert.equal((await worker.runStorageOnboardScheduled({ ...base, CLUED_STORAGE_CONNECTOR_ISSUER: "short" })).status, "unavailable");
+    assert.equal(calls.length, 0);
+  });
+  for (const answer of [{ status: "ok" }, { status: "ok", expired: -1 }, { message: "x" }]) {
+    await withFetch(() => Response.json(answer), async () => {
+      assert.equal((await worker.runStorageOnboardScheduled(base)).status, "unavailable", JSON.stringify(answer));
+    });
+  }
+  await withFetch(() => Response.json({ message: "storage_onboard_denied" }, { status: 403 }), async () => {
+    assert.equal((await worker.runStorageOnboardScheduled(base)).status, "unavailable");
   });
 });

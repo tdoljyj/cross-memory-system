@@ -730,6 +730,25 @@ export async function runStorageStagingScheduled(env: ContinuityEnv) {
   catch { return { status: "unavailable" }; }
 }
 
+// Cron: N0 onboarding expiry in its own transaction (§8.1 step 5): attempts
+// past their 30 minutes lose the staged credential, created folders stay
+// orphans. It runs whenever the storage account and Google features are on, so
+// switching the onboard page off never strands a staged credential; only an
+// unavailable sweep while onboarding is on is reported.
+export async function runStorageOnboardScheduled(env: ContinuityEnv) {
+  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return { status: "disabled" };
+  try {
+    const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+    if (!issuer || issuer.length < 32) return { status: "unavailable" };
+    const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_onboard_sweep_v1", {
+      method: "POST", body: JSON.stringify({ p_issuer_hash: await sha256(issuer) }),
+      signal: AbortSignal.timeout(10000), redirect: "manual",
+    }) as Record<string, unknown>;
+    if (result?.status !== "ok" || !Number.isSafeInteger(result.expired) || Number(result.expired) < 0) return { status: "unavailable" };
+    return { status: "ok", expired: Number(result.expired) };
+  } catch { return { status: "unavailable" }; }
+}
+
 export async function runStorageRefreshScheduled(env: ContinuityEnv) {
   if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true" || env.CLUED_STORAGE_REFRESH_V1 !== "true") return { status: "disabled" };
   try {

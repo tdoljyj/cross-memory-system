@@ -49,6 +49,8 @@ const reasons: Record<string, string> = {
   onboard_effect_unconfirmed: "Drive 目录创建结果未确认，可在新建连接页重试，不会重复创建",
   activation_unconfirmed: "连接启用未确认，可在新建连接页核对并重试，不会重复创建目录",
   onboard_expired: "本次接入已超过 30 分钟，请重新开始",
+  onboard_run_active: "这次接入仍在处理中，请几分钟后在新建连接页刷新状态",
+  onboard_run_superseded: "这次接入已由另一次重试接管，请在新建连接页核对状态",
 };
 async function settleOriginal(state: string, token: string, owner: string, receipt: string): Promise<Delivery> {
   const current = await supabase.auth.getSession();

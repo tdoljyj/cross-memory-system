@@ -1135,8 +1135,8 @@ Migration `20261001040000_storage_onboard_n0.sql`:
   sends their claim / complete to `clued_private.storage_onboard_oauth_v1`
   (one-shot claim, counted in the refresh-token ledger).
 - `public.clued_storage_onboard_v1(issuer secret, input)`: `begin`,
-  `stage_credential`, `resume`, `effect_intent`, `effect_result`, `activate`,
-  `fail`, `status`, `list`. `activate` creates in one transaction: Project →
+  `stage_credential`, `resume`, `effect_intent`, `effect_result`,
+  `effect_stray`, `activate`, `fail`, `status`, `list`. `activate` creates in one transaction: Project →
   Decision (`user_explicit`, `user_confirmed`) → profile
   (`/clued-cloud/google-drive/<root_folder_id>`, `clued.storage-onboard/1`) and
   root artifact → track artifacts → `cloud_runtime` → connection → policy
@@ -1145,6 +1145,18 @@ Migration `20261001040000_storage_onboard_n0.sql`:
   Any failure rolls every step back; the Worker then records `fail`, listing
   the created folders as orphans. Clued never deletes or trashes them; the page
   shows them as "已在 Drive 中创建但未启用".
+- Expiry: `public.clued_storage_onboard_sweep_v1(issuer hash)`, called by the
+  Worker cron every minute whenever `CLUED_STORAGE_ACCOUNT_V1` and
+  `CLUED_STORAGE_GOOGLE_V1` are on (also with the onboard page switched off),
+  expires attempts past their 30 minutes in its own transaction: the staged
+  envelope is dropped, created folders stay orphans. A failure the Worker
+  marks not retryable (for example `root_not_owned`) drops the envelope at
+  once. Log event `storage_onboard_sweep_unavailable` (only while
+  `CLUED_STORAGE_ONBOARD_V1=true`) means the sweep could not run.
+- One run per attempt: `stage_credential` and `resume` issue a run token with
+  a 5-minute lease; `resume` is refused (`onboard_run_active`) while the
+  callback or another resume holds it. A folder a run created but could not
+  record (`effect_stray`) is listed as an orphan, also on a completed attempt.
 - `clued_resource_center_admin_v1(profile_register)` refuses the
   `/clued-cloud/` prefix.
 - Gate (§2.5, Q9): only owners in `clued_private.storage_onboard_allowlist_v1`

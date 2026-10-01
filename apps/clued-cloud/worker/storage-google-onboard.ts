@@ -17,6 +17,13 @@ import { ONBOARD_DISCLOSURE_VERSION, onboardChoiceValid, renderOnboardDisclosure
  * resume: retry the effects and activation of a failed attempt within its 30
  *   minutes with the staged credential (no second consent, no duplicate folder).
  *
+ * One run at a time: stage_credential and resume hand out a run token with a
+ * lease; every effect call, activate and fail carry it, and the database
+ * refuses a resume while another run holds the lease. A folder this run created
+ * but could not record (superseded run, ambiguous or unconfirmed result) is
+ * reported with effect_stray and stays listed as an orphan. A failure that a
+ * resume cannot fix drops the staged credential at once (retryable: false).
+ *
  * Only fixed reason labels leave this module; never a token, code, subject,
  * upstream body or provider URL. */
 const encoder = new TextEncoder();
@@ -35,8 +42,14 @@ export const ONBOARD_PAGE_REASONS = Object.freeze([
   "onboard_not_allowed", "onboard_unavailable", "onboard_disabled", "picker_unconfigured", "refresh_unavailable", "refresh_token_limit",
   "onboard_input_invalid", "onboard_disclosure_changed", "attempt_unavailable", "verifier_unavailable", "token_exchange_unconfirmed",
   "token_response_invalid", "refresh_token_missing", "scope_mismatch", "provider_identity_unconfirmed", "token_lifetime_insufficient",
-  "credential_seal_unavailable", "credential_commit_unconfirmed",
+  "credential_seal_unavailable", "credential_commit_unconfirmed", "onboard_run_active", "onboard_run_superseded",
 ]);
+// Failures a resume of the same attempt cannot fix: the attempt's root, name,
+// tracks or disclosure are fixed, or the staged credential itself is unusable.
+// The database then drops the staged envelope immediately.
+const TERMINAL = new Set(["root_shared_drive", "root_not_owned", "root_not_folder", "root_name_changed", "root_overlaps_existing",
+  "onboard_not_allowed", "onboard_input_invalid", "onboard_disclosure_changed", "onboard_expired", "attempt_unavailable",
+  "verifier_unavailable", "token_lifetime_insufficient"]);
 export class StorageOnboardError extends StorageGoogleConnectionError {
   constructor(reason: string, onboardAttemptId?: string) { super(reason, onboardAttemptId); }
 }
@@ -48,6 +61,7 @@ const databaseReason: Record<string, string> = Object.freeze({
   storage_refresh_token_limit: "refresh_token_limit", storage_onboard_root_overlaps_existing: "root_overlaps_existing",
   storage_onboard_disclosure_changed: "onboard_disclosure_changed", storage_onboard_input_invalid: "onboard_input_invalid",
   storage_onboard_effect_ambiguous: "onboard_effect_ambiguous", storage_onboard_expired: "onboard_expired",
+  storage_onboard_run_active: "onboard_run_active", storage_onboard_run_superseded: "onboard_run_superseded",
 }) as Record<string, string>;
 const known = (error: unknown) => error instanceof Error ? databaseReason[error.message] : undefined;
 const hash = async (s: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(s))), b => b.toString(16).padStart(2, "0")).join("");
@@ -59,7 +73,7 @@ export type OnboardResult = {
   normal_use_enabled: boolean; refresh_enabled: boolean;
 };
 type Staged = {
-  onboard_attempt_id: string; root: { mode: "new" | "picked"; name: string; folder_id?: string }; tracks: string[];
+  onboard_attempt_id: string; run_token: string; root: { mode: "new" | "picked"; name: string; folder_id?: string }; tracks: string[];
   effects: Record<string, RecordValue>; active_roots: string[];
 };
 
@@ -74,7 +88,7 @@ export function onboardResult(raw: RecordValue): OnboardResult {
 }
 function staged(raw: RecordValue): Staged {
   const root = raw.root as RecordValue | undefined;
-  if (!id.test(String(raw.onboard_attempt_id)) || !root || (root.mode !== "new" && root.mode !== "picked") || typeof root.name !== "string" ||
+  if (!id.test(String(raw.onboard_attempt_id)) || !id.test(String(raw.run_token)) || !root || (root.mode !== "new" && root.mode !== "picked") || typeof root.name !== "string" ||
     (root.mode === "picked" && !fileId.test(String(root.folder_id))) || !Array.isArray(raw.tracks) || !raw.tracks.every(t => typeof t === "string") ||
     !raw.effects || typeof raw.effects !== "object" || Array.isArray(raw.effects) ||
     !Array.isArray(raw.active_roots) || !raw.active_roots.every(r => typeof r === "string" && fileId.test(r))) refuse("attempt_unavailable");
@@ -154,24 +168,36 @@ export async function createStorageGoogleOnboard(configuration: {
     }
     return refuse("root_ancestry_unavailable");
   }
-  async function effect(attempt: string, role: string, found: RecordValue[], create: () => Promise<RecordValue>, created = true) {
+  async function effect(s: Staged, role: string, found: RecordValue[], create: () => Promise<RecordValue>) {
+    const attempt = s.onboard_attempt_id, run_token = s.run_token;
     if (found.length > 1) refuse("onboard_effect_ambiguous");
     // Intent first (idempotent), then create; a replay finds and reuses the object.
-    await rpc({ action: "effect_intent", onboard_attempt_id: attempt, role });
-    const object = folder(found.length === 1 ? found[0] : await create(), "onboard_effect_unconfirmed");
-    await rpc({ action: "effect_result", onboard_attempt_id: attempt, role, provider_file_id: object.id, version: object.version,
-      parents: object.parents, created });
-    return object;
+    await rpc({ action: "effect_intent", onboard_attempt_id: attempt, run_token, role });
+    const raw = found.length === 1 ? found[0] : await create();
+    try {
+      const object = folder(raw, "onboard_effect_unconfirmed");
+      const recorded = await rpc({ action: "effect_result", onboard_attempt_id: attempt, run_token, role, provider_file_id: object.id,
+        version: object.version, parents: object.parents, created: true });
+      if (recorded.status !== "recorded" || (recorded.effect as RecordValue | undefined)?.provider_file_id !== object.id) refuse("onboard_effect_ambiguous");
+      return object;
+    } catch (error) {
+      // The folder exists (its ID came back) but no effect records it: keep it
+      // as an orphan. Best effort; the failure itself is what the page shows.
+      if (fileId.test(String(raw.id))) {
+        try { await rpc({ action: "effect_stray", onboard_attempt_id: attempt, role, provider_file_id: String(raw.id) }); } catch { /* ignore */ }
+      }
+      throw error;
+    }
   }
   const marker = (attempt: string, role: string) =>
     `appProperties has { key='clued_onboard_attempt_id' and value=${quote(attempt)} } and appProperties has { key='clued_onboard_role' and value=${quote(role)} } and trashed=false`;
 
   async function run(s: Staged, token: string): Promise<OnboardResult> {
-    const api = drive(token), attempt = s.onboard_attempt_id;
+    const api = drive(token), attempt = s.onboard_attempt_id, run_token = s.run_token;
     let root: { id: string; version: string; parents: string[] };
     if (s.root.mode === "new") {
       const recorded = s.effects.root as RecordValue | undefined;
-      root = await effect(attempt, "root", await api.list(marker(attempt, "root"), "onboard_effect_unconfirmed"), () => api.create({
+      root = await effect(s, "root", await api.list(marker(attempt, "root"), "onboard_effect_unconfirmed"), () => api.create({
         name: s.root.name, mimeType: FOLDER, appProperties: { clued_onboard_attempt_id: attempt, clued_onboard_role: "root" } }));
       if (recorded?.provider_file_id && recorded.provider_file_id !== root.id) refuse("onboard_effect_ambiguous");
     } else {
@@ -187,7 +213,7 @@ export async function createStorageGoogleOnboard(configuration: {
       if ((meta.capabilities as RecordValue | undefined)?.canAddChildren !== true) refuse("root_not_writable");
       if (meta.name !== s.root.name) refuse("root_name_changed");
       root = folder(meta, "root_metadata_unavailable");
-      await rpc({ action: "effect_result", onboard_attempt_id: attempt, role: "root", provider_file_id: root.id, version: root.version,
+      await rpc({ action: "effect_result", onboard_attempt_id: attempt, run_token, role: "root", provider_file_id: root.id, version: root.version,
         parents: root.parents, created: false });
     }
     // Overlap: the root equals, is inside, or contains an active root of this Google account.
@@ -208,20 +234,26 @@ export async function createStorageGoogleOnboard(configuration: {
       const ours = named.filter(f => (f.appProperties as RecordValue | undefined)?.clued_onboard_attempt_id === attempt &&
         (f.appProperties as RecordValue | undefined)?.clued_onboard_role === role);
       if (ours.length !== named.length) refuse("onboard_track_name_conflict");
-      await effect(attempt, role, ours, () => api.create({ name: track, mimeType: FOLDER, parents: [root.id],
+      await effect(s, role, ours, () => api.create({ name: track, mimeType: FOLDER, parents: [root.id],
         appProperties: { clued_onboard_attempt_id: attempt, clued_onboard_role: role } }));
     }
     let activated: RecordValue;
-    try { activated = await rpc({ action: "activate", onboard_attempt_id: attempt, ancestors: chain }); }
+    try { activated = await rpc({ action: "activate", onboard_attempt_id: attempt, run_token, ancestors: chain }); }
     catch (error) { return refuse(known(error) ?? "activation_unconfirmed"); }
     return onboardResult(activated);
   }
-  async function guarded(attempt: string, work: () => Promise<OnboardResult>): Promise<OnboardResult> {
+  async function guarded(attempt: string, runToken: string | null, work: () => Promise<OnboardResult>): Promise<OnboardResult> {
     try { return await work(); }
     catch (error) {
       const reason = error instanceof Refusal ? error.reason : known(error) ?? "activation_unconfirmed";
       // Separate transaction: the attempt fails, created objects become orphans.
-      try { await rpc({ action: "fail", onboard_attempt_id: attempt, code: reason }); } catch { /* status stays readable */ }
+      // A superseded run leaves the attempt to the run that holds the lease.
+      if (reason !== "onboard_run_superseded") {
+        try {
+          await rpc({ action: "fail", onboard_attempt_id: attempt, code: reason, retryable: !TERMINAL.has(reason),
+            ...(runToken ? { run_token: runToken } : {}) });
+        } catch { /* status stays readable */ }
+      }
       throw new StorageOnboardError(reason, attempt);
     }
   }
@@ -307,10 +339,11 @@ export async function createStorageGoogleOnboard(configuration: {
         token = String(tokens.access_token);
       } catch (error) {
         // Before the credential is staged there is nothing to retry: a new consent is needed.
-        try { await rpc({ action: "fail", onboard_attempt_id: attempt, code: error instanceof Refusal ? error.reason : stage }); } catch { /* ignore */ }
+        try { await rpc({ action: "fail", onboard_attempt_id: attempt, code: error instanceof Refusal ? error.reason : stage, retryable: false }); }
+        catch { /* ignore */ }
         throw new StorageOnboardError(error instanceof Refusal ? error.reason : stage, attempt);
       }
-      return await guarded(attempt, () => run(s, token));
+      return await guarded(attempt, s.run_token, () => run(s, token));
     },
     /** §8.1 step 5: retry within 30 minutes with the staged credential. */
     async resume(attempt: string): Promise<OnboardResult> {
@@ -318,7 +351,8 @@ export async function createStorageGoogleOnboard(configuration: {
       let raw: RecordValue;
       try { raw = await rpc({ action: "resume", onboard_attempt_id: attempt }); }
       catch (error) { throw new StorageOnboardError(known(error) ?? "attempt_unavailable", attempt); }
-      return await guarded(attempt, async () => {
+      const runToken = id.test(String(raw.run_token)) ? String(raw.run_token) : null;
+      return await guarded(attempt, runToken, async () => {
         const s = staged(raw);
         if (s.onboard_attempt_id !== attempt || !id.test(String(raw.owner_id)) || !id.test(String(raw.connection_id)) ||
           raw.oauth_client_id !== client || raw.credential_version !== 1 || !/^[A-Za-z0-9_-]{1,255}$/.test(String(raw.provider_subject)))

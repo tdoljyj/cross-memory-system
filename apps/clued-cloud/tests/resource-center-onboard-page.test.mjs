@@ -133,7 +133,12 @@ test("Picker token: a scope superset is discarded with no revoke and no Picker; 
 test("failed attempts list their orphans; retry resumes without a new consent", async () => {
   const attempt = { onboard_attempt_id: "11111111-1111-4111-8111-111111111111", state: "failed", root: { name: "Clued_资料中心" },
     failure_code: "activation_unconfirmed", orphans: [{ role: "root", provider_file_id: "r" }, { role: "track:资料", provider_file_id: "t" }],
-    expires_at: "2099-01-01T00:00:00Z" };
+    expires_at: "2099-01-01T00:00:00Z", retryable: true };
+  // No retry when the server says resume cannot succeed (credential dropped, or another run holds the attempt).
+  const closed = fixture(); await closed.settle(); closed.respond(0, config({ attempts: [{ ...attempt, failure_code: "root_not_owned", retryable: false }] }));
+  await closed.settle();
+  assert.match(closed.text(), /已在 Drive 中创建但未启用/);
+  assert.equal(closed.find(n => n.type === "button" && /^重试/.test(String(n.props.children))), undefined);
   const f = fixture(); await f.settle(); f.respond(0, config({ attempts: [attempt] })); await f.settle();
   assert.match(f.text(), /已在 Drive 中创建但未启用：根目录、子目录 资料/); assert.match(f.text(), /Clued 不会删除它们/);
   f.button("重试").props.onClick(); await f.settle();

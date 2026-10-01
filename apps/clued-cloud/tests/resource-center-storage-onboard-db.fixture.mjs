@@ -33,12 +33,23 @@ export async function testStorageOnboard(t, admin, server, user, decision) {
 
   const envelope = tag => ({ contract: "clued.storage-credential/1", key_id: "fixture", nonce: "N".repeat(16),
     ciphertext: tag + randomBytes(48).toString("base64url") });
-  const onboard = async (input, database = native) => (await database.query("select public.clued_storage_onboard_v1($1,$2::jsonb) value",
-    [issuerSecret, JSON.stringify(input)])).rows[0].value;
+  const row = async id => (await admin.query("select * from clued_private.storage_onboard_attempts_v1 where id=$1", [id])).rows[0];
+  // The run calls carry the current run token unless a test passes one (or
+  // run_token: undefined to send none); the lease tests pass stale ones.
+  const runActions = new Set(["effect_intent", "effect_result", "activate", "fail"]);
+  const onboard = async (input, database = native) => {
+    if (runActions.has(input.action) && !("run_token" in input)) {
+      const token = (await row(input.onboard_attempt_id))?.run_token;
+      if (token) input = { ...input, run_token: token };
+    }
+    if ("run_token" in input && input.run_token === undefined) { input = { ...input }; delete input.run_token; }
+    return (await database.query("select public.clued_storage_onboard_v1($1,$2::jsonb) value", [issuerSecret, JSON.stringify(input)])).rows[0].value;
+  };
+  const sweep = async (hash = issuer, database = caller) =>
+    (await database.query("select public.clued_storage_onboard_sweep_v1($1) value", [hash])).rows[0].value;
   const callback = async (input, database = native) => (await database.query("select public.clued_storage_oauth_callback_v2($1,$2::jsonb) value",
     [issuerSecret, JSON.stringify(input)])).rows[0].value;
   const outer = async input => (await native.query("select public.clued_storage_oauth_v1($1,$2::jsonb) value", [issuer, JSON.stringify(input)])).rows[0].value;
-  const row = async id => (await admin.query("select * from clued_private.storage_onboard_attempts_v1 where id=$1", [id])).rows[0];
 
   // The Worker renders the disclosure (storage-onboard-disclosure.ts); here any
   // text naming the root in 「」 with its SHA-256 stands in for it.
@@ -58,7 +69,7 @@ export async function testStorageOnboard(t, admin, server, user, decision) {
     const credential = envelope("CRED");
     const staged = await onboard({ action: "stage_credential", state_hash: attempt.state_hash, provider_subject: subject,
       credential_envelope: credential, provider_scope_profile: granted });
-    assert.equal(staged.status, "credential_staged");
+    assert.equal(staged.status, "credential_staged"); assert.match(staged.run_token, /^[0-9a-f-]{36}$/);
     return { claimed, staged, credential };
   };
   const ids = new Map();
@@ -428,13 +439,190 @@ export async function testStorageOnboard(t, admin, server, user, decision) {
       await onboard({ action: "effect_result", onboard_attempt_id: attempt.onboard_attempt_id, role: "root", provider_file_id: driveId(attempt.onboard_attempt_id),
         version: "1", parents: ["my-drive-root"], created: true });
       await admin.query("update clued_private.storage_onboard_attempts_v1 set expires_at=clock_timestamp()-interval '1 second' where id=$1", [attempt.onboard_attempt_id]);
-      await assert.rejects(onboard({ action: "resume", onboard_attempt_id: attempt.onboard_attempt_id }), /storage_onboard_denied|storage_onboard_expired/);
-      const expired = await onboard({ action: "status", onboard_attempt_id: attempt.onboard_attempt_id });
-      assert.equal(expired.state, "expired");
+      // The in-call expiry of a call that then raises is rolled back with it:
+      // the abandoned attempt still holds its sealed refresh token.
+      await assert.rejects(onboard({ action: "resume", onboard_attempt_id: attempt.onboard_attempt_id }), /storage_onboard_denied|storage_onboard_run_active|storage_onboard_expired/);
+      await assert.rejects(onboard({ action: "effect_intent", onboard_attempt_id: attempt.onboard_attempt_id, role: "track:资料" }), /storage_onboard_expired/);
+      assert.notEqual((await row(attempt.onboard_attempt_id)).credential_envelope, null);
+      // The cron sweep (its own transaction, issuer hash only) expires it.
+      await assert.rejects(sweep(sha(randomUUID())), /storage_onboard_denied/);
+      await assert.rejects(sweep("not-a-hash"), /storage_onboard_denied/);
+      await assert.rejects(sweep(issuer, native), /permission denied/, "the sweep is the Worker's (anon + issuer hash), not a native RPC");
+      const swept = await sweep();
+      assert.equal(swept.status, "ok"); assert.ok(swept.expired >= 1);
       const stored = await row(attempt.onboard_attempt_id);
-      assert.equal(stored.credential_envelope, null);
+      assert.equal(stored.state, "expired"); assert.equal(stored.credential_envelope, null); assert.equal(stored.run_token, null);
       assert.deepEqual(stored.orphans.map(o => o.role), ["root"]);
       assert.equal(stored.orphans[0].provider_file_id, driveId(attempt.onboard_attempt_id));
+      const expired = await onboard({ action: "status", onboard_attempt_id: attempt.onboard_attempt_id });
+      assert.equal(expired.state, "expired"); assert.equal(expired.retryable, false);
+      assert.equal((await sweep()).expired, 0, "nothing left to expire");
+      // An expired failed attempt (retryable failure) also loses its envelope; a row
+      // locked by a running call is skipped, not waited for.
+      const failed = await begin();
+      await claimAndStage(failed);
+      await onboard({ action: "fail", onboard_attempt_id: failed.onboard_attempt_id, code: "activation_unconfirmed", retryable: true });
+      assert.notEqual((await row(failed.onboard_attempt_id)).credential_envelope, null);
+      await admin.query("update clued_private.storage_onboard_attempts_v1 set expires_at=clock_timestamp()-interval '1 second' where id=$1", [failed.onboard_attempt_id]);
+      const holder = await connect();
+      await holder.query("begin");
+      try {
+        await holder.query("select 1 from clued_private.storage_onboard_attempts_v1 where id=$1 for update", [failed.onboard_attempt_id]);
+        assert.equal((await sweep()).expired, 0, "SKIP LOCKED");
+      } finally { await holder.query("rollback"); }
+      assert.equal((await sweep()).expired, 1);
+      assert.equal((await row(failed.onboard_attempt_id)).credential_envelope, null);
+    });
+
+    await t.test("a failure no resume can fix drops the staged credential at once; a retryable one keeps it for resume", async () => {
+      const attempt = await begin();
+      await claimAndStage(attempt);
+      await onboard({ action: "effect_intent", onboard_attempt_id: attempt.onboard_attempt_id, role: "root" });
+      await assert.rejects(onboard({ action: "fail", onboard_attempt_id: attempt.onboard_attempt_id, code: "root_not_owned", retryable: "no" }),
+        /storage_onboard_input_invalid/);
+      const failed = await onboard({ action: "fail", onboard_attempt_id: attempt.onboard_attempt_id, code: "root_not_owned", retryable: false });
+      assert.equal(failed.state, "failed"); assert.equal(failed.retryable, false); assert.deepEqual(failed.orphans.map(o => o.role), ["root"]);
+      const stored = await row(attempt.onboard_attempt_id);
+      assert.equal(stored.credential_envelope, null); assert.equal(stored.run_token, null);
+      await assert.rejects(onboard({ action: "resume", onboard_attempt_id: attempt.onboard_attempt_id }), /storage_onboard_denied/);
+      // A second fail is a no-op (the first code stays).
+      assert.equal((await onboard({ action: "fail", onboard_attempt_id: attempt.onboard_attempt_id, code: "other" })).failure_code, "root_not_owned");
+    });
+
+    await t.test("one run at a time: the run token and its lease serialise the callback, resume and a stopped Worker", async () => {
+      const attempt = await begin(), id = attempt.onboard_attempt_id;
+      const { staged } = await claimAndStage(attempt);
+      const first = staged.run_token;
+      assert.equal(staged.retryable, false, "the callback run holds the lease");
+      // The callback run holds the lease: a resume (another tab, a retry) is refused.
+      await assert.rejects(onboard({ action: "resume", onboard_attempt_id: id }), /storage_onboard_run_active/);
+      await assert.rejects(onboard({ action: "effect_intent", onboard_attempt_id: id, role: "root", run_token: undefined }), /storage_onboard_run_superseded/);
+      await assert.rejects(onboard({ action: "effect_intent", onboard_attempt_id: id, role: "root", run_token: randomUUID() }), /storage_onboard_run_superseded/);
+      const before = (await row(id)).run_lease_until;
+      await onboard({ action: "effect_intent", onboard_attempt_id: id, role: "root", run_token: first });
+      assert.ok((await row(id)).run_lease_until >= before, "every effect call refreshes the lease");
+      // The Worker stops between intent and result; its lease lapses.
+      await admin.query("update clued_private.storage_onboard_attempts_v1 set run_lease_until=clock_timestamp()-interval '1 second' where id=$1", [id]);
+      assert.equal((await onboard({ action: "status", onboard_attempt_id: id })).retryable, true);
+      const resumed = await onboard({ action: "resume", onboard_attempt_id: id });
+      const second = resumed.run_token;
+      assert.match(second, /^[0-9a-f-]{36}$/); assert.notEqual(second, first);
+      await assert.rejects(onboard({ action: "resume", onboard_attempt_id: id }), /storage_onboard_run_active/, "the resumed run holds it now");
+      // The old run is superseded: no effect, no activation, and its fail never fails the new run.
+      await assert.rejects(onboard({ action: "effect_result", onboard_attempt_id: id, role: "root", run_token: first, provider_file_id: "old-run-root",
+        version: "1", parents: ["my-drive-root"], created: true }), /storage_onboard_run_superseded/);
+      await assert.rejects(onboard({ action: "activate", onboard_attempt_id: id, ancestors: ["my-drive-root"], run_token: first }), /storage_onboard_run_superseded/);
+      await assert.rejects(onboard({ action: "fail", onboard_attempt_id: id, code: "activation_unconfirmed", run_token: first }), /storage_onboard_run_superseded/);
+      await assert.rejects(onboard({ action: "fail", onboard_attempt_id: id, code: "activation_unconfirmed", run_token: undefined }), /storage_onboard_run_superseded/);
+      assert.equal((await row(id)).state, "credential_staged");
+      // The folder the old run created is reported as a stray (no token needed) and kept.
+      await assert.rejects(onboard({ action: "effect_stray", onboard_attempt_id: id, role: "track:unknown", provider_file_id: "x" }), /storage_onboard_input_invalid/);
+      await assert.rejects(onboard({ action: "effect_stray", onboard_attempt_id: id, role: "root", provider_file_id: "bad id!" }), /storage_onboard_input_invalid/);
+      await assert.rejects(onboard({ action: "effect_stray", onboard_attempt_id: id, role: "root", provider_file_id: "old-run-root" }, other), /storage_onboard_denied/);
+      await onboard({ action: "effect_stray", onboard_attempt_id: id, role: "root", provider_file_id: "old-run-root" });
+      await onboard({ action: "effect_stray", onboard_attempt_id: id, role: "root", provider_file_id: "old-run-root" });
+      // A stray later found by its marker and recorded is that effect, not an orphan.
+      await onboard({ action: "effect_stray", onboard_attempt_id: id, role: "track:资料", provider_file_id: "found-later" });
+      assert.deepEqual((await row(id)).strays.map(x => x.provider_file_id), ["old-run-root", "found-later"]);
+      const rootId = driveId(id + ":new-root");
+      await onboard({ action: "effect_result", onboard_attempt_id: id, role: "root", run_token: second, provider_file_id: rootId,
+        version: "1", parents: ["my-drive-root"], created: true });
+      for (const track of attempt.tracks) {
+        const role = "track:" + track;
+        await onboard({ action: "effect_intent", onboard_attempt_id: id, role, run_token: second });
+        await onboard({ action: "effect_result", onboard_attempt_id: id, role, run_token: second,
+          provider_file_id: track === "资料" ? "found-later" : driveId(id + ":" + role), version: "1", parents: [rootId], created: true });
+      }
+      assert.deepEqual((await row(id)).strays.map(x => x.provider_file_id), ["old-run-root"]);
+      // An already recorded effect is never a stray.
+      await onboard({ action: "effect_stray", onboard_attempt_id: id, role: "root", provider_file_id: rootId });
+      const done = await onboard({ action: "activate", onboard_attempt_id: id, ancestors: ["my-drive-root"], run_token: second });
+      assert.equal(done.status, "completed");
+      const completed = await row(id);
+      assert.equal(completed.run_token, null); assert.equal(completed.run_lease_until, null);
+      assert.deepEqual(completed.orphans.map(o => [o.role, o.provider_file_id]), [["root", "old-run-root"]], "a completed attempt lists its stray");
+      // A stray reported after completion is still kept, and listed.
+      await onboard({ action: "effect_stray", onboard_attempt_id: id, role: "track:项目", provider_file_id: "late-stray" });
+      assert.deepEqual((await row(id)).orphans.map(o => o.provider_file_id), ["old-run-root", "late-stray"]);
+      assert.ok((await onboard({ action: "list" })).attempts.some(a => a.onboard_attempt_id === id && a.orphans.length === 2));
+      // A failed run's orphans are its unactivated effects plus its strays.
+      const lost = await begin(), lostId = lost.onboard_attempt_id;
+      await claimAndStage(lost);
+      await onboard({ action: "effect_intent", onboard_attempt_id: lostId, role: "root" });
+      await onboard({ action: "effect_stray", onboard_attempt_id: lostId, role: "root", provider_file_id: "ambiguous-root" });
+      const failed = await onboard({ action: "fail", onboard_attempt_id: lostId, code: "onboard_effect_ambiguous" });
+      assert.deepEqual(failed.orphans.map(o => [o.role, o.provider_file_id]), [["root", "ambiguous-root"]],
+        "an intent without a result whose folder is a stray is listed once");
+      assert.equal(failed.retryable, true);
+    });
+
+    await t.test("the token limit is re-checked at claim under the per-owner lock", async () => {
+      const counted = (await admin.query("select clued_private.storage_refresh_token_count_v1($1,null,$2) n", [user, oauthClient])).rows[0].n;
+      const filler = async n => admin.query(`with a as (insert into clued_private.storage_oauth_attempts_v1(id,connection_id,owner_id,session_id,issuer_hash,connection_version,
+        state_hash,verifier_envelope,expires_at,status) select gen_random_uuid(),$1,$2,$3,$4,1,encode(extensions.digest(gen_random_uuid()::text,'sha256'),'hex'),
+        '{}'::jsonb,clock_timestamp(),'completed' from generate_series(1,$5::int) returning id)
+        insert into clued_private.storage_refresh_token_issuance_v1(oauth_attempt_id,owner_id,oauth_client_id,provider_subject,connection_id,purpose)
+        select id,$2,$6,'onboard-subject',$1,'connection' from a`, [ownerConnection, user, session, issuer, n, oauthClient]);
+      try {
+        await filler(89 - counted);
+        // Both begin at 89 (each sees room for one more).
+        const one = await begin(), two = await begin();
+        assert.equal(one.begun.refresh_token_count, 89); assert.equal(two.begun.refresh_token_count, 89);
+        assert.equal((await callback({ action: "claim", state_hash: one.state_hash })).status, "claimed");
+        await assert.rejects(callback({ action: "claim", state_hash: two.state_hash }), /storage_refresh_token_limit/);
+        assert.equal((await admin.query("select status from clued_private.storage_oauth_attempts_v1 where id=$1", [two.oauth_attempt_id])).rows[0].status, "prepared",
+          "the refused claim is not counted");
+        // Concurrent claims serialise on the per-owner lock: the second sees the first's count.
+        await admin.query("update clued_private.storage_refresh_token_issuance_v1 set cleared_at=clock_timestamp() where oauth_attempt_id=$1", [one.oauth_attempt_id]);
+        const three = await begin();
+        const first = await connect("authenticated", session), second = await connect("authenticated", session);
+        await first.query("begin");
+        try {
+          assert.equal((await callback({ action: "claim", state_hash: two.state_hash }, first)).status, "claimed");
+          const racing = callback({ action: "claim", state_hash: three.state_hash }, second).then(() => "claimed", error => error.message);
+          const waited = await Promise.race([racing, new Promise(resolve => setTimeout(() => resolve("waiting"), 300))]);
+          assert.equal(waited, "waiting", "the second claim waits for the per-owner lock");
+          await first.query("commit");
+          assert.match(await racing, /storage_refresh_token_limit/);
+        } catch (error) { await first.query("rollback").catch(() => {}); throw error; }
+      } finally {
+        await admin.query("update clued_private.storage_refresh_token_issuance_v1 set cleared_at=clock_timestamp() where owner_id=$1 and oauth_client_id=$2 and cleared_at is null", [user, oauthClient]);
+      }
+    });
+
+    await t.test("nested roots: a parent and its child activating concurrently are serialised; the second sees the overlap", async () => {
+      const parent = await begin(), child = await begin();
+      await claimAndStage(parent); await claimAndStage(child);
+      const parentIds = await effects(parent);
+      await effects(child, { parent: parentIds.root });
+      const first = await connect("authenticated", session), second = await connect("authenticated", session);
+      await first.query("begin");
+      try {
+        assert.equal((await activate(parent, ["my-drive-root"], first)).status, "completed");
+        const racing = activate(child, [parentIds.root, "my-drive-root"], second).then(value => value.status, error => error.message);
+        const waited = await Promise.race([racing, new Promise(resolve => setTimeout(() => resolve("waiting"), 300))]);
+        assert.equal(waited, "waiting", "the child's activation waits for the per-owner onboard lock");
+        await first.query("commit");
+        assert.match(await racing, /storage_onboard_root_overlaps_existing/);
+      } catch (error) { await first.query("rollback").catch(() => {}); throw error; }
+      assert.equal((await row(child.onboard_attempt_id)).state, "credential_staged");
+    });
+
+    await t.test("activation re-checks the allowlist / verified-opening gate", async () => {
+      const attempt = await begin();
+      await claimAndStage(attempt);
+      await effects(attempt);
+      const before = await canonical();
+      await admin.query("delete from clued_private.storage_onboard_allowlist_v1 where owner_id=$1", [user]);
+      try {
+        await assert.rejects(activate(attempt), /storage_onboard_not_allowed/);
+        assert.deepEqual(await canonical(), before);
+        await admin.query("update clued_private.storage_oauth_apps_v1 set onboard_open=true where issuer_hash=$1", [issuer]);
+        try { assert.equal((await activate(attempt)).status, "completed", "the verified opening admits"); }
+        finally { await admin.query("update clued_private.storage_oauth_apps_v1 set onboard_open=false where issuer_hash=$1", [issuer]); }
+      } finally {
+        await admin.query("insert into clued_private.storage_onboard_allowlist_v1(owner_id,note) values($1,'test user') on conflict do nothing", [user]);
+      }
     });
 
     await t.test("the token-count limit refuses a new onboarding at 90 (unknown Google account counts every claim)", async () => {

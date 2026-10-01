@@ -12,7 +12,7 @@ import { acceptPickerToken, DRIVE_FILE_SCOPE, ONBOARD_DEFAULT_ROOT_NAME, ONBOARD
 const FOLDER = "application/vnd.google-apps.folder";
 type Picker = { api_key: string; app_id: string; client_id: string };
 type Attempt = { onboard_attempt_id: string; state: string; root: { name: string }; failure_code: string | null;
-  orphans: { role: string; provider_file_id: string | null }[]; expires_at: string };
+  orphans: { role: string; provider_file_id: string | null }[]; expires_at: string; retryable?: boolean };
 type Config = { enabled: boolean; reason?: string; allowed?: boolean; picker?: Picker | null; refresh_available?: boolean;
   refresh_token_count?: number; attempts?: Attempt[] };
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -41,6 +41,8 @@ const reasons: Record<string, string> = {
   scope_mismatch: "Google 返回的权限与请求不一致，连接未建立。",
   token_exchange_unconfirmed: "Google 授权码兑换未确认，请重新开始，不要重复使用同一授权。",
   credential_commit_unconfirmed: "凭据保存未确认，请刷新状态核对。",
+  onboard_run_active: "这次接入仍在处理中，请几分钟后刷新状态再重试。",
+  onboard_run_superseded: "这次接入已由另一次重试接管，请刷新状态核对。",
 };
 const reasonText = (reason: unknown) => typeof reason === "string" && Object.hasOwn(reasons, reason) ? reasons[reason] : "操作未确认，请刷新状态后核对。";
 class RequestFailure extends Error { constructor(readonly reason?: string) { super("request_failed"); } }
@@ -166,8 +168,9 @@ export default function StorageOnboard() {
     {unfinished.map(a => <section key={a.onboard_attempt_id} className="my-3 rounded-xl border p-3 text-sm">
       <p>「{a.root.name}」：{a.state === "failed" ? "未完成" : a.state === "expired" ? "已过期" : "处理中"}{a.failure_code ? `（${reasonText(a.failure_code)}）` : ""}</p>
       {a.orphans.length > 0 && <p>已在 Drive 中创建但未启用：{a.orphans.map(o => o.role === "root" ? "根目录" : o.role.replace(/^track:/, "子目录 ")).join("、")}。Clued 不会删除它们，可在 Drive 中自行处理。</p>}
-      {/* The server expires attempts after 30 minutes; an expired one is listed as expired. */}
-      {a.state === "failed" &&
+      {/* The server expires attempts after 30 minutes; an expired one is listed as expired. Retry only
+          while the staged credential is kept and no other run holds the attempt. */}
+      {a.retryable === true &&
         <button disabled={busy} onClick={() => void retry(a)}>重试（不会重复创建目录）</button>}
     </section>)}
     {config?.enabled && config.allowed && <div>
