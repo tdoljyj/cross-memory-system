@@ -382,6 +382,6 @@ export default function StorageConnections() {
       </section>;
     })}
     <div className="mt-6 flex gap-4"><button disabled={busy} onClick={() => void refresh()}>刷新状态</button>
-      <Link href="/storage/admin">存储管理</Link><Link href="/oauth/connections">已连接应用／客户端管理</Link></div>
+      <Link href="/storage/onboard">新建 Google Drive 连接</Link><Link href="/storage/admin">存储管理</Link><Link href="/oauth/connections">已连接应用／客户端管理</Link></div>
   </main>;
 }

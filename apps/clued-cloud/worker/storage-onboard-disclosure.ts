@@ -2,9 +2,11 @@
  * `clued.storage-onboard-disclosure/1`. The page shows exactly this text and
  * the Worker renders it again from the same inputs to compute the SHA-256 the
  * database stores with the attempt and in the Owner's Decision. Any change to
- * the text needs a new disclosure version (database first). No imports: the
- * page test loads this module in isolation.
+ * the text needs a new disclosure version (database first). The page imports
+ * this module; it depends only on the scope module (no runtime services).
  */
+import { GOOGLE_DRIVE_FILE_SCOPE } from "./storage-google-scopes";
+
 export const ONBOARD_DISCLOSURE_VERSION = "clued.storage-onboard-disclosure/1";
 export const ONBOARD_DEFAULT_ROOT_NAME = "Clued_资料中心";
 export const ONBOARD_DEFAULT_TRACKS: readonly string[] = Object.freeze(["资料", "项目", "归档"]);
@@ -57,4 +59,16 @@ export function renderOnboardDisclosure(choice: OnboardChoice): string {
     (choice.normal_use ? "\n" + normalUseDisclosureText(name) + "\n" : "") +
     (choice.default_refresh ? "Clued 会在后台自动续期 Google 授权，直到你关闭或断开连接。" : "") +
     "你可以随时在本页关闭或断开连接。";
+}
+
+/** The only scope the browser Picker token may carry (§8.1 step 3, m-a). Not a
+ * connection scope set. */
+export const DRIVE_FILE_SCOPE = GOOGLE_DRIVE_FILE_SCOPE;
+/** A Picker access token is accepted only when its granted scopes are exactly
+ * {drive.file}; otherwise it is discarded and never revoked (a revoke would end
+ * the whole user x client grant, §2.4 item 4). It stays in page memory only. */
+export function acceptPickerToken(response: { access_token?: unknown; scope?: unknown; error?: unknown }): string | null {
+  if (response.error || typeof response.access_token !== "string" || typeof response.scope !== "string") return null;
+  const scopes = new Set(response.scope.trim().split(/\s+/));
+  return scopes.size === 1 && scopes.has(DRIVE_FILE_SCOPE) ? response.access_token : null;
 }
