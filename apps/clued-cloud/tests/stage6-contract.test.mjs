@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { loadContinuityWorker as loadWorker } from "./worker-continuity-loader.mjs";
+import { contractVersionOf, verifyServedAgentContract } from "../scripts/verify-served-agent-contract.mjs";
 
 const baseEnv = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
@@ -23,6 +24,19 @@ test("bootstrap and record config publish one M1 semantic contract", async () =>
   assert.equal(bootstrapBody.lifecycle.durable_changes.records, "clued_record_mutate");
   assert.equal(bootstrapBody.lifecycle.durable_changes.duplicate_event_after_canonical_mutation, false);
   assert.equal(bootstrapBody.lifecycle.reconcile_when_required, "clued_session_reconcile");
+});
+
+test("the Worker passes the release's served-contract check against the repository contract", async () => {
+  // The production release runs verifyServedAgentContract against the live
+  // Worker after deploy; run the same check against this Worker before merge,
+  // so a contract version bump cannot leave the bootstrap behind.
+  const worker = await loadWorker();
+  const contract = await readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8");
+  const [served, bootstrap] = await Promise.all([
+    worker.fetch(new Request("https://clued.test/clued-agent.md"), baseEnv, ctx).then((r) => r.text()),
+    worker.fetch(new Request("https://clued.test/v1/continuity/bootstrap"), baseEnv, ctx).then((r) => r.json()),
+  ]);
+  assert.deepEqual(verifyServedAgentContract({ contract, served, bootstrap }), []);
 });
 
 test("agent contract makes stable ids and one transactional write explicit", async () => {
@@ -128,7 +142,7 @@ test("the Worker serves the single agent contract and advertises capture", async
   const generated = await readFile(new URL("../worker/generated/agent-contract.ts", import.meta.url), "utf8");
   assert.equal(generated, await renderAgentContractModule(), "run node scripts/generate-agent-contract.mjs");
   const lifecycle = (await bootstrap.json()).lifecycle;
-  assert.equal(lifecycle.contract.version, 5);
+  assert.equal(lifecycle.contract.version, contractVersionOf(source));
   assert.equal(lifecycle.contract.url, "https://clued.test/clued-agent.md");
   assert.equal(lifecycle.durable_changes.capture, "material_outcomes_in_same_turn_before_reporting");
 });
