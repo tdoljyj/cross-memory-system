@@ -81,6 +81,8 @@ The source-bound mapping proposal and domain-owner decision are documented in
 [DatasetSplitMapping.candidate.md](DatasetSplitMapping.candidate.md). Its local
 synthetic profiles bind each purpose to the full use mask and holdout flag; they
 retain UNRESOLVED domain mapping and grant no data-use authority.
+The bounded original-parent investigation and one-decision proposal are in
+[DatasetSplitDomainDecision.candidate.md](DatasetSplitDomainDecision.candidate.md).
 
 The existing M1 harness CI also runs the M2 checks and tests. Storage, Canonical,
 runtime and device configuration remain outside this candidate work package.

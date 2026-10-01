@@ -53,14 +53,20 @@ the plan describes logical uses but explicitly declines to create an enum.
 Historical package digest checks are not a Domain Authority Receipt and cannot
 settle this mapping.
 
-Recommended route: obtain the current authoritative DatasetSplit definition
-from its domain owner with object/version/digest and applicable receipt, then
-map the six uses to those actual identities. Ask the owner to resolve only the
-fit/selection parent boundary if the existing definition leaves it ambiguous.
-If no such definition exists, an owner-approved domain successor must establish
-it before any accepted mapping. Creating six new enum values from this table is
-not supported by the plan. Owner approval of this proposal alone cannot create a
-missing upstream definition or replace formal-package authority checks.
+Further bounded source investigation verified all 35/12/159 declared files of
+the original A/B/C release and located the ownership registry: Dataset registries
+belong to MODEL PROGRAM. No DatasetSplit schema or Domain Authority Receipt
+definition was found in those verified sources. These bounded findings support
+treating the unresolved mapping as a candidate model-domain contract implementation
+gap; they do not establish global absence or require rewriting IF parents.
+
+See [DatasetSplitDomainDecision.candidate.md](DatasetSplitDomainDecision.candidate.md)
+for the source scope, four data boundaries/six logical uses, recommended isolated
+fit/selection partitions within development, and one precise Owner decision.
+Any newly supplied authoritative definition takes precedence after verification.
+Until an exact definition, independent review and real existing-authority receipt
+are bound, mapping remains UNRESOLVED. Approving further candidate work cannot
+replace domain adoption or formal-package authority checks.
 
 Before formal M2: original M0-A/B/C revalidation and Domain Authority Receipt;
 actual license/privacy/erasure review; actual ingestion/curation/dedup and protected
