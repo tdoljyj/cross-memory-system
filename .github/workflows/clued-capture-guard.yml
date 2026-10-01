@@ -1,7 +1,9 @@
 name: clued-capture-guard
 
-# Unit tests for the Claude Code Stop hook that enforces Clued capture
-# (skills/clued/references/agent-contract.md §3 and §5, BUG-20260924-001 L3).
+# Unit tests for the Claude Code hooks in scripts/hooks: the Stop hook that
+# enforces Clued capture (skills/clued/references/agent-contract.md §3 and §5,
+# BUG-20260924-001 L3) and the work-claim hooks (agent-contract §1.7,
+# WorkClaimAdmission.v0.1 §4.6 L3).
 
 on:
   pull_request:
@@ -10,6 +12,7 @@ on:
       - '.claude/settings.json'
       - 'scripts/hooks/**'
       - 'tests/test_clued_capture_guard.py'
+      - 'tests/test_clued_work_claim_guard.py'
   push:
     branches: [main]
     paths:
@@ -17,6 +20,7 @@ on:
       - '.claude/settings.json'
       - 'scripts/hooks/**'
       - 'tests/test_clued_capture_guard.py'
+      - 'tests/test_clued_work_claim_guard.py'
 
 permissions:
   contents: read
@@ -46,7 +50,7 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 --version
-      - run: python3 -m unittest tests.test_clued_capture_guard -v
+      - run: python3 -m unittest tests.test_clued_capture_guard tests.test_clued_work_claim_guard -v
 
   untrusted-hosted:
     name: >-
@@ -68,4 +72,4 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 --version
-      - run: python3 -m unittest tests.test_clued_capture_guard -v
+      - run: python3 -m unittest tests.test_clued_capture_guard tests.test_clued_work_claim_guard -v

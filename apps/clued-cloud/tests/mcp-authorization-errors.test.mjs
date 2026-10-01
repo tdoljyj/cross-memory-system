@@ -69,7 +69,7 @@ test('contract-rule rejections return a tool error instead of an HTTP 403', asyn
   const original = globalThis.fetch;
   try {
     for (const message of ['lifecycle_action_cannot_edit_record_content', 'resume_required', 'project_scope_mismatch',
-      'checkpoint_event_not_authorized']) {
+      'checkpoint_event_not_authorized', 'session_context_mismatch']) {
       globalThis.fetch = async () => Response.json({ code: '42501', message }, { status: 401 });
       const response = await handle(request('clued_bnd_isolated-fixture'), env);
       assert.equal(response.status, 200);
@@ -85,6 +85,9 @@ test('contract-rule rejections return a tool error instead of an HTTP 403', asyn
       { code: '42501', message: 'lifecycle_action_cannot_edit_record_content' }, { status: 401 });
     const { result } = await (await handle(request('clued_bnd_isolated-fixture'), env)).json();
     assert.match(result.structuredContent.error.hint, /closure_summary/);
+    globalThis.fetch = async () => Response.json({ code: '42501', message: 'session_context_mismatch' }, { status: 401 });
+    const mismatch = (await (await handle(request('clued_bnd_isolated-fixture'), env)).json()).result;
+    assert.match(mismatch.structuredContent.error.hint, /Omit context_key to use the session's own context/);
   } finally { globalThis.fetch = original; }
 });
 
@@ -194,7 +197,7 @@ test('record create exposes exact confirmation error without request text or a s
       const error = await recordRejection(input);
       assert.deepEqual(error.missing_fields, []);
       assert.deepEqual(error.invalid_fields, [{ field: 'user_confirmed', error: 'authority_escalation_forbidden' }]);
-      assert.match(error.hint, /only when the user explicitly confirmed this exact record/);
+      assert.match(error.hint, /records that the main claim is the Owner's own words in this conversation; do not ask the Owner again/);
       assert.deepEqual(Object.keys(error.create_contract), ['type_specific_fields']);
       assert.deepEqual(error.create_contract.type_specific_fields.task,
         { field: 'execution_bucket', error: 'task_execution_bucket_required' });
@@ -298,7 +301,8 @@ test('record tool discovery explains exact confirmation and the actual database 
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
   }), recordEnv);
   const tool = (await response.json()).result.tools.find(tool => tool.name === 'clued_record_mutate');
-  assert.match(tool.description, /authority=user_explicit requires user_confirmed=true/);
+  assert.match(tool.description, /authority=user_explicit \(the record's main claim is the Owner's own words in this conversation\) requires user_confirmed=true/);
+  assert.match(tool.description, /do not ask the Owner again before writing/);
   const fields = tool.inputSchema.properties.mutation.properties.type_fields.properties;
   assert.deepEqual(fields.execution_bucket.enum, ['now', 'next', 'blocked', 'later']);
   assert.match(fields.state_kind.description, /manual/);

@@ -53,7 +53,8 @@ import { createStorageGoogleProbe, storageProbeDiagnostic } from "./storage-goog
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
-import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages } from "./storage-agent-tools";
+import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages,
+  storageDestructiveCode, storageDestructiveMessages, storageTrashBatchInput, storageTrashBatchResult } from "./storage-agent-tools";
 import { createStagingRuntime, handleStagingPut, loadStagedContent, stageInline, stagingErrorCode, storageUploadBeginTool,
   sweepStaging, uploadBegin, uploadErrorBody, StorageUploadError, type StagingBucket } from "./storage-staging";
 import { createStorageReadAgent, storageReadTool, storageContentTool, StorageReadError, STORAGE_IMAGE } from "./storage-read-agent";
@@ -1208,6 +1209,12 @@ const tools = [
           default: "structured",
           description: "Choose structured pending events or the rendered work log; the response never duplicates both.",
         },
+        event_order: {
+          type: "string",
+          enum: ["newest", "oldest"],
+          default: "newest",
+          description: "Order of unabsorbed events: newest first (default) or oldest first. Page with event_cursor set to the returned next_cursor in the same order.",
+        },
         event_cursor: { type: "integer", minimum: 0, default: 0 },
         event_limit: { type: "integer", minimum: 1, maximum: 100, default: 25 },
         event_budget_bytes: { type: "integer", minimum: 4096, maximum: 262144, default: 65536 },
@@ -1288,7 +1295,11 @@ const tools = [
       required: ["session_token"],
       properties: {
         session_token: { type: "string" },
-        context_key: { type: "string", minLength: 1, maxLength: 160, default: "global" },
+        context_key: {
+          type: "string", minLength: 1, maxLength: 160,
+          description:
+            "Context the session was resumed with. Omit it to use the session's own context; a different value is rejected with session_context_mismatch.",
+        },
       },
       additionalProperties: false,
     },
@@ -1381,7 +1392,11 @@ const tools = [
       type: "object",
       required: ["session_token", "base_version", "snapshot", "summary", "next_action", "coverage"],
       properties: {
-        context_key: { type: "string" },
+        context_key: {
+          type: "string",
+          description:
+            "Context the session was resumed with. Omit it to use the session's own context; a different value is rejected with session_context_mismatch.",
+        },
         session_token: {
           type: "string",
           description: "Short-lived token returned by clued_session_resume.",
@@ -1398,6 +1413,11 @@ const tools = [
             contexts: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 160 } },
             tracks: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 80 } },
             event_ids: { type: "array", uniqueItems: true, items: { type: "integer", minimum: 1 } },
+            binding_events: {
+              type: "string",
+              const: "all",
+              description: "Also absorb every unabsorbed event this Binding wrote in this context, without listing each id.",
+            },
           },
           additionalProperties: false,
         },
@@ -1913,6 +1933,8 @@ const REQUEST_RULE_REJECTIONS: Readonly<Record<string, string | null>> = {
   resume_required_or_session_expired:
     "Use session_renewal.session_token from your last committed checkpoint if you have it; otherwise call clued_session_resume and retry with the returned session_token.",
   session_not_found: "Call clued_session_resume and retry with the returned session_token.",
+  session_context_mismatch:
+    "This session_token was resumed with a different context_key. Omit context_key to use the session's own context, or pass the context_key you resumed with; to work in another context, resume with that context_key.",
   requested_context_not_authorized:
     "context_key must be \"global\" or \"project:<canonical_project_id>\", not a bare project ID. Retry with the prefixed key.",
   checkpoint_event_not_authorized:
@@ -1969,7 +1991,7 @@ function recordValidationRejection(error: unknown) {
       invalid_fields: invalid,
       ...(details.create_contract ? { create_contract: { type_specific_fields: RECORD_TYPE_REQUIRED_FIELDS } } : {}),
       ...(invalid.some(item => item.error === "authority_escalation_forbidden") ? {
-        hint: "authority=user_explicit requires user_confirmed=true (only when the user explicitly confirmed this exact record); otherwise use observed/inferred.",
+        hint: "authority=user_explicit requires user_confirmed=true, which records that the main claim is the Owner's own words in this conversation; do not ask the Owner again. Otherwise use observed/inferred.",
       } : {}),
     },
   };
@@ -2044,6 +2066,32 @@ async function callTool(
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
     }
   }
+  if (name === "clued_storage_trash_batch") {
+    if (!storageJobsEnabled(env)) throw new HttpError(404, "Storage jobs are disabled.");
+    // StorageFullCapability P5 (Decision 7f9daf68): one Owner-confirmed batch of trash/untrash items.
+    // Only registers a pending batch; never dispatches execution.
+    try {
+      const input = storageTrashBatchInput(args);
+      const token = bearerToken(request);
+      if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new HttpError(403, "A valid Clued Binding is required.");
+      const result = storageTrashBatchResult(await supabaseRequest(env, "/rest/v1/rpc/clued_storage_trash_batch_v1", {
+        method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
+      }), input);
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
+    } catch (error) {
+      const pathCode = storagePathCode(error);
+      const message = error instanceof Error ? error.message : "";
+      const result = pathCode ? { error: pathCode, message: storagePathMessages[pathCode] }
+        : message === "storage_trash_batch_item_unavailable"
+          ? { error: "storage_trash_batch_item_unavailable", message: "An item does not match a Clued-registered item that can be moved to (or out of) the trash at that path, Drive file ID and version. Stat each item again; leave out the root, tracks, non-empty directories and governance files without delete authority." }
+          : message === "storage_trash_batch_pending_limit"
+            ? { error: "storage_trash_batch_pending_limit", message: "This client registration already has 5 batches waiting for the Owner on this connection. Ask the user to confirm or let them expire before registering another; put every remaining item in one batch." }
+          : message === "storage_trash_batch_conflict"
+            ? { error: "storage_trash_batch_conflict", message: "This batch_id already names a batch with other items. Use a new batch_id for a different list." }
+            : { error: "storage_trash_batch_unavailable", message: "Storage trash batch unavailable. Send the same batch_id and items again to read its status." };
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+    }
+  }
   if (isStorageAgentTool(name)) {
     if (!storageJobsEnabled(env)) throw new HttpError(404, "Storage jobs are disabled.");
     let binary = false;
@@ -2082,6 +2130,12 @@ async function callTool(
       const pathCode = storagePathCode(error);
       if (pathCode) {
         const result = { error: pathCode, message: storagePathMessages[pathCode] };
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+      }
+      // The trash limit (StorageFullCapability §3.4 item 4) is a fixed refusal decided before any job exists.
+      const destructiveCode = storageDestructiveCode(error);
+      if (destructiveCode) {
+        const result = { error: destructiveCode, message: storageDestructiveMessages[destructiveCode] };
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
       }
       // No provider, issuer, credentials, paths or database diagnostics in errors.
@@ -3011,14 +3065,15 @@ async function handleContinuityRequestInner(
       }
     }
     if (url.pathname === "/v1/storage/read-access" || url.pathname === "/v1/storage/write-access" || url.pathname === "/v1/storage/normal-use"
-      || url.pathname === "/v1/storage/budget") {
+      || url.pathname === "/v1/storage/budget" || url.pathname === "/v1/storage/trash-confirmation") {
       // StorageFullCapability.v0.1: native Owner control of the read level (P1)
       // and the modify write level (P3); StorageNormalUse.v0.1 §8.2 normal use
-      // and §7.3 hourly budgets (N4).
+      // and §7.3 hourly budgets (N4); the native trash batch confirmation (P5, §3.4 item 4).
       // The RPC checks the live auth session itself; never a Binding or service role.
       const rpc = url.pathname === "/v1/storage/read-access" ? "clued_storage_read_access_v1"
         : url.pathname === "/v1/storage/normal-use" ? "clued_storage_normal_use_v1"
-          : url.pathname === "/v1/storage/budget" ? "clued_storage_budget_v1" : "clued_storage_write_access_v1";
+          : url.pathname === "/v1/storage/budget" ? "clued_storage_budget_v1"
+            : url.pathname === "/v1/storage/trash-confirmation" ? "clued_storage_trash_confirmation_v1" : "clued_storage_write_access_v1";
       validateOrigin(request, env);
       const headers = { ...corsHeaders(request), "cache-control": "no-store" };
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true") return json({ error: "Not found." }, 404, headers);
@@ -3031,8 +3086,13 @@ async function handleContinuityRequestInner(
           method: "POST", userToken: token, body: JSON.stringify({ p_input: input }),
         });
         return json(result, 200, headers);
-      } catch {
-        return json({ error: "Storage access operation unavailable." }, 403, headers);
+      } catch (error) {
+        // N4: a stale CAS base or an out-of-bounds value is refused before any
+        // receipt, so the page can say "not saved" instead of "unconfirmed".
+        const reason = rpc === "clued_storage_budget_v1" && error instanceof HttpError
+          && (error.message === "storage_owner_version_conflict" || error.message === "storage_budget_out_of_bounds")
+          ? error.message : undefined;
+        return json({ error: "Storage access operation unavailable.", ...(reason ? { reason } : {}) }, reason ? 409 : 403, headers);
       }
     }
     if (url.pathname === "/v1/storage/account" || url.pathname === "/v1/storage/refresh") {

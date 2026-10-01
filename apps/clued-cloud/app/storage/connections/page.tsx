@@ -11,7 +11,7 @@ type Connection = {
 };
 const actionName: Record<string, string> = {
   inspect: "查看任务状态", create_file: "新建文件", create_topic: "新建主题目录", modify: "改名、移动文件",
-  overwrite: "覆盖文件内容",
+  overwrite: "覆盖文件内容", destructive: "移入回收站、从回收站恢复",
 };
 const stateName: Record<string, string> = {
   awaiting_provider: "等待 Google 授权", active: "已连接", reauthorization_required: "需要重新授权", revoked: "已断开",
@@ -103,14 +103,40 @@ const budgetScopeName: Record<BudgetScope, string> = { connection: "每个已授
 const budgetDimensionName: Record<BudgetDimension, string> = { read: "读取", upload: "上传" };
 const formatMib = (mib: number) => mib >= 1024 && mib % 1024 === 0 ? `${mib / 1024} GiB` : `${mib} MiB`;
 const formatBytes = (bytes: number) => formatMib(Math.floor(bytes / MIB));
+type WriteLevel = "modify" | "overwrite" | "destructive";
 type WriteAccess = { active: boolean; policy_generation: number; disclosure_version: string;
-  overwrite_disclosure_version: string; classes: string[] };
+  overwrite_disclosure_version: string; destructive_disclosure_version?: string; classes: string[] };
 function isWriteAccess(value: unknown): value is WriteAccess {
   return isObject(value) && typeof value.active === "boolean" && Number.isSafeInteger(value.policy_generation)
     && typeof value.disclosure_version === "string" && typeof value.overwrite_disclosure_version === "string"
-    && Array.isArray(value.classes) && value.classes.every(item => item === "modify" || item === "overwrite");
+    && (value.destructive_disclosure_version === undefined || typeof value.destructive_disclosure_version === "string")
+    && Array.isArray(value.classes) && value.classes.every(item => item === "modify" || item === "overwrite" || item === "destructive");
 }
-// One write class per change; each has its own confirmation text (P3 modify, P4 overwrite).
+// The destructive level is offered only by a server that names its disclosure (P5).
+const writeLevels = (access: WriteAccess): WriteLevel[] =>
+  access.destructive_disclosure_version === undefined ? ["modify", "overwrite"] : ["modify", "overwrite", "destructive"];
+const writeDisclosure = (access: WriteAccess, level: WriteLevel) => level === "overwrite" ? access.overwrite_disclosure_version
+  : level === "destructive" ? access.destructive_disclosure_version ?? "" : access.disclosure_version;
+// Native trash batch confirmation (P5, §3.4 item 4; Decision 7f9daf68): the Agent registers one batch,
+// the Owner confirms the whole list once.
+type TrashItem = { operation: "delete" | "restore"; target_kind: "file" | "directory"; path: string; provider_file_id: string;
+  provider_file_version: string; current: boolean; used: boolean };
+type TrashBatch = { batch_id: string; status: "pending" | "confirmed"; created_at: string; expires_at: string; items: TrashItem[] };
+type TrashConfirmation = { destructive: boolean; policy_generation: number; limit: number; window_hours: number;
+  batches: TrashBatch[]; batches_truncated: boolean };
+function isTrashConfirmation(value: unknown): value is TrashConfirmation {
+  return isObject(value) && typeof value.destructive === "boolean" && Number.isSafeInteger(value.policy_generation)
+    && Number.isSafeInteger(value.limit) && Number.isSafeInteger(value.window_hours) && typeof value.batches_truncated === "boolean"
+    && Array.isArray(value.batches) && value.batches.every(batch => isObject(batch) && typeof batch.batch_id === "string"
+      && (batch.status === "pending" || batch.status === "confirmed") && typeof batch.created_at === "string" && typeof batch.expires_at === "string"
+      && Array.isArray(batch.items) && batch.items.every(item => isObject(item) && (item.operation === "delete" || item.operation === "restore")
+        && (item.target_kind === "file" || item.target_kind === "directory") && typeof item.path === "string"
+        && typeof item.provider_file_id === "string" && typeof item.provider_file_version === "string"
+        && typeof item.current === "boolean" && typeof item.used === "boolean"));
+}
+const trashItemText = (item: TrashItem) => `${item.operation === "delete" ? "移入回收站" : "从回收站恢复"}${item.target_kind === "directory" ? "（空目录）" : ""}：`
+  + `${item.path}（ID ${item.provider_file_id}，版本 ${item.provider_file_version}）`;
+// One write class per change; each has its own confirmation text (P3 modify, P4 overwrite, P5 destructive).
 const writeText = {
   modify: {
     name: "改名和移动文件",
@@ -122,6 +148,11 @@ const writeText = {
     on: "允许已授权的 Agent 覆盖此目录内由 Clued 创建的文本文件的内容（每次最多 1 MB）？覆盖前的内容会保存为永久保留的 Google Drive 版本，可以撤回；每个文件保留最近 10 个。不会删除文件。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。",
     off: "停止 Agent 覆盖文件内容？已保存的旧版本不受影响。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束。",
   },
+  destructive: {
+    name: "把文件移入回收站",
+    on: "允许已授权的 Agent 把此目录内由 Clued 创建的文件和空目录移入 Google Drive 回收站，并可从回收站恢复 Clued 移入的项目？不会永久删除；但 Google 会在移入回收站 30 天后自动永久删除，之后无法恢复。每个任务只处理一个文件或一个空目录，不处理非空目录；同一客户端登记在 24 小时内超过 5 项时，需要您在本页对 Agent 列出的整批项目一次确认。您手动上传的文件不受影响。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。",
+    off: "停止 Agent 把文件移入回收站和从回收站恢复？已在回收站中的文件不受影响，仍会在 30 天后被 Google 永久删除。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束。",
+  },
 } as const;
 export default function StorageConnections() {
   // Read level (StorageFullCapability P1) is loaded on demand per connection so
@@ -130,6 +161,8 @@ export default function StorageConnections() {
   // Write level (P3): changing it replaces the account policy, so the page
   // always reloads the connection list and both settings afterwards.
   const [writeAccess, setWriteAccess] = useState<Record<string, WriteAccess>>({});
+  // Trash batch confirmation (P5), loaded on demand per connection.
+  const [trash, setTrash] = useState<Record<string, TrashConfirmation>>({});
   // Normal use (StorageNormalUse §8.2), loaded on demand like the read level.
   const [normalUse, setNormalUse] = useState<Record<string, NormalUse>>({});
   // Hourly budgets (N4), loaded on demand. Drafts are "64" / "256" / "1024" or
@@ -358,14 +391,54 @@ export default function StorageConnections() {
       setBudget(state => ({ ...state, [c.id]: latest }));
       setMessage(latest[scope].read_bytes_per_hour === read * MIB && latest[scope].upload_bytes_per_hour === upload * MIB
         ? `已更新${budgetScopeName[scope]}的每小时额度，立即生效。回执：${result.receipt_id}` : "已提交，但最新状态未确认。请核对原回执。");
-    } catch {
+    } catch (error) {
       if (epoch === revision.current) {
         setBudget(state => { const next = { ...state }; delete next[c.id]; return next; });
-        setMessage("额度设置结果未确认。请重新读取额度设置并核对，勿重复提交。");
+        const reason = error instanceof RequestFailure ? error.reason : undefined;
+        setMessage(reason === "storage_owner_version_conflict" ? "额度设置已变化（或连接已断开），本次未保存。请重新读取额度设置后再改。"
+          : reason === "storage_budget_out_of_bounds" ? "额度超出允许范围，本次未保存。请重新读取额度设置查看可选范围。"
+            : "额度设置结果未确认。请重新读取额度设置并核对，勿重复提交。");
       }
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
-  async function toggleWrite(c: Connection, level: "modify" | "overwrite") {
+  async function loadTrash(c: Connection) {
+    if (operation.current || busy) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      const result = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/trash-confirmation");
+      if (epoch !== revision.current) return;
+      if (!isTrashConfirmation(result)) throw new Error("回收站确认设置未确认。");
+      setTrash(state => ({ ...state, [c.id]: result }));
+    } catch { if (epoch === revision.current) setMessage("回收站确认设置未确认，请稍后重试。"); }
+    finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  // §3.4 item 4: the Owner confirms a whole pending batch once ("全部确认").
+  async function confirmTrash(c: Connection, batch: TrashBatch) {
+    const current = trash[c.id];
+    if (operation.current || busy || !current?.destructive || batch.status !== "pending" || !batch.items.every(item => item.current)) return;
+    if (!window.confirm(`确认这批共 ${batch.items.length} 项（24 小时内有效，每项只用一次）？移入回收站的项目，Google 会在 30 天后自动永久删除。\n\n`
+      + batch.items.map(trashItemText).join("\n"))) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      const result = await accountRequest({ action: "confirm", connection_id: c.id, batch_id: batch.batch_id,
+        base_generation: current.policy_generation, idempotency_key: crypto.randomUUID() }, "/v1/storage/trash-confirmation");
+      if (epoch !== revision.current) return;
+      if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
+      const latest = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/trash-confirmation");
+      if (epoch !== revision.current) return;
+      if (!isTrashConfirmation(latest)) throw new Error("回收站确认设置未确认。");
+      setTrash(state => ({ ...state, [c.id]: latest }));
+      setMessage(`已确认这批 ${batch.items.length} 项。回执：${result.receipt_id}`);
+    } catch {
+      if (epoch === revision.current) {
+        setTrash(state => { const next = { ...state }; delete next[c.id]; return next; });
+        setMessage("回收站确认结果未确认。请重新读取并核对，勿重复提交。");
+      }
+    } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  async function toggleWrite(c: Connection, level: WriteLevel) {
     const current = writeAccess[c.id];
     if (operation.current || busy || !current?.active) return;
     const enable = !current.classes.includes(level);
@@ -377,7 +450,7 @@ export default function StorageConnections() {
     try {
       const result = await accountRequest({ action: "set_classes", connection_id: c.id, classes,
         base_generation: current.policy_generation,
-        disclosure_version: level === "overwrite" ? current.overwrite_disclosure_version : current.disclosure_version,
+        disclosure_version: writeDisclosure(current, level),
         idempotency_key: crypto.randomUUID() }, "/v1/storage/write-access");
       if (epoch !== revision.current) return;
       if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
@@ -491,11 +564,25 @@ export default function StorageConnections() {
             <button disabled={busy} onClick={() => void toggleRead(c, "read_content")}>
               {readAccess[c.id].classes.includes("read_content") ? "停止 Agent 读正文" : "允许 Agent 读正文"}</button>
           </>}
-          {writeAccess[c.id]?.active && (["modify", "overwrite"] as const).map(level => <div key={level}>
+          {writeAccess[c.id]?.active && writeLevels(writeAccess[c.id]).map(level => <div key={level}>
             <p className="mt-2">Agent {writeText[level].name}：{writeAccess[c.id].classes.includes(level) ? "已允许（仅 Clued 创建的文件）" : "未允许"}</p>
             <button disabled={busy} onClick={() => void toggleWrite(c, level)}>
               {writeAccess[c.id].classes.includes(level) ? `停止 Agent ${writeText[level].name}` : `允许 Agent ${writeText[level].name}`}</button>
           </div>)}
+          {writeAccess[c.id]?.active && writeAccess[c.id].classes.includes("destructive") && <div>
+            <p className="mt-2">回收站批量确认：同一客户端登记在 24 小时内移入回收站超过 5 项时，Agent 会把其余项目列成一批，在这里一次确认。</p>
+            {trash[c.id] ? <>
+              {trash[c.id].batches.length === 0 ? <p>没有待确认或已确认的批次。</p> : trash[c.id].batches.map(batch =>
+                <div key={batch.batch_id} className="mt-2">
+                  <p>{batch.status === "pending" ? "待确认批次" : "已确认批次"}（{batch.items.length} 项，{batch.expires_at} 前有效）</p>
+                  {batch.items.map((item, index) => <p key={index}>{trashItemText(item)}
+                    {item.used ? "：已使用" : item.current ? "" : "：已变化，不能确认，请让 Agent 重新列出"}</p>)}
+                  {batch.status === "pending" && <button disabled={busy || !batch.items.every(item => item.current)}
+                    onClick={() => void confirmTrash(c, batch)}>全部确认</button>}
+                </div>)}
+              {trash[c.id].batches_truncated && <p>只显示最近 20 个批次。</p>}
+            </> : <button disabled={busy} onClick={() => void loadTrash(c)}>读取回收站确认</button>}
+          </div>}
         </div>}
         {["active", "reauthorization_required"].includes(c.state) && <button disabled={busy} onClick={() => void disconnect(c)}>断开网盘连接</button>}
       </section>;

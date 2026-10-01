@@ -47,6 +47,15 @@
             "default": "structured",
             "description": "Choose structured pending events or the rendered work log; the response never duplicates both."
           },
+          "event_order": {
+            "type": "string",
+            "enum": [
+              "newest",
+              "oldest"
+            ],
+            "default": "newest",
+            "description": "Order of unabsorbed events: newest first (default) or oldest first. Page with event_cursor set to the returned next_cursor in the same order."
+          },
           "event_cursor": {
             "type": "integer",
             "minimum": 0,
@@ -309,7 +318,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 160,
-            "default": "global"
+            "description": "Context the session was resumed with. Omit it to use the session's own context; a different value is rejected with session_context_mismatch."
           }
         },
         "additionalProperties": false
@@ -589,7 +598,8 @@
         ],
         "properties": {
           "context_key": {
-            "type": "string"
+            "type": "string",
+            "description": "Context the session was resumed with. Omit it to use the session's own context; a different value is rejected with session_context_mismatch."
           },
           "session_token": {
             "type": "string",
@@ -652,6 +662,11 @@
                   "type": "integer",
                   "minimum": 1
                 }
+              },
+              "binding_events": {
+                "type": "string",
+                "const": "all",
+                "description": "Also absorb every unabsorbed event this Binding wrote in this context, without listing each id."
               }
             },
             "additionalProperties": false
@@ -1106,7 +1121,7 @@
     },
     {
       "name": "clued_record_mutate",
-      "description": "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. authority=user_explicit requires user_confirmed=true only when the user explicitly confirmed this exact record; otherwise use the actual observed/inferred authority. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). execution_bucket accepts only now, next, blocked, later. The database requires the other four keys but imposes no value enum: use a rationale explaining the decision, state_kind=manual for a manual State, fact_kind=preference for a preference, or note_kind=log for a follow-up note. On an existing record, mutation.type_fields and mutation.relations merge into the stored top-level keys: omitted keys are kept and a key sent as null is removed; field_mode=replace replaces each object sent whole. Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint. source_refs accepts Evidence IDs only ([] when there are none), never Record IDs; relations.supersedes changes only through clued_decision_supersede. Required Clued scope: context:write.",
+      "description": "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. authority=user_explicit (the record's main claim is the Owner's own words in this conversation) requires user_confirmed=true; those words are the confirmation, so do not ask the Owner again before writing. Otherwise use the actual observed/inferred authority. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). execution_bucket accepts only now, next, blocked, later. The database requires the other four keys but imposes no value enum: use a rationale explaining the decision, state_kind=manual for a manual State, fact_kind=preference for a preference, or note_kind=log for a follow-up note. On an existing record, mutation.type_fields and mutation.relations merge into the stored top-level keys: omitted keys are kept and a key sent as null is removed; field_mode=replace replaces each object sent whole. Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint. source_refs accepts Evidence IDs only ([] when there are none), never Record IDs; relations.supersedes changes only through clued_decision_supersede. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -1288,7 +1303,7 @@
           },
           "user_confirmed": {
             "type": "boolean",
-            "description": "Must be true with authority=user_explicit, only when the user explicitly confirmed this exact record."
+            "description": "Must be true with authority=user_explicit. It records that the main claim is the Owner's own words in this conversation; it is not a step to ask the Owner again."
           },
           "observed_at": {
             "anyOf": [
@@ -1512,7 +1527,7 @@
           },
           "user_confirmed": {
             "type": "boolean",
-            "description": "Must be true with replacement.authority=user_explicit, only when the user explicitly confirmed this exact record."
+            "description": "Must be true with replacement.authority=user_explicit. It records that the replacement's main claim is the Owner's own words in this conversation; it is not a step to ask the Owner again."
           }
         },
         "additionalProperties": false

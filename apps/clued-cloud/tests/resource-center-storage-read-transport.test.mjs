@@ -189,7 +189,7 @@ test("discovery needs account, Google and read flags; the write tools are unaffe
     assert.equal((await browse({ operation: "list" }, {}, flags)).status, 404);
   }
   assert.deepEqual(await list(env), ["clued_storage_browse", "clued_storage_read"]);
-  assert.deepEqual(await list({ ...env, CLUED_STORAGE_JOBS_V1: "true" }), ["clued_storage_submit", "clued_storage_inspect", "clued_storage_browse", "clued_storage_read"]);
+  assert.deepEqual(await list({ ...env, CLUED_STORAGE_JOBS_V1: "true" }), ["clued_storage_submit", "clued_storage_inspect", "clued_storage_trash_batch", "clued_storage_browse", "clued_storage_read"]);
 });
 
 test("invalid input, caller authority and missing Binding fail before any RPC or Google request", async () => {
