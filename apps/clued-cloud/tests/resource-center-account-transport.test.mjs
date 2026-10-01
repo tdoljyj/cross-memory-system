@@ -150,9 +150,11 @@ test("budget control (StorageNormalUse §7.3, N4) is native-only and routes to i
   globalThis.fetch=async(url,init)=>{
     calls.push({url:String(url),headers:new Headers(init.headers),body:init.body});
     if(String(url).endsWith("/auth/v1/user"))return Response.json({id:"fixture-owner"});
+    if(refusal)return Response.json({message:refusal,code:refusal==="storage_owner_version_conflict"?"40001":"22023"},{status:400});
     if(calls.length>2)return Response.json({message:"private",code:"42501"},{status:403});
     return Response.json({contract:"clued.storage-budget/1"});
   };
+  let refusal=null;
   const budgetRequest=(body,token="fixture-native-jwt")=>new Request(origin+"/v1/storage/budget",{
     method:"POST",headers:{"content-type":"application/json",origin,authorization:"Bearer "+token},body:JSON.stringify(body)});
   try {
@@ -168,5 +170,12 @@ test("budget control (StorageNormalUse §7.3, N4) is native-only and routes to i
     assert.deepEqual(JSON.parse(calls[1].body),{p_input:input});
     const denied=await worker.fetch(budgetRequest(input),env);
     assert.equal(denied.status,403);assert.equal((await denied.text()).includes("private"),false);
+    // A stale CAS base or out-of-bounds value (refused before any receipt) is a fixed reason, not "unconfirmed".
+    for(const code of ["storage_owner_version_conflict","storage_budget_out_of_bounds"]){
+      refusal=code;
+      const refused=await worker.fetch(budgetRequest(input),env);
+      assert.equal(refused.status,409);assert.equal((await refused.json()).reason,code);
+    }
+    refusal=null;
   } finally {globalThis.fetch=original;}
 });

@@ -1337,6 +1337,13 @@ Migration `20261001040000_storage_onboard_n0.sql`:
 - Gate (§2.5, Q9): only owners in `clued_private.storage_onboard_allowlist_v1`
   may begin, until the operator sets `storage_oauth_apps_v1.onboard_open=true`
   after Google verification (and CASA) passed. Nothing is seeded.
+- Gate v2 (`20261001120000_storage_onboard_gate_v2.sql`, Owner Decision
+  ba02734a): `begin` and `activate` require `storage_oauth_apps_v1.read_enabled`
+  only. The executor switch `execution_enabled` gates storage write jobs and no
+  longer gates onboarding.
+- Lock order: `claim` takes onboard row -> OAuth attempt row -> per-owner lock;
+  `activate` takes onboard row -> per-owner lock -> owner||root lock -> OAuth
+  attempt row (inside the activation). Both start with the onboard row.
 
 Owner configuration (names only; values never go in Git):
 
@@ -1358,8 +1365,8 @@ Owner configuration (names only; values never go in Git):
    `CLUED_STORAGE_REFRESH_V1` (needed for the default refresh delegation) and
    the secrets `CLUED_STORAGE_GOOGLE_CLIENT_SECRET`,
    `CLUED_STORAGE_CONNECTOR_ISSUER`, `CLUED_STORAGE_VAULT_KEYS`.
-3. Database (operator, reviewed): `storage_oauth_apps_v1.execution_enabled`
-   and `read_enabled` true for the issuer; one row per tester in
+3. Database (operator, reviewed): `storage_oauth_apps_v1.read_enabled` true
+   for the issuer (gate v2; `execution_enabled` is not needed); one row per tester in
    `clued_private.storage_onboard_allowlist_v1`.
 
 Without the Picker values the page offers only "新建目录" and the Worker

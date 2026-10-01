@@ -625,6 +625,22 @@ export async function testStorageOnboard(t, admin, server, user, decision) {
       }
     });
 
+    await t.test("gate v2: onboarding needs read_enabled only; the executor switch execution_enabled does not gate it", async () => {
+      await admin.query("update clued_private.storage_oauth_apps_v1 set execution_enabled=false where issuer_hash=$1", [issuer]);
+      try {
+        const attempt = await begin();
+        assert.equal(attempt.begun.status, "begun", "begin with the executor switch off");
+        await claimAndStage(attempt);
+        await effects(attempt);
+        assert.equal((await activate(attempt)).status, "completed", "activation with the executor switch off");
+        await admin.query("update clued_private.storage_oauth_apps_v1 set read_enabled=false where issuer_hash=$1", [issuer]);
+        try { await assert.rejects(begin(), /storage_onboard_unavailable/, "read_enabled off refuses begin"); }
+        finally { await admin.query("update clued_private.storage_oauth_apps_v1 set read_enabled=true where issuer_hash=$1", [issuer]); }
+      } finally {
+        await admin.query("update clued_private.storage_oauth_apps_v1 set execution_enabled=true where issuer_hash=$1", [issuer]);
+      }
+    });
+
     await t.test("the token-count limit refuses a new onboarding at 90 (unknown Google account counts every claim)", async () => {
       const counted = (await admin.query("select clued_private.storage_refresh_token_count_v1($1,null,$2) n", [user, oauthClient])).rows[0].n;
       await admin.query(`with a as (insert into clued_private.storage_oauth_attempts_v1(id,connection_id,owner_id,session_id,issuer_hash,connection_version,

@@ -358,10 +358,13 @@ export default function StorageConnections() {
       setBudget(state => ({ ...state, [c.id]: latest }));
       setMessage(latest[scope].read_bytes_per_hour === read * MIB && latest[scope].upload_bytes_per_hour === upload * MIB
         ? `已更新${budgetScopeName[scope]}的每小时额度，立即生效。回执：${result.receipt_id}` : "已提交，但最新状态未确认。请核对原回执。");
-    } catch {
+    } catch (error) {
       if (epoch === revision.current) {
         setBudget(state => { const next = { ...state }; delete next[c.id]; return next; });
-        setMessage("额度设置结果未确认。请重新读取额度设置并核对，勿重复提交。");
+        const reason = error instanceof RequestFailure ? error.reason : undefined;
+        setMessage(reason === "storage_owner_version_conflict" ? "额度已在其他页面或设备上修改，本次未保存。请重新读取额度设置后再改。"
+          : reason === "storage_budget_out_of_bounds" ? "额度超出允许范围，本次未保存。请重新读取额度设置查看可选范围。"
+            : "额度设置结果未确认。请重新读取额度设置并核对，勿重复提交。");
       }
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
