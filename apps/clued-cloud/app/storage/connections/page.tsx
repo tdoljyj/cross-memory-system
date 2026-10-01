@@ -362,7 +362,7 @@ export default function StorageConnections() {
       if (epoch === revision.current) {
         setBudget(state => { const next = { ...state }; delete next[c.id]; return next; });
         const reason = error instanceof RequestFailure ? error.reason : undefined;
-        setMessage(reason === "storage_owner_version_conflict" ? "额度已在其他页面或设备上修改，本次未保存。请重新读取额度设置后再改。"
+        setMessage(reason === "storage_owner_version_conflict" ? "额度设置已变化（或连接已断开），本次未保存。请重新读取额度设置后再改。"
           : reason === "storage_budget_out_of_bounds" ? "额度超出允许范围，本次未保存。请重新读取额度设置查看可选范围。"
             : "额度设置结果未确认。请重新读取额度设置并核对，勿重复提交。");
       }

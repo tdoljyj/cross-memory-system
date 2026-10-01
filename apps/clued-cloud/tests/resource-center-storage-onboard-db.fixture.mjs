@@ -633,8 +633,14 @@ export async function testStorageOnboard(t, admin, server, user, decision) {
         await claimAndStage(attempt);
         await effects(attempt);
         assert.equal((await activate(attempt)).status, "completed", "activation with the executor switch off");
+        const pending = await begin();
+        await claimAndStage(pending);
+        await effects(pending);
         await admin.query("update clued_private.storage_oauth_apps_v1 set read_enabled=false where issuer_hash=$1", [issuer]);
-        try { await assert.rejects(begin(), /storage_onboard_unavailable/, "read_enabled off refuses begin"); }
+        try {
+          await assert.rejects(begin(), /storage_onboard_unavailable/, "read_enabled off refuses begin");
+          await assert.rejects(activate(pending), /storage_onboard_unavailable/, "read_enabled off refuses activate");
+        }
         finally { await admin.query("update clued_private.storage_oauth_apps_v1 set read_enabled=true where issuer_hash=$1", [issuer]); }
       } finally {
         await admin.query("update clued_private.storage_oauth_apps_v1 set execution_enabled=true where issuer_hash=$1", [issuer]);
