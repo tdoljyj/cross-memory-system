@@ -1368,7 +1368,7 @@ const tools = [
   {
     name: "clued_mtpe_owner_pin",
     description:
-      "Set or cancel the Owner-selected current focus for one eligible Universal Intake Task using explicit user confirmation, exact Task-version CAS, Event, Receipt, and projection invalidation.",
+      "Set or cancel the Owner-selected current focus for one eligible Universal Intake Task using explicit user confirmation, exact Task-version CAS, Event, Receipt, and projection invalidation. There is one focus per user: a set must name the focus it replaces in expected_current_focus_id (null when no focus is expected) and is rejected with owner_pin_focus_conflict, which returns the current focus, when that is not the current focus. Use it only when the Owner chooses a new focus; parallel work is claimed with clued_work_claim, never pinned.",
     inputSchema: {
       type: "object",
       required: ["operation", "record_id", "base_version", "idempotency_key", "user_confirmed"],
@@ -1376,6 +1376,10 @@ const tools = [
         operation: { type: "string", enum: ["set", "cancel"] },
         record_id: { type: "string", format: "uuid" },
         base_version: { type: "integer", minimum: 1 },
+        expected_current_focus_id: {
+          anyOf: [{ type: "string", format: "uuid" }, { type: "null" }],
+          description: "Required on set: the record_id of the current Owner focus, or null when there is none. Read it from clued_mtpe_snapshot owner_selected_current_focus.",
+        },
         idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
         user_confirmed: { type: "boolean", const: true },
         reason: { type: "string", minLength: 1, maxLength: 1000 },
