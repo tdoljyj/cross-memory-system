@@ -1,10 +1,10 @@
 {
   "schema": "clued.ci-health-report/v1",
   "repository": "tdoljyj/cross-memory-system",
-  "observed_at": "2026-09-30T13:49:01.478873Z",
+  "observed_at": "2026-10-01T23:55:25.471199Z",
   "status": "ANOMALY",
   "notify_model": true,
-  "fingerprint": "d360ff676f29633320a5caeb07c0f7a3abcb43703f367673a4f2ce2807a77936",
+  "fingerprint": "41c884de1a91529fe69bc3065bcffc66f51c923d4c035d64330aede4d07e66f8",
   "thresholds": {
     "startup_delay_seconds": 300,
     "minimum_repeats": 2,
@@ -22,141 +22,239 @@
         "occupation_evidence": "sampled_jobs_only",
         "threshold_seconds": 300,
         "minimum_repeats": 2,
-        "occurrences": 7,
+        "occurrences": 5,
         "wait_causes": {
-          "runner_occupied": 4,
-          "unexplained": 3
+          "runner_idle_while_work_queued": 3,
+          "unexplained": 2
         },
         "jobs": [
           {
-            "job_id": "109440568543",
-            "run_id": 36578604462,
+            "job_id": "110474551803",
+            "run_id": 36893475960,
+            "name": "runner-heartbeat / clued-ci-company-linux-02",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-10-01T16:38:12Z",
+            "started_at": "2026-10-01T16:44:30Z",
+            "delay_seconds": 378,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 378
+          },
+          {
+            "job_id": "110550908741",
+            "run_id": 36916275326,
+            "name": "trivy",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-10-01T19:42:36Z",
+            "started_at": "2026-10-01T19:53:37Z",
+            "delay_seconds": 661,
+            "kind": "started",
+            "wait_cause": "runner_idle_while_work_queued",
+            "idle_seconds": 661,
+            "queued_eligible_jobs": [
+              {
+                "job_id": 110550986086,
+                "name": "Supabase migration, RLS, transaction, and pgTAP",
+                "overlap_seconds": 650
+              },
+              {
+                "job_id": 110551004296,
+                "name": "Information Flow E2E over the local Worker and Supabase stack",
+                "overlap_seconds": 648
+              },
+              {
+                "job_id": 110550913024,
+                "name": "public-mcp-protocol",
+                "overlap_seconds": 370
+              }
+            ]
+          },
+          {
+            "job_id": "110550908967",
+            "run_id": 36916275214,
             "name": "public-mcp-behavior",
-            "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-09-29T13:54:28Z",
-            "started_at": "2026-09-29T14:02:33Z",
-            "delay_seconds": 485,
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-10-01T19:42:36Z",
+            "started_at": "2026-10-01T19:54:03Z",
+            "delay_seconds": 687,
             "kind": "started",
-            "wait_cause": "runner_occupied",
-            "idle_seconds": 13,
-            "occupied_by": [
+            "wait_cause": "runner_idle_while_work_queued",
+            "idle_seconds": 664,
+            "queued_eligible_jobs": [
               {
-                "job_id": 109440566826,
-                "run_id": 36578604500,
-                "name": "isolated-candidate"
+                "job_id": 110550986086,
+                "name": "Supabase migration, RLS, transaction, and pgTAP",
+                "overlap_seconds": 650
               },
               {
-                "job_id": 109440566131,
-                "run_id": 36578604210,
-                "name": "trivy"
+                "job_id": 110551004296,
+                "name": "Information Flow E2E over the local Worker and Supabase stack",
+                "overlap_seconds": 648
               },
               {
-                "job_id": 109440566964,
-                "run_id": 36578604234,
-                "name": "public-mcp-protocol"
+                "job_id": 110550913024,
+                "name": "public-mcp-protocol",
+                "overlap_seconds": 370
               }
             ]
           },
           {
-            "job_id": "109768650438",
-            "run_id": 36678460988,
+            "job_id": "110550986086",
+            "run_id": 36916275408,
             "name": "Supabase migration, RLS, transaction, and pgTAP",
-            "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-09-30T06:29:45Z",
-            "started_at": "2026-09-30T06:34:49Z",
-            "delay_seconds": 304,
-            "kind": "started",
-            "wait_cause": "runner_occupied",
-            "idle_seconds": 4,
-            "occupied_by": [
-              {
-                "job_id": 109768505100,
-                "run_id": 36678460994,
-                "name": "public-mcp-behavior"
-              }
-            ]
-          },
-          {
-            "job_id": "109768700714",
-            "run_id": 36678460973,
-            "name": "Information Flow E2E over the local Worker and Supabase stack",
-            "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-09-30T06:29:57Z",
-            "started_at": "2026-09-30T06:35:00Z",
-            "delay_seconds": 303,
-            "kind": "started",
-            "wait_cause": "runner_occupied",
-            "idle_seconds": 11,
-            "occupied_by": [
-              {
-                "job_id": 109768505839,
-                "run_id": 36678461000,
-                "name": "trivy"
-              },
-              {
-                "job_id": 109768502735,
-                "run_id": 36678460997,
-                "name": "gitleaks"
-              },
-              {
-                "job_id": 109768590758,
-                "run_id": 36678461040,
-                "name": "public-mcp-protocol"
-              }
-            ]
-          },
-          {
-            "job_id": "109911548273",
-            "run_id": 36722682160,
-            "name": "gitleaks",
-            "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-09-30T13:35:02Z",
-            "started_at": "2026-09-30T13:41:07Z",
-            "delay_seconds": 365,
+            "runner_name": "clued-ci-home-linux-01",
+            "created_at": "2026-10-01T19:42:47Z",
+            "started_at": "2026-10-01T19:54:29Z",
+            "delay_seconds": 702,
             "kind": "started",
             "wait_cause": "unexplained",
             "idle_seconds": 102
           },
           {
-            "job_id": "109911548789",
-            "run_id": 36722682212,
+            "job_id": "110551004296",
+            "run_id": 36916275487,
+            "name": "Information Flow E2E over the local Worker and Supabase stack",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-10-01T19:42:49Z",
+            "started_at": "2026-10-01T19:53:52Z",
+            "delay_seconds": 663,
+            "kind": "started",
+            "wait_cause": "runner_idle_while_work_queued",
+            "idle_seconds": 361,
+            "queued_eligible_jobs": [
+              {
+                "job_id": 110550908741,
+                "name": "trivy",
+                "overlap_seconds": 357
+              },
+              {
+                "job_id": 110550908967,
+                "name": "public-mcp-behavior",
+                "overlap_seconds": 357
+              },
+              {
+                "job_id": 110550986086,
+                "name": "Supabase migration, RLS, transaction, and pgTAP",
+                "overlap_seconds": 357
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "code": "RUNNER_IDLE_WHILE_WORK_QUEUED",
+      "key": "runner:clued-ci-company-linux-01:idle-while-work-queued",
+      "message": "No collected job explains clued-ci-company-linux-01's wait while at least 2 eligible jobs queued; online/idleness and the cause remain unverified.",
+      "details": {
+        "runner": "clued-ci-company-linux-01",
+        "severity": "warning",
+        "occupation_evidence": "sampled_jobs_only",
+        "pool": "linux-docker-wsl2-v1",
+        "threshold_seconds": 300,
+        "minimum_repeats": 2,
+        "queued_eligible_job_count": 3,
+        "probes": [
+          {
+            "job_id": "110550908741",
+            "run_id": 36916275326,
             "name": "trivy",
             "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-09-30T13:35:02Z",
-            "started_at": "2026-09-30T13:41:34Z",
-            "delay_seconds": 392,
+            "created_at": "2026-10-01T19:42:36Z",
+            "started_at": "2026-10-01T19:53:37Z",
+            "delay_seconds": 661,
             "kind": "started",
-            "wait_cause": "unexplained",
-            "idle_seconds": 106
-          },
-          {
-            "job_id": "109911858118",
-            "run_id": 36722682213,
-            "name": "Information Flow E2E over the local Worker and Supabase stack",
-            "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-09-30T13:35:46Z",
-            "started_at": "2026-09-30T13:41:58Z",
-            "delay_seconds": 372,
-            "kind": "started",
-            "wait_cause": "unexplained",
-            "idle_seconds": 66
-          },
-          {
-            "job_id": "109912211964",
-            "run_id": 36722682267,
-            "name": "public-mcp-behavior",
-            "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-09-30T13:36:36Z",
-            "started_at": "2026-09-30T13:44:25Z",
-            "delay_seconds": 469,
-            "kind": "started",
-            "wait_cause": "runner_occupied",
-            "idle_seconds": 4,
-            "occupied_by": [
+            "wait_cause": "runner_idle_while_work_queued",
+            "idle_seconds": 661,
+            "queued_eligible_jobs": [
               {
-                "job_id": 109911544915,
-                "run_id": 36722682102,
-                "name": "Supabase migration, RLS, transaction, and pgTAP"
+                "job_id": 110550986086,
+                "name": "Supabase migration, RLS, transaction, and pgTAP",
+                "overlap_seconds": 650
+              },
+              {
+                "job_id": 110551004296,
+                "name": "Information Flow E2E over the local Worker and Supabase stack",
+                "overlap_seconds": 648
+              },
+              {
+                "job_id": 110550913024,
+                "name": "public-mcp-protocol",
+                "overlap_seconds": 370
+              }
+            ]
+          },
+          {
+            "job_id": "110550908967",
+            "run_id": 36916275214,
+            "name": "public-mcp-behavior",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-10-01T19:42:36Z",
+            "started_at": "2026-10-01T19:54:03Z",
+            "delay_seconds": 687,
+            "kind": "started",
+            "wait_cause": "runner_idle_while_work_queued",
+            "idle_seconds": 664,
+            "queued_eligible_jobs": [
+              {
+                "job_id": 110550986086,
+                "name": "Supabase migration, RLS, transaction, and pgTAP",
+                "overlap_seconds": 650
+              },
+              {
+                "job_id": 110551004296,
+                "name": "Information Flow E2E over the local Worker and Supabase stack",
+                "overlap_seconds": 648
+              },
+              {
+                "job_id": 110550913024,
+                "name": "public-mcp-protocol",
+                "overlap_seconds": 370
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "code": "RUNNER_IDLE_WHILE_WORK_QUEUED",
+      "key": "runner:clued-ci-company-linux-02:idle-while-work-queued",
+      "message": "No collected job explains clued-ci-company-linux-02's wait while at least 2 eligible jobs queued; online/idleness and the cause remain unverified.",
+      "details": {
+        "runner": "clued-ci-company-linux-02",
+        "severity": "warning",
+        "occupation_evidence": "sampled_jobs_only",
+        "pool": "linux-docker-wsl2-v1",
+        "threshold_seconds": 300,
+        "minimum_repeats": 2,
+        "queued_eligible_job_count": 3,
+        "probes": [
+          {
+            "job_id": "110551004296",
+            "run_id": 36916275487,
+            "name": "Information Flow E2E over the local Worker and Supabase stack",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-10-01T19:42:49Z",
+            "started_at": "2026-10-01T19:53:52Z",
+            "delay_seconds": 663,
+            "kind": "started",
+            "wait_cause": "runner_idle_while_work_queued",
+            "idle_seconds": 361,
+            "queued_eligible_jobs": [
+              {
+                "job_id": 110550908741,
+                "name": "trivy",
+                "overlap_seconds": 357
+              },
+              {
+                "job_id": 110550908967,
+                "name": "public-mcp-behavior",
+                "overlap_seconds": 357
+              },
+              {
+                "job_id": 110550986086,
+                "name": "Supabase migration, RLS, transaction, and pgTAP",
+                "overlap_seconds": 357
               }
             ]
           }
@@ -184,7 +282,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-09-30T08:06:28Z",
+          "last_verified_at": "2026-10-01T21:22:54Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -202,7 +300,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-09-30T08:06:28Z",
+          "last_verified_at": "2026-10-01T21:22:54Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -219,7 +317,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-09-30T08:06:28Z",
+          "last_verified_at": "2026-10-01T21:22:54Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -236,7 +334,7 @@
             "site-home",
             "trust-internal"
           ],
-          "last_verified_at": "2026-09-30T08:06:28Z",
+          "last_verified_at": "2026-10-01T21:22:54Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -253,7 +351,7 @@
             "site-home",
             "trust-internal"
           ],
-          "last_verified_at": "2026-09-30T08:06:28Z",
+          "last_verified_at": "2026-10-01T21:22:54Z",
           "slow_queued_probes": [],
           "state": "routable"
         }
@@ -267,134 +365,113 @@
       "slow_occurrences_by_pool": {
         "linux-docker-wsl2-v1": [
           {
-            "job_id": "109440568543",
-            "run_id": 36578604462,
+            "job_id": "110474551803",
+            "run_id": 36893475960,
+            "name": "runner-heartbeat / clued-ci-company-linux-02",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-10-01T16:38:12Z",
+            "started_at": "2026-10-01T16:44:30Z",
+            "delay_seconds": 378,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 378
+          },
+          {
+            "job_id": "110550908741",
+            "run_id": 36916275326,
+            "name": "trivy",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-10-01T19:42:36Z",
+            "started_at": "2026-10-01T19:53:37Z",
+            "delay_seconds": 661,
+            "kind": "started",
+            "wait_cause": "runner_idle_while_work_queued",
+            "idle_seconds": 661,
+            "queued_eligible_jobs": [
+              {
+                "job_id": 110550986086,
+                "name": "Supabase migration, RLS, transaction, and pgTAP",
+                "overlap_seconds": 650
+              },
+              {
+                "job_id": 110551004296,
+                "name": "Information Flow E2E over the local Worker and Supabase stack",
+                "overlap_seconds": 648
+              },
+              {
+                "job_id": 110550913024,
+                "name": "public-mcp-protocol",
+                "overlap_seconds": 370
+              }
+            ]
+          },
+          {
+            "job_id": "110550908967",
+            "run_id": 36916275214,
             "name": "public-mcp-behavior",
-            "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-09-29T13:54:28Z",
-            "started_at": "2026-09-29T14:02:33Z",
-            "delay_seconds": 485,
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-10-01T19:42:36Z",
+            "started_at": "2026-10-01T19:54:03Z",
+            "delay_seconds": 687,
             "kind": "started",
-            "wait_cause": "runner_occupied",
-            "idle_seconds": 13,
-            "occupied_by": [
+            "wait_cause": "runner_idle_while_work_queued",
+            "idle_seconds": 664,
+            "queued_eligible_jobs": [
               {
-                "job_id": 109440566826,
-                "run_id": 36578604500,
-                "name": "isolated-candidate"
+                "job_id": 110550986086,
+                "name": "Supabase migration, RLS, transaction, and pgTAP",
+                "overlap_seconds": 650
               },
               {
-                "job_id": 109440566131,
-                "run_id": 36578604210,
-                "name": "trivy"
+                "job_id": 110551004296,
+                "name": "Information Flow E2E over the local Worker and Supabase stack",
+                "overlap_seconds": 648
               },
               {
-                "job_id": 109440566964,
-                "run_id": 36578604234,
-                "name": "public-mcp-protocol"
+                "job_id": 110550913024,
+                "name": "public-mcp-protocol",
+                "overlap_seconds": 370
               }
             ]
           },
           {
-            "job_id": "109768650438",
-            "run_id": 36678460988,
+            "job_id": "110550986086",
+            "run_id": 36916275408,
             "name": "Supabase migration, RLS, transaction, and pgTAP",
-            "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-09-30T06:29:45Z",
-            "started_at": "2026-09-30T06:34:49Z",
-            "delay_seconds": 304,
-            "kind": "started",
-            "wait_cause": "runner_occupied",
-            "idle_seconds": 4,
-            "occupied_by": [
-              {
-                "job_id": 109768505100,
-                "run_id": 36678460994,
-                "name": "public-mcp-behavior"
-              }
-            ]
-          },
-          {
-            "job_id": "109768700714",
-            "run_id": 36678460973,
-            "name": "Information Flow E2E over the local Worker and Supabase stack",
-            "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-09-30T06:29:57Z",
-            "started_at": "2026-09-30T06:35:00Z",
-            "delay_seconds": 303,
-            "kind": "started",
-            "wait_cause": "runner_occupied",
-            "idle_seconds": 11,
-            "occupied_by": [
-              {
-                "job_id": 109768505839,
-                "run_id": 36678461000,
-                "name": "trivy"
-              },
-              {
-                "job_id": 109768502735,
-                "run_id": 36678460997,
-                "name": "gitleaks"
-              },
-              {
-                "job_id": 109768590758,
-                "run_id": 36678461040,
-                "name": "public-mcp-protocol"
-              }
-            ]
-          },
-          {
-            "job_id": "109911548273",
-            "run_id": 36722682160,
-            "name": "gitleaks",
-            "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-09-30T13:35:02Z",
-            "started_at": "2026-09-30T13:41:07Z",
-            "delay_seconds": 365,
+            "runner_name": "clued-ci-home-linux-01",
+            "created_at": "2026-10-01T19:42:47Z",
+            "started_at": "2026-10-01T19:54:29Z",
+            "delay_seconds": 702,
             "kind": "started",
             "wait_cause": "unexplained",
             "idle_seconds": 102
           },
           {
-            "job_id": "109911548789",
-            "run_id": 36722682212,
-            "name": "trivy",
-            "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-09-30T13:35:02Z",
-            "started_at": "2026-09-30T13:41:34Z",
-            "delay_seconds": 392,
-            "kind": "started",
-            "wait_cause": "unexplained",
-            "idle_seconds": 106
-          },
-          {
-            "job_id": "109911858118",
-            "run_id": 36722682213,
+            "job_id": "110551004296",
+            "run_id": 36916275487,
             "name": "Information Flow E2E over the local Worker and Supabase stack",
-            "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-09-30T13:35:46Z",
-            "started_at": "2026-09-30T13:41:58Z",
-            "delay_seconds": 372,
-            "kind": "started",
-            "wait_cause": "unexplained",
-            "idle_seconds": 66
-          },
-          {
-            "job_id": "109912211964",
-            "run_id": 36722682267,
-            "name": "public-mcp-behavior",
             "runner_name": "clued-ci-company-linux-02",
-            "created_at": "2026-09-30T13:36:36Z",
-            "started_at": "2026-09-30T13:44:25Z",
-            "delay_seconds": 469,
+            "created_at": "2026-10-01T19:42:49Z",
+            "started_at": "2026-10-01T19:53:52Z",
+            "delay_seconds": 663,
             "kind": "started",
-            "wait_cause": "runner_occupied",
-            "idle_seconds": 4,
-            "occupied_by": [
+            "wait_cause": "runner_idle_while_work_queued",
+            "idle_seconds": 361,
+            "queued_eligible_jobs": [
               {
-                "job_id": 109911544915,
-                "run_id": 36722682102,
-                "name": "Supabase migration, RLS, transaction, and pgTAP"
+                "job_id": 110550908741,
+                "name": "trivy",
+                "overlap_seconds": 357
+              },
+              {
+                "job_id": 110550908967,
+                "name": "public-mcp-behavior",
+                "overlap_seconds": 357
+              },
+              {
+                "job_id": 110550986086,
+                "name": "Supabase migration, RLS, transaction, and pgTAP",
+                "overlap_seconds": 357
               }
             ]
           }
