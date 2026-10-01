@@ -91,6 +91,8 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6Feature
   CLUED_STORAGE_READ_V1?: string;
   CLUED_STORAGE_READ_RECEIPT_KEYS?: string;
   CLUED_STORAGE_READ_CURSOR_KEY?: string;
+  /** Service binding to the PDF extractor Worker clued-storage-pdf (StorageNormalUse §4.5, RPC). */
+  PDF_EXTRACTOR?: unknown;
   // StorageNormalUse N3 binary upload: flag, R2 staging bucket, URL signing key, staging keyring.
   CLUED_STORAGE_BINARY_V1?: string;
   CLUED_STORAGE_STAGING?: StagingBucket;
@@ -1588,6 +1590,8 @@ async function callStorageRead(request: Request, env: ContinuityEnv, args: unkno
   try {
     agent = await createStorageReadAgent({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
       receipt_keys: JSON.parse(env.CLUED_STORAGE_READ_RECEIPT_KEYS), cursor_key: env.CLUED_STORAGE_READ_CURSOR_KEY,
+      // §4.5: PDFs are parsed only by the extractor Worker behind this service binding.
+      pdf_extractor: env.PDF_EXTRACTOR,
       rpc: async ({ token_hash, input }) => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_read_v1", {
         method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_token_hash: token_hash, p_input: input }),
         signal: AbortSignal.timeout(10000), redirect: "manual",
@@ -1945,16 +1949,19 @@ async function callTool(
         : code === "cursor_invalid" ? "The cursor is invalid or expired. Start the listing or search again."
         : code === "storage_read_input_invalid" ? `Invalid input for ${String(name)}.`
         : code === "format_unsupported" ? "This object has no readable content: folders are never read, and without the Owner's normal use only text files and Google Docs are."
-        : code === "document_invalid" ? "The file is damaged or not what its type says (for example an encrypted Office file or an XML part with a DOCTYPE). Retrying will not help."
-        : code === "archive_limit_exceeded" ? "The file exceeds a safety limit for Office files (parts, entries, decompressed size, or more than 8 MiB of extracted text). Retrying will not help."
+        : code === "document_invalid" ? "The file is damaged or not what its type says (for example an encrypted Office file, a password-protected PDF, or an XML part with a DOCTYPE). Retrying will not help."
+        : code === "archive_limit_exceeded" ? "The file exceeds a safety limit for Office or PDF files (parts, entries, decompressed size, or more than 8 MiB of extracted text in one call). Retrying will not help."
         : code === "binary_too_large" ? "Reading this file would download more than 32 MiB in one call. Retrying will not help."
         : code === "export_too_large" ? "The Google Doc is larger than the 10 MB export limit."
         : code === "shortcut_not_followed" ? "Shortcuts are not followed. Read the target file inside the root instead."
         : code === "content_not_accessible" ? "This file's content is not readable with the current Google permission."
         : code === "scope_upgrade_required" ? "Reading files Clued did not create, and searching by content, need the Owner to turn on normal use on the Clued storage page. Retrying will not help."
-        : code === "budget_exhausted" ? "This connection has used its hourly content budget (256 MiB per rolling hour, reserved before each body request and settled to the bytes returned). Try again later; retrying now will not help."
+        : code === "budget_exhausted" ? "This connection has used its hourly content budget (by default 256 MiB per rolling hour per authorized client and 1 GiB per account; only the Owner can change them, on the Clued storage page; reserved before each body request and settled to the bytes returned). Try again later; retrying now will not help."
         : code === "request_limit_exceeded" ? "This large Office file needs more provider requests than one call may make. Retrying will not help; read an earlier or shorter range (a smaller offset + length), since each call extracts the text up to offset + length."
-        : "Storage read unavailable." };
+        : "Storage read unavailable.",
+        // A fixed hint and a page number (StorageNormalUse §4.5: PDF time cut on a continuation).
+        ...(error instanceof StorageReadError && error.detail ? { hint: error.detail.hint,
+          ...(error.detail.next_page_start !== undefined ? { next_page_start: error.detail.next_page_start } : {}) } : {}) };
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
     }
   }
@@ -2855,12 +2862,15 @@ async function handleContinuityRequestInner(
         return json({ error: "Storage owner operation unavailable." }, 403, headers);
       }
     }
-    if (url.pathname === "/v1/storage/read-access" || url.pathname === "/v1/storage/write-access" || url.pathname === "/v1/storage/normal-use") {
+    if (url.pathname === "/v1/storage/read-access" || url.pathname === "/v1/storage/write-access" || url.pathname === "/v1/storage/normal-use"
+      || url.pathname === "/v1/storage/budget") {
       // StorageFullCapability.v0.1: native Owner control of the read level (P1)
-      // and the modify write level (P3); StorageNormalUse.v0.1 §8.2 normal use.
+      // and the modify write level (P3); StorageNormalUse.v0.1 §8.2 normal use
+      // and §7.3 hourly budgets (N4).
       // The RPC checks the live auth session itself; never a Binding or service role.
       const rpc = url.pathname === "/v1/storage/read-access" ? "clued_storage_read_access_v1"
-        : url.pathname === "/v1/storage/normal-use" ? "clued_storage_normal_use_v1" : "clued_storage_write_access_v1";
+        : url.pathname === "/v1/storage/normal-use" ? "clued_storage_normal_use_v1"
+          : url.pathname === "/v1/storage/budget" ? "clued_storage_budget_v1" : "clued_storage_write_access_v1";
       validateOrigin(request, env);
       const headers = { ...corsHeaders(request), "cache-control": "no-store" };
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true") return json({ error: "Not found." }, 404, headers);

@@ -31,6 +31,7 @@ import { testStorageModifyExecution } from "./resource-center-storage-modify-exe
 import { testStorageReplace } from "./resource-center-storage-replace-db.fixture.mjs";
 import { testStorageNormalUse } from "./resource-center-storage-normal-use-db.fixture.mjs";
 import { testStorageBinaryUpload } from "./resource-center-storage-binary-db.fixture.mjs";
+import { testStorageBudget } from "./resource-center-storage-budget-db.fixture.mjs";
 import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refresh-upgrade-db.fixture.mjs";
 
 const USER = "10000000-0000-4000-8000-000000000071";
@@ -144,6 +145,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead ? ["lega
       await testStorageReplace(t, admin, server, USER, DECISION);
       await testStorageNormalUse(t, admin, server, USER, DECISION);
       await testStorageBinaryUpload(t, admin, server, USER, DECISION);
+      await testStorageBudget(t, admin, server, USER);
       return;
     }
 
@@ -816,6 +818,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead ? ["lega
     await testStorageReplace(t, admin, server, USER, DECISION);
     await testStorageNormalUse(t, admin, server, USER, DECISION);
     await testStorageBinaryUpload(t, admin, server, USER, DECISION);
+    await testStorageBudget(t, admin, server, USER);
     await t.test("a directory with a recorded sharing digest is matched by sharing, not Drive version", async () => {
       const shared = "d".repeat(64), changed = "e".repeat(64);
       const rowVersion = async (id) => Number((await admin.query(
