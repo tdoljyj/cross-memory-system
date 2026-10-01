@@ -1,0 +1,232 @@
+"""Tests for scripts/hooks/clued_work_claim_guard.py (Claude Code work-claim hooks)."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+import unittest
+from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+HOOK = ROOT / "scripts" / "hooks" / "clued_work_claim_guard.py"
+CLAIM_ID = "1bd72d4d-d2f8-4459-b3a7-c0521258e405"
+TASK_ID = "178ff66c-1432-46e2-8b27-d8a7a1755be5"
+
+
+def stamp(delta: timedelta) -> str:
+    # Postgres prints a variable-length fraction; keep five digits on purpose.
+    value = datetime.now(timezone.utc) + delta
+    return value.strftime("%Y-%m-%dT%H:%M:%S.") + f"{value.microsecond:06d}"[:5] + "+00:00"
+
+
+def claim(status: str = "ACTIVE", claim_id: str = CLAIM_ID, expires: timedelta = timedelta(hours=1)) -> dict:
+    return {"claim_id": claim_id, "task_id": TASK_ID, "context_key": "global", "fence": 1,
+            "lease_version": 1, "status": status, "expires_at": stamp(expires),
+            "write_set": ["scripts/hooks/clued_work_claim_guard.py"], "base_commit": "1b6ca6d8",
+            "holder_session_ref": "session_test"}
+
+
+def committed(value: dict) -> dict:
+    return {"status": "committed", "receipt_id": "r1", "claim": value}
+
+
+class WorkClaimGuardTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.project = Path(self.tmp.name) / "project"
+        self.project.mkdir()
+        self.env = {**os.environ, "TMPDIR": self.tmp.name, "CLAUDE_PROJECT_DIR": str(self.project)}
+        for name in ("CLUED_WORK_CLAIM_GUARD", "CLUED_WORK_CLAIM", "CLUED_CONTEXT_READ_TOKEN",
+                     "CLUED_SUPABASE_URL", "CLUED_SUPABASE_PUBLISHABLE_KEY"):
+            self.env.pop(name, None)
+
+    def run_hook(self, payload: dict, env: dict | None = None) -> subprocess.CompletedProcess:
+        payload = {"session_id": "s1", **payload}
+        return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), text=True,
+                              capture_output=True, env=env or self.env, timeout=30)
+
+    def pre(self, name: str, tool_input: dict, session: str = "s1", env: dict | None = None):
+        return self.run_hook({"hook_event_name": "PreToolUse", "session_id": session,
+                              "tool_name": name, "tool_input": tool_input}, env)
+
+    def bash(self, command: str, session: str = "s1", env: dict | None = None):
+        return self.pre("Bash", {"command": command}, session, env)
+
+    def post(self, name: str, response, tool_input: dict | None = None):
+        return self.run_hook({"hook_event_name": "PostToolUse", "tool_name": name,
+                              "tool_input": tool_input or {}, "tool_response": response})
+
+    def stored(self) -> dict:
+        path = self.project / ".clued" / "work-claim.json"
+        return json.loads(path.read_text(encoding="utf-8"))["claims"] if path.exists() else {}
+
+    # PreToolUse -------------------------------------------------------------
+
+    def test_push_without_claim_blocks_once_per_session(self):
+        first = self.bash("git push -u origin claude/x")
+        self.assertEqual(first.returncode, 2)
+        self.assertIn("Clued-Work-Claim", first.stderr)
+        self.assertIn("clued_work_claim", first.stderr)
+        self.assertEqual(self.bash("git push -u origin claude/x").returncode, 0)
+        self.assertEqual(self.bash("git push -u origin claude/x", session="s2").returncode, 2)
+
+    def test_spend_and_publish_are_reported_separately(self):
+        self.assertEqual(self.bash("cd apps/clued-cloud && npm run build").returncode, 2)
+        self.assertEqual(self.bash("node --test tests/a.test.mjs").returncode, 0)
+        self.assertEqual(self.bash("gh pr create --fill").returncode, 2)
+
+    def test_guarded_commands(self):
+        for command in ("npm ci", "npm install", "pnpm test", "yarn add x", "npm run test:work:claims",
+                        "node --test x.mjs", "python3 -m pytest -q", "pytest", "python3 -m unittest t",
+                        "pip install -r r.txt", "npx vitest run", "cargo test", "go build ./...",
+                        "FOO=1 npm test", "cd a; npm ci", "true && git push"):
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command, session=command).returncode, 2)
+
+    def test_unguarded_commands_pass(self):
+        for command in ("git status", "ls -la", "git commit -m 'git push later'", "echo npm test",
+                        "grep -rn 'node --test' .", "git fetch origin main", "npm view next version",
+                        "cat <<'EOF' > f\ngit push\nnpm ci\nEOF"):
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command, session=command).returncode, 0)
+
+    def test_github_publish_tools_are_guarded(self):
+        for name in ("mcp__github__create_pull_request", "mcp__github__push_files",
+                     "mcp__github__create_or_update_file"):
+            with self.subTest(name=name):
+                self.assertEqual(self.pre(name, {"owner": "o"}, session=name).returncode, 2)
+        self.assertEqual(self.pre("mcp__github__pull_request_read", {}, session="read").returncode, 0)
+        self.assertEqual(self.pre("Read", {"file_path": "x"}, session="read2").returncode, 0)
+
+    def test_env_claim_and_off_switch_allow(self):
+        self.assertEqual(self.bash("git push", env={**self.env, "CLUED_WORK_CLAIM": CLAIM_ID}).returncode, 0)
+        self.assertEqual(self.bash("git push", env={**self.env, "CLUED_WORK_CLAIM_GUARD": "off"}).returncode, 0)
+
+    # PostToolUse -> PreToolUse ----------------------------------------------
+
+    def test_recorded_claim_allows_and_shapes_are_parsed(self):
+        shapes = {
+            "structured": {"content": [{"type": "text", "text": "{}"}], "structuredContent": committed(claim())},
+            "content": [{"type": "text", "text": json.dumps(committed(claim()))}],
+            "text": json.dumps(committed(claim())),
+            "object": committed(claim()),
+        }
+        for label, response in shapes.items():
+            with self.subTest(shape=label):
+                (self.project / ".clued" / "work-claim.json").unlink(missing_ok=True)
+                self.assertEqual(self.post("mcp__Clued__clued_work_claim", response).returncode, 0)
+                self.assertIn(CLAIM_ID, self.stored())
+                self.assertEqual(self.bash("git push", session=f"after-{label}").returncode, 0)
+
+    def test_rejected_claim_is_not_recorded(self):
+        rejected = {"status": "rejected", "error_code": "work_claim_conflict", "conflicts": []}
+        self.post("mcp__Clued__clued_work_claim", rejected)
+        self.assertEqual(self.stored(), {})
+        self.assertEqual(self.bash("git push").returncode, 2)
+
+    def test_expired_claim_does_not_count(self):
+        self.post("mcp__Clued__clued_work_claim", committed(claim(expires=-timedelta(minutes=1))))
+        self.assertEqual(self.bash("git push").returncode, 2)
+
+    def test_release_and_draining(self):
+        self.post("mcp__Clued__clued_work_claim", committed(claim()))
+        self.post("mcp__Clued__clued_work_release", committed(claim(status="DRAINING")))
+        self.assertEqual(self.stored()[CLAIM_ID]["status"], "DRAINING")
+        self.assertEqual(self.bash("git push", session="draining").returncode, 0)
+        self.post("mcp__Clued__clued_work_release", committed(claim(status="RELEASED")))
+        self.assertEqual(self.stored(), {})
+        self.assertEqual(self.bash("git push", session="released").returncode, 2)
+
+    def test_renew_updates_and_takeover_replaces(self):
+        self.post("mcp__Clued__clued_work_claim", committed(claim()))
+        renewed = {**claim(), "lease_version": 2}
+        self.post("mcp__Clued__clued_work_renew", committed(renewed))
+        self.assertEqual(self.stored()[CLAIM_ID]["lease_version"], 2)
+        new_id = "2bd72d4d-d2f8-4459-b3a7-c0521258e405"
+        self.post("mcp__Clued__clued_work_takeover", committed(claim(claim_id=new_id)), {"claim_id": CLAIM_ID})
+        self.assertEqual(set(self.stored()), {new_id})
+
+    def test_other_tools_are_ignored(self):
+        self.post("mcp__Clued__clued_record_mutate", committed(claim()))
+        self.assertEqual(self.stored(), {})
+
+    # SessionStart -----------------------------------------------------------
+
+    def session_start(self, env: dict | None = None) -> str:
+        result = self.run_hook({"hook_event_name": "SessionStart", "source": "startup"}, env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)["hookSpecificOutput"]
+        self.assertEqual(output["hookEventName"], "SessionStart")
+        return output["additionalContext"]
+
+    def test_session_start_without_token(self):
+        self.post("mcp__Clued__clued_work_claim", committed(claim()))
+        text = self.session_start()
+        self.assertIn("clued_work_claim", text)
+        self.assertIn("Clued-Work-Claim", text)
+        self.assertIn(CLAIM_ID, text)
+        self.assertIn("clued_session_resume", text)
+
+    def test_session_start_reads_live_claims(self):
+        seen = {}
+        live = {"status": "ok", "active_work_claims": [claim(claim_id="3bd72d4d-d2f8-4459-b3a7-c0521258e405")]}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                seen["path"] = self.path
+                seen["apikey"] = self.headers.get("apikey")
+                seen["body"] = json.loads(self.rfile.read(int(self.headers["content-length"])))
+                payload = json.dumps(live).encode()
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        env = {**self.env, "CLUED_CONTEXT_READ_TOKEN": "clued_bnd_test",
+               "CLUED_SUPABASE_URL": f"http://127.0.0.1:{server.server_port}",
+               "CLUED_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_test"}
+        text = self.session_start(env)
+        self.assertIn("3bd72d4d-d2f8-4459-b3a7-c0521258e405", text)
+        self.assertEqual(seen["path"], "/rest/v1/rpc/clued_work_claims_active_v1")
+        self.assertEqual(seen["apikey"], "sb_publishable_test")
+        self.assertEqual(seen["body"]["p_token_hash"], hashlib.sha256(b"clued_bnd_test").hexdigest())
+
+    def test_session_start_degrades_when_clued_is_unreachable(self):
+        env = {**self.env, "CLUED_CONTEXT_READ_TOKEN": "clued_bnd_test",
+               "CLUED_SUPABASE_URL": "http://127.0.0.1:9", "CLUED_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_test"}
+        self.assertIn("unavailable", self.session_start(env))
+        insecure = {**env, "CLUED_SUPABASE_URL": "http://example.com"}
+        self.assertIn("unavailable", self.session_start(insecure))
+
+    def test_public_config_is_read_from_the_repository_file(self):
+        source = self.project / "apps" / "clued-cloud" / "app"
+        source.mkdir(parents=True)
+        (source / "supabase-public-config.ts").write_text(
+            'x\n    return { url: "https://127.0.0.1:9", key: "sb_publishable_test" };\n', encoding="utf-8")
+        env = {**self.env, "CLUED_CONTEXT_READ_TOKEN": "clued_bnd_test"}
+        self.assertIn("reading live claims failed", self.session_start(env))
+
+    def test_bad_payloads_are_ignored(self):
+        for raw in ("", "not json", "[]"):
+            result = subprocess.run([sys.executable, str(HOOK)], input=raw, text=True,
+                                    capture_output=True, env=self.env, timeout=30)
+            self.assertEqual(result.returncode, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
