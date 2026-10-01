@@ -91,6 +91,8 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6Feature
   CLUED_STORAGE_READ_V1?: string;
   CLUED_STORAGE_READ_RECEIPT_KEYS?: string;
   CLUED_STORAGE_READ_CURSOR_KEY?: string;
+  /** Service binding to the PDF extractor Worker clued-storage-pdf (StorageNormalUse §4.5, RPC). */
+  PDF_EXTRACTOR?: unknown;
   // StorageNormalUse N3 binary upload: flag, R2 staging bucket, URL signing key, staging keyring.
   CLUED_STORAGE_BINARY_V1?: string;
   CLUED_STORAGE_STAGING?: StagingBucket;
@@ -1588,6 +1590,8 @@ async function callStorageRead(request: Request, env: ContinuityEnv, args: unkno
   try {
     agent = await createStorageReadAgent({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
       receipt_keys: JSON.parse(env.CLUED_STORAGE_READ_RECEIPT_KEYS), cursor_key: env.CLUED_STORAGE_READ_CURSOR_KEY,
+      // §4.5: PDFs are parsed only by the extractor Worker behind this service binding.
+      pdf_extractor: env.PDF_EXTRACTOR,
       rpc: async ({ token_hash, input }) => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_read_v1", {
         method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_token_hash: token_hash, p_input: input }),
         signal: AbortSignal.timeout(10000), redirect: "manual",
@@ -1956,7 +1960,8 @@ async function callTool(
         : code === "request_limit_exceeded" ? "This large Office file needs more provider requests than one call may make. Retrying will not help; read an earlier or shorter range (a smaller offset + length), since each call extracts the text up to offset + length."
         : "Storage read unavailable.",
         // A fixed hint and a page number (StorageNormalUse §4.5: PDF time cut on a continuation).
-        ...(error instanceof StorageReadError && error.detail ? { hint: error.detail.hint, next_page_start: error.detail.next_page_start } : {}) };
+        ...(error instanceof StorageReadError && error.detail ? { hint: error.detail.hint,
+          ...(error.detail.next_page_start !== undefined ? { next_page_start: error.detail.next_page_start } : {}) } : {}) };
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
     }
   }

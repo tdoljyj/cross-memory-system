@@ -244,6 +244,38 @@ test('production backup mode encrypts and verifies the dump before removing plai
     /release-evidence\/clued-production-pre-migration\.dump\s*$/m);
 });
 
+test('production release deploys the PDF extractor Worker first and verifies the service binding after both deploys', async () => {
+  // StorageNormalUse §4.5 (Owner decision 7210e5a5): the main Worker's PDF_EXTRACTOR binding names clued-storage-pdf.
+  const steps = productionWorkflow.split(/\n      - /).slice(1);
+  const index = (name) => steps.findIndex((step) => step.startsWith(`name: ${name}\n`));
+  const build = index('Build exact Worker source'), extractor = index('Deploy Clued PDF extractor Worker'),
+    main = index('Deploy Clued production Worker'), live = index('Verify exact live commit and currentness transport'),
+    verify = index('Verify the PDF extractor service binding');
+  assert.ok(build >= 0 && build < extractor && extractor < main && main < live && live < verify, JSON.stringify({ build, extractor, main, live, verify }));
+  // Same deploy token and account as the main Worker; no vars, secrets or extra flags for the extractor.
+  assert.match(steps[extractor], /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLUED_CLOUDFLARE_DEPLOY_TOKEN \}\}/);
+  assert.match(steps[extractor], /CLOUDFLARE_ACCOUNT_ID: \$\{\{ vars\.CLUED_CLOUDFLARE_ACCOUNT_ID \}\}/);
+  assert.match(steps[extractor], /\n        run: npx wrangler deploy --config wrangler\.pdf-extractor\.jsonc\n?$/);
+  assert.match(steps[main], /npx wrangler deploy --config wrangler\.production\.jsonc --keep-vars/);
+  assert.match(steps[verify], /\n        if: \$\{\{ inputs\.mode == 'deploy' \}\}\n/);
+  assert.match(steps[verify], /node scripts\/verify-pdf-extractor\.mjs --evidence-out \.sites-runtime\/release-evidence\/pdf-extractor\.json/);
+  assert.match(productionWorkflow, /release-evidence\/pdf-extractor\.json\n/);
+  const buildScript = await readFile(new URL('../scripts/build-verified.sh', import.meta.url), 'utf8');
+  assert.match(buildScript, /scripts\/build-pdf-extractor\.mjs" --check-main/);
+
+  const { expectedExtractorOf, verifyPdfExtractorCheck, CHECK_PATH } = await import('../scripts/verify-pdf-extractor.mjs');
+  const expected = expectedExtractorOf(await readFile(new URL('../worker/storage-read-pdf-common.ts', import.meta.url), 'utf8'));
+  assert.deepEqual(expected, { contract: 'clued.storage-pdf-extractor/1', version: 1 });
+  assert.equal(CHECK_PATH, '/v1/storage/pdf-extractor/check');
+  const ok = { contract: 'clued.storage-pdf-extractor-check/1', status: 'ok', extractor: expected };
+  assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 200, body: ok }), []);
+  assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 503, body: { ...ok, status: 'unavailable', code: 'storage_read_unavailable' } }),
+    ['pdf_extractor_check_http_503', 'pdf_extractor_check_storage_read_unavailable']);
+  assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 200, body: { ...ok, extractor: { ...expected, version: 2 } } }), ['pdf_extractor_version_mismatch']);
+  assert.deepEqual(verifyPdfExtractorCheck({ expected: null, status: 0, body: null }),
+    ['repository_extractor_contract_missing', 'pdf_extractor_check_http_0', 'pdf_extractor_check_contract_invalid', 'pdf_extractor_check_failed']);
+});
+
 test('production release deploys only when deploy is chosen explicitly', () => {
   // A dispatch whose inputs are missing or misparsed must never fall through to a
   // deploy (run 36738247464 deployed when a boolean backup_only was ignored).

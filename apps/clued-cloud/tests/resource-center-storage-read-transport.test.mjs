@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
+import { loadContinuityWorker, loadPdfExtractorBinding } from "./worker-continuity-loader.mjs";
 import { createStorageCredentialVault } from "../worker/storage-credential-vault.ts";
 import { imageInfo } from "../worker/storage-read-formats.ts";
 import { docxOf, gifOf, jpegOf, pngOf, pptxOf, webpOf, xlsxOf } from "./resource-center-storage-formats.fixture.mjs";
@@ -25,6 +25,8 @@ const env = {
   CLUED_STORAGE_GOOGLE_CLIENT_ID: "read-client", CLUED_STORAGE_READ_CURSOR_KEY: btoa("c".repeat(32)),
   CLUED_STORAGE_READ_RECEIPT_KEYS: JSON.stringify({ current: "k1", keys: { k1: btoa("h".repeat(32)) } }),
   SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key",
+  // StorageNormalUse §4.5: PDFs are parsed only by the extractor Worker behind this service binding.
+  PDF_EXTRACTOR: (await loadPdfExtractorBinding()).binding,
 };
 const vault = await createStorageCredentialVault(vaultKeys);
 const context = { owner_id: OWNER, connection_id: CONNECTION, provider: "google-drive", provider_subject: "subject-1", oauth_client_id: "read-client", credential_version: 3 };
@@ -1146,6 +1148,45 @@ test("§4.5 PDF: a file moved out of the root during extraction delivers nothing
   assert.equal(moved.value.error, "not_found_in_scope"); assert.equal(moved.h.calls.at(-1).p_input.byte_count, 0);
   const legacy = await readBody({ object_id: "pdfLegacy0000001" }, { drive: formatTree([["pdfLegacy0000001", "l.pdf", PDF, latinPdf(latinPages(1))]]) });
   assert.equal(legacy.value.error, "format_unsupported"); assert.equal(bodyRequests(legacy.h).length, 0);
+});
+
+// Owner decision 7210e5a5: PDFs are parsed only by the extractor Worker behind PDF_EXTRACTOR. Without a working,
+// matching extractor a PDF read fails closed (storage_read_unavailable, fixed hint) and nothing is parsed in the main Worker.
+test("§4.5 PDF extractor: missing binding, wrong marker or a failed marker call fail closed before any body request", async () => {
+  const { binding } = await loadPdfExtractorBinding();
+  const drive = () => formatTree([["pdfDeny000000001", "d.pdf", PDF, latinPdf(latinPages(1))]]);
+  const cases = [["missing", undefined], ["wrong version", { ...binding, marker: async () => ({ ...(await binding.marker()), version: 999 }) }],
+    ["marker throws", { ...binding, marker: async () => { throw new Error("Network connection lost."); } }],
+    ["unpatched pdf.js", { ...binding, marker: async () => ({ ...(await binding.marker()), decode_guard: false }) }]];
+  for (const [name, extractor] of cases) {
+    const read = await readBody({ object_id: "pdfDeny000000001" }, await normalOptions({ drive: drive() }), { ...env, PDF_EXTRACTOR: extractor });
+    assert.equal(read.isError, true, name); assert.equal(read.value.error, "storage_read_unavailable", name);
+    assert.match(read.value.hint, /PDF reader service is unavailable/, name);
+    assert.equal(bodyRequests(read.h).length, 0, `${name}: no body request`);
+    assert.equal(read.h.calls.at(-1).p_input.byte_count, 0, `${name}: nothing delivered`);
+  }
+  // Other storage reads do not need the extractor.
+  const text = await readBody({ object_id: "planAFile0000001" }, await normalOptions({ drive: normalTree() }), { ...env, PDF_EXTRACTOR: undefined });
+  assert.equal(text.isError, false);
+});
+
+test("§4.5 PDF extractor: a crash, CPU or memory limit of the extractor call is one failed read with a fixed hint, not retried", async () => {
+  const { binding } = await loadPdfExtractorBinding();
+  for (const [name, error, code] of [["out of memory", new Error("Worker exceeded memory limit."), "archive_limit_exceeded"],
+    ["CPU limit", new Error("Worker exceeded CPU time limit."), "archive_limit_exceeded"], ["crash", new Error("Network connection lost."), "storage_read_unavailable"]]) {
+    let calls = 0;
+    const extractor = { ...binding, extract: async () => { calls++; throw error; } };
+    const read = await readBody({ object_id: "pdfCrash00000001" }, await normalOptions({ drive: formatTree([["pdfCrash00000001", "c.pdf", PDF, latinPdf(latinPages(1))]]) }),
+      { ...env, PDF_EXTRACTOR: extractor });
+    assert.equal(read.value.error, code, name); assert.match(read.value.hint, /PDF reader stopped on this file/, name);
+    assert.equal(calls, 1, `${name}: the same input is not sent again`);
+    assert.equal(read.h.calls.at(-1).p_input.byte_count, 0, `${name}: nothing delivered`);
+  }
+  // A result over the response bound is refused.
+  const oversize = { ...binding, extract: async (bytes, options) => { const r = await binding.extract(bytes, options); r.extraction.text = "x".repeat(16 * 1024 * 1024 + 1); return r; } };
+  const big = await readBody({ object_id: "pdfBig0000000002" }, await normalOptions({ drive: formatTree([["pdfBig0000000002", "b.pdf", PDF, latinPdf(latinPages(1))]]) }),
+    { ...env, PDF_EXTRACTOR: oversize });
+  assert.equal(big.value.error, "storage_read_unavailable"); assert.equal(big.h.calls.at(-1).p_input.byte_count, 0);
 });
 
 test("§4.5 tool description states PDF page ranges, the 20 MiB limit, no OCR and omitted undecodable text honestly", async () => {

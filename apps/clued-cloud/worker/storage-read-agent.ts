@@ -6,7 +6,11 @@ import { bytesToBase64, bytesToBase64Url } from "./storage-base64";
 import { createStorageContentGateway } from "./storage-content-gateway";
 import { classifyFormat, extractOfficeText, imageInfo, StorageFormatError, EXTRACT_TEXT_MAX, IMAGE_MAX_BYTES, IMAGE_MAX_EDGE,
   IN_MEMORY_ZIP_MAX } from "./storage-read-formats";
-import { extractPdfText, pdfOffsetPastText, pdfTimeBudget, readExactBody, withPdfSlot, PdfBusyError, PDF_BUSY_HINT, PDF_MAX_BYTES, PDF_PAGES_PER_CALL } from "./storage-read-pdf";
+// The main Worker never imports storage-read-pdf.ts (pdf.js): PDFs go to the
+// extractor Worker through the PDF_EXTRACTOR service binding (Owner decision 7210e5a5).
+import { pdfOffsetPastText, pdfTimeBudget, readExactBody, withPdfSlot, PdfBusyError, PDF_BUSY_HINT, PDF_MAX_BYTES, PDF_PAGES_PER_CALL,
+  type PdfExtraction } from "./storage-read-pdf-common";
+import { connectPdfExtractor, PdfExtractorError } from "./storage-read-pdf-client";
 
 /** StorageFullCapability.v0.1 P1 read level (list / stat / search / resolve)
  * and P2 read_content (read: one text file body, by byte range), with
@@ -71,9 +75,16 @@ export class StorageReadError extends Error {
     "format_unsupported" | "export_too_large" | "shortcut_not_followed" | "content_not_accessible" | "budget_exhausted" |
     "scope_upgrade_required" | "document_invalid" | "archive_limit_exceeded" | "binary_too_large" | "request_limit_exceeded",
     /** Fixed fields added to the error result (a fixed hint and where to continue), never provider text. */
-    readonly detail?: { hint: string; next_page_start: number }) { super(code); }
+    readonly detail?: { hint: string; next_page_start?: number }) { super(code); }
 }
 function fail(code: StorageReadError["code"]): never { throw new StorageReadError(code); }
+/** A PDF extraction failure: the extractor's fixed hint when it has one
+ * (unavailable, stopped, busy), otherwise the plain code. */
+function pdfFailure(error: unknown): never {
+  if (error instanceof StorageReadError) throw error;
+  if (error instanceof PdfExtractorError) throw new StorageReadError(error.code as StorageReadError["code"], { hint: error.hint });
+  return fail(error instanceof StorageFormatError ? error.code : "storage_read_unavailable");
+}
 /** Fixed-label log for a transient Drive batch failure (after its one retry):
  * absorbed by search into complete:false, or fatal. No IDs or provider text. */
 function driveTransient(error: unknown, outcome: "absorbed" | "fatal"): boolean {
@@ -218,6 +229,8 @@ export async function createStorageReadAgent(config: {
   client_id: string; vault: Parameters<typeof createStorageCredentialVault>[0];
   rpc: (input: Data) => Promise<Data>; receipt_keys: unknown; cursor_key: unknown;
   fetch?: typeof fetch; clock?: () => number;
+  /** The PDF_EXTRACTOR service binding (clued-storage-pdf); PDF reads fail closed without it. */
+  pdf_extractor?: unknown;
 }) {
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id)) fail("storage_read_unavailable");
   const vault = await createStorageCredentialVault(config.vault);
@@ -459,9 +472,14 @@ export async function createStorageReadAgent(config: {
           if (fileSize > IMAGE_MAX_BYTES || (declared && Math.max(declared.width, declared.height) > IMAGE_MAX_EDGE))
             return metadataOnly("image_too_large", declared ? { media_metadata: declared } : {});
         }
+        // §4.5 (Owner decision 7210e5a5): the extractor Worker is checked (binding
+        // present, marker of this contract and version) before any PDF body is
+        // requested; without it the read fails closed and nothing is parsed here.
+        let pdfExtractor: Awaited<ReturnType<typeof connectPdfExtractor>> | null = null;
         if (pdf) {
           if (!Number.isSafeInteger(fileSize) || fileSize < 0) fail("storage_read_unavailable");
           if (fileSize > PDF_MAX_BYTES) return metadataOnly("pdf_too_large");
+          try { pdfExtractor = await connectPdfExtractor(config.pdf_extractor); } catch (error) { pdfFailure(error); }
         }
         // One body request plus the re-check must fit the call budget (§3 item 4).
         if (used + 1 + recheckReserve > SUBREQUEST_BUDGET) fail("storage_read_unavailable");
@@ -547,9 +565,10 @@ export async function createStorageReadAgent(config: {
         if (pdf) {
           // §4.5: whole file (at most 20 MiB, one budgeted request) into one
           // buffer of exactly its size, then text of the selected pages only.
-          // One PDF download + extraction at a time per isolate (withPdfSlot):
-          // two would together approach the isolate's memory.
-          let pages: Awaited<ReturnType<typeof extractPdfText>>;
+          // One PDF download + extractor call at a time per isolate (withPdfSlot):
+          // each holds the file and its RPC copy (up to 2 x 20 MiB).
+          const extractor = pdfExtractor!;
+          let pages: PdfExtraction;
           try {
             pages = await withPdfSlot(async () => {
               const media = await call(() => content.media(id));
@@ -561,9 +580,9 @@ export async function createStorageReadAgent(config: {
                 // wait and the download, minus a reserve for the post-read scope recheck.
                 const time = pdfTimeBudget(Date.now() - signalStarted);
                 if (time === null) return fail("storage_read_unavailable");
-                return await extractPdfText(body, { page_start: input.page_start ?? 1, page_count: input.page_count ?? PDF_PAGES_PER_CALL,
+                return await extractor.extract(body, { page_start: input.page_start ?? 1, page_count: input.page_count ?? PDF_PAGES_PER_CALL,
                   max_text_bytes: Math.min(offset + length, EXTRACT_TEXT_MAX), time_ms: time });
-              } catch (error) { return fail(error instanceof StorageFormatError ? error.code : "storage_read_unavailable"); }
+              } catch (error) { return pdfFailure(error); }
             });
           } catch (error) {
             if (error instanceof PdfBusyError) throw new StorageReadError("storage_read_unavailable", { hint: PDF_BUSY_HINT, next_page_start: input.page_start ?? 1 });

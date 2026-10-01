@@ -1,12 +1,18 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { base64ToBytes } from "./storage-base64";
 import { StorageFormatError } from "./storage-read-formats";
+import { PDF_MAX_BYTES, PDF_PAGES_PER_CALL, PDF_TEXT_MAX, PDF_TIME_MS, type PdfExtraction } from "./storage-read-pdf-common";
+export * from "./storage-read-pdf-common";
 
 /** StorageNormalUse.v0.1 §4.5 (Owner decision 7dbb4c09 Q4): PDF text by page
  * range for clued_storage_read. Pure extraction only: the read agent decides
- * scope, budget and download, and hands the whole file (at most 20 MiB) here.
+ * scope, budget and download in the main Worker, which hands the whole file (at
+ * most 20 MiB) to the extractor Worker (storage-pdf-extractor.ts, Owner decision
+ * 7210e5a5) through the PDF_EXTRACTOR service binding. Only that Worker bundles
+ * this module, so a PDF that defeats every limit below costs one failed read in
+ * the extractor's isolate, never the main Worker's isolate or its other requests.
  *
- * pdf.js (pdfjs-dist legacy build, Apache-2.0) runs in this isolate as its
+ * pdf.js (pdfjs-dist legacy build, Apache-2.0) runs in the extractor's isolate as its
  * in-thread "fake" worker: no Worker thread, no canvas, no font loading, no
  * eval (pdf.js 6 has no eval path), no network (the only loader is the bundled
  * CMap table below). pdf.js and the CMaps are imported on the first PDF read
@@ -40,16 +46,6 @@ import { StorageFormatError } from "./storage-read-formats";
  * Type1 / CFF font whose codes only its own built-in encoding names, without
  * ToUnicode, yields an unreliable page (§4.5 false negative). */
 
-export const PDF_MAX_BYTES = 20 * 1024 * 1024;
-/** Pages per call (contract §5.1: at most 20). */
-export const PDF_PAGES_PER_CALL = 20;
-/** Extracted text per call, like Office (a call returns at most 256 KiB of it). */
-export const PDF_TEXT_MAX = 8 * 1024 * 1024;
-/** Wall time for extraction in one call (the caller may pass less). Checked
- * between pages and every few text chunks, after a timer yield (a Worker's
- * clock advances only across I/O and timers), and inside pdf.js by the guard
- * (PDF_DEADLINE_CHECK_EVERY). */
-export const PDF_TIME_MS = 10000;
 /** Decoded-byte buffers one pdf.js stream may allocate. Buffers grow by
  * doubling, so this keeps any one decoded stream under 8 MiB (at most 12 MiB
  * live while it grows); real content streams, fonts and CMaps are far smaller. */
@@ -57,26 +53,6 @@ export const PDF_DECODE_STREAM_MAX = 16 * 1024 * 1024;
 /** Decoded-byte buffers all streams of one call may allocate (about 32 MiB of
  * decoded content, which also bounds the operators pdf.js interprets). */
 export const PDF_DECODE_TOTAL_MAX = 48 * 1024 * 1024;
-
-export type PdfTextLayer = "present" | "partial" | "none";
-export type PdfExtraction = {
-  page_count: number;
-  /** First selected page; pages_extracted pages from it are in `text`. */
-  page_start: number; pages_extracted: number;
-  /** One text: "# Page N" header line per page, then its text. */
-  text: string;
-  /** The text of pages [page_start, page_start + pages_extracted) is whole. False only
-   * when the text limit stopped extraction (the last page may be cut); a time
-   * limit instead ends the selection early at a page boundary. */
-  complete: boolean;
-  /** The time limit ended the selection before its last page. */
-  time_limited: boolean;
-  text_layer: PdfTextLayer;
-  /** Pages whose text looked like glyph codes rather than characters; their text is omitted. */
-  unreliable_pages: number[];
-  /** A predefined CJK CMap the document needs is not bundled; affected text may be missing. */
-  cmap_missing: boolean;
-};
 
 /** Content-stream objects (operands and operators) pdf.js may parse in one
  * call: about 0.5–1 µs each, so an operator bomb stops within a few seconds;
@@ -141,6 +117,21 @@ export const PDF_STRING_CHARS_MAX = 4 * 1024 * 1024;
  * the bound, 100 such fonts (a 65 KB file) or one `/W [0 30000000 500]` (1 KB)
  * exhausted a 64 MB heap. */
 export const PDF_GLYPH_ENTRIES_MAX = 2_000_000;
+/** Cross-reference entries pdf.js may allocate in one call (xref table lines,
+ * xref stream entries, entries found while reconstructing a damaged file): an
+ * entry object costs some 40-60 bytes of heap, so about 16-24 MB at the limit.
+ * A 20 MiB document with this many objects would average about 50 bytes per
+ * object; real ones have far fewer (a 1 000-page manual some 50-150 thousand).
+ * Before the bound, `/W [0 0 0] /Size 10000000` (a 560 B file) or `/W [1 0 0]`
+ * over 9 MB of Flate zeros (9 KB) exhausted a 64 MB heap. */
+export const PDF_XREF_ENTRIES_MAX = 400_000;
+/** Characters x codespace ranges pdf.js may scan in one call
+ * (CMap.readCharCode compares each shown character with every codespace range
+ * of the font's encoding CMap; build/pdfjs-decode-guard.mjs also caps a CMap at
+ * 1 024 ranges). A real CMap has 1-8 ranges, so 20 dense CJK pages (some
+ * 100-200 thousand characters) scan about 1-2 M; at the limit, about 0.1 s.
+ * Before, 400 000 ranges and a 200 KB string ran for minutes. */
+export const PDF_CODESPACE_SCAN_MAX = 32 * 1024 * 1024;
 
 /** The guard compares the call's clock with its deadline once every this many
  * guard calls (tokens, objects, strings, operators, decoded buffers ...), so a
@@ -164,9 +155,15 @@ export const PDF_DEADLINE_CHECK_EVERY = 4096;
 export const PDF_TEXT_ITEMS_MAX = 200_000;
 
 type DecodeBudget = { allocated: number; tokens: number; primitives: number; cmap: number; objects: number; content: number; chars: number; glyphs: number;
-  exceeded: boolean; calls: number; clock: () => number; deadline: number; timedOut: boolean; streams: WeakMap<object, number> };
+  xref: number; scan: number; exceeded: boolean; calls: number; clock: () => number; deadline: number; timedOut: boolean; streams: WeakMap<object, number> };
 const decodeBudgets = new AsyncLocalStorage<DecodeBudget>();
-class DecodeLimit extends Error {}
+/** Thrown by the guard; `cluedPdfLimit` lets the patched CMap parser rethrow it
+ * instead of skipping to the next token. Once a call is over a limit or past its
+ * deadline every further guard call throws the same prebuilt error, so a pdf.js
+ * loop that swallows errors (one per token) does not also build a stack trace
+ * per token (800 000 of them took 10 s). */
+class DecodeLimit extends Error { readonly cluedPdfLimit = true; }
+const OVER_LIMIT = new DecodeLimit("pdf resource limit"), OVER_TIME = new DecodeLimit("pdf time limit");
 /** Called by the patched pdf.js worker (build/pdfjs-decode-guard.mjs): before
  * it allocates `bytes` of decoded data for `stream` ("decode"), for each
  * content-stream token ("token"), for each new cached Name / Cmd
@@ -177,14 +174,17 @@ class DecodeLimit extends Error {}
  * operator or path operator added to a kept operator list ("oplist":
  * PDF_CONTENT_OBJECTS_MAX), for the `bytes` characters of each
  * lexed string or name ("chars": PDF_STRING_CHARS_MAX), before a font's
- * glyph table gets `bytes` entries ("glyphs": PDF_GLYPH_ENTRIES_MAX), and where a
+ * glyph table gets `bytes` entries ("glyphs": PDF_GLYPH_ENTRIES_MAX), before
+ * `bytes` cross-reference entries are allocated ("xref": PDF_XREF_ENTRIES_MAX),
+ * before `bytes` characters x codespace ranges are scanned ("scan":
+ * PDF_CODESPACE_SCAN_MAX), and where a
  * hard limit is hit ("limit", which includes every image decode). Outside an
  * extraction (no budget in the async context) nothing may be decoded. pdf.js
  * may swallow the throw (stopAtErrors: false skips a failing stream), so the
  * budget records it and the extraction fails with archive_limit_exceeded
  * instead of returning partial text; past the deadline (timedOut) it fails
  * with the time-limit semantics of extractPdfText instead. */
-function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "object" | "oplist" | "chars" | "glyphs" | "limit", stream?: object | null, bytes = 0, code = 0): void {
+function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "object" | "oplist" | "chars" | "glyphs" | "xref" | "scan" | "limit", stream?: object | null, bytes = 0, code = 0): void {
   const budget = decodeBudgets.getStore();
   if (!budget) {
     // Module evaluation creates a few Names before any extraction runs.
@@ -193,7 +193,7 @@ function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "object" 
   }
   if (budget.timedOut || (++budget.calls % PDF_DEADLINE_CHECK_EVERY === 0 && budget.clock() > budget.deadline)) {
     budget.timedOut = true;
-    throw new DecodeLimit("pdf time limit");
+    throw OVER_TIME;
   }
   if (!budget.exceeded) {
     if (kind === "token") { if (++budget.tokens <= PDF_TOKENS_MAX) return; }
@@ -216,6 +216,8 @@ function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "object" 
     else if (kind === "oplist") { if ((budget.content += bytes) <= PDF_CONTENT_OBJECTS_MAX) return; }
     else if (kind === "chars") { if ((budget.chars += bytes) <= PDF_STRING_CHARS_MAX) return; }
     else if (kind === "glyphs") { if (Number.isFinite(bytes) && (budget.glyphs += Math.max(0, bytes)) <= PDF_GLYPH_ENTRIES_MAX) return; }
+    else if (kind === "xref") { if (Number.isFinite(bytes) && (budget.xref += Math.max(0, bytes)) <= PDF_XREF_ENTRIES_MAX) return; }
+    else if (kind === "scan") { if (Number.isFinite(bytes) && (budget.scan += Math.max(0, bytes)) <= PDF_CODESPACE_SCAN_MAX) return; }
     else if (kind === "decode" && stream) {
       const used = (budget.streams.get(stream) ?? 0) + bytes;
       if (used <= PDF_DECODE_STREAM_MAX && budget.allocated + bytes <= PDF_DECODE_TOTAL_MAX) {
@@ -225,7 +227,7 @@ function decodeGuard(kind: "decode" | "token" | "primitive" | "cmap" | "object" 
     }
   }
   budget.exceeded = true;
-  throw new DecodeLimit("pdf resource limit");
+  throw OVER_LIMIT;
 }
 
 type PdfJs = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -244,6 +246,13 @@ function loadPdfJs(): Promise<PdfJs> {
   })();
   loading.catch(() => { loading = null; });
   return loading;
+}
+
+/** True once the patched pdf.js worker (both build markers) is loaded: the
+ * extractor's marker reports it, so the main Worker never sends a PDF to an
+ * extractor built without the guard. */
+export async function pdfWorkerReady(): Promise<boolean> {
+  try { await loadPdfJs(); return true; } catch { return false; }
 }
 
 const encoder = new TextEncoder();
@@ -272,24 +281,6 @@ export function looksGarbled(text: string): boolean {
   return bad / total > 0.1 || (buckets.size >= 4 && other / total >= 0.2);
 }
 
-/** The whole body into one buffer of exactly `size` bytes (the Drive metadata
- * size, at most 20 MiB): no chunk list plus copy, so peak memory stays at the
- * file size. More or fewer bytes than declared fail closed. */
-export async function readExactBody(response: Response, size: number): Promise<Uint8Array> {
-  if (!Number.isSafeInteger(size) || size < 0 || size > PDF_MAX_BYTES) throw new StorageFormatError("binary_too_large");
-  const out = new Uint8Array(size);
-  const reader = response.body?.getReader();
-  let at = 0;
-  if (reader) for (;;) {
-    let chunk: ReadableStreamReadResult<Uint8Array>;
-    try { chunk = await reader.read(); } catch { throw new StorageFormatError("storage_read_unavailable"); }
-    if (chunk.done) break;
-    if (at + chunk.value.length > size) { await reader.cancel().catch(() => {}); throw new StorageFormatError("storage_read_unavailable"); }
-    out.set(chunk.value, at); at += chunk.value.length;
-  }
-  if (at !== size) throw new StorageFormatError("storage_read_unavailable");
-  return out;
-}
 
 // C0/C1 controls, and the bidi embedding / override / isolate controls that
 // could make extracted text display in another order than it reads.
@@ -322,57 +313,6 @@ export function classifyPdfError(error: unknown, limitHit: boolean): StorageForm
   return new StorageFormatError("document_invalid");
 }
 
-/** How long a PDF read waits for the isolate's PDF slot before it gives up. */
-export const PDF_SLOT_WAIT_MS = 2000;
-export const PDF_BUSY_HINT = "Another PDF is being read by this server instance right now. Retry the same read in a few seconds.";
-/** The PDF slot stayed busy for PDF_SLOT_WAIT_MS (storage_read_unavailable with PDF_BUSY_HINT). */
-export class PdfBusyError extends Error { constructor() { super("pdf slot busy"); } }
-let pdfSlot: Promise<void> | null = null;
-/** Runs `fn` (a PDF download and extraction) when no other PDF read runs in
- * this isolate: each may hold a 20 MiB file plus pdf.js's working set (about
- * 20-60 MB under the limits above), so two at once could approach the 128 MB
- * isolate. A read waits at most `waitMs` for the slot, then fails
- * PdfBusyError. Waiters are not queued in order; each takes the slot if it is
- * free when it wakes. */
-export async function withPdfSlot<T>(fn: () => Promise<T>, waitMs = PDF_SLOT_WAIT_MS): Promise<T> {
-  if (pdfSlot) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<"timeout">(resolve => { timer = setTimeout(() => resolve("timeout"), waitMs); });
-    try { while (pdfSlot) if (await Promise.race([pdfSlot, timeout]) === "timeout") throw new PdfBusyError(); }
-    finally { clearTimeout(timer); }
-  }
-  let release!: () => void;
-  pdfSlot = new Promise<void>(resolve => { release = resolve; });
-  try { return await fn(); } finally { pdfSlot = null; release(); }
-}
-
-/** The read's Drive calls share one 25 s signal; the post-read scope recheck
- * (a fresh ancestor walk) needs time after extraction. */
-export const PDF_CALL_MS = 25000, PDF_RECHECK_RESERVE_MS = 5000, PDF_MIN_TIME_MS = 1000;
-/** Extraction time for a call whose signal started `elapsedMs` ago: what is
- * left of it after the recheck reserve, at most PDF_TIME_MS; null when less
- * than PDF_MIN_TIME_MS is left (the download took the time). */
-export function pdfTimeBudget(elapsedMs: number): number | null {
-  const left = PDF_CALL_MS - Math.max(0, elapsedMs) - PDF_RECHECK_RESERVE_MS;
-  return left < PDF_MIN_TIME_MS ? null : Math.min(left, PDF_TIME_MS);
-}
-export const PDF_TIME_CUT_HINT = "The time limit ended this PDF read before the requested offset. Earlier text was already returned: " +
-  "read again with page_start = next_page_start and offset 0.";
-/** An offset at or past the extracted text. Null: an empty chunk at eof (the
- * selection's text is whole and shorter). A cut by the text limit is
- * archive_limit_exceeded (the text up to offset + length is never reached).
- * A cut by the time limit on a continuation (offset > 0) is
- * storage_read_unavailable with next_page_start: this call ended the
- * selection earlier than the call that produced the offset, so an empty eof
- * would silently drop the rest of the selection. */
-export function pdfOffsetPastText(pages: PdfExtraction, textLength: number, offset: number):
-  null | { code: "archive_limit_exceeded" } | { code: "storage_read_unavailable"; hint: string; next_page_start: number } {
-  if (offset < textLength) return null;
-  if (!pages.complete) return { code: "archive_limit_exceeded" };
-  if (pages.time_limited && offset > 0)
-    return { code: "storage_read_unavailable", hint: PDF_TIME_CUT_HINT, next_page_start: pages.page_start + pages.pages_extracted };
-  return null;
-}
 
 export async function extractPdfText(bytes: Uint8Array, options: { page_start: number; page_count: number; max_text_bytes: number;
   clock?: () => number; time_ms?: number }): Promise<PdfExtraction> {
@@ -397,7 +337,7 @@ export async function extractPdfText(bytes: Uint8Array, options: { page_start: n
       throw new Error("unavailable");
     }
   }
-  const budget: DecodeBudget = { allocated: 0, tokens: 0, primitives: 0, cmap: 0, objects: 0, content: 0, chars: 0, glyphs: 0, exceeded: false,
+  const budget: DecodeBudget = { allocated: 0, tokens: 0, primitives: 0, cmap: 0, objects: 0, content: 0, chars: 0, glyphs: 0, xref: 0, scan: 0, exceeded: false,
     calls: 0, clock, deadline, timedOut: false, streams: new WeakMap() };
   // pdf.js's in-thread worker runs in promise jobs started from here, so all
   // decoding for this document sees this budget through the async context.

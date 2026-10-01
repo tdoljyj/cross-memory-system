@@ -879,9 +879,9 @@ N1a (text bodies only, `format_unsupported` for other formats).
   decoded header) return `reason: "image_too_large"` with metadata and no bytes.
 - **PDF text** (`apps/clued-cloud/worker/storage-read-pdf.ts`, contract §4.5
   PDF paragraph). PDFs up to 20 MiB are downloaded whole in one request into a
-  buffer of exactly the Drive `size` and run through pdf.js (`pdfjs-dist`,
-  pinned exact, legacy build, in-thread worker, no canvas, no font loading, no
-  network). `page_start` (default 1) and `page_count` (1–20, default 20) pick
+  buffer of exactly the Drive `size` and sent to the separate PDF extractor
+  Worker, which runs pdf.js (`pdfjs-dist`, pinned exact, legacy build,
+  in-thread worker, no canvas, no font loading, no network). `page_start` (default 1) and `page_count` (1–20, default 20) pick
   pages; each page is `# Page N` plus its text, and `offset` / `length` address
   that text like Office text. Responses carry `page_count`, `pages`,
   `next_page_start`, `text_layer` (`none` = scan, no OCR) and, when a page's
@@ -889,15 +889,15 @@ N1a (text bodies only, `format_unsupported` for other formats).
   bundled, `text_unreliable` (that page's text is omitted). Password-protected
   or damaged files are `document_invalid`; larger files return
   `reason: "pdf_too_large"` with no body request. A PDF above 256 KiB reserves
-  `min(size, 5 MiB)` before the download. pdf.js and the CMaps load on the first
-  PDF read only (separate chunks, about +1 MiB gzip on the Worker upload).
+  `min(size, 5 MiB)` before the download. pdf.js and the CMaps live only in the
+  extractor Worker (about 1.2 MiB gzip) and load on its first PDF read.
   Every call downloads the whole file again (page ranges and offset
   continuations included): up to 20 MiB of provider bytes per call that the
   content budget does not count (it counts delivered text only; the
   provider-byte dimension is N4).
   Hostile files: pdf.js has no decoded-size limit, so the build patches the
   pinned worker (`apps/clued-cloud/build/pdfjs-decode-guard.mjs`, applied by
-  `vite.config.ts` and by the esbuild test bundles) to call a per-extraction
+  `scripts/build-pdf-extractor.mjs` and by the esbuild test bundles) to call a per-extraction
   guard: at most 16 MiB of decoded-buffer allocations per stream (a decoded
   stream stays under 8 MiB) and 48 MiB per call, 4 000 000 content-stream
   tokens, 200 000 new cached names, strings / names / arrays up to 256 Ki
@@ -913,16 +913,60 @@ N1a (text bodies only, `format_unsupported` for other formats).
   `storage_read_unavailable`, not `document_invalid`. Embedded font programs
   (FontFile / FontFile2 / FontFile3) are never read or converted: text comes
   from Encoding / Differences / ToUnicode, and a call past 200 000 text items is
-  `archive_limit_exceeded`. The Worker refuses to parse PDFs if the patched
-  worker's `CLUED_PDF_DECODE_GUARD` or `CLUED_PDF_FONT_PROGRAMS` marker is missing.
+  `archive_limit_exceeded`. Cross-reference entries (xref tables and streams,
+  reconstruction) are capped at 400 000 per call, an xref stream with zero entry
+  width or a range longer than its data and an object stream whose `/N` exceeds
+  a quarter of its decoded bytes are refused, a ToUnicode map above code 0x10000
+  is built sparse, and a CMap may declare at most 1 024 codespace ranges with
+  characters x ranges scanned capped at 32 Mi per call. The extractor refuses to
+  parse PDFs if the patched worker's `CLUED_PDF_DECODE_GUARD` or
+  `CLUED_PDF_FONT_PROGRAMS` marker is missing, and its marker then reports
+  `decode_guard: false`, which the main Worker refuses.
   `tests/resource-center-storage-read-pdf-bounds.test.mjs` runs deflate bombs
   in a child with `--max-old-space-size=64`.
+- **PDF extractor Worker** (Owner decision `7210e5a5`, contract §4.5
+  "隔离"). pdf.js never runs in the main Worker `clued-cloud`: a PDF read sends
+  the file and four options (`page_start`, `page_count`, `max_text_bytes`,
+  `time_ms`) through the service binding `PDF_EXTRACTOR` (RPC,
+  `worker/storage-read-pdf-client.ts`) to the Worker `clued-storage-pdf`
+  (`wrangler.pdf-extractor.jsonc`; entry `worker/storage-pdf-extractor.ts`,
+  built by `scripts/build-pdf-extractor.mjs` into `dist/pdf-extractor/index.js`).
+  The extractor has no bindings, vars or secrets, no workers.dev route or
+  preview URL, only the `nodejs_als` compatibility flag, and
+  `limits.cpu_ms: 10000` (enforced only on Workers Paid / Standard usage; on
+  Workers Free a Worker gets 10 ms of CPU per invocation and the extractor is
+  unusable). Before any body request the main Worker calls `marker()`: a
+  missing binding, a failed or slow (5 s) marker call, another contract or
+  version (`clued.storage-pdf-extractor/1`, version 1), or a pdf.js without
+  the patch markers is `storage_read_unavailable` with a fixed hint, and the
+  read never falls back to parsing in the main Worker. If the `extract` call
+  itself fails (the extractor ran out of memory or CPU, crashed) or does not
+  return within `time_ms` + 2 s, that read fails once with a fixed hint
+  (`archive_limit_exceeded` for memory / CPU / time, otherwise
+  `storage_read_unavailable`) and is not retried. Results are rebuilt field by
+  field and refused above 16 Mi UTF-16 units of text. One extraction runs per
+  extractor isolate at a time; a second is refused at once (busy hint).
+  Deploy order: the production release workflow deploys the extractor
+  (`npx wrangler deploy --config wrangler.pdf-extractor.jsonc`) with the same
+  `CLUED_CLOUDFLARE_DEPLOY_TOKEN` before the main Worker, and after both are
+  live `scripts/verify-pdf-extractor.mjs` requires
+  `GET /v1/storage/pdf-extractor/check` (a fixed built-in one-page PDF through
+  the binding) to return 200 with the expected text and the repository's
+  extractor version (evidence `release-evidence/pdf-extractor.json`). The
+  token's existing Workers Scripts Edit covers creating and updating the new
+  script, its subdomain settings, CPU limit and the service binding; no new
+  permission is expected. When the request, result or guard semantics change,
+  bump `PDF_EXTRACTOR_VERSION` in `worker/storage-read-pdf-common.ts` (both
+  Workers ship from the same commit). Local `vite dev` has no extractor
+  binding, so PDF reads fail closed there.
   Upgrading `pdfjs-dist`: bump the exact version, run
   `node scripts/generate-pdf-cmaps.mjs`, re-check the patch anchors in
   `build/pdfjs-decode-guard.mjs` (the build fails when one does not match), and
-  rerun `tests/resource-center-storage-read-pdf.test.mjs` and
+  rerun `tests/resource-center-storage-read-pdf.test.mjs`,
   `tests/resource-center-storage-read-pdf-bounds.test.mjs` (the first fails
-  when the CMap module does not match the installed version).
+  when the CMap module does not match the installed version) and
+  `tests/resource-center-storage-pdf-extractor.test.mjs` (both Workers under
+  workerd with a real service binding).
 - **Metadata only.** Zip and other archives, video (with
   `media_metadata` or `processing: true`), audio, HEIC/TIFF/BMP, legacy
   .doc/.xls/.ppt, ODF, other Google types and other binaries return

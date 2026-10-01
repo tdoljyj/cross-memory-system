@@ -13,6 +13,7 @@ import {
 } from "./continuity";
 
 import { delegatedOAuthEnabled, handleDelegatedOAuth, type DelegatedOAuthEnv } from "./delegated-oauth";
+import { checkPdfExtractor, PDF_EXTRACTOR_CHECK_PATH } from "./storage-read-pdf-client";
 
 interface Env extends ContinuityEnv, DelegatedOAuthEnv {
   ASSETS: Fetcher;
@@ -40,6 +41,14 @@ interface ExecutionContext {
 const legacyWorker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // StorageNormalUse §4.5: release-time proof that the PDF_EXTRACTOR binding
+    // works (a fixed built-in PDF round trip; no input is read from the request).
+    if (url.pathname === PDF_EXTRACTOR_CHECK_PATH) {
+      if (request.method !== "GET") return new Response(null, { status: 405, headers: { allow: "GET" } });
+      const check = await checkPdfExtractor(env.PDF_EXTRACTOR);
+      return Response.json(check, { status: check.status === "ok" ? 200 : 503, headers: { "cache-control": "no-store" } });
+    }
 
     const continuityResponse = await handleContinuityRequest(request, env, ctx);
     if (continuityResponse) return continuityResponse;

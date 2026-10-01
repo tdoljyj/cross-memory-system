@@ -10,7 +10,8 @@ import { build, stop } from "esbuild";
 import { PDF_WORKER_MODULE, patchPdfWorker, pdfDecodeGuardEsbuildPlugin } from "../build/pdfjs-decode-guard.mjs";
 import { catalogDictBombPdf, cffProgram, cmapRangeBombPdf, dictArrayBombPdf, embeddedFontPdf, emptyArrayBombPdf, extraOperandsBombPdf, flateLatinPdf, formXObjectsBombPdf,
   heldOperandsBombPdf, stringArrayBombPdf, imageFilterBombPdf, longStringPdf, operatorBombPdf, predefinedCjkFontsPdf, realisticTextPdf, repeatedStreamPdf, textBombPdf,
-  textItemsBombPdf, toUnicodeBombPdf, trueTypeProgram, type3CharProcBombPdf, cidFontsPdf, cidToGidMapStream } from "./resource-center-storage-pdf.fixture.mjs";
+  textItemsBombPdf, toUnicodeBombPdf, trueTypeProgram, type3CharProcBombPdf, cidFontsPdf, cidToGidMapStream, objStmCountBombPdf, xrefStreamEntriesBombPdf,
+  xrefTableEntriesPdf, sparseToUnicodePdf, codespaceRangesBombPdf } from "./resource-center-storage-pdf.fixture.mjs";
 
 // StorageNormalUse.v0.1 §4.5 resource bounds (independent review MAJOR): small
 // deflate bombs must not exhaust a Worker isolate. Each case runs in its own
@@ -140,6 +141,26 @@ for (const [name, pdf, expect, seconds] of [
     r => r.code === "archive_limit_exceeded", 5],
   ["40 CIDFonts whose /W and /W2 each span all 65 536 CIDs pass the glyph limit", () => cidFontsPdf(40, { vertical: true,
     entries: i => `/W [0 65535 ${500 + i}] /W2 [0 65535 -1000 500 880]` }), r => r.code === "archive_limit_exceeded", 5],
+  // Review of 70c2a54a (arrays and loops sized by one number in the file). Before, under this 64 MB heap: the object
+  // stream /N, both xref-stream cases and the sparse ToUnicode ran out of memory within 0.2 s, and the 400 000 codespace
+  // ranges were still running after 30 s (the review measured 105 s of CPU).
+  ["714 B object stream with /N 10 000 000", () => objStmCountBombPdf(), r => r.code === "document_invalid", 3],
+  ["an object stream header of 200 000 entries passes the object limit", () => objStmCountBombPdf({ n: 200000, pairs: 200000 }),
+    r => r.code === "archive_limit_exceeded", 3],
+  ["a one-entry object stream still reads", () => objStmCountBombPdf({ n: 1 }), r => r.ok && r.complete && r.text_bytes === "# Page 1\nObject stream text".length, 3],
+  // pdf.js reconstructs the cross-reference from the objects after refusing the stream.
+  ["562 B xref stream with /W [0 0 0] /Size 10 000 000", () => xrefStreamEntriesBombPdf(),
+    r => r.ok && r.complete && r.text_bytes === "# Page 1\nObject stream text".length, 3],
+  ["xref stream whose /Size is longer than its data", () => xrefStreamEntriesBombPdf({ w: [1, 4, 2], size: 1_000_000, data: Buffer.alloc(70) }),
+    r => r.ok && r.complete && r.text_bytes === "# Page 1\nObject stream text".length, 3],
+  ["9 KB xref stream with /W [1 0 0] over 9 MB of Flate zeros", () => xrefStreamEntriesBombPdf({ w: [1, 0, 0], size: 9_000_000, data: Buffer.alloc(9_000_000), flate: true }),
+    r => r.code === "archive_limit_exceeded", 3],
+  ["10 MB xref table of 500 000 entries passes the xref limit", () => xrefTableEntriesPdf(500_000), r => r.code === "archive_limit_exceeded", 5],
+  ["6 MB xref table of 300 000 entries still reads", () => xrefTableEntriesPdf(300_000), r => r.ok && r.complete && r.text_bytes === "# Page 1\nxref table entries".length, 5],
+  ["1.4 KB ToUnicode with one bfchar <00FFFFFF>", () => sparseToUnicodePdf(), r => r.ok && r.complete && r.text_bytes === "# Page 1\nAB".length, 3],
+  ["12 KB encoding CMap of 400 000 codespace ranges and a 200 KB string", () => codespaceRangesBombPdf(), r => r.code === "archive_limit_exceeded", 3],
+  ["1 000 codespace ranges and a 200 KB string pass the scan limit", () => codespaceRangesBombPdf({ ranges: 1000 }), r => r.code === "archive_limit_exceeded", 3],
+  ["4 codespace ranges and a 200 KB string still read", () => codespaceRangesBombPdf({ ranges: 4, matching: true }), r => r.ok && r.complete, 3],
 ]) {
   test(`bounded under a 64 MB heap: ${name}`, { timeout: 90000 }, async t => {
     const result = await measure(pdf());
@@ -256,8 +277,13 @@ test("the patch fails the build when pdf.js does not match the pinned anchors", 
   for (const inserted of ["nonProcessedArgs.splice(0, nonProcessedArgs.length - 33)", '__cluedPdfDecodeGuard("oplist", null, 6);\n    this.optimizer.push',
     '__cluedPdfDecodeGuard("oplist", null, 1);\n    const {\n      pathMinMax', 'for (const n of []) {\n        fontFile = descriptor.get(n);',
     "if (properties.cluedEmbeddedFontFile) this.missingFile = false;", "!properties.file && !properties.cluedEmbeddedFontFile || properties.isInternalFont",
-    'export const CLUED_PDF_FONT_PROGRAMS = "skipped";'])
+    'export const CLUED_PDF_FONT_PROGRAMS = "skipped";', 'if (n < 0 || n > cluedObjStmBytes / 4)', '__cluedPdfDecodeGuard("object", parser, 3 * n);',
+    "!(cluedEntryWidth > 0)", 'if (cluedEntries > 0) globalThis.__cluedPdfDecodeGuard("xref", null, cluedEntries);',
+    'globalThis.__cluedPdfDecodeGuard("xref", null, 1);\n        const entry = {', 'globalThis.__cluedPdfDecodeGuard("xref", null, 1);\n          this.#entries[num] = {',
+    "const map = cmap.length <= 0x10000 ? new Array(cmap.length) : [];", "if (this.numCodespaceRanges >= 1024) globalThis.__cluedPdfDecodeGuard(\"limit\");",
+    "ex instanceof MissingDataException || ex?.cluedPdfLimit === true"])
     assert.equal(patched.split(inserted).length, 2, inserted);
+  assert.equal(patched.split('globalThis.__cluedPdfDecodeGuard("scan", null, chars.length * this.cMap.numCodespaceRanges);').length, 3);
   // No FontFile lookup is left in translateFont (the patched loop iterates over nothing).
   assert.equal(patched.includes('for (const n of ["FontFile", "FontFile2", "FontFile3"])'), false);
   for (const anchor of ["  addOp(fn, args) {\n    this.optimizer.push(fn, args);\n    this.weight++;",

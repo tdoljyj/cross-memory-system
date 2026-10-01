@@ -401,3 +401,63 @@ export const cidToGidMapStream = bytes => {
   const data = deflateSync(Buffer.alloc(bytes, Buffer.from([0, 1])), { level: 9 }).toString("latin1");
   return `<< /Length ${data.length} /Filter /FlateDecode >>\nstream\n${data}\nendstream`;
 };
+
+// Cross-reference and CMap pre-allocation (review of 70c2a54a): pdf.js sized arrays or loops from a number in the
+// file before it parsed what that number describes.
+/** objects: bodies of objects 1..n (null: no object). An xref stream object (number n + 1) with `/W [1 4 2]` lists
+ * each as uncompressed, or as `compressed[number] = [objStm, index]`; `xref` replaces its /Size and /W entries,
+ * `xrefData` its (unfiltered) entry data, and `xrefFilter` FlateDecode-compresses that data. */
+export function xrefStreamPdf(objects, { compressed = {}, xref = null, xrefData = null, xrefFilter = false } = {}) {
+  let out = "%PDF-1.7\n%\xe2\xe3\xcf\xd3\n";
+  const offsets = [];
+  objects.forEach((body, index) => { offsets.push(body === null ? null : out.length); if (body !== null) out += `${index + 1} 0 obj\n${body}\nendobj\n`; });
+  const self = objects.length + 1, at = out.length;
+  const entry = (type, a, b) => Buffer.from([type, (a >>> 24) & 0xff, (a >>> 16) & 0xff, (a >>> 8) & 0xff, a & 0xff, (b >> 8) & 0xff, b & 0xff]);
+  let data = xrefData ?? Buffer.concat([entry(0, 0, 65535), ...offsets.map((offset, i) => compressed[i + 1] ? entry(2, compressed[i + 1][0], compressed[i + 1][1])
+    : offset === null ? entry(0, 0, 0) : entry(1, offset, 0)), entry(1, at, 0)]);
+  if (xrefFilter) data = deflateSync(data, { level: 9 });
+  out += `${self} 0 obj\n<< /Type /XRef ${xref ?? `/Size ${self + 1} /W [1 4 2]`} /Root 1 0 R /Length ${data.length}${xrefFilter ? " /Filter /FlateDecode" : ""} >>\nstream\n` +
+    data.toString("latin1") + `\nendstream\nendobj\nstartxref\n${at}\n%%EOF\n`;
+  return new Uint8Array(Buffer.from(out, "latin1"));
+}
+const textPageObjects = (contents = "BT /F1 11 Tf 50 700 Td (Object stream text) Tj ET") => ["<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>", HELVETICA, stream(contents)];
+/** The Catalog (object 1) lives in object stream 6 whose `/N` is `n`; its header holds `pairs` `number offset` pairs
+ * (FlateDecode). pdf.js allocated `new Array(n)` three times before it parsed the header. */
+export function objStmCountBombPdf({ n = 10_000_000, pairs = 1 } = {}) {
+  const header = "1 0 ".repeat(pairs);
+  const data = deflateSync(Buffer.from(header + "<< /Type /Catalog /Pages 2 0 R >>", "latin1"), { level: 9 }).toString("latin1");
+  return xrefStreamPdf([null, ...textPageObjects(), `<< /Type /ObjStm /N ${n} /First ${header.length} /Length ${data.length} /Filter /FlateDecode >>\nstream\n${data}\nendstream`],
+    { compressed: { 1: [6, 0] } });
+}
+/** A file whose only cross-reference is an xref stream with `/W w` and `/Size size` over `data` (FlateDecode when
+ * `flate`): pdf.js read /Size entries, allocating one per entry, whatever bytes the stream held. */
+export const xrefStreamEntriesBombPdf = ({ w = [0, 0, 0], size = 10_000_000, data = Buffer.alloc(0), flate = false } = {}) =>
+  xrefStreamPdf(["<< /Type /Catalog /Pages 2 0 R >>", ...textPageObjects()], { xref: `/Size ${size} /W [${w.join(" ")}]`, xrefData: data, xrefFilter: flate });
+/** A classic xref table with one extra subsection of `count` free entries (20 bytes each, uncompressed). */
+export function xrefTableEntriesPdf(count) {
+  const text = Buffer.from(latinPdf([["xref table entries"]])).toString("latin1");
+  const cut = text.indexOf("trailer\n");
+  return new Uint8Array(Buffer.concat([Buffer.from(text.slice(0, cut), "latin1"), Buffer.from(`100 ${count}\n`, "latin1"),
+    Buffer.alloc(count * 20, "0000000000 00000 f \n", "latin1"), Buffer.from(text.slice(cut).replace(/\/Size \d+/, `/Size ${100 + count}`), "latin1")]));
+}
+/** A ToUnicode CMap whose highest entry is one 4-byte bfchar `code` (pdf.js sized the Unicode map by the highest code). */
+export const sparseToUnicodePdf = (code = "00FFFFFF") => buildPdf([...catalog, ...identityFont("8 0 R"),
+  stream(["/CIDInit /ProcSet findresource begin 12 dict begin begincmap", "1 begincodespacerange <0000> <FFFF> endcodespacerange",
+    "3 beginbfchar", `<${code}> <0043>`, "<0001> <0041>", "<0002> <0042>", "endbfchar endcmap CMapName currentdict /CMap defineresource pop end end"].join("\n"))]);
+/** A Type0 font whose /Encoding is an embedded CMap of `ranges` 2-byte codespace ranges (none matching the text unless
+ * `matching`), shown as one `textBytes`-character string: pdf.js scanned every range for every character. */
+export function codespaceRangesBombPdf({ ranges = 400_000, textBytes = 200_000, matching = false } = {}) {
+  const cmap = deflateSync(Buffer.concat([Buffer.from("/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n/CMapName /Bomb def\n" +
+    `${ranges} begincodespacerange\n`, "latin1"), Buffer.alloc(ranges * 14, matching ? "<0000> <FFFF>\n" : "<FFFF> <FFFF>\n", "latin1"),
+  Buffer.from("endcodespacerange\n1 begincidrange\n<0000> <FFFF> 0\nendcidrange\nendcmap CMapName currentdict /CMap defineresource pop end end\n", "latin1")]),
+  { level: 9 }).toString("latin1");
+  const text = deflateSync(Buffer.concat([Buffer.from("BT /F1 11 Tf 50 700 Td (", "latin1"), Buffer.alloc(textBytes, "A"), Buffer.from(") Tj ET\n", "latin1")]),
+    { level: 9 }).toString("latin1");
+  return buildPdf([...catalog,
+    "<< /Type /Font /Subtype /Type0 /BaseFont /Embedded /Encoding 8 0 R /DescendantFonts [6 0 R] >>",
+    ...onePage("5 0 R"), `<< /Length ${text.length} /Filter /FlateDecode >>\nstream\n${text}\nendstream`,
+    "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Embedded /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R /DW 1000 /CIDToGIDMap /Identity >>",
+    "<< /Type /FontDescriptor /FontName /Embedded /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 900 /Descent -200 /CapHeight 700 /StemV 80 >>",
+    `<< /Length ${cmap.length} /Filter /FlateDecode >>\nstream\n${cmap}\nendstream`]);
+}

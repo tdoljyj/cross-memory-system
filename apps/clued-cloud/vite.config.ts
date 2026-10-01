@@ -4,7 +4,6 @@ import { execFileSync } from "node:child_process";
 import { resolveSupabasePublicConfig } from "./app/supabase-public-config";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
-import { pdfDecodeGuardVitePlugin } from "./build/pdfjs-decode-guard.mjs";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
@@ -91,12 +90,9 @@ export default defineConfig(async ({ mode }) => {
         ? { watch: { useFsEvents: false, usePolling: true } }
         : {}),
     },
-    // pdf.js pre-bundled by the dev optimizer would skip the decode guard
-    // patch (and PDF reads then fail closed), so it is always transformed.
-    optimizeDeps: { exclude: ["pdfjs-dist"] },
     plugins: [
-      // StorageNormalUse §4.5: bounded pdf.js decoding (worker/storage-read-pdf.ts).
-      pdfDecodeGuardVitePlugin(),
+      // StorageNormalUse §4.5: this Worker never bundles pdf.js; PDFs are parsed by
+      // the extractor Worker clued-storage-pdf (scripts/build-pdf-extractor.mjs).
       vinext(),
       sites(),
       cloudflare({
