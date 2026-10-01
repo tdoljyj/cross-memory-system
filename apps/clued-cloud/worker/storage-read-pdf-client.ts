@@ -54,7 +54,7 @@ async function within<T>(start: () => Promise<T>, ms: number): Promise<T | typeo
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
 /** The marker must name exactly this contract, this version or the one before
- * it (acceptedExtractorVersions: the deploy gap between the two Workers), and
+ * it (acceptedExtractorVersions: N and its neighbours, for the deploy gap), and
  * report the patched pdf.js worker (decode guard, no font programs). */
 export function validMarker(marker: unknown, current: number = PDF_EXTRACTOR_VERSION): boolean {
   return record(marker) && marker.contract === PDF_EXTRACTOR_CONTRACT && typeof marker.version === "number" &&

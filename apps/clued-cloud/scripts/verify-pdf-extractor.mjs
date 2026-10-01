@@ -23,8 +23,12 @@ export function expectedExtractorOf(source) {
   return contract && version ? { contract, version: Number(version) } : null;
 }
 
-export function verifyPdfExtractorCheck({ expected, status, body }) {
+export function verifyPdfExtractorCheck({ expected, status, body, notBefore }) {
   const errors = [];
+  // A fresh round trip: not an answer the route replayed from before this
+  // verification started (5 s allowance for clock skew).
+  if (typeof notBefore === 'number' && body?.status === 'ok' && body?.cached !== false &&
+      !(Date.parse(body?.checked_at ?? '') >= notBefore - 5_000)) errors.push('pdf_extractor_check_not_fresh');
   if (!expected) errors.push('repository_extractor_contract_missing');
   if (status !== 200) errors.push(`pdf_extractor_check_http_${status}`);
   if (body?.contract !== 'clued.storage-pdf-extractor-check/1') errors.push('pdf_extractor_check_contract_invalid');
@@ -52,9 +56,10 @@ async function main() {
   // a main Worker isolate serves its last check result again for up to 60 s
   // (failures for 5 s), so the attempts span more than that window.
   let errors = [], last;
+  const notBefore = Date.now();
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     last = await check(commit).catch(() => ({ status: 0, body: null }));
-    errors = verifyPdfExtractorCheck({ expected, ...last });
+    errors = verifyPdfExtractorCheck({ expected, notBefore, ...last });
     if (!errors.length) break;
     if (attempt < ATTEMPTS) await new Promise((done) => setTimeout(done, 10_000));
   }

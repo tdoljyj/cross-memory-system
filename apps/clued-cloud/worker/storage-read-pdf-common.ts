@@ -68,7 +68,7 @@ let pdfSlot: Promise<void> | null = null;
  * `fn` is the download plus the extractor call (the 20 MiB file and its RPC
  * copy); in the extractor Worker it is one extraction (the file plus pdf.js's
  * working set, about 20-60 MB under the limits of storage-read-pdf.ts), where
- * it is called with waitMs 0 so a second PDF never waits inside that isolate.
+ * it waits briefly (pdfSlotWaitMs: at most 2 s and half its time_ms).
  * Two at once could approach the 128 MB isolate. A read waits at most `waitMs`
  * for the slot, then fails PdfBusyError. Waiters are not queued in order; each
  * takes the slot if it is free when it wakes. */
@@ -135,14 +135,16 @@ export type PdfExtractResult = { contract: typeof PDF_EXTRACTOR_CONTRACT; ok: tr
  * under the 32 MiB serialized RPC limit. A larger result is refused. */
 export const PDF_RESULT_TEXT_MAX = 16 * 1024 * 1024;
 
-/** Extractor versions the main Worker accepts: this one and the one before it
- * (never below 1), so the gap between deploying the two Workers does not fail
- * every PDF read. A version bump must therefore keep the request and result
- * readable by the previous main Worker; a change that cannot is a new
+/** Extractor versions the main Worker accepts: this one and its neighbours
+ * (never below 1). The release deploys the extractor first, so during the gap
+ * the previous main Worker (N-1) meets extractor N (accepted as current+1);
+ * a rollback of only the extractor leaves main N with extractor N-1 (accepted
+ * as current-1). A version bump must therefore keep the request and result
+ * readable by the neighbouring main Worker; a change that cannot is a new
  * PDF_EXTRACTOR_CONTRACT name. When PDF_EXTRACTOR_VERSION changes, the two
- * Workers are rolled back together. */
+ * Workers are still rolled back together. */
 export function acceptedExtractorVersions(current: number = PDF_EXTRACTOR_VERSION): number[] {
-  return current > 1 ? [current, current - 1] : [current];
+  return current > 1 ? [current, current + 1, current - 1] : [current, current + 1];
 }
 /** How long an extraction waits inside the extractor isolate for that
  * isolate's one PDF slot (at most half its own time_ms; the wait is taken off

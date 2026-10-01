@@ -274,12 +274,20 @@ test('production release deploys the PDF extractor Worker first and verifies the
   assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 503, body: { ...ok, status: 'unavailable', code: 'storage_read_unavailable' } }),
     ['pdf_extractor_check_http_503', 'pdf_extractor_check_storage_read_unavailable']);
   assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 200, body: { ...ok, extractor: { ...expected, version: 2 } } }), ['pdf_extractor_version_mismatch']);
-  // The release requires exactly the repository's version, even though reads accept N-1 during a deploy gap.
+  // The release requires exactly the repository's version, even though reads accept N-1 and N+1 during a deploy gap.
   assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 200, body: { ...ok, extractor: { ...expected, version: 0 } } }), ['pdf_extractor_version_mismatch']);
   assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 503, body: { ...ok, status: 'unavailable', extractor: null, code: 'check_in_progress' } }),
     ['pdf_extractor_check_http_503', 'pdf_extractor_check_check_in_progress', 'pdf_extractor_version_mismatch']);
   assert.deepEqual(verifyPdfExtractorCheck({ expected: null, status: 0, body: null }),
     ['repository_extractor_contract_missing', 'pdf_extractor_check_http_0', 'pdf_extractor_check_contract_invalid', 'pdf_extractor_check_failed']);
+  // Freshness: an OK answer replayed from before verification started is refused.
+  const started = Date.parse('2026-10-01T04:00:00Z');
+  assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 200, notBefore: started,
+    body: { ...ok, cached: true, checked_at: '2026-10-01T03:59:00Z' } }), ['pdf_extractor_check_not_fresh']);
+  assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 200, notBefore: started,
+    body: { ...ok, cached: true, checked_at: '2026-10-01T04:00:30Z' } }), []);
+  assert.deepEqual(verifyPdfExtractorCheck({ expected, status: 200, notBefore: started,
+    body: { ...ok, cached: false, checked_at: '2026-10-01T03:59:00Z' } }), []);
 });
 
 test('production release deploys only when deploy is chosen explicitly', () => {

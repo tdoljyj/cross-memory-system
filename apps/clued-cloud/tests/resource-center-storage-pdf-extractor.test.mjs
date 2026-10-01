@@ -45,7 +45,7 @@ test("client: a missing binding, a wrong marker, a failed or slow marker call ar
   const good = await binding.marker();
   for (const [name, raw] of [["undefined", undefined], ["null", null], ["empty object", {}], ["fetch-only binding", { fetch: async () => new Response() }],
     ["wrong contract", counting(async () => ({ ...good, contract: "clued.storage-pdf-extractor/0" }))],
-    ["older version", counting(async () => ({ ...good, version: good.version - 1 }))], ["newer version", counting(async () => ({ ...good, version: good.version + 1 }))],
+    ["older version", counting(async () => ({ ...good, version: good.version - 1 }))], ["two versions newer", counting(async () => ({ ...good, version: good.version + 2 }))],
     ["no decode guard", counting(async () => ({ ...good, decode_guard: false }))], ["font programs parsed", counting(async () => ({ ...good, font_programs: "parsed" }))],
     ["marker throws", counting(async () => { throw new Error("Network connection lost."); })], ["marker not an object", counting(async () => "ok")]]) {
     assert.deepEqual(await failure(connectPdfExtractor(raw)), { code: "storage_read_unavailable", hint: PDF_EXTRACTOR_UNAVAILABLE_HINT }, name);
@@ -224,17 +224,20 @@ test("release check route: results are cached per isolate (OK 60 s, failure 5 s)
   assert.doesNotMatch(route, /searchParams|request\.(?:json|text|arrayBuffer|headers)/);
 });
 
-test("version skew: the main Worker accepts its extractor version and the one before it, never others, with the strict contract and patch markers", async () => {
+test("version skew: the main Worker accepts its extractor version and its neighbours (N-1, N+1), never others, with the strict contract and patch markers", async () => {
   const good = await binding.marker();
   assert.equal(validMarker(good), true);
   assert.equal(validMarker({ ...good, version: 4 }, 5), true, "N-1");
   assert.equal(validMarker({ ...good, version: 5 }, 5), true, "N");
-  for (const [name, marker] of [["N-2", { ...good, version: 3 }], ["N+1", { ...good, version: 6 }], ["string version", { ...good, version: "4" }],
+  // The release deploys the extractor first: the previous main Worker meets the next version.
+  assert.equal(validMarker({ ...good, version: 6 }, 5), true, "N+1");
+  for (const [name, marker] of [["N-2", { ...good, version: 3 }], ["N+2", { ...good, version: 7 }], ["string version", { ...good, version: "4" }],
     ["other contract", { ...good, version: 4, contract: "clued.storage-pdf-extractor/2" }], ["no decode guard", { ...good, version: 4, decode_guard: false }],
     ["font programs", { ...good, version: 4, font_programs: "parsed" }]])
     assert.equal(validMarker(marker, 5), false, name);
-  // At version 1 there is no N-1: version 0 is refused.
+  // At version 1 there is no N-1: version 0 is refused; version 2 (the next) is accepted.
   assert.equal(validMarker({ ...good, version: 0 }), false);
+  assert.equal(validMarker({ ...good, version: 2 }), true);
 });
 
 test("configuration: the extractor Worker has no bindings, no public route and a CPU limit; the main Worker binds it by name", async () => {
