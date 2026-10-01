@@ -91,6 +91,8 @@ export default defineConfig(async ({ mode }) => {
         : {}),
     },
     plugins: [
+      // StorageNormalUse §4.5: this Worker never bundles pdf.js; PDFs are parsed by
+      // the extractor Worker clued-storage-pdf (scripts/build-pdf-extractor.mjs).
       vinext(),
       sites(),
       cloudflare({
