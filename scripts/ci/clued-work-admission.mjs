@@ -226,26 +226,44 @@ async function mcp(fetchImpl, env, id, method, params) {
     },
     body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
   });
+  let text = "";
   let body = null;
   try {
-    body = await response.json();
+    text = await response.text();
+    body = text ? JSON.parse(text) : null;
   } catch {
     body = null;
   }
-  return { status: response.status, body };
+  // Diagnostics for a refusal: who answered (Worker vs. an edge layer) and why.
+  const diag = {};
+  for (const name of ["server", "cf-ray", "cf-mitigated", "www-authenticate", "content-type", "x-clued-release-version"]) {
+    const value = response.headers && typeof response.headers.get === "function" ? response.headers.get(name) : null;
+    if (value) diag[name] = value;
+  }
+  return { status: response.status, body, text: text.slice(0, 400), diag };
 }
 
 function errorMessage(body) {
   return body && body.error && typeof body.error.message === "string" ? body.error.message : "";
 }
 
+function describe(answer) {
+  const parts = [];
+  const message = errorMessage(answer.body);
+  if (message) parts.push(message);
+  else if (answer.text) parts.push(answer.text.replace(/\s+/g, " "));
+  const diag = Object.entries(answer.diag ?? {}).map(([k, v]) => `${k}=${v}`).join(" ");
+  if (diag) parts.push(`[${diag}]`);
+  return parts.length ? `: ${parts.join(" ")}` : "";
+}
+
 // Returns { enforced, reason } from tools/list: the Worker hides the work
 // claim tools while the feature is off, so advertisement is the switch.
 export async function probeEnforcement(fetchImpl, env) {
   const listed = await mcp(fetchImpl, env, 1, "tools/list", {});
-  if (listed.status === 401) throw new Error("Clued rejected CLUED_CONTEXT_READ_TOKEN (401).");
+  if (listed.status === 401) throw new Error(`Clued rejected CLUED_CONTEXT_READ_TOKEN (401)${describe(listed)}`);
   if (listed.status !== 200 || !listed.body || !listed.body.result || !Array.isArray(listed.body.result.tools)) {
-    throw new Error(`Clued tools/list returned ${listed.status}${errorMessage(listed.body) ? `: ${errorMessage(listed.body)}` : ""}`);
+    throw new Error(`Clued tools/list returned ${listed.status}${describe(listed)}`);
   }
   const advertised = listed.body.result.tools.some((tool) => tool && tool.name === VERIFY_TOOL);
   return advertised ? { enforced: true, reason: `${VERIFY_TOOL} advertised` } : { enforced: false, reason: `${VERIFY_TOOL} not advertised (CLUED_WORK_CLAIMS_V1 off)` };
@@ -254,9 +272,9 @@ export async function probeEnforcement(fetchImpl, env) {
 export async function verifyClaim(fetchImpl, env, args) {
   const called = await mcp(fetchImpl, env, 2, "tools/call", { name: VERIFY_TOOL, arguments: args });
   if (called.status === 404 && errorMessage(called.body) === DISABLED_MESSAGE) return { disabled: true };
-  if (called.status === 401) throw new Error("Clued rejected CLUED_CONTEXT_READ_TOKEN (401).");
+  if (called.status === 401) throw new Error(`Clued rejected CLUED_CONTEXT_READ_TOKEN (401)${describe(called)}`);
   if (called.status !== 200 || !called.body || !called.body.result) {
-    throw new Error(`Clued ${VERIFY_TOOL} returned ${called.status}${errorMessage(called.body) ? `: ${errorMessage(called.body)}` : ""}`);
+    throw new Error(`Clued ${VERIFY_TOOL} returned ${called.status}${describe(called)}`);
   }
   const result = called.body.result;
   let payload = result.structuredContent;

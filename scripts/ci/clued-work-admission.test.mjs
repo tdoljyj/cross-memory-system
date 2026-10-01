@@ -63,7 +63,12 @@ function fakeFetch(script) {
     if (!responder) return { ok: false, status: 599, json: async () => ({ error: `unscripted ${call.url}` }) };
     const result = typeof responder === "function" ? responder(call) : responder;
     const status = result.status ?? 200;
-    return { ok: status >= 200 && status < 300, status, json: async () => result.body };
+    const text = result.body === null || result.body === undefined ? "" : JSON.stringify(result.body);
+    return {
+      ok: status >= 200 && status < 300, status,
+      headers: { get: (name) => (result.headers ?? {})[name] ?? null },
+      json: async () => result.body, text: async () => text,
+    };
   };
   return { fetchImpl, calls };
 }
@@ -198,7 +203,7 @@ test("a tool error envelope is a rejection, never an admission", async () => {
 test("fail closed: missing token, rejected token, transport failure", async () => {
   const scripts = {
     "GET https://api.test/repos/o/r/pulls/452/files": files,
-    "mcp:tools/list": { status: 401, body: { error: { message: "Authorize with Clued OAuth or a Clued Binding Token." } } },
+    "mcp:tools/list": { status: 401, body: { error: { message: "Authorize with Clued OAuth or a Clued Binding Token." } }, headers: { server: "cloudflare", "cf-ray": "abc-HKG" } },
   };
   await assert.rejects(
     evaluate({ env: env({ CLUED_CONTEXT_READ_TOKEN: "" }), eventName: "pull_request", fetchImpl: fakeFetch(scripts).fetchImpl, event: event() }),
@@ -206,7 +211,7 @@ test("fail closed: missing token, rejected token, transport failure", async () =
   );
   await assert.rejects(
     evaluate({ env: env(), eventName: "pull_request", fetchImpl: fakeFetch(scripts).fetchImpl, event: event() }),
-    /401/,
+    /401\): Authorize with Clued OAuth or a Clued Binding Token\. \[server=cloudflare cf-ray=abc-HKG\]/,
   );
   await assert.rejects(
     evaluate({ env: env(), eventName: "pull_request", fetchImpl: fakeFetch({ ...scripts, "mcp:tools/list": { status: 502, body: null } }).fetchImpl, event: event() }),
