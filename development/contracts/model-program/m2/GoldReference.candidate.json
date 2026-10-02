@@ -1,0 +1,23 @@
+{
+  "schema_version": "clued.model-m2-gold-reference-contract-candidate/1",
+  "authority_effect": "NONE",
+  "m1_reference": {
+    "repository": "tdoljyj/cross-memory-system",
+    "commit": "c454d8dfe6b8a216eb2eee5fda39550ea2ac0f82",
+    "path": "development/contracts/model-program/m1/registries/TeacherComparisonSelectionMatrix.v1.0.2.json",
+    "git_blob_sha1": "4d86c3e6852f0190e2a19a4226182453850fab94",
+    "record_id": "CLUED-MODEL-M1-TEACHER-COMPARISON-SELECTION-MATRIX-v1.0.2-20260921",
+    "accepted_state_id": "50f24568-fd32-4632-8cb7-aa7ac31f84df",
+    "accepted_state_version": 2,
+    "effect": "REFERENCE_BASELINE_ONLY_NOT_QUALITY_THRESHOLD"
+  },
+  "parent_reader": {
+    "path": "scripts/information-flow/frozen-parent-adapter.mjs",
+    "sha256": "9e7fb387464af264b725a7ff345bea6b4d01c6850db1b2b2c87dc772e312ae9c"
+  },
+  "formal_gold_ref": null,
+  "domain_receipt_ref": null,
+  "independent_review_ref": null,
+  "holdout_lock_ref": null,
+  "threshold_ref": null
+}

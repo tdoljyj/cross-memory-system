@@ -195,3 +195,38 @@ No actual data, weight, source registry, frozen revision or online authority cha
 The existing baseline validator still rejects already withdrawn/private sources.
 Independent Gold, protected holdout, threshold freeze, DataGate and real domain
 authority remain unissued; M2 is NOT_ISSUED.
+
+## Gold provenance and accepted M1 reference candidate
+
+`validate_m2_gold_reference.py` binds the accepted M1-09 v1.0.2 matrix at
+`c454d8dfe6b8a216eb2eee5fda39550ea2ac0f82` to its exact Git blob
+`4d86c3e6852f0190e2a19a4226182453850fab94`. The fixture is a byte-preserved
+read-only machine source snapshot, not a new M1 registry or acceptance decision.
+The matrix's pre-review wording stays unchanged; later acceptance is recorded
+in Canonical State `50f24568-fd32-4632-8cb7-aa7ac31f84df` v2. Offline checks do
+not independently establish currentness. M1 is a PC reference baseline, never
+a teacher-quality winner, M2 quality threshold or fresh execution permission.
+
+Every synthetic label binds its exact rule/source revision, input, answer, Gold
+revision, annotator and adjudication evidence. Unresolved/disputed labels, stale
+evidence, missing sources and same-identity reviews fail closed for consumption.
+The named annotator/reviewer are synthetic role stand-ins; differing strings do
+not authenticate independent people or runs. These arithmetic examples do not
+create Clued Core Gold. Real Gold, domain permission, independent review,
+holdout lock and threshold references remain null.
+
+Upstream source checks reuse the pinned `frozen-parent-adapter.mjs`, with all
+three original parent roots; missing parents cannot fall back to the toy rule.
+The candidate normalized upstream leaf interface is not an adopted M0-C format
+or semantic mapping. Original packages are never modified. Source-byte checks
+alone issue no domain or data authority.
+
+```sh
+python scripts/model-program/validate_m2_gold_reference.py
+python scripts/model-program/validate_m2_gold_reference.py --require-formal-gold
+python -m unittest tests.test_model_program_m2_gold_reference -v
+```
+
+The formal command must exit 1. No actual annotation, independent adjudication,
+protected holdout, threshold freeze or DataGate is issued; no M1/model run,
+credentials, permissions, training, paid inference or production changes occur.
