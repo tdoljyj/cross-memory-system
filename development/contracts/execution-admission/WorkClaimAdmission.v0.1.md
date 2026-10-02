@@ -20,7 +20,7 @@
   - 修复后未做复审。
 - **未实现或与本文设计不符**（各条在对应小节标注）：
   - 每认领 CI 分钟预算与 finalize、`attempts_cap`（§4.5、§7，Task `80aea04a`）。
-  - 备份恢复后 `max(fence)` 会回退（§4.4、§6，Task `27b4f5e8` 第 4 条）。
+  - 备份恢复后 `max(fence)` 会回退，靠恢复后的手工步骤补救（§4.4、§6，Owner Decision `2b23eb0c`）。
   - 同名 check 伪造与 PR 删除 `needs: admission-gate`（§4.6）。
   - 判定只在检查运行时成立，合并时不实时重验（§5）。
 - **待 Owner 设置**：
@@ -167,6 +167,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - **过期只拒绝新效果，不证明旧进程停止**：过期后 claim 进入 EXPIRED；旧持有者的分支仍存在，但其 claim_id + fence 在 `clued_work_verify` 下 REJECTED，无法通过 L0。它不能再续期，只能对新 claim 发起"采纳分支"请求（人工或新持有者决定）。
 - **fence 单调**：只在 claim 创建与 takeover 时 +1；续期不动。服务恢复、备份回滚不得回退 fence：fence 来源于 `max(fence)+1` 的事务内计算，不来自客户端。
   - **实测（第 7 步，PR #467）与此不符**：从较旧的表副本恢复后 `max(fence)` 会回退。重新签发的 claim 拿到相同 fence 数值，但 claim_id 不同；恢复点之后签发的 claim_id 在 verify 下为 `claim_not_found`。不回退需要表外的单调 fence 来源，或修改本条（Task `27b4f5e8` 第 4 条）。
+  - **已知限制（Owner Decision `2b23eb0c`，2026-10-02）**：不改 fence 来源。数据库从备份恢复后、Agent 再开工前，运行 `apps/clued-cloud/scripts/work-claims-after-restore.sql` 一次：恢复回来的 ACTIVE／DRAINING 认领标为 RELEASED（abandoned），所有 fence 加一百万，使新认领与接管拿到的 fence 高于恢复前签发过的任何 fence。步骤写在 `apps/clued-cloud/docs/production-release.md`「After a database restore」，验收测试 `work-claims-acceptance-db` 覆盖。
 - **多资源一次性获取**：write_set 整体在一个事务中判定，没有逐路径加锁，没有持锁等锁，不会死锁。
 - **优先级不抢占**：Global Frontier 的 Pin 或 priority 变化不自动 takeover 一个 ACTIVE claim。
 
@@ -278,7 +279,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 | 无 Task、伪造 claim、漏报 write_set | `clued_work_verify` 对不存在／伪造 claim_id、变更文件 ⊄ write_set 返回 REJECTED；gate job 不放行 | L0／L1 |
 | 重演 443／444：不同标题、同意图或同 lockfile | 两个 Binding 并发 `clued_work_claim`，相同 trigger_ref 或相交路径，恰一个 ACTIVE（barrier 测试，复用 projection-refresh-pipeline-db 的并发模式） | L1 |
 | 同时领取、响应丢失后重试 | 同幂等键重试返回原 claim；不同键同资源返回 conflict | L1 |
-| 过期 owner、网络分区、服务重启 | 过期 claim 的 fence 在 verify 下 REJECTED；takeover 后 fence +1；备份恢复后 `max(fence)` 不回退（迁移测试）。**实测：前两项通过；备份恢复后会回退，见 §4.4** | L1 |
+| 过期 owner、网络分区、服务重启 | 过期 claim 的 fence 在 verify 下 REJECTED；takeover 后 fence +1；备份恢复后 `max(fence)` 不回退（迁移测试）。**实测：前两项通过；备份恢复后会回退，按已知限制由恢复后脚本补救，见 §4.4** | L1 |
 | 持续 heartbeat 却无进展 | progress_ref 不变的 renew 被拒；到 hard_deadline 自动 EXPIRED | L1 |
 | 非幂等请求成功但回包丢失 | claim 创建用幂等键；CI gate 对同一 head 重复查询返回同一判定 | L1／L0 |
 | 多资源反序竞争、cleanup 崩溃 | write_set 整体一次事务；无逐路径锁；EXPIRED 清理不删 ACTIVE 行 | L1 |
