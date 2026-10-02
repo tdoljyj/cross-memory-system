@@ -92,7 +92,7 @@ export const workClaimTools = [
   {
     name: "clued_work_verify",
     description:
-      "Read-only check a CI gate or reviewer runs: ADMITTED only when the claim is live, holds the task's current fence, and its write set covers every changed path. Reasons are listed (claim_not_found, claim_not_current, fence_superseded, paths_outside_write_set). Never a receipt; call it as often as needed.",
+      "Check a CI gate or reviewer runs: ADMITTED only when the claim is live, holds the task's current fence, and its write set covers every changed path. Reasons are listed (claim_not_found, claim_not_current, fence_superseded, paths_outside_write_set, claim_bound_to_other_pr). Without pr_ref it is read-only; with pr_ref (\"owner/repo#123\") the first admitting verify binds the claim to that pull request (one receipt) and any other pull request is then refused.",
     inputSchema: {
       type: "object",
       required: ["claim_id"],
@@ -100,6 +100,7 @@ export const workClaimTools = [
         scope, claim_id: uuid,
         changed_paths: { type: "array", maxItems: 2000, items: { type: "string", minLength: 1, maxLength: 400 } },
         head_sha: { type: "string", pattern: "^[0-9a-f]{7,64}$" }, base_sha: { type: "string", pattern: "^[0-9a-f]{7,64}$" },
+        pr_ref: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}#[0-9]{1,10}$" },
       },
       additionalProperties: false,
     },
@@ -131,7 +132,8 @@ export const workClaimToolPolicies = {
     scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
   },
   clued_work_verify: {
-    scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+    // With pr_ref the first admitting verify binds the claim (one receipt), so not read-only.
+    scopes: ["context:read"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
   },
   clued_work_takeover: {
     scopes: ["context:write"], readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,

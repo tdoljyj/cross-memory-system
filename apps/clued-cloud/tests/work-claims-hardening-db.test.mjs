@@ -10,7 +10,9 @@ import EmbeddedPostgres from 'embedded-postgres';
 
 // Work Claim Admission v0.1, step 7 review fixes (migration
 // 20261002050000_work_claims_admission_hardening): glob-against-glob conflicts
-// and one pull request per claim.
+// and one pull request per claim; the concurrency caps (20261002060001); and
+// the MINOR fixes (20261002072000): trigger-ref matching, idempotency keys,
+// repeated progress and "**/" at the root.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -241,6 +243,68 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     committed(await release(tokens.B, other));
     const profile = (await admin.query('select clued_private.work_claim_profile_v1() p')).rows[0].p;
     assert.deepEqual([profile.max_active_per_session, profile.max_active_per_binding], [3, 10]);
+
+    // --- MINOR fixes (migration 20261002072000, Task 27b4f5e8). ---
+    // Trigger refs: case-insensitive, and a short SHA matches its full SHA.
+    const full = 'f7ba6ff312aa0e90095db1e28f5937920f30de3a';
+    const ghsa = committed(await claim(tokens.A, { task_id: await createTask('ghsa upper'),
+      write_set: ['minor/a.txt'], trigger_refs: ['ghsa:GHSA-VCVR-R3JV-PC5J', `ci:trivy@${full}`] })).claim;
+    assert.deepEqual(ghsa.trigger_refs, [`ci:trivy@${full}`, 'ghsa:GHSA-VCVR-R3JV-PC5J']);
+    for (const refs of [['GHSA:ghsa-vcvr-r3jv-pc5j'], ['ci:trivy@f7ba6ff'], ['CI:Trivy@F7BA6FF312']]) {
+      const clash = await claim(tokens.B, { task_id: await createTask(`ref ${refs[0]}`), write_set: ['minor/b.txt'], trigger_refs: refs });
+      assert.equal(clash.error_code, 'work_claim_conflict', JSON.stringify(refs));
+    }
+    for (const refs of [['ci:trivy@f7ba6fe'], ['ci:gitleaks@f7ba6ff'], ['ci:trivy@abc']]) {
+      const fine = committed(await claim(tokens.B, { task_id: await createTask(`ref ${refs[0]}`), write_set: ['minor/c.txt'], trigger_refs: refs })).claim;
+      committed(await release(tokens.B, fine));
+    }
+    committed(await release(tokens.A, ghsa));
+
+    // Idempotency: the same key with another request is refused; a spent key is refused.
+    const key = uuid();
+    const task1 = await createTask('idempotency one');
+    const first = committed(await claim(tokens.A, { idempotency_key: key, task_id: task1, write_set: ['minor/one.txt'] }));
+    const again = committed(await claim(tokens.A, { idempotency_key: key, task_id: task1, write_set: ['./minor/one.txt'] }));
+    assert.deepEqual([again.replayed, again.claim.claim_id], [true, first.claim.claim_id], 'normalized-equal request replays');
+    const other1 = await claim(tokens.A, { idempotency_key: key, task_id: await createTask('idempotency two'), write_set: ['minor/two.txt'] });
+    assert.deepEqual([other1.status, other1.error_code], ['rejected', 'work_claim_idempotency_conflict']);
+    const widenedKey = await claim(tokens.A, { idempotency_key: key, task_id: task1, write_set: ['minor/**'] });
+    assert.equal(widenedKey.error_code, 'work_claim_idempotency_conflict');
+    committed(await release(tokens.A, first.claim));
+    const spent = await claim(tokens.A, { idempotency_key: key, task_id: task1, write_set: ['minor/one.txt'] });
+    assert.deepEqual([spent.error_code, spent.claim.status], ['work_claim_idempotency_spent', 'RELEASED']);
+    // A row from before the migration (no hash) replays as before while live.
+    const legacy = committed(await claim(tokens.A, { task_id: await createTask('legacy key'), write_set: ['minor/legacy.txt'] })).claim;
+    await admin.query('update clued_private.work_claims_v1 set request_hash=null where claim_id=$1', [legacy.claim_id]);
+    const legacyKey = (await admin.query('select idempotency_key k from clued_private.work_claims_v1 where claim_id=$1', [legacy.claim_id])).rows[0].k;
+    const legacyReplay = committed(await claim(tokens.A, { idempotency_key: legacyKey, task_id: uuid(), write_set: ['anything'] }));
+    assert.equal(legacyReplay.claim.claim_id, legacy.claim_id);
+    committed(await release(tokens.A, legacy));
+
+    // Renewal progress cannot repeat, even alternating.
+    let r = committed(await claim(tokens.A, { task_id: await createTask('progress'), write_set: ['minor/p.txt'] })).claim;
+    const renew = (progress_ref) => call(tokens.A, 'clued_work_renew_v1',
+      { scope: 'global', claim_id: r.claim_id, fence: r.fence, lease_version: r.lease_version, progress_ref });
+    r = committed(await renew('x')).claim;
+    r = committed(await renew('y')).claim;
+    for (const repeat of ['x', 'y']) {
+      const refused = await renew(repeat);
+      assert.equal(refused.error_code, 'work_claim_no_progress', repeat);
+      assert.deepEqual(refused.used_progress_refs, ['x', 'y']);
+    }
+    r = committed(await renew('z')).claim;
+    committed(await release(tokens.A, r));
+
+    // "**/" also matches zero directories.
+    const covers = async (file, glob) => (await admin.query(
+      'select clued_private.work_claim_path_covered($1,array[$2]) v', [file, glob])).rows[0].v;
+    assert.equal(await covers('package-lock.json', '**/package-lock.json'), true);
+    assert.equal(await covers('apps/x/package-lock.json', '**/package-lock.json'), true);
+    assert.equal(await covers('a/z', 'a/**/z'), true);
+    assert.equal(await covers('a/b/c/z', 'a/**/z'), true);
+    assert.equal(await covers('xpackage-lock.json', '**/package-lock.json'), false);
+    assert.equal(await covers('a/xz', 'a/**/z'), false);
+    assert.equal(await covers('src', 'src/**'), true);
 
     // The column is not writable through the client role, and verify is
     // still the only anon entry that touches it.
