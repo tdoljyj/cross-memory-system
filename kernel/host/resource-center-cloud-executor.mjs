@@ -330,7 +330,9 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         if(String(replacement.byteLength)!==restore.size || (restore.sha256!=null && sha256Hex(replacement)!==restore.sha256) ||
           (restore.md5!=null && md5Hex(replacement)!==restore.md5)) fail();
       }
-      const effect=subtree ? createGoogleDriveNativeDirectoryMoveEffect({...effectConfig,get_file:metadata.getFile})
+      // P6.1: the batched reader (when the Worker has one) reads every registered descendant at once.
+      const effect=subtree ? createGoogleDriveNativeDirectoryMoveEffect({...effectConfig,get_file:metadata.getFile,
+          ...(batched.get_files ? {get_files:batched.get_files} : {})})
         : destructive ? createGoogleDriveNativeDestructiveEffect({...effectConfig,get_file:metadata.getFile,
           get_ownership:metadata.getOwnership,has_children:metadata.hasChildren})
         : replace ? createGoogleDriveNativeReplaceEffect({...effectConfig,get_file:metadata.getFile,get_revision:metadata.getRevision,replacement,
@@ -341,7 +343,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         include_verified_proof:verifiedResultMode,clock};
       const verify=subtree ? createGoogleDriveDirectoryMovePostconditionVerifier({...verifierConfig,get_sharing:metadata.getSharing,
-          get_access:metadata.getAccess})
+          get_access:metadata.getAccess,...(batched.get_files ? {get_files:batched.get_files} : {})})
         : destructive ? createGoogleDriveDestructivePostconditionVerifier({...verifierConfig,has_children:metadata.hasChildren})
         : replace ? createGoogleDriveReplacePostconditionVerifier({...verifierConfig,get_revision:metadata.getRevision})
         : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
@@ -364,7 +366,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           saved={result:structuredClone(result),provider:request.provider_identity};
           startedProvider={intent_id:result.intent_id,request_sha256:result.request_sha256,provider:request.provider_identity,
             // P6: the descendants to re-read, chosen by the durable start under its locks.
-            ...(subtree ? {subtree_sample:result.subtree_sample} : {})};
+            ...(subtree ? {subtree_sample:result.subtree_sample,subtree_registry:result.subtree_registry} : {})};
           return {status:"started",execution_permitted:true,intent_id:result.intent_id,request_sha256:result.request_sha256};
         },commit_post_write:async({mutation:input,binding,reservation,effect_result:result})=>{
           let stage="reservation";
