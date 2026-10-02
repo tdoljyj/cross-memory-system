@@ -343,6 +343,9 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       const made = await artifact(target, `${trackPath}/made`);
       assert.equal(made.provider_sharing_digest, googleDriveSharingDigest(PRIVATE));
       assert.equal((await journal(created)).verified_result_v2.proof.provider_sharing_digest, googleDriveSharingDigest(PRIVATE));
+      // The committed replay check rebuilds the registration with the digest (a mismatch raises).
+      const inspected = await cloud({ action: "verified_inspect", ...created.reference });
+      assert.equal(inspected.status, "committed");
       // Its Drive version moving on no longer stops a write into it.
       storage.files.get(made.provider_file_id).version = "9";
       const inside = await submitJob(target, client, { operation: "create", target_kind: "file", destination_path: `${trackPath}/made/x.md`, content: "x" });
@@ -378,11 +381,29 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.equal(Number((await artifactById(track.id)).version), Number(trackAfter.version));
     });
 
+    await t.test("P6.2: a folder whose Drive version moved on since it was registered gets no digest from a move", async () => {
+      const { target, client, storage, trackPath, topic, folder } = await tree();
+      const track = await artifact(target, trackPath);
+      // The source folder changed in Drive outside Clued; the authority matches it by ID only.
+      storage.files.get(target.trackId).version = "3";
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      assert.equal((await executor(target, storage).run(job.reference)).status, "committed");
+      assert.equal((await journal(job)).authority_request.provider_identity.source_parent_version, "3");
+      const trackAfter = await artifactById(track.id);
+      assert.equal(trackAfter.provider_sharing_digest, null);
+      assert.equal(Number(trackAfter.version), Number(track.version), "the stale source folder is left as registered");
+      assert.equal((await artifactById(topic.id)).provider_sharing_digest, googleDriveSharingDigest(PRIVATE));
+    });
+
     await t.test("P6.2: the verified record refuses a sharing digest on a file or one that is not the folder's", async () => {
       // Each case on its own root: a refused record leaves its intent fenced.
-      for (const [kind, forged] of [["file", googleDriveSharingDigest(PRIVATE)], ["directory", googleDriveSharingDigest(SHARED)]]) {
+      // A file; another folder's digest; a non-digest value; a folder whose
+      // destination had no digest in the identity (Drive omitted its sharing).
+      for (const [kind, forged, unshared] of [["file", googleDriveSharingDigest(PRIVATE)], ["directory", googleDriveSharingDigest(SHARED)],
+        ["directory", "invalid"], ["file", "invalid"], ["directory", googleDriveSharingDigest(PRIVATE), true]]) {
         const { target, client, storage } = await setup();
         const trackPath = `${target.root}/${TRACK}`;
+        if (unshared) { delete storage.files.get(target.trackId).shared; delete storage.files.get(target.trackId).permissionIds; }
         const mutation = kind === "file" ? { operation: "create", target_kind: "file", destination_path: `${trackPath}/f.md`, content: "x" }
           : { operation: "create", target_kind: "directory", destination_path: `${trackPath}/d`, directory_semantics: "topic" };
         const job = await submitJob(target, client, mutation);
@@ -402,7 +423,8 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
         });
         const result = await forging.run(job.reference);
         assert.notEqual(result.status, "committed", JSON.stringify(result));
-        assert.equal(refused, true, kind);
+        assert.equal(refused, true, `${kind} ${forged}`);
+        if (unshared) assert.equal((await journal(job)).authority_request.provider_identity.destination_parent_sharing_digest, null);
         assert.equal(await artifact(target, mutation.destination_path), undefined);
       }
     });

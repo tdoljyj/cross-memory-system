@@ -180,9 +180,11 @@ test("P6.2: a created directory carries its sharing digest only when it equals t
   const same = await run({ get_sharing: async (id) => ({ id, ...sharing }) }, { destination_parent_sharing_digest: parentDigest });
   assert.equal(same.provider_sharing_digest, parentDigest);
   assert.equal(same.contract, "clued.storage-create-verified/2");
-  // Different sharing, a failed read, no recorded parent digest or no reader: no digest, as before.
+  // Different sharing, another file's sharing, a failed read, no recorded
+  // parent digest or no reader: no digest, as before.
   for (const [options, before] of [
     [{ get_sharing: async (id) => ({ id, shared: true, permissionIds: ["owner", "anyone"] }) }, { destination_parent_sharing_digest: parentDigest }],
+    [{ get_sharing: async () => ({ id: "track", ...sharing }) }, { destination_parent_sharing_digest: parentDigest }],
     [{ get_sharing: async () => { throw new Error("DRIVE_METADATA_UNAVAILABLE"); } }, { destination_parent_sharing_digest: parentDigest }],
     [{ get_sharing: async (id) => ({ id, ...sharing }) }, { destination_parent_sharing_digest: null }],
     [{}, { destination_parent_sharing_digest: parentDigest }],

@@ -143,7 +143,10 @@ export function createGoogleDriveCreatePostconditionVerifier({
         // is exactly the destination folder's, as the authority checked it.
         let sharingDigest = null;
         if (folder && typeof getSharing === "function" && /^[0-9a-f]{64}$/.test(before.destination_parent_sharing_digest ?? "")) {
-          try { sharingDigest = googleDriveSharingDigest(await getSharing(file.id)); } catch { sharingDigest = null; }
+          try {
+            const sharing = await getSharing(file.id);
+            sharingDigest = sharing?.id === file.id ? googleDriveSharingDigest(sharing) : null;
+          } catch { sharingDigest = null; }
           if (sharingDigest !== before.destination_parent_sharing_digest) sharingDigest = null;
         }
         // This is emitted only after the complete metadata/content/ancestor and

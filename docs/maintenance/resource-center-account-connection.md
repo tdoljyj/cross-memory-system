@@ -881,8 +881,19 @@ an anchored patch with an exact hit count.
   only for a directory and only as that folder's digest), so it is matched
   by sharing, not by a Drive version that later moves advance. A directory
   move's settlement records, on the source and destination folders that have
-  no digest yet, the digest the provider identity recorded for each; a
-  folder that already has one is not changed.
+  no digest yet, the digest the provider identity recorded for each, only
+  while the folder's registered Drive version is the one the identity
+  recorded (`source_parent_version`, new in the identity, and
+  `destination_parent_version`): the authority matches the source folder by
+  ID alone, and a folder registered at an older version changed in Drive
+  since Clued last checked it. A folder that already has a digest is not
+  changed. A proof that carries a digest for a file, or for a folder whose
+  identity has none, is refused (`storage_verified_mismatch`).
+  Release order: apply the migration before releasing the Worker. The old
+  executor works against the new database (no digest in its proofs, no
+  `source_parent_version`, so no source-folder digest); the new executor
+  against the old database has every directory create refused at its
+  verified record, leaving the intent fenced until recovery.
 - A lost update reply leaves the intent fenced, and the single writer then
   blocks other writes on that root until it is resolved. Scheduled recovery
   never lists or loads a directory move; the Owner's native recovery

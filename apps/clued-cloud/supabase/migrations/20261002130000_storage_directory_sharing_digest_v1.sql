@@ -18,8 +18,12 @@
 -- * Directory move: the settlement records, on the source and destination
 --   folders that have no digest yet, the digest the provider identity
 --   recorded for each (the move requires the two to be equal, and the
---   destination's was checked against the registry by the authority). A
---   folder that already has a digest is not changed.
+--   destination's was checked against the registry by the authority), only
+--   while the folder's registered Drive version is the one the identity
+--   recorded (source_parent_version, destination_parent_version). A folder
+--   that already has a digest is not changed.
+-- * A proof that carries a digest for a file, or for a folder whose identity
+--   has none, is refused (storage_verified_mismatch).
 -- * Each existing function is changed by an anchored patch with an exact hit
 --   count. The proof field is optional, so the old executor keeps working
 --   between this migration and the release.
@@ -35,10 +39,11 @@ begin
     end if;$a$,
      $r$      'checks',jsonb_build_object('identity',true,'content',true,'ancestors',true,'unique_name',true,'stable_version',true))
       ||case when proof ? 'provider_sharing_digest' then jsonb_build_object('provider_sharing_digest',
-        case when j.mutation->>'target_kind'='directory'
-          and m.authority_request->'provider_identity'->>'destination_parent_sharing_digest' ~ '^[0-9a-f]{64}$'
-          then m.authority_request->'provider_identity'->'destination_parent_sharing_digest' else '"invalid"'::jsonb end)
-        else '{}'::jsonb end;
+        m.authority_request->'provider_identity'->'destination_parent_sharing_digest') else '{}'::jsonb end;
+      if proof ? 'provider_sharing_digest' and (j.mutation->>'target_kind' is distinct from 'directory'
+        or jsonb_typeof(m.authority_request->'provider_identity'->'destination_parent_sharing_digest') is distinct from 'string'
+        or m.authority_request->'provider_identity'->>'destination_parent_sharing_digest' !~ '^[0-9a-f]{64}$') then
+        raise exception 'storage_verified_mismatch' using errcode='42501'; end if;
     end if;$r$,1),
     -- The registration input carries it.
     ('clued_private.storage_settle_input_v1(uuid,clued_private.resource_center_mutations_v1,jsonb)',
@@ -70,16 +75,22 @@ begin
      $r$    where id=a.id returning * into moved;
   -- P6.2: the source and destination folders that have no sharing digest get
   -- the one the provider identity recorded (equal on both sides), so the
-  -- Drive version this move advanced no longer stops later writes.
+  -- Drive version this move advanced no longer stops later writes. Only a
+  -- folder the registry still holds at the Drive version the identity saw:
+  -- the authority matches the source folder by ID alone, and a folder whose
+  -- registered version is stale changed in Drive since Clued last checked it.
+  -- An identity without source_parent_version (an executor before P6.2)
+  -- gives the source folder nothing.
   update clued_private.resource_center_artifacts_v1 x
     set provider_sharing_digest=g.digest,version=x.version+1,updated_at=now(),receipt_id=p_receipt
     from (select m.authority_request->'provider_identity' i from clued_private.resource_center_mutations_v1 m
         where m.id=substr(p_input->>'idempotency_key',26)::uuid) s,
-      lateral (values (s.i->>'destination_parent_id',parent,s.i->>'destination_parent_sharing_digest'),
-        (s.i->>'source_parent_id',regexp_replace(old,'/[^/]*$',''),s.i->>'source_parent_sharing_digest')) g(fid,folder,digest)
+      lateral (values (s.i->>'destination_parent_id',parent,s.i->>'destination_parent_version',s.i->>'destination_parent_sharing_digest'),
+        (s.i->>'source_parent_id',regexp_replace(old,'/[^/]*$',''),s.i->>'source_parent_version',s.i->>'source_parent_sharing_digest'))
+        g(fid,folder,seen_version,digest)
     where x.profile_id=p.id and x.user_id=p.user_id and x.state='active' and x.target_kind='directory'
       and x.provider_sharing_digest is null and x.provider_file_id=g.fid and x.path=g.folder
-      and g.digest ~ '^[0-9a-f]{64}$';
+      and x.provider_file_version=g.seen_version and g.digest ~ '^[0-9a-f]{64}$';
   return moved;$r$,1)
   ) v(sig,anchor,replacement,expected) loop
     -- Every edit of one function first, then one CREATE OR REPLACE.
