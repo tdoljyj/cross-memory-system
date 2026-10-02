@@ -45,7 +45,7 @@ function fixture({ role = "A", resolutionChange = {}, recheckChange = {}, input 
   };
   const host = createM2RestrictedEntryCandidate({ trustedRole: role, trustedRoots: roots,
     frozenInputs: { "marker.txt": hash("PUBLIC_EMPTY") }, transport, timeoutMs, leaseMs });
-  return { host, roots, observed, effects, reads: () => reads, stops: () => stops };
+  return { host, roots, transport, observed, effects, reads: () => reads, stops: () => stops };
 }
 const read = (host, id = "read") => host.callTool("m2_read_input", { request_id: id, path: "marker.txt" });
 const write = (host, id = "write", path = "result.txt") => host.callTool("m2_write_output", { request_id: id, path, content: "PUBLIC_RESULT" });
@@ -211,4 +211,8 @@ test("Host configuration cannot select H/root or a foreign root", () => {
   assert.throws(() => createM2RestrictedEntryCandidate({ trustedRole: "root" }), /HOST_PROFILE_INVALID/);
   assert.throws(() => createM2RestrictedEntryCandidate({ trustedRole: "H" }), /HOST_PROFILE_INVALID/);
   assert.throws(() => createM2RestrictedEntryCandidate({ transport: {} }), /TRANSPORT_CONTRACT_INVALID/);
+  const f = fixture();
+  f.roots.input.normalized_root = "/root";
+  assert.throws(() => createM2RestrictedEntryCandidate({ transport: f.transport,
+    trustedRoots: f.roots, frozenInputs: { "marker.txt": hash("PUBLIC_EMPTY") } }), /HOST_ROOT_INVALID/);
 });
