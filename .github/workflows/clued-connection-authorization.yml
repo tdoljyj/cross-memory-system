@@ -21,6 +21,7 @@ on:
       - 'apps/clued-cloud/tests/priority-projection-db.test.mjs'
       - 'apps/clued-cloud/tests/context-v2-*.test.mjs'
       - 'apps/clued-cloud/tests/currentness-*.test.mjs'
+      - 'apps/clued-cloud/tests/work-claims-*.test.mjs'
       - 'apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs'
       - 'apps/clued-cloud/tests/resume-constraint-index-db.test.mjs'
       - 'apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs'
@@ -66,6 +67,7 @@ on:
       - 'apps/clued-cloud/tests/priority-projection-db.test.mjs'
       - 'apps/clued-cloud/tests/context-v2-*.test.mjs'
       - 'apps/clued-cloud/tests/currentness-*.test.mjs'
+      - 'apps/clued-cloud/tests/work-claims-*.test.mjs'
       - 'apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs'
       - 'apps/clued-cloud/tests/resume-constraint-index-db.test.mjs'
       - 'apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs'
@@ -172,6 +174,7 @@ jobs:
       - run: npm run test:context:v2
       - run: npm run test:projection:refresh
       - run: npm run test:work:claims
+      - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs
       - run: npm run test:information-flow:candidates
       - run: npm run test:information-flow:intake
       - run: npm run test:information-flow:promotion
@@ -232,6 +235,7 @@ jobs:
       - run: npm run test:context:v2
       - run: npm run test:projection:refresh
       - run: npm run test:work:claims
+      - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs
       - run: npm run test:information-flow:candidates
       - run: npm run test:information-flow:intake
       - run: npm run test:information-flow:promotion
