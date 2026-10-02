@@ -107,7 +107,7 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
 
     // --- Agent creates a request; a retry with the same key replays it. ---
     const commit = 'repo:tdoljyj/cross-memory-system/4f49b0e8';
-    const requestInput = { action: 'release.production', resources: [commit], idempotency_key: 'release-4f49b0e8',
+    const requestInput = { action: 'release.production', resources: [commit], idempotency_key: 'release-request-fixture',
       suggested_grant: { expires_seconds: 7200 }, agent_note: '发布 #502 的数据库函数，已备份' };
     const created = committed(await agent('claude', 'clued_owner_request_v1', requestInput));
     const request = created.request;
@@ -198,7 +198,7 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
 
     // --- Approve once: one use, then nothing. ---
     const onceReq = committed(await agent('codex', 'clued_owner_request_v1', { action: 'migration.production',
-      resources: [commit], idempotency_key: 'migrate-4f49b0e8' })).request;
+      resources: [commit], idempotency_key: 'migrate-once-fixture' })).request;
     committed(await grant(await confirm({ request_id: onceReq.request_id, choice: 'once' })));
     assert.equal((await agent('codex', 'clued_owner_request_status_v1', { request_id: onceReq.request_id })).request.status,
       'approved_once');
