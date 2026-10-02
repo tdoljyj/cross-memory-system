@@ -68,8 +68,22 @@ jobs:
           node --version
           node --test scripts/ci/clued-work-admission.test.mjs
       - name: Verify the work claim with Clued and summarize applicable workflows
+        id: admit
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_CONTEXT_READ_TOKEN }}
           CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode required
+      # Owner Decision 37e01bb1: the same result once more as the Owner's
+      # clued-admission GitHub App. Its key lives only in this environment, so
+      # a pull request's own workflow cannot post this check and the main
+      # ruleset can require it by App. Posts nothing until the App is set up.
+      - name: Post the result as the clued-admission App
+        if: ${{ !cancelled() }}
+        env:
+          ADMISSION_HEAD_SHA: ${{ steps.admit.outputs.head_sha }}
+          ADMISSION_OUTCOME: ${{ steps.admit.outcome }}
+          ADMISSION_VERDICT: ${{ steps.admit.outputs.verdict }}
+          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
+          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_PRIVATE_KEY }}
+        run: node scripts/ci/clued-work-admission.mjs --mode app-check
