@@ -462,6 +462,67 @@ class CaptureGuardTest(GuardHarness):
             turn = [human("看看", "u1"), call("b1", "Bash", {"command": command}), result("b1", body, is_error)]
             self.assertEqual(self.run_hook(turn).returncode, 0, (command, is_error))
 
+    def test_gh_api_merge_command_forms(self):
+        merged = '{"sha":"abc1234","merged":true}'
+        for command in ("gh api \\\n  -X PUT \\\n  repos/o/r/pulls/478/merge", "gh api -X 'PUT' repos/o/r/pulls/478/merge",
+                        'gh api -XPUT repos/o/r/pulls/478/merge'):
+            turn = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", merged)]
+            self.assertIn("merged PR #478 with gh api", self.run_hook(turn).stderr, command)
+        # No number to name: any committed write settles it.
+        for command, body in (("gh api -X PUT repos/o/r/pulls/$PR/merge", merged),
+                              ("gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"X\"}) "
+                               "{ clientMutationId } }'", '{"data":{"mergePullRequest":{"clientMutationId":null}}}')):
+            turn = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", body)]
+            proc = self.run_hook(turn)
+            self.assertIn("merged a PR with gh api", proc.stderr, command)
+            settled = turn + [call("w1", MUTATE), result("w1", COMMITTED), call("c1", CHECKPOINT),
+                              result("c1", {"status": "committed"})]
+            self.assertEqual(self.run_hook(settled).returncode, 0, command)
+        # Commands run through the PowerShell tool count too.
+        turn = [human("合入", "u1"), call("p1", "PowerShell", {"command": "gh pr merge 478 --merge"}),
+                result("p1", "ok")]
+        self.assertIn("merged PR #478 with gh pr merge", self.run_hook(turn).stderr)
+
+    def test_failed_gh_api_merge_does_not_hide_a_push_to_main(self):
+        command = "gh api -X PUT repos/o/r/pulls/5/merge; git push origin HEAD:main"
+        turn = [human("推送", "u1"), call("b1", "Bash", {"command": command}),
+                result("b1", '{"message":"Pull Request is not mergeable"}')]
+        self.assertIn("pushed to main", self.run_hook(turn).stderr)
+
+    def test_subagent_transcript_edge_cases(self):
+        def at(entry: dict, stamp: str | None) -> dict:
+            return {**entry, "timestamp": stamp} if stamp else entry
+        merge = [at({**human("合入 7", "sub-u"), "isSidechain": True}, "2026-10-02T10:00:06.500Z"),
+                 at(call("m1", MERGE, {"owner": "o", "repo": "r", "pullNumber": 7}, sidechain=True),
+                    "2026-10-02T10:00:06.600Z"),
+                 at({**result("m1", MERGED), "isSidechain": True}, "2026-10-02T10:00:06.700Z")]
+        write_at = lambda stamp: [at(human("看看", "u1"), "2026-10-02T10:00:00Z"),
+                                  at(call("w1", MUTATE, ABOUT_PR_7), stamp), at(result("w1", COMMITTED), stamp),
+                                  at(call("c1", CHECKPOINT), stamp), at(result("c1", {"status": "committed"}), stamp)]
+        # Timestamps are compared as times, not strings: 06Z is before 06.700Z.
+        self.assertEqual(self.run_hook(write_at("2026-10-02T10:00:06Z"), subagents={"a": merge}).returncode, 2)
+        self.assertEqual(self.run_hook(write_at("2026-10-02T10:00:07Z"), subagents={"a": merge}).returncode, 0)
+        # A subagent file without timestamps is placed last.
+        undated = [{k: v for k, v in e.items() if k != "timestamp"} for e in merge]
+        self.assertEqual(self.run_hook(write_at("2026-10-02T10:00:07Z"), subagents={"a": undated}).returncode, 2)
+        # An unreadable subagent path does not switch the guard off.
+        session = self.merge_turn()
+        transcript_dir = Path(self.tmp.name) / "unreadable" / "subagents" / "agent-zz.jsonl"
+        transcript_dir.mkdir(parents=True)
+        self.assertEqual(self.run_hook(session, session="unreadable").returncode, 2)
+        # An entry repeated in a subagent file (same uuid) counts once.
+        first = {**human("那就保持原样", "dup"), "timestamp": "2026-10-02T10:00:00Z"}
+        later_write = [at(call("w1", MUTATE), "2026-10-02T10:00:05Z"), at(result("w1", COMMITTED), "2026-10-02T10:00:05Z"),
+                       at(call("c1", CHECKPOINT), "2026-10-02T10:00:05Z"),
+                       at(result("c1", {"status": "committed"}), "2026-10-02T10:00:05Z")]
+        replay = [{**first, "isSidechain": True, "timestamp": "2026-10-02T10:00:09Z"}]
+        self.assertEqual(self.run_hook([first] + later_write, subagents={"r": replay}).returncode, 0)
+        # A subagent's own committed write needs a checkpoint like any other.
+        sub_write = [at({**call("w9", MUTATE), "isSidechain": True}, "2026-10-02T10:00:03Z"),
+                     at({**result("w9", COMMITTED), "isSidechain": True}, "2026-10-02T10:00:03Z")]
+        proc = self.run_hook([at(human("看看", "u1"), "2026-10-02T10:00:00Z")], subagents={"w": sub_write})
+        self.assertIn("since the last checkpoint", proc.stderr)
+
     def test_every_decision_message_since_the_last_write_counts(self):
         first, second = human("那就保持原样", "u1"), human("这个也暂缓", "u2")
         proc = self.run_hook([first, human("好的继续", "u-mid"), second])

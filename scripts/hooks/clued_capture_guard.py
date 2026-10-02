@@ -40,6 +40,7 @@ import re
 import sys
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 CLUED_WRITE_TOOLS = (
@@ -67,8 +68,14 @@ GH_PR_MERGE = re.compile(COMMAND_START + r"gh\s+pr\s+merge\b", re.MULTILINE)
 # The REST merge endpoint merges only on PUT; a GET there just asks whether the
 # PR is merged.
 GH_API_MERGE = re.compile(
-    COMMAND_START + r"gh\s+api\b(?=[^\n;&|]*(?:-X\s*|--method[=\s]+)PUT\b)[^\n;&|]*?/pulls/(\d+)/merge\b",
+    COMMAND_START + r"gh\s+api\b(?=[^\n;&|]*(?:-X\s*|--method[=\s]+)['\"]?PUT\b)"
+    r"[^\n;&|]*?/pulls/(\d+|\$\{?\w+\}?)/merge\b",
     re.MULTILINE | re.IGNORECASE)
+# The GraphQL merge mutation names the PR by node id, so it has no PR number.
+GH_GRAPHQL_MERGE = re.compile(COMMAND_START + r"gh\s+api\s+graphql\b[^\n;&|]*mergePullRequest",
+                              re.MULTILINE | re.IGNORECASE)
+# Tools whose command input runs a shell.
+SHELL_TOOLS = ("Bash", "PowerShell")
 # Host-injected reminders inside a human entry are not the Owner's words.
 SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?(?:</system-reminder>|\Z)", re.DOTALL)
 # Heredoc bodies (commit messages, inline scripts) are data, not commands.
@@ -255,20 +262,50 @@ def load_session(path: Path) -> list[dict]:
     """The session transcript with its subagents' transcripts merged in.
 
     Claude Code keeps each subagent's transcript in <session>/subagents/; its
-    entries carry isSidechain. They are merged into the session by timestamp
-    (an entry without one keeps its file's last timestamp), so an outcome a
-    subagent reaches is ordered against the session's later writes.
+    entries carry isSidechain. They are merged into the session by parsed
+    timestamp, so an outcome a subagent reaches is ordered against the
+    session's later writes. An entry without a timestamp takes its file's
+    previous one (or next one); a subagent file with none at all is placed
+    last, so its outcomes need a write that is surely later. On equal times
+    the session comes first. An entry repeated across files (same uuid) counts
+    once. An unreadable subagent file is skipped, not fatal.
     """
-    files = [path] + sorted(path.with_suffix("").joinpath("subagents").glob("agent-*.jsonl"))
-    keyed = []
-    for rank, file in enumerate(files):
-        stamp = ""
-        for index, entry in enumerate(load_entries(file)):
-            stamp = entry.get("timestamp") if isinstance(entry.get("timestamp"), str) else stamp
-            keyed.append(((stamp, rank, index), entry))
-    if len(files) == 1:
-        return [entry for _, entry in keyed]
+    main = load_entries(path)
+    try:
+        subagent_files = sorted(path.with_suffix("").joinpath("subagents").glob("agent-*.jsonl"))
+    except OSError:
+        subagent_files = []
+    if not subagent_files:
+        return main
+    files = [main]
+    for file in subagent_files:
+        try:
+            files.append(load_entries(file))
+        except OSError:
+            continue
+    keyed, seen = [], set()
+    for rank, entries in enumerate(files):
+        times = [parse_time(entry.get("timestamp")) for entry in entries]
+        known = [t for t in times if t is not None]
+        fill = known[0] if known else (float("-inf") if rank == 0 else float("inf"))
+        for index, (entry, moment) in enumerate(zip(entries, times)):
+            fill = moment if moment is not None else fill
+            uuid = entry.get("uuid")
+            if isinstance(uuid, str):
+                if uuid in seen:
+                    continue
+                seen.add(uuid)
+            keyed.append(((fill, rank, index), entry))
     return [entry for _, entry in sorted(keyed, key=lambda item: item[0])]
+
+
+def parse_time(value) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def prompt_text(content) -> str | None:
@@ -377,18 +414,22 @@ def analyse(entries: list[dict]) -> list[Finding]:
             elif suffix == "deploy_edge_function" and not failed and '"error"' not in body:
                 outcomes.append((pos, use_id, f"deployed edge function {tool_input.get('name', '')}".strip(),
                                  name_subject("edge function", tool_input.get("name"))))
-            elif name == "Bash" and not failed:
+            elif name in SHELL_TOOLS and not failed:
                 command = HEREDOC.sub("", str(tool_input.get("command", "")))
+                command = re.sub(r"\\\r?\n", " ", command)  # line continuations
                 merges = gh_merge_numbers(command)
                 for index, number in enumerate(merges):
                     outcomes.append((pos, f"{use_id}#{index}" if index else use_id,
                                      f"merged PR #{number} with gh pr merge" if number
                                      else "merged a PR with gh pr merge", pr_subject(number)))
-                api_merges = GH_API_MERGE.findall(command)
-                if api_merges and ('"merged":true' in body.replace(" ", "") or '"message"' not in body):
-                    for index, number in enumerate(api_merges):
-                        outcomes.append((pos, f"{use_id}#api{index}", f"merged PR #{number} with gh api",
-                                         pr_subject(number)))
+                api_merges = []
+                if '"merged":true' in body.replace(" ", "") or '"message"' not in body:
+                    api_merges = [number if number.isdigit() else None
+                                  for number in GH_API_MERGE.findall(command)]
+                    api_merges += [None] * len(GH_GRAPHQL_MERGE.findall(command))
+                for index, number in enumerate(api_merges):
+                    outcomes.append((pos, f"{use_id}#api{index}", f"merged PR #{number} with gh api"
+                                     if number else "merged a PR with gh api", pr_subject(number)))
                 if not merges and not api_merges and GIT_PUSH_MAIN.search(command):
                     outcomes.append((pos, use_id, "pushed to main", None))
 
