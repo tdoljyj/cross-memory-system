@@ -100,7 +100,8 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       ...structuredClone(PRIVATE), permissions: structuredClone(OWNER_ONLY), ownedByMe: true, capabilities: { canTrash: true, canUntrash: true } });
     const files = new Map([[target.parentId, directory(target.parentId, target.root.split("/").at(-2))],
       [target.rootId, directory(target.rootId, "Clued_资料中心", target.parentId)], [target.trackId, directory(target.trackId, TRACK, target.rootId)]]);
-    const state = { patches: 0, losePatch: false, files, directory };
+    // A new folder inherits its parent's sharing, as in Drive (P6.2); newFolderSharing overrides it.
+    const state = { patches: 0, losePatch: false, files, directory, newFolderSharing: null };
     state.fetch = async (url, init = {}) => {
       const u = new URL(url); assert.equal(new Headers(init.headers).get("authorization"), "Bearer fixture-subtree-access");
       assert.equal(u.hostname, "www.googleapis.com");
@@ -129,8 +130,12 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       if (init.method === "POST") {
         const raw = init.body, match = /\{[^\r\n]+"appProperties":\{[^\r\n]+\}\}/.exec(raw), metadata = JSON.parse(match?.[0] ?? raw);
         const attempt = (await admin.query("select provider_attempt from clued_private.resource_center_mutations_v1 where id=$1", [metadata.appProperties.clued_intent_id])).rows[0].provider_attempt;
+        const parent = files.get(metadata.parents?.[0]);
+        const inherited = metadata.mimeType === FOLDER ? { ...structuredClone(state.newFolderSharing ?? { shared: parent.shared, permissionIds: parent.permissionIds }),
+          permissions: structuredClone(parent.permissions) } : {};
         const created = { ...metadata, version: "1", trashed: false, size: attempt.size, sha256Checksum: attempt.sha256,
-          md5Checksum: "f".repeat(32), headRevisionId: "rev-" + randomUUID(), ownedByMe: true, capabilities: { canTrash: true, canUntrash: true } };
+          md5Checksum: "f".repeat(32), headRevisionId: "rev-" + randomUUID(), ownedByMe: true, capabilities: { canTrash: true, canUntrash: true },
+          ...inherited };
         files.set(metadata.id, created);
         return Response.json(created);
       }
@@ -327,6 +332,79 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
         provider_file_version: "99", idempotency_key: "resource-center-finalize:" + intent.id,
         descendant_versions: [{ provider_file_id: deep.provider_file_id, base_version: deep.provider_file_version, provider_file_version: "99" }] });
       assert.notEqual(forged.status, "committed");
+    });
+
+    await t.test("P6.2: a directory Clued creates is registered with its sharing digest when it equals its folder's", async () => {
+      const { target, client, storage } = await setup();
+      const trackPath = `${target.root}/${TRACK}`;
+      const created = await submitJob(target, client, { operation: "create", target_kind: "directory", destination_path: `${trackPath}/made`,
+        directory_semantics: "topic" });
+      assert.equal((await executor(target, storage).run(created.reference)).status, "committed");
+      const made = await artifact(target, `${trackPath}/made`);
+      assert.equal(made.provider_sharing_digest, googleDriveSharingDigest(PRIVATE));
+      assert.equal((await journal(created)).verified_result_v2.proof.provider_sharing_digest, googleDriveSharingDigest(PRIVATE));
+      // Its Drive version moving on no longer stops a write into it.
+      storage.files.get(made.provider_file_id).version = "9";
+      const inside = await submitJob(target, client, { operation: "create", target_kind: "file", destination_path: `${trackPath}/made/x.md`, content: "x" });
+      assert.equal((await executor(target, storage).run(inside.reference)).status, "committed");
+      // A folder whose sharing differs from its parent's keeps version matching.
+      storage.newFolderSharing = SHARED;
+      const odd = await submitJob(target, client, { operation: "create", target_kind: "directory", destination_path: `${trackPath}/odd`,
+        directory_semantics: "topic" });
+      assert.equal((await executor(target, storage).run(odd.reference)).status, "committed");
+      assert.equal((await artifact(target, `${trackPath}/odd`)).provider_sharing_digest, null);
+      assert.equal("provider_sharing_digest" in (await journal(odd)).verified_result_v2.proof, false);
+    });
+
+    await t.test("P6.2: a directory move gives both folders without a digest the one the authority recorded", async () => {
+      const { target, client, storage, trackPath, topic, folder } = await tree();
+      const track = await artifact(target, trackPath);
+      assert.equal(topic.provider_sharing_digest, null); assert.equal(track.provider_sharing_digest, null);
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      assert.equal((await executor(target, storage).run(job.reference)).status, "committed");
+      const digest = googleDriveSharingDigest(PRIVATE);
+      const topicAfter = await artifactById(topic.id), trackAfter = await artifactById(track.id);
+      assert.equal(topicAfter.provider_sharing_digest, digest); assert.equal(trackAfter.provider_sharing_digest, digest);
+      assert.equal(Number(topicAfter.version), Number(topic.version) + 1);
+      assert.equal(topicAfter.provider_file_version, topic.provider_file_version, "the version itself is left as registered");
+      // Drive advanced the destination folder's version: writes into it still work.
+      storage.files.get(topic.provider_file_id).version = String(Number(storage.files.get(topic.provider_file_id).version) + 4);
+      const inside = await submitJob(target, client, { operation: "create", target_kind: "file", destination_path: `${topic.path}/after.md`, content: "x" });
+      assert.equal((await executor(target, storage).run(inside.reference)).status, "committed");
+      // A folder that already has a digest keeps it: moving back changes nothing on either side.
+      const back = await submitJob(target, client, move(await artifactById(folder.id), folder.path, storage.files.get(folder.provider_file_id).version));
+      assert.equal((await executor(target, storage).run(back.reference)).status, "committed");
+      assert.equal(Number((await artifactById(topic.id)).version), Number(topicAfter.version));
+      assert.equal(Number((await artifactById(track.id)).version), Number(trackAfter.version));
+    });
+
+    await t.test("P6.2: the verified record refuses a sharing digest on a file or one that is not the folder's", async () => {
+      // Each case on its own root: a refused record leaves its intent fenced.
+      for (const [kind, forged] of [["file", googleDriveSharingDigest(PRIVATE)], ["directory", googleDriveSharingDigest(SHARED)]]) {
+        const { target, client, storage } = await setup();
+        const trackPath = `${target.root}/${TRACK}`;
+        const mutation = kind === "file" ? { operation: "create", target_kind: "file", destination_path: `${trackPath}/f.md`, content: "x" }
+          : { operation: "create", target_kind: "directory", destination_path: `${trackPath}/d`, directory_semantics: "topic" };
+        const job = await submitJob(target, client, mutation);
+        let refused = false, loaded;
+        const forging = createResourceCenterCloudExecutor({ verified_result_mode: true,
+          load_job: async ref => { const d = await cloud({ action: "load", ...ref }); loaded = d; const c = { ...d }; delete c.credential_envelope; delete c.oauth_client_id; return c; },
+          get_credential: async expected => ({ ...expected, access_token: "fixture-subtree-access", scope: SCOPES, expires_at_ms: Date.now() + 3600000 }),
+          drive_fetch: storage.fetch,
+          rpc: async input => {
+            const { connection_id, job_id, action, ...body } = input;
+            if (action === "verified_record") body.proof = { ...body.proof, provider_sharing_digest: forged };
+            try {
+              return await cloud({ connection_id, job_id, action, ...(action === "settle_verified" ? {} : { credential_version: loaded.credential_version }),
+                ...(action === "finalize" ? { finish: { action, ...body } } : body) });
+            } catch (error) { if (action === "verified_record") refused = /storage_verified_mismatch/.test(String(error.message)); throw error; }
+          },
+        });
+        const result = await forging.run(job.reference);
+        assert.notEqual(result.status, "committed", JSON.stringify(result));
+        assert.equal(refused, true, kind);
+        assert.equal(await artifact(target, mutation.destination_path), undefined);
+      }
     });
 
     await t.test("submit refuses a track, a rename, a move into itself and any other shape before a job exists", async () => {
