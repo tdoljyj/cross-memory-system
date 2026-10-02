@@ -131,12 +131,12 @@ export async function createStorageGoogleProbe(config: {
       const root = d.layout.managed_root;
       const scanConfig = { managed_root: root, root_folder_id: d.layout.root_folder_id,
         root_parent_id: d.layout.root_parent_id, scan_roots: [{ folder_id: d.layout.root_parent_id,
-          path: root.slice(0, root.lastIndexOf("/")) }], max_depth: 8, max_entries: 10000 };
+          path: root.slice(0, root.lastIndexOf("/")) }], registered_sibling_roots: siblingRoots, max_depth: 8, max_entries: 10000 };
       const scan = createGoogleDriveBoundaryScanner({
         trusted_profile: { registration_status: "registered", managed_root: root,
           boundary_scan_max_depth: scanConfig.max_depth, boundary_scan_max_entries: scanConfig.max_entries },
         root_folder_id: scanConfig.root_folder_id, root_parent_id: scanConfig.root_parent_id, scan_roots: scanConfig.scan_roots,
-        registered_sibling_roots: siblingRoots, // shape checked by the scanner
+        registered_sibling_roots: scanConfig.registered_sibling_roots, // shape checked by the scanner
         get_file: async (id: string) => { checkTime(); return (await metadata.getFiles([id], { signal }))[0]; },
         list_folder: async (id: string) => { checkTime(); return (await metadata.listFolders([id], { signal }))[0]; },
       });

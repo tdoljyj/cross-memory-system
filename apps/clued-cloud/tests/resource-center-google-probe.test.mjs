@@ -252,7 +252,12 @@ test('another registered root of the same owner beside the root is skipped only 
   assert.equal((await named.probe.run({connection_id:named.connection})).boundary_observation.status,'clean');
   const malformed=await fixture({siblingRoot:true,descriptor:{registered_sibling_roots:'n0'}});error=undefined;
   try{await malformed.probe.run({connection_id:malformed.connection});}catch(e){error=e;}
-  assert.equal(storageProbeDiagnostic(error).stage,'boundary');assert.equal(malformed.rpcs.length,1);
+  assert.deepEqual(storageProbeDiagnostic(error),{stage:'boundary',reason:'BOUNDARY_PROFILE_UNQUALIFIED'});assert.equal(malformed.rpcs.length,1);
+  // The exemption set is part of the effective scan and of its evidence digest.
+  const other=await fixture({siblingRoot:true,descriptor:{registered_sibling_roots:['n0','n1']}});
+  const a=(await named.probe.run({connection_id:named.connection})).boundary_observation;
+  const b=(await other.probe.run({connection_id:other.connection})).boundary_observation;
+  assert.notEqual(a.scan_config_sha256,b.scan_config_sha256);
 });
 
 test('boundary incomplete enumeration, final drift, timeout and subrequest limit never complete',async()=>{
@@ -272,7 +277,7 @@ test('manual evidence digests are reproducible and descriptor changes never reus
   const f=await fixture(),first=(await f.probe.run({connection_id:f.connection})).boundary_observation;
   assert.equal(first.descriptor_sha256,hash(f.descriptor));
   assert.equal(first.scan_config_sha256,hash({managed_root:'/drive/Clued_资料中心',root_folder_id:'root',root_parent_id:'parent',
-    scan_roots:[{folder_id:'parent',path:'/drive'}],max_depth:8,max_entries:10000}));
+    scan_roots:[{folder_id:'parent',path:'/drive'}],registered_sibling_roots:[],max_depth:8,max_entries:10000}));
   f.descriptor.connection_version++;
   const second=(await f.probe.run({connection_id:f.connection})).boundary_observation;
   assert.notEqual(first.descriptor_sha256,second.descriptor_sha256);

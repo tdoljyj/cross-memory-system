@@ -943,11 +943,15 @@ changes. Existing connections keep working unchanged until the Owner turns on
   Another active root of the same owner under the same Drive parent (an N0
   onboarded root beside `Clued_资料中心`) is not an island either (Decision
   `b18eff80`, migration `20261002070000_storage_registered_sibling_roots_v1`):
-  the job and directory-probe descriptors carry `registered_sibling_roots`,
+  the job descriptors (account-policy v2 and legacy v1) and the
+  directory-probe descriptor carry `registered_sibling_roots`,
   the owner's other active profiles' `root_folder_id`s with the same
   `root_parent_id`, and the scanner skips exactly those folder IDs when they
   are listed directly in the managed root's parent. A same-name folder with
   another ID, a revoked profile's root and other owners' roots still count.
+  More than 64 such roots under one parent fails closed
+  (`DRIVE_BOUNDARY_PROFILE_UNQUALIFIED`); the list is read when the job or
+  probe is loaded.
   Diagnose
   from Worker logs: `storage_cloud_denied` (a deny, e.g.
   `UNAUTHORIZED_WORKSPACE_MUTATION`) or `storage_cloud_unavailable` (the job

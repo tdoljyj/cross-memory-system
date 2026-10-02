@@ -11,17 +11,22 @@
 -- * clued_private.storage_registered_sibling_roots_v1(owner, profile) lists the
 --   Drive folder IDs of the owner's OTHER active profiles whose root has the
 --   same Drive parent. Revoked profiles and other owners never appear.
--- * The cloud executor job descriptor (storage_cloud_worker_v2) and the
---   directory probe descriptor (storage_directory_descriptor_v1) carry it as
+-- * The cloud executor job descriptors (account-policy storage_cloud_worker_v2
+--   and legacy-mode clued_storage_cloud_worker_v1) and the directory probe
+--   descriptor (storage_directory_descriptor_v1) carry it as
 --   registered_sibling_roots. The scanner skips exactly those folder IDs when
 --   they are listed directly in the managed root's parent; a folder with the
 --   same name and another ID is still a finding. Every other island rule
 --   (Decision 89b998d7, fd94bd2f) is unchanged.
--- * Both functions are changed by an anchored patch with an exact hit count.
+-- * The list is read when the job or probe is loaded; a sibling revoked
+--   while one job is in flight stays exempt for that job only. The scanner
+--   accepts at most 64 sibling roots; more fails closed
+--   (DRIVE_BOUNDARY_PROFILE_UNQUALIFIED).
+-- * Each function is changed by an anchored patch with an exact hit count.
 
 create or replace function clued_private.storage_registered_sibling_roots_v1(p_owner uuid, p_profile uuid)
 returns jsonb language sql stable security definer set search_path='' as $$
-  select coalesce(jsonb_agg(o.root_folder_id order by o.root_folder_id),'[]'::jsonb)
+  select coalesce(jsonb_agg(o.root_folder_id order by o.root_folder_id collate "C"),'[]'::jsonb)
   from clued_private.resource_center_profiles_v1 s
   join clued_private.resource_center_profiles_v1 o
     on o.user_id=s.user_id and o.id<>s.id and o.state='active'
@@ -39,6 +44,10 @@ declare patch record; body text; hits int; current text;
 begin
   for patch in select * from (values
     ('clued_private.storage_cloud_worker_v2(text,jsonb)',
+     $a$      'scan_roots',jsonb_build_array(jsonb_build_object('folder_id',p.root_parent_id,'path',regexp_replace(p.managed_root,'/[^/]+$',''))));$a$,
+     $r$      'scan_roots',jsonb_build_array(jsonb_build_object('folder_id',p.root_parent_id,'path',regexp_replace(p.managed_root,'/[^/]+$',''))),
+      'registered_sibling_roots',clued_private.storage_registered_sibling_roots_v1(c.owner_id,p.id));$r$,1),
+    ('public.clued_storage_cloud_worker_v1(text,jsonb)',
      $a$      'scan_roots',jsonb_build_array(jsonb_build_object('folder_id',p.root_parent_id,'path',regexp_replace(p.managed_root,'/[^/]+$',''))));$a$,
      $r$      'scan_roots',jsonb_build_array(jsonb_build_object('folder_id',p.root_parent_id,'path',regexp_replace(p.managed_root,'/[^/]+$',''))),
       'registered_sibling_roots',clued_private.storage_registered_sibling_roots_v1(c.owner_id,p.id));$r$,1),

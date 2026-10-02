@@ -217,7 +217,12 @@ export async function testAccountCloud(t, admin, server, user, decision) {
       const policy = await activate(initialPolicy), policyJob = await submit(policy, policyClient);
       assert.equal((await jobRow(legacyJob)).authority_snapshot_v2, null);
       assert.ok((await jobRow(policyJob)).authority_snapshot_v2);
-      for (const job of [legacyJob, policyJob]) assert.equal((await cloud({ action: "load", ...job.reference })).status, "queued");
+      for (const job of [legacyJob, policyJob]) {
+        const loaded = await cloud({ action: "load", ...job.reference });
+        assert.equal(loaded.status, "queued");
+        // Both the legacy (v1) and the account-policy (v2) descriptor name sibling roots (Decision b18eff80).
+        assert.deepEqual(loaded.registered_sibling_roots, []);
+      }
       for (const [target, client, original, snapshot] of [[legacy, legacyClient, legacyJob, {}], [policy, policyClient, policyJob, null]]) {
         const wrong = randomUUID();
         await admin.query(`insert into clued_private.storage_jobs_v1(owner_id,job_id,connection_id,binding_id,grant_receipt_id,
@@ -393,6 +398,18 @@ export async function testAccountCloud(t, admin, server, user, decision) {
       const near = await sibling(target.parentId), far = await sibling(`elsewhere-${randomUUID()}`);
       assert.deepEqual(await loadSiblings(), [near.rootId]); assert.deepEqual(await probeSiblings(), [near.rootId]);
       assert.ok(!(await loadSiblings()).includes(far.rootId));
+      // A root whose folder is the scanned parent itself is never named.
+      const self = await register({ action: "profile_register", project_id: project, profile_version: `account-cloud-sibling/${randomUUID()}`,
+        managed_root: `/account-cloud-parent-${randomUUID()}/Clued_资料中心`, root_folder_id: target.parentId, root_parent_id: target.parentId, root_folder_version: "1" });
+      assert.deepEqual(await loadSiblings(), [near.rootId]);
+      await register({ action: "profile_revoke", profile_id: self.target_refs.find(ref => ref.role === "primary").id, base_version: 1 });
+      // Another owner's active root under the same parent is never named.
+      const stranger = randomUUID();
+      await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())", [stranger, `sibling-${stranger}@example.invalid`]);
+      await admin.query("update clued_private.resource_center_profiles_v1 set user_id=$2 where id=$1", [near.id, stranger]);
+      assert.deepEqual(await loadSiblings(), []); assert.deepEqual(await probeSiblings(), []);
+      await admin.query("update clued_private.resource_center_profiles_v1 set user_id=$2 where id=$1", [near.id, user]);
+      assert.deepEqual(await loadSiblings(), [near.rootId]);
       await register({ action: "profile_revoke", profile_id: near.id, base_version: 1 });
       assert.deepEqual(await loadSiblings(), []); assert.deepEqual(await probeSiblings(), []);
       await register({ action: "profile_revoke", profile_id: far.id, base_version: 1 });
