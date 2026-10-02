@@ -396,6 +396,34 @@
 | `untrash` | `files.update trashed=false` | 判定器新增 `restore` 操作，Artifact `state` 约束从 `{active, revoked}` 扩展为含 `trashed`（P5 迁移；trash 结算时写入）。源的查找条件是 `state = 'trashed'`，且原父目录仍在根内 | `trashed = false`、祖先链在根内、同名唯一 | GET trashed 判断 |
 | `move`（目录） | 与文件 move 相同 | 子树内所有已登记 Artifact 的路径，在同一个结算事务里重写；子树内有在途作业时拒绝 | 目录的祖先链正确；子项路径抽样或全量一致 | 判为 `attention_required`，不自动重写路径 |
 
+**P6 实现说明（2026-10-02，Owner Decisions `c47efe38`、`746fd078`；迁移 `20261002080000`）**：
+
+- **等级与开关。** 目录 move 使用单独的 `modify_subtree` 写入等级（独立开关与说明 `clued.storage-subtree-disclosure/1`）。/3 策略的 actions 是 create 集合加上 `modify`、`overwrite`、`destructive`、`modify_subtree` 中任意几项，按这个顺序排列（`clued_private.storage_write_actions_v1`）。
+- **提交形状。** 提交为 `{operation: move, target_kind: directory, source_path, destination_path, source_file_version, source_file_id}`，以 Drive ID、路径和调用方观测到的版本共同指定目录。名称不变、父目录改变；不能移到自身或自身之下；track（根的直属目录）不能移动。
+- **判定器。** 源目录与其他已登记目录一样，按共享状态而不是 Drive 版本与登记比对，因为子项变化时 Drive 会推进文件夹版本。判定器还要求：
+  - 源目录的父目录是 Drive 报告的已登记父目录；目标父目录不能是根本身（`track_forbidden`）；
+  - 目标处及其下没有任何已登记对象（`destination_exists`）；
+  - 两个父目录的共享状态和访问权限（每个权限连同其角色）都完全相同（`sharing_differs`；执行器在任何预留前以 `DIRECTORY_SHARING_DIFFERS` 拒绝），因此被移动子树继承的访问权限不变；
+  - 目录下已登记对象（含 trashed）不超过 500 个（`subtree_too_large`）。
+- **在途作业（T14）。** 由既有的每个 profile 单写者围栏保证：移动处于 prepared / started / uncertain 时，其他意图都不能开始；其他意图在途时，移动也不能开始。排队中、仍指向旧路径的作业会在自身的 provider 查找时失败，不产生 effect。
+- **attempt 与核验。** provider attempt 为 `clued.storage-subtree-move-attempt/1`，记录目录、两个父目录、两条路径，以及服务端选定的最多 10 个已登记子孙（先浅后深，再按路径排序；由持锁的 durable start 返回，记录 attempt 时须与当时登记一致，核验记录时以已存 attempt 为准）。移动前，执行器（任何预留前）和 effect（durable flush 前后）都按 Drive ID 复读这些子孙；登记已漂移时以 `SUBTREE_DRIFT` 拒绝，不产生 effect。核验合同为 `clued.storage-directory-move-verified/1`，检查项包括 identity、ancestors、stable_state、unique_name、source_vacated、sharing_unchanged（共享状态与访问权限均不变）、subtree。
+- **结算。** 结算（`artifact_subtree_move`，只接受某个目录 move 意图的已核验结算，且须与其已记录证明的目录、路径和 Drive 版本一致）在同一个结算事务里完成两件事：按判定时看到的目录版本 CAS 更新目录的路径和观测到的 Drive 版本；同时重写目录下每个 active / trashed 对象的路径。revoked 历史保持旧路径。
+- **子项版本刷新（P6.1，Owner Decision `e5e99da8`，迁移 `20261002090000`）。** 生产验收发现：目录每移动一次，Drive 会推进其下各项的 version，内容不变。为此：
+  - durable start 还返回目录下全部 active / trashed 已登记对象（最多 500 个；trashed 对象可与 active 对象同路径）；
+  - 移动前，执行器按 Drive ID 逐项读取这些对象（批量读取失败时对半拆分以隔离读不到的项，读取有时间与请求上限），把实际状态与登记完全一致的（版本、名称、类型、所在文件夹一致，文件另记大小与 sha256）记入 attempt 的 `descendants`；
+  - 移动后，核验再读一次，仍在原相对位置、名称、类型与内容都不变且版本未倒退的，记入 proof 的 `descendant_versions`；这次读取有独立的时间预算，不会拖垮核验本身；
+  - 结算在同一事务里按 attempt 记录的版本逐项 CAS 更新登记版本。
+
+  不符合、读不到或超时的项保持原登记版本（fail closed），其余项照常刷新。迁移前已记录的 attempt（无 `descendants`）的 attempt、proof 与结算输入保持原样，不刷新。残余风险：移动前读取与核验读取之间，对子项做的不改内容的外部修改（共享、锁定、描述）会被并入刷新后的版本。迁移与发布之间须关闭 modify_subtree 与执行开关。
+- **目录共享指纹（P6.2，Owner Decision `06b54716`，迁移 `20261002130000`）。** P6.1 验收发现：Clued 新建的目录没有登记共享指纹，只按 Drive 版本核对；有文件夹移入移出后版本前进，之后以它为父目录的写入都被拒绝。为此：
+  - 新建目录时，核验读取新文件夹的共享；与目标父目录（authority 已核对、provider identity 记录的）共享指纹完全一致时，证明（`clued.storage-create-verified/2`）带 `provider_sharing_digest`，登记时一并记下；不一致或读不到时不带，仍按版本核对。核验记录只接受目录、且只接受等于该父目录记录值的指纹。
+  - 目录移动结算时，源父目录和目标父目录中还没有指纹的，记下 provider identity 为它们记录的指纹（移动要求两者相等，目标父目录的指纹已由 authority 核对）；已有指纹的不改。只有登记的 Drive 版本仍等于 provider identity 记录的版本（新增的 `source_parent_version` 与已有的 `destination_parent_version`）时才记：authority 只按 ID 核对源父目录，登记版本落后说明它在 Clued 上次核对之后在 Drive 里变过。
+  - 证明给文件带指纹，或给 identity 没有父目录指纹的目录带指纹，一律拒绝（`storage_verified_mismatch`）。
+  - 上线顺序：先执行迁移，再发布 Worker。旧执行器配新数据库照常工作（证明不带指纹、identity 没有 `source_parent_version`，源父目录不补指纹）；新执行器配旧数据库则所有新建目录都会在 Drive 已建成后于核验记录处被拒、意图被围栏，迁移执行后恢复才能成功。
+  - 残余：新建核验在版本检查之后才读新文件夹的共享，identity 也分两次读版本与共享；其间共享若被改，只会让记下的指纹与 Drive 不符而拒绝后续写入，不会放宽。
+- **结果不确定时。** 定时恢复不加载目录 move（不自动重写路径）。只有 Owner 在原生页面触发的恢复会以只读 GET 重新核验，并通过同一核验记录结算，绝不重复 effect。
+- **未记录尝试的已开始任务（Owner Decision `d9d6db4c`，迁移 `20261002170000`）。** 所有写入效果都先持久化 provider attempt，再做第一次 Drive 写入，且记录 attempt 要求日志仍为 started（行锁）。因此没有 attempt 的 started/uncertain 任务从未到达 Drive。准入过期满 60 秒后，定时任务把它结案为 cancelled（`released_unattempted`，原因码 `NO_PROVIDER_ATTEMPT`，带 Receipt 与 Event）；结案后 attempt 不能再记录，不会再有 Drive 写入。只读数据库，不需要执行开关。持久开始前的身份读取遇到超时、请求失败或无法解析时最多重读两次（错误状态码不重读）；动网盘前的复核不重读，其失败留下的无 attempt 任务由上述结案处理。任务未结时仍不允许切换写入等级，页面显示原因。
+
 **revision 管理：**
 
 - `replace` 结算后，保留最近 K 个由 Clued 设为永久保存的 revision（K 由实现 PR 提出，Owner 批准）。更早的 revision 取消永久保存，交回 Google 默认的保留策略。

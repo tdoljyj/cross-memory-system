@@ -30,6 +30,7 @@ import { testStorageModifyLevel } from "./resource-center-storage-modify-level-d
 import { testStorageModifyExecution } from "./resource-center-storage-modify-execution-db.fixture.mjs";
 import { testStorageReplace } from "./resource-center-storage-replace-db.fixture.mjs";
 import { testStorageDestructive } from "./resource-center-storage-destructive-db.fixture.mjs";
+import { testStorageDirectoryMove } from "./resource-center-storage-directory-move-db.fixture.mjs";
 import { testStorageNormalUse } from "./resource-center-storage-normal-use-db.fixture.mjs";
 import { testStorageBinaryUpload } from "./resource-center-storage-binary-db.fixture.mjs";
 import { testStorageOnboard } from "./resource-center-storage-onboard-db.fixture.mjs";
@@ -57,7 +58,8 @@ const focusedCloud = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "account-clo
 const focusedAdmin = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-admin";
 const focusedRead = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-read";
 const focusedOnboard = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-onboard";
-for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focusedOnboard ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
+const focusedDirectoryMove = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-directory-move";
+for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focusedOnboard || focusedDirectoryMove ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
@@ -147,10 +149,16 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       await testStorageModifyExecution(t, admin, server, USER, DECISION);
       await testStorageReplace(t, admin, server, USER, DECISION);
       await testStorageDestructive(t, admin, server, USER, DECISION);
+      await testStorageDirectoryMove(t, admin, server, USER, DECISION);
       await testStorageNormalUse(t, admin, server, USER, DECISION);
       await testStorageBinaryUpload(t, admin, server, USER, DECISION);
       await testStorageBudget(t, admin, server, USER);
       await testStorageOnboard(t, admin, server, USER, DECISION);
+      return;
+    }
+
+    if (focusedDirectoryMove) {
+      await testStorageDirectoryMove(t, admin, server, USER, DECISION);
       return;
     }
 
@@ -827,6 +835,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
     await testStorageModifyExecution(t, admin, server, USER, DECISION);
     await testStorageReplace(t, admin, server, USER, DECISION);
     await testStorageDestructive(t, admin, server, USER, DECISION);
+    await testStorageDirectoryMove(t, admin, server, USER, DECISION);
     await testStorageNormalUse(t, admin, server, USER, DECISION);
     await testStorageBinaryUpload(t, admin, server, USER, DECISION);
     await testStorageBudget(t, admin, server, USER);

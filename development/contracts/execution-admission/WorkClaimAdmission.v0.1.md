@@ -3,6 +3,7 @@
 状态：**部分实施。** 第 1–6 步已在生产生效，强制开启。第 7 步实测已完成；独立评审结论为 HOLD_FAIL，评审指出的 BLOCKER 与 MAJOR 修复已合入，但修复后未再评审。方向由 Owner 接受（Decision `78ca0c07`），不是架构接受。
 日期：2026-10-01（状态更新 2026-10-02）
 来源：Owner 上传的《Clued 多 Agent 执行协调与费用保护：讨论纪要与既有机制对账》（2026-10-01）的重新评估，以及对纪要第九节源码与合同的只读对账（固定在 commit `f7ba6ff312aa0e90095db1e28f5937920f30de3a`）。
+通用化后续：任意资源、一个门卫多个门口、领取模式（独占/拆分/多份）的设计候选见 [GenericWorkClaim.v0.1.md](GenericWorkClaim.v0.1.md)（Task `52739939`）。
 治理：起草时受 Global Decision `93eb4e76` 的暂停约束（只读评估与设计豁免）。该约束已由 Decision `78ca0c07`（2026-10-01）取代。各步实施由 Owner 逐步授权。本文件本身不授予实施、合并、部署或权限变更。
 
 ### 当前状态（2026-10-02，对照 main `f844d6a`）
@@ -19,15 +20,14 @@
   - 独立评审 HOLD_FAIL。修复已合入：PR #472、#479、#480，另有 PR #475、#477。
   - 修复后未做复审。
 - **未实现或与本文设计不符**（各条在对应小节标注）：
-  - 每认领 CI 分钟预算与 finalize、`attempts_cap`（§4.5、§7，Task `80aea04a`）。
-  - 备份恢复后 `max(fence)` 会回退（§4.4、§6，Task `27b4f5e8` 第 4 条）。
-  - 认领只写审计 Receipt，不写 Event（§4.6 L1，Task `27b4f5e8` 第 8 条）。
+  - 每认领 CI 分钟预算与 finalize：改为次数上限，不做（§4.5，Owner Decision `a264ea02`）。
+  - 备份恢复后 `max(fence)` 会回退，靠恢复后的手工步骤补救（§4.4、§6，Owner Decision `2b23eb0c`）。
   - 同名 check 伪造与 PR 删除 `needs: admission-gate`（§4.6）。
   - 判定只在检查运行时成立，合并时不实时重验（§5）。
-- **待 Owner 设置**：
-  - `clued-admission` environment 限 `main`、不设审批人。
-  - token 移为 environment secret 并轮换。
-  - 防同名 check 需 GitHub App 或 required workflows。
+- **Owner 设置（2026-10-02）**：
+  - 已完成（Owner 自述）：`clued-admission` environment 限 `main`、不设审批人；新只读 token 放入 environment secret，删除仓库 secret，撤销旧 token。
+  - 已验证：`clued-work-admission-dispatch` run `37003236812`（main `e2a1c06`）在该 environment 中拿到 token，Clued 以强制模式判 ADMITTED。部署分支限制与仓库 secret 删除无法从 Agent 侧读取，未独立验证。
+  - 防同名 check（Owner Decision `37e01bb1`）：仓库侧已就绪（`clued-admission-verified`，§4.6）；Owner 已建 `clued-admission` GitHub App（仅 Checks 读写，只装在本仓库；2026-10-02 删除重建一次，旧私钥随旧 App 作废）并把 App ID 与私钥放进 `clued-admission` environment；`clued-admission-verified` 已在 main ruleset 设为必需检查，来源限定为该 App。
 
 ---
 
@@ -134,7 +134,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 | `clued_work_claim` | 输入 task_id（或 `{title, execution_bucket, execution_intent}` 原子创建 Task 后再 claim）、base_commit、write_set、trigger_refs、估算预算。一个事务内：校验 Task 身份与 Binding 读写权；计算冲突（4.3）；无冲突则插入 ACTIVE claim，fence = 该 task 历史最大 fence + 1；返回 claim_id、fence、expires_at、Receipt。有冲突则返回 `work_claim_conflict` 与冲突 claim 的 id、持有者、expires_at、重叠的路径／trigger，不插入。 | 单事务，幂等键 = `<session>:<task_id>:claim` |
 | `clued_work_renew` | 必须携带 claim_id + fence + lease_version + **progress_ref**（新 head SHA 或新 Receipt）。progress_ref 与上次相同 → 拒绝 `work_claim_no_progress`。成功只延长 expires_at、lease_version +1，不动 fence。超过 hard_deadline_at 或 renewals 上限 → 拒绝。 | 单事务 |
 | `clued_work_release` | 持有者主动释放；带 outcome（completed / abandoned）与证据引用。 | 单事务 |
-| `clued_work_verify` | 只读。输入 claim_id、head_sha、base_sha、changed_paths[]；返回 ADMITTED / REJECTED 及原因。供 CI gate 与 required check 调用，使用只读 Binding。 | 只读 |
+| `clued_work_verify` | 只读。输入 claim_id、head_sha、base_sha、changed_paths[]；返回 ADMITTED / REJECTED 及原因。供 CI gate 与 required check 调用，使用只读 Binding。实现：可选 `pr_ref` 时首次准入把 claim 绑定到该 PR（一条 Receipt），MCP 工具从迁移 `20261002072000` 一起开放 `pr_ref`；不带 `changed_paths` 时不检查路径，CI 的 PR 检查总会带，手动触发的准入有意不带 | 只读；带 `pr_ref` 时写一条绑定 |
 | `clued_work_takeover` | 对 EXPIRED 或 DRAINING claim 发起接管：新 claim 以 fence +1 创建，旧 claim 标 SUPERSEDED。不自动触发，只由新持有者显式调用；Owner 决定或 profile 允许时才可对未过期 claim 强制接管。 | 单事务 |
 
 `clued_session_resume` 增加返回：`contract_version`、`active_work_claims`（本用户所有 ACTIVE claim 的 task_id、write_set、trigger_refs、expires_at）。合规 Agent 在 resume 时就能比对自己的意图。
@@ -149,15 +149,26 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 **实现（第 7 步评审修复，2026-10-01，迁移 `20261002050000`，Task `047e663e`）**：第 2 条最初只检查「一侧的 glob 覆盖另一侧的字面路径」，两个 glob 之间不比较，`apps/clued-cloud/**` 与 `**/package-lock.json` 不冲突。现按路径段比较：含 `**` 的段匹配任意多段；两个单段通配只要字面前缀与后缀相容就算相交。判定偏向「相交」：可能把两个实际不共享路径的 glob 判为冲突，不会漏判。
 
+**实现（MINOR 修复，2026-10-02，迁移 `20261002072000`，Task `27b4f5e8`）**：
+- 第 3 条按不区分大小写比较：`ghsa:GHSA-x` 与 `ghsa:ghsa-x` 相同。`@` 后都是至少 7 位十六进制、且一方是另一方前缀时也算相同，所以 `ci:trivy@f7ba6ff` 与完整 SHA 冲突。存储的 ref 保留声明时的大小写。
+- 第 2 条中 `**/` 也匹配零层目录：`**/package-lock.json` 覆盖根目录的 `package-lock.json`，与 CI 路径过滤的理解一致。
+
 不做：标题相似度、语义去重、自动合并意图。语义不明确时 Agent 可以用 `clued_search_context` 做有上限的探索，但那不是准入判断。
 
 ### 4.4 租约、续期、过期、接管、fence
 
 - **期限来自 profile**，不是无限 TTL：默认 claim 期限 2 小时，hard_deadline 24 小时，最多续期 12 次。数值在 `protocol/.../work-claim.profile.json` 中定义并随测试接受；缺省配置视为失败，不视为无限。
 - **续期必须带进展**：heartbeat 不是进展。progress_ref 不变即拒绝续期，到期自然过期。这直接回答"持续 heartbeat 却无进展"。
+  - **实现（2026-10-02，迁移 `20261002072000`）**：本 claim 以前任何一次续期用过的 progress_ref 都会被拒，`x,y,x,y` 交替不再通过（`progress_refs` 列记录历史）。
+- **幂等键只代表一件工作（迁移 `20261002072000`）**：`clued_work_claim`／`clued_work_takeover` 记下操作、scope、Task（或被接管的 claim）与规范化 write_set 的哈希。
+  - 同一个键换了这些内容，返回 `work_claim_idempotency_conflict`，不再返回无关的旧 claim。
+  - 键对应的 claim 已不再有效（释放、过期、被接管）时，重放返回 `work_claim_idempotency_spent`。
+  - 重试时省略可选字段（trigger_refs、base_commit、会话、租期、预算）仍按重放处理。
+- **DRAINING**：持有者声明「已派出、不可取消的动作还在收尾」。它在到期前一直阻止冲突，也不能被接管；到期后才可接管或由持有者释放。
 - **过期只拒绝新效果，不证明旧进程停止**：过期后 claim 进入 EXPIRED；旧持有者的分支仍存在，但其 claim_id + fence 在 `clued_work_verify` 下 REJECTED，无法通过 L0。它不能再续期，只能对新 claim 发起"采纳分支"请求（人工或新持有者决定）。
 - **fence 单调**：只在 claim 创建与 takeover 时 +1；续期不动。服务恢复、备份回滚不得回退 fence：fence 来源于 `max(fence)+1` 的事务内计算，不来自客户端。
   - **实测（第 7 步，PR #467）与此不符**：从较旧的表副本恢复后 `max(fence)` 会回退。重新签发的 claim 拿到相同 fence 数值，但 claim_id 不同；恢复点之后签发的 claim_id 在 verify 下为 `claim_not_found`。不回退需要表外的单调 fence 来源，或修改本条（Task `27b4f5e8` 第 4 条）。
+  - **已知限制（Owner Decision `2b23eb0c`，2026-10-02）**：不改 fence 来源。数据库从备份恢复后、Agent 再开工前，运行 `apps/clued-cloud/scripts/work-claims-after-restore.sql` 一次：恢复回来的 ACTIVE／DRAINING 认领标为 RELEASED（abandoned），所有 fence 加一百万，使新认领与接管拿到的 fence 高于恢复前签发过的任何 fence。步骤写在 `apps/clued-cloud/docs/production-release.md`「After a database restore」，验收测试 `work-claims-acceptance-db` 覆盖。
 - **多资源一次性获取**：write_set 整体在一个事务中判定，没有逐路径加锁，没有持锁等锁，不会死锁。
 - **优先级不抢占**：Global Frontier 的 Pin 或 priority 变化不自动 takeover 一个 ACTIVE claim。
 
@@ -167,13 +178,13 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 - **每 Binding 并发 claim 上限**（默认 3）：一个失控 Host 不能把所有 Task 都占了。
   - **实现（2026-10-02，Owner Decision `533a5286`，迁移 `20261002060001`）**：改为每个会话（Agent 自报的 `holder_session_ref`）最多 3 个活认领、每个 Binding 合计最多 10 个。原因：Owner 的所有 Claude Code 会话共用一个 Binding，原来的「每 Binding 3 个」会让并行会话互相挤占。会话标识是自报的，所以保留 Binding 总上限兜底；没有 `holder_session_ref` 的认领单独算一组。拒绝时 `limit` 字段写明撞到的是哪个上限。
-- **每 claim CI 分钟上限**：`admission-gate` 在放行重任务前调用 `clued_work_verify` 并上报本次预计分钟数；超出上限返回 REJECTED，重任务不启动。实际消耗由 workflow 完成后以 observed 回写（finalize）。
+- **每 claim CI 分钟上限**（原设计）：`admission-gate` 在放行重任务前调用 `clued_work_verify` 并上报本次预计分钟数；超出上限返回 REJECTED，重任务不启动。实际消耗由 workflow 完成后以 observed 回写（finalize）。
 - **模型 token**：claim 只记录 Agent 自报的估算，标为 `declared_unenforced`。不宣称预留。
-- 取消、失联或 UNKNOWN 时**不释放预留**；只有 finalize 或 takeover 事务才结算。
-- **未实现（2026-10-02）**：
-  - 没有 CI 分钟上限、finalize 或预留结算。`budget` 字段原样保存、不校验。
-  - `admission-gate` 也不再调用 Clued，见 §4.6。
-  - 生效的只有上面的并发上限（Task `80aea04a`）。
+- （原设计）取消、失联或 UNKNOWN 时**不释放预留**；只有 finalize 或 takeover 事务才结算。没有分钟预留后不再适用。
+- **实现（2026-10-02，Owner Decision `a264ea02`，Task `80aea04a`，迁移 `20261002100000`）**：分钟预算、finalize 与预留结算不做，改为数据库内强制的两个次数上限，不给 CI 可写凭据：
+  - `attempts_cap`：一个 Task 在任意 24 小时内最多 10 次新认领或接管；超出时 `clued_work_claim`／`clued_work_takeover` 返回 `work_claim_budget_exhausted`，`limit` 为 `max_claims_per_task_24h`，附 `claims_last_24h` 与 `retry_after`。已签发认领的幂等重放不受影响。
+  - 每 claim 的 PR head 上限：带 `pr_ref` 与 `head_sha` 的 verify 在放行时把该 head 记入 `admitted_heads`；一个 claim 最多放行 20 个不同 head，再来新 head 判 REJECTED（`claim_head_cap_reached`），重任务不跑。同一 head 重跑或每小时复核不计数；不带 `pr_ref` 的 verify（手动触发、Agent 自查）不记录。
+  - `budget` 字段仍原样保存、不校验；模型 token 不计。
 
 ### 4.6 执行层细节
 
@@ -182,6 +193,8 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 一个无路径过滤的 workflow，GitHub 托管 runner，只做一次 HTTPS 调用 `clued_work_verify`（只读 Binding 放在 GitHub secret）。
 - 输入：PR head SHA、base SHA、变更文件集（`gh api .../files`）、PR body 或最后一个 commit trailer 中的 `Clued-Work-Claim: <claim_id>`。
 - 判定：claim ACTIVE 或 DRAINING 且未过期；holder 不校验 GitHub 身份（都是 Owner），校验 fence 为该 task 当前最大；变更文件集 ⊆ write_set；base_sha 等于或晚于 claim.base_commit。任一不满足 → 失败并写明原因。
+  - **实现（2026-10-02，Owner Decision `36b50981`，Task `d95ee6ea`）**：「base_sha 等于或晚于 claim.base_commit」改为只提示。claim 的 base_commit 比 PR 的 base 新时，检查摘要写一条 `base_behind_claim` 提示，仍放行。原因：base_commit 由 Agent 自报，这条比较拦不住错误的 claim；Codex 在新 main 上重新认领而分支仍基于旧 main 时，#441 因此被拒三次。base_commit 在仓库里找不到（`claim_base_unknown`）仍拒绝。
+- **Owner 在 GitHub 网页直接改文件开的 PR**（Owner Decision `36b50981`）：同样需要 claim，没有豁免。Agent 与 Owner 共用一个 GitHub 账号，CI 分不出是谁改的，豁免会被 Agent 用来绕过。做法：网页改动前让任一 Agent 为该 Task 建 claim，把 `Clued-Work-Claim: <claim_id>` 贴进 PR 正文；改正文会重跑检查。
 - 范围扩张（变更文件超出 write_set）→ 失败，提示先 `clued_work_renew` 携带扩大的 write_set（扩大时重新做冲突判定）。
 - 加入 ruleset required 列表后，这条和 gitleaks、trivy 一样是无过滤 check，不会出现"等不到"的问题。
 - 同一 check 顺带输出一张汇总表：按本 PR 变更路径判定哪些路径过滤的 workflow **适用**、各自在当前 head 上的结论、哪些**不适用**。这就是 2026-10-01 根因审计第 4 项要的"始终返回结果的汇总检查"，不必另开一个。
@@ -194,12 +207,12 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - `clued-work-admission-reverify.yml` 每小时检查一次：对最近一次 admission 运行通过的未合并、非草稿 PR 重新判定，claim 已过期、释放、被接管或绑定到别的 PR 时重跑那次运行，使必需检查变红。判定过期的窗口因此不超过约一小时，合并时并不实时重验。
   - PR 文件列表少于 `changed_files`（API 3000 文件上限）时强制模式判 REJECTED（`changed_files_truncated`）。
   - **仍未覆盖**：
-    - PR 可以新增另一个 workflow，其 job 也叫 `clued-work-admission`，两者都是 GitHub Actions 的 check run。要堵住需要 PR workflow 无法使用的检查身份（GitHub App，或 required workflows），属 Owner 在仓库外的设置。
-    - L0b 的 `admission-gate` 仍是 PR 定义的 job，PR 可以删掉 `needs:`。
+    - PR 可以新增另一个 workflow，其 job 也叫 `clued-work-admission`，两者都是 GitHub Actions 的 check run。**处理（Owner Decision `37e01bb1`，2026-10-02）**：仓库属个人账号且私有，没有组织 required workflows。准入 workflow 在判定后用 Owner 的专用 GitHub App 再发一个 `clued-admission-verified` check（`--mode app-check`，App 私钥只在 `clued-admission` environment 中）。Owner 建好 App、在 main ruleset 把该 check 设为必需并限定来源为该 App 后，PR 无法冒充。App 未配置时这一步只提示、不发检查。
+    - L0b 的 `admission-gate` 仍是 PR 定义的 job，PR 可以删掉 `needs:`。**处理（同一决定）**：准入检查读取 PR 新增或改动的 workflow：base 上已有闸的 workflow，或新加的含自托管 job 的 workflow，必须保留与 `GATE_JOB_SHA256` 一致的 `admission-gate` job，其余每个 job 都 `needs` 它，且 `if:` 为闸条件 `&&` 一个整体括号组；否则判 REJECTED（`workflow_gate:<文件>:<原因>`），PR 无法合入。闸 job 改为检出 base 分支（或默认分支）代码，PR 改脚本也绕不过。已知代价：被拒的 PR 上，重任务在拒绝前可能已经跑过一次。base 上已有、本来不加闸的轻量 workflow（Owner Decision `75abfe80`）不在检查范围。修改闸 job 本身需两步：先在 `GATE_JOB_SHA256` 中加入新摘要并合入，再改各 workflow。
     - 任何同仓 PR 的 workflow 都能引用仓库 secret，所以 `CLUED_CONTEXT_READ_TOKEN` 只能靠 environment 限定加轮换保护。
 - **实现（token 隔离，2026-10-02，Task `95a93218`，PR #479）**：
-  - `admission-gate` 不再调用 Clued，也不再拿 `CLUED_CONTEXT_READ_TOKEN`（它跑的是 PR 的代码）。它等待本 head 上 `clued-work-admission.yml` 最新一次 `pull_request_target` 运行结束，只在该运行成功时放行；其他事件或其他 head 的运行不算。强制模式下等不到运行、到期仍未结束（默认 480 秒）或 GitHub API 出错都不放行；advisory 模式从不拦截。
-  - 只有跑 base 分支代码的 workflow 引用该 token：`clued-work-admission.yml`、`clued-work-admission-reverify.yml`，以及 PR #480 起的 `clued-work-admission-dispatch.yml`。三者都在 `clued-admission` environment 中运行。Owner 将该 environment 的部署分支限定为 `main`、不设审批人，把 token 移为 environment secret、删除仓库 secret 并轮换后，PR 新增或改写的 workflow（运行在 `refs/pull/N/merge`）即使声明该 environment 也拿不到 token。
+  - `admission-gate` 不再调用 Clued，也不再拿 `CLUED_CONTEXT_READ_TOKEN`（它跑的是 PR 的代码）。它等待本 head 上 `clued-work-admission.yml` 最新一次 `pull_request_target` 运行结束，只在该运行成功时放行；其他事件或其他 head 的运行不算。强制模式下等不到运行、到期仍未结束（默认 480 秒）或 GitHub API 出错都不放行；advisory 模式从不拦截。来自 fork 的 PR 可能拿不到仓库变量，所以闸对 fork PR 一律按强制处理，只跟随准入运行的结果；准入运行在 base 仓库读变量，advisory 时总是成功（Task `27b4f5e8` 第 11 条，2026-10-02）。
+  - 只有跑 base 分支代码的 workflow 引用该 token：`clued-work-admission.yml`、`clued-work-admission-reverify.yml`，以及 PR #480 起的 `clued-work-admission-dispatch.yml`。三者都在 `clued-admission` environment 中运行。Owner 已（2026-10-02）将该 environment 的部署分支限定为 `main`、不设审批人，把 token 移为 environment secret、删除仓库 secret 并轮换；此后PR 新增或改写的 workflow（运行在 `refs/pull/N/merge`）即使声明该 environment 也拿不到 token。
   - 仓库检查（`scripts/ci/clued-work-admission.test.mjs`）断言只有上述 workflow 引用 `secrets.CLUED_CONTEXT_READ_TOKEN`。
   - 仍未覆盖：同名 check 伪造（见上）。另外 PR 可以改写自己的 workflow、删掉 `needs: admission-gate`：闸是 PR 自己的 job，只能控制合规 PR 的花费，不是强制边界。
 - **实现（加闸范围与手动触发，2026-10-02，Owner Decision `75abfe80`，Task `29128827`）**：
@@ -208,7 +221,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
     1. 在默认分支触发 `clued-work-admission-dispatch.yml`，参数 `workflow`（上述三者之一）、`ref`、`claim_id`（可选 `scope`）。它在 `clued-admission` environment 中持有 token，向 Clued 校验该 claim（`clued_work_verify_v1`，带 ref 的 head，不带 changed_paths），运行名为 `admit <workflow> <ref> <claim_id>`；不在默认分支时 job 不运行。
     2. 在该 ref 上触发重任务 workflow，`admission_run_id` 填第 1 步的 run id。其 `admission-gate`（无 token）只在该运行是默认分支上的 `workflow_dispatch`、成功、30 分钟内、运行名指向本 workflow 与本 ref 时放行。
   - 一次准入在 30 分钟内可用于同一 workflow 与 ref 的多次触发；claim 本身仍须有效（第 1 步校验时）。push 与定时事件不经此闸。
-  - `skills/clued/references/agent-contract.md` 尚未写入这两步（合同文本随 Worker 下发，需单独发布）；缺 `admission_run_id` 时闸的提示写明做法。
+  - 合同 v12（`skills/clued/references/agent-contract.md` §1.7）写入这两步，并写明准入只在检查运行时判定、每小时复核（Task `ace2fb96`）。合同文本随 Worker 下发，Worker 发布前已部署的服务仍下发 v11。缺 `admission_run_id` 时闸的提示写明做法。
 
 **L0b：重任务 workflow 的 `admission-gate` job**
 
@@ -219,7 +232,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 **L1：Clued DB**
 
 - 全部 RPC 为 `security definer`，revoke 客户端直接执行，与现有 `clued_private` 模式一致。
-- claim 行的创建同时写 Event + Receipt，复用现有 mutation contract。**实际（2026-10-02）**：claim、续期、释放、接管与 PR 绑定只写 `clued_audit_receipts`，不写 Event（Task `27b4f5e8` 第 8 条）。
+- claim、续期、释放、接管与 PR 绑定只写 `clued_audit_receipts`，不写 Event（Owner Decision `8f98387a`，2026-10-02，Task `27b4f5e8` 第 8 条）。原设计要求同时写 Event；改为只写 Receipt，因为写 Event 会让每次认领、续期、释放都使其他会话的 checkpoint 变 STALE 并刷满工作日志。谁在做什么由 resume 的 `active_work_claims` 提供。
 
 **L2：合规路径**
 
@@ -231,7 +244,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 - SessionStart hook 调用 Clued 只读 API 取 `active_work_claims`，以附加上下文注入第一轮。模型在消耗第一个 token 之前就看到"谁在做什么、改哪些文件、何时到期"。这是本仓库内 Claude Code 会话能做到的最早一刻，仍属合规层：hook 可关、Host 可换。
 
-- PreToolUse hook：匹配 Bash 中的 `git push`、`gh pr create`、`npm (ci|install|run build|test)`、`pytest`、`node --test`，以及 `mcp__github__create_pull_request`、`push_files`。没有 `CLUED_WORK_CLAIM` 环境变量或 `$CLAUDE_PROJECT_DIR/.clued/work-claim.json`（由 `clued_work_claim` 成功后写入）则阻止一次并提示先 claim。
+- PreToolUse hook：匹配 Bash 中的 `git push`、`gh pr create`、`npm (ci|install|run build|test)`、`pytest`、`node --test`，以及 `mcp__github__create_pull_request`、`push_files`。2026-10-02 起（Task `27b4f5e8` 第 10 条）另匹配：任意 `npm run` 与 `npx` 脚本；`gh workflow run`、`gh run rerun` 与 MCP `actions_run_trigger`（启动 CI）；远程会话 `create_session`、`Workflow` 与非只读的 `Agent` 子任务（Explore、Plan 等只读子代理除外）；对仓库文件的 `Edit`／`Write`／`NotebookEdit`（`.clued/`、`.git/` 与仓库外路径除外）。没有 `CLUED_WORK_CLAIM` 环境变量或 `$CLAUDE_PROJECT_DIR/.clued/work-claim.json`（由 `clued_work_claim` 成功后写入）则阻止一次并提示先 claim。
 - 与 Stop hook 同样可关、可删；标为 L3，不进任何"不可绕过"声明。
 - **实现（第 6 步，2026-10-01，Owner Decision `9297922c`）**：`scripts/hooks/clued_work_claim_guard.py` 一个脚本按 `hook_event_name` 服务三个事件，由 `.claude/settings.json` 注册。SessionStart 注入 §1.7 规则与本 checkout 记录的有效认领；设了只读 Binding token `CLUED_CONTEXT_READ_TOKEN` 时，另经 PostgREST `clued_work_claims_active_v1`（公开配置读自 `app/supabase-public-config.ts`，只发 token 的 SHA-256）读取该用户全部有效认领，失败只降级为提示。PostToolUse 在 `clued_work_claim`／`renew`／`takeover`／`release` 成功后更新 `.clued/work-claim.json`（已 gitignore）。PreToolUse 在上述命令与 `mcp__*__create_pull_request`／`push_files`／`create_or_update_file` 前检查：没有有效认领、也没有 `CLUED_WORK_CLAIM` 时，「发布」与「花钱」两类各在每个会话拦一次。`CLUED_WORK_CLAIM_GUARD=off` 关闭。PreToolUse 不校验认领是否覆盖改动路径，这由 CI 的 `clued-work-admission` 负责。
 
@@ -267,7 +280,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 | 无 Task、伪造 claim、漏报 write_set | `clued_work_verify` 对不存在／伪造 claim_id、变更文件 ⊄ write_set 返回 REJECTED；gate job 不放行 | L0／L1 |
 | 重演 443／444：不同标题、同意图或同 lockfile | 两个 Binding 并发 `clued_work_claim`，相同 trigger_ref 或相交路径，恰一个 ACTIVE（barrier 测试，复用 projection-refresh-pipeline-db 的并发模式） | L1 |
 | 同时领取、响应丢失后重试 | 同幂等键重试返回原 claim；不同键同资源返回 conflict | L1 |
-| 过期 owner、网络分区、服务重启 | 过期 claim 的 fence 在 verify 下 REJECTED；takeover 后 fence +1；备份恢复后 `max(fence)` 不回退（迁移测试）。**实测：前两项通过；备份恢复后会回退，见 §4.4** | L1 |
+| 过期 owner、网络分区、服务重启 | 过期 claim 的 fence 在 verify 下 REJECTED；takeover 后 fence +1；备份恢复后 `max(fence)` 不回退（迁移测试）。**实测：前两项通过；备份恢复后会回退，按已知限制由恢复后脚本补救，见 §4.4** | L1 |
 | 持续 heartbeat 却无进展 | progress_ref 不变的 renew 被拒；到 hard_deadline 自动 EXPIRED | L1 |
 | 非幂等请求成功但回包丢失 | claim 创建用幂等键；CI gate 对同一 head 重复查询返回同一判定 | L1／L0 |
 | 多资源反序竞争、cleanup 崩溃 | write_set 整体一次事务；无逐路径锁；EXPIRED 清理不删 ACTIVE 行 | L1 |
@@ -283,7 +296,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 | Owner 要求 | 本设计 |
 | --- | --- |
 | 许可有时效，故障不能永久霸占任务 | 2 小时期限、24 小时 hard_deadline、12 次续期上限，全部来自 profile；过期自动 EXPIRED |
-| 能崩溃恢复、接管，避免死锁与无界重试 | takeover 以 fence +1 接管；write_set 单事务获取；attempts_cap 有界。**`attempts_cap` 未实现**：同一 Task 可反复 claim／release（评审实测 30 次全部接受），重试只受 12 次续期与 24 小时硬期限约束（Task `80aea04a`） |
+| 能崩溃恢复、接管，避免死锁与无界重试 | takeover 以 fence +1 接管；write_set 单事务获取；attempts_cap 有界。**实现（Owner Decision `a264ea02`）**：每 Task 24 小时最多 10 次认领或接管，每 claim 最多放行 20 个 PR head；CI 分钟不计（Task `80aea04a`） |
 | 不能把 Agent 自觉遵守作为安全前提 | L0 由 GitHub ruleset 与 workflow 强制，L1 由 Postgres 强制；L2／L3 明确标为合规层 |
 | 不能直到提交时才发现重复 | 合规 Agent 在 resume／claim 即发现（第一次 Clued 调用）；不合规 Agent 在 CI 第一个 job 被挡住重任务，而不是等到合并 |
 | 先复用既有机制 | claim 表与 RPC 逐字复用 Projection Refresh 的 lease／attempt SQL 模式；预算复用 N4；身份复用 execution_intent；fence 语义复用 kernel approval-lease；门禁复用现有 ruleset |

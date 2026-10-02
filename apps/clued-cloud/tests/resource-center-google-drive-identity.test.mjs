@@ -126,3 +126,18 @@ test("Drive identity carries root and parent sharing digests that change with pe
   assert.equal(plain.root_sharing_digest, null);
   assert.equal(plain.destination_parent_sharing_digest, null);
 });
+
+test("P6.2: a directory move records its source folder's Drive version; other operations do not", async () => {
+  const { files, resolve } = fixture();
+  files.push(file("dir", "资料夹", "inbox", "7", true));
+  const move = { operation: "move", target_kind: "directory", source_path: `${root}/90_待归类/资料夹`,
+    destination_path: `${root}/20_P_产品与体验/品牌与视觉/资料夹` };
+  const identity = await resolve({ profile: { managed_root: root }, mutation: move });
+  assert.equal(identity.source_parent_id, "inbox");
+  assert.equal(identity.source_parent_version, "2");
+  assert.equal(identity.destination_parent_version, "4");
+  const fileMove = await resolve({ profile: { managed_root: root }, mutation: {
+    operation: "move", target_kind: "file", source_path: `${root}/90_待归类/a.md`,
+    destination_path: `${root}/20_P_产品与体验/品牌与视觉/a.md` } });
+  assert.equal("source_parent_version" in fileMove, false);
+});

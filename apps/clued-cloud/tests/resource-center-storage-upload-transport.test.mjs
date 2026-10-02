@@ -112,7 +112,7 @@ test("discovery: upload_begin and binary submit variants exist only with every b
   for (const [env, expected] of [[{ ...baseEnv(), CLUED_STORAGE_BINARY_V1: undefined }, false], [{ ...baseEnv(), CLUED_STORAGE_JOBS_V2: undefined }, false], [baseEnv(), true]]) {
     const tools = (await (await worker.fetch(rpc("tools/list", {}), env)).json()).result.tools;
     assert.equal(tools.some(t => t.name === "clued_storage_upload_begin"), expected);
-    assert.equal(tools.find(t => t.name === "clued_storage_submit").inputSchema.properties.mutation.oneOf.length, expected ? 9 : 7);
+    assert.equal(tools.find(t => t.name === "clued_storage_submit").inputSchema.properties.mutation.oneOf.length, expected ? 10 : 8);
     if (!expected) assert.equal((await worker.fetch(new Request(origin + "/storage/staging/" + randomUUID(), { method: "PUT", body: "x", headers: { "x-clued-upload-token": "x" } }), env)).status, 404);
   }
 });

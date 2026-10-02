@@ -784,6 +784,181 @@ Rollout: production migration, then release. Execution needs the write
 switches (`execution_enabled` plus the executor window) and the Owner's
 destructive level.
 
+## Directory move (StorageFullCapability.v0.1 P6)
+
+Migration `20261002080000_storage_directory_move_p6.sql` and the executor
+changes move one registered directory, with everything under it, on the same
+account-policy job chain under a separate `modify_subtree` level (Owner
+Decisions `c47efe38` and `746fd078`). Every existing function is changed by
+an anchored patch with an exact hit count.
+
+- Policies may carry `modify_subtree` after `modify`, `overwrite` and
+  `destructive` (`clued_private.storage_write_actions_v1` accepts the create
+  set plus any of them in that order). The Owner turns it on at
+  `/storage/connections` with "允许 Agent 移动整个文件夹" (disclosure
+  `clued.storage-subtree-disclosure/1`; turning it off stores
+  `clued.storage-modify_subtree-disabled/1`). The page shows the toggle only
+  when the write-access status names `subtree_disclosure_version`.
+- `clued_storage_submit` accepts `{operation: "move", target_kind:
+  "directory", source_path, destination_path, source_file_version,
+  source_file_id}`: the same name in another registered folder, never into
+  the directory itself or below it. Submit refuses a track (a direct child of
+  the root) and every other shape with `storage_job_input_invalid` before a
+  job exists. The `modify` level alone does not allow it.
+- The authority matches the registered directory by Drive ID and sharing
+  state (Drive advances a folder's version when its children change; the
+  Agent's observed version is still checked against Drive before any
+  reservation). It requires the directory's folder to be its registered
+  parent as Drive reports it, a destination folder other than the root
+  (`track_forbidden`), nothing registered at or under the destination
+  (`destination_exists`), at most 500 registered items under the directory
+  (`subtree_too_large`), and both folders with exactly the same sharing state
+  and the same access: every permission with its type, role, domain,
+  discoverability and expiry (`googleDriveAccessDigest`, read with
+  `permissions(...)`; `sharing_differs`). The executor refuses a difference
+  before any reservation with job reason `DIRECTORY_SHARING_DIFFERS`, so the
+  moved subtree's inherited access never changes, not even a role. When Drive
+  does not return every permission of the directory or a folder (it omits
+  them where the account cannot share), the move is refused with
+  `DIRECTORY_ACCESS_UNAVAILABLE`.
+- Before any reservation the executor also re-reads the server's sample of
+  registered descendants by Drive ID; one renamed, moved or deleted in Drive
+  outside Clued is refused with job reason `SUBTREE_DRIFT` and no effect. The
+  effect repeats that check before and after the durable attempt.
+- In-flight work under the subtree (T14) is excluded by the single writer
+  per profile: no other intent can be prepared, started or uncertain while
+  the move is, and the move cannot start while another one is. A queued job
+  that still names an old path fails its own provider lookup with no effect.
+- The executor records `clued.storage-subtree-move-attempt/1` (the
+  directory, both folders, both paths and up to 10 registered descendants the
+  server chose, shallowest first, as the durable start returned them under
+  its locks; the attempt must match the registry then and the verified record
+  checks the stored attempt) before the one `files.update`
+  (`addParents`/`removeParents`, empty body). The verifier proves
+  `clued.storage-directory-move-verified/1`: the directory is the only entry
+  of its name in the destination, is gone from its old folder, keeps its
+  sharing and access, each sampled descendant still sits at its relative path by Drive
+  ID, and its version is stable across two reads.
+- Settlement (`artifact_subtree_move`, accepted only as the verified
+  settlement of a directory move intent whose recorded proof names exactly
+  that directory, path and Drive version; never a free path rewrite through
+  the administrative RPC) changes the directory's path and
+  observed Drive version by CAS on its version, and the path of every active
+  or trashed item under it, in the one settlement transaction. Revoked rows
+  keep their old path as history.
+- P6.1 (Decision `e5e99da8`, migration
+  `20261002090000_storage_directory_move_descendants_v1.sql`): Drive advances
+  the version of every item under a folder each time the folder moves (P6
+  acceptance, Note `23d63403`). The durable start returns every active or
+  trashed registered descendant (`subtree_registry`, at most 500; a trashed
+  item may share its path with an active one). Before the attempt the
+  executor reads them by Drive ID, each on its own (batched when the Worker
+  has the batch reader, a failing batch halved until the unreadable item is
+  isolated, after every chunk was read once, at most 40 batch requests;
+  otherwise up to 50, eight at a time), within 15 s and keeping the last 10 s
+  of the admission, and records in the attempt
+  (`descendants`) those exactly as registered: same version, name, kind,
+  state and folder chain, with each file's size and sha256. After the move
+  the verifier reads them again and the proof (`descendant_versions`) names
+  the new version of each one still in place with the same content and a
+  version not lower than before; those reads have their own budget (a third
+  of the verifier's, at most 10 s; a quarter in the Owner's native recovery)
+  and as much again is kept before the verifier's deadline, so a slow or
+  unreadable item never costs the proof. The settlement sets those versions by CAS on the recorded
+  version. Anything else keeps its registered version and stays refused for
+  file-level writes, as before; a partial refresh logs
+  `storage_subtree_refresh_partial` with counts only. An attempt stored before
+  this migration (no `descendants`) keeps its attempt, proof and settlement
+  input exactly as recorded and is settled with no refresh.
+  Residual: an external change that keeps the content (sharing, a lock, a
+  description) made to a descendant between the read before the move and the
+  verifier's read is absorbed into the refreshed version.
+- P6.2 (Decision `06b54716`, migration
+  `20261002130000_storage_directory_sharing_digest_v1.sql`): a directory
+  Clued creates is registered with a sharing digest when its sharing equals
+  its destination folder's as the provider identity recorded it (the create
+  verifier reads it; the proof carries `provider_sharing_digest`, accepted
+  only for a directory and only as that folder's digest), so it is matched
+  by sharing, not by a Drive version that later moves advance. A directory
+  move's settlement records, on the source and destination folders that have
+  no digest yet, the digest the provider identity recorded for each, only
+  while the folder's registered Drive version is the one the identity
+  recorded (`source_parent_version`, new in the identity, and
+  `destination_parent_version`): the authority matches the source folder by
+  ID alone, and a folder registered at an older version changed in Drive
+  since Clued last checked it. A folder that already has a digest is not
+  changed. A proof that carries a digest for a file, or for a folder whose
+  identity has none, is refused (`storage_verified_mismatch`).
+  Release order: apply the migration before releasing the Worker. The old
+  executor works against the new database (no digest in its proofs, no
+  `source_parent_version`, so no source-folder digest); the new executor
+  against the old database has every directory create refused at its
+  verified record after the Drive effect, leaving the intent fenced; its
+  recovery succeeds only after the migration is applied.
+  Residual: the create verifier reads the new folder's sharing after its
+  version checks, and the identity reads a folder's version and sharing in
+  separate calls. A sharing change between them can only make the recorded
+  digest differ from Drive, so later writes are refused, never widened.
+- A lost update reply leaves the intent fenced, and the single writer then
+  blocks other writes on that root until it is resolved. Scheduled recovery
+  never lists or loads a directory move; the Owner's native recovery
+  (`/storage/admin`, route `/v1/storage/recovery`) re-verifies it by GET only
+  and settles through the same verified record, never repeating the update.
+
+Rollout: production migration, then release. Execution needs the write
+switches (`execution_enabled` plus the executor window) and the Owner's
+modify_subtree level. For P6.1, keep both off between the migration and the
+release: the executor and the database disagree on the attempt during that
+window, and a directory move started in it is refused after its durable start
+and stays for inspection.
+
+### Release of a started job with no provider attempt
+
+Owner Decision `d9d6db4c`, Task `0ea9a51c`, migration
+`20261002170000_storage_release_unattempted_v1.sql`. The P6.2 acceptance
+(Note `77019762`) left a directory move `started` after a Drive metadata read
+in its pre-effect authority check failed in transit: Drive was never changed,
+yet the single writer refused every later write on the root and the Owner's
+level switch (`storage_root_has_unresolved_mutation`).
+
+- Every account-policy cloud effect records its exact provider attempt
+  (`storage_job_provider_attempt_v2`) before its first Drive write, and that
+  record requires the journal, locked for update, to be `started`. A journal
+  without an attempt has never reached Drive; once it is cancelled no attempt
+  can be recorded, so no Drive write can follow.
+- `public.clued_storage_release_unattempted_v1` (fixed connector issuer,
+  `{action: release}`) cancels at most 3 `started`/`uncertain` journals of
+  account-policy cloud jobs with no attempt, no attempt Receipt and no verified
+  record, whose admission expired at least 60 s ago. Each runs under the job and
+  root locks with its own Receipt (`storage_unattempted_release`) and Event
+  (`extension:storage:unattempted_released`); `final_result` is
+  `{outcome: released_unattempted, reason_code: NO_PROVIDER_ATTEMPT}`. The
+  job's status reads `cancelled` with that reason code, and the inspect tool
+  adds a fixed hint.
+- The Worker's scheduled run calls it every minute
+  (`runStorageUnattemptedReleaseScheduled`). It reads and writes the database
+  only, so it runs with the storage account, Google and jobs flags and does not
+  need the executor switch: a stuck root clears without opening a window.
+- Before the durable start, the executor reads the provider identity again,
+  at most twice, when a Drive metadata read fails in transit (timeout, failed
+  request, unreadable answer); an error status is final. The pre-effect check
+  is never retried: it runs on the admission's time, and its failure leaves a
+  job with no attempt, which the release clears. A final failure logs its fixed
+  code (`DRIVE_METADATA_TIMEOUT` and others) instead of
+  `PROVIDER_IDENTITY_UNAVAILABLE`.
+- Each release candidate runs in its own subtransaction with a 2 s lock
+  timeout: one that fails is rolled back alone and skipped; at most 10 are
+  looked at per call.
+- Residual: no per-effect unit test yet pins "the attempt record precedes the
+  first Drive write" for every effect; the directory-move DB fixture covers it
+  end to end for moves.
+- The level switch stays refused while a job is unresolved (the job settles
+  against the policy it was admitted under); the storage page now says so
+  (reason `storage_root_busy`).
+- Release order: the migration first. The old Worker never calls the release;
+  the new Worker against the old database gets an error from the release call
+  and logs `storage_unattempted_release_unavailable`.
+
 ## Scope profiles (StorageNormalUse.v0.1 N0a)
 
 Migration `20260930140000_storage_scope_profile_v1.sql` and the Worker and

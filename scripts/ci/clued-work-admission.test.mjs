@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,6 +24,13 @@ import {
   resolvePublicSupabaseConfig,
   sha256Hex,
   workflowApplies,
+  APP_CHECK_NAME,
+  appCheck,
+  appJwt,
+  GATE_JOB_SHA256,
+  gateFindings,
+  workflowIsGated,
+  workflowJobs,
 } from "./clued-work-admission.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -160,11 +168,32 @@ test("enforced: REJECTED with paths outside the write set is not admitted and li
   assert.match(renderSummary(outcome), /docs\/new\.md/);
 });
 
-test("enforced: a claim taken on a newer base than the PR targets is rejected", async () => {
-  const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { body: { status: "behind" } }, [VERIFY]: { body: admittedPayload } });
+test("enforced: a claim past its head cap is REJECTED with a hint to claim again", async () => {
+  const payload = { ...admittedPayload, verdict: "REJECTED", reasons: ["claim_head_cap_reached"], admitted_heads: 20, max_heads_per_claim: 20 };
+  const { fetchImpl } = fakeFetch({ [FILES]: files, [VERIFY]: { body: payload } });
   const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
   assert.equal(outcome.admitted, false);
-  assert.deepEqual(outcome.reasons, ["base_behind_claim:behind"]);
+  assert.deepEqual([outcome.reasons, outcome.admitted_heads, outcome.max_heads_per_claim], [["claim_head_cap_reached"], 20, 20]);
+  assert.match(renderSummary(outcome), /already admitted 20 pull-request heads \(cap 20, Owner Decision a264ea02\)/);
+});
+
+test("enforced: a claim taken on a newer base than the PR targets is admitted with a notice", async () => {
+  for (const status of ["behind", "diverged"]) {
+    const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { body: { status } }, [VERIFY]: { body: admittedPayload } });
+    const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
+    assert.deepEqual([outcome.admitted, outcome.verdict, outcome.reasons], [true, "ADMITTED", []], status);
+    assert.equal(outcome.notices.length, 1);
+    assert.match(outcome.notices[0], new RegExp(`^base_behind_claim:${status} `));
+    assert.match(renderSummary(outcome), /Notices \(not blocking\):\n- base_behind_claim/);
+  }
+});
+
+test("enforced: a claim whose base_commit is not in the repository is rejected", async () => {
+  const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { status: 404, body: { message: "Not Found" } }, [VERIFY]: { body: admittedPayload } });
+  const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
+  assert.equal(outcome.admitted, false);
+  assert.deepEqual(outcome.reasons, [`claim_base_unknown:${CLAIM_BASE}`]);
+  assert.deepEqual(outcome.notices, []);
 });
 
 test("enforced: fail closed on missing token, missing RPC, refused Binding, rejection envelope, transport error", async () => {
@@ -489,6 +518,26 @@ test("gate: admits only on a successful pull_request_target admission run on thi
   await assert.rejects(gate({ env: env(), event: withClaim(), eventName: "pull_request",
     fetchImpl: fakeFetch({ [ADMISSION_RUNS]: { status: 500, body: null } }).fetchImpl, sleep: async () => {} }), /returned 500/);
 
+  // A fork pull request may not see repository variables: an unset
+  // CLUED_WORK_ADMISSION_ENFORCE does not open the gate, the admission run decides.
+  const forkEvent = withClaim();
+  forkEvent.pull_request.head.repo = { full_name: "someone/r" };
+  const forkGate = (runs) => gate({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "", CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" }),
+    event: forkEvent, eventName: "pull_request", sleep: async () => {},
+    fetchImpl: fakeFetch({ [ADMISSION_RUNS]: { body: { workflow_runs: runs } } }).fetchImpl });
+  let fork = await forkGate([run({ conclusion: "failure" })]);
+  assert.deepEqual([fork.admitted, fork.enforced, fork.verdict, fork.advisory], [false, true, "REJECTED", undefined]);
+  assert.match(fork.notices[0], /fork pull request from someone\/r/);
+  fork = await forkGate([]);
+  assert.deepEqual([fork.admitted, fork.verdict], [false, "NO_ADMISSION_RUN"]);
+  fork = await forkGate([run({})]);
+  assert.deepEqual([fork.admitted, fork.verdict], [true, "ADMITTED"]);
+  await assert.rejects(gate({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), event: forkEvent, eventName: "pull_request",
+    fetchImpl: fakeFetch({ [ADMISSION_RUNS]: { status: 500, body: null } }).fetchImpl, sleep: async () => {} }), /returned 500/);
+  // A same-repository pull request keeps the variable's answer.
+  ({ outcome } = await gateWith([run({ conclusion: "failure" })], { CLUED_WORK_ADMISSION_ENFORCE: "" }));
+  assert.deepEqual(outcome.notices, []);
+
   // Non-PR events are not admission subjects.
   const push = await gate({ env: env(), event: null, eventName: "push", fetchImpl: fakeFetch({}).fetchImpl });
   assert.deepEqual([push.admitted, push.verdict], [true, "NOT_APPLICABLE"]);
@@ -620,4 +669,132 @@ test("workflows: dispatch-gated workflows take admission_run_id; the admission w
     assert.equal((text.match(/^ {4}needs: admission-gate$/gm) ?? []).length, 2, file);
     assert.match(text, /--mode gate/, file);
   }
+});
+
+// --- Gate guard (Owner Decision 37e01bb1).
+
+const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filter((name) => /\.ya?ml$/.test(name))
+  .filter((name) => workflowIsGated(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8")));
+const g4 = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-g4-database.yml"), "utf8");
+
+test("gate guard: every gated workflow on this branch passes and uses a listed gate job", () => {
+  assert.deepEqual(GATED_FILES.sort(), [
+    "clued-cloud-node22-install.yml", "clued-connection-authorization.yml", "clued-g4-database.yml",
+    "information-flow-e2e.yml", "public-mcp-behavior.yml", "public-mcp-protocol.yml",
+  ]);
+  for (const name of GATED_FILES) {
+    const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
+    assert.deepEqual(gateFindings(text, text), [], name);
+    const gateJob = workflowJobs(text).find((job) => job.name === "admission-gate");
+    assert.ok(GATE_JOB_SHA256.has(sha256Hex(gateJob.lines.join("\n"))), name);
+    // The gate runs the base branch's script, not the PR's.
+    assert.match(gateJob.lines.join("\n"), /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.repository\.default_branch \}\}/);
+  }
+  // Ungated workflows, even with self-hosted jobs, stay out of scope when they already exist.
+  const ungated = fs.readFileSync(path.join(ROOT, ".github", "workflows", "trivy.yml"), "utf8");
+  assert.deepEqual(gateFindings(ungated, ungated), []);
+});
+
+test("gate guard: removing or loosening the gate is found", () => {
+  const job = "database-gate-trusted-self-hosted";
+  const cases = [
+    [g4.replace(/\n  admission-gate:\n[\s\S]*?\n\n(?=  database-gate-trusted-self-hosted:)/, "\n"), ["admission_gate_missing"]],
+    [g4.replace("          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n", ""), ["admission_gate_changed"]],
+    [g4.replace("        run: node scripts/ci/clued-work-admission.mjs --mode gate", "        run: echo admitted=true >> \"$GITHUB_OUTPUT\""), ["admission_gate_changed"]],
+    [g4.replace(`  ${job}:\n    needs: admission-gate\n`, `  ${job}:\n`), [`job_not_gated:${job}`]],
+    [g4.replace(`  ${job}:\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&`, `  ${job}:\n    needs: admission-gate\n    if: >-\n      always() ||`), [`job_condition_not_gated:${job}`]],
+    [g4.replace(`  ${job}:\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((`, `  ${job}:\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (true) || ((`), [`job_condition_not_gated:${job}`]],
+    [g4.replace(`  ${job}:\n    needs: admission-gate\n    if: >-`, `  ${job}:\n    needs: admission-gate\n    if: always()\n    x-old-if: >-`), [`job_condition_not_gated:${job}`]],
+    [`${g4}\n  sneaky:\n    runs-on: [self-hosted, Linux]\n    steps:\n      - run: npm test\n`, ["job_not_gated:sneaky"]],
+  ];
+  for (const [text, expected] of cases) {
+    assert.notEqual(text, g4, `fixture did not change: ${expected}`);
+    assert.deepEqual(gateFindings(text, g4), expected);
+  }
+  // Equivalent spellings of needs are accepted.
+  const listed = g4.replace(`  ${job}:\n    needs: admission-gate\n`, `  ${job}:\n    needs: [admission-gate]\n`);
+  assert.deepEqual(gateFindings(listed, g4), []);
+  const block = g4.replace(`  ${job}:\n    needs: admission-gate\n`, `  ${job}:\n    needs:\n      - admission-gate\n`);
+  assert.deepEqual(gateFindings(block, g4), []);
+  const bare = g4.replace(`    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'workflow_dispatch' &&\n       github.actor == github.repository_owner)`, `    if: \${{ needs.admission-gate.outputs.admitted == 'true' }}\n    x-was: ((github.event_name == 'workflow_dispatch' &&\n       github.actor == github.repository_owner)`);
+  assert.notEqual(bare, g4);
+  assert.deepEqual(gateFindings(bare, g4), []);
+});
+
+test("gate guard: new workflows with self-hosted jobs need the gate; new hosted ones do not", () => {
+  const hosted = "name: x\non: pull_request\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n";
+  assert.deepEqual(gateFindings(hosted, null), []);
+  const selfHosted = hosted.replace("ubuntu-latest", "[self-hosted, Linux, X64]");
+  assert.deepEqual(gateFindings(selfHosted, null), ["admission_gate_missing"]);
+  const comment = hosted.replace("    steps:", "    # self-hosted was considered\n    steps:");
+  assert.deepEqual(gateFindings(comment, null), []);
+});
+
+test("enforced: a PR that unties a heavy job from the gate is REJECTED even with an admitted claim", async () => {
+  const stripped = g4.replace("  database-gate-trusted-self-hosted:\n    needs: admission-gate\n", "  database-gate-trusted-self-hosted:\n");
+  const b64 = (text) => ({ body: { content: Buffer.from(text).toString("base64"), encoding: "base64" } });
+  const CONTENTS = "GET https://api.test/repos/o/r/contents/.github/workflows/clued-g4-database.yml";
+  const workflowFiles = { body: [{ filename: ".github/workflows/clued-g4-database.yml", status: "modified" },
+    { filename: ".github/workflows/old.yml", status: "removed" }, { filename: "apps/clued-cloud/package.json", status: "modified" }] };
+  const { fetchImpl, calls } = fakeFetch({ [FILES]: workflowFiles, [VERIFY]: { body: admittedPayload }, [COMPARE]: { body: { status: "ahead" } },
+    [CONTENTS]: (call) => (call.url.endsWith(`?ref=${HEAD}`) ? b64(stripped) : b64(g4)) });
+  const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
+  assert.equal(outcome.admitted, false);
+  assert.deepEqual(outcome.reasons, ["workflow_gate:.github/workflows/clued-g4-database.yml:job_not_gated:database-gate-trusted-self-hosted"]);
+  assert.ok(!calls.some((c) => c.url.includes("old.yml")), "removed workflows are not read");
+  // The same PR with the gate intact is admitted.
+  const intact = fakeFetch({ [FILES]: workflowFiles, [VERIFY]: { body: admittedPayload }, [COMPARE]: { body: { status: "ahead" } }, [CONTENTS]: b64(g4) });
+  const ok = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl: intact.fetchImpl });
+  assert.deepEqual([ok.admitted, ok.reasons], [true, []]);
+  // Advisory: reported, not blocking.
+  const advisory = fakeFetch({ [FILES]: workflowFiles, [VERIFY]: { body: admittedPayload }, [COMPARE]: { body: { status: "ahead" } },
+    [CONTENTS]: (call) => (call.url.endsWith(`?ref=${HEAD}`) ? b64(stripped) : b64(g4)) });
+  const soft = await evaluateIn({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), event: withClaim(), eventName: "pull_request", fetchImpl: advisory.fetchImpl });
+  assert.equal(soft.admitted, true);
+  assert.ok(soft.reasons.some((r) => r.startsWith("workflow_gate:")));
+});
+
+// --- App-posted check (Owner Decision 37e01bb1).
+
+test("app check: posts the admission result as the App on the evaluated head", async () => {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" });
+  const jwt = appJwt("12345", pem, 1_800_000_000);
+  const [h, p, sig] = jwt.split(".");
+  assert.ok(crypto.createVerify("RSA-SHA256").update(`${h}.${p}`).verify(publicKey, Buffer.from(sig, "base64url")));
+  assert.deepEqual(JSON.parse(Buffer.from(p, "base64url")), { iat: 1_800_000_000 - 60, exp: 1_800_000_000 + 540, iss: "12345" });
+
+  const appEnv = (extra) => ({ GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: "https://api.test", GITHUB_RUN_ID: "77",
+    CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: pem, ADMISSION_HEAD_SHA: HEAD, ...extra });
+  const script = () => fakeFetch({
+    "GET https://api.test/repos/o/r/installation": { body: { id: 99 } },
+    "POST https://api.test/app/installations/99/access_tokens": { status: 201, body: { token: "ghs_app" } },
+    "POST https://api.test/repos/o/r/check-runs": { status: 201, body: { id: 5 } },
+  });
+  for (const [outcome, conclusion] of [["success", "success"], ["failure", "failure"], ["skipped", "failure"]]) {
+    const { fetchImpl, calls } = script();
+    const result = await appCheck({ env: appEnv({ ADMISSION_OUTCOME: outcome }), fetchImpl, now: () => 1_800_000_000_000 });
+    assert.deepEqual([result.posted, result.conclusion, result.head_sha], [true, conclusion, HEAD], outcome);
+    assert.match(calls[0].headers.authorization, /^Bearer ey/, "installation lookup uses the App JWT");
+    assert.deepEqual(calls[1].body, { repositories: ["r"], permissions: { checks: "write" } });
+    const post = calls[2];
+    assert.equal(post.headers.authorization, "Bearer ghs_app");
+    assert.deepEqual([post.body.name, post.body.head_sha, post.body.status, post.body.conclusion], [APP_CHECK_NAME, HEAD, "completed", conclusion]);
+  }
+  // Not configured, or no evaluated head: nothing is posted.
+  let quiet = await appCheck({ env: appEnv({ CLUED_ADMISSION_APP_PRIVATE_KEY: "" }), fetchImpl: fakeFetch({}).fetchImpl });
+  assert.equal(quiet.posted, false);
+  assert.match(quiet.reason, /not configured/);
+  quiet = await appCheck({ env: appEnv({ ADMISSION_HEAD_SHA: "" }), fetchImpl: fakeFetch({}).fetchImpl });
+  assert.match(quiet.reason, /no head commit/);
+  // An API failure is an error, never a silent pass.
+  const broken = await appCheck({ env: appEnv({ ADMISSION_OUTCOME: "success" }), fetchImpl: fakeFetch({ "GET https://api.test/repos/o/r/installation": { status: 404, body: {} } }).fetchImpl });
+  assert.match(broken.error, /returned 404/);
+});
+
+test("app check: the admission workflow posts it after the admission step, keys from the environment", () => {
+  const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission.yml"), "utf8");
+  assert.match(text, /id: admit\n/);
+  assert.match(text, /if: \$\{\{ !cancelled\(\) \}\}\n[\s\S]*ADMISSION_HEAD_SHA: \$\{\{ steps\.admit\.outputs\.head_sha \}\}[\s\S]*secrets\.CLUED_ADMISSION_APP_PRIVATE_KEY[\s\S]*--mode app-check/);
+  assert.match(text, /environment: clued-admission/);
 });

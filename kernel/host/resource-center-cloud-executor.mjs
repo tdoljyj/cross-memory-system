@@ -14,6 +14,9 @@ import { createGoogleDriveReplacePostconditionVerifier } from "./resource-center
 import { createGoogleDriveNativeDestructiveEffect, destructiveShape, destructiveOwnershipAllowed,
   DESTRUCTIVE_PROOF_CONTRACTS } from "./resource-center-google-drive-destructive-effect.mjs";
 import { createGoogleDriveDestructivePostconditionVerifier } from "./resource-center-google-drive-destructive-postcondition.mjs";
+import { createGoogleDriveNativeDirectoryMoveEffect, directoryMoveShape, subtreeSampleShape, checkSubtreeSample,
+  DIRECTORY_MOVE_KEYS } from "./resource-center-google-drive-directory-move-effect.mjs";
+import { createGoogleDriveDirectoryMovePostconditionVerifier } from "./resource-center-google-drive-directory-move-postcondition.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "./resource-center-governed-tool-surface.mjs";
 import { RESOURCE_CENTER_POLICY_VERSION, bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 
@@ -58,7 +61,17 @@ const providerAuthorityCodes = new Set([
   "DRIVE_METADATA_UNAVAILABLE", "DRIVE_NAMESPACE_VISIBILITY_UNPROVEN", "DRIVE_PAGINATION_INVALID",
   "DRIVE_PAGINATION_LIMIT", "SOURCE_VERSION_MISMATCH", "DESTINATION_VERSION_MISMATCH", "REVISION_KEEP_LIMIT",
   "REPLACE_TARGET_UNSUPPORTED", "STORAGE_CONTENT_STAGING_MISMATCH", "SOURCE_ID_MISMATCH",
+  "DRIVE_METADATA_TIMEOUT", "DRIVE_METADATA_ABORTED", "DRIVE_METADATA_REQUEST_FAILED",
+  "DRIVE_METADATA_RESPONSE_INVALID", "DRIVE_METADATA_SUBREQUEST_LIMIT",
 ]);
+// Before the durable start, a Drive metadata read that failed in transit (no
+// answer in time, a failed request, an unreadable answer) is read again, at
+// most twice. An error status is final. The pre-effect check is never retried:
+// it runs on the admission's time, and a failure there leaves a started job
+// with no provider attempt, which the database releases.
+const transientProviderCodes = new Set(["DRIVE_METADATA_TIMEOUT", "DRIVE_METADATA_REQUEST_FAILED",
+  "DRIVE_METADATA_RESPONSE_INVALID"]);
+const PROVIDER_IDENTITY_RETRIES = 2;
 // Fixed denial labels from public.clued_resource_center_authority_v1; each names a failed check, never a value.
 const authorityDenialReasons = new Set([
   "request_invalid", "binding_inactive", "profile_mismatch", "root_identity_mismatch", "decision_not_current",
@@ -66,7 +79,8 @@ const authorityDenialReasons = new Set([
   "root_sharing_changed", "root_sharing_unavailable", "parent_sharing_changed", "parent_sharing_unavailable",
   "source_mismatch", "destination_outside_root", "parent_version_mismatch", "parent_unregistered",
   "parent_path_not_current", "destination_mismatch", "destination_exists", "artifact_decision_not_current",
-  "delete_authority_required", "restore_name_conflict", "directory_not_empty", "track_forbidden", "internal_error",
+  "delete_authority_required", "restore_name_conflict", "directory_not_empty", "track_forbidden",
+  "destination_inside_source", "sharing_differs", "subtree_too_large", "internal_error",
 ]);
 const logAuthorityFailure = (phase,stage,errorCode,reason) => {
   // Emit only fixed labels. In particular, never serialize an exception, RPC response or provider identity.
@@ -141,7 +155,10 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       if(!uuid(profile?.profile_id) || profile.policy_version!==RESOURCE_CENTER_POLICY_VERSION) fail("CLOUD_PROFILE_INVALID");
       // Rename and file move (StorageFullCapability P3) run only in the
       // verified-result (account policy) mode, whose server proof names them.
-      const modify=mutation?.operation==="rename" || mutation?.operation==="move";
+      // A directory move (P6, modify_subtree) likewise; the server names the
+      // registered descendants to re-read after the move.
+      const subtree=mutation?.operation==="move" && mutation.target_kind==="directory";
+      const modify=!subtree && (mutation?.operation==="rename" || mutation?.operation==="move");
       // Replace and revert (P4) likewise; the server names the Clued-pinned
       // revisions to release and, for a revert, the pinned revision to restore.
       const replace=mutation?.operation==="replace";
@@ -149,7 +166,11 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       // the server names the registered, trashed source's Drive ID.
       const destructive=mutation?.operation==="delete" || mutation?.operation==="restore";
       const revisionIdOk=value=>typeof value==="string" && /^[A-Za-z0-9_-]{1,200}$/.test(value);
-      if(replace){
+      if(!subtree && descriptor.subtree_sample!=null) fail("CLOUD_MUTATION_SHAPE_INVALID");
+      if(subtree){
+        if(!verifiedResultMode || !directoryMoveShape(mutation) || !subtreeSampleShape(descriptor.subtree_sample) ||
+          Object.keys(mutation).sort().join(",")!==DIRECTORY_MOVE_KEYS.join(",")) fail("CLOUD_MUTATION_SHAPE_INVALID");
+      }else if(replace){
         if(!verifiedResultMode || !replaceShape(mutation) || mutation.target_kind!=="file" ||
           Object.keys(mutation).some(k=>!["operation","destination_path","target_kind","destination_file_version","content","restore_job_id"].includes(k)) ||
           !Array.isArray(descriptor.revision_releases) || descriptor.revision_releases.length>200 || !descriptor.revision_releases.every(revisionIdOk) ||
@@ -198,6 +219,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const resolveProvider=createGoogleDriveProviderIdentityResolver({managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         get_sharing:metadata.getSharing,
+        ...(subtree ? {get_access:metadata.getAccess} : {}),
         ...(mutation.operation==="restore" ? {restore_source_id:descriptor.untrash_source.provider_file_id} : {})});
       let batched={};
       if(metadataBatch){
@@ -226,11 +248,14 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const resolveAuthority=async({mutation:input})=>{
         const phase=["initial","revalidation","pre_effect"][Math.min(authorityLookupCount++,2)];
         let request;
-        try { request=await authorityRequest(input); }
-        catch(error){
-          const message=error?.message;
-          logAuthorityFailure(phase,"provider_identity",providerAuthorityCodes.has(message)?message:"PROVIDER_IDENTITY_UNAVAILABLE");
-          throw error;
+        for(let retry=0;;retry++){
+          try { request=await authorityRequest(input); break; }
+          catch(error){
+            const message=error?.message;
+            if(phase!=="pre_effect" && retry<PROVIDER_IDENTITY_RETRIES && transientProviderCodes.has(message)) continue;
+            logAuthorityFailure(phase,"provider_identity",providerAuthorityCodes.has(message)?message:"PROVIDER_IDENTITY_UNAVAILABLE");
+            throw error;
+          }
         }
         let result;
         try { result=await invoke({action:"authority",request}); }
@@ -249,12 +274,12 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         }
         // §6.1 version precondition: the Agent names the version it observed.
         // A change since then is refused before any durable reservation.
-        if((modify||destructive) && request.provider_identity.source_file_version!==input.source_file_version){
+        if((modify||destructive||subtree) && request.provider_identity.source_file_version!==input.source_file_version){
           logAuthorityFailure(phase,"provider_identity","SOURCE_VERSION_MISMATCH");
           fail();
         }
-        // P5: trash/untrash name the item by its Drive ID, not only its path.
-        if(destructive && request.provider_identity.source_file_id!==input.source_file_id){
+        // P5/P6: trash, untrash and a directory move name the item by its Drive ID, not only its path.
+        if((destructive||subtree) && request.provider_identity.source_file_id!==input.source_file_id){
           logAuthorityFailure(phase,"provider_identity","SOURCE_ID_MISMATCH");
           fail();
         }
@@ -318,7 +343,10 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         if(String(replacement.byteLength)!==restore.size || (restore.sha256!=null && sha256Hex(replacement)!==restore.sha256) ||
           (restore.md5!=null && md5Hex(replacement)!==restore.md5)) fail();
       }
-      const effect=destructive ? createGoogleDriveNativeDestructiveEffect({...effectConfig,get_file:metadata.getFile,
+      // P6.1: the batched reader (when the Worker has one) reads every registered descendant at once.
+      const effect=subtree ? createGoogleDriveNativeDirectoryMoveEffect({...effectConfig,get_file:metadata.getFile,
+          ...(batched.get_files ? {get_files:batched.get_files} : {})})
+        : destructive ? createGoogleDriveNativeDestructiveEffect({...effectConfig,get_file:metadata.getFile,
           get_ownership:metadata.getOwnership,has_children:metadata.hasChildren})
         : replace ? createGoogleDriveNativeReplaceEffect({...effectConfig,get_file:metadata.getFile,get_revision:metadata.getRevision,replacement,
           release_revision_ids:descriptor.revision_releases})
@@ -327,16 +355,20 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const verifierConfig={managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         include_verified_proof:verifiedResultMode,clock};
-      const verify=destructive ? createGoogleDriveDestructivePostconditionVerifier({...verifierConfig,has_children:metadata.hasChildren})
+      const verify=subtree ? createGoogleDriveDirectoryMovePostconditionVerifier({...verifierConfig,get_sharing:metadata.getSharing,
+          get_access:metadata.getAccess,...(batched.get_files ? {get_files:batched.get_files} : {})})
+        : destructive ? createGoogleDriveDestructivePostconditionVerifier({...verifierConfig,has_children:metadata.hasChildren})
         : replace ? createGoogleDriveReplacePostconditionVerifier({...verifierConfig,get_revision:metadata.getRevision})
         : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
-        : createGoogleDriveCreatePostconditionVerifier({...verifierConfig,require_effect_provider_id:true});
-      const proofContract=destructive ? DESTRUCTIVE_PROOF_CONTRACTS[mutation.operation]
+        : createGoogleDriveCreatePostconditionVerifier({...verifierConfig,require_effect_provider_id:true,
+          get_sharing:metadata.getSharing});
+      const proofContract=subtree ? "clued.storage-directory-move-verified/1"
+        : destructive ? DESTRUCTIVE_PROOF_CONTRACTS[mutation.operation]
         : replace ? "clued.storage-replace-verified/1"
         : modify ? `clued.storage-${mutation.operation}-verified/1`
         : binary ? "clued.storage-create-verified/3" : "clued.storage-create-verified/2";
       const host=createResourceCenterOnlineToolHost({trusted_profile:profile,resolve_artifact_online:resolveAuthority,
-        mutation_effect:effect,scan_boundary:scan,clock,qualified_operations:modify||replace||destructive?[mutation.operation]:["create"],
+        mutation_effect:effect,scan_boundary:scan,clock,qualified_operations:modify||replace||destructive||subtree?[mutation.operation]:["create"],
         prepare_write:async({mutation:input,binding})=>{
           const request=await authorityRequest(input);
           const result=await invoke({action:"begin",prepare:{action:"prepare",request_key:"account-job:"+ref.job_id,
@@ -346,7 +378,9 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
             result.job_id!==ref.job_id || result.job_request_digest!==descriptor.request_digest || result.request_sha256!==binding.request_sha256 ||
             !Number.isSafeInteger(result.version)) fail();
           saved={result:structuredClone(result),provider:request.provider_identity};
-          startedProvider={intent_id:result.intent_id,request_sha256:result.request_sha256,provider:request.provider_identity};
+          startedProvider={intent_id:result.intent_id,request_sha256:result.request_sha256,provider:request.provider_identity,
+            // P6: the descendants to re-read, chosen by the durable start under its locks.
+            ...(subtree ? {subtree_sample:result.subtree_sample,subtree_registry:result.subtree_registry} : {})};
           return {status:"started",execution_permitted:true,intent_id:result.intent_id,request_sha256:result.request_sha256};
         },commit_post_write:async({mutation:input,binding,reservation,effect_result:result})=>{
           let stage="reservation";
@@ -405,6 +439,35 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         }catch(error){
           if(mutation.operation==="restore" && error?.message==="PROVIDER_DESTINATION_EXISTS") refusal="RESTORE_NAME_CONFLICT";
         }
+        if(refusal){
+          logDiagnostic("deny",refusal);
+          return {status:"deny",error_code:refusal,side_effects:0,execution_permitted:false};
+        }
+      }
+      // P6, before any reservation, each with its own fixed reason (the
+      // authority and the effect refuse the same again): a directory moves only
+      // between folders that grant exactly the same access, so the moved
+      // subtree's inherited access does not change (DIRECTORY_SHARING_DIFFERS,
+      // only when both folders' states were read); and the server's sample of
+      // registered descendants must still sit where the registry says
+      // (SUBTREE_DRIFT), so a drifted registry is never moved and fenced.
+      // When Drive does not report every permission of the directory or a
+      // folder, equal access cannot be proven (DIRECTORY_ACCESS_UNAVAILABLE).
+      if(subtree){
+        let refusal=null;
+        try{
+          const identity=await resolveProvider({profile,mutation});
+          const unequal=(a,b)=>typeof a==="string" && typeof b==="string" && a!==b;
+          if(identity.source_file_id===mutation.source_file_id){
+            // Without every permission of all three (Drive omits them where
+            // this account cannot share) equal access cannot be proven.
+            if([identity.source_access_digest,identity.source_parent_access_digest,identity.destination_parent_access_digest]
+              .some(value=>typeof value!=="string")) refusal="DIRECTORY_ACCESS_UNAVAILABLE";
+            else if(unequal(identity.source_parent_sharing_digest,identity.destination_parent_sharing_digest) ||
+              unequal(identity.source_parent_access_digest,identity.destination_parent_access_digest)) refusal="DIRECTORY_SHARING_DIFFERS";
+            else await checkSubtreeSample(metadata.getFile,mutation.source_file_id,descriptor.subtree_sample,"SUBTREE_DRIFT");
+          }
+        }catch(error){ if(error?.message==="SUBTREE_DRIFT") refusal="SUBTREE_DRIFT"; }
         if(refusal){
           logDiagnostic("deny",refusal);
           return {status:"deny",error_code:refusal,side_effects:0,execution_permitted:false};

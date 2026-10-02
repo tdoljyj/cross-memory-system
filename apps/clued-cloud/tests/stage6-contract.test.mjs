@@ -83,7 +83,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 11/);
+  assert.match(contract, /Contract version: 13/);
   assert.match(contract, /Say what you are about to record before you write it, in one line of your reply/);
   assert.match(contract, /The line is a statement, not a question/);
   assert.match(contract, /`user_confirmed: true` records where the claim came from, not a confirmation step/);
@@ -100,6 +100,13 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /Never retry under another title, another Task, a new idempotency key or another Binding/);
   assert.match(contract, /`Clued-Work-Claim: <claim_id>` in the pull request body and as a trailer of the head commit/);
   assert.match(contract, /A live claim is never preempted/);
+  assert.match(contract, /One claim carries the work until the work ends, across turns, steps and sessions/);
+  assert.match(contract, /Do not release at the end of a turn or step and claim again for the next one/);
+  assert.match(contract, /A Task gets at most 10 new claims or takeovers in 24 hours/);
+  assert.match(contract, /\| `work_claim_budget_exhausted` \|.*wait until `retry_after` or tell the Owner/);
+  assert.match(contract, /A passing check is not verified again at merge time/);
+  assert.match(contract, /First dispatch `clued-work-admission-dispatch\.yml` on the default branch with `workflow`/);
+  assert.match(contract, /with `admission_run_id` set to that run's id, within 30 minutes of that run's start/);
   assert.match(contract, /resume also returns `contract_version`/);
   assert.match(skill, /claim its Task as the contract's §1\.7 says/);
   assert.match(contract, /Resume lists unabsorbed work-log events newest first \(`event_order: "newest"`, the default\)/);

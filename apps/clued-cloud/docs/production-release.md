@@ -62,6 +62,18 @@ through an authorized, evidence-backed operation, then rerun the release.
 Do not run a blind `supabase db push` against this historically divergent
 production ledger or mark a migration applied without checking its live SQL.
 
+## After a database restore
+
+Restoring production from a backup or PITR point brings the work-claims table
+back to that point, and a claim's fence is `max(fence)+1` over that table, so
+new claims would get fences already issued after the restore point. Before
+any Agent works again, run
+[`scripts/work-claims-after-restore.sql`](../scripts/work-claims-after-restore.sql)
+once against the restored database. It abandons the claims the restore brought
+back as live and raises every fence by one million. Agents then claim again;
+a claim issued after the restore point verifies as `claim_not_found`. This is
+a known limit of Work Claim Admission v0.1 (§4.4, Owner Decision `2b23eb0c`).
+
 ## Release evidence
 
 The workflow stores three safe artifacts: the preflight result, the exact

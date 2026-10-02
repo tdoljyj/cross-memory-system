@@ -51,7 +51,7 @@
 // No dependencies: Node 20+ fetch, crypto and fs only, so a hosted runner
 // finishes in seconds without an install.
 
-import { createHash } from "node:crypto";
+import { createHash, createSign } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -294,7 +294,142 @@ export async function changedPathsOfPullRequest(fetchImpl, env, repository, numb
     if (typeof file.filename === "string") paths.add(file.filename);
     if (typeof file.previous_filename === "string") paths.add(file.previous_filename);
   }
-  return { paths: [...paths].sort(), file_count: files.length };
+  return { paths: [...paths].sort(), file_count: files.length, files };
+}
+
+// ---------------------------------------------------------------------------
+// Gate guard (Owner Decision 37e01bb1). The admission-gate job and the needs
+// that tie heavy jobs to it live in the PR's own workflow files, so a pull
+// request could delete them and run the heavy jobs anyway. This check runs
+// base-branch code and reads every workflow the PR adds or changes. A
+// workflow that is gated on the base branch, or a new workflow with a
+// self-hosted job, must keep the admission-gate job exactly as one of
+// GATE_JOB_SHA256 and
+// make every other job need it with an `if:` that is the gate condition
+// joined by && to one parenthesized group. Changing the gate job itself is a
+// two-step change: first add the new job's digest here, then the workflows.
+
+const GATE_JOB = "admission-gate";
+const GATE_CONDITION = "needs.admission-gate.outputs.admitted == 'true'";
+export const GATE_JOB_SHA256 = new Set([
+  "9443b017da24280b22f86149e8f672b8dd37ea8fcdb4f939d4bb93bfdbc277b4",
+]);
+const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
+
+export function workflowJobs(text) {
+  const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
+  const start = lines.findIndex((line) => /^jobs:\s*(#.*)?$/.test(line));
+  if (start < 0) return [];
+  const jobs = [];
+  let current = null;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^[^\s#]/.test(line)) break;
+    const key = /^  ([A-Za-z0-9_-]+):\s*(#.*)?$/.exec(line);
+    if (key) {
+      current = { name: key[1], lines: [] };
+      jobs.push(current);
+    }
+    if (current) current.lines.push(line);
+  }
+  // Blank and comment lines before the next job belong to that job, not this one.
+  for (const job of jobs) {
+    while (job.lines.length > 1 && /^\s*(#.*)?$/.test(job.lines[job.lines.length - 1])) job.lines.pop();
+  }
+  return jobs;
+}
+
+function jobField(job, field) {
+  const index = job.lines.findIndex((line) => line.startsWith(`    ${field}:`));
+  if (index < 0) return null;
+  const parts = [job.lines[index].slice(`    ${field}:`.length)];
+  for (let i = index + 1; i < job.lines.length && /^ {5,}\S|^\s*$/.test(job.lines[i]); i += 1) parts.push(job.lines[i]);
+  return parts.join("\n");
+}
+
+function jobNeeds(job) {
+  const value = jobField(job, "needs");
+  if (value === null) return [];
+  const text = value.replace(/#.*$/gm, "");
+  const inline = text.split("\n")[0].trim();
+  if (inline.startsWith("[")) return inline.replace(/[[\]'"]/g, "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (inline) return [unquote(inline)];
+  return [...text.matchAll(/^\s*-\s*(\S+)/gm)].map((m) => unquote(m[1]));
+}
+
+function jobCondition(job) {
+  const value = jobField(job, "if");
+  if (value === null) return null;
+  let text = value.replace(/^\s*[>|][+-]?/, "").replace(/\s+/g, " ").trim();
+  const wrapped = /^\$\{\{(.*)\}\}$/.exec(text);
+  if (wrapped) text = wrapped[1].trim();
+  return text;
+}
+
+// One parenthesized group spanning the whole string, quotes respected.
+function singleGroup(text) {
+  if (!text.startsWith("(") || !text.endsWith(")")) return false;
+  let depth = 0;
+  let quote = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) { if (ch === quote) quote = null; continue; }
+    if (ch === "'" || ch === '"') { quote = ch; continue; }
+    if (ch === "(") depth += 1;
+    if (ch === ")") { depth -= 1; if (depth === 0 && i < text.length - 1) return false; }
+  }
+  return depth === 0 && quote === null;
+}
+
+export function gateConditionHolds(condition) {
+  if (condition === null) return false;
+  if (condition === GATE_CONDITION) return true;
+  const prefix = `${GATE_CONDITION} && `;
+  return condition.startsWith(prefix) && singleGroup(condition.slice(prefix.length).trim());
+}
+
+export function workflowIsGated(text) {
+  return workflowJobs(text).some((job) => job.name === GATE_JOB);
+}
+
+// Findings for one workflow at the PR head; baseText is its base-branch
+// version, or null when the PR adds it. Existing ungated workflows (the
+// short checks of Owner Decision 75abfe80) stay ungated.
+export function gateFindings(headText, baseText) {
+  const jobs = workflowJobs(headText);
+  const selfHosted = jobs.some((job) => job.lines.some((line) => !/^\s*#/.test(line) && line.includes("self-hosted")));
+  const required = baseText === null ? selfHosted : workflowIsGated(baseText);
+  if (!required) return [];
+  const gate = jobs.find((job) => job.name === GATE_JOB);
+  if (!gate) return ["admission_gate_missing"];
+  const findings = [];
+  if (!GATE_JOB_SHA256.has(sha256Hex(gate.lines.join("\n")))) findings.push("admission_gate_changed");
+  for (const job of jobs) {
+    if (job.name === GATE_JOB) continue;
+    if (!jobNeeds(job).includes(GATE_JOB)) findings.push(`job_not_gated:${job.name}`);
+    else if (!gateConditionHolds(jobCondition(job))) findings.push(`job_condition_not_gated:${job.name}`);
+  }
+  return findings;
+}
+
+async function fileAt(fetchImpl, env, repository, path, ref) {
+  const body = await githubJson(fetchImpl, env,
+    `/repos/${repository}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${ref}`, { allowMissing: true });
+  if (!body) return null;
+  if (typeof body.content !== "string") throw new Error(`${path}@${ref} has no inline content.`);
+  return Buffer.from(body.content, "base64").toString("utf8");
+}
+
+export async function workflowGateFindings(fetchImpl, env, repository, files, headSha, baseSha) {
+  const findings = [];
+  for (const file of files) {
+    if (file.status === "removed" || !WORKFLOW_FILE.test(file.filename ?? "")) continue;
+    const head = await fileAt(fetchImpl, env, repository, file.filename, headSha);
+    if (head === null) throw new Error(`${file.filename} is missing at ${headSha}.`);
+    const base = await fileAt(fetchImpl, env, repository, file.previous_filename ?? file.filename, baseSha);
+    for (const finding of gateFindings(head, base)) findings.push(`workflow_gate:${file.filename}:${finding}`);
+  }
+  return findings;
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +499,7 @@ export async function verifyClaim(fetchImpl, env, args, workspace) {
 
 function emptyOutcome(eventName, enforced) {
   return {
-    mode: null, event: eventName, admitted: false, enforced, verdict: null, reasons: [],
+    mode: null, event: eventName, admitted: false, enforced, verdict: null, reasons: [], notices: [],
     claim_id: null, scope: null, head_sha: null, base_sha: null, pr_ref: null, changed_paths: [],
     applicable_workflows: [], error: null,
   };
@@ -428,6 +563,8 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     const changed = await changedPathsOfPullRequest(fetchImpl, env, repository, pr.number);
     outcome.changed_paths = changed.paths;
     const truncated = Number.isInteger(pr.changed_files) && changed.file_count < pr.changed_files;
+    const gateFindingsOfPr = await workflowGateFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha);
+    if (gateFindingsOfPr.length) outcome.workflow_gate_findings = gateFindingsOfPr;
     if (withSummary && workspace) {
       await summarizeWorkflows(fetchImpl, env, repository, pr.head.sha, outcome.changed_paths, workspace, outcome);
     }
@@ -483,6 +620,10 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     outcome.reasons.push(...verified.reasons);
     const outside = verified.payload.paths_outside_write_set;
     if (Array.isArray(outside) && outside.length) outcome.paths_outside_write_set = outside;
+    if (Number.isInteger(verified.payload.admitted_heads)) {
+      outcome.admitted_heads = verified.payload.admitted_heads;
+      outcome.max_heads_per_claim = verified.payload.max_heads_per_claim ?? null;
+    }
     if (verified.payload.claim && typeof verified.payload.claim === "object") {
       const { claim } = verified.payload;
       outcome.claim = {
@@ -492,8 +633,10 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
         write_set: Array.isArray(claim.write_set) ? claim.write_set : [],
       };
     }
-    // The claim's base must not be ahead of the PR's base: a claim taken on a
-    // newer main than the PR targets is not the work this PR carries.
+    // The claim's base must name a commit of this repository. A claim taken on
+    // a newer main than the PR's base is only reported (Owner Decision
+    // 36b50981): base_commit is declared by the Agent, so the comparison
+    // cannot catch a wrong claim, and rejecting it only forced re-pushes.
     const claimBase = outcome.claim && outcome.claim.base_commit;
     if (outcome.verdict === "ADMITTED" && typeof claimBase === "string" && claimBase) {
       const compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${claimBase}...${pr.base.sha}`, { allowMissing: true });
@@ -501,9 +644,12 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
         outcome.verdict = "REJECTED";
         outcome.reasons.push(`claim_base_unknown:${claimBase}`);
       } else if (compare.status !== "ahead" && compare.status !== "identical") {
-        outcome.verdict = "REJECTED";
-        outcome.reasons.push(`base_behind_claim:${compare.status}`);
+        outcome.notices.push(`base_behind_claim:${compare.status} (the claim's base_commit ${claimBase} is newer than this PR's base ${pr.base.sha}; merge main into the branch or claim with the branch's merge-base)`);
       }
+    }
+    if (gateFindingsOfPr.length) {
+      outcome.verdict = "REJECTED";
+      outcome.reasons.push(...gateFindingsOfPr);
     }
     if (enforced) {
       outcome.admitted = outcome.verdict === "ADMITTED";
@@ -604,7 +750,7 @@ async function latestAdmissionRun(fetchImpl, env, repository, headSha) {
 }
 
 export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() }) {
-  const enforced = enforcementEnabled(env);
+  let enforced = enforcementEnabled(env);
   const outcome = emptyOutcome(eventName, enforced);
   if (eventName === "workflow_dispatch") return dispatchGate({ env, event, fetchImpl, now, outcome });
   if (!PR_EVENTS.has(eventName)) {
@@ -618,6 +764,17 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   outcome.head_sha = pr.head.sha;
   outcome.base_sha = pr.base.sha;
   outcome.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
+  // A fork pull request may not receive repository variables, so an unset
+  // CLUED_WORK_ADMISSION_ENFORCE here proves nothing. The gate then follows
+  // the trusted pull_request_target run, which reads the variable in the base
+  // repository and succeeds whenever admission is advisory.
+  const headRepo = pr.head.repo && pr.head.repo.full_name;
+  const baseRepo = (pr.base.repo && pr.base.repo.full_name) || env.GITHUB_REPOSITORY;
+  if (!enforced && headRepo && baseRepo && headRepo !== baseRepo) {
+    enforced = true;
+    outcome.enforced = true;
+    outcome.notices.push(`fork pull request from ${headRepo}: following the ${ADMISSION_WORKFLOW} result whatever this run sees of CLUED_WORK_ADMISSION_ENFORCE`);
+  }
   const waitSeconds = Number.parseInt(env.CLUED_ADMISSION_GATE_WAIT_SECONDS ?? "", 10);
   const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : GATE_WAIT_SECONDS;
   try {
@@ -842,6 +999,15 @@ export function renderSummary(outcome) {
     lines.push("Reasons:");
     for (const reason of outcome.reasons) lines.push(`- ${reason}`);
   }
+  if (outcome.notices && outcome.notices.length) {
+    lines.push("");
+    lines.push("Notices (not blocking):");
+    for (const notice of outcome.notices) lines.push(`- ${notice}`);
+  }
+  if (outcome.reasons.includes("claim_head_cap_reached")) {
+    lines.push("");
+    lines.push(`This claim already admitted ${outcome.admitted_heads ?? "the maximum number of"} pull-request heads (cap ${outcome.max_heads_per_claim ?? 20}, Owner Decision a264ea02). Each push is one head; claim the Task again and put the new claim in the PR.`);
+  }
   if (outcome.paths_outside_write_set && outcome.paths_outside_write_set.length) {
     lines.push("");
     lines.push("Changed paths outside the claim's write set (renew the claim with a wider write set first):");
@@ -866,12 +1032,86 @@ function appendFile(file, text) {
   if (file) fs.appendFileSync(file, text);
 }
 
+// ---------------------------------------------------------------------------
+// App-posted check (Owner Decision 37e01bb1). Any job can be named
+// clued-work-admission, so a pull request could add one that passes. This
+// mode posts the admission result once more as the Owner's dedicated GitHub
+// App, whose private key lives only in the clued-admission environment
+// (deployment branches: main). The main ruleset can then require
+// APP_CHECK_NAME from that App, which no pull-request workflow can post.
+// Without the App's id and key it posts nothing and says so.
+
+export const APP_CHECK_NAME = "clued-admission-verified";
+
+function base64url(input) {
+  return Buffer.from(input).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+export function appJwt(appId, privateKeyPem, nowSeconds) {
+  const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const payload = base64url(JSON.stringify({ iat: nowSeconds - 60, exp: nowSeconds + 540, iss: String(appId) }));
+  const signer = createSign("RSA-SHA256");
+  signer.update(`${header}.${payload}`);
+  return `${header}.${payload}.${base64url(signer.sign(privateKeyPem))}`;
+}
+
+async function appRequest(fetchImpl, env, method, route, bearer, body) {
+  const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
+  const response = await fetchImpl(`${base}${route}`, {
+    method,
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${bearer}`,
+      "x-github-api-version": "2022-11-28",
+      "user-agent": "clued-work-admission",
+      ...(body ? { "content-type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!response.ok) throw new Error(`GitHub API ${method} ${route} returned ${response.status}`);
+  return response.json();
+}
+
+export async function appCheck({ env, fetchImpl, now = () => Date.now() }) {
+  const appId = (env.CLUED_ADMISSION_APP_ID ?? "").trim();
+  const key = (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? "").trim();
+  if (!appId || !key) return { posted: false, reason: "the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)" };
+  const headSha = (env.ADMISSION_HEAD_SHA ?? "").trim();
+  if (!/^[0-9a-f]{40}$/.test(headSha)) return { posted: false, reason: "the admission step reported no head commit; nothing to post (the required check stays missing)" };
+  const success = env.ADMISSION_OUTCOME === "success";
+  const repository = env.GITHUB_REPOSITORY;
+  try {
+    const jwt = appJwt(appId, key, Math.floor(now() / 1000));
+    const installation = await appRequest(fetchImpl, env, "GET", `/repos/${repository}/installation`, jwt);
+    const token = await appRequest(fetchImpl, env, "POST", `/app/installations/${installation.id}/access_tokens`, jwt,
+      { repositories: [repository.split("/")[1]], permissions: { checks: "write" } });
+    const verdict = (env.ADMISSION_VERDICT ?? "").trim() || (success ? "ADMITTED" : "NOT ADMITTED");
+    const check = await appRequest(fetchImpl, env, "POST", `/repos/${repository}/check-runs`, token.token, {
+      name: APP_CHECK_NAME, head_sha: headSha, status: "completed", conclusion: success ? "success" : "failure",
+      output: { title: verdict, summary: `clued-work-admission ${success ? "admitted" : "did not admit"} this head (run ${env.GITHUB_RUN_ID ?? "?"}).` },
+    });
+    return { posted: true, head_sha: headSha, conclusion: success ? "success" : "failure", check_run_id: check.id ?? null };
+  } catch (error) {
+    return { posted: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch) {
   const modeIndex = argv.indexOf("--mode");
   const mode = modeIndex >= 0 ? argv[modeIndex + 1] : "required";
-  if (!["required", "gate", "reverify", "dispatch-admit"].includes(mode)) {
-    console.error("usage: clued-work-admission.mjs --mode required|gate|reverify|dispatch-admit");
+  if (!["required", "gate", "reverify", "dispatch-admit", "app-check"].includes(mode)) {
+    console.error("usage: clued-work-admission.mjs --mode required|gate|reverify|dispatch-admit|app-check");
     return 2;
+  }
+  if (mode === "app-check") {
+    const result = await appCheck({ env, fetchImpl });
+    console.log(JSON.stringify(result, null, 2));
+    if (result.error) {
+      console.error(`::error title=${APP_CHECK_NAME}::${result.error}`);
+      return 1;
+    }
+    if (!result.posted) console.error(`::notice title=${APP_CHECK_NAME}::${result.reason}`);
+    return 0;
   }
   if (mode === "reverify") {
     const result = await reverify({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE });
@@ -906,6 +1146,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     `enforced=${String(outcome.enforced)}`,
     `verdict=${outcome.verdict ?? ""}`,
     `claim_id=${outcome.claim_id ?? ""}`,
+    `head_sha=${outcome.head_sha ?? ""}`,
     "",
   ].join("\n"));
   if (outcome.error) {
