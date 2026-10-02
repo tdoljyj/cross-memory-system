@@ -160,11 +160,23 @@ test("enforced: REJECTED with paths outside the write set is not admitted and li
   assert.match(renderSummary(outcome), /docs\/new\.md/);
 });
 
-test("enforced: a claim taken on a newer base than the PR targets is rejected", async () => {
-  const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { body: { status: "behind" } }, [VERIFY]: { body: admittedPayload } });
+test("enforced: a claim taken on a newer base than the PR targets is admitted with a notice", async () => {
+  for (const status of ["behind", "diverged"]) {
+    const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { body: { status } }, [VERIFY]: { body: admittedPayload } });
+    const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
+    assert.deepEqual([outcome.admitted, outcome.verdict, outcome.reasons], [true, "ADMITTED", []], status);
+    assert.equal(outcome.notices.length, 1);
+    assert.match(outcome.notices[0], new RegExp(`^base_behind_claim:${status} `));
+    assert.match(renderSummary(outcome), /Notices \(not blocking\):\n- base_behind_claim/);
+  }
+});
+
+test("enforced: a claim whose base_commit is not in the repository is rejected", async () => {
+  const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { status: 404, body: { message: "Not Found" } }, [VERIFY]: { body: admittedPayload } });
   const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
   assert.equal(outcome.admitted, false);
-  assert.deepEqual(outcome.reasons, ["base_behind_claim:behind"]);
+  assert.deepEqual(outcome.reasons, [`claim_base_unknown:${CLAIM_BASE}`]);
+  assert.deepEqual(outcome.notices, []);
 });
 
 test("enforced: fail closed on missing token, missing RPC, refused Binding, rejection envelope, transport error", async () => {
