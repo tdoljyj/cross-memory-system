@@ -893,7 +893,12 @@ an anchored patch with an exact hit count.
   executor works against the new database (no digest in its proofs, no
   `source_parent_version`, so no source-folder digest); the new executor
   against the old database has every directory create refused at its
-  verified record, leaving the intent fenced until recovery.
+  verified record after the Drive effect, leaving the intent fenced; its
+  recovery succeeds only after the migration is applied.
+  Residual: the create verifier reads the new folder's sharing after its
+  version checks, and the identity reads a folder's version and sharing in
+  separate calls. A sharing change between them can only make the recorded
+  digest differ from Drive, so later writes are refused, never widened.
 - A lost update reply leaves the intent fenced, and the single writer then
   blocks other writes on that root until it is resolved. Scheduled recovery
   never lists or loads a directory move; the Owner's native recovery

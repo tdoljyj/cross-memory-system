@@ -419,7 +419,8 @@
   - 新建目录时，核验读取新文件夹的共享；与目标父目录（authority 已核对、provider identity 记录的）共享指纹完全一致时，证明（`clued.storage-create-verified/2`）带 `provider_sharing_digest`，登记时一并记下；不一致或读不到时不带，仍按版本核对。核验记录只接受目录、且只接受等于该父目录记录值的指纹。
   - 目录移动结算时，源父目录和目标父目录中还没有指纹的，记下 provider identity 为它们记录的指纹（移动要求两者相等，目标父目录的指纹已由 authority 核对）；已有指纹的不改。只有登记的 Drive 版本仍等于 provider identity 记录的版本（新增的 `source_parent_version` 与已有的 `destination_parent_version`）时才记：authority 只按 ID 核对源父目录，登记版本落后说明它在 Clued 上次核对之后在 Drive 里变过。
   - 证明给文件带指纹，或给 identity 没有父目录指纹的目录带指纹，一律拒绝（`storage_verified_mismatch`）。
-  - 上线顺序：先执行迁移，再发布 Worker。旧执行器配新数据库照常工作（证明不带指纹、identity 没有 `source_parent_version`，源父目录不补指纹）；新执行器配旧数据库则所有新建目录都会在核验记录处被拒、意图被围栏，需走恢复。
+  - 上线顺序：先执行迁移，再发布 Worker。旧执行器配新数据库照常工作（证明不带指纹、identity 没有 `source_parent_version`，源父目录不补指纹）；新执行器配旧数据库则所有新建目录都会在 Drive 已建成后于核验记录处被拒、意图被围栏，迁移执行后恢复才能成功。
+  - 残余：新建核验在版本检查之后才读新文件夹的共享，identity 也分两次读版本与共享；其间共享若被改，只会让记下的指纹与 Drive 不符而拒绝后续写入，不会放宽。
 - **结果不确定时。** 定时恢复不加载目录 move（不自动重写路径）。只有 Owner 在原生页面触发的恢复会以只读 GET 重新核验，并通过同一核验记录结算，绝不重复 effect。
 
 **revision 管理：**
