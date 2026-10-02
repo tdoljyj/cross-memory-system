@@ -846,6 +846,20 @@ an anchored patch with an exact hit count.
   observed Drive version by CAS on its version, and the path of every active
   or trashed item under it, in the one settlement transaction. Revoked rows
   keep their old path as history.
+- P6.1 (Decision `e5e99da8`, migration
+  `20261002090000_storage_directory_move_descendants_v1.sql`): Drive advances
+  the version of every item under a folder each time the folder moves (P6
+  acceptance, Note `23d63403`). The durable start returns every active or
+  trashed registered descendant (`subtree_registry`, at most 500). Before the
+  attempt the executor reads them by Drive ID (batched when the Worker has the
+  batch reader; otherwise one by one, up to 50) and records in the attempt
+  (`descendants`) those exactly as registered: same version, name, kind,
+  state and folder chain, with each file's size and sha256. After the move
+  the verifier reads them again and the proof (`descendant_versions`) names
+  the new version of each one still in place with the same content and a
+  version not lower than before. The settlement sets those versions by CAS on
+  the recorded version. Anything else keeps its registered version and stays
+  refused for file-level writes, as before.
 - A lost update reply leaves the intent fenced, and the single writer then
   blocks other writes on that root until it is resolved. Scheduled recovery
   never lists or loads a directory move; the Owner's native recovery

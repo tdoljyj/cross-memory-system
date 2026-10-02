@@ -132,7 +132,7 @@ export async function createStorageCloudRecovery(config: {
       const postcondition = await bounded(verify({ profile: d.profile, mutation: d.mutation, provider_before: d.provider_before,
         effect_result: subtree
           ? { operation, target_kind: "directory", source_path: d.mutation.source_path, destination_path: d.mutation.destination_path,
-              provider_file_id: d.attempt.provider_file_id, subtree_sample: d.attempt.subtree_sample }
+              provider_file_id: d.attempt.provider_file_id, subtree_sample: d.attempt.subtree_sample, descendants: d.attempt.descendants }
           : destructive
           ? { operation, source_path: d.mutation.source_path, destination_path: d.mutation.destination_path ?? null,
               provider_file_id: d.attempt.provider_file_id, content: d.attempt.content }

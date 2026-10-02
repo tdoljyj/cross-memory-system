@@ -119,6 +119,10 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
         assert.deepEqual(file.parents, [u.searchParams.get("removeParents")]);
         file.parents = [u.searchParams.get("addParents")];
         file.version = String(Number(file.version) + 3); // Drive may jump by more than one.
+        // As Drive (P6 acceptance, Note 23d63403): moving a folder advances
+        // the version of every item under it; their content stays the same.
+        const under = item => { for (let p = item.parents[0]; p; p = files.get(p)?.parents[0]) if (p === id) return true; return false; };
+        for (const item of files.values()) if (item.id !== id && item.parents.length && under(item)) item.version = String(Number(item.version) + 1);
         if (state.losePatch) throw new Error("synthetic lost provider response");
         return Response.json(file);
       }
@@ -281,7 +285,10 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       for (const [row, relative] of [[inner, "inner"], [note, "note.md"], [deep, "inner/deep.md"]]) {
         const after = await artifactById(row.id);
         assert.equal(after.path, `${topic.path}/folder/${relative}`); assert.equal(after.state, "active");
-        assert.equal(Number(after.version), Number(row.version) + 1); assert.equal(after.provider_file_version, row.provider_file_version);
+        assert.equal(Number(after.version), Number(row.version) + 1);
+        // P6.1: the registered Drive version follows Drive's advance.
+        assert.equal(after.provider_file_version, storage.files.get(row.provider_file_id).version, relative);
+        assert.notEqual(after.provider_file_version, row.provider_file_version, relative);
       }
       assert.equal((await artifactById(revoked.id)).path, revoked.path, "revoked history keeps its old path");
       assert.equal(await artifact(target, folder.path), undefined);
@@ -290,6 +297,8 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.deepEqual(intent.provider_attempt.subtree_sample, descriptor.subtree_sample);
       assert.equal(intent.verified_result_v2.proof.contract, "clued.storage-directory-move-verified/1");
       assert.equal(intent.verified_result_v2.proof.checks.subtree, true);
+      assert.equal(intent.provider_attempt.descendants.length, 3, "every active registered descendant matched the registry");
+      assert.equal(intent.verified_result_v2.proof.descendant_versions.length, 3);
       assert.equal(intent.final_result.status, "committed");
       // Files under the moved directory keep working at their new paths.
       const again = await submitJob(target, client, { operation: "create", target_kind: "file", destination_path: `${topic.path}/folder/inner/after.md`, content: "x" });
@@ -300,6 +309,24 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       const back = await submitJob(target, client, move(await artifactById(folder.id), folder.path, drive.version));
       assert.equal((await executor(target, storage).run(back.reference)).status, "committed");
       assert.equal((await artifactById(deep.id)).path, deep.path);
+    });
+
+    await t.test("P6.1: an item changed outside Clued before the move keeps its registered version; the rest follow Drive", async () => {
+      const { target, client, storage, topic, folder, note, deep } = await tree();
+      storage.files.get(deep.provider_file_id).version = String(Number(storage.files.get(deep.provider_file_id).version) + 2);
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      assert.equal((await executor(target, storage).run(job.reference)).status, "committed");
+      const intent = await journal(job);
+      assert.equal(intent.provider_attempt.descendants.some(item => item.provider_file_id === deep.provider_file_id), false);
+      assert.equal((await artifactById(deep.id)).provider_file_version, deep.provider_file_version, "stale before, stale after");
+      assert.equal((await artifactById(deep.id)).path, `${topic.path}/folder/inner/deep.md`);
+      assert.equal((await artifactById(note.id)).provider_file_version, storage.files.get(note.provider_file_id).version);
+      // The administrative path rewrite cannot add a refresh the proof did not name.
+      const forged = await adminCall({ action: "artifact_subtree_move", profile_id: target.profile, artifact_id: folder.id,
+        base_version: Number((await artifactById(folder.id)).version), path: folder.path, provider_file_id: folder.provider_file_id,
+        provider_file_version: "99", idempotency_key: "resource-center-finalize:" + intent.id,
+        descendant_versions: [{ provider_file_id: deep.provider_file_id, base_version: deep.provider_file_version, provider_file_version: "99" }] });
+      assert.notEqual(forged.status, "committed");
     });
 
     await t.test("submit refuses a track, a rename, a move into itself and any other shape before a job exists", async () => {
@@ -398,6 +425,7 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.equal((await executor(target, storage).run(job.reference)).status, "committed");
       const trashed = await artifactById(note.id);
       assert.equal(trashed.state, "trashed"); assert.equal(trashed.path, `${topic.path}/folder/note.md`);
+      assert.equal(trashed.provider_file_version, storage.files.get(note.provider_file_id).version, "the trashed item's version followed Drive");
       const restore = await submitJob(target, client, { operation: "restore", target_kind: "file", source_path: trashed.path,
         source_file_version: trashed.provider_file_version, source_file_id: note.provider_file_id });
       const restored = await executor(target, storage).run(restore.reference);
@@ -453,7 +481,8 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       const { verified_proof: proof, ...postcondition } = await verify({ profile: descriptor.profile, mutation: descriptor.mutation,
         provider_before: descriptor.provider_before, effect_result: { operation: "move", target_kind: "directory",
           source_path: descriptor.mutation.source_path, destination_path: descriptor.mutation.destination_path,
-          provider_file_id: descriptor.attempt.provider_file_id, subtree_sample: descriptor.attempt.subtree_sample } });
+          provider_file_id: descriptor.attempt.provider_file_id, subtree_sample: descriptor.attempt.subtree_sample,
+          descendants: descriptor.attempt.descendants } });
       const finish = { action: "finalize", intent_id: descriptor.intent_id, base_version: descriptor.version, request_sha256: descriptor.request_sha256,
         idempotency_key: `account-job:${job.reference.job_id}:finalize`, postcondition };
       const recorded = await cloud({ action: "verified_record", ...job.reference, credential_version: descriptor.credential_version, finish, proof });

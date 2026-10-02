@@ -408,6 +408,13 @@
 - **在途作业（T14）。** 由既有的每个 profile 单写者围栏保证：移动处于 prepared / started / uncertain 时，其他意图都不能开始；其他意图在途时，移动也不能开始。排队中、仍指向旧路径的作业会在自身的 provider 查找时失败，不产生 effect。
 - **attempt 与核验。** provider attempt 为 `clued.storage-subtree-move-attempt/1`，记录目录、两个父目录、两条路径，以及服务端选定的最多 10 个已登记子孙（先浅后深，再按路径排序；由持锁的 durable start 返回，记录 attempt 时须与当时登记一致，核验记录时以已存 attempt 为准）。移动前，执行器（任何预留前）和 effect（durable flush 前后）都按 Drive ID 复读这些子孙；登记已漂移时以 `SUBTREE_DRIFT` 拒绝，不产生 effect。核验合同为 `clued.storage-directory-move-verified/1`，检查项包括 identity、ancestors、stable_state、unique_name、source_vacated、sharing_unchanged（共享状态与访问权限均不变）、subtree。
 - **结算。** 结算（`artifact_subtree_move`，只接受某个目录 move 意图的已核验结算，且须与其已记录证明的目录、路径和 Drive 版本一致）在同一个结算事务里完成两件事：按判定时看到的目录版本 CAS 更新目录的路径和观测到的 Drive 版本；同时重写目录下每个 active / trashed 对象的路径。revoked 历史保持旧路径。
+- **子项版本刷新（P6.1，Owner Decision `e5e99da8`，迁移 `20261002090000`）。** 生产验收发现：目录每移动一次，Drive 会推进其下各项的 version，内容不变。为此：
+  - durable start 还返回目录下全部 active / trashed 已登记对象（最多 500 个）；
+  - 移动前，执行器按 Drive ID 批量读取这些对象，把实际状态与登记完全一致的（版本、名称、类型、所在文件夹一致，文件另记大小与 sha256）记入 attempt 的 `descendants`；
+  - 移动后，核验再读一次，仍在原相对位置、名称、类型与内容都不变且版本未倒退的，记入 proof 的 `descendant_versions`；
+  - 结算在同一事务里按 attempt 记录的版本逐项 CAS 更新登记版本。
+
+  不符合的项保持原登记版本（fail closed）；读取失败时不刷新任何项。
 - **结果不确定时。** 定时恢复不加载目录 move（不自动重写路径）。只有 Owner 在原生页面触发的恢复会以只读 GET 重新核验，并通过同一核验记录结算，绝不重复 effect。
 
 **revision 管理：**

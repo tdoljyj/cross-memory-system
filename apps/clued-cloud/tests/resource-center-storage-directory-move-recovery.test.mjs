@@ -53,7 +53,7 @@ async function setup({ moved = true, sample = SAMPLE } = {}) {
     profile: { managed_root: ROOT }, mutation, provider_before: provider,
     attempt: { contract: "clued.storage-subtree-move-attempt/1", intent_id: ids.intent, operation: "move", target_kind: "directory",
       provider_file_id: "dir", source_path: mutation.source_path, source_file_version: "6", source_parent_id: "track",
-      destination_path: mutation.destination_path, parent_id: "topic", subtree_sample: sample } };
+      destination_path: mutation.destination_path, parent_id: "topic", subtree_sample: sample, descendants: [] } };
   descriptor.credential_envelope = await vault.seal(JSON.stringify({ access_token: "recovery-access-token-0001", scope: SCOPE,
     token_type: "Bearer", expires_at_ms: Date.now() + 3600000 }), { owner_id: ids.owner, connection_id: ids.connection, provider: "google-drive",
     provider_subject: "subject", oauth_client_id: "test-client", credential_version: 1 });

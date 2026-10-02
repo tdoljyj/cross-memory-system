@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { createGoogleDriveNativeDirectoryMoveEffect, directoryMoveShape, directoryMoveProviderBefore, subtreeSampleShape,
-  SUBTREE_SAMPLE_LIMIT } from "../../../kernel/host/resource-center-google-drive-directory-move-effect.mjs";
+  SUBTREE_SAMPLE_LIMIT, subtreeRegistryShape, subtreeDescendantsShape, observeSubtreeRegistry, refreshedSubtreeVersions } from "../../../kernel/host/resource-center-google-drive-directory-move-effect.mjs";
 import { createGoogleDriveDirectoryMovePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-directory-move-postcondition.mjs";
 import { googleDriveAccessDigest, googleDriveSharingDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
 import { evaluateResourceCenterMutation } from "../../../kernel/policy/resource-center-mutation-policy.mjs";
@@ -19,6 +19,18 @@ const SHARING = { shared: false, permissionIds: ["owner-permission"] };
 const DIGEST = googleDriveSharingDigest(SHARING);
 const PERMISSIONS = [{ id: "owner-permission", type: "user", role: "owner" }, { id: "u", type: "user", role: "reader" }];
 const ACCESS = googleDriveAccessDigest({ permissions: PERMISSIONS });
+// P6.1: every registered descendant as the durable start returns it, and the
+// ones the attempt records (all match the registry here).
+const REGISTRY = [
+  { provider_file_id: "inner", relative_path: "inner", target_kind: "directory", state: "active", provider_file_version: "1" },
+  { provider_file_id: "note", relative_path: "note.md", target_kind: "file", state: "active", provider_file_version: "3" },
+  { provider_file_id: "deep", relative_path: "inner/deep.md", target_kind: "file", state: "active", provider_file_version: "4" },
+];
+const DESCENDANTS = [
+  { ...REGISTRY[0], size: null, sha256: null },
+  { ...REGISTRY[1], size: "12", sha256: "a".repeat(64) },
+  { ...REGISTRY[2], size: "7", sha256: "b".repeat(64) },
+];
 const SAMPLE = [
   { provider_file_id: "inner", relative_path: "inner", target_kind: "directory" },
   { provider_file_id: "note", relative_path: "note.md", target_kind: "file" },
@@ -29,8 +41,8 @@ function drive() {
   const files = new Map([["root", folder("root", "Clued_资料中心", "container")], ["track", folder("track", "20_P_产品与体验", "root")],
     ["topic", folder("topic", "topic", "track")], ["dir", folder("dir", "folder", "track", "17")],
     ["inner", folder("inner", "inner", "dir")],
-    ["note", { id: "note", name: "note.md", parents: ["dir"], version: "3", trashed: false, mimeType: "text/markdown" }],
-    ["deep", { id: "deep", name: "deep.md", parents: ["inner"], version: "4", trashed: false, mimeType: "text/markdown" }]]);
+    ["note", { id: "note", name: "note.md", parents: ["dir"], version: "3", trashed: false, mimeType: "text/markdown", size: "12", sha256Checksum: "a".repeat(64) }],
+    ["deep", { id: "deep", name: "deep.md", parents: ["inner"], version: "4", trashed: false, mimeType: "text/markdown", size: "7", sha256Checksum: "b".repeat(64) }]]);
   const sharing = new Map([...files.keys()].map(id => [id, structuredClone(SHARING)]));
   const access = new Map([...files.keys()].map(id => [id, structuredClone(PERMISSIONS)]));
   return { files, sharing, access, getFile: async id => structuredClone(files.get(id)),
@@ -58,7 +70,7 @@ function effectFixture(d = drive(), overrides = {}, mutation = hostMutation) {
     get_credential: async () => ({ access_token: "subtree-test-access-token", scope: SCOPE }),
     resolve_provider_identity: async () => ({ ...provider }),
     consume_started_provider: () => consumed ? null : (consumed = true, { intent_id: intent, request_sha256: binding.request_sha256, provider,
-      subtree_sample: SAMPLE }),
+      subtree_sample: SAMPLE, subtree_registry: REGISTRY }),
     persist_provider_attempt: async value => { events.push("persist"); attempt = value; },
     fetch: async (url, options) => {
       events.push("patch");
@@ -133,9 +145,11 @@ test("a directory move records the exact attempt with the server sample, then mo
   assert.deepEqual(f.attempt(), { contract: "clued.storage-subtree-move-attempt/1", intent_id: intent,
     request_sha256: f.request.admission.binding.request_sha256, profile_id: profile.profile_id, operation: "move", target_kind: "directory",
     provider_file_id: "dir", source_path: moveMutation.source_path, source_file_version: "17", source_parent_id: "track",
-    destination_path: moveMutation.destination_path, parent_id: "topic", subtree_sample: SAMPLE, binding: f.request.admission.binding });
+    destination_path: moveMutation.destination_path, parent_id: "topic", subtree_sample: SAMPLE, descendants: DESCENDANTS,
+    binding: f.request.admission.binding });
   assert.deepEqual(result, { operation: "move", target_kind: "directory", source_path: moveMutation.source_path,
-    destination_path: moveMutation.destination_path, provider_file_id: "dir", provider_file_version: "20", subtree_sample: SAMPLE, intent_id: intent });
+    destination_path: moveMutation.destination_path, provider_file_id: "dir", provider_file_version: "20", subtree_sample: SAMPLE,
+    descendants: DESCENDANTS, intent_id: intent });
   assert.deepEqual(f.d.files.get("dir").parents, ["topic"]);
   assert.deepEqual(f.d.files.get("note").parents, ["dir"], "children keep their parent: the whole subtree moves");
 });
@@ -167,9 +181,13 @@ test("a changed directory, a missing durable start, unequal sharing or a changed
   await assert.rejects(expired.effect(expired.request), /DRIVE_NATIVE_ADMISSION_EXPIRED/);
   assert.equal(expired.events.includes("patch"), false);
   const noSample = effectFixture(drive(), { consume_started_provider: () => ({ intent_id: intent,
-    request_sha256: noSampleHash, provider: before(), subtree_sample: [{ provider_file_id: "x" }] }) });
+    request_sha256: noSampleHash, provider: before(), subtree_sample: [{ provider_file_id: "x" }], subtree_registry: REGISTRY }) });
   await assert.rejects(noSample.effect(noSample.request), /DRIVE_NATIVE_DURABLE_START_REQUIRED/);
   assert.deepEqual(noSample.events, []);
+  const noRegistry = effectFixture(drive(), { consume_started_provider: () => ({ intent_id: intent,
+    request_sha256: noSampleHash, provider: before(), subtree_sample: SAMPLE }) });
+  await assert.rejects(noRegistry.effect(noRegistry.request), /DRIVE_NATIVE_DURABLE_START_REQUIRED/);
+  assert.deepEqual(noRegistry.events, []);
   const r = drive(), wrong = effectFixture(r, { fetch: async () => {
     const file = r.files.get("dir"); file.parents = ["track"]; file.version = "20"; return Response.json(file);
   } });
@@ -184,7 +202,7 @@ test("a registered descendant that drifted in Drive is refused before the attemp
   await assert.rejects(early.effect(early.request), /DRIVE_NATIVE_SUBTREE_DRIFT/);
   assert.deepEqual(early.events, [], "nothing is recorded or moved");
   let reads = 0; const d = drive(), getFile = d.getFile;
-  d.getFile = async id => { const f = await getFile(id); if (id === "deep" && ++reads === 2) f.parents = ["dir"]; return f; };
+  d.getFile = async id => { const f = await getFile(id); if (id === "deep" && ++reads === 3) f.parents = ["dir"]; return f; };
   const late = effectFixture(d);
   await assert.rejects(late.effect(late.request), /DRIVE_NATIVE_SUBTREE_DRIFT/);
   assert.deepEqual(late.events, ["persist"], "a drift after the durable flush stops before the update");
@@ -196,9 +214,13 @@ function verifier(d, extra = {}) {
     get_file: d.getFile, list_children: d.listChildren, get_sharing: d.getSharing, get_access: d.getAccess, include_verified_proof: true,
     timeout_ms: 3000, poll_ms: 1000, clock: () => now, sleep: async ms => { now += ms; }, ...extra });
 }
-const effectResult = (sample = SAMPLE) => ({ operation: "move", target_kind: "directory", source_path: moveMutation.source_path,
-  destination_path: moveMutation.destination_path, provider_file_id: "dir", provider_file_version: "20", subtree_sample: sample });
-const moved = () => { const d = drive(); Object.assign(d.files.get("dir"), { parents: ["topic"], version: "20" }); return d; };
+const effectResult = (sample = SAMPLE, descendants = DESCENDANTS) => ({ operation: "move", target_kind: "directory", source_path: moveMutation.source_path,
+  destination_path: moveMutation.destination_path, provider_file_id: "dir", provider_file_version: "20", subtree_sample: sample, descendants });
+// As Drive: moving a folder advances the version of every item under it.
+const moved = () => { const d = drive(); Object.assign(d.files.get("dir"), { parents: ["topic"], version: "20" });
+  d.files.get("inner").version = "2"; d.files.get("note").version = "5"; d.files.get("deep").version = "6"; return d; };
+const REFRESHED = [{ provider_file_id: "inner", provider_file_version: "2" }, { provider_file_id: "note", provider_file_version: "5" },
+  { provider_file_id: "deep", provider_file_version: "6" }];
 
 test("the verifier proves a directory move from metadata, sharing and the sampled subtree", async () => {
   const result = await verifier(moved())({ profile, mutation: hostMutation, provider_before: before(), effect_result: effectResult() });
@@ -206,10 +228,46 @@ test("the verifier proves a directory move from metadata, sharing and the sample
     provider_file_id: "dir", provider_file_version: "20", verified_proof: undefined });
   assert.deepEqual(result.verified_proof, { contract: "clued.storage-directory-move-verified/1", path: moveMutation.destination_path,
     parent_id: "topic", provider_file_id: "dir", provider_file_version: "20", operation: "move", target_kind: "directory",
-    source_path: moveMutation.source_path, source_file_version: "17", subtree_sample: SAMPLE, provider_before: before(),
+    source_path: moveMutation.source_path, source_file_version: "17", subtree_sample: SAMPLE, descendant_versions: REFRESHED, provider_before: before(),
     checks: { identity: true, ancestors: true, stable_state: true, unique_name: true, source_vacated: true, sharing_unchanged: true, subtree: true } });
-  const empty = await verifier(moved())({ profile, mutation: hostMutation, provider_before: before(), effect_result: effectResult([]) });
-  assert.deepEqual(empty.verified_proof.subtree_sample, []);
+  const empty = await verifier(moved())({ profile, mutation: hostMutation, provider_before: before(), effect_result: effectResult([], []) });
+  assert.deepEqual(empty.verified_proof.subtree_sample, []); assert.deepEqual(empty.verified_proof.descendant_versions, []);
+});
+
+test("P6.1: only descendants exactly as registered are recorded, and only unchanged ones are refreshed", async () => {
+  assert.deepEqual(subtreeRegistryShape(REGISTRY), REGISTRY); assert.deepEqual(subtreeDescendantsShape(DESCENDANTS), DESCENDANTS);
+  for (const bad of [[{ ...REGISTRY[0], extra: 1 }], [REGISTRY[0], REGISTRY[0]], [{ ...REGISTRY[0], relative_path: "../x" }],
+    [{ ...REGISTRY[0], provider_file_version: "x" }], [{ ...REGISTRY[0], state: "revoked" }]]) assert.equal(subtreeRegistryShape(bad), null);
+  // A trashed item is recorded and refreshed as trashed.
+  const t = drive(); t.files.get("note").trashed = true;
+  const trashedRegistry = [REGISTRY[0], { ...REGISTRY[1], state: "trashed" }, REGISTRY[2]];
+  assert.deepEqual((await observeSubtreeRegistry({ get_file: t.getFile }, "dir", trashedRegistry)).map(i => i.state), ["active", "trashed", "active"]);
+  assert.deepEqual(await observeSubtreeRegistry({ get_file: t.getFile }, "dir", REGISTRY), [DESCENDANTS[0], DESCENDANTS[2]], "trashed in Drive, active in the registry");
+  for (const bad of [[{ ...DESCENDANTS[0], size: "1" }], [{ ...DESCENDANTS[1], sha256: null }], [{ ...DESCENDANTS[1], size: null }]]) {
+    assert.equal(subtreeDescendantsShape(bad), null);
+  }
+  // Before: a drifted version, a moved or renamed item, or a file without sha256 is left out.
+  const d = drive();
+  d.files.get("note").version = "9"; d.files.get("deep").sha256Checksum = undefined;
+  assert.deepEqual(await observeSubtreeRegistry({ get_file: d.getFile }, "dir", REGISTRY), [DESCENDANTS[0]]);
+  // Batched reads give the same answer; a failed read records nothing.
+  const batched = drive(); let batches = 0;
+  const getFiles = async ids => { batches++; return Promise.all(ids.map(id => batched.getFile(id))); };
+  assert.deepEqual(await observeSubtreeRegistry({ get_file: async () => { throw new Error("unused"); }, get_files: getFiles }, "dir", REGISTRY), DESCENDANTS);
+  assert.equal(batches, 1);
+  assert.deepEqual(await observeSubtreeRegistry({ get_file: async () => { throw new Error("down"); } }, "dir", REGISTRY), []);
+  // Without a batch reader, more than 50 are not read one by one.
+  const many = Array.from({ length: 51 }, (_, i) => ({ provider_file_id: "f" + i, relative_path: "f" + i, target_kind: "file", state: "active", provider_file_version: "1" }));
+  let reads = 0;
+  assert.deepEqual(await observeSubtreeRegistry({ get_file: async () => { reads++; } }, "dir", many), []); assert.equal(reads, 0);
+  // After: changed content, a moved item or a version going backwards is left out.
+  const after = moved();
+  after.files.get("note").sha256Checksum = "c".repeat(64); after.files.get("deep").version = "3";
+  assert.deepEqual(await refreshedSubtreeVersions({ get_file: after.getFile }, "dir", DESCENDANTS),
+    [{ provider_file_id: "inner", provider_file_version: "2" }]);
+  const gone = moved(); gone.files.get("inner").parents = ["track"];
+  assert.deepEqual(await refreshedSubtreeVersions({ get_file: gone.getFile }, "dir", DESCENDANTS),
+    [{ provider_file_id: "note", provider_file_version: "5" }], "an item whose folder moved away, and items under it, are left out");
 });
 
 test("the verifier fails closed on a wrong parent, changed sharing, a broken subtree, a leftover entry or no move", async () => {
