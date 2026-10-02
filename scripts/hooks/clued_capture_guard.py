@@ -6,13 +6,16 @@ written to Clued in the same turn, and §5 requires a checkpoint after writes.
 This hook reads the session transcript when Claude is about to stop and blocks
 the stop once, with a reason, when it finds:
 
-* a material outcome (merged PR, pushed main, applied migration, deployed edge
-  function) with no committed Clued write about it after it;
+* a material outcome (merged PR, by tool, `gh pr merge` or a `gh api` PUT to
+  the merge endpoint; pushed main; applied migration; deployed edge function)
+  with no committed Clued write about it after it, including outcomes reached
+  inside subagents, whose transcripts Claude Code keeps beside the session's
+  (<session>/subagents/agent-*.jsonl) and which are merged in by timestamp;
 * committed Clued writes with no committed checkpoint for their context after
   them (BUG-20260924-003: a checkpoint absorbs only its own context's events,
   so project-scope writes need a checkpoint in that project's context);
 * a human message that looks like an Owner decision with no committed Clued
-  write after it;
+  write after it (every such message, not only the last one);
 * an answered question (AskUserQuestion) with no committed Clued write after
   it: Owner decisions are asked as such questions, so every answer counts as
   a decision, whatever its wording.
@@ -61,6 +64,13 @@ DECISION_PATTERN = re.compile(
 COMMAND_START = r"(?:^|[;&|(]\s*|&&\s*|\|\|\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
 GIT_PUSH_MAIN = re.compile(COMMAND_START + r"git\s+push\b[^\n;&|]*\b(main|master)\b", re.MULTILINE)
 GH_PR_MERGE = re.compile(COMMAND_START + r"gh\s+pr\s+merge\b", re.MULTILINE)
+# The REST merge endpoint merges only on PUT; a GET there just asks whether the
+# PR is merged.
+GH_API_MERGE = re.compile(
+    COMMAND_START + r"gh\s+api\b(?=[^\n;&|]*(?:-X\s*|--method[=\s]+)PUT\b)[^\n;&|]*?/pulls/(\d+)/merge\b",
+    re.MULTILINE | re.IGNORECASE)
+# Host-injected reminders inside a human entry are not the Owner's words.
+SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?(?:</system-reminder>|\Z)", re.DOTALL)
 # Heredoc bodies (commit messages, inline scripts) are data, not commands.
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.MULTILINE | re.DOTALL)
 
@@ -241,6 +251,26 @@ def load_entries(path: Path) -> list[dict]:
     return entries
 
 
+def load_session(path: Path) -> list[dict]:
+    """The session transcript with its subagents' transcripts merged in.
+
+    Claude Code keeps each subagent's transcript in <session>/subagents/; its
+    entries carry isSidechain. They are merged into the session by timestamp
+    (an entry without one keeps its file's last timestamp), so an outcome a
+    subagent reaches is ordered against the session's later writes.
+    """
+    files = [path] + sorted(path.with_suffix("").joinpath("subagents").glob("agent-*.jsonl"))
+    keyed = []
+    for rank, file in enumerate(files):
+        stamp = ""
+        for index, entry in enumerate(load_entries(file)):
+            stamp = entry.get("timestamp") if isinstance(entry.get("timestamp"), str) else stamp
+            keyed.append(((stamp, rank, index), entry))
+    if len(files) == 1:
+        return [entry for _, entry in keyed]
+    return [entry for _, entry in sorted(keyed, key=lambda item: item[0])]
+
+
 def prompt_text(content) -> str | None:
     """Return the text of a user prompt, or None for tool results."""
     if isinstance(content, str):
@@ -283,8 +313,9 @@ def analyse(entries: list[dict]) -> list[Finding]:
     answers: list[tuple[int, str, str]] = []  # (position, use id, the Owner's answers)
 
     for pos, entry in enumerate(entries):
-        if entry.get("isSidechain"):
-            continue
+        # A subagent's outcomes and writes count; its "user" entries are the
+        # parent's instructions, not the Owner's words.
+        sidechain = bool(entry.get("isSidechain"))
         message = entry.get("message")
         content = message.get("content") if isinstance(message, dict) else None
         if entry.get("type") == "assistant" and isinstance(content, list):
@@ -302,8 +333,11 @@ def analyse(entries: list[dict]) -> list[Finding]:
         if text is not None:
             origin = entry.get("origin")
             origin = origin.get("kind") if isinstance(origin, dict) else None
-            human = origin == "human" or (origin is None and not entry.get("isMeta"))
-            if human and OWN_MESSAGE not in text:
+            human = not sidechain and (origin == "human" or (origin is None and not entry.get("isMeta")))
+            # A compaction summary is the Host's recap, not something the Owner said.
+            injected = entry.get("isCompactSummary") or entry.get("isVisibleInTranscriptOnly")
+            text = SYSTEM_REMINDER.sub("", text)
+            if human and not injected and OWN_MESSAGE not in text:
                 human_prompts.append((pos, str(entry.get("uuid") or f"pos{pos}"), text))
             continue
         if not isinstance(content, list):
@@ -350,7 +384,12 @@ def analyse(entries: list[dict]) -> list[Finding]:
                     outcomes.append((pos, f"{use_id}#{index}" if index else use_id,
                                      f"merged PR #{number} with gh pr merge" if number
                                      else "merged a PR with gh pr merge", pr_subject(number)))
-                if not merges and GIT_PUSH_MAIN.search(command):
+                api_merges = GH_API_MERGE.findall(command)
+                if api_merges and ('"merged":true' in body.replace(" ", "") or '"message"' not in body):
+                    for index, number in enumerate(api_merges):
+                        outcomes.append((pos, f"{use_id}#api{index}", f"merged PR #{number} with gh api",
+                                         pr_subject(number)))
+                if not merges and not api_merges and GIT_PUSH_MAIN.search(command):
                     outcomes.append((pos, use_id, "pushed to main", None))
 
     ordered = sorted(writes.values(), key=lambda write: write.pos)
@@ -409,22 +448,27 @@ def analyse(entries: list[dict]) -> list[Finding]:
                 "the Host refuses it, tell the Owner which write is still owed (§4). If it needs no "
                 "record, say why.",
             ))
-    if human_prompts:
-        pos, key, text = human_prompts[-1]
+    # Every message that looks like a decision, not only the last: a committed
+    # write after a message settles it, so in practice these are the messages
+    # since the last committed write.
+    for pos, key, text in human_prompts:
         match = DECISION_PATTERN.search(text)
-        state, detail = settle(ordered, pos, None) if match else ("settled", "")
+        if not match:
+            continue
+        state, detail = settle(ordered, pos, None)
+        quote = " ".join(text.split())[:60]
         if state == "none":
             findings.append(Finding(
                 f"decision:{key}",
-                f"- The Owner's last message may be a decision (matched “{match.group(0)}”). "
+                f"- An Owner message may be a decision (matched “{match.group(0)}” in “{quote}”). "
                 "If it is a material decision per §3, record it; if not, no record is needed.",
             ))
         elif state == "failed":
             findings.append(Finding(
                 f"decision:{key}:failed",
-                f"- The Owner's last message may be a decision (matched “{match.group(0)}”) and the "
-                f"Clued write after it did not commit ({detail}). Fix and retry it; if Clued or the "
-                "Host refuses it, tell the Owner which write is still owed (§4).",
+                f"- An Owner message may be a decision (matched “{match.group(0)}” in “{quote}”) and "
+                f"the Clued write after it did not commit ({detail}). Fix and retry it; if Clued or "
+                "the Host refuses it, tell the Owner which write is still owed (§4).",
             ))
     return findings
 
@@ -468,7 +512,7 @@ def run() -> int:
     transcript = payload.get("transcript_path")
     if not transcript or not Path(transcript).is_file():
         return 0
-    findings = analyse(load_entries(Path(transcript)))
+    findings = analyse(load_session(Path(transcript)))
     path = state_path(str(payload.get("session_id", "")))
     reported = load_reported(path)
     new = [finding for finding in findings if finding.key not in reported]

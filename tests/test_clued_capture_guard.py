@@ -58,12 +58,18 @@ class GuardHarness(unittest.TestCase):
         self.session = 0
 
     def run_hook(self, entries: list[dict], session: str | None = None, trailing: str = "",
-                 env: dict | None = None) -> subprocess.CompletedProcess:
+                 env: dict | None = None, subagents: dict[str, list[dict]] | None = None
+                 ) -> subprocess.CompletedProcess:
         if session is None:
             self.session += 1
             session = f"s{self.session}"
         transcript = Path(self.tmp.name) / f"{session}.jsonl"
         transcript.write_text("".join(json.dumps(e) + "\n" for e in entries) + trailing, encoding="utf-8")
+        for name, lines in (subagents or {}).items():
+            folder = transcript.with_suffix("") / "subagents"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"agent-{name}.jsonl").write_text(
+                "".join(json.dumps(e) + "\n" for e in lines), encoding="utf-8")
         payload = {"session_id": session, "transcript_path": str(transcript),
                    "hook_event_name": "Stop", "stop_hook_active": False}
         return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), text=True,
@@ -407,9 +413,83 @@ class CaptureGuardTest(GuardHarness):
             entries = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", "ok")]
             self.assertEqual(self.run_hook(entries).returncode, 2, command)
 
-    def test_sidechain_calls_are_ignored(self):
-        entries = [human("看看", "u1"), call("m1", MERGE, sidechain=True), result("m1", MERGED)]
-        self.assertEqual(self.run_hook(entries).returncode, 0)
+    def test_sidechain_outcome_in_the_session_transcript_counts(self):
+        sidechain_result = {**result("m1", MERGED), "isSidechain": True}
+        entries = [human("看看", "u1"), call("m1", MERGE, {"owner": "o", "repo": "r", "pullNumber": 7},
+                                            sidechain=True), sidechain_result]
+        proc = self.run_hook(entries)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("merged PR o/r#7", proc.stderr)
+
+    def test_outcome_inside_a_subagent_needs_a_record(self):
+        def at(entry: dict, second: int) -> dict:
+            return {**entry, "timestamp": f"2026-10-02T10:00:{second:02d}.000Z"}
+        session = [at(human("让子代理合入 PR 7", "u1"), 0)]
+        # The subagent's own prompt is the parent's instruction, not an Owner decision.
+        subagent = [at({**human("接受并合入 PR 7", "sub-u"), "isSidechain": True}, 1),
+                    at(call("m1", MERGE, {"owner": "o", "repo": "r", "pullNumber": 7}, sidechain=True), 2),
+                    at({**result("m1", MERGED), "isSidechain": True}, 3)]
+        proc = self.run_hook(session, subagents={"a1": subagent})
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("merged PR o/r#7", proc.stderr)
+        self.assertNotIn("may be a decision", proc.stderr)
+        recorded = session + [at(call("w1", MUTATE, ABOUT_PR_7), 5), at(result("w1", COMMITTED), 6),
+                              at(call("c1", CHECKPOINT), 7), at(result("c1", {"status": "committed"}), 8)]
+        self.assertEqual(self.run_hook(recorded, subagents={"a1": subagent}).returncode, 0)
+        # A write before the subagent merged does not settle it.
+        early = [at(human("让子代理合入 PR 7", "u1"), 0), at(call("w1", MUTATE, ABOUT_PR_7), 0),
+                 at(result("w1", COMMITTED), 0), at(call("c1", CHECKPOINT), 0),
+                 at(result("c1", {"status": "committed"}), 0)]
+        self.assertEqual(self.run_hook(early, subagents={"a1": subagent}).returncode, 2)
+
+    def test_gh_api_put_to_the_merge_endpoint_is_a_merge(self):
+        merged = '{"sha":"abc1234","merged":true,"message":"Pull Request successfully merged"}'
+        for command in ("gh api -X PUT repos/o/r/pulls/478/merge -f merge_method=merge",
+                        "gh api --method PUT /repos/o/r/pulls/478/merge", "gh api --method=put repos/o/r/pulls/478/merge"):
+            turn = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", merged)]
+            proc = self.run_hook(turn)
+            self.assertEqual(proc.returncode, 2, command)
+            self.assertIn("merged PR #478 with gh api", proc.stderr)
+            named = turn + [call("w1", MUTATE, {"mutation": {"content": "PR #478 已合入"}}), result("w1", COMMITTED),
+                            call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+            self.assertEqual(self.run_hook(named).returncode, 0, command)
+        # A GET only asks whether it is merged; a failed PUT merged nothing.
+        for command, body, is_error in (("gh api repos/o/r/pulls/478/merge", "", False),
+                                        ("gh api -X PUT repos/o/r/pulls/478/merge",
+                                         '{"message":"Pull Request is not mergeable","status":"405"}', True),
+                                        ("gh api -X PUT repos/o/r/pulls/478/merge",
+                                         '{"message":"Pull Request is not mergeable","status":"405"}', False)):
+            turn = [human("看看", "u1"), call("b1", "Bash", {"command": command}), result("b1", body, is_error)]
+            self.assertEqual(self.run_hook(turn).returncode, 0, (command, is_error))
+
+    def test_every_decision_message_since_the_last_write_counts(self):
+        first, second = human("那就保持原样", "u1"), human("这个也暂缓", "u2")
+        proc = self.run_hook([first, human("好的继续", "u-mid"), second])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("保持原样", proc.stderr)
+        self.assertIn("暂缓", proc.stderr)
+        settled_first = [first, call("w1", MUTATE), result("w1", COMMITTED), call("c1", CHECKPOINT),
+                         result("c1", {"status": "committed"}), human("好的继续", "u-mid"), second]
+        proc = self.run_hook(settled_first)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("暂缓", proc.stderr)
+        self.assertNotIn("保持原样", proc.stderr)
+        # A decision followed by a plain message is still reported.
+        proc = self.run_hook([first, human("好的继续", "u-mid")])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("保持原样", proc.stderr)
+
+    def test_host_injected_text_is_not_an_owner_decision(self):
+        summary = {"type": "user", "uuid": "c1", "isCompactSummary": True, "isVisibleInTranscriptOnly": True,
+                   "message": {"role": "user", "content": "This session is being continued ... the user approved X"}}
+        reminder_only = human("<system-reminder> The user approves of nothing yet </system-reminder>", "u1")
+        reminder_then_ask = human("<system-reminder>accepted rules</system-reminder>\n帮我看看日志", "u2")
+        for entry in (summary, reminder_only, reminder_then_ask):
+            self.assertEqual(self.run_hook([entry]).returncode, 0, entry["uuid"])
+        # The Owner's own words after a reminder still count.
+        proc = self.run_hook([human("<system-reminder>context</system-reminder>\n那就保持原样", "u3")])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("保持原样", proc.stderr)
 
     def test_incomplete_trailing_line_is_tolerated(self):
         proc = self.run_hook(self.merge_turn(), trailing='{"type": "assistant", "mess')
