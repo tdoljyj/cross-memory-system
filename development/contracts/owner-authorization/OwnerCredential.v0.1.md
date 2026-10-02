@@ -1,6 +1,13 @@
 # Owner Credential v0.1：范围授权与直达确认链接
 
-状态：**设计候选，未实施。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
+状态：**设计已合入（PR #505）；第 1 步实施中。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
+
+- 第 1 步（Owner 授权 2026-10-02，Task `3b7adacc`）：迁移 `20261002220000_owner_grants_v1.sql`，测试 `apps/clued-cloud/tests/owner-grants-db.test.mjs`。
+  - Agent 侧：`clued_owner_request_v1`、`clued_owner_request_status_v1`（Binding）。
+  - Owner 侧（Native 登录会话）：`clued_owner_request_view_v1`、`clued_owner_grant_confirmation_issue_v1` + `clued_owner_grant_v1`、`clued_owner_request_reject_v1`、`clued_owner_grant_revoke_v1`、`clued_owner_grants_list_v1`。
+  - 门口消费：内部函数 `clued_private.owner_grant_consume_v1`。尚无门口调用它，现有行为不变。
+  - "只批一次"的授权 24 小时内有效、只能用一次；Owner 直接发起（不经请求）的授权一律给任何 Agent。
+  - 生产迁移尚未应用，MCP 工具与确认页属于第 2 步。
 日期：2026-10-02
 Task：`17ab25b3`（Global）。Owner 决定：方向与优先级见 Task `17ab25b3` v3，规则见 Decision `6fa79397`，待定三条见 Decision `667f588b`（§11）。
 相关：[GenericWorkClaim.v0.1.md](../execution-admission/GenericWorkClaim.v0.1.md)（门卫与资源模型）、[NativeWriteSurfaces.v0.1.md](../information-flow/NativeWriteSurfaces.v0.1.md)（现有 Owner 本人确认面）。
