@@ -250,6 +250,12 @@ test("synchronous late stop confirmation is UNKNOWN even when timer cannot fire"
   assert.equal(result.error_code, "EXECUTION_STOP_UNCONFIRMED");
   assert.equal(result.execution_state, "UNKNOWN"); assert.equal(f.host.status().revoked, true);
 });
+test("synchronous late transport exception still follows timeout stop path", async () => {
+  const f = fixture({ timeoutMs: 10, probe: () => { blockFor(35); throw new Error("PRIVATE_TRANSPORT_ERROR"); } });
+  const result = await probe(f.host);
+  assert.equal(result.error_code, "ENTRY_INTERRUPTED"); assert.equal(f.stops(), 1);
+  assert.equal(f.host.status().revoked, true);
+});
 test("malformed request_id is REQUEST_INVALID and next stdio request survives", async () => {
   const endpoint = createM2RestrictedStdioCandidate();
   const bad = await endpoint.request({ jsonrpc: "2.0", id: 1, method: "tools/call",

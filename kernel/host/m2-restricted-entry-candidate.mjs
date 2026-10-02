@@ -157,6 +157,7 @@ export function createM2RestrictedEntryCandidate({
       return result;
     } catch {
       // No exception text (paths, guest output or secrets) crosses the surface.
+      if (performance.now() >= callDeadline) revoke();
       if (controller.signal.aborted) {
         const stopDeadline = performance.now() + 100;
         const stopped = await Promise.race([
