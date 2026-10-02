@@ -7,7 +7,8 @@ name: clued-work-admission-reverify
 # whose latest admission run passed, and re-runs that run when the claim no
 # longer admits the PR, which turns the required check red. Runs only when
 # CLUED_WORK_ADMISSION_ENFORCE=true; otherwise it reports and does nothing.
-# Code comes from the default branch; no PR code is checked out.
+# Code comes from the default branch; no PR code is checked out. The Clued
+# token comes from the `clued-admission` environment, as for the check itself.
 
 on:
   schedule:
@@ -28,6 +29,7 @@ jobs:
     name: clued-work-admission-reverify
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment: clued-admission
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:

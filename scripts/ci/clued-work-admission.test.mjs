@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   PUBLIC_CONFIG_SOURCE,
   evaluate,
+  gate,
   globToRegExp,
   renderReverifySummary,
   reverify,
@@ -288,13 +289,19 @@ test("main: exit codes and outputs in both modes, enforced and advisory", async 
   assert.match(read("s1"), /\| `gitleaks\.yml` \| yes \| unfiltered \| completed \/ success \|/);
   assert.match(read("s1"), /\| `clued-cloud-node22-install\.yml` \| yes \| matches apps\/clued-cloud\/package\.json \| none \|/);
 
-  code = await main(["--mode", "gate"], { ...base, GITHUB_OUTPUT: out("o2"), GITHUB_STEP_SUMMARY: out("s2") }, fakeFetch(rejected).fetchImpl);
+  const failedRun = { [ADMISSION_RUNS]: { body: { workflow_runs: [
+    { id: 7, event: "pull_request_target", head_sha: HEAD, status: "completed", conclusion: "failure", created_at: "2026-10-02T04:00:00Z" },
+  ] } } };
+  const gateCalls = fakeFetch(failedRun);
+  code = await main(["--mode", "gate"], { ...base, CLUED_CONTEXT_READ_TOKEN: "", GITHUB_OUTPUT: out("o2"), GITHUB_STEP_SUMMARY: out("s2") }, gateCalls.fetchImpl);
   assert.equal(code, 0, "the gate job itself succeeds; heavy jobs read admitted=false");
   assert.match(read("o2"), /^admitted=false$/m);
+  assert.match(read("o2"), /^verdict=REJECTED$/m);
   assert.ok(!read("s2").includes("| Workflow |"), "gate mode writes no workflow table");
+  assert.ok(!gateCalls.calls.some((c) => c.url.startsWith(PUBLIC.url)), "the gate never calls Clued");
 
-  code = await main(["--mode", "gate"], { ...base, CLUED_CONTEXT_READ_TOKEN: "", GITHUB_OUTPUT: out("o3"), GITHUB_STEP_SUMMARY: out("s3") }, fakeFetch(rejected).fetchImpl);
-  assert.equal(code, 1, "enforced + missing token is an error in every mode");
+  code = await main(["--mode", "gate"], { ...base, GITHUB_TOKEN: "", GITHUB_OUTPUT: out("o3"), GITHUB_STEP_SUMMARY: out("s3") }, fakeFetch(failedRun).fetchImpl);
+  assert.equal(code, 1, "enforced + no GitHub token is an error");
   assert.match(read("o3"), /^admitted=false$/m);
   assert.match(read("o3"), /^verdict=ERROR$/m);
 
@@ -424,4 +431,78 @@ test("main --mode reverify: exit 1 only when a PR could not be re-verified", asy
   assert.equal(code, 1);
   assert.equal(await main(["--mode", "nope"], env(), fakeFetch({}).fetchImpl), 2);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// --- Token isolation: the gate reads the trusted pull_request_target check run.
+
+test("gate: admits only on a successful pull_request_target admission run on this head, without Clued", async () => {
+  const run = (overrides) => ({ id: 1, event: "pull_request_target", head_sha: HEAD, status: "completed", conclusion: "success", created_at: "2026-10-02T04:00:00Z", ...overrides });
+  const gateWith = async (runs, extraEnv = {}, sleeps = []) => {
+    const { fetchImpl, calls } = fakeFetch({ [ADMISSION_RUNS]: (call) => ({ body: { workflow_runs: typeof runs === "function" ? runs(call) : runs } }) });
+    const outcome = await gate({ env: env({ CLUED_CONTEXT_READ_TOKEN: "", ...extraEnv }), event: withClaim(), eventName: "pull_request", fetchImpl, sleep: async (ms) => { sleeps.push(ms); } });
+    return { outcome, calls };
+  };
+
+  let { outcome, calls } = await gateWith([run({})]);
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"]);
+  assert.equal(calls.length, 1);
+  const query = new URL(calls[0].url).searchParams;
+  assert.deepEqual([query.get("head_sha"), query.get("event")], [HEAD, "pull_request_target"]);
+  assert.ok(!calls.some((c) => c.method === "POST"), "no Clued call, no write");
+
+  // The latest run decides; look-alike runs from other events or heads are ignored.
+  ({ outcome } = await gateWith([
+    run({ id: 1, conclusion: "success", created_at: "2026-10-02T04:00:00Z" }),
+    run({ id: 2, conclusion: "failure", created_at: "2026-10-02T04:05:00Z" }),
+    run({ id: 3, event: "pull_request", conclusion: "success", created_at: "2026-10-02T04:06:00Z" }),
+    run({ id: 4, head_sha: "e".repeat(40), conclusion: "success", created_at: "2026-10-02T04:07:00Z" }),
+  ]));
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_run.id], [false, "REJECTED", 2]);
+  assert.match(outcome.reasons[0], /run 2 concluded failure/);
+
+  // It waits for a run that has not started or finished yet.
+  let polls = 0;
+  const sleeps = [];
+  ({ outcome } = await gateWith(() => {
+    polls += 1;
+    if (polls === 1) return [];
+    if (polls === 2) return [run({ status: "in_progress", conclusion: null })];
+    return [run({})];
+  }, {}, sleeps));
+  assert.deepEqual([outcome.admitted, polls, sleeps.length], [true, 3, 2]);
+
+  // Enforced: no run, or a run still pending, at the deadline fails closed.
+  ({ outcome } = await gateWith([], { CLUED_ADMISSION_GATE_WAIT_SECONDS: "20" }));
+  assert.deepEqual([outcome.admitted, outcome.verdict], [false, "NO_ADMISSION_RUN"]);
+  ({ outcome } = await gateWith([run({ status: "queued", conclusion: null })], { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" }));
+  assert.deepEqual([outcome.admitted, outcome.verdict], [false, "ADMISSION_PENDING"]);
+
+  // Advisory: never blocks, but reports what it saw.
+  ({ outcome } = await gateWith([run({ conclusion: "failure" })], { CLUED_WORK_ADMISSION_ENFORCE: "" }));
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.advisory], [true, "REJECTED", true]);
+  const broken = await gate({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), event: withClaim(), eventName: "pull_request",
+    fetchImpl: fakeFetch({ [ADMISSION_RUNS]: { status: 500, body: null } }).fetchImpl, sleep: async () => {} });
+  assert.deepEqual([broken.admitted, broken.verdict], [true, "NOT_ENFORCED"]);
+  await assert.rejects(gate({ env: env(), event: withClaim(), eventName: "pull_request",
+    fetchImpl: fakeFetch({ [ADMISSION_RUNS]: { status: 500, body: null } }).fetchImpl, sleep: async () => {} }), /returned 500/);
+
+  // Non-PR events are not admission subjects.
+  const push = await gate({ env: env(), event: null, eventName: "push", fetchImpl: fakeFetch({}).fetchImpl });
+  assert.deepEqual([push.admitted, push.verdict], [true, "NOT_APPLICABLE"]);
+});
+
+test("workflows: only base-branch jobs in the clued-admission environment get the Clued token", () => {
+  const dir = path.join(ROOT, ".github", "workflows");
+  const holders = [];
+  for (const file of fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f))) {
+    const text = fs.readFileSync(path.join(dir, file), "utf8");
+    if (text.includes("secrets.CLUED_CONTEXT_READ_TOKEN")) holders.push(file);
+  }
+  assert.deepEqual(holders.sort(), ["clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
+  const admission = fs.readFileSync(path.join(dir, "clued-work-admission.yml"), "utf8");
+  assert.doesNotMatch(admission, /^ {2}pull_request:/m, "no pull_request trigger: PR-edited copies never run");
+  assert.match(admission, /^ {2}pull_request_target:$/m);
+  for (const file of holders) {
+    assert.match(fs.readFileSync(path.join(dir, file), "utf8"), /^ {4}environment: clued-admission$/m, file);
+  }
 });
