@@ -40,6 +40,8 @@ executor termination; absent/failed/bounded-out confirmation returns
 `EXECUTION_STOP_UNCONFIRMED` with execution state `UNKNOWN`. JavaScript cannot
 kill an uncooperative executor or undo an already committed output. Exceptions
 return sanitized errors and invalidate the entry; they never claim zero effects.
+Call success and stop confirmation must also pass monotonic deadline checks;
+blocked timer callbacks do not admit a late result or late confirmation.
 
 ## External preconditions and precise pending installation
 

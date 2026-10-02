@@ -27,11 +27,12 @@ export function createM2RestrictedEntryCandidate({
   trustedRole = "A", trustedRoots, frozenInputs = {}, transport = null,
   leaseMs = 60000, timeoutMs = 1000,
 } = {}) {
-  const role = ROLES[trustedRole];
-  if (!role || !Number.isInteger(leaseMs) || leaseMs < 1 || leaseMs > 60000 ||
+  if (typeof trustedRole !== "string" || !Object.hasOwn(ROLES, trustedRole) ||
+      !Number.isInteger(leaseMs) || leaseMs < 1 || leaseMs > 60000 ||
       !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5000) {
     throw new Error("HOST_PROFILE_INVALID");
   }
+  const role = ROLES[trustedRole];
   const manifest = Object.freeze({ ...frozenInputs });
   const configured = transport !== null;
   const policies = {};
@@ -41,6 +42,9 @@ export function createM2RestrictedEntryCandidate({
     }
     for (const kind of ["input", "output"]) {
       const p = trustedRoots?.[kind];
+      if (!p || typeof p.normalized_root !== "string" || p.normalized_root.length === 0) {
+        throw new Error("HOST_PROFILE_INVALID");
+      }
       if (!p || p.platform !== "posix" || p.normalized_root !== role[kind] ||
           p.case_sensitive !== true || p.network_share_allowed !== false ||
           !p.root_file_id || !p.volume_id || !p.policy_version) throw new Error("HOST_ROOT_INVALID");
@@ -76,8 +80,8 @@ export function createM2RestrictedEntryCandidate({
     if (!TOOL_NAMES.includes(name)) return deny("TOOL_NOT_ALLOWED");
     const keys = name === TOOL_NAMES[0] ? ["request_id", "path"] :
       name === TOOL_NAMES[1] ? ["request_id", "path", "content"] : ["request_id"];
-    if (!exactKeys(args, keys) || !/^[A-Za-z0-9_-]{1,64}$/.test(args.request_id) ||
-        keys.some(k => typeof args[k] !== "string")) return deny("REQUEST_INVALID");
+    if (!exactKeys(args, keys) || keys.some(k => typeof args[k] !== "string") ||
+        !/^[A-Za-z0-9_-]{1,64}$/.test(args.request_id)) return deny("REQUEST_INVALID");
     args = Object.freeze({ ...args });
     if (revoked || expired()) { revoke(); return deny("ENTRY_REVOKED_OR_EXPIRED"); }
     if (seen.has(args.request_id)) return deny("REPLAY_REJECTED");
@@ -96,9 +100,11 @@ export function createM2RestrictedEntryCandidate({
     busy = true;
     const controller = new AbortController();
     active.add(controller);
+    const callDeadline = Math.min(started + leaseMs, performance.now() + timeoutMs);
     let timer;
     let stopTimer;
     const check = () => {
+      if (performance.now() >= callDeadline) revoke();
       if (controller.signal.aborted || revoked || expired()) throw new Error("ENTRY_INVALIDATED");
     };
     const dispatch = async () => {
@@ -142,17 +148,24 @@ export function createM2RestrictedEntryCandidate({
     try {
       const interrupted = new Promise((_, reject) => {
         controller.signal.addEventListener("abort", () => reject(new Error("ENTRY_INTERRUPTED")), { once: true });
-        timer = setTimeout(() => { revoke(); }, Math.min(timeoutMs, Math.max(1, leaseMs - (performance.now() - started))));
+        timer = setTimeout(() => { revoke(); }, Math.max(1, callDeadline - performance.now()));
       });
-      return await Promise.race([dispatch(), interrupted]);
+      const result = await Promise.race([dispatch(), interrupted]);
+      // A synchronous transport can prevent timer callbacks while promise
+      // microtasks still resolve. Recheck time after all transport/wrapper work.
+      check();
+      return result;
     } catch {
       // No exception text (paths, guest output or secrets) crosses the surface.
       if (controller.signal.aborted) {
+        const stopDeadline = performance.now() + 100;
         const stopped = await Promise.race([
-          Promise.resolve().then(() => transport.stopAndConfirm(controller.signal)).catch(() => false),
+          Promise.resolve().then(() => transport.stopAndConfirm(controller.signal))
+            .then(value => value === true && performance.now() < stopDeadline).catch(() => false),
           new Promise(resolve => { stopTimer = setTimeout(() => resolve(false), 100); }),
         ]);
-        return deny(stopped === true ? "ENTRY_INTERRUPTED" : "EXECUTION_STOP_UNCONFIRMED", stopped !== true);
+        const timely = stopped === true && performance.now() < stopDeadline;
+        return deny(timely ? "ENTRY_INTERRUPTED" : "EXECUTION_STOP_UNCONFIRMED", !timely);
       }
       revoke();
       return deny("OPERATION_REJECTED", true);

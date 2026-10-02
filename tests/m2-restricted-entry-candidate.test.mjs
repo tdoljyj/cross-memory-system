@@ -6,9 +6,11 @@ import { createM2RestrictedStdioCandidate, runM2CandidateStdio } from "../kernel
 import { PassThrough } from "node:stream";
 
 const hash = s => createHash("sha256").update(s).digest("hex");
+const blockFor = ms => { const end = performance.now() + ms; while (performance.now() < end) {} };
 // Contract fixtures, not an OS/VM executor or formal isolation evidence.
 function fixture({ role = "A", resolutionChange = {}, recheckChange = {}, input = "PUBLIC_EMPTY", probe,
-  stop = true, timeoutMs = 1000, leaseMs = 60000, failCreate = false } = {}) {
+  stop = true, timeoutMs = 1000, leaseMs = 60000, failCreate = false,
+  readDelay = 0, createDelay = 0, stopDelay = 0 } = {}) {
   const stem = role === "A" ? "a" : "r";
   const roots = Object.fromEntries(["input", "output"].map(kind => [kind, {
     platform: "posix", normalized_root: `/srv/clued-m2/probe/${stem}-${kind === "input" ? "input" : role === "A" ? "work" : "output"}`,
@@ -29,10 +31,11 @@ function fixture({ role = "A", resolutionChange = {}, recheckChange = {}, input 
       };
       return fn({ resolution,
         recheck: async () => ({ ...resolution, ...recheckChange }),
-        read: async () => { reads++; return input; },
+        read: async () => { reads++; blockFor(readDelay); return input; },
         create: async content => {
           if (signal.aborted) throw new Error("aborted");
           if (failCreate) throw new Error("SECRET_ERROR /root/private");
+          blockFor(createDelay);
           effects.push(content);
         },
       });
@@ -41,7 +44,7 @@ function fixture({ role = "A", resolutionChange = {}, recheckChange = {}, input 
       observed.push(binding);
       return probe ? probe(signal) : "EMPTY_MARKER_OK";
     },
-    async stopAndConfirm() { stops++; return stop; },
+    async stopAndConfirm() { stops++; blockFor(stopDelay); return stop; },
   };
   const host = createM2RestrictedEntryCandidate({ trustedRole: role, trustedRoots: roots,
     frozenInputs: { "marker.txt": hash("PUBLIC_EMPTY") }, transport, timeoutMs, leaseMs });
@@ -215,4 +218,52 @@ test("Host configuration cannot select H/root or a foreign root", () => {
   f.roots.input.normalized_root = "/root";
   assert.throws(() => createM2RestrictedEntryCandidate({ transport: f.transport,
     trustedRoots: f.roots, frozenInputs: { "marker.txt": hash("PUBLIC_EMPTY") } }), /HOST_ROOT_INVALID/);
+});
+for (const trustedRole of ["__proto__", "constructor", "toString", ["A"], null, { toString: null }]) {
+  test(`reject non-own/non-string role ${JSON.stringify(trustedRole)} before transport`, () => {
+    const f = fixture();
+    const roots = structuredClone(f.roots);
+    delete roots.input.normalized_root; delete roots.output.normalized_root;
+    assert.throws(() => createM2RestrictedEntryCandidate({ trustedRole, trustedRoots: roots,
+      transport: f.transport, frozenInputs: { "marker.txt": hash("PUBLIC_EMPTY") } }), /HOST_PROFILE_INVALID/);
+    assert.equal(f.observed.length, 0);
+  });
+}
+for (const root of [undefined, null, "", 123, []]) test(`invalid root type ${JSON.stringify(root)} fails profile`, () => {
+  const f = fixture(); f.roots.input.normalized_root = root;
+  assert.throws(() => createM2RestrictedEntryCandidate({ trustedRoots: f.roots, transport: f.transport,
+    frozenInputs: { "marker.txt": hash("PUBLIC_EMPTY") } }), /HOST_PROFILE_INVALID/);
+  assert.equal(f.observed.length, 0);
+});
+for (const kind of ["probe", "read", "create"]) test(`synchronous late ${kind} cannot return candidate_ok`, async () => {
+  const f = fixture({ timeoutMs: 10, readDelay: kind === "read" ? 35 : 0,
+    createDelay: kind === "create" ? 35 : 0,
+    probe: kind === "probe" ? () => { blockFor(35); return "EMPTY_MARKER_OK"; } : undefined });
+  const result = kind === "probe" ? await probe(f.host) : kind === "read" ? await read(f.host) : await write(f.host);
+  assert.equal(result.error_code, "ENTRY_INTERRUPTED");
+  assert.equal(f.host.status().revoked, true); assert.equal(f.stops(), 1);
+  assert.equal((await probe(f.host, "after")).error_code, "ENTRY_REVOKED_OR_EXPIRED");
+});
+test("synchronous late stop confirmation is UNKNOWN even when timer cannot fire", async () => {
+  const f = fixture({ timeoutMs: 10, stopDelay: 130, probe: () => { blockFor(35); return "EMPTY_MARKER_OK"; } });
+  const result = await probe(f.host);
+  assert.equal(result.error_code, "EXECUTION_STOP_UNCONFIRMED");
+  assert.equal(result.execution_state, "UNKNOWN"); assert.equal(f.host.status().revoked, true);
+});
+test("malformed request_id is REQUEST_INVALID and next stdio request survives", async () => {
+  const endpoint = createM2RestrictedStdioCandidate();
+  const bad = await endpoint.request({ jsonrpc: "2.0", id: 1, method: "tools/call",
+    params: { name: "m2_run_empty_probe", arguments: { request_id: { toString: null } } } });
+  assert.equal(JSON.parse(bad.result.content[0].text).error_code, "REQUEST_INVALID");
+  assert.equal((await endpoint.request({ jsonrpc: "2.0", id: 2, method: "tools/list" })).result.tools.length, 3);
+  const input = new PassThrough(); const output = new PassThrough(); let text = "";
+  output.on("data", chunk => { text += chunk; });
+  const running = runM2CandidateStdio({ input, output });
+  input.end(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call",
+    params: { name: "m2_run_empty_probe", arguments: { request_id: { toString: null } } } }) +
+    '\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n');
+  await running; const lines = text.trim().split("\n").map(JSON.parse);
+  assert.equal(lines.length, 2);
+  assert.equal(JSON.parse(lines[0].result.content[0].text).error_code, "REQUEST_INVALID");
+  assert.equal(lines[1].result.tools.length, 3);
 });
