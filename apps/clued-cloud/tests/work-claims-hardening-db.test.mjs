@@ -211,7 +211,7 @@ test('work claims hardening: glob/glob overlap and pull request binding',
       committed(await release(tokens.A, c));
     }
 
-    // --- Concurrency caps (migration 20261002060000): 3 per session, 10 per
+    // --- Concurrency caps (migration 20261002060001): 3 per session, 10 per
     // Binding across sessions; a claim without holder_session_ref counts in
     // a group of its own. ---
     const capClaim = async (token, session, label) => call(token, 'clued_work_claim_v1', {

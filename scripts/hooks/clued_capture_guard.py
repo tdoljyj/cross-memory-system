@@ -74,12 +74,16 @@ def result_text(content) -> str:
     return ""
 
 
-def result_status(text: str) -> str | None:
+def result_body(text: str) -> dict:
     try:
         data = json.loads(text)
     except (ValueError, TypeError):
-        return None
-    return data.get("status") if isinstance(data, dict) else None
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def result_status(text: str) -> str | None:
+    return result_body(text).get("status")
 
 
 def write_context(tool_input: dict) -> str | None:
@@ -89,6 +93,19 @@ def write_context(tool_input: dict) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def checkpoint_context(tool_input: dict, body: str) -> str:
+    """The context a committed checkpoint absorbed events in.
+
+    The server resolves an omitted context_key from the session token and
+    always returns the context it committed in, so the result wins over the
+    input; "global" is only the fallback for results that do not carry it.
+    """
+    value = result_body(body).get("context_key")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return write_context(tool_input) or "global"
 
 
 def load_entries(path: Path) -> list[dict]:
@@ -154,7 +171,7 @@ def analyse(entries: list[dict]) -> list[Finding]:
             if suffix in CLUED_WRITE_TOOLS and not failed and result_status(body) == "committed":
                 committed_writes.append((pos, use_id, write_context(tool_input)))
             elif suffix == CLUED_CHECKPOINT_TOOL and not failed and result_status(body) == "committed":
-                checkpoints.append((pos, write_context(tool_input) or "global"))
+                checkpoints.append((pos, checkpoint_context(tool_input, body)))
             elif suffix == "merge_pull_request" and not failed and '"merged":true' in body.replace(" ", ""):
                 number = tool_input.get("pullNumber", "?")
                 repo = f"{tool_input.get('owner', '')}/{tool_input.get('repo', '')}".strip("/")

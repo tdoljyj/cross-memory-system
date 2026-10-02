@@ -109,6 +109,18 @@ class CaptureGuardTest(unittest.TestCase):
                    call("c1", CHECKPOINT), result("c1", {"status": "committed", "version": 2})]
         self.assertEqual(self.run_hook(entries).returncode, 0)
 
+    def test_checkpoint_context_comes_from_the_result(self):
+        # Since PR #466 the server takes an omitted context_key from the session
+        # token and returns the context it committed in.
+        project = "project:0597aa60-9b98-4da6-a4ab-63d7705b632f"
+        writes = [call("w1", MUTATE, {"scope": project}), result("w1", COMMITTED), call("c1", CHECKPOINT)]
+        settled = writes + [result("c1", {"status": "committed", "version": 654, "context_key": project})]
+        self.assertEqual(self.run_hook(settled).returncode, 0)
+        other = writes + [result("c1", {"status": "committed", "context_key": "project:p2"})]
+        proc = self.run_hook(other)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn(f"in context {project}", proc.stderr)
+
     def test_each_context_needs_its_own_checkpoint(self):
         project = "project:p1"
         writes = [call("w1", MUTATE, {"scope": "global"}), result("w1", COMMITTED),
