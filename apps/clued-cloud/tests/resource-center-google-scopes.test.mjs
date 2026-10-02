@@ -30,11 +30,13 @@ test("Worker and kernel scope modules export the same values item by item", () =
   }
   assert.deepEqual([...kernel.STORAGE_GOOGLE_SCOPE_SETS.legacy], [FILE, META_RO]);
   assert.deepEqual([...kernel.STORAGE_GOOGLE_SCOPE_SETS.normal], [FILE, META_RO, RO]);
-  assert.deepEqual([...kernel.STORAGE_SCOPE_PROFILES], ["legacy", "normal"]);
+  assert.deepEqual([...kernel.STORAGE_GOOGLE_SCOPE_SETS.full], [DRIVE, FILE, META_RO, RO]);
+  assert.deepEqual([...kernel.STORAGE_SCOPE_PROFILES], ["legacy", "normal", "full"]);
   for (const module of [worker, kernel]) {
     assert.equal(module.scopeString("legacy"), `${FILE} ${META_RO}`);
     assert.equal(module.scopeString("normal"), `${FILE} ${META_RO} ${RO}`);
-    assert.throws(() => module.scopeString("full"), TypeError);
+    assert.equal(module.scopeString("full"), `${DRIVE} ${FILE} ${META_RO} ${RO}`);
+    assert.throws(() => module.scopeString("drive"), TypeError);
     assert.ok(Object.isFrozen(module.STORAGE_GOOGLE_SCOPE_SETS) && Object.isFrozen(module.STORAGE_GOOGLE_SCOPE_SETS.normal));
   }
 });
@@ -49,8 +51,11 @@ test("scopeProfile matrix: exact sets only, after dedupe and sort", () => {
     [`${RO} ${FILE} ${META_RO} ${RO}`, "normal"],
     // partial
     [FILE, null], [META_RO, null], [RO, null], [`${FILE} ${RO}`, null], [`${META_RO} ${RO}`, null],
-    // containing drive or drive.metadata
-    [`${FILE} ${META_RO} ${DRIVE}`, null], [`${FILE} ${META_RO} ${RO} ${DRIVE}`, null], [DRIVE, null],
+    // full (StorageFullCapability P7): normal + drive, exactly
+    [`${FILE} ${META_RO} ${RO} ${DRIVE}`, "full"], [`${DRIVE} ${RO} ${META_RO} ${FILE} ${DRIVE}`, "full"],
+    // drive without the rest, or with drive.metadata
+    [`${FILE} ${META_RO} ${DRIVE}`, null], [DRIVE, null], [`${DRIVE} ${RO}`, null],
+    [`${FILE} ${META_RO} ${RO} ${DRIVE} ${META}`, null],
     [`${FILE} ${META_RO} ${META}`, null], [`${FILE} ${META} ${RO}`, null],
     // unknown
     [`${FILE} ${META_RO} openid`, null], [`${FILE} ${META_RO}.evil`, null], [`${FILE} ${META_RO} ${RO}x`, null],
@@ -63,7 +68,14 @@ test("scopeProfile matrix: exact sets only, after dedupe and sort", () => {
     for (const [value, profile] of cases) assert.equal(module.scopeProfile(value), profile, JSON.stringify(value));
     assert.deepEqual(module.normalizeScopes(`${META_RO} ${FILE} ${FILE}`), [FILE, META_RO]);
     assert.equal(module.isStorageScopeProfile("normal"), true);
-    assert.equal(module.isStorageScopeProfile("full"), false);
+    assert.equal(module.isStorageScopeProfile("full"), true);
+    assert.equal(module.isStorageScopeProfile("drive"), false);
+    // full covers normal and legacy; nothing covers a higher profile.
+    assert.equal(module.scopeProfileCovers("full", "normal"), true);
+    assert.equal(module.scopeProfileCovers("normal", "normal"), true);
+    assert.equal(module.scopeProfileCovers("normal", "full"), false);
+    assert.equal(module.scopeProfileCovers("legacy", "normal"), false);
+    assert.equal(module.scopeProfileCovers("drive", "legacy"), false);
   }
 });
 

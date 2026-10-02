@@ -54,7 +54,8 @@ import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
 import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages,
-  storageDestructiveCode, storageDestructiveMessages, storageTrashBatchInput, storageTrashBatchResult } from "./storage-agent-tools";
+  storageDestructiveCode, storageDestructiveMessages, storageAdoptCode, storageAdoptMessages, storageTrashBatchInput,
+  storageTrashBatchResult } from "./storage-agent-tools";
 import { createStagingRuntime, handleStagingPut, loadStagedContent, stageInline, stagingErrorCode, storageUploadBeginTool,
   sweepStaging, uploadBegin, uploadErrorBody, StorageUploadError, type StagingBucket } from "./storage-staging";
 import { createStorageReadAgent, storageReadTool, storageContentTool, StorageReadError, STORAGE_IMAGE } from "./storage-read-agent";
@@ -2166,6 +2167,12 @@ async function callTool(
         const result = { error: destructiveCode, message: storageDestructiveMessages[destructiveCode] };
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
       }
+      // Adopt (P7): the full-scope requirement and an already registered item are fixed refusals before any job exists.
+      const adoptCode = storageAdoptCode(error);
+      if (adoptCode) {
+        const result = { error: adoptCode, message: storageAdoptMessages[adoptCode] };
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+      }
       // No provider, issuer, credentials, paths or database diagnostics in errors.
       const result = { error: "storage_job_unavailable", message: "Storage job unavailable. Check the same job ID; do not create another job to retry an unknown effect." };
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
@@ -2993,17 +3000,22 @@ async function handleContinuityRequestInner(
           result = await (await createStorageGoogleOAuth(configuration)).inspectRecovery(input.state);
         } else if (url.pathname.endsWith("/start")) {
           // normal_use (StorageNormalUse §2.4, §8.2): re-consent with the normal
-          // set; the disclosure version the Owner confirmed is bound to the attempt
-          // and checked by the database. Otherwise keep the recorded profile.
-          const normalUse = input.normal_use;
-          if (Object.keys(input).some(key => !["connection_id", "default_refresh", "normal_use"].includes(key)) || typeof input.connection_id !== "string" ||
+          // set; full_scope (StorageFullCapability P7, Decision 6dc1cf20):
+          // re-consent with the full set. The disclosure version the Owner
+          // confirmed is bound to the attempt and checked by the database.
+          // Otherwise keep the recorded profile.
+          const consentOf = (value: unknown) => !!value && typeof value === "object" && !Array.isArray(value) &&
+            Object.keys(value).length === 1 && typeof (value as Record<string, unknown>).disclosure_version === "string";
+          if (Object.keys(input).some(key => !["connection_id", "default_refresh", "normal_use", "full_scope"].includes(key)) ||
+              typeof input.connection_id !== "string" ||
               ("default_refresh" in input && typeof input.default_refresh !== "boolean") ||
-              ("normal_use" in input && (!normalUse || typeof normalUse !== "object" || Array.isArray(normalUse) ||
-                Object.keys(normalUse).length !== 1 || typeof (normalUse as Record<string, unknown>).disclosure_version !== "string"))) throw new Error("Invalid");
+              ("normal_use" in input && !consentOf(input.normal_use)) || ("full_scope" in input && !consentOf(input.full_scope)) ||
+              ("normal_use" in input && "full_scope" in input)) throw new Error("Invalid");
           if (input.default_refresh === true && env.CLUED_STORAGE_REFRESH_V1 !== "true") throw new Error("Unavailable");
+          const consent = (input.normal_use ?? input.full_scope) as Record<string, unknown> | undefined;
           result = await (await createStorageGoogleOAuth(configuration)).start(input.connection_id, input.default_refresh === true,
-            normalUse ? "normal" : "keep",
-            normalUse ? { disclosure_version: String((normalUse as Record<string, unknown>).disclosure_version) } : undefined);
+            input.normal_use ? "normal" : input.full_scope ? "full" : "keep",
+            consent ? { disclosure_version: String(consent.disclosure_version) } : undefined);
         } else {
           if (Object.keys(input).length !== 2 || typeof input.state !== "string" || typeof input.code !== "string") throw new Error("Invalid");
           result = await (await createStorageGoogleOAuth(configuration)).complete({ state: input.state, code: input.code });

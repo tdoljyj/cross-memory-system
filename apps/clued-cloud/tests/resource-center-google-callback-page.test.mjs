@@ -152,3 +152,14 @@ test("normal-use re-consent: the callback reports the granted profile and whethe
   const busy=await fixture({reason:"storage_root_busy"});
   assert.match(busy.message(),/尚未完成的文件操作/);
 });
+test("full-scope re-consent (StorageFullCapability P7): the callback says whether managing existing files is allowed",async()=>{
+  const full=await fixture({status:"completed",receipt_id:"fixture-receipt",provider_scope_profile:"full",requested_scope_profile:"full"},true);
+  assert.match(full.message(),/已允许管理已有文件（完整云端硬盘权限）/);
+  const normal=await fixture({status:"completed",receipt_id:"fixture-receipt",provider_scope_profile:"normal",requested_scope_profile:"full"},true);
+  assert.match(normal.message(),/未授予“查看、修改、创建和删除你 Google 云端硬盘中的所有文件”，管理已有文件未允许/);
+  assert.equal(normal.message().includes("正常使用不可用"),false);
+  const legacy=await fixture({status:"completed",receipt_id:"fixture-receipt",provider_scope_profile:"legacy",requested_scope_profile:"full"},true);
+  assert.match(legacy.message(),/管理已有文件未允许；也未授予“查看你 Google 云端硬盘中的所有文件”，正常使用不可用/);
+  const other=await fixture({status:"completed",receipt_id:"fixture-receipt",provider_scope_profile:"normal",requested_scope_profile:"normal"},true);
+  assert.equal(other.message().includes("管理已有文件"),false);
+});

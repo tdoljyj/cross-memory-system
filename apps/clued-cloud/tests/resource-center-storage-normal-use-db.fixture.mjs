@@ -327,6 +327,62 @@ export async function testStorageNormalUse(t, admin, server, user, decision) {
       finally { await admin.query("update clued_private.storage_connections_v1 set provider_scope_profile='normal' where id=$1", [connection]); }
     });
 
+    // StorageFullCapability P7 (Decisions 746fd078, 6dc1cf20).
+    await t.test("full scope: an upgrade binds the full-scope disclosure, records what Google granted, and full counts as normal", async () => {
+      const FULL = "clued.storage-full-scope-disclosure/1";
+      const described = await oauth({ action: "describe", connection_id: connection });
+      const base = { action: "prepare", connection_id: connection, connection_version: described.connection_version, verifier_envelope: envelope("V") };
+      for (const bad of [{ requested_scope_profile: "full" }, { full_scope: { disclosure_version: FULL } },
+        { requested_scope_profile: "normal", full_scope: { disclosure_version: FULL } },
+        { requested_scope_profile: "full", full_scope: { disclosure_version: FULL, extra: true } },
+        { requested_scope_profile: "full", full_scope: FULL },
+        { requested_scope_profile: "full", full_scope: { disclosure_version: FULL }, normal_use: { disclosure_version: NORMAL_DISCLOSURE } }]) {
+        await assert.rejects(oauth({ ...base, attempt_id: randomUUID(), state_hash: sha(randomUUID()), ...bad }), /storage_oauth_denied/, JSON.stringify(bad));
+      }
+      await assert.rejects(prepare({ requested_scope_profile: "full", full_scope: { disclosure_version: "clued.storage-full-scope-disclosure/0" } }),
+        /storage_full_scope_disclosure_changed/);
+      const before = await status();
+      assert.equal(before.full_scope, false); assert.equal(before.full_scope_disclosure_version, FULL);
+      // Google granted only normal: the profile stays normal, normal use stays on.
+      const partial = await prepare({ requested_scope_profile: "full", full_scope: { disclosure_version: FULL } });
+      const attempt = (await admin.query("select requested_scope_profile,normal_use_requested,disclosure_version from clued_private.storage_oauth_attempts_v1 where id=$1",
+        [partial.attempt_id])).rows[0];
+      assert.deepEqual(attempt, { requested_scope_profile: "full", normal_use_requested: false, disclosure_version: FULL });
+      assert.equal((await oauth({ action: "claim", state_hash: partial.state_hash })).requested_scope_profile, "full");
+      const kept = await complete(partial.state_hash, envelope("FULLpartial"), "normal");
+      assert.equal(kept.provider_scope_profile, "normal"); assert.equal(kept.requested_scope_profile, "full");
+      assert.equal("normal_use_enabled" in kept, false, "a full upgrade never changes read access");
+      assert.equal((await row()).provider_scope_profile, "normal");
+      // Google granted full.
+      const read = await activeRead();
+      const upgrade = await prepare({ requested_scope_profile: "full", full_scope: { disclosure_version: FULL } });
+      await oauth({ action: "claim", state_hash: upgrade.state_hash });
+      const done = await complete(upgrade.state_hash, envelope("FULLenv"), "full");
+      assert.equal(done.status, "completed"); assert.equal(done.provider_scope_profile, "full");
+      assert.equal((await row()).provider_scope_profile, "full");
+      assert.deepEqual(await activeRead(), read, "read access is untouched");
+      const current = await status();
+      assert.equal(current.full_scope, true); assert.equal(current.normal_use, true); assert.equal(current.reconsent_required, false);
+      assert.equal((await admin.query("select clued_private.storage_binary_gate_v1($1) v", [connection])).rows[0].v, true, "full includes normal for uploads");
+      const client = await bind();
+      assert.equal((await search(client)).rows[0].value.provider_scope_profile, "full", "full includes normal for content search");
+      await assert.rejects(toggle("enable"), /storage_owner_version_conflict/, "normal use is already on with a full credential");
+      // A plain reconnect of a full connection keeps the full set without a new disclosure.
+      const reconnect = await prepare({ requested_scope_profile: "full" });
+      assert.equal((await admin.query("select disclosure_version from clued_private.storage_oauth_attempts_v1 where id=$1", [reconnect.attempt_id])).rows[0].disclosure_version, null);
+      // Without a full request the full set is never recorded.
+      const legacyAttempt = await prepare({ requested_scope_profile: "legacy" });
+      await oauth({ action: "claim", state_hash: legacyAttempt.state_hash });
+      await assert.rejects(complete(legacyAttempt.state_hash, envelope("NOTFULL"), "full"), /storage_oauth_denied/);
+      const normalAttempt = await prepare({ requested_scope_profile: "normal" });
+      await oauth({ action: "claim", state_hash: normalAttempt.state_hash });
+      await assert.rejects(complete(normalAttempt.state_hash, envelope("NOTFULL"), "full"), /storage_oauth_denied/);
+      await assert.rejects(admin.query("update clued_private.storage_connections_v1 set provider_scope_profile='drive' where id=$1", [connection]),
+        /storage_connections_scope_profile_v1/);
+      // The tests below start from a normal connection.
+      await admin.query("update clued_private.storage_connections_v1 set provider_scope_profile='normal' where id=$1", [connection]);
+    });
+
     await t.test("refresh-token count per account x client: warning at 50, new re-consent refused at 90", async () => {
       const counted = await tokenCount();
       assert.ok(counted >= 6, "every claim above was counted");
@@ -343,6 +399,8 @@ export async function testStorageNormalUse(t, admin, server, user, decision) {
       const blocked = await status();
       assert.equal(blocked.refresh_token_count, 90); assert.equal(blocked.refresh_token_blocked, true);
       await assert.rejects(prepare({ requested_scope_profile: "normal", normal_use: { disclosure_version: NORMAL_DISCLOSURE } }), /storage_refresh_token_limit/);
+      await assert.rejects(prepare({ requested_scope_profile: "full", full_scope: { disclosure_version: "clued.storage-full-scope-disclosure/1" } }),
+        /storage_refresh_token_limit/, "a full-scope upgrade is refused like a normal-use upgrade");
       // Until "withdraw all file read access" exists, only the normal-use upgrade
       // is refused; a plain reconnect (either profile) is counted, not refused.
       for (const requested_scope_profile of ["legacy", "normal"]) {

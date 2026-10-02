@@ -959,6 +959,101 @@ level switch (`storage_root_has_unresolved_mutation`).
   the new Worker against the old database gets an error from the release call
   and logs `storage_unattempted_release_unavailable`.
 
+## Full scope and adopt (StorageFullCapability.v0.1 P7)
+
+Owner Decisions `c47efe38`, `746fd078` and `6dc1cf20`, Task `7a8dcb8a`,
+migration `20261002200000_storage_adopt_p7.sql`. Adopt registers one existing
+item that Clued did not create, where it is, so that the existing levels can
+change it like an item Clued created.
+
+**Full scope profile.**
+
+- `full` = `drive.file` + `drive.metadata.readonly` + `drive.readonly` +
+  `drive`, in both scope modules (`scopeProfileCovers` orders legacy < normal
+  < full). The connection row and the OAuth attempt allow `full`.
+- Full includes normal: normal use, content search and binary upload accept a
+  full credential (`clued_private.storage_scope_covers_v1`).
+- The storage page offers "允许管理已有文件" once the server reports
+  `full_scope` and `full_scope_disclosure_version` (normal-use status). It
+  confirms `clued.storage-full-scope-disclosure/1` and starts connection
+  consent with `full_scope: {disclosure_version}`: the attempt records
+  `requested_scope_profile = full` and the disclosure. It upgrades the Google
+  grant only; no write level or read access changes. It is refused at 90
+  counted refresh tokens, like a normal-use upgrade.
+- A plain reconnect of a full connection requests the full set with no new
+  disclosure; a lower connection cannot request full without it
+  (`storage_oauth_denied`).
+- Complete accepts the requested profile or any lower one (the Owner may
+  untick a scope) and records what Google granted. The callback page says
+  whether managing existing files is allowed.
+- To withdraw the grant, the Owner removes Clued in the Google account's
+  third-party access settings; this ends every Clued connection of that Google
+  account. "撤回全部文件读取授权" does not exist yet, and the full-scope
+  disclosure never points to it.
+- Before Google's verification of the `drive` scope, only test users can grant
+  it. If the consent page refuses the scope, add it to the OAuth consent
+  screen's data access list in the Google Cloud console; that is a console
+  change, not a code change.
+
+**Adopt job.**
+
+- Submit: `{operation: adopt, target_kind: file|directory, source_path,
+  source_file_id}` under the `modify` level. Before any job exists the
+  database refuses a connection whose credential is not full
+  (`adopt_scope_upgrade_required`), an item registered (active or trashed) at
+  that path or a Drive ID registered in any state, revoked included
+  (`adopt_already_registered`: an item the Owner removed from Clued returns
+  only through the administrative path), and the root's own children (tracks;
+  `storage_job_input_invalid`).
+- Authority: the item's folder must be registered, current, matched like any
+  destination folder (Drive version or sharing digest) and `ordinary`
+  (`governance_forbidden` otherwise: items under governance folders keep the
+  administrative registration path). A directory is adopted only when its
+  sharing digest equals its folder's (`sharing_differs`), so content written
+  into it later inherits nothing its folder does not grant. A file's own
+  sharing is not checked (Decision `6dc1cf20` does not ask for it): a later
+  replace writes into a file shared however the Owner shared it.
+- Executor, before any reservation: `ADOPT_SCOPE_UPGRADE_REQUIRED` (the
+  credential is not full), `PROVIDER_OWNER_REQUIRED` (not owned by this
+  Google account), `ADOPT_TARGET_UNSUPPORTED` (a shortcut, trashed, in
+  several folders, or not the named kind), `DIRECTORY_SHARING_DIFFERS`.
+- Adopt writes nothing to Drive. Its attempt
+  (`clued.storage-adopt-attempt/1`) names the item, its folder and the Drive
+  version the authority saw; the proof (`clued.storage-adopt-verified/1`)
+  shows the same item, path and version (read twice), the only one of its
+  name, owned by this account, not a shortcut and, for a directory, with its
+  folder's sharing. Settlement registers an `ordinary` Artifact
+  (`delete_authority = false`; a directory with its sharing digest) through
+  `artifact_register`; the settle Event names the observation (`adopted`).
+- Unchanged-ness is judged by the Drive version (it advances on any content
+  or metadata change), read at the identity, in the effect and twice in the
+  verifier; no revision or checksum is recorded for the adopt itself. Later
+  operations record their own content identity in their attempts.
+- An adopt that fails verification (for example the item is being edited)
+  leaves its journal started, and the single writer blocks other writes on the
+  root until the release below cancels it (about 90 s after the start, plus the
+  minute cadence). An item that keeps changing cannot be adopted.
+- An adopt that has not committed 60 s after its admission expired is
+  released by the scheduled release with
+  `{outcome: released_no_effect, reason_code: ADOPT_NOT_SETTLED}`, with or
+  without an attempt or proof. Scheduled recovery never loads an adopt.
+- Without the full credential, Drive refuses writes to an item this app did
+  not create or open. For rename, move, replace, trash, untrash and directory
+  move, the executor reads `isAppAuthorized` of the item (from the identity it
+  already resolved for the durable start) when the credential is not full and
+  refuses `SCOPE_UPGRADE_REQUIRED` before the durable start when Drive reports
+  `false`, so a downgraded connection never fences the root by changing such an
+  item. Residual: the destination folder is not checked. Moving or creating
+  into an adopted folder Clued did not create, after a downgrade, may still be
+  refused by Drive after the attempt and stay fenced for recovery.
+
+Rollout: production migration, then release. The old Worker never submits an
+adopt and treats a full credential as having no profile, so connections stay
+below full until the release; the Owner then re-authorizes Google from the
+storage page. Acceptance needs the write switches (`execution_enabled` plus
+the executor window) and the Owner's modify level (destructive to test
+trash).
+
 ## Scope profiles (StorageNormalUse.v0.1 N0a)
 
 Migration `20260930140000_storage_scope_profile_v1.sql` and the Worker and

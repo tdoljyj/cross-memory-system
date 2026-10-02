@@ -1,3 +1,4 @@
+import { isStorageScopeProfile } from "./storage-google-scopes";
 import { createStorageGoogleOAuth } from "./storage-google-oauth";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -19,7 +20,7 @@ export async function createStorageGoogleRecoveryOAuth(
       const result = await configuration.rpc({ ...input, job_id: job });
       if (typeof result.recovery_binding !== "string" || !/^[0-9a-f]{64}$/.test(result.recovery_binding) ||
         typeof result.provider_subject !== "string" || result.provider_subject.length === 0 ||
-        (result.provider_scope_profile !== "legacy" && result.provider_scope_profile !== "normal")) throw new Error("storage_google_connection_unavailable");
+        !isStorageScopeProfile(result.provider_scope_profile)) throw new Error("storage_google_connection_unavailable");
       binding = result.recovery_binding;
       return result;
     }

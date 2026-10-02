@@ -1,7 +1,7 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
 import { bytesToBase64Url } from "./storage-base64";
-import { isStorageScopeProfile, scopeProfile, scopeString, type StorageScopeProfile } from "./storage-google-scopes";
+import { isStorageScopeProfile, scopeProfile, scopeProfileCovers, scopeString, type StorageScopeProfile } from "./storage-google-scopes";
 
 const encoder = new TextEncoder();
 const id = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -18,6 +18,7 @@ const base64 = (b: Uint8Array) => bytesToBase64Url(b);
 const startReason: Record<string, string> = Object.freeze({
   storage_root_has_unresolved_mutation: "storage_root_busy",
   storage_refresh_token_limit: "refresh_token_limit",
+  storage_full_scope_disclosure_changed: "storage_full_scope_disclosure_changed",
 }) as Record<string, string>;
 const hash = async (s: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(s))), b => b.toString(16).padStart(2, "0")).join("");
 type RecordValue = Record<string, unknown>;
@@ -96,24 +97,28 @@ export async function createStorageGoogleOAuth(configuration: {
     /** scopeRequest (StorageNormalUse §2.2-§2.4):
      * - "legacy": the legacy set;
      * - "keep": the profile the connection row records (a plain reconnect never
-     *   downgrades a normal connection);
+     *   downgrades a normal or full connection);
      * - "normal": the normal set, for normal use on an existing connection
-     *   (re-consent, §2.4); `normalUse` binds the disclosure the Owner confirmed;
+     *   (re-consent, §2.4); `consent` binds the disclosure the Owner confirmed;
+     * - "full": the full set (StorageFullCapability P7, Decision 6dc1cf20), on
+     *   an existing connection only; `consent` binds the full-scope disclosure
+     *   the Owner confirmed. It upgrades the grant only, never a write level;
      * - "sealed": exactly the recorded profile, as credential recovery must:
      *   recovery never upgrades or downgrades. Its prepare contract takes no
      *   extra key, so nothing but the base fields is sent.
      * Connection consent binds the requested profile to the attempt; complete
-     * then accepts only that profile or legacy (the Owner may untick a scope). */
-    async start(connectionId: string, defaultRefresh = false, scopeRequest: "legacy" | "keep" | "normal" | "sealed" = "legacy",
-      normalUse?: { disclosure_version: string }): Promise<{ authorization_url: string }> {
+     * then accepts that profile or any lower one (the Owner may untick a scope). */
+    async start(connectionId: string, defaultRefresh = false, scopeRequest: "legacy" | "keep" | "normal" | "full" | "sealed" = "legacy",
+      consent?: { disclosure_version: string }): Promise<{ authorization_url: string }> {
       try {
-        if (!id.test(connectionId) || !["legacy", "keep", "normal", "sealed"].includes(scopeRequest) ||
-          (normalUse !== undefined && (scopeRequest !== "normal" || !normalUse || Object.keys(normalUse).length !== 1 ||
-            typeof normalUse.disclosure_version !== "string" || !/^[A-Za-z0-9._/-]{1,160}$/.test(normalUse.disclosure_version)))) fail();
+        if (!id.test(connectionId) || !["legacy", "keep", "normal", "full", "sealed"].includes(scopeRequest) ||
+          (scopeRequest === "full" && consent === undefined) ||
+          (consent !== undefined && ((scopeRequest !== "normal" && scopeRequest !== "full") || !consent || Object.keys(consent).length !== 1 ||
+            typeof consent.disclosure_version !== "string" || !/^[A-Za-z0-9._/-]{1,160}$/.test(consent.disclosure_version)))) fail();
         const described = await rpc({ action: "describe", connection_id: connectionId });
         const d = descriptor(described, client, redirect);
         if (d.connection_id !== connectionId) fail();
-        let requested: StorageScopeProfile = scopeRequest === "normal" ? "normal" : "legacy";
+        let requested: StorageScopeProfile = scopeRequest === "normal" || scopeRequest === "full" ? scopeRequest : "legacy";
         if (scopeRequest === "sealed" || scopeRequest === "keep") {
           if (!isStorageScopeProfile(described.provider_scope_profile)) fail();
           requested = described.provider_scope_profile as StorageScopeProfile;
@@ -125,7 +130,8 @@ export async function createStorageGoogleOAuth(configuration: {
         const stored = await rpc({ action: "prepare", connection_id: d.connection_id, connection_version: d.connection_version,
           attempt_id: attempt, state_hash: await hash(state), verifier_envelope: sealed,
           ...(scopeRequest === "sealed" ? {} : { requested_scope_profile: requested }),
-          ...(normalUse ? { normal_use: { disclosure_version: normalUse.disclosure_version } } : {}),
+          ...(consent && scopeRequest === "normal" ? { normal_use: { disclosure_version: consent.disclosure_version } } : {}),
+          ...(consent && scopeRequest === "full" ? { full_scope: { disclosure_version: consent.disclosure_version } } : {}),
           ...(defaultRefresh ? { default_refresh_consent: (d as Descriptor & { default_refresh_eligible?: boolean }).default_refresh_eligible === true } : {}) });
         if (stored.status !== "prepared") fail();
         const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -184,18 +190,18 @@ export async function createStorageGoogleOAuth(configuration: {
         stage = "refresh_token_missing";
         if (typeof tokens.refresh_token !== "string" || tokens.refresh_token.length < 16) fail();
         stage = "scope_mismatch";
-        // Connection consent accepts the requested profile or legacy (the user may
-        // untick a scope on the consent page) and records what was granted; the
-        // requested profile is bound to the attempt (§2.3). Credential recovery
-        // must return exactly the sealed profile (§2.2 item 7). The database
-        // checks the same.
+        // Connection consent accepts the requested profile or a lower one (the
+        // user may untick a scope on the consent page) and records what was
+        // granted; the requested profile is bound to the attempt (§2.3).
+        // Credential recovery must return exactly the sealed profile (§2.2
+        // item 7). The database checks the same.
         const granted = scopeProfile(tokens.scope);
         if (granted === null) fail();
         if (claimed.purpose === "credential_recovery") {
           if (!isStorageScopeProfile(claimed.provider_scope_profile) || claimed.provider_scope_profile !== granted) fail();
         } else {
           const requested = claimed.requested_scope_profile ?? "legacy";
-          if (!isStorageScopeProfile(requested) || (granted !== requested && granted !== "legacy")) fail();
+          if (!isStorageScopeProfile(requested) || !scopeProfileCovers(requested, granted!)) fail();
         }
         const headers = { authorization: "Bearer " + tokens.access_token };
         stage = "provider_identity_unconfirmed";

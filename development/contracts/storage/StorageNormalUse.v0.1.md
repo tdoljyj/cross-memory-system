@@ -81,6 +81,7 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 | --- | --- | --- |
 | `legacy` | `drive.file` + `drive.metadata.readonly` | 现有能力；正文只限 Clued 自建文件 |
 | `normal` | 上述 + `drive.readonly` | 另可读根内任意文件正文、全文搜索 |
+| `full` | 上述 + `drive`（StorageFullCapability P7，Decision `746fd078`） | `normal` 的全部能力，另可修改纳管（adopt）的已有对象；凡要求 `normal` 处都接受 `full` |
 
 1. 单一模块 `apps/clued-cloud/worker/storage-google-scopes.ts` 与 kernel 镜像 `kernel/host/resource-center-google-scopes.mjs` 导出 `scopeProfile(value): "legacy" | "normal" | null`（去重排序后逐一比较；含 `drive`、`drive.metadata` 或其他 scope 返回 `null`）及各 profile 的请求集合。
 2. §2.1 所列“完全相等”处改为 `scopeProfile(x) !== null`；封存写入**实际授予**的规范化集合。

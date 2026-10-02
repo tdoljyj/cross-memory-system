@@ -1,7 +1,8 @@
 export const RESOURCE_CENTER_POLICY_VERSION = "clued.resource-center-mutation-policy/1";
 
 // "restore" (StorageFullCapability P5) takes a trashed file out of the trash: source only, like delete.
-const MUTATIONS = new Set(["create", "write", "move", "rename", "replace", "delete", "restore"]);
+// "adopt" (P7) registers one existing item where it is: source only, nothing written.
+const MUTATIONS = new Set(["create", "write", "move", "rename", "replace", "delete", "restore", "adopt"]);
 const DEFAULT_STATUS_DIRECTORY_NAMES = [
   "current",
   "current baseline",
@@ -109,18 +110,23 @@ export function evaluateResourceCenterMutation(input) {
     if (destination && operation === "delete") return deny("DELETE_DESTINATION_FORBIDDEN");
   } else if (operation === "move" || operation === "rename") {
     if (!source || !destination) return deny("SOURCE_AND_DESTINATION_REQUIRED");
+  } else if (operation === "adopt") {
+    if (!source) return deny("ADOPT_TARGET_REQUIRED");
+    if (destination) return deny("ADOPT_DESTINATION_FORBIDDEN");
   } else {
     if (!destination) return deny("DESTINATION_REQUIRED");
     if (source) return deny("SOURCE_PATH_FORBIDDEN_FOR_OPERATION", { operation });
   }
-  // Trash and untrash of an empty directory (P5) and a directory move (P6)
-  // name an existing directory and carry no directory semantics.
+  // Trash and untrash of an empty directory (P5), a directory move (P6) and
+  // adopting a directory (P7) name an existing directory and carry no
+  // directory semantics.
   if (targetKind === "directory" && operation !== "delete" && operation !== "restore" && operation !== "move" &&
+    operation !== "adopt" &&
     !["track", "topic", "asset_collection"].includes(directorySemantics)) {
     return deny("DIRECTORY_SEMANTICS_REQUIRED");
   }
 
-  const target = operation === "delete" || (operation === "restore" && !destination) ? source : destination;
+  const target = operation === "delete" || operation === "adopt" || (operation === "restore" && !destination) ? source : destination;
   if (artifactRole === "clued_resource" && !isWithin(target, managedRoot)) {
     return deny("SIBLING_ISLAND_FORBIDDEN", { managed_root: managedRoot });
   }
@@ -140,7 +146,8 @@ export function evaluateResourceCenterMutation(input) {
 
   // Status semantics are forbidden at the mutation destination. The source is
   // intentionally not blocked so an admitted move/rename can remediate an
-  // already-illegal status folder by moving material back into a legal topic.
+  // already-illegal status folder by moving material back into a legal topic;
+  // adopting an item there (P7) writes nothing and is what makes that possible.
   if (destination && isWithin(destination, managedRoot)) {
     const forbidden = directorySegments(destination, managedRoot, targetKind)
       .find((segment) => statusNames.has(foldName(segment)));
