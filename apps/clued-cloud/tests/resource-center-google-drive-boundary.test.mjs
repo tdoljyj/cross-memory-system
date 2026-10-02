@@ -39,6 +39,39 @@ test(mode+': folder identity drift and unqualified external allowlists cannot yi
   await assert.rejects(f.scan(),/BOUNDARY_CHANGED/);
   assert.throws(()=>createGoogleDriveBoundaryScanner(fixture({registered_external_roots:['/drive/work']},mode).config),/PROFILE_UNQUALIFIED/);
 });
+test(mode+': another registered root of the same owner (Decision b18eff80) is skipped only by its exact ID beside the managed root',async()=>{
+  // An N0-onboarded root next to Clued_资料中心, with its tracks and a Clued-named file inside.
+  const build=sibling=>{
+    const f=fixture({},mode);f.files.splice(2);
+    f.files.push(item('n0','Clued_N0验收_新建','parent'),item('n0track','资料','n0'),item('n0file','Clued_笔记.md','n0track','text/plain'));
+    if(sibling!==undefined)f.config.registered_sibling_roots=sibling;
+    return f;
+  };
+  const before=await build().scan();
+  assert.deepEqual(before.map(r=>r.path).sort(),['/drive/Clued_N0验收_新建','/drive/Clued_N0验收_新建/资料','/drive/Clued_N0验收_新建/资料/Clued_笔记.md']);
+  assert.deepEqual(await build(['n0']).scan(),[]);
+  // A sibling root does not hide other islands beside it.
+  const other=build(['n0']);other.files.push(item('drop','Clued_说明.md','parent','text/plain'));
+  assert.deepEqual((await other.scan()).map(r=>r.path),['/drive/Clued_说明.md']);
+  // Same name, different ID: still an island.
+  const spoof=fixture({},mode);spoof.files.splice(2);spoof.files.push(item('spoof','Clued_N0验收_新建','parent'));
+  spoof.config.registered_sibling_roots=['n0'];
+  assert.deepEqual((await spoof.scan()).map(r=>r.path),['/drive/Clued_N0验收_新建']);
+  // The ID counts only directly in the managed root's parent, and only as a folder.
+  const nested=fixture({},mode);nested.files.splice(3);nested.files.push(item('n0','Clued-moved','ordinary'));
+  nested.config.registered_sibling_roots=['n0'];
+  assert.deepEqual((await nested.scan()).map(r=>r.path),['/drive/work/Clued-moved']);
+  const asFile=fixture({},mode);asFile.files.splice(2);asFile.files.push(item('n0','Clued_N0.md','parent','text/plain'));
+  asFile.config.registered_sibling_roots=['n0'];
+  assert.deepEqual((await asFile.scan()).map(r=>r.path),['/drive/Clued_N0.md']);
+});
+test(mode+': malformed registered_sibling_roots fail closed before any read',async()=>{
+  for(const bad of [null,'n0',[''],['n0','n0'],['bad/id'],['root'],['parent'],[1],Array.from({length:65},(_,i)=>'s'+i)]){
+    const f=fixture({},mode);f.config.registered_sibling_roots=bad;
+    f.config.get_file=async()=>assert.fail('no read');f.config.list_folder=async()=>assert.fail('no read');
+    assert.throws(()=>createGoogleDriveBoundaryScanner(f.config),/PROFILE_UNQUALIFIED/);
+  }
+});
 test(mode+': rename between parent enumeration and child GET cannot hide a Clued sibling behind its old path',async()=>{
   const f=fixture({},mode);f.files.splice(3);const original=f.config.get_file;
   f.config.get_file=async id=>{const value=await original(id);if(id==='ordinary'){value.name='Clued-hidden';value.version='2';}return value;};
