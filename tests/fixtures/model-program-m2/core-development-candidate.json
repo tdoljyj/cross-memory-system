@@ -1,0 +1,1390 @@
+{
+  "schema_version": "clued.model-m2-core-development-candidate/1",
+  "contract_sha256": "dcf05031e07b8c77cfab3ba3efb04147fa822ff7bf80d8530948c03eb5c9ba17",
+  "samples": [
+    {
+      "sample_id": "m2-core-dev-20261002-utterance_card-01",
+      "domain": "utterance_card",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-utterance_card-01",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-01",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-utterance_card-01-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-utterance_card-01-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-utterance_card-01的演示版本是青色。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "schema_version": "candidate_information.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-01",
+        "items": [
+          {
+            "candidate_local_id": "item_dev_1",
+            "item_type": "fact",
+            "claim": "虚构试验-utterance_card-01的演示版本是青色。",
+            "summary": "虚构试验-utterance_card-01的演示版本是青色。",
+            "action_level": "reference",
+            "priority": null,
+            "entity_mentions": [],
+            "topics": [
+              "合成开发演示"
+            ],
+            "temporal_mentions": [],
+            "source_anchors": [
+              {
+                "message_id": "m2-core-dev-20261002-utterance_card-01-m1",
+                "exact_quote": "虚构试验-utterance_card-01的演示版本是青色。"
+              }
+            ],
+            "confidence": 0.5,
+            "uncertainties": [
+              "作者答案候选，尚未独立复核"
+            ],
+            "sensitivity_hint": "none"
+          }
+        ]
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXPLICIT_SINGLE_CLAIM_CANDIDATE_EXTRACTION/1",
+        "upstream_mapping": "M0A_SCHEMA_BOUND"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "00bbd0cc4d5420de56ba801a5d338bf4b9fa29ee01a7cf4cc0838a7f9e01a243",
+        "answer_sha256": "7b4620d8799580b8411939aa89b781880f64f6e550397c52301c6756d36efc8f",
+        "source_sha256": "264a8710d789ed750b41e764bdf87e1a2bb9ea563321c1172e29913ff7615e10",
+        "rule_sha256": "ab691f60e43c08e57fd6f16112577dddb6d65c6df4fd51b42e82d8562627b34c"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-utterance_card-02",
+      "domain": "utterance_card",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-utterance_card-02",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-02",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-utterance_card-02-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-utterance_card-02-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "在虚构试验-utterance_card-02中我偏好短句。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "schema_version": "candidate_information.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-02",
+        "items": [
+          {
+            "candidate_local_id": "item_dev_2",
+            "item_type": "preference",
+            "claim": "在虚构试验-utterance_card-02中我偏好短句。",
+            "summary": "在虚构试验-utterance_card-02中我偏好短句。",
+            "action_level": "reference",
+            "priority": null,
+            "entity_mentions": [],
+            "topics": [
+              "合成开发演示"
+            ],
+            "temporal_mentions": [],
+            "source_anchors": [
+              {
+                "message_id": "m2-core-dev-20261002-utterance_card-02-m1",
+                "exact_quote": "在虚构试验-utterance_card-02中我偏好短句。"
+              }
+            ],
+            "confidence": 0.5,
+            "uncertainties": [
+              "作者答案候选，尚未独立复核"
+            ],
+            "sensitivity_hint": "none"
+          }
+        ]
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXPLICIT_SINGLE_CLAIM_CANDIDATE_EXTRACTION/1",
+        "upstream_mapping": "M0A_SCHEMA_BOUND"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "8c16dbbd0357e7ac860849078407b1490e8701aff01368f533f3a95db9aee22d",
+        "answer_sha256": "ce863f2735ae1bea015b6784de0a228a8ad4815bae159a8d2e4d16a2371c646f",
+        "source_sha256": "264a8710d789ed750b41e764bdf87e1a2bb9ea563321c1172e29913ff7615e10",
+        "rule_sha256": "ab691f60e43c08e57fd6f16112577dddb6d65c6df4fd51b42e82d8562627b34c"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-utterance_card-03",
+      "domain": "utterance_card",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-utterance_card-03",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-03",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-utterance_card-03-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-utterance_card-03-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "我决定虚构试验-utterance_card-03只做离线演示。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "schema_version": "candidate_information.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-03",
+        "items": [
+          {
+            "candidate_local_id": "item_dev_3",
+            "item_type": "decision",
+            "claim": "我决定虚构试验-utterance_card-03只做离线演示。",
+            "summary": "我决定虚构试验-utterance_card-03只做离线演示。",
+            "action_level": "reference",
+            "priority": null,
+            "entity_mentions": [],
+            "topics": [
+              "合成开发演示"
+            ],
+            "temporal_mentions": [],
+            "source_anchors": [
+              {
+                "message_id": "m2-core-dev-20261002-utterance_card-03-m1",
+                "exact_quote": "我决定虚构试验-utterance_card-03只做离线演示。"
+              }
+            ],
+            "confidence": 0.5,
+            "uncertainties": [
+              "作者答案候选，尚未独立复核"
+            ],
+            "sensitivity_hint": "none"
+          }
+        ]
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXPLICIT_SINGLE_CLAIM_CANDIDATE_EXTRACTION/1",
+        "upstream_mapping": "M0A_SCHEMA_BOUND"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "529268629f6d2af69a4db8488a071de619715827cdaa3de40d0651e8b6673e33",
+        "answer_sha256": "390cc5489f14d33ec5eb964d01d2ef09ad1d600fc2cd93a240edd8202ff9b963",
+        "source_sha256": "264a8710d789ed750b41e764bdf87e1a2bb9ea563321c1172e29913ff7615e10",
+        "rule_sha256": "ab691f60e43c08e57fd6f16112577dddb6d65c6df4fd51b42e82d8562627b34c"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-utterance_card-04",
+      "domain": "utterance_card",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-utterance_card-04",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-04",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-utterance_card-04-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-utterance_card-04-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "请为虚构试验-utterance_card-04整理演示清单。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "schema_version": "candidate_information.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-04",
+        "items": [
+          {
+            "candidate_local_id": "item_dev_4",
+            "item_type": "task",
+            "claim": "请为虚构试验-utterance_card-04整理演示清单。",
+            "summary": "请为虚构试验-utterance_card-04整理演示清单。",
+            "action_level": "needs_action",
+            "priority": null,
+            "entity_mentions": [],
+            "topics": [
+              "合成开发演示"
+            ],
+            "temporal_mentions": [],
+            "source_anchors": [
+              {
+                "message_id": "m2-core-dev-20261002-utterance_card-04-m1",
+                "exact_quote": "请为虚构试验-utterance_card-04整理演示清单。"
+              }
+            ],
+            "confidence": 0.5,
+            "uncertainties": [
+              "作者答案候选，尚未独立复核"
+            ],
+            "sensitivity_hint": "none"
+          }
+        ]
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXPLICIT_SINGLE_CLAIM_CANDIDATE_EXTRACTION/1",
+        "upstream_mapping": "M0A_SCHEMA_BOUND"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "bcf46dc9a2188742fab9175ea571d0324c665826e025aa008bcbdc6b1e0bef4d",
+        "answer_sha256": "1e023997af742ff6b56f2a052f348026318fb4189108fbb4cc78f38f713ec343",
+        "source_sha256": "264a8710d789ed750b41e764bdf87e1a2bb9ea563321c1172e29913ff7615e10",
+        "rule_sha256": "ab691f60e43c08e57fd6f16112577dddb6d65c6df4fd51b42e82d8562627b34c"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-utterance_card-05",
+      "domain": "utterance_card",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-utterance_card-05",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-05",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-utterance_card-05-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-utterance_card-05-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-utterance_card-05的演示清单已经准备好。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "schema_version": "candidate_information.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-05",
+        "items": [
+          {
+            "candidate_local_id": "item_dev_5",
+            "item_type": "status",
+            "claim": "虚构试验-utterance_card-05的演示清单已经准备好。",
+            "summary": "虚构试验-utterance_card-05的演示清单已经准备好。",
+            "action_level": "reference",
+            "priority": null,
+            "entity_mentions": [],
+            "topics": [
+              "合成开发演示"
+            ],
+            "temporal_mentions": [],
+            "source_anchors": [
+              {
+                "message_id": "m2-core-dev-20261002-utterance_card-05-m1",
+                "exact_quote": "虚构试验-utterance_card-05的演示清单已经准备好。"
+              }
+            ],
+            "confidence": 0.5,
+            "uncertainties": [
+              "作者答案候选，尚未独立复核"
+            ],
+            "sensitivity_hint": "none"
+          }
+        ]
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXPLICIT_SINGLE_CLAIM_CANDIDATE_EXTRACTION/1",
+        "upstream_mapping": "M0A_SCHEMA_BOUND"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "4d36ea771392d6d0e935e462252ac13ec2386e020612124a79e616d1331b089d",
+        "answer_sha256": "a0511bd1d709ee2b3608d2312ced1acb667a9cc707642837592b16aab2c28d70",
+        "source_sha256": "264a8710d789ed750b41e764bdf87e1a2bb9ea563321c1172e29913ff7615e10",
+        "rule_sha256": "ab691f60e43c08e57fd6f16112577dddb6d65c6df4fd51b42e82d8562627b34c"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-utterance_card-06",
+      "domain": "utterance_card",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-utterance_card-06",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-06",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-utterance_card-06-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-utterance_card-06-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-utterance_card-06可能需要更轻的呈现，含义尚未确定。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "schema_version": "candidate_information.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-06",
+        "items": [
+          {
+            "candidate_local_id": "item_dev_6",
+            "item_type": "unclassified",
+            "claim": "虚构试验-utterance_card-06可能需要更轻的呈现，含义尚未确定。",
+            "summary": "虚构试验-utterance_card-06可能需要更轻的呈现，含义尚未确定。",
+            "action_level": "reference",
+            "priority": null,
+            "entity_mentions": [],
+            "topics": [
+              "合成开发演示"
+            ],
+            "temporal_mentions": [],
+            "source_anchors": [
+              {
+                "message_id": "m2-core-dev-20261002-utterance_card-06-m1",
+                "exact_quote": "虚构试验-utterance_card-06可能需要更轻的呈现，含义尚未确定。"
+              }
+            ],
+            "confidence": 0.5,
+            "uncertainties": [
+              "作者答案候选，尚未独立复核"
+            ],
+            "sensitivity_hint": "none"
+          }
+        ]
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXPLICIT_SINGLE_CLAIM_CANDIDATE_EXTRACTION/1",
+        "upstream_mapping": "M0A_SCHEMA_BOUND"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "2f13d861c3c340fafe8231adb9d032c6796b7ae29ac9942d2f17a6d5909a9c41",
+        "answer_sha256": "9ec879dbc9b26e823f95d952b80b45943d2cbe0684bea549280a15b613e4c10f",
+        "source_sha256": "264a8710d789ed750b41e764bdf87e1a2bb9ea563321c1172e29913ff7615e10",
+        "rule_sha256": "ab691f60e43c08e57fd6f16112577dddb6d65c6df4fd51b42e82d8562627b34c"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-card_chain-01",
+      "domain": "card_chain",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-card_chain-01",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-card_chain-01",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-card_chain-01-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-card_chain-01-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-card_chain-01：先完成card_A的演示，再开始card_B；这里只建议依赖，未批准执行。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "suggested_before": "card_A",
+        "suggested_after": "card_B",
+        "anchor_message_ids": [
+          "m2-core-dev-20261002-card_chain-01-m1"
+        ],
+        "execute": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXPLICIT_LOCAL_EDGE_SUGGESTION_NO_EXECUTION/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "209736983fa72185676ab02f387a718e7d1323d55fdd46faa79eadc0c63e1d45",
+        "answer_sha256": "b462553e66b56ea91e504b32514c96fb0e6016fecbf51c228ae80d367d9f5c2a",
+        "source_sha256": "8667e2151ef889768a2d092fb5ebf6620eee4779ff1c36af91cd1ae99d1f3b2a",
+        "rule_sha256": "af1d81f0c48af841d5f6f505b21d501838cb6f7a80a30a67badaa4602d1bc2fe"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-card_chain-02",
+      "domain": "card_chain",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-card_chain-02",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-card_chain-02",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-card_chain-02-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-card_chain-02-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-card_chain-02：先完成card_B的演示，再开始card_A；这里只建议依赖，未批准执行。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "suggested_before": "card_B",
+        "suggested_after": "card_A",
+        "anchor_message_ids": [
+          "m2-core-dev-20261002-card_chain-02-m1"
+        ],
+        "execute": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXPLICIT_LOCAL_EDGE_SUGGESTION_NO_EXECUTION/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "9e6b55819a0cc219b6769bc59f24ddda4b06626077715c99434638ebbca170e2",
+        "answer_sha256": "db2634ee4a48b1f2c89852fe659cdf7e06f02581bc7b9e92ce2b4833591057dc",
+        "source_sha256": "8667e2151ef889768a2d092fb5ebf6620eee4779ff1c36af91cd1ae99d1f3b2a",
+        "rule_sha256": "af1d81f0c48af841d5f6f505b21d501838cb6f7a80a30a67badaa4602d1bc2fe"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-card_chain-03",
+      "domain": "card_chain",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-card_chain-03",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-card_chain-03",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-card_chain-03-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-card_chain-03-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-card_chain-03：先完成card_A的演示，再开始card_C；这里只建议依赖，未批准执行。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "suggested_before": "card_A",
+        "suggested_after": "card_C",
+        "anchor_message_ids": [
+          "m2-core-dev-20261002-card_chain-03-m1"
+        ],
+        "execute": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXPLICIT_LOCAL_EDGE_SUGGESTION_NO_EXECUTION/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "a41d94ba4ba6e141c3e81ee3f66fbd3483d98e659a3a01e8be2709cd94cccf90",
+        "answer_sha256": "c88011be850c8a9118c3e91ba5c16f5450dc689e5493bc695c78a355cc7fec8e",
+        "source_sha256": "8667e2151ef889768a2d092fb5ebf6620eee4779ff1c36af91cd1ae99d1f3b2a",
+        "rule_sha256": "af1d81f0c48af841d5f6f505b21d501838cb6f7a80a30a67badaa4602d1bc2fe"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-card_chain-04",
+      "domain": "card_chain",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-card_chain-04",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-card_chain-04",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-card_chain-04-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-card_chain-04-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-card_chain-04：先完成card_C的演示，再开始card_B；这里只建议依赖，未批准执行。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "suggested_before": "card_C",
+        "suggested_after": "card_B",
+        "anchor_message_ids": [
+          "m2-core-dev-20261002-card_chain-04-m1"
+        ],
+        "execute": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXPLICIT_LOCAL_EDGE_SUGGESTION_NO_EXECUTION/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "49adf3c5a92c53bf72e57d367641670a11f973352d5a794517af7269b7eceaf8",
+        "answer_sha256": "72de16ae9220ec5cfed023d8f5a7916aa30e2be99da1e30526bf62d058183330",
+        "source_sha256": "8667e2151ef889768a2d092fb5ebf6620eee4779ff1c36af91cd1ae99d1f3b2a",
+        "rule_sha256": "af1d81f0c48af841d5f6f505b21d501838cb6f7a80a30a67badaa4602d1bc2fe"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-card_chain-05",
+      "domain": "card_chain",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-card_chain-05",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-card_chain-05",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-card_chain-05-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-card_chain-05-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-card_chain-05：先完成card_B的演示，再开始card_C；这里只建议依赖，未批准执行。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "suggested_before": "card_B",
+        "suggested_after": "card_C",
+        "anchor_message_ids": [
+          "m2-core-dev-20261002-card_chain-05-m1"
+        ],
+        "execute": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXPLICIT_LOCAL_EDGE_SUGGESTION_NO_EXECUTION/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "97c281728721a0d5ce7f191198e8211eec9b32a3dd8bb590f501a650342b7611",
+        "answer_sha256": "5255ff9b1d44dbae876231b7c92fe62757ffda22ae51896d33adca609c6c9685",
+        "source_sha256": "8667e2151ef889768a2d092fb5ebf6620eee4779ff1c36af91cd1ae99d1f3b2a",
+        "rule_sha256": "af1d81f0c48af841d5f6f505b21d501838cb6f7a80a30a67badaa4602d1bc2fe"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-card_chain-06",
+      "domain": "card_chain",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-card_chain-06",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-card_chain-06",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-card_chain-06-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-card_chain-06-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-card_chain-06：先完成card_C的演示，再开始card_A；这里只建议依赖，未批准执行。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "suggested_before": "card_C",
+        "suggested_after": "card_A",
+        "anchor_message_ids": [
+          "m2-core-dev-20261002-card_chain-06-m1"
+        ],
+        "execute": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXPLICIT_LOCAL_EDGE_SUGGESTION_NO_EXECUTION/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "155a7b59b2d5a53827cb71ffbed2da60b1fa8c97a4a584743e3562d22a8e26e2",
+        "answer_sha256": "eef58ea0c6458993c7c4ea9394898dd8b98690d73e9a96df1411cbee6cb2dec9",
+        "source_sha256": "8667e2151ef889768a2d092fb5ebf6620eee4779ff1c36af91cd1ae99d1f3b2a",
+        "rule_sha256": "af1d81f0c48af841d5f6f505b21d501838cb6f7a80a30a67badaa4602d1bc2fe"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-imprint-01",
+      "domain": "imprint",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-imprint-01",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-imprint-01",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-imprint-01-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-01-m1",
+            "author_role": "assistant",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-imprint-01的演示属性是青色。"
+          },
+          {
+            "message_id": "m2-core-dev-20261002-imprint-01-m2",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-01-m2",
+            "author_role": "assistant",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-imprint-01的演示属性是青色。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "source_message_ids": [
+          "m2-core-dev-20261002-imprint-01-m1",
+          "m2-core-dev-20261002-imprint-01-m2"
+        ],
+        "conflict": false,
+        "claims": [
+          "虚构试验-imprint-01的演示属性是青色。",
+          "虚构试验-imprint-01的演示属性是青色。"
+        ],
+        "external_truth_verified": false,
+        "canonical_write": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXACT_SAME_SUBJECT_MULTI_SOURCE_CONFLICT_PRESERVATION/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "6bc1e8e00bdd69e814e0a2cbb3a9a232e7f91c63a1fb9e9b95c2d62ce67c5862",
+        "answer_sha256": "0d33ca0bc2f6cdf23d48bde37417c58ca6087d7dfc459fdbccca082239c4780a",
+        "source_sha256": "c83d0e3245ae9fc30dc51b8573fa9dc228a557bd49cebb30a544194440b979f7",
+        "rule_sha256": "d0e87dcf6bc4d3d40299737c8aacec1365e76e7ad69ddf51a01f4fcbb66c5bb2"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-imprint-02",
+      "domain": "imprint",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-imprint-02",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-imprint-02",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-imprint-02-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-02-m1",
+            "author_role": "assistant",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-imprint-02的演示属性是圆形。"
+          },
+          {
+            "message_id": "m2-core-dev-20261002-imprint-02-m2",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-02-m2",
+            "author_role": "assistant",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-imprint-02的演示属性是方形。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "source_message_ids": [
+          "m2-core-dev-20261002-imprint-02-m1",
+          "m2-core-dev-20261002-imprint-02-m2"
+        ],
+        "conflict": true,
+        "claims": [
+          "虚构试验-imprint-02的演示属性是圆形。",
+          "虚构试验-imprint-02的演示属性是方形。"
+        ],
+        "external_truth_verified": false,
+        "canonical_write": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXACT_SAME_SUBJECT_MULTI_SOURCE_CONFLICT_PRESERVATION/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "5bad430064e6f26f5e5a3eea53c9cf138eb551add377fccf19c5382cbd1bb0d1",
+        "answer_sha256": "d3aa09a180569031ddbe29f998a1aa69add73ca971d91f0f3cc0a419b09cd205",
+        "source_sha256": "c83d0e3245ae9fc30dc51b8573fa9dc228a557bd49cebb30a544194440b979f7",
+        "rule_sha256": "d0e87dcf6bc4d3d40299737c8aacec1365e76e7ad69ddf51a01f4fcbb66c5bb2"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-imprint-03",
+      "domain": "imprint",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-imprint-03",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-imprint-03",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-imprint-03-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-03-m1",
+            "author_role": "assistant",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-imprint-03的演示属性是短句。"
+          },
+          {
+            "message_id": "m2-core-dev-20261002-imprint-03-m2",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-03-m2",
+            "author_role": "assistant",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-imprint-03的演示属性是短句。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "source_message_ids": [
+          "m2-core-dev-20261002-imprint-03-m1",
+          "m2-core-dev-20261002-imprint-03-m2"
+        ],
+        "conflict": false,
+        "claims": [
+          "虚构试验-imprint-03的演示属性是短句。",
+          "虚构试验-imprint-03的演示属性是短句。"
+        ],
+        "external_truth_verified": false,
+        "canonical_write": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXACT_SAME_SUBJECT_MULTI_SOURCE_CONFLICT_PRESERVATION/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "3c99936193ea4d753d3c0980420fffd09f28a815804f0c48bd35e8b0cc40a51f",
+        "answer_sha256": "ee7103f77a01d05668f6affaefe2c4280fecd79a3f20bec4b1b3c7b4eb1fe4e3",
+        "source_sha256": "c83d0e3245ae9fc30dc51b8573fa9dc228a557bd49cebb30a544194440b979f7",
+        "rule_sha256": "d0e87dcf6bc4d3d40299737c8aacec1365e76e7ad69ddf51a01f4fcbb66c5bb2"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-imprint-04",
+      "domain": "imprint",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-imprint-04",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-imprint-04",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-imprint-04-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-04-m1",
+            "author_role": "assistant",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-imprint-04的演示属性是离线。"
+          },
+          {
+            "message_id": "m2-core-dev-20261002-imprint-04-m2",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-04-m2",
+            "author_role": "assistant",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-imprint-04的演示属性是在线。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "source_message_ids": [
+          "m2-core-dev-20261002-imprint-04-m1",
+          "m2-core-dev-20261002-imprint-04-m2"
+        ],
+        "conflict": true,
+        "claims": [
+          "虚构试验-imprint-04的演示属性是离线。",
+          "虚构试验-imprint-04的演示属性是在线。"
+        ],
+        "external_truth_verified": false,
+        "canonical_write": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXACT_SAME_SUBJECT_MULTI_SOURCE_CONFLICT_PRESERVATION/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "9013fdacfdff44866d4e3ae57cc4bfee83d0955795acd637957d593ff46ea001",
+        "answer_sha256": "46850ec44d720ebd425356a3e28dcb72e55ebb97169c2993255d939c0bd99500",
+        "source_sha256": "c83d0e3245ae9fc30dc51b8573fa9dc228a557bd49cebb30a544194440b979f7",
+        "rule_sha256": "d0e87dcf6bc4d3d40299737c8aacec1365e76e7ad69ddf51a01f4fcbb66c5bb2"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-imprint-05",
+      "domain": "imprint",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-imprint-05",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-imprint-05",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-imprint-05-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-05-m1",
+            "author_role": "assistant",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-imprint-05的演示属性是单列。"
+          },
+          {
+            "message_id": "m2-core-dev-20261002-imprint-05-m2",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-05-m2",
+            "author_role": "assistant",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-imprint-05的演示属性是单列。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "source_message_ids": [
+          "m2-core-dev-20261002-imprint-05-m1",
+          "m2-core-dev-20261002-imprint-05-m2"
+        ],
+        "conflict": false,
+        "claims": [
+          "虚构试验-imprint-05的演示属性是单列。",
+          "虚构试验-imprint-05的演示属性是单列。"
+        ],
+        "external_truth_verified": false,
+        "canonical_write": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXACT_SAME_SUBJECT_MULTI_SOURCE_CONFLICT_PRESERVATION/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "d9ea185b4c1eb495b5cc55714e878f59893a9e5c2318eb58f4f25f96b0617a7e",
+        "answer_sha256": "63d21fce0cee4dec2b5654ed0620b78de00146e21b2654abce0256fa9812e52f",
+        "source_sha256": "c83d0e3245ae9fc30dc51b8573fa9dc228a557bd49cebb30a544194440b979f7",
+        "rule_sha256": "d0e87dcf6bc4d3d40299737c8aacec1365e76e7ad69ddf51a01f4fcbb66c5bb2"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-imprint-06",
+      "domain": "imprint",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-imprint-06",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-imprint-06",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-imprint-06-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-06-m1",
+            "author_role": "assistant",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-imprint-06的演示属性是低对比。"
+          },
+          {
+            "message_id": "m2-core-dev-20261002-imprint-06-m2",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-06-m2",
+            "author_role": "assistant",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-imprint-06的演示属性是高对比。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "source_message_ids": [
+          "m2-core-dev-20261002-imprint-06-m1",
+          "m2-core-dev-20261002-imprint-06-m2"
+        ],
+        "conflict": true,
+        "claims": [
+          "虚构试验-imprint-06的演示属性是低对比。",
+          "虚构试验-imprint-06的演示属性是高对比。"
+        ],
+        "external_truth_verified": false,
+        "canonical_write": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "EXACT_SAME_SUBJECT_MULTI_SOURCE_CONFLICT_PRESERVATION/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "58f864d18b8b739535a03e87a7d17d2e53914bc1aff0a61a55ce9f5d1967ad06",
+        "answer_sha256": "47375a9c6e5852bce33d17880870b1afa6757c81c4265718b085ff51d4c3495c",
+        "source_sha256": "c83d0e3245ae9fc30dc51b8573fa9dc228a557bd49cebb30a544194440b979f7",
+        "rule_sha256": "d0e87dcf6bc4d3d40299737c8aacec1365e76e7ad69ddf51a01f4fcbb66c5bb2"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-context-01",
+      "domain": "context",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-context-01",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-context-01",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-context-01-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-01-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-context-01：这是声明的合成资源 scope=synthetic-project-A; currentness=CURRENT; revoked=false; grant_present=true。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "candidate_eligible": true,
+        "live_authorization_checked": false,
+        "reason": "DECLARED_MATCH_ONLY",
+        "execute": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "DECLARED_SYNTHETIC_SCOPE_CURRENTNESS_FILTER_NO_GRANT/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "bd1987b85037cdaf3919edcdff8d427df878512c5ce52d9f39d652041b82d64c",
+        "answer_sha256": "c8c21355a8feb423671bc45ff4ca4a8db59059324547222542fcd2f930e3f352",
+        "source_sha256": "e6ee9edff48387e2e1bbd2b9613a481e4349a3d2cea71fecdac1715dcfa29c26",
+        "rule_sha256": "386e74e2d5e13527b0d5beb48c371f41c64c655d53c770448f2dd1c837b4532f"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-context-02",
+      "domain": "context",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-context-02",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-context-02",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-context-02-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-02-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-context-02：这是声明的合成资源 scope=synthetic-project-A; currentness=STALE; revoked=false; grant_present=true。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "candidate_eligible": false,
+        "live_authorization_checked": false,
+        "reason": "STALE",
+        "execute": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "DECLARED_SYNTHETIC_SCOPE_CURRENTNESS_FILTER_NO_GRANT/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "2d997658e506167a1f5fdd74ee0a7267a9e6ccb558210a4144ae3c1ac19f3d3c",
+        "answer_sha256": "a43bc03afc92332977b6b12ca5a9777b9789bea5ddef6fd24cd919673e850c8b",
+        "source_sha256": "e6ee9edff48387e2e1bbd2b9613a481e4349a3d2cea71fecdac1715dcfa29c26",
+        "rule_sha256": "386e74e2d5e13527b0d5beb48c371f41c64c655d53c770448f2dd1c837b4532f"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-context-03",
+      "domain": "context",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-context-03",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-context-03",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-context-03-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-03-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-context-03：这是声明的合成资源 scope=synthetic-project-A; currentness=UNKNOWN; revoked=false; grant_present=true。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "candidate_eligible": false,
+        "live_authorization_checked": false,
+        "reason": "UNKNOWN",
+        "execute": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "DECLARED_SYNTHETIC_SCOPE_CURRENTNESS_FILTER_NO_GRANT/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "068ec847fc1c4141a9d7296613e5629ba1ed37d2fec91477939fa916756da755",
+        "answer_sha256": "7d4494be5d6df7191ba0035e22e3228e03177ef17ba67a88fc15ab9be850e95c",
+        "source_sha256": "e6ee9edff48387e2e1bbd2b9613a481e4349a3d2cea71fecdac1715dcfa29c26",
+        "rule_sha256": "386e74e2d5e13527b0d5beb48c371f41c64c655d53c770448f2dd1c837b4532f"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-context-04",
+      "domain": "context",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-context-04",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-context-04",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-context-04-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-04-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-context-04：这是声明的合成资源 scope=synthetic-project-B; currentness=CURRENT; revoked=false; grant_present=true。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "candidate_eligible": false,
+        "live_authorization_checked": false,
+        "reason": "SCOPE_MISMATCH",
+        "execute": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "DECLARED_SYNTHETIC_SCOPE_CURRENTNESS_FILTER_NO_GRANT/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "179a36fc86da84e1f787a82db7badfc5a3c8783e487618f4017ee51d0f1f62eb",
+        "answer_sha256": "290484e435679d80daa23623817d49b8c4bdd9daf486dd96f7eca9cdc9545431",
+        "source_sha256": "e6ee9edff48387e2e1bbd2b9613a481e4349a3d2cea71fecdac1715dcfa29c26",
+        "rule_sha256": "386e74e2d5e13527b0d5beb48c371f41c64c655d53c770448f2dd1c837b4532f"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-context-05",
+      "domain": "context",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-context-05",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-context-05",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-context-05-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-05-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-context-05：这是声明的合成资源 scope=synthetic-project-A; currentness=CURRENT; revoked=true; grant_present=true。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "candidate_eligible": false,
+        "live_authorization_checked": false,
+        "reason": "REVOKED",
+        "execute": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "DECLARED_SYNTHETIC_SCOPE_CURRENTNESS_FILTER_NO_GRANT/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "3d99ccd3c2e2b1c4545ff26b67a55aa0920ac3909dc519fad3b5b166ef5f675e",
+        "answer_sha256": "054d22c2d0270a280ebfa1443442035ce117f040576fae17e24b9fe3986c31a9",
+        "source_sha256": "e6ee9edff48387e2e1bbd2b9613a481e4349a3d2cea71fecdac1715dcfa29c26",
+        "rule_sha256": "386e74e2d5e13527b0d5beb48c371f41c64c655d53c770448f2dd1c837b4532f"
+      }
+    },
+    {
+      "sample_id": "m2-core-dev-20261002-context-06",
+      "domain": "context",
+      "partition": "DEVELOPMENT",
+      "group_id": "m2-core-dev-20261002-context-06",
+      "input": {
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-context-06",
+        "reference_time": "2026-10-02T00:00:00Z",
+        "timezone": "Etc/UTC",
+        "messages": [
+          {
+            "message_id": "m2-core-dev-20261002-context-06-m1",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-06-m1",
+            "author_role": "user",
+            "created_at": "2026-10-02T00:00:00Z",
+            "context_only": false,
+            "content": "虚构试验-context-06：这是声明的合成资源 scope=synthetic-project-A; currentness=CURRENT; revoked=false; grant_present=false。"
+          }
+        ]
+      },
+      "answer_candidate": {
+        "candidate_eligible": false,
+        "live_authorization_checked": false,
+        "reason": "MISSING_GRANT",
+        "execute": false
+      },
+      "source": {
+        "source_class": "C",
+        "origin": "DETERMINISTIC_AUTHOR_SYNTHETIC_ONLY",
+        "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+        "private_data_imported": false,
+        "copied_upstream_fixture": false,
+        "rule_revision": "DECLARED_SYNTHETIC_SCOPE_CURRENTNESS_FILTER_NO_GRANT/1",
+        "upstream_mapping": "CANDIDATE_MAPPING_NOT_FORMAL_CORE_TAXONOMY"
+      },
+      "review": {
+        "status": "AUTHOR_ONLY_PENDING_INDEPENDENT_REVIEW",
+        "receipt_ref": null
+      },
+      "evidence": {
+        "input_sha256": "11f2639698a10400f8aef21d4672660b3f2e4989d4e56075b775f4262feea981",
+        "answer_sha256": "5a9d3c395d5cf89da15af3f16869c19aed055b3bcc5e889463f1f93061af6ffa",
+        "source_sha256": "e6ee9edff48387e2e1bbd2b9613a481e4349a3d2cea71fecdac1715dcfa29c26",
+        "rule_sha256": "386e74e2d5e13527b0d5beb48c371f41c64c655d53c770448f2dd1c837b4532f"
+      }
+    }
+  ],
+  "heldout_material": null,
+  "authority": {
+    "formal_gold_ref": null,
+    "independent_review_ref": null,
+    "holdout_lock_ref": null,
+    "domain_receipt_ref": null,
+    "model_call_profile_ref": null,
+    "m2_verdict": "NOT_ISSUED"
+  },
+  "revision_sha256": "27ea2d138dd91699e5fc372dd9a9bdcd1bd96c36244dbcb8232ce24440ce8fd9"
+}

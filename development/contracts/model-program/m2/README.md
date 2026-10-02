@@ -230,3 +230,49 @@ python -m unittest tests.test_model_program_m2_gold_reference -v
 The formal command must exit 1. No actual annotation, independent adjudication,
 protected holdout, threshold freeze or DataGate is issued; no M1/model run,
 credentials, permissions, training, paid inference or production changes occur.
+
+
+## First Core pilot: development candidates only
+
+Owner approved preparation of 72 fresh source-class C synthetic cases on
+2026-10-02 06:16:20 UTC (Decision `ad2ba16d-e0f7-480d-ba69-36b417e1b65a`,
+Receipt `aa9209df-72ce-47e8-b2c5-e8e806193d82`). `CoreSyntheticPilot.candidate.json`
+reserves 18 cases each for utterance cards, card chains, imprints and Context:
+six per domain per development/qualification/final-holdout boundary. Only the
+24 development candidates are materialized. No qualification or holdout content,
+seed, answer, or generator is included; they remain NOT_GENERATED until actual
+independent custody/access controls and review roles are admitted. A same-account
+agent, process, directory or public fixture is not a protected holdout.
+
+`core-development-candidate.json` contains six explicit single-claim extraction
+cases (fact/preference/decision/task/status/uncertain), six directed local dependency
+suggestions, six two-source agreement/conflict cases, and six declared Context
+match/stale/unknown/scope-mismatch/revoked/missing-grant cases. Every row binds
+its input, answer candidate, source and deterministic rule. Source IDs are fictional
+provenance labels, not service Evidence IDs. Model and tool calls are zero.
+
+The existing frozen-parent adapter reverified all A/B/C roots and their 35/12/159
+original files in this request. The original release ZIP hashes matched. The
+utterance input and candidate output bind the byte-identical vendored M0-A schemas;
+the other three domain mappings are local candidate rules, not adopted Core
+taxonomy or a formal M0-C Gold revision. The upstream extractor keeps source
+quotes exact and treats assistant claims as claims, not verified external facts.
+This pilot preserves those boundaries, suggestions and conflicts. It covers a
+small structured subset rather than full Core semantics, safety or product E2E.
+The offline validator does not attest live currentness or formal parent lock.
+
+Role slots remain unassigned and all formal authority references are null.
+The current authenticated development-context list returned no readable contexts;
+this is scoped capability evidence, not proof that none exist globally. Existing
+Native membership/authorization routes can be reused only after actual principals,
+resource versions, actions and revocation checks are verified. Owner can review
+the visible dev candidates via the established conversation/Canonical decision
+path; that is not yet an independent Gold or holdout-custody grant. No new account,
+credential, permission, ACL or storage root is installed by this package.
+
+Run `python scripts/model-program/validate_m2_core_synthetic_pilot.py` to reproduce
+the 24-case candidate check; `--require-formal-gold` fails closed. Review/source/
+answer tampering and rehashed revisions are rejected. There is no held-out
+generation switch. No model execution is authorized. Independent semantic review,
+full Core mapping, protected split generation, Gold, thresholds and DataGate remain
+separate gates; M2 remains NOT_ISSUED.
