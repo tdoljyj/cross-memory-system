@@ -1,6 +1,13 @@
 # Generic Work Claim v0.1：任意资源、一个门卫多个门口、领取模式
 
-状态：**设计候选，未实施。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
+状态：**设计已合入（PR #501）；第 1 步实施中。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
+
+- 第 1 步（Owner 授权 2026-10-02，Task `e9a10dbb`）：迁移 `20261002210000_work_claims_resource_kinds.sql`，测试 `apps/clued-cloud/tests/work-claims-resource-kinds-db.test.mjs`。
+  - 登记了 `repo`、`storage`、`record` 三个 kind，当前只有"认领时冲突"这一个门口。
+  - 只含裸路径的写集判定结果与 v1 完全相同。
+  - verify 的覆盖判定保持字面：裸路径只被裸路径覆盖，`repo:` 不覆盖。GitHub 门口在第 5 步知道仓库身份后再放开。
+  - 根目录文件名带冒号（如 `c:foo`）的变更路径会被当作未登记的 kind，verify 报错，按 fail closed 处理。
+  - 生产迁移尚未应用，需 Owner 另行授权。
 日期：2026-10-02
 Task：`52739939`（Global）。Owner 决定：门卫原则见 Task `52739939` v3，四条规则见 Decision `2a7391ff`，三条待定见 Decision `357fce4f`（§9）。
 前置：[WorkClaimAdmission.v0.1.md](WorkClaimAdmission.v0.1.md)（v1 认领、准入检查与 GitHub 门口，已在生产生效）。本文只写在 v1 之上要扩什么，v1 已有的租约、fence、续期进展、次数上限、幂等规则原样沿用，不重复。
