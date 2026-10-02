@@ -49,7 +49,7 @@ export const workClaimTools = [
   {
     name: "clued_work_claim",
     description:
-      "Claim one existing active Task for execution before spending anything on it: before model calls, installs, builds, tests, CI or subtasks. Declares the write set (paths or globs) and trigger refs. Rejected with work_claim_conflict when another live claim names the same task, intersects the write set, or shares a trigger ref; the conflict names the holder so you stop, not retry under another title. One session (holder_session_ref) holds at most 3 live claims and one Binding at most 10 across its sessions; work_claim_budget_exhausted names the limit hit. The claim carries a fence and a lease (profile: 2 h, hard deadline 24 h). Idempotent by idempotency_key.",
+      "Claim one existing active Task for execution before spending anything on it: before model calls, installs, builds, tests, CI or subtasks. Declares the write set (paths or globs) and trigger refs. Rejected with work_claim_conflict when another live claim names the same task, intersects the write set, or shares a trigger ref; the conflict names the holder so you stop, not retry under another title. One session (holder_session_ref) holds at most 3 live claims, one Binding at most 10 across its sessions, and one Task gets at most 10 new claims or takeovers in 24 hours; work_claim_budget_exhausted names the limit hit. The claim carries a fence and a lease (profile: 2 h, hard deadline 24 h). Idempotent by idempotency_key.",
     inputSchema: {
       type: "object",
       required: ["task_id", "write_set", "idempotency_key"],
@@ -92,7 +92,7 @@ export const workClaimTools = [
   {
     name: "clued_work_verify",
     description:
-      "Check a CI gate or reviewer runs: ADMITTED only when the claim is live, holds the task's current fence, and its write set covers every changed path. Reasons are listed (claim_not_found, claim_not_current, fence_superseded, paths_outside_write_set, claim_bound_to_other_pr). Without pr_ref it is read-only; with pr_ref (\"owner/repo#123\") the first admitting verify binds the claim to that pull request (one receipt) and any other pull request is then refused.",
+      "Check a CI gate or reviewer runs: ADMITTED only when the claim is live, holds the task's current fence, and its write set covers every changed path. Reasons are listed (claim_not_found, claim_not_current, fence_superseded, paths_outside_write_set, claim_bound_to_other_pr, claim_head_cap_reached). Without pr_ref it is read-only; with pr_ref (\"owner/repo#123\") the first admitting verify binds the claim to that pull request (one receipt) and any other pull request is then refused; each distinct head_sha it admits is recorded, and a claim admits at most 20 heads.",
     inputSchema: {
       type: "object",
       required: ["claim_id"],

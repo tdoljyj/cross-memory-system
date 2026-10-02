@@ -19,7 +19,7 @@
   - 独立评审 HOLD_FAIL。修复已合入：PR #472、#479、#480，另有 PR #475、#477。
   - 修复后未做复审。
 - **未实现或与本文设计不符**（各条在对应小节标注）：
-  - 每认领 CI 分钟预算与 finalize、`attempts_cap`（§4.5、§7，Task `80aea04a`）。
+  - 每认领 CI 分钟预算与 finalize：改为次数上限，不做（§4.5，Owner Decision `a264ea02`）。
   - 备份恢复后 `max(fence)` 会回退，靠恢复后的手工步骤补救（§4.4、§6，Owner Decision `2b23eb0c`）。
   - 同名 check 伪造与 PR 删除 `needs: admission-gate`（§4.6）。
   - 判定只在检查运行时成立，合并时不实时重验（§5）。
@@ -177,13 +177,13 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 - **每 Binding 并发 claim 上限**（默认 3）：一个失控 Host 不能把所有 Task 都占了。
   - **实现（2026-10-02，Owner Decision `533a5286`，迁移 `20261002060001`）**：改为每个会话（Agent 自报的 `holder_session_ref`）最多 3 个活认领、每个 Binding 合计最多 10 个。原因：Owner 的所有 Claude Code 会话共用一个 Binding，原来的「每 Binding 3 个」会让并行会话互相挤占。会话标识是自报的，所以保留 Binding 总上限兜底；没有 `holder_session_ref` 的认领单独算一组。拒绝时 `limit` 字段写明撞到的是哪个上限。
-- **每 claim CI 分钟上限**：`admission-gate` 在放行重任务前调用 `clued_work_verify` 并上报本次预计分钟数；超出上限返回 REJECTED，重任务不启动。实际消耗由 workflow 完成后以 observed 回写（finalize）。
+- **每 claim CI 分钟上限**（原设计）：`admission-gate` 在放行重任务前调用 `clued_work_verify` 并上报本次预计分钟数；超出上限返回 REJECTED，重任务不启动。实际消耗由 workflow 完成后以 observed 回写（finalize）。
 - **模型 token**：claim 只记录 Agent 自报的估算，标为 `declared_unenforced`。不宣称预留。
-- 取消、失联或 UNKNOWN 时**不释放预留**；只有 finalize 或 takeover 事务才结算。
-- **未实现（2026-10-02）**：
-  - 没有 CI 分钟上限、finalize 或预留结算。`budget` 字段原样保存、不校验。
-  - `admission-gate` 也不再调用 Clued，见 §4.6。
-  - 生效的只有上面的并发上限（Task `80aea04a`）。
+- （原设计）取消、失联或 UNKNOWN 时**不释放预留**；只有 finalize 或 takeover 事务才结算。没有分钟预留后不再适用。
+- **实现（2026-10-02，Owner Decision `a264ea02`，Task `80aea04a`，迁移 `20261002100000`）**：分钟预算、finalize 与预留结算不做，改为数据库内强制的两个次数上限，不给 CI 可写凭据：
+  - `attempts_cap`：一个 Task 在任意 24 小时内最多 10 次新认领或接管；超出时 `clued_work_claim`／`clued_work_takeover` 返回 `work_claim_budget_exhausted`，`limit` 为 `max_claims_per_task_24h`，附 `claims_last_24h` 与 `retry_after`。已签发认领的幂等重放不受影响。
+  - 每 claim 的 PR head 上限：带 `pr_ref` 与 `head_sha` 的 verify 在放行时把该 head 记入 `admitted_heads`；一个 claim 最多放行 20 个不同 head，再来新 head 判 REJECTED（`claim_head_cap_reached`），重任务不跑。同一 head 重跑或每小时复核不计数；不带 `pr_ref` 的 verify（手动触发、Agent 自查）不记录。
+  - `budget` 字段仍原样保存、不校验；模型 token 不计。
 
 ### 4.6 执行层细节
 
@@ -295,7 +295,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 | Owner 要求 | 本设计 |
 | --- | --- |
 | 许可有时效，故障不能永久霸占任务 | 2 小时期限、24 小时 hard_deadline、12 次续期上限，全部来自 profile；过期自动 EXPIRED |
-| 能崩溃恢复、接管，避免死锁与无界重试 | takeover 以 fence +1 接管；write_set 单事务获取；attempts_cap 有界。**`attempts_cap` 未实现**：同一 Task 可反复 claim／release（评审实测 30 次全部接受），重试只受 12 次续期与 24 小时硬期限约束（Task `80aea04a`） |
+| 能崩溃恢复、接管，避免死锁与无界重试 | takeover 以 fence +1 接管；write_set 单事务获取；attempts_cap 有界。**实现（Owner Decision `a264ea02`）**：每 Task 24 小时最多 10 次认领或接管，每 claim 最多放行 20 个 PR head；CI 分钟不计（Task `80aea04a`） |
 | 不能把 Agent 自觉遵守作为安全前提 | L0 由 GitHub ruleset 与 workflow 强制，L1 由 Postgres 强制；L2／L3 明确标为合规层 |
 | 不能直到提交时才发现重复 | 合规 Agent 在 resume／claim 即发现（第一次 Clued 调用）；不合规 Agent 在 CI 第一个 job 被挡住重任务，而不是等到合并 |
 | 先复用既有机制 | claim 表与 RPC 逐字复用 Projection Refresh 的 lease／attempt SQL 模式；预算复用 N4；身份复用 execution_intent；fence 语义复用 kernel approval-lease；门禁复用现有 ruleset |

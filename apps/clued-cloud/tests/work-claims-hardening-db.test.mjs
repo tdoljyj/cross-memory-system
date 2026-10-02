@@ -12,7 +12,8 @@ import EmbeddedPostgres from 'embedded-postgres';
 // 20261002050000_work_claims_admission_hardening): glob-against-glob conflicts
 // and one pull request per claim; the concurrency caps (20261002060001); and
 // the MINOR fixes (20261002072000): trigger-ref matching, idempotency keys,
-// repeated progress and "**/" at the root.
+// repeated progress and "**/" at the root; and the count caps
+// (20261002100000): attempts per Task per 24 hours, heads per claim.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -305,6 +306,72 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     assert.equal(await covers('xpackage-lock.json', '**/package-lock.json'), false);
     assert.equal(await covers('a/xz', 'a/**/z'), false);
     assert.equal(await covers('src', 'src/**'), true);
+
+    // --- Count caps (migration 20261002100000, Owner Decision a264ea02,
+    // Task 80aea04a). ---
+    const caps = (await admin.query('select clued_private.work_claim_profile_v1() p')).rows[0].p;
+    assert.deepEqual([caps.max_claims_per_task_24h, caps.max_heads_per_claim], [10, 20]);
+    // attempts_cap: ten claims of one Task in 24 hours, then refused. A
+    // replay of an issued claim still answers.
+    const looped = await createTask('claim loop');
+    let loopKey;
+    let loopClaim;
+    for (let i = 0; i < 10; i += 1) {
+      loopKey = uuid();
+      loopClaim = committed(await claim(tokens.A, { idempotency_key: loopKey, task_id: looped, write_set: ['loop/x'] })).claim;
+      if (i < 9) committed(await release(tokens.A, loopClaim));
+    }
+    const loopReplay = committed(await claim(tokens.A, { idempotency_key: loopKey, task_id: looped, write_set: ['loop/x'] }));
+    assert.deepEqual([loopReplay.replayed, loopReplay.claim.claim_id], [true, loopClaim.claim_id]);
+    committed(await release(tokens.A, loopClaim));
+    const looping = await claim(tokens.A, { task_id: looped, write_set: ['loop/x'] });
+    assert.equal(looping.error_code, 'work_claim_budget_exhausted', JSON.stringify(looping));
+    assert.deepEqual([looping.limit, looping.max_claims_per_task_24h, looping.claims_last_24h],
+      ['max_claims_per_task_24h', 10, 10]);
+    assert.ok(Date.parse(looping.retry_after) > Date.now());
+    // Another Task is not affected; claims older than 24 hours stop counting.
+    committed(await release(tokens.A, committed(await claim(tokens.A, { task_id: await createTask('loop other'), write_set: ['loop/y'] })).claim));
+    await admin.query(`update clued_private.work_claims_v1 set issued_at=issued_at-interval '25 hours'
+      where task_id=$1`, [looped]);
+    let current = committed(await claim(tokens.A, { task_id: looped, write_set: ['loop/x'] })).claim;
+    // Takeovers count as attempts too.
+    const expire = (c) => admin.query(`update clued_private.work_claims_v1
+      set expires_at=greatest(issued_at,clock_timestamp()-interval '1 second') where claim_id=$1`, [c.claim_id]);
+    for (let i = 0; i < 9; i += 1) {
+      await expire(current);
+      current = committed(await call(tokens.B, 'clued_work_takeover_v1', { scope: 'global',
+        claim_id: current.claim_id, idempotency_key: uuid() })).claim;
+    }
+    await expire(current);
+    const takeoverOver = await call(tokens.B, 'clued_work_takeover_v1', { scope: 'global',
+      claim_id: current.claim_id, idempotency_key: uuid() });
+    assert.deepEqual([takeoverOver.error_code, takeoverOver.limit, takeoverOver.claims_last_24h],
+      ['work_claim_budget_exhausted', 'max_claims_per_task_24h', 10], JSON.stringify(takeoverOver));
+
+    // A claim admits at most 20 distinct pull-request heads.
+    const headClaim = committed(await claim(tokens.A, { task_id: await createTask('head cap'), write_set: ['heads/**'] })).claim;
+    const sha = (i) => i.toString(16).padStart(40, '0');
+    for (let i = 1; i <= 20; i += 1) {
+      v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], pr_ref: 'o/r#77', head_sha: sha(i) });
+      assert.deepEqual([v.verdict, v.admitted_heads, v.max_heads_per_claim], ['ADMITTED', i, 20], JSON.stringify(v));
+    }
+    // The same head again (a re-run, the hourly reverify) does not count.
+    v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], pr_ref: 'o/r#77', head_sha: sha(5).toUpperCase() });
+    assert.deepEqual([v.verdict, v.admitted_heads], ['ADMITTED', 20]);
+    // A new head past the cap is refused and not recorded.
+    v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], pr_ref: 'o/r#77', head_sha: sha(21) });
+    assert.deepEqual([v.verdict, v.reasons, v.admitted_heads], ['REJECTED', ['claim_head_cap_reached'], 20]);
+    // A failing verify does not record its head either.
+    const headTwo = committed(await claim(tokens.A, { task_id: await createTask('head fail'), write_set: ['heads2/**'] })).claim;
+    v = await verify({ claim_id: headTwo.claim_id, changed_paths: ['elsewhere/a'], pr_ref: 'o/r#78', head_sha: sha(1) });
+    assert.deepEqual([v.verdict, v.admitted_heads], ['REJECTED', 0]);
+    // Without pr_ref (a hand dispatch, an Agent's own check) nothing is recorded.
+    v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], head_sha: sha(22) });
+    assert.deepEqual([v.verdict, v.admitted_heads], ['ADMITTED', 20]);
+    await assert.rejects(() => verify({ claim_id: headClaim.claim_id, pr_ref: 'o/r#77', head_sha: 'not-a-sha' }),
+      /work_claim_head_sha_invalid/);
+    committed(await release(tokens.A, headClaim));
+    committed(await release(tokens.A, headTwo));
 
     // The column is not writable through the client role, and verify is
     // still the only anon entry that touches it.
