@@ -132,6 +132,15 @@ test('inspect exposes only the fixed reason_code of a denied or attention_requir
       assert.equal(r.isError, true); assert.equal(r.structuredContent.reason_code, undefined);
     }
     reply = status('denied'); assert.equal('reason_code' in (await inspect()).structuredContent, false);
+    // A started job cancelled before it reached Drive names its fixed reason, with a fixed hint.
+    reply = { ...status('cancelled'), reason_code: 'NO_PROVIDER_ATTEMPT' };
+    const cancelled = await inspect();
+    assert.equal(cancelled.isError, false); assert.equal(cancelled.structuredContent.reason_code, 'NO_PROVIDER_ATTEMPT');
+    assert.match(cancelled.structuredContent.hint, /nothing was changed/);
+    for (const state of ['started', 'uncertain', 'queued']) {
+      reply = { ...status(state), reason_code: 'NO_PROVIDER_ATTEMPT' };
+      assert.equal((await inspect()).isError, true, state);
+    }
   } finally { globalThis.fetch = before; }
 });
 

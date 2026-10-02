@@ -884,6 +884,30 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
   } catch { return { status: "unavailable" }; }
 }
 
+// Storage fix (Owner Decision d9d6db4c): a started journal with no recorded
+// provider attempt never reached Drive (every effect records its attempt first,
+// and the record is refused once the journal is no longer started). The
+// database cancels such journals once their admission has expired, so a
+// failure before the effect no longer fences the root. Database only: no Drive
+// call, no credential, and not gated on the executor switch.
+export async function runStorageUnattemptedReleaseScheduled(env: ContinuityEnv):
+    Promise<{ status: "disabled" | "unavailable" } | { status: "ok"; released: number }> {
+  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true" ||
+      env.CLUED_STORAGE_JOBS_V2 !== "true") return { status: "disabled" };
+  try {
+    const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+    if (!issuer || issuer.length < 32) return { status: "unavailable" };
+    const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_release_unattempted_v1", {
+      method: "POST", body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: { action: "release" } }),
+      signal: AbortSignal.timeout(10000), redirect: "manual",
+    }) as Record<string, unknown>;
+    const released = result.released;
+    if (result.status !== "ok" || typeof released !== "number" || !Number.isSafeInteger(released) || released < 0 || released > 3)
+      return { status: "unavailable" };
+    return { status: "ok", released };
+  } catch { return { status: "unavailable" }; }
+}
+
 export async function runProjectionRefreshScheduled(env: ContinuityEnv) {
   if (!projectionBuilderToken(env)) return runProjectionRefreshPipeline(env);
   const runId = crypto.randomUUID();
@@ -3095,7 +3119,10 @@ async function handleContinuityRequestInner(
         // receipt, so the page can say "not saved" instead of "unconfirmed".
         const reason = rpc === "clued_storage_budget_v1" && error instanceof HttpError
           && (error.message === "storage_owner_version_conflict" || error.message === "storage_budget_out_of_bounds")
-          ? error.message : undefined;
+          ? error.message
+          // A level switch is refused while the root has an unresolved job; the page says so.
+          : rpc === "clued_storage_write_access_v1" && error instanceof HttpError
+            && error.message === "storage_root_has_unresolved_mutation" ? "storage_root_busy" : undefined;
         return json({ error: "Storage access operation unavailable.", ...(reason ? { reason } : {}) }, reason ? 409 : 403, headers);
       }
     }

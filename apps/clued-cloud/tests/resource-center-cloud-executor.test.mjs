@@ -219,11 +219,13 @@ test('dispatch outcome carries a fixed reason code and bounded boundary findings
 test('authority failures identify the failed stage using fixed labels without exposing inputs',async()=>{
   for(const scenario of ['provider','provider_unknown','rpc','denied','mismatch']){
     const f=fixture();
+    let trackReads=0;
     if(scenario==='provider' || scenario==='provider_unknown'){
       const fetch=f.config.drive_fetch;
       f.config.drive_fetch=async(url,init)=>{
         const response=await fetch(url,init);
         if(new URL(url).searchParams.get('q')?.includes("name = 'track'")){
+          trackReads++;
           if(scenario==='provider_unknown') throw new Error('private provider detail '+root);
           const body=await response.json();
           return Response.json({...body,files:body.files.map(file=>({...file,version:null}))});
@@ -248,7 +250,8 @@ test('authority failures identify the failed stage using fixed labels without ex
     assert.equal(result.error_code,'ARTIFACT_AUTHORITY_RESOLUTION_FAILED');
     assert.equal(f.info().starts,0);assert.equal(f.info().posts,0);
     const expected={provider:['provider_identity','PROVIDER_METADATA_MISMATCH'],
-      provider_unknown:['provider_identity','PROVIDER_IDENTITY_UNAVAILABLE'],
+      // A failed request is named by its fixed code, after two more reads.
+      provider_unknown:['provider_identity','DRIVE_METADATA_REQUEST_FAILED'],
       rpc:['canonical_rpc','AUTHORITY_RPC_UNAVAILABLE'],denied:['canonical_result','AUTHORITY_RPC_DENIED'],
       mismatch:['canonical_result','AUTHORITY_RESPONSE_MISMATCH']}[scenario];
     assert.deepEqual(logs.map(message=>JSON.parse(message)),[
@@ -257,6 +260,25 @@ test('authority failures identify the failed stage using fixed labels without ex
     ]);
     assert.equal(logs.join('').includes(root),false);
     assert.equal(logs.join('').includes(ids.job),false);
+    if(scenario==='provider_unknown') assert.equal(trackReads,3);
+    if(scenario==='provider') assert.equal(trackReads,1,'a metadata mismatch is not read again');
+  }
+});
+test('a provider identity read that fails in transit is read again; the job then commits',async()=>{
+  for(const [failures,committed] of [[1,true],[2,true]]){
+    const f=fixture(),fetch=f.config.drive_fetch;let left=failures;
+    f.config.drive_fetch=async(url,init)=>{
+      if(new URL(url).searchParams.get('q')?.includes("name = 'track'") && left>0){ left--; throw new Error('transient'); }
+      return fetch(url,init);
+    };
+    const logs=[],original=console.warn;
+    console.warn=message=>logs.push(message);
+    let result;
+    try { result=await f.run().run(f.reference); }
+    finally { console.warn=original; }
+    assert.equal(result.status==='committed',committed,JSON.stringify(result));
+    assert.equal(logs.some(message=>message.includes('storage_cloud_authority_failed')),false);
+    assert.equal(f.info().posts,1);
   }
 });
 test('authority diagnostics distinguish revalidation after initial resolution',async()=>{

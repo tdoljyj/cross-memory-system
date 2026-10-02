@@ -429,6 +429,70 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       }
     });
 
+    await t.test("fix d9d6db4c: a started move that never recorded its attempt is released once its admission expired", async () => {
+      const { target, client, storage, topic, folder } = await tree();
+      const release = async (hash = issuer, input = { action: "release" }) => (await caller.query(
+        "select public.clued_storage_release_unattempted_v1($1,$2::jsonb) value", [hash, JSON.stringify(input)])).rows[0].value;
+      // The executor stops before the attempt record (as a failed pre-effect read does in production).
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      const patches = storage.patches;
+      let loaded;
+      const stopping = createResourceCenterCloudExecutor({ verified_result_mode: true,
+        load_job: async ref => { loaded = await cloud({ action: "load", ...ref }); const d = { ...loaded }; delete d.credential_envelope; delete d.oauth_client_id; return d; },
+        get_credential: async expected => ({ ...expected, access_token: "fixture-subtree-access", scope: SCOPES, expires_at_ms: Date.now() + 3600000 }),
+        drive_fetch: storage.fetch,
+        rpc: async input => {
+          const { connection_id, job_id, action, ...body } = input;
+          if (action === "provider_attempt") throw new Error("synthetic failure before the attempt");
+          return cloud({ connection_id, job_id, action, ...(action === "settle_verified" ? {} : { credential_version: loaded.credential_version }),
+            ...(action === "finalize" ? { finish: { action, ...body } } : body) });
+        },
+      });
+      assert.equal((await stopping.run(job.reference)).status, "unreconciled");
+      assert.equal(storage.patches, patches, "Drive was never changed");
+      let intent = await journal(job);
+      assert.equal(intent.state, "started"); assert.equal(intent.provider_attempt, null);
+      // While it is unresolved the Owner's level switch is refused.
+      await assert.rejects(setLevel(target, ["destructive"]), /storage_root_has_unresolved_mutation/);
+      // Not before its admission has expired; never for another issuer or input.
+      assert.deepEqual(await release(), { status: "ok", released: 0 });
+      await assert.rejects(release(sha(randomUUID())), /storage_release_denied/);
+      await assert.rejects(release(issuer, { action: "release", limit: 9 }), /storage_release_denied/);
+      await admin.query("update clued_private.resource_center_mutations_v1 set expires_at=now()-interval '61 seconds' where id=$1", [intent.id]);
+      assert.equal((await release()).released, 1);
+      intent = await journal(job);
+      assert.equal(intent.state, "cancelled");
+      assert.deepEqual(intent.final_result, { outcome: "released_unattempted", reason_code: "NO_PROVIDER_ATTEMPT" });
+      const receipt = (await admin.query("select operation,status from public.clued_audit_receipts where id=$1", [intent.receipt_id])).rows[0];
+      assert.deepEqual(receipt, { operation: "storage_unattempted_release", status: "committed" });
+      const inspected = (await caller.query(`select ${JOBS}($1,$2::jsonb) value`, [client.token, JSON.stringify({ action: "inspect", ...job.reference })])).rows[0].value;
+      assert.equal(inspected.status, "cancelled"); assert.equal(inspected.reason_code, "NO_PROVIDER_ATTEMPT");
+      // A late attempt record is refused, so no Drive write can follow; a second release finds nothing.
+      await assert.rejects(cloud({ action: "provider_attempt", ...job.reference, credential_version: 1,
+        attempt: { provider_file_id: folder.provider_file_id } }));
+      assert.equal((await journal(job)).provider_attempt, null);
+      assert.deepEqual(await release(), { status: "ok", released: 0 });
+      // The root is free: the same move runs, and the level switch is accepted.
+      const again = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      assert.equal((await executor(target, storage).run(again.reference)).status, "committed");
+      assert.equal((await setLevel(target, ["destructive"])).status, "committed");
+    });
+
+    await t.test("fix d9d6db4c: a started job that recorded its attempt is never released, however old", async () => {
+      const { target, client, storage, topic, folder } = await tree();
+      storage.losePatch = true;
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      assert.equal((await executor(target, storage).run(job.reference)).status, "unreconciled");
+      storage.losePatch = false;
+      const intent = await journal(job);
+      assert.equal(intent.state, "started"); assert.notEqual(intent.provider_attempt, null);
+      await admin.query("update clued_private.resource_center_mutations_v1 set expires_at=now()-interval '1 hour' where id=$1", [intent.id]);
+      const released = (await caller.query("select public.clued_storage_release_unattempted_v1($1,$2::jsonb) value",
+        [issuer, JSON.stringify({ action: "release" })])).rows[0].value;
+      assert.equal(released.status, "ok");
+      assert.equal((await journal(job)).state, "started");
+    });
+
     await t.test("submit refuses a track, a rename, a move into itself and any other shape before a job exists", async () => {
       const { target, client, trackPath, topic, folder } = await tree();
       const track = await artifact(target, trackPath);

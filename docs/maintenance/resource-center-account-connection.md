@@ -912,6 +912,45 @@ release: the executor and the database disagree on the attempt during that
 window, and a directory move started in it is refused after its durable start
 and stays for inspection.
 
+### Release of a started job with no provider attempt
+
+Owner Decision `d9d6db4c`, Task `0ea9a51c`, migration
+`20261002170000_storage_release_unattempted_v1.sql`. The P6.2 acceptance
+(Note `77019762`) left a directory move `started` after a Drive metadata read
+in its pre-effect authority check failed in transit: Drive was never changed,
+yet the single writer refused every later write on the root and the Owner's
+level switch (`storage_root_has_unresolved_mutation`).
+
+- Every account-policy cloud effect records its exact provider attempt
+  (`storage_job_provider_attempt_v2`) before its first Drive write, and that
+  record requires the journal, locked for update, to be `started`. A journal
+  without an attempt has never reached Drive; once it is cancelled no attempt
+  can be recorded, so no Drive write can follow.
+- `public.clued_storage_release_unattempted_v1` (fixed connector issuer,
+  `{action: release}`) cancels at most 3 `started`/`uncertain` journals of
+  account-policy cloud jobs with no attempt, no attempt Receipt and no verified
+  record, whose admission expired at least 60 s ago. Each runs under the job and
+  root locks with its own Receipt (`storage_unattempted_release`) and Event
+  (`extension:storage:unattempted_released`); `final_result` is
+  `{outcome: released_unattempted, reason_code: NO_PROVIDER_ATTEMPT}`. The
+  job's status reads `cancelled` with that reason code, and the inspect tool
+  adds a fixed hint.
+- The Worker's scheduled run calls it every minute
+  (`runStorageUnattemptedReleaseScheduled`). It reads and writes the database
+  only, so it runs with the storage account, Google and jobs flags and does not
+  need the executor switch: a stuck root clears without opening a window.
+- The executor reads the provider identity again, at most twice, when a Drive
+  metadata read fails in transit (timeout, failed request, unreadable answer,
+  error status), and logs the fixed code of a final failure
+  (`DRIVE_METADATA_TIMEOUT` and others) instead of
+  `PROVIDER_IDENTITY_UNAVAILABLE`.
+- The level switch stays refused while a job is unresolved (the job settles
+  against the policy it was admitted under); the storage page now says so
+  (reason `storage_root_busy`).
+- Release order: the migration first. The old Worker never calls the release;
+  the new Worker against the old database gets an error from the release call
+  and logs `storage_unattempted_release_unavailable`.
+
 ## Scope profiles (StorageNormalUse.v0.1 N0a)
 
 Migration `20260930140000_storage_scope_profile_v1.sql` and the Worker and

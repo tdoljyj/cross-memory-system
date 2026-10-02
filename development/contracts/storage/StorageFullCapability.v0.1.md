@@ -422,6 +422,7 @@
   - 上线顺序：先执行迁移，再发布 Worker。旧执行器配新数据库照常工作（证明不带指纹、identity 没有 `source_parent_version`，源父目录不补指纹）；新执行器配旧数据库则所有新建目录都会在 Drive 已建成后于核验记录处被拒、意图被围栏，迁移执行后恢复才能成功。
   - 残余：新建核验在版本检查之后才读新文件夹的共享，identity 也分两次读版本与共享；其间共享若被改，只会让记下的指纹与 Drive 不符而拒绝后续写入，不会放宽。
 - **结果不确定时。** 定时恢复不加载目录 move（不自动重写路径）。只有 Owner 在原生页面触发的恢复会以只读 GET 重新核验，并通过同一核验记录结算，绝不重复 effect。
+- **未记录尝试的已开始任务（Owner Decision `d9d6db4c`，迁移 `20261002170000`）。** 所有写入效果都先持久化 provider attempt，再做第一次 Drive 写入，且记录 attempt 要求日志仍为 started（行锁）。因此没有 attempt 的 started/uncertain 任务从未到达 Drive。准入过期满 60 秒后，定时任务把它结案为 cancelled（`released_unattempted`，原因码 `NO_PROVIDER_ATTEMPT`，带 Receipt 与 Event）；结案后 attempt 不能再记录，不会再有 Drive 写入。只读数据库，不需要执行开关。动网盘前的身份复核遇到瞬时元数据读取失败最多重读两次。任务未结时仍不允许切换写入等级，页面显示原因。
 
 **revision 管理：**
 

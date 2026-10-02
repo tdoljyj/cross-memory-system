@@ -203,3 +203,22 @@ test("budget control (StorageNormalUse §7.3, N4) is native-only and routes to i
     refusal=null;
   } finally {globalThis.fetch=original;}
 });
+test("a level switch refused for an unresolved job returns the fixed busy reason (fix d9d6db4c)",async()=>{
+  const original=globalThis.fetch;let refusal="storage_root_has_unresolved_mutation";
+  globalThis.fetch=async(url)=>{
+    if(String(url).endsWith("/auth/v1/user"))return Response.json({id:"fixture-owner"});
+    return Response.json({message:refusal,code:"42501"},{status:403});
+  };
+  const writeRequest=body=>new Request(origin+"/v1/storage/write-access",{
+    method:"POST",headers:{"content-type":"application/json",origin,authorization:"Bearer fixture-native-jwt"},body:JSON.stringify(body)});
+  try {
+    const input={action:"set_classes",connection_id:"20000000-0000-4000-8000-000000000001",classes:[],base_generation:1,
+      disclosure_version:"clued.storage-modify-disclosure/1",idempotency_key:"fixture-key"};
+    const busy=await worker.fetch(writeRequest(input),env);
+    assert.equal(busy.status,409);assert.deepEqual(await busy.json(),{error:"Storage access operation unavailable.",reason:"storage_root_busy"});
+    // Any other refusal stays an unconfirmed result without detail.
+    refusal="storage_owner_version_conflict";
+    const other=await worker.fetch(writeRequest(input),env);
+    assert.equal(other.status,403);assert.equal("reason" in await other.json(),false);
+  } finally {globalThis.fetch=original;}
+});

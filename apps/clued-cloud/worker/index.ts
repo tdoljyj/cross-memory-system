@@ -6,6 +6,7 @@ import {
   runProjectionRefreshScheduled,
   runStorageRefreshScheduled,
   runStorageRecoveryScheduled,
+  runStorageUnattemptedReleaseScheduled,
   runStorageStagingScheduled,
   runStorageOnboardScheduled,
   runStorageJobQueue,
@@ -97,6 +98,11 @@ const worker = {
     ctx.waitUntil(runStorageRecoveryScheduled(env).then(result => {
       if (result.status === "unavailable" || result.status === "attention_required")
         console.warn(JSON.stringify({ event: "storage_recovery_attention_required", status: result.status }));
+    }));
+    ctx.waitUntil(runStorageUnattemptedReleaseScheduled(env).then(result => {
+      if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_unattempted_release_unavailable" }));
+      else if (result.status === "ok" && result.released > 0)
+        console.warn(JSON.stringify({ event: "storage_unattempted_released", released: result.released }));
     }));
     ctx.waitUntil(runStorageStagingScheduled(env).then(result => {
       if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_staging_sweep_unavailable" }));
