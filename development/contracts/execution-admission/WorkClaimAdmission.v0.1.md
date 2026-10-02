@@ -26,7 +26,7 @@
 - **Owner 设置（2026-10-02）**：
   - 已完成（Owner 自述）：`clued-admission` environment 限 `main`、不设审批人；新只读 token 放入 environment secret，删除仓库 secret，撤销旧 token。
   - 已验证：`clued-work-admission-dispatch` run `37003236812`（main `e2a1c06`）在该 environment 中拿到 token，Clued 以强制模式判 ADMITTED。部署分支限制与仓库 secret 删除无法从 Agent 侧读取，未独立验证。
-  - 防同名 check（Owner Decision `37e01bb1`）：仓库侧已就绪（`clued-admission-verified`，§4.6）；待 Owner 建 GitHub App 并在 main ruleset 设为必需检查。
+  - 防同名 check（Owner Decision `37e01bb1`）：仓库侧已就绪（`clued-admission-verified`，§4.6）；Owner 已建 `clued-admission` GitHub App（仅 Checks 读写，只装在本仓库）并把 App ID 与私钥放进 `clued-admission` environment（2026-10-02）；待在 main ruleset 设为必需检查并限定来源为该 App。
 
 ---
 
