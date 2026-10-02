@@ -50,6 +50,7 @@ export function storageDestructiveCode(error: unknown): StorageDestructiveCode |
 }
 /** Guidance for fixed execution reason codes the Agent can act on. Never from the database. */
 const reasonHints: Record<string, string> = {
+  NO_PROVIDER_ATTEMPT: "The job stopped before Clued changed anything in Drive and was cancelled; nothing was changed. If the user still wants it, check the current state and submit it again under a new job_id.",
   RESTORE_NAME_CONFLICT: storageDestructiveMessages.restore_name_conflict,
   DIRECTORY_NOT_EMPTY: "The directory is not empty in Drive (trashed items inside count). Only an empty directory can be moved to the trash; do not trash its contents to get around this unless the user asks.",
   PROVIDER_OWNER_REQUIRED: "Only the item's owner can move it to the trash. Tell the user; there is no other way.",
@@ -110,7 +111,7 @@ export const storageAgentTools = [
   },
   {
     name: "clued_storage_inspect",
-    description: "Read one account storage job's status and receipt using an Owner-granted inspect permission on this client's Binding. A denied or attention_required job may carry a fixed reason_code (for example UNAUTHORIZED_WORKSPACE_MUTATION); details stay with the Owner. This does not read file contents, resume execution, refresh credentials or clear an unresolved fence. Keep the original job_id after a lost reply.",
+    description: "Read one account storage job's status and receipt using an Owner-granted inspect permission on this client's Binding. A denied or attention_required job may carry a fixed reason_code (for example UNAUTHORIZED_WORKSPACE_MUTATION); details stay with the Owner. A cancelled job with reason_code NO_PROVIDER_ATTEMPT stopped before it changed anything in Drive. This does not read file contents, resume execution, refresh credentials or clear an unresolved fence. Keep the original job_id after a lost reply.",
     inputSchema: { type: "object", required: ["connection_id", "job_id"], properties: reference, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { "clued/requiredStorageGrant": ["inspect"], "clued/scopeEnforcement": "server-side" },
@@ -287,9 +288,10 @@ export function storageAgentResult(value: unknown, input: Data): Data {
     !uuid(value.receipt_id) || (value.intent_id !== null && !uuid(value.intent_id)) ||
     !["queued", "prepared", "started", "uncertain", "committed", "cancelled", "denied", "attention_required"].includes(String(value.status)) ||
     ("replayed" in value && typeof value.replayed !== "boolean") ||
-    // Only the fixed reason code of a pre-reservation outcome; its findings stay in the Owner's row.
+    // Only the fixed reason code of a pre-reservation outcome (its findings stay in the Owner's row),
+    // or of a started job cancelled before it reached Drive.
     ("reason_code" in value && (typeof value.reason_code !== "string" || !/^[A-Z][A-Z0-9_]{2,63}$/.test(value.reason_code) ||
-      (value.status !== "denied" && value.status !== "attention_required")))) throw new Error("storage_job_response_invalid");
+      (value.status !== "denied" && value.status !== "attention_required" && value.status !== "cancelled")))) throw new Error("storage_job_response_invalid");
   const projected = Object.fromEntries(["job_id", "connection_id", "request_digest", "status", "intent_id", "receipt_id", "execution_permitted", "replayed", "reason_code"]
     .filter(key => key in value).map(key => [key, value[key]]));
   // A fixed Worker-side hint for reasons the Agent must act on (never database text).

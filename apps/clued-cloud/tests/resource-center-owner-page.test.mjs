@@ -152,6 +152,17 @@ test("rename and move is its own write-level toggle; it replaces the policy and 
   f.respond(7,{error:"private"},403);await f.settle();
   assert.match(f.text(),/Agent 修改设置结果未确认/);assert.equal(f.calls.length,8,"an unknown result is never resent");
 });
+test("a level switch refused because the root has an unresolved job says so (fix d9d6db4c)",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
+  f.button("读取 Agent 查看设置").props.onClick();await f.settle();
+  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+    content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});
+  f.respond(2,writeStatus([]));await f.settle();
+  f.button("允许 Agent 改名和移动文件").props.onClick();await f.settle();
+  f.respond(3,{error:"Storage access operation unavailable.",reason:"storage_root_busy"},409);await f.settle();
+  assert.match(f.text(),/未修改：此目录有一个已开始但未结束的任务/);
+  assert.doesNotMatch(f.text(),/结果未确认/);assert.equal(f.calls.length,4,"a refusal is never resent");
+});
 test("overwrite is its own toggle with its own disclosure and keeps rename/move as is",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();

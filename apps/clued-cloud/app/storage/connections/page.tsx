@@ -483,12 +483,15 @@ export default function StorageConnections() {
       setReadAccess(state => ({ ...state, [c.id]: read }));
       setMessage(latest.classes.includes(level) === enable
         ? `${enable ? "已允许" : "已停止"} Agent ${writeText[level].name}。回执：${result.receipt_id}` : "已提交，但最新状态未确认。请核对原回执。");
-    } catch {
+    } catch (error) {
       // The policy (and the read access bound to it) may have changed: drop both.
       setWriteAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
       setReadAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
       if (settled === revision.current) {
-        setMessage("Agent 修改设置结果未确认。若此目录有已开始但未完成的任务，请等它结束后再试。请重新读取设置并核对，勿重复提交。");
+        setMessage(error instanceof RequestFailure && error.reason === "storage_root_busy"
+          // Refused before any change: the root has a job that started and has not ended.
+          ? "未修改：此目录有一个已开始但未结束的任务，结束前不能修改 Agent 权限。没有动过网盘的任务约两分钟内会自动结束；之后重新读取设置再试。"
+          : "Agent 修改设置结果未确认。若此目录有已开始但未完成的任务，请等它结束后再试。请重新读取设置并核对，勿重复提交。");
       }
     } finally { operation.current = false; if (settled === revision.current) setBusy(false); }
   }

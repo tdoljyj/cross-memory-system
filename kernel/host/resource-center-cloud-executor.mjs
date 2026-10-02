@@ -61,7 +61,17 @@ const providerAuthorityCodes = new Set([
   "DRIVE_METADATA_UNAVAILABLE", "DRIVE_NAMESPACE_VISIBILITY_UNPROVEN", "DRIVE_PAGINATION_INVALID",
   "DRIVE_PAGINATION_LIMIT", "SOURCE_VERSION_MISMATCH", "DESTINATION_VERSION_MISMATCH", "REVISION_KEEP_LIMIT",
   "REPLACE_TARGET_UNSUPPORTED", "STORAGE_CONTENT_STAGING_MISMATCH", "SOURCE_ID_MISMATCH",
+  "DRIVE_METADATA_TIMEOUT", "DRIVE_METADATA_ABORTED", "DRIVE_METADATA_REQUEST_FAILED",
+  "DRIVE_METADATA_RESPONSE_INVALID", "DRIVE_METADATA_SUBREQUEST_LIMIT",
 ]);
+// Before the durable start, a Drive metadata read that failed in transit (no
+// answer in time, a failed request, an unreadable answer) is read again, at
+// most twice. An error status is final. The pre-effect check is never retried:
+// it runs on the admission's time, and a failure there leaves a started job
+// with no provider attempt, which the database releases.
+const transientProviderCodes = new Set(["DRIVE_METADATA_TIMEOUT", "DRIVE_METADATA_REQUEST_FAILED",
+  "DRIVE_METADATA_RESPONSE_INVALID"]);
+const PROVIDER_IDENTITY_RETRIES = 2;
 // Fixed denial labels from public.clued_resource_center_authority_v1; each names a failed check, never a value.
 const authorityDenialReasons = new Set([
   "request_invalid", "binding_inactive", "profile_mismatch", "root_identity_mismatch", "decision_not_current",
@@ -238,11 +248,14 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const resolveAuthority=async({mutation:input})=>{
         const phase=["initial","revalidation","pre_effect"][Math.min(authorityLookupCount++,2)];
         let request;
-        try { request=await authorityRequest(input); }
-        catch(error){
-          const message=error?.message;
-          logAuthorityFailure(phase,"provider_identity",providerAuthorityCodes.has(message)?message:"PROVIDER_IDENTITY_UNAVAILABLE");
-          throw error;
+        for(let retry=0;;retry++){
+          try { request=await authorityRequest(input); break; }
+          catch(error){
+            const message=error?.message;
+            if(phase!=="pre_effect" && retry<PROVIDER_IDENTITY_RETRIES && transientProviderCodes.has(message)) continue;
+            logAuthorityFailure(phase,"provider_identity",providerAuthorityCodes.has(message)?message:"PROVIDER_IDENTITY_UNAVAILABLE");
+            throw error;
+          }
         }
         let result;
         try { result=await invoke({action:"authority",request}); }
