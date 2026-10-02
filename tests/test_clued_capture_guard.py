@@ -39,9 +39,10 @@ MUTATE = "mcp__Clued__clued_record_mutate"
 CHECKPOINT = "mcp__Clued__clued_session_checkpoint"
 MERGED = [{"type": "text", "text": '{"sha":"abc","merged":true,"message":"Pull Request successfully merged"}'}]
 COMMITTED = {"status": "committed", "event_ids": ["1"]}
+ABOUT_PR_7 = {"mutation": {"content": "PR o/r#7 已合入 main"}}
 
 
-class CaptureGuardTest(unittest.TestCase):
+class GuardHarness(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -61,6 +62,8 @@ class CaptureGuardTest(unittest.TestCase):
         return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), text=True,
                               capture_output=True, env=env or self.env, timeout=30)
 
+
+class CaptureGuardTest(GuardHarness):
     def merge_turn(self) -> list[dict]:
         return [human("合入后告诉我", "u1"),
                 call("m1", MERGE, {"owner": "o", "repo": "r", "pullNumber": 7}), result("m1", MERGED)]
@@ -75,13 +78,166 @@ class CaptureGuardTest(unittest.TestCase):
 
     def test_merge_then_write_and_checkpoint_passes(self):
         entries = self.merge_turn() + [
-            call("w1", MUTATE), result("w1", COMMITTED),
+            call("w1", MUTATE, ABOUT_PR_7), result("w1", COMMITTED),
             call("c1", CHECKPOINT), result("c1", {"status": "committed", "version": 2})]
         self.assertEqual(self.run_hook(entries).returncode, 0)
 
-    def test_failed_write_attempt_counts_as_capture_attempt(self):
-        entries = self.merge_turn() + [call("w1", MUTATE), result("w1", {"status": "rejected"})]
+    def test_rejected_write_does_not_settle_an_outcome(self):
+        rejected = {"status": "rejected", "error": {"code": "record_version_conflict"}}
+        entries = self.merge_turn() + [call("w1", MUTATE, ABOUT_PR_7), result("w1", rejected)]
+        proc = self.run_hook(entries)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("did not commit (rejected: record_version_conflict)", proc.stderr)
+
+    def test_error_or_unanswered_write_does_not_settle_an_outcome(self):
+        errored = self.merge_turn() + [call("w1", MUTATE, ABOUT_PR_7),
+                                       result("w1", "MCP error -32001: Request timed out", True)]
+        proc = self.run_hook(errored)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("did not commit (MCP error -32001", proc.stderr)
+        # The Host stopped before the write returned (crash, interrupt).
+        unanswered = self.merge_turn() + [call("w1", MUTATE, ABOUT_PR_7)]
+        proc = self.run_hook(unanswered)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("did not commit (no result)", proc.stderr)
+
+    def test_replayed_committed_write_settles_an_outcome(self):
+        entries = self.merge_turn() + [
+            call("w1", MUTATE, ABOUT_PR_7), result("w1", {**COMMITTED, "replayed": True}),
+            call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
         self.assertEqual(self.run_hook(entries).returncode, 0)
+
+    def test_committed_write_about_something_else_does_not_settle_a_merge(self):
+        for text in ("Task 进展，与本次合并无关", "PR #70 已合入", "PR #77"):
+            entries = self.merge_turn() + [
+                call("w1", MUTATE, {"mutation": {"content": text}}), result("w1", COMMITTED),
+                call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+            proc = self.run_hook(entries)
+            self.assertEqual(proc.returncode, 2, text)
+            self.assertIn("none names PR #7", proc.stderr)
+
+    def test_merge_is_named_by_number_reference_or_merge_commit(self):
+        merged = [{"type": "text", "text": '{"sha":"abc1234def","merged":true}'}]
+        base = [human("合入", "u1"), call("m1", MERGE, {"owner": "o", "repo": "r", "pullNumber": 7}),
+                result("m1", merged)]
+        for text in ("PR o/r#7 已合入", "pr:o/r#7", "https://github.com/o/r/pull/7", "PR 7",
+                     "merge commit ABC1234"):
+            entries = base + [call("w1", MUTATE, {"mutation": {"content": text}}), result("w1", COMMITTED),
+                              call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+            self.assertEqual(self.run_hook(entries).returncode, 0, text)
+
+    def test_each_state_of_a_finding_is_reported_once(self):
+        steps = [self.merge_turn(),
+                 [call("w1", MUTATE, ABOUT_PR_7), result("w1", {"status": "rejected"})],
+                 [call("w2", MUTATE, {"mutation": {"content": "unrelated"}}), result("w2", COMMITTED)]]
+        expected = ["no Clued write after it", "did not commit", "none names PR #7"]
+        entries: list[dict] = []
+        for step, text in zip(steps, expected):
+            entries += step
+            first = self.run_hook(entries, session="same")
+            self.assertEqual(first.returncode, 2)
+            self.assertIn(text, first.stderr)
+            self.assertEqual(self.run_hook(entries, session="same").returncode, 0)
+        entries += [call("w3", MUTATE, ABOUT_PR_7), result("w3", COMMITTED),
+                    call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+        self.assertEqual(self.run_hook(entries, session="same").returncode, 0)
+
+    def test_gh_pr_merge_number_is_the_subject(self):
+        for command in ("gh pr merge 478 --merge --match-head-commit 7ac3f7bc",
+                        "gh pr merge https://github.com/o/r/pull/478 --squash", "gh pr merge #478"):
+            turn = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", "ok")]
+            unrelated = turn + [call("w1", MUTATE, {"mutation": {"content": "PR #47"}}),
+                                result("w1", COMMITTED)]
+            proc = self.run_hook(unrelated)
+            self.assertEqual(proc.returncode, 2, command)
+            self.assertIn("none names PR #478", proc.stderr)
+            named = turn + [call("w1", MUTATE, {"mutation": {"content": "PR #478 已合入"}}),
+                            result("w1", COMMITTED), call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+            self.assertEqual(self.run_hook(named).returncode, 0, command)
+
+    def test_real_rejection_shape_reports_its_error_code(self):
+        rejected = {"status": "rejected", "replayed": False, "error_code": "NOW_CONFLICT"}
+        proc = self.run_hook(self.merge_turn() + [call("w1", MUTATE, ABOUT_PR_7), result("w1", rejected)])
+        self.assertIn("did not commit (rejected: NOW_CONFLICT)", proc.stderr)
+
+    def test_failure_is_reported_for_the_write_about_the_subject(self):
+        entries = self.merge_turn() + [
+            call("w1", MUTATE, ABOUT_PR_7), result("w1", {"status": "rejected", "error_code": "about_pr"}),
+            call("w2", MUTATE, {"mutation": {"content": "other"}}), result("w2", {"status": "rejected"})]
+        self.assertIn("(rejected: about_pr)", self.run_hook(entries).stderr)
+
+    def test_appended_event_counts_as_a_write(self):
+        entries = self.merge_turn() + [
+            call("e1", "mcp__Clued__clued_append_event", {"summary": "PR o/r#7 merged"}),
+            result("e1", {"status": "appended", "event_id": 650, "receipt_id": "r"}),
+            call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+        self.assertEqual(self.run_hook(entries).returncode, 0)
+
+    def test_pr_number_is_read_from_every_merge_tool_shape(self):
+        for field in ("pullNumber", "pull_number", "number"):
+            entries = [human("合入", "u1"), call("m1", MERGE, {"owner": "o", "repo": "r", field: 7}),
+                       result("m1", MERGED), call("w1", MUTATE, {"mutation": {"content": "PR #7 已合入"}}),
+                       result("w1", COMMITTED), call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+            self.assertEqual(self.run_hook(entries).returncode, 0, field)
+
+    def test_pr_references_in_free_text(self):
+        for text in ("合入PR7", "已合并PR 7", "Merged.\nPR 7 done", "pull request 7", "＃7 已合入", "PR-7"):
+            entries = self.merge_turn() + [
+                call("w1", MUTATE, {"mutation": {"content": text}}), result("w1", COMMITTED),
+                call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+            self.assertEqual(self.run_hook(entries).returncode, 0, text)
+        for text in ("#7a7", "#70", "sprint 7", "prefix 7"):
+            entries = self.merge_turn() + [call("w1", MUTATE, {"mutation": {"content": text}}),
+                                           result("w1", COMMITTED)]
+            self.assertIn("none names PR #7", self.run_hook(entries).stderr, text)
+        # "pr" ending one value and "7" starting the next do not name PR #7.
+        entries = self.merge_turn() + [call("w1", MUTATE, {"title": "bump pr", "base_version": 7}),
+                                       result("w1", COMMITTED)]
+        self.assertIn("none names PR #7", self.run_hook(entries).stderr)
+
+    def test_gh_pr_merge_argument_forms(self):
+        for command in ("gh pr merge --squash 478", "gh pr merge -R o/r 478 --merge", 'gh pr merge "478"',
+                        "(gh pr merge 478)", "gh pr merge \\\n  478 --merge", "gh pr merge \\\r\n 478",
+                        "gh pr merge --match-head-commit 7ac3f7bc 478"):
+            turn = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", "ok"),
+                    call("w1", MUTATE, {"mutation": {"content": "PR #47"}}), result("w1", COMMITTED)]
+            self.assertIn("none names PR #478", self.run_hook(turn).stderr, command)
+
+    def test_every_merge_in_one_command_is_an_outcome(self):
+        command = "gh pr merge 1 --merge && gh pr merge 478 --merge"
+        turn = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", "ok"),
+                call("w1", MUTATE, {"mutation": {"content": "PR #1 已合入"}}), result("w1", COMMITTED),
+                call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+        proc = self.run_hook(turn)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("none names PR #478", proc.stderr)
+        self.assertNotIn("PR #1 with", proc.stderr)
+
+    def test_own_reminder_logged_as_user_entry_is_not_a_decision(self):
+        feedback = ("Stop hook feedback:\nClued capture guard (skills/clued/references/agent-contract.md §3 "
+                    "and §5):\n- The Clued write after it did not commit (rejected: authority_escalation_forbidden).")
+        entries = self.merge_turn() + [
+            call("w1", MUTATE, ABOUT_PR_7), result("w1", COMMITTED), call("c1", CHECKPOINT),
+            result("c1", {"status": "committed"}),
+            {"type": "user", "uuid": "fb1", "message": {"role": "user", "content": feedback}}]
+        self.assertEqual(self.run_hook(entries).returncode, 0)
+
+    def test_subjectless_outcomes_are_settled_by_any_committed_write(self):
+        for command in ("gh pr merge --merge", "git push origin HEAD:main"):
+            turn = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", "ok"),
+                    call("w1", MUTATE), result("w1", COMMITTED), call("c1", CHECKPOINT),
+                    result("c1", {"status": "committed"})]
+            self.assertEqual(self.run_hook(turn).returncode, 0, command)
+
+    def test_migration_is_named_by_its_name(self):
+        turn = [human("上线迁移", "u1"),
+                call("a1", "mcp__supabase__apply_migration", {"name": "capture_unknown"}),
+                result("a1", '{"success":true}')]
+        unrelated = turn + [call("w1", MUTATE, {"mutation": {"content": "other"}}), result("w1", COMMITTED)]
+        self.assertIn("none names migration capture_unknown", self.run_hook(unrelated).stderr)
+        named = turn + [call("w1", MUTATE, {"mutation": {"content": "applied capture_unknown"}}),
+                        result("w1", COMMITTED), call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+        self.assertEqual(self.run_hook(named).returncode, 0)
 
     def test_committed_write_without_checkpoint_blocks(self):
         entries = [notification("<task-notification/>"), call("w1", MUTATE), result("w1", COMMITTED)]
@@ -145,6 +301,13 @@ class CaptureGuardTest(unittest.TestCase):
                    call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
         self.assertEqual(self.run_hook(entries).returncode, 0)
 
+    def test_rejected_write_after_decision_still_blocks(self):
+        entries = [human("那就保持原样", "u9"), call("w1", MUTATE),
+                   result("w1", {"status": "rejected", "error": {"code": "authority_escalation_forbidden"}})]
+        proc = self.run_hook(entries)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("did not commit (rejected: authority_escalation_forbidden)", proc.stderr)
+
     def test_plain_request_passes(self):
         self.assertEqual(self.run_hook([human("做 L3 的 Stop hook", "u1")]).returncode, 0)
 
@@ -186,10 +349,53 @@ class CaptureGuardTest(unittest.TestCase):
         self.assertEqual(self.run_hook(self.merge_turn(), env=env).returncode, 0)
 
     def test_missing_transcript_or_bad_input_passes(self):
-        for stdin in ("not json", json.dumps({"session_id": "x", "transcript_path": "/nonexistent"})):
+        for stdin in ("not json", "[]", json.dumps({"session_id": "x", "transcript_path": "/nonexistent"})):
             proc = subprocess.run([sys.executable, str(HOOK)], input=stdin, text=True,
                                   capture_output=True, env=self.env, timeout=30)
             self.assertEqual(proc.returncode, 0)
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_malformed_transcript_entries_do_not_crash(self):
+        odd = [[1], 5, {"type": "user", "message": {"content": None}}, {"type": "user", "message": "x"},
+               {"type": "user", "origin": "human", "message": {"content": "接受"}},
+               {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": ["x"], "name": MUTATE,
+                                                              "input": "a string"}]}},
+               {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": ["x"]}]}}]
+        proc = self.run_hook(self.merge_turn() + odd)
+        self.assertIn(proc.returncode, (0, 2))
+        self.assertNotIn("Traceback", proc.stderr)
+
+
+class Adr06ReplayTest(GuardHarness):
+    """BUG-20260924-001 reproduction: the Owner accepts a final review PASS and
+    the session ends with no committed record of it (ADR-06 v0.1.1, 2026-09-22)."""
+
+    ACCEPT = "ADR-06 v0.1.1 Fresh-Context 终审 PASS，0 BLOCKER / 0 MAJOR，我接受"
+
+    def accepted(self) -> list[dict]:
+        return [human(self.ACCEPT, "u-accept"),
+                call("r1", "mcp__Clued__clued_record_list", {"record_type": "task"}),
+                result("r1", {"status": "ok", "records": []})]
+
+    def test_acceptance_with_no_record_blocks(self):
+        proc = self.run_hook(self.accepted())
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("may be a decision", proc.stderr)
+
+    def test_acceptance_with_a_refused_record_still_blocks(self):
+        entries = self.accepted() + [
+            call("w1", MUTATE, {"authority": "user_explicit", "mutation": {"content": "ADR-06 accepted"}}),
+            result("w1", {"status": "rejected", "error": {"code": "authority_escalation_forbidden"}})]
+        proc = self.run_hook(entries)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("authority_escalation_forbidden", proc.stderr)
+
+    def test_acceptance_recorded_and_checkpointed_passes(self):
+        entries = self.accepted() + [
+            call("w1", MUTATE, {"authority": "user_explicit", "user_confirmed": True,
+                                "mutation": {"content": "ADR-06 accepted"}}),
+            result("w1", COMMITTED), call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+        self.assertEqual(self.run_hook(entries).returncode, 0)
 
 
 class SettingsRegistrationTest(unittest.TestCase):
