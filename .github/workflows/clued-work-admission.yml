@@ -8,7 +8,8 @@ name: clued-work-admission
 # CLUED_CONTEXT_READ_TOKEN), asking whether the claim named in the PR body or
 # head commit (`Clued-Work-Claim: <id>`) admits this head, base, changed-file
 # set and pull request. It also prints which path-filtered workflows apply to
-# the changed paths and what each concluded on this head.
+# the changed paths and what each concluded on this head. The admission-gate
+# jobs of the heavy workflows read this run's result instead of calling Clued.
 #
 # `pull_request_target` (step 7 review, BLOCKER 95a93218): this file and
 # scripts/ci/clued-work-admission.mjs are taken from the base branch, and no
@@ -18,10 +19,12 @@ name: clued-work-admission
 # clued-work-admission-reverify.yml re-runs a passing check whose claim no
 # longer admits the PR.
 #
-# The `pull_request` trigger runs only for a PR that changes this file, and
-# also executes base-branch code only. It exists so such a PR (the first one
-# carrying this change included) still gets the required check, which a
-# target run of an older base file would not produce.
+# The token lives in the `clued-admission` environment (Owner setting:
+# deployment branches limited to main, no reviewers). A pull_request_target
+# run and the scheduled re-verification run on main, so they get it; a
+# workflow a PR adds or edits runs on refs/pull/N/merge and does not, even if
+# it names the environment. No `pull_request` trigger here: every PR, one that
+# edits this file included, is judged by the base-branch copy.
 #
 # Not covered here: a PR can add another workflow whose job is also named
 # clued-work-admission; both are GitHub Actions check runs. Closing that needs
@@ -37,9 +40,6 @@ name: clued-work-admission
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited, ready_for_review]
-  pull_request:
-    paths:
-      - .github/workflows/clued-work-admission.yml
 
 permissions:
   actions: read
@@ -48,7 +48,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -56,6 +56,7 @@ jobs:
     name: clued-work-admission
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    environment: clued-admission
     steps:
       # The base commit, never the PR head or merge ref.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
