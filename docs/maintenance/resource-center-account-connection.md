@@ -939,7 +939,16 @@ changes. Existing connections keep working unchanged until the Owner turns on
   or opened (`isAppAuthorized === true`; a missing field still counts).
   Listings stay unfiltered: duplicate names, shortcuts, root impersonation,
   depth and entry limits, and the identity and postcondition absence and
-  uniqueness checks see every entry and fail exactly as before. Diagnose
+  uniqueness checks see every entry and fail exactly as before.
+  Another active root of the same owner under the same Drive parent (an N0
+  onboarded root beside `Clued_资料中心`) is not an island either (Decision
+  `b18eff80`, migration `20261002070000_storage_registered_sibling_roots_v1`):
+  the job and directory-probe descriptors carry `registered_sibling_roots`,
+  the owner's other active profiles' `root_folder_id`s with the same
+  `root_parent_id`, and the scanner skips exactly those folder IDs when they
+  are listed directly in the managed root's parent. A same-name folder with
+  another ID, a revoked profile's root and other owners' roots still count.
+  Diagnose
   from Worker logs: `storage_cloud_denied` (a deny, e.g.
   `UNAUTHORIZED_WORKSPACE_MUTATION`) or `storage_cloud_unavailable` (the job
   becomes `attention_required`; fixed codes such as `DRIVE_BOUNDARY_*`,

@@ -41,6 +41,7 @@ async function fixture(options={}) {
   }
   if(options.parentlessBoundary)delete files[0].parents;
   if(options.sibling)files.push({...item('sibling',options.sibling,'parent'),mimeType:'text/plain'});
+  if(options.siblingRoot)files.push(item('n0','Clued_N0验收_新建','parent'),item('n0track','资料','n0'));
   if(options.nestedIsland)files.push(item('external','ordinary','parent'),{...item('island','Clued_notes.md','external'),mimeType:'text/plain'});
   const calls=[], rpcs=[];
   const fetcher=async(url,init)=>{
@@ -241,6 +242,17 @@ test('sibling/root drop and nested island deny before directory receipt without 
   }
   const normal=await fixture({sibling:'ordinary.txt'});
   assert.equal((await normal.probe.run({connection_id:normal.connection})).boundary_observation.status,'clean');
+});
+
+test('another registered root of the same owner beside the root is skipped only when the server descriptor names its ID (Decision b18eff80)',async()=>{
+  const unnamed=await fixture({siblingRoot:true});let error;
+  try{await unnamed.probe.run({connection_id:unnamed.connection});}catch(e){error=e;}
+  assert.deepEqual(storageProbeDiagnostic(error),{stage:'boundary',reason:'UNAUTHORIZED_WORKSPACE_MUTATION'});
+  const named=await fixture({siblingRoot:true,descriptor:{registered_sibling_roots:['n0']}});
+  assert.equal((await named.probe.run({connection_id:named.connection})).boundary_observation.status,'clean');
+  const malformed=await fixture({siblingRoot:true,descriptor:{registered_sibling_roots:'n0'}});error=undefined;
+  try{await malformed.probe.run({connection_id:malformed.connection});}catch(e){error=e;}
+  assert.equal(storageProbeDiagnostic(error).stage,'boundary');assert.equal(malformed.rpcs.length,1);
 });
 
 test('boundary incomplete enumeration, final drift, timeout and subrequest limit never complete',async()=>{

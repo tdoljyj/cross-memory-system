@@ -124,7 +124,10 @@ export async function createStorageGoogleProbe(config: {
       stage = "boundary";
       // Closed to the same Canonical parent/root as the cloud executor. No
       // caller scan roots, external-root exceptions, credential copy or cache.
+      // The server-built descriptor names the owner's other active roots under
+      // the same parent (Decision b18eff80); the scanner checks their shape.
       if (!object(d.layout) || typeof d.layout.managed_root !== "string") fail();
+      const siblingRoots: unknown = d.registered_sibling_roots === undefined ? [] : d.registered_sibling_roots;
       const root = d.layout.managed_root;
       const scanConfig = { managed_root: root, root_folder_id: d.layout.root_folder_id,
         root_parent_id: d.layout.root_parent_id, scan_roots: [{ folder_id: d.layout.root_parent_id,
@@ -133,6 +136,7 @@ export async function createStorageGoogleProbe(config: {
         trusted_profile: { registration_status: "registered", managed_root: root,
           boundary_scan_max_depth: scanConfig.max_depth, boundary_scan_max_entries: scanConfig.max_entries },
         root_folder_id: scanConfig.root_folder_id, root_parent_id: scanConfig.root_parent_id, scan_roots: scanConfig.scan_roots,
+        registered_sibling_roots: siblingRoots, // shape checked by the scanner
         get_file: async (id: string) => { checkTime(); return (await metadata.getFiles([id], { signal }))[0]; },
         list_folder: async (id: string) => { checkTime(); return (await metadata.listFolders([id], { signal }))[0]; },
       });

@@ -29,12 +29,26 @@ function identity(file, id) {
  * Every listed entry, whoever created it, goes through every structural check
  * (ambiguity, shortcut, root impersonation, depth, entry limit). Each observed
  * entry carries the listing's isAppAuthorized value to the island rule only.
+ * registered_sibling_roots (server-trusted Drive folder IDs of the same
+ * owner's other active managed roots under the same parent, Decision
+ * b18eff80) are skipped as a whole: a folder listed directly in the managed
+ * root's parent with one of those exact IDs is another registered root, not
+ * an island, and is not descended. A name match without the ID never counts.
  */
 export function createGoogleDriveBoundaryScanner({ trusted_profile: trustedProfile,
   root_folder_id: rootId, root_parent_id: parentId, scan_roots: scanRoots,
+  registered_sibling_roots: siblingRootIds,
   get_file: getFile, list_folder: listFolder, get_files: getFiles, list_folders: listFolders,
 } = {}) {
   const profile = structuredClone(trustedProfile), roots = structuredClone(scanRoots);
+  const siblings = siblingRootIds === undefined ? [] : Array.isArray(siblingRootIds) ? [...siblingRootIds] : null;
+  if (!siblings || siblings.length > 64 || new Set(siblings).size !== siblings.length ||
+      siblings.some(id => typeof id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(id) || id === rootId || id === parentId))
+    fail("DRIVE_BOUNDARY_PROFILE_UNQUALIFIED");
+  const siblingRoots = new Set(siblings);
+  // Only a folder listed directly in the managed root's parent can be another
+  // registered root; anywhere else the same ID is an ordinary entry.
+  const isSiblingRoot = (folderId, file) => folderId === parentId && file.mimeType === FOLDER && siblingRoots.has(file.id);
   const managed = normalized(profile?.managed_root), parent = managed?.slice(0,managed.lastIndexOf("/"));
   const maxDepth = profile?.boundary_scan_max_depth ?? 8, maxEntries = profile?.boundary_scan_max_entries ?? 10000;
   if (profile?.registration_status !== "registered" || !managed || managed !== profile.managed_root || !parent ||
@@ -96,6 +110,7 @@ export function createGoogleDriveBoundaryScanner({ trusted_profile: trustedProfi
             sawRoot=true;continue;
           }
           if(childPath===managed) fail("DRIVE_BOUNDARY_ROOT_CHANGED");
+          if(isSiblingRoot(folderId,file)) continue;
           observed.push({path:childPath,is_app_authorized:raw.isAppAuthorized});
           if(file.mimeType===SHORTCUT) fail("DRIVE_BOUNDARY_SHORTCUT_UNQUALIFIED");
           if(file.mimeType===FOLDER){
@@ -140,6 +155,7 @@ export function createGoogleDriveBoundaryScanner({ trusted_profile: trustedProfi
         }
         // Same name/path with another ID must not impersonate the managed root.
         if(childPath===managed) fail("DRIVE_BOUNDARY_ROOT_CHANGED");
+        if(isSiblingRoot(folderId,file)) continue;
         observed.push({path:childPath,is_app_authorized:raw.isAppAuthorized});
         if(file.mimeType===SHORTCUT) fail("DRIVE_BOUNDARY_SHORTCUT_UNQUALIFIED");
         if(file.mimeType===FOLDER){

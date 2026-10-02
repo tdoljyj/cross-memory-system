@@ -378,6 +378,30 @@ export async function testAccountCloud(t, admin, server, user, decision) {
       assert.equal(ran.status, "committed", JSON.stringify(ran)); assert.equal(storage.posts, 1);
       assert.equal((await journal(job)).state, "committed");
     });
+    await t.test("descriptors name the owner's other active roots under the same Drive parent, never revoked or elsewhere (Decision b18eff80)", async () => {
+      const initial = await createRoot(), client = await bind(initial), target = await activate(initial), job = await submit(target, client);
+      const loadSiblings = async () => (await cloud({ action: "load", ...job.reference })).registered_sibling_roots;
+      const probeSiblings = async () => (await admin.query("select clued_private.storage_directory_descriptor_v1($1,$2) value",
+        [user, target.connection])).rows[0].value.registered_sibling_roots;
+      assert.deepEqual(await loadSiblings(), []); assert.deepEqual(await probeSiblings(), []);
+      const sibling = async parent => {
+        const suffix = randomUUID();
+        const registered = await register({ action: "profile_register", project_id: project, profile_version: `account-cloud-sibling/${suffix}`,
+          managed_root: `/account-cloud-sibling-${suffix}/Clued_资料中心`, root_folder_id: `sibling-${suffix}`, root_parent_id: parent, root_folder_version: "1" });
+        return { id: registered.target_refs.find(ref => ref.role === "primary").id, rootId: `sibling-${suffix}` };
+      };
+      const near = await sibling(target.parentId), far = await sibling(`elsewhere-${randomUUID()}`);
+      assert.deepEqual(await loadSiblings(), [near.rootId]); assert.deepEqual(await probeSiblings(), [near.rootId]);
+      assert.ok(!(await loadSiblings()).includes(far.rootId));
+      await register({ action: "profile_revoke", profile_id: near.id, base_version: 1 });
+      assert.deepEqual(await loadSiblings(), []); assert.deepEqual(await probeSiblings(), []);
+      await register({ action: "profile_revoke", profile_id: far.id, base_version: 1 });
+      // Never callable from API roles.
+      for (const role of ["anon", "authenticated", "service_role"]) {
+        const db = await connect(role);
+        await assert.rejects(db.query("select clued_private.storage_registered_sibling_roots_v1($1,$2)", [user, target.profile]), /permission denied/);
+      }
+    });
     await t.test("lost V2 provider reply retains original attempt and root fence across replay, conflicts and restart", async () => {
       const initial = await createRoot(), client = await bind(initial), target = await activate(initial), job = await submit(target, client), storage = provider(target);
       storage.losePost = true; const requests = [];
