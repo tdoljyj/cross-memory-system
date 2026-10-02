@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 // Work Claim Admission v0.1, step 3 (development/contracts/execution-admission/
-// WorkClaimAdmission.v0.1.md §4.6 L0a/L0b). One script, three modes:
+// WorkClaimAdmission.v0.1.md §4.6 L0a/L0b). One script, four modes:
 //
 //   --mode required   the unfiltered `clued-work-admission` check on every PR
 //   --mode gate       the `admission-gate` job that heavy self-hosted workflows
 //                     run first; they `needs:` it and run only on admitted=true.
 //                     It does not call Clued and holds no Clued token: it reads
 //                     the result of the trusted required check (see gate())
+//   --mode dispatch-admit
+//                     the `clued-work-admission-dispatch` run on the default
+//                     branch: verifies a claim before a heavy workflow is
+//                     dispatched by hand (see dispatchAdmit())
 //   --mode reverify   the scheduled re-check: every open PR whose last
 //                     admission run passed is verified again, and that run is
 //                     re-run when its claim no longer admits the PR (expired,
@@ -39,9 +43,9 @@
 // token or a transport error all fail closed. Non-PR events (push to main,
 // dispatch) are not admission subjects and are admitted.
 //
-// CLUED_CONTEXT_READ_TOKEN is read only by the jobs that run base-branch code
-// (the pull_request_target check and the scheduled re-verification), both in
-// the `clued-admission` environment. No `pull_request` job, whose code the PR
+// CLUED_CONTEXT_READ_TOKEN is read only by the jobs that run default-branch
+// code (the pull_request_target check, the scheduled re-verification and the
+// dispatch admission), all in the `clued-admission` environment. No `pull_request` job, whose code the PR
 // controls, is given it.
 //
 // No dependencies: Node 20+ fetch, crypto and fs only, so a hosted runner
@@ -599,9 +603,10 @@ async function latestAdmissionRun(fetchImpl, env, repository, headSha) {
   return latest;
 }
 
-export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() }) {
   const enforced = enforcementEnabled(env);
   const outcome = emptyOutcome(eventName, enforced);
+  if (eventName === "workflow_dispatch") return dispatchGate({ env, event, fetchImpl, now, outcome });
   if (!PR_EVENTS.has(eventName)) {
     outcome.admitted = true;
     outcome.verdict = "NOT_APPLICABLE";
@@ -650,6 +655,166 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     outcome.reasons.push("advisory only: CLUED_WORK_ADMISSION_ENFORCE is not set");
   }
   return outcome;
+}
+
+// ---------------------------------------------------------------------------
+// Hand dispatch (Owner Decision 75abfe80). Agents act through the Owner's
+// account, so "only the Owner may dispatch" does not require a claim. A heavy
+// workflow dispatched by hand runs only after a claim was verified:
+//
+//   1. Dispatch clued-work-admission-dispatch.yml on the default branch with
+//      inputs workflow (one of DISPATCH_GATED_WORKFLOWS), ref and claim_id.
+//      That run holds the Clued token (clued-admission environment), verifies
+//      the claim and names itself "admit <workflow> <ref> <claim_id>".
+//   2. Dispatch the heavy workflow on that ref with admission_run_id = the
+//      run id of step 1. Its admission-gate (no token) reads that run and
+//      admits only when it succeeded on the default branch within
+//      DISPATCH_ADMISSION_TTL_SECONDS and names this workflow and ref.
+//
+// The admission run must come from the default branch: a copy of the
+// dispatch workflow on another branch could skip the check, and the
+// environment's branch policy keeps the token from it anyway.
+
+export const DISPATCH_ADMISSION_WORKFLOW = "clued-work-admission-dispatch.yml";
+export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml"];
+export const DISPATCH_ADMISSION_TTL_SECONDS = 1800;
+const CLAIM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SCOPE = /^(global|project:[0-9a-fA-F-]{36})$/;
+const GIT_REF = /^[A-Za-z0-9._/-]{1,200}$/;
+
+export function dispatchTitle(workflow, ref, claimId) {
+  return `admit ${workflow} ${ref} ${claimId}`;
+}
+
+function workflowFileOf(env) {
+  const match = /\.github\/workflows\/([^@/]+)@/.exec(env.GITHUB_WORKFLOW_REF ?? "");
+  return match ? match[1] : null;
+}
+
+const DISPATCH_HOWTO = `dispatch ${DISPATCH_ADMISSION_WORKFLOW} on the default branch with workflow, ref and claim_id first, then pass its run id as admission_run_id`;
+
+async function dispatchGate({ env, event, fetchImpl, now, outcome }) {
+  const workflow = workflowFileOf(env);
+  const ref = env.GITHUB_REF_NAME ?? "";
+  if (!workflow || !DISPATCH_GATED_WORKFLOWS.includes(workflow)) {
+    outcome.admitted = true;
+    outcome.verdict = "NOT_APPLICABLE";
+    outcome.reasons = [`workflow ${workflow ?? "unknown"} is not dispatch-gated`];
+    return outcome;
+  }
+  const defaultBranch = (event && event.repository && event.repository.default_branch) || "main";
+  const runId = String((event && event.inputs && event.inputs.admission_run_id) ?? "").trim();
+  try {
+    if (!/^[0-9]{1,20}$/.test(runId)) {
+      outcome.verdict = "REJECTED";
+      outcome.reasons.push(`admission_run_missing: ${DISPATCH_HOWTO}`);
+    } else {
+      if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
+      const run = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/actions/runs/${runId}`, { allowMissing: true });
+      if (!run) {
+        outcome.verdict = "REJECTED";
+        outcome.reasons.push(`admission_run_not_found:${runId}`);
+      } else {
+        outcome.admission_run = { id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url ?? null };
+        const title = String(run.display_title ?? "").split(" ");
+        const expectedPath = `.github/workflows/${DISPATCH_ADMISSION_WORKFLOW}`;
+        const runPath = String(run.path ?? "");
+        const checks = [
+          [runPath === expectedPath || runPath.startsWith(`${expectedPath}@`), `admission_run_wrong_workflow:${runPath}`],
+          [run.event === "workflow_dispatch", `admission_run_wrong_event:${run.event}`],
+          [run.head_branch === defaultBranch, `admission_run_not_on_default_branch:${run.head_branch}`],
+          [run.status === "completed" && run.conclusion === "success", `admission_run_not_successful:${run.status}/${run.conclusion}`],
+          [now() - Date.parse(run.created_at) <= DISPATCH_ADMISSION_TTL_SECONDS * 1000, `admission_run_expired:${run.created_at}`],
+          [title.length === 4 && title[0] === "admit" && title[1] === workflow && title[2] === ref && CLAIM_ID.test(title[3]),
+            `admission_run_other_target:${run.display_title}`],
+        ];
+        for (const [ok, reason] of checks) if (!ok) outcome.reasons.push(reason);
+        if (title.length === 4 && CLAIM_ID.test(title[3])) outcome.claim_id = title[3];
+        if (outcome.reasons.length === 0) {
+          outcome.verdict = "ADMITTED";
+          outcome.admitted = true;
+        } else {
+          outcome.verdict = "REJECTED";
+        }
+      }
+    }
+  } catch (error) {
+    if (outcome.enforced) throw error;
+    outcome.verdict = "NOT_ENFORCED";
+    outcome.reasons.push(`advisory gate unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!outcome.admitted && !outcome.enforced) {
+    outcome.advisory = true;
+    outcome.admitted = true;
+    outcome.reasons.push("advisory only: CLUED_WORK_ADMISSION_ENFORCE is not set");
+  }
+  return outcome;
+}
+
+// The dispatch admission run (step 1 above). Inputs arrive as environment
+// variables; the run must be on the default branch.
+export async function dispatchAdmit({ env, fetchImpl, workspace }) {
+  const enforced = enforcementEnabled(env);
+  const outcome = emptyOutcome("workflow_dispatch", enforced);
+  const workflow = String(env.ADMIT_WORKFLOW ?? "").trim();
+  const ref = String(env.ADMIT_REF ?? "").trim();
+  const claimId = String(env.ADMIT_CLAIM_ID ?? "").trim();
+  const scope = String(env.ADMIT_SCOPE ?? "").trim() || "global";
+  const defaultBranch = String(env.CLUED_DEFAULT_BRANCH ?? "").trim() || "main";
+  if (env.GITHUB_REF !== `refs/heads/${defaultBranch}`) throw new Error(`dispatch admission runs only on ${defaultBranch}, not ${env.GITHUB_REF}.`);
+  if (!DISPATCH_GATED_WORKFLOWS.includes(workflow)) throw new Error(`workflow ${workflow} is not dispatch-gated.`);
+  if (!GIT_REF.test(ref) || ref.includes("..")) throw new Error(`ref ${ref} is not a branch or tag name.`);
+  if (!CLAIM_ID.test(claimId)) throw new Error("claim_id is not a claim id.");
+  if (!SCOPE.test(scope)) throw new Error(`scope ${scope} is not global or project:<id>.`);
+  if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
+  outcome.claim_id = claimId;
+  outcome.scope = scope;
+  const notEnforced = (reason) => {
+    outcome.admitted = true;
+    if (outcome.verdict === null || outcome.verdict === "ERROR") outcome.verdict = "NOT_ENFORCED";
+    outcome.reasons.push(reason);
+    return outcome;
+  };
+  try {
+    const commit = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/commits/${encodeURIComponent(ref)}`, { allowMissing: true });
+    if (!commit || typeof commit.sha !== "string") throw new Error(`ref ${ref} was not found.`);
+    outcome.head_sha = commit.sha;
+    if (!env.CLUED_CONTEXT_READ_TOKEN) {
+      if (enforced) throw new Error("CLUED_CONTEXT_READ_TOKEN is not set; admission cannot be verified.");
+      return notEnforced("CLUED_CONTEXT_READ_TOKEN is not set; advisory verification skipped");
+    }
+    const verified = await verifyClaim(fetchImpl, env, { scope, claim_id: claimId, head_sha: commit.sha }, workspace);
+    if (verified.kind === "rpc_unavailable") {
+      if (enforced) throw new Error(`Clued ${VERIFY_RPC} is not deployed (${verified.detail}).`);
+      return notEnforced(`${VERIFY_RPC} is not deployed yet (${verified.detail})`);
+    }
+    if (verified.kind === "refused") {
+      if (enforced) throw new Error(`Clued refused the verification request (${verified.detail}).`);
+      return notEnforced(`Clued refused the verification request (${verified.detail})`);
+    }
+    outcome.verdict = verified.verdict;
+    outcome.reasons.push(...verified.reasons);
+    if (verified.payload.claim && typeof verified.payload.claim === "object") {
+      const { claim } = verified.payload;
+      outcome.claim = {
+        task_id: claim.task_id ?? null, status: claim.status ?? null, fence: claim.fence ?? null,
+        expires_at: claim.expires_at ?? null, base_commit: claim.base_commit ?? null,
+        bound_pr: claim.bound_pr ?? null,
+        write_set: Array.isArray(claim.write_set) ? claim.write_set : [],
+      };
+    }
+    if (enforced) {
+      outcome.admitted = outcome.verdict === "ADMITTED";
+    } else {
+      outcome.advisory = true;
+      outcome.admitted = true;
+      outcome.reasons.push("advisory only: CLUED_WORK_ADMISSION_ENFORCE is not set");
+    }
+    return outcome;
+  } catch (error) {
+    if (enforced) throw error;
+    return notEnforced(`advisory verification unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -704,8 +869,8 @@ function appendFile(file, text) {
 export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch) {
   const modeIndex = argv.indexOf("--mode");
   const mode = modeIndex >= 0 ? argv[modeIndex + 1] : "required";
-  if (mode !== "required" && mode !== "gate" && mode !== "reverify") {
-    console.error("usage: clued-work-admission.mjs --mode required|gate|reverify");
+  if (!["required", "gate", "reverify", "dispatch-admit"].includes(mode)) {
+    console.error("usage: clued-work-admission.mjs --mode required|gate|reverify|dispatch-admit");
     return 2;
   }
   if (mode === "reverify") {
@@ -725,9 +890,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
   }
   let outcome;
   try {
-    outcome = mode === "gate"
-      ? await gate({ env, event, eventName, fetchImpl })
-      : await evaluate({ env, event, eventName, fetchImpl, workspace: env.GITHUB_WORKSPACE, withSummary: true });
+    if (mode === "gate") outcome = await gate({ env, event, eventName, fetchImpl });
+    else if (mode === "dispatch-admit") outcome = await dispatchAdmit({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE });
+    else outcome = await evaluate({ env, event, eventName, fetchImpl, workspace: env.GITHUB_WORKSPACE, withSummary: true });
   } catch (error) {
     outcome = emptyOutcome(eventName, enforcementEnabled(env));
     outcome.verdict = "ERROR";
@@ -749,7 +914,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
   }
   if (!outcome.admitted) {
     const text = `${outcome.verdict}: ${outcome.reasons.join("; ")}`;
-    if (mode === "required") {
+    if (mode === "required" || mode === "dispatch-admit") {
       console.error(`::error title=clued-work-admission::${text}`);
       return 1;
     }

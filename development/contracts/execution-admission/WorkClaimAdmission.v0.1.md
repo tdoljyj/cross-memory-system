@@ -173,10 +173,17 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - 只有跑 base 分支代码的两个 workflow 引用该 token：`clued-work-admission.yml` 与 `clued-work-admission-reverify.yml`，二者都在 `clued-admission` environment 中运行。Owner 将该 environment 的部署分支限定为 `main`、不设审批人，把 token 移为 environment secret、删除仓库 secret 并轮换后，PR 新增或改写的 workflow（运行在 `refs/pull/N/merge`）即使声明该 environment 也拿不到 token。
   - 仓库检查（`scripts/ci/clued-work-admission.test.mjs`）断言只有上述两个 workflow 引用 `secrets.CLUED_CONTEXT_READ_TOKEN`。
   - 仍未覆盖：同名 check 伪造（见上），以及 PR 可删掉 `needs: admission-gate`（Task `29128827`）。
+- **实现（加闸范围与手动触发，2026-10-02，Owner Decision `75abfe80`，Task `29128827`）**：
+  - 新增加闸：`public-mcp-behavior.yml`、`public-mcp-protocol.yml`（装依赖、起本地 MCP，behavior 还起数据库）。`model-program-*`、`mps03-native-agent`、`multitrack-governance-projection`、`node-profile-policy` 是几秒的 Python 校验，不加闸：闸任务本身的开销与等待超过它们。
+  - 手动触发：Agent 用 Owner 账号，「只许 Owner 触发」不等于要求认领。`clued-g4-database`、`information-flow-e2e`、`clued-connection-authorization` 的 `workflow_dispatch` 现在要带 `admission_run_id`。流程两步：
+    1. 在默认分支触发 `clued-work-admission-dispatch.yml`，参数 `workflow`（上述三者之一）、`ref`、`claim_id`（可选 `scope`）。它在 `clued-admission` environment 中持有 token，向 Clued 校验该 claim（`clued_work_verify_v1`，带 ref 的 head，不带 changed_paths），运行名为 `admit <workflow> <ref> <claim_id>`；不在默认分支时 job 不运行。
+    2. 在该 ref 上触发重任务 workflow，`admission_run_id` 填第 1 步的 run id。其 `admission-gate`（无 token）只在该运行是默认分支上的 `workflow_dispatch`、成功、30 分钟内、运行名指向本 workflow 与本 ref 时放行。
+  - 一次准入在 30 分钟内可用于同一 workflow 与 ref 的多次触发；claim 本身仍须有效（第 1 步校验时）。push 与定时事件不经此闸。
+  - `skills/clued/references/agent-contract.md` 尚未写入这两步（合同文本随 Worker 下发，需单独发布）；缺 `admission_run_id` 时闸的提示写明做法。
 
 **L0b：重任务 workflow 的 `admission-gate` job**
 
-- 现有 `information-flow-e2e.yml`、`clued-g4-database.yml`、`clued-cloud-node22-install.yml`、`model-program-*.yml` 等自托管重任务加一个前置 job，与 L0a 同一脚本；`needs: admission-gate` 且 `if: needs.admission-gate.outputs.admitted == 'true'`。
+- `information-flow-e2e.yml`、`clued-g4-database.yml`、`clued-cloud-node22-install.yml`、`clued-connection-authorization.yml`、`public-mcp-behavior.yml`、`public-mcp-protocol.yml` 这些自托管重任务加一个前置 job，与 L0a 同一脚本；`needs: admission-gate` 且 `if: needs.admission-gate.outputs.admitted == 'true'`。
 - 未 admitted 的 PR 仍跑 gitleaks、trivy（它们是 required，且便宜），其余跳过并在 check summary 写"未被 claim 覆盖"。
 - 这一层挡住的是本次事故中真实烧掉的东西：三份 PR 各自触发了 Information Flow E2E（12 分钟）、Supabase 栈、isolated-candidate。
 
