@@ -12,7 +12,10 @@ the stop once, with a reason, when it finds:
   them (BUG-20260924-003: a checkpoint absorbs only its own context's events,
   so project-scope writes need a checkpoint in that project's context);
 * a human message that looks like an Owner decision with no committed Clued
-  write after it.
+  write after it;
+* an answered question (AskUserQuestion) with no committed Clued write after
+  it: Owner decisions are asked as such questions, so every answer counts as
+  a decision, whatever its wording.
 
 Only a write whose result is committed (or "appended", for the legacy event
 tool) settles a finding: a rejected, failed or unanswered write does not. A
@@ -85,6 +88,11 @@ class Subject:
 # A Clued write succeeded: record tools return "committed"; the legacy
 # clued_append_event returns "appended" with a receipt.
 WRITE_OK = ("committed", "appended")
+# The tool that asks the Owner a question, and the text of an answered one:
+# 'Your questions have been answered: "<question>"="<answer>", ...'
+ASK_TOOL = "askuserquestion"
+ANSWERED = "have been answered"
+ANSWER = re.compile(r'="((?:[^"\\]|\\.)*)"')
 # Text of this hook's own reminders, should the Host log one as a user entry.
 OWN_MESSAGE = "Clued capture guard (skills/clued/references/agent-contract.md"
 # `gh pr merge` options that take a value.
@@ -255,6 +263,7 @@ def analyse(entries: list[dict]) -> list[Finding]:
     committed_writes: list[tuple[int, str, str | None]] = []  # (position, use id, context)
     checkpoints: list[tuple[int, str]] = []  # (position, context)
     human_prompts: list[tuple[int, str, str]] = []  # (position, key, text)
+    answers: list[tuple[int, str, str]] = []  # (position, use id, the Owner's answers)
 
     for pos, entry in enumerate(entries):
         if entry.get("isSidechain"):
@@ -299,6 +308,9 @@ def analyse(entries: list[dict]) -> list[Finding]:
                     committed_writes.append((pos, use_id, write_context(tool_input)))
                 else:
                     write.detail = failure_detail(body, failed)
+            elif suffix == ASK_TOOL and not failed and ANSWERED in body:
+                chosen = "; ".join(ANSWER.findall(body)) or body.strip()
+                answers.append((pos, use_id, " ".join(chosen.split())[:120]))
             elif suffix == CLUED_CHECKPOINT_TOOL and not failed and result_status(body) == "committed":
                 checkpoints.append((pos, checkpoint_context(tool_input, body)))
             elif suffix == "merge_pull_request" and not failed and '"merged":true' in body.replace(" ", ""):
@@ -363,6 +375,21 @@ def analyse(entries: list[dict]) -> list[Finding]:
                 "Reconcile if you wrote since resume, then clued_session_checkpoint (§5)."
             )
         findings.append(Finding(f"checkpoint:{context}:{use_ids[-1]}", message))
+    for pos, use_id, chosen in answers:
+        state, detail = settle(ordered, pos, None)
+        if state == "none":
+            findings.append(Finding(
+                f"answer:{use_id}",
+                f"- The Owner answered a question (“{chosen}”) and no Clued write followed. An Owner "
+                "choice is a decision per §3: record it; if this answer needs no record, say why.",
+            ))
+        elif state == "failed":
+            findings.append(Finding(
+                f"answer:{use_id}:failed",
+                f"- The Owner answered a question (“{chosen}”) and the Clued write after it did not "
+                f"commit ({detail}). Fix and retry it; if Clued or the Host refuses it, tell the Owner "
+                "which write is still owed (§4).",
+            ))
     if human_prompts:
         pos, key, text = human_prompts[-1]
         match = DECISION_PATTERN.search(text)
