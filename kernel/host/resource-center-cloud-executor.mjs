@@ -313,7 +313,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         }
         return Object.freeze({...result.authority,workspace_version:"provider+canonical:"+hash([result.authority.workspace_version,request.provider_identity])});
       };
-      let startedProvider=null, saved=null;
+      let startedProvider=null, saved=null, scopeRefusal=null;
       const effectConfig={trusted_profile:profile,get_credential:credential,resolve_provider_identity:resolveProvider,
         fetch:driveFetch,clock,consume_started_provider:binding=>{
           const current=startedProvider;startedProvider=null;
@@ -383,6 +383,20 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         mutation_effect:effect,scan_boundary:scan,clock,qualified_operations:modify||replace||destructive||subtree||adopt?[mutation.operation]:["create"],
         prepare_write:async({mutation:input,binding})=>{
           const request=await authorityRequest(input);
+          // P7: without the full credential Drive refuses writes to an item this
+          // app did not create or open. Changing one that Drive reports as such
+          // is refused here, before the durable start, so it never fences the
+          // root (SCOPE_UPGRADE_REQUIRED). The item is the one this identity
+          // names; only an explicit false refuses.
+          if((modify||replace||destructive||subtree) &&
+            !scopeProfileCovers(scopeProfile((await credential()).scope),"full")){
+            const itemId=request.provider_identity[replace ? "destination_file_id" : "source_file_id"];
+            const authorization=typeof itemId==="string" && itemId ? await metadata.getAppAuthorization(itemId) : null;
+            if(authorization?.id===itemId && authorization.app_authorized===false){
+              scopeRefusal="SCOPE_UPGRADE_REQUIRED";
+              fail("SCOPE_UPGRADE_REQUIRED");
+            }
+          }
           const result=await invoke({action:"begin",prepare:{action:"prepare",request_key:"account-job:"+ref.job_id,
             idempotency_key:"account-job:"+ref.job_id+":prepare",request_sha256:binding.request_sha256,
             exact_request:{mutation:input,binding},authority_request:request}});
@@ -489,12 +503,10 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       // needs the full credential (ADOPT_SCOPE_UPGRADE_REQUIRED), an item this
       // account owns (PROVIDER_OWNER_REQUIRED) of the named kind and never a
       // shortcut (ADOPT_TARGET_UNSUPPORTED) and, for a directory, its folder's
-      // sharing state (DIRECTORY_SHARING_DIFFERS). Without the full credential
-      // Drive refuses writes to an item this app did not create or open, so
-      // changing one is refused before it could fence the root
-      // (SCOPE_UPGRADE_REQUIRED). A lookup failure falls through: the
-      // authority and the effect resolve the same identity and fail closed.
-      if(adopt || modify || replace || destructive || subtree){
+      // sharing state (DIRECTORY_SHARING_DIFFERS). A lookup failure falls
+      // through: the authority and the effect resolve the same identity and
+      // fail closed.
+      if(adopt){
         let refusal=null;
         const full=scopeProfileCovers(scopeProfile((await credential()).scope),"full");
         try{
@@ -509,13 +521,6 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
               else if(shape.directory && (typeof identity.source_sharing_digest!=="string" ||
                 identity.source_sharing_digest!==identity.source_parent_sharing_digest)) refusal="DIRECTORY_SHARING_DIFFERS";
             }
-          }else if(!full){
-            // Trash, untrash and a directory move name the item's Drive ID; the
-            // others resolve it from the path.
-            const itemId=destructive||subtree ? mutation.source_file_id
-              : (await resolveProvider({profile,mutation}))[replace ? "destination_file_id" : "source_file_id"];
-            const authorization=typeof itemId==="string" && itemId ? await metadata.getAppAuthorization(itemId) : null;
-            if(authorization?.id===itemId && authorization.app_authorized===false) refusal="SCOPE_UPGRADE_REQUIRED";
           }
         }catch{ /* resolved again below, failing closed */ }
         if(refusal){
@@ -524,6 +529,11 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         }
       }
       const result=await host.callTool(RESOURCE_CENTER_MUTATION_TOOL,mutation);
+      if(scopeRefusal){
+        // Refused in prepare_write, before the durable start: nothing was reserved.
+        logDiagnostic("deny",scopeRefusal);
+        return {status:"deny",error_code:scopeRefusal,side_effects:0,execution_permitted:false};
+      }
       if(result.status==="unreconciled" || result.status==="deny") {
         // Keep the original journal fenced, but leave a stable diagnostic.
         logDiagnostic(result.status,result.error_code);

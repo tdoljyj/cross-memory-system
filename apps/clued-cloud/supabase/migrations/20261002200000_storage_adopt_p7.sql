@@ -143,7 +143,9 @@ end $migration$;
 --   whose credential is full (adopt_scope_upgrade_required otherwise, before
 --   any job exists). One existing Drive item per job, named by its path and
 --   Drive ID; never the root or a track (a direct child of the root); nothing
---   registered (active or trashed) at that path or with that Drive ID
+--   registered (active or trashed) at that path, and no registration of that
+--   Drive ID in any state, revoked included: an item the Owner removed from
+--   Clued comes back only through the administrative path
 --   (adopt_already_registered).
 -- * The Artifact authority requires the item's folder to be registered, current
 --   and matched like any destination folder (by Drive version or sharing
@@ -192,13 +194,13 @@ declare c clued_private.storage_connections_v1; p clued_private.resource_center_
 begin
   select * into c from clued_private.storage_connections_v1 where id=p_connection;
   select pr.* into p from clued_private.resource_center_profiles_v1 pr where pr.id=c.profile_id and pr.user_id=c.owner_id;
-  if c.id is null or p.id is null then return; end if;
+  if c.id is null or p.id is null then raise exception 'storage_policy_denied' using errcode='42501'; end if;
   if c.provider_scope_profile is distinct from 'full' then
     raise exception 'adopt_scope_upgrade_required' using errcode='42501'; end if;
   if regexp_replace(m->>'source_path','/[^/]*$','')=p.managed_root then
     raise exception 'storage_job_input_invalid' using errcode='22023'; end if;
-  if exists(select 1 from clued_private.resource_center_artifacts_v1 a where a.profile_id=p.id and a.state in ('active','trashed')
-      and (a.path=m->>'source_path' or a.provider_file_id=m->>'source_file_id')) then
+  if exists(select 1 from clued_private.resource_center_artifacts_v1 a where a.profile_id=p.id
+      and ((a.state in ('active','trashed') and a.path=m->>'source_path') or a.provider_file_id=m->>'source_file_id')) then
     raise exception 'adopt_already_registered' using errcode='22023'; end if;
 end $$;
 
@@ -284,7 +286,8 @@ begin
     if left(v_destination_path,$a$,
      $r$  -- Adopt (P7): one existing, unregistered item in a registered, current,
   -- ordinary folder (matched like any destination folder), never the root or
-  -- a track; nothing registered at its path or with its Drive ID; a directory
+  -- a track; nothing registered at its path, and its Drive ID never registered
+  -- in any state (a revoked item returns only by the administrative path); a directory
   -- only with exactly its folder's sharing state.
   if v_operation='adopt' then
     if left(v_source_path,char_length(v_profile.managed_root)+1)<>v_profile.managed_root||'/' then
@@ -320,8 +323,8 @@ begin
       return jsonb_build_object('status','denied','reason','governance_forbidden');
     end if;
     if exists(select 1 from clued_private.resource_center_artifacts_v1 a
-        where a.profile_id=v_profile.id and a.state in ('active','trashed')
-          and (a.path=v_source_path or a.provider_file_id=v_provider->>'source_file_id')) then
+        where a.profile_id=v_profile.id
+          and ((a.state in ('active','trashed') and a.path=v_source_path) or a.provider_file_id=v_provider->>'source_file_id')) then
       return jsonb_build_object('status','denied','reason','already_registered');
     end if;
     if v_mutation->>'target_kind'='directory' and (coalesce(v_provider->>'source_sharing_digest','') !~ '^[0-9a-f]{64}$'
@@ -393,7 +396,7 @@ begin
         or regexp_replace(p_mutation->>'source_path','/[^/]*$','')=p.managed_root
         or parent.provider_file_id is distinct from m.authority_request->'provider_identity'->>'source_parent_id'
         or exists(select 1 from clued_private.resource_center_artifacts_v1 x where x.profile_id=p.id
-          and x.state in ('active','trashed') and (x.path=p_mutation->>'source_path'
+          and ((x.state in ('active','trashed') and x.path=p_mutation->>'source_path')
             or x.provider_file_id=m.authority_request->'provider_identity'->>'source_file_id'))) then
       return null; end if;
     selected:=parent;

@@ -988,8 +988,8 @@ change it like an item Clued created.
   whether managing existing files is allowed.
 - To withdraw the grant, the Owner removes Clued in the Google account's
   third-party access settings; this ends every Clued connection of that Google
-  account. "撤回全部文件读取授权" does not exist yet, and the page never
-  points to it.
+  account. "撤回全部文件读取授权" does not exist yet, and the full-scope
+  disclosure never points to it.
 - Before Google's verification of the `drive` scope, only test users can grant
   it. If the consent page refuses the scope, add it to the OAuth consent
   screen's data access list in the Google Cloud console; that is a console
@@ -1001,13 +1001,18 @@ change it like an item Clued created.
   source_file_id}` under the `modify` level. Before any job exists the
   database refuses a connection whose credential is not full
   (`adopt_scope_upgrade_required`), an item registered (active or trashed) at
-  that path or with that Drive ID (`adopt_already_registered`), and the root's
-  own children (tracks; `storage_job_input_invalid`).
+  that path or a Drive ID registered in any state, revoked included
+  (`adopt_already_registered`: an item the Owner removed from Clued returns
+  only through the administrative path), and the root's own children (tracks;
+  `storage_job_input_invalid`).
 - Authority: the item's folder must be registered, current, matched like any
   destination folder (Drive version or sharing digest) and `ordinary`
   (`governance_forbidden` otherwise: items under governance folders keep the
   administrative registration path). A directory is adopted only when its
-  sharing digest equals its folder's (`sharing_differs`).
+  sharing digest equals its folder's (`sharing_differs`), so content written
+  into it later inherits nothing its folder does not grant. A file's own
+  sharing is not checked (Decision `6dc1cf20` does not ask for it): a later
+  replace writes into a file shared however the Owner shared it.
 - Executor, before any reservation: `ADOPT_SCOPE_UPGRADE_REQUIRED` (the
   credential is not full), `PROVIDER_OWNER_REQUIRED` (not owned by this
   Google account), `ADOPT_TARGET_UNSUPPORTED` (a shortcut, trashed, in
@@ -1020,16 +1025,27 @@ change it like an item Clued created.
   folder's sharing. Settlement registers an `ordinary` Artifact
   (`delete_authority = false`; a directory with its sharing digest) through
   `artifact_register`; the settle Event names the observation (`adopted`).
+- Unchanged-ness is judged by the Drive version (it advances on any content
+  or metadata change), read at the identity, in the effect and twice in the
+  verifier; no revision or checksum is recorded for the adopt itself. Later
+  operations record their own content identity in their attempts.
+- An adopt that fails verification (for example the item is being edited)
+  leaves its journal started, and the single writer blocks other writes on the
+  root until the release below cancels it (about 90 s after the start, plus the
+  minute cadence). An item that keeps changing cannot be adopted.
 - An adopt that has not committed 60 s after its admission expired is
   released by the scheduled release with
   `{outcome: released_no_effect, reason_code: ADOPT_NOT_SETTLED}`, with or
   without an attempt or proof. Scheduled recovery never loads an adopt.
 - Without the full credential, Drive refuses writes to an item this app did
   not create or open. For rename, move, replace, trash, untrash and directory
-  move, the executor reads `isAppAuthorized` of the item when the credential
-  is not full and refuses `SCOPE_UPGRADE_REQUIRED` before any reservation when
-  Drive reports `false`, so a downgraded connection never fences the root on
-  an adopted (or administratively registered) item.
+  move, the executor reads `isAppAuthorized` of the item (from the identity it
+  already resolved for the durable start) when the credential is not full and
+  refuses `SCOPE_UPGRADE_REQUIRED` before the durable start when Drive reports
+  `false`, so a downgraded connection never fences the root by changing such an
+  item. Residual: the destination folder is not checked. Moving or creating
+  into an adopted folder Clued did not create, after a downgrade, may still be
+  refused by Drive after the attempt and stay fenced for recovery.
 
 Rollout: production migration, then release. The old Worker never submits an
 adopt and treats a full credential as having no profile, so connections stay

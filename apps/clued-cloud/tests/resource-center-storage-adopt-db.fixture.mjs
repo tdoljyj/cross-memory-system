@@ -354,6 +354,41 @@ export async function testStorageAdopt(t, admin, server, user, decision) {
       assert.equal(await artifact(target, `${folder.path}/plain.txt`), undefined);
     });
 
+    await t.test("an item the Owner revoked, an item under a governance folder or one registered after submit is never adopted", async () => {
+      const { target, client, storage } = await setup();
+      const folder = await directoryIn(target, storage, "uploads");
+      // Revoked by the Owner's administrative path: an Agent cannot adopt it back.
+      const id = manual(storage, folder.provider_file_id, "removed.txt");
+      await register({ action: "artifact_register", profile_id: target.profile, path: `${folder.path}/removed.txt`, provider_file_id: id,
+        provider_file_version: "7", target_kind: "file", governance_class: "governance", delete_authority: false });
+      const registered = await artifact(target, `${folder.path}/removed.txt`);
+      await register({ action: "artifact_revoke", profile_id: target.profile, artifact_id: registered.id, base_version: Number(registered.version) });
+      await assert.rejects(submitRaw(target, client, adopt(`${folder.path}/removed.txt`, id)), /adopt_already_registered/);
+      // A revoked row at a path does not block a different item there.
+      storage.files.get(id).name = "elsewhere.txt";
+      const fresh = manual(storage, folder.provider_file_id, "removed.txt");
+      const freshJob = await submitJob(target, client, adopt(`${folder.path}/removed.txt`, fresh));
+      assert.equal((await executor(target, storage).run(freshJob.reference)).status, "committed");
+      // Under a governance folder: the administrative path only.
+      const governed = `ad-gov-${randomUUID()}`, governedPath = `${target.root}/${TRACK}/governed`;
+      storage.files.set(governed, storage.directory(governed, "governed", target.trackId));
+      await register({ action: "artifact_register", profile_id: target.profile, path: governedPath, provider_file_id: governed,
+        provider_file_version: "1", target_kind: "directory", governance_class: "governance", delete_authority: false });
+      const inside = manual(storage, governed, "rule.txt");
+      let before = await counters();
+      const governedJob = await submitJob(target, client, adopt(`${governedPath}/rule.txt`, inside));
+      assert.notEqual((await executor(target, storage).run(governedJob.reference)).status, "committed");
+      assert.equal((await counters()).intents, before.intents); assert.equal(await artifact(target, `${governedPath}/rule.txt`), undefined);
+      // Registered between submit and execution: the authority refuses it.
+      const late = manual(storage, folder.provider_file_id, "late.txt");
+      before = await counters();
+      const lateJob = await submitJob(target, client, adopt(`${folder.path}/late.txt`, late));
+      await register({ action: "artifact_register", profile_id: target.profile, path: `${folder.path}/late.txt`, provider_file_id: late,
+        provider_file_version: "7", target_kind: "file", governance_class: "ordinary", delete_authority: false });
+      assert.notEqual((await executor(target, storage).run(lateJob.reference)).status, "committed");
+      assert.equal((await counters()).intents, before.intents);
+    });
+
     await t.test("without the full credential, changing an item Clued did not create is refused before it could fence the root", async () => {
       const { target, client, storage } = await setup();
       const folder = await directoryIn(target, storage, "uploads");

@@ -452,11 +452,12 @@
 
 **P7 实现说明（2026-10-02，Owner Decisions `746fd078`、`6dc1cf20`；迁移 `20261002200000`）**：
 
-- **对象与前提。** 文件和文件夹都可纳管，每个作业一个（Decision `6dc1cf20` 第 1 项）；提交形状为 `{operation: adopt, target_kind: file|directory, source_path, source_file_id}`，以路径和 Drive ID 共同指定根内已有的、尚未登记的对象。所在文件夹须已登记、路径当前、按 Drive 版本或共享指纹与登记一致，且为 `ordinary`（治理类文件夹下的对象沿用 admin 路径，`governance_forbidden`）；因此纳管须从上往下。根与 track 不能纳管。同一路径或同一 Drive ID 已登记（含 trashed）时拒绝（`adopt_already_registered` / `already_registered`）。
+- **对象与前提。** 文件和文件夹都可纳管，每个作业一个（Decision `6dc1cf20` 第 1 项）；提交形状为 `{operation: adopt, target_kind: file|directory, source_path, source_file_id}`，以路径和 Drive ID 共同指定根内已有的、尚未登记的对象。所在文件夹须已登记、路径当前、按 Drive 版本或共享指纹与登记一致，且为 `ordinary`（治理类文件夹下的对象沿用 admin 路径，`governance_forbidden`）；因此纳管须从上往下。根与 track 不能纳管。同一路径已登记（active 或 trashed）或同一 Drive ID 有任何登记（含 revoked：Owner 撤下的对象只能经 admin 路径回来）时拒绝（`adopt_already_registered` / `already_registered`）。
 - **所有者与类型。** 只纳管 Drive 报告为本账号拥有的对象（`ownedByMe`，Decision `6dc1cf20` 第 2 项，否则 `PROVIDER_OWNER_REQUIRED`）；快捷方式、已在回收站、多父对象或与所报类型不符的对象拒绝（`ADOPT_TARGET_UNSUPPORTED`）。目录只在其共享指纹与所在文件夹完全一致时纳管（`DIRECTORY_SHARING_DIFFERS` / `sharing_differs`），之后写入它的内容不会继承文件夹以外的访问。
-- **授权。** 连接凭据须为 `full`：提交时（`adopt_scope_upgrade_required`）、执行准入时（降级后不再执行）与执行器预留前（`ADOPT_SCOPE_UPGRADE_REQUIRED`）各查一次。凭据不是 `full` 时，对 Drive 明确报告“非本应用创建或打开”（`isAppAuthorized = false`）的已登记对象做 rename、move、replace、trash、untrash 或目录 move，执行器在预留前以 `SCOPE_UPGRADE_REQUIRED` 拒绝，避免 Drive 拒写后围栏整个根。
+- **授权。** 连接凭据须为 `full`：提交时（`adopt_scope_upgrade_required`）、执行准入时（降级后不再执行）与执行器预留前（`ADOPT_SCOPE_UPGRADE_REQUIRED`）各查一次。凭据不是 `full` 时，对 Drive 明确报告“非本应用创建或打开”（`isAppAuthorized = false`）的已登记对象本身做 rename、move、replace、trash、untrash 或目录 move，执行器在持久开始前以 `SCOPE_UPGRADE_REQUIRED` 拒绝，避免 Drive 拒写后围栏整个根。残余：不检查目标文件夹；降级后向非 Clued 创建的纳管文件夹移入或新建，仍可能在 attempt 之后被 Drive 拒绝并围栏，走既有恢复。
+- **未变的判定。** 以 Drive 版本为准（内容或元数据任何变化都会推进），在 identity、effect 与核验中读取；纳管本身不另记 revision 与校验和（偏离本节上文“读取 revision 和校验和”），后续操作在各自 attempt 中记录内容标识。文件自身的共享不检查（Decision `6dc1cf20` 未要求）。
 - **不改 Drive。** provider attempt 为 `clued.storage-adopt-attempt/1`（对象、所在文件夹、authority 看到的 Drive 版本）；核验合同为 `clued.storage-adopt-verified/1`（identity、ancestors、stable_state（两次读取版本不变）、unique_name、owned_by_me、not_shortcut，目录另加 sharing_matches_parent）。结算经 `artifact_register` 登记为 `ordinary`、`delete_authority = false` 的 Artifact（目录带共享指纹），结算 Event 写明观测来源（`adopted`）。普通 finalize 仍只用于 create。
-- **未结的纳管。** 纳管从不改动 Drive，准入过期满 60 秒仍未提交的纳管由定时结案处理为 cancelled（`released_no_effect`，原因码 `ADOPT_NOT_SETTLED`），无论有无 attempt 或核验记录；定时恢复不加载纳管。
+- **未结的纳管。** 纳管从不改动 Drive，准入过期满 60 秒仍未提交的纳管由定时结案处理为 cancelled（`released_no_effect`，原因码 `ADOPT_NOT_SETTLED`），无论有无 attempt 或核验记录；定时恢复不加载纳管。核验失败（例如对象正在被编辑）期间单写者围栏阻止该根的其他写入，直到结案（约开始后 90 秒再加每分钟的周期）；持续变化的对象无法纳管。
 - 纳管之后，对象与 Clued 自建对象一样受各写入等级、根范围与 §3.4 全部约束。
 
 ## 7. 威胁模型

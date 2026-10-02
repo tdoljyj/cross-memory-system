@@ -80,7 +80,7 @@ const normalUseDisclosure = (root: string) =>
 // 6dc1cf20). Any change to this text needs a new disclosure version in the
 // database first.
 const fullScopeDisclosure = (root: string) =>
-  `允许管理已有文件后，Clued 可以“纳管”「${root}」里你自己拥有的已有文件和文件夹：一次一个，只登记、不改动。纳管后，它们和 Clued 自己创建的文件一样，可以在你打开的写入等级内改名、移动、覆盖或移入回收站。纳管属于“改名和移动文件”等级；这一步只升级 Google 授权，不会打开任何写入等级。\n` +
+  `允许管理已有文件后，Clued 可以“纳管”「${root}」里你自己拥有的已有文件和文件夹：一次一个，只登记、不改动。纳管后，它们和 Clued 自己创建的文件一样，受你打开的写入等级约束：文件可以改名和移动，1 MB 以内的文本文件可以覆盖，文件夹可以整体移动，空文件夹和文件可以移入回收站。纳管属于“改名和移动文件”等级；这一步只升级 Google 授权，不会打开任何写入等级。\n` +
   "Google 页面会显示“查看、修改、创建和删除你 Google 云端硬盘中的所有文件”。Clued 服务端只允许访问所选目录，这个限制由 Clued 保证，不由 Google 保证；授权凭据一旦泄露，整个云端硬盘都可能被读取或改写。\n" +
   "关闭对应的写入等级会立即停止纳管和修改，但不会收回 Google 授权。要收回授权，请在 Google 账号的“第三方应用和服务”中移除 Clued；这会断开该 Google 账号在 Clued 中的所有连接，之后需要重新连接。";
 const normalUseOff = "关闭“正常使用”？会立即停止读正文、按内容搜索和上传，仍可查看文件名和目录结构。这不会收回 Google 授权（Google 页面上的授权范围不变）；已经返回给 Agent 的内容无法收回。";
@@ -386,7 +386,8 @@ export default function StorageConnections() {
       if (epoch === revision.current) {
         setNormalUse(state => { const next = { ...state }; delete next[c.id]; return next; });
         const reason = error instanceof RequestFailure && error.reason ? startReasons[error.reason] : undefined;
-        setMessage(reason ?? "未能开始 Google 授权。请重新读取设置后再试。");
+        setMessage((reason === startReasons.refresh_token_limit ? startReasons.refresh_token_limit_full : reason) ??
+          "未能开始 Google 授权。请重新读取设置后再试。");
       }
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
@@ -583,7 +584,7 @@ export default function StorageConnections() {
           {normalUse[c.id]?.full_scope !== undefined && <div className="my-2">
             <p className="font-semibold">管理已有文件：{normalUse[c.id].full_scope ? "已允许（Google 已授予完整云端硬盘权限）" : "未允许"}</p>
             {normalUse[c.id].full_scope
-              ? <p className="my-1 text-sm">Agent 可以在“改名和移动文件”等级下纳管你自己拥有的已有文件和文件夹，一次一个；纳管后的修改仍受各写入等级控制。</p>
+              ? <p className="my-1 text-sm">打开“改名和移动文件”等级后，Agent 可以纳管你自己拥有的已有文件和文件夹，一次一个；纳管后的修改仍受各写入等级控制。</p>
               : <>
                 <button disabled={busy} onClick={() => void upgradeFullScope(c)}>允许管理已有文件</button>
                 <p className="my-1 text-sm">需要重新授权 Google（增加“查看、修改、创建和删除你 Google 云端硬盘中的所有文件”）；只升级授权，不打开任何写入等级。授权完成前，现有功能照常可用。</p>
