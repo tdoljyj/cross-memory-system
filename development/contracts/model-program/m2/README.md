@@ -276,3 +276,32 @@ answer tampering and rehashed revisions are rejected. There is no held-out
 generation switch. No model execution is authorized. Independent semantic review,
 full Core mapping, protected split generation, Gold, thresholds and DataGate remain
 separate gates; M2 remains NOT_ISSUED.
+
+
+### Fixed-head semantic review corrections
+
+The review of `ff66cc54163b9604bdc1c992cdb3141b8c699bc1` identified four
+candidate semantics/evidence issues. Context now includes a visible, context-only
+JSON policy message with expected scope and declared currentness/grant/revocation
+requirements. Its canonical JSON digest is bound by the contract; missing or
+changed policy is rejected. Answers derive from that input policy, not a hidden
+target. It remains synthetic declared matching, never live authorization.
+
+Imprint inputs state the same subject, named single-valued attribute and effective
+time before comparing the two assistant claims. Missing, different or multivalued
+premises return an ambiguous conflict (`null`) and preserve both claims rather
+than inventing a contradiction. None establishes external truth.
+
+Utterance `uncertainties` contains only semantic uncertainty: cases 01-05 are empty;
+06 retains the meaning ambiguity of “更轻的呈现”. Production/review state stays in
+`review`. The existing confidence value 0.5 is explicitly an uncalibrated schema
+placeholder, not a model confidence estimate, calibration result or quality score.
+
+`rule_implementation` binds the implementation path, revision and SHA-256 of the
+complete raw Python file bytes, without newline/JSON normalization. Each source
+and `evidence.rule_sha256` references those bytes, not a rule-name string. The
+implementation contains no embedded self-hash or contract/fixture digest: the
+contract binds implementation; samples bind both, so there is no hash cycle.
+Changes require regenerated contract/fixture bindings. Three-domain mapping and
+independent Gold/holdout/authority gates remain candidate/pending. Card-chain
+direction, source quotes and non-execution semantics are retained.

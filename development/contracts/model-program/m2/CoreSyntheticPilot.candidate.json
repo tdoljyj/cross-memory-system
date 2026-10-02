@@ -45,10 +45,10 @@
     }
   ],
   "domain_rules": {
-    "utterance_card": "EXPLICIT_SINGLE_CLAIM_CANDIDATE_EXTRACTION/1",
+    "utterance_card": "EXPLICIT_SINGLE_CLAIM_CANDIDATE_EXTRACTION/2",
     "card_chain": "EXPLICIT_LOCAL_EDGE_SUGGESTION_NO_EXECUTION/1",
-    "imprint": "EXACT_SAME_SUBJECT_MULTI_SOURCE_CONFLICT_PRESERVATION/1",
-    "context": "DECLARED_SYNTHETIC_SCOPE_CURRENTNESS_FILTER_NO_GRANT/1"
+    "imprint": "EXPLICIT_SINGLE_VALUE_SAME_TIME_CONFLICT_PRESERVATION/2",
+    "context": "VISIBLE_DECLARED_POLICY_SCOPE_FILTER_NO_GRANT/2"
   },
   "role_slots": {
     "gold_reviewer": {
@@ -79,5 +79,12 @@
     "domain_receipt_ref": null,
     "model_call_profile_ref": null,
     "m2_verdict": "NOT_ISSUED"
-  }
+  },
+  "rule_implementation": {
+    "path": "scripts/model-program/validate_m2_core_synthetic_pilot.py",
+    "revision": "core-dev-semantic-rules/2",
+    "sha256": "7c7f02e27267b70a5b2964d1e836841be75bbcea99c34113353c10f1bf8ab621",
+    "hash_bytes": "SHA256_COMPLETE_RAW_FILE_BYTES_NO_NEWLINE_OR_JSON_NORMALIZATION"
+  },
+  "context_policy_sha256": "eebba79cfee92fd578bf2bffa8a41051111e0975c8487c256596a94b716563b8"
 }
