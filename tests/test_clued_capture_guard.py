@@ -155,6 +155,69 @@ class CaptureGuardTest(GuardHarness):
                             result("w1", COMMITTED), call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
             self.assertEqual(self.run_hook(named).returncode, 0, command)
 
+    def test_real_rejection_shape_reports_its_error_code(self):
+        rejected = {"status": "rejected", "replayed": False, "error_code": "NOW_CONFLICT"}
+        proc = self.run_hook(self.merge_turn() + [call("w1", MUTATE, ABOUT_PR_7), result("w1", rejected)])
+        self.assertIn("did not commit (rejected: NOW_CONFLICT)", proc.stderr)
+
+    def test_failure_is_reported_for_the_write_about_the_subject(self):
+        entries = self.merge_turn() + [
+            call("w1", MUTATE, ABOUT_PR_7), result("w1", {"status": "rejected", "error_code": "about_pr"}),
+            call("w2", MUTATE, {"mutation": {"content": "other"}}), result("w2", {"status": "rejected"})]
+        self.assertIn("(rejected: about_pr)", self.run_hook(entries).stderr)
+
+    def test_appended_event_counts_as_a_write(self):
+        entries = self.merge_turn() + [
+            call("e1", "mcp__Clued__clued_append_event", {"summary": "PR o/r#7 merged"}),
+            result("e1", {"status": "appended", "event_id": 650, "receipt_id": "r"}),
+            call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+        self.assertEqual(self.run_hook(entries).returncode, 0)
+
+    def test_pr_number_is_read_from_every_merge_tool_shape(self):
+        for field in ("pullNumber", "pull_number", "number"):
+            entries = [human("合入", "u1"), call("m1", MERGE, {"owner": "o", "repo": "r", field: 7}),
+                       result("m1", MERGED), call("w1", MUTATE, {"mutation": {"content": "PR #7 已合入"}}),
+                       result("w1", COMMITTED), call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+            self.assertEqual(self.run_hook(entries).returncode, 0, field)
+
+    def test_pr_references_in_free_text(self):
+        for text in ("合入PR7", "已合并PR 7", "Merged.\nPR 7 done", "pull request 7", "＃7 已合入", "PR-7"):
+            entries = self.merge_turn() + [
+                call("w1", MUTATE, {"mutation": {"content": text}}), result("w1", COMMITTED),
+                call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+            self.assertEqual(self.run_hook(entries).returncode, 0, text)
+        for text in ("#7a7", "#70", "sprint 7", "prefix 7"):
+            entries = self.merge_turn() + [call("w1", MUTATE, {"mutation": {"content": text}}),
+                                           result("w1", COMMITTED)]
+            self.assertIn("none names PR #7", self.run_hook(entries).stderr, text)
+
+    def test_gh_pr_merge_argument_forms(self):
+        for command in ("gh pr merge --squash 478", "gh pr merge -R o/r 478 --merge", 'gh pr merge "478"',
+                        "(gh pr merge 478)", "gh pr merge \\\n  478 --merge",
+                        "gh pr merge --match-head-commit 7ac3f7bc 478"):
+            turn = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", "ok"),
+                    call("w1", MUTATE, {"mutation": {"content": "PR #47"}}), result("w1", COMMITTED)]
+            self.assertIn("none names PR #478", self.run_hook(turn).stderr, command)
+
+    def test_every_merge_in_one_command_is_an_outcome(self):
+        command = "gh pr merge 1 --merge && gh pr merge 478 --merge"
+        turn = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", "ok"),
+                call("w1", MUTATE, {"mutation": {"content": "PR #1 已合入"}}), result("w1", COMMITTED),
+                call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+        proc = self.run_hook(turn)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("none names PR #478", proc.stderr)
+        self.assertNotIn("PR #1 with", proc.stderr)
+
+    def test_own_reminder_logged_as_user_entry_is_not_a_decision(self):
+        feedback = ("Stop hook feedback:\nClued capture guard (skills/clued/references/agent-contract.md §3 "
+                    "and §5):\n- The Clued write after it did not commit (rejected: authority_escalation_forbidden).")
+        entries = self.merge_turn() + [
+            call("w1", MUTATE, ABOUT_PR_7), result("w1", COMMITTED), call("c1", CHECKPOINT),
+            result("c1", {"status": "committed"}),
+            {"type": "user", "uuid": "fb1", "message": {"role": "user", "content": feedback}}]
+        self.assertEqual(self.run_hook(entries).returncode, 0)
+
     def test_subjectless_outcomes_are_settled_by_any_committed_write(self):
         for command in ("gh pr merge --merge", "git push origin HEAD:main"):
             turn = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", "ok"),
@@ -282,10 +345,21 @@ class CaptureGuardTest(GuardHarness):
         self.assertEqual(self.run_hook(self.merge_turn(), env=env).returncode, 0)
 
     def test_missing_transcript_or_bad_input_passes(self):
-        for stdin in ("not json", json.dumps({"session_id": "x", "transcript_path": "/nonexistent"})):
+        for stdin in ("not json", "[]", json.dumps({"session_id": "x", "transcript_path": "/nonexistent"})):
             proc = subprocess.run([sys.executable, str(HOOK)], input=stdin, text=True,
                                   capture_output=True, env=self.env, timeout=30)
             self.assertEqual(proc.returncode, 0)
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_malformed_transcript_entries_do_not_crash(self):
+        odd = [[1], 5, {"type": "user", "message": {"content": None}}, {"type": "user", "message": "x"},
+               {"type": "user", "origin": "human", "message": {"content": "接受"}},
+               {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": ["x"], "name": MUTATE,
+                                                              "input": "a string"}]}},
+               {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": ["x"]}]}}]
+        proc = self.run_hook(self.merge_turn() + odd)
+        self.assertIn(proc.returncode, (0, 2))
+        self.assertNotIn("Traceback", proc.stderr)
 
 
 class Adr06ReplayTest(GuardHarness):

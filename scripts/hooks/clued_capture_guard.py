@@ -14,8 +14,8 @@ the stop once, with a reason, when it finds:
 * a human message that looks like an Owner decision with no committed Clued
   write after it.
 
-Only a write whose result is committed settles a finding: a rejected, failed
-or unanswered write does not. A write is about an outcome when its input names
+Only a write whose result is committed (or "appended", for the legacy event
+tool) settles a finding: a rejected, failed or unanswered write does not. A write is about an outcome when its input names
 the outcome's subject (the PR number or merge commit, the migration or the
 function); a push to main has no subject, so any committed write settles it.
 
@@ -69,7 +69,7 @@ class Finding:
 @dataclass
 class Write:
     pos: int
-    text: str  # the call's input, serialized, for subject matching
+    text: str  # the string values of the call's input, for subject matching
     committed: bool = False
     detail: str = "no result"  # why it did not commit
 
@@ -80,15 +80,36 @@ class Subject:
     patterns: list[re.Pattern]
 
 
-def pr_subject(number, sha: str | None = None) -> Subject | None:
-    patterns = []
-    if str(number).isdigit():
-        patterns.append(re.compile(rf"(?:#|/pull/|\bpr[\s:#-]*){number}(?!\d)", re.IGNORECASE))
-    if sha and len(sha) >= 7:
+# A Clued write succeeded: record tools return "committed"; the legacy
+# clued_append_event returns "appended" with a receipt.
+WRITE_OK = ("committed", "appended")
+# Text of this hook's own reminders, should the Host log one as a user entry.
+OWN_MESSAGE = "Clued capture guard (skills/clued/references/agent-contract.md"
+# `gh pr merge` options that take a value.
+GH_VALUE_OPTIONS = {"-R", "--repo", "-t", "--subject", "-b", "--body", "-F", "--body-file",
+                    "-A", "--author-email", "--match-head-commit"}
+
+
+def input_text(value) -> str:
+    """The string and number values of a tool input, one per line."""
+    if isinstance(value, dict):
+        return "\n".join(input_text(item) for item in value.values())
+    if isinstance(value, list):
+        return "\n".join(input_text(item) for item in value)
+    return "" if value is None or isinstance(value, bool) else str(value)
+
+
+def pr_subject(number, sha=None) -> Subject | None:
+    patterns, number = [], str(number)
+    if number.isdigit():
+        patterns.append(re.compile(
+            rf"(?:[#＃]|/pull/|(?<![A-Za-z])pr[\s:#＃-]*|pull request\s*#?){number}(?![0-9A-Za-z])",
+            re.IGNORECASE))
+    if isinstance(sha, str) and len(sha) >= 7:
         patterns.append(re.compile(re.escape(sha[:7]), re.IGNORECASE))
     if not patterns:
         return None
-    return Subject(f"PR #{number}" if str(number).isdigit() else f"merge commit {sha[:7]}", patterns)
+    return Subject(f"PR #{number}" if number.isdigit() else f"merge commit {sha[:7]}", patterns)
 
 
 def name_subject(kind: str, name) -> Subject | None:
@@ -97,21 +118,31 @@ def name_subject(kind: str, name) -> Subject | None:
     return Subject(f"{kind} {name.strip()}", [re.compile(re.escape(name.strip()), re.IGNORECASE)])
 
 
-def gh_merge_number(command: str) -> str | None:
-    """The PR number given to `gh pr merge`, when it is given."""
-    match = GH_PR_MERGE.search(command)
-    if not match:
-        return None
-    rest = re.split(r"[;&|\n]", command[match.end():], maxsplit=1)[0].split()
-    if not rest or rest[0].startswith("-"):
-        return None
-    found = re.fullmatch(r"#?(\d+)", rest[0]) or re.search(r"/pull/(\d+)", rest[0])
-    return found.group(1) if found else None
+def gh_merge_numbers(command: str) -> list[str | None]:
+    """One entry per `gh pr merge` in the command: its PR number, or None."""
+    command = command.replace("\\\n", " ")
+    numbers: list[str | None] = []
+    for match in GH_PR_MERGE.finditer(command):
+        tokens = re.split(r"[;&|\n)]", command[match.end():], maxsplit=1)[0].split()
+        number, skip = None, False
+        for token in tokens:
+            if skip:
+                skip = False
+                continue
+            if token.startswith("-"):
+                skip = token in GH_VALUE_OPTIONS
+                continue
+            token = token.strip("'\"")
+            found = re.fullmatch(r"#?(\d+)", token) or re.search(r"/pull/(\d+)", token)
+            number = found.group(1) if found else None
+            break
+        numbers.append(number)
+    return numbers
 
 
 def failure_detail(body: str, is_error: bool) -> str:
     data = result_body(body)
-    error = data.get("error")
+    error = data.get("error_code") or data.get("error")
     if isinstance(error, dict):
         error = error.get("code") or error.get("message")
     parts = [str(value) for value in (data.get("status"), error) if value]
@@ -174,9 +205,11 @@ def load_entries(path: Path) -> list[dict]:
     with path.open(encoding="utf-8", errors="replace") as handle:
         for line in handle:
             try:
-                entries.append(json.loads(line))
+                entry = json.loads(line)
             except ValueError:
                 continue  # the line being written right now may be incomplete
+            if isinstance(entry, dict):
+                entries.append(entry)
     return entries
 
 
@@ -198,13 +231,18 @@ def settle(writes: list[Write], after: int, subject: Subject | None) -> tuple[st
     tried but none committed, or ("unrelated", "") when writes committed but
     none names the subject.
     """
+    def names(write: Write) -> bool:
+        return subject is None or any(p.search(write.text) for p in subject.patterns)
+
     later = [write for write in writes if write.pos > after]
     committed = [write for write in later if write.committed]
     if not committed:
-        return ("failed", later[-1].detail) if later else ("none", "")
-    if subject is None or any(p.search(w.text) for w in committed for p in subject.patterns):
-        return ("settled", "")
-    return ("unrelated", "")
+        if not later:
+            return ("none", "")
+        # Report the failure of the write about this subject, if there was one.
+        about = [write for write in later if names(write)] or later
+        return ("failed", about[-1].detail)
+    return ("settled", "") if any(names(write) for write in committed) else ("unrelated", "")
 
 
 def analyse(entries: list[dict]) -> list[Finding]:
@@ -218,29 +256,33 @@ def analyse(entries: list[dict]) -> list[Finding]:
     for pos, entry in enumerate(entries):
         if entry.get("isSidechain"):
             continue
-        message = entry.get("message") or {}
-        content = message.get("content")
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
         if entry.get("type") == "assistant" and isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
-                    tool_input = block.get("input") or {}
-                    calls[block.get("id", "")] = (pos, block.get("name", ""), tool_input)
-                    if tool_suffix(block.get("name", "")) in CLUED_WRITE_TOOLS:
-                        writes[block.get("id", "")] = Write(
-                            pos, json.dumps(tool_input, ensure_ascii=False, default=str))
+                    use_id, name = str(block.get("id", "")), str(block.get("name", ""))
+                    tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
+                    calls[use_id] = (pos, name, tool_input)
+                    if tool_suffix(name) in CLUED_WRITE_TOOLS:
+                        writes[use_id] = Write(pos, input_text(tool_input))
             continue
         if entry.get("type") != "user":
             continue
         text = prompt_text(content)
         if text is not None:
-            origin = (entry.get("origin") or {}).get("kind")
-            if origin == "human" or (origin is None and not entry.get("isMeta")):
-                human_prompts.append((pos, entry.get("uuid") or f"pos{pos}", text))
+            origin = entry.get("origin")
+            origin = origin.get("kind") if isinstance(origin, dict) else None
+            human = origin == "human" or (origin is None and not entry.get("isMeta"))
+            if human and OWN_MESSAGE not in text:
+                human_prompts.append((pos, str(entry.get("uuid") or f"pos{pos}"), text))
+            continue
+        if not isinstance(content, list):
             continue
         for block in content:
             if not isinstance(block, dict) or block.get("type") != "tool_result":
                 continue
-            use_id = block.get("tool_use_id", "")
+            use_id = str(block.get("tool_use_id", ""))
             if use_id not in calls:
                 continue
             _, name, tool_input = calls[use_id]
@@ -249,7 +291,7 @@ def analyse(entries: list[dict]) -> list[Finding]:
             failed = bool(block.get("is_error"))
             if suffix in CLUED_WRITE_TOOLS:
                 write = writes[use_id]
-                if not failed and result_status(body) == "committed":
+                if not failed and result_status(body) in WRITE_OK:
                     write.committed = True
                     committed_writes.append((pos, use_id, write_context(tool_input)))
                 else:
@@ -257,11 +299,11 @@ def analyse(entries: list[dict]) -> list[Finding]:
             elif suffix == CLUED_CHECKPOINT_TOOL and not failed and result_status(body) == "committed":
                 checkpoints.append((pos, checkpoint_context(tool_input, body)))
             elif suffix == "merge_pull_request" and not failed and '"merged":true' in body.replace(" ", ""):
-                number = tool_input.get("pullNumber", "?")
+                number = next((tool_input[k] for k in ("pullNumber", "pull_number", "number")
+                               if k in tool_input), "?")
                 repo = f"{tool_input.get('owner', '')}/{tool_input.get('repo', '')}".strip("/")
-                sha = result_body(body).get("sha")
                 outcomes.append((pos, use_id, f"merged PR {repo}#{number}",
-                                 pr_subject(number, sha if isinstance(sha, str) else None)))
+                                 pr_subject(number, result_body(body).get("sha"))))
             elif suffix == "apply_migration" and not failed and '"error"' not in body:
                 outcomes.append((pos, use_id, f"applied migration {tool_input.get('name', '')}".strip(),
                                  name_subject("migration", tool_input.get("name"))))
@@ -270,11 +312,12 @@ def analyse(entries: list[dict]) -> list[Finding]:
                                  name_subject("edge function", tool_input.get("name"))))
             elif name == "Bash" and not failed:
                 command = HEREDOC.sub("", str(tool_input.get("command", "")))
-                if GH_PR_MERGE.search(command):
-                    number = gh_merge_number(command)
-                    outcomes.append((pos, use_id, f"merged PR #{number} with gh pr merge" if number
+                merges = gh_merge_numbers(command)
+                for index, number in enumerate(merges):
+                    outcomes.append((pos, f"{use_id}#{index}" if index else use_id,
+                                     f"merged PR #{number} with gh pr merge" if number
                                      else "merged a PR with gh pr merge", pr_subject(number)))
-                elif GIT_PUSH_MAIN.search(command):
+                if not merges and GIT_PUSH_MAIN.search(command):
                     outcomes.append((pos, use_id, "pushed to main", None))
 
     ordered = sorted(writes.values(), key=lambda write: write.pos)
@@ -294,7 +337,8 @@ def analyse(entries: list[dict]) -> list[Finding]:
                        f"{subject.label} in the record.")
         else:
             continue
-        findings.append(Finding(f"outcome:{key}:{state}", message))
+        # "none" keeps the key earlier versions used, so an upgrade does not re-report it.
+        findings.append(Finding(f"outcome:{key}" if state == "none" else f"outcome:{key}:{state}", message))
     # A write is settled by a later checkpoint in its own context; a write whose
     # context is unknown is settled by any later checkpoint.
     pending: dict[str, list[str]] = {}
@@ -360,8 +404,17 @@ def main() -> int:
     if os.environ.get("CLUED_CAPTURE_GUARD", "").lower() == "off":
         return 0
     try:
+        return run()
+    except Exception:  # an odd transcript must never break the session
+        return 0
+
+
+def run() -> int:
+    try:
         payload = json.load(sys.stdin)
     except ValueError:
+        return 0
+    if not isinstance(payload, dict):
         return 0
     transcript = payload.get("transcript_path")
     if not transcript or not Path(transcript).is_file():
