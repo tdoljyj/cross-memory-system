@@ -42,6 +42,13 @@ COMMITTED = {"status": "committed", "event_ids": ["1"]}
 ABOUT_PR_7 = {"mutation": {"content": "PR o/r#7 已合入 main"}}
 
 
+def ask(use_id: str, question: str, answer: str) -> list[dict]:
+    """An AskUserQuestion call and the Owner's answer, as Claude Code logs them."""
+    text = (f'Your questions have been answered: "{question}"="{answer}". '
+            "You can now continue with these answers in mind.")
+    return [call(use_id, "AskUserQuestion", {"questions": [{"question": question}]}), result(use_id, text)]
+
+
 class GuardHarness(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -308,6 +315,70 @@ class CaptureGuardTest(GuardHarness):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("did not commit (rejected: authority_escalation_forbidden)", proc.stderr)
 
+    def test_answered_question_without_write_blocks(self):
+        # No decision keyword: every answer to a question counts.
+        entries = [human("下一步呢", "u1")] + ask("q1", "PR #9 怎么处理？", "等 CI 全绿后合并 (推荐)")
+        proc = self.run_hook(entries)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("answered a question (“等 CI 全绿后合并 (推荐)”)", proc.stderr)
+
+    def test_answered_question_followed_by_committed_write_passes(self):
+        entries = ask("q1", "PR #9 怎么处理？", "现在合并") + [
+            call("w1", MUTATE), result("w1", COMMITTED), call("c1", CHECKPOINT),
+            result("c1", {"status": "committed"})]
+        self.assertEqual(self.run_hook(entries).returncode, 0)
+
+    def test_every_answered_question_needs_a_write_after_it(self):
+        entries = (ask("q1", "A？", "选一") + [call("w1", MUTATE), result("w1", COMMITTED),
+                                               call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+                   + ask("q2", "B？", "选二"))
+        proc = self.run_hook(entries)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("“选二”", proc.stderr)
+        self.assertNotIn("“选一”", proc.stderr)
+
+    def test_answered_question_with_rejected_write_still_blocks(self):
+        entries = ask("q1", "接受吗？", "接受") + [
+            call("w1", MUTATE), result("w1", {"status": "rejected", "error_code": "authority_escalation_forbidden"})]
+        proc = self.run_hook(entries)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("did not commit (rejected: authority_escalation_forbidden)", proc.stderr)
+
+    def test_declined_or_failed_question_is_not_a_decision(self):
+        rejected = ("The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it "
+                    "was a file edit, the new_string was NOT written to the file). STOP what you are doing.")
+        for body, is_error in ((rejected, True), ("Error: question tool unavailable", True),
+                               ("The user dismissed the questions.", False)):
+            entries = [call("q1", "AskUserQuestion", {"questions": []}), result("q1", body, is_error)]
+            self.assertEqual(self.run_hook(entries).returncode, 0, body)
+
+    def test_answer_is_reported_once_per_state(self):
+        entries = ask("q1", "A？", "选一")
+        self.assertEqual(self.run_hook(entries, session="same").returncode, 2)
+        self.assertEqual(self.run_hook(entries, session="same").returncode, 0)
+        entries += [call("w1", MUTATE), result("w1", {"status": "rejected"})]
+        proc = self.run_hook(entries, session="same")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("If it needs no record, say why", proc.stderr)
+        self.assertEqual(self.run_hook(entries, session="same").returncode, 0)
+
+    def test_answer_shapes(self):
+        multi = ('Your questions have been answered: "A？"="选一", "B？"="甲, 乙". '
+                 "You can now continue with these answers in mind.")
+        listed = [{"type": "text", "text": multi}]
+        reworded = 'User has answered your questions: "A？"="选一". You can now continue.'
+        for body in (multi, listed, reworded):
+            entries = [call("q1", "AskUserQuestion", {"questions": []}), result("q1", body)]
+            proc = self.run_hook(entries)
+            self.assertEqual(proc.returncode, 2, body)
+            self.assertIn("选一", proc.stderr)
+        # The Host's structured answers win over the text, quotes and all.
+        entry = result("q1", "Answers recorded.")
+        entry["toolUseResult"] = {"questions": [], "answers": {"A？": 'say "hi" now', "B？": "b"}}
+        proc = self.run_hook([call("q1", "AskUserQuestion", {"questions": []}), entry])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn('“say "hi" now; b”', proc.stderr)
+
     def test_plain_request_passes(self):
         self.assertEqual(self.run_hook([human("做 L3 的 Stop hook", "u1")]).returncode, 0)
 
@@ -389,6 +460,21 @@ class Adr06ReplayTest(GuardHarness):
         proc = self.run_hook(entries)
         self.assertEqual(proc.returncode, 2)
         self.assertIn("authority_escalation_forbidden", proc.stderr)
+
+    def test_acceptance_given_as_an_answer_with_no_record_blocks(self):
+        # Owner decisions are asked as questions (resident constraint 2dca3cf1).
+        entries = [human("看看终审结果", "u1")] + ask(
+            "q1", "ADR-06 v0.1.1 终审 PASS，0 BLOCKER / 0 MAJOR。是否接受？", "接受 (推荐)")
+        proc = self.run_hook(entries)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("answered a question (“接受 (推荐)”)", proc.stderr)
+
+    def test_acceptance_given_as_an_answer_and_recorded_passes(self):
+        entries = [human("看看终审结果", "u1")] + ask("q1", "是否接受 ADR-06 终审 PASS？", "接受 (推荐)") + [
+            call("w1", MUTATE, {"authority": "user_explicit", "user_confirmed": True,
+                                "mutation": {"content": "ADR-06 accepted"}}),
+            result("w1", COMMITTED), call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+        self.assertEqual(self.run_hook(entries).returncode, 0)
 
     def test_acceptance_recorded_and_checkpointed_passes(self):
         entries = self.accepted() + [
