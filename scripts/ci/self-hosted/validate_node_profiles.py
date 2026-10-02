@@ -144,6 +144,15 @@ def main() -> int:
         fail(errors, "Linux bootstrap runner version drift")
     if package.get("linux_x64_sha256") not in linux_bootstrap:
         fail(errors, "Linux bootstrap digest drift")
+    containment_fragments = (
+        "KillMode=control-group",
+        "20-clued-process-containment.conf",
+        "systemctl daemon-reload",
+        "systemctl show -p KillMode --value",
+    )
+    for fragment in containment_fragments:
+        if fragment not in linux_bootstrap:
+            fail(errors, f"Linux bootstrap service containment drift: missing {fragment}")
 
     report = {
         "schema": "clued.self-hosted-node-profile-validation/v1",

@@ -131,6 +131,8 @@ Required:
 
 Docker Desktop WSL integration is not part of the CI capability contract. A node advertising `cap-docker-linux` must have a working native Linux engine.
 
+The bootstrap also installs a systemd drop-in with `KillMode=control-group`. This is a Clued containment invariant: stopping or capacity-suspending a Linux runner must terminate every process left in that runner service cgroup, including orphaned job descendants such as `worker-host` and `workerd`. The watchdog already defers capacity suspension while `Runner.Worker` is present, so process containment does not replace the busy-job safety check.
+
 ## Capacity profiles
 
 ### compact-v1
