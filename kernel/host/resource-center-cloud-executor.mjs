@@ -391,7 +391,9 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           if((modify||replace||destructive||subtree) &&
             !scopeProfileCovers(scopeProfile((await credential()).scope),"full")){
             const itemId=request.provider_identity[replace ? "destination_file_id" : "source_file_id"];
-            const authorization=typeof itemId==="string" && itemId ? await metadata.getAppAuthorization(itemId) : null;
+            // A failed lookup proceeds: Drive itself still refuses the write.
+            const authorization=typeof itemId==="string" && itemId
+              ? await metadata.getAppAuthorization(itemId).catch(()=>null) : null;
             if(authorization?.id===itemId && authorization.app_authorized===false){
               scopeRefusal="SCOPE_UPGRADE_REQUIRED";
               fail("SCOPE_UPGRADE_REQUIRED");
