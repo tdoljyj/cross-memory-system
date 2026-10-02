@@ -103,12 +103,22 @@ unset token
 (
   cd "$ROOT"
   sudo ./svc.sh install "$(whoami)"
-  sudo ./svc.sh start
 )
 unit="$(systemctl list-unit-files 'actions.runner.*.service' --no-legend | awk -v n="$RUNNER_NAME" '$1 ~ n {print $1; exit}')"
 [ -n "$unit" ] || { echo "Unable to resolve the installed runner service." >&2; exit 1; }
+
+dropin_dir="/etc/systemd/system/${unit}.d"
+dropin_path="${dropin_dir}/20-clued-process-containment.conf"
+sudo install -d -m 0755 "$dropin_dir"
+printf '%s\n' '[Service]' 'KillMode=control-group' | sudo tee "$dropin_path" >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl start "$unit"
 sudo systemctl is-enabled --quiet "$unit"
 sudo systemctl is-active --quiet "$unit"
+[ "$(systemctl show -p KillMode --value "$unit")" = "control-group" ] || {
+  echo "Runner service containment hardening did not take effect for $unit." >&2
+  exit 1
+}
 
 echo "Bootstrap complete."
 echo "Runner: $RUNNER_NAME"
