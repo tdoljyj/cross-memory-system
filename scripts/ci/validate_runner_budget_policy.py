@@ -31,7 +31,10 @@ HOSTED_ONLY_ALLOWLIST = {
         "The lightweight monitor must remain independent of the self-hosted pool so it can detect complete Windows/Linux capability-pool loss."
     ),
     "clued-work-admission.yml": (
-        "Work Claim Admission L0a: an unfiltered required-check candidate that makes one read-only Clued call per pull request and must not wait on self-hosted capacity; it installs nothing and executes no PR code."
+        "Work Claim Admission L0a: an unfiltered required check that makes one Clued call per pull request and must not wait on self-hosted capacity; it runs base-branch code only (pull_request_target), installs nothing and executes no PR code."
+    ),
+    "clued-work-admission-reverify.yml": (
+        "Work Claim Admission hourly re-verification: re-runs a passing admission check whose claim expired or moved; default-branch code only, no install, no pull request trigger."
     ),
     "phase2-naming-surface-inventory.yml": (
         "Frozen historical exact-byte inventory workflow; modifying its execution contract would invalidate bound evidence."
