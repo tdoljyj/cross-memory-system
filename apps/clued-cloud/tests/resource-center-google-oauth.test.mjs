@@ -175,6 +175,7 @@ test("token errors expose only fixed classes, retain single exchange and never c
 
 // StorageNormalUse.v0.1 N0a (§2.2, §2.3): start still requests legacy; complete
 // accepts either allowed profile, seals the granted set and records its profile.
+const fullScope = "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly";
 const normalScope = scope + " https://www.googleapis.com/auth/drive.readonly";
 const sealedContext = { owner_id: d.owner_id, connection_id: d.connection_id, provider: "google-drive", provider_subject: "provider-user",
   oauth_client_id: d.oauth_client_id, credential_version: 1 };
@@ -206,16 +207,17 @@ test("scope profiles: partial, unknown and broader grants are scope_mismatch", a
   }
 });
 test("scope profiles: a sealed-profile start requests exactly the recorded profile", async () => {
-  for (const profile of ["legacy", "normal"]) {
+  for (const profile of ["legacy", "normal", "full"]) {
     const f = await fixture({ descriptor: { provider_scope_profile: profile } });
     const url = new URL((await f.oauth.start(d.connection_id, false, "sealed")).authorization_url);
-    assert.equal(url.searchParams.get("scope"), profile === "normal" ? normalScope : scope);
+    assert.equal(url.searchParams.get("scope"), { legacy: scope, normal: normalScope, full: fullScope }[profile]);
   }
-  for (const profile of [undefined, "full", null]) {
+  for (const profile of [undefined, "drive", null]) {
     const f = await fixture({ descriptor: { provider_scope_profile: profile } });
     await assert.rejects(f.oauth.start(d.connection_id, false, "sealed"), /unavailable/);
     assert.equal(f.pending(), undefined);
   }
+  // A full request (P7) always binds the confirmed full-scope disclosure.
   const f = await fixture();
   await assert.rejects(f.oauth.start(d.connection_id, false, "full"), /unavailable/);
   assert.equal(f.pending(), undefined);
@@ -297,4 +299,46 @@ test("re-consent: a busy root or the refresh-token limit is a fixed reason, neve
   const lost = await fixture({ completeError: "fixture-private-database-text" });
   const lostState = new URL((await lost.oauth.start(d.connection_id)).authorization_url).searchParams.get("state");
   await assert.rejects(lost.oauth.complete({ state: lostState, code: "fixture-auth-code" }), error => error.reason === "credential_commit_unconfirmed");
+});
+
+// StorageFullCapability P7 (Decisions 746fd078, 6dc1cf20): re-consent to the full set.
+const FULL_DISCLOSURE = "clued.storage-full-scope-disclosure/1";
+test("full scope: a full start binds the full set and the confirmed disclosure, never normal use", async () => {
+  const f = await fixture({ descriptor: { provider_scope_profile: "normal" } });
+  const url = new URL((await f.oauth.start(d.connection_id, false, "full", { disclosure_version: FULL_DISCLOSURE })).authorization_url);
+  assert.equal(url.searchParams.get("scope"), fullScope);
+  assert.equal(url.searchParams.get("include_granted_scopes"), "false"); assert.equal(url.searchParams.get("prompt"), "consent");
+  assert.equal(f.pending().requested_scope_profile, "full");
+  assert.deepEqual(f.pending().full_scope, { disclosure_version: FULL_DISCLOSURE });
+  assert.equal("normal_use" in f.pending(), false);
+  const kept = await fixture({ descriptor: { provider_scope_profile: "full" } });
+  assert.equal(new URL((await kept.oauth.start(d.connection_id, false, "keep")).authorization_url).searchParams.get("scope"), fullScope,
+    "a plain reconnect of a full connection keeps the full set");
+  assert.equal("full_scope" in kept.pending(), false);
+  for (const consent of [undefined, null, { disclosure_version: "bad version!" }, { disclosure_version: FULL_DISCLOSURE, extra: 1 }]) {
+    const bad = await fixture();
+    await assert.rejects(bad.oauth.start(d.connection_id, false, "full", consent), /unavailable/, JSON.stringify(consent));
+    assert.equal(bad.pending(), undefined);
+  }
+});
+test("full scope: complete accepts the full set or any lower one and records what Google granted", async () => {
+  for (const [granted, profile] of [[fullScope, "full"], [normalScope, "normal"], [scope, "legacy"]]) {
+    const f = await fixture({ tokens: { scope: granted }, completeResult: { provider_scope_profile: profile, requested_scope_profile: "full" } });
+    const state = new URL((await f.oauth.start(d.connection_id, false, "full", { disclosure_version: FULL_DISCLOSURE })).authorization_url)
+      .searchParams.get("state");
+    const result = await f.oauth.complete({ state, code: "fixture-auth-code" });
+    assert.equal(result.provider_scope_profile, profile); assert.equal(result.requested_scope_profile, "full");
+    assert.equal(f.complete().provider_scope_profile, profile);
+  }
+  // Without a full request the full set is never accepted.
+  for (const mode of ["legacy", "normal"]) {
+    const f = await fixture({ tokens: { scope: fullScope } });
+    const state = new URL((await f.oauth.start(d.connection_id, false, mode, mode === "normal" ? { disclosure_version: NORMAL_DISCLOSURE } : undefined))
+      .authorization_url).searchParams.get("state");
+    await assert.rejects(f.oauth.complete({ state, code: "fixture-auth-code" }), error => error.reason === "scope_mismatch");
+    assert.equal(f.complete(), undefined);
+  }
+  const changed = await fixture({ prepareError: "storage_full_scope_disclosure_changed" });
+  await assert.rejects(changed.oauth.start(d.connection_id, false, "full", { disclosure_version: FULL_DISCLOSURE }),
+    error => error.reason === "storage_full_scope_disclosure_changed");
 });

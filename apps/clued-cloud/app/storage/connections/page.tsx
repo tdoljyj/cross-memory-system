@@ -54,14 +54,20 @@ function isReadAccess(value: unknown): value is ReadAccess {
     && Array.isArray(value.classes) && value.classes.every(item => typeof item === "string");
 }
 // StorageNormalUse.v0.1 §8.2: one "正常使用" toggle over the read level.
-type NormalUse = { read_generation: number; disclosure_version: string; provider_scope_profile: "legacy" | "normal";
-  normal_use: boolean; reconsent_required: boolean; refresh_token_count: number; refresh_token_warning: boolean; refresh_token_blocked: boolean };
+// StorageFullCapability P7 (Decision 6dc1cf20): a server that offers the full
+// scope names its state and disclosure; an older one omits both.
+type NormalUse = { read_generation: number; disclosure_version: string; provider_scope_profile: "legacy" | "normal" | "full";
+  normal_use: boolean; reconsent_required: boolean; refresh_token_count: number; refresh_token_warning: boolean; refresh_token_blocked: boolean;
+  full_scope?: boolean; full_scope_disclosure_version?: string };
 function isNormalUse(value: unknown): value is NormalUse {
   return isObject(value) && Number.isSafeInteger(value.read_generation) && typeof value.disclosure_version === "string"
-    && (value.provider_scope_profile === "legacy" || value.provider_scope_profile === "normal")
+    && (value.provider_scope_profile === "legacy" || value.provider_scope_profile === "normal" || value.provider_scope_profile === "full")
     && typeof value.normal_use === "boolean" && typeof value.reconsent_required === "boolean"
     && Number.isSafeInteger(value.refresh_token_count) && typeof value.refresh_token_warning === "boolean"
-    && typeof value.refresh_token_blocked === "boolean";
+    && typeof value.refresh_token_blocked === "boolean"
+    && (value.full_scope === undefined || typeof value.full_scope === "boolean")
+    && (value.full_scope_disclosure_version === undefined || typeof value.full_scope_disclosure_version === "string")
+    && (value.full_scope === undefined) === (value.full_scope_disclosure_version === undefined);
 }
 // clued.storage-normal-use-disclosure/1 (StorageNormalUse §8.2). Any change to
 // this text needs a new disclosure version in the database first.
@@ -70,12 +76,21 @@ const normalUseDisclosure = (root: string) =>
   "读取到的内容会发送给该 Agent 所用的模型服务，已经返回的内容无法收回。\n" +
   "Google 页面会显示“查看你 Google 云端硬盘中的所有文件”。Clued 服务端只允许访问所选目录，这个限制由 Clued 保证，不由 Google 保证。\n" +
   "默认每小时额度：读取 256 MB、上传 256 MB。关闭“正常使用”会立即停止读正文、按内容搜索和上传，但不会收回 Google 授权；“撤回全部文件读取授权”会断开该 Google 账号在 Clued 中的所有连接。";
+// clued.storage-full-scope-disclosure/1 (StorageFullCapability P7, Decision
+// 6dc1cf20). Any change to this text needs a new disclosure version in the
+// database first.
+const fullScopeDisclosure = (root: string) =>
+  `允许管理已有文件后，Clued 可以“纳管”「${root}」里你自己拥有的已有文件和文件夹：一次一个，只登记、不改动。纳管后，它们和 Clued 自己创建的文件一样，可以在你打开的写入等级内改名、移动、覆盖或移入回收站。纳管属于“改名和移动文件”等级；这一步只升级 Google 授权，不会打开任何写入等级。\n` +
+  "Google 页面会显示“查看、修改、创建和删除你 Google 云端硬盘中的所有文件”。Clued 服务端只允许访问所选目录，这个限制由 Clued 保证，不由 Google 保证；授权凭据一旦泄露，整个云端硬盘都可能被读取或改写。\n" +
+  "关闭对应的写入等级会立即停止纳管和修改，但不会收回 Google 授权。要收回授权，请在 Google 账号的“第三方应用和服务”中移除 Clued；这会断开该 Google 账号在 Clued 中的所有连接，之后需要重新连接。";
 const normalUseOff = "关闭“正常使用”？会立即停止读正文、按内容搜索和上传，仍可查看文件名和目录结构。这不会收回 Google 授权（Google 页面上的授权范围不变）；已经返回给 Agent 的内容无法收回。";
 const startReasons: Record<string, string> = {
   storage_root_busy: "该目录还有尚未完成的文件操作，稍后再试。",
   // Until "撤回全部文件读取授权" exists, only a maintainer can reset the count
   // (runbook); a plain reconnect is never refused.
   refresh_token_limit: "该 Google 账号在 Clued 中的授权次数已达上限，暂时不能通过重新授权开启正常使用。请联系维护者处理；现有功能和重新连接不受影响。",
+  refresh_token_limit_full: "该 Google 账号在 Clued 中的授权次数已达上限，暂时不能通过重新授权允许管理已有文件。请联系维护者处理；现有功能和重新连接不受影响。",
+  storage_full_scope_disclosure_changed: "说明已更新，请重新读取设置后再确认。",
 };
 // StorageNormalUse.v0.1 §7.3 / §8.2 item 4 (N4): hourly read / upload budgets,
 // per authorized Agent on this connection and for the whole account.
@@ -348,6 +363,33 @@ export default function StorageConnections() {
       }
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
+  // Full scope (P7): the confirmed disclosure, then Google consent to the full
+  // set on this connection. It upgrades the grant only; the callback reports
+  // what Google granted.
+  async function upgradeFullScope(c: Connection) {
+    const current = normalUse[c.id];
+    if (operation.current || busy || !current || current.full_scope !== false || !current.full_scope_disclosure_version) return;
+    if (current.refresh_token_blocked) { setMessage(startReasons.refresh_token_limit_full); return; }
+    if (!window.confirm(fullScopeDisclosure(c.root_name) +
+      "\n确认后将前往 Google 授权页面，请勾选“查看、修改、创建和删除你 Google 云端硬盘中的所有文件”。")) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      const result = await accountRequest({ connection_id: c.id, full_scope: { disclosure_version: current.full_scope_disclosure_version } },
+        "/v1/storage/google/start");
+      if (epoch !== revision.current || typeof result.authorization_url !== "string") return;
+      const url = new URL(result.authorization_url);
+      if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" || url.username || url.password)
+        throw new Error("授权地址未确认。");
+      window.location.assign(url.href);
+    } catch (error) {
+      if (epoch === revision.current) {
+        setNormalUse(state => { const next = { ...state }; delete next[c.id]; return next; });
+        const reason = error instanceof RequestFailure && error.reason ? startReasons[error.reason] : undefined;
+        setMessage(reason ?? "未能开始 Google 授权。请重新读取设置后再试。");
+      }
+    } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
   async function loadBudget(c: Connection) {
     if (operation.current || busy) return;
     operation.current = true; setBusy(true);
@@ -538,6 +580,15 @@ export default function StorageConnections() {
             : <button disabled={busy} onClick={() => void loadNormalUse(c)}>读取正常使用设置</button>}
           {normalUse[c.id] && !normalUse[c.id].normal_use && normalUse[c.id].reconsent_required &&
             <p className="my-1 text-sm">开启需要重新授权 Google（增加“查看你 Google 云端硬盘中的所有文件”）；授权完成前，现有功能照常可用。</p>}
+          {normalUse[c.id]?.full_scope !== undefined && <div className="my-2">
+            <p className="font-semibold">管理已有文件：{normalUse[c.id].full_scope ? "已允许（Google 已授予完整云端硬盘权限）" : "未允许"}</p>
+            {normalUse[c.id].full_scope
+              ? <p className="my-1 text-sm">Agent 可以在“改名和移动文件”等级下纳管你自己拥有的已有文件和文件夹，一次一个；纳管后的修改仍受各写入等级控制。</p>
+              : <>
+                <button disabled={busy} onClick={() => void upgradeFullScope(c)}>允许管理已有文件</button>
+                <p className="my-1 text-sm">需要重新授权 Google（增加“查看、修改、创建和删除你 Google 云端硬盘中的所有文件”）；只升级授权，不打开任何写入等级。授权完成前，现有功能照常可用。</p>
+              </>}
+          </div>}
           {normalUse[c.id]?.refresh_token_warning && <p role="status" className="my-1 text-sm">{normalUse[c.id].refresh_token_blocked
             ? "该 Google 账号在 Clued 中的授权次数已达上限，暂时不能通过重新授权开启正常使用；请联系维护者处理。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因，重新连接仍可使用。"
             : `该 Google 账号在 Clued 中的授权次数已较多（${normalUse[c.id].refresh_token_count} 次）。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因。`}</p>}

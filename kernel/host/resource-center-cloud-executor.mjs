@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { createResourceCenterOnlineToolHost } from "./resource-center-online-tool-host.mjs";
 import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-metadata.mjs";
-import { scopeProfile } from "./resource-center-google-scopes.mjs";
+import { scopeProfile, scopeProfileCovers } from "./resource-center-google-scopes.mjs";
 import { createGoogleDriveProviderIdentityResolver } from "./resource-center-google-drive-identity.mjs";
 import { createGoogleDriveBoundaryScanner } from "./resource-center-google-drive-boundary.mjs";
 import { createGoogleDriveNativeCreateEffect, contentRefShape, contentSourceShape } from "./resource-center-google-drive-create-effect.mjs";
@@ -17,6 +17,8 @@ import { createGoogleDriveDestructivePostconditionVerifier } from "./resource-ce
 import { createGoogleDriveNativeDirectoryMoveEffect, directoryMoveShape, subtreeSampleShape, checkSubtreeSample,
   DIRECTORY_MOVE_KEYS } from "./resource-center-google-drive-directory-move-effect.mjs";
 import { createGoogleDriveDirectoryMovePostconditionVerifier } from "./resource-center-google-drive-directory-move-postcondition.mjs";
+import { createGoogleDriveAdoptEffect, adoptShape, adoptItemAllowed, ADOPT_KEYS } from "./resource-center-google-drive-adopt-effect.mjs";
+import { createGoogleDriveAdoptPostconditionVerifier } from "./resource-center-google-drive-adopt-postcondition.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "./resource-center-governed-tool-surface.mjs";
 import { RESOURCE_CENTER_POLICY_VERSION, bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 
@@ -80,7 +82,8 @@ const authorityDenialReasons = new Set([
   "source_mismatch", "destination_outside_root", "parent_version_mismatch", "parent_unregistered",
   "parent_path_not_current", "destination_mismatch", "destination_exists", "artifact_decision_not_current",
   "delete_authority_required", "restore_name_conflict", "directory_not_empty", "track_forbidden",
-  "destination_inside_source", "sharing_differs", "subtree_too_large", "internal_error",
+  "destination_inside_source", "sharing_differs", "subtree_too_large", "already_registered", "governance_forbidden",
+  "internal_error",
 ]);
 const logAuthorityFailure = (phase,stage,errorCode,reason) => {
   // Emit only fixed labels. In particular, never serialize an exception, RPC response or provider identity.
@@ -165,6 +168,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       // Trash ("delete") and untrash ("restore", P5) likewise; for an untrash
       // the server names the registered, trashed source's Drive ID.
       const destructive=mutation?.operation==="delete" || mutation?.operation==="restore";
+      // Adopt (P7) registers one existing item and writes nothing to Drive.
+      const adopt=mutation?.operation==="adopt";
       const revisionIdOk=value=>typeof value==="string" && /^[A-Za-z0-9_-]{1,200}$/.test(value);
       if(!subtree && descriptor.subtree_sample!=null) fail("CLOUD_MUTATION_SHAPE_INVALID");
       if(subtree){
@@ -191,6 +196,9 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
             Object.keys(source).sort().join(",")!=="provider_file_id,provider_file_version" ||
             source.provider_file_id!==mutation.source_file_id || source.provider_file_version!==mutation.source_file_version)
             : source!=null)) fail("CLOUD_MUTATION_SHAPE_INVALID");
+      }else if(adopt){
+        if(!verifiedResultMode || !adoptShape(mutation) ||
+          Object.keys(mutation).sort().join(",")!==ADOPT_KEYS.join(",")) fail("CLOUD_MUTATION_SHAPE_INVALID");
       }else if(modify){
         if(!verifiedResultMode || !modifyShape(mutation) || mutation.target_kind!=="file" ||
           Object.keys(mutation).some(k=>!["operation","source_path","destination_path","target_kind","source_file_version"].includes(k))) fail("CLOUD_MUTATION_SHAPE_INVALID");
@@ -278,8 +286,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           logAuthorityFailure(phase,"provider_identity","SOURCE_VERSION_MISMATCH");
           fail();
         }
-        // P5/P6: trash, untrash and a directory move name the item by its Drive ID, not only its path.
-        if((destructive||subtree) && request.provider_identity.source_file_id!==input.source_file_id){
+        // P5-P7: trash, untrash, a directory move and an adopt name the item by its Drive ID, not only its path.
+        if((destructive||subtree||adopt) && request.provider_identity.source_file_id!==input.source_file_id){
           logAuthorityFailure(phase,"provider_identity","SOURCE_ID_MISMATCH");
           fail();
         }
@@ -344,7 +352,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           (restore.md5!=null && md5Hex(replacement)!==restore.md5)) fail();
       }
       // P6.1: the batched reader (when the Worker has one) reads every registered descendant at once.
-      const effect=subtree ? createGoogleDriveNativeDirectoryMoveEffect({...effectConfig,get_file:metadata.getFile,
+      const effect=adopt ? createGoogleDriveAdoptEffect({...effectConfig,get_file:metadata.getFile,get_ownership:metadata.getOwnership})
+        : subtree ? createGoogleDriveNativeDirectoryMoveEffect({...effectConfig,get_file:metadata.getFile,
           ...(batched.get_files ? {get_files:batched.get_files} : {})})
         : destructive ? createGoogleDriveNativeDestructiveEffect({...effectConfig,get_file:metadata.getFile,
           get_ownership:metadata.getOwnership,has_children:metadata.hasChildren})
@@ -355,20 +364,23 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const verifierConfig={managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         include_verified_proof:verifiedResultMode,clock};
-      const verify=subtree ? createGoogleDriveDirectoryMovePostconditionVerifier({...verifierConfig,get_sharing:metadata.getSharing,
+      const verify=adopt ? createGoogleDriveAdoptPostconditionVerifier({...verifierConfig,get_ownership:metadata.getOwnership,
+          get_sharing:metadata.getSharing})
+        : subtree ? createGoogleDriveDirectoryMovePostconditionVerifier({...verifierConfig,get_sharing:metadata.getSharing,
           get_access:metadata.getAccess,...(batched.get_files ? {get_files:batched.get_files} : {})})
         : destructive ? createGoogleDriveDestructivePostconditionVerifier({...verifierConfig,has_children:metadata.hasChildren})
         : replace ? createGoogleDriveReplacePostconditionVerifier({...verifierConfig,get_revision:metadata.getRevision})
         : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
         : createGoogleDriveCreatePostconditionVerifier({...verifierConfig,require_effect_provider_id:true,
           get_sharing:metadata.getSharing});
-      const proofContract=subtree ? "clued.storage-directory-move-verified/1"
+      const proofContract=adopt ? "clued.storage-adopt-verified/1"
+        : subtree ? "clued.storage-directory-move-verified/1"
         : destructive ? DESTRUCTIVE_PROOF_CONTRACTS[mutation.operation]
         : replace ? "clued.storage-replace-verified/1"
         : modify ? `clued.storage-${mutation.operation}-verified/1`
         : binary ? "clued.storage-create-verified/3" : "clued.storage-create-verified/2";
       const host=createResourceCenterOnlineToolHost({trusted_profile:profile,resolve_artifact_online:resolveAuthority,
-        mutation_effect:effect,scan_boundary:scan,clock,qualified_operations:modify||replace||destructive||subtree?[mutation.operation]:["create"],
+        mutation_effect:effect,scan_boundary:scan,clock,qualified_operations:modify||replace||destructive||subtree||adopt?[mutation.operation]:["create"],
         prepare_write:async({mutation:input,binding})=>{
           const request=await authorityRequest(input);
           const result=await invoke({action:"begin",prepare:{action:"prepare",request_key:"account-job:"+ref.job_id,
@@ -468,6 +480,44 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
             else await checkSubtreeSample(metadata.getFile,mutation.source_file_id,descriptor.subtree_sample,"SUBTREE_DRIFT");
           }
         }catch(error){ if(error?.message==="SUBTREE_DRIFT") refusal="SUBTREE_DRIFT"; }
+        if(refusal){
+          logDiagnostic("deny",refusal);
+          return {status:"deny",error_code:refusal,side_effects:0,execution_permitted:false};
+        }
+      }
+      // P7, before any reservation, each with its own fixed reason: an adopt
+      // needs the full credential (ADOPT_SCOPE_UPGRADE_REQUIRED), an item this
+      // account owns (PROVIDER_OWNER_REQUIRED) of the named kind and never a
+      // shortcut (ADOPT_TARGET_UNSUPPORTED) and, for a directory, its folder's
+      // sharing state (DIRECTORY_SHARING_DIFFERS). Without the full credential
+      // Drive refuses writes to an item this app did not create or open, so
+      // changing one is refused before it could fence the root
+      // (SCOPE_UPGRADE_REQUIRED). A lookup failure falls through: the
+      // authority and the effect resolve the same identity and fail closed.
+      if(adopt || modify || replace || destructive || subtree){
+        let refusal=null;
+        const full=scopeProfileCovers(scopeProfile((await credential()).scope),"full");
+        try{
+          if(adopt && !full) refusal="ADOPT_SCOPE_UPGRADE_REQUIRED";
+          else if(adopt){
+            const identity=await resolveProvider({profile,mutation});
+            const shape=adoptShape(mutation);
+            if(identity.source_file_id===mutation.source_file_id){
+              const file=await metadata.getFile(identity.source_file_id), ownership=await metadata.getOwnership(identity.source_file_id);
+              if(ownership?.id===file?.id && ownership.owned_by_me!==true) refusal="PROVIDER_OWNER_REQUIRED";
+              else if(!adoptItemAllowed(shape,file,ownership)) refusal="ADOPT_TARGET_UNSUPPORTED";
+              else if(shape.directory && (typeof identity.source_sharing_digest!=="string" ||
+                identity.source_sharing_digest!==identity.source_parent_sharing_digest)) refusal="DIRECTORY_SHARING_DIFFERS";
+            }
+          }else if(!full){
+            // Trash, untrash and a directory move name the item's Drive ID; the
+            // others resolve it from the path.
+            const itemId=destructive||subtree ? mutation.source_file_id
+              : (await resolveProvider({profile,mutation}))[replace ? "destination_file_id" : "source_file_id"];
+            const authorization=typeof itemId==="string" && itemId ? await metadata.getAppAuthorization(itemId) : null;
+            if(authorization?.id===itemId && authorization.app_authorized===false) refusal="SCOPE_UPGRADE_REQUIRED";
+          }
+        }catch{ /* resolved again below, failing closed */ }
         if(refusal){
           logDiagnostic("deny",refusal);
           return {status:"deny",error_code:refusal,side_effects:0,execution_permitted:false};

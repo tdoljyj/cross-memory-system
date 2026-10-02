@@ -241,6 +241,8 @@
 
 **Owner 已定（D1）：** 先实测 Picker。实测通过就走 Picker；不通过，再由 Owner 在“`drive.readonly` + `drive`”与“只对 Clued 自建文件开放”两者之间另行决定。
 
+**D1 最终选择（2026-10-02，Owner Decision `746fd078`）：** 在 `drive.file` + `drive.metadata.readonly` + `drive.readonly` 之外申请完整 `drive`（scope profile `full`，接续 `drive.readonly` 的 Decision `dc594258`）。服务端仍只允许访问资料根以内；已连接用户须在原生页面单独的“允许管理已有文件”按钮确认说明（`clued.storage-full-scope-disclosure/1`）后，到 Google 重新同意，只升级授权、不打开任何写入等级（Decision `6dc1cf20` 第 3 项）。已知代价：凭据泄露时整个 Drive 可被读取或改写；与 `drive.readonly` 同属受限审核级别。实现见 §6.3。
+
 ## 5. 读路径合同（P1、P2）
 
 ### 5.1 调用面、判定器与线性化点
@@ -448,6 +450,15 @@
 
 `adopt` 属于 `modify` 等级。要纳管治理类对象，需要 Owner Decision，沿用 admin 路径。
 
+**P7 实现说明（2026-10-02，Owner Decisions `746fd078`、`6dc1cf20`；迁移 `20261002200000`）**：
+
+- **对象与前提。** 文件和文件夹都可纳管，每个作业一个（Decision `6dc1cf20` 第 1 项）；提交形状为 `{operation: adopt, target_kind: file|directory, source_path, source_file_id}`，以路径和 Drive ID 共同指定根内已有的、尚未登记的对象。所在文件夹须已登记、路径当前、按 Drive 版本或共享指纹与登记一致，且为 `ordinary`（治理类文件夹下的对象沿用 admin 路径，`governance_forbidden`）；因此纳管须从上往下。根与 track 不能纳管。同一路径或同一 Drive ID 已登记（含 trashed）时拒绝（`adopt_already_registered` / `already_registered`）。
+- **所有者与类型。** 只纳管 Drive 报告为本账号拥有的对象（`ownedByMe`，Decision `6dc1cf20` 第 2 项，否则 `PROVIDER_OWNER_REQUIRED`）；快捷方式、已在回收站、多父对象或与所报类型不符的对象拒绝（`ADOPT_TARGET_UNSUPPORTED`）。目录只在其共享指纹与所在文件夹完全一致时纳管（`DIRECTORY_SHARING_DIFFERS` / `sharing_differs`），之后写入它的内容不会继承文件夹以外的访问。
+- **授权。** 连接凭据须为 `full`：提交时（`adopt_scope_upgrade_required`）、执行准入时（降级后不再执行）与执行器预留前（`ADOPT_SCOPE_UPGRADE_REQUIRED`）各查一次。凭据不是 `full` 时，对 Drive 明确报告“非本应用创建或打开”（`isAppAuthorized = false`）的已登记对象做 rename、move、replace、trash、untrash 或目录 move，执行器在预留前以 `SCOPE_UPGRADE_REQUIRED` 拒绝，避免 Drive 拒写后围栏整个根。
+- **不改 Drive。** provider attempt 为 `clued.storage-adopt-attempt/1`（对象、所在文件夹、authority 看到的 Drive 版本）；核验合同为 `clued.storage-adopt-verified/1`（identity、ancestors、stable_state（两次读取版本不变）、unique_name、owned_by_me、not_shortcut，目录另加 sharing_matches_parent）。结算经 `artifact_register` 登记为 `ordinary`、`delete_authority = false` 的 Artifact（目录带共享指纹），结算 Event 写明观测来源（`adopted`）。普通 finalize 仍只用于 create。
+- **未结的纳管。** 纳管从不改动 Drive，准入过期满 60 秒仍未提交的纳管由定时结案处理为 cancelled（`released_no_effect`，原因码 `ADOPT_NOT_SETTLED`），无论有无 attempt 或核验记录；定时恢复不加载纳管。
+- 纳管之后，对象与 Clued 自建对象一样受各写入等级、根范围与 §3.4 全部约束。
+
 ## 7. 威胁模型
 
 | # | 威胁 | 场景 | 缓解 |
@@ -488,7 +499,7 @@
 | P4 | `replace`、revision 保护、revert | 同 P3 | P3 |
 | P5 | `destructive`：trash、untrash（判定器新增 `restore`）、§3.4 约束、原生批量确认 | 同 P3 | P3 |
 | P6 | `modify_subtree`：目录 move 与子树路径重写 | 同 P3 | P3 |
-| P7 | `adopt`；对非 Clued 创建的已有文件开放 modify / destructive | 由 D1 决定 | P3–P5，D1 |
+| P7 | `adopt`；对非 Clued 创建的已有文件开放 modify / destructive | `full`（D1，Decision `746fd078`） | P3–P5，D1 |
 
 **建议先做 P1。** 它不需要改 Google scope，就能解决“Agent 看不见资料空间”这个核心问题；边界扫描和元数据读取器可以复用。
 

@@ -122,6 +122,8 @@ export function createGoogleDriveProviderIdentityResolver({
         versions.push([trashed.id, trashed.version]);
         source = trashed;
       } else {
+        // Adopt (P7) names an existing, unregistered item by its path: the
+        // same exact walk, and the only item of its name in its folder.
         source = await child(parent, parts.at(-1), mutation.target_kind === "directory", true);
       }
     }
@@ -158,8 +160,12 @@ export function createGoogleDriveProviderIdentityResolver({
       const result = await getAccess(file.id);
       return result?.id === file.id ? googleDriveAccessDigest(result) : null;
     };
-    const sourceSharingDigest = directoryMove ? await sharing(source) : null;
-    const sourceParentSharingDigest = directoryMove ? await sharing(sourceParent) : null;
+    // Adopt (P7) names the item's folder with its Drive version and sharing
+    // (matched like any destination folder) and, for a directory, its own
+    // sharing (the authority requires the two to be equal).
+    const adopt = mutation.operation === "adopt";
+    const sourceSharingDigest = directoryMove || (adopt && mutation.target_kind === "directory") ? await sharing(source) : null;
+    const sourceParentSharingDigest = directoryMove || adopt ? await sharing(sourceParent) : null;
     const accessDigests = directoryMove ? { source_access_digest: await access(source),
       source_parent_access_digest: await access(sourceParent),
       destination_parent_access_digest: await access(destinationParent) } : {};
@@ -186,6 +192,9 @@ export function createGoogleDriveProviderIdentityResolver({
       ...(directoryMove ? { source_parent_id: sourceParent?.id ?? null, source_parent_version: sourceParent?.version ?? null,
         source_sharing_digest: sourceSharingDigest,
         source_parent_sharing_digest: sourceParentSharingDigest, ...accessDigests } : {}),
+      ...(adopt ? { source_parent_id: sourceParent?.id ?? null, source_parent_version: sourceParent?.version ?? null,
+        source_parent_sharing_digest: sourceParentSharingDigest,
+        ...(mutation.target_kind === "directory" ? { source_sharing_digest: sourceSharingDigest } : {}) } : {}),
     });
   };
 }

@@ -6,7 +6,8 @@
  *
  * legacy: drive.file + drive.metadata.readonly.
  * normal: legacy + drive.readonly.
- * Any other set, including one with `drive` or `drive.metadata`, has no profile. */
+ * full:   normal + drive (StorageFullCapability P7: modify existing files Clued adopted).
+ * Any other set, including one with `drive.metadata`, has no profile. */
 
 export const GOOGLE_DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 export const GOOGLE_DRIVE_METADATA_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.metadata.readonly";
@@ -16,24 +17,31 @@ export const GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
 
 /** Scopes any one of which proves Drive namespace visibility (absence and
  * uniqueness checks of the metadata API). Not an allowed connection set:
- * `drive.metadata` and `drive` still have no profile. */
+ * `drive.metadata` still has no profile. */
 export const NAMESPACE_READ_SCOPES = Object.freeze([GOOGLE_DRIVE_METADATA_READONLY_SCOPE, GOOGLE_DRIVE_METADATA_SCOPE,
   GOOGLE_DRIVE_READONLY_SCOPE, GOOGLE_DRIVE_SCOPE].sort());
 
-/** @type {readonly ("legacy"|"normal")[]} */
-export const STORAGE_SCOPE_PROFILES = Object.freeze(["legacy", "normal"]);
+/** @type {readonly ("legacy"|"normal"|"full")[]} */
+export const STORAGE_SCOPE_PROFILES = Object.freeze(["legacy", "normal", "full"]);
 
 /** Requested set per profile, deduplicated and sorted. */
 export const STORAGE_GOOGLE_SCOPE_SETS = Object.freeze({
   legacy: Object.freeze([GOOGLE_DRIVE_FILE_SCOPE, GOOGLE_DRIVE_METADATA_READONLY_SCOPE].sort()),
   normal: Object.freeze([GOOGLE_DRIVE_FILE_SCOPE, GOOGLE_DRIVE_METADATA_READONLY_SCOPE, GOOGLE_DRIVE_READONLY_SCOPE].sort()),
+  full: Object.freeze([GOOGLE_DRIVE_FILE_SCOPE, GOOGLE_DRIVE_METADATA_READONLY_SCOPE, GOOGLE_DRIVE_READONLY_SCOPE,
+    GOOGLE_DRIVE_SCOPE].sort()),
 });
 
-/** @param {unknown} value @returns {value is "legacy"|"normal"} */
-export const isStorageScopeProfile = (value) => value === "legacy" || value === "normal";
+/** @param {unknown} value @returns {value is "legacy"|"normal"|"full"} */
+export const isStorageScopeProfile = (value) => value === "legacy" || value === "normal" || value === "full";
+
+/** Each profile includes every lower one: full reads like normal (P7).
+ * @param {unknown} profile @param {"legacy"|"normal"|"full"} wanted */
+export const scopeProfileCovers = (profile, wanted) =>
+  isStorageScopeProfile(profile) && STORAGE_SCOPE_PROFILES.indexOf(profile) >= STORAGE_SCOPE_PROFILES.indexOf(wanted);
 
 /** Space-separated, deduplicated, sorted scope string of a profile.
- * @param {"legacy"|"normal"} profile */
+ * @param {"legacy"|"normal"|"full"} profile */
 export function scopeString(profile) {
   if (!isStorageScopeProfile(profile)) throw new TypeError("unknown scope profile");
   return STORAGE_GOOGLE_SCOPE_SETS[profile].join(" ");
@@ -48,7 +56,7 @@ export function normalizeScopes(value) {
 }
 
 /** Exact-set comparison after dedupe and sort.
- * @param {unknown} value @returns {"legacy"|"normal"|null} */
+ * @param {unknown} value @returns {"legacy"|"normal"|"full"|null} */
 export function scopeProfile(value) {
   const scopes = normalizeScopes(value);
   if (!scopes) return null;

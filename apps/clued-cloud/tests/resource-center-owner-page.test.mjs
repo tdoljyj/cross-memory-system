@@ -282,6 +282,39 @@ test("normal use on a legacy connection starts Google re-consent with the normal
   assert.equal(f.calls.length,before,"a blocked account starts no consent");assert.match(f.text(),/暂时不能通过重新授权开启正常使用/);
   assert.equal(f.text().includes("请先撤回全部文件读取授权"),false,"never points to a control that does not exist");
 });
+// StorageFullCapability P7 (Decision 6dc1cf20 item 3): one button upgrades the Google grant to the full set.
+const FULL_DISCLOSURE="clued.storage-full-scope-disclosure/1";
+const fullStatus=(profile,extra={})=>normalStatus(profile,profile!=="legacy",{reconsent_required:profile==="legacy",
+  full_scope:profile==="full",full_scope_disclosure_version:FULL_DISCLOSURE,...extra});
+test("managing existing files: one button starts Google re-consent with the full set under its own disclosure, nothing else",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
+  f.button("读取正常使用设置").props.onClick();await f.settle();f.respond(1,fullStatus("normal"));await f.settle();
+  assert.match(f.text(),/管理已有文件：未允许/);assert.match(f.text(),/只升级授权，不打开任何写入等级/);
+  f.button("允许管理已有文件").props.onClick();await f.settle();
+  const prompt=f.prompts.at(-1);
+  assert.match(prompt,/“纳管”「Clued_资料中心」里你自己拥有的已有文件和文件夹：一次一个，只登记、不改动/);
+  assert.match(prompt,/查看、修改、创建和删除你 Google 云端硬盘中的所有文件/);assert.match(prompt,/这个限制由 Clued 保证，不由 Google 保证/);
+  assert.match(prompt,/整个云端硬盘都可能被读取或改写/);assert.match(prompt,/第三方应用和服务/);assert.match(prompt,/前往 Google 授权页面/);
+  assert.equal(prompt.includes("撤回全部文件读取授权"),false,"never points to a control that does not exist");
+  assert.equal(f.calls[2].url,"/v1/storage/google/start");
+  assert.deepEqual(JSON.parse(f.calls[2].init.body),{connection_id:active.id,full_scope:{disclosure_version:FULL_DISCLOSURE}});
+  f.respond(2,{error:"Storage Google connection unavailable.",reason:"storage_root_busy"},403);await f.settle();
+  assert.match(f.text(),/该目录还有尚未完成的文件操作，稍后再试/);
+  // A full credential: allowed, no button.
+  f.button("读取正常使用设置").props.onClick();await f.settle();f.respond(3,fullStatus("full"));await f.settle();
+  assert.match(f.text(),/管理已有文件：已允许/);assert.match(f.text(),/正常使用：已开启/);
+  assert.throws(()=>f.button("允许管理已有文件"));
+  // The refresh-token limit refuses before any request.
+  const g=fixture();await g.settle();g.respond(0,{connections:[active],worker_execution_enabled:false});await g.settle();
+  g.button("读取正常使用设置").props.onClick();await g.settle();
+  g.respond(1,fullStatus("normal",{refresh_token_count:90,refresh_token_warning:true,refresh_token_blocked:true}));await g.settle();
+  const before=g.calls.length;g.button("允许管理已有文件").props.onClick();await g.settle();
+  assert.equal(g.calls.length,before);assert.match(g.text(),/暂时不能通过重新授权允许管理已有文件/);
+  // An older server names neither field: no button.
+  const h=fixture();await h.settle();h.respond(0,{connections:[active],worker_execution_enabled:false});await h.settle();
+  h.button("读取正常使用设置").props.onClick();await h.settle();h.respond(1,normalStatus("normal",true));await h.settle();
+  assert.equal(h.text().includes("管理已有文件"),false);
+});
 // StorageNormalUse.v0.1 §7.3 / §8.2 item 4 (N4): hourly budgets with presets and a bounded custom value.
 const MiB=1048576,GiB=1024*MiB;
 const budgetStatus=(connection={},account={})=>({contract:"clued.storage-budget/1",connection_id:active.id,

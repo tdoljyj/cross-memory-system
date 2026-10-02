@@ -28,7 +28,7 @@ test('discovery and guessed calls require both existing account/jobs flags; no p
       assert.equal(tools[0].annotations.readOnlyHint, false);
       assert.equal(tools[1].annotations.readOnlyHint, true);
       assert.equal(tools[0].inputSchema.additionalProperties, false);
-      assert.equal(tools[0].inputSchema.properties.mutation.oneOf.length, 8);
+      assert.equal(tools[0].inputSchema.properties.mutation.oneOf.length, 9);
     }
   }
   for (const name of ['clued_storage_begin', 'clued_storage_admission', 'clued_storage_grant', 'clued_storage_credential']) {
@@ -342,6 +342,54 @@ test('inspect adds a fixed Worker hint for RESTORE_NAME_CONFLICT, DIRECTORY_NOT_
     reason = 'UNAUTHORIZED_WORKSPACE_MUTATION';
     const r = (await (await call('clued_storage_inspect', ref, env, { waitUntil: () => {} })).json()).result;
     assert.equal('hint' in r.structuredContent, false);
+  } finally { globalThis.fetch = before; }
+});
+
+// StorageFullCapability P7 (Decisions 746fd078, 6dc1cf20).
+test('adopt passes only in its exact shape (path and Drive ID) and reaches the jobs RPC unchanged', async () => {
+  const before = globalThis.fetch; const calls = [];
+  globalThis.fetch = async (_url, init) => { calls.push(JSON.parse(init.body)); return Response.json(status()); };
+  const item = { operation: 'adopt', target_kind: 'file', source_path: '20_P/uploads/manual.pdf', source_file_id: 'drive-m' };
+  const bad = [{ ...item, source_file_version: '3' }, { ...item, destination_path: '20_P/x.pdf' }, { ...item, source_file_id: 'bad id' },
+    { ...item, target_kind: 'link' }, { operation: 'adopt', target_kind: 'file', source_path: item.source_path }, { ...item, content: 'x' },
+    { ...item, directory_semantics: 'topic' }];
+  try {
+    for (const input of bad) {
+      const reply = await (await submit({ ...ref, mutation: input })).json();
+      assert.ok(reply.result?.isError === true || reply.error, JSON.stringify(input));
+    }
+    const invalid = (await (await submit({ ...ref, mutation: { ...item, source_path: '20_P/../x.pdf' } })).json()).result;
+    assert.equal(invalid.structuredContent.error, 'storage_path_invalid');
+    assert.equal(calls.length, 0);
+    for (const input of [item, { ...item, target_kind: 'directory', source_path: 'G:/My Drive/Clued_资料中心/20_P/uploads' }]) {
+      const reply = (await (await submit({ ...ref, mutation: input })).json()).result;
+      assert.equal(reply.isError, false, JSON.stringify(input));
+      assert.deepEqual(calls.at(-1).p_input, { ...ref, mutation: input, action: 'submit' });
+    }
+  } finally { globalThis.fetch = before; }
+});
+
+test('adopt refusals before any job and its execution reasons carry fixed guidance and schedule nothing', async () => {
+  const before = globalThis.fetch; const pending = []; let code;
+  globalThis.fetch = async () => Response.json({ message: code, code: '42501' }, { status: 403 });
+  const item = { operation: 'adopt', target_kind: 'file', source_path: '20_P/uploads/manual.pdf', source_file_id: 'drive-m' };
+  try {
+    for (const [refusal, pattern] of [['adopt_scope_upgrade_required', /allow managing existing files/], ['adopt_already_registered', /do not adopt it again/]]) {
+      code = refusal;
+      const reply = (await (await submit({ ...ref, mutation: item }, env, { waitUntil: p => pending.push(p) })).json()).result;
+      assert.equal(reply.isError, true); assert.equal(reply.structuredContent.error, refusal); assert.match(reply.structuredContent.message, pattern);
+    }
+    assert.equal(pending.length, 0);
+  } finally { globalThis.fetch = before; }
+  let reason;
+  globalThis.fetch = async () => Response.json({ ...status(reason === 'ADOPT_NOT_SETTLED' ? 'cancelled' : 'denied'), reason_code: reason });
+  try {
+    const expected = { ADOPT_SCOPE_UPGRADE_REQUIRED: /allow managing existing files/, ADOPT_TARGET_UNSUPPORTED: /shortcut/,
+      ADOPT_NOT_SETTLED: /nothing was registered/, SCOPE_UPGRADE_REQUIRED: /not created by Clued/, PROVIDER_OWNER_REQUIRED: /adopted/ };
+    for (reason of Object.keys(expected)) {
+      const r = (await (await call('clued_storage_inspect', ref, env, { waitUntil: () => {} })).json()).result;
+      assert.equal(r.structuredContent.reason_code, reason); assert.match(r.structuredContent.hint, expected[reason], reason);
+    }
   } finally { globalThis.fetch = before; }
 });
 

@@ -70,7 +70,8 @@ export async function testStorageOAuth(t, admin, server, user, decision) {
       assert.equal((await rpc({ action: "describe", connection_id: connection })).provider_scope_profile, "legacy");
       const claimed = await rpc({ action: "claim", state_hash });
       assert.equal(claimed.provider_scope_profile, "legacy"); assert.equal(claimed.requested_scope_profile, "normal");
-      for (const bad of ["full", "LEGACY", 1, null, true]) {
+      // A full grant on a normal request (P7: full is never accepted unrequested).
+      for (const bad of ["full", "LEGACY", "drive", 1, null, true]) {
         await assert.rejects(rpc({ action: "complete", state_hash, provider_subject: "fixture-subject", credential_envelope: envelope, provider_scope_profile: bad }),
           /storage_oauth_denied/, JSON.stringify(bad));
       }
@@ -82,7 +83,8 @@ export async function testStorageOAuth(t, admin, server, user, decision) {
       const next = await setup(); await rpc({ action: "claim", state_hash: next.state_hash });
       assert.equal((await complete(next.state_hash)).status, "completed");
       assert.deepEqual(await profileOf(), { provider_scope_profile: "legacy", credential_version: "1" });
-      await assert.rejects(admin.query("update clued_private.storage_connections_v1 set provider_scope_profile='full' where id=$1", [connection]),
+      // P7: full is a profile now (only through a full request); anything else is not.
+      await assert.rejects(admin.query("update clued_private.storage_connections_v1 set provider_scope_profile='drive' where id=$1", [connection]),
         /storage_connections_scope_profile_v1/);
     });
     await t.test("expired OAuth attempt and logged-out session cannot activate or expose credentials", async () => {

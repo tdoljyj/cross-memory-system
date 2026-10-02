@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../../supabase-browser";
 
+const isProfile = (value: unknown): value is "legacy" | "normal" | "full" =>
+  value === "legacy" || value === "normal" || value === "full";
 // One in-memory delivery across React remounts. Never persist the Google code,
 // state or provider credentials in browser storage; never feed it to Clued auth.
 type Delivery = { receipt: string; owner: string; refreshEnabled?: boolean; recovery?: boolean; originalReceipt?: string; originalUnconfirmed?: boolean;
-  scopeProfile?: "legacy" | "normal"; requestedProfile?: "legacy" | "normal"; normalUse?: boolean; onboard?: boolean };
+  scopeProfile?: "legacy" | "normal" | "full"; requestedProfile?: "legacy" | "normal" | "full"; normalUse?: boolean; onboard?: boolean };
 let delivery: Promise<Delivery> | undefined;
 class CallbackFailure extends Error {}
 const reasons: Record<string, string> = {
@@ -125,13 +127,13 @@ function finish(): Promise<Delivery> {
       return await settleOriginal(state, data.session.access_token, data.session.user.id, result.receipt_id);
     if (result.purpose === "onboard") return { receipt: result.receipt_id, owner: data.session.user.id, onboard: true,
       ...(typeof result.refresh_enabled === "boolean" ? { refreshEnabled: result.refresh_enabled } : {}),
-      ...(result.provider_scope_profile === "legacy" || result.provider_scope_profile === "normal" ? { scopeProfile: result.provider_scope_profile } : {}),
-      ...(result.requested_scope_profile === "legacy" || result.requested_scope_profile === "normal" ? { requestedProfile: result.requested_scope_profile } : {}),
+      ...(isProfile(result.provider_scope_profile) ? { scopeProfile: result.provider_scope_profile } : {}),
+      ...(isProfile(result.requested_scope_profile) ? { requestedProfile: result.requested_scope_profile } : {}),
       ...(typeof result.normal_use_enabled === "boolean" ? { normalUse: result.normal_use_enabled } : {}) };
     return { receipt: result.receipt_id, owner: data.session.user.id,
       ...(typeof result.refresh_enabled === "boolean" ? { refreshEnabled: result.refresh_enabled } : {}),
-      ...(result.provider_scope_profile === "legacy" || result.provider_scope_profile === "normal" ? { scopeProfile: result.provider_scope_profile } : {}),
-      ...(result.requested_scope_profile === "legacy" || result.requested_scope_profile === "normal" ? { requestedProfile: result.requested_scope_profile } : {}),
+      ...(isProfile(result.provider_scope_profile) ? { scopeProfile: result.provider_scope_profile } : {}),
+      ...(isProfile(result.requested_scope_profile) ? { requestedProfile: result.requested_scope_profile } : {}),
       ...(typeof result.normal_use_enabled === "boolean" ? { normalUse: result.normal_use_enabled } : {}) };
   })();
   return delivery;
@@ -164,6 +166,11 @@ export default function StorageGoogleCallback() {
           "。连接停用状态、Agent 权限和后台续签设置未改变；没有重新创建文件。" :
           "连接凭据已安全保存。回执：" + result.receipt +
           (typeof result.refreshEnabled === "boolean" ? (result.refreshEnabled ? "。后台续签已开启" : "。后台续签保持关闭") : "") +
+          // StorageFullCapability P7: a full request (or a reconnect of a full
+          // connection) says whether Google granted the full scope.
+          (result.requestedProfile === "full" ? (result.scopeProfile === "full" ? "。已允许管理已有文件（完整云端硬盘权限）"
+            : "。未授予“查看、修改、创建和删除你 Google 云端硬盘中的所有文件”，管理已有文件未允许" +
+              (result.scopeProfile === "legacy" ? "；也未授予“查看你 Google 云端硬盘中的所有文件”，正常使用不可用" : "")) : "") +
           // StorageNormalUse §2.3: a partial grant keeps normal use off and says
           // why, whether normal use was requested or a normal connection was only
           // reconnected (the saved credential follows what Google granted).
