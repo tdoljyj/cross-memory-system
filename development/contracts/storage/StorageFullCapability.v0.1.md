@@ -401,13 +401,13 @@
 - **等级与开关。** 目录 move 使用单独的 `modify_subtree` 写入等级（独立开关与说明 `clued.storage-subtree-disclosure/1`）。/3 策略的 actions 是 create 集合加上 `modify`、`overwrite`、`destructive`、`modify_subtree` 中任意几项，按这个顺序排列（`clued_private.storage_write_actions_v1`）。
 - **提交形状。** 提交为 `{operation: move, target_kind: directory, source_path, destination_path, source_file_version, source_file_id}`，以 Drive ID、路径和调用方观测到的版本共同指定目录。名称不变、父目录改变；不能移到自身或自身之下；track（根的直属目录）不能移动。
 - **判定器。** 源目录与其他已登记目录一样，按共享状态而不是 Drive 版本与登记比对，因为子项变化时 Drive 会推进文件夹版本。判定器还要求：
-  - 源目录的父目录是 Drive 报告的已登记父目录；
+  - 源目录的父目录是 Drive 报告的已登记父目录；目标父目录不能是根本身（`track_forbidden`）；
   - 目标处及其下没有任何已登记对象（`destination_exists`）；
-  - 两个父目录的共享状态完全相同（`sharing_differs`；执行器在任何预留前以 `DIRECTORY_SHARING_DIFFERS` 拒绝），因此被移动子树继承的访问权限不变；
+  - 两个父目录的共享状态和访问权限（每个权限连同其角色）都完全相同（`sharing_differs`；执行器在任何预留前以 `DIRECTORY_SHARING_DIFFERS` 拒绝），因此被移动子树继承的访问权限不变；
   - 目录下已登记对象（含 trashed）不超过 500 个（`subtree_too_large`）。
 - **在途作业（T14）。** 由既有的每个 profile 单写者围栏保证：移动处于 prepared / started / uncertain 时，其他意图都不能开始；其他意图在途时，移动也不能开始。排队中、仍指向旧路径的作业会在自身的 provider 查找时失败，不产生 effect。
-- **attempt 与核验。** provider attempt 为 `clued.storage-subtree-move-attempt/1`，记录目录、两个父目录、两条路径，以及服务端选定、写后按 Drive ID 复读的最多 10 个已登记子孙（先浅后深，再按路径排序）。核验合同为 `clued.storage-directory-move-verified/1`，检查项包括 identity、ancestors、stable_state、unique_name、source_vacated、sharing_unchanged、subtree。
-- **结算。** 结算（`artifact_subtree_move`）在同一个结算事务里完成两件事：按判定时看到的目录版本 CAS 更新目录的路径和观测到的 Drive 版本；同时重写目录下每个 active / trashed 对象的路径。revoked 历史保持旧路径。
+- **attempt 与核验。** provider attempt 为 `clued.storage-subtree-move-attempt/1`，记录目录、两个父目录、两条路径，以及服务端选定的最多 10 个已登记子孙（先浅后深，再按路径排序；由持锁的 durable start 返回，记录 attempt 时须与当时登记一致，核验记录时以已存 attempt 为准）。移动前，执行器（任何预留前）和 effect（durable flush 前后）都按 Drive ID 复读这些子孙；登记已漂移时以 `SUBTREE_DRIFT` 拒绝，不产生 effect。核验合同为 `clued.storage-directory-move-verified/1`，检查项包括 identity、ancestors、stable_state、unique_name、source_vacated、sharing_unchanged（共享状态与访问权限均不变）、subtree。
+- **结算。** 结算（`artifact_subtree_move`，只接受某个目录 move 意图的已核验结算，且须与其已记录证明的目录、路径和 Drive 版本一致）在同一个结算事务里完成两件事：按判定时看到的目录版本 CAS 更新目录的路径和观测到的 Drive 版本；同时重写目录下每个 active / trashed 对象的路径。revoked 历史保持旧路径。
 - **结果不确定时。** 定时恢复不加载目录 move（不自动重写路径）。只有 Owner 在原生页面触发的恢复会以只读 GET 重新核验，并通过同一核验记录结算，绝不重复 effect。
 
 **revision 管理：**

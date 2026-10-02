@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
-import { googleDriveSharingDigest } from "./resource-center-google-drive-sharing.mjs";
+import { googleDriveAccessDigest, googleDriveSharingDigest } from "./resource-center-google-drive-sharing.mjs";
 
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 
@@ -47,6 +47,8 @@ export function createGoogleDriveProviderIdentityResolver({
   get_file: getFile,
   list_children: listChildren,
   get_sharing: getSharing,
+  // Directory move (P6): every permission with its role, for the access digests.
+  get_access: getAccess,
   // Untrash (StorageFullCapability P5): the Drive ID of the registered,
   // trashed source. A trashed file is never listed by name, so it is read by
   // this server-supplied ID and must still sit, trashed, under its path's parent.
@@ -57,6 +59,7 @@ export function createGoogleDriveProviderIdentityResolver({
     typeof rootParentId !== "string" || !rootParentId ||
     typeof getFile !== "function" || typeof listChildren !== "function" ||
     (getSharing !== undefined && typeof getSharing !== "function") ||
+    (getAccess !== undefined && typeof getAccess !== "function") ||
     (restoreSourceId !== undefined && (typeof restoreSourceId !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(restoreSourceId)))) {
     throw new TypeError("A pinned Drive root and Host-owned metadata API are required.");
   }
@@ -145,12 +148,21 @@ export function createGoogleDriveProviderIdentityResolver({
     };
     const rootSharingDigest = await sharing(rootFile);
     const destinationParentSharingDigest = await sharing(destinationParent);
-    // A directory move (P6) names the directory's folder and the sharing of
-    // the directory and that folder: the authority requires both folders to
-    // share the same access, and the verifier the directory's to stay unchanged.
+    // A directory move (P6) names the directory's folder and the sharing and
+    // access (every permission with its role) of the directory and both
+    // folders: the authority requires both folders to grant the same access,
+    // and the verifier the directory's to stay unchanged.
     const directoryMove = mutation.operation === "move" && mutation.target_kind === "directory";
+    const access = async (file) => {
+      if (!getAccess || !file) return null;
+      const result = await getAccess(file.id);
+      return result?.id === file.id ? googleDriveAccessDigest(result) : null;
+    };
     const sourceSharingDigest = directoryMove ? await sharing(source) : null;
     const sourceParentSharingDigest = directoryMove ? await sharing(sourceParent) : null;
+    const accessDigests = directoryMove ? { source_access_digest: await access(source),
+      source_parent_access_digest: await access(sourceParent),
+      destination_parent_access_digest: await access(destinationParent) } : {};
 
     return Object.freeze({
       root_folder_id: rootFolderId,
@@ -170,7 +182,7 @@ export function createGoogleDriveProviderIdentityResolver({
       ...(mutation.operation === "delete" || mutation.operation === "restore"
         ? { source_parent_id: sourceParent?.id ?? null } : {}),
       ...(directoryMove ? { source_parent_id: sourceParent?.id ?? null, source_sharing_digest: sourceSharingDigest,
-        source_parent_sharing_digest: sourceParentSharingDigest } : {}),
+        source_parent_sharing_digest: sourceParentSharingDigest, ...accessDigests } : {}),
     });
   };
 }

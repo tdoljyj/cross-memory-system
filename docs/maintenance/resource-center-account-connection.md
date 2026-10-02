@@ -809,25 +809,37 @@ an anchored patch with an exact hit count.
   state (Drive advances a folder's version when its children change; the
   Agent's observed version is still checked against Drive before any
   reservation). It requires the directory's folder to be its registered
-  parent as Drive reports it, nothing registered at or under the destination
+  parent as Drive reports it, a destination folder other than the root
+  (`track_forbidden`), nothing registered at or under the destination
   (`destination_exists`), at most 500 registered items under the directory
-  (`subtree_too_large`), and both folders with exactly the same sharing
-  state (`sharing_differs`). The executor refuses unequal sharing before any
-  reservation with job reason `DIRECTORY_SHARING_DIFFERS`, so the moved
-  subtree's inherited access never changes.
+  (`subtree_too_large`), and both folders with exactly the same sharing state
+  and the same access: every permission with its type, role, domain,
+  discoverability and expiry (`googleDriveAccessDigest`, read with
+  `permissions(...)`; `sharing_differs`). The executor refuses a difference
+  before any reservation with job reason `DIRECTORY_SHARING_DIFFERS`, so the
+  moved subtree's inherited access never changes, not even a role.
+- Before any reservation the executor also re-reads the server's sample of
+  registered descendants by Drive ID; one renamed, moved or deleted in Drive
+  outside Clued is refused with job reason `SUBTREE_DRIFT` and no effect. The
+  effect repeats that check before and after the durable attempt.
 - In-flight work under the subtree (T14) is excluded by the single writer
   per profile: no other intent can be prepared, started or uncertain while
   the move is, and the move cannot start while another one is. A queued job
   that still names an old path fails its own provider lookup with no effect.
 - The executor records `clued.storage-subtree-move-attempt/1` (the
   directory, both folders, both paths and up to 10 registered descendants the
-  server chose, shallowest first) before the one `files.update`
+  server chose, shallowest first, as the durable start returned them under
+  its locks; the attempt must match the registry then and the verified record
+  checks the stored attempt) before the one `files.update`
   (`addParents`/`removeParents`, empty body). The verifier proves
   `clued.storage-directory-move-verified/1`: the directory is the only entry
   of its name in the destination, is gone from its old folder, keeps its
-  sharing, each sampled descendant still sits at its relative path by Drive
+  sharing and access, each sampled descendant still sits at its relative path by Drive
   ID, and its version is stable across two reads.
-- Settlement (`artifact_subtree_move`) changes the directory's path and
+- Settlement (`artifact_subtree_move`, accepted only as the verified
+  settlement of a directory move intent whose recorded proof names exactly
+  that directory, path and Drive version; never a free path rewrite through
+  the administrative RPC) changes the directory's path and
   observed Drive version by CAS on its version, and the path of every active
   or trashed item under it, in the one settlement transaction. Revoked rows
   keep their old path as history.

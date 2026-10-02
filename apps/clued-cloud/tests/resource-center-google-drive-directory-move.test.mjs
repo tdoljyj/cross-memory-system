@@ -4,7 +4,7 @@ import test from "node:test";
 import { createGoogleDriveNativeDirectoryMoveEffect, directoryMoveShape, directoryMoveProviderBefore, subtreeSampleShape,
   SUBTREE_SAMPLE_LIMIT } from "../../../kernel/host/resource-center-google-drive-directory-move-effect.mjs";
 import { createGoogleDriveDirectoryMovePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-directory-move-postcondition.mjs";
-import { googleDriveSharingDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
+import { googleDriveAccessDigest, googleDriveSharingDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
 import { evaluateResourceCenterMutation } from "../../../kernel/policy/resource-center-mutation-policy.mjs";
 
 // StorageFullCapability.v0.1 P6: the Drive directory move effect and
@@ -17,6 +17,8 @@ const FOLDER = "application/vnd.google-apps.folder";
 const folder = (id, name, parent, version = "1") => ({ id, name, parents: [parent], version, trashed: false, mimeType: FOLDER });
 const SHARING = { shared: false, permissionIds: ["owner-permission"] };
 const DIGEST = googleDriveSharingDigest(SHARING);
+const PERMISSIONS = [{ id: "owner-permission", type: "user", role: "owner" }, { id: "u", type: "user", role: "reader" }];
+const ACCESS = googleDriveAccessDigest({ permissions: PERMISSIONS });
 const SAMPLE = [
   { provider_file_id: "inner", relative_path: "inner", target_kind: "directory" },
   { provider_file_id: "note", relative_path: "note.md", target_kind: "file" },
@@ -30,15 +32,18 @@ function drive() {
     ["note", { id: "note", name: "note.md", parents: ["dir"], version: "3", trashed: false, mimeType: "text/markdown" }],
     ["deep", { id: "deep", name: "deep.md", parents: ["inner"], version: "4", trashed: false, mimeType: "text/markdown" }]]);
   const sharing = new Map([...files.keys()].map(id => [id, structuredClone(SHARING)]));
-  return { files, sharing, getFile: async id => structuredClone(files.get(id)),
+  const access = new Map([...files.keys()].map(id => [id, structuredClone(PERMISSIONS)]));
+  return { files, sharing, access, getFile: async id => structuredClone(files.get(id)),
     getSharing: async id => ({ id, ...structuredClone(sharing.get(id)) }),
+    getAccess: async id => ({ id, permissions: structuredClone(access.get(id)) }),
     listChildren: async ({ parent_id, name }) => [...files.values()].filter(f => f.parents.includes(parent_id) && f.name === name).map(f => structuredClone(f)) };
 }
 const before = () => ({ root_folder_id: "root", root_parent_id: "container", root_folder_version: "1",
   source_file_id: "dir", source_file_version: "17", destination_parent_id: "topic", destination_parent_version: "1",
   destination_file_id: null, destination_file_version: null, provider_version: "a".repeat(64),
   root_sharing_digest: DIGEST, destination_parent_sharing_digest: DIGEST,
-  source_parent_id: "track", source_sharing_digest: DIGEST, source_parent_sharing_digest: DIGEST });
+  source_parent_id: "track", source_sharing_digest: DIGEST, source_parent_sharing_digest: DIGEST,
+  source_access_digest: ACCESS, source_parent_access_digest: ACCESS, destination_parent_access_digest: ACCESS });
 const moveMutation = { operation: "move", target_kind: "directory", source_path: TRACK + "/folder", destination_path: TRACK + "/topic/folder",
   source_file_version: "17", source_file_id: "dir" };
 // As the Host passes it: the submitted fields plus its own authority fields.
@@ -52,9 +57,9 @@ function effectFixture(d = drive(), overrides = {}, mutation = hostMutation) {
   const effect = createGoogleDriveNativeDirectoryMoveEffect({ trusted_profile: profile, get_file: d.getFile,
     get_credential: async () => ({ access_token: "subtree-test-access-token", scope: SCOPE }),
     resolve_provider_identity: async () => ({ ...provider }),
-    consume_started_provider: () => consumed ? null : (consumed = true, { intent_id: intent, request_sha256: binding.request_sha256, provider }),
+    consume_started_provider: () => consumed ? null : (consumed = true, { intent_id: intent, request_sha256: binding.request_sha256, provider,
+      subtree_sample: SAMPLE }),
     persist_provider_attempt: async value => { events.push("persist"); attempt = value; },
-    subtree_sample: SAMPLE,
     fetch: async (url, options) => {
       events.push("patch");
       assert.equal(options.method, "PATCH"); assert.equal(options.redirect, "error"); assert.equal(options.body, "{}");
@@ -90,11 +95,23 @@ test("the subtree sample is at most ten distinct descendants with clean relative
     [{ ...SAMPLE[0], extra: 1 }], [{ ...SAMPLE[0], provider_file_id: "bad id" }]]) assert.equal(subtreeSampleShape(bad), null);
 });
 
+test("the access digest covers every permission with its role, in any order, and fails closed", () => {
+  assert.match(ACCESS, /^[0-9a-f]{64}$/);
+  assert.equal(googleDriveAccessDigest({ permissions: [...PERMISSIONS].reverse() }), ACCESS);
+  assert.notEqual(googleDriveAccessDigest({ permissions: [PERMISSIONS[0], { ...PERMISSIONS[1], role: "writer" }] }), ACCESS,
+    "a role change with the same grantee changes the digest (the sharing digest would not)");
+  assert.equal(googleDriveSharingDigest({ shared: false, permissionIds: ["owner-permission", "u"] }),
+    googleDriveSharingDigest({ shared: false, permissionIds: ["u", "owner-permission"] }));
+  for (const bad of [null, {}, { permissions: [] }, { permissions: [{ id: "x" }] }, { permissions: [{ id: "bad id", type: "user", role: "reader" }] },
+    { permissions: [{ ...PERMISSIONS[0], allowFileDiscovery: "yes" }] }]) assert.equal(googleDriveAccessDigest(bad), null);
+});
+
 test("the provider identity must name both folders with the same sharing state", () => {
   const shape = directoryMoveShape(moveMutation);
   assert.equal(directoryMoveProviderBefore(shape, before()), true);
   for (const change of [{ destination_parent_sharing_digest: "b".repeat(64) }, { source_parent_sharing_digest: null },
-    { source_sharing_digest: null }, { source_parent_id: null }, { destination_parent_id: "track" }, { destination_parent_id: "dir" },
+    { source_sharing_digest: null }, { source_parent_id: null }, { destination_parent_access_digest: "c".repeat(64) },
+    { source_access_digest: null }, { source_parent_access_digest: null }, { destination_parent_id: "track" }, { destination_parent_id: "dir" },
     { destination_file_id: "x" }, { source_file_version: "16" }, { source_file_id: "other" }]) {
     assert.equal(directoryMoveProviderBefore(shape, { ...before(), ...change }), false, JSON.stringify(change));
   }
@@ -149,17 +166,34 @@ test("a changed directory, a missing durable start, unequal sharing or a changed
   expired.request.admission.expires_at_ms = Date.now() - 1;
   await assert.rejects(expired.effect(expired.request), /DRIVE_NATIVE_ADMISSION_EXPIRED/);
   assert.equal(expired.events.includes("patch"), false);
-  assert.throws(() => effectFixture(drive(), { subtree_sample: [{ provider_file_id: "x" }] }), TypeError);
+  const noSample = effectFixture(drive(), { consume_started_provider: () => ({ intent_id: intent,
+    request_sha256: noSampleHash, provider: before(), subtree_sample: [{ provider_file_id: "x" }] }) });
+  await assert.rejects(noSample.effect(noSample.request), /DRIVE_NATIVE_DURABLE_START_REQUIRED/);
+  assert.deepEqual(noSample.events, []);
   const r = drive(), wrong = effectFixture(r, { fetch: async () => {
     const file = r.files.get("dir"); file.parents = ["track"]; file.version = "20"; return Response.json(file);
   } });
   await assert.rejects(wrong.effect(wrong.request), /DRIVE_NATIVE_RESPONSE_MISMATCH/);
 });
 
+const noSampleHash = createHash("sha256").update(JSON.stringify(hostMutation)).digest("hex");
+
+test("a registered descendant that drifted in Drive is refused before the attempt, or after the flush before the update", async () => {
+  const early = effectFixture();
+  early.d.files.get("note").name = "renamed.md";
+  await assert.rejects(early.effect(early.request), /DRIVE_NATIVE_SUBTREE_DRIFT/);
+  assert.deepEqual(early.events, [], "nothing is recorded or moved");
+  let reads = 0; const d = drive(), getFile = d.getFile;
+  d.getFile = async id => { const f = await getFile(id); if (id === "deep" && ++reads === 2) f.parents = ["dir"]; return f; };
+  const late = effectFixture(d);
+  await assert.rejects(late.effect(late.request), /DRIVE_NATIVE_SUBTREE_DRIFT/);
+  assert.deepEqual(late.events, ["persist"], "a drift after the durable flush stops before the update");
+});
+
 function verifier(d, extra = {}) {
   let now = 0;
   return createGoogleDriveDirectoryMovePostconditionVerifier({ managed_root: ROOT, root_folder_id: "root", root_parent_id: "container",
-    get_file: d.getFile, list_children: d.listChildren, get_sharing: d.getSharing, include_verified_proof: true,
+    get_file: d.getFile, list_children: d.listChildren, get_sharing: d.getSharing, get_access: d.getAccess, include_verified_proof: true,
     timeout_ms: 3000, poll_ms: 1000, clock: () => now, sleep: async ms => { now += ms; }, ...extra });
 }
 const effectResult = (sample = SAMPLE) => ({ operation: "move", target_kind: "directory", source_path: moveMutation.source_path,
@@ -182,6 +216,7 @@ test("the verifier fails closed on a wrong parent, changed sharing, a broken sub
   const cases = [
     ["DRIVE_POSTCONDITION_IDENTITY_MISMATCH", d => { d.files.get("dir").parents = ["topic", "track"]; }],
     ["DRIVE_POSTCONDITION_SHARING_CHANGED", d => { d.sharing.set("dir", { shared: true, permissionIds: ["owner-permission", "anyone"] }); }],
+    ["DRIVE_POSTCONDITION_SHARING_CHANGED", d => { d.access.set("dir", [PERMISSIONS[0], { ...PERMISSIONS[1], role: "writer" }]); }],
     ["DRIVE_POSTCONDITION_SUBTREE_MISMATCH", d => { d.files.get("deep").parents = ["dir"]; }],
     ["DRIVE_POSTCONDITION_SUBTREE_MISMATCH", d => { d.files.get("note").trashed = true; }],
     ["DRIVE_POSTCONDITION_SUBTREE_MISMATCH", d => { d.files.get("inner").name = "renamed"; }],
@@ -207,6 +242,7 @@ test("the verifier fails closed on a wrong parent, changed sharing, a broken sub
       /DRIVE_POSTCONDITION_REQUEST_MISMATCH/);
   }
   assert.throws(() => verifier(moved(), { get_sharing: undefined }), TypeError);
+  assert.throws(() => verifier(moved(), { get_access: undefined }), TypeError);
 });
 
 test("a directory version still settling is re-read until two observations agree, and folder versions are not pinned", async () => {

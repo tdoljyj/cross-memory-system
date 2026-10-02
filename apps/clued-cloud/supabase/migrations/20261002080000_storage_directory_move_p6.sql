@@ -19,21 +19,26 @@
 --   directory (by Drive ID and its sharing state, as for every registered
 --   directory, since Drive advances folder versions when children change);
 --   its registered folder as Drive reports it; the destination not inside the
---   directory and nothing registered at or under the destination; both folders
---   with exactly the same sharing state (sharing_differs otherwise), so the
---   inherited access of the moved subtree does not change; at most 500
---   registered items under the directory (subtree_too_large).
+--   directory, not the root itself (track_forbidden), and nothing registered at
+--   or under the destination; both folders with exactly the same sharing state
+--   and the same access, every permission with its role (sharing_differs
+--   otherwise), so the inherited access of the moved subtree does not change;
+--   at most 500 registered items under the directory (subtree_too_large).
 -- * In-flight work under the subtree (T14) is excluded by the existing single
 --   writer per profile: no other intent can be prepared, started or
 --   uncertain while the move is, and the move cannot start while another is.
 --   A queued job that names an old path fails its own provider lookup.
 -- * The provider attempt (clued.storage-subtree-move-attempt/1) names the
 --   directory, both folders, both paths and up to 10 registered descendants
---   chosen by the server (shallowest first, then by path) that the verifier
---   re-reads by Drive ID after the move. The verified proof is
+--   chosen by the server (shallowest first, then by path). The durable start
+--   returns that sample under its locks; the attempt must repeat the registry's
+--   sample at that moment; the verified record checks the stored attempt. The
+--   executor and the effect re-read the sample before the move (a drifted
+--   registry is refused with no effect) and the verifier after it. The verified proof is
 --   clued.storage-directory-move-verified/1 (identity, ancestors,
 --   stable_state, unique_name, source_vacated, sharing_unchanged, subtree).
--- * Settlement (artifact_subtree_move) changes, in the one settlement
+-- * Settlement (artifact_subtree_move, accepted only for the verified
+--   settlement of a directory move intent) changes, in the one settlement
 --   transaction, the directory's path and observed Drive version by CAS on the
 --   version the authority saw, and the path of every active or trashed item
 --   under it. Nothing is rewritten from a partial observation.
@@ -107,12 +112,16 @@ $$;
 
 -- Expected provider attempt of a directory move: the directory and both
 -- folders are the authority's provider identity, the directory is the one the
--- job names by Drive ID, and the descendants are the server's sample.
+-- job names by Drive ID, and the descendants are the server's sample: the
+-- registry's sample now (p_sample null, when the attempt is recorded), or the
+-- sample of the attempt recorded and checked then (the verified record).
 create function clued_private.storage_subtree_attempt_v1(m clued_private.resource_center_mutations_v1,
-  j clued_private.storage_jobs_v1)
+  j clued_private.storage_jobs_v1,p_sample jsonb)
 returns jsonb language plpgsql stable security definer set search_path='' as $$
 declare pi jsonb:=m.authority_request->'provider_identity';
 begin
+  if p_sample is not null and (jsonb_typeof(p_sample) is distinct from 'array' or jsonb_array_length(p_sample)>10) then
+    return null; end if;
   if j.mutation->>'source_file_version' is distinct from pi->>'source_file_version'
     or j.mutation->>'source_file_id' is distinct from pi->>'source_file_id'
     or coalesce(pi->>'source_parent_id','') !~ '^[A-Za-z0-9_-]{1,160}$'
@@ -123,7 +132,7 @@ begin
     'provider_file_id',pi->>'source_file_id','source_path',j.mutation->>'source_path',
     'source_file_version',j.mutation->>'source_file_version','source_parent_id',pi->>'source_parent_id',
     'destination_path',j.mutation->>'destination_path','parent_id',pi->>'destination_parent_id',
-    'subtree_sample',clued_private.storage_subtree_sample_v1(m.profile_id,m.user_id,j.mutation->>'source_path'),
+    'subtree_sample',coalesce(p_sample,clued_private.storage_subtree_sample_v1(m.profile_id,m.user_id,j.mutation->>'source_path')),
     'binding',m.exact_request->'binding');
 end $$;
 
@@ -131,13 +140,29 @@ end $$;
 -- and observed Drive version by CAS on its version, and the path of every
 -- active or trashed item under it, in this one transaction. Same name, a
 -- registered folder under the root (never the root itself), nothing
--- registered at or under the new path, never below the old one.
+-- registered at or under the new path, never below the old one. Accepted only
+-- as the verified settlement of a directory move intent of this profile whose
+-- recorded proof names exactly this directory, path and Drive version: never
+-- a free path rewrite through the administrative RPC.
 create function clued_private.storage_subtree_move_v1(p clued_private.resource_center_profiles_v1,
   a clued_private.resource_center_artifacts_v1,p_input jsonb,p_decision uuid,p_receipt uuid)
 returns clued_private.resource_center_artifacts_v1 language plpgsql security definer set search_path='' as $$
 declare v_path text:=p_input->>'path'; old text:=a.path; root text:=p.managed_root; parent text;
   moved clued_private.resource_center_artifacts_v1;
 begin
+  if coalesce(p_input->>'idempotency_key','') !~ '^resource-center-finalize:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    or not exists(select 1 from clued_private.resource_center_mutations_v1 m
+      where m.id=substr(p_input->>'idempotency_key',26)::uuid and m.user_id=p.user_id and m.profile_id=p.id
+        and m.state in ('started','uncertain') and m.verified_result_v2 is not null
+        and m.authority_request->'mutation'->>'operation'='move'
+        and m.authority_request->'mutation'->>'target_kind'='directory'
+        and m.authority_request->'mutation'->>'source_path'=a.path
+        and m.authority_result->'authority'->>'artifact_id'=a.id::text
+        and m.verified_result_v2->'proof'->>'contract'='clued.storage-directory-move-verified/1'
+        and m.verified_result_v2->'proof'->>'path' is not distinct from p_input->>'path'
+        and m.verified_result_v2->'proof'->>'provider_file_id' is not distinct from p_input->>'provider_file_id'
+        and m.verified_result_v2->'proof'->>'provider_file_version' is not distinct from p_input->>'provider_file_version') then
+    raise exception 'resource_center_directory_move_requires_subtree_contract' using errcode='22023'; end if;
   if p_input->>'provider_file_id' is distinct from a.provider_file_id
     or coalesce(p_input->>'provider_file_version','') !~ '^[0-9]+$' or v_path is null
     or v_path=old or left(v_path,char_length(old)+1)=old||'/'
@@ -238,10 +263,11 @@ begin
     ('public.clued_resource_center_authority_v1(text,jsonb)',
      $a$  if v_destination_path is not null then
     if left(v_destination_path,$a$,
-     $r$  -- Directory move (P6): never a track; the directory's folder is its
-  -- registered, current parent as Drive reports it; never into itself;
-  -- nothing registered at or under the destination; both folders with the
-  -- same sharing state; at most 500 registered items under the directory.
+     $r$  -- Directory move (P6): never a track and never into the root itself; the
+  -- directory's folder is its registered, current parent as Drive reports
+  -- it; never into itself; nothing registered at or under the destination;
+  -- both folders with the same sharing state and the same access (every
+  -- permission with its role); at most 500 registered items under it.
   if v_operation='move' and v_mutation->>'target_kind'='directory' then
     v_parent_path:=left(v_source_path,char_length(v_source_path)-strpos(reverse(v_source_path),'/'));
     if v_parent_path=v_profile.managed_root then
@@ -249,6 +275,9 @@ begin
     end if;
     if v_destination_path=v_source_path or left(v_destination_path,char_length(v_source_path)+1)=v_source_path||'/' then
       return jsonb_build_object('status','denied','reason','destination_inside_source');
+    end if;
+    if left(v_destination_path,char_length(v_destination_path)-strpos(reverse(v_destination_path),'/'))=v_profile.managed_root then
+      return jsonb_build_object('status','denied','reason','track_forbidden');
     end if;
     select * into v_parent from clued_private.resource_center_artifacts_v1
       where profile_id=v_profile.id and user_id=v_profile.user_id and state='active'
@@ -264,7 +293,10 @@ begin
     end if;
     if coalesce(v_provider->>'source_sharing_digest','') !~ '^[0-9a-f]{64}$'
       or coalesce(v_provider->>'source_parent_sharing_digest','') !~ '^[0-9a-f]{64}$'
-      or v_provider->>'source_parent_sharing_digest' is distinct from v_provider->>'destination_parent_sharing_digest' then
+      or v_provider->>'source_parent_sharing_digest' is distinct from v_provider->>'destination_parent_sharing_digest'
+      or coalesce(v_provider->>'source_access_digest','') !~ '^[0-9a-f]{64}$'
+      or coalesce(v_provider->>'source_parent_access_digest','') !~ '^[0-9a-f]{64}$'
+      or v_provider->>'source_parent_access_digest' is distinct from v_provider->>'destination_parent_access_digest' then
       return jsonb_build_object('status','denied','reason','sharing_differs');
     end if;
     if exists(select 1 from clued_private.resource_center_artifacts_v1 a
@@ -285,15 +317,21 @@ begin
      $a$  if j.mutation->>'operation' in ('rename','move') then
     expected:=clued_private.storage_modify_attempt_v1(m,j,p_attempt->'content');$a$,
      $r$  if j.mutation->>'operation'='move' and j.mutation->>'target_kind'='directory' then
-    expected:=clued_private.storage_subtree_attempt_v1(m,j);
+    expected:=clued_private.storage_subtree_attempt_v1(m,j,null);
   elsif j.mutation->>'operation' in ('rename','move') then
     expected:=clued_private.storage_modify_attempt_v1(m,j,p_attempt->'content');$r$,1),
+    -- The durable start returns a directory move's sample under its locks.
+    ('clued_private.storage_job_begin_v2(uuid,uuid,text,jsonb)',
+     $a$  return started||jsonb_build_object('job_id',p_job,'job_request_digest',j.request_digest);$a$,
+     $r$  return started||jsonb_build_object('job_id',p_job,'job_request_digest',j.request_digest)
+    ||case when j.mutation->>'operation'='move' and j.mutation->>'target_kind'='directory' then jsonb_build_object('subtree_sample',
+      clued_private.storage_subtree_sample_v1(p.id,p_owner,j.mutation->>'source_path')) else '{}'::jsonb end;$r$,1),
     -- Verified record and settlement.
     ('clued_private.storage_verified_result_v2(text,jsonb)',
      $a$    if j.mutation->>'operation' in ('rename','move') then
       attempt_expected:=clued_private.storage_modify_attempt_v1(m,j,m.provider_attempt->'content');$a$,
      $r$    if j.mutation->>'operation'='move' and j.mutation->>'target_kind'='directory' then
-      attempt_expected:=clued_private.storage_subtree_attempt_v1(m,j);
+      attempt_expected:=clued_private.storage_subtree_attempt_v1(m,j,m.provider_attempt->'subtree_sample');
     elsif j.mutation->>'operation' in ('rename','move') then
       attempt_expected:=clued_private.storage_modify_attempt_v1(m,j,m.provider_attempt->'content');$r$,1),
     ('clued_private.storage_verified_result_v2(text,jsonb)',
@@ -325,6 +363,7 @@ begin
      $r$      or (p_mutation->>'operation'='delete' and selected.governance_class='governance' and not selected.delete_authority)
       or (p_mutation->>'operation'='move' and p_mutation->>'target_kind'='directory'
         and (regexp_replace(selected.path,'/[^/]*$','')=p.managed_root
+          or regexp_replace(p_mutation->>'destination_path','/[^/]*$','')=p.managed_root
           or not exists(select 1 from clued_private.resource_center_artifacts_v1 x where x.profile_id=p.id and x.state='active'
             and x.target_kind='directory' and x.path=regexp_replace(selected.path,'/[^/]*$','')
             and x.provider_file_id=m.authority_request->'provider_identity'->>'source_parent_id')
@@ -397,6 +436,6 @@ revoke all on function clued_private.storage_write_actions_v1(text[]),
   clued_private.storage_subtree_shape_v1(jsonb),
   clued_private.storage_subtree_target_v1(uuid,jsonb),
   clued_private.storage_subtree_sample_v1(uuid,uuid,text),
-  clued_private.storage_subtree_attempt_v1(clued_private.resource_center_mutations_v1,clued_private.storage_jobs_v1),
+  clued_private.storage_subtree_attempt_v1(clued_private.resource_center_mutations_v1,clued_private.storage_jobs_v1,jsonb),
   clued_private.storage_subtree_move_v1(clued_private.resource_center_profiles_v1,clued_private.resource_center_artifacts_v1,jsonb,uuid,uuid)
   from public,anon,authenticated,service_role;

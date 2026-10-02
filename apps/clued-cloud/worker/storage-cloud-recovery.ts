@@ -120,7 +120,8 @@ export async function createStorageCloudRecovery(config: {
         include_verified_proof: !!config.verified, timeout_ms: timeout, poll_ms: Math.min(1000, timeout), clock,
       };
       const verify = subtree ? createGoogleDriveDirectoryMovePostconditionVerifier({ ...verifierConfig,
-          get_sharing: (id: string) => metadata.getSharing(id, { signal: abort.signal }) })
+          get_sharing: (id: string) => metadata.getSharing(id, { signal: abort.signal }),
+          get_access: (id: string) => metadata.getAccess(id, { signal: abort.signal }) })
         : destructive ? createGoogleDriveDestructivePostconditionVerifier({ ...verifierConfig,
           has_children: (id: string) => metadata.hasChildren(id, { signal: abort.signal }) })
         : replace

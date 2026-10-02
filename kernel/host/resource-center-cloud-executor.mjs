@@ -14,7 +14,7 @@ import { createGoogleDriveReplacePostconditionVerifier } from "./resource-center
 import { createGoogleDriveNativeDestructiveEffect, destructiveShape, destructiveOwnershipAllowed,
   DESTRUCTIVE_PROOF_CONTRACTS } from "./resource-center-google-drive-destructive-effect.mjs";
 import { createGoogleDriveDestructivePostconditionVerifier } from "./resource-center-google-drive-destructive-postcondition.mjs";
-import { createGoogleDriveNativeDirectoryMoveEffect, directoryMoveShape, subtreeSampleShape,
+import { createGoogleDriveNativeDirectoryMoveEffect, directoryMoveShape, subtreeSampleShape, checkSubtreeSample,
   DIRECTORY_MOVE_KEYS } from "./resource-center-google-drive-directory-move-effect.mjs";
 import { createGoogleDriveDirectoryMovePostconditionVerifier } from "./resource-center-google-drive-directory-move-postcondition.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "./resource-center-governed-tool-surface.mjs";
@@ -209,6 +209,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const resolveProvider=createGoogleDriveProviderIdentityResolver({managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         get_sharing:metadata.getSharing,
+        ...(subtree ? {get_access:metadata.getAccess} : {}),
         ...(mutation.operation==="restore" ? {restore_source_id:descriptor.untrash_source.provider_file_id} : {})});
       let batched={};
       if(metadataBatch){
@@ -329,8 +330,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         if(String(replacement.byteLength)!==restore.size || (restore.sha256!=null && sha256Hex(replacement)!==restore.sha256) ||
           (restore.md5!=null && md5Hex(replacement)!==restore.md5)) fail();
       }
-      const effect=subtree ? createGoogleDriveNativeDirectoryMoveEffect({...effectConfig,get_file:metadata.getFile,
-          subtree_sample:descriptor.subtree_sample})
+      const effect=subtree ? createGoogleDriveNativeDirectoryMoveEffect({...effectConfig,get_file:metadata.getFile})
         : destructive ? createGoogleDriveNativeDestructiveEffect({...effectConfig,get_file:metadata.getFile,
           get_ownership:metadata.getOwnership,has_children:metadata.hasChildren})
         : replace ? createGoogleDriveNativeReplaceEffect({...effectConfig,get_file:metadata.getFile,get_revision:metadata.getRevision,replacement,
@@ -340,7 +340,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const verifierConfig={managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         include_verified_proof:verifiedResultMode,clock};
-      const verify=subtree ? createGoogleDriveDirectoryMovePostconditionVerifier({...verifierConfig,get_sharing:metadata.getSharing})
+      const verify=subtree ? createGoogleDriveDirectoryMovePostconditionVerifier({...verifierConfig,get_sharing:metadata.getSharing,
+          get_access:metadata.getAccess})
         : destructive ? createGoogleDriveDestructivePostconditionVerifier({...verifierConfig,has_children:metadata.hasChildren})
         : replace ? createGoogleDriveReplacePostconditionVerifier({...verifierConfig,get_revision:metadata.getRevision})
         : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
@@ -361,7 +362,9 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
             result.job_id!==ref.job_id || result.job_request_digest!==descriptor.request_digest || result.request_sha256!==binding.request_sha256 ||
             !Number.isSafeInteger(result.version)) fail();
           saved={result:structuredClone(result),provider:request.provider_identity};
-          startedProvider={intent_id:result.intent_id,request_sha256:result.request_sha256,provider:request.provider_identity};
+          startedProvider={intent_id:result.intent_id,request_sha256:result.request_sha256,provider:request.provider_identity,
+            // P6: the descendants to re-read, chosen by the durable start under its locks.
+            ...(subtree ? {subtree_sample:result.subtree_sample} : {})};
           return {status:"started",execution_permitted:true,intent_id:result.intent_id,request_sha256:result.request_sha256};
         },commit_post_write:async({mutation:input,binding,reservation,effect_result:result})=>{
           let stage="reservation";
@@ -425,20 +428,27 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           return {status:"deny",error_code:refusal,side_effects:0,execution_permitted:false};
         }
       }
-      // P6: a directory moves only between folders with exactly the same
-      // sharing, so the moved subtree's inherited access does not change. A
-      // difference is refused before any reservation with its own fixed
-      // reason (the authority refuses it again as sharing_differs).
+      // P6, before any reservation, each with its own fixed reason (the
+      // authority and the effect refuse the same again): a directory moves only
+      // between folders that grant exactly the same access, so the moved
+      // subtree's inherited access does not change (DIRECTORY_SHARING_DIFFERS,
+      // only when both folders' states were read); and the server's sample of
+      // registered descendants must still sit where the registry says
+      // (SUBTREE_DRIFT), so a drifted registry is never moved and fenced.
       if(subtree){
-        let differs=false;
+        let refusal=null;
         try{
           const identity=await resolveProvider({profile,mutation});
-          differs=identity.source_file_id===mutation.source_file_id &&
-            identity.source_parent_sharing_digest!==identity.destination_parent_sharing_digest;
-        }catch{ /* The authority below resolves the same identity and fails closed. */ }
-        if(differs){
-          logDiagnostic("deny","DIRECTORY_SHARING_DIFFERS");
-          return {status:"deny",error_code:"DIRECTORY_SHARING_DIFFERS",side_effects:0,execution_permitted:false};
+          const unequal=(a,b)=>typeof a==="string" && typeof b==="string" && a!==b;
+          if(identity.source_file_id===mutation.source_file_id){
+            if(unequal(identity.source_parent_sharing_digest,identity.destination_parent_sharing_digest) ||
+              unequal(identity.source_parent_access_digest,identity.destination_parent_access_digest)) refusal="DIRECTORY_SHARING_DIFFERS";
+            else await checkSubtreeSample(metadata.getFile,mutation.source_file_id,descriptor.subtree_sample,"SUBTREE_DRIFT");
+          }
+        }catch(error){ if(error?.message==="SUBTREE_DRIFT") refusal="SUBTREE_DRIFT"; }
+        if(refusal){
+          logDiagnostic("deny",refusal);
+          return {status:"deny",error_code:refusal,side_effects:0,execution_permitted:false};
         }
       }
       const result=await host.callTool(RESOURCE_CENTER_MUTATION_TOOL,mutation);

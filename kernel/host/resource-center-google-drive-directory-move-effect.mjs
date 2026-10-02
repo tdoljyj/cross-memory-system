@@ -59,9 +59,10 @@ export function subtreeSampleShape(sample) {
 }
 
 /** The provider identity a directory move must carry: the named directory,
- * its registered folder, the destination folder, and the sharing state of the
- * directory and both folders. Both folders must share exactly the same
- * access, so the moved subtree's inherited sharing does not change. */
+ * its registered folder, the destination folder, and the sharing and access
+ * (every permission with its role) of the directory and both folders. Both
+ * folders must grant exactly the same access, so the moved subtree's
+ * inherited access does not change. */
 export function directoryMoveProviderBefore(shape, before) {
   return !!shape && !!before && before.source_file_id === shape.source_file_id &&
     before.source_file_version === shape.source_file_version && fileId.test(before.source_parent_id ?? "") &&
@@ -69,32 +70,55 @@ export function directoryMoveProviderBefore(shape, before) {
     before.destination_parent_id !== shape.source_file_id &&
     before.destination_file_id === null && before.destination_file_version === null &&
     digest.test(before.source_sharing_digest ?? "") && digest.test(before.source_parent_sharing_digest ?? "") &&
-    before.source_parent_sharing_digest === before.destination_parent_sharing_digest;
+    before.source_parent_sharing_digest === before.destination_parent_sharing_digest &&
+    digest.test(before.source_access_digest ?? "") && digest.test(before.source_parent_access_digest ?? "") &&
+    before.source_parent_access_digest === before.destination_parent_access_digest;
+}
+
+/** Each sampled registered descendant sits, by Drive ID, at its path
+ * relative to the folder `folderId`: its own name and kind, then each folder
+ * up to that folder. Checked before the move (a drifted registry is refused
+ * with no effect) and after it (the verifier). Throws `code` otherwise. */
+export async function checkSubtreeSample(getFile, folderId, sample, code) {
+  for (const item of sample) {
+    const segments = item.relative_path.split("/");
+    let node = await getFile(item.provider_file_id);
+    if (!node || node.id !== item.provider_file_id || node.name !== segments.at(-1) || node.trashed !== false ||
+      (node.mimeType === FOLDER) !== (item.target_kind === "directory") ||
+      !Array.isArray(node.parents) || node.parents.length !== 1 || typeof node.parents[0] !== "string") fail(code);
+    for (let index = segments.length - 2; index >= 0; index -= 1) {
+      const parentId = node.parents[0];
+      node = await getFile(parentId);
+      if (!node || node.id !== parentId || node.name !== segments[index] || node.trashed !== false ||
+        node.mimeType !== FOLDER || !Array.isArray(node.parents) || node.parents.length !== 1 ||
+        typeof node.parents[0] !== "string") fail(code);
+    }
+    if (node.parents[0] !== folderId) fail(code);
+  }
 }
 
 /** Private effect for the admitted, durable-started Host only. The exact
  * attempt (directory ID, both folders, both paths and the server-chosen
  * descendants to re-read) is durably recorded BEFORE the one files.update
- * call. Drive has no conditional update (§6.2): the directory is re-read
- * before and after the durable flush, and the verifier re-reads after. A lost
- * reply is inspected, never retried.
- * @param {{trusted_profile: object, get_credential: Function, get_file: Function, resolve_provider_identity: Function, consume_started_provider: Function, persist_provider_attempt: Function, subtree_sample: Array<object>, fetch?: typeof fetch, clock?: () => number}} config
+ * call. Drive has no conditional update (§6.2): the directory and the sampled
+ * descendants are re-read before and after the durable flush, and the
+ * verifier re-reads after. The sample is the one the durable start returned
+ * (chosen under the start's locks). A lost reply is inspected, never retried.
+ * @param {{trusted_profile: object, get_credential: Function, get_file: Function, resolve_provider_identity: Function, consume_started_provider: Function, persist_provider_attempt: Function, fetch?: typeof fetch, clock?: () => number}} config
  */
 export function createGoogleDriveNativeDirectoryMoveEffect({
   trusted_profile: trustedProfile, get_credential: getCredential, get_file: getFile,
   resolve_provider_identity: resolveProviderIdentity,
   consume_started_provider: consumeStartedProvider,
   persist_provider_attempt: persistProviderAttempt,
-  subtree_sample: subtreeSample,
   fetch: fetchImpl = globalThis.fetch,
   clock = Date.now,
 } = {}) {
-  const sample = subtreeSampleShape(subtreeSample);
   if (!trustedProfile || typeof getCredential !== "function" || typeof getFile !== "function" ||
     typeof resolveProviderIdentity !== "function" || typeof consumeStartedProvider !== "function" ||
-    typeof persistProviderAttempt !== "function" || !sample ||
+    typeof persistProviderAttempt !== "function" ||
     typeof fetchImpl !== "function" || typeof clock !== "function") {
-    throw new TypeError("A private native writer, durable attempt store and server subtree sample are required.");
+    throw new TypeError("A private native writer and durable attempt store are required.");
   }
   const profile = structuredClone(trustedProfile);
   async function patch(url, expiresAt) {
@@ -132,10 +156,13 @@ export function createGoogleDriveNativeDirectoryMoveEffect({
     }
     const started = consumeStartedProvider(binding);
     if (!started || started.request_sha256 !== requestHash || !started.intent_id) fail("DRIVE_NATIVE_DURABLE_START_REQUIRED");
+    const sample = subtreeSampleShape(started.subtree_sample);
+    if (!sample) fail("DRIVE_NATIVE_DURABLE_START_REQUIRED");
     const before = await resolveProviderIdentity({ profile, mutation });
     if (!isDeepStrictEqual(before, started.provider) || !directoryMoveProviderBefore(shape, before)) fail("DRIVE_NATIVE_PROVIDER_CHANGED");
     const sourceParent = before.source_parent_id, destinationParent = before.destination_parent_id;
     await sourceFolder(shape, sourceParent);
+    await checkSubtreeSample(getFile, shape.source_file_id, sample, "DRIVE_NATIVE_SUBTREE_DRIFT");
     const attempt = Object.freeze({ contract: "clued.storage-subtree-move-attempt/1", intent_id: started.intent_id,
       request_sha256: requestHash, profile_id: profile.profile_id, operation: "move", target_kind: "directory",
       provider_file_id: shape.source_file_id, source_path: shape.source, source_file_version: shape.source_file_version,
@@ -145,6 +172,7 @@ export function createGoogleDriveNativeDirectoryMoveEffect({
     // Recheck after the durable flush, still before the only storage update.
     if (!isDeepStrictEqual(await resolveProviderIdentity({ profile, mutation }), before)) fail("DRIVE_NATIVE_PROVIDER_CHANGED");
     await sourceFolder(shape, sourceParent);
+    await checkSubtreeSample(getFile, shape.source_file_id, sample, "DRIVE_NATIVE_SUBTREE_DRIFT");
     const url = `${API}/${encodeURIComponent(shape.source_file_id)}?fields=${FIELDS}` +
       `&addParents=${encodeURIComponent(destinationParent)}&removeParents=${encodeURIComponent(sourceParent)}`;
     const result = await patch(url, admission.expires_at_ms);

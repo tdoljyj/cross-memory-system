@@ -28,8 +28,10 @@ const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis
 const folder = (id, name, parent) => ({ id, name, parents: [parent], version: "1", trashed: false, mimeType: "application/vnd.google-apps.folder" });
 
 const SHARING = { shared: false, permissionIds: ["owner-permission"] };
-const { googleDriveSharingDigest } = await import("../../../kernel/host/resource-center-google-drive-sharing.mjs");
+const { googleDriveAccessDigest, googleDriveSharingDigest } = await import("../../../kernel/host/resource-center-google-drive-sharing.mjs");
 const DIGEST = googleDriveSharingDigest(SHARING);
+const PERMISSIONS = [{ id: "owner-permission", type: "user", role: "owner" }];
+const ACCESS = googleDriveAccessDigest({ permissions: PERMISSIONS });
 const SAMPLE = [{ provider_file_id: "note", relative_path: "note.md", target_kind: "file" }];
 
 async function setup({ moved = true, sample = SAMPLE } = {}) {
@@ -43,7 +45,8 @@ async function setup({ moved = true, sample = SAMPLE } = {}) {
   const provider = { root_folder_id: "root", root_parent_id: "container", root_folder_version: "1", source_file_id: "dir",
     source_file_version: "6", destination_parent_id: "topic", destination_parent_version: "1", destination_file_id: null,
     destination_file_version: null, provider_version: "a".repeat(64), root_sharing_digest: DIGEST, destination_parent_sharing_digest: DIGEST,
-    source_parent_id: "track", source_sharing_digest: DIGEST, source_parent_sharing_digest: DIGEST };
+    source_parent_id: "track", source_sharing_digest: DIGEST, source_parent_sharing_digest: DIGEST,
+    source_access_digest: ACCESS, source_parent_access_digest: ACCESS, destination_parent_access_digest: ACCESS };
   const descriptor = { status: "recovery_only", owner_id: ids.owner, connection_id: ids.connection, job_id: ids.job, intent_id: ids.intent,
     version: 2, provider: "google-drive", oauth_client_id: "test-client", provider_subject: "subject", credential_version: 1,
     request_sha256: "b".repeat(64), root_folder_id: "root", root_parent_id: "container",
@@ -65,6 +68,7 @@ async function setup({ moved = true, sample = SAMPLE } = {}) {
       }
       const found = files.get(u.pathname.split("/").at(-1));
       if (found && u.searchParams.get("fields") === "id,shared,permissionIds") return Response.json({ id: found.id, ...SHARING });
+      if (found && u.searchParams.get("fields")?.startsWith("id,permissions(")) return Response.json({ id: found.id, permissions: PERMISSIONS });
       return found ? Response.json(found) : new Response("", { status: 404 });
     },
     verified: { descriptor, rpc: async input => {
