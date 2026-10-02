@@ -211,6 +211,37 @@ test('work claims hardening: glob/glob overlap and pull request binding',
       committed(await release(tokens.A, c));
     }
 
+    // --- Concurrency caps (migration 20261002060000): 3 per session, 10 per
+    // Binding across sessions; a claim without holder_session_ref counts in
+    // a group of its own. ---
+    const capClaim = async (token, session, label) => call(token, 'clued_work_claim_v1', {
+      scope: 'global', idempotency_key: uuid(), task_id: await createTask(`cap ${label}`),
+      write_set: [`cap/${label}`], ...(session ? { holder_session_ref: session } : {}) });
+    const live = [];
+    for (let i = 0; i < 3; i += 1) live.push(committed(await capClaim(tokens.A, 's1', `s1-${i}`)).claim);
+    let over = await capClaim(tokens.A, 's1', 's1-over');
+    assert.equal(over.error_code, 'work_claim_budget_exhausted', JSON.stringify(over));
+    assert.deepEqual([over.limit, over.max_active_per_session, over.max_active_per_binding, over.active, over.active_binding],
+      ['max_active_per_session', 3, 10, 3, 3]);
+    // Another session of the same Binding is not blocked by s1.
+    for (let i = 0; i < 3; i += 1) live.push(committed(await capClaim(tokens.A, 's2', `s2-${i}`)).claim);
+    for (let i = 0; i < 3; i += 1) live.push(committed(await capClaim(tokens.A, 's3', `s3-${i}`)).claim);
+    // Claims without a session share one group of their own.
+    live.push(committed(await capClaim(tokens.A, null, 'none-0')).claim);
+    // Ten live claims on the Binding: an eleventh is refused even from a fresh session.
+    over = await capClaim(tokens.A, 's4', 's4-0');
+    assert.equal(over.error_code, 'work_claim_budget_exhausted', JSON.stringify(over));
+    assert.deepEqual([over.limit, over.active, over.active_session], ['max_active_per_binding', 10, 0]);
+    // Another Binding of the same user has its own budget.
+    const other = committed(await capClaim(tokens.B, 's1', 'b-s1')).claim;
+    // Releasing one claim of s1 frees a slot for s1 and for the Binding.
+    committed(await release(tokens.A, live[0]));
+    live[0] = committed(await capClaim(tokens.A, 's1', 's1-again')).claim;
+    for (const c of live) committed(await release(tokens.A, c));
+    committed(await release(tokens.B, other));
+    const profile = (await admin.query('select clued_private.work_claim_profile_v1() p')).rows[0].p;
+    assert.deepEqual([profile.max_active_per_session, profile.max_active_per_binding], [3, 10]);
+
     // The column is not writable through the client role, and verify is
     // still the only anon entry that touches it.
     await assert.rejects(() => anon.query('update clued_private.work_claims_v1 set bound_pr=null'), /permission denied/);

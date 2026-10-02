@@ -375,7 +375,8 @@ test('work claims: one live claim per task/write set/trigger, progress-gated ren
       write_set: ['apps/clued-cloud/tests/task-dependency-guard-db.test.mjs'],
     }));
 
-    // --- Per-Binding cap: three live claims, the fourth is refused. ---
+    // --- Per-session cap: three live claims in one session (these declare no
+    // holder_session_ref, so they share one group), the fourth is refused. ---
     const liveC = (await admin.query(`select count(*)::int n from clued_private.work_claims_v1
       where holder_binding_id=$1 and status in ('ACTIVE','DRAINING')`, [bindingIds['Host C']])).rows[0].n;
     const needed = 3 - liveC;
@@ -390,7 +391,9 @@ test('work claims: one live claim per task/write set/trigger, progress-gated ren
     const capped = rejected(await call(hostC, 'clued_work_claim_v1', {
       scope: 'global', task_id: overflowTask, idempotency_key: `host-c:${overflowTask}:cap`, write_set: ['cap/overflow.txt'],
     }), 'work_claim_budget_exhausted');
-    assert.equal(capped.max_active_per_binding, 3);
+    assert.equal(capped.limit, 'max_active_per_session');
+    assert.equal(capped.max_active_per_session, 3);
+    assert.equal(capped.max_active_per_binding, 10);
     assert.equal(capped.active, 3);
 
     // --- Step 2: the resume fold-in read lists this user's live claims, in
@@ -402,7 +405,8 @@ test('work claims: one live claim per task/write set/trigger, progress-gated ren
       order by expires_at,claim_id`, [userId])).rows.map((r) => r.claim_id);
     assert.deepEqual(active.active_work_claims.map((c) => c.claim_id), liveIds);
     assert.ok(active.active_work_claims.length >= 4, 'C holds three capped claims plus A holds one');
-    assert.equal(active.work_claim_profile.max_active_per_binding, 3);
+    assert.equal(active.work_claim_profile.max_active_per_session, 3);
+    assert.equal(active.work_claim_profile.max_active_per_binding, 10);
     assert.ok(active.active_work_claims.every((c) => c.write_set.length > 0 && c.fence >= 1 && c.expires_at));
     const foreign = await call(otherUser, 'clued_work_claims_active_v1', { scope: 'global' });
     assert.deepEqual(foreign.active_work_claims, [], 'another user sees none of these claims');
