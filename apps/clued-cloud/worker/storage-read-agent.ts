@@ -1,7 +1,7 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageGoogleMetadataBatch, isDriveTransient } from "./storage-google-metadata-batch";
 import { createStorageFetch } from "./storage-fetch";
-import { isStorageScopeProfile, scopeProfile } from "./storage-google-scopes";
+import { isStorageScopeProfile, scopeProfile, scopeProfileCovers } from "./storage-google-scopes";
 import { bytesToBase64, bytesToBase64Url } from "./storage-base64";
 import { createStorageContentGateway } from "./storage-content-gateway";
 import { classifyFormat, extractOfficeText, imageInfo, StorageFormatError, EXTRACT_TEXT_MAX, IMAGE_MAX_BYTES, IMAGE_MAX_EDGE,
@@ -404,9 +404,10 @@ export async function createStorageReadAgent(config: {
         return lists.map(list => (list as Data[]).filter(raw => (raw.parents as string[]).length <= 1 || okMulti.has(String(raw.id))));
       };
       const byName = (a: Item, b: Item) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
-      // §3 item 3 / §8.2: any in-root body only with a normal credential AND
-      // normal/1 read access; the token's profile equals the admitted one (above).
-      const anyFile = admitted.provider_scope_profile === "normal" && admitted.content_profile === "normal/1";
+      // §3 item 3 / §8.2: any in-root body only with a normal (or full, which
+      // includes it) credential AND normal/1 read access; the token's profile
+      // equals the admitted one (above).
+      const anyFile = scopeProfileCovers(admitted.provider_scope_profile, "normal") && admitted.content_profile === "normal/1";
 
       if (input.operation === "read") {
         const id = String(input.object_id);
