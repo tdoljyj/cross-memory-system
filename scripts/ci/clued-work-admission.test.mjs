@@ -501,6 +501,26 @@ test("gate: admits only on a successful pull_request_target admission run on thi
   await assert.rejects(gate({ env: env(), event: withClaim(), eventName: "pull_request",
     fetchImpl: fakeFetch({ [ADMISSION_RUNS]: { status: 500, body: null } }).fetchImpl, sleep: async () => {} }), /returned 500/);
 
+  // A fork pull request may not see repository variables: an unset
+  // CLUED_WORK_ADMISSION_ENFORCE does not open the gate, the admission run decides.
+  const forkEvent = withClaim();
+  forkEvent.pull_request.head.repo = { full_name: "someone/r" };
+  const forkGate = (runs) => gate({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "", CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" }),
+    event: forkEvent, eventName: "pull_request", sleep: async () => {},
+    fetchImpl: fakeFetch({ [ADMISSION_RUNS]: { body: { workflow_runs: runs } } }).fetchImpl });
+  let fork = await forkGate([run({ conclusion: "failure" })]);
+  assert.deepEqual([fork.admitted, fork.enforced, fork.verdict, fork.advisory], [false, true, "REJECTED", undefined]);
+  assert.match(fork.notices[0], /fork pull request from someone\/r/);
+  fork = await forkGate([]);
+  assert.deepEqual([fork.admitted, fork.verdict], [false, "NO_ADMISSION_RUN"]);
+  fork = await forkGate([run({})]);
+  assert.deepEqual([fork.admitted, fork.verdict], [true, "ADMITTED"]);
+  await assert.rejects(gate({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), event: forkEvent, eventName: "pull_request",
+    fetchImpl: fakeFetch({ [ADMISSION_RUNS]: { status: 500, body: null } }).fetchImpl, sleep: async () => {} }), /returned 500/);
+  // A same-repository pull request keeps the variable's answer.
+  ({ outcome } = await gateWith([run({ conclusion: "failure" })], { CLUED_WORK_ADMISSION_ENFORCE: "" }));
+  assert.deepEqual(outcome.notices, []);
+
   // Non-PR events are not admission subjects.
   const push = await gate({ env: env(), event: null, eventName: "push", fetchImpl: fakeFetch({}).fetchImpl });
   assert.deepEqual([push.admitted, push.verdict], [true, "NOT_APPLICABLE"]);

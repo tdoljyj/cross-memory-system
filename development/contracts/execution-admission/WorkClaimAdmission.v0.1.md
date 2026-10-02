@@ -21,7 +21,6 @@
 - **未实现或与本文设计不符**（各条在对应小节标注）：
   - 每认领 CI 分钟预算与 finalize、`attempts_cap`（§4.5、§7，Task `80aea04a`）。
   - 备份恢复后 `max(fence)` 会回退（§4.4、§6，Task `27b4f5e8` 第 4 条）。
-  - 认领只写审计 Receipt，不写 Event（§4.6 L1，Task `27b4f5e8` 第 8 条）。
   - 同名 check 伪造与 PR 删除 `needs: admission-gate`（§4.6）。
   - 判定只在检查运行时成立，合并时不实时重验（§5）。
 - **待 Owner 设置**：
@@ -210,7 +209,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
     - L0b 的 `admission-gate` 仍是 PR 定义的 job，PR 可以删掉 `needs:`。
     - 任何同仓 PR 的 workflow 都能引用仓库 secret，所以 `CLUED_CONTEXT_READ_TOKEN` 只能靠 environment 限定加轮换保护。
 - **实现（token 隔离，2026-10-02，Task `95a93218`，PR #479）**：
-  - `admission-gate` 不再调用 Clued，也不再拿 `CLUED_CONTEXT_READ_TOKEN`（它跑的是 PR 的代码）。它等待本 head 上 `clued-work-admission.yml` 最新一次 `pull_request_target` 运行结束，只在该运行成功时放行；其他事件或其他 head 的运行不算。强制模式下等不到运行、到期仍未结束（默认 480 秒）或 GitHub API 出错都不放行；advisory 模式从不拦截。
+  - `admission-gate` 不再调用 Clued，也不再拿 `CLUED_CONTEXT_READ_TOKEN`（它跑的是 PR 的代码）。它等待本 head 上 `clued-work-admission.yml` 最新一次 `pull_request_target` 运行结束，只在该运行成功时放行；其他事件或其他 head 的运行不算。强制模式下等不到运行、到期仍未结束（默认 480 秒）或 GitHub API 出错都不放行；advisory 模式从不拦截。来自 fork 的 PR 可能拿不到仓库变量，所以闸对 fork PR 一律按强制处理，只跟随准入运行的结果；准入运行在 base 仓库读变量，advisory 时总是成功（Task `27b4f5e8` 第 11 条，2026-10-02）。
   - 只有跑 base 分支代码的 workflow 引用该 token：`clued-work-admission.yml`、`clued-work-admission-reverify.yml`，以及 PR #480 起的 `clued-work-admission-dispatch.yml`。三者都在 `clued-admission` environment 中运行。Owner 将该 environment 的部署分支限定为 `main`、不设审批人，把 token 移为 environment secret、删除仓库 secret 并轮换后，PR 新增或改写的 workflow（运行在 `refs/pull/N/merge`）即使声明该 environment 也拿不到 token。
   - 仓库检查（`scripts/ci/clued-work-admission.test.mjs`）断言只有上述 workflow 引用 `secrets.CLUED_CONTEXT_READ_TOKEN`。
   - 仍未覆盖：同名 check 伪造（见上）。另外 PR 可以改写自己的 workflow、删掉 `needs: admission-gate`：闸是 PR 自己的 job，只能控制合规 PR 的花费，不是强制边界。
@@ -231,7 +230,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 **L1：Clued DB**
 
 - 全部 RPC 为 `security definer`，revoke 客户端直接执行，与现有 `clued_private` 模式一致。
-- claim 行的创建同时写 Event + Receipt，复用现有 mutation contract。**实际（2026-10-02）**：claim、续期、释放、接管与 PR 绑定只写 `clued_audit_receipts`，不写 Event（Task `27b4f5e8` 第 8 条）。
+- claim、续期、释放、接管与 PR 绑定只写 `clued_audit_receipts`，不写 Event（Owner Decision `8f98387a`，2026-10-02，Task `27b4f5e8` 第 8 条）。原设计要求同时写 Event；改为只写 Receipt，因为写 Event 会让每次认领、续期、释放都使其他会话的 checkpoint 变 STALE 并刷满工作日志。谁在做什么由 resume 的 `active_work_claims` 提供。
 
 **L2：合规路径**
 
@@ -243,7 +242,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 - SessionStart hook 调用 Clued 只读 API 取 `active_work_claims`，以附加上下文注入第一轮。模型在消耗第一个 token 之前就看到"谁在做什么、改哪些文件、何时到期"。这是本仓库内 Claude Code 会话能做到的最早一刻，仍属合规层：hook 可关、Host 可换。
 
-- PreToolUse hook：匹配 Bash 中的 `git push`、`gh pr create`、`npm (ci|install|run build|test)`、`pytest`、`node --test`，以及 `mcp__github__create_pull_request`、`push_files`。没有 `CLUED_WORK_CLAIM` 环境变量或 `$CLAUDE_PROJECT_DIR/.clued/work-claim.json`（由 `clued_work_claim` 成功后写入）则阻止一次并提示先 claim。
+- PreToolUse hook：匹配 Bash 中的 `git push`、`gh pr create`、`npm (ci|install|run build|test)`、`pytest`、`node --test`，以及 `mcp__github__create_pull_request`、`push_files`。2026-10-02 起（Task `27b4f5e8` 第 10 条）另匹配：任意 `npm run` 与 `npx` 脚本；`gh workflow run`、`gh run rerun` 与 MCP `actions_run_trigger`（启动 CI）；远程会话 `create_session`、`Workflow` 与非只读的 `Agent` 子任务（Explore、Plan 等只读子代理除外）；对仓库文件的 `Edit`／`Write`／`NotebookEdit`（`.clued/`、`.git/` 与仓库外路径除外）。没有 `CLUED_WORK_CLAIM` 环境变量或 `$CLAUDE_PROJECT_DIR/.clued/work-claim.json`（由 `clued_work_claim` 成功后写入）则阻止一次并提示先 claim。
 - 与 Stop hook 同样可关、可删；标为 L3，不进任何"不可绕过"声明。
 - **实现（第 6 步，2026-10-01，Owner Decision `9297922c`）**：`scripts/hooks/clued_work_claim_guard.py` 一个脚本按 `hook_event_name` 服务三个事件，由 `.claude/settings.json` 注册。SessionStart 注入 §1.7 规则与本 checkout 记录的有效认领；设了只读 Binding token `CLUED_CONTEXT_READ_TOKEN` 时，另经 PostgREST `clued_work_claims_active_v1`（公开配置读自 `app/supabase-public-config.ts`，只发 token 的 SHA-256）读取该用户全部有效认领，失败只降级为提示。PostToolUse 在 `clued_work_claim`／`renew`／`takeover`／`release` 成功后更新 `.clued/work-claim.json`（已 gitignore）。PreToolUse 在上述命令与 `mcp__*__create_pull_request`／`push_files`／`create_or_update_file` 前检查：没有有效认领、也没有 `CLUED_WORK_CLAIM` 时，「发布」与「花钱」两类各在每个会话拦一次。`CLUED_WORK_CLAIM_GUARD=off` 关闭。PreToolUse 不校验认领是否覆盖改动路径，这由 CI 的 `clued-work-admission` 负责。
 
