@@ -23,10 +23,10 @@
   - 备份恢复后 `max(fence)` 会回退，靠恢复后的手工步骤补救（§4.4、§6，Owner Decision `2b23eb0c`）。
   - 同名 check 伪造与 PR 删除 `needs: admission-gate`（§4.6）。
   - 判定只在检查运行时成立，合并时不实时重验（§5）。
-- **待 Owner 设置**：
-  - `clued-admission` environment 限 `main`、不设审批人。
-  - token 移为 environment secret 并轮换。
-  - 防同名 check 需 GitHub App 或 required workflows。
+- **Owner 设置（2026-10-02）**：
+  - 已完成（Owner 自述）：`clued-admission` environment 限 `main`、不设审批人；新只读 token 放入 environment secret，删除仓库 secret，撤销旧 token。
+  - 已验证：`clued-work-admission-dispatch` run `37003236812`（main `e2a1c06`）在该 environment 中拿到 token，Clued 以强制模式判 ADMITTED。部署分支限制与仓库 secret 删除无法从 Agent 侧读取，未独立验证。
+  - 待做：防同名 check 需 GitHub App 或 required workflows。
 
 ---
 
@@ -211,7 +211,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
     - 任何同仓 PR 的 workflow 都能引用仓库 secret，所以 `CLUED_CONTEXT_READ_TOKEN` 只能靠 environment 限定加轮换保护。
 - **实现（token 隔离，2026-10-02，Task `95a93218`，PR #479）**：
   - `admission-gate` 不再调用 Clued，也不再拿 `CLUED_CONTEXT_READ_TOKEN`（它跑的是 PR 的代码）。它等待本 head 上 `clued-work-admission.yml` 最新一次 `pull_request_target` 运行结束，只在该运行成功时放行；其他事件或其他 head 的运行不算。强制模式下等不到运行、到期仍未结束（默认 480 秒）或 GitHub API 出错都不放行；advisory 模式从不拦截。来自 fork 的 PR 可能拿不到仓库变量，所以闸对 fork PR 一律按强制处理，只跟随准入运行的结果；准入运行在 base 仓库读变量，advisory 时总是成功（Task `27b4f5e8` 第 11 条，2026-10-02）。
-  - 只有跑 base 分支代码的 workflow 引用该 token：`clued-work-admission.yml`、`clued-work-admission-reverify.yml`，以及 PR #480 起的 `clued-work-admission-dispatch.yml`。三者都在 `clued-admission` environment 中运行。Owner 将该 environment 的部署分支限定为 `main`、不设审批人，把 token 移为 environment secret、删除仓库 secret 并轮换后，PR 新增或改写的 workflow（运行在 `refs/pull/N/merge`）即使声明该 environment 也拿不到 token。
+  - 只有跑 base 分支代码的 workflow 引用该 token：`clued-work-admission.yml`、`clued-work-admission-reverify.yml`，以及 PR #480 起的 `clued-work-admission-dispatch.yml`。三者都在 `clued-admission` environment 中运行。Owner 已（2026-10-02）将该 environment 的部署分支限定为 `main`、不设审批人，把 token 移为 environment secret、删除仓库 secret 并轮换；此后PR 新增或改写的 workflow（运行在 `refs/pull/N/merge`）即使声明该 environment 也拿不到 token。
   - 仓库检查（`scripts/ci/clued-work-admission.test.mjs`）断言只有上述 workflow 引用 `secrets.CLUED_CONTEXT_READ_TOKEN`。
   - 仍未覆盖：同名 check 伪造（见上）。另外 PR 可以改写自己的 workflow、删掉 `needs: admission-gate`：闸是 PR 自己的 job，只能控制合规 PR 的花费，不是强制边界。
 - **实现（加闸范围与手动触发，2026-10-02，Owner Decision `75abfe80`，Task `29128827`）**：
