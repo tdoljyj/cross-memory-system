@@ -1,4 +1,21 @@
 {
+  "permissions": {
+    "allow": [
+      "mcp__Clued__clued_session_resume",
+      "mcp__Clued__clued_session_reconcile",
+      "mcp__Clued__clued_session_checkpoint",
+      "mcp__Clued__clued_record_list",
+      "mcp__Clued__clued_context",
+      "mcp__Clued__clued_context_pack",
+      "mcp__Clued__clued_search_context",
+      "mcp__Clued__clued_read_log",
+      "mcp__Clued__clued_record_mutate",
+      "mcp__Clued__clued_work_claim",
+      "mcp__Clued__clued_work_renew",
+      "mcp__Clued__clued_work_release",
+      "mcp__Clued__clued_work_verify"
+    ]
+  },
   "hooks": {
     "Stop": [
       {
