@@ -364,7 +364,7 @@ export async function verifyClaim(fetchImpl, env, args, workspace) {
 
 function emptyOutcome(eventName, enforced) {
   return {
-    mode: null, event: eventName, admitted: false, enforced, verdict: null, reasons: [],
+    mode: null, event: eventName, admitted: false, enforced, verdict: null, reasons: [], notices: [],
     claim_id: null, scope: null, head_sha: null, base_sha: null, pr_ref: null, changed_paths: [],
     applicable_workflows: [], error: null,
   };
@@ -492,8 +492,10 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
         write_set: Array.isArray(claim.write_set) ? claim.write_set : [],
       };
     }
-    // The claim's base must not be ahead of the PR's base: a claim taken on a
-    // newer main than the PR targets is not the work this PR carries.
+    // The claim's base must name a commit of this repository. A claim taken on
+    // a newer main than the PR's base is only reported (Owner Decision
+    // 36b50981): base_commit is declared by the Agent, so the comparison
+    // cannot catch a wrong claim, and rejecting it only forced re-pushes.
     const claimBase = outcome.claim && outcome.claim.base_commit;
     if (outcome.verdict === "ADMITTED" && typeof claimBase === "string" && claimBase) {
       const compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${claimBase}...${pr.base.sha}`, { allowMissing: true });
@@ -501,8 +503,7 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
         outcome.verdict = "REJECTED";
         outcome.reasons.push(`claim_base_unknown:${claimBase}`);
       } else if (compare.status !== "ahead" && compare.status !== "identical") {
-        outcome.verdict = "REJECTED";
-        outcome.reasons.push(`base_behind_claim:${compare.status}`);
+        outcome.notices.push(`base_behind_claim:${compare.status} (the claim's base_commit ${claimBase} is newer than this PR's base ${pr.base.sha}; merge main into the branch or claim with the branch's merge-base)`);
       }
     }
     if (enforced) {
@@ -841,6 +842,11 @@ export function renderSummary(outcome) {
     lines.push("");
     lines.push("Reasons:");
     for (const reason of outcome.reasons) lines.push(`- ${reason}`);
+  }
+  if (outcome.notices && outcome.notices.length) {
+    lines.push("");
+    lines.push("Notices (not blocking):");
+    for (const notice of outcome.notices) lines.push(`- ${notice}`);
   }
   if (outcome.paths_outside_write_set && outcome.paths_outside_write_set.length) {
     lines.push("");
