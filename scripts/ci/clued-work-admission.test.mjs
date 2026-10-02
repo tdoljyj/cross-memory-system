@@ -160,6 +160,15 @@ test("enforced: REJECTED with paths outside the write set is not admitted and li
   assert.match(renderSummary(outcome), /docs\/new\.md/);
 });
 
+test("enforced: a claim past its head cap is REJECTED with a hint to claim again", async () => {
+  const payload = { ...admittedPayload, verdict: "REJECTED", reasons: ["claim_head_cap_reached"], admitted_heads: 20, max_heads_per_claim: 20 };
+  const { fetchImpl } = fakeFetch({ [FILES]: files, [VERIFY]: { body: payload } });
+  const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
+  assert.equal(outcome.admitted, false);
+  assert.deepEqual([outcome.reasons, outcome.admitted_heads, outcome.max_heads_per_claim], [["claim_head_cap_reached"], 20, 20]);
+  assert.match(renderSummary(outcome), /already admitted 20 pull-request heads \(cap 20, Owner Decision a264ea02\)/);
+});
+
 test("enforced: a claim taken on a newer base than the PR targets is admitted with a notice", async () => {
   for (const status of ["behind", "diverged"]) {
     const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { body: { status } }, [VERIFY]: { body: admittedPayload } });
