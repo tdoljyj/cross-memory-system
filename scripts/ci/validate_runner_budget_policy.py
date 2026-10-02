@@ -33,6 +33,9 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-work-admission.yml": (
         "Work Claim Admission L0a: an unfiltered required check that makes one Clued call per pull request and must not wait on self-hosted capacity; it runs base-branch code only (pull_request_target), installs nothing and executes no PR code."
     ),
+    "clued-work-admission-dispatch.yml": (
+        "Work Claim Admission hand-dispatch check: verifies a claim before a heavy workflow is dispatched; default-branch code only, one Clued call, no install, no pull request trigger."
+    ),
     "clued-work-admission-reverify.yml": (
         "Work Claim Admission hourly re-verification: re-runs a passing admission check whose claim expired or moved; default-branch code only, no install, no pull request trigger."
     ),
