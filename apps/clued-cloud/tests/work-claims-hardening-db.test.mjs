@@ -13,7 +13,8 @@ import EmbeddedPostgres from 'embedded-postgres';
 // and one pull request per claim; the concurrency caps (20261002060001); and
 // the MINOR fixes (20261002072000): trigger-ref matching, idempotency keys,
 // repeated progress and "**/" at the root; and the count caps
-// (20261002100000): attempts per Task per 24 hours, heads per claim.
+// (20261002100000): attempts per Task per 24 hours, heads per claim, with
+// retry_after corrected in 20261002150000.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -329,6 +330,25 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     assert.deepEqual([looping.limit, looping.max_claims_per_task_24h, looping.claims_last_24h],
       ['max_claims_per_task_24h', 10, 10]);
     assert.ok(Date.parse(looping.retry_after) > Date.now());
+    // At the cap, the oldest claim aging out readmits the Task. Over the cap
+    // (claims issued before the cap went live: Task 1502fd80 had 22) the count
+    // has to drop below it, so retry_after is the (claims_last_24h - cap + 1)-th
+    // oldest claim + 24 hours (20261002150000).
+    const loopIssued = (await admin.query(`select claim_id,issued_at from clued_private.work_claims_v1
+      where task_id=$1 order by issued_at`, [looped])).rows;
+    assert.equal(Date.parse(looping.retry_after), loopIssued[0].issued_at.getTime() + 86400000);
+    await admin.query(`insert into clued_private.work_claims_v1(user_id,task_id,context_key,
+        holder_binding_id,write_set,fence,issued_at,expires_at,hard_deadline_at,status,
+        released_outcome,idempotency_key)
+      select user_id,task_id,context_key,holder_binding_id,write_set,100+g,
+        issued_at-make_interval(hours=>g),issued_at-make_interval(hours=>g),issued_at,
+        'RELEASED','abandoned','pre-cap-history-'||g
+      from clued_private.work_claims_v1,generate_series(1,3) g where claim_id=$1`,
+      [loopIssued[0].claim_id]);
+    const overCap = await claim(tokens.A, { task_id: looped, write_set: ['loop/x'] });
+    assert.deepEqual([overCap.error_code, overCap.claims_last_24h], ['work_claim_budget_exhausted', 13],
+      JSON.stringify(overCap));
+    assert.equal(Date.parse(overCap.retry_after), loopIssued[0].issued_at.getTime() + 86400000);
     // Another Task is not affected; claims older than 24 hours stop counting.
     committed(await release(tokens.A, committed(await claim(tokens.A, { task_id: await createTask('loop other'), write_set: ['loop/y'] })).claim));
     await admin.query(`update clued_private.work_claims_v1 set issued_at=issued_at-interval '25 hours'
