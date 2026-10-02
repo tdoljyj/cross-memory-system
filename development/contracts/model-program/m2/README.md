@@ -164,3 +164,34 @@ independent freeze. Independent Gold, protected holdout, actual model evaluation
 frozen thresholds, DataGate and domain authority remain unissued/unverified.
 Regenerate changed synthetic fixtures and evidence together before validation;
 recomputing a digest alone does not pass source-bound package verification.
+
+## Synthetic withdrawal propagation
+
+`validate_m2_withdrawal.py` replays a complete caller-declared synthetic event set
+against the existing pre-withdrawal foundation fixture. Events bind the exact
+baseline, source revision and raw snapshot. Withdrawal, deletion and license
+invalidation propagate through the validated sample DAG, including cross-source
+derivatives. The impact report retains historical identities, lists affected
+snapshots/splits and direct/derived invalid samples, and preserves unaffected
+sample IDs. Any invalid member makes the original dataset unavailable and requires
+an explicit rebuild; the retained subset is never silently issued as a new dataset.
+Repeated identical events are idempotent; conflicting IDs, missing bindings,
+invalid lineage and stale or rewritten reports fail closed.
+
+```sh
+python scripts/model-program/validate_m2_withdrawal.py
+python scripts/model-program/validate_m2_withdrawal.py --require-available
+python -m unittest tests.test_model_program_m2_withdrawal -v
+```
+
+The first command emits impact evidence. The second must exit 1 for the committed
+withdrawal fixture. `--impact PATH` verifies a saved report by full deterministic
+replay, including unavailable state. An empty event set only leaves an unchanged
+candidate; it never grants training or data-use authority. This is a pure offline
+candidate for plan sections 11 and 19.2, not an authenticated withdrawal log,
+physical erasure service, model-impact review or untraining claim. Event completeness
+is caller-declared; omitting a real event cannot be detected by this synthetic tool.
+No actual data, weight, source registry, frozen revision or online authority changes.
+The existing baseline validator still rejects already withdrawn/private sources.
+Independent Gold, protected holdout, threshold freeze, DataGate and real domain
+authority remain unissued; M2 is NOT_ISSUED.
