@@ -28,6 +28,8 @@
 -- * An attempt stored before this migration (no descendants key) keeps
 --   exactly the attempt, proof and settlement input it had: a P6 directory
 --   move already recorded or settled reads back unchanged.
+-- * An invalid list never matches anything a caller can send (not even
+--   null): the expected value is then the string "invalid".
 -- * Each existing function is changed by an anchored patch with an exact hit
 --   count. Between this migration and the release the old executor's attempt
 --   is refused after its durable start (and the new executor's before the
@@ -133,18 +135,20 @@ begin
     ('clued_private.storage_job_provider_attempt_v2(uuid,uuid,text,jsonb)',
      $a$    expected:=clued_private.storage_subtree_attempt_v1(m,j,null);$a$,
      $r$    expected:=clued_private.storage_subtree_attempt_v1(m,j,null)||jsonb_build_object('descendants',
-      clued_private.storage_subtree_descendants_v1(m,j,p_attempt->'descendants',true));$r$,1),
+      coalesce(clued_private.storage_subtree_descendants_v1(m,j,p_attempt->'descendants',true),'"invalid"'::jsonb));$r$,1),
     -- The verified record repeats the stored attempt and checks the refresh.
     ('clued_private.storage_verified_result_v2(text,jsonb)',
      $a$      attempt_expected:=clued_private.storage_subtree_attempt_v1(m,j,m.provider_attempt->'subtree_sample');$a$,
      $r$      attempt_expected:=clued_private.storage_subtree_attempt_v1(m,j,m.provider_attempt->'subtree_sample')
         ||case when m.provider_attempt ? 'descendants' then jsonb_build_object('descendants',
-          clued_private.storage_subtree_descendants_v1(m,j,m.provider_attempt->'descendants',false)) else '{}'::jsonb end;$r$,1),
+          coalesce(clued_private.storage_subtree_descendants_v1(m,j,m.provider_attempt->'descendants',false),'"invalid"'::jsonb))
+          else '{}'::jsonb end;$r$,1),
     ('clued_private.storage_verified_result_v2(text,jsonb)',
      $a$          'source_vacated',true,'sharing_unchanged',true,'subtree',true));$a$,
      $r$          'source_vacated',true,'sharing_unchanged',true,'subtree',true))
         ||case when m.provider_attempt ? 'descendants' then jsonb_build_object('descendant_versions',
-          clued_private.storage_subtree_refresh_v1(attempt_expected->'descendants',proof->'descendant_versions')) else '{}'::jsonb end;$r$,1),
+          coalesce(clued_private.storage_subtree_refresh_v1(attempt_expected->'descendants',proof->'descendant_versions'),'"invalid"'::jsonb))
+          else '{}'::jsonb end;$r$,1),
     -- The settlement carries the refresh list with its CAS bases.
     ('clued_private.storage_settle_input_v1(uuid,clued_private.resource_center_mutations_v1,jsonb)',
      $a$      'path',p_proof->>'path','provider_file_id',p_proof->>'provider_file_id','provider_file_version',p_proof->>'provider_file_version')

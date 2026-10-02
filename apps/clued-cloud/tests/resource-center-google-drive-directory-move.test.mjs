@@ -301,6 +301,16 @@ test("P6.1 review: a trashed item beside an active one, an unreadable item, the 
   const many = Array.from({ length: 500 }, (_, i) => ({ provider_file_id: "f" + i, relative_path: "f" + i, target_kind: "file", state: "active", provider_file_version: "1" }));
   assert.deepEqual(await observeSubtreeRegistry({ get_file: async () => null, get_files: async () => { capped++; throw new Error("DRIVE_BATCH_HTTP_503"); } }, "dir", many), []);
   assert.equal(capped, 40);
+  // Every chunk is read once before any failed one is halved.
+  const spread = many.map((item, i) => ({ ...item, provider_file_id: "g" + i }));
+  const okFile = id => ({ id, name: id.replace("g", "f"), parents: ["dir"], version: "1", trashed: false, mimeType: "text/plain", size: "1", sha256Checksum: "c".repeat(64) });
+  const bad = new Set(["g5", "g105", "g205"]);
+  const spreadRead = async ids => { if (ids.some(id => bad.has(id))) throw new Error("DRIVE_BATCH_HTTP_404"); return ids.map(okFile); };
+  const spreadIds = new Set((await observeSubtreeRegistry({ get_file: async () => null, get_files: spreadRead }, "dir", spread)).map(i => i.provider_file_id));
+  assert.ok(spread.slice(300).every(item => spreadIds.has(item.provider_file_id)), "the healthy chunks are all read");
+  assert.ok(spreadIds.size >= 490 && [...bad].every(id => !spreadIds.has(id)), String(spreadIds.size));
+  // Active paths stay unique.
+  assert.equal(subtreeRegistryShape([REGISTRY[1], { ...REGISTRY[1], provider_file_id: "other" }]), null);
   // No read starts after the deadline; reads run a few at a time.
   let now = 0, started = 0, inFlight = 0, peak = 0;
   const slow = drive();

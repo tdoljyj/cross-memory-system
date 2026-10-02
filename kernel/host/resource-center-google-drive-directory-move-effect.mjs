@@ -72,6 +72,9 @@ const BATCH_CALL_LIMIT = 40;
 /** How long the read before the move may take (it never outlasts the
  * admission either). */
 export const SUBTREE_OBSERVE_MS = 15_000;
+/** Time kept after the read for the attempt, its recheck and the update (a
+ * read already in flight can take part of it). */
+const ADMISSION_RESERVE_MS = 10_000;
 const relativeOk = (path) => typeof path === "string" && path.length >= 1 && path.length <= 1000 && !path.includes("\\") &&
   !path.split("/").some((part) => !part || part === "." || part === "..");
 const version = /^[1-9]\d{0,39}$/;
@@ -82,15 +85,17 @@ const version = /^[1-9]\d{0,39}$/;
  * share its path with an active one (only active paths are unique). */
 export function subtreeRegistryShape(list) {
   if (!Array.isArray(list) || list.length > SUBTREE_REFRESH_LIMIT) return null;
-  const ids = new Set();
+  const ids = new Set(), activePaths = new Set();
   for (const item of list) {
     if (!item || typeof item !== "object" ||
       Object.keys(item).sort().join(",") !== "provider_file_id,provider_file_version,relative_path,state,target_kind" ||
       !["active", "trashed"].includes(item.state) ||
       !fileId.test(item.provider_file_id ?? "") || ids.has(item.provider_file_id) || !relativeOk(item.relative_path) ||
       !["file", "directory"].includes(item.target_kind) ||
-      !/^\d{1,40}$/.test(item.provider_file_version ?? "")) return null;
+      !/^\d{1,40}$/.test(item.provider_file_version ?? "") ||
+      (item.state === "active" && activePaths.has(item.relative_path))) return null;
     ids.add(item.provider_file_id);
+    if (item.state === "active") activePaths.add(item.relative_path);
   }
   return list.map((item) => Object.freeze({ ...item }));
 }
@@ -117,30 +122,41 @@ export function subtreeDescendantsShape(list) {
 
 /** Reads items by Drive ID, each on its own: null for an item that is not
  * read (missing, inaccessible, a failed request, out of time or out of
- * requests). Batched when a batch reader exists: a failed batch is halved
- * until the unreadable items are isolated. Otherwise one by one, a few at a
- * time, up to SINGLE_READ_LIMIT. No new read starts after `until`. Never
- * throws. */
+ * requests). Batched when a batch reader exists: every chunk is read once
+ * first, then each failed chunk is halved until the unreadable items are
+ * isolated. Otherwise one by one, a few at a time, up to SINGLE_READ_LIMIT.
+ * No new read starts after `until`. Never throws. */
 async function readMany(getFile, getFiles, ids, until, clock) {
   const results = ids.map(() => null);
   const open = () => { try { return Number(clock()) < until; } catch { return false; } };
   if (typeof getFiles === "function") {
     let calls = 0;
+    // One request per range; true when it was read.
     const read = async (from, to) => {
-      if (from >= to || calls >= BATCH_CALL_LIMIT || !open()) return;
+      if (calls >= BATCH_CALL_LIMIT || !open()) return false;
       calls += 1;
       let values = null;
       try { values = await getFiles(ids.slice(from, to)); } catch { values = null; }
-      if (Array.isArray(values) && values.length === to - from) {
-        values.forEach((value, index) => { results[from + index] = value; });
-        return;
-      }
-      if (to - from === 1) return;
-      const middle = from + Math.ceil((to - from) / 2);
-      await read(from, middle);
-      await read(middle, to);
+      if (!Array.isArray(values) || values.length !== to - from) return false;
+      values.forEach((value, index) => { results[from + index] = value; });
+      return true;
     };
-    for (let index = 0; index < ids.length; index += 100) await read(index, Math.min(index + 100, ids.length));
+    // Breadth first: a bad chunk never costs a healthy chunk its read.
+    let failed = [];
+    for (let index = 0; index < ids.length; index += 100) {
+      const range = [index, Math.min(index + 100, ids.length)];
+      if (!await read(...range)) failed.push(range);
+    }
+    while (failed.length) {
+      const next = [];
+      for (const [from, to] of failed) {
+        if (to - from === 1) continue;
+        const middle = from + Math.ceil((to - from) / 2);
+        for (const range of [[from, middle], [middle, to]]) if (!await read(...range)) next.push(range);
+      }
+      if (calls >= BATCH_CALL_LIMIT || !open()) break;
+      failed = next;
+    }
     return results;
   }
   if (ids.length > SINGLE_READ_LIMIT) return results;
@@ -337,7 +353,7 @@ export function createGoogleDriveNativeDirectoryMoveEffect({
     await checkSubtreeSample(getFile, shape.source_file_id, sample, "DRIVE_NATIVE_SUBTREE_DRIFT");
     // Never past the admission: the attempt still has to be stored and
     // rechecked before the only update.
-    const observeUntil = Math.min(Number(clock()) + SUBTREE_OBSERVE_MS, Number(admission.expires_at_ms) - 5000);
+    const observeUntil = Math.min(Number(clock()) + SUBTREE_OBSERVE_MS, Number(admission.expires_at_ms) - ADMISSION_RESERVE_MS);
     const descendants = await observeSubtreeRegistry({ get_file: getFile, get_files: getFiles, until: observeUntil, clock },
       shape.source_file_id, registry);
     const attempt = Object.freeze({ contract: "clued.storage-subtree-move-attempt/1", intent_id: started.intent_id,

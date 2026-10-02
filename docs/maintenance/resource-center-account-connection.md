@@ -854,15 +854,17 @@ an anchored patch with an exact hit count.
   item may share its path with an active one). Before the attempt the
   executor reads them by Drive ID, each on its own (batched when the Worker
   has the batch reader, a failing batch halved until the unreadable item is
-  isolated, at most 40 batch requests; otherwise up to 50, eight at a time),
-  within 15 s and never past the admission, and records in the attempt
+  isolated, after every chunk was read once, at most 40 batch requests;
+  otherwise up to 50, eight at a time), within 15 s and keeping the last 10 s
+  of the admission, and records in the attempt
   (`descendants`) those exactly as registered: same version, name, kind,
   state and folder chain, with each file's size and sha256. After the move
   the verifier reads them again and the proof (`descendant_versions`) names
   the new version of each one still in place with the same content and a
-  version not lower than before; those reads have their own budget (in the
-  Owner's native recovery a quarter of it), so a slow or unreadable item never
-  costs the proof. The settlement sets those versions by CAS on the recorded
+  version not lower than before; those reads have their own budget (a third
+  of the verifier's, at most 10 s; a quarter in the Owner's native recovery)
+  and as much again is kept before the verifier's deadline, so a slow or
+  unreadable item never costs the proof. The settlement sets those versions by CAS on the recorded
   version. Anything else keeps its registered version and stays refused for
   file-level writes, as before; a partial refresh logs
   `storage_subtree_refresh_partial` with counts only. An attempt stored before

@@ -20,16 +20,16 @@ const fail = (code) => { throw new Error(code); };
  * P6.1: the proof also names the new Drive version of each descendant the
  * attempt recorded that still sits at the same place with the same name, kind
  * and content (descendant_versions); the settlement refreshes those. Those
- * reads have their own budget (refresh_ms, never past the verifier's
- * deadline): what is not read in time keeps its registered version, and the
- * proof is not lost to them.
+ * reads have their own budget (refresh_ms), and as much again is kept before
+ * the verifier's deadline: what is not read in time keeps its registered
+ * version, and the proof is not lost to them.
  * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, get_files?: Function, list_children: Function, get_sharing: Function, get_access: Function, include_verified_proof?: boolean, timeout_ms?: number, poll_ms?: number, refresh_ms?: number, clock?: () => number, sleep?: Function}} config
  */
 export function createGoogleDriveDirectoryMovePostconditionVerifier({
   managed_root: managedRoot, root_folder_id: rootId, root_parent_id: rootParentId,
   get_file: getFile, get_files: getFiles, list_children: listChildren, get_sharing: getSharing, get_access: getAccess,
   include_verified_proof: includeVerifiedProof = false,
-  timeout_ms: timeoutMs = 30_000, poll_ms: pollMs = 1000, refresh_ms: refreshMs = 10_000,
+  timeout_ms: timeoutMs = 30_000, poll_ms: pollMs = 1000, refresh_ms: refreshMs = Math.max(1, Math.min(10_000, Math.floor(timeoutMs / 3))),
   clock = Date.now, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
   const root = normalized(managedRoot);
@@ -122,7 +122,8 @@ export function createGoogleDriveDirectoryMovePostconditionVerifier({
               provider_file_id: folderId, provider_file_version: seen.file.version };
             if (!includeVerifiedProof) return Object.freeze(postcondition);
             const descendantVersions = legacy ? null : await refreshedSubtreeVersions({ get_file: getFile, get_files: getFiles,
-              until: Math.min(deadline, clock() + refreshMs), clock }, folderId, descendants);
+              // The same budget is kept after it, for recording the proof.
+              until: Math.min(clock() + refreshMs, deadline - refreshMs), clock }, folderId, descendants);
             const verifiedProof = Object.freeze({ contract: "clued.storage-directory-move-verified/1",
               ...postcondition, operation: "move", target_kind: "directory", source_path: shape.source,
               source_file_version: shape.source_file_version, subtree_sample: sample.map((item) => ({ ...item })),
