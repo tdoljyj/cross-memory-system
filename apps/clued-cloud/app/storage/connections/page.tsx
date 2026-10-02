@@ -627,13 +627,14 @@ export default function StorageConnections() {
             ? <button disabled={busy} onClick={() => void toggleRead(c)}>{readAccess[c.id].active ? "停止 Agent 查看目录结构" : "允许 Agent 查看目录结构"}</button>
             : <button disabled={busy} onClick={() => void loadReadAccess(c)}>读取 Agent 查看设置</button>}
           {readAccess[c.id]?.active && <>
-            <p className="mt-2">Agent 读正文：{readAccess[c.id].classes.includes("read_content") ? "已允许（仅 Clued 创建的文本文件）" : "未允许"}</p>
+            <p className="mt-2">Agent 读正文：{readAccess[c.id].classes.includes("read_content")
+              ? normalUse[c.id]?.normal_use ? "已允许（目录内全部文件）" : "已允许（仅 Clued 创建的文本文件）" : "未允许"}</p>
             <button disabled={busy} onClick={() => void toggleRead(c, "read_content")}>
               {readAccess[c.id].classes.includes("read_content") ? "停止 Agent 读正文" : "允许 Agent 读正文"}</button>
           </>}
           {writeAccess[c.id]?.active && writeLevels(writeAccess[c.id]).map(level => <div key={level}>
             <p className="mt-2">Agent {writeText[level].name}：{writeAccess[c.id].classes.includes(level)
-              ? level === "modify_subtree" ? "已允许（仅 Clued 创建的文件夹）" : "已允许（仅 Clued 创建的文件）" : "未允许"}</p>
+              ? level === "modify_subtree" ? "已允许（仅 Clued 创建或已纳管的文件夹）" : "已允许（仅 Clued 创建或已纳管的文件）" : "未允许"}</p>
             <button disabled={busy} onClick={() => void toggleWrite(c, level)}>
               {writeAccess[c.id].classes.includes(level) ? `停止 Agent ${writeText[level].name}` : `允许 Agent ${writeText[level].name}`}</button>
           </div>)}

@@ -169,7 +169,7 @@ test("overwrite is its own toggle with its own disclosure and keeps rename/move 
   f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});
   f.respond(2,writeStatus(["modify"]));await f.settle();
-  assert.match(f.text(),/Agent 覆盖文件内容：未允许/);assert.match(f.text(),/Agent 改名和移动文件：已允许/);
+  assert.match(f.text(),/Agent 覆盖文件内容：未允许/);assert.match(f.text(),/Agent 改名和移动文件：已允许（仅 Clued 创建或已纳管的文件）/);
   f.button("允许 Agent 覆盖文件内容").props.onClick();await f.settle();
   assert.match(f.prompts.at(-1),/保存为永久保留的 Google Drive 版本/);assert.match(f.prompts.at(-1),/最近 10 个/);
   assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set_classes",connection_id:active.id,classes:["modify","overwrite"],
@@ -239,6 +239,21 @@ test("without the destructive disclosure in the status, the page offers only ren
   assert.match(f.text(),/Agent 覆盖文件内容：未允许/);assert.equal(f.text().includes("回收站"),false);
 });
 // StorageNormalUse.v0.1 §8.2: one "正常使用" toggle; the four toggles stay under 高级.
+// After P7 the levels also cover adopted items; bodies of every in-root file only under normal use.
+test("level labels name what each level covers",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
+  f.button("读取 Agent 查看设置").props.onClick();await f.settle();
+  f.respond(1,{active:true,read_generation:2,disclosure_version:"clued.storage-read-disclosure/1",
+    content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:["read","read_content"]});
+  f.respond(2,{...writeStatus(["modify","modify_subtree"]),subtree_disclosure_version:"clued.storage-subtree-disclosure/1"});await f.settle();
+  assert.match(f.text(),/Agent 读正文：已允许（仅 Clued 创建的文本文件）/);
+  assert.match(f.text(),/Agent 改名和移动文件：已允许（仅 Clued 创建或已纳管的文件）/);
+  assert.match(f.text(),/Agent 移动整个文件夹：已允许（仅 Clued 创建或已纳管的文件夹）/);
+  assert.doesNotMatch(f.text(),/已允许（仅 Clued 创建的文件）/);
+  f.button("读取正常使用设置").props.onClick();await f.settle();
+  f.respond(3,normalStatus("normal",true));await f.settle();
+  assert.match(f.text(),/Agent 读正文：已允许（目录内全部文件）/);
+});
 const normalStatus=(profile,on,extra={})=>({connection_id:active.id,read_generation:on?3:1,disclosure_version:"clued.storage-normal-use-disclosure/1",
   provider_scope_profile:profile,normal_use:on,reconsent_required:profile!=="normal",refresh_token_count:2,refresh_token_warning:false,
   refresh_token_blocked:false,...extra});
