@@ -91,8 +91,25 @@ WRITE_OK = ("committed", "appended")
 # The tool that asks the Owner a question, and the text of an answered one:
 # 'Your questions have been answered: "<question>"="<answer>", ...'
 ASK_TOOL = "askuserquestion"
-ANSWERED = "have been answered"
+ANSWERED = re.compile(r"have been answered|answered (?:your|the) questions?", re.IGNORECASE)
 ANSWER = re.compile(r'="((?:[^"\\]|\\.)*)"')
+
+
+def owner_answers(entry: dict, body: str) -> str | None:
+    """The Owner's answers to a question, or None when it was not answered.
+
+    The Host's structured record (toolUseResult.answers) wins; the result text
+    is the fallback, so a change of wording on either side is tolerated.
+    """
+    structured = entry.get("toolUseResult")
+    structured = structured.get("answers") if isinstance(structured, dict) else None
+    if isinstance(structured, dict) and structured:
+        chosen = "; ".join(str(value) for value in structured.values())
+    elif ANSWERED.search(body):
+        chosen = "; ".join(ANSWER.findall(body)) or body.strip()
+    else:
+        return None
+    return " ".join(chosen.split())[:120]
 # Text of this hook's own reminders, should the Host log one as a user entry.
 OWN_MESSAGE = "Clued capture guard (skills/clued/references/agent-contract.md"
 # `gh pr merge` options that take a value.
@@ -308,9 +325,10 @@ def analyse(entries: list[dict]) -> list[Finding]:
                     committed_writes.append((pos, use_id, write_context(tool_input)))
                 else:
                     write.detail = failure_detail(body, failed)
-            elif suffix == ASK_TOOL and not failed and ANSWERED in body:
-                chosen = "; ".join(ANSWER.findall(body)) or body.strip()
-                answers.append((pos, use_id, " ".join(chosen.split())[:120]))
+            elif suffix == ASK_TOOL and not failed:
+                chosen = owner_answers(entry, body)
+                if chosen is not None:
+                    answers.append((pos, use_id, chosen))
             elif suffix == CLUED_CHECKPOINT_TOOL and not failed and result_status(body) == "committed":
                 checkpoints.append((pos, checkpoint_context(tool_input, body)))
             elif suffix == "merge_pull_request" and not failed and '"merged":true' in body.replace(" ", ""):
@@ -387,8 +405,9 @@ def analyse(entries: list[dict]) -> list[Finding]:
             findings.append(Finding(
                 f"answer:{use_id}:failed",
                 f"- The Owner answered a question (“{chosen}”) and the Clued write after it did not "
-                f"commit ({detail}). Fix and retry it; if Clued or the Host refuses it, tell the Owner "
-                "which write is still owed (§4).",
+                f"commit ({detail}). If the answer needs a record, fix and retry the write; if Clued or "
+                "the Host refuses it, tell the Owner which write is still owed (§4). If it needs no "
+                "record, say why.",
             ))
     if human_prompts:
         pos, key, text = human_prompts[-1]

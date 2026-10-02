@@ -345,10 +345,39 @@ class CaptureGuardTest(GuardHarness):
         self.assertIn("did not commit (rejected: authority_escalation_forbidden)", proc.stderr)
 
     def test_declined_or_failed_question_is_not_a_decision(self):
-        for body, is_error in (("The user declined to answer the questions.", False),
-                               ("Error: question tool unavailable", True)):
+        rejected = ("The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it "
+                    "was a file edit, the new_string was NOT written to the file). STOP what you are doing.")
+        for body, is_error in ((rejected, True), ("Error: question tool unavailable", True),
+                               ("The user dismissed the questions.", False)):
             entries = [call("q1", "AskUserQuestion", {"questions": []}), result("q1", body, is_error)]
             self.assertEqual(self.run_hook(entries).returncode, 0, body)
+
+    def test_answer_is_reported_once_per_state(self):
+        entries = ask("q1", "A？", "选一")
+        self.assertEqual(self.run_hook(entries, session="same").returncode, 2)
+        self.assertEqual(self.run_hook(entries, session="same").returncode, 0)
+        entries += [call("w1", MUTATE), result("w1", {"status": "rejected"})]
+        proc = self.run_hook(entries, session="same")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("If it needs no record, say why", proc.stderr)
+        self.assertEqual(self.run_hook(entries, session="same").returncode, 0)
+
+    def test_answer_shapes(self):
+        multi = ('Your questions have been answered: "A？"="选一", "B？"="甲, 乙". '
+                 "You can now continue with these answers in mind.")
+        listed = [{"type": "text", "text": multi}]
+        reworded = 'User has answered your questions: "A？"="选一". You can now continue.'
+        for body in (multi, listed, reworded):
+            entries = [call("q1", "AskUserQuestion", {"questions": []}), result("q1", body)]
+            proc = self.run_hook(entries)
+            self.assertEqual(proc.returncode, 2, body)
+            self.assertIn("选一", proc.stderr)
+        # The Host's structured answers win over the text, quotes and all.
+        entry = result("q1", "Answers recorded.")
+        entry["toolUseResult"] = {"questions": [], "answers": {"A？": 'say "hi" now', "B？": "b"}}
+        proc = self.run_hook([call("q1", "AskUserQuestion", {"questions": []}), entry])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn('“say "hi" now; b”', proc.stderr)
 
     def test_plain_request_passes(self):
         self.assertEqual(self.run_hook([human("做 L3 的 Stop hook", "u1")]).returncode, 0)
