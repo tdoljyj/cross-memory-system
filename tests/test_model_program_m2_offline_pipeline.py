@@ -148,6 +148,70 @@ class OfflinePipelineTests(unittest.TestCase):
                 path.write_text(content, encoding='utf-8')
                 self.reject(lambda: p.read_saved_outputs(path), code)
 
+    def test_missing_and_mismatched_version_evidence_fails_closed(self):
+        for field in ['dataset_revision', 'evaluation_revision']:
+            dataset = copy.deepcopy(self.dataset)
+            del dataset[field]
+            self.reject(lambda: p.score_saved(dataset, self.saved, self.sha),
+                        'PIPELINE_VERSION_EVIDENCE_REQUIRED')
+        for field in ['dataset_revision_sha256', 'evaluation_revision_sha256']:
+            saved = copy.deepcopy(self.saved)
+            del saved[field]
+            self.reject(lambda: p.score_saved(self.dataset, saved, self.sha),
+                        'PIPELINE_SAVED_OUTPUT_SHAPE')
+            saved[field] = '0' * 64
+            self.reject(lambda: p.score_saved(self.dataset, saved, self.sha),
+                        'PIPELINE_SAVED_VERSION_BINDING')
+
+    def test_dataset_revision_covers_all_data_evidence(self):
+        for field in ['revisions', 'raw_snapshot_manifest', 'curated_rows',
+                      'curated_shard_index', 'gold_revision', 'scrub_report',
+                      'dedup_report', 'contamination_report']:
+            dataset = copy.deepcopy(self.dataset)
+            dataset[field] = [] if isinstance(dataset[field], list) else {}
+            with self.subTest(field=field):
+                self.reject(lambda: p.score_saved(dataset, self.saved, self.sha),
+                            'PIPELINE_DATASET_REVISION_BINDING')
+
+    def test_stale_evaluation_and_cross_dataset_outputs_rejected(self):
+        dataset = copy.deepcopy(self.dataset)
+        dataset['evaluation_revision']['scorer'] = 'other/1'
+        self.reject(lambda: p.score_saved(dataset, self.saved, self.sha),
+                    'PIPELINE_EVALUATION_REVISION_BINDING')
+        dataset = copy.deepcopy(self.dataset)
+        dataset['curated_rows'][0]['gold'] = {'answer': 99}
+        dataset['dataset_revision'] = p.dataset_revision(dataset)
+        dataset['evaluation_revision'] = p.evaluation_revision(dataset)
+        self.reject(lambda: p.score_saved(dataset, self.saved, self.sha),
+                    'PIPELINE_SAVED_VERSION_BINDING')
+
+    def test_package_evidence_missing_digest_and_recomputed_forgery(self):
+        expected = p.run()
+        self.reject(lambda: p.validate_package_evidence({}, expected),
+                    'PIPELINE_PACKAGE_EVIDENCE_REQUIRED')
+        evidence = copy.deepcopy(expected)
+        evidence['package_sha256'] = '0' * 64
+        self.reject(lambda: p.validate_package_evidence(evidence, expected),
+                    'PIPELINE_PACKAGE_DIGEST')
+        for field, value in [('m2_verdict', 'PASS'),
+                             ('scoring_replay', {'identical': True})]:
+            evidence = copy.deepcopy(expected)
+            evidence[field] = value
+            evidence['package_sha256'] = p.digest({k: v for k, v in evidence.items()
+                                                  if k != 'package_sha256'})
+            self.reject(lambda: p.validate_package_evidence(evidence, expected),
+                        'PIPELINE_PACKAGE_EVIDENCE_BINDING')
+
+    def test_cli_missing_evidence_is_failure_and_sanitized(self):
+        from io import StringIO
+        with tempfile.TemporaryDirectory() as tmp:
+            capture = StringIO()
+            with patch('sys.stdout', capture):
+                self.assertEqual(p.main(['--evidence', str(Path(tmp) / 'missing-private.json')]), 1)
+            self.assertNotIn('private', capture.getvalue())
+            self.assertEqual(json.loads(capture.getvalue())['status'],
+                             'FAIL_OFFLINE_SYNTHETIC_PIPELINE')
+
     def test_cli_bad_input_is_sanitized(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'private-path.json'

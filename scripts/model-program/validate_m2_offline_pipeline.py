@@ -39,6 +39,9 @@ EXPECTED_CONTRACT = {
     "renderer": "SORTED_LOCAL_JSON_NO_NONFINITE/1",
     "max_rows": 128, "max_input_chars": 2048, "max_output_chars": 2048,
     "max_saved_output_bytes": 65536, "sample_boundaries": ["DEVELOPMENT"],
+    "dataset_revision_id": "synthetic-offline-dataset/1",
+    "evaluation_revision_id": "synthetic-saved-output-evaluation/1",
+    "version_binding": "CLOSED_DATASET_EVALUATION_EVIDENCE_BINDING/1",
     "saved_output_origin": "DETERMINISTIC_SYNTHETIC_FIXTURE_WRITER",
     "independent_gold_review": "NOT_PERFORMED", "real_holdout_secrecy": False,
     "training_or_real_data_use_authorized": False, "m2_verdict": "NOT_ISSUED",
@@ -258,6 +261,51 @@ def contamination(left: list[dict], right: list[dict], left_role: str, right_rol
         "matches": matches, "formal_train_eval_clearance": False, "real_holdout_secrecy": False}
 
 
+def seal_revision(value: dict) -> dict:
+    return {**value, "sha256": digest(value)}
+
+
+def dataset_revision(dataset: dict) -> dict:
+    # Local content identity only; these digests never attest an independent freeze.
+    return seal_revision({
+        "revision_id": EXPECTED_CONTRACT["dataset_revision_id"],
+        "source_revisions": dataset["revisions"],
+        "raw_snapshot_manifest_sha256": digest(dataset["raw_snapshot_manifest"]),
+        "curated_rows_sha256": digest(dataset["curated_rows"]),
+        "curated_shard_index_sha256": digest(dataset["curated_shard_index"]),
+        "gold_revision_sha256": digest(dataset["gold_revision"]),
+        "scrub_report_sha256": digest(dataset["scrub_report"]),
+        "dedup_report_sha256": digest(dataset["dedup_report"]),
+        "contamination_report_sha256": digest(dataset["contamination_report"]),
+        "status": "SYNTHETIC_LOCAL_CONTENT_IDENTITY_ONLY",
+        "independent_data_gate": "NOT_PERFORMED", "authority_effect": "NONE",
+    })
+
+
+def evaluation_revision(dataset: dict) -> dict:
+    return seal_revision({
+        "revision_id": EXPECTED_CONTRACT["evaluation_revision_id"],
+        "dataset_revision_sha256": dataset["dataset_revision"]["sha256"],
+        "scorer": EXPECTED_CONTRACT["scorer"],
+        "renderer": EXPECTED_CONTRACT["renderer"],
+        "implementation_sha256": dataset["revisions"]["implementation_sha256"],
+        "contract_sha256": dataset["revisions"]["contract_sha256"],
+        "status": "SYNTHETIC_LOCAL_REPLAY_SPEC_ONLY",
+        "upstream_gold_binding": None, "frozen_threshold_binding": None,
+        "formal_eval_acceptance": False, "authority_effect": "NONE",
+    })
+
+
+def validate_version_bindings(dataset: dict) -> None:
+    require(type(dataset.get("dataset_revision")) is dict and
+            type(dataset.get("evaluation_revision")) is dict,
+            "PIPELINE_VERSION_EVIDENCE_REQUIRED")
+    require(dataset["dataset_revision"] == dataset_revision(dataset),
+            "PIPELINE_DATASET_REVISION_BINDING")
+    require(dataset["evaluation_revision"] == evaluation_revision(dataset),
+            "PIPELINE_EVALUATION_REVISION_BINDING")
+
+
 def prepare_dataset() -> dict:
     contract = load(CONTRACT_PATH)
     require(digest(contract) == digest(EXPECTED_CONTRACT), "PIPELINE_CONTRACT_BINDING")
@@ -280,7 +328,7 @@ def prepare_dataset() -> dict:
     public_inputs = fixture["registry"]["sources"][0]["synthetic_inputs"]
     known_public = [{"sample_id": key, "input": value, "isolation_groups": {}}
                     for key, value in sorted(public_inputs.items())]
-    return {
+    dataset = {
         "schema_version": "clued.model-m2-offline-pipeline-result/1",
         "status": "PASS_OFFLINE_SYNTHETIC_TRANSFORMS_ONLY", "authority_effect": "NONE",
         "m2_verdict": "NOT_ISSUED", "training_or_real_data_use_authorized": False,
@@ -302,6 +350,10 @@ def prepare_dataset() -> dict:
                                                "PUBLIC_DEVELOPMENT", "KNOWN_PUBLIC_REGRESSION_FIXTURES"),
     }
 
+    dataset["dataset_revision"] = dataset_revision(dataset)
+    dataset["evaluation_revision"] = evaluation_revision(dataset)
+    return dataset
+
 
 def read_saved_outputs(path: Path) -> tuple[dict, str]:
     with path.open("rb") as handle:
@@ -320,12 +372,17 @@ def read_saved_outputs(path: Path) -> tuple[dict, str]:
 
 
 def score_saved(dataset: dict, saved: dict, saved_sha256: str) -> dict:
+    validate_version_bindings(dataset)
     require(type(saved) is dict and set(saved) == {"schema_version", "origin", "input_set_sha256",
-            "contract_sha256", "outputs"}, "PIPELINE_SAVED_OUTPUT_SHAPE")
+            "contract_sha256", "dataset_revision_sha256", "evaluation_revision_sha256",
+            "outputs"}, "PIPELINE_SAVED_OUTPUT_SHAPE")
     require(saved["schema_version"] == "clued.model-m2-saved-synthetic-outputs/1" and
             saved["origin"] == EXPECTED_CONTRACT["saved_output_origin"], "PIPELINE_SAVED_OUTPUT_ORIGIN")
     require(saved["input_set_sha256"] == dataset["revisions"]["curated_dataset_sha256"] and
             saved["contract_sha256"] == dataset["revisions"]["contract_sha256"], "PIPELINE_REPLAY_BINDING")
+    require(saved["dataset_revision_sha256"] == dataset["dataset_revision"]["sha256"] and
+            saved["evaluation_revision_sha256"] == dataset["evaluation_revision"]["sha256"],
+            "PIPELINE_SAVED_VERSION_BINDING")
     rows = dataset["curated_rows"]
     outputs = saved["outputs"]
     require(type(outputs) is list and len(outputs) == len(rows), "PIPELINE_OUTPUT_COVERAGE")
@@ -367,6 +424,8 @@ def score_saved(dataset: dict, saved: dict, saved_sha256: str) -> dict:
         "implementation_sha256": dataset["revisions"]["implementation_sha256"],
         "contract_sha256": saved["contract_sha256"], "input_set_sha256": saved["input_set_sha256"],
         "saved_outputs_sha256": saved_sha256, "saved_output_origin": saved["origin"],
+        "dataset_revision_sha256": saved["dataset_revision_sha256"],
+        "evaluation_revision_sha256": saved["evaluation_revision_sha256"],
         "sample_count": len(scores), "correct_count": sum(s["correct"] for s in scores),
         "schema_valid_count": sum(s["schema_valid"] for s in scores), "scores": scores,
         "model_inference_performed": False, "formal_eval_acceptance": False}
@@ -386,15 +445,28 @@ def run(saved_path: Path = SAVED_OUTPUTS) -> dict:
     return dataset
 
 
+def validate_package_evidence(evidence: dict, expected: dict) -> None:
+    require(type(evidence) is dict and "package_sha256" in evidence,
+            "PIPELINE_PACKAGE_EVIDENCE_REQUIRED")
+    validate_version_bindings(evidence)
+    payload = {key: value for key, value in evidence.items() if key != "package_sha256"}
+    require(evidence["package_sha256"] == digest(payload), "PIPELINE_PACKAGE_DIGEST")
+    # Recomputed source identities bind the entire package, including saved bytes,
+    # coverage, both score replays and all candidate/non-authoritative boundaries.
+    require(evidence == expected, "PIPELINE_PACKAGE_EVIDENCE_BINDING")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--saved-outputs", type=Path, default=SAVED_OUTPUTS)
+    parser.add_argument("--evidence", type=Path, default=BASE / "offline-pipeline-evidence.json")
     args = parser.parse_args(argv)
     try:
         result = run(args.saved_outputs)
+        validate_package_evidence(load(args.evidence), result)
         summary = {key: result[key] for key in ("status", "m2_verdict", "authority_effect",
             "training_or_real_data_use_authorized", "formal_holdout_used", "independent_gold_review",
-            "revisions", "package_sha256")}
+            "revisions", "dataset_revision", "evaluation_revision", "package_sha256")}
         summary.update(raw_count=len(result["raw_snapshot_manifest"]),
             scrub_rejected_count=len(result["scrub_report"]["rejected"]),
             dedup_removed_count=len(result["dedup_report"]["removed"]),

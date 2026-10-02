@@ -146,3 +146,21 @@ The bounded original-parent investigation and one-decision proposal are in
 
 The existing M1 harness CI also runs the M2 checks and tests. Storage, Canonical,
 runtime and device configuration remain outside this candidate work package.
+
+
+## Offline dataset and evaluation revision binding
+
+The synthetic offline pipeline seals separate dataset and evaluation revisions.
+Dataset identity includes raw/curated content, split index, candidate Gold and
+scrub/dedup/contamination evidence. The evaluation revision binds that dataset,
+implementation, contract, scorer and renderer. Saved synthetic outputs must name
+both exact revision digests; missing, stale or cross-dataset bindings fail closed.
+The CLI verifies the committed evidence package against a fresh deterministic
+replay (or the explicit `--evidence` path), including saved-output bytes and scores.
+Missing evidence, a wrong digest or a rewritten package fails with exit code 1.
+
+These are local candidate content identities, not trusted attestations or an
+independent freeze. Independent Gold, protected holdout, actual model evaluation,
+frozen thresholds, DataGate and domain authority remain unissued/unverified.
+Regenerate changed synthetic fixtures and evidence together before validation;
+recomputing a digest alone does not pass source-bound package verification.
