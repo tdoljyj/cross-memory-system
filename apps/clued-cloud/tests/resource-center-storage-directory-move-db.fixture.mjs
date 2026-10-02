@@ -1,0 +1,471 @@
+import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
+import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
+import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
+import { createGoogleDriveDirectoryMovePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-directory-move-postcondition.mjs";
+import { googleDriveSharingDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
+
+const sha = value => createHash("sha256").update(value).digest("hex");
+const CLOUD = "public.clued_storage_cloud_worker_router_v2";
+const JOBS = "public.clued_storage_jobs_router_v2";
+const WRITE = "public.clued_storage_write_access_v1";
+const DISCLOSURE = "clued.storage-subtree-disclosure/1";
+const SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
+const TRACK = "20_P_产品与体验";
+const FOLDER = "application/vnd.google-apps.folder";
+const PRIVATE = { shared: false, permissionIds: ["owner-permission"] };
+const SHARED = { shared: true, permissionIds: ["anyone-with-link", "owner-permission"] };
+const OWNER_ONLY = [{ id: "owner-permission", type: "user", role: "owner" }];
+
+// StorageFullCapability.v0.1 P6: a directory move through the real cloud
+// executor (verified-result mode) against disposable PostgreSQL and an
+// in-memory Drive. Never Google, never a disk.
+export async function testStorageDirectoryMove(t, admin, server, user, decision) {
+  const issuerSecret = randomUUID() + randomUUID();
+  const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
+  const oauthClient = `subtree-${randomUUID()}`, resource = "https://subtree.invalid/mcp";
+  const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
+  const connect = async role => {
+    const database = server.getPgClient(); clients.push(database); await database.connect();
+    await database.query("set statement_timeout='10s'");
+    if (role) await database.query(`set role ${role}`);
+    return database;
+  };
+  const native = await connect("authenticated"), caller = await connect("anon");
+  await admin.query("insert into auth.sessions(id,user_id) values($1,$2)", [session, user]);
+  await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+    [user, JSON.stringify({ sub: user, session_id: session })]);
+  await admin.query("insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,$2,'subtree-fixture')", [clientIssuer, resource]);
+  await admin.query("insert into clued_private.storage_oauth_apps_v1(issuer_hash,oauth_client_id,redirect_uri,execution_enabled) values($1,$2,'https://subtree.invalid/storage/google/callback',true)", [issuer, oauthClient]);
+  const account = async input => (await native.query("select public.clued_storage_account_v1($1::jsonb) value", [JSON.stringify(input)])).rows[0].value;
+  const adminCall = async input => (await admin.query("select public.clued_resource_center_admin_v1($1,$2::jsonb) value", [user,
+    JSON.stringify({ source_decision_id: decision, idempotency_key: randomUUID(), ...input })])).rows[0].value;
+  const register = async input => {
+    const result = await adminCall(input);
+    assert.equal(result.status, "committed", JSON.stringify(result)); return result;
+  };
+  const createRoot = async () => {
+    const suffix = randomUUID(), root = `/subtree-${suffix}/Clued_资料中心`, rootId = `st-root-${suffix}`;
+    const registered = await register({ action: "profile_register", project_id: project, profile_version: `subtree/${suffix}`,
+      managed_root: root, root_folder_id: rootId, root_parent_id: `st-parent-${suffix}`, root_folder_version: "1" });
+    const profile = registered.target_refs.find(ref => ref.role === "primary").id;
+    await register({ action: "artifact_register", profile_id: profile, path: root + "/" + TRACK, provider_file_id: `st-track-${suffix}`,
+      provider_file_version: "1", target_kind: "directory", governance_class: "ordinary", delete_authority: false });
+    const qualified = (await admin.query("select public.clued_storage_cloud_qualify_v1($1,$2::jsonb) value", [user, JSON.stringify({
+      profile_id: profile, base_version: 1, allowed_root_children: [TRACK], source_decision_id: decision, idempotency_key: randomUUID() })])).rows[0].value;
+    assert.equal(qualified.status, "committed");
+    const connected = await account({ action: "register", profile_id: profile, source_decision_id: decision, idempotency_key: randomUUID() });
+    assert.equal(connected.status, "committed");
+    const connection = connected.target_refs.find(ref => ref.role === "primary").id;
+    await admin.query("update clued_private.storage_connections_v1 set state='active',provider_subject='subtree-subject',oauth_client_id=$2,credential_version=1,credential_envelope='{}' where id=$1", [connection, oauthClient]);
+    return { root, rootId, parentId: `st-parent-${suffix}`, trackId: `st-track-${suffix}`, profile, connection, receipt: connected.receipt_id };
+  };
+  const bind = async target => {
+    const token = sha(randomUUID()), clientId = `st-client-${randomUUID()}`;
+    const prepared = (await native.query("select public.clued_authorization_prepare_v12($1,$2::jsonb) value", [clientIssuer, JSON.stringify({
+      request_digest: sha(randomUUID()), client_id: clientId, client_name: "Subtree fixture", redirect_uri: "https://subtree.invalid/client-callback",
+      resource, requested_scopes: ["context:write"] })])).rows[0].value;
+    const approved = (await native.query("select public.clued_authorization_approve_v12($1,$2,$3,$4::jsonb,$5,$6) value", [clientIssuer,
+      prepared.request_id, prepared.version, JSON.stringify([{ resource_kind: "scope", resource_id: "project:" + project, environment: "canonical", actions: ["write", "close"] }]),
+      token, new Date(Date.now() + 3 * 3600000).toISOString()])).rows[0].value;
+    const lineage = randomUUID(), digest = (await admin.query("select clued_private.storage_client_request_digest_v2($1) value", [prepared.request_id])).rows[0].value;
+    await admin.query("insert into clued_private.storage_client_registrations_v2(lineage_id,generation,issuer_hash,resource,client_id,metadata_digest,review_receipt_id) values($1,1,$2,$3,$4,$5,$6)",
+      [lineage, clientIssuer, resource, clientId, digest, target.receipt]);
+    await admin.query("insert into clued_private.storage_client_request_links_v2(request_id,lineage_id,registration_generation,metadata_digest,review_receipt_id) values($1,$2,1,$3,$4)",
+      [prepared.request_id, lineage, digest, target.receipt]);
+    await admin.query("insert into clued_private.storage_client_capabilities_v2(lineage_id,registration_generation,receipt_id) values($1,1,$2)", [lineage, target.receipt]);
+    return { token, id: approved.binding_id, lineage };
+  };
+  const activate = async target => {
+    const policy = randomUUID(); await admin.query("begin");
+    try {
+      await admin.query(`insert into clued_private.storage_account_policies_v2(id,owner_id,connection_id,provider,provider_subject,root_folder_id,profile_id,
+        scope_digest,policy_generation,source_decision_id,decision_version,consent_source,disclosure_version,consent_receipt_id)
+        select $1,c.owner_id,c.id,c.provider,c.provider_subject,p.root_folder_id,p.id,clued_private.storage_policy_scope_digest_v2(c.id),1,
+          c.source_decision_id,c.decision_version,'reviewed_transition','subtree-fixture/2',c.receipt_id
+        from clued_private.storage_connections_v1 c join clued_private.resource_center_profiles_v1 p on p.id=c.profile_id where c.id=$2`, [policy, target.connection]);
+      await admin.query("update clued_private.storage_account_policies_v2 set state='active',activation_receipt_id=$2 where id=$1", [policy, target.receipt]);
+      await admin.query("update clued_private.storage_connections_v1 set auth_mode='account_policy',account_policy_id=$2,auth_generation=auth_generation+1 where id=$1", [target.connection, policy]);
+      await admin.query("commit");
+    } catch (error) { await admin.query("rollback"); throw error; }
+    return { ...target, policy };
+  };
+  const cloud = async (input, database = caller) => (await database.query(`select ${CLOUD}($1,$2::jsonb) value`, [issuer, JSON.stringify(input)])).rows[0].value;
+  const counters = async () => (await admin.query(`select
+    (select count(*)::int from clued_private.storage_jobs_v1) jobs,
+    (select count(*)::int from clued_private.resource_center_mutations_v1) intents`)).rows[0];
+  const journal = async job => (await admin.query("select m.* from clued_private.storage_jobs_v1 j join clued_private.resource_center_mutations_v1 m on m.id=j.intent_id where j.owner_id=$1 and j.job_id=$2", [user, job.reference.job_id])).rows[0];
+  const provider = target => {
+    const directory = (id, name, parent) => ({ id, name, parents: parent ? [parent] : [], version: "1", trashed: false, mimeType: FOLDER,
+      ...structuredClone(PRIVATE), permissions: structuredClone(OWNER_ONLY), ownedByMe: true, capabilities: { canTrash: true, canUntrash: true } });
+    const files = new Map([[target.parentId, directory(target.parentId, target.root.split("/").at(-2))],
+      [target.rootId, directory(target.rootId, "Clued_资料中心", target.parentId)], [target.trackId, directory(target.trackId, TRACK, target.rootId)]]);
+    const state = { patches: 0, losePatch: false, files, directory };
+    state.fetch = async (url, init = {}) => {
+      const u = new URL(url); assert.equal(new Headers(init.headers).get("authorization"), "Bearer fixture-subtree-access");
+      assert.equal(u.hostname, "www.googleapis.com");
+      assert.notEqual(init.method, "DELETE");
+      if (init.method === "PATCH") {
+        state.patches++;
+        const id = u.pathname.split("/").at(-1), file = files.get(id);
+        const recorded = (await admin.query("select count(*)::int n from clued_private.resource_center_mutations_v1 where state='started' and provider_attempt->>'provider_file_id'=$1", [id])).rows[0].n;
+        assert.equal(recorded, 1, "the exact attempt is durable before the update");
+        const body = JSON.parse(init.body || "{}");
+        if ("trashed" in body) {
+          file.trashed = body.trashed; file.version = String(Number(file.version) + 1);
+          return Response.json(file);
+        }
+        assert.equal(init.body, "{}");
+        assert.deepEqual(file.parents, [u.searchParams.get("removeParents")]);
+        file.parents = [u.searchParams.get("addParents")];
+        file.version = String(Number(file.version) + 3); // Drive may jump by more than one.
+        if (state.losePatch) throw new Error("synthetic lost provider response");
+        return Response.json(file);
+      }
+      if (init.method === "POST") {
+        const raw = init.body, match = /\{[^\r\n]+"appProperties":\{[^\r\n]+\}\}/.exec(raw), metadata = JSON.parse(match?.[0] ?? raw);
+        const attempt = (await admin.query("select provider_attempt from clued_private.resource_center_mutations_v1 where id=$1", [metadata.appProperties.clued_intent_id])).rows[0].provider_attempt;
+        const created = { ...metadata, version: "1", trashed: false, size: attempt.size, sha256Checksum: attempt.sha256,
+          md5Checksum: "f".repeat(32), headRevisionId: "rev-" + randomUUID(), ownedByMe: true, capabilities: { canTrash: true, canUntrash: true } };
+        files.set(metadata.id, created);
+        return Response.json(created);
+      }
+      assert.equal(init.method ?? "GET", "GET");
+      if (u.pathname.endsWith("/generateIds")) return Response.json({ ids: ["cloud-object-" + randomUUID()] });
+      const query = u.searchParams.get("q");
+      if (query) {
+        const all = !/trashed = false/.test(query);
+        const parent = /'([^']+)' in parents/.exec(query)?.[1], name = /name = '([^']+)'/.exec(query)?.[1];
+        return Response.json({ files: [...files.values()].filter(file => file.parents.includes(parent) && (all || !file.trashed) && (!name || name === file.name)), incompleteSearch: false });
+      }
+      const found = files.get(u.pathname.split("/").at(-1));
+      return found ? Response.json(found) : new Response("", { status: 404 });
+    };
+    return state;
+  };
+  const executor = (target, storage, afterLoad = async () => {}) => {
+    let loaded;
+    return createResourceCenterCloudExecutor({ verified_result_mode: true,
+      load_job: async ref => {
+        loaded = await cloud({ action: "load", ...ref });
+        await afterLoad(loaded);
+        const descriptor = { ...loaded }; delete descriptor.credential_envelope; delete descriptor.oauth_client_id;
+        return descriptor;
+      },
+      get_credential: async expected => ({ ...expected, access_token: "fixture-subtree-access", scope: SCOPES, expires_at_ms: Date.now() + 3600000 }),
+      drive_fetch: storage.fetch,
+      rpc: async input => {
+        const { connection_id, job_id, action, ...body } = input;
+        return cloud({ connection_id, job_id, action, ...(action === "settle_verified" ? {} : { credential_version: loaded.credential_version }),
+          ...(action === "finalize" ? { finish: { action, ...body } } : body) });
+      },
+    });
+  };
+  // As the Worker does after a refusal: store the fixed outcome in the Owner's job row.
+  const report = async (job, result) => cloud({ action: "report", ...job.reference, credential_version: 1,
+    outcome: { status: result.status === "deny" ? "denied" : "attention_required", ...(result.error_code ? { reason: { code: result.error_code } } : {}) } });
+  const writeStatus = async target => (await native.query(`select ${WRITE}($1::jsonb) value`, [JSON.stringify({ action: "status", connection_id: target.connection })])).rows[0].value;
+  const setLevel = async (target, classes, disclosure = DISCLOSURE) => {
+    const status = await writeStatus(target);
+    return (await native.query(`select ${WRITE}($1::jsonb) value`, [JSON.stringify({ action: "set_classes", connection_id: target.connection,
+      classes, base_generation: status.policy_generation, disclosure_version: disclosure, idempotency_key: randomUUID() })])).rows[0].value;
+  };
+  const policyOf = async target => (await admin.query("select p.actions,p.disclosure_version from clued_private.storage_connections_v1 c join clued_private.storage_account_policies_v2 p on p.id=c.account_policy_id where c.id=$1", [target.connection])).rows[0];
+  const submitRaw = (target, client, mutation, jobId = randomUUID()) => caller.query(`select ${JOBS}($1,$2::jsonb) value`,
+    [client.token, JSON.stringify({ action: "submit", connection_id: target.connection, job_id: jobId, mutation })]);
+  const submitJob = async (target, client, mutation, jobId = randomUUID()) => {
+    const result = (await submitRaw(target, client, mutation, jobId)).rows[0].value;
+    assert.equal(result.status, "queued", JSON.stringify(result));
+    return { reference: { connection_id: target.connection, job_id: jobId }, mutation, result };
+  };
+  const artifact = async (target, path, state = "active") => (await admin.query(
+    "select * from clued_private.resource_center_artifacts_v1 where profile_id=$1 and path=$2 and state=$3", [target.profile, path, state])).rows[0];
+  const artifactById = async id => (await admin.query("select * from clued_private.resource_center_artifacts_v1 where id=$1", [id])).rows[0];
+  const createFile = async (target, client, storage, path) => {
+    const job = await submitJob(target, client, { operation: "create", target_kind: "file", destination_path: path, content: "subtree fixture" });
+    const result = await executor(target, storage).run(job.reference);
+    assert.equal(result.status, "committed", JSON.stringify(result));
+    return artifact(target, path);
+  };
+  const directoryIn = async (target, storage, name, parentPath = `${target.root}/${TRACK}`, parentId = target.trackId) => {
+    const id = `st-dir-${randomUUID()}`, path = `${parentPath}/${name}`;
+    storage.files.set(id, storage.directory(id, name, parentId));
+    await register({ action: "artifact_register", profile_id: target.profile, path, provider_file_id: id, provider_file_version: "1",
+      target_kind: "directory", governance_class: "ordinary", delete_authority: false });
+    return artifact(target, path);
+  };
+  // Record a registered directory's sharing digest, as the directory probe does.
+  const recordSharing = async (target, row) => register({ action: "artifact_update", profile_id: target.profile, artifact_id: row.id,
+    base_version: Number(row.version), path: row.path, provider_file_id: row.provider_file_id, provider_file_version: row.provider_file_version,
+    governance_class: row.governance_class, delete_authority: row.delete_authority, provider_sharing_digest: googleDriveSharingDigest(PRIVATE) });
+  const setup = async (levels = ["modify_subtree", "destructive"]) => {
+    const initial = await createRoot(), client = await bind(initial), target = await activate(initial), storage = provider(target);
+    for (const level of levels) {
+      const enabled = await setLevel(target, [...(await writeStatus(target)).classes, level],
+        level === "modify_subtree" ? DISCLOSURE : `clued.storage-${level}-disclosure/1`);
+      assert.equal(enabled.status, "committed", JSON.stringify(enabled));
+    }
+    return { target, client, storage };
+  };
+  // A registered directory "folder" with a file, a nested directory and a
+  // nested file, all created through Clued; and a registered destination.
+  const tree = async () => {
+    const { target, client, storage } = await setup();
+    const trackPath = `${target.root}/${TRACK}`;
+    const topic = await directoryIn(target, storage, "topic");
+    const folder = await directoryIn(target, storage, "folder");
+    const inner = await directoryIn(target, storage, "inner", folder.path, folder.provider_file_id);
+    const note = await createFile(target, client, storage, `${folder.path}/note.md`);
+    const deep = await createFile(target, client, storage, `${inner.path}/deep.md`);
+    // Children changed the folder's Drive version; its sharing is registered.
+    storage.files.get(folder.provider_file_id).version = "5";
+    await recordSharing(target, folder);
+    return { target, client, storage, trackPath, topic, folder: await artifactById(folder.id), inner, note, deep };
+  };
+  const move = (row, destination, version = "5", extra = {}) => ({ operation: "move", target_kind: "directory", source_path: row.path,
+    destination_path: destination, source_file_version: version, source_file_id: row.provider_file_id, ...extra });
+
+  try {
+    await t.test("the modify_subtree level has its own disclosure, a canonical action order and replaces the policy", async () => {
+      const initial = await createRoot(), target = await activate(initial);
+      const status = await writeStatus(target);
+      assert.equal(status.subtree_disclosure_version, DISCLOSURE); assert.deepEqual(status.classes, []);
+      await assert.rejects(setLevel(target, ["modify_subtree"], "clued.storage-modify-disclosure/1"), /storage_write_disclosure_changed/);
+      assert.equal((await setLevel(target, ["modify_subtree"])).status, "committed");
+      assert.deepEqual((await policyOf(target)).actions, ["inspect", "create_file", "create_topic", "modify_subtree"]);
+      assert.equal((await policyOf(target)).disclosure_version, DISCLOSURE);
+      for (const [level, disclosure] of [["destructive", "clued.storage-destructive-disclosure/1"], ["modify", "clued.storage-modify-disclosure/1"],
+        ["overwrite", "clued.storage-overwrite-disclosure/1"]]) {
+        assert.equal((await setLevel(target, [...(await writeStatus(target)).classes, level], disclosure)).status, "committed");
+      }
+      assert.deepEqual((await policyOf(target)).actions, ["inspect", "create_file", "create_topic", "modify", "overwrite", "destructive", "modify_subtree"]);
+      assert.deepEqual((await writeStatus(target)).classes, ["destructive", "modify", "modify_subtree", "overwrite"]);
+      assert.equal((await setLevel(target, ["destructive", "modify", "overwrite"])).status, "committed");
+      const stopped = await policyOf(target);
+      assert.deepEqual(stopped.actions, ["inspect", "create_file", "create_topic", "modify", "overwrite", "destructive"]);
+      assert.equal(stopped.disclosure_version, "clued.storage-modify_subtree-disabled/1");
+      const valid = async actions => (await admin.query("select clued_private.storage_write_actions_v1($1::text[]) value", [actions])).rows[0].value;
+      assert.equal(await valid(["inspect", "create_file", "create_topic", "modify_subtree"]), true);
+      for (const bad of [["inspect", "create_file", "create_topic", "modify_subtree", "modify"], ["inspect", "create_file", "create_topic", "modify", "modify"],
+        ["inspect", "create_file", "create_topic", "admin"], ["create_file", "inspect", "create_topic"]]) assert.equal(await valid(bad), false, bad.join());
+    });
+
+    await t.test("a directory move needs the modify_subtree level; modify alone is not enough", async () => {
+      const { target, client, storage } = await setup(["modify"]);
+      const folder = await directoryIn(target, storage, "folder"), topic = await directoryIn(target, storage, "topic");
+      const before = await counters();
+      await assert.rejects(submitRaw(target, client, move(folder, `${topic.path}/folder`, "1")), /storage_policy_denied/);
+      assert.deepEqual(await counters(), before);
+    });
+
+    await t.test("a directory moves with its whole subtree: one PATCH, the registry rewritten in the settlement", async () => {
+      const { target, client, storage, topic, folder, inner, note, deep } = await tree();
+      const revoked = await createFile(target, client, storage, `${folder.path}/old.md`);
+      await register({ action: "artifact_revoke", profile_id: target.profile, artifact_id: revoked.id, base_version: Number(revoked.version) });
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      const descriptor = await cloud({ action: "load", ...job.reference });
+      assert.deepEqual(descriptor.subtree_sample, [
+        { provider_file_id: inner.provider_file_id, relative_path: "inner", target_kind: "directory" },
+        { provider_file_id: note.provider_file_id, relative_path: "note.md", target_kind: "file" },
+        { provider_file_id: deep.provider_file_id, relative_path: "inner/deep.md", target_kind: "file" }]);
+      const patches = storage.patches;
+      const done = await executor(target, storage).run(job.reference);
+      assert.equal(done.status, "committed", JSON.stringify(done));
+      assert.equal(storage.patches, patches + 1);
+      const drive = storage.files.get(folder.provider_file_id);
+      assert.deepEqual(drive.parents, [topic.provider_file_id]);
+      const moved = await artifactById(folder.id);
+      assert.equal(moved.path, `${topic.path}/folder`); assert.equal(moved.provider_file_version, drive.version);
+      assert.equal(Number(moved.version), Number(folder.version) + 1);
+      assert.equal(moved.provider_sharing_digest, folder.provider_sharing_digest, "the sharing is unchanged");
+      for (const [row, relative] of [[inner, "inner"], [note, "note.md"], [deep, "inner/deep.md"]]) {
+        const after = await artifactById(row.id);
+        assert.equal(after.path, `${topic.path}/folder/${relative}`); assert.equal(after.state, "active");
+        assert.equal(Number(after.version), Number(row.version) + 1); assert.equal(after.provider_file_version, row.provider_file_version);
+      }
+      assert.equal((await artifactById(revoked.id)).path, revoked.path, "revoked history keeps its old path");
+      assert.equal(await artifact(target, folder.path), undefined);
+      const intent = await journal(job);
+      assert.equal(intent.state, "committed"); assert.equal(intent.provider_attempt.contract, "clued.storage-subtree-move-attempt/1");
+      assert.deepEqual(intent.provider_attempt.subtree_sample, descriptor.subtree_sample);
+      assert.equal(intent.verified_result_v2.proof.contract, "clued.storage-directory-move-verified/1");
+      assert.equal(intent.verified_result_v2.proof.checks.subtree, true);
+      assert.equal(intent.final_result.status, "committed");
+      // Files under the moved directory keep working at their new paths.
+      const again = await submitJob(target, client, { operation: "create", target_kind: "file", destination_path: `${topic.path}/folder/inner/after.md`, content: "x" });
+      assert.equal((await executor(target, storage).run(again.reference)).status, "committed");
+      const replay = (await submitRaw(target, client, job.mutation, job.reference.job_id)).rows[0].value;
+      assert.equal(replay.replayed, true); assert.equal(replay.status, "committed");
+      // And it moves back the same way.
+      const back = await submitJob(target, client, move(await artifactById(folder.id), folder.path, drive.version));
+      assert.equal((await executor(target, storage).run(back.reference)).status, "committed");
+      assert.equal((await artifactById(deep.id)).path, deep.path);
+    });
+
+    await t.test("submit refuses a track, a rename, a move into itself and any other shape before a job exists", async () => {
+      const { target, client, trackPath, topic, folder } = await tree();
+      const track = await artifact(target, trackPath);
+      const before = await counters();
+      for (const mutation of [move(track, `${topic.path}/${TRACK}`, "1"), move(folder, `${topic.path}/renamed`),
+        move(folder, `${folder.path}/inner/folder`), move(folder, folder.path), { ...move(folder, `${topic.path}/folder`), operation: "rename" },
+        { ...move(folder, `${topic.path}/folder`), source_file_id: undefined }, move(folder, `${topic.path}/folder`, "0"),
+        { ...move(folder, `${topic.path}/folder`), directory_semantics: "topic" }, { ...move(folder, `${topic.path}/folder`), content: "x" }]) {
+        await assert.rejects(submitRaw(target, client, JSON.parse(JSON.stringify(mutation))), /storage_job_input_invalid/, JSON.stringify(mutation));
+      }
+      assert.deepEqual(await counters(), before);
+    });
+
+    await t.test("different sharing, a stale version or a registered destination is refused with no provider effect", async () => {
+      const { target, client, storage, topic, folder } = await tree();
+      const runRefused = async (mutation, prepare = () => {}) => {
+        const job = await submitJob(target, client, mutation);
+        await prepare();
+        const before = { patches: storage.patches, intents: (await counters()).intents };
+        const result = await executor(target, storage).run(job.reference);
+        assert.equal(storage.patches, before.patches, JSON.stringify(result));
+        assert.equal((await counters()).intents, before.intents, "no reservation");
+        return { job, result };
+      };
+      // The destination folder is shared differently: its own fixed reason.
+      Object.assign(storage.files.get(topic.provider_file_id), structuredClone(SHARED));
+      const differs = await runRefused(move(folder, `${topic.path}/folder`));
+      assert.equal(differs.result.status, "deny"); assert.equal(differs.result.error_code, "DIRECTORY_SHARING_DIFFERS");
+      assert.equal((await report(differs.job, differs.result)).status, "denied");
+      const inspected = (await caller.query(`select ${JOBS}($1,$2::jsonb) value`, [client.token, JSON.stringify({ action: "inspect", ...differs.job.reference })])).rows[0].value;
+      assert.equal(inspected.reason_code, "DIRECTORY_SHARING_DIFFERS");
+      Object.assign(storage.files.get(topic.provider_file_id), structuredClone(PRIVATE));
+      // The same grantees with another role: only the access digest tells them apart.
+      storage.files.get(target.trackId).permissions = [...OWNER_ONLY, { id: "u", type: "user", role: "reader" }];
+      storage.files.get(topic.provider_file_id).permissions = [...OWNER_ONLY, { id: "u", type: "user", role: "writer" }];
+      const roles = await runRefused(move(folder, `${topic.path}/folder`));
+      assert.equal(roles.result.error_code, "DIRECTORY_SHARING_DIFFERS");
+      storage.files.get(topic.provider_file_id).permissions = [...OWNER_ONLY, { id: "u", type: "user", role: "reader" }];
+      // Drive did not report the destination's permissions: equal access cannot be proven.
+      delete storage.files.get(topic.provider_file_id).permissions;
+      const unknown = await runRefused(move(folder, `${topic.path}/folder`));
+      assert.equal(unknown.result.error_code, "DIRECTORY_ACCESS_UNAVAILABLE");
+      storage.files.get(topic.provider_file_id).permissions = [...OWNER_ONLY, { id: "u", type: "user", role: "reader" }];
+      // A registered file inside was renamed in Drive outside Clued.
+      const note = (await admin.query("select provider_file_id from clued_private.resource_center_artifacts_v1 where profile_id=$1 and path=$2",
+        [target.profile, `${folder.path}/note.md`])).rows[0].provider_file_id;
+      storage.files.get(note).name = "renamed.md";
+      const drift = await runRefused(move(folder, `${topic.path}/folder`));
+      assert.equal(drift.result.status, "deny"); assert.equal(drift.result.error_code, "SUBTREE_DRIFT");
+      storage.files.get(note).name = "note.md";
+      // The directory changed in Drive after the Agent looked at it.
+      const stale = await runRefused(move(folder, `${topic.path}/folder`, "4"));
+      assert.equal(stale.result.status, "deny"); assert.equal(stale.result.error_code, "ARTIFACT_AUTHORITY_RESOLUTION_FAILED");
+      // Something is already registered at the destination (not in Drive).
+      await register({ action: "artifact_register", profile_id: target.profile, path: `${topic.path}/folder`, provider_file_id: `st-ghost-${randomUUID()}`,
+        provider_file_version: "1", target_kind: "directory", governance_class: "ordinary", delete_authority: false });
+      const taken = await runRefused(move(folder, `${topic.path}/folder`));
+      assert.equal(taken.result.status, "deny"); assert.equal(taken.result.error_code, "ARTIFACT_AUTHORITY_RESOLUTION_FAILED");
+      assert.deepEqual(storage.files.get(folder.provider_file_id).parents, [target.trackId]);
+    });
+
+    await t.test("more than 500 registered items under the directory is refused by the authority", async () => {
+      const { target, client, storage, topic, folder } = await tree();
+      await admin.query(`insert into clued_private.resource_center_artifacts_v1(user_id,profile_id,path,provider_file_id,provider_file_version,
+          target_kind,governance_class,delete_authority,source_decision_id,receipt_id)
+        select a.user_id,a.profile_id,a.path||'/bulk-'||n||'.md','st-bulk-'||n||'-'||md5(a.id::text),'1','file','ordinary',false,a.source_decision_id,a.receipt_id
+        from clued_private.resource_center_artifacts_v1 a, generate_series(1,500) n where a.id=$1`, [folder.id]);
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      const patches = storage.patches;
+      const result = await executor(target, storage).run(job.reference);
+      assert.equal(result.status, "deny"); assert.equal(storage.patches, patches);
+      assert.equal((await artifactById(folder.id)).path, folder.path);
+    });
+
+    await t.test("a registry change between the descriptor and the durable start uses the start's sample", async () => {
+      const { target, storage, topic, folder, client } = await tree();
+      let added;
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      const done = await executor(target, storage, async () => {
+        added = await directoryIn(target, storage, "aaa", folder.path, folder.provider_file_id);
+      }).run(job.reference);
+      assert.equal(done.status, "committed", JSON.stringify(done));
+      const attempt = (await journal(job)).provider_attempt;
+      assert.equal(attempt.subtree_sample[0].provider_file_id, added.provider_file_id, "the sample taken at the start");
+      assert.equal((await artifactById(added.id)).path, `${topic.path}/folder/aaa`);
+    });
+
+    await t.test("a trashed item under the directory moves with it and is untrashed at its new path", async () => {
+      const { target, client, storage, topic, folder, note } = await tree();
+      const trash = await submitJob(target, client, { operation: "delete", target_kind: "file", source_path: note.path,
+        source_file_version: storage.files.get(note.provider_file_id).version, source_file_id: note.provider_file_id });
+      assert.equal((await executor(target, storage).run(trash.reference)).status, "committed");
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      assert.equal((await executor(target, storage).run(job.reference)).status, "committed");
+      const trashed = await artifactById(note.id);
+      assert.equal(trashed.state, "trashed"); assert.equal(trashed.path, `${topic.path}/folder/note.md`);
+      const restore = await submitJob(target, client, { operation: "restore", target_kind: "file", source_path: trashed.path,
+        source_file_version: trashed.provider_file_version, source_file_id: note.provider_file_id });
+      const restored = await executor(target, storage).run(restore.reference);
+      assert.equal(restored.status, "committed", JSON.stringify(restored));
+      assert.equal((await artifactById(note.id)).state, "active");
+    });
+
+    await t.test("the registry path rewrite is refused outside the verified settlement of a directory move", async () => {
+      const { target, topic, folder } = await tree();
+      for (const key of [randomUUID(), "resource-center-finalize:" + randomUUID()]) {
+        const result = await adminCall({ action: "artifact_subtree_move", profile_id: target.profile, artifact_id: folder.id,
+          base_version: Number(folder.version), path: `${topic.path}/folder`, provider_file_id: folder.provider_file_id,
+          provider_file_version: "9", idempotency_key: key });
+        assert.notEqual(result.status, "committed", JSON.stringify(result));
+      }
+      assert.equal((await artifactById(folder.id)).path, folder.path);
+    });
+
+    await t.test("a lost reply stays fenced; scheduled recovery never settles it, the Owner's native recovery does, once", async () => {
+      const { target, client, storage, topic, folder, deep } = await tree();
+      storage.losePatch = true;
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      const result = await executor(target, storage).run(job.reference);
+      assert.equal(result.status, "unreconciled");
+      assert.equal(storage.patches > 0, true);
+      const row = await journal(job);
+      assert.equal(row.state, "started", "the uncertain effect stays fenced");
+      assert.equal((await artifactById(folder.id)).path, folder.path, "no rewrite without a verified proof");
+      assert.equal((await artifactById(deep.id)).path, deep.path);
+      // The single writer: no other write on this root starts while the move is unresolved.
+      const other = await submitJob(target, client, { operation: "create", target_kind: "file", destination_path: `${topic.path}/other.md`, content: "x" });
+      const intents = (await counters()).intents;
+      const blocked = await executor(target, storage).run(other.reference);
+      assert.notEqual(blocked.status, "committed", JSON.stringify(blocked));
+      assert.equal((await counters()).intents, intents, "no second intent");
+      assert.equal(await artifact(target, `${topic.path}/other.md`), undefined);
+      await admin.query("update clued_private.storage_connections_v1 set credential_envelope=$2::jsonb where id=$1", [target.connection,
+        JSON.stringify({ contract: "clued.storage-credential/1", key_id: "fixture", nonce: "A".repeat(16), ciphertext: "B".repeat(24) })]);
+      await admin.query("update public.clued_audit_receipts set created_at=clock_timestamp()-interval '30 seconds' where id=$1", [row.provider_attempt_receipt_id]);
+      const due = (await caller.query("select public.clued_storage_scheduled_recovery_v2($1,$2::jsonb) value", [issuer, JSON.stringify({ action: "due" })])).rows[0].value;
+      assert.equal(due.jobs.some(entry => entry.job_id === job.reference.job_id), false, "scheduled recovery does not list a directory move");
+      await assert.rejects(caller.query("select public.clued_storage_scheduled_recovery_v2($1,$2::jsonb) value",
+        [issuer, JSON.stringify({ action: "load", ...job.reference })]), /storage_scheduled_recovery_denied/);
+      const descriptor = (await native.query("select public.clued_storage_native_recovery_load_v2($1,$2::jsonb) value",
+        [issuerSecret, JSON.stringify({ action: "recovery_load", ...job.reference })])).rows[0].value;
+      assert.equal(descriptor.status, "recovery_only"); assert.equal(descriptor.attempt.contract, "clued.storage-subtree-move-attempt/1");
+      const patches = storage.patches;
+      const metadata = createGoogleDriveMetadataApi({ get_credential: async () => ({ access_token: "fixture-subtree-access", scope: SCOPES }),
+        fetch: async (url, init = {}) => { assert.equal(init.method ?? "GET", "GET"); return storage.fetch(url, init); } });
+      const verify = createGoogleDriveDirectoryMovePostconditionVerifier({ managed_root: descriptor.profile.managed_root, root_folder_id: descriptor.root_folder_id,
+        root_parent_id: descriptor.root_parent_id, get_file: metadata.getFile, list_children: metadata.listChildren,
+        get_sharing: metadata.getSharing, get_access: metadata.getAccess, include_verified_proof: true });
+      const { verified_proof: proof, ...postcondition } = await verify({ profile: descriptor.profile, mutation: descriptor.mutation,
+        provider_before: descriptor.provider_before, effect_result: { operation: "move", target_kind: "directory",
+          source_path: descriptor.mutation.source_path, destination_path: descriptor.mutation.destination_path,
+          provider_file_id: descriptor.attempt.provider_file_id, subtree_sample: descriptor.attempt.subtree_sample } });
+      const finish = { action: "finalize", intent_id: descriptor.intent_id, base_version: descriptor.version, request_sha256: descriptor.request_sha256,
+        idempotency_key: `account-job:${job.reference.job_id}:finalize`, postcondition };
+      const recorded = await cloud({ action: "verified_record", ...job.reference, credential_version: descriptor.credential_version, finish, proof });
+      assert.equal(recorded.status, "verified", JSON.stringify(recorded));
+      const settled = await cloud({ action: "settle_verified", ...job.reference, intent_id: descriptor.intent_id, base_version: descriptor.version,
+        request_sha256: descriptor.request_sha256, verified_receipt_id: recorded.verified_receipt_id, verified_digest: recorded.verified_digest });
+      assert.equal(settled.state, "committed", JSON.stringify(settled));
+      assert.equal(storage.patches, patches, "recovery never repeats the update");
+      assert.equal((await artifactById(folder.id)).path, `${topic.path}/folder`);
+      assert.equal((await artifactById(deep.id)).path, `${topic.path}/folder/inner/deep.md`);
+    });
+  } finally {
+    for (const database of clients.reverse()) await database.end().catch(() => {});
+  }
+}

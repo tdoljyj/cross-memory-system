@@ -11,7 +11,7 @@ type Connection = {
 };
 const actionName: Record<string, string> = {
   inspect: "查看任务状态", create_file: "新建文件", create_topic: "新建主题目录", modify: "改名、移动文件",
-  overwrite: "覆盖文件内容", destructive: "移入回收站、从回收站恢复",
+  overwrite: "覆盖文件内容", destructive: "移入回收站、从回收站恢复", modify_subtree: "移动整个文件夹",
 };
 const stateName: Record<string, string> = {
   awaiting_provider: "等待 Google 授权", active: "已连接", reauthorization_required: "需要重新授权", revoked: "已断开",
@@ -103,20 +103,26 @@ const budgetScopeName: Record<BudgetScope, string> = { connection: "每个已授
 const budgetDimensionName: Record<BudgetDimension, string> = { read: "读取", upload: "上传" };
 const formatMib = (mib: number) => mib >= 1024 && mib % 1024 === 0 ? `${mib / 1024} GiB` : `${mib} MiB`;
 const formatBytes = (bytes: number) => formatMib(Math.floor(bytes / MIB));
-type WriteLevel = "modify" | "overwrite" | "destructive";
+type WriteLevel = "modify" | "overwrite" | "destructive" | "modify_subtree";
 type WriteAccess = { active: boolean; policy_generation: number; disclosure_version: string;
-  overwrite_disclosure_version: string; destructive_disclosure_version?: string; classes: string[] };
+  overwrite_disclosure_version: string; destructive_disclosure_version?: string; subtree_disclosure_version?: string; classes: string[] };
 function isWriteAccess(value: unknown): value is WriteAccess {
   return isObject(value) && typeof value.active === "boolean" && Number.isSafeInteger(value.policy_generation)
     && typeof value.disclosure_version === "string" && typeof value.overwrite_disclosure_version === "string"
     && (value.destructive_disclosure_version === undefined || typeof value.destructive_disclosure_version === "string")
-    && Array.isArray(value.classes) && value.classes.every(item => item === "modify" || item === "overwrite" || item === "destructive");
+    && (value.subtree_disclosure_version === undefined || typeof value.subtree_disclosure_version === "string")
+    && Array.isArray(value.classes)
+    && value.classes.every(item => item === "modify" || item === "overwrite" || item === "destructive" || item === "modify_subtree");
 }
-// The destructive level is offered only by a server that names its disclosure (P5).
-const writeLevels = (access: WriteAccess): WriteLevel[] =>
-  access.destructive_disclosure_version === undefined ? ["modify", "overwrite"] : ["modify", "overwrite", "destructive"];
+// The destructive (P5) and modify_subtree (P6) levels are offered only by a server that names their disclosure.
+const writeLevels = (access: WriteAccess): WriteLevel[] => [
+  "modify", "overwrite",
+  ...(access.destructive_disclosure_version === undefined ? [] : ["destructive" as const]),
+  ...(access.subtree_disclosure_version === undefined ? [] : ["modify_subtree" as const]),
+];
 const writeDisclosure = (access: WriteAccess, level: WriteLevel) => level === "overwrite" ? access.overwrite_disclosure_version
-  : level === "destructive" ? access.destructive_disclosure_version ?? "" : access.disclosure_version;
+  : level === "destructive" ? access.destructive_disclosure_version ?? ""
+  : level === "modify_subtree" ? access.subtree_disclosure_version ?? "" : access.disclosure_version;
 // Native trash batch confirmation (P5, §3.4 item 4; Decision 7f9daf68): the Agent registers one batch,
 // the Owner confirms the whole list once.
 type TrashItem = { operation: "delete" | "restore"; target_kind: "file" | "directory"; path: string; provider_file_id: string;
@@ -136,7 +142,8 @@ function isTrashConfirmation(value: unknown): value is TrashConfirmation {
 }
 const trashItemText = (item: TrashItem) => `${item.operation === "delete" ? "移入回收站" : "从回收站恢复"}${item.target_kind === "directory" ? "（空目录）" : ""}：`
   + `${item.path}（ID ${item.provider_file_id}，版本 ${item.provider_file_version}）`;
-// One write class per change; each has its own confirmation text (P3 modify, P4 overwrite, P5 destructive).
+// One write class per change; each has its own confirmation text (P3 modify, P4 overwrite, P5 destructive,
+// P6 modify_subtree).
 const writeText = {
   modify: {
     name: "改名和移动文件",
@@ -152,6 +159,11 @@ const writeText = {
     name: "把文件移入回收站",
     on: "允许已授权的 Agent 把此目录内由 Clued 创建的文件和空目录移入 Google Drive 回收站，并可从回收站恢复 Clued 移入的项目？不会永久删除；但 Google 会在移入回收站 30 天后自动永久删除，之后无法恢复。每个任务只处理一个文件或一个空目录，不处理非空目录；同一客户端登记在 24 小时内超过 5 项时，需要您在本页对 Agent 列出的整批项目一次确认。您手动上传的文件不受影响。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。",
     off: "停止 Agent 把文件移入回收站和从回收站恢复？已在回收站中的文件不受影响，仍会在 30 天后被 Google 永久删除。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束。",
+  },
+  modify_subtree: {
+    name: "移动整个文件夹",
+    on: "允许已授权的 Agent 把此目录内由 Clued 创建的文件夹，连同里面的全部内容，移动到另一个已登记的文件夹？文件夹名称不变，内容不会被删除或覆盖；只在共享设置完全相同的两个文件夹之间移动，不会改变谁能访问这些内容。每次操作都会留下回执，可以再移回原位置。不能移动一级目录（轨道），也不能移进文件夹自身。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束；可随时停止。",
+    off: "停止 Agent 移动整个文件夹？已移动的文件夹保持现状。尚未开始的排队任务会被取消，已开始但未完成的任务需先结束。",
   },
 } as const;
 export default function StorageConnections() {
@@ -565,7 +577,8 @@ export default function StorageConnections() {
               {readAccess[c.id].classes.includes("read_content") ? "停止 Agent 读正文" : "允许 Agent 读正文"}</button>
           </>}
           {writeAccess[c.id]?.active && writeLevels(writeAccess[c.id]).map(level => <div key={level}>
-            <p className="mt-2">Agent {writeText[level].name}：{writeAccess[c.id].classes.includes(level) ? "已允许（仅 Clued 创建的文件）" : "未允许"}</p>
+            <p className="mt-2">Agent {writeText[level].name}：{writeAccess[c.id].classes.includes(level)
+              ? level === "modify_subtree" ? "已允许（仅 Clued 创建的文件夹）" : "已允许（仅 Clued 创建的文件）" : "未允许"}</p>
             <button disabled={busy} onClick={() => void toggleWrite(c, level)}>
               {writeAccess[c.id].classes.includes(level) ? `停止 Agent ${writeText[level].name}` : `允许 Agent ${writeText[level].name}`}</button>
           </div>)}
