@@ -483,6 +483,10 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     outcome.reasons.push(...verified.reasons);
     const outside = verified.payload.paths_outside_write_set;
     if (Array.isArray(outside) && outside.length) outcome.paths_outside_write_set = outside;
+    if (Number.isInteger(verified.payload.admitted_heads)) {
+      outcome.admitted_heads = verified.payload.admitted_heads;
+      outcome.max_heads_per_claim = verified.payload.max_heads_per_claim ?? null;
+    }
     if (verified.payload.claim && typeof verified.payload.claim === "object") {
       const { claim } = verified.payload;
       outcome.claim = {
@@ -858,6 +862,10 @@ export function renderSummary(outcome) {
     lines.push("");
     lines.push("Notices (not blocking):");
     for (const notice of outcome.notices) lines.push(`- ${notice}`);
+  }
+  if (outcome.reasons.includes("claim_head_cap_reached")) {
+    lines.push("");
+    lines.push(`This claim already admitted ${outcome.admitted_heads ?? "the maximum number of"} pull-request heads (cap ${outcome.max_heads_per_claim ?? 20}, Owner Decision a264ea02). Each push is one head; claim the Task again and put the new claim in the PR.`);
   }
   if (outcome.paths_outside_write_set && outcome.paths_outside_write_set.length) {
     lines.push("");
