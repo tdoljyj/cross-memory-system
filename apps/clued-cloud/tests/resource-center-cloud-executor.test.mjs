@@ -378,6 +378,34 @@ for(const mode of ['single','batched'])for(const [profile,credential] of Object.
     assert.equal(f.info().starts,0);assert.equal(f.info().posts,0);
     assert.deepEqual(logs,[{event:'storage_cloud_denied',error_code:'UNAUTHORIZED_WORKSPACE_MUTATION'}]);
   });
+  // Decision b18eff80: an N0-onboarded root of the same owner beside the root
+  // is another registered root, named by the server descriptor by Drive ID.
+  const withSiblingRoot=(siblings,options={})=>{
+    const f=make(options);
+    f.files.set('n0',{...ownerEntry('n0','Clued_N0验收_新建','parent'),isAppAuthorized:true});
+    f.files.set('n0-track',{...ownerEntry('n0-track','资料','n0'),isAppAuthorized:true});
+    if(siblings!==undefined){const load=f.config.load_job;f.config.load_job=async r=>({...await load(r),registered_sibling_roots:siblings});}
+    return f;
+  };
+  test(`${mode}/${profile}: another registered root of the same owner beside the root no longer denies a create`,async()=>{
+    const before=withSiblingRoot();const denied=await quietRun(before);
+    assert.equal(denied.result.status,'deny');assert.equal(denied.result.error_code,'UNAUTHORIZED_WORKSPACE_MUTATION');
+    assert.deepEqual(denied.result.findings.map(x=>x.path).sort(),['G:/My Drive/Clued_N0验收_新建','G:/My Drive/Clued_N0验收_新建/资料']);
+    assert.equal(before.info().posts,0);
+    const f=withSiblingRoot(['n0']);const {result,logs}=await quietRun(f);
+    assert.deepEqual(result,{status:'committed',job_id:ids.job,receipt_id:ids.receipt,execution_permitted:false});
+    assert.equal(f.info().posts,1);assert.deepEqual(logs,[]);
+    // It does not cover an unrelated Clued stray beside it.
+    const stray=withSiblingRoot(['n0'],{island:true});const other=await quietRun(stray);
+    assert.equal(other.result.status,'deny');assert.deepEqual(other.result.findings.map(x=>x.path),['G:/My Drive/Clued_品牌说明.md']);
+    assert.equal(stray.info().posts,0);
+  });
+  test(`${mode}/${profile}: a malformed registered_sibling_roots descriptor fails closed with no effect`,async()=>{
+    for(const bad of [null,'n0',['root'],['n0','n0']]){
+      const f=withSiblingRoot(bad);const {result}=await quietRun(f);
+      assert.equal(result.status,'unavailable');assert.equal(f.info().starts,0);assert.equal(f.info().posts,0);
+    }
+  });
   test(`${mode}/${profile}: an Owner same-name file in the destination folder fails exactly as a Clued one`,async()=>{
     const owner=make({owner:[ownerEntry('o-same','new.txt','track','text/plain')]});
     const own=make();own.files.set('c-same',ownerEntry('c-same','new.txt','track','text/plain'));

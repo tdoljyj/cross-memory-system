@@ -210,6 +210,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       // the island rule only (StorageNormalUse §3.1).
       const scan=createGoogleDriveBoundaryScanner({trusted_profile:profile,root_folder_id:descriptor.root_folder_id,root_parent_id:descriptor.root_parent_id,
         scan_roots:descriptor.scan_roots,get_file:metadata.getFile,
+        // The server names the owner's other active roots under the same parent.
+        registered_sibling_roots:descriptor.registered_sibling_roots===undefined ? [] : descriptor.registered_sibling_roots,
         list_folder:id=>metadata.listFolder(id,{app_authorized:true}),...batched});
       const findings=await scan();
       if(findings.length) {
