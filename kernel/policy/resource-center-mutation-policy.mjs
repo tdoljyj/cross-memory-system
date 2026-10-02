@@ -113,8 +113,9 @@ export function evaluateResourceCenterMutation(input) {
     if (!destination) return deny("DESTINATION_REQUIRED");
     if (source) return deny("SOURCE_PATH_FORBIDDEN_FOR_OPERATION", { operation });
   }
-  // Trash and untrash of an empty directory (P5) carry no directory semantics.
-  if (targetKind === "directory" && operation !== "delete" && operation !== "restore" &&
+  // Trash and untrash of an empty directory (P5) and a directory move (P6)
+  // name an existing directory and carry no directory semantics.
+  if (targetKind === "directory" && operation !== "delete" && operation !== "restore" && operation !== "move" &&
     !["track", "topic", "asset_collection"].includes(directorySemantics)) {
     return deny("DIRECTORY_SEMANTICS_REQUIRED");
   }

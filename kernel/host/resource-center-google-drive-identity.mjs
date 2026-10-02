@@ -145,6 +145,12 @@ export function createGoogleDriveProviderIdentityResolver({
     };
     const rootSharingDigest = await sharing(rootFile);
     const destinationParentSharingDigest = await sharing(destinationParent);
+    // A directory move (P6) names the directory's folder and the sharing of
+    // the directory and that folder: the authority requires both folders to
+    // share the same access, and the verifier the directory's to stay unchanged.
+    const directoryMove = mutation.operation === "move" && mutation.target_kind === "directory";
+    const sourceSharingDigest = directoryMove ? await sharing(source) : null;
+    const sourceParentSharingDigest = directoryMove ? await sharing(sourceParent) : null;
 
     return Object.freeze({
       root_folder_id: rootFolderId,
@@ -163,6 +169,8 @@ export function createGoogleDriveProviderIdentityResolver({
       // the verified settlement require to be its registered parent.
       ...(mutation.operation === "delete" || mutation.operation === "restore"
         ? { source_parent_id: sourceParent?.id ?? null } : {}),
+      ...(directoryMove ? { source_parent_id: sourceParent?.id ?? null, source_sharing_digest: sourceSharingDigest,
+        source_parent_sharing_digest: sourceParentSharingDigest } : {}),
     });
   };
 }

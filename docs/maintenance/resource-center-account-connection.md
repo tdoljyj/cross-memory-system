@@ -784,6 +784,63 @@ Rollout: production migration, then release. Execution needs the write
 switches (`execution_enabled` plus the executor window) and the Owner's
 destructive level.
 
+## Directory move (StorageFullCapability.v0.1 P6)
+
+Migration `20261002080000_storage_directory_move_p6.sql` and the executor
+changes move one registered directory, with everything under it, on the same
+account-policy job chain under a separate `modify_subtree` level (Owner
+Decisions `c47efe38` and `746fd078`). Every existing function is changed by
+an anchored patch with an exact hit count.
+
+- Policies may carry `modify_subtree` after `modify`, `overwrite` and
+  `destructive` (`clued_private.storage_write_actions_v1` accepts the create
+  set plus any of them in that order). The Owner turns it on at
+  `/storage/connections` with "允许 Agent 移动整个文件夹" (disclosure
+  `clued.storage-subtree-disclosure/1`; turning it off stores
+  `clued.storage-modify_subtree-disabled/1`). The page shows the toggle only
+  when the write-access status names `subtree_disclosure_version`.
+- `clued_storage_submit` accepts `{operation: "move", target_kind:
+  "directory", source_path, destination_path, source_file_version,
+  source_file_id}`: the same name in another registered folder, never into
+  the directory itself or below it. Submit refuses a track (a direct child of
+  the root) and every other shape with `storage_job_input_invalid` before a
+  job exists. The `modify` level alone does not allow it.
+- The authority matches the registered directory by Drive ID and sharing
+  state (Drive advances a folder's version when its children change; the
+  Agent's observed version is still checked against Drive before any
+  reservation). It requires the directory's folder to be its registered
+  parent as Drive reports it, nothing registered at or under the destination
+  (`destination_exists`), at most 500 registered items under the directory
+  (`subtree_too_large`), and both folders with exactly the same sharing
+  state (`sharing_differs`). The executor refuses unequal sharing before any
+  reservation with job reason `DIRECTORY_SHARING_DIFFERS`, so the moved
+  subtree's inherited access never changes.
+- In-flight work under the subtree (T14) is excluded by the single writer
+  per profile: no other intent can be prepared, started or uncertain while
+  the move is, and the move cannot start while another one is. A queued job
+  that still names an old path fails its own provider lookup with no effect.
+- The executor records `clued.storage-subtree-move-attempt/1` (the
+  directory, both folders, both paths and up to 10 registered descendants the
+  server chose, shallowest first) before the one `files.update`
+  (`addParents`/`removeParents`, empty body). The verifier proves
+  `clued.storage-directory-move-verified/1`: the directory is the only entry
+  of its name in the destination, is gone from its old folder, keeps its
+  sharing, each sampled descendant still sits at its relative path by Drive
+  ID, and its version is stable across two reads.
+- Settlement (`artifact_subtree_move`) changes the directory's path and
+  observed Drive version by CAS on its version, and the path of every active
+  or trashed item under it, in the one settlement transaction. Revoked rows
+  keep their old path as history.
+- A lost update reply leaves the intent fenced, and the single writer then
+  blocks other writes on that root until it is resolved. Scheduled recovery
+  never lists or loads a directory move; the Owner's native recovery
+  (`/storage/admin`, route `/v1/storage/recovery`) re-verifies it by GET only
+  and settles through the same verified record, never repeating the update.
+
+Rollout: production migration, then release. Execution needs the write
+switches (`execution_enabled` plus the executor window) and the Owner's
+modify_subtree level.
+
 ## Scope profiles (StorageNormalUse.v0.1 N0a)
 
 Migration `20260930140000_storage_scope_profile_v1.sql` and the Worker and

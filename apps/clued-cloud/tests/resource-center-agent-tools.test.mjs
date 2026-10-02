@@ -28,7 +28,7 @@ test('discovery and guessed calls require both existing account/jobs flags; no p
       assert.equal(tools[0].annotations.readOnlyHint, false);
       assert.equal(tools[1].annotations.readOnlyHint, true);
       assert.equal(tools[0].inputSchema.additionalProperties, false);
-      assert.equal(tools[0].inputSchema.properties.mutation.oneOf.length, 7);
+      assert.equal(tools[0].inputSchema.properties.mutation.oneOf.length, 8);
     }
   }
   for (const name of ['clued_storage_begin', 'clued_storage_admission', 'clued_storage_grant', 'clued_storage_credential']) {
@@ -204,6 +204,36 @@ test('rename and file move pass only in their exact shape and reach the same job
   } finally { globalThis.fetch = before; }
 });
 
+test('a directory move passes only in its exact shape (Drive ID, path, version, same name, another folder) and reaches the jobs RPC unchanged', async () => {
+  const before = globalThis.fetch; const calls = [];
+  globalThis.fetch = async (_url, init) => { calls.push(JSON.parse(init.body)); return Response.json(status()); };
+  const root = 'G:/My Drive/Clued_资料中心/track';
+  const good = [
+    { operation: 'move', target_kind: 'directory', source_path: root + '/topic/folder', destination_path: root + '/other/folder',
+      source_file_version: '9', source_file_id: 'drive-folder' },
+    { operation: 'move', target_kind: 'directory', source_path: 'track/topic/folder', destination_path: 'track/folder',
+      source_file_version: '9', source_file_id: 'drive-folder' },
+  ];
+  const bad = [
+    { ...good[0], source_file_id: undefined }, { ...good[0], source_file_id: 'bad id' }, { ...good[0], source_file_version: '0' },
+    { ...good[0], destination_path: root + '/other/renamed' }, { ...good[0], destination_path: root + '/topic/folder' },
+    { ...good[0], destination_path: root + '/topic/folder/inner/folder' }, { ...good[0], operation: 'rename' },
+    { ...good[0], directory_semantics: 'topic' }, { ...good[0], content: 'x' }, { ...good[0], destination_path: root + '/topic/../folder' },
+  ].map(input => JSON.parse(JSON.stringify(input)));
+  try {
+    for (const input of bad) {
+      const reply = await (await submit({ ...ref, mutation: input })).json();
+      assert.ok(reply.result?.isError === true || reply.error, JSON.stringify(input));
+    }
+    assert.equal(calls.length, 0);
+    for (const input of good) {
+      const reply = (await (await submit({ ...ref, mutation: input })).json()).result;
+      assert.equal(reply.isError, false);
+      assert.deepEqual(calls.at(-1).p_input, { ...ref, mutation: input, action: 'submit' });
+    }
+  } finally { globalThis.fetch = before; }
+});
+
 test('replace passes with new content or a restore job in its exact shape and reaches the same jobs RPC unchanged', async () => {
   const before = globalThis.fetch; const calls = [];
   globalThis.fetch = async (_url, init) => { calls.push(JSON.parse(init.body)); return Response.json(status()); };
@@ -290,13 +320,14 @@ test('the trash limit and an untrash name conflict are fixed refusals with guida
   } finally { globalThis.fetch = before; }
 });
 
-test('inspect adds a fixed Worker hint for RESTORE_NAME_CONFLICT and DIRECTORY_NOT_EMPTY only', async () => {
+test('inspect adds a fixed Worker hint for RESTORE_NAME_CONFLICT, DIRECTORY_NOT_EMPTY and DIRECTORY_SHARING_DIFFERS only', async () => {
   const before = globalThis.fetch; let reason;
   globalThis.fetch = async () => Response.json({ ...status('denied'), reason_code: reason, hint: 'database text must not pass' });
   try {
-    for (reason of ['RESTORE_NAME_CONFLICT', 'DIRECTORY_NOT_EMPTY']) {
+    for (reason of ['RESTORE_NAME_CONFLICT', 'DIRECTORY_NOT_EMPTY', 'DIRECTORY_SHARING_DIFFERS']) {
       const r = (await (await call('clued_storage_inspect', ref, env, { waitUntil: () => {} })).json()).result;
-      assert.equal(r.structuredContent.reason_code, reason); assert.match(r.structuredContent.hint, reason === 'RESTORE_NAME_CONFLICT' ? /ask the user/ : /empty directory/);
+      assert.equal(r.structuredContent.reason_code, reason);
+      assert.match(r.structuredContent.hint, reason === 'RESTORE_NAME_CONFLICT' ? /ask the user/ : reason === 'DIRECTORY_NOT_EMPTY' ? /empty directory/ : /same sharing/);
     }
     reason = 'UNAUTHORIZED_WORKSPACE_MUTATION';
     const r = (await (await call('clued_storage_inspect', ref, env, { waitUntil: () => {} })).json()).result;

@@ -4,6 +4,7 @@ import { createGoogleDriveModifyPostconditionVerifier } from "../../../kernel/ho
 import { createGoogleDriveReplacePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-replace-postcondition.mjs";
 import { createGoogleDriveDestructivePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-destructive-postcondition.mjs";
 import { DESTRUCTIVE_PROOF_CONTRACTS } from "../../../kernel/host/resource-center-google-drive-destructive-effect.mjs";
+import { createGoogleDriveDirectoryMovePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-directory-move-postcondition.mjs";
 import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
@@ -96,11 +97,17 @@ export async function createStorageCloudRecovery(config: {
       }});
       // Rename and file move (P3) settle only through the verified record.
       const operation = String(d.mutation.operation);
-      const modify = operation === "rename" || operation === "move";
+      // A directory move (P6) settles only through the verified record, and
+      // only by the Owner's native recovery: scheduled recovery never loads it.
+      const subtree = operation === "move" && d.mutation.target_kind === "directory";
+      const modify = !subtree && (operation === "rename" || operation === "move");
       const replace = operation === "replace";
       const destructive = operation === "delete" || operation === "restore";
       if (destructive && (!config.verified || d.attempt.contract !== "clued.storage-destructive-attempt/1" ||
           d.attempt.operation !== operation || d.attempt.source_path !== d.mutation.source_path)) throw denied();
+      if (subtree && (!config.verified || d.attempt.contract !== "clued.storage-subtree-move-attempt/1" ||
+          d.attempt.operation !== "move" || d.attempt.target_kind !== "directory" ||
+          d.attempt.source_path !== d.mutation.source_path)) throw denied();
       if (modify && (!config.verified || d.attempt.contract !== "clued.storage-modify-attempt/1" ||
           d.attempt.operation !== operation || d.attempt.source_path !== d.mutation.source_path)) throw denied();
       if (replace && (!config.verified || d.attempt.contract !== "clued.storage-replace-attempt/1" ||
@@ -112,7 +119,9 @@ export async function createStorageCloudRecovery(config: {
         list_children: (input: Data) => metadata.listChildren(input, { signal: abort.signal }),
         include_verified_proof: !!config.verified, timeout_ms: timeout, poll_ms: Math.min(1000, timeout), clock,
       };
-      const verify = destructive ? createGoogleDriveDestructivePostconditionVerifier({ ...verifierConfig,
+      const verify = subtree ? createGoogleDriveDirectoryMovePostconditionVerifier({ ...verifierConfig,
+          get_sharing: (id: string) => metadata.getSharing(id, { signal: abort.signal }) })
+        : destructive ? createGoogleDriveDestructivePostconditionVerifier({ ...verifierConfig,
           has_children: (id: string) => metadata.hasChildren(id, { signal: abort.signal }) })
         : replace
         ? createGoogleDriveReplacePostconditionVerifier({ ...verifierConfig,
@@ -120,7 +129,10 @@ export async function createStorageCloudRecovery(config: {
         : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
         : createGoogleDriveCreatePostconditionVerifier({ ...verifierConfig, require_effect_provider_id: true });
       const postcondition = await bounded(verify({ profile: d.profile, mutation: d.mutation, provider_before: d.provider_before,
-        effect_result: destructive
+        effect_result: subtree
+          ? { operation, target_kind: "directory", source_path: d.mutation.source_path, destination_path: d.mutation.destination_path,
+              provider_file_id: d.attempt.provider_file_id, subtree_sample: d.attempt.subtree_sample }
+          : destructive
           ? { operation, source_path: d.mutation.source_path, destination_path: d.mutation.destination_path ?? null,
               provider_file_id: d.attempt.provider_file_id, content: d.attempt.content }
           : replace
@@ -138,7 +150,8 @@ export async function createStorageCloudRecovery(config: {
       if (config.verified) {
         const verifiedPost: unknown = postcondition;
         // A binary create (content_ref, StorageNormalUse N3) settles only with the /3 proof.
-        const contract = destructive ? DESTRUCTIVE_PROOF_CONTRACTS[operation as "delete" | "restore"]
+        const contract = subtree ? "clued.storage-directory-move-verified/1"
+          : destructive ? DESTRUCTIVE_PROOF_CONTRACTS[operation as "delete" | "restore"]
           : replace ? "clued.storage-replace-verified/1"
           : modify ? `clued.storage-${operation}-verified/1`
           : object(d.mutation.content_ref) ? "clued.storage-create-verified/3" : "clued.storage-create-verified/2";
