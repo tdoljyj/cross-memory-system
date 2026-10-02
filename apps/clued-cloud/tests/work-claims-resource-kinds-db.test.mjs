@@ -65,15 +65,16 @@ test('work claims: typed resources, registered kinds and per-kind overlap',
     assert.deepEqual(await normalize(['record:52739939-a719-4819-b81b-05339f0ffea9']),
       ['record:52739939-a719-4819-b81b-05339f0ffea9']);
     // Unregistered kinds are refused, also where a bare root file would carry a colon.
-    for (const entry of ['calendar:team/2026-10-02', 'c:foo', 'x-y:z']) {
+    for (const entry of ['calendar:team/2026-10-02', 'ab:foo', 'x-y:z']) {
       await assert.rejects(() => normalize([entry]), /work_claim_resource_kind_unknown/, entry);
     }
     // The value follows the path rules.
     for (const entry of ['storage:', 'storage:/', 'storage:a/../b', 'repo:o/n/a b', `storage:${'a'.repeat(400)}`]) {
       await assert.rejects(() => normalize([entry]), /work_claim_write_set_invalid/, entry);
     }
-    // A colon later in a bare path is not a kind.
+    // A colon later in a bare path is not a kind, and a single letter is a drive.
     assert.deepEqual(await normalize(['docs/a:b.md']), ['docs/a:b.md']);
+    assert.deepEqual(await normalize(['C:/Clued/M2Isolation/**', 'c:foo']), ['C:/Clued/M2Isolation/**', 'c:foo']);
 
     // --- Overlap per kind. ---
     const overlap = async (a, b) => (await admin.query(
@@ -97,6 +98,9 @@ test('work claims: typed resources, registered kinds and per-kind overlap',
       // repo: against repo: compares the full value, so other repositories are apart.
       [['repo:o/a/x'], ['repo:o/b/x'], []],
       [['repo:o/*/x'], ['repo:o/b/x'], ['repo:o/*/x', 'repo:o/b/x']],
+      // Drive paths stay bare paths (bare-only sets: the v1 result lists the covered entry).
+      [['C:/Clued/**'], ['C:/Clued/M2Isolation/x'], ['C:/Clued/M2Isolation/x']],
+      [['c:/a/**'], ['storage:c/a/x'], []],
       // Mixed sets: only the intersecting entries are listed.
       [['apps/**', 'storage:c1/a'], ['storage:c1/**', 'docs/z'], ['storage:c1/**', 'storage:c1/a']],
     ];

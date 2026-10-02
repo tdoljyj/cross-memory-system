@@ -9,9 +9,13 @@
 -- whatever the repository), other kinds never overlap. Write sets made only
 -- of bare paths are judged exactly as before. No door is wired here: Clued
 -- write tools and the GitHub check behave as before.
+--
+-- A kind has at least two characters: a single letter before the colon is a
+-- Windows drive ("C:/Clued/..." is a live write_set entry in production) and
+-- stays a bare path.
 
 create table clued_private.work_claim_resource_kinds (
-  kind text primary key check (kind ~ '^[a-z][a-z0-9-]{0,31}$'),
+  kind text primary key check (kind ~ '^[a-z][a-z0-9-]{1,31}$'),
   doors text[] not null check (cardinality(doors)>0),
   note text not null,
   registered_at timestamptz not null default now()
@@ -29,13 +33,14 @@ insert into clued_private.work_claim_resource_kinds(kind,doors,note) values
 -- One normalized entry to {kind, value}; kind is null for a bare path.
 create function clued_private.work_claim_resource_split(p_entry text) returns text[]
 language sql immutable set search_path='' as $$
-  select case when p_entry ~ '^[a-z][a-z0-9-]{0,31}:'
+  select case when p_entry ~ '^[a-z][a-z0-9-]{1,31}:'
     then array[split_part(p_entry,':',1),substr(p_entry,strpos(p_entry,':')+1)]
     else array[null,p_entry] end
 $$;
 
 -- Paths: trimmed, no leading "./" or "/", no empty or ".." segments, sorted,
--- distinct. Globs keep "*" and "**". An entry that starts with "<kind>:" is a
+-- distinct. Globs keep "*" and "**". An entry that starts with "<kind>:" (two
+-- or more characters; "C:/..." is a drive path) is a
 -- typed resource: the kind is lower-cased and must be registered, the value
 -- follows the path rules and may not be empty. Anything else raises.
 -- Stable, not immutable: it reads the kind registry.
@@ -49,7 +54,7 @@ begin
     if v_raw is null then raise exception 'work_claim_write_set_invalid' using errcode='22023'; end if;
     v_path:=btrim(v_raw);
     v_kind:=null;
-    if v_path ~ '^[A-Za-z][A-Za-z0-9-]{0,31}:' then
+    if v_path ~ '^[A-Za-z][A-Za-z0-9-]{1,31}:' then
       v_kind:=lower(split_part(v_path,':',1));
       v_path:=substr(v_path,strpos(v_path,':')+1);
       if not exists(select 1 from clued_private.work_claim_resource_kinds k where k.kind=v_kind) then
