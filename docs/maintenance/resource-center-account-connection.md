@@ -939,11 +939,19 @@ level switch (`storage_root_has_unresolved_mutation`).
   (`runStorageUnattemptedReleaseScheduled`). It reads and writes the database
   only, so it runs with the storage account, Google and jobs flags and does not
   need the executor switch: a stuck root clears without opening a window.
-- The executor reads the provider identity again, at most twice, when a Drive
-  metadata read fails in transit (timeout, failed request, unreadable answer,
-  error status), and logs the fixed code of a final failure
-  (`DRIVE_METADATA_TIMEOUT` and others) instead of
+- Before the durable start, the executor reads the provider identity again,
+  at most twice, when a Drive metadata read fails in transit (timeout, failed
+  request, unreadable answer); an error status is final. The pre-effect check
+  is never retried: it runs on the admission's time, and its failure leaves a
+  job with no attempt, which the release clears. A final failure logs its fixed
+  code (`DRIVE_METADATA_TIMEOUT` and others) instead of
   `PROVIDER_IDENTITY_UNAVAILABLE`.
+- Each release candidate runs in its own subtransaction with a 2 s lock
+  timeout: one that fails is rolled back alone and skipped; at most 10 are
+  looked at per call.
+- Residual: no per-effect unit test yet pins "the attempt record precedes the
+  first Drive write" for every effect; the directory-move DB fixture covers it
+  end to end for moves.
 - The level switch stays refused while a job is unresolved (the job settles
   against the policy it was admitted under); the storage page now says so
   (reason `storage_root_busy`).

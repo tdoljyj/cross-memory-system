@@ -476,3 +476,33 @@ test('unavailable runs log one fixed code: shape checks, boundary scan refusals,
       {status:'unavailable',execution_permitted:false,error_code:code},code);
   }
 });
+test('the pre-effect identity check is not read again; its failure leaves no provider attempt (fix d9d6db4c)',async()=>{
+  const f=fixture(),fetch=f.config.drive_fetch,rpc=f.config.rpc;let reads=0;const actions=[];
+  // Reads 1-3: initial, revalidation, durable start. Read 4: the pre-effect check.
+  f.config.drive_fetch=async(url,init)=>{
+    if(new URL(url).searchParams.get('q')?.includes("name = 'track'") && ++reads===4) throw new Error('transient');
+    return fetch(url,init);
+  };
+  f.config.rpc=async input=>{actions.push(input.action);return rpc(input);};
+  const logs=[],original=console.warn;
+  console.warn=message=>logs.push(message);
+  let result;
+  try { result=await f.run().run(f.reference); }
+  finally { console.warn=original; }
+  assert.equal(result.status,'unreconciled');
+  assert.equal(reads,4,'no second pre-effect read');
+  assert.equal(actions.includes('provider_attempt'),false);assert.equal(f.info().posts,0);
+  assert.deepEqual(JSON.parse(logs[0]),{event:'storage_cloud_authority_failed',phase:'pre_effect',stage:'provider_identity',
+    error_code:'DRIVE_METADATA_REQUEST_FAILED'});
+});
+test('an error status from Drive is final and not read again',async()=>{
+  const f=fixture(),fetch=f.config.drive_fetch;let reads=0;
+  f.config.drive_fetch=async(url,init)=>{
+    if(new URL(url).searchParams.get('q')?.includes("name = 'track'")){ reads++; return new Response('{}',{status:404}); }
+    return fetch(url,init);
+  };
+  const original=console.warn;console.warn=()=>{};
+  try { assert.equal((await f.run().run(f.reference)).status,'deny'); }
+  finally { console.warn=original; }
+  assert.equal(reads,1);
+});

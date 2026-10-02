@@ -20,7 +20,9 @@
 --   each under the job and root locks with its own Receipt and Event, with
 --   final_result {outcome: released_unattempted, reason_code:
 --   NO_PROVIDER_ATTEMPT}. A journal with an attempt, a verified record or a
---   live admission is never touched.
+--   live admission is never touched. Each candidate runs in its own
+--   subtransaction with a short lock timeout: one that fails is skipped and
+--   rolled back alone, and at most 10 candidates are looked at per call.
 -- * clued_private.storage_job_status_v1: a cancelled job names that reason code.
 
 create function public.clued_storage_release_unattempted_v1(p_issuer_hash text,p_input jsonb)
@@ -35,6 +37,7 @@ begin
   select * into app from clued_private.storage_oauth_apps_v1
     where issuer_hash=p_issuer_hash and revoked_at is null for share;
   if not found then raise exception 'storage_release_denied' using errcode='42501'; end if;
+  perform pg_catalog.set_config('lock_timeout','2s',true);
   for cand in
     select j0.owner_id,j0.job_id,j0.connection_id from clued_private.storage_jobs_v1 j0
     join clued_private.storage_connections_v1 c0 on c0.id=j0.connection_id and c0.owner_id=j0.owner_id
@@ -44,8 +47,10 @@ begin
       and m0.provider_attempt is null and m0.provider_attempt_receipt_id is null and m0.verified_result_v2 is null
       and m0.writer_binding_id is not distinct from j0.cloud_writer_binding_id
       and m0.expires_at<clock_timestamp()-interval '60 seconds'
-    order by m0.expires_at,j0.job_id limit 3
+    order by m0.expires_at,j0.job_id limit 10
   loop
+    exit when released>=3;
+    begin
     -- The same lock order as the attempt record: job, root, then the rows.
     perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('storage-job:'||cand.owner_id::text||':'||cand.job_id::text,0));
     select * into c from clued_private.storage_connections_v1 where id=cand.connection_id and owner_id=cand.owner_id;
@@ -55,14 +60,14 @@ begin
     select * into c from clued_private.storage_connections_v1 where id=cand.connection_id and owner_id=cand.owner_id for share;
     select * into j from clued_private.storage_jobs_v1 where owner_id=cand.owner_id and job_id=cand.job_id for update;
     select * into m from clued_private.resource_center_mutations_v1 where id=j.intent_id and user_id=cand.owner_id for update;
-    if m.id is null or m.state not in ('started','uncertain') or m.provider_attempt is not null
+    if m.id is null or m.profile_id is distinct from p.id or m.state not in ('started','uncertain') or m.provider_attempt is not null
       or m.provider_attempt_receipt_id is not null or m.verified_result_v2 is not null
       or m.writer_binding_id is distinct from j.cloud_writer_binding_id
       or m.expires_at>=clock_timestamp()-interval '60 seconds' then continue; end if;
     req:=jsonb_build_object('idempotency_key','storage-unattempted-release:'||m.id::text,
       'intent_id',m.id,'job_id',j.job_id,'base_version',m.version);
     r:=clued_private.m1_begin_receipt(cand.owner_id,null,'storage_unattempted_release',req,clued_private.m1_sha256(req));
-    if r.status<>'pending' then continue; end if;
+    if r.status<>'pending' then raise exception 'storage_release_receipt_conflict' using errcode='40001'; end if;
     update clued_private.resource_center_mutations_v1 set state='cancelled',version=version+1,updated_at=now(),
       receipt_id=r.id,final_result=jsonb_build_object('outcome','released_unattempted','reason_code','NO_PROVIDER_ATTEMPT')
       where id=m.id;
@@ -72,6 +77,10 @@ begin
       'success','audit_only','{}'::uuid[],'[]'::jsonb,null);
     perform clued_private.m1_finish_receipt(r.id,'committed',refs,'{}'::jsonb,'{}'::jsonb,array[ev],'{}'::uuid[],null);
     released:=released+1;
+    exception when others then
+      -- This candidate is rolled back alone (locks included) and left as it was.
+      null;
+    end;
   end loop;
   return jsonb_build_object('status','ok','released',released);
 end $$;
