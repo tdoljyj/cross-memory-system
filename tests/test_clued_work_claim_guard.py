@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -226,6 +227,64 @@ class WorkClaimGuardTest(unittest.TestCase):
             result = subprocess.run([sys.executable, str(HOOK)], input=raw, text=True,
                                     capture_output=True, env=self.env, timeout=30)
             self.assertEqual(result.returncode, 0)
+
+
+LAUNCHER = ROOT / "scripts" / "hooks" / "run_python.sh"
+STUB = "#!/bin/sh\nexit 49\n"  # what the Windows Store python3 alias does
+
+
+class HookLauncherTest(unittest.TestCase):
+    """scripts/hooks/run_python.sh and the hook registrations that use it."""
+
+    def setUp(self) -> None:
+        self.sh = shutil.which("sh")
+        if not self.sh:
+            self.skipTest("sh is not available")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.bin = Path(self.tmp.name) / "bin"
+        self.bin.mkdir()
+        self.script = Path(self.tmp.name) / "hook.py"
+        self.script.write_text("import sys\nsys.stdout.write(sys.stdin.read().upper())\nsys.exit(3)\n",
+                               encoding="utf-8")
+
+    def fake(self, name: str, body: str) -> None:
+        path = self.bin / name
+        path.write_text(body, encoding="utf-8", newline="\n")
+        path.chmod(0o755)
+
+    def launch(self) -> subprocess.CompletedProcess:
+        env = {k: v for k, v in os.environ.items() if k != "CLUED_HOOK_PYTHON"}
+        env["PATH"] = str(self.bin) + os.pathsep + env.get("PATH", "")
+        return subprocess.run([self.sh, str(LAUNCHER), str(self.script)], input="payload", text=True,
+                              capture_output=True, env=env, timeout=60)
+
+    def test_settings_run_every_hook_through_the_launcher(self):
+        settings = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        prefix = 'sh "$CLAUDE_PROJECT_DIR/scripts/hooks/run_python.sh" "$CLAUDE_PROJECT_DIR/'
+        commands = [hook["command"] for groups in settings["hooks"].values()
+                    for group in groups for hook in group["hooks"]]
+        self.assertEqual(len(commands), 4)
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(command.startswith(prefix), command)
+                target = command[len(prefix):].rstrip('"')
+                self.assertTrue((ROOT / target).is_file(), target)
+
+    def test_stub_interpreters_are_skipped(self):
+        for name in ("python3", "py"):
+            self.fake(name, STUB)
+        self.fake("python", f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" "$@"\n')
+        result = self.launch()
+        self.assertEqual((result.returncode, result.stdout), (3, "PAYLOAD"), result.stderr)
+
+    def test_no_working_interpreter_is_reported(self):
+        for name in ("python3", "python", "py"):
+            self.fake(name, STUB)
+        result = self.launch()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no working Python 3.8+ interpreter", result.stderr)
+        self.assertIn("hook.py did not run", result.stderr)
 
 
 if __name__ == "__main__":
