@@ -817,7 +817,10 @@ an anchored patch with an exact hit count.
   discoverability and expiry (`googleDriveAccessDigest`, read with
   `permissions(...)`; `sharing_differs`). The executor refuses a difference
   before any reservation with job reason `DIRECTORY_SHARING_DIFFERS`, so the
-  moved subtree's inherited access never changes, not even a role.
+  moved subtree's inherited access never changes, not even a role. When Drive
+  does not return every permission of the directory or a folder (it omits
+  them where the account cannot share), the move is refused with
+  `DIRECTORY_ACCESS_UNAVAILABLE`.
 - Before any reservation the executor also re-reads the server's sample of
   registered descendants by Drive ID; one renamed, moved or deleted in Drive
   outside Clued is refused with job reason `SUBTREE_DRIFT` and no effect. The

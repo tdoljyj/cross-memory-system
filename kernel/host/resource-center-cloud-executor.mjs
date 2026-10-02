@@ -435,13 +435,19 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       // only when both folders' states were read); and the server's sample of
       // registered descendants must still sit where the registry says
       // (SUBTREE_DRIFT), so a drifted registry is never moved and fenced.
+      // When Drive does not report every permission of the directory or a
+      // folder, equal access cannot be proven (DIRECTORY_ACCESS_UNAVAILABLE).
       if(subtree){
         let refusal=null;
         try{
           const identity=await resolveProvider({profile,mutation});
           const unequal=(a,b)=>typeof a==="string" && typeof b==="string" && a!==b;
           if(identity.source_file_id===mutation.source_file_id){
-            if(unequal(identity.source_parent_sharing_digest,identity.destination_parent_sharing_digest) ||
+            // Without every permission of all three (Drive omits them where
+            // this account cannot share) equal access cannot be proven.
+            if([identity.source_access_digest,identity.source_parent_access_digest,identity.destination_parent_access_digest]
+              .some(value=>typeof value!=="string")) refusal="DIRECTORY_ACCESS_UNAVAILABLE";
+            else if(unequal(identity.source_parent_sharing_digest,identity.destination_parent_sharing_digest) ||
               unequal(identity.source_parent_access_digest,identity.destination_parent_access_digest)) refusal="DIRECTORY_SHARING_DIFFERS";
             else await checkSubtreeSample(metadata.getFile,mutation.source_file_id,descriptor.subtree_sample,"SUBTREE_DRIFT");
           }

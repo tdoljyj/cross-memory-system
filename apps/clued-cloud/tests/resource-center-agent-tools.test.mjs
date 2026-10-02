@@ -320,12 +320,12 @@ test('the trash limit and an untrash name conflict are fixed refusals with guida
   } finally { globalThis.fetch = before; }
 });
 
-test('inspect adds a fixed Worker hint for RESTORE_NAME_CONFLICT, DIRECTORY_NOT_EMPTY, DIRECTORY_SHARING_DIFFERS and SUBTREE_DRIFT only', async () => {
+test('inspect adds a fixed Worker hint for RESTORE_NAME_CONFLICT, DIRECTORY_NOT_EMPTY, DIRECTORY_SHARING_DIFFERS, SUBTREE_DRIFT and DIRECTORY_ACCESS_UNAVAILABLE only', async () => {
   const before = globalThis.fetch; let reason;
   globalThis.fetch = async () => Response.json({ ...status('denied'), reason_code: reason, hint: 'database text must not pass' });
   try {
     const expected = { RESTORE_NAME_CONFLICT: /ask the user/, DIRECTORY_NOT_EMPTY: /empty directory/,
-      DIRECTORY_SHARING_DIFFERS: /same access/, SUBTREE_DRIFT: /Nothing was moved/ };
+      DIRECTORY_SHARING_DIFFERS: /same access/, SUBTREE_DRIFT: /Nothing was moved/, DIRECTORY_ACCESS_UNAVAILABLE: /permissions/ };
     for (reason of Object.keys(expected)) {
       const r = (await (await call('clued_storage_inspect', ref, env, { waitUntil: () => {} })).json()).result;
       assert.equal(r.structuredContent.reason_code, reason); assert.match(r.structuredContent.hint, expected[reason]);

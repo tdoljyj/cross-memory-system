@@ -54,7 +54,8 @@ const reasonHints: Record<string, string> = {
   DIRECTORY_NOT_EMPTY: "The directory is not empty in Drive (trashed items inside count). Only an empty directory can be moved to the trash; do not trash its contents to get around this unless the user asks.",
   PROVIDER_OWNER_REQUIRED: "Only the item's owner can move it to the trash. Tell the user; there is no other way.",
   DIRECTORY_SHARING_DIFFERS: "The directory's current folder and the destination folder grant different access (who, or with which role), so moving it would change who can access its contents. Clued only moves a directory between folders with exactly the same access. Tell the user; do not change sharing to get around it.",
-  SUBTREE_DRIFT: "Something Clued registered inside the directory was renamed, moved or deleted in Drive outside Clued, so Clued's records no longer match. Nothing was moved. Tell the user; only the Owner can bring the records up to date. Do not retry.",
+  SUBTREE_DRIFT: "Something Clued registered inside the directory was renamed, moved or deleted in Drive outside Clued, so Clued's records no longer match. Nothing was moved. Tell the user; the directory cannot be moved until Clued's records match Drive again. Do not retry.",
+  DIRECTORY_ACCESS_UNAVAILABLE: "Drive did not report the full list of permissions for the directory or one of the two folders, so Clued cannot prove the move keeps everyone's access unchanged. Nothing was moved. Tell the user; do not retry.",
 };
 /** The untrash name option (" (n)" before the extension, n 1..99). */
 export function storageSuffixedName(name: string, candidate: string): boolean {

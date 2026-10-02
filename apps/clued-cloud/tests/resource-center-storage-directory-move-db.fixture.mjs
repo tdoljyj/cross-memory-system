@@ -340,6 +340,11 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       const roles = await runRefused(move(folder, `${topic.path}/folder`));
       assert.equal(roles.result.error_code, "DIRECTORY_SHARING_DIFFERS");
       storage.files.get(topic.provider_file_id).permissions = [...OWNER_ONLY, { id: "u", type: "user", role: "reader" }];
+      // Drive did not report the destination's permissions: equal access cannot be proven.
+      delete storage.files.get(topic.provider_file_id).permissions;
+      const unknown = await runRefused(move(folder, `${topic.path}/folder`));
+      assert.equal(unknown.result.error_code, "DIRECTORY_ACCESS_UNAVAILABLE");
+      storage.files.get(topic.provider_file_id).permissions = [...OWNER_ONLY, { id: "u", type: "user", role: "reader" }];
       // A registered file inside was renamed in Drive outside Clued.
       const note = (await admin.query("select provider_file_id from clued_private.resource_center_artifacts_v1 where profile_id=$1 and path=$2",
         [target.profile, `${folder.path}/note.md`])).rows[0].provider_file_id;
