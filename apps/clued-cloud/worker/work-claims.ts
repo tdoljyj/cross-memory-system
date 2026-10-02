@@ -49,7 +49,7 @@ export const workClaimTools = [
   {
     name: "clued_work_claim",
     description:
-      "Claim one existing active Task for execution before spending anything on it: before model calls, installs, builds, tests, CI or subtasks. Declares the write set (paths or globs) and trigger refs. Rejected with work_claim_conflict when another live claim names the same task, intersects the write set, or shares a trigger ref; the conflict names the holder so you stop, not retry under another title. One Binding holds at most 3 live claims. The claim carries a fence and a lease (profile: 2 h, hard deadline 24 h). Idempotent by idempotency_key.",
+      "Claim one existing active Task for execution before spending anything on it: before model calls, installs, builds, tests, CI or subtasks. Declares the write set (paths or globs) and trigger refs. Rejected with work_claim_conflict when another live claim names the same task, intersects the write set, or shares a trigger ref; the conflict names the holder so you stop, not retry under another title. One session (holder_session_ref) holds at most 3 live claims and one Binding at most 10 across its sessions; work_claim_budget_exhausted names the limit hit. The claim carries a fence and a lease (profile: 2 h, hard deadline 24 h). Idempotent by idempotency_key.",
     inputSchema: {
       type: "object",
       required: ["task_id", "write_set", "idempotency_key"],

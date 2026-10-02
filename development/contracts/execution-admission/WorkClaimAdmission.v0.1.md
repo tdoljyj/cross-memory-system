@@ -141,6 +141,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 复用 N4 模式：
 
 - **每 Binding 并发 claim 上限**（默认 3）：一个失控 Host 不能把所有 Task 都占了。
+  - **实现（2026-10-02，Owner Decision `533a5286`，迁移 `20261002060000`）**：改为每个会话（Agent 自报的 `holder_session_ref`）最多 3 个活认领、每个 Binding 合计最多 10 个。原因：Owner 的所有 Claude Code 会话共用一个 Binding，原来的「每 Binding 3 个」会让并行会话互相挤占。会话标识是自报的，所以保留 Binding 总上限兜底；没有 `holder_session_ref` 的认领单独算一组。拒绝时 `limit` 字段写明撞到的是哪个上限。
 - **每 claim CI 分钟上限**：`admission-gate` 在放行重任务前调用 `clued_work_verify` 并上报本次预计分钟数；超出上限返回 REJECTED，重任务不启动。实际消耗由 workflow 完成后以 observed 回写（finalize）。
 - **模型 token**：claim 只记录 Agent 自报的估算，标为 `declared_unenforced`。不宣称预留。
 - 取消、失联或 UNKNOWN 时**不释放预留**；只有 finalize 或 takeover 事务才结算。
