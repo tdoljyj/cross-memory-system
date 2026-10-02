@@ -267,6 +267,22 @@ test('work claims acceptance: races, revoked Bindings, verify repeatability, exp
     assert.notEqual(reissued.claim_id, after.claim_id);
     assert.equal((await verify({ claim_id: reissued.claim_id, changed_paths: ['restore/x'] })).verdict, 'ADMITTED');
     assert.equal((await verify({ claim_id: after.claim_id })).verdict, 'REJECTED');
+
+    // The documented remedy (Owner Decision 2b23eb0c): after a restore the
+    // Owner runs scripts/work-claims-after-restore.sql once. Live claims are
+    // abandoned and every fence moves above any fence issued before.
+    const fencesBefore = (await admin.query('select max(fence)::bigint m from clued_private.work_claims_v1')).rows[0].m;
+    await admin.query(await fs.readFile(path.join(root, 'scripts', 'work-claims-after-restore.sql'), 'utf8'));
+    const abandoned = (await admin.query(`select status,released_outcome,fence::bigint fence
+      from clued_private.work_claims_v1 where claim_id=$1`, [reissued.claim_id])).rows[0];
+    assert.deepEqual(abandoned, { status: 'RELEASED', released_outcome: 'abandoned', fence: '1000002' });
+    assert.equal((await admin.query(`select count(*)::int n from clued_private.work_claims_v1
+      where status in ('ACTIVE','DRAINING')`)).rows[0].n, 0);
+    assert.equal((await verify({ claim_id: reissued.claim_id, changed_paths: ['restore/x'] })).verdict, 'REJECTED');
+    const fresh = committed(await claim(anon, tokens.A, { task_id: taskRestore, write_set: ['restore/**'] })).claim;
+    assert.equal(fresh.fence, 1000003);
+    assert.ok(BigInt(fresh.fence) > BigInt(fencesBefore), 'a new fence is above every fence issued before the restore');
+    assert.equal((await verify({ claim_id: fresh.claim_id, changed_paths: ['restore/x'] })).verdict, 'ADMITTED');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
