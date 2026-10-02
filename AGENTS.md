@@ -6,7 +6,7 @@ This repository follows `Clued_单一数据源与两级五视图架构方案_v1.
 
 Every Agent working in this repository follows [skills/clued/references/agent-contract.md](skills/clued/references/agent-contract.md), the single normative contract for using Clued: start, read order, capture of material outcomes, write discipline, error handling and checkpoint. The Clued service serves the same text at `/clued-agent.md`. This file adds repository rules only; do not restate the contract here.
 
-In Claude Code, `.claude/settings.json` runs `scripts/hooks/clued_capture_guard.py` as a Stop hook that enforces the contract's §3 and §5 (BUG-20260924-001 L3). It blocks a stop once per finding: a material outcome (merged PR, push to main, applied migration, deployed edge function) with no Clued write after it, committed Clued writes with no checkpoint after them, or a likely Owner decision in the last human message with no Clued write after it. `CLUED_CAPTURE_GUARD=off` disables it.
+In Claude Code, `.claude/settings.json` runs `scripts/hooks/clued_capture_guard.py` as a Stop hook that enforces the contract's §3 and §5 (BUG-20260924-001 L3). It blocks a stop once per finding and state: a material outcome (merged PR, push to main, applied migration, deployed edge function) with no committed Clued write about it after it, committed Clued writes with no checkpoint after them, or a likely Owner decision in the last human message with no committed Clued write after it. A rejected, failed or unanswered write settles nothing, and a write about an outcome names its PR number or merge commit, migration or function. `CLUED_CAPTURE_GUARD=off` disables it.
 
 ## Authority and storage
 

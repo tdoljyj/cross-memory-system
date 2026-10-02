@@ -7,15 +7,21 @@ This hook reads the session transcript when Claude is about to stop and blocks
 the stop once, with a reason, when it finds:
 
 * a material outcome (merged PR, pushed main, applied migration, deployed edge
-  function) with no Clued write attempted after it;
+  function) with no committed Clued write about it after it;
 * committed Clued writes with no committed checkpoint for their context after
   them (BUG-20260924-003: a checkpoint absorbs only its own context's events,
   so project-scope writes need a checkpoint in that project's context);
-* a human message that looks like an Owner decision with no Clued write
-  attempted after it.
+* a human message that looks like an Owner decision with no committed Clued
+  write after it.
 
-Each finding is reported at most once per session (state is kept in the temp
-directory), so the hook never loops. Set CLUED_CAPTURE_GUARD=off to disable.
+Only a write whose result is committed settles a finding: a rejected, failed
+or unanswered write does not. A write is about an outcome when its input names
+the outcome's subject (the PR number or merge commit, the migration or the
+function); a push to main has no subject, so any committed write settles it.
+
+Each finding is reported at most once per session per state (no write, write
+not committed, write not about it), with state kept in the temp directory, so
+the hook never loops. Set CLUED_CAPTURE_GUARD=off to disable.
 Exit 0 allows the stop; exit 2 with a stderr reason blocks it.
 """
 from __future__ import annotations
@@ -58,6 +64,61 @@ HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.MULTILIN
 class Finding:
     key: str
     message: str
+
+
+@dataclass
+class Write:
+    pos: int
+    text: str  # the call's input, serialized, for subject matching
+    committed: bool = False
+    detail: str = "no result"  # why it did not commit
+
+
+@dataclass
+class Subject:
+    label: str
+    patterns: list[re.Pattern]
+
+
+def pr_subject(number, sha: str | None = None) -> Subject | None:
+    patterns = []
+    if str(number).isdigit():
+        patterns.append(re.compile(rf"(?:#|/pull/|\bpr[\s:#-]*){number}(?!\d)", re.IGNORECASE))
+    if sha and len(sha) >= 7:
+        patterns.append(re.compile(re.escape(sha[:7]), re.IGNORECASE))
+    if not patterns:
+        return None
+    return Subject(f"PR #{number}" if str(number).isdigit() else f"merge commit {sha[:7]}", patterns)
+
+
+def name_subject(kind: str, name) -> Subject | None:
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return Subject(f"{kind} {name.strip()}", [re.compile(re.escape(name.strip()), re.IGNORECASE)])
+
+
+def gh_merge_number(command: str) -> str | None:
+    """The PR number given to `gh pr merge`, when it is given."""
+    match = GH_PR_MERGE.search(command)
+    if not match:
+        return None
+    rest = re.split(r"[;&|\n]", command[match.end():], maxsplit=1)[0].split()
+    if not rest or rest[0].startswith("-"):
+        return None
+    found = re.fullmatch(r"#?(\d+)", rest[0]) or re.search(r"/pull/(\d+)", rest[0])
+    return found.group(1) if found else None
+
+
+def failure_detail(body: str, is_error: bool) -> str:
+    data = result_body(body)
+    error = data.get("error")
+    if isinstance(error, dict):
+        error = error.get("code") or error.get("message")
+    parts = [str(value) for value in (data.get("status"), error) if value]
+    if parts:
+        return ": ".join(dict.fromkeys(parts))[:80]
+    text = " ".join(body.split())[:80]
+    return text or ("tool error" if is_error else "empty result")
 
 
 def tool_suffix(name: str) -> str:
@@ -130,10 +191,26 @@ def prompt_text(content) -> str | None:
     return None
 
 
+def settle(writes: list[Write], after: int, subject: Subject | None) -> tuple[str, str]:
+    """How the Clued writes after position `after` settle a finding.
+
+    Returns ("settled", ""), ("none", ""), ("failed", detail) when writes were
+    tried but none committed, or ("unrelated", "") when writes committed but
+    none names the subject.
+    """
+    later = [write for write in writes if write.pos > after]
+    committed = [write for write in later if write.committed]
+    if not committed:
+        return ("failed", later[-1].detail) if later else ("none", "")
+    if subject is None or any(p.search(w.text) for w in committed for p in subject.patterns):
+        return ("settled", "")
+    return ("unrelated", "")
+
+
 def analyse(entries: list[dict]) -> list[Finding]:
     calls: dict[str, tuple[int, str, dict]] = {}
-    outcomes: list[tuple[int, str, str]] = []  # (position, key, description)
-    write_attempts: list[int] = []
+    outcomes: list[tuple[int, str, str, Subject | None]] = []  # (position, key, description, subject)
+    writes: dict[str, Write] = {}
     committed_writes: list[tuple[int, str, str | None]] = []  # (position, use id, context)
     checkpoints: list[tuple[int, str]] = []  # (position, context)
     human_prompts: list[tuple[int, str, str]] = []  # (position, key, text)
@@ -146,9 +223,11 @@ def analyse(entries: list[dict]) -> list[Finding]:
         if entry.get("type") == "assistant" and isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
-                    calls[block.get("id", "")] = (pos, block.get("name", ""), block.get("input") or {})
+                    tool_input = block.get("input") or {}
+                    calls[block.get("id", "")] = (pos, block.get("name", ""), tool_input)
                     if tool_suffix(block.get("name", "")) in CLUED_WRITE_TOOLS:
-                        write_attempts.append(pos)
+                        writes[block.get("id", "")] = Write(
+                            pos, json.dumps(tool_input, ensure_ascii=False, default=str))
             continue
         if entry.get("type") != "user":
             continue
@@ -168,33 +247,54 @@ def analyse(entries: list[dict]) -> list[Finding]:
             suffix = tool_suffix(name)
             body = result_text(block.get("content"))
             failed = bool(block.get("is_error"))
-            if suffix in CLUED_WRITE_TOOLS and not failed and result_status(body) == "committed":
-                committed_writes.append((pos, use_id, write_context(tool_input)))
+            if suffix in CLUED_WRITE_TOOLS:
+                write = writes[use_id]
+                if not failed and result_status(body) == "committed":
+                    write.committed = True
+                    committed_writes.append((pos, use_id, write_context(tool_input)))
+                else:
+                    write.detail = failure_detail(body, failed)
             elif suffix == CLUED_CHECKPOINT_TOOL and not failed and result_status(body) == "committed":
                 checkpoints.append((pos, checkpoint_context(tool_input, body)))
             elif suffix == "merge_pull_request" and not failed and '"merged":true' in body.replace(" ", ""):
                 number = tool_input.get("pullNumber", "?")
                 repo = f"{tool_input.get('owner', '')}/{tool_input.get('repo', '')}".strip("/")
-                outcomes.append((pos, use_id, f"merged PR {repo}#{number}"))
+                sha = result_body(body).get("sha")
+                outcomes.append((pos, use_id, f"merged PR {repo}#{number}",
+                                 pr_subject(number, sha if isinstance(sha, str) else None)))
             elif suffix == "apply_migration" and not failed and '"error"' not in body:
-                outcomes.append((pos, use_id, f"applied migration {tool_input.get('name', '')}".strip()))
+                outcomes.append((pos, use_id, f"applied migration {tool_input.get('name', '')}".strip(),
+                                 name_subject("migration", tool_input.get("name"))))
             elif suffix == "deploy_edge_function" and not failed and '"error"' not in body:
-                outcomes.append((pos, use_id, f"deployed edge function {tool_input.get('name', '')}".strip()))
+                outcomes.append((pos, use_id, f"deployed edge function {tool_input.get('name', '')}".strip(),
+                                 name_subject("edge function", tool_input.get("name"))))
             elif name == "Bash" and not failed:
                 command = HEREDOC.sub("", str(tool_input.get("command", "")))
                 if GH_PR_MERGE.search(command):
-                    outcomes.append((pos, use_id, "merged a PR with gh pr merge"))
+                    number = gh_merge_number(command)
+                    outcomes.append((pos, use_id, f"merged PR #{number} with gh pr merge" if number
+                                     else "merged a PR with gh pr merge", pr_subject(number)))
                 elif GIT_PUSH_MAIN.search(command):
-                    outcomes.append((pos, use_id, "pushed to main"))
+                    outcomes.append((pos, use_id, "pushed to main", None))
 
+    ordered = sorted(writes.values(), key=lambda write: write.pos)
     findings: list[Finding] = []
-    for pos, key, description in outcomes:
-        if not any(attempt > pos for attempt in write_attempts):
-            findings.append(Finding(
-                f"outcome:{key}",
-                f"- Material outcome with no Clued write after it: {description}. "
-                "Record it per §3 (close or update the Task, or a follow-up note).",
-            ))
+    for pos, key, description, subject in outcomes:
+        state, detail = settle(ordered, pos, subject)
+        if state == "none":
+            message = (f"- Material outcome with no Clued write after it: {description}. "
+                       "Record it per §3 (close or update the Task, or a follow-up note).")
+        elif state == "failed":
+            message = (f"- Material outcome not recorded: {description}. The Clued write after it did "
+                       f"not commit ({detail}). Fix and retry it; if Clued or the Host refuses it, tell "
+                       "the Owner which write is still owed (§4).")
+        elif state == "unrelated":
+            message = (f"- Material outcome not recorded: {description}. Clued writes after it committed, "
+                       f"but none names {subject.label}. Record this outcome itself per §3 and cite "
+                       f"{subject.label} in the record.")
+        else:
+            continue
+        findings.append(Finding(f"outcome:{key}:{state}", message))
     # A write is settled by a later checkpoint in its own context; a write whose
     # context is unknown is settled by any later checkpoint.
     pending: dict[str, list[str]] = {}
@@ -219,11 +319,19 @@ def analyse(entries: list[dict]) -> list[Finding]:
     if human_prompts:
         pos, key, text = human_prompts[-1]
         match = DECISION_PATTERN.search(text)
-        if match and not any(attempt > pos for attempt in write_attempts):
+        state, detail = settle(ordered, pos, None) if match else ("settled", "")
+        if state == "none":
             findings.append(Finding(
                 f"decision:{key}",
                 f"- The Owner's last message may be a decision (matched “{match.group(0)}”). "
                 "If it is a material decision per §3, record it; if not, no record is needed.",
+            ))
+        elif state == "failed":
+            findings.append(Finding(
+                f"decision:{key}:failed",
+                f"- The Owner's last message may be a decision (matched “{match.group(0)}”) and the "
+                f"Clued write after it did not commit ({detail}). Fix and retry it; if Clued or the "
+                "Host refuses it, tell the Owner which write is still owed (§4).",
             ))
     return findings
 
@@ -269,7 +377,7 @@ def main() -> int:
         "Clued capture guard (skills/clued/references/agent-contract.md §3 and §5):\n"
         + "\n".join(finding.message for finding in new)
         + "\nHandle these now, or say in your reply why they need no record or that Clued is "
-        "unavailable. Each item is reported once.",
+        "unavailable. Each item is reported once in each state.",
         file=sys.stderr,
     )
     return 2
