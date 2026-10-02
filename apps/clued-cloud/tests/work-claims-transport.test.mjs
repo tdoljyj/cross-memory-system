@@ -55,7 +55,9 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   assert.equal(off.length + WORK_TOOLS.length, on.length, 'the flag adds exactly the five tools');
   const byName = Object.fromEntries(on.map((tool) => [tool.name, tool]));
   assert.deepEqual(byName.clued_work_verify._meta['clued/requiredScopes'], ['context:read']);
-  assert.equal(byName.clued_work_verify.annotations.readOnlyHint, true);
+  assert.equal(byName.clued_work_verify.annotations.readOnlyHint, false, 'pr_ref binds the claim');
+  assert.equal(byName.clued_work_verify.annotations.idempotentHint, true);
+  assert.equal(byName.clued_work_verify.inputSchema.properties.pr_ref.pattern, '^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}#[0-9]{1,10}$');
   assert.equal(byName.clued_work_verify.annotations.destructiveHint, false);
   for (const name of ['clued_work_claim', 'clued_work_renew', 'clued_work_release', 'clued_work_takeover']) {
     assert.deepEqual(byName[name]._meta['clued/requiredScopes'], ['context:write'], name);
@@ -102,7 +104,7 @@ test('Binding and OAuth callers reach the same step-1 RPCs with the arguments pa
       trigger_refs: ['ghsa:GHSA-vcvr-r3jv-pc5j'], idempotency_key: 'host-a:task:claim', base_commit: 'f7ba6ff3' },
     clued_work_renew: { claim_id: '22222222-2222-4222-8222-222222222222', fence: 1, lease_version: 1, progress_ref: 'sha-1' },
     clued_work_release: { claim_id: '22222222-2222-4222-8222-222222222222', fence: 1, outcome: 'completed', evidence_ref: 'pr:450' },
-    clued_work_verify: { claim_id: '22222222-2222-4222-8222-222222222222', changed_paths: ['apps/clued-cloud/package.json'], head_sha: '3329174e' },
+    clued_work_verify: { claim_id: '22222222-2222-4222-8222-222222222222', changed_paths: ['apps/clued-cloud/package.json'], head_sha: '3329174e', pr_ref: 'tdoljyj/cross-memory-system#482' },
     clued_work_takeover: { claim_id: '22222222-2222-4222-8222-222222222222', idempotency_key: 'host-b:claim:takeover' },
   };
   const { calls, restore } = mockFetch(({ rpc, body }) =>

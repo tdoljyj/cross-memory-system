@@ -134,7 +134,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 | `clued_work_claim` | 输入 task_id（或 `{title, execution_bucket, execution_intent}` 原子创建 Task 后再 claim）、base_commit、write_set、trigger_refs、估算预算。一个事务内：校验 Task 身份与 Binding 读写权；计算冲突（4.3）；无冲突则插入 ACTIVE claim，fence = 该 task 历史最大 fence + 1；返回 claim_id、fence、expires_at、Receipt。有冲突则返回 `work_claim_conflict` 与冲突 claim 的 id、持有者、expires_at、重叠的路径／trigger，不插入。 | 单事务，幂等键 = `<session>:<task_id>:claim` |
 | `clued_work_renew` | 必须携带 claim_id + fence + lease_version + **progress_ref**（新 head SHA 或新 Receipt）。progress_ref 与上次相同 → 拒绝 `work_claim_no_progress`。成功只延长 expires_at、lease_version +1，不动 fence。超过 hard_deadline_at 或 renewals 上限 → 拒绝。 | 单事务 |
 | `clued_work_release` | 持有者主动释放；带 outcome（completed / abandoned）与证据引用。 | 单事务 |
-| `clued_work_verify` | 只读。输入 claim_id、head_sha、base_sha、changed_paths[]；返回 ADMITTED / REJECTED 及原因。供 CI gate 与 required check 调用，使用只读 Binding。 | 只读 |
+| `clued_work_verify` | 只读。输入 claim_id、head_sha、base_sha、changed_paths[]；返回 ADMITTED / REJECTED 及原因。供 CI gate 与 required check 调用，使用只读 Binding。实现：可选 `pr_ref` 时首次准入把 claim 绑定到该 PR（一条 Receipt），MCP 工具从迁移 `20261002072000` 一起开放 `pr_ref`；不带 `changed_paths` 时不检查路径，CI 的 PR 检查总会带，手动触发的准入有意不带 | 只读；带 `pr_ref` 时写一条绑定 |
 | `clued_work_takeover` | 对 EXPIRED 或 DRAINING claim 发起接管：新 claim 以 fence +1 创建，旧 claim 标 SUPERSEDED。不自动触发，只由新持有者显式调用；Owner 决定或 profile 允许时才可对未过期 claim 强制接管。 | 单事务 |
 
 `clued_session_resume` 增加返回：`contract_version`、`active_work_claims`（本用户所有 ACTIVE claim 的 task_id、write_set、trigger_refs、expires_at）。合规 Agent 在 resume 时就能比对自己的意图。
@@ -149,12 +149,22 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 **实现（第 7 步评审修复，2026-10-01，迁移 `20261002050000`，Task `047e663e`）**：第 2 条最初只检查「一侧的 glob 覆盖另一侧的字面路径」，两个 glob 之间不比较，`apps/clued-cloud/**` 与 `**/package-lock.json` 不冲突。现按路径段比较：含 `**` 的段匹配任意多段；两个单段通配只要字面前缀与后缀相容就算相交。判定偏向「相交」：可能把两个实际不共享路径的 glob 判为冲突，不会漏判。
 
+**实现（MINOR 修复，2026-10-02，迁移 `20261002072000`，Task `27b4f5e8`）**：
+- 第 3 条按不区分大小写比较：`ghsa:GHSA-x` 与 `ghsa:ghsa-x` 相同。`@` 后都是至少 7 位十六进制、且一方是另一方前缀时也算相同，所以 `ci:trivy@f7ba6ff` 与完整 SHA 冲突。存储的 ref 保留声明时的大小写。
+- 第 2 条中 `**/` 也匹配零层目录：`**/package-lock.json` 覆盖根目录的 `package-lock.json`，与 CI 路径过滤的理解一致。
+
 不做：标题相似度、语义去重、自动合并意图。语义不明确时 Agent 可以用 `clued_search_context` 做有上限的探索，但那不是准入判断。
 
 ### 4.4 租约、续期、过期、接管、fence
 
 - **期限来自 profile**，不是无限 TTL：默认 claim 期限 2 小时，hard_deadline 24 小时，最多续期 12 次。数值在 `protocol/.../work-claim.profile.json` 中定义并随测试接受；缺省配置视为失败，不视为无限。
 - **续期必须带进展**：heartbeat 不是进展。progress_ref 不变即拒绝续期，到期自然过期。这直接回答"持续 heartbeat 却无进展"。
+  - **实现（2026-10-02，迁移 `20261002072000`）**：本 claim 以前任何一次续期用过的 progress_ref 都会被拒，`x,y,x,y` 交替不再通过（`progress_refs` 列记录历史）。
+- **幂等键只代表一件工作（迁移 `20261002072000`）**：`clued_work_claim`／`clued_work_takeover` 记下操作、scope、Task（或被接管的 claim）与规范化 write_set 的哈希。
+  - 同一个键换了这些内容，返回 `work_claim_idempotency_conflict`，不再返回无关的旧 claim。
+  - 键对应的 claim 已不再有效（释放、过期、被接管）时，重放返回 `work_claim_idempotency_spent`。
+  - 重试时省略可选字段（trigger_refs、base_commit、会话、租期、预算）仍按重放处理。
+- **DRAINING**：持有者声明「已派出、不可取消的动作还在收尾」。它在到期前一直阻止冲突，也不能被接管；到期后才可接管或由持有者释放。
 - **过期只拒绝新效果，不证明旧进程停止**：过期后 claim 进入 EXPIRED；旧持有者的分支仍存在，但其 claim_id + fence 在 `clued_work_verify` 下 REJECTED，无法通过 L0。它不能再续期，只能对新 claim 发起"采纳分支"请求（人工或新持有者决定）。
 - **fence 单调**：只在 claim 创建与 takeover 时 +1；续期不动。服务恢复、备份回滚不得回退 fence：fence 来源于 `max(fence)+1` 的事务内计算，不来自客户端。
   - **实测（第 7 步，PR #467）与此不符**：从较旧的表副本恢复后 `max(fence)` 会回退。重新签发的 claim 拿到相同 fence 数值，但 claim_id 不同；恢复点之后签发的 claim_id 在 verify 下为 `claim_not_found`。不回退需要表外的单调 fence 来源，或修改本条（Task `27b4f5e8` 第 4 条）。
