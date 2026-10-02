@@ -7,6 +7,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   PUBLIC_CONFIG_SOURCE,
+  DISPATCH_GATED_WORKFLOWS,
+  dispatchAdmit,
+  dispatchTitle,
   evaluate,
   gate,
   globToRegExp,
@@ -498,11 +501,123 @@ test("workflows: only base-branch jobs in the clued-admission environment get th
     const text = fs.readFileSync(path.join(dir, file), "utf8");
     if (text.includes("secrets.CLUED_CONTEXT_READ_TOKEN")) holders.push(file);
   }
-  assert.deepEqual(holders.sort(), ["clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
+  assert.deepEqual(holders.sort(), ["clued-work-admission-dispatch.yml", "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
   const admission = fs.readFileSync(path.join(dir, "clued-work-admission.yml"), "utf8");
   assert.doesNotMatch(admission, /^ {2}pull_request:/m, "no pull_request trigger: PR-edited copies never run");
   assert.match(admission, /^ {2}pull_request_target:$/m);
   for (const file of holders) {
     assert.match(fs.readFileSync(path.join(dir, file), "utf8"), /^ {4}environment: clued-admission$/m, file);
+  }
+});
+
+// --- Hand dispatch: a heavy workflow runs only after a default-branch admission run verified a claim.
+
+const RUN_NOW = Date.parse("2026-10-02T06:30:00Z");
+const ADMIT_RUN = `GET https://api.test/repos/o/r/actions/runs/`;
+const dispatchEnv = (overrides = {}) => env({
+  CLUED_CONTEXT_READ_TOKEN: "",
+  GITHUB_WORKFLOW_REF: "o/r/.github/workflows/clued-g4-database.yml@refs/heads/feature/x",
+  GITHUB_REF_NAME: "feature/x",
+  ...overrides,
+});
+const dispatchEvent = (runId) => ({ inputs: runId === null ? {} : { admission_run_id: runId }, repository: { default_branch: "main" } });
+const admissionRun = (overrides = {}) => ({
+  id: 77, path: ".github/workflows/clued-work-admission-dispatch.yml", event: "workflow_dispatch", head_branch: "main",
+  status: "completed", conclusion: "success", created_at: "2026-10-02T06:10:00Z",
+  display_title: dispatchTitle("clued-g4-database.yml", "feature/x", CLAIM), ...overrides,
+});
+const dispatchGateWith = async (run, envOverrides = {}, runId = "77") => {
+  const { fetchImpl, calls } = fakeFetch({ [ADMIT_RUN]: run === null ? { status: 404, body: { message: "Not Found" } } : { body: run } });
+  const outcome = await gate({ env: dispatchEnv(envOverrides), event: dispatchEvent(runId), eventName: "workflow_dispatch", fetchImpl, now: () => RUN_NOW });
+  return { outcome, calls };
+};
+
+test("dispatch gate: admits only a fresh, successful default-branch admission run naming this workflow and ref", async () => {
+  let { outcome, calls } = await dispatchGateWith(admissionRun());
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.claim_id], [true, "ADMITTED", CLAIM]);
+  assert.deepEqual(calls.map((c) => c.url), ["https://api.test/repos/o/r/actions/runs/77"]);
+  assert.ok(!calls.some((c) => c.url.startsWith(PUBLIC.url)), "the gate never calls Clued");
+
+  const rejects = [
+    [admissionRun({ path: ".github/workflows/other.yml" }), /admission_run_wrong_workflow/],
+    [admissionRun({ event: "push" }), /admission_run_wrong_event/],
+    [admissionRun({ head_branch: "feature/x" }), /admission_run_not_on_default_branch/],
+    [admissionRun({ conclusion: "failure" }), /admission_run_not_successful/],
+    [admissionRun({ status: "in_progress", conclusion: null }), /admission_run_not_successful/],
+    [admissionRun({ created_at: "2026-10-02T05:59:00Z" }), /admission_run_expired/],
+    [admissionRun({ display_title: dispatchTitle("information-flow-e2e.yml", "feature/x", CLAIM) }), /admission_run_other_target/],
+    [admissionRun({ display_title: dispatchTitle("clued-g4-database.yml", "main", CLAIM) }), /admission_run_other_target/],
+    [admissionRun({ display_title: "admit clued-g4-database.yml feature/x not-a-claim" }), /admission_run_other_target/],
+  ];
+  for (const [run, reason] of rejects) {
+    ({ outcome } = await dispatchGateWith(run));
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"], String(reason));
+    assert.match(outcome.reasons.join(" "), reason);
+  }
+  ({ outcome } = await dispatchGateWith(admissionRun(), {}, null));
+  assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"]);
+  assert.match(outcome.reasons[0], /admission_run_missing: dispatch clued-work-admission-dispatch\.yml/);
+  ({ outcome } = await dispatchGateWith(null));
+  assert.match(outcome.reasons[0], /admission_run_not_found:77/);
+
+  // Advisory never blocks; a workflow outside the gated list is not a subject.
+  ({ outcome } = await dispatchGateWith(admissionRun({ conclusion: "failure" }), { CLUED_WORK_ADMISSION_ENFORCE: "" }));
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.advisory], [true, "REJECTED", true]);
+  ({ outcome } = await dispatchGateWith(admissionRun(), { GITHUB_WORKFLOW_REF: "o/r/.github/workflows/mps03-native-agent.yml@refs/heads/main" }));
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "NOT_APPLICABLE"]);
+});
+
+test("dispatch admission: verifies the claim on the default branch only, against the ref's head", async () => {
+  const base = env({
+    GITHUB_REF: "refs/heads/main", CLUED_DEFAULT_BRANCH: "main",
+    ADMIT_WORKFLOW: "clued-g4-database.yml", ADMIT_REF: "feature/x", ADMIT_CLAIM_ID: CLAIM, ADMIT_SCOPE: "global",
+  });
+  const script = {
+    [`GET https://api.test/repos/o/r/commits/feature%2Fx`]: { body: { sha: HEAD } },
+    [VERIFY]: { body: admittedPayload },
+  };
+  let { fetchImpl, calls } = fakeFetch(script);
+  let outcome = await dispatchAdmit({ env: base, fetchImpl, workspace: ROOT });
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.head_sha], [true, "ADMITTED", HEAD]);
+  const verify = calls.find((c) => c.method === "POST");
+  assert.deepEqual(verify.body.p_input, { scope: "global", claim_id: CLAIM, head_sha: HEAD });
+  assert.equal(verify.body.p_token_hash, sha256Hex("clued_bnd_test"));
+
+  ({ fetchImpl } = fakeFetch({ ...script, [VERIFY]: { body: { ...admittedPayload, verdict: "REJECTED", reasons: ["claim_not_current"] } } }));
+  outcome = await dispatchAdmit({ env: base, fetchImpl, workspace: ROOT });
+  assert.deepEqual([outcome.admitted, outcome.reasons], [false, ["claim_not_current"]]);
+
+  for (const [overrides, message] of [
+    [{ GITHUB_REF: "refs/heads/feature/x" }, /runs only on main/],
+    [{ ADMIT_WORKFLOW: "public-mcp-behavior.yml" }, /not dispatch-gated/],
+    [{ ADMIT_REF: "a b" }, /not a branch or tag/],
+    [{ ADMIT_REF: "x/../y" }, /not a branch or tag/],
+    [{ ADMIT_CLAIM_ID: "nope" }, /not a claim id/],
+    [{ ADMIT_SCOPE: "project:1" }, /not global or project/],
+  ]) {
+    await assert.rejects(dispatchAdmit({ env: { ...base, ...overrides }, fetchImpl: fakeFetch(script).fetchImpl, workspace: ROOT }), message);
+  }
+  await assert.rejects(dispatchAdmit({ env: { ...base, CLUED_CONTEXT_READ_TOKEN: "" }, fetchImpl: fakeFetch(script).fetchImpl, workspace: ROOT }), /CLUED_CONTEXT_READ_TOKEN is not set/);
+  outcome = await dispatchAdmit({ env: { ...base, CLUED_CONTEXT_READ_TOKEN: "", CLUED_WORK_ADMISSION_ENFORCE: "" }, fetchImpl: fakeFetch(script).fetchImpl, workspace: ROOT });
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "NOT_ENFORCED"]);
+});
+
+test("workflows: dispatch-gated workflows take admission_run_id; the admission workflow lists exactly them", () => {
+  const dir = path.join(ROOT, ".github", "workflows");
+  const admit = fs.readFileSync(path.join(dir, "clued-work-admission-dispatch.yml"), "utf8");
+  const options = [...admit.matchAll(/^ {10}- (\S+\.yml)$/gm)].map((m) => m[1]);
+  assert.deepEqual(options, DISPATCH_GATED_WORKFLOWS);
+  assert.match(admit, /^run-name: admit \$\{\{ inputs\.workflow \}\} \$\{\{ inputs\.ref \}\} \$\{\{ inputs\.claim_id \}\}$/m);
+  assert.match(admit, /^ {4}if: github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)$/m);
+  assert.doesNotMatch(admit, /^ {2}pull_request/m);
+  for (const file of DISPATCH_GATED_WORKFLOWS) {
+    const text = fs.readFileSync(path.join(dir, file), "utf8");
+    assert.match(text, /^ {2}workflow_dispatch:\n {4}inputs:\n {6}admission_run_id:\n/m, file);
+    assert.match(text, /--mode gate/, file);
+  }
+  for (const file of ["public-mcp-behavior.yml", "public-mcp-protocol.yml"]) {
+    const text = fs.readFileSync(path.join(dir, file), "utf8");
+    assert.equal((text.match(/^ {4}needs: admission-gate$/gm) ?? []).length, 2, file);
+    assert.match(text, /--mode gate/, file);
   }
 });

@@ -95,6 +95,11 @@ on:
       - '.github/workflows/clued-cloud-production-release.yml'
       - 'apps/clued-cloud/package*.json'
   workflow_dispatch:
+    inputs:
+      admission_run_id:
+        description: Id of a successful clued-work-admission-dispatch run that admitted this workflow and ref
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -109,8 +114,9 @@ jobs:
   # Clued token (this job runs PR code): it waits for the trusted
   # pull_request_target run of clued-work-admission.yml on this head and reads
   # its result. Until the Owner sets the repository variable
-  # CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits; non-PR
-  # events are admitted. Hosted runner, no install.
+  # CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits. A hand
+  # dispatch needs admission_run_id from clued-work-admission-dispatch.yml;
+  # push events are admitted. Hosted runner, no install.
   admission-gate:
     name: admission-gate
     runs-on: ubuntu-latest
