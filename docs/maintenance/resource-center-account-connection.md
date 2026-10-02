@@ -850,16 +850,27 @@ an anchored patch with an exact hit count.
   `20261002090000_storage_directory_move_descendants_v1.sql`): Drive advances
   the version of every item under a folder each time the folder moves (P6
   acceptance, Note `23d63403`). The durable start returns every active or
-  trashed registered descendant (`subtree_registry`, at most 500). Before the
-  attempt the executor reads them by Drive ID (batched when the Worker has the
-  batch reader; otherwise one by one, up to 50) and records in the attempt
+  trashed registered descendant (`subtree_registry`, at most 500; a trashed
+  item may share its path with an active one). Before the attempt the
+  executor reads them by Drive ID, each on its own (batched when the Worker
+  has the batch reader, a failing batch halved until the unreadable item is
+  isolated, at most 40 batch requests; otherwise up to 50, eight at a time),
+  within 15 s and never past the admission, and records in the attempt
   (`descendants`) those exactly as registered: same version, name, kind,
   state and folder chain, with each file's size and sha256. After the move
   the verifier reads them again and the proof (`descendant_versions`) names
   the new version of each one still in place with the same content and a
-  version not lower than before. The settlement sets those versions by CAS on
-  the recorded version. Anything else keeps its registered version and stays
-  refused for file-level writes, as before.
+  version not lower than before; those reads have their own budget (in the
+  Owner's native recovery a quarter of it), so a slow or unreadable item never
+  costs the proof. The settlement sets those versions by CAS on the recorded
+  version. Anything else keeps its registered version and stays refused for
+  file-level writes, as before; a partial refresh logs
+  `storage_subtree_refresh_partial` with counts only. An attempt stored before
+  this migration (no `descendants`) keeps its attempt, proof and settlement
+  input exactly as recorded and is settled with no refresh.
+  Residual: an external change that keeps the content (sharing, a lock, a
+  description) made to a descendant between the read before the move and the
+  verifier's read is absorbed into the refreshed version.
 - A lost update reply leaves the intent fenced, and the single writer then
   blocks other writes on that root until it is resolved. Scheduled recovery
   never lists or loads a directory move; the Owner's native recovery
@@ -868,7 +879,10 @@ an anchored patch with an exact hit count.
 
 Rollout: production migration, then release. Execution needs the write
 switches (`execution_enabled` plus the executor window) and the Owner's
-modify_subtree level.
+modify_subtree level. For P6.1, keep both off between the migration and the
+release: the executor and the database disagree on the attempt during that
+window, and a directory move started in it is refused after its durable start
+and stays for inspection.
 
 ## Scope profiles (StorageNormalUse.v0.1 N0a)
 

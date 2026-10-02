@@ -494,6 +494,98 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.equal((await artifactById(folder.id)).path, `${topic.path}/folder`);
       assert.equal((await artifactById(deep.id)).path, `${topic.path}/folder/inner/deep.md`);
     });
+
+    // A lost reply, re-verified as the Owner's native recovery does; optionally
+    // with the attempt as stored before P6.1 (no descendants).
+    const lostMove = async ({ legacy = false } = {}) => {
+      const fixture = await tree();
+      const { target, client, storage, topic, folder } = fixture;
+      storage.losePatch = true;
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      assert.equal((await executor(target, storage).run(job.reference)).status, "unreconciled");
+      storage.losePatch = false;
+      // As stored before P6.1: the attempt without descendants, and its
+      // receipt sealed over that attempt.
+      if (legacy) {
+        const id = (await journal(job)).id;
+        await admin.query("update clued_private.resource_center_mutations_v1 set provider_attempt=provider_attempt-'descendants' where id=$1", [id]);
+        await admin.query(`with m as (select id,provider_attempt_receipt_id r,jsonb_build_object('idempotency_key','storage-provider-attempt:'||id::text,
+            'intent_id',id,'attempt_digest',clued_private.m1_sha256(provider_attempt)) q from clued_private.resource_center_mutations_v1 where id=$1)
+          update public.clued_audit_receipts x set received_payload_hash=clued_private.m1_sha256(m.q),
+            request_sha256=clued_private.m1_sha256(jsonb_build_object('operation','storage_provider_attempt','payload',m.q-'idempotency_key'))
+          from m where x.id=m.r`, [id]);
+      }
+      await admin.query("update clued_private.storage_connections_v1 set credential_envelope=$2::jsonb where id=$1", [target.connection,
+        JSON.stringify({ contract: "clued.storage-credential/1", key_id: "fixture", nonce: "A".repeat(16), ciphertext: "B".repeat(24) })]);
+      const descriptor = (await native.query("select public.clued_storage_native_recovery_load_v2($1,$2::jsonb) value",
+        [issuerSecret, JSON.stringify({ action: "recovery_load", ...job.reference })])).rows[0].value;
+      assert.equal(descriptor.status, "recovery_only", JSON.stringify(descriptor));
+      assert.equal("descendants" in descriptor.attempt, !legacy);
+      const metadata = createGoogleDriveMetadataApi({ get_credential: async () => ({ access_token: "fixture-subtree-access", scope: SCOPES }),
+        fetch: async (url, init = {}) => storage.fetch(url, init) });
+      const verify = createGoogleDriveDirectoryMovePostconditionVerifier({ managed_root: descriptor.profile.managed_root, root_folder_id: descriptor.root_folder_id,
+        root_parent_id: descriptor.root_parent_id, get_file: metadata.getFile, list_children: metadata.listChildren,
+        get_sharing: metadata.getSharing, get_access: metadata.getAccess, include_verified_proof: true });
+      const { verified_proof: proof, ...postcondition } = await verify({ profile: descriptor.profile, mutation: descriptor.mutation,
+        provider_before: descriptor.provider_before, effect_result: { operation: "move", target_kind: "directory",
+          source_path: descriptor.mutation.source_path, destination_path: descriptor.mutation.destination_path,
+          provider_file_id: descriptor.attempt.provider_file_id, subtree_sample: descriptor.attempt.subtree_sample,
+          descendants: descriptor.attempt.descendants } });
+      const finish = { action: "finalize", intent_id: descriptor.intent_id, base_version: descriptor.version, request_sha256: descriptor.request_sha256,
+        idempotency_key: `account-job:${job.reference.job_id}:finalize`, postcondition };
+      const recorded = await cloud({ action: "verified_record", ...job.reference, credential_version: descriptor.credential_version, finish, proof });
+      assert.equal(recorded.status, "verified", JSON.stringify(recorded));
+      const settle = () => cloud({ action: "settle_verified", ...job.reference, intent_id: descriptor.intent_id, base_version: descriptor.version,
+        request_sha256: descriptor.request_sha256, verified_receipt_id: recorded.verified_receipt_id, verified_digest: recorded.verified_digest });
+      return { ...fixture, job, proof, settle };
+    };
+
+    await t.test("P6.1: a verified refresh list cannot be swapped for another", async () => {
+      const { target, folder, deep, job, proof } = await lostMove();
+      assert.ok(proof.descendant_versions.some(item => item.provider_file_id === deep.provider_file_id));
+      const intent = await journal(job);
+      const input = (await admin.query("select clued_private.storage_settle_input_v1($1,m,$2::jsonb) value from clued_private.resource_center_mutations_v1 m where m.id=$3",
+        [target.profile, JSON.stringify(proof), intent.id])).rows[0].value;
+      assert.equal(input.action, "artifact_subtree_move");
+      // The exact settlement input with one refreshed version raised.
+      const forged = structuredClone(input);
+      forged.descendant_versions = forged.descendant_versions.map(item => item.provider_file_id === deep.provider_file_id
+        ? { ...item, provider_file_version: String(Number(item.provider_file_version) + 7) } : item);
+      const refused = (await admin.query("select public.clued_resource_center_admin_v1($1,$2::jsonb) value", [user, JSON.stringify(forged)])).rows[0].value;
+      // Path, Drive ID and version equal the proof: only the refresh list differs.
+      assert.equal(refused.error_code, "resource_center_directory_move_requires_subtree_contract", JSON.stringify(refused));
+      assert.equal((await artifactById(folder.id)).path, folder.path);
+      assert.equal((await artifactById(deep.id)).provider_file_version, deep.provider_file_version);
+    });
+
+    await t.test("P6.1: an attempt stored before P6.1 settles and reads back exactly as before, with no refresh", async () => {
+      const { topic, folder, deep, job, proof, settle } = await lostMove({ legacy: true });
+      assert.equal("descendant_versions" in proof, false);
+      const settled = await settle();
+      assert.equal(settled.state, "committed", JSON.stringify(settled));
+      assert.equal("descendant_versions" in (await journal(job)).verified_result_v2.proof, false);
+      const after = await artifactById(deep.id);
+      assert.equal(after.path, `${topic.path}/folder/inner/deep.md`);
+      assert.equal(after.provider_file_version, deep.provider_file_version, "no refresh without recorded descendants");
+      assert.equal((await artifactById(folder.id)).path, `${topic.path}/folder`);
+      const inspected = await cloud({ action: "verified_inspect", ...job.reference });
+      assert.equal(inspected.status, "committed", JSON.stringify(inspected));
+    });
+
+    await t.test("P6.1: the refresh functions refuse a lower, unknown, repeated or mistyped version", async () => {
+      const descendants = [{ provider_file_id: "a", provider_file_version: "5" }, { provider_file_id: "b", provider_file_version: "2" }];
+      const refresh = async versions => (await admin.query("select clued_private.storage_subtree_refresh_v1($1::jsonb,$2::jsonb) value",
+        [JSON.stringify(descendants), JSON.stringify(versions)])).rows[0].value;
+      assert.deepEqual(await refresh([{ provider_file_id: "a", provider_file_version: "5" }, { provider_file_id: "b", provider_file_version: "10" }]),
+        [{ provider_file_id: "a", provider_file_version: "5" }, { provider_file_id: "b", provider_file_version: "10" }], "numeric, not text, order");
+      for (const bad of [[{ provider_file_id: "a", provider_file_version: "4" }], [{ provider_file_id: "c", provider_file_version: "9" }],
+        [{ provider_file_id: "a", provider_file_version: "6" }, { provider_file_id: "a", provider_file_version: "7" }],
+        [{ provider_file_id: "a", provider_file_version: 6 }], [{ provider_file_id: "a", provider_file_version: "6", extra: 1 }], ["a"],
+        [{ provider_file_id: "a", provider_file_version: "6" }, { provider_file_id: "b", provider_file_version: "3" }, { provider_file_id: "x", provider_file_version: "1" }]]) {
+        assert.equal(await refresh(bad), null, JSON.stringify(bad));
+      }
+      assert.equal((await admin.query("select clued_private.storage_subtree_refresh_v1($1::jsonb,'{}'::jsonb) value", [JSON.stringify(descendants)])).rows[0].value, null);
+    });
   } finally {
     for (const database of clients.reverse()) await database.end().catch(() => {});
   }

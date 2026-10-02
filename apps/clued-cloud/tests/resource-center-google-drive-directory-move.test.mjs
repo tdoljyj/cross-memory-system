@@ -270,6 +270,54 @@ test("P6.1: only descendants exactly as registered are recorded, and only unchan
     [{ provider_file_id: "note", provider_file_version: "5" }], "an item whose folder moved away, and items under it, are left out");
 });
 
+test("P6.1 review: a trashed item beside an active one, an unreadable item, the read deadline and a pre-P6.1 attempt", async () => {
+  // Only active paths are unique: a trashed note.md beside a new one.
+  const twin = drive();
+  twin.files.set("old-note", { ...structuredClone(twin.files.get("note")), id: "old-note", version: "2", trashed: true });
+  const twinRegistry = [...REGISTRY, { provider_file_id: "old-note", relative_path: "note.md", target_kind: "file", state: "trashed", provider_file_version: "2" }];
+  assert.deepEqual(subtreeRegistryShape(twinRegistry), twinRegistry);
+  assert.deepEqual((await observeSubtreeRegistry({ get_file: twin.getFile }, "dir", twinRegistry)).map(i => i.provider_file_id),
+    ["inner", "note", "deep", "old-note"]);
+  // A trashed folder never stands in for the active folder at its path.
+  const shadow = drive(); shadow.files.set("old-inner", { ...folder("old-inner", "inner", "dir", "3"), trashed: true });
+  const shadowRegistry = [REGISTRY[0], { provider_file_id: "old-inner", relative_path: "inner", target_kind: "directory", state: "trashed", provider_file_version: "3" },
+    REGISTRY[1], REGISTRY[2]];
+  assert.deepEqual((await observeSubtreeRegistry({ get_file: shadow.getFile }, "dir", shadowRegistry)).map(i => i.provider_file_id),
+    ["inner", "old-inner", "note", "deep"]);
+  // One missing item never cancels the others: a failing batch is halved.
+  const gone = drive(); gone.files.delete("note"); let calls = 0;
+  const getFiles = async ids => { calls++; if (ids.includes("note")) throw new Error("DRIVE_BATCH_HTTP_404"); return Promise.all(ids.map(id => gone.getFile(id))); };
+  assert.deepEqual(await observeSubtreeRegistry({ get_file: async () => { throw new Error("unused"); }, get_files: getFiles }, "dir", REGISTRY),
+    [DESCENDANTS[0], DESCENDANTS[2]]);
+  assert.ok(calls > 1 && calls <= 5, String(calls));
+  const single = drive(); single.files.delete("note");
+  const throwing = async id => { if (id === "note") throw new Error("DRIVE_METADATA_UNAVAILABLE"); return single.getFile(id); };
+  assert.deepEqual(await observeSubtreeRegistry({ get_file: throwing }, "dir", REGISTRY), [DESCENDANTS[0], DESCENDANTS[2]]);
+  const after = moved(); after.files.delete("note");
+  assert.deepEqual(await refreshedSubtreeVersions({ get_file: async id => { if (id === "note") throw new Error("gone"); return after.getFile(id); } },
+    "dir", DESCENDANTS), [REFRESHED[0], REFRESHED[2]]);
+  // A batch that keeps failing stops at the request cap; what is unread keeps its version.
+  let capped = 0;
+  const many = Array.from({ length: 500 }, (_, i) => ({ provider_file_id: "f" + i, relative_path: "f" + i, target_kind: "file", state: "active", provider_file_version: "1" }));
+  assert.deepEqual(await observeSubtreeRegistry({ get_file: async () => null, get_files: async () => { capped++; throw new Error("DRIVE_BATCH_HTTP_503"); } }, "dir", many), []);
+  assert.equal(capped, 40);
+  // No read starts after the deadline; reads run a few at a time.
+  let now = 0, started = 0, inFlight = 0, peak = 0;
+  const slow = drive();
+  const timed = async id => { started++; inFlight++; peak = Math.max(peak, inFlight); await new Promise(r => setTimeout(r, 1)); inFlight--; now += 10; return slow.getFile(id); };
+  assert.deepEqual(await observeSubtreeRegistry({ get_file: timed, until: 0, clock: () => now }, "dir", REGISTRY), []);
+  assert.equal(started, 0);
+  const wide = Array.from({ length: 20 }, (_, i) => ({ provider_file_id: "note", relative_path: "n" + i, target_kind: "file", state: "active", provider_file_version: "3" }));
+  await observeSubtreeRegistry({ get_file: timed, until: 1e9, clock: () => now }, "dir", wide.map((item, i) => ({ ...item, provider_file_id: "x" + i })));
+  assert.ok(peak > 1 && peak <= 8, String(peak));
+  // An attempt stored before P6.1 (no descendants) is proven exactly as before.
+  const legacy = { ...effectResult() }; delete legacy.descendants;
+  const proof = (await verifier(moved())({ profile, mutation: hostMutation, provider_before: before(), effect_result: legacy })).verified_proof;
+  assert.equal("descendant_versions" in proof, false);
+  // The refresh budget is bounded like the verifier's own.
+  for (const refresh_ms of [0, 60_001, 1.5]) assert.throws(() => verifier(moved(), { refresh_ms }), TypeError);
+});
+
 test("the verifier fails closed on a wrong parent, changed sharing, a broken subtree, a leftover entry or no move", async () => {
   const cases = [
     ["DRIVE_POSTCONDITION_IDENTITY_MISMATCH", d => { d.files.get("dir").parents = ["topic", "track"]; }],

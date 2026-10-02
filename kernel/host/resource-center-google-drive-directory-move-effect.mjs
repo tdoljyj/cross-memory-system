@@ -62,26 +62,35 @@ export function subtreeSampleShape(sample) {
  * refuses a larger subtree) have their Drive versions refreshed after a
  * directory move (P6.1, Decision e5e99da8). */
 export const SUBTREE_REFRESH_LIMIT = 500;
-/** Without a batched reader, at most this many are read one by one. */
+/** Without a batched reader, at most this many are read one by one, a few at
+ * a time. */
 const SINGLE_READ_LIMIT = 50;
+const SINGLE_READ_CONCURRENCY = 8;
+/** Batch requests per refresh read, including the halving that isolates an
+ * unreadable item; what is left unread keeps its registered version. */
+const BATCH_CALL_LIMIT = 40;
+/** How long the read before the move may take (it never outlasts the
+ * admission either). */
+export const SUBTREE_OBSERVE_MS = 15_000;
 const relativeOk = (path) => typeof path === "string" && path.length >= 1 && path.length <= 1000 && !path.includes("\\") &&
   !path.split("/").some((part) => !part || part === "." || part === "..");
 const version = /^[1-9]\d{0,39}$/;
 
 /** Every active or trashed registered descendant of the moved directory, as
  * the durable start returned it: Drive ID, path relative to the directory,
- * kind, registry state and the registered Drive version. */
+ * kind, registry state and the registered Drive version. A trashed item may
+ * share its path with an active one (only active paths are unique). */
 export function subtreeRegistryShape(list) {
   if (!Array.isArray(list) || list.length > SUBTREE_REFRESH_LIMIT) return null;
-  const ids = new Set(), paths = new Set();
+  const ids = new Set();
   for (const item of list) {
     if (!item || typeof item !== "object" ||
       Object.keys(item).sort().join(",") !== "provider_file_id,provider_file_version,relative_path,state,target_kind" ||
       !["active", "trashed"].includes(item.state) ||
       !fileId.test(item.provider_file_id ?? "") || ids.has(item.provider_file_id) || !relativeOk(item.relative_path) ||
-      paths.has(item.relative_path) || !["file", "directory"].includes(item.target_kind) ||
+      !["file", "directory"].includes(item.target_kind) ||
       !/^\d{1,40}$/.test(item.provider_file_version ?? "")) return null;
-    ids.add(item.provider_file_id); paths.add(item.relative_path);
+    ids.add(item.provider_file_id);
   }
   return list.map((item) => Object.freeze({ ...item }));
 }
@@ -106,25 +115,54 @@ export function subtreeDescendantsShape(list) {
   return list.map((item) => Object.freeze({ ...item }));
 }
 
-/** Reads items by Drive ID: batched when a batch reader exists, otherwise
- * one by one up to SINGLE_READ_LIMIT; null when they are not read. */
-async function readMany(getFile, getFiles, ids) {
-  if (!ids.length) return [];
+/** Reads items by Drive ID, each on its own: null for an item that is not
+ * read (missing, inaccessible, a failed request, out of time or out of
+ * requests). Batched when a batch reader exists: a failed batch is halved
+ * until the unreadable items are isolated. Otherwise one by one, a few at a
+ * time, up to SINGLE_READ_LIMIT. No new read starts after `until`. Never
+ * throws. */
+async function readMany(getFile, getFiles, ids, until, clock) {
+  const results = ids.map(() => null);
+  const open = () => { try { return Number(clock()) < until; } catch { return false; } };
   if (typeof getFiles === "function") {
-    const results = [];
-    for (let index = 0; index < ids.length; index += 100) {
-      const chunk = ids.slice(index, index + 100);
-      const values = await getFiles(chunk);
-      if (!Array.isArray(values) || values.length !== chunk.length) fail("DRIVE_LIST_INVALID");
-      results.push(...values);
-    }
+    let calls = 0;
+    const read = async (from, to) => {
+      if (from >= to || calls >= BATCH_CALL_LIMIT || !open()) return;
+      calls += 1;
+      let values = null;
+      try { values = await getFiles(ids.slice(from, to)); } catch { values = null; }
+      if (Array.isArray(values) && values.length === to - from) {
+        values.forEach((value, index) => { results[from + index] = value; });
+        return;
+      }
+      if (to - from === 1) return;
+      const middle = from + Math.ceil((to - from) / 2);
+      await read(from, middle);
+      await read(middle, to);
+    };
+    for (let index = 0; index < ids.length; index += 100) await read(index, Math.min(index + 100, ids.length));
     return results;
   }
-  if (ids.length > SINGLE_READ_LIMIT) return null;
-  const results = [];
-  for (const id of ids) results.push(await getFile(id));
+  if (ids.length > SINGLE_READ_LIMIT) return results;
+  let next = 0;
+  const worker = async () => {
+    while (next < ids.length && open()) {
+      const index = next++;
+      try { results[index] = await getFile(ids[index]); } catch { results[index] = null; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SINGLE_READ_CONCURRENCY, ids.length) }, worker));
   return results;
 }
+
+// Counts only: never an ID, path or provider text.
+const reportPartial = (phase, total, matched) => {
+  if (matched < total) console.warn(JSON.stringify({ event: "storage_subtree_refresh_partial", phase, total, matched }));
+};
+// The registered folders an item's parent can be: active directories only (a
+// trashed folder may share its path with an active one).
+const foldersByPath = (items) => new Map(items.filter((item) => item.target_kind === "directory" && item.state === "active")
+  .map((item) => [item.relative_path, item]));
 
 // The Drive ID an item's parent must have: the moved directory for a direct
 // child, otherwise the registered folder at its parent relative path.
@@ -143,11 +181,9 @@ const sameItem = (file, item, parentId) => !!file && file.id === item.provider_f
  * exactly the registry's (same Drive version, name, kind and folder), each
  * with its content identity. Anything else, or a read that fails, is left
  * out: it keeps its registered version (fail closed, as without P6.1). */
-export async function observeSubtreeRegistry({ get_file: getFile, get_files: getFiles }, folderId, registry) {
-  const byPath = new Map(registry.map((item) => [item.relative_path, item]));
-  let live;
-  try { live = await readMany(getFile, getFiles, registry.map((item) => item.provider_file_id)); } catch { return []; }
-  if (!live) return [];
+export async function observeSubtreeRegistry({ get_file: getFile, get_files: getFiles, until = Infinity, clock = Date.now }, folderId, registry) {
+  const byPath = foldersByPath(registry);
+  const live = await readMany(getFile, getFiles, registry.map((item) => item.provider_file_id), until, clock);
   // Shallowest first: an item counts only when its whole folder chain up to
   // the moved directory counted too.
   const observed = [], placed = new Set([""]);
@@ -163,6 +199,7 @@ export async function observeSubtreeRegistry({ get_file: getFile, get_files: get
       observed.push({ ...item, size: file.size, sha256: file.sha256Checksum });
     }
   });
+  reportPartial("before", registry.length, observed.length);
   return observed;
 }
 
@@ -170,11 +207,9 @@ export async function observeSubtreeRegistry({ get_file: getFile, get_files: get
  * that still sits at the same place with the same name, kind and content and
  * whose version did not go backwards. Anything else, or a failed read, is
  * left out and keeps its registered version. */
-export async function refreshedSubtreeVersions({ get_file: getFile, get_files: getFiles }, folderId, descendants) {
-  const byPath = new Map(descendants.map((item) => [item.relative_path, item]));
-  let live;
-  try { live = await readMany(getFile, getFiles, descendants.map((item) => item.provider_file_id)); } catch { return []; }
-  if (!live) return [];
+export async function refreshedSubtreeVersions({ get_file: getFile, get_files: getFiles, until = Infinity, clock = Date.now }, folderId, descendants) {
+  const byPath = foldersByPath(descendants);
+  const live = await readMany(getFile, getFiles, descendants.map((item) => item.provider_file_id), until, clock);
   // Shallowest first: an item counts only when its whole folder chain up to
   // the moved directory still holds.
   const refreshed = [], placed = new Set([""]);
@@ -186,6 +221,7 @@ export async function refreshedSubtreeVersions({ get_file: getFile, get_files: g
     if (item.target_kind === "directory" && item.state === "active") placed.add(item.relative_path);
     refreshed.push({ provider_file_id: item.provider_file_id, provider_file_version: file.version });
   });
+  reportPartial("after", descendants.length, refreshed.length);
   return refreshed;
 }
 
@@ -299,7 +335,11 @@ export function createGoogleDriveNativeDirectoryMoveEffect({
     const sourceParent = before.source_parent_id, destinationParent = before.destination_parent_id;
     await sourceFolder(shape, sourceParent);
     await checkSubtreeSample(getFile, shape.source_file_id, sample, "DRIVE_NATIVE_SUBTREE_DRIFT");
-    const descendants = await observeSubtreeRegistry({ get_file: getFile, get_files: getFiles }, shape.source_file_id, registry);
+    // Never past the admission: the attempt still has to be stored and
+    // rechecked before the only update.
+    const observeUntil = Math.min(Number(clock()) + SUBTREE_OBSERVE_MS, Number(admission.expires_at_ms) - 5000);
+    const descendants = await observeSubtreeRegistry({ get_file: getFile, get_files: getFiles, until: observeUntil, clock },
+      shape.source_file_id, registry);
     const attempt = Object.freeze({ contract: "clued.storage-subtree-move-attempt/1", intent_id: started.intent_id,
       request_sha256: requestHash, profile_id: profile.profile_id, operation: "move", target_kind: "directory",
       provider_file_id: shape.source_file_id, source_path: shape.source, source_file_version: shape.source_file_version,

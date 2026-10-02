@@ -8,9 +8,10 @@
 -- refused for a registered version older than Drive's.
 --
 -- * The durable start also returns every active or trashed registered
---   descendant (Drive ID, relative path, kind, state, registered version; at
---   most 500, the authority's own cap): subtree_registry. Drive advances
---   trashed items under the folder too.
+--   descendant (Drive ID, relative path, kind, state, registered version;
+--   the authority refuses a subtree of more than 500, and the executor reads
+--   no more than that): subtree_registry. Drive advances trashed items under
+--   the folder too, and a trashed item may share its path with an active one.
 -- * Before the attempt, the executor reads them by Drive ID and records in the
 --   attempt (descendants) those whose live state is exactly the registry's
 --   (same version, name, kind and folder), with each file's size and sha256.
@@ -24,9 +25,14 @@
 --   on the recorded version, in the same transaction as the path rewrite. An
 --   item left out, or changed since, keeps its registered version: it stays
 --   refused as before (fail closed), never refreshed from a guess.
+-- * An attempt stored before this migration (no descendants key) keeps
+--   exactly the attempt, proof and settlement input it had: a P6 directory
+--   move already recorded or settled reads back unchanged.
 -- * Each existing function is changed by an anchored patch with an exact hit
---   count. Migration first, then the release: until the release the old
---   executor's attempt has no descendants and is refused before any update.
+--   count. Between this migration and the release the old executor's attempt
+--   is refused after its durable start (and the new executor's before the
+--   migration), leaving the intent for inspection: keep modify_subtree and
+--   execution off for that window (runbook).
 
 -- Every active or trashed registered descendant of a directory, shallowest first.
 create function clued_private.storage_subtree_registry_v1(p_profile uuid,p_user uuid,p_path text)
@@ -56,6 +62,8 @@ begin
     if jsonb_typeof(e) is distinct from 'object'
       or (select array_agg(k order by k) from jsonb_object_keys(e) k)
         is distinct from array['provider_file_id','provider_file_version','relative_path','sha256','size','state','target_kind']
+      or jsonb_typeof(e->'state') is distinct from 'string' or jsonb_typeof(e->'provider_file_id') is distinct from 'string'
+      or jsonb_typeof(e->'provider_file_version') is distinct from 'string' or jsonb_typeof(e->'target_kind') is distinct from 'string'
       or coalesce(e->>'state','') not in ('active','trashed')
       or coalesce(e->>'provider_file_id','') !~ '^[A-Za-z0-9_-]{1,160}$'
       or coalesce(e->>'provider_file_version','') !~ '^[0-9]{1,40}$'
@@ -89,6 +97,7 @@ begin
   for e in select x from jsonb_array_elements(p_versions) x loop
     if jsonb_typeof(e) is distinct from 'object'
       or (select array_agg(k order by k) from jsonb_object_keys(e) k) is distinct from array['provider_file_id','provider_file_version']
+      or jsonb_typeof(e->'provider_file_id') is distinct from 'string' or jsonb_typeof(e->'provider_file_version') is distinct from 'string'
       or coalesce(e->>'provider_file_version','') !~ '^[1-9][0-9]{0,39}$' then return null; end if;
     select d->>'provider_file_version' into recorded from jsonb_array_elements(p_descendants) d
       where d->>'provider_file_id'=e->>'provider_file_id';
@@ -129,25 +138,29 @@ begin
     ('clued_private.storage_verified_result_v2(text,jsonb)',
      $a$      attempt_expected:=clued_private.storage_subtree_attempt_v1(m,j,m.provider_attempt->'subtree_sample');$a$,
      $r$      attempt_expected:=clued_private.storage_subtree_attempt_v1(m,j,m.provider_attempt->'subtree_sample')
-        ||jsonb_build_object('descendants',clued_private.storage_subtree_descendants_v1(m,j,m.provider_attempt->'descendants',false));$r$,1),
+        ||case when m.provider_attempt ? 'descendants' then jsonb_build_object('descendants',
+          clued_private.storage_subtree_descendants_v1(m,j,m.provider_attempt->'descendants',false)) else '{}'::jsonb end;$r$,1),
     ('clued_private.storage_verified_result_v2(text,jsonb)',
-     $a$        'source_file_version',j.mutation->>'source_file_version','subtree_sample',attempt_expected->'subtree_sample',$a$,
-     $r$        'source_file_version',j.mutation->>'source_file_version','subtree_sample',attempt_expected->'subtree_sample',
-        'descendant_versions',clued_private.storage_subtree_refresh_v1(attempt_expected->'descendants',proof->'descendant_versions'),$r$,1),
+     $a$          'source_vacated',true,'sharing_unchanged',true,'subtree',true));$a$,
+     $r$          'source_vacated',true,'sharing_unchanged',true,'subtree',true))
+        ||case when m.provider_attempt ? 'descendants' then jsonb_build_object('descendant_versions',
+          clued_private.storage_subtree_refresh_v1(attempt_expected->'descendants',proof->'descendant_versions')) else '{}'::jsonb end;$r$,1),
     -- The settlement carries the refresh list with its CAS bases.
     ('clued_private.storage_settle_input_v1(uuid,clued_private.resource_center_mutations_v1,jsonb)',
      $a$      'path',p_proof->>'path','provider_file_id',p_proof->>'provider_file_id','provider_file_version',p_proof->>'provider_file_version')
   when m.authority_request->'mutation'->>'operation' in ('delete','restore') then$a$,
-     $r$      'path',p_proof->>'path','provider_file_id',p_proof->>'provider_file_id','provider_file_version',p_proof->>'provider_file_version',
-      'descendant_versions',clued_private.storage_subtree_refresh_input_v1(m.provider_attempt->'descendants',p_proof->'descendant_versions'))
+     $r$      'path',p_proof->>'path','provider_file_id',p_proof->>'provider_file_id','provider_file_version',p_proof->>'provider_file_version')
+    ||case when m.provider_attempt ? 'descendants' then jsonb_build_object('descendant_versions',
+      clued_private.storage_subtree_refresh_input_v1(m.provider_attempt->'descendants',p_proof->'descendant_versions')) else '{}'::jsonb end
   when m.authority_request->'mutation'->>'operation' in ('delete','restore') then$r$,1),
     -- The registry change: only the verified intent's own refresh list, each
     -- item by CAS on its recorded version, under the new path.
     ('clued_private.storage_subtree_move_v1(clued_private.resource_center_profiles_v1,clued_private.resource_center_artifacts_v1,jsonb,uuid,uuid)',
      $a$        and m.verified_result_v2->'proof'->>'provider_file_version' is not distinct from p_input->>'provider_file_version') then$a$,
      $r$        and m.verified_result_v2->'proof'->>'provider_file_version' is not distinct from p_input->>'provider_file_version'
-        and p_input->'descendant_versions' is not distinct from clued_private.storage_subtree_refresh_input_v1(
-          m.provider_attempt->'descendants',m.verified_result_v2->'proof'->'descendant_versions')) then$r$,1),
+        and p_input->'descendant_versions' is not distinct from case when m.provider_attempt ? 'descendants'
+          then clued_private.storage_subtree_refresh_input_v1(m.provider_attempt->'descendants',
+            m.verified_result_v2->'proof'->'descendant_versions') end) then$r$,1),
     ('clued_private.storage_subtree_move_v1(clued_private.resource_center_profiles_v1,clued_private.resource_center_artifacts_v1,jsonb,uuid,uuid)',
      $a$  update clued_private.resource_center_artifacts_v1
     set path=v_path,provider_file_version=p_input->>'provider_file_version',$a$,

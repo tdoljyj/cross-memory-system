@@ -119,7 +119,12 @@ export async function createStorageCloudRecovery(config: {
         list_children: (input: Data) => metadata.listChildren(input, { signal: abort.signal }),
         include_verified_proof: !!config.verified, timeout_ms: timeout, poll_ms: Math.min(1000, timeout), clock,
       };
+      // The descendant refresh (P6.1) reads a few at a time and stops
+      // starting reads after a fraction of the budget, leaving the rest of it
+      // for recording and settling the proof; what is not read keeps its
+      // registered version.
       const verify = subtree ? createGoogleDriveDirectoryMovePostconditionVerifier({ ...verifierConfig,
+          refresh_ms: Math.max(1, Math.floor(timeout / 4)),
           get_sharing: (id: string) => metadata.getSharing(id, { signal: abort.signal }),
           get_access: (id: string) => metadata.getAccess(id, { signal: abort.signal }) })
         : destructive ? createGoogleDriveDestructivePostconditionVerifier({ ...verifierConfig,

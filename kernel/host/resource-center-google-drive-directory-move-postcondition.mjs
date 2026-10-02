@@ -19,14 +19,17 @@ const fail = (code) => { throw new Error(code); };
  * and the registry is never rewritten from a partial observation (T14).
  * P6.1: the proof also names the new Drive version of each descendant the
  * attempt recorded that still sits at the same place with the same name, kind
- * and content (descendant_versions); the settlement refreshes those.
- * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, get_files?: Function, list_children: Function, get_sharing: Function, get_access: Function, include_verified_proof?: boolean, timeout_ms?: number, poll_ms?: number, clock?: () => number, sleep?: Function}} config
+ * and content (descendant_versions); the settlement refreshes those. Those
+ * reads have their own budget (refresh_ms, never past the verifier's
+ * deadline): what is not read in time keeps its registered version, and the
+ * proof is not lost to them.
+ * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, get_files?: Function, list_children: Function, get_sharing: Function, get_access: Function, include_verified_proof?: boolean, timeout_ms?: number, poll_ms?: number, refresh_ms?: number, clock?: () => number, sleep?: Function}} config
  */
 export function createGoogleDriveDirectoryMovePostconditionVerifier({
   managed_root: managedRoot, root_folder_id: rootId, root_parent_id: rootParentId,
   get_file: getFile, get_files: getFiles, list_children: listChildren, get_sharing: getSharing, get_access: getAccess,
   include_verified_proof: includeVerifiedProof = false,
-  timeout_ms: timeoutMs = 30_000, poll_ms: pollMs = 1000,
+  timeout_ms: timeoutMs = 30_000, poll_ms: pollMs = 1000, refresh_ms: refreshMs = 10_000,
   clock = Date.now, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
   const root = normalized(managedRoot);
@@ -35,7 +38,8 @@ export function createGoogleDriveDirectoryMovePostconditionVerifier({
     (getFiles !== undefined && typeof getFiles !== "function") ||
     typeof clock !== "function" || typeof sleep !== "function" || typeof includeVerifiedProof !== "boolean" ||
     !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
-    !Number.isInteger(pollMs) || pollMs < 1 || pollMs > timeoutMs) {
+    !Number.isInteger(pollMs) || pollMs < 1 || pollMs > timeoutMs ||
+    !Number.isInteger(refreshMs) || refreshMs < 1 || refreshMs > 60_000) {
     throw new TypeError("Pinned Drive identity, metadata and sharing API and bounded polling are required.");
   }
   const folderCheck = (file, id, name, parent) => {
@@ -46,7 +50,10 @@ export function createGoogleDriveDirectoryMovePostconditionVerifier({
   return async function verify({ profile, mutation, provider_before: before, effect_result: effect }) {
     const shape = directoryMoveShape(mutation);
     const sample = subtreeSampleShape(effect?.subtree_sample);
-    const descendants = subtreeDescendantsShape(effect?.descendants);
+    // An attempt stored before P6.1 has no descendants: its proof names no
+    // refresh, exactly as it was recorded.
+    const legacy = effect?.descendants === undefined;
+    const descendants = legacy ? [] : subtreeDescendantsShape(effect.descendants);
     if (!shape || !sample || !descendants || normalized(profile?.managed_root) !== root ||
       !shape.source.startsWith(root + "/") || !shape.destination.startsWith(root + "/") ||
       effect?.operation !== "move" || effect.target_kind !== "directory" ||
@@ -114,11 +121,12 @@ export function createGoogleDriveDirectoryMovePostconditionVerifier({
             const postcondition = { path: shape.destination, parent_id: parent.id,
               provider_file_id: folderId, provider_file_version: seen.file.version };
             if (!includeVerifiedProof) return Object.freeze(postcondition);
-            const descendantVersions = await refreshedSubtreeVersions({ get_file: getFile, get_files: getFiles }, folderId, descendants);
+            const descendantVersions = legacy ? null : await refreshedSubtreeVersions({ get_file: getFile, get_files: getFiles,
+              until: Math.min(deadline, clock() + refreshMs), clock }, folderId, descendants);
             const verifiedProof = Object.freeze({ contract: "clued.storage-directory-move-verified/1",
               ...postcondition, operation: "move", target_kind: "directory", source_path: shape.source,
               source_file_version: shape.source_file_version, subtree_sample: sample.map((item) => ({ ...item })),
-              descendant_versions: descendantVersions,
+              ...(legacy ? {} : { descendant_versions: descendantVersions }),
               provider_before: structuredClone(before),
               checks: Object.freeze({ identity: true, ancestors: true, stable_state: true, unique_name: true,
                 source_vacated: true, sharing_unchanged: true, subtree: true }) });
