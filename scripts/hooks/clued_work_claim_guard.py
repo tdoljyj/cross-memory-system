@@ -11,9 +11,12 @@ chosen by the payload's hook_event_name:
   read-only Binding token, the user's live claims read from Clued.
 * PostToolUse on clued_work_claim / renew / takeover / release records the
   returned claim in $CLAUDE_PROJECT_DIR/.clued/work-claim.json (gitignored).
-* PreToolUse on git push, gh pr create, the GitHub PR and file-push tools, and
-  on installs, builds and tests blocks the call once per session and kind when
-  no live claim is recorded and CLUED_WORK_CLAIM is unset.
+* PreToolUse blocks the call once per session and kind when no live claim is
+  recorded and CLUED_WORK_CLAIM is unset. Kinds: publish (git push, gh pr
+  create, the GitHub PR and file-push tools), spend (installs, builds, tests,
+  npm run and npx scripts, gh workflow run / gh run rerun, the GitHub
+  workflow-dispatch tool, a remote session, a Workflow or a non-read-only
+  Agent subtask) and edit (Edit, Write or NotebookEdit on a repository file).
 
 This is the compliance layer: it can be turned off (CLUED_WORK_CLAIM_GUARD=off),
 reports each kind once, and never claims to make anything unbypassable. The
@@ -38,6 +41,11 @@ ACTIVE_RPC = "clued_work_claims_active_v1"
 LIVE_STATUSES = {"ACTIVE", "DRAINING"}
 CLAIM_TOOLS = {"clued_work_claim", "clued_work_renew", "clued_work_takeover", "clued_work_release"}
 PUBLISH_TOOLS = {"create_pull_request", "push_files", "create_or_update_file"}
+# Starting CI or dispatching a subtask spends like a build (agent-contract §1.7).
+SPEND_TOOLS = {"actions_run_trigger", "create_session"}
+EDIT_TOOLS = {"Edit", "Write", "NotebookEdit"}
+# Read-only helpers a session uses to find its way; they are not a subtask.
+READ_ONLY_AGENTS = {"explore", "plan", "claude-code-guide", "statusline-setup"}
 
 # Only an invocation counts: the command must start a line or follow a shell
 # separator, so text such as a commit message that mentions it does not match.
@@ -45,8 +53,9 @@ COMMAND_START = r"(?:^|[;&|(]\s*|&&\s*|\|\|\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)
 PUBLISH_COMMAND = re.compile(COMMAND_START + r"(?:git\s+push|gh\s+pr\s+create)\b", re.MULTILINE)
 SPEND_COMMAND = re.compile(
     COMMAND_START
-    + r"(?:(?:npm|pnpm|yarn)\s+(?:ci|install|i|add|test|t|run\s+(?:build|test)[\w:.-]*)\b"
-    r"|npx\s+(?:vitest|jest|playwright)\b"
+    + r"(?:(?:npm|pnpm|yarn)\s+(?:ci|install|i|add|test|t|run\s+[\w:.-]+)\b"
+    r"|npx\s+(?:-\S+\s+)*[\w@./-]+"
+    r"|gh\s+(?:workflow\s+run|run\s+rerun)\b"
     r"|node\s+--test\b"
     r"|pip3?\s+install\b"
     r"|(?:python3?\s+-m\s+)?pytest\b"
@@ -170,7 +179,30 @@ def guarded_kind(payload: dict) -> str | None:
         return None
     if name.startswith("mcp__") and tool_suffix(name) in PUBLISH_TOOLS:
         return "publish"
+    if name.startswith("mcp__") and tool_suffix(name) in SPEND_TOOLS:
+        return "spend"
+    if name == "Workflow":
+        return "spend"
+    if name == "Agent":
+        kind = str(tool_input.get("subagent_type") or "general-purpose").strip().lower()
+        return None if kind in READ_ONLY_AGENTS else "spend"
+    if name in EDIT_TOOLS:
+        return "edit" if in_repository(payload, tool_input) else None
     return None
+
+
+def in_repository(payload: dict, tool_input: dict) -> bool:
+    raw = tool_input.get("file_path") or tool_input.get("notebook_path")
+    if not raw:
+        return False
+    root = project_dir(payload).resolve()
+    path = Path(str(raw))
+    target = (path if path.is_absolute() else root / path).resolve()
+    try:
+        relative = target.relative_to(root)
+    except ValueError:
+        return False
+    return bool(relative.parts) and relative.parts[0] not in {".clued", ".git"}
 
 
 def state_path(session_id: str) -> Path:
@@ -200,8 +232,11 @@ def check_claim(payload: dict) -> int:
     if kind == "publish":
         what = ("This pushes or opens a pull request. clued-work-admission is enforced on main, so a pull "
                 "request without `Clued-Work-Claim: <claim_id>` in its body and head commit is rejected.")
+    elif kind == "edit":
+        what = "This changes a repository file, which is work on a Task."
     else:
-        what = "This runs an install, build or test, which is spending on the work."
+        what = ("This runs an install, build or test, starts CI or dispatches a subtask, which is spending "
+                "on the work.")
     print(
         "Clued work-claim guard (agent-contract §1.7): no live work claim is recorded for this checkout. "
         + what

@@ -605,7 +605,7 @@ async function latestAdmissionRun(fetchImpl, env, repository, headSha) {
 }
 
 export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() }) {
-  const enforced = enforcementEnabled(env);
+  let enforced = enforcementEnabled(env);
   const outcome = emptyOutcome(eventName, enforced);
   if (eventName === "workflow_dispatch") return dispatchGate({ env, event, fetchImpl, now, outcome });
   if (!PR_EVENTS.has(eventName)) {
@@ -619,6 +619,17 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   outcome.head_sha = pr.head.sha;
   outcome.base_sha = pr.base.sha;
   outcome.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
+  // A fork pull request may not receive repository variables, so an unset
+  // CLUED_WORK_ADMISSION_ENFORCE here proves nothing. The gate then follows
+  // the trusted pull_request_target run, which reads the variable in the base
+  // repository and succeeds whenever admission is advisory.
+  const headRepo = pr.head.repo && pr.head.repo.full_name;
+  const baseRepo = (pr.base.repo && pr.base.repo.full_name) || env.GITHUB_REPOSITORY;
+  if (!enforced && headRepo && baseRepo && headRepo !== baseRepo) {
+    enforced = true;
+    outcome.enforced = true;
+    outcome.notices.push(`fork pull request from ${headRepo}: following the ${ADMISSION_WORKFLOW} result whatever this run sees of CLUED_WORK_ADMISSION_ENFORCE`);
+  }
   const waitSeconds = Number.parseInt(env.CLUED_ADMISSION_GATE_WAIT_SECONDS ?? "", 10);
   const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : GATE_WAIT_SECONDS;
   try {

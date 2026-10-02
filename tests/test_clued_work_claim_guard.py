@@ -87,13 +87,16 @@ class WorkClaimGuardTest(unittest.TestCase):
         for command in ("npm ci", "npm install", "pnpm test", "yarn add x", "npm run test:work:claims",
                         "node --test x.mjs", "python3 -m pytest -q", "pytest", "python3 -m unittest t",
                         "pip install -r r.txt", "npx vitest run", "cargo test", "go build ./...",
-                        "FOO=1 npm test", "cd a; npm ci", "true && git push"):
+                        "FOO=1 npm test", "cd a; npm ci", "true && git push", "npm run mcp:tools:verify",
+                        "npx tsc --noEmit", "npx --yes wrangler deploy", "gh workflow run g4.yml -f ref=x",
+                        "gh run rerun 123 --failed"):
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command, session=command).returncode, 2)
 
     def test_unguarded_commands_pass(self):
         for command in ("git status", "ls -la", "git commit -m 'git push later'", "echo npm test",
                         "grep -rn 'node --test' .", "git fetch origin main", "npm view next version",
+                        "npm info x", "gh run view 1", "gh workflow list", "echo npx tsc",
                         "cat <<'EOF' > f\ngit push\nnpm ci\nEOF"):
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command, session=command).returncode, 0)
@@ -105,6 +108,44 @@ class WorkClaimGuardTest(unittest.TestCase):
                 self.assertEqual(self.pre(name, {"owner": "o"}, session=name).returncode, 2)
         self.assertEqual(self.pre("mcp__github__pull_request_read", {}, session="read").returncode, 0)
         self.assertEqual(self.pre("Read", {"file_path": "x"}, session="read2").returncode, 0)
+
+    def test_ci_dispatch_and_subtasks_are_spend(self):
+        for name, tool_input in (("mcp__github__actions_run_trigger", {"method": "run_workflow"}),
+                                 ("mcp__claude-code-remote__create_session", {"prompt": "x"}),
+                                 ("Workflow", {"script": "x"}),
+                                 ("Agent", {"subagent_type": "general-purpose", "prompt": "x"}),
+                                 ("Agent", {"prompt": "x"})):
+            with self.subTest(name=name, tool_input=tool_input):
+                result = self.pre(name, tool_input, session=f"{name}{tool_input}")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("starts CI or dispatches a subtask", result.stderr)
+        for kind in ("Explore", "Plan", "claude-code-guide"):
+            with self.subTest(agent=kind):
+                self.assertEqual(self.pre("Agent", {"subagent_type": kind}, session=kind).returncode, 0)
+        # One kind per session: a build after a dispatch passes.
+        self.assertEqual(self.pre("Workflow", {}, session="mixed").returncode, 2)
+        self.assertEqual(self.bash("npm ci", session="mixed").returncode, 0)
+
+    def test_repository_edits_are_guarded(self):
+        inside = str(self.project / "scripts" / "x.py")
+        for name, tool_input in (("Edit", {"file_path": inside}), ("Write", {"file_path": "docs/a.md"}),
+                                 ("NotebookEdit", {"notebook_path": str(self.project / "n.ipynb")})):
+            with self.subTest(name=name):
+                result = self.pre(name, tool_input, session=f"edit-{name}")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("changes a repository file", result.stderr)
+        outside = str(Path(self.tmp.name) / "scratch" / "notes.md")
+        for tool_input in ({"file_path": outside}, {"file_path": str(self.project / ".clued" / "x.json")},
+                           {"file_path": str(self.project / ".git" / "config")},
+                           {"file_path": str(self.project / ".." / "elsewhere.txt")}, {}):
+            with self.subTest(tool_input=tool_input):
+                self.assertEqual(self.pre("Write", tool_input, session=f"out-{tool_input}").returncode, 0)
+        # Edits and publishing are reported separately.
+        self.assertEqual(self.pre("Edit", {"file_path": inside}, session="both").returncode, 2)
+        self.assertEqual(self.bash("git push", session="both").returncode, 2)
+        # A recorded claim allows edits.
+        self.post("mcp__Clued__clued_work_claim", committed(claim()))
+        self.assertEqual(self.pre("Edit", {"file_path": inside}, session="claimed").returncode, 0)
 
     def test_env_claim_and_off_switch_allow(self):
         self.assertEqual(self.bash("git push", env={**self.env, "CLUED_WORK_CLAIM": CLAIM_ID}).returncode, 0)
