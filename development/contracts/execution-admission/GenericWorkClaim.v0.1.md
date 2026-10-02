@@ -2,7 +2,7 @@
 
 状态：**设计候选，未实施。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
 日期：2026-10-02
-Task：`52739939`（Global）。Owner 决定：门卫原则见 Task `52739939` v3，四条规则见 Decision `2a7391ff`。
+Task：`52739939`（Global）。Owner 决定：门卫原则见 Task `52739939` v3，四条规则见 Decision `2a7391ff`，三条待定见 Decision `357fce4f`（§9）。
 前置：[WorkClaimAdmission.v0.1.md](WorkClaimAdmission.v0.1.md)（v1 认领、准入检查与 GitHub 门口，已在生产生效）。本文只写在 v1 之上要扩什么，v1 已有的租约、fence、续期进展、次数上限、幂等规则原样沿用，不重复。
 后续：官方托管 Clued GitHub App（Task `4d694640`）是本文 §3 中 GitHub 门口的产品化传话口，按本文接口实现。
 
@@ -98,7 +98,7 @@ work_claim_gate(user, door, resources[], claim_id?, mode)
 | --- | --- | --- | --- |
 | Clued 写工具（默认门口） | Worker 与数据库，写入事务内 | `collision_only`（Decision `2a7391ff` 第 1 条） | 未实施（§4） |
 | GitHub 合并：本仓库 | 传话口：`clued-work-admission` + `clued-admission` App + 必需检查 | `require_claim` | 已生效 |
-| GitHub 合并：其他用户 | 传话口：官方托管 Clued GitHub App（Task `4d694640`） | 默认 `collision_only`，仓库可选 `require_claim` | 未实施 |
+| GitHub 合并：其他用户 | 传话口：官方托管 Clued GitHub App（Task `4d694640`） | 默认 `collision_only`，仓库可切到 `require_claim`（Owner 已定，§9 第 3 条） | 未实施 |
 | Host 本地（Claude Code） | 传话口：PreToolUse 钩子 | 只提示和拦一次（L3） | 已生效，可关 |
 
 **传话口**指：它不保存认领、不含规则，只把"谁要动哪些资源"交给 §3.1 的判定，再把结果转成那扇门能懂的形式（GitHub 的检查结论、钩子的拦截）。
@@ -135,7 +135,7 @@ Agent 经 Clued 写入时，门卫只拦撞车（Decision `2a7391ff` 第 1 条�
 
 ### 4.3 Canonical Record
 
-Record 已经有 CAS（`base_version`）：两个 Agent 同时改同一条 Record，后到的会因版本不符被拒。所以 `record:` 资源第一阶段只用于认领声明，以及让别人在 resume 时看到"这条 Record 有人在改"，`clued_record_mutate` 不接入门卫。是否接入放到 §9 待定。
+Record 已经有 CAS（`base_version`）：两个 Agent 同时改同一条 Record，后到的会因版本不符被拒。所以 `record:` 资源第一阶段只用于认领声明，以及让别人在 resume 时看到"这条 Record 有人在改"，`clued_record_mutate` 不接入门卫（Owner 已定，§9 第 1 条）。
 
 ---
 
@@ -164,7 +164,7 @@ Record 已经有 CAS（`base_version`）：两个 Agent 同时改同一条 Recor
 - 每份在自己的**草稿区**里产出：GitHub 上是各自的分支和 PR；Clued 存储里是该份专属的草稿路径（建议 `…/_copies/<task>/<copy_index>/`，由认领时声明）。写草稿区按普通规则过门卫，不算写回。
 
 **采纳**（Decision `2a7391ff` 第 2 条，写回即采纳）：
-- 写回 = 一份产出写入该 Task 的**共享资源**（Owner 开启多份时随 Task 记录；GitHub 上即合并进 main）。
+- 写回 = 一份产出写入该 Task 的**共享资源**（Owner 开启多份时在页面填写，随 `claim_mode` 记录；GitHub 上即合并进 main）。
 - 第一份通过门口写回的认领在同一事务内被标为 ADOPTED；Task 记下 `adopted_claim_id`；其余各份立即变为 SUPERSEDED（`outcome = not_adopted`），之后任何门口对它们判 REJECTED（`copy_not_adopted`），不能再写回。产出原样保留作对比。
 - GitHub 上，合并发生在 GitHub，门卫在检查时还不知道哪份会被合并。处理：
   1. 准入检查对多份 Task 的每个 PR 都可以放行（各自的认领绑定各自的 PR）。
@@ -222,8 +222,8 @@ Record 已经有 CAS（`base_version`）：两个 Agent 同时改同一条 Recor
 
 ---
 
-## 9. 待定（实施前请 Owner 定）
+## 9. Owner 已定（2026-10-02，Decision `357fce4f`）
 
-1. `record:` 资源是否接入 `clued_record_mutate` 的门卫（§4.3）。建议第一阶段不接：Record 已有 CAS，接入会让每次 Record 写入多一次查询。
-2. 多份模式的"共享资源"由谁声明：Owner 开启时在页面填写，还是取第一份认领声明的范围。建议 Owner 开启时填写，避免 Agent 把共享资源声明得过窄或过宽。
-3. 其他用户仓库的 GitHub 门口默认模式：建议默认 `collision_only`（与默认门口一致），仓库所有者可在官方 App 设置里切到 `require_claim`。
+1. `record:` 资源第一阶段**不接入** `clued_record_mutate` 的门卫，靠 Record 自带的 CAS（§4.3）。
+2. 多份模式的共享资源由 **Owner 开启多份时在页面填写**，随 `claim_mode` 记录（§5.3），不取 Agent 声明的范围。
+3. 官方 GitHub App 的门口**默认 `collision_only`**，仓库所有者可在 App 设置里切到 `require_claim`（§3.2）。本仓库保持 `require_claim`。
