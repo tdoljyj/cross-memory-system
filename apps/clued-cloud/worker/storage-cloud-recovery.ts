@@ -133,7 +133,8 @@ export async function createStorageCloudRecovery(config: {
         ? createGoogleDriveReplacePostconditionVerifier({ ...verifierConfig,
           get_revision: (fileId: string, revisionId: string) => metadata.getRevision(fileId, revisionId, { signal: abort.signal }) })
         : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
-        : createGoogleDriveCreatePostconditionVerifier({ ...verifierConfig, require_effect_provider_id: true });
+        : createGoogleDriveCreatePostconditionVerifier({ ...verifierConfig, require_effect_provider_id: true,
+          get_sharing: (id: string) => metadata.getSharing(id, { signal: abort.signal }) });
       const postcondition = await bounded(verify({ profile: d.profile, mutation: d.mutation, provider_before: d.provider_before,
         effect_result: subtree
           ? { operation, target_kind: "directory", source_path: d.mutation.source_path, destination_path: d.mutation.destination_path,

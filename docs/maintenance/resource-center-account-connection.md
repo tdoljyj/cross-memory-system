@@ -873,6 +873,32 @@ an anchored patch with an exact hit count.
   Residual: an external change that keeps the content (sharing, a lock, a
   description) made to a descendant between the read before the move and the
   verifier's read is absorbed into the refreshed version.
+- P6.2 (Decision `06b54716`, migration
+  `20261002130000_storage_directory_sharing_digest_v1.sql`): a directory
+  Clued creates is registered with a sharing digest when its sharing equals
+  its destination folder's as the provider identity recorded it (the create
+  verifier reads it; the proof carries `provider_sharing_digest`, accepted
+  only for a directory and only as that folder's digest), so it is matched
+  by sharing, not by a Drive version that later moves advance. A directory
+  move's settlement records, on the source and destination folders that have
+  no digest yet, the digest the provider identity recorded for each, only
+  while the folder's registered Drive version is the one the identity
+  recorded (`source_parent_version`, new in the identity, and
+  `destination_parent_version`): the authority matches the source folder by
+  ID alone, and a folder registered at an older version changed in Drive
+  since Clued last checked it. A folder that already has a digest is not
+  changed. A proof that carries a digest for a file, or for a folder whose
+  identity has none, is refused (`storage_verified_mismatch`).
+  Release order: apply the migration before releasing the Worker. The old
+  executor works against the new database (no digest in its proofs, no
+  `source_parent_version`, so no source-folder digest); the new executor
+  against the old database has every directory create refused at its
+  verified record after the Drive effect, leaving the intent fenced; its
+  recovery succeeds only after the migration is applied.
+  Residual: the create verifier reads the new folder's sharing after its
+  version checks, and the identity reads a folder's version and sharing in
+  separate calls. A sharing change between them can only make the recorded
+  digest differ from Drive, so later writes are refused, never widened.
 - A lost update reply leaves the intent fenced, and the single writer then
   blocks other writes on that root until it is resolved. Scheduled recovery
   never lists or loads a directory move; the Owner's native recovery

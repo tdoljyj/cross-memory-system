@@ -181,7 +181,10 @@ export function createGoogleDriveProviderIdentityResolver({
       // the verified settlement require to be its registered parent.
       ...(mutation.operation === "delete" || mutation.operation === "restore"
         ? { source_parent_id: sourceParent?.id ?? null } : {}),
-      ...(directoryMove ? { source_parent_id: sourceParent?.id ?? null, source_sharing_digest: sourceSharingDigest,
+      // The settlement records the source folder's sharing digest only while
+      // the registry still holds this version of it (P6.2).
+      ...(directoryMove ? { source_parent_id: sourceParent?.id ?? null, source_parent_version: sourceParent?.version ?? null,
+        source_sharing_digest: sourceSharingDigest,
         source_parent_sharing_digest: sourceParentSharingDigest, ...accessDigests } : {}),
     });
   };

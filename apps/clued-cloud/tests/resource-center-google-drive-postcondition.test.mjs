@@ -166,3 +166,35 @@ test("native postcondition requires the exact generated ID, not a same-name same
   f.request.effect_result.provider_file_id = "topic";
   assert.equal((await f.verify(f.request)).provider_file_id, "topic");
 });
+
+test("P6.2: a created directory carries its sharing digest only when it equals the destination folder's", async () => {
+  const { googleDriveSharingDigest } = await import("../../../kernel/host/resource-center-google-drive-sharing.mjs");
+  const sharing = { shared: false, permissionIds: ["owner"] };
+  const parentDigest = googleDriveSharingDigest(sharing);
+  const run = async (options, before = {}) => {
+    const f = fixture({ options: { require_effect_provider_id: true, include_verified_proof: true, ...options } });
+    f.request.effect_result.provider_file_id = "topic";
+    Object.assign(f.request.provider_before, before);
+    return (await f.verify(f.request)).verified_proof;
+  };
+  const same = await run({ get_sharing: async (id) => ({ id, ...sharing }) }, { destination_parent_sharing_digest: parentDigest });
+  assert.equal(same.provider_sharing_digest, parentDigest);
+  assert.equal(same.contract, "clued.storage-create-verified/2");
+  // Different sharing, another file's sharing, a failed read, no recorded
+  // parent digest or no reader: no digest, as before.
+  for (const [options, before] of [
+    [{ get_sharing: async (id) => ({ id, shared: true, permissionIds: ["owner", "anyone"] }) }, { destination_parent_sharing_digest: parentDigest }],
+    [{ get_sharing: async () => ({ id: "track", ...sharing }) }, { destination_parent_sharing_digest: parentDigest }],
+    [{ get_sharing: async () => { throw new Error("DRIVE_METADATA_UNAVAILABLE"); } }, { destination_parent_sharing_digest: parentDigest }],
+    [{ get_sharing: async (id) => ({ id, ...sharing }) }, { destination_parent_sharing_digest: null }],
+    [{}, { destination_parent_sharing_digest: parentDigest }],
+  ]) assert.equal("provider_sharing_digest" in await run(options, before), false);
+  // A file never carries one.
+  const f = fixture({ file: true, options: { require_effect_provider_id: true, include_verified_proof: true,
+    get_sharing: async (id) => ({ id, ...sharing }) } });
+  f.request.effect_result.provider_file_id = "topic";
+  f.request.provider_before.destination_parent_sharing_digest = parentDigest;
+  assert.equal("provider_sharing_digest" in (await f.verify(f.request)).verified_proof, false);
+  assert.throws(() => createGoogleDriveCreatePostconditionVerifier({ managed_root: root, root_folder_id: "root",
+    root_parent_id: "container", get_file: async () => null, list_children: async () => [], get_sharing: "x" }), TypeError);
+});
