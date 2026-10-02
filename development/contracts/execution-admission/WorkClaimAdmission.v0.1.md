@@ -123,6 +123,8 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 2. **write_set 路径重叠**：规范化后任一路径或 glob 相交。`apps/clued-cloud/package-lock.json` 这类共享文件会直接相交。
 3. **trigger_refs 重叠**：任一规范化触发源相同。#443／#444／#445 都会写 `ghsa:GHSA-vcvr-r3jv-pc5j` 或 `ci:trivy@f7ba6ff`，在第二份 claim 时即冲突，与标题无关。
 
+**实现（第 7 步评审修复，2026-10-01，迁移 `20261002050000`，Task `047e663e`）**：第 2 条最初只检查「一侧的 glob 覆盖另一侧的字面路径」，两个 glob 之间不比较，`apps/clued-cloud/**` 与 `**/package-lock.json` 不冲突。现按路径段比较：含 `**` 的段匹配任意多段；两个单段通配只要字面前缀与后缀相容就算相交。判定偏向「相交」：可能把两个实际不共享路径的 glob 判为冲突，不会漏判。
+
 不做：标题相似度、语义去重、自动合并意图。语义不明确时 Agent 可以用 `clued_search_context` 做有上限的探索，但那不是准入判断。
 
 ### 4.4 租约、续期、过期、接管、fence
@@ -139,6 +141,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 复用 N4 模式：
 
 - **每 Binding 并发 claim 上限**（默认 3）：一个失控 Host 不能把所有 Task 都占了。
+  - **实现（2026-10-02，Owner Decision `533a5286`，迁移 `20261002060000`）**：改为每个会话（Agent 自报的 `holder_session_ref`）最多 3 个活认领、每个 Binding 合计最多 10 个。原因：Owner 的所有 Claude Code 会话共用一个 Binding，原来的「每 Binding 3 个」会让并行会话互相挤占。会话标识是自报的，所以保留 Binding 总上限兜底；没有 `holder_session_ref` 的认领单独算一组。拒绝时 `limit` 字段写明撞到的是哪个上限。
 - **每 claim CI 分钟上限**：`admission-gate` 在放行重任务前调用 `clued_work_verify` 并上报本次预计分钟数；超出上限返回 REJECTED，重任务不启动。实际消耗由 workflow 完成后以 observed 回写（finalize）。
 - **模型 token**：claim 只记录 Agent 自报的估算，标为 `declared_unenforced`。不宣称预留。
 - 取消、失联或 UNKNOWN 时**不释放预留**；只有 finalize 或 takeover 事务才结算。
@@ -155,6 +158,16 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 同一 check 顺带输出一张汇总表：按本 PR 变更路径判定哪些路径过滤的 workflow **适用**、各自在当前 head 上的结论、哪些**不适用**。这就是 2026-10-01 根因审计第 4 项要的"始终返回结果的汇总检查"，不必另开一个。
 - 自报 JSON、同名 check、伪造签名不算：check 由 workflow 从 Clued 实时查询，Receipt 在 Clued 侧。
 - **实现偏离（第 3 步，2026-10-01，PR #454）**：生产的 `/mcp` 由委托 OAuth provider 接管，只接受 OAuth access token，直接的 `clued_bnd_` Binding token 会被 401 拒绝；因此 CI 不走 MCP，而是直接调 Clued 数据库 PostgREST 的 `clued_work_verify_v1`（公开 publishable key + Binding token 的 SHA-256，由数据库 `resolve_binding` 鉴权，与 Worker 内部走的是同一条路）。强制与否不跟随 `CLUED_WORK_CLAIMS_V1`，而是 Owner 的仓库变量 `CLUED_WORK_ADMISSION_ENFORCE=true`：未打开时 check 只做 advisory（有 claim 就把判定写进 summary，没有则报 NOT_ENFORCED，一律放行），避免迁移一应用就拦住所有 PR 而 Agent 还无法建 claim；打开后缺 trailer、REJECTED、RPC 缺失、token 被拒、传输错误一律 fail closed。
+
+- **实现（第 7 步评审修复，2026-10-01，Owner Decision `64d9b418`，Task `95a93218`／`21a77b34`）**：
+  - 评审发现原 check 在 `pull_request` 事件下运行 PR 自带的 workflow 与脚本，PR 可以改写判定。现改为 `pull_request_target`：workflow 与 `scripts/ci/clued-work-admission.mjs` 取自 base 分支，不 checkout、不执行 PR 代码，PR 只经 API 读取，每次运行重新读取，因此修改正文（`edited`）或重跑都看到当前 trailer 与 head。只有改动本 workflow 文件的 PR 还会经 `pull_request` 触发一次，同样只执行 base 代码。
+  - 每次 verify 带 `pr_ref`（`owner/repo#n`）。第一个判定为 ADMITTED 的 PR 把 claim 绑定到自己（一条 `work_claim_bind_pr` 回执），之后其他 PR 引用同一 claim 返回 `claim_bound_to_other_pr`。这是 verify 唯一的写入，在 CI 持有的只读 Binding 下进行。接管或新 claim 从未绑定开始。
+  - `clued-work-admission-reverify.yml` 每小时检查一次：对最近一次 admission 运行通过的未合并、非草稿 PR 重新判定，claim 已过期、释放、被接管或绑定到别的 PR 时重跑那次运行，使必需检查变红。判定过期的窗口因此不超过约一小时，合并时并不实时重验。
+  - PR 文件列表少于 `changed_files`（API 3000 文件上限）时强制模式判 REJECTED（`changed_files_truncated`）。
+  - **仍未覆盖**：
+    - PR 可以新增另一个 workflow，其 job 也叫 `clued-work-admission`，两者都是 GitHub Actions 的 check run。要堵住需要 PR workflow 无法使用的检查身份（GitHub App，或 required workflows），属 Owner 在仓库外的设置。
+    - L0b 的 `admission-gate` 仍是 PR 定义的 job，PR 可以删掉 `needs:`。
+    - 任何同仓 PR 的 workflow 都能引用仓库 secret，所以 `CLUED_CONTEXT_READ_TOKEN` 只能靠 environment 限定加轮换保护。
 
 **L0b：重任务 workflow 的 `admission-gate` job**
 

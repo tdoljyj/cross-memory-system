@@ -5,6 +5,20 @@
 //   --mode required   the unfiltered `clued-work-admission` check on every PR
 //   --mode gate       the `admission-gate` job that heavy self-hosted workflows
 //                     run first; they `needs:` it and run only on admitted=true
+//   --mode reverify   the scheduled re-check: every open PR whose last
+//                     admission run passed is verified again, and that run is
+//                     re-run when its claim no longer admits the PR (expired,
+//                     released, superseded, or bound to another PR), so a
+//                     green check does not outlive its claim
+//
+// The required check runs on `pull_request_target`: the workflow file and this
+// script come from the base branch, and no code of the PR is checked out or
+// executed. The PR is read through the API only, fetched fresh on every run so
+// an edited body or a re-run sees the current trailer and head.
+//
+// Each verify call carries pr_ref "<owner>/<repo>#<number>". The first verify
+// that admits binds the claim to that pull request in Clued; any other PR
+// naming the same claim is REJECTED (claim_bound_to_other_pr).
 //
 // The script asks Clued whether the PR's work claim admits the PR's head, base
 // and changed files: clued_work_verify_v1 (read-only, no receipt), called on
@@ -111,6 +125,11 @@ export function parseWorkflowTriggers(text) {
   const lines = text.split(/\r?\n/);
   let name = null;
   const triggers = { pull_request: null };
+  const all = [];
+  const open = () => {
+    triggers.pull_request = { paths: [], pathsIgnore: [] };
+    all.push(triggers.pull_request);
+  };
   let inOn = false;
   let trigger = null;
   let listKey = null;
@@ -126,11 +145,11 @@ export function parseWorkflowTriggers(text) {
         const flow = /^\[(.*)\]$/.exec(top[2].trim());
         if (flow) {
           for (const item of flow[1].split(",").map(unquote)) {
-            if (PR_EVENTS.has(item)) triggers.pull_request = { paths: [], pathsIgnore: [] };
+            if (PR_EVENTS.has(item)) open();
           }
           inOn = false;
         } else if (PR_EVENTS.has(top[2].trim())) {
-          triggers.pull_request = { paths: [], pathsIgnore: [] };
+          open();
           inOn = false;
         }
         continue;
@@ -145,13 +164,13 @@ export function parseWorkflowTriggers(text) {
       const key = /^([A-Za-z_-]+):\s*(.*)$/.exec(line.trim());
       if (/^-\s/.test(line.trim())) {
         // `on:` as a block list of event names.
-        if (PR_EVENTS.has(unquote(line.trim().slice(1)))) triggers.pull_request = { paths: [], pathsIgnore: [] };
+        if (PR_EVENTS.has(unquote(line.trim().slice(1)))) open();
         continue;
       }
       trigger = key ? key[1] : null;
       if (trigger === "pull_request_target") trigger = "pull_request";
       listKey = null;
-      if (trigger === "pull_request") triggers.pull_request = { paths: [], pathsIgnore: [] };
+      if (trigger === "pull_request") open();
       continue;
     }
     if (trigger !== "pull_request") continue;
@@ -172,11 +191,22 @@ export function parseWorkflowTriggers(text) {
       triggers.pull_request[listKey === "paths" ? "paths" : "pathsIgnore"].push(unquote(line.trim().slice(1)));
     }
   }
-  return { name, pull_request: triggers.pull_request };
+  // pull_request and pull_request_target together: the workflow runs when
+  // either does, so one unfiltered trigger makes the whole workflow unfiltered.
+  if (all.length === 0) return { name, pull_request: null };
+  if (all.some((t) => t.paths.length === 0 && t.pathsIgnore.length === 0)) {
+    return { name, pull_request: { paths: [], pathsIgnore: [] } };
+  }
+  if (all.length === 1) return { name, pull_request: all[0] };
+  return { name, pull_request: { ...all[0], any: all } };
 }
 
 export function workflowApplies(trigger, changedPaths) {
   if (!trigger) return { applies: false, reason: "no pull_request trigger" };
+  if (trigger.any) {
+    const hit = trigger.any.map((one) => workflowApplies(one, changedPaths)).find((d) => d.applies);
+    return hit ?? { applies: false, reason: "no changed path matches its filter" };
+  }
   const { paths, pathsIgnore } = trigger;
   if (paths.length === 0 && pathsIgnore.length === 0) return { applies: true, reason: "unfiltered" };
   if (paths.length > 0) {
@@ -218,6 +248,20 @@ async function githubJson(fetchImpl, env, route, { allowMissing = false } = {}) 
   return await response.json();
 }
 
+async function githubPost(fetchImpl, env, route) {
+  const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
+  const response = await fetchImpl(`${base}${route}`, {
+    method: "POST",
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${env.GITHUB_TOKEN}`,
+      "x-github-api-version": "2022-11-28",
+      "user-agent": "clued-work-admission",
+    },
+  });
+  if (!response.ok) throw new Error(`GitHub API POST ${route} returned ${response.status}`);
+}
+
 async function githubPaged(fetchImpl, env, route, key) {
   const items = [];
   for (let page = 1; page <= 50; page += 1) {
@@ -230,6 +274,8 @@ async function githubPaged(fetchImpl, env, route, key) {
   return items;
 }
 
+// The files endpoint stops at 3000 entries. Callers compare file_count with
+// the PR's changed_files and fail closed when the list came back short.
 export async function changedPathsOfPullRequest(fetchImpl, env, repository, number) {
   const files = await githubPaged(fetchImpl, env, `/repos/${repository}/pulls/${number}/files`);
   const paths = new Set();
@@ -237,7 +283,7 @@ export async function changedPathsOfPullRequest(fetchImpl, env, repository, numb
     if (typeof file.filename === "string") paths.add(file.filename);
     if (typeof file.previous_filename === "string") paths.add(file.previous_filename);
   }
-  return [...paths].sort();
+  return { paths: [...paths].sort(), file_count: files.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +354,7 @@ export async function verifyClaim(fetchImpl, env, args, workspace) {
 function emptyOutcome(eventName, enforced) {
   return {
     mode: null, event: eventName, admitted: false, enforced, verdict: null, reasons: [],
-    claim_id: null, scope: null, head_sha: null, base_sha: null, changed_paths: [],
+    claim_id: null, scope: null, head_sha: null, base_sha: null, pr_ref: null, changed_paths: [],
     applicable_workflows: [], error: null,
   };
 }
@@ -345,10 +391,17 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     outcome.reasons = [`event ${eventName} is not an admission subject`];
     return outcome;
   }
-  const pr = event && event.pull_request;
+  let pr = event && event.pull_request;
   if (!pr || !pr.head || !pr.base) throw new Error("pull_request payload is missing head/base.");
+  if (eventName === "pull_request_target") {
+    // A re-run replays the original payload; the PR itself may have moved.
+    if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
+    pr = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/pulls/${pr.number}`);
+    if (!pr || !pr.head || !pr.base) throw new Error(`pull request ${event.pull_request.number} could not be read.`);
+  }
   outcome.head_sha = pr.head.sha;
   outcome.base_sha = pr.base.sha;
+  outcome.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
 
   // Advisory mode must never fail the job for a reason unrelated to the PR:
   // whatever goes wrong below is reported and the PR is admitted.
@@ -361,7 +414,9 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
   try {
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     const repository = env.GITHUB_REPOSITORY;
-    outcome.changed_paths = await changedPathsOfPullRequest(fetchImpl, env, repository, pr.number);
+    const changed = await changedPathsOfPullRequest(fetchImpl, env, repository, pr.number);
+    outcome.changed_paths = changed.paths;
+    const truncated = Number.isInteger(pr.changed_files) && changed.file_count < pr.changed_files;
     if (withSummary && workspace) {
       await summarizeWorkflows(fetchImpl, env, repository, pr.head.sha, outcome.changed_paths, workspace, outcome);
     }
@@ -386,6 +441,15 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     }
     outcome.claim_id = reference.claim_id;
     outcome.scope = reference.scope;
+    if (truncated) {
+      // Paths past the API limit cannot be checked against the write set.
+      if (enforced) {
+        outcome.verdict = "REJECTED";
+        outcome.reasons.push(`changed_files_truncated:${pr.changed_files}`);
+        return outcome;
+      }
+      return notEnforced(`changed file list truncated (${pr.changed_files} files); advisory verification skipped`);
+    }
 
     const verified = await verifyClaim(fetchImpl, env, {
       scope: reference.scope,
@@ -393,6 +457,7 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
       changed_paths: outcome.changed_paths,
       head_sha: pr.head.sha,
       base_sha: pr.base.sha,
+      pr_ref: outcome.pr_ref,
     }, workspace);
     if (verified.kind === "rpc_unavailable") {
       if (enforced) throw new Error(`Clued ${VERIFY_RPC} is not deployed (${verified.detail}); enforcement is on, so admission cannot be verified.`);
@@ -412,6 +477,7 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
       outcome.claim = {
         task_id: claim.task_id ?? null, status: claim.status ?? null, fence: claim.fence ?? null,
         expires_at: claim.expires_at ?? null, base_commit: claim.base_commit ?? null,
+        bound_pr: claim.bound_pr ?? null,
         write_set: Array.isArray(claim.write_set) ? claim.write_set : [],
       };
     }
@@ -443,6 +509,64 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
 }
 
 // ---------------------------------------------------------------------------
+// Re-verification. A check run is a verdict at one moment; the claim behind it
+// can expire, be released or be taken over afterwards. For every open,
+// non-draft PR, the latest successful run of the admission workflow on its
+// head (per triggering event) is re-run when a fresh evaluation no longer
+// admits the PR. The re-run evaluates again and turns the check red. Transport
+// errors are reported, never turned into a re-run.
+
+export const ADMISSION_WORKFLOW = "clued-work-admission.yml";
+
+export async function reverify({ env, fetchImpl, workspace }) {
+  const result = { enforced: enforcementEnabled(env), checked: [], reran: [], errors: [] };
+  if (!result.enforced) {
+    result.skipped = "CLUED_WORK_ADMISSION_ENFORCE is not set; checks are advisory";
+    return result;
+  }
+  if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
+  const repository = env.GITHUB_REPOSITORY;
+  const pulls = await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`);
+  for (const pr of pulls) {
+    if (pr.draft || !pr.head || !pr.base) continue;
+    try {
+      const runs = (await githubJson(fetchImpl, env,
+        `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${pr.head.sha}&per_page=50`)).workflow_runs ?? [];
+      const latest = new Map();
+      for (const run of runs) {
+        const prior = latest.get(run.event);
+        if (!prior || Date.parse(run.created_at) > Date.parse(prior.created_at)) latest.set(run.event, run);
+      }
+      const passing = [...latest.values()].filter((run) => run.status === "completed" && run.conclusion === "success");
+      if (passing.length === 0) continue;
+      const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false });
+      result.checked.push({ pr: pr.number, verdict: outcome.verdict, reasons: outcome.reasons });
+      if (outcome.admitted) continue;
+      for (const run of passing) {
+        await githubPost(fetchImpl, env, `/repos/${repository}/actions/runs/${run.id}/rerun`);
+        result.reran.push({ pr: pr.number, run_id: run.id, event: run.event, verdict: outcome.verdict, reasons: outcome.reasons });
+      }
+    } catch (error) {
+      result.errors.push({ pr: pr.number, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return result;
+}
+
+export function renderReverifySummary(result) {
+  const lines = ["## clued-work-admission re-verification", ""];
+  if (result.skipped) {
+    lines.push(`Skipped: ${result.skipped}.`, "");
+    return lines.join("\n");
+  }
+  lines.push(`Open PRs with a passing admission run checked: ${result.checked.length} · re-runs requested: ${result.reran.length} · errors: ${result.errors.length}`);
+  for (const rerun of result.reran) lines.push(`- #${rerun.pr}: run ${rerun.run_id} (${rerun.event}) re-run, ${rerun.verdict}: ${rerun.reasons.join("; ")}`);
+  for (const error of result.errors) lines.push(`- #${error.pr}: error ${error.error}`);
+  lines.push("");
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Reporting.
 
 export function renderSummary(outcome) {
@@ -456,6 +580,7 @@ export function renderSummary(outcome) {
     lines.push(`**Claim state:** task \`${outcome.claim.task_id}\` · ${outcome.claim.status} · fence ${outcome.claim.fence} · expires ${outcome.claim.expires_at}${outcome.claim.base_commit ? ` · base \`${outcome.claim.base_commit}\`` : ""}`);
   }
   if (outcome.head_sha) lines.push(`**Head:** \`${outcome.head_sha}\` · **Base:** \`${outcome.base_sha}\``);
+  if (outcome.claim && outcome.claim.bound_pr) lines.push(`**Claim bound to:** \`${outcome.claim.bound_pr}\``);
   if (outcome.error) lines.push(`**Error:** ${outcome.error}`);
   if (outcome.reasons.length) {
     lines.push("");
@@ -489,9 +614,19 @@ function appendFile(file, text) {
 export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch) {
   const modeIndex = argv.indexOf("--mode");
   const mode = modeIndex >= 0 ? argv[modeIndex + 1] : "required";
-  if (mode !== "required" && mode !== "gate") {
-    console.error("usage: clued-work-admission.mjs --mode required|gate");
+  if (mode !== "required" && mode !== "gate" && mode !== "reverify") {
+    console.error("usage: clued-work-admission.mjs --mode required|gate|reverify");
     return 2;
+  }
+  if (mode === "reverify") {
+    const result = await reverify({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE });
+    console.log(JSON.stringify(result, null, 2));
+    appendFile(env.GITHUB_STEP_SUMMARY, renderReverifySummary(result));
+    if (result.errors.length) {
+      console.error(`::error title=clued-work-admission re-verification::${result.errors.length} PR(s) could not be re-verified`);
+      return 1;
+    }
+    return 0;
   }
   const eventName = env.GITHUB_EVENT_NAME ?? "";
   let event = null;

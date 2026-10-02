@@ -1,28 +1,45 @@
 name: clued-work-admission
 
 # Work Claim Admission v0.1 §4.6 L0a (development/contracts/execution-admission/
-# WorkClaimAdmission.v0.1.md). An unfiltered check on every pull request, so it
-# can become a `main` ruleset required check like gitleaks and trivy without a
-# PR ever waiting on it. It makes one read-only call to Clued
-# (clued_work_verify through the public MCP endpoint, with the read-only Binding
-# token in CLUED_CONTEXT_READ_TOKEN) and asks whether the claim named in the PR
-# body or head commit (`Clued-Work-Claim: <id>`) admits this head, base and
-# changed-file set. It also prints which path-filtered workflows apply to the
-# changed paths and what each concluded on this head.
+# WorkClaimAdmission.v0.1.md). An unfiltered check on every pull request, a
+# `main` ruleset required check like gitleaks and trivy. It makes one Clued
+# call per run: clued_work_verify_v1 on the Clued database's PostgREST endpoint
+# (public publishable key, SHA-256 of the read-only Binding token in
+# CLUED_CONTEXT_READ_TOKEN), asking whether the claim named in the PR body or
+# head commit (`Clued-Work-Claim: <id>`) admits this head, base, changed-file
+# set and pull request. It also prints which path-filtered workflows apply to
+# the changed paths and what each concluded on this head.
 #
-# The call goes to the Clued database's PostgREST endpoint (clued_work_verify_v1
-# with the public publishable key and the SHA-256 of the Binding token): the
-# production /mcp route is owned by the delegated OAuth provider and takes OAuth
-# access tokens only. Enforcement is the Owner's repository variable
-# CLUED_WORK_ADMISSION_ENFORCE=true; until then the check is advisory (verdicts
-# are printed, every PR is admitted). Once enforced, a missing claim, a
-# REJECTED verdict, a missing RPC, a refused token or a transport error all fail
-# closed. Hosted runner on purpose: seconds of work, no self-hosted capacity,
-# and no code of the PR is executed (the script is checked out from the PR head
-# but only reads files; it has no dependencies to install).
+# `pull_request_target` (step 7 review, BLOCKER 95a93218): this file and
+# scripts/ci/clued-work-admission.mjs are taken from the base branch, and no
+# code of the PR is checked out or executed, so a PR cannot change how its own
+# admission is judged. The PR is read through the API only. `edited` re-runs
+# the check when the PR body (and so the trailer) changes; the hourly
+# clued-work-admission-reverify.yml re-runs a passing check whose claim no
+# longer admits the PR.
+#
+# The `pull_request` trigger runs only for a PR that changes this file, and
+# also executes base-branch code only. It exists so such a PR (the first one
+# carrying this change included) still gets the required check, which a
+# target run of an older base file would not produce.
+#
+# Not covered here: a PR can add another workflow whose job is also named
+# clued-work-admission; both are GitHub Actions check runs. Closing that needs
+# a check identity a PR workflow cannot use (a GitHub App, or required
+# workflows), which is an Owner setting outside the repository.
+#
+# Enforcement is the Owner's repository variable
+# CLUED_WORK_ADMISSION_ENFORCE=true; until then the check is advisory. Once
+# enforced, a missing claim, a REJECTED verdict, a missing RPC, a refused token
+# or a transport error all fail closed. Hosted runner on purpose: seconds of
+# work, no install, no self-hosted capacity.
 
 on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
   pull_request:
+    paths:
+      - .github/workflows/clued-work-admission.yml
 
 permissions:
   actions: read
@@ -31,7 +48,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -40,8 +57,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # The base commit, never the PR head or merge ref.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
       - name: Self-test the admission script (no network, mocked fetch)
         run: |

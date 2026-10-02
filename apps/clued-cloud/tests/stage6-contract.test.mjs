@@ -83,7 +83,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 10/);
+  assert.match(contract, /Contract version: 11/);
   assert.match(contract, /Say what you are about to record before you write it, in one line of your reply/);
   assert.match(contract, /The line is a statement, not a question/);
   assert.match(contract, /`user_confirmed: true` records where the claim came from, not a confirmation step/);

@@ -69,10 +69,14 @@ test('owner pin: the Pin the write accepts is the Pin the snapshot selects',
     const write = (input) => rpc(hostToken, 'clued_record_mutate', input);
     const snapshot = () => rpc(hostToken, 'clued_mcp_mtpe_snapshot');
     const validate = () => rpc(hostToken, 'clued_mcp_mtpe_validate');
-    const pin = (operation, recordId, baseVersion) => rpc(hostToken, 'clued_mcp_mtpe_owner_pin', {
-      operation, record_id: recordId, base_version: baseVersion,
-      idempotency_key: uuid(), user_confirmed: true, reason: 'Owner focus fixture',
-    });
+    const pin = (operation, recordId, baseVersion, expectedFocus = null) =>
+      rpc(hostToken, 'clued_mcp_mtpe_owner_pin', {
+        operation, record_id: recordId, base_version: baseVersion,
+        ...(operation === 'set' ? { expected_current_focus_id: expectedFocus } : {}),
+        idempotency_key: uuid(), user_confirmed: true, reason: 'Owner focus fixture',
+      });
+    const focusRows = async () => (await admin.query(
+      'select record_id from clued_private.mtpe_owner_focus where user_id=$1', [userId])).rows;
     const row = (view, id) => view.candidate_universe.find((entry) => entry.record_id === id);
 
     // A project-scoped fixture avoids clued_now_global_uidx (one global 'now' Task per user).
@@ -156,6 +160,34 @@ test('owner pin: the Pin the write accepts is the Pin the snapshot selects',
     snapshotSource);
     assert.equal((await pin('set', readyId, 1)).status, 'committed');
     assert.equal((await snapshot()).selected_frontier.record_id, readyId);
+
+    // 3. Focus CAS: a set names the focus it replaces (Task 49404202). A set that
+    //    expects no focus, or another focus, is rejected and changes nothing; the
+    //    rejection names the current focus. A set without the key is malformed.
+    const blind = await pin('set', labelledId, 1, null);
+    assert.equal(blind.status, 'rejected', JSON.stringify(blind));
+    assert.match(JSON.stringify(blind), /owner_pin_focus_conflict/);
+    assert.equal(blind.supplemental.current_focus_id, readyId);
+    const wrong = await pin('set', labelledId, 1, labelledId);
+    assert.equal(wrong.status, 'rejected', JSON.stringify(wrong));
+    assert.match(JSON.stringify(wrong), /owner_pin_focus_conflict/);
+    const unnamed = await rpc(hostToken, 'clued_mcp_mtpe_owner_pin', {
+      operation: 'set', record_id: labelledId, base_version: 1,
+      idempotency_key: uuid(), user_confirmed: true, reason: 'Owner focus fixture',
+    });
+    assert.equal(unnamed.status, 'rejected', JSON.stringify(unnamed));
+    assert.match(JSON.stringify(unnamed), /invalid_mtpe_owner_pin_request/);
+    assert.deepEqual(await focusRows(), [{ record_id: readyId }]);
+    assert.equal((await snapshot()).owner_selected_current_focus.record_id, readyId);
+    // Re-pinning the current focus names itself; switching names the old focus.
+    assert.equal((await pin('set', readyId, 1, readyId)).status, 'committed');
+    const switched = await pin('set', labelledId, 1, readyId);
+    assert.equal(switched.status, 'committed', JSON.stringify(switched));
+    assert.equal(switched.supplemental.owner_focus.record_id, labelledId);
+    assert.deepEqual(await focusRows(), [{ record_id: labelledId }]);
+    // cancel already names the focus it removes and needs no expected focus.
+    assert.equal((await pin('cancel', labelledId, 1)).status, 'committed');
+    assert.deepEqual(await focusRows(), []);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

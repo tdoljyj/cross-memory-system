@@ -39,6 +39,11 @@ test('MTPE inspection tools are read-only and route Binding/OAuth calls to the s
   assert.deepEqual(ownerPin._meta['clued/requiredScopes'], ['context:write']);
   assert.deepEqual(ownerPin.inputSchema.required,
     ['operation', 'record_id', 'base_version', 'idempotency_key', 'user_confirmed']);
+  // A set names the focus it replaces; null means no focus is expected.
+  assert.deepEqual(ownerPin.inputSchema.properties.expected_current_focus_id.anyOf,
+    [{ type: 'string', format: 'uuid' }, { type: 'null' }]);
+  assert.match(ownerPin.description, /owner_pin_focus_conflict/);
+  assert.match(ownerPin.description, /clued_work_claim/);
 
   const previousFetch = globalThis.fetch;
   const calls = [];
@@ -55,7 +60,8 @@ test('MTPE inspection tools are read-only and route Binding/OAuth calls to the s
       }
     }
     const pinArgs = { operation: 'set', record_id: '11111111-1111-4111-8111-111111111111',
-      base_version: 3, idempotency_key: 'owner-pin-test', user_confirmed: true };
+      base_version: 3, expected_current_focus_id: null, idempotency_key: 'owner-pin-test',
+      user_confirmed: true };
     for (const token of [bindingToken, 'oauth-access-token']) {
       const response = await worker.fetch(request(token, 'clued_mtpe_owner_pin', pinArgs), env, ctx);
       assert.equal(response.status, 200, await response.clone().text());
