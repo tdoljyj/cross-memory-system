@@ -190,10 +190,14 @@ class CaptureGuardTest(GuardHarness):
             entries = self.merge_turn() + [call("w1", MUTATE, {"mutation": {"content": text}}),
                                            result("w1", COMMITTED)]
             self.assertIn("none names PR #7", self.run_hook(entries).stderr, text)
+        # "pr" ending one value and "7" starting the next do not name PR #7.
+        entries = self.merge_turn() + [call("w1", MUTATE, {"title": "bump pr", "base_version": 7}),
+                                       result("w1", COMMITTED)]
+        self.assertIn("none names PR #7", self.run_hook(entries).stderr)
 
     def test_gh_pr_merge_argument_forms(self):
         for command in ("gh pr merge --squash 478", "gh pr merge -R o/r 478 --merge", 'gh pr merge "478"',
-                        "(gh pr merge 478)", "gh pr merge \\\n  478 --merge",
+                        "(gh pr merge 478)", "gh pr merge \\\n  478 --merge", "gh pr merge \\\r\n 478",
                         "gh pr merge --match-head-commit 7ac3f7bc 478"):
             turn = [human("合入", "u1"), call("b1", "Bash", {"command": command}), result("b1", "ok"),
                     call("w1", MUTATE, {"mutation": {"content": "PR #47"}}), result("w1", COMMITTED)]

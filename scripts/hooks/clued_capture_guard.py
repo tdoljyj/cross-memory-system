@@ -15,9 +15,11 @@ the stop once, with a reason, when it finds:
   write after it.
 
 Only a write whose result is committed (or "appended", for the legacy event
-tool) settles a finding: a rejected, failed or unanswered write does not. A write is about an outcome when its input names
-the outcome's subject (the PR number or merge commit, the migration or the
-function); a push to main has no subject, so any committed write settles it.
+tool) settles a finding: a rejected, failed or unanswered write does not. A
+write is about an outcome when its input names the outcome's subject (the PR
+number or merge commit, the migration or the function); a push to main has no
+subject, so any committed write settles it. An appended event, like any
+committed write, also needs a checkpoint (§5).
 
 Each finding is reported at most once per session per state (no write, write
 not committed, write not about it), with state kept in the temp directory, so
@@ -91,11 +93,12 @@ GH_VALUE_OPTIONS = {"-R", "--repo", "-t", "--subject", "-b", "--body", "-F", "--
 
 
 def input_text(value) -> str:
-    """The string and number values of a tool input, one per line."""
+    """The string and number values of a tool input, NUL-separated so that no
+    pattern matches across two values."""
     if isinstance(value, dict):
-        return "\n".join(input_text(item) for item in value.values())
+        return "\0".join(input_text(item) for item in value.values())
     if isinstance(value, list):
-        return "\n".join(input_text(item) for item in value)
+        return "\0".join(input_text(item) for item in value)
     return "" if value is None or isinstance(value, bool) else str(value)
 
 
@@ -120,7 +123,7 @@ def name_subject(kind: str, name) -> Subject | None:
 
 def gh_merge_numbers(command: str) -> list[str | None]:
     """One entry per `gh pr merge` in the command: its PR number, or None."""
-    command = command.replace("\\\n", " ")
+    command = re.sub(r"\\\r?\n", " ", command)
     numbers: list[str | None] = []
     for match in GH_PR_MERGE.finditer(command):
         tokens = re.split(r"[;&|\n)]", command[match.end():], maxsplit=1)[0].split()
