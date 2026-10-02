@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // Work Claim Admission v0.1, step 3 (development/contracts/execution-admission/
-// WorkClaimAdmission.v0.1.md §4.6 L0a/L0b). One script, two modes:
+// WorkClaimAdmission.v0.1.md §4.6 L0a/L0b). One script, three modes:
 //
 //   --mode required   the unfiltered `clued-work-admission` check on every PR
 //   --mode gate       the `admission-gate` job that heavy self-hosted workflows
-//                     run first; they `needs:` it and run only on admitted=true
+//                     run first; they `needs:` it and run only on admitted=true.
+//                     It does not call Clued and holds no Clued token: it reads
+//                     the result of the trusted required check (see gate())
 //   --mode reverify   the scheduled re-check: every open PR whose last
 //                     admission run passed is verified again, and that run is
 //                     re-run when its claim no longer admits the PR (expired,
@@ -20,8 +22,8 @@
 // that admits binds the claim to that pull request in Clued; any other PR
 // naming the same claim is REJECTED (claim_bound_to_other_pr).
 //
-// The script asks Clued whether the PR's work claim admits the PR's head, base
-// and changed files: clued_work_verify_v1 (read-only, no receipt), called on
+// The required and reverify modes ask Clued whether the PR's work claim admits
+// the PR's head, base and changed files: clued_work_verify_v1 (read-only, no receipt), called on
 // the Clued database's PostgREST endpoint with the public publishable key and
 // the SHA-256 of the read-only Binding token in CLUED_CONTEXT_READ_TOKEN. The
 // database resolves the Binding and its scope itself, exactly as it does for
@@ -36,6 +38,11 @@
 // it is on, a missing trailer, a REJECTED verdict, a missing RPC, a refused
 // token or a transport error all fail closed. Non-PR events (push to main,
 // dispatch) are not admission subjects and are admitted.
+//
+// CLUED_CONTEXT_READ_TOKEN is read only by the jobs that run base-branch code
+// (the pull_request_target check and the scheduled re-verification), both in
+// the `clued-admission` environment. No `pull_request` job, whose code the PR
+// controls, is given it.
 //
 // No dependencies: Node 20+ fetch, crypto and fs only, so a hosted runner
 // finishes in seconds without an install.
@@ -567,6 +574,85 @@ export function renderReverifySummary(result) {
 }
 
 // ---------------------------------------------------------------------------
+// Gate. The admission-gate jobs run inside `pull_request` workflows, whose
+// workflow file and checkout come from the PR, so they must not hold the Clued
+// token. They do not ask Clued. They read the verdict of the trusted check:
+// the latest pull_request_target run of clued-work-admission.yml on this head.
+// That run executes base-branch code; a `pull_request` workflow cannot create
+// one, so a PR that adds a look-alike job named clued-work-admission does not
+// satisfy the gate. Both start on the same push, so the gate waits for that
+// run to finish. A PR that edits this script or its gate job changes only its
+// own cost gating; the required check, which merging needs, is unaffected.
+
+export const GATE_WAIT_SECONDS = 480;
+export const GATE_POLL_SECONDS = 10;
+const ADMISSION_EVENT = "pull_request_target";
+
+async function latestAdmissionRun(fetchImpl, env, repository, headSha) {
+  const body = await githubJson(fetchImpl, env,
+    `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=${ADMISSION_EVENT}&per_page=20`);
+  let latest = null;
+  for (const run of (body && body.workflow_runs) || []) {
+    if (run.event !== ADMISSION_EVENT || run.head_sha !== headSha) continue;
+    if (!latest || Date.parse(run.created_at) > Date.parse(latest.created_at)) latest = run;
+  }
+  return latest;
+}
+
+export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+  const enforced = enforcementEnabled(env);
+  const outcome = emptyOutcome(eventName, enforced);
+  if (!PR_EVENTS.has(eventName)) {
+    outcome.admitted = true;
+    outcome.verdict = "NOT_APPLICABLE";
+    outcome.reasons = [`event ${eventName} is not an admission subject`];
+    return outcome;
+  }
+  const pr = event && event.pull_request;
+  if (!pr || !pr.head || !pr.base) throw new Error("pull_request payload is missing head/base.");
+  outcome.head_sha = pr.head.sha;
+  outcome.base_sha = pr.base.sha;
+  outcome.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
+  const waitSeconds = Number.parseInt(env.CLUED_ADMISSION_GATE_WAIT_SECONDS ?? "", 10);
+  const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : GATE_WAIT_SECONDS;
+  try {
+    if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
+    let run = null;
+    for (let waited = 0; ; waited += GATE_POLL_SECONDS) {
+      run = await latestAdmissionRun(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha);
+      if ((run && run.status === "completed") || waited >= limit) break;
+      await sleep(GATE_POLL_SECONDS * 1000);
+    }
+    if (run) {
+      outcome.admission_run = { id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url ?? null };
+    }
+    if (!run) {
+      outcome.verdict = "NO_ADMISSION_RUN";
+      outcome.reasons.push(`no ${ADMISSION_EVENT} run of ${ADMISSION_WORKFLOW} on ${pr.head.sha} within ${limit}s`);
+    } else if (run.status !== "completed") {
+      outcome.verdict = "ADMISSION_PENDING";
+      outcome.reasons.push(`${ADMISSION_WORKFLOW} run ${run.id} still ${run.status} after ${limit}s`);
+    } else if (run.conclusion === "success") {
+      outcome.verdict = "ADMITTED";
+      outcome.admitted = true;
+    } else {
+      outcome.verdict = "REJECTED";
+      outcome.reasons.push(`${ADMISSION_WORKFLOW} run ${run.id} concluded ${run.conclusion}`);
+    }
+  } catch (error) {
+    if (enforced) throw error;
+    outcome.verdict = "NOT_ENFORCED";
+    outcome.reasons.push(`advisory gate unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!outcome.admitted && !enforced) {
+    outcome.advisory = true;
+    outcome.admitted = true;
+    outcome.reasons.push("advisory only: CLUED_WORK_ADMISSION_ENFORCE is not set");
+  }
+  return outcome;
+}
+
+// ---------------------------------------------------------------------------
 // Reporting.
 
 export function renderSummary(outcome) {
@@ -581,6 +667,10 @@ export function renderSummary(outcome) {
   }
   if (outcome.head_sha) lines.push(`**Head:** \`${outcome.head_sha}\` · **Base:** \`${outcome.base_sha}\``);
   if (outcome.claim && outcome.claim.bound_pr) lines.push(`**Claim bound to:** \`${outcome.claim.bound_pr}\``);
+  if (outcome.admission_run) {
+    const run = outcome.admission_run;
+    lines.push(`**Admission run:** ${run.html_url ? `[${run.id}](${run.html_url})` : run.id} · ${run.status}${run.conclusion ? ` / ${run.conclusion}` : ""}`);
+  }
   if (outcome.error) lines.push(`**Error:** ${outcome.error}`);
   if (outcome.reasons.length) {
     lines.push("");
@@ -635,10 +725,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
   }
   let outcome;
   try {
-    outcome = await evaluate({
-      env, event, eventName, fetchImpl,
-      workspace: env.GITHUB_WORKSPACE, withSummary: mode === "required",
-    });
+    outcome = mode === "gate"
+      ? await gate({ env, event, eventName, fetchImpl })
+      : await evaluate({ env, event, eventName, fetchImpl, workspace: env.GITHUB_WORKSPACE, withSummary: true });
   } catch (error) {
     outcome = emptyOutcome(eventName, enforcementEnabled(env));
     outcome.verdict = "ERROR";
