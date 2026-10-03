@@ -20,6 +20,12 @@ the stop once, with a reason, when it finds:
   it: Owner decisions are asked as such questions, so every answer counts as
   a decision, whatever its wording.
 
+An Owner decision (a decision-looking message or an answer) is settled only by
+a committed record write (clued_record_mutate, clued_decision_supersede or
+clued_project_mutate). An Event (the legacy clued_append_event or an extension
+clued_event_append) does not settle it: a decision kept only as an Event is
+the gap that withheld every Global Decision on 2026-10-03 (Event 3951).
+
 Only a write whose result is committed (or "appended", for the legacy event
 tool) settles a finding: a rejected, failed or unanswered write does not. A
 write is about an outcome when its input names the outcome's subject (the PR
@@ -51,7 +57,17 @@ CLUED_WRITE_TOOLS = (
     "clued_event_append",
     "clued_append_event",
 )
+# The writes that create or change a Canonical Record; only these settle an
+# Owner decision (§3).
+RECORD_WRITE_TOOLS = (
+    "clued_record_mutate",
+    "clued_decision_supersede",
+    "clued_project_mutate",
+)
 CLUED_CHECKPOINT_TOOL = "clued_session_checkpoint"
+EVENT_ONLY_HINT = ("An Event (clued_append_event or clued_event_append) does not record it: write the "
+                   "decision with clued_record_mutate (a decision record) or clued_decision_supersede "
+                   "(§3, §4.1).")
 
 DECISION_PATTERN = re.compile(
     r"(接受|同意|批准|决定|就这样|就按|就用|选用|暂缓|先不(做|要|考虑|推)|不做了|不再|取消|冻结|解冻"
@@ -92,6 +108,7 @@ class Finding:
 class Write:
     pos: int
     text: str  # the string values of the call's input, for subject matching
+    record: bool = False  # a record write (RECORD_WRITE_TOOLS), not an Event or Evidence
     committed: bool = False
     detail: str = "no result"  # why it did not commit
 
@@ -319,17 +336,28 @@ def prompt_text(content) -> str | None:
     return None
 
 
-def settle(writes: list[Write], after: int, subject: Subject | None) -> tuple[str, str]:
+def settle(writes: list[Write], after: int, subject: Subject | None,
+           records_only: bool = False) -> tuple[str, str]:
     """How the Clued writes after position `after` settle a finding.
 
     Returns ("settled", ""), ("none", ""), ("failed", detail) when writes were
     tried but none committed, or ("unrelated", "") when writes committed but
-    none names the subject.
+    none names the subject. With records_only (an Owner decision), only a
+    record write settles it, and ("event_only", "") means that only Events or
+    Evidence committed after it.
     """
     def names(write: Write) -> bool:
         return subject is None or any(p.search(write.text) for p in subject.patterns)
 
     later = [write for write in writes if write.pos > after]
+    if records_only:
+        records = [write for write in later if write.record]
+        if any(write.committed for write in records):
+            return ("settled", "")
+        if records:
+            return ("failed", records[-1].detail)
+        if any(write.committed for write in later):
+            return ("event_only", "")
     committed = [write for write in later if write.committed]
     if not committed:
         if not later:
@@ -362,7 +390,8 @@ def analyse(entries: list[dict]) -> list[Finding]:
                     tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
                     calls[use_id] = (pos, name, tool_input)
                     if tool_suffix(name) in CLUED_WRITE_TOOLS:
-                        writes[use_id] = Write(pos, input_text(tool_input))
+                        writes[use_id] = Write(pos, input_text(tool_input),
+                                               record=tool_suffix(name) in RECORD_WRITE_TOOLS)
             continue
         if entry.get("type") != "user":
             continue
@@ -474,7 +503,7 @@ def analyse(entries: list[dict]) -> list[Finding]:
             )
         findings.append(Finding(f"checkpoint:{context}:{use_ids[-1]}", message))
     for pos, use_id, chosen in answers:
-        state, detail = settle(ordered, pos, None)
+        state, detail = settle(ordered, pos, None, records_only=True)
         if state == "none":
             findings.append(Finding(
                 f"answer:{use_id}",
@@ -489,6 +518,12 @@ def analyse(entries: list[dict]) -> list[Finding]:
                 "the Host refuses it, tell the Owner which write is still owed (§4). If it needs no "
                 "record, say why.",
             ))
+        elif state == "event_only":
+            findings.append(Finding(
+                f"answer:{use_id}:event_only",
+                f"- The Owner answered a question (“{chosen}”) and only an Event followed. "
+                f"{EVENT_ONLY_HINT} If it needs no record, say why.",
+            ))
     # Every message that looks like a decision, not only the last: a committed
     # write after a message settles it, so in practice these are the messages
     # since the last committed write.
@@ -496,7 +531,7 @@ def analyse(entries: list[dict]) -> list[Finding]:
         match = DECISION_PATTERN.search(text)
         if not match:
             continue
-        state, detail = settle(ordered, pos, None)
+        state, detail = settle(ordered, pos, None, records_only=True)
         quote = " ".join(text.split())[:60]
         if state == "none":
             findings.append(Finding(
@@ -510,6 +545,13 @@ def analyse(entries: list[dict]) -> list[Finding]:
                 f"- An Owner message may be a decision (matched “{match.group(0)}” in “{quote}”) and "
                 f"the Clued write after it did not commit ({detail}). Fix and retry it; if Clued or "
                 "the Host refuses it, tell the Owner which write is still owed (§4).",
+            ))
+        elif state == "event_only":
+            findings.append(Finding(
+                f"decision:{key}:event_only",
+                f"- An Owner message may be a decision (matched “{match.group(0)}” in “{quote}”) and "
+                f"only an Event followed. {EVENT_ONLY_HINT} If it is not a material decision, no "
+                "record is needed.",
             ))
     return findings
 
