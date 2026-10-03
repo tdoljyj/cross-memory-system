@@ -1274,7 +1274,7 @@ const tools = [
   {
     name: "clued_append_event",
     description:
-      "Append a durable continuity event for a decision, correction, action, failure, blocker or retracted conclusion. Use during work whenever authoritative context changes.",
+      "Legacy continuity adapter for action, failure, blocker and note events. It rejects decision, correction and retraction events with decision_event_requires_record: record an Owner decision with clued_record_mutate (or clued_decision_supersede), correct a record with clued_record_mutate update, and clear an active event with clued_event_carrier_transition. Use clued_event_append for extension events.",
     inputSchema: {
       type: "object",
       required: ["session_token", "base_version", "event_type", "payload"],
@@ -1982,6 +1982,8 @@ const REQUEST_RULE_REJECTIONS: Readonly<Record<string, string | null>> = {
     "context_key must be \"global\" or \"project:<canonical_project_id>\", not a bare project ID. Retry with the prefixed key.",
   checkpoint_event_not_authorized:
     "coverage.event_ids may list only events of this checkpoint's context_key. Checkpoint each context separately: resume with that context's context_key (for example project:<id> for project-scope writes), reconcile, then checkpoint with the same context_key and its own event ids.",
+  decision_event_requires_record:
+    "clued_append_event no longer accepts decision, correction or retraction events: they withhold every State/Task/Decision record of their scope until materialized. Record an Owner decision with clued_record_mutate (operation create, record_type decision) or replace one with clued_decision_supersede; correct a record with clued_record_mutate update; clear an existing active event with clued_event_carrier_transition. Do not resend it as another event type.",
   authority_escalation_forbidden: null,
   authorized_exact_annotation_source_required: null,
   carrier_transition_receipt_invalid: null,
