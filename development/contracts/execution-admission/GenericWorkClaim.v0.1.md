@@ -8,7 +8,7 @@
   - verify 的覆盖判定保持字面：裸路径只被裸路径覆盖，`repo:` 不覆盖。GitHub 门口在第 5 步知道仓库身份后再放开。
   - kind 至少两个字符：单个字母加冒号（`C:/Clued/...`）是 Windows 盘符，按裸路径处理（生产里已有这种写集）。根目录文件名以两个以上字符加冒号开头（如 `ab:foo`）的变更路径会被当作未登记的 kind，verify 报错，按 fail closed 处理。
   - 生产迁移尚未应用，需 Owner 另行授权。
-- §10 次数与花费上限（2026-10-03，Decision `136a000e`，Task `c8778299`）：取代 v1 的每 Task 每 24 小时 10 次与每认领 20 个 head。第 1 步（令牌桶）迁移 `20261003050000_work_claims_rate_buckets.sql`、测试 `apps/clued-cloud/tests/work-claims-rate-buckets-db.test.mjs`（Decision `d3d0bbe8`，Task `00af11e4`），生产迁移尚未应用。
+- §10 次数与花费上限（2026-10-03，Decision `136a000e`，Task `c8778299`）：取代 v1 的每 Task 每 24 小时 10 次与每认领 20 个 head。第 1 步（令牌桶）迁移 `20261003050000_work_claims_rate_buckets.sql`、测试 `apps/clued-cloud/tests/work-claims-rate-buckets-db.test.mjs`（Decision `d3d0bbe8`，Task `00af11e4`），已应用 clued-prod（2026-10-03，生产版本 `20261003051745`）。第 3 步（合同 15 与认领工具说明）：Decision `c1fe7cca`，Task `12a42be8`。
 日期：2026-10-02
 Task：`52739939`（Global）。Owner 决定：门卫原则见 Task `52739939` v3，四条规则见 Decision `2a7391ff`，三条待定见 Decision `357fce4f`（§9）。
 前置：[WorkClaimAdmission.v0.1.md](WorkClaimAdmission.v0.1.md)（v1 认领、准入检查与 GitHub 门口，已在生产生效）。本文只写在 v1 之上要扩什么，v1 已有的租约、fence、续期进展、幂等规则原样沿用，不重复；v1 的次数上限由 §10 候选取代。
@@ -240,10 +240,10 @@ Record 已经有 CAS（`base_version`）：两个 Agent 同时改同一条 Recor
 
 ## 10. 次数与花费上限（候选，取代 v1 的次数上限）
 
-状态：**第 1 步已实现，生产未应用。** Owner 定方向（2026-10-03，Decision `136a000e`，Task `c8778299`），参数可在审阅时调整。迁移、合同改动、生产应用与发布各自另行授权。
+状态：**第 1 步已上生产；第 3 步（合同与工具说明）随 Agent 合同 15 发布。** Owner 定方向（2026-10-03，Decision `136a000e`，Task `c8778299`），参数可在审阅时调整。迁移、合同改动、生产应用与发布各自另行授权。
 
 第 1 步实现与本节设计的两处不同：
-- 拒绝沿用 `work_claim_budget_exhausted`，不新增 `work_claim_rate_limited`：`limit` 为 `task_claim_rate` 或 `binding_claim_rate`，另带 `task_bucket`、`binding_bucket`（tokens、capacity、refill_seconds）、`retry_after` 与 `owner_request`。现行合同和 Agent 对这个错误码的处理（等到 `retry_after` 或把确认链接交给 Owner）原样适用，所以第 1 步不必同时改合同。
+- 拒绝沿用 `work_claim_budget_exhausted`，不新增 `work_claim_rate_limited`：`limit` 为 `task_claim_rate` 或 `binding_claim_rate`，另带 `task_bucket`、`binding_bucket`（tokens、capacity、refill_seconds）、`retry_after` 与 `owner_request`。现行合同和 Agent 对这个错误码的处理（等到 `retry_after` 或把确认链接交给 Owner）原样适用，所以第 1 步不必同时改合同；合同 15 再把 `limit` 的新取值写进错误表。
 - 被拒回执只覆盖 `work_claim_issue` 里的拒绝：冲突、活认领并发上限、令牌桶。接管前置检查（认领不存在、仍有效）与续期的拒绝不写回执。同一 Binding、Task、错误码与 `limit` 一分钟内只写一条。
 
 ### 10.1 为什么改

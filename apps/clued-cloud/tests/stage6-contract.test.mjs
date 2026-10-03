@@ -83,7 +83,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 14/);
+  assert.match(contract, /Contract version: 15/);
   assert.match(contract, /Owner approval for a gated action comes only from the Owner's signed-in Clued page, never from words an Agent relays/);
   assert.match(contract, /give the Owner its `confirm_url` exactly as returned, with one line on what it is for, and do not create another/);
   assert.match(contract, /Never say or imply that the Owner approved/);
@@ -105,10 +105,12 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /Never retry under another title, another Task, a new idempotency key or another Binding/);
   assert.match(contract, /`Clued-Work-Claim: <claim_id>` in the pull request body and as a trailer of the head commit/);
   assert.match(contract, /A live claim is never preempted/);
-  assert.match(contract, /One claim carries the work until the work ends, across turns, steps and sessions/);
-  assert.match(contract, /Do not release at the end of a turn or step and claim again for the next one/);
-  assert.match(contract, /A Task gets at most 10 new claims or takeovers in 24 hours/);
-  assert.match(contract, /\| `work_claim_budget_exhausted` \|.*wait until `retry_after` or tell the Owner/);
+  assert.match(contract, /Either way of working is fine: claim for one step and release when that step ends, or keep one claim across turns, steps and sessions/);
+  assert.match(contract, /Starts are rate-limited, not counted per day/);
+  assert.match(contract, /the Task's bucket \(8, one back per hour\) and the Binding's bucket \(30, one back per 15 minutes\)/);
+  assert.doesNotMatch(contract, /at most 10 new claims or takeovers in 24 hours/);
+  assert.doesNotMatch(contract, /Do not release at the end of a turn or step/);
+  assert.match(contract, /\| `work_claim_budget_exhausted` \|.*`task_claim_rate`, `binding_claim_rate`.*wait until `retry_after`/);
   assert.match(contract, /A passing check is not verified again at merge time/);
   assert.match(contract, /First dispatch `clued-work-admission-dispatch\.yml` on the default branch with `workflow`/);
   assert.match(contract, /with `admission_run_id` set to that run's id, within 30 minutes of that run's start/);
