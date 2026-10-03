@@ -92,17 +92,6 @@ jobs:
               exit 1 ;;
           esac
           echo "Release mode: $RELEASE_MODE"
-      # OwnerCredential §6.1 (Task 2a31ca2a): before anything changes production,
-      # consume one use of the Owner's grant for this commit. Advisory until the
-      # Owner sets CLUED_RELEASE_GRANT_ENFORCE=true; then no grant, no run.
-      - name: Consume the Owner Grant for this commit
-        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'migrate' }}
-        working-directory: .
-        env:
-          RELEASE_MODE: ${{ inputs.mode }}
-          CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
-          CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
-        run: node scripts/ci/clued-release-grant.mjs --mode "$RELEASE_MODE"
       - name: Check production database credential
         if: ${{ inputs.mode != 'source-capture' }}
         env:
@@ -162,6 +151,20 @@ jobs:
         env:
           CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
         run: test -n "$CLUED_MIGRATION_DATABASE_URL"
+      # OwnerCredential §6.1 (Task 2a31ca2a): before anything changes production,
+      # consume one use of the Owner's grant for this commit (deploy) or for the
+      # named migration files of this commit (migrate). Advisory until the Owner
+      # sets CLUED_RELEASE_GRANT_ENFORCE=true; then no grant, no run. It runs
+      # after the credential checks, so a run that cannot proceed uses no grant.
+      - name: Consume the Owner Grant for this commit
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'migrate' }}
+        working-directory: .
+        env:
+          RELEASE_MODE: ${{ inputs.mode }}
+          MIGRATIONS: ${{ inputs.migrations }}
+          CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
+          CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
+        run: node scripts/ci/clued-release-grant.mjs --mode "$RELEASE_MODE"
       # OwnerCredential §6.1: each named file from this commit is applied in its
       # own transaction together with its schema_migrations row (statements =
       # the file's exact text), then md5(statements) is checked against the file.
@@ -189,13 +192,16 @@ jobs:
             tag="mig_$(openssl rand -hex 8)"
             if grep -qF "\$$tag\$" "$file"; then echo "::error::quote tag collision"; exit 1; fi
             version=$(date -u +%Y%m%d%H%M%S)
-            wrapper=$(mktemp -p "$PWD" migrate-XXXXXX.sql)
-            { printf 'begin;\n\\i %s\n' "$file"
-              printf "insert into supabase_migrations.schema_migrations(version,name,statements) values('%s','%s',array[\$%s\$" "$version" "$short" "$tag"
+            # The whole transaction goes to the server as one psql -c string, which
+            # psql never scans for meta-commands, so a backslash line in a file
+            # (\! would run a shell next to the credential) is only a syntax
+            # error (re-review N6). One argument holds at most 128 KiB.
+            sql=$(printf 'begin;\n'; cat "$file"
+              printf "\ninsert into supabase_migrations.schema_migrations(version,name,statements) values('%s','%s',array[\$%s\$" "$version" "$short" "$tag"
               cat "$file"
-              printf '$%s$]);\ncommit;\n' "$tag"; } > "$wrapper"
-            psql -f "/work/$(basename "$wrapper")"
-            rm -f "$wrapper"
+              printf '$%s$]);\ncommit;' "$tag")
+            [ "${#sql}" -le 120000 ] || { echo "::error::$name is too large for migrate mode (${#sql} characters with its record); apply it another way"; exit 1; }
+            psql -c "$sql"
             stored=$(psql -tA -c "select md5(array_to_string(statements,'')) from supabase_migrations.schema_migrations where version='$version' and name='$short'")
             expected=$(md5sum "$file" | cut -d' ' -f1)
             [ "$stored" = "$expected" ] || { echo "::error::$short md5 $stored differs from the file $expected"; exit 1; }

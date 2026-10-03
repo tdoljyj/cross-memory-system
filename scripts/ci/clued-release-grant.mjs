@@ -6,7 +6,10 @@
 // clued-cloud-production-release.yml: before anything changes production,
 // the run consumes one use of an Owner Grant for this exact commit
 // (repo:<owner>/<name>/<40-hex sha>) and action (release.production for
-// deploy, migration.production for migrate). It calls
+// deploy, migration.production for migrate). For migrate the resources are
+// the named migration files of that commit
+// (repo:<owner>/<name>/<sha>/apps/clued-cloud/supabase/migrations/<file>), so
+// the Owner approves which migrations run, not only the commit (re-review N6). It calls
 // clued_owner_grant_door_consume_v1 on the Clued database's PostgREST
 // endpoint with the public publishable key and the SHA-256 of the Binding
 // token in CLUED_RELEASE_TOKEN (the clued-release environment), the same way
@@ -31,6 +34,17 @@ export function grantEnforced(env) {
   return /^(1|true|on|enabled)$/i.test((env.CLUED_RELEASE_GRANT_ENFORCE ?? "").trim());
 }
 
+export const MIGRATIONS_DIR = "apps/clued-cloud/supabase/migrations";
+const MIGRATION_NAME = /^[0-9]{14}_[a-z0-9_]+\.sql$/;
+
+export function migrationResources(env) {
+  const names = String(env.MIGRATIONS ?? "").split(",").map((name) => name.trim()).filter(Boolean);
+  if (names.length === 0 || names.length > 50) throw new Error("MIGRATIONS must name 1 to 50 migration files.");
+  for (const name of names) if (!MIGRATION_NAME.test(name)) throw new Error(`Not a migration file name: ${name}`);
+  const commit = commitResource(env);
+  return names.map((name) => `${commit}/${MIGRATIONS_DIR}/${name}`);
+}
+
 export function commitResource(env) {
   const repository = (env.GITHUB_REPOSITORY ?? "").trim();
   const sha = (env.GITHUB_SHA ?? "").trim().toLowerCase();
@@ -41,12 +55,13 @@ export function commitResource(env) {
 
 export async function checkGrant({ env, mode, fetchImpl, workspace }) {
   const result = {
-    mode, action: ACTIONS[mode] ?? null, resource: null, enforced: grantEnforced(env),
+    mode, action: ACTIONS[mode] ?? null, resource: null, resources: [], enforced: grantEnforced(env),
     consumed: false, grant: null, request_id: null, confirm_url: null, reason: null, error: null,
   };
   try {
     if (!result.action) throw new Error(`mode ${mode} needs no Owner Grant`);
-    result.resource = commitResource(env);
+    result.resources = mode === "migrate" ? migrationResources(env) : [commitResource(env)];
+    result.resource = result.resources.join(", ");
     if (!(env.CLUED_RELEASE_TOKEN ?? "").trim()) {
       result.reason = "CLUED_RELEASE_TOKEN is not set (clued-release environment)";
       return result;
@@ -63,7 +78,7 @@ export async function checkGrant({ env, mode, fetchImpl, workspace }) {
       },
       body: JSON.stringify({
         p_token_hash: sha256Hex(env.CLUED_RELEASE_TOKEN.trim()),
-        p_input: { action: result.action, resources: [result.resource] },
+        p_input: { action: result.action, resources: result.resources },
       }),
     });
     let body = null;

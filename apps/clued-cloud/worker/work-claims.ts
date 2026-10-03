@@ -92,7 +92,7 @@ export const workClaimTools = [
   {
     name: "clued_work_verify",
     description:
-      "Check a CI gate or reviewer runs: ADMITTED only when the claim is live, holds the task's current fence, and its write set covers every changed path. Reasons are listed (claim_not_found, claim_not_current, fence_superseded, paths_outside_write_set, claim_bound_to_other_pr, copy_not_adopted, task_ci_head_cap_reached). Without pr_ref it is read-only; with pr_ref (\"owner/repo#123\") the first admitting verify binds the claim to that pull request (one receipt) and any other pull request is then refused. Each distinct head_sha it admits counts once toward the Task's GitHub CI meter: at most 40 heads per Task in any 24 hours, across all of its claims; a refusal gives ci_retry_after.",
+      "Check a CI gate or reviewer runs: ADMITTED only when the claim is live, holds the task's current fence, and its write set covers every changed path. Reasons are listed (claim_not_found, claim_not_current, fence_superseded, paths_outside_write_set, claim_bound_to_other_pr, copy_not_adopted, task_ci_head_cap_reached, admission_binding_required). Without pr_ref it is read-only, and that is how an Agent checks a claim. With pr_ref (\"owner/repo#123\") the first admitting verify binds the claim to that pull request (one receipt) and any other pull request is then refused; once the Owner has marked a CI admission Binding, only that Binding may pass pr_ref (others get admission_binding_required). Each distinct head_sha it admits counts once toward the Task's GitHub CI meter: at most 40 heads per Task in any 24 hours, across all of its claims; a refusal gives ci_retry_after.",
     inputSchema: {
       type: "object",
       required: ["claim_id"],

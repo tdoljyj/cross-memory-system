@@ -31,6 +31,7 @@ import {
   appJwt,
   GATE_JOB_SHA256,
   gateFindings,
+  workflowFormFindings,
   workflowIsGated,
   workflowJobs,
 } from "./clued-work-admission.mjs";
@@ -337,7 +338,7 @@ test("main: exit codes and outputs in both modes, enforced and advisory", async 
   assert.match(read("s1"), /\| `clued-cloud-node22-install\.yml` \| yes \| matches apps\/clued-cloud\/package\.json \| none \|/);
 
   const failedRun = { [ADMISSION_RUNS]: { body: { workflow_runs: [
-    { id: 7, event: "pull_request_target", head_sha: HEAD, status: "completed", conclusion: "failure", created_at: "2026-10-02T04:00:00Z" },
+    { id: 7, event: "pull_request_target", head_sha: HEAD, status: "completed", conclusion: "failure", created_at: "2026-10-02T04:00:00Z", pull_requests: [{ number: 452 }] },
   ] } } };
   const gateCalls = fakeFetch(failedRun);
   code = await main(["--mode", "gate"], { ...base, CLUED_CONTEXT_READ_TOKEN: "", GITHUB_OUTPUT: out("o2"), GITHUB_STEP_SUMMARY: out("s2") }, gateCalls.fetchImpl);
@@ -483,7 +484,7 @@ test("main --mode reverify: exit 1 only when a PR could not be re-verified", asy
 // --- Token isolation: the gate reads the trusted pull_request_target check run.
 
 test("gate: admits only on a successful pull_request_target admission run on this head, without Clued", async () => {
-  const run = (overrides) => ({ id: 1, event: "pull_request_target", head_sha: HEAD, status: "completed", conclusion: "success", created_at: "2026-10-02T04:00:00Z", ...overrides });
+  const run = (overrides) => ({ id: 1, event: "pull_request_target", head_sha: HEAD, status: "completed", conclusion: "success", created_at: "2026-10-02T04:00:00Z", pull_requests: [{ number: 452 }], ...overrides });
   const gateWith = async (runs, extraEnv = {}, sleeps = []) => {
     const { fetchImpl, calls } = fakeFetch({ [ADMISSION_RUNS]: (call) => ({ body: { workflow_runs: typeof runs === "function" ? runs(call) : runs } }) });
     const outcome = await gate({ env: env({ CLUED_CONTEXT_READ_TOKEN: "", ...extraEnv }), event: withClaim(), eventName: "pull_request", fetchImpl, sleep: async (ms) => { sleeps.push(ms); } });
@@ -506,6 +507,15 @@ test("gate: admits only on a successful pull_request_target admission run on thi
   ]));
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_run.id], [false, "REJECTED", 2]);
   assert.match(outcome.reasons[0], /run 2 concluded failure/);
+
+  // Re-review N3: a passing run made for another pull request on the same head
+  // (one into a branch whose admission workflow passes everything) is ignored.
+  ({ outcome } = await gateWith([
+    run({ id: 5, conclusion: "failure", created_at: "2026-10-02T04:00:00Z" }),
+    run({ id: 6, conclusion: "success", created_at: "2026-10-02T04:09:00Z", pull_requests: [{ number: 999 }] }),
+    run({ id: 8, conclusion: "success", created_at: "2026-10-02T04:10:00Z", pull_requests: [] }),
+  ]));
+  assert.deepEqual([outcome.admitted, outcome.admission_run.id], [false, 5]);
 
   // It waits for a run that has not started or finished yet.
   let polls = 0;
@@ -580,6 +590,7 @@ const RUN_NOW = Date.parse("2026-10-02T06:30:00Z");
 const ADMIT_RUN = `GET https://api.test/repos/o/r/actions/runs/`;
 const dispatchEnv = (overrides = {}) => env({
   CLUED_CONTEXT_READ_TOKEN: "",
+  GITHUB_SHA: HEAD,
   GITHUB_WORKFLOW_REF: "o/r/.github/workflows/clued-g4-database.yml@refs/heads/feature/x",
   GITHUB_REF_NAME: "feature/x",
   ...overrides,
@@ -590,8 +601,14 @@ const admissionRun = (overrides = {}) => ({
   status: "completed", conclusion: "success", created_at: "2026-10-02T06:10:00Z",
   display_title: dispatchTitle("clued-g4-database.yml", "feature/x", CLAIM), ...overrides,
 });
-const dispatchGateWith = async (run, envOverrides = {}, runId = "77") => {
-  const { fetchImpl, calls } = fakeFetch({ [ADMIT_RUN]: run === null ? { status: 404, body: { message: "Not Found" } } : { body: run } });
+const ADMIT_JOBS = "GET https://api.test/repos/o/r/actions/runs/77/jobs";
+const ADMIT_NOTES = "GET https://api.test/repos/o/r/check-runs/701/annotations";
+const dispatchGateWith = async (run, envOverrides = {}, runId = "77", admittedHead = HEAD) => {
+  const { fetchImpl, calls } = fakeFetch({
+    [ADMIT_JOBS]: { body: { jobs: [{ id: 701 }] } },
+    [ADMIT_NOTES]: { body: admittedHead === null ? [] : [{ title: "other", message: "x" }, { title: "clued-admitted-head", message: admittedHead }] },
+    [ADMIT_RUN]: run === null ? { status: 404, body: { message: "Not Found" } } : { body: run },
+  });
   const outcome = await gate({ env: dispatchEnv(envOverrides), event: dispatchEvent(runId), eventName: "workflow_dispatch", fetchImpl, now: () => RUN_NOW });
   return { outcome, calls };
 };
@@ -599,7 +616,13 @@ const dispatchGateWith = async (run, envOverrides = {}, runId = "77") => {
 test("dispatch gate: admits only a fresh, successful default-branch admission run naming this workflow and ref", async () => {
   let { outcome, calls } = await dispatchGateWith(admissionRun());
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.claim_id], [true, "ADMITTED", CLAIM]);
-  assert.deepEqual(calls.map((c) => c.url), ["https://api.test/repos/o/r/actions/runs/77"]);
+  assert.deepEqual(calls.map((c) => c.url), ["https://api.test/repos/o/r/actions/runs/77",
+    "https://api.test/repos/o/r/actions/runs/77/jobs", "https://api.test/repos/o/r/check-runs/701/annotations"]);
+  // Re-review N3: the admission covers the commit it verified, not a later push to the ref.
+  ({ outcome } = await dispatchGateWith(admissionRun(), {}, "77", "e".repeat(40)));
+  assert.deepEqual([outcome.admitted, outcome.reasons], [false, [`admission_run_other_head:${"e".repeat(40)}`]]);
+  ({ outcome } = await dispatchGateWith(admissionRun(), {}, "77", null));
+  assert.deepEqual([outcome.admitted, outcome.reasons], [false, ["admission_run_head_unknown"]]);
   assert.ok(!calls.some((c) => c.url.startsWith(PUBLIC.url)), "the gate never calls Clued");
 
   const rejects = [
@@ -644,7 +667,7 @@ test("dispatch admission: verifies the claim on the default branch only, against
   let outcome = await dispatchAdmit({ env: base, fetchImpl, workspace: ROOT });
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.head_sha], [true, "ADMITTED", HEAD]);
   const verify = calls.find((c) => c.method === "POST");
-  assert.deepEqual(verify.body.p_input, { scope: "global", claim_id: CLAIM, head_sha: HEAD });
+  assert.deepEqual(verify.body.p_input, { scope: "global", claim_id: CLAIM, head_sha: HEAD, ci_dispatch: true });
   assert.equal(verify.body.p_token_hash, sha256Hex("clued_bnd_test"));
 
   ({ fetchImpl } = fakeFetch({ ...script, [VERIFY]: { body: { ...admittedPayload, verdict: "REJECTED", reasons: ["claim_not_current"] } } }));
@@ -745,6 +768,44 @@ test("gate guard: new workflows with self-hosted jobs need the gate; new hosted 
   assert.deepEqual(gateFindings(comment, null), []);
 });
 
+test("gate guard (re-review N4): YAML the line reader cannot follow is refused, and only literal hosted labels count as hosted", () => {
+  const hosted = "name: x\non: pull_request\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n";
+  const cases = [
+    [`${g4}\n  "evil":\n    runs-on: [self-hosted, Linux]\n    steps:\n      - run: x\n`, /workflow_not_canonical:job_line/],
+    [`${g4}\n  evil: {runs-on: [self-hosted, Linux], steps: [{run: x}]}\n`, /workflow_not_canonical:job_line/],
+    [`${g4}\n  evil: *anchor\n`, /workflow_not_canonical:job_line/],
+    ["name: x\non: pull_request\njobs:\n    evil:\n      runs-on: [self-hosted]\n      steps:\n        - run: x\n", /workflow_not_canonical:job_line/],
+    ["name: x\non: pull_request\njobs: {evil: {runs-on: self-hosted}}\n", /workflow_not_canonical:jobs/],
+    ["name: x\non: pull_request\n\"jobs\":\n  evil:\n    runs-on: self-hosted\n", /workflow_not_canonical:jobs/],
+    [`${hosted}---\njobs:\n  evil:\n    runs-on: self-hosted\n`, /workflow_not_canonical:jobs/],
+    [hosted.replace("    runs-on", "\truns-on"), /workflow_not_canonical:(tab|job_line)/],
+  ];
+  for (const [text, finding] of cases) {
+    assert.match(gateFindings(text, null).join(" "), finding, text.slice(-80));
+    assert.match(gateFindings(text, g4).join(" "), finding);
+  }
+  // Labels that are not one literal GitHub-hosted image count as self-hosted.
+  for (const runsOn of ["[Linux, X64, clued]", "${{ format('{0}-hosted','self') }}", "[ubuntu-latest, self-hosted]",
+    "\n      - ubuntu-latest", "${{ matrix.os }}", "\n      group: runners"]) {
+    const text = hosted.replace(" ubuntu-latest", ` ${runsOn}`);
+    assert.deepEqual(gateFindings(text, null), ["admission_gate_missing"], runsOn);
+  }
+  assert.deepEqual(gateFindings(hosted.replace("ubuntu-latest", "'ubuntu-24.04'"), null), []);
+  const reusable = "name: x\non: pull_request\njobs:\n  call:\n    uses: ./.github/workflows/heavy.yml\n";
+  assert.deepEqual(gateFindings(reusable, null), ["admission_gate_missing"]);
+  const merged = hosted.replace("    steps:", "    <<: *heavy\n    steps:");
+  assert.deepEqual(gateFindings(merged, null), ["admission_gate_missing"]);
+  // An existing ungated short check may not grow a new self-hosted job.
+  const trivy = fs.readFileSync(path.join(ROOT, ".github", "workflows", "trivy.yml"), "utf8");
+  assert.deepEqual(gateFindings(`${trivy}\n  extra:\n    runs-on: [self-hosted, Linux]\n    steps:\n      - run: x\n`, trivy),
+    ["self_hosted_job_added_ungated:extra"]);
+  assert.deepEqual(gateFindings(`${trivy}\n  extra:\n    runs-on: ubuntu-latest\n    steps:\n      - run: x\n`, trivy), []);
+  // Every workflow in this repository is in the form the guard reads.
+  for (const name of fs.readdirSync(path.join(ROOT, ".github", "workflows")).filter((n) => /\.ya?ml$/.test(n))) {
+    assert.deepEqual(workflowFormFindings(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8")), [], name);
+  }
+});
+
 test("enforced: a PR that unties a heavy job from the gate is REJECTED even with an admitted claim", async () => {
   const stripped = g4.replace("  database-gate-trusted-self-hosted:\n    needs: admission-gate\n", "  database-gate-trusted-self-hosted:\n");
   const b64 = (text) => ({ body: { content: Buffer.from(text).toString("base64"), encoding: "base64" } });
@@ -757,6 +818,10 @@ test("enforced: a PR that unties a heavy job from the gate is REJECTED even with
   assert.equal(outcome.admitted, false);
   assert.deepEqual(outcome.reasons, ["workflow_gate:.github/workflows/clued-g4-database.yml:job_not_gated:database-gate-trusted-self-hosted"]);
   assert.ok(!calls.some((c) => c.url.includes("old.yml")), "removed workflows are not read");
+  // Re-review N8: a PR the guard refuses is verified read-only, so it neither
+  // binds the claim nor uses the Task's CI budget.
+  const refusedVerify = calls.find((c) => c.method === "POST");
+  assert.deepEqual(Object.keys(refusedVerify.body.p_input).sort(), ["changed_paths", "claim_id", "scope"]);
   // The same PR with the gate intact is admitted.
   const intact = fakeFetch({ [FILES]: workflowFiles, [VERIFY]: { body: admittedPayload }, [COMPARE]: { body: { status: "ahead" } }, [CONTENTS]: b64(g4) });
   const ok = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl: intact.fetchImpl });

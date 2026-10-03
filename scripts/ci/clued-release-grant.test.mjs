@@ -31,16 +31,25 @@ const run = (overrides, responder, mode = "deploy") => {
   return checkGrant({ env: env(overrides), mode, fetchImpl: fake.fetchImpl, workspace: ROOT }).then((r) => ({ r, calls: fake.calls }));
 };
 
-test("release grant: deploy and migrate consume their action for the exact commit", async () => {
+test("release grant: deploy consumes for the exact commit, migrate for the named files of it", async () => {
   assert.deepEqual(ACTIONS, { deploy: "release.production", migrate: "migration.production" });
-  for (const [mode, action] of Object.entries(ACTIONS)) {
-    const { r, calls } = await run({}, () => ({ body: { status: "ok", consumed: true, grant: { grant_id: "g-1", use: 1, max_uses: 1 } } }), mode);
+  const files = "20261003170000_a.sql, 20261003180000_b.sql";
+  for (const [mode, action, resources] of [
+    ["deploy", "release.production", [`repo:o/r/${SHA}`]],
+    ["migrate", "migration.production", [`repo:o/r/${SHA}/apps/clued-cloud/supabase/migrations/20261003170000_a.sql`,
+      `repo:o/r/${SHA}/apps/clued-cloud/supabase/migrations/20261003180000_b.sql`]],
+  ]) {
+    const { r, calls } = await run({ MIGRATIONS: files }, () => ({ body: { status: "ok", consumed: true, grant: { grant_id: "g-1", use: 1, max_uses: 1 } } }), mode);
     assert.deepEqual([r.consumed, r.error, admitted(r)], [true, null, true]);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, DOOR);
     assert.equal(calls[0].headers.apikey, PUBLIC.key);
-    assert.deepEqual(calls[0].body, { p_token_hash: sha256Hex("clued_bnd_release"),
-      p_input: { action, resources: [`repo:o/r/${SHA}`] } });
+    assert.deepEqual(calls[0].body, { p_token_hash: sha256Hex("clued_bnd_release"), p_input: { action, resources } });
+  }
+  for (const [migrations, message] of [["", /1 to 50/], ["x.sql", /Not a migration file name/], ["../a.sql", /Not a migration/]]) {
+    const { r, calls } = await run({ MIGRATIONS: migrations }, null, "migrate");
+    assert.match(r.error, message);
+    assert.equal(calls.length, 0);
   }
 });
 
@@ -88,7 +97,7 @@ test("release grant: main exit codes and summary", async () => {
   console.log = () => {}; console.error = () => {};
   try {
     assert.equal(await main(["--mode", "backup"], env()), 2);
-    const base = env({ GITHUB_STEP_SUMMARY: summary, GITHUB_WORKSPACE: ROOT });
+    const base = env({ GITHUB_STEP_SUMMARY: summary, GITHUB_WORKSPACE: ROOT, MIGRATIONS: "20261003200000_x.sql" });
     assert.equal(await main(["--mode", "deploy"], base,
       fakeFetch(() => ({ body: { status: "ok", consumed: true, grant: { grant_id: "g-9", use: 1, max_uses: 1 } } })).fetchImpl), 0);
     assert.match(fs.readFileSync(summary, "utf8"), /Consumed grant `g-9`, use 1 of 1/);

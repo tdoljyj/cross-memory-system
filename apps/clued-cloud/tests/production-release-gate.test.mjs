@@ -335,10 +335,17 @@ test('deploy and migrate consume an Owner Grant before they change production', 
   assert.match(steps[grant], /inputs\.mode == 'deploy' \|\| inputs\.mode == 'migrate'/);
   assert.match(steps[grant], /node scripts\/ci\/clued-release-grant\.mjs --mode "\$RELEASE_MODE"/);
   assert.match(steps[grant], /CLUED_RELEASE_TOKEN: \$\{\{ secrets\.CLUED_RELEASE_TOKEN \}\}/);
+  // Steps that change production come after the grant; the credential checks
+  // come before it, so a run that cannot proceed uses no grant (re-review N6).
   steps.forEach((step, index) => {
-    if (/wrangler deploy|CLUED_CLOUDFLARE_DEPLOY_TOKEN|CLUED_MIGRATION_DATABASE_URL/.test(step)) {
-      assert.ok(index > grant, names[index]);
-    }
+    if (/wrangler deploy|Apply the named migrations/.test(step)) assert.ok(index > grant, names[index]);
+    if (/^name: Check (production|migration) database credential/.test(step)) assert.ok(index < grant, names[index]);
   });
+  assert.match(steps[grant], /MIGRATIONS: \$\{\{ inputs\.migrations \}\}/);
+  // The migration runs as one psql -c string, never through \i or -f, so psql
+  // meta-commands in a file are not executed.
+  const apply = steps.find((step) => step.startsWith('name: Apply the named migrations'));
+  assert.match(apply, /psql -c "\$sql"/);
+  assert.doesNotMatch(apply, /\\i |psql -f/);
   assert.match(productionWorkflow, /\n    environment: clued-release\n/);
 });
