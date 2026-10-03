@@ -90,10 +90,11 @@ test("T-CUR-35/67 successor: Event fence, materialization, hidden equivalence, a
     const appendSession = await rpc("clued_mcp_restore", {
       context_key: "global", response_view: "structured",
     });
-    const event = await rpc("clued_mcp_append_event", {
+    // Decision-class Events are rejected by the public adapter; seed a pre-guard row.
+    const event = (await admin.query("select clued_private.clued_mcp_append_event_unguarded($1,$2) value", [tokenHash, {
       context_key: "global", session_token: appendSession.session_token, base_version: appendSession.version,
       event_type: "decision", payload: { marker: "new decision carrier" }, idempotency_key: uuid(),
-    });
+    }])).rows[0].value;
     assert.equal(event.status, "appended");
     const carrier = (await admin.query("select carrier_state,visibility from clued_private.event_truth_carriers where event_id=$1", [event.event_id])).rows[0];
     assert.deepEqual(carrier, { carrier_state: "ACTIVE_UNSTRUCTURED", visibility: "work_log" });
@@ -317,11 +318,11 @@ test("T-CUR-35/67 successor: Event fence, materialization, hidden equivalence, a
     const aliasSession = await aliasRpc("clued_mcp_restore", {
       context_key: "project:alpha", response_view: "structured",
     });
-    const aliasEvent = await aliasRpc("clued_mcp_append_event", {
+    const aliasEvent = (await admin.query("select clued_private.clued_mcp_append_event_unguarded($1,$2) value", [aliasToken, {
       context_key: "project:alpha", session_token: aliasSession.session_token,
       base_version: aliasSession.version, event_type: "decision",
       payload: { marker: "alias E2 current" }, idempotency_key: uuid(),
-    });
+    }])).rows[0].value;
     assert.equal(aliasEvent.status, "appended");
     assert.equal((await admin.query(`select canonical_scope from clued_private.event_truth_carriers
       where event_id=$1`, [aliasEvent.event_id])).rows[0].canonical_scope, projectScope);

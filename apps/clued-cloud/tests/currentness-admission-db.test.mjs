@@ -108,10 +108,11 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
       clued_private.currentness_vector(s.user_id,s.context_key,s.binding_id)) digest
       from public.clued_continuity_sessions s where s.id=$1`, [session.id])).rows[0].digest;
     assert.equal(hiddenDigest, session.restored_currentness_digest);
-    const event = await rpc('clued_mcp_append_event', {
+    // Decision-class Events are rejected by the public adapter; seed a pre-guard row.
+    const event = (await admin.query('select clued_private.clued_mcp_append_event_unguarded($1,$2) value', [tokenHash, {
       context_key: 'global', session_token: restored.session_token, base_version: restored.version,
       event_type: 'decision', payload: { marker: 'new current authority' }, idempotency_key: uuid(),
-    });
+    }])).rows[0].value;
     assert.equal(event.status, 'appended');
     const coverage = { mode: 'explicit', contexts: ['global'], tracks: ['decision'], event_ids: [event.event_id] };
     const checkpoint = {

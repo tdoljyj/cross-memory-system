@@ -880,9 +880,11 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       assert.deepEqual(sh1.pack.items.map((row) => row.status.currentness), ['CURRENT']);
       const shadowSession = await call('clued_session_resume', { context_key: pShadow });
       assert.ok(shadowSession.session_token, JSON.stringify(shadowSession));
-      assert.equal((await call('clued_append_event', { context_key: pShadow, session_token: shadowSession.session_token,
-        base_version: shadowSession.version, event_type: 'decision', payload: { note: 'Agent decision event' },
-        idempotency_key: key('pshadow') })).status, 'appended');
+      // Decision-class Events are rejected by the public adapter; seed a pre-guard row.
+      assert.equal((await admin.query('select clued_private.clued_mcp_append_event_unguarded($1,$2) value', [sha256(rawBinding),
+        { context_key: pShadow, session_token: shadowSession.session_token,
+          base_version: shadowSession.version, event_type: 'decision', payload: { note: 'Agent decision event' },
+          idempotency_key: key('pshadow') }])).rows[0].value.status, 'appended');
       const sh2 = packOk(await call('clued_context_pack', { scope: pShadow, task_class: 'degraded.shadow' }), 'shadow 2');
       assert.deepEqual(sh2.pack.items.map((row) => row.status.currentness), ['SHADOWED_BY_ACTIVE_EVENT']);
       assert.notEqual(sh2.compile_inputs_digest, sh1.compile_inputs_digest, 'currentness is a compile input');
@@ -1209,9 +1211,15 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       // lifecycle (Owner Decision 0b183c2e, contract 6.1).
       const resumed = await call('clued_session_resume', { context_key: 'global' });
       assert.ok(resumed.session_token, JSON.stringify(resumed));
-      const shadow = await call('clued_append_event', { context_key: 'global', session_token: resumed.session_token,
+      const shadowInput = { context_key: 'global', session_token: resumed.session_token,
         base_version: resumed.version, event_type: 'decision', payload: { note: 'Agent decision event' },
-        idempotency_key: key('shadow') });
+        idempotency_key: key('shadow') };
+      const refused = await call('clued_append_event', shadowInput);
+      assert.equal(refused.status, 'rejected', JSON.stringify(refused));
+      assert.equal(refused.error.code, 'decision_event_requires_record');
+      // Seed the same Event as a pre-guard row to keep exercising the shadow.
+      const shadow = (await admin.query('select clued_private.clued_mcp_append_event_unguarded($1,$2) value',
+        [sha256(rawBinding), shadowInput])).rows[0].value;
       assert.equal(shadow.status, 'appended', JSON.stringify(shadow));
       assert.equal((await admin.query('select clued_private.record_currentness_fence($1,$2,null) f',
         [userId, (await decisionOf(dos.policyId)).id])).rows[0].f, 'SHADOWED_BY_ACTIVE_EVENT',

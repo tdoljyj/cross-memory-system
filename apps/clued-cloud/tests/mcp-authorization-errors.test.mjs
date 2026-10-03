@@ -69,7 +69,7 @@ test('contract-rule rejections return a tool error instead of an HTTP 403', asyn
   const original = globalThis.fetch;
   try {
     for (const message of ['lifecycle_action_cannot_edit_record_content', 'resume_required', 'project_scope_mismatch',
-      'checkpoint_event_not_authorized', 'session_context_mismatch']) {
+      'checkpoint_event_not_authorized', 'session_context_mismatch', 'decision_event_requires_record']) {
       globalThis.fetch = async () => Response.json({ code: '42501', message }, { status: 401 });
       const response = await handle(request('clued_bnd_isolated-fixture'), env);
       assert.equal(response.status, 200);
@@ -88,6 +88,10 @@ test('contract-rule rejections return a tool error instead of an HTTP 403', asyn
     globalThis.fetch = async () => Response.json({ code: '42501', message: 'session_context_mismatch' }, { status: 401 });
     const mismatch = (await (await handle(request('clued_bnd_isolated-fixture'), env)).json()).result;
     assert.match(mismatch.structuredContent.error.hint, /Omit context_key to use the session's own context/);
+    globalThis.fetch = async () => Response.json({ code: '42501', message: 'decision_event_requires_record' }, { status: 401 });
+    const decisionEvent = (await (await handle(request('clued_bnd_isolated-fixture'), env)).json()).result;
+    assert.match(decisionEvent.structuredContent.error.hint, /clued_record_mutate/);
+    assert.match(decisionEvent.structuredContent.error.hint, /Do not resend it as another event type/);
   } finally { globalThis.fetch = original; }
 });
 
