@@ -1,6 +1,6 @@
 # Owner Credential v0.1：范围授权与直达确认链接
 
-状态：**设计已合入（PR #505）；第 1–3、5 步已上线；第 4 步（Task `2a31ca2a`）与第 6 步（Task `832658e0`，等宿主支持）未做。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
+状态：**设计已合入（PR #505）；第 1–3、5 步已上线；第 4 步（Task `2a31ca2a`）已实现，需生产迁移、Worker 发布和 Owner 设置后生效；第 6 步（Task `832658e0`，等宿主支持）未做。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
 
 - 第 1 步（Owner 授权 2026-10-02，Task `3b7adacc`）：迁移 `20261002220000_owner_grants_v1.sql`，测试 `apps/clued-cloud/tests/owner-grants-db.test.mjs`。
   - Agent 侧：`clued_owner_request_v1`、`clued_owner_request_status_v1`（Binding）。
@@ -20,6 +20,11 @@
   - 都没有就拒绝，拒绝里带上这个 Binding 对该 Task 的待确认请求（没有就新建，建议 24 小时、5 次），Worker 补上绝对链接 `owner_request.confirm_url`；原来的 `owner_exemption_path` 不再返回。
   - 新豁免停发：`clued_work_claim_exemption_confirmation_issue_v1` 返回 `work_claim_exemption_retired`；迁移前已发出的第 1 步令牌仍可确认。`/work-claims/exemption` 改为说明页，指向 `/grants`。
   - 已上线（2026-10-03）：生产迁移版本 `20261003035202`（Decision `a9cb070a`），发布 run 37094621010。
+- 第 4 步（Owner 授权 2026-10-03，Task `2a31ca2a`）：迁移 `20261003170000_owner_grants_release_door.sql`，测试 `tests/owner-grants-release-door-db.test.mjs`、`scripts/ci/clued-release-grant.test.mjs`、`tests/production-release-gate.test.mjs`。
+  - 门口函数 `clued_owner_grant_door_consume_v1`（Binding，`context:write`）：只接受登记了 `release-workflow` 门口的动作；按动作与资源找授权，不看受权方和 Task（Owner 选择）。用掉一次记 `OWNER_GRANT_USED` Receipt（`door: release-workflow`）。没有授权就复用或新建这个 Binding 的待确认请求（建议 1 次、24 小时）并返回。
+  - 发布 workflow：job 进 `clued-release` environment；新增 `migrate` 模式（输入 `migrations`，逗号分隔的文件名）；`deploy` 与 `migrate` 先跑 `scripts/ci/clued-release-grant.mjs`。
+  - 授权检查先只提示（Owner 选择）：Owner 设仓库变量 `CLUED_RELEASE_GRANT_ENFORCE=true` 后才拦。
+  - Agent 合同升到第 20 版，§6.6 写明发布与迁移前按提交申请授权。
 - 第 5 步（Owner 授权 2026-10-03，Task `340693ee`）：Agent 合同升到第 14 版，§6.6 写明 Owner 批准只来自 Owner 本人登录的页面、`confirm_url` 原样交给 Owner、不得自称已批准、被拒或过期就停；§4 错误表的 `work_claim_budget_exhausted` 改为先给 `owner_request.confirm_url`。尚无门口消费的动作（发布、迁移）仍按 §6.4 需要明确授权。Worker 发布后服务端 `/clued-agent.md` 才是第 14 版。
 日期：2026-10-02
 Task：`17ab25b3`（Global）。Owner 决定：方向与优先级见 Task `17ab25b3` v3，规则见 Decision `6fa79397`，待定三条见 Decision `667f588b`（§11）。
@@ -179,14 +184,17 @@ Owner 同一天内同类的确认，只需要在第一次时选"管一段时间"
   4. 写出证据。
 
   有了这个模式，迁移不再需要 Agent 直接连生产库。
+  每个文件和它的 `schema_migrations` 行在同一个事务里写入（`statements` 就是文件原文）；已登记过的名字拒绝，不重放。连接串是 `clued-release` environment 里的 `CLUED_MIGRATION_DATABASE_URL`。
 - **`deploy` 与 `migrate` 的第一步是授权检查**（传话口）：
-  - 调用 Clued 的 `owner_grant_consume`，动作分别是 `release.production`、`migration.production`，资源是 `repo:tdoljyj/cross-memory-system/<提交>`。
-  - 调用使用 `clued-release` environment 里的 Binding token。这个 environment 限 `main`，与 `clued-admission` 的做法相同。
-  - 没有授权就失败，并在运行摘要里给出确认链接。
+  - 调用 Clued 的 `clued_owner_grant_door_consume_v1`，动作分别是 `release.production`、`migration.production`，资源是 `repo:tdoljyj/cross-memory-system/<40 位提交>`。
+  - 调用使用 `clued-release` environment 里的 Binding token（`CLUED_RELEASE_TOKEN`）。这个 environment 限 `main`，与 `clued-admission` 的做法相同。
+  - 门口只看动作和提交，不看是哪个 Agent 申请的、挂在哪个 Task 上（Owner 选择 2026-10-03）。
+  - 没有授权时在运行摘要里给出确认链接；Owner 设 `CLUED_RELEASE_GRANT_ENFORCE=true` 之后才失败，之前只提示（Owner 选择 2026-10-03）。
 - **`backup` 与 `preflight` 不需要授权**：它们不改变生产。
 
 **Owner 需要做的设置**：
-- 新建 `clued-release` environment，并放入 token。
+- 新建 `clued-release` environment（部署分支只限 `main`），放入 `CLUED_RELEASE_TOKEN`（一个有 `context:write` 的 Binding token）和 `CLUED_MIGRATION_DATABASE_URL`。
+- 试跑一次确认能消费授权后，设仓库变量 `CLUED_RELEASE_GRANT_ENFORCE=true`。
 - 建议把 Agent 使用的 Supabase 连接改为只读（Supabase MCP 支持只读模式）。否则 Agent 仍能绕过 workflow 直接改生产，§9 写明了这一点。
 
 ### 6.2 认领豁免

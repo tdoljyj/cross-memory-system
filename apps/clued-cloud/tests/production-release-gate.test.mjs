@@ -317,4 +317,28 @@ test('production release deploys only when deploy is chosen explicitly', () => {
   assert.notEqual(run({ RELEASE_MODE: 'source-capture' }), 0);
   assert.equal(run({ RELEASE_MODE: 'source-capture', SOURCE_REQUEST_ID: 'r', SOURCE_REQUEST_DIGEST: 'd' }), 0);
   assert.notEqual(run({ RELEASE_MODE: 'deploy', SOURCE_REQUEST_ID: 'r' }), 0);
+  // migrate names its files; no other mode takes them.
+  assert.notEqual(run({ RELEASE_MODE: 'migrate' }), 0);
+  assert.equal(run({ RELEASE_MODE: 'migrate', MIGRATIONS: '20261003170000_owner_grants_release_door.sql' }), 0);
+  assert.notEqual(run({ RELEASE_MODE: 'migrate', MIGRATIONS: 'x.sql', SOURCE_REQUEST_ID: 'r' }), 0);
+  for (const mode of ['preflight', 'backup', 'deploy']) {
+    assert.notEqual(run({ RELEASE_MODE: mode, MIGRATIONS: 'x.sql' }), 0, mode);
+  }
+});
+
+test('deploy and migrate consume an Owner Grant before they change production', () => {
+  // Owner Credential v0.1 §6.1 (Task 2a31ca2a): the grant step comes first.
+  const steps = productionWorkflow.split(/\n      - /).slice(1);
+  const names = steps.map((step) => step.split('\n')[0]);
+  const grant = names.indexOf('name: Consume the Owner Grant for this commit');
+  assert.ok(grant > 0);
+  assert.match(steps[grant], /inputs\.mode == 'deploy' \|\| inputs\.mode == 'migrate'/);
+  assert.match(steps[grant], /node scripts\/ci\/clued-release-grant\.mjs --mode "\$RELEASE_MODE"/);
+  assert.match(steps[grant], /CLUED_RELEASE_TOKEN: \$\{\{ secrets\.CLUED_RELEASE_TOKEN \}\}/);
+  steps.forEach((step, index) => {
+    if (/wrangler deploy|CLUED_CLOUDFLARE_DEPLOY_TOKEN|CLUED_MIGRATION_DATABASE_URL/.test(step)) {
+      assert.ok(index > grant, names[index]);
+    }
+  });
+  assert.match(productionWorkflow, /\n    environment: clued-release\n/);
 });

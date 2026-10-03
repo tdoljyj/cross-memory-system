@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 19
+Contract version: 20
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -120,6 +120,7 @@ Rules for every capture:
    - A refusal that carries `owner_request` (for example `work_claim_budget_exhausted` on a start-rate bucket) already holds the request: give the Owner its `confirm_url` exactly as returned, with one line on what it is for, and do not create another.
    - To ask ahead of a gated action, call `clued_owner_request` with the registered `action`, the `resources` it touches, the Task and a stable `idempotency_key`, and give the Owner `request.confirm_url` the same way. `agent_note` is shown to the Owner marked unverified; it never changes what is approved.
    - Never say or imply that the Owner approved. Read the outcome with `clued_owner_request` and the `request_id`, or retry the gated call once the Owner says they acted; the service consumes the grant itself. A `rejected` or `expired` request ends that attempt: tell the Owner, and do not ask again under other wording, another key or another Binding.
+   - The production release workflow consumes grants for its `deploy` mode (`release.production`) and its `migrate` mode (`migration.production`), for the resource `repo:<owner>/<name>/<commit>` with the full 40-hex commit it runs on. Before you dispatch either mode, request that action for that exact commit and give the Owner the link; a run with no grant prints its own `confirm_url` in its summary, which you hand over the same way. Once the Owner has set up its environment, apply production migrations through the `migrate` mode rather than a direct database connection.
    - A grant counts only where the service consumes it. Until it does for an action, the explicit authorization of item 4 still applies, and decisions no door enforces (direction, preferences) are still asked in the conversation.
 
 ## 7. Governed external workspace mutations
