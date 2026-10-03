@@ -2273,7 +2273,8 @@ async function callTool(
       : { status: "not_ready", gate: "G6_CURRENTNESS",
           missing_requirements: ["all_path_checkpoint_enforcement"] }
     : sanitized;
-  const result = await withWorkClaims(request, env, name, args, withAuthorityCapture(name, gated));
+  const captured = await withWorkClaims(request, env, name, args, withAuthorityCapture(name, gated));
+  const result = name in workClaimRpcByTool ? withConfirmUrl(captured, new URL(request.url).origin, "owner_request") : captured;
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
     structuredContent: result,
