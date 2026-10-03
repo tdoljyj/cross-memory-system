@@ -1,0 +1,24 @@
+{
+  "schema": "clued.design-refs-exempt/1",
+  "note": "Frozen design documents that scripts/ci/check_design_refs.py does not check: their bytes are pinned elsewhere, so IDs cannot be added in place. Their deferrals are tracked in Clued instead (Task b896173e).",
+  "exempt": [
+    {
+      "path": "development/contracts/integration-runtime/IntegrationRuntime.v0.1.8.md",
+      "pinned_by": "development/contracts/integration-runtime/README.md",
+      "decision": "558c0a0b-2aab-407e-ad81-653da675b164",
+      "reason": "Frozen S2c implementation contract; README.md records its SHA-256 and the freeze. Changes go to a new version or ERRATA.md."
+    },
+    {
+      "path": "development/contracts/information-flow/M0DCloseout.v0.1.md",
+      "pinned_by": "artifacts/clued-validation/information-flow-m0d/c101f1ea3299/b09-review.json",
+      "decision": "825aa822-7cb2-4239-a3a1-0989200ef068",
+      "reason": "Frozen M0-D closeout contract (commit 2aa51246, SHA-256 5c6371cf); review evidence binds its bytes."
+    },
+    {
+      "path": "development/contracts/model-program/m0/README.md",
+      "pinned_by": "development/contracts/model-program/m0/SHA256SUMS.json",
+      "decision": null,
+      "reason": "Closed-world M0 manifest: SHA256SUMS.json binds every M0 file, this README included; changing its bytes invalidates the M0 manifest."
+    }
+  ]
+}

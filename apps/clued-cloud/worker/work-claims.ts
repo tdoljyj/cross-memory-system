@@ -32,7 +32,7 @@ const uuid = { type: "string", format: "uuid" } as const;
 const writeSet = {
   type: "array", minItems: 1, maxItems: 200, uniqueItems: true,
   items: { type: "string", minLength: 1, maxLength: 400 },
-  description: "Repository paths or globs this work will change (\"*\" within a segment, \"**\" across segments). Normalized and sorted by the server.",
+  description: "Repository paths or globs this work will change (\"*\" within a segment, \"**\" across segments), or typed resources kind:value: storage:<connection_id>/<path under the registered root> (checked by the Clued storage write tools), repo:<owner>/<name>/<path>, record:<canonical id>. No whitespace; cover names with spaces by a glob. Normalized and sorted by the server.",
 } as const;
 const triggerRefs = {
   type: "array", maxItems: 50, uniqueItems: true,
@@ -92,7 +92,7 @@ export const workClaimTools = [
   {
     name: "clued_work_verify",
     description:
-      "Check a CI gate or reviewer runs: ADMITTED only when the claim is live, holds the task's current fence, and its write set covers every changed path. Reasons are listed (claim_not_found, claim_not_current, fence_superseded, paths_outside_write_set, claim_bound_to_other_pr, claim_head_cap_reached). Without pr_ref it is read-only; with pr_ref (\"owner/repo#123\") the first admitting verify binds the claim to that pull request (one receipt) and any other pull request is then refused; each distinct head_sha it admits is recorded, and a claim admits at most 20 heads.",
+      "Check a CI gate or reviewer runs: ADMITTED only when the claim is live, holds the task's current fence, and its write set covers every changed path. Reasons are listed (claim_not_found, claim_not_current, fence_superseded, paths_outside_write_set, claim_bound_to_other_pr, copy_not_adopted, task_ci_head_cap_reached, admission_binding_required). Without pr_ref it is read-only, and that is how an Agent checks a claim. With pr_ref (\"owner/repo#123\") the first admitting verify binds the claim to that pull request (one receipt) and any other pull request is then refused; once the Owner has marked a CI admission Binding, only that Binding may pass pr_ref (others get admission_binding_required). Each distinct head_sha it admits counts once toward the Task's GitHub CI meter: at most 40 heads per Task in any 24 hours, across all of its claims; a refusal gives ci_retry_after.",
     inputSchema: {
       type: "object",
       required: ["claim_id"],

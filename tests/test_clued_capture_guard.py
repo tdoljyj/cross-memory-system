@@ -350,6 +350,44 @@ class CaptureGuardTest(GuardHarness):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("did not commit (rejected: authority_escalation_forbidden)", proc.stderr)
 
+    def test_answer_followed_only_by_an_event_still_blocks(self):
+        # 2026-10-03: a decision kept only as a legacy decision Event withheld
+        # every Global Decision. An Event never records an Owner decision.
+        for tool, body in (("mcp__Clued__clued_append_event", {"status": "appended", "event_id": 3951}),
+                           ("mcp__Clued__clued_event_append", COMMITTED)):
+            entries = ask("q1", "先对账吗？", "先对账，优先级先不用管") + [
+                call("e1", tool, {"payload": {"text": "先对账"}}), result("e1", body),
+                call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+            proc = self.run_hook(entries)
+            self.assertEqual(proc.returncode, 2, tool)
+            self.assertIn("only an Event followed", proc.stderr)
+            self.assertIn("clued_record_mutate", proc.stderr)
+
+    def test_decision_message_followed_only_by_an_event_still_blocks(self):
+        entries = [human("先对账，优先级先不用管，就这样", "u9"),
+                   call("e1", "mcp__Clued__clued_append_event", {"event_type": "note"}),
+                   result("e1", {"status": "appended", "event_id": 7}),
+                   call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+        proc = self.run_hook(entries)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("only an Event followed", proc.stderr)
+
+    def test_record_write_settles_a_decision_after_an_event(self):
+        entries = ask("q1", "先对账吗？", "先对账") + [
+            call("e1", "mcp__Clued__clued_append_event"), result("e1", {"status": "appended", "event_id": 7}),
+            call("w1", "mcp__Clued__clued_decision_supersede"), result("w1", COMMITTED),
+            call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+        self.assertEqual(self.run_hook(entries).returncode, 0)
+
+    def test_refused_record_write_is_reported_even_when_an_event_committed(self):
+        entries = ask("q1", "接受吗？", "接受") + [
+            call("w1", MUTATE), result("w1", {"status": "rejected", "error_code": "authority_escalation_forbidden"}),
+            call("e1", "mcp__Clued__clued_append_event"), result("e1", {"status": "appended", "event_id": 7}),
+            call("c1", CHECKPOINT), result("c1", {"status": "committed"})]
+        proc = self.run_hook(entries)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("did not commit (rejected: authority_escalation_forbidden)", proc.stderr)
+
     def test_declined_or_failed_question_is_not_a_decision(self):
         rejected = ("The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it "
                     "was a file edit, the new_string was NOT written to the file). STOP what you are doing.")

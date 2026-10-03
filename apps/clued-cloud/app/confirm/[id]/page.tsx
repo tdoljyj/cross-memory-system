@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { type Session } from "@supabase/supabase-js";
@@ -15,9 +15,12 @@ import "../owner.css";
 // issues a single-use token over the exact view it shows (bound to this signed-in
 // session), and "批准" commits exactly that view. All RPCs run as this account
 // session; the database refuses Bindings and delegated OAuth tokens.
+// For "grant for a while" each requested resource is a row the Owner can untick
+// (narrow) or widen to a parent Clued offers (Decision c4e82dee); "" is unticked.
 type Json = Record<string, unknown>;
 type Choice = "once" | "grant";
-type Options = { choice: Choice; seconds: number; anyAgent: boolean };
+type Options = { choice: Choice; seconds: number; anyAgent: boolean; scope: string[] };
+type ScopeRow = { resource: string; options: string[] };
 type Issued = { confirmation_token: string; view_digest: string; expires_at: string; view: Json; options: Options };
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,6 +35,8 @@ const MESSAGES: Record<string, string> = {
   owner_request_decided: "这个请求已经处理过了。",
   owner_request_expired: "这个请求已超过 24 小时，已失效。请让 Agent 重新发起。",
   owner_grant_duration_invalid: "授权时长须在 1 分钟到 7 天之间。",
+  owner_grant_resources_not_offered: "所选范围不在可选项里，请刷新页面后重选。",
+  owner_grant_resources_invalid: "至少要保留一项范围。",
   confirmation_token_expired: "确认已超过 5 分钟有效期，请刷新页面后重试。",
   confirmation_token_reused: "这次确认已经用过，请刷新页面后重试。",
   confirmation_token_revoked: "确认已被更新的选择取代，请按页面当前内容操作。",
@@ -63,10 +68,18 @@ async function rpc(name: string, input: Json): Promise<Json> {
   return value;
 }
 
-function issueInput(requestId: string, options: Options): Json {
-  return options.choice === "once"
-    ? { request_id: requestId, choice: "once", grantee: options.anyAgent ? "any_agent" : "requester" }
-    : { request_id: requestId, choice: "grant", expires_seconds: options.seconds, grantee: options.anyAgent ? "any_agent" : "requester" };
+function issueInput(requestId: string, options: Options, rows: ScopeRow[]): Json {
+  const grantee = options.anyAgent ? "any_agent" : "requester";
+  if (options.choice === "once") return { request_id: requestId, choice: "once", grantee };
+  const input: Json = { request_id: requestId, choice: "grant", expires_seconds: options.seconds, grantee };
+  // Sent only when the Owner changed the scope; otherwise Clued keeps the request's.
+  if (options.scope.some((chosen, index) => chosen !== rows[index]?.resource)) input.resources = options.scope.filter(Boolean);
+  return input;
+}
+function scopeRows(value: unknown): ScopeRow[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(object).map(row => ({ resource: String(row.resource ?? ""), options: list(row.options) }))
+    .filter(row => row.resource && row.options.includes(row.resource));
 }
 function durationText(seconds: number) {
   const known = DURATIONS.find(([value]) => value === seconds);
@@ -82,7 +95,8 @@ export default function OwnerConfirmPage() {
   const rawId = typeof params?.id === "string" ? params.id : "";
   const requestId = REQUEST_ID.test(rawId) ? rawId.toLowerCase() : null;
   const [request, setRequest] = useState<Json | null>(null);
-  const [options, setOptions] = useState<Options>({ choice: "grant", seconds: 14400, anyAgent: false });
+  const [options, setOptions] = useState<Options>({ choice: "grant", seconds: 14400, anyAgent: false, scope: [] });
+  const [rows, setRows] = useState<ScopeRow[]>([]);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [pending, setPending] = useState<Issued | null>(null);
   const [done, setDone] = useState<{ kind: "granted" | "rejected"; grant?: Json } | null>(null);
@@ -102,7 +116,7 @@ export default function OwnerConfirmPage() {
       current.current = next; setSession(next); setReady(true);
       if (!changed) return;
       ++epoch.current;
-      setRequest(null); setIssued(null); setPending(null); setDone(null); setError(""); setWorking(false);
+      setRequest(null); setIssued(null); setPending(null); setDone(null); setError(""); setWorking(false); setRows([]);
     });
     return () => { disposed = true; ++lifetime.current; data.subscription.unsubscribe(); };
   }, []);
@@ -123,9 +137,11 @@ export default function OwnerConfirmPage() {
       setRequest(value.request);
       const view = object(value.view) ? value.view : {};
       const seconds = Number(view.expires_seconds);
-      const initial: Options = { choice: "grant", seconds: Number.isInteger(seconds) && seconds >= 60 ? seconds : 14400, anyAgent: false };
-      setOptions(initial);
-      if (value.request.status === "pending") await issue(id, initial, generation);
+      const offered = scopeRows(value.resource_options);
+      const initial: Options = { choice: "grant", seconds: Number.isInteger(seconds) && seconds >= 60 ? seconds : 14400,
+        anyAgent: false, scope: offered.map(row => row.resource) };
+      setRows(offered); setOptions(initial);
+      if (value.request.status === "pending") await issue(id, initial, generation, offered);
     } catch (failure) {
       if (epoch.current === generation) setError(failure instanceof RequestFailure ? failure.message : "暂时无法读取请求。");
     } finally { if (epoch.current === generation) setWorking(false); }
@@ -133,8 +149,8 @@ export default function OwnerConfirmPage() {
 
   // Step 1: a token over exactly the view these options produce. A newer
   // issue revokes the older token, so only what is on screen can be approved.
-  async function issue(id: string, next: Options, generation: number): Promise<Issued | null> {
-    const value = await rpc("clued_owner_grant_confirmation_issue_v1", issueInput(id, next));
+  async function issue(id: string, next: Options, generation: number, offered = rows): Promise<Issued | null> {
+    const value = await rpc("clued_owner_grant_confirmation_issue_v1", issueInput(id, next, offered));
     if (epoch.current !== generation) return null;
     if (value.status !== "issued" || typeof value.confirmation_token !== "string" || typeof value.view_digest !== "string"
       || typeof value.expires_at !== "string" || !object(value.confirmation_view)) {
@@ -159,6 +175,17 @@ export default function OwnerConfirmPage() {
   // is used only if Clued renders the identical view, otherwise the new view is
   // shown for another look. Repeating with the same token is safe: a grant that
   // already committed is returned again, never granted twice.
+  // One handler for every scope row: data-index names the row; a checkbox
+  // keeps (the requested resource) or unticks it, a select picks an option.
+  function pickScope(event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
+    const target = event.currentTarget;
+    const index = Number(target.dataset.index);
+    const row = rows[index];
+    if (!row) return;
+    const chosen = target.type === "checkbox" ? ((target as HTMLInputElement).checked ? row.resource : "") : target.value;
+    void choose({ ...options, scope: options.scope.map((value, at) => at === index ? chosen : value) });
+  }
+
   async function approve(retry?: Issued) {
     let target = retry ?? issued;
     if (!requestId || !current.current || working || !target) return;
@@ -222,6 +249,7 @@ export default function OwnerConfirmPage() {
   const note = viewRequest && typeof viewRequest.agent_note_unverified === "string" ? viewRequest.agent_note_unverified : "";
   const grantee = view && object(view.grantee) ? view.grantee : null;
   const task = view && object(view.task) ? view.task : null;
+  const kept = options.scope.filter(Boolean).length;
 
   return <main className="context-page owner-confirm">
     <header><Link href="/">Clued</Link><Link href="/grants">我的授权</Link></header>
@@ -259,6 +287,23 @@ export default function OwnerConfirmPage() {
               </select></label>}
             <label className="owner-check"><input type="checkbox" checked={options.anyAgent} disabled={working}
               onChange={event => void choose({ ...options, anyAgent: event.target.checked })} />我的任何 Agent 都可以用（默认只给发起请求的 Agent）</label>
+            {options.choice === "grant" && rows.length > 0 && <fieldset className="owner-scope" disabled={working}>
+              <legend>范围（取消勾选即收窄，选上一级即放宽）</legend>
+              {rows.map((row, index) => {
+                const chosen = options.scope[index] ?? "";
+                return <div key={row.resource} className="owner-scope-row">
+                  <label className="owner-check"><input type="checkbox" checked={chosen !== ""}
+                    disabled={working || (chosen !== "" && kept <= 1)}
+                    data-index={index} onChange={pickScope} />
+                    {row.options.length > 1 ? "" : row.resource}</label>
+                  {row.options.length > 1 && <select aria-label={"范围：" + row.resource} value={chosen || row.resource}
+                    disabled={working || chosen === ""} data-index={index} onChange={pickScope}>
+                    {row.options.map((option, at) => <option key={option} value={option}>
+                      {option}{at === 0 ? "（请求的范围）" : ""}</option>)}
+                  </select>}
+                </div>;
+              })}
+            </fieldset>}
           </section>
           {view && <section aria-label="要批准什么"><h2>要批准什么</h2>
             <p className="context-muted">以下内容由 Clued 生成，Agent 改不了。</p>

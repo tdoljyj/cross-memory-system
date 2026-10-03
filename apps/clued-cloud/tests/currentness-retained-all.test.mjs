@@ -64,6 +64,10 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         values($1,'synthetic','T-CUR retained',$2,array['context:read','context:write','audit:read'],array['*'])
         returning id`, [userId, token])).rows[0].id;
       const rpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
+      // Decision-class Events are rejected by the public adapter; fixtures seed
+      // them through the unguarded body, as rows written before that guard.
+      const legacyAppend = async (input) => (await admin.query(
+        'select clued_private.clued_mcp_append_event_unguarded($1,$2) value', [token, input])).rows[0].value;
       const project = async (name) => {
         const id = uuid();
         const scope = `project:${id}`;
@@ -135,7 +139,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         }
         throw new Error('projection refresh did not converge');
       };
-      return { userId, token, bindingId, rpc, project, record, update, restore, checkpoint,
+      return { userId, token, bindingId, rpc, legacyAppend, project, record, update, restore, checkpoint,
         drainProjections };
     }
 
@@ -158,7 +162,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       [f.userId, p.scope, sessionId, f.bindingId]);
       const afterAudit = await f.restore(p.scope);
       assert.ok(afterAudit.active_constraints.some(r => r.id === decision), 'audit-only Events must not shadow a resident rule');
-      const event = await f.rpc('clued_mcp_append_event', { context_key: p.scope,
+      const event = await f.legacyAppend({ context_key: p.scope,
         session_token: afterAudit.session_token, base_version: afterAudit.version,
         event_type: 'decision', payload: { marker: 'Visible replacement Event' }, idempotency_key: uuid() });
       assert.equal(event.status, 'appended');
@@ -452,7 +456,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
     await t.test('T-CUR-12/13/14/40/55: legacy Event continuation, current search, cursor and CAS', async () => {
       const f = await fixture();
       const session = await f.restore('global', 'structured', { event_limit: 1, event_budget_bytes: 4096 });
-      const append = (baseVersion, marker) => f.rpc('clued_mcp_append_event', {
+      const append = (baseVersion, marker) => f.legacyAppend({
         context_key: 'global', session_token: session.session_token,
         base_version: baseVersion, event_type: 'decision',
         payload: { marker }, idempotency_key: uuid(),
@@ -865,7 +869,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       const globalBefore = (await admin.query(`select authority_revision from
         clued_private.scope_currentness_heads where user_id=$1 and canonical_scope='global'`,
       [f.userId])).rows[0]?.authority_revision ?? 0;
-      const globalDecision = await f.rpc('clued_mcp_append_event', {
+      const globalDecision = await f.legacyAppend({
         context_key: 'global', session_token: globalSession.session_token,
         base_version: globalSession.version, event_type: 'decision',
         payload: { marker: 'direct-global-decision' }, idempotency_key: uuid(),
@@ -960,7 +964,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
     await t.test('T-CUR-56: materialization rejects wrong owner/scope/version/state and replays once', async () => {
       const f = await fixture();
       const initial = await f.restore('global');
-      const event = await f.rpc('clued_mcp_append_event', {
+      const event = await f.legacyAppend({
         context_key: 'global', session_token: initial.session_token,
         base_version: initial.version, event_type: 'decision',
         payload: { marker: 'materialization-source' }, idempotency_key: uuid(),
@@ -1023,7 +1027,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         clued_private.scope_currentness_heads where user_id=$1 and canonical_scope='global'`,
       [f.userId])).rows[0].snapshot_revision;
       assert.equal(Number(revisionAfter), Number(revisionBefore) + 2);
-      const secondEvent = await f.rpc('clued_mcp_append_event', {
+      const secondEvent = await f.legacyAppend({
         context_key: 'global', session_token: initial.session_token,
         base_version: event.version, event_type: 'decision',
         payload: { marker: 'already-resolved-source' }, idempotency_key: uuid(),
@@ -1212,7 +1216,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         session_token: before.session_token, query: 'Source bound', limit: 20 });
       assert.ok(currentSearch.results.some(row => row.id === task));
       const sourceSession = await f.restore(sourceProject.scope);
-      await f.rpc('clued_mcp_append_event', { context_key: sourceProject.scope,
+      await f.legacyAppend({ context_key: sourceProject.scope,
         session_token: sourceSession.session_token, base_version: sourceSession.version,
         event_type: 'decision', payload: { title: 'New governance authority', content: 'Re-evaluate old source' },
         idempotency_key: uuid() });

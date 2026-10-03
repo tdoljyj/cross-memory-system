@@ -5,9 +5,10 @@ on:
     inputs:
       mode:
         description: >-
-          Release mode. Only deploy changes production. preflight runs the read-only gate,
-          backup creates the encrypted pre-migration backup, source-capture captures one
-          reviewed storage client source.
+          Release mode. Only deploy and migrate change production, and both first consume
+          an Owner Grant for this commit. preflight runs the read-only gate, backup creates
+          the encrypted pre-migration backup, source-capture captures one reviewed storage
+          client source, migrate applies the named migration files.
         type: choice
         required: true
         default: preflight
@@ -16,12 +17,19 @@ on:
           - backup
           - source-capture
           - deploy
+          - migrate
       source_request_id:
         description: Exact approved authorization request UUID; source-capture mode only
         type: string
         default: ''
       source_request_digest:
         description: Exact immutable authorization request SHA-256; source-capture mode only
+        type: string
+        default: ''
+      migrations:
+        description: >-
+          migrate mode only: migration file names under apps/clued-cloud/supabase/migrations,
+          comma-separated, in the order to apply
         type: string
         default: ''
 
@@ -40,6 +48,9 @@ jobs:
       github.triggering_actor == github.repository_owner
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # OwnerCredential §6.1: CLUED_RELEASE_TOKEN and CLUED_MIGRATION_DATABASE_URL
+    # live in this environment (Owner setting: deployment branches main only).
+    environment: clued-release
     defaults:
       run:
         working-directory: apps/clued-cloud
@@ -58,6 +69,7 @@ jobs:
           RELEASE_MODE: ${{ inputs.mode }}
           SOURCE_REQUEST_ID: ${{ inputs.source_request_id }}
           SOURCE_REQUEST_DIGEST: ${{ inputs.source_request_digest }}
+          MIGRATIONS: ${{ inputs.migrations }}
         run: |
           set -euo pipefail
           # Deploy is never implied: an unknown or missing mode stops here, before any
@@ -65,10 +77,16 @@ jobs:
           case "$RELEASE_MODE" in
             preflight|backup|deploy)
               test -z "$SOURCE_REQUEST_ID"
-              test -z "$SOURCE_REQUEST_DIGEST" ;;
+              test -z "$SOURCE_REQUEST_DIGEST"
+              test -z "${MIGRATIONS:-}" ;;
             source-capture)
               test -n "$SOURCE_REQUEST_ID"
-              test -n "$SOURCE_REQUEST_DIGEST" ;;
+              test -n "$SOURCE_REQUEST_DIGEST"
+              test -z "${MIGRATIONS:-}" ;;
+            migrate)
+              test -z "$SOURCE_REQUEST_ID"
+              test -z "$SOURCE_REQUEST_DIGEST"
+              test -n "${MIGRATIONS:-}" ;;
             *)
               echo "::error::Unknown release mode '$RELEASE_MODE'" >&2
               exit 1 ;;
@@ -128,7 +146,85 @@ jobs:
             "$GITHUB_SHA" "$dump_sha256" "$dump_bytes" "$encrypted_sha256" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > "$evidence_dir/production-backup-manifest.json"
           shred -u "$dump_path" "$verified_path"
-      - if: ${{ inputs.mode != 'backup' }}
+      # It connects once (select 1), so a wrong password or host fails here,
+      # before the grant step uses one of the Owner's grants (trial run
+      # 37155374056 used its grant and then failed to authenticate).
+      - name: Check migration database credential
+        if: ${{ inputs.mode == 'migrate' }}
+        env:
+          CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$CLUED_MIGRATION_DATABASE_URL"
+          # A malformed URL (for example an unencoded @ or # in the password)
+          # is reported without echoing the value.
+          database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL; URL-encode special characters in the password"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); process.stdout.write(url.toString())')
+          connected=$(docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine \
+            psql "$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select 1') \
+            || { echo "::error::Cannot connect with CLUED_MIGRATION_DATABASE_URL; no grant was used"; exit 1; }
+          [ "$connected" = "1" ] || { echo "::error::Unexpected answer from the migration database; no grant was used"; exit 1; }
+          echo "Migration database connection works"
+      # OwnerCredential §6.1 (Task 2a31ca2a): before anything changes production,
+      # consume one use of the Owner's grant for this commit (deploy) or for the
+      # named migration files of this commit (migrate). Advisory until the Owner
+      # sets CLUED_RELEASE_GRANT_ENFORCE=true; then no grant, no run. It runs
+      # after the credential checks, so a run that cannot proceed uses no grant.
+      - name: Consume the Owner Grant for this commit
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'migrate' }}
+        working-directory: .
+        env:
+          RELEASE_MODE: ${{ inputs.mode }}
+          MIGRATIONS: ${{ inputs.migrations }}
+          CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
+          CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
+        run: node scripts/ci/clued-release-grant.mjs --mode "$RELEASE_MODE"
+      # OwnerCredential §6.1: each named file from this commit is applied in its
+      # own transaction together with its schema_migrations row (statements =
+      # the file's exact text), then md5(statements) is checked against the file.
+      # A file whose name is already recorded is refused, never re-applied.
+      - name: Apply the named migrations
+        if: ${{ inputs.mode == 'migrate' }}
+        env:
+          CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
+          MIGRATIONS: ${{ inputs.migrations }}
+        run: |
+          set -euo pipefail
+          evidence_dir=.sites-runtime/release-evidence
+          mkdir -p "$evidence_dir"
+          database_url=$(node -e 'const url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); process.stdout.write(url.toString())')
+          psql() { docker run --rm -i --user "$(id -u):$(id -g)" -e DATABASE_URL="$database_url" \
+            -v "$PWD:/work:ro" -w /work postgres:17-alpine psql "$database_url" -v ON_ERROR_STOP=1 -X "$@"; }
+          applied='[]'
+          for name in $(printf '%s' "$MIGRATIONS" | tr ',' ' '); do
+            [[ "$name" =~ ^[0-9]{14}_[a-z0-9_]+\.sql$ ]] || { echo "::error::Not a migration file name: $name"; exit 1; }
+            file="supabase/migrations/$name"
+            test -f "$file" || { echo "::error::$file is not in this commit"; exit 1; }
+            short="${name#*_}"; short="${short%.sql}"
+            recorded=$(psql -tA -c "select count(*) from supabase_migrations.schema_migrations where name='$short'")
+            [ "$recorded" = "0" ] || { echo "::error::$short is already recorded in production; not re-applied"; exit 1; }
+            tag="mig_$(openssl rand -hex 8)"
+            if grep -qF "\$$tag\$" "$file"; then echo "::error::quote tag collision"; exit 1; fi
+            version=$(date -u +%Y%m%d%H%M%S)
+            # The whole transaction goes to the server as one psql -c string, which
+            # psql never scans for meta-commands, so a backslash line in a file
+            # (\! would run a shell next to the credential) is only a syntax
+            # error (re-review N6). One argument holds at most 128 KiB.
+            sql=$(printf 'begin;\n'; cat "$file"
+              printf "\ninsert into supabase_migrations.schema_migrations(version,name,statements) values('%s','%s',array[\$%s\$" "$version" "$short" "$tag"
+              cat "$file"
+              printf '$%s$]);\ncommit;' "$tag")
+            [ "${#sql}" -le 120000 ] || { echo "::error::$name is too large for migrate mode (${#sql} characters with its record); apply it another way"; exit 1; }
+            psql -c "$sql"
+            stored=$(psql -tA -c "select md5(array_to_string(statements,'')) from supabase_migrations.schema_migrations where version='$version' and name='$short'")
+            expected=$(md5sum "$file" | cut -d' ' -f1)
+            [ "$stored" = "$expected" ] || { echo "::error::$short md5 $stored differs from the file $expected"; exit 1; }
+            echo "Applied $short as $version (md5 $expected)"
+            applied=$(node -e 'const a=JSON.parse(process.argv[1]);a.push({file:process.argv[2],name:process.argv[3],version:process.argv[4],md5:process.argv[5]});process.stdout.write(JSON.stringify(a))' "$applied" "$name" "$short" "$version" "$expected")
+            sleep 1
+          done
+          node -e 'process.stdout.write(JSON.stringify({contract:"clued.production-migration-apply.v1",source_commit:process.env.GITHUB_SHA,applied:JSON.parse(process.argv[1]),finished_at:new Date().toISOString()},null,2)+"\n")' "$applied" \
+            > "$evidence_dir/production-migrations.json"
+      - if: ${{ inputs.mode != 'backup' && inputs.mode != 'migrate' }}
         run: npm ci --ignore-scripts
       - name: Capture exact nonsecret registration source
         if: ${{ inputs.mode == 'source-capture' }}
