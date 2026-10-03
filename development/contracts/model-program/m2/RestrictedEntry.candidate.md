@@ -55,7 +55,8 @@ Before any installation request, supply and review the concrete missing adapter:
 offline guest transport bound to fixed m2-a or m2-r, root-owned fixed-job launcher,
 verified read-only input handles and private output handles, resource/time limits,
 termination confirmation and durable replay ledger. Guest runtime availability
-and transport are unverified; no Node/Python/client/SSH/network install is implied.
+has since been inspected as recorded below; transport remains unverified. No
+Node/Python/client/SSH/network install is implied.
 Supply an exact complete-tool Host profile plus OS boundary enforcement and
 rollback/revocation procedure. Those installation differences are NOT_CONFIGURED
 and are not installed by this change. There is no approval to install guessed
@@ -117,7 +118,11 @@ fixed empty launcher and enforced termination, chosen offline transport plus
 any Hyper-V registration, and complete three-tool Agent Host with its revocation
 and uninstall procedure. Candidate code tests do not authorize that installation.
 
-Validation: `python3 -m unittest discover -s tests
--p test_m2_restricted_entry_python_candidate.py -v`. Windows executes ledger
+Validation: `python3 -m unittest discover -s tests -p test_m2_restricted_entry_python_candidate.py -v`. Windows executes ledger
 tests but explicitly skips Linux handle tests; the existing Linux candidate CI
 runs the complete public-fixture suite without installing Python.
+
+Local Python 3.12.10 candidate evidence: five ledger/schema tests passed and
+seven Linux-only handle tests explicitly skipped; both new Python files passed
+`py_compile`, and the four-file change passed `git diff --check`. Linux handle
+evidence must come from the exact-head CI run, not these Windows results.
