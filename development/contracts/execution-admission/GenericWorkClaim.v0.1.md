@@ -232,10 +232,10 @@ Record 已经有 CAS（`base_version`）：两个 Agent 同时改同一条 Recor
 
 ### 7.2 分步（每步单独请 Owner 授权）
 
-1. 资源模型与相交：规范化、相交、kind 登记表与测试。不接门口，行为不变。
-2. 默认门口：Clued 存储写工具接入 `collision_only`。生产迁移与 Worker 发布各需 Owner 授权。
-3. 多份模式：`claim_mode`、Native 开启页、`copy_index`、`work_claim_adopt`，以及准入 workflow 的合并后采纳运行。
-4. 合同与提示：agent-contract 新版本、resume 返回的认领带资源 kind。
+1. 资源模型与相交（Task `e9a10dbb`）：规范化、相交、kind 登记表与测试。不接门口，行为不变。
+2. 默认门口（Task `b244a345`）：Clued 存储写工具接入 `collision_only`。生产迁移与 Worker 发布各需 Owner 授权。
+3. 多份模式（Task `5d379c50`）：`claim_mode`、Native 开启页、`copy_index`、`work_claim_adopt`，以及准入 workflow 的合并后采纳运行。
+4. 合同与提示（Task `ae40c8fe`）：agent-contract 新版本、resume 返回的认领带资源 kind。
 5. 官方托管 GitHub App（Task `4d694640`）：按 §3 实现 GitHub 门口传话口。
 
 ---
@@ -352,6 +352,6 @@ Owner 定的原则：规则要能支撑不同宿主的习惯，要成本低、�
 ### 10.7 分步（每步单独请 Owner 授权）
 
 1. 迁移：令牌桶状态表与两个桶、`work_claim_rate_limited`、被拒回执；从 profile 删 `max_claims_per_task_24h`；豁免按届时 Owner 定的设计接到令牌桶上。DB 测试含历史回放、合成循环与豁免放行。
-2. 迁移：GitHub CI 计量表与每 Task 24 小时 head 上限，取代 `max_heads_per_claim`。
+2. 迁移（Task `bb9f1e36`）：GitHub CI 计量表与每 Task 24 小时 head 上限，取代 `max_heads_per_claim`。
 3. 合同与工具说明：agent-contract §1.7、错误表、`clued_work_claim` 工具描述；Worker 发布。
 4. 生产应用与 Worker 发布。
