@@ -88,13 +88,15 @@ export function ownerRequestRejection(status: number, message: string) {
   return { status: "rejected", error_code: message };
 }
 
-// Adds the absolute confirmation link to every request in the result.
-export function withConfirmUrl(result: unknown, origin: string): unknown {
+// Adds the absolute confirmation link to the request in the result: "request"
+// from this tool, "owner_request" from a work claim refused over the per-Task
+// cap (OwnerCredential §6.2).
+export function withConfirmUrl(result: unknown, origin: string, key: "request" | "owner_request" = "request"): unknown {
   if (!result || typeof result !== "object" || Array.isArray(result)) return result;
   const body = result as Record<string, unknown>;
-  const request = body.request;
+  const request = body[key];
   if (!request || typeof request !== "object" || Array.isArray(request)) return result;
   const path = (request as Record<string, unknown>).confirm_path;
   if (typeof path !== "string" || !/^\/confirm\/[0-9a-f-]{36}$/.test(path)) return result;
-  return { ...body, request: { ...(request as Record<string, unknown>), confirm_url: origin + path } };
+  return { ...body, [key]: { ...(request as Record<string, unknown>), confirm_url: origin + path } };
 }

@@ -11,6 +11,11 @@ import EmbeddedPostgres from 'embedded-postgres';
 // Work Claim per-Task cap exemption (migration 20261002190000, Owner Decision
 // d16b5bfc): only a fresh Native account session can grant one, in two steps;
 // it admits 5 more claims or takeovers of one Task for 24 hours.
+// Owner Credential step 3 (20261003030000) retired issuing new exemptions,
+// so this test applies the migrations before it: it covers the flow that
+// granted the exemptions still honoured until they expire. The state after
+// step 3 is covered by work-claims-owner-grants-db.test.mjs.
+const STEP3 = '20261003030000_work_claims_owner_grants.sql';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -54,7 +59,7 @@ test('work claim exemption: Native two-step grant lifts the per-Task cap by 5 fo
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     for (const name of (await fs.readdir(path.join(root, 'supabase/migrations')))
-      .filter((name) => name.endsWith('.sql')).sort()) {
+      .filter((name) => name.endsWith('.sql') && name < STEP3).sort()) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
