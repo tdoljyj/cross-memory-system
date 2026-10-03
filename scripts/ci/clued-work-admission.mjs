@@ -395,14 +395,65 @@ export function workflowIsGated(text) {
   return workflowJobs(text).some((job) => job.name === GATE_JOB);
 }
 
+// Re-review N4 (Task 869d2db7): the line reader above understands one YAML
+// form only, so a workflow the PR adds or changes must be in that form, or the
+// check refuses it. The jobs block is one bare `jobs:` line; inside it every
+// line is a blank or comment line, a bare `  <job>:` key line with nothing
+// after the colon, or indented four or more spaces. Quoted, flow-style or
+// aliased jobs, tabs and a second YAML document are refused.
+export function workflowFormFindings(text) {
+  const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
+  const findings = [];
+  const jobsLines = lines.map((line, i) => [line, i]).filter(([line]) => /^["']?jobs["']?\s*:/.test(line));
+  if (jobsLines.length !== 1 || !/^jobs:\s*(#.*)?$/.test(jobsLines[0][0])) return ["workflow_not_canonical:jobs"];
+  let started = false;
+  lines.forEach((line, i) => {
+    if (/\t/.test(line)) findings.push(`workflow_not_canonical:tab:${i + 1}`);
+    if (started && /^(---|\.\.\.)\s*$/.test(line)) findings.push(`workflow_not_canonical:document:${i + 1}`);
+    if (/^\S/.test(line) && !/^#/.test(line)) started = true;
+  });
+  let inJob = false;
+  for (let i = jobsLines[0][1] + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^[^\s#]/.test(line)) break;
+    if (/^\s*(#.*)?$/.test(line)) continue;
+    if (/^  [A-Za-z0-9_-]+:\s*(#.*)?$/.test(line)) { inJob = true; continue; }
+    if (inJob && /^ {4,}\S/.test(line)) continue;
+    findings.push(`workflow_not_canonical:job_line:${i + 1}`);
+  }
+  return [...new Set(findings)];
+}
+
+// A job counts as GitHub-hosted only when its runs-on is one literal
+// ubuntu-*, windows-* or macos-* label and it neither calls a reusable
+// workflow nor merges YAML anchors; anything else may reach a self-hosted
+// runner, so it is treated as one.
+const HOSTED_LABEL = /^(ubuntu|windows|macos)-[A-Za-z0-9.-]+$/;
+export function jobIsHosted(job) {
+  if (job.lines.some((line) => /^ {4}uses:/.test(line) || /^\s*<<\s*:/.test(line))) return false;
+  const value = jobField(job, "runs-on");
+  if (value === null) return false;
+  const text = value.replace(/#.*$/gm, "").trim();
+  if (text.includes("\n")) return false;
+  return HOSTED_LABEL.test(unquote(text));
+}
+
 // Findings for one workflow at the PR head; baseText is its base-branch
 // version, or null when the PR adds it. Existing ungated workflows (the
 // short checks of Owner Decision 75abfe80) stay ungated.
 export function gateFindings(headText, baseText) {
+  const form = workflowFormFindings(headText);
+  if (form.length) return form;
   const jobs = workflowJobs(headText);
-  const selfHosted = jobs.some((job) => job.lines.some((line) => !/^\s*#/.test(line) && line.includes("self-hosted")));
+  const selfHosted = jobs.some((job) => !jobIsHosted(job));
   const required = baseText === null ? selfHosted : workflowIsGated(baseText);
-  if (!required) return [];
+  if (!required) {
+    // An existing ungated workflow (a short check) may not grow a new job that
+    // can reach a self-hosted runner.
+    if (baseText === null) return [];
+    const before = new Set(workflowJobs(baseText).map((job) => job.name));
+    return jobs.filter((job) => !before.has(job.name) && !jobIsHosted(job)).map((job) => `self_hosted_job_added_ungated:${job.name}`);
+  }
   const gate = jobs.find((job) => job.name === GATE_JOB);
   if (!gate) return ["admission_gate_missing"];
   const findings = [];
@@ -602,7 +653,13 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
       return notEnforced(`changed file list truncated (${pr.changed_files} files); advisory verification skipped`);
     }
 
-    const verified = await verifyClaim(fetchImpl, env, {
+    // Re-review N8: a PR the workflow guard already refuses is verified
+    // read-only, so it neither binds the claim nor uses the Task's CI budget.
+    const verified = await verifyClaim(fetchImpl, env, gateFindingsOfPr.length ? {
+      scope: reference.scope,
+      claim_id: reference.claim_id,
+      changed_paths: outcome.changed_paths,
+    } : {
       scope: reference.scope,
       claim_id: reference.claim_id,
       changed_paths: outcome.changed_paths,
@@ -736,10 +793,12 @@ export function renderReverifySummary(result) {
 // Gate. The admission-gate jobs run inside `pull_request` workflows, whose
 // workflow file and checkout come from the PR, so they must not hold the Clued
 // token. They do not ask Clued. They read the verdict of the trusted check:
-// the latest pull_request_target run of clued-work-admission.yml on this head.
-// That run executes base-branch code; a `pull_request` workflow cannot create
-// one, so a PR that adds a look-alike job named clued-work-admission does not
-// satisfy the gate. Both start on the same push, so the gate waits for that
+// the latest pull_request_target run of clued-work-admission.yml on this head
+// for this pull request. That run executes base-branch code; a `pull_request`
+// workflow cannot create one, so a PR that adds a look-alike job named
+// clued-work-admission does not satisfy the gate. A run made for another pull
+// request with the same head (one into a branch whose copy of the admission
+// workflow passes everything) does not count either (re-review N3). Both start on the same push, so the gate waits for that
 // run to finish. A PR that edits this script or its gate job changes only its
 // own cost gating; the required check, which merging needs, is unaffected.
 
@@ -747,12 +806,13 @@ export const GATE_WAIT_SECONDS = 480;
 export const GATE_POLL_SECONDS = 10;
 const ADMISSION_EVENT = "pull_request_target";
 
-async function latestAdmissionRun(fetchImpl, env, repository, headSha) {
+export async function latestAdmissionRun(fetchImpl, env, repository, headSha, prNumber) {
   const body = await githubJson(fetchImpl, env,
     `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=${ADMISSION_EVENT}&per_page=20`);
   let latest = null;
   for (const run of (body && body.workflow_runs) || []) {
     if (run.event !== ADMISSION_EVENT || run.head_sha !== headSha) continue;
+    if (!Array.isArray(run.pull_requests) || !run.pull_requests.some((p) => p && p.number === prNumber)) continue;
     if (!latest || Date.parse(run.created_at) > Date.parse(latest.created_at)) latest = run;
   }
   return latest;
@@ -790,7 +850,7 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     let run = null;
     for (let waited = 0; ; waited += GATE_POLL_SECONDS) {
-      run = await latestAdmissionRun(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha);
+      run = await latestAdmissionRun(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, pr.number);
       if ((run && run.status === "completed") || waited >= limit) break;
       await sleep(GATE_POLL_SECONDS * 1000);
     }
@@ -844,6 +904,22 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
 export const DISPATCH_ADMISSION_WORKFLOW = "clued-work-admission-dispatch.yml";
 export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml"];
 export const DISPATCH_ADMISSION_TTL_SECONDS = 1800;
+export const ADMITTED_HEAD_TITLE = "clued-admitted-head";
+
+// The head the admission run verified, from its own notice annotation. The
+// run executes default-branch code only, so the annotation is that code's.
+async function admittedHeadOf(fetchImpl, env, runId) {
+  const jobs = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/actions/runs/${runId}/jobs`);
+  for (const job of (jobs && jobs.jobs) || []) {
+    const annotations = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/check-runs/${job.id}/annotations`);
+    for (const note of Array.isArray(annotations) ? annotations : []) {
+      if (note && note.title === ADMITTED_HEAD_TITLE && /^[0-9a-f]{40}$/.test(String(note.message ?? "").trim())) {
+        return String(note.message).trim();
+      }
+    }
+  }
+  return null;
+}
 const CLAIM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SCOPE = /^(global|project:[0-9a-fA-F-]{36})$/;
 const GIT_REF = /^[A-Za-z0-9._/-]{1,200}$/;
@@ -897,6 +973,14 @@ async function dispatchGate({ env, event, fetchImpl, now, outcome }) {
         for (const [ok, reason] of checks) if (!ok) outcome.reasons.push(reason);
         if (title.length === 4 && CLAIM_ID.test(title[3])) outcome.claim_id = title[3];
         if (outcome.reasons.length === 0) {
+          // Re-review N3: the admission covers the commit it verified, not
+          // whatever the ref points at later.
+          const admitted = await admittedHeadOf(fetchImpl, env, run.id);
+          outcome.head_sha = env.GITHUB_SHA ?? null;
+          if (!admitted) outcome.reasons.push("admission_run_head_unknown");
+          else if (admitted !== String(env.GITHUB_SHA ?? "").toLowerCase()) outcome.reasons.push(`admission_run_other_head:${admitted}`);
+        }
+        if (outcome.reasons.length === 0) {
           outcome.verdict = "ADMITTED";
           outcome.admitted = true;
         } else {
@@ -949,7 +1033,10 @@ export async function dispatchAdmit({ env, fetchImpl, workspace }) {
       if (enforced) throw new Error("CLUED_CONTEXT_READ_TOKEN is not set; admission cannot be verified.");
       return notEnforced("CLUED_CONTEXT_READ_TOKEN is not set; advisory verification skipped");
     }
-    const verified = await verifyClaim(fetchImpl, env, { scope, claim_id: claimId, head_sha: commit.sha }, workspace);
+    // The dispatched head is metered against the Task's CI budget like a pull
+    // request head (re-review MAJOR-6), and the run records the head it
+    // admitted, which the heavy workflow's gate compares with its own commit.
+    const verified = await verifyClaim(fetchImpl, env, { scope, claim_id: claimId, head_sha: commit.sha, ci_dispatch: true }, workspace);
     if (verified.kind === "rpc_unavailable") {
       if (enforced) throw new Error(`Clued ${VERIFY_RPC} is not deployed (${verified.detail}).`);
       return notEnforced(`${VERIFY_RPC} is not deployed yet (${verified.detail})`);
@@ -976,6 +1063,7 @@ export async function dispatchAdmit({ env, fetchImpl, workspace }) {
       outcome.admitted = true;
       outcome.reasons.push("advisory only: CLUED_WORK_ADMISSION_ENFORCE is not set");
     }
+    if (outcome.admitted) console.log(`::notice title=${ADMITTED_HEAD_TITLE}::${commit.sha}`);
     return outcome;
   } catch (error) {
     if (enforced) throw error;

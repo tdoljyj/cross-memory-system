@@ -197,6 +197,7 @@ Owner 同一天内同类的确认，只需要在第一次时选"管一段时间"
 
 **Owner 需要做的设置**：
 - 新建 `clued-release` environment（部署分支只限 `main`），放入 `CLUED_RELEASE_TOKEN`（一个有 `context:write` 的 Binding token）和 `CLUED_MIGRATION_DATABASE_URL`。
+- 在 `/bindings` 页面把这个 Binding 标为"发布门口"（Task `869d2db7`，Decision `38ddb8cf`）。标出后只有它能在发布门口消费授权，其他 Agent 的 Binding 不能抢先用掉。
 - 试跑一次确认能消费授权后，设仓库变量 `CLUED_RELEASE_GRANT_ENFORCE=true`。
 - 建议把 Agent 使用的 Supabase 连接改为只读（Supabase MCP 支持只读模式）。否则 Agent 仍能绕过 workflow 直接改生产，§9 写明了这一点。
 

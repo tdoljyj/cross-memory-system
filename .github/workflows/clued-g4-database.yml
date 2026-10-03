@@ -10,7 +10,6 @@ on:
   push:
     branches:
       - main
-      - feat/clued-two-level-views-v1
     paths:
       - .github/workflows/clued-g4-database.yml
       - apps/clued-cloud/package.json
