@@ -351,5 +351,8 @@ test('deploy and migrate consume an Owner Grant before they change production', 
   const apply = steps.find((step) => step.startsWith('name: Apply the named migrations'));
   assert.match(apply, /psql -c "\$sql"/);
   assert.doesNotMatch(apply, /\\i |psql -f/);
+  // The applied-migration record is kept with the run's evidence.
+  assert.match(apply, /> "\$evidence_dir\/production-migrations\.json"/);
+  assert.match(productionWorkflow, /release-evidence\/production-migrations\.json\n/);
   assert.match(productionWorkflow, /\n    environment: clued-release\n/);
 });
