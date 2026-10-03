@@ -493,3 +493,56 @@ test('tool descriptions say both relative and full paths are accepted', async ()
     }
   }
 });
+
+test('work_claim passes through to the storage RPCs; a Work Claim refusal is a structured error that dispatches nothing', async () => {
+  const before = globalThis.fetch; const calls = []; let reply;
+  globalThis.fetch = async (url, init) => { calls.push({ url: String(url), body: JSON.parse(init.body) }); return Response.json(reply); };
+  const claim = { claim_id: '50000000-0000-4000-8000-000000000005', fence: 2 };
+  const batch = { connection_id: ref.connection_id, batch_id: '40000000-0000-4000-8000-000000000004',
+    items: [{ operation: 'trash', target_kind: 'file', source_path: '90_待归类/a.md', source_file_version: '3', source_file_id: 'drive-a' }] };
+  const tools = (await (await worker.fetch(rpc('tools/list', {}), env)).json()).result.tools;
+  for (const name of ['clued_storage_submit', 'clued_storage_trash_batch']) {
+    const schema = tools.find(x => x.name === name).inputSchema.properties.work_claim;
+    assert.deepEqual([schema.required, schema.additionalProperties], [['claim_id', 'fence'], false]);
+    assert.match(tools.find(x => x.name === name).description, /work_claim_conflict/);
+  }
+  const conflict = { status: 'rejected', error_code: 'work_claim_conflict', door: 'clued-storage',
+    resources: ['storage:' + ref.connection_id + '/track/topic/example.md'], private_field: 'x',
+    conflicts: [{ claim_id: claim.claim_id, task_id: '60000000-0000-4000-8000-000000000006', holder_binding_id: '70000000-0000-4000-8000-000000000007',
+      holder_session_ref: 'session-a', status: 'ACTIVE', fence: 1, expires_at: '2026-10-03T08:00:00Z',
+      overlap: { same_task: null, paths: ['storage:' + ref.connection_id + '/track/**'], trigger_refs: [] } }] };
+  const pending = [];
+  try {
+    // Malformed claims fail at the tool boundary without a request.
+    for (const work_claim of [{}, { claim_id: claim.claim_id }, { ...claim, fence: 0 }, { ...claim, fence: '2' }, { ...claim, extra: 1 }, { claim_id: 'x', fence: 1 }]) {
+      assert.equal((await (await submit({ ...ref, mutation, work_claim })).json()).result.isError, true, JSON.stringify(work_claim));
+      assert.equal((await (await call('clued_storage_trash_batch', { ...batch, work_claim })).json()).result.isError, true);
+    }
+    assert.equal((await (await call('clued_storage_inspect', { ...ref, work_claim: claim })).json()).result.isError, true);
+    assert.equal(calls.length, 0);
+    // A valid claim reaches both RPCs unchanged.
+    reply = status();
+    assert.equal((await (await submit({ ...ref, mutation, work_claim: claim })).json()).result.isError, false);
+    assert.deepEqual(calls.at(-1).body.p_input, { ...ref, mutation, work_claim: claim, action: 'submit' });
+    reply = { status: 'rejected', error_code: 'work_claim_not_covered', uncovered: ['storage:x/y'], resources: ['storage:x/y'] };
+    const batchRefused = (await (await call('clued_storage_trash_batch', { ...batch, work_claim: claim })).json()).result;
+    assert.equal(calls.at(-1).url, env.SUPABASE_URL + '/rest/v1/rpc/clued_storage_trash_batch_v1');
+    assert.deepEqual(calls.at(-1).body.p_input.work_claim, claim);
+    assert.equal(batchRefused.isError, true);
+    assert.deepEqual(batchRefused.structuredContent, { status: 'rejected', error: 'work_claim_not_covered',
+      message: batchRefused.structuredContent.message, uncovered: ['storage:x/y'], resources: ['storage:x/y'] });
+    // A conflict: fixed fields only, isError, no dispatch.
+    reply = conflict;
+    const refused = (await (await submit({ ...ref, mutation }, env, { waitUntil: p => pending.push(p) })).json()).result;
+    assert.equal(refused.isError, true);
+    assert.deepEqual(refused.structuredContent, { status: 'rejected', error: 'work_claim_conflict', message: refused.structuredContent.message,
+      conflicts: [{ claim_id: claim.claim_id, task_id: conflict.conflicts[0].task_id, holder_binding_id: conflict.conflicts[0].holder_binding_id,
+        holder_session_ref: 'session-a', expires_at: '2026-10-03T08:00:00Z', paths: conflict.conflicts[0].overlap.paths }],
+      resources: conflict.resources });
+    assert.match(refused.structuredContent.message, /tell the user/);
+    assert.equal(pending.length, 0);
+    // An unknown rejection code is not passed through.
+    reply = { status: 'rejected', error_code: 'something_else', resources: [] };
+    assert.equal((await (await submit({ ...ref, mutation })).json()).result.structuredContent.error, 'storage_job_unavailable');
+  } finally { globalThis.fetch = before; }
+});

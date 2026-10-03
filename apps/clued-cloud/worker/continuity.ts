@@ -2146,7 +2146,8 @@ async function callTool(
       const result = storageTrashBatchResult(await supabaseRequest(env, "/rest/v1/rpc/clued_storage_trash_batch_v1", {
         method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
       }), input);
-      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
+      // A Work Claim refusal (GenericWorkClaim §4.2) is a structured tool error: no batch exists.
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: result.status === "rejected" };
     } catch (error) {
       const pathCode = storagePathCode(error);
       const message = error instanceof Error ? error.message : "";
@@ -2185,8 +2186,9 @@ async function callTool(
           input = { ...input, mutation: { ...rest, staging_id: staged.staging_id } };
         }
       }
-      const result = await callStorageJob(request, env, input, ctx, storageAgentResult);
-      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
+      const result = await callStorageJob(request, env, input, ctx, storageAgentResult) as Record<string, unknown>;
+      // A Work Claim refusal (GenericWorkClaim §4.2) is a structured tool error: no job exists, nothing is dispatched.
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: result.status === "rejected" };
     } catch (error) {
       if (binary) {
         const code = stagingErrorCode(error);
