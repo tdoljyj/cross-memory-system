@@ -1,0 +1,70 @@
+name: company-windows-once-20261003
+on:
+  pull_request:
+    types: [opened]
+    paths: [".github/workflows/company-readonly-diagnostic-20261003.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: company-windows-once-20261003
+  cancel-in-progress: false
+jobs:
+  admission-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+      - id: gate
+        env:
+          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+  company-only:
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      github.run_attempt == 1 &&
+      github.actor == github.repository_owner &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, site-company, cap-python312]
+    timeout-minutes: 3
+    steps:
+      - name: Verify exact company host, read minimal evidence, request one authorized restart
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_NAME -ne 'clued-ci-company-win-01' -or $env:COMPUTERNAME -ne 'DESK-W-591') { throw 'TARGET_MISMATCH: no restart' }
+          Write-Output ("TARGET_VERIFIED runner={0} host={1} utc={2:o}" -f $env:RUNNER_NAME,$env:COMPUTERNAME,[DateTime]::UtcNow)
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+          Write-Output ("IDENTITY name={0} admin={1}" -f $identity.Name,$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
+          $priv = & "$env:SystemRoot\System32\whoami.exe" /priv
+          if ($LASTEXITCODE -ne 0) { throw 'IDENTITY_PRIVILEGE_QUERY_FAILED' }
+          $shutdownPriv = @($priv | Select-String -Pattern 'SeShutdownPrivilege')
+          $shutdownPriv | ForEach-Object { Write-Output ("SHUTDOWN_PRIVILEGE " + $_.Line.Trim()) }
+          if ($shutdownPriv.Count -eq 0) { throw 'NO_EXISTING_SHUTDOWN_PRIVILEGE: no restart' }
+          try {
+            Get-CimInstance Win32_OperatingSystem | Select-Object CSName,LastBootUpTime | ConvertTo-Json -Compress
+          } catch { Write-Output 'BOOT_TIME_QUERY_UNAVAILABLE' }
+          Get-Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProcessName -match '^(UU|UU[A-Za-z0-9_-]*|UURemote[A-Za-z0-9_-]*|DesktopCommander[A-Za-z0-9_-]*|desktop-commander[A-Za-z0-9_-]*|Codex[A-Za-z0-9_-]*)$' } |
+            Select-Object -First 30 ProcessName,Id,SessionId,Responding | ConvertTo-Json -Compress
+          Write-Output 'PROCESS_NAME_CHECK_ONLY: node/electron-hosted agents may be unidentifiable without command lines'
+          try {
+            Get-WinEvent -FilterHashtable @{LogName='System';Id=1074,6005,6006,6008;StartTime=(Get-Date).AddHours(-6)} -MaxEvents 8 |
+              Select-Object TimeCreated,Id,ProviderName | ConvertTo-Json -Compress
+          } catch { Write-Output 'RESTART_EVENT_QUERY_UNAVAILABLE' }
+          Write-Output ("REBOOT_REQUEST_ISSUING_ONCE utc={0:o}; user authorized forced restart; no retry" -f [DateTime]::UtcNow)
+          & "$env:SystemRoot\System32\shutdown.exe" /r /f /t 15 /d p:0:0
+          $shutdownExit = $LASTEXITCODE
+          Write-Output ("REBOOT_REQUEST_EXIT_CODE={0} utc={1:o}" -f $shutdownExit,[DateTime]::UtcNow)
+          if ($shutdownExit -ne 0) { throw ("REBOOT_REQUEST_FAILED exit=" + $shutdownExit) }
+          Write-Output 'REBOOT_REQUEST_ACCEPTED; completed reboot requires independent later evidence'
