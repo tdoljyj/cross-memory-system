@@ -350,6 +350,11 @@ class InstallerTemporaryFixtureTests(unittest.TestCase):
             def fixture_parent(path):
                 self.assertTrue(path.resolve().is_relative_to(root))
             stack.enter_context(mock.patch.object(Path, "lstat", owned_stat))
+            original_fstat = os.fstat
+            def owned_fstat(fd):
+                s = original_fstat(fd)
+                return os.stat_result((s.st_mode, s.st_ino, s.st_dev, s.st_nlink, 0, 0, s.st_size, s.st_atime, s.st_mtime, s.st_ctime))
+            stack.enter_context(mock.patch.object(os, "fstat", owned_fstat))
             stack.enter_context(mock.patch.object(Path, "mkdir", mkdir))
             stack.enter_context(mock.patch.object(Path, "rmdir", rmdir))
             stack.enter_context(mock.patch.object(installer, "safe_parent", side_effect=fixture_parent))
@@ -457,6 +462,244 @@ class InstallerTemporaryFixtureTests(unittest.TestCase):
             target.write_bytes(b"CHANGED_PUBLIC_FIXTURE\n")
             target.chmod(0o555)
             self.rejected_unchanged(root, manifest)
+
+    def successor_args(self, paths, manifest):
+        package = paths["DATA"].parent / "package.zip"
+        content, _ = installer.verify_package(package, hashlib.sha256(package.read_bytes()).hexdigest())
+        snapshot = installer.retained_snapshot()
+        _, _, raw = installer.receipt_head(snapshot)
+        return (content, manifest, manifest, installer.sha(raw), installer.sha(snapshot["files"]["ledger.sqlite"][1]))
+
+    def reject_successor_without_writes(self, root, args):
+        before = self.snapshot(root)
+        directories = {str(p.relative_to(root)): p.lstat().st_ino for p in root.rglob("*") if p.is_dir()}
+        with mock.patch.object(installer, "exclusive") as write, mock.patch.object(Path, "mkdir") as mkdir, mock.patch.object(os, "chmod") as chmod:
+            with self.assertRaises((ValueError, sqlite3.DatabaseError)):
+                installer.resume_after_rollback(*args)
+            write.assert_not_called()
+            mkdir.assert_not_called()
+            chmod.assert_not_called()
+        self.assertEqual(before, self.snapshot(root))
+        self.assertEqual(directories, {str(p.relative_to(root)): p.lstat().st_ino for p in root.rglob("*") if p.is_dir()})
+
+    def test_successor_twice_preserves_exact_ledger_and_all_receipts_and_replay(self):
+        with self.installed() as (_, paths, manifest):
+            ledger = paths["DATA"] / "ledger.sqlite"
+            with sqlite3.connect(ledger) as db:
+                db.execute("INSERT INTO burns VALUES (?,?)", (installer.INSTANCE, "burn-before-rollback"))
+            installer.rollback(manifest)
+            for index in range(2):
+                old = {p.name: p.read_bytes() for p in paths["DATA"].iterdir()}
+                identity = installer.identity(ledger, 0o600)
+                installer.resume_after_rollback(*self.successor_args(paths, manifest))
+                self.assertEqual(identity, installer.identity(ledger, 0o600))
+                for name, raw in old.items():
+                    self.assertEqual((paths["DATA"] / name).read_bytes(), raw)
+                loaded = entry.load_boundary(paths["CODE"] / "boundary.py")
+                replay = loaded.ReplayLedger(ledger)
+                try:
+                    with self.assertRaisesRegex(loaded.Denied, "REPLAY_REJECTED"):
+                        replay.burn(installer.INSTANCE, "burn-before-rollback")
+                    replay.burn(installer.INSTANCE, "new-burn-" + str(index))
+                finally:
+                    replay.close()
+                installer.rollback(manifest)
+            self.assertEqual(len(list(paths["DATA"].glob("install-receipt*.json"))), 3)
+
+    def test_successor_ordinary_apply_still_rejects_retained_data(self):
+        with self.installed() as (root, paths, manifest):
+            installer.rollback(manifest)
+            args = self.successor_args(paths, manifest)
+            before = self.snapshot(root)
+            with self.assertRaisesRegex(ValueError, "INSTALL_COLLISION"):
+                installer.apply(args[0], manifest)
+            self.assertEqual(before, self.snapshot(root))
+
+    def test_successor_unknown_file_directory_journal_or_symlink_zero_write(self):
+        for name in ("unknown", "ledger.sqlite-journal", "ledger.sqlite-wal", "directory", "symlink"):
+            with self.subTest(name=name), self.installed() as (root, paths, manifest):
+                installer.rollback(manifest)
+                args = self.successor_args(paths, manifest)
+                extra = paths["DATA"] / name
+                if name == "directory":
+                    extra.mkdir()
+                elif name == "symlink":
+                    extra.symlink_to(paths["DATA"] / "ledger.sqlite")
+                else:
+                    extra.write_bytes(b"public fixture")
+                self.reject_successor_without_writes(root, args)
+
+    def test_successor_approval_hash_and_previous_manifest_mismatch_zero_write(self):
+        for index in (2, 3, 4):
+            with self.subTest(index=index), self.installed() as (root, paths, manifest):
+                installer.rollback(manifest)
+                args = list(self.successor_args(paths, manifest))
+                args[index] = {"schema": "m2-a-package-v1", "files": {}} if index == 2 else "0" * 64
+                self.reject_successor_without_writes(root, args)
+
+    def test_successor_changed_binding_receipt_permissions_and_ledger_inode_zero_write(self):
+        for change in ("binding", "receipt", "permissions", "inode"):
+            with self.subTest(change=change), self.installed() as (root, paths, manifest):
+                installer.rollback(manifest)
+                args = self.successor_args(paths, manifest)
+                ledger = paths["DATA"] / "ledger.sqlite"
+                if change == "binding":
+                    pwd = sys.modules["pwd"]
+                    pwd.getpwnam.return_value.pw_uid = 43
+                elif change == "receipt":
+                    (paths["DATA"] / "install-receipt.json").write_bytes(b"{}\n")
+                elif change == "permissions":
+                    ledger.chmod(0o640)
+                else:
+                    replacement = root / "replacement"
+                    replacement.write_bytes(ledger.read_bytes())
+                    replacement.chmod(0o600)
+                    os.replace(replacement, ledger)
+                self.reject_successor_without_writes(root, args)
+
+    def test_successor_conflicting_active_directory_zero_write(self):
+        for name in ("CODE", "CONFIG", "CGROUP"):
+            with self.subTest(name=name), self.installed() as (root, paths, manifest):
+                installer.rollback(manifest)
+                args = self.successor_args(paths, manifest)
+                paths[name].mkdir()
+                self.reject_successor_without_writes(root, args)
+
+    def test_successor_foreign_instance_extra_schema_and_malformed_ledger_zero_write(self):
+        for change in ("foreign", "table", "trigger", "malformed"):
+            with self.subTest(change=change), self.installed() as (root, paths, manifest):
+                installer.rollback(manifest)
+                ledger = paths["DATA"] / "ledger.sqlite"
+                if change == "malformed":
+                    ledger.write_bytes(b"not sqlite")
+                else:
+                    with sqlite3.connect(ledger) as db:
+                        if change == "foreign":
+                            db.execute("INSERT INTO burns VALUES ('different-instance','request')")
+                        elif change == "table":
+                            db.execute("CREATE TABLE extra(x)")
+                        else:
+                            db.execute("CREATE TRIGGER extra AFTER INSERT ON burns BEGIN SELECT 1; END")
+                self.reject_successor_without_writes(root, self.successor_args(paths, manifest))
+
+    def test_successor_backup_requires_exact_pin_and_stays_unchanged(self):
+        with self.installed() as (root, paths, manifest):
+            installer.rollback(manifest)
+            backup = paths["DATA"] / installer.BACKUP
+            backup.write_bytes(b"public cleanup backup fixture")
+            backup.chmod(0o600)
+            args = self.successor_args(paths, manifest)
+            self.reject_successor_without_writes(root, args)
+            self.reject_successor_without_writes(root, (*args, "0" * 64))
+            raw = backup.read_bytes()
+            installer.resume_after_rollback(*args, installer.sha(raw))
+            installer.rollback(manifest)
+            self.assertEqual(backup.read_bytes(), raw)
+
+    def test_successor_recorded_history_deletion_rejected_even_with_new_ledger_pin(self):
+        with self.installed() as (root, paths, manifest):
+            ledger = paths["DATA"] / "ledger.sqlite"
+            with sqlite3.connect(ledger) as db:
+                db.execute("INSERT INTO burns VALUES (?,?)", (installer.INSTANCE, "must-retain"))
+            installer.rollback(manifest)
+            installer.resume_after_rollback(*self.successor_args(paths, manifest))
+            installer.rollback(manifest)
+            with sqlite3.connect(ledger) as db:
+                db.execute("DELETE FROM burns")
+            self.reject_successor_without_writes(root, self.successor_args(paths, manifest))
+
+    def test_successor_fork_orphan_and_missing_root_zero_write(self):
+        for change in ("fork", "orphan", "missing-root"):
+            with self.subTest(change=change), self.installed() as (root, paths, manifest):
+                installer.rollback(manifest)
+                installer.resume_after_rollback(*self.successor_args(paths, manifest))
+                installer.rollback(manifest)
+                args = self.successor_args(paths, manifest)
+                head_path = next(paths["DATA"].glob("install-receipt-*.json"))
+                if change == "missing-root":
+                    (paths["DATA"] / "install-receipt.json").unlink()
+                else:
+                    receipt = json.loads(head_path.read_bytes())
+                    receipt.pop("installation_id")
+                    if change == "fork":
+                        receipt["manifest_sha256"] = "0" * 64
+                    else:
+                        receipt["predecessor"]["receipt"] = "install-receipt-" + "0" * 64 + ".json"
+                        head_path.unlink()
+                    receipt["installation_id"] = installer.sha(installer.encoded(receipt))
+                    new = paths["DATA"] / ("install-receipt-" + receipt["installation_id"] + ".json")
+                    installer.exclusive(new, installer.encoded(receipt), 0o600)
+                self.reject_successor_without_writes(root, args)
+
+    def test_successor_gid_drift_hardlink_and_snapshot_exchange_zero_write(self):
+        for change in ("gid", "hardlink", "exchange"):
+            with self.subTest(change=change), self.installed() as (root, paths, manifest):
+                installer.rollback(manifest)
+                args = self.successor_args(paths, manifest)
+                ledger = paths["DATA"] / "ledger.sqlite"
+                if change == "hardlink":
+                    os.link(ledger, root / "hardlink")
+                    self.reject_successor_without_writes(root, args)
+                elif change == "gid":
+                    original = Path.lstat
+                    def drift(path, *a, **kw):
+                        s = original(path, *a, **kw)
+                        if path == ledger:
+                            return os.stat_result((s.st_mode, s.st_ino, s.st_dev, s.st_nlink, s.st_uid, 42, s.st_size, s.st_atime, s.st_mtime, s.st_ctime))
+                        return s
+                    with mock.patch.object(Path, "lstat", drift):
+                        self.reject_successor_without_writes(root, args)
+                else:
+                    original = installer.retained_snapshot
+                    calls = []
+                    def changed():
+                        result = original()
+                        calls.append(1)
+                        if len(calls) == 2:
+                            result["files"]["ledger.sqlite"] = (result["files"]["ledger.sqlite"][0], b"changed snapshot fixture")
+                        return result
+                    with mock.patch.object(installer, "retained_snapshot", side_effect=changed):
+                        self.reject_successor_without_writes(root, args)
+
+
+class SuccessorLedgerSnapshotTests(unittest.TestCase):
+    def snapshot(self, rows=(), sql=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.sqlite"
+            with sqlite3.connect(path) as db:
+                db.execute(installer.BURNS_SQL)
+                db.executemany("INSERT INTO burns VALUES (?,?)", rows)
+                if sql:
+                    db.execute(sql)
+            db.close()
+            return path.read_bytes()
+
+    def test_exact_schema_and_fixed_instance_snapshot(self):
+        self.assertEqual(installer.ledger_burns(self.snapshot([(installer.INSTANCE, "b"), (installer.INSTANCE, "a")])), ["a", "b"])
+
+    def test_no_disk_connection_during_validation(self):
+        raw = self.snapshot()
+        connect = sqlite3.connect
+        calls = []
+        def memory_only(path, *args, **kwargs):
+            calls.append(path)
+            self.assertEqual(path, ":memory:")
+            return connect(path, *args, **kwargs)
+        with mock.patch.object(sqlite3, "connect", side_effect=memory_only):
+            self.assertEqual(installer.ledger_burns(raw), [])
+        self.assertEqual(calls, [":memory:"])
+
+    def test_foreign_instance_invalid_request_extra_schema_and_quota_rejected(self):
+        for rows, sql in (([("other", "a")], None), ([(installer.INSTANCE, "bad/request")], None), ([], "CREATE TABLE extra(x)"), ([], "CREATE VIEW extra AS SELECT * FROM burns"), ([(installer.INSTANCE, str(x)) for x in range(257)], None)):
+            with self.subTest(sql=sql, count=len(rows)):
+                with self.assertRaises(ValueError):
+                    installer.ledger_burns(self.snapshot(rows, sql))
+
+    def test_corrupt_and_wal_header_rejected(self):
+        raw = self.snapshot()
+        for candidate in (b"bad", raw[:18] + b"\x02\x02" + raw[20:]):
+            with self.assertRaises(ValueError):
+                installer.ledger_burns(candidate)
 
 
 if __name__ == "__main__":
