@@ -682,7 +682,7 @@ const g4 = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-g4-dat
 test("gate guard: every gated workflow on this branch passes and uses a listed gate job", () => {
   assert.deepEqual(GATED_FILES.sort(), [
     "clued-cloud-node22-install.yml", "clued-connection-authorization.yml", "clued-g4-database.yml",
-    "information-flow-e2e.yml", "public-mcp-behavior.yml", "public-mcp-protocol.yml",
+    "design-refs.yml", "information-flow-e2e.yml", "public-mcp-behavior.yml", "public-mcp-protocol.yml",
   ]);
   for (const name of GATED_FILES) {
     const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");

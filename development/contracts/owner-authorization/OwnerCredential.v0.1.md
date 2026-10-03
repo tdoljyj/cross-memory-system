@@ -13,7 +13,7 @@
   - 确认页 `/confirm/<id>`：打开即按默认选择（"管一段时间"，时长取 Agent 建议，否则 4 小时；只给发起的 Agent）签发确认；改选择就重新签发，只有页面上显示的那一版能被批准。点"批准"时若确认快过期，先按同样选择重签，只有 Clued 渲染出的内容完全相同才提交。Agent 说明单独一栏，标"未核实"。未登录可在页内登录。
   - 授权列表页 `/grants`：有效授权的剩余时间和已用次数、一键撤销，以及等待确认的请求链接。
   - 测试：`tests/owner-requests-transport.test.mjs`、`tests/owner-grants-ui.test.mjs`。
-  - §4 第 3 条"放宽或收窄范围"本步不做：数据库对来自请求的授权固定资源范围（`owner_grant_request_fields_fixed`）。
+  - §4 第 3 条"放宽或收窄范围"本步不做（Task `fcd55008`）：数据库对来自请求的授权固定资源范围（`owner_grant_request_fields_fixed`）。
   - 已发布（2026-10-03，发布 run 37089156567），Owner 已开 `CLUED_OWNER_REQUESTS_V1`。
 - 第 3 步（Owner 授权 2026-10-03，Task `13bb5d2c`）：迁移 `20261003030000_work_claims_owner_grants.sql`，测试 `tests/work-claims-owner-grants-db.test.mjs`。
   - 超过每 Task 认领上限时，`work_claim_issue` 先认旧豁免（到期为止），否则在认领自己的事务里消费 `work_claim.extra_claims` 授权（资源 `record:<task_id>`、Task 限定、每次认领或接管用一次），认领 Receipt 记下授权 ID 与第几次。
@@ -232,12 +232,12 @@ Clued 维护一张"受信宿主公钥"表，由 Owner 在 Native 页面登记。
 
 ## 10. 分步实施（每步单独请 Owner 授权）
 
-1. **数据与核心函数**：`owner_grant_actions`、`owner_grants_v1`、`owner_requests_v1`、Native 两步确认、`owner_grant_consume`，以及测试。不接任何门口。
-2. **确认页与授权列表页**：直达链接、手机可用、撤销；新增 MCP 工具 `clued_owner_request`。Worker 发布需 Owner 授权。
-3. **认领豁免迁到授权**（§6.2）。
-4. **发布 workflow**：新增 `migrate` 模式和授权检查步骤（§6.1）。Owner 需建 `clued-release` environment，并建议把 Supabase 连接设为只读。
-5. **合同增补**（§7）：agent-contract 新版本。
-6. **宿主签名**（§8）：等宿主支持后再做。
+1. **数据与核心函数**（Task `3b7adacc`）：`owner_grant_actions`、`owner_grants_v1`、`owner_requests_v1`、Native 两步确认、`owner_grant_consume`，以及测试。不接任何门口。
+2. **确认页与授权列表页**（Task `9cabcfa0`）：直达链接、手机可用、撤销；新增 MCP 工具 `clued_owner_request`。Worker 发布需 Owner 授权。
+3. **认领豁免迁到授权**（§6.2，Task `13bb5d2c`）。
+4. **发布 workflow**（Task `2a31ca2a`）：新增 `migrate` 模式和授权检查步骤（§6.1）。Owner 需建 `clued-release` environment，并建议把 Supabase 连接设为只读。
+5. **合同增补**（§7，Task `340693ee`）：agent-contract 新版本。
+6. **宿主签名**（§8，Task `832658e0`）：等宿主支持后再做。
 
 ---
 
