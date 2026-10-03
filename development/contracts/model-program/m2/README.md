@@ -114,7 +114,7 @@ They are **not** a replacement DatasetSplit enum. Every candidate split has
 `dataset_split_ref=null` and `domain_mapping_status=UNRESOLVED`. Per-use booleans
 are local synthetic guard inputs, not a published data-domain contract. The
 calibration/selection implementation is deliberately conservative: it accepts
-isolated partitions only; preregistered cross-fitting is not implemented.
+isolated partitions only; preregistered cross-fitting is not implemented (Task `1502fd80`).
 
 M0-A Taxonomy/Schema, M0-B Prompt/Config, and M0-C Gold/Threshold/Harness remain
 read-only upstream domains. This slice does not copy, modify, execute, or
@@ -305,3 +305,48 @@ contract binds implementation; samples bind both, so there is no hash cycle.
 Changes require regenerated contract/fixture bindings. Three-domain mapping and
 independent Gold/holdout/authority gates remain candidate/pending. Card-chain
 direction, source quotes and non-execution semantics are retained.
+
+### Input-only Core development envelope
+
+`CoreInputEnvelope.candidate.json` and `validate_m2_core_input_envelope.py`
+separate the 24 public development inputs from the author-visible source bundle.
+The validator first reuses `validate_m2_core_synthetic_pilot.validate`, preserving
+its exact semantics, license declarations, schema and raw rule-source bindings.
+It then checks the committed `core-input-envelope.json` against a fresh projection:
+sorted sample ID, domain, DEVELOPMENT partition, exact segment input and input
+digest. The envelope binds the complete source bundle revision, source contract
+and rule bytes. Candidate answers, review metadata and executable commands are
+absent from each request. Adding them, changing input, relabelling a partition,
+duplicating/reordering requests, or forging a binding fails even after rehashing.
+
+Source message roles, including the visible Context policy's `system` role, are
+untrusted task data. They supply no model system/developer authority and must not
+be promoted into chat roles. This contract defines an offline input projection;
+it contains no model adapter, prompt selection, dispatch or execution permission.
+Its revision digest is a local fixture identity, not a service Receipt or grant.
+
+```sh
+python scripts/model-program/validate_m2_core_input_envelope.py
+python scripts/model-program/validate_m2_core_input_envelope.py --require-call-admission
+python -m unittest discover -s tests -p 'test_model_program_m2_core_input_envelope.py' -v
+```
+
+The ordinary command validates only this payload. The admission command always
+exits 1 with `CORE_INPUT_CALL_ADMISSION_REQUIRED`: no exact model-call Profile,
+formal domain permission or live authorization is bound. The CLI emits scope and
+digests rather than payloads or answers. Existing M2 CI test discovery covers the
+new regression suite without a workflow or runner change.
+
+| Subject | Reproducible repository evidence | Remaining gate on original Task `1502fd80` |
+| --- | --- | --- |
+| Public Core dev inputs | 24 exact input projections; current source validator replay | Model prompt/adapter/Profile and exact execution authorization |
+| Source lineage and license | Source-class C, declared synthetic review scope, source/rule/schema digests | Formal source issuer/currentness and applicable real-data license clearance |
+| Split boundary | DEVELOPMENT only; other partitions and rehashed input substitutions rejected | Qualification 24 and holdout 24 remain NOT_GENERATED under Decision `ad2ba16d-e0f7-480d-ba69-36b417e1b65a` |
+| Scoring replay | Existing offline pipeline's six public arithmetic/context fixtures and saved-output scorer | Actual model outputs, independent Gold and accepted evaluation revisions |
+| Acceptance | Local deterministic candidate checks | Threshold freeze, independent DataGate and complete AgentHost qualification; M2 NOT_ISSUED |
+
+The 72-case pilot is a preparation allocation, not 72 materialized samples or a
+claim of final sample sufficiency. This addition leaves the reviewed 24 dev source
+inputs/answers, three-domain limited semantics (Decision
+`02660a88-1fbc-4ad7-9e84-501b8312e772`), existing scorer and protected-data boundary
+unchanged. It issues no independent Gold, license, model or installation authority.

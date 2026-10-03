@@ -1,0 +1,687 @@
+{
+  "authority_effect": "NONE",
+  "contract_sha256": "3f81a3169894fc9fb2c60375be38aef339aec0615176713b238971f48f0dbfd7",
+  "dispatch": "NOT_IMPLEMENTED_NOT_AUTHORIZED",
+  "formal_domain_receipt_ref": null,
+  "m2_verdict": "NOT_ISSUED",
+  "model_call_profile_ref": null,
+  "requests": [
+    {
+      "domain": "card_chain",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "虚构试验-card_chain-01：先完成card_A的演示，再开始card_B；这里只建议依赖，未批准执行。",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-card_chain-01-m1",
+            "message_id": "m2-core-dev-20261002-card_chain-01-m1"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-card_chain-01",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "209736983fa72185676ab02f387a718e7d1323d55fdd46faa79eadc0c63e1d45",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-card_chain-01"
+    },
+    {
+      "domain": "card_chain",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "虚构试验-card_chain-02：先完成card_B的演示，再开始card_A；这里只建议依赖，未批准执行。",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-card_chain-02-m1",
+            "message_id": "m2-core-dev-20261002-card_chain-02-m1"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-card_chain-02",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "9e6b55819a0cc219b6769bc59f24ddda4b06626077715c99434638ebbca170e2",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-card_chain-02"
+    },
+    {
+      "domain": "card_chain",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "虚构试验-card_chain-03：先完成card_A的演示，再开始card_C；这里只建议依赖，未批准执行。",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-card_chain-03-m1",
+            "message_id": "m2-core-dev-20261002-card_chain-03-m1"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-card_chain-03",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "a41d94ba4ba6e141c3e81ee3f66fbd3483d98e659a3a01e8be2709cd94cccf90",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-card_chain-03"
+    },
+    {
+      "domain": "card_chain",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "虚构试验-card_chain-04：先完成card_C的演示，再开始card_B；这里只建议依赖，未批准执行。",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-card_chain-04-m1",
+            "message_id": "m2-core-dev-20261002-card_chain-04-m1"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-card_chain-04",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "49adf3c5a92c53bf72e57d367641670a11f973352d5a794517af7269b7eceaf8",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-card_chain-04"
+    },
+    {
+      "domain": "card_chain",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "虚构试验-card_chain-05：先完成card_B的演示，再开始card_C；这里只建议依赖，未批准执行。",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-card_chain-05-m1",
+            "message_id": "m2-core-dev-20261002-card_chain-05-m1"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-card_chain-05",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "97c281728721a0d5ce7f191198e8211eec9b32a3dd8bb590f501a650342b7611",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-card_chain-05"
+    },
+    {
+      "domain": "card_chain",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "虚构试验-card_chain-06：先完成card_C的演示，再开始card_A；这里只建议依赖，未批准执行。",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-card_chain-06-m1",
+            "message_id": "m2-core-dev-20261002-card_chain-06-m1"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-card_chain-06",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "155a7b59b2d5a53827cb71ffbed2da60b1fa8c97a4a584743e3562d22a8e26e2",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-card_chain-06"
+    },
+    {
+      "domain": "context",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "{\"currentness\": \"CURRENT\", \"grant_present\": true, \"revoked\": false, \"scope\": \"synthetic-project-A\", \"subject\": \"虚构试验-context-01\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-01-m1",
+            "message_id": "m2-core-dev-20261002-context-01-m1"
+          },
+          {
+            "author_role": "system",
+            "content": "{\"accepted_currentness\": [\"CURRENT\"], \"effect\": \"DECLARED_SYNTHETIC_MATCH_ONLY_NOT_AUTHORIZATION\", \"expected_scope\": \"synthetic-project-A\", \"reject_revoked\": true, \"require_declared_grant\": true, \"revision\": \"declared-context-match/2\"}",
+            "context_only": true,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-01-policy",
+            "message_id": "m2-core-dev-20261002-context-01-policy"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-context-01",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "a6d74b29b669bcb40cd17b9c190de895729267448d24fb980aff6c5aa168c016",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-context-01"
+    },
+    {
+      "domain": "context",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "{\"currentness\": \"STALE\", \"grant_present\": true, \"revoked\": false, \"scope\": \"synthetic-project-A\", \"subject\": \"虚构试验-context-02\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-02-m1",
+            "message_id": "m2-core-dev-20261002-context-02-m1"
+          },
+          {
+            "author_role": "system",
+            "content": "{\"accepted_currentness\": [\"CURRENT\"], \"effect\": \"DECLARED_SYNTHETIC_MATCH_ONLY_NOT_AUTHORIZATION\", \"expected_scope\": \"synthetic-project-A\", \"reject_revoked\": true, \"require_declared_grant\": true, \"revision\": \"declared-context-match/2\"}",
+            "context_only": true,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-02-policy",
+            "message_id": "m2-core-dev-20261002-context-02-policy"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-context-02",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "453cabde9b051e8f0e3fcedfd6a3a24b741a3ea509a6b28e948ae176fac11497",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-context-02"
+    },
+    {
+      "domain": "context",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "{\"currentness\": \"UNKNOWN\", \"grant_present\": true, \"revoked\": false, \"scope\": \"synthetic-project-A\", \"subject\": \"虚构试验-context-03\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-03-m1",
+            "message_id": "m2-core-dev-20261002-context-03-m1"
+          },
+          {
+            "author_role": "system",
+            "content": "{\"accepted_currentness\": [\"CURRENT\"], \"effect\": \"DECLARED_SYNTHETIC_MATCH_ONLY_NOT_AUTHORIZATION\", \"expected_scope\": \"synthetic-project-A\", \"reject_revoked\": true, \"require_declared_grant\": true, \"revision\": \"declared-context-match/2\"}",
+            "context_only": true,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-03-policy",
+            "message_id": "m2-core-dev-20261002-context-03-policy"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-context-03",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "4c3f350a8534b8ffbc751d9edc22a1d6a6936366becb405b79a88262f71fc554",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-context-03"
+    },
+    {
+      "domain": "context",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "{\"currentness\": \"CURRENT\", \"grant_present\": true, \"revoked\": false, \"scope\": \"synthetic-project-B\", \"subject\": \"虚构试验-context-04\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-04-m1",
+            "message_id": "m2-core-dev-20261002-context-04-m1"
+          },
+          {
+            "author_role": "system",
+            "content": "{\"accepted_currentness\": [\"CURRENT\"], \"effect\": \"DECLARED_SYNTHETIC_MATCH_ONLY_NOT_AUTHORIZATION\", \"expected_scope\": \"synthetic-project-A\", \"reject_revoked\": true, \"require_declared_grant\": true, \"revision\": \"declared-context-match/2\"}",
+            "context_only": true,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-04-policy",
+            "message_id": "m2-core-dev-20261002-context-04-policy"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-context-04",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "f649053d413ac70a44c911bdc5358f87703f9360e660a945fbdfceae5a2f8c7c",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-context-04"
+    },
+    {
+      "domain": "context",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "{\"currentness\": \"CURRENT\", \"grant_present\": true, \"revoked\": true, \"scope\": \"synthetic-project-A\", \"subject\": \"虚构试验-context-05\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-05-m1",
+            "message_id": "m2-core-dev-20261002-context-05-m1"
+          },
+          {
+            "author_role": "system",
+            "content": "{\"accepted_currentness\": [\"CURRENT\"], \"effect\": \"DECLARED_SYNTHETIC_MATCH_ONLY_NOT_AUTHORIZATION\", \"expected_scope\": \"synthetic-project-A\", \"reject_revoked\": true, \"require_declared_grant\": true, \"revision\": \"declared-context-match/2\"}",
+            "context_only": true,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-05-policy",
+            "message_id": "m2-core-dev-20261002-context-05-policy"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-context-05",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "37800695ca574a8b0bcbc0c882ae94b49c4b9035ef1edd7e9b7b2abfd6d5b214",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-context-05"
+    },
+    {
+      "domain": "context",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "{\"currentness\": \"CURRENT\", \"grant_present\": false, \"revoked\": false, \"scope\": \"synthetic-project-A\", \"subject\": \"虚构试验-context-06\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-06-m1",
+            "message_id": "m2-core-dev-20261002-context-06-m1"
+          },
+          {
+            "author_role": "system",
+            "content": "{\"accepted_currentness\": [\"CURRENT\"], \"effect\": \"DECLARED_SYNTHETIC_MATCH_ONLY_NOT_AUTHORIZATION\", \"expected_scope\": \"synthetic-project-A\", \"reject_revoked\": true, \"require_declared_grant\": true, \"revision\": \"declared-context-match/2\"}",
+            "context_only": true,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-context-06-policy",
+            "message_id": "m2-core-dev-20261002-context-06-policy"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-context-06",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "fcf415ccd9b87fbf369f30c921da3680330b39ad9c59af5b821aba00b2c85326",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-context-06"
+    },
+    {
+      "domain": "imprint",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "{\"attribute\": \"highlight_color\", \"cardinality\": \"SINGLE\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-01\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-01-premise",
+            "message_id": "m2-core-dev-20261002-imprint-01-premise"
+          },
+          {
+            "author_role": "assistant",
+            "content": "{\"attribute\": \"highlight_color\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-01\", \"value\": \"青色\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-01-m1",
+            "message_id": "m2-core-dev-20261002-imprint-01-m1"
+          },
+          {
+            "author_role": "assistant",
+            "content": "{\"attribute\": \"highlight_color\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-01\", \"value\": \"青色\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-01-m2",
+            "message_id": "m2-core-dev-20261002-imprint-01-m2"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-imprint-01",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "bf27c1242577f589018f1119e1b6b8ddc09544a0ecd5965c1336e3a792e09ccc",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-imprint-01"
+    },
+    {
+      "domain": "imprint",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "{\"attribute\": \"tile_shape\", \"cardinality\": \"SINGLE\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-02\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-02-premise",
+            "message_id": "m2-core-dev-20261002-imprint-02-premise"
+          },
+          {
+            "author_role": "assistant",
+            "content": "{\"attribute\": \"tile_shape\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-02\", \"value\": \"圆形\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-02-m1",
+            "message_id": "m2-core-dev-20261002-imprint-02-m1"
+          },
+          {
+            "author_role": "assistant",
+            "content": "{\"attribute\": \"tile_shape\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-02\", \"value\": \"方形\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-02-m2",
+            "message_id": "m2-core-dev-20261002-imprint-02-m2"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-imprint-02",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "29b82a5ce1f01ee3f5cdc74a7c61cc5e60a994468c23bf3ff598a7db0d54a1aa",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-imprint-02"
+    },
+    {
+      "domain": "imprint",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "{\"attribute\": \"sentence_length\", \"cardinality\": \"SINGLE\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-03\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-03-premise",
+            "message_id": "m2-core-dev-20261002-imprint-03-premise"
+          },
+          {
+            "author_role": "assistant",
+            "content": "{\"attribute\": \"sentence_length\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-03\", \"value\": \"短句\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-03-m1",
+            "message_id": "m2-core-dev-20261002-imprint-03-m1"
+          },
+          {
+            "author_role": "assistant",
+            "content": "{\"attribute\": \"sentence_length\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-03\", \"value\": \"短句\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-03-m2",
+            "message_id": "m2-core-dev-20261002-imprint-03-m2"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-imprint-03",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "39585ab9185a67d6cc0102ab8f02dbf0e718ed8518f8745843ac1225d5b644c1",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-imprint-03"
+    },
+    {
+      "domain": "imprint",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "{\"attribute\": \"connection_mode\", \"cardinality\": \"SINGLE\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-04\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-04-premise",
+            "message_id": "m2-core-dev-20261002-imprint-04-premise"
+          },
+          {
+            "author_role": "assistant",
+            "content": "{\"attribute\": \"connection_mode\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-04\", \"value\": \"离线\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-04-m1",
+            "message_id": "m2-core-dev-20261002-imprint-04-m1"
+          },
+          {
+            "author_role": "assistant",
+            "content": "{\"attribute\": \"connection_mode\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-04\", \"value\": \"在线\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-04-m2",
+            "message_id": "m2-core-dev-20261002-imprint-04-m2"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-imprint-04",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "0b6f17de6f5747a4c3024a1fa42176cca6e4c3d0901fb693d75f9d075f20f72f",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-imprint-04"
+    },
+    {
+      "domain": "imprint",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "{\"attribute\": \"column_count\", \"cardinality\": \"SINGLE\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-05\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-05-premise",
+            "message_id": "m2-core-dev-20261002-imprint-05-premise"
+          },
+          {
+            "author_role": "assistant",
+            "content": "{\"attribute\": \"column_count\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-05\", \"value\": \"单列\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-05-m1",
+            "message_id": "m2-core-dev-20261002-imprint-05-m1"
+          },
+          {
+            "author_role": "assistant",
+            "content": "{\"attribute\": \"column_count\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-05\", \"value\": \"单列\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-05-m2",
+            "message_id": "m2-core-dev-20261002-imprint-05-m2"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-imprint-05",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "34520381de1df70f682aa9ad2773989ce58b9a93d866d2ad79237c77aedcc3ef",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-imprint-05"
+    },
+    {
+      "domain": "imprint",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "{\"attribute\": \"contrast_level\", \"cardinality\": \"SINGLE\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-06\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-06-premise",
+            "message_id": "m2-core-dev-20261002-imprint-06-premise"
+          },
+          {
+            "author_role": "assistant",
+            "content": "{\"attribute\": \"contrast_level\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-06\", \"value\": \"低对比\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-06-m1",
+            "message_id": "m2-core-dev-20261002-imprint-06-m1"
+          },
+          {
+            "author_role": "assistant",
+            "content": "{\"attribute\": \"contrast_level\", \"effective_at\": \"2026-10-02T00:00:00Z\", \"subject\": \"虚构试验-imprint-06\", \"value\": \"高对比\"}",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-imprint-06-m2",
+            "message_id": "m2-core-dev-20261002-imprint-06-m2"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-imprint-06",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "18506edde3acb34ce61801ba5ba290b57f7dd7503ce8a194a132008cdb6da2f5",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-imprint-06"
+    },
+    {
+      "domain": "utterance_card",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "虚构试验-utterance_card-01的演示版本是青色。",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-utterance_card-01-m1",
+            "message_id": "m2-core-dev-20261002-utterance_card-01-m1"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-01",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "00bbd0cc4d5420de56ba801a5d338bf4b9fa29ee01a7cf4cc0838a7f9e01a243",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-utterance_card-01"
+    },
+    {
+      "domain": "utterance_card",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "在虚构试验-utterance_card-02中我偏好短句。",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-utterance_card-02-m1",
+            "message_id": "m2-core-dev-20261002-utterance_card-02-m1"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-02",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "8c16dbbd0357e7ac860849078407b1490e8701aff01368f533f3a95db9aee22d",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-utterance_card-02"
+    },
+    {
+      "domain": "utterance_card",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "我决定虚构试验-utterance_card-03只做离线演示。",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-utterance_card-03-m1",
+            "message_id": "m2-core-dev-20261002-utterance_card-03-m1"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-03",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "529268629f6d2af69a4db8488a071de619715827cdaa3de40d0651e8b6673e33",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-utterance_card-03"
+    },
+    {
+      "domain": "utterance_card",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "请为虚构试验-utterance_card-04整理演示清单。",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-utterance_card-04-m1",
+            "message_id": "m2-core-dev-20261002-utterance_card-04-m1"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-04",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "bcf46dc9a2188742fab9175ea571d0324c665826e025aa008bcbdc6b1e0bef4d",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-utterance_card-04"
+    },
+    {
+      "domain": "utterance_card",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "虚构试验-utterance_card-05的演示清单已经准备好。",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-utterance_card-05-m1",
+            "message_id": "m2-core-dev-20261002-utterance_card-05-m1"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-05",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "4d36ea771392d6d0e935e462252ac13ec2386e020612124a79e616d1331b089d",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-utterance_card-05"
+    },
+    {
+      "domain": "utterance_card",
+      "input": {
+        "messages": [
+          {
+            "author_role": "user",
+            "content": "虚构试验-utterance_card-06可能需要更轻的呈现，含义尚未确定。",
+            "context_only": false,
+            "created_at": "2026-10-02T00:00:00Z",
+            "evidence_id": "synthetic-evidence-m2-core-dev-20261002-utterance_card-06-m1",
+            "message_id": "m2-core-dev-20261002-utterance_card-06-m1"
+          }
+        ],
+        "reference_time": "2026-10-02T00:00:00Z",
+        "schema_version": "segment_input.v1",
+        "segment_id": "m2-core-dev-20261002-utterance_card-06",
+        "timezone": "Etc/UTC"
+      },
+      "input_sha256": "2f13d861c3c340fafe8231adb9d032c6796b7ae29ac9942d2f17a6d5909a9c41",
+      "partition": "DEVELOPMENT",
+      "sample_id": "m2-core-dev-20261002-utterance_card-06"
+    }
+  ],
+  "revision_sha256": "9edef5991dfd6eb28d8280d793c2a0e8ca1b44ed7a29f82c2eb8fc53ce71d0d5",
+  "schema_version": "clued.model-m2-core-input-envelope/1",
+  "source_bundle_revision_sha256": "dc74a11193e879f5ceb22f86a242ab78088353c791a4725d30ec11348bc188ad",
+  "source_contract_sha256": "4503331f3d0d17cf109707a08c93d6b8009a1e93f82d1e1d7f6ea84acb3085c6",
+  "source_rule_sha256": "7c7f02e27267b70a5b2964d1e836841be75bbcea99c34113353c10f1bf8ab621"
+}
