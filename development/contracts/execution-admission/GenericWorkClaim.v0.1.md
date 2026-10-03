@@ -315,7 +315,7 @@ Owner 定的原则：规则要能支撑不同宿主的习惯，要成本低、�
 
 - **合同**：agent-contract §1.7 删去"不要在一步或一轮结束时释放再认领"和"每 Task 24 小时 10 次"两句，改为：两种做法都可以；被 `work_claim_rate_limited` 拒绝时等到 `retry_after` 或告诉 Owner，不得换 Task、换幂等键或换 Binding 绕过。
 - **多份模式**（§5.3）：每一份取一个 Task 令牌，所以份数硬上限 = Task 桶容量（8）；各份的 head 合计计入 Task 的 CI 计量。
-- **认领豁免（保留，Decision `00b6dcf4`）**：已上线的 Owner 授权 `work_claim.extra_claims`（迁移 `20261003030000_work_claims_owner_grants.sql`）保留，触发条件从"超过每 Task 24 小时 10 次"改为"桶不足"：任一桶不足 1 个令牌时，消费一次该 Task 的授权放行这次开工，不扣令牌；没有授权时拒绝，并照旧返回确认请求与链接。旧豁免机制（`20261002190000`）已不能新发豁免，建议在第 1 步一并删除其表与页面（待 Owner 审阅时确认）。
+- **认领豁免（保留，Decision `00b6dcf4`）**：豁免与令牌桶并存。已上线的 Owner 授权 `work_claim.extra_claims`（迁移 `20261003030000_work_claims_owner_grants.sql`）在令牌桶上线前照常使用。令牌桶下豁免怎么做另行设计，由 Owner 定：触发条件、放行几次或补几个令牌、是否沿用 `work_claim.extra_claims`、旧豁免机制（`20261002190000`，已不能新发豁免）的表与页面如何处理。一种候选：任一桶不足 1 个令牌时，消费一次该 Task 的授权放行这次开工，不扣令牌；没有授权时拒绝，并返回确认请求与链接。
 - **并发上限**（每会话 3 个、每 Binding 10 个活认领）：不变。它们限制同时占用，不是次数。
 
 ### 10.6 不保护什么
@@ -327,7 +327,7 @@ Owner 定的原则：规则要能支撑不同宿主的习惯，要成本低、�
 
 ### 10.7 分步（每步单独请 Owner 授权）
 
-1. 迁移：令牌桶状态表与两个桶、`work_claim_rate_limited`、被拒回执；从 profile 删 `max_claims_per_task_24h`；`work_claim.extra_claims` 授权改为桶不足时放行；（待确认）删除旧豁免表与页面。DB 测试含历史回放、合成循环与授权放行。
+1. 迁移：令牌桶状态表与两个桶、`work_claim_rate_limited`、被拒回执；从 profile 删 `max_claims_per_task_24h`；豁免按届时 Owner 定的设计接到令牌桶上。DB 测试含历史回放、合成循环与豁免放行。
 2. 迁移：GitHub CI 计量表与每 Task 24 小时 head 上限，取代 `max_heads_per_claim`。
 3. 合同与工具说明：agent-contract §1.7、错误表、`clued_work_claim` 工具描述；Worker 发布。
 4. 生产应用与 Worker 发布。
