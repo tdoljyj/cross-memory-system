@@ -344,6 +344,7 @@ jobs:
             apps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json
             apps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc
             apps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json
+            apps/clued-cloud/.sites-runtime/release-evidence/production-migrations.json
             apps/clued-cloud/.sites-runtime/storage-client-source/registration.json
           if-no-files-found: ignore
           retention-days: ${{ inputs.mode == 'source-capture' && 1 || 30 }}
