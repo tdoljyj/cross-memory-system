@@ -129,6 +129,48 @@ test('the Agent\'s suggested duration is the default; changing the options issue
   assert.deepEqual(plain(f.calls[4].args.p_input), { confirmation_token: 'clued_ogr_c', view_digest: 'f'.repeat(64) });
 });
 
+test('scope rows: unticking narrows, a parent option widens, "once" keeps the request (Decision c4e82dee)', async t => {
+  const f = fixture(CONFIRM); t.after(() => f.unmount());
+  const commit = 'repo:o/n/abc1234';
+  const record = 'record:2a31ca2a-0ece-476d-af7f-d4ee6dc4d1e0';
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', request: { ...request(), resources: [commit, record] },
+    view: { action: 'release.production', expires_seconds: 14400 },
+    resource_options: [{ resource: commit, options: [commit, 'repo:o/n/**'] }, { resource: record, options: [record] }] },
+  error: null });
+  await f.settle();
+  // Unchanged scope: the request's resources are kept and none are sent.
+  assert.deepEqual(plain(f.calls[1].args.p_input), { request_id: REQUEST, choice: 'grant', expires_seconds: 14400, grantee: 'requester' });
+  f.calls[1].resolve(issued()); await f.settle();
+  const scope = () => f.nodes('fieldset')[0];
+  assert.ok(f.text(scope()).includes('取消勾选即收窄'));
+  const select = f.nodes('select', scope())[0];
+  assert.deepEqual(f.nodes('option', select).map(n => n.props.value), [commit, 'repo:o/n/**']);
+  assert.ok(f.text(select).includes('（请求的范围）'));
+  // Widen the commit to its repository.
+  select.props.onChange({ currentTarget: { type: 'select-one', value: 'repo:o/n/**', dataset: { index: String(select.props['data-index']) } } });
+  f.render();
+  assert.deepEqual(plain(f.calls[2].args.p_input), { request_id: REQUEST, choice: 'grant', expires_seconds: 14400,
+    grantee: 'requester', resources: ['repo:o/n/**', record] });
+  f.calls[2].resolve(issued({ token: 'clued_ogr_w', digest: 'w'.repeat(64) })); await f.settle();
+  // Untick the record: only the widened repository is left, and it cannot be unticked.
+  const boxes = () => f.nodes('input', scope()).filter(n => n.props.type === 'checkbox');
+  boxes()[1].props.onChange({ currentTarget: { type: 'checkbox', checked: false, dataset: { index: '1' } } });
+  f.render();
+  assert.deepEqual(plain(f.calls[3].args.p_input.resources), ['repo:o/n/**']);
+  f.calls[3].resolve(issued({ token: 'clued_ogr_n', digest: 'n'.repeat(64) })); await f.settle();
+  assert.equal(boxes()[0].props.disabled, true, 'the last kept row cannot be unticked');
+  assert.equal(f.nodes('select', scope())[0].props.disabled, false);
+  // "Approve once" never sends a scope and shows no rows.
+  f.button('只批这一次').props.onClick();
+  assert.deepEqual(plain(f.calls[4].args.p_input), { request_id: REQUEST, choice: 'once', grantee: 'requester' });
+  f.calls[4].resolve(issued({ token: 'clued_ogr_o', digest: 'o'.repeat(64), choice: 'once' })); await f.settle();
+  assert.equal(f.nodes('fieldset').length, 0);
+  // Back to "grant": the chosen scope is still what is sent.
+  f.button('这一类管一段时间').props.onClick();
+  assert.deepEqual(plain(f.calls[5].args.p_input.resources), ['repo:o/n/**']);
+});
+
 test('a token about to expire is reissued and used only when Clued renders the same view', async t => {
   const soon = new Date(Date.now() + 5000).toISOString();
   const f = fixture(CONFIRM); t.after(() => f.unmount());
