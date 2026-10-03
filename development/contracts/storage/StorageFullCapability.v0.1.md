@@ -189,6 +189,7 @@
 
 - 读取有独立的开关：数据库 `storage_oauth_apps_v1.read_enabled`，加 Worker 标志 `CLUED_STORAGE_READ_V1`。
 - 写入沿用现有开关：`execution_enabled` 加 Worker executor window。
+  - 2026-10-03 起（Owner Decision `4a1f8617`）两个写入总闸常开：`execution_enabled` 保持 true，Worker `CLUED_STORAGE_EXECUTOR_V1` 由 executor window 工作流 `mode: open` 打开且不自动关闭；Agent 能写什么由 Owner 在存储连接页的等级开关决定。急停仍是工作流 `mode: close` 或把 `execution_enabled` 设为 false。
 - 两组开关互不影响。
 
 ### 3.4 破坏性操作附加约束
