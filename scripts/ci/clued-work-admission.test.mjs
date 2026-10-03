@@ -7,6 +7,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  ADOPT_RPC,
+  adoptMerged,
   PUBLIC_CONFIG_SOURCE,
   DISPATCH_GATED_WORKFLOWS,
   dispatchAdmit,
@@ -797,4 +799,105 @@ test("app check: the admission workflow posts it after the admission step, keys 
   assert.match(text, /id: admit\n/);
   assert.match(text, /if: \$\{\{ !cancelled\(\) \}\}\n[\s\S]*ADMISSION_HEAD_SHA: \$\{\{ steps\.admit\.outputs\.head_sha \}\}[\s\S]*secrets\.CLUED_ADMISSION_APP_PRIVATE_KEY[\s\S]*--mode app-check/);
   assert.match(text, /environment: clued-admission/);
+});
+
+// --- Multi-copy write-back: a merged pull request is reported once for adoption.
+
+const ADOPT = `POST ${PUBLIC.url}/rest/v1/rpc/clued_work_claim_adopt_v1`;
+const MERGE = "d".repeat(40);
+const merged = (overrides = {}) => {
+  const value = event({ body: overrides.body ?? `Body\n\nClued-Work-Claim: ${CLAIM}` });
+  Object.assign(value.pull_request, { merged: true, merge_commit_sha: MERGE }, overrides.pull_request ?? {});
+  return { action: "closed", ...value, ...(overrides.action ? { action: overrides.action } : {}) };
+};
+
+test("adopt: a merged copy's pull request is reported with the token hash, its pr_ref and merge commit", async () => {
+  assert.equal(ADOPT_RPC, "clued_work_claim_adopt_v1");
+  const adopted = { status: "ok", adopted: true, replayed: false, claim_id: CLAIM, task_id: "t-1", copy_index: 2,
+    receipt_id: "r-1", not_adopted: ["c-1", "c-3"], pr_ref: "o/r#452" };
+  const { fetchImpl, calls } = fakeFetch({ [ADOPT]: { body: adopted } });
+  const result = await adoptMerged({ env: env(), event: merged({ body: `B\n\nClued-Work-Claim: ${CLAIM}\nClued-Work-Scope: project:11111111-2222-4333-8444-555555555555` }),
+    eventName: "pull_request_target", fetchImpl, workspace: ROOT });
+  assert.deepEqual([result.adopted, result.error, result.pr_ref, result.merge_sha], [true, null, "o/r#452", MERGE]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].headers.apikey, PUBLIC.key);
+  assert.equal(calls[0].headers.authorization, `Bearer ${PUBLIC.key}`);
+  assert.deepEqual(calls[0].body, { p_token_hash: sha256Hex("clued_bnd_test"),
+    p_input: { scope: "project:11111111-2222-4333-8444-555555555555", pr_ref: "o/r#452", merge_sha: MERGE } });
+});
+
+test("adopt: not a copy, a lost race and an unmerged close change nothing; failures are errors", async () => {
+  let r = await adoptMerged({ env: env(), event: merged(), eventName: "pull_request_target", workspace: ROOT,
+    fetchImpl: fakeFetch({ [ADOPT]: { body: { status: "ok", adopted: false, reason: "no_copy_for_pr", pr_ref: "o/r#452" } } }).fetchImpl });
+  assert.deepEqual([r.adopted, r.reason, r.error], [false, "no_copy_for_pr", null]);
+  r = await adoptMerged({ env: env(), event: merged(), eventName: "pull_request_target", workspace: ROOT,
+    fetchImpl: fakeFetch({ [ADOPT]: { body: { status: "rejected", error_code: "copy_not_adopted", adopted_claim_id: "c-9" } } }).fetchImpl });
+  assert.deepEqual([r.adopted, r.error], [false, null]);
+  assert.match(r.reason, /copy_not_adopted/);
+
+  // No Clued call at all: closed without merging, other events, no trailer, no token.
+  for (const [value, name] of [[merged({ pull_request: { merged: false } }), "pull_request_target"],
+    [merged({ action: "synchronize" }), "pull_request_target"], [merged(), "pull_request"]]) {
+    const { fetchImpl, calls } = fakeFetch({});
+    r = await adoptMerged({ env: env(), event: value, eventName: name, fetchImpl, workspace: ROOT });
+    assert.deepEqual([r.adopted, r.reason, calls.length], [false, "not a merged pull request", 0]);
+  }
+  let fake = fakeFetch({ [COMMIT]: { body: { commit: { message: "no trailer" } } } });
+  r = await adoptMerged({ env: env(), event: merged({ body: "no trailer" }), eventName: "pull_request_target", fetchImpl: fake.fetchImpl, workspace: ROOT });
+  assert.match(r.reason, /no Clued-Work-Claim trailer/);
+  assert.ok(!fake.calls.some((c) => c.url.startsWith(PUBLIC.url)));
+  // The trailer may live in the head commit only.
+  fake = fakeFetch({ [COMMIT]: { body: { commit: { message: `x\n\nClued-Work-Claim: ${CLAIM}` } } },
+    [ADOPT]: { body: { status: "ok", adopted: false, reason: "no_copy_for_pr" } } });
+  r = await adoptMerged({ env: env(), event: merged({ body: "no trailer" }), eventName: "pull_request_target", fetchImpl: fake.fetchImpl, workspace: ROOT });
+  assert.deepEqual([r.claim_id, r.scope, r.reason], [CLAIM, "global", "no_copy_for_pr"]);
+  fake = fakeFetch({});
+  r = await adoptMerged({ env: env({ CLUED_CONTEXT_READ_TOKEN: "" }), event: merged(), eventName: "pull_request_target", fetchImpl: fake.fetchImpl, workspace: ROOT });
+  assert.deepEqual([r.adopted, fake.calls.length], [false, 0]);
+  assert.match(r.reason, /not set/);
+
+  // A missing merge commit, a refused token or a transport answer is an error.
+  r = await adoptMerged({ env: env(), event: merged({ pull_request: { merge_commit_sha: null } }), eventName: "pull_request_target", fetchImpl: fakeFetch({}).fetchImpl, workspace: ROOT });
+  assert.match(r.error, /no merge commit/);
+  r = await adoptMerged({ env: env(), event: merged(), eventName: "pull_request_target", workspace: ROOT,
+    fetchImpl: fakeFetch({ [ADOPT]: { status: 401, body: { code: "42501", message: "binding_not_authorized" } } }).fetchImpl });
+  assert.match(r.error, /returned 401/);
+  r = await adoptMerged({ env: env(), event: merged(), eventName: "pull_request_target", workspace: ROOT,
+    fetchImpl: fakeFetch({ [ADOPT]: { status: 400, body: { code: "22023", message: "work_claim_pr_ref_invalid" } } }).fetchImpl });
+  assert.match(r.error, /work_claim_pr_ref_invalid/);
+  r = await adoptMerged({ env: env(), event: merged(), eventName: "pull_request_target", workspace: ROOT, fetchImpl: fakeFetch({}).fetchImpl });
+  assert.match(r.error, /returned 599/);
+  // Not deployed yet: reported, not an error.
+  r = await adoptMerged({ env: env(), event: merged(), eventName: "pull_request_target", workspace: ROOT,
+    fetchImpl: fakeFetch({ [ADOPT]: { status: 404, body: { code: "PGRST202" } } }).fetchImpl });
+  assert.deepEqual([r.error, /not deployed/.test(r.reason)], [null, true]);
+});
+
+test("adopt: main exits 1 only on an error and writes a summary", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "adopt-"));
+  const eventPath = path.join(dir, "event.json");
+  const summary = path.join(dir, "summary.md");
+  fs.writeFileSync(eventPath, JSON.stringify(merged()));
+  const base = env({ GITHUB_EVENT_NAME: "pull_request_target", GITHUB_EVENT_PATH: eventPath, GITHUB_STEP_SUMMARY: summary, GITHUB_WORKSPACE: ROOT });
+  const log = console.log; const error = console.error;
+  console.log = () => {}; console.error = () => {};
+  try {
+    let code = await main(["--mode", "adopt"], base, fakeFetch({ [ADOPT]: { body: { status: "ok", adopted: true, copy_index: 1, task_id: "t-1", not_adopted: ["c-2"] } } }).fetchImpl);
+    assert.equal(code, 0);
+    assert.match(fs.readFileSync(summary, "utf8"), /Adopted copy 1 of Task `t-1`; 1 other copy put out/);
+    code = await main(["--mode", "adopt"], base, fakeFetch({}).fetchImpl);
+    assert.equal(code, 1);
+  } finally { console.log = log; console.error = error; }
+});
+
+test("adopt: the admission workflow runs it only for a merged pull request, from the base branch", () => {
+  const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission.yml"), "utf8");
+  assert.match(text, /types: \[opened, synchronize, reopened, edited, ready_for_review, closed\]/);
+  assert.match(text, /clued-work-admission:\n {4}name: clued-work-admission\n {4}if: github\.event\.action != 'closed'\n/);
+  const job = text.slice(text.indexOf("  clued-work-adopt:"));
+  assert.match(job, /if: github\.event\.action == 'closed' && github\.event\.pull_request\.merged == true\n/);
+  assert.match(job, /^ {4}environment: clued-admission$/m);
+  assert.match(job, /ref: \$\{\{ github\.event\.pull_request\.base\.ref \}\}\n {10}persist-credentials: false/);
+  assert.match(job, /--mode adopt$/m);
+  assert.doesNotMatch(job, /head\.sha|head\.ref|merge_commit_sha/);
 });
