@@ -115,7 +115,7 @@
     },
     {
       "name": "clued_append_event",
-      "description": "Append a durable continuity event for a decision, correction, action, failure, blocker or retracted conclusion. Use during work whenever authoritative context changes. Required Clued scope: context:write.",
+      "description": "Legacy continuity adapter for action, failure, blocker and note events. It rejects decision, correction and retraction events with decision_event_requires_record: record an Owner decision with clued_record_mutate (or clued_decision_supersede), correct a record with clued_record_mutate update, and clear an active event with clued_event_carrier_transition. Use clued_event_append for extension events. Required Clued scope: context:write.",
       "inputSchema": {
         "type": "object",
         "required": [
