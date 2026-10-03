@@ -54,6 +54,17 @@ class LedgerTests(unittest.TestCase):
             m2.ReplayLedger(missing)
         self.assertFalse(missing.exists())
 
+    def test_ledger_without_unique_key_is_denied(self):
+        db = sqlite3.connect(self.path)
+        try:
+            db.execute("DROP TABLE burns")
+            db.execute("CREATE TABLE burns(instance TEXT, request TEXT)")
+            db.commit()
+        finally:
+            db.close()
+        with self.assertRaisesRegex(m2.Denied, "LEDGER_PROFILE_INVALID"):
+            m2.ReplayLedger(self.path)
+
     def test_limit_persists(self):
         ledger = m2.ReplayLedger(self.path)
         try:

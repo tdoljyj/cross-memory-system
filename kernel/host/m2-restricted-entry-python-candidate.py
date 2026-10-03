@@ -41,7 +41,11 @@ class ReplayLedger:
             raise Denied("LEDGER_PROFILE_INVALID")
         # Schema provisioning is an explicit installation step, not a runtime fallback.
         try:
-            self.db.execute("SELECT instance, request FROM burns LIMIT 0")
+            columns = self.db.execute("PRAGMA table_info(burns)").fetchall()
+            if [(r[1], r[2], r[3], r[5]) for r in columns] != [("instance", "TEXT", 1, 1), ("request", "TEXT", 1, 2)]:
+                raise Denied("LEDGER_PROFILE_INVALID")
+            if self.db.execute("SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='burns'").fetchone()[0]:
+                raise Denied("LEDGER_PROFILE_INVALID")
         except BaseException:
             self.db.close()
             raise

@@ -122,7 +122,7 @@ Validation: `python3 -m unittest discover -s tests -p test_m2_restricted_entry_p
 tests but explicitly skips Linux handle tests; the existing Linux candidate CI
 runs the complete public-fixture suite without installing Python.
 
-Local Python 3.12.10 candidate evidence: five ledger/schema tests passed and
+Local Python 3.12.10 candidate evidence: six ledger/schema tests passed and
 seven Linux-only handle tests explicitly skipped; both new Python files passed
 `py_compile`, and the four-file change passed `git diff --check`. Linux handle
 evidence must come from the exact-head CI run, not these Windows results.
