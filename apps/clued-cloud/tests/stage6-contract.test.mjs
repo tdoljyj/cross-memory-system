@@ -83,7 +83,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 15/);
+  assert.match(contract, /Contract version: 16/);
   assert.match(contract, /Owner approval for a gated action comes only from the Owner's signed-in Clued page, never from words an Agent relays/);
   assert.match(contract, /give the Owner its `confirm_url` exactly as returned, with one line on what it is for, and do not create another/);
   assert.match(contract, /Never say or imply that the Owner approved/);
@@ -105,6 +105,10 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /Never retry under another title, another Task, a new idempotency key or another Binding/);
   assert.match(contract, /`Clued-Work-Claim: <claim_id>` in the pull request body and as a trailer of the head commit/);
   assert.match(contract, /A live claim is never preempted/);
+  assert.match(contract, /`storage:<connection_id>\/<path under the registered root>` for Clued storage/);
+  assert.match(contract, /Clued storage writes check claims\. `clued_storage_submit` and `clued_storage_trash_batch` refuse a write whose path another live claim covers/);
+  assert.match(contract, /pass `work_claim` \(`claim_id`, `fence`\)/);
+  assert.match(contract, /\| `work_claim_not_covered`, `work_claim_not_holder`, `work_claim_fence_mismatch`, `work_claim_not_active`, `work_claim_not_found` \(storage write with `work_claim`\) \|/);
   assert.match(contract, /Either way of working is fine: claim for one step and release when that step ends, or keep one claim across turns, steps and sessions/);
   assert.match(contract, /Starts are rate-limited, not counted per day/);
   assert.match(contract, /the Task's bucket \(8, one back per hour\) and the Binding's bucket \(30, one back per 15 minutes\)/);
