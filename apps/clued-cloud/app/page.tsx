@@ -951,6 +951,7 @@ export default function Home() {
         </Link>
         <div className="header-actions">
           <Link href="/contexts">{locale === "zh-CN" ? "上下文" : "Contexts"}</Link>
+          <Link href="/grants">{locale === "zh-CN" ? "我的授权" : "Grants"}</Link>
           <span className="byline">{t.byline}</span>
           <div className="language-switch" role="group" aria-label={t.languageLabel}>
             <button
