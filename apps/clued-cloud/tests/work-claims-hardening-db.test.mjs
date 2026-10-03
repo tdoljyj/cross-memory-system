@@ -311,30 +311,33 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     // --- Count caps (migration 20261002100000, Owner Decision a264ea02,
     // Task 80aea04a). The per-Task 24-hour count is replaced by rate buckets
     // (20261003050000), covered in work-claims-rate-buckets-db.test.mjs; the
-    // per-claim head cap stays. ---
+    // per-claim head cap is replaced by a per-Task 24-hour CI meter
+    // (20261003180000), covered in work-claims-ci-metering-db.test.mjs. ---
     const caps = (await admin.query('select clued_private.work_claim_profile_v1() p')).rows[0].p;
-    assert.deepEqual([caps.max_claims_per_task_24h, caps.max_heads_per_claim], [undefined, 20]);
+    assert.deepEqual([caps.max_claims_per_task_24h, caps.max_heads_per_claim, caps.github_ci_heads_per_task_24h],
+      [undefined, undefined, 40]);
 
-    // A claim admits at most 20 distinct pull-request heads.
+    // A claim records each distinct pull-request head it admits.
     const headClaim = committed(await claim(tokens.A, { task_id: await createTask('head cap'), write_set: ['heads/**'] })).claim;
     const sha = (i) => i.toString(16).padStart(40, '0');
     for (let i = 1; i <= 20; i += 1) {
       v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], pr_ref: 'o/r#77', head_sha: sha(i) });
-      assert.deepEqual([v.verdict, v.admitted_heads, v.max_heads_per_claim], ['ADMITTED', i, 20], JSON.stringify(v));
+      assert.deepEqual([v.verdict, v.admitted_heads, v.task_ci_heads_24h, v.task_ci_head_cap], ['ADMITTED', i, i, 40],
+        JSON.stringify(v));
     }
     // The same head again (a re-run, the hourly reverify) does not count.
     v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], pr_ref: 'o/r#77', head_sha: sha(5).toUpperCase() });
     assert.deepEqual([v.verdict, v.admitted_heads], ['ADMITTED', 20]);
-    // A new head past the cap is refused and not recorded.
+    // A 21st head is no longer refused per claim.
     v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], pr_ref: 'o/r#77', head_sha: sha(21) });
-    assert.deepEqual([v.verdict, v.reasons, v.admitted_heads], ['REJECTED', ['claim_head_cap_reached'], 20]);
+    assert.deepEqual([v.verdict, v.reasons, v.admitted_heads], ['ADMITTED', [], 21]);
     // A failing verify does not record its head either.
     const headTwo = committed(await claim(tokens.A, { task_id: await createTask('head fail'), write_set: ['heads2/**'] })).claim;
     v = await verify({ claim_id: headTwo.claim_id, changed_paths: ['elsewhere/a'], pr_ref: 'o/r#78', head_sha: sha(1) });
     assert.deepEqual([v.verdict, v.admitted_heads], ['REJECTED', 0]);
     // Without pr_ref (a hand dispatch, an Agent's own check) nothing is recorded.
     v = await verify({ claim_id: headClaim.claim_id, changed_paths: ['heads/a'], head_sha: sha(22) });
-    assert.deepEqual([v.verdict, v.admitted_heads], ['ADMITTED', 20]);
+    assert.deepEqual([v.verdict, v.admitted_heads, v.task_ci_heads_24h], ['ADMITTED', 21, 21]);
     await assert.rejects(() => verify({ claim_id: headClaim.claim_id, pr_ref: 'o/r#77', head_sha: 'not-a-sha' }),
       /work_claim_head_sha_invalid/);
     committed(await release(tokens.A, headClaim));

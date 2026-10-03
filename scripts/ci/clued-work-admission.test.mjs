@@ -179,6 +179,19 @@ test("enforced: a claim past its head cap is REJECTED with a hint to claim again
   assert.match(renderSummary(outcome), /already admitted 20 pull-request heads \(cap 20, Owner Decision a264ea02\)/);
 });
 
+test("enforced: a Task past its 24-hour CI head cap is REJECTED with when the next place frees up", async () => {
+  const payload = { ...admittedPayload, verdict: "REJECTED", reasons: ["task_ci_head_cap_reached"], admitted_heads: 3,
+    task_ci_heads_24h: 40, task_ci_head_cap: 40, ci_retry_after: "2026-10-04T09:00:00+00:00" };
+  const { fetchImpl } = fakeFetch({ [FILES]: files, [VERIFY]: { body: payload } });
+  const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
+  assert.equal(outcome.admitted, false);
+  assert.deepEqual([outcome.reasons, outcome.task_ci_heads_24h, outcome.task_ci_head_cap, outcome.ci_retry_after],
+    [["task_ci_head_cap_reached"], 40, 40, "2026-10-04T09:00:00+00:00"]);
+  const summary = renderSummary(outcome);
+  assert.match(summary, /already ran CI on 40 pull-request heads in the last 24 hours \(cap 40, all of its claims together\)/);
+  assert.match(summary, /frees up at 2026-10-04T09:00:00\+00:00\. Another claim does not help/);
+});
+
 test("enforced: a claim taken on a newer base than the PR targets is admitted with a notice", async () => {
   for (const status of ["behind", "diverged"]) {
     const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { body: { status } }, [VERIFY]: { body: admittedPayload } });

@@ -28,7 +28,7 @@
     - Agent 合同 18：§1.7 加多份模式说明，错误表加 `copy_not_adopted`、`work_claim_copies_full`。
     - Worker 已发布，合同 18 经 `/clued-agent.md` 与 resume 的 `contract_version` 下发。
 - 第 4 步（Owner 2026-10-03 选定，Task `ae40c8fe`，已上线，后续由合同 17 取代）：Agent 合同 16，§1.7 写明 `write_set` 的类型资源（`storage:`、`repo:`、`record:`）、Clued 存储写入检查认领与 `work_claim` 用法，错误表加入存储门卫的拒绝码；`clued_work_claim` 的 `write_set` 说明同步。resume 返回的认领仍是原样的 `write_set`，未另加资源 kind 字段（kind 已在条目前缀中）。合并与 Worker 发布各需 Owner 授权。
-- §10 次数与花费上限（2026-10-03，Decision `136a000e`，Task `c8778299`）：取代 v1 的每 Task 每 24 小时 10 次与每认领 20 个 head。第 1 步（令牌桶）迁移 `20261003050000_work_claims_rate_buckets.sql`、测试 `apps/clued-cloud/tests/work-claims-rate-buckets-db.test.mjs`（Decision `d3d0bbe8`，Task `00af11e4`），已应用 clued-prod（2026-10-03，生产版本 `20261003051745`）。第 3 步（合同 15 与认领工具说明）：Decision `c1fe7cca`，Task `12a42be8`。被拒回执补全（续期、接管前置检查与幂等重放的拒绝）：迁移 `20261003070000_work_claims_reject_receipts_renew_takeover.sql`、测试 `apps/clued-cloud/tests/work-claims-reject-receipts-db.test.mjs`（Decision `bd4243b6`，Task `91272c5d`），已应用 clued-prod（2026-10-03，生产版本 `20261003063641`）。
+- §10 次数与花费上限（2026-10-03，Decision `136a000e`，Task `c8778299`）：取代 v1 的每 Task 每 24 小时 10 次与每认领 20 个 head。第 1 步（令牌桶）迁移 `20261003050000_work_claims_rate_buckets.sql`、测试 `apps/clued-cloud/tests/work-claims-rate-buckets-db.test.mjs`（Decision `d3d0bbe8`，Task `00af11e4`），已应用 clued-prod（2026-10-03，生产版本 `20261003051745`）。第 3 步（合同 15 与认领工具说明）：Decision `c1fe7cca`，Task `12a42be8`。被拒回执补全（续期、接管前置检查与幂等重放的拒绝）：迁移 `20261003070000_work_claims_reject_receipts_renew_takeover.sql`、测试 `apps/clued-cloud/tests/work-claims-reject-receipts-db.test.mjs`（Decision `bd4243b6`，Task `91272c5d`），已应用 clued-prod（2026-10-03，生产版本 `20261003063641`）。第 2 步（GitHub CI 按 Task 计量，Task `bb9f1e36`）：迁移 `20261003180000_work_claims_task_ci_metering.sql`、测试 `apps/clued-cloud/tests/work-claims-ci-metering-db.test.mjs`；verify 带 `pr_ref` 与 `head_sha` 时，每个新 head 记一行 `work_claim_door_usage_v1`（门口 `github-ci`），该 Task 任意 24 小时内最多 40 个，超出判 `task_ci_head_cap_reached` 并给出 `ci_retry_after`；profile 的 `max_heads_per_claim` 换成 `github_ci_heads_per_task_24h`。同一迁移顺带修好旧豁免状态函数对已删参数的读取（Task `6414f530`）。合同 21 写明到上限后换认领无用。生产应用与 Worker 发布由 Owner 另行授权。
 日期：2026-10-02
 Task：`52739939`（Global）。Owner 决定：门卫原则见 Task `52739939` v3，四条规则见 Decision `2a7391ff`，三条待定见 Decision `357fce4f`（§9）。
 前置：[WorkClaimAdmission.v0.1.md](WorkClaimAdmission.v0.1.md)（v1 认领、准入检查与 GitHub 门口，已在生产生效）。本文只写在 v1 之上要扩什么，v1 已有的租约、fence、续期进展、幂等规则原样沿用，不重复；v1 的次数上限由 §10 候选取代。
@@ -201,7 +201,7 @@ Record 已经有 CAS（`base_version`）：两个 Agent 同时改同一条 Recor
   4. 窗口：从第一份合并到采纳记录完成之间，Owner 若手快再合并第二份，第二份会被合进去。这与 v1"判定只在检查运行时成立"同一类限制，写进 §8。
 - 写回本身仍由有权限的人或工具执行：门卫只记录"这一份是被采纳的"，不替任何人合并或写入。
 
-**花费**：每一份都是一次新认领，计入每 Task 每 24 小时 10 次的上限；每份各自受每认领 20 个 head 的上限约束。§10 实施后：每一份从 Task 令牌桶取一个令牌，各份的 head 合计计入该 Task 的 CI 计量。
+**花费**：每一份都是一次新认领，从 Task 令牌桶取一个令牌；各份的 head 合计计入该 Task 的 CI 计量（§10.4，迁移 `20261003180000`）。
 
 ---
 
