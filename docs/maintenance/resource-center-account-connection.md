@@ -177,8 +177,12 @@ exact profile version and registered tracks. Its `execution_enabled` and the
 Worker's `CLUED_STORAGE_EXECUTOR_V1` both default off. OAuth alone enables neither.
 The `Clued Storage executor window` workflow is the reviewed way to open the
 Worker gate: the repository owner dispatches it from `main` with the authorizing
-Decision ID, it sets the secret to `true` for at most five minutes and then always
-sets it back to `false`; `mode: close` closes it immediately. It uses the existing
+Decision ID. `mode: open_window` sets the secret to `true` for at most five
+minutes and then always sets it back to `false`; `mode: open` sets it to `true`
+until a `mode: close` run; `mode: close` closes it immediately and is the
+emergency stop. Since Owner Decision `4a1f8617` (2026-10-03) both write gates
+stay on (`execution_enabled` true and the Worker gate opened with `mode: open`),
+and the Owner's levels on the storage page decide what agents may write. It uses the existing
 deploy credential and checks out no code. The database switch stays a separate gate.
 One cloud job runs scan, authority, write and post-write verify in a single
 invocation, which needs more than the Workers Free 50-subrequest budget, so
