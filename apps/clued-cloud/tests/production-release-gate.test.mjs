@@ -342,6 +342,10 @@ test('deploy and migrate consume an Owner Grant before they change production', 
     if (/^name: Check (production|migration) database credential/.test(step)) assert.ok(index < grant, names[index]);
   });
   assert.match(steps[grant], /MIGRATIONS: \$\{\{ inputs\.migrations \}\}/);
+  // The migration credential check connects, so a bad password stops the run
+  // before a grant is used (trial run 37155374056).
+  const check = steps.find((step) => step.startsWith('name: Check migration database credential'));
+  assert.match(check, /psql "\$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select 1'/);
   // The migration runs as one psql -c string, never through \i or -f, so psql
   // meta-commands in a file are not executed.
   const apply = steps.find((step) => step.startsWith('name: Apply the named migrations'));
