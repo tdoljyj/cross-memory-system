@@ -257,6 +257,7 @@ test('context write requires an explicit write scope and unknown tools fail clos
   assert.deepEqual(requiredToolScopes('clued_projection_rebuild'), ['context:write']);
   assert.deepEqual(requiredToolScopes('clued_full_global_reconcile'), ['context:write']);
   assert.deepEqual(requiredToolScopes('clued_currentness_g6_gate'), ['context:read']);
+  assert.deepEqual(requiredToolScopes('clued_owner_request'), ['context:write']);
   assert.deepEqual(requiredToolScopes('clued_storage_browse'), []);
   assert.deepEqual(requiredToolScopes('clued_storage_read'), []);
   assert.equal(requiredToolScopes('clued_context', { op: 'publish' }), null);
