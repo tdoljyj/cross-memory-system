@@ -77,7 +77,7 @@
   - 只有 `https`、公网 DNS 主机名（小写、至少一个点、无端口或 443、无 query/fragment/userinfo）的 redirect URI 可继承。loopback、IP 字面量、`localhost`/`.localhost`、`.local` 等本机地址任何本地程序都能注册，**永不继承**，仍须逐请求审核 link。
   - 继承只在判定时派生，不写 link 行；lineage 与读取等级拒绝、资格撤销、账号策略与 Binding/authorization 生命周期照常生效。已有人工审核 link 的请求始终按原 exact client ID 合同判定，不被继承替代。匹配到两个及以上 active lineage 时视为歧义，一律不继承。
   - Owner 按客户端拒绝或撤销时作用于整个 lineage，即同一应用的所有重连会话；这是预期语义。
-- 资格标准对兼容客户端一致，不做厂商名称白名单，也不要求普通用户为每个设备设置。
+- 资格标准对兼容客户端一致，不做厂商名称白名单（Decision `281c4eb6`），也不要求普通用户为每个设备设置。
 - 登记一个应用的技术资格不等于给它用户委托；每个请求仍需实际用户的有效 Binding/authorization 和账号策略。
 - **唯一 storage authority 就是 Owner 的账号策略 consent/transition Receipt**：其一次连接说明明确涵盖“本账号已连接且合格的应用可按账号设置使用所选网盘”。它不是逐 Binding grant，v12 只证明同账号应用身份与委托生命周期；不得要求新 per-Binding storage Receipt，不改冻结 v12 scope，也不从 `context:write` 推导 storage 权限。已有连接从未披露/同意这一用途时，不能仅靠 context token 升级；未有账号策略 consent 的普通 context-only 客户端，以及技术资格未通过的客户端仍然拒绝。用户完成该账号层一次同意之后，其合格且有效的应用自然继承，不再次弹客户端存储授权页。
 - 当前 Owner 已明确批准的精确客户端/连接可以在受审过渡中引用现有 Owner Decision，不再次申请同一授权。不得外推为迁移其他用户或所有未知客户端。

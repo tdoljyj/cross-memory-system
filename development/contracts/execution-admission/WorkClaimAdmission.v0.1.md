@@ -18,8 +18,8 @@
 - **第 7 步**：
   - 验收矩阵实测：PR #467。
   - 独立评审 HOLD_FAIL。修复已合入：PR #472、#479、#480，另有 PR #475、#477。
-  - 修复后未做复审。
-- **未实现或与本文设计不符**（各条在对应小节标注）：
+  - 修复后未做复审（Task `869d2db7`）。
+- **尚缺或与本文设计不符**（各条在对应小节标注）：
   - 每认领 CI 分钟预算与 finalize：改为次数上限，不做（§4.5，Owner Decision `a264ea02`）。
   - 备份恢复后 `max(fence)` 会回退，靠恢复后的手工步骤补救（§4.4、§6，Owner Decision `2b23eb0c`）。
   - 同名 check 伪造与 PR 删除 `needs: admission-gate`（§4.6）。
@@ -153,7 +153,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 第 3 条按不区分大小写比较：`ghsa:GHSA-x` 与 `ghsa:ghsa-x` 相同。`@` 后都是至少 7 位十六进制、且一方是另一方前缀时也算相同，所以 `ci:trivy@f7ba6ff` 与完整 SHA 冲突。存储的 ref 保留声明时的大小写。
 - 第 2 条中 `**/` 也匹配零层目录：`**/package-lock.json` 覆盖根目录的 `package-lock.json`，与 CI 路径过滤的理解一致。
 
-不做：标题相似度、语义去重、自动合并意图。语义不明确时 Agent 可以用 `clued_search_context` 做有上限的探索，但那不是准入判断。
+不做：标题相似度、语义去重、自动合并意图（Decision `78ca0c07`）。语义不明确时 Agent 可以用 `clued_search_context` 做有上限的探索，但那不是准入判断。
 
 ### 4.4 租约、续期、过期、接管、fence
 
@@ -286,7 +286,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 | 非幂等请求成功但回包丢失 | claim 创建用幂等键；CI gate 对同一 head 重复查询返回同一判定 | L1／L0 |
 | 多资源反序竞争、cleanup 崩溃 | write_set 整体一次事务；无逐路径锁；EXPIRED 清理不删 ACTIVE 行 | L1 |
 | raw 工具修改后尝试整合、篡改 Receipt 或 verifier | 无 trailer 或 trailer 指向他人 claim 的 PR 在 L0a 失败；verifier 从 Clued 实时查，不读 PR 自报 | L0 |
-| 权限撤销、approval 过期、预算耗尽 | Binding 撤销后 renew／claim 失败；预算超限 verify 返回 REJECTED 且无自动追加。**实测：Binding 撤销项通过（PR #467）；预算未实现，见 §4.5** | L1／L0 |
+| 权限撤销、approval 过期、预算耗尽 | Binding 撤销后 renew／claim 失败；预算超限 verify 返回 REJECTED 且无自动追加。**实测：Binding 撤销项通过（PR #467）；预算未实现，按 Decision `a264ea02` 改为次数上限，见 §4.5** | L1／L0 |
 
 测试用可控时钟（`clock_timestamp` 由测试夹具注入或用 `pg_sleep` 边界）、并发 barrier、真实行计数与 Receipt。
 
@@ -306,15 +306,15 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 ## 8. 实施顺序
 
-第 1–7 步均已执行。第 7 步的复审未做；其余状态见文首「当前状态」。以下为原计划，保留原文。
+第 1–7 步均已执行。第 7 步的复审未做（Task `869d2db7`）；其余状态见文首「当前状态」。以下为原计划，保留原文。
 
-1. 迁移：`work_claims_v1` 表 + 五个 RPC + Event／Receipt 接线；DB 测试覆盖第 6 节矩阵。
-2. Worker：五个 MCP 工具；`clued_session_resume` 增加 `contract_version` 与 `active_work_claims`。
-3. CI：`clued-work-admission.yml`（无过滤）+ 重任务 workflow 的 `admission-gate` job；只读 Binding secret。
-4. ruleset：把 `clued-work-admission` 加入 required（Owner 操作）。
-5. 合同：agent-contract v7 §1 新增 claim 步骤；Skill 与 Worker 下发同步。
-6. hook：PreToolUse 候选。
-7. 独立评审 + 第 6 节矩阵实测。
+1. 迁移（Task `ca767208`）：`work_claims_v1` 表 + 五个 RPC + Event／Receipt 接线；DB 测试覆盖第 6 节矩阵。
+2. Worker（Task `ed816cd8`）：五个 MCP 工具；`clued_session_resume` 增加 `contract_version` 与 `active_work_claims`。
+3. CI（Task `f6311ff5`）：`clued-work-admission.yml`（无过滤）+ 重任务 workflow 的 `admission-gate` job；只读 Binding secret。
+4. ruleset（Decision `b12d4703`）：把 `clued-work-admission` 加入 required（Owner 操作）。
+5. 合同（Task `29ad7d4e`）：agent-contract v7 §1 新增 claim 步骤；Skill 与 Worker 下发同步。
+6. hook（Task `178ff66c`）：PreToolUse 候选。
+7. 独立评审 + 第 6 节矩阵实测（Task `2a5ae9ce`；修复后复审 Task `869d2db7`）。
 
 每一步都是独立 PR，每一步合入前都要先按本设计 claim 自己的 write_set。第 1 步之前，本文件只是候选。
 
