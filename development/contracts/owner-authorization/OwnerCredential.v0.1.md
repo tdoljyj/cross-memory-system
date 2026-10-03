@@ -1,6 +1,6 @@
 # Owner Credential v0.1：范围授权与直达确认链接
 
-状态：**设计已合入（PR #505）；第 1、2 步已上线；第 3 步实施中。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
+状态：**设计已合入（PR #505）；第 1–3 步已上线；第 5 步（合同增补）实施中。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
 
 - 第 1 步（Owner 授权 2026-10-02，Task `3b7adacc`）：迁移 `20261002220000_owner_grants_v1.sql`，测试 `apps/clued-cloud/tests/owner-grants-db.test.mjs`。
   - Agent 侧：`clued_owner_request_v1`、`clued_owner_request_status_v1`（Binding）。
@@ -19,7 +19,8 @@
   - 超过每 Task 认领上限时，`work_claim_issue` 先认旧豁免（到期为止），否则在认领自己的事务里消费 `work_claim.extra_claims` 授权（资源 `record:<task_id>`、Task 限定、每次认领或接管用一次），认领 Receipt 记下授权 ID 与第几次。
   - 都没有就拒绝，拒绝里带上这个 Binding 对该 Task 的待确认请求（没有就新建，建议 24 小时、5 次），Worker 补上绝对链接 `owner_request.confirm_url`；原来的 `owner_exemption_path` 不再返回。
   - 新豁免停发：`clued_work_claim_exemption_confirmation_issue_v1` 返回 `work_claim_exemption_retired`；迁移前已发出的第 1 步令牌仍可确认。`/work-claims/exemption` 改为说明页，指向 `/grants`。
-  - 生产迁移与发布需 Owner 另行授权。
+  - 已上线（2026-10-03）：生产迁移版本 `20261003035202`（Decision `a9cb070a`），发布 run 37094621010。
+- 第 5 步（Owner 授权 2026-10-03，Task `340693ee`）：Agent 合同升到第 14 版，§6.6 写明 Owner 批准只来自 Owner 本人登录的页面、`confirm_url` 原样交给 Owner、不得自称已批准、被拒或过期就停；§4 错误表的 `work_claim_budget_exhausted` 改为先给 `owner_request.confirm_url`。尚无门口消费的动作（发布、迁移）仍按 §6.4 需要明确授权。Worker 发布后服务端 `/clued-agent.md` 才是第 14 版。
 日期：2026-10-02
 Task：`17ab25b3`（Global）。Owner 决定：方向与优先级见 Task `17ab25b3` v3，规则见 Decision `6fa79397`，待定三条见 Decision `667f588b`（§11）。
 相关：[GenericWorkClaim.v0.1.md](../execution-admission/GenericWorkClaim.v0.1.md)（门卫与资源模型）、[NativeWriteSurfaces.v0.1.md](../information-flow/NativeWriteSurfaces.v0.1.md)（现有 Owner 本人确认面）。
