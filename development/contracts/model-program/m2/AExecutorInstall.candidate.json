@@ -15,6 +15,8 @@
   "guest_profile_owner_mode": "root:root directory 0700/file 0600",
   "ledger": "/var/lib/clued-m2-a/ledger.sqlite",
   "ledger_owner_mode": "root:root directory 0700/file 0600",
+  "installation_receipt": "/var/lib/clued-m2-a/install-receipt.json",
+  "installation_receipt_owner_mode": "root:root 0600; binds exact installed profile/manifest and fixed target identities; retained with ledger on rollback",
   "fixed_identity": "existing locked/nologin m2-a; its primary UID/GID only, supplemental groups cleared",
   "input": "/srv/clued-m2/probe/a-input/marker.txt",
   "input_expected_public_bytes": "PUBLIC_EMPTY_PROBE_INPUT:a-input\n",
@@ -50,7 +52,7 @@
     "Close bridge, revoke and stop supervisor; require whole cgroup empty and listener gone",
     "Remove only the newly created exact GUID and approved bridge directory; restore DVD empty",
     "Guest installer rollback removes only matching package code/profile and empty cgroup",
-    "Retain root-private replay ledger for audit; do not reset IDs or change existing roles/roots/NIC/VM/runner"
+    "Retain root-private replay ledger and installation receipt for audit; do not reset IDs or change existing roles/roots/NIC/VM/runner"
   ],
   "limits": [
     "Root supervisor and entire Windows management host are trusted TCB; VSOCK CID/port is routing, not caller authentication",

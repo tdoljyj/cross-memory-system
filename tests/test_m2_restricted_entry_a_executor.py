@@ -9,6 +9,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -214,6 +215,46 @@ class NativeContractMockTests(unittest.TestCase):
 
 
 class FramingPackageTests(unittest.TestCase):
+    def snapshot_exchange(self, replace):
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "approved.zip"
+            expected = builder.build(package)
+            approved_bytes = package.read_bytes()
+            approved, _ = installer.verify_package(package, expected)
+            changed = dict(approved)
+            changed["bridge.py"] = b"UNAPPROVED_PUBLIC_FIXTURE\n"
+            manifest = {"schema": "m2-a-package-v1", "files": {name: hashlib.sha256(changed[name]).hexdigest() for name in installer.FILES}}
+            other = Path(tmp) / "unapproved.zip"
+            with zipfile.ZipFile(other, "w") as archive:
+                for name, data in changed.items():
+                    archive.writestr(name, data)
+                archive.writestr("manifest.json", json.dumps(manifest))
+            real_sha256 = hashlib.sha256
+            exchanged = []
+            def hash_then_exchange(data):
+                digest = real_sha256(data)
+                if data == approved_bytes and not exchanged:
+                    def approved_digest():
+                        if replace:
+                            os.replace(other, package)
+                        else:
+                            package.write_bytes(other.read_bytes())
+                        exchanged.append(True)
+                        return digest.hexdigest()
+                    return mock.Mock(hexdigest=approved_digest)
+                return digest
+            with mock.patch.object(installer.hashlib, "sha256", side_effect=hash_then_exchange):
+                actual, _ = installer.verify_package(package, expected)
+            self.assertEqual(exchanged, [True])
+            self.assertEqual(actual, approved)
+            self.assertNotEqual(package.read_bytes(), approved_bytes)
+
+    def test_real_hash_then_staging_path_exchange_uses_approved_snapshot(self):
+        self.snapshot_exchange(True)
+
+    def test_real_hash_then_inplace_change_uses_approved_snapshot(self):
+        self.snapshot_exchange(False)
+
     def test_bounded_duplicate_and_nonfinite_frames_rejected(self):
         for frame in (b'{"tool":"x","tool":"y","arguments":{}}\n', b'{"tool":"x","arguments":{"n":NaN}}\n', b"x" * (entry.MAX_FRAME + 1), b'{}\n'):
             with self.assertRaises(entry.Rejected):
@@ -251,6 +292,134 @@ class FramingPackageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "PACKAGE_SHAPE_INVALID"):
                 installer.verify_package(first, new_digest)
             self.assertFalse((Path(tmp).parent / "outside").exists())
+
+
+@unittest.skipUnless(sys.platform == "linux", "Real POSIX temp apply/rollback runs in Linux CI; no guest installation")
+class InstallerTemporaryFixtureTests(unittest.TestCase):
+    """Real files, exclusive writes, hashes, SQLite and apply/rollback control flow.
+
+    Only root ownership/account metadata and virtual cgroup files are fixtures.
+    No chown, account changes, kernel cgroup, listener or privileged effect.
+    """
+    @contextlib.contextmanager
+    def installed(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as stack:
+            root = Path(tmp)
+            paths = {name: root / name.lower() for name in ("CODE", "CONFIG", "DATA", "CGROUP", "INPUT", "OUTPUT", "CONTROLLERS")}
+            for name, path in paths.items():
+                stack.enter_context(mock.patch.object(installer, name, path))
+            paths["INPUT"].mkdir(mode=0o750)
+            paths["OUTPUT"].mkdir(mode=0o700)
+            paths["INPUT"].chmod(0o750)
+            paths["OUTPUT"].chmod(0o700)
+            marker = paths["INPUT"] / "marker.txt"
+            marker.write_bytes(installer.PUBLIC_INPUT)
+            marker.chmod(0o640)
+            paths["CONTROLLERS"].write_text("memory pids cpu")
+            pwd = mock.Mock()
+            pwd.getpwnam.return_value = mock.Mock(pw_uid=42, pw_gid=42, pw_shell="/usr/sbin/nologin")
+            stack.enter_context(mock.patch.dict(sys.modules, {"pwd": pwd}))
+            original_stat, original_mkdir, original_rmdir = Path.lstat, Path.mkdir, Path.rmdir
+            def owned_stat(path, *args, **kwargs):
+                s = original_stat(path, *args, **kwargs)
+                uid = 42 if path == paths["OUTPUT"] else 0
+                gid = 42 if path == paths["INPUT"] or path == marker or path == paths["OUTPUT"] else 0
+                return os.stat_result((s.st_mode, s.st_ino, s.st_dev, s.st_nlink, uid, gid, s.st_size, s.st_atime, s.st_mtime, s.st_ctime))
+            def mkdir(path, *args, **kwargs):
+                original_mkdir(path, *args, **kwargs)
+                if path == paths["CGROUP"]:
+                    (path / "cgroup.kill").write_text("")
+                    (path / "cgroup.events").write_text("populated 0\n")
+            def rmdir(path, *args, **kwargs):
+                if path == paths["CGROUP"]:
+                    virtual = set(installer.LIMITS) | {"cgroup.kill", "cgroup.events"}
+                    self.assertEqual(set(p.name for p in path.iterdir()), virtual)
+                    for name in virtual:
+                        (path / name).unlink()
+                original_rmdir(path, *args, **kwargs)
+            def fixture_parent(path):
+                self.assertTrue(path.resolve().is_relative_to(root))
+            stack.enter_context(mock.patch.object(Path, "lstat", owned_stat))
+            stack.enter_context(mock.patch.object(Path, "mkdir", mkdir))
+            stack.enter_context(mock.patch.object(Path, "rmdir", rmdir))
+            stack.enter_context(mock.patch.object(installer, "safe_parent", side_effect=fixture_parent))
+            package = root / "package.zip"
+            digest = builder.build(package)
+            content, manifest = installer.verify_package(package, digest)
+            installer.apply(content, manifest)
+            yield root, paths, manifest
+
+    @staticmethod
+    def snapshot(root):
+        return {str(path.relative_to(root)): (path.read_bytes(), path.lstat().st_ino, path.lstat().st_mode) for path in root.rglob("*") if path.is_file()}
+
+    def rejected_unchanged(self, root, manifest):
+        before = self.snapshot(root)
+        with self.assertRaisesRegex(ValueError, "ROLLBACK_IDENTITY_DRIFT"):
+            installer.rollback(manifest)
+        self.assertEqual(self.snapshot(root), before)
+
+    def test_real_temp_apply_and_unchanged_rollback_retains_burns_and_receipt(self):
+        with self.installed() as (_, paths, manifest):
+            ledger = paths["DATA"] / "ledger.sqlite"
+            with sqlite3.connect(ledger) as db:
+                db.execute("INSERT INTO burns VALUES (?, ?)", ("fixed-a", "public-burn"))
+            before = ledger.read_bytes()
+            receipt = (paths["DATA"] / "install-receipt.json").read_bytes()
+            installer.rollback(manifest)
+            for name in ("CODE", "CONFIG", "CGROUP"):
+                self.assertFalse(paths[name].exists())
+            self.assertEqual(ledger.read_bytes(), before)
+            self.assertEqual((paths["DATA"] / "install-receipt.json").read_bytes(), receipt)
+
+    def test_real_temp_changed_instance_binding_or_filehash_fails_before_delete(self):
+        for change in ("instance", "binding", "files"):
+            with self.subTest(change=change), self.installed() as (root, paths, manifest):
+                path = paths["CONFIG"] / "profile.json"
+                profile = json.loads(path.read_bytes())
+                if change == "instance":
+                    profile["instance"] = "changed-public-fixture"
+                elif change == "binding":
+                    profile["binding"]["uid"] += 1
+                else:
+                    profile["files"]["executor.py"] = "0" * 64
+                path.write_bytes(installer.encoded(profile))
+                self.rejected_unchanged(root, manifest)
+
+    def test_real_temp_same_profile_bytes_new_identity_fails_before_delete(self):
+        with self.installed() as (root, paths, manifest):
+            profile = paths["CONFIG"] / "profile.json"
+            other = root / "replacement.json"
+            other.write_bytes(profile.read_bytes())
+            other.chmod(0o600)
+            os.replace(other, profile)
+            self.rejected_unchanged(root, manifest)
+
+    def test_real_temp_installation_id_change_fails_before_delete(self):
+        with self.installed() as (root, paths, manifest):
+            path = paths["DATA"] / "install-receipt.json"
+            receipt = json.loads(path.read_bytes())
+            receipt["installation_id"] = "0" * 64
+            path.write_bytes(installer.encoded(receipt))
+            self.rejected_unchanged(root, manifest)
+
+    def test_real_temp_other_target_identity_drift_fails_before_delete(self):
+        for name in (*installer.INSTALLED_CODE, "ledger.sqlite"):
+            with self.subTest(target=name), self.installed() as (root, paths, manifest):
+                target = paths["DATA"] / name if name == "ledger.sqlite" else paths["CODE"] / name
+                other = root / "replacement"
+                other.write_bytes(target.read_bytes())
+                other.chmod(0o600 if name == "ledger.sqlite" else 0o555)
+                os.replace(other, target)
+                self.rejected_unchanged(root, manifest)
+
+    def test_real_temp_changed_code_hash_fails_before_delete(self):
+        with self.installed() as (root, paths, manifest):
+            target = paths["CODE"] / "executor.py"
+            target.chmod(0o600)
+            target.write_bytes(b"CHANGED_PUBLIC_FIXTURE\n")
+            target.chmod(0o555)
+            self.rejected_unchanged(root, manifest)
 
 
 if __name__ == "__main__":
