@@ -156,6 +156,28 @@ test('a conflict or budget rejection is a structured result, not a transport err
   } finally { restore(); }
 });
 
+test('a refusal over the per-Task cap carries the Owner Request with an absolute confirm_url', async () => {
+  const worker = await loadContinuityWorker();
+  const requestId = '55555555-5555-4555-8555-555555555555';
+  const rejection = { status: 'rejected', error_code: 'work_claim_budget_exhausted', limit: 'max_claims_per_task_24h',
+    max_claims_per_task_24h: 10, claims_last_24h: 10, task_id: '11111111-1111-4111-8111-111111111111',
+    retry_after: '2026-10-04T00:00:00+00:00',
+    owner_request: { request_id: requestId, action: 'work_claim.extra_claims', status: 'pending',
+      resources: ['record:11111111-1111-4111-8111-111111111111'], confirm_path: `/confirm/${requestId}` } };
+  const { restore } = mockFetch(() => Response.json(rejection));
+  try {
+    for (const token of [bindingToken, oauthToken]) {
+      const response = await worker.fetch(mcp(token, 'clued_work_claim', {
+        task_id: '11111111-1111-4111-8111-111111111111', write_set: ['a/b'], idempotency_key: 'over-the-cap',
+      }), enabled, ctx);
+      const result = (await response.json()).result;
+      assert.equal(result.isError, false);
+      assert.equal(result.structuredContent.owner_request.confirm_url, `https://clued.test/confirm/${requestId}`);
+      assert.equal(result.structuredContent.owner_request.confirm_path, `/confirm/${requestId}`);
+    }
+  } finally { restore(); }
+});
+
 test('resume folds in contract_version and the live claims; a failed claims read is reported, not thrown', async () => {
   const worker = await loadContinuityWorker();
   const resume = { status: 'restored', session_token: 'session-test', version: 7, active_constraints: [],

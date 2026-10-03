@@ -43,6 +43,17 @@ import {
   workClaimsEnabled,
   type WorkClaimFeatureEnv,
 } from "./work-claims";
+import {
+  OWNER_REQUEST_TOOL,
+  OwnerRequestInputError,
+  ownerRequestCall,
+  ownerRequestRejection,
+  ownerRequestToolPolicies,
+  ownerRequestTools,
+  ownerRequestsEnabled,
+  withConfirmUrl,
+  type OwnerRequestFeatureEnv,
+} from "./owner-requests";
 import { measurePack } from "./context-pack";
 import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION } from "./generated/agent-contract";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
@@ -86,7 +97,7 @@ const RESOURCE_CENTER_AUTHORITY_CONTRACT = "clued.resource-center-authority/1";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
-export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv {
+export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv {
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
@@ -1526,6 +1537,7 @@ const tools = [
   ...p5Tools,
   ...contextTools,
   ...workClaimTools,
+  ...ownerRequestTools,
 ] as const;
 
 type PublicToolName = (typeof tools)[number]["name"];
@@ -1651,6 +1663,7 @@ export const publicToolPolicies = {
     scopes: ["audit:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
   },
   ...workClaimToolPolicies,
+  ...ownerRequestToolPolicies,
 } as const satisfies Record<PublicToolName, PublicToolPolicy>;
 
 function publishTool<T extends (typeof tools)[number]>(tool: T) {
@@ -1675,12 +1688,13 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {
   };
 }
 
-export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_WORK_CLAIMS_V1" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1">) {
+export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_WORK_CLAIMS_V1" | "CLUED_OWNER_REQUESTS_V1" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1">) {
   const existing = tools.filter((tool) =>
     (!(tool.name in recordRpcByTool || tool.name in informationFlowRpcByTool) || recordsV2Enabled(env))
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
     && (!(tool.name in contextRpcByTool) || contextsEnabled(env))
     && (!(tool.name in workClaimRpcByTool) || workClaimsEnabled(env))
+    && (tool.name !== OWNER_REQUEST_TOOL || ownerRequestsEnabled(env))
   ).map(publishTool);
   const binary = storageBinaryEnabled(env);
   return [...existing, ...(storageJobsEnabled(env) ? storageAgentToolsFor(binary) : []), ...(binary ? [storageUploadBeginTool] : []),
@@ -2043,6 +2057,32 @@ function requestRuleRejection(error: unknown) {
   };
 }
 
+// OwnerCredential §3.2: an Agent (Binding) creates or reads its own request.
+// Account and legacy OAuth tokens are refused: a request names the Binding
+// that asked, and delegated OAuth already arrives here as its Binding.
+async function callOwnerRequest(request: Request, env: ContinuityEnv, args: unknown) {
+  const token = bearerToken(request);
+  if (!token) throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
+  if (!token.startsWith("clued_bnd_")) throw new HttpError(403, "Owner requests require a Clued Agent Binding.");
+  let result: unknown;
+  try {
+    const call = ownerRequestCall(args);
+    result = await supabaseRequest(env, `/rest/v1/rpc/${call.rpc}`, {
+      method: "POST",
+      body: JSON.stringify({ p_token_hash: await sha256(token), p_input: call.input }),
+    });
+  } catch (error) {
+    const rejection = error instanceof OwnerRequestInputError
+      ? { status: "rejected", error_code: error.message }
+      : error instanceof HttpError ? ownerRequestRejection(error.status, error.message) : null;
+    if (!rejection) throw error;
+    return { content: [{ type: "text", text: JSON.stringify(rejection) }], structuredContent: rejection, isError: true };
+  }
+  const body = withConfirmUrl(sanitizeCluedResult(result), new URL(request.url).origin);
+  const failed = (body as Record<string, unknown> | null)?.status === "rejected";
+  return { content: [{ type: "text", text: JSON.stringify(body) }], structuredContent: body, isError: failed };
+}
+
 async function callTool(
   request: Request,
   env: ContinuityEnv,
@@ -2196,6 +2236,10 @@ async function callTool(
   if (typeof name === "string" && name in workClaimRpcByTool && !workClaimsEnabled(env)) {
     throw new HttpError(404, "Clued work claims are disabled.");
   }
+  if (name === OWNER_REQUEST_TOOL) {
+    if (!ownerRequestsEnabled(env)) throw new HttpError(404, "Clued owner requests are disabled.");
+    return await callOwnerRequest(request, env, args);
+  }
   if (typeof name !== "string" || !(name in rpcByTool)) {
     throw new HttpError(404, "Unknown Clued continuity tool.");
   }
@@ -2229,7 +2273,8 @@ async function callTool(
       : { status: "not_ready", gate: "G6_CURRENTNESS",
           missing_requirements: ["all_path_checkpoint_enforcement"] }
     : sanitized;
-  const result = await withWorkClaims(request, env, name, args, withAuthorityCapture(name, gated));
+  const captured = await withWorkClaims(request, env, name, args, withAuthorityCapture(name, gated));
+  const result = name in workClaimRpcByTool ? withConfirmUrl(captured, new URL(request.url).origin, "owner_request") : captured;
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
     structuredContent: result,

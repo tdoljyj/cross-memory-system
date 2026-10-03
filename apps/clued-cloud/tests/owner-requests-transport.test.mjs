@@ -1,0 +1,158 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { loadContinuityWorker } from './worker-continuity-loader.mjs';
+
+// Owner Credential v0.1, step 2: the clued_owner_request MCP tool over the
+// step-1 Agent RPCs. The database side is covered by owner-grants-db.test.mjs;
+// here every RPC is mocked.
+
+const assets = { ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
+const enabled = { ...assets, PROJECT_VIEWS_V2: 'true', CLUED_OWNER_REQUESTS_V1: 'true' };
+const disabled = { ...assets, PROJECT_VIEWS_V2: 'true' };
+const ctx = { waitUntil() {}, passThroughOnException() {} };
+const bindingToken = `clued_bnd_${'o'.repeat(43)}`;
+const oauthToken = 'account-or-legacy-oauth-token';
+const REQUEST_ID = '33333333-3333-4333-8333-333333333333';
+const TOOL = 'clued_owner_request';
+
+function mcp(token, name, args = {}, id = 1) {
+  return new Request('https://clued.test/mcp', {
+    method: 'POST',
+    headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }),
+  });
+}
+function list(token) {
+  return new Request('https://clued.test/mcp', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+  });
+}
+function mockFetch(handler) {
+  const previous = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const rpc = /\/rpc\/([^/?]+)$/.exec(String(input))?.[1];
+    const body = JSON.parse(init.body);
+    calls.push({ rpc, body });
+    return handler({ rpc, body, calls });
+  };
+  return { calls, restore: () => { globalThis.fetch = previous; } };
+}
+const publicRequest = (status = 'pending') => ({
+  request_id: REQUEST_ID, action: 'release.production', resources: ['repo:tdoljyj/cross-memory-system/**'],
+  task_id: null, status, confirm_path: `/confirm/${REQUEST_ID}`, created_at: '2026-10-03T00:00:00Z',
+  expires_at: '2026-10-04T00:00:00Z', decided_at: null, grant: null,
+});
+
+test('the tool is advertised only behind CLUED_OWNER_REQUESTS_V1, with context:write', async () => {
+  const worker = await loadContinuityWorker();
+  const on = (await (await worker.fetch(list(bindingToken), enabled, ctx)).json()).result.tools;
+  const off = (await (await worker.fetch(list(bindingToken), disabled, ctx)).json()).result.tools;
+  assert.equal(off.length + 1, on.length, 'the flag adds exactly one tool');
+  assert.ok(!off.some((tool) => tool.name === TOOL));
+  const tool = on.find((entry) => entry.name === TOOL);
+  assert.ok(tool);
+  assert.deepEqual(tool._meta['clued/requiredScopes'], ['context:write']);
+  assert.match(tool.description, /Required Clued scope: context:write\.$/);
+  assert.match(tool.description, /cannot approve/);
+  assert.equal(tool.annotations.readOnlyHint, false);
+  assert.equal(tool.annotations.destructiveHint, false);
+  assert.equal(tool.annotations.idempotentHint, true);
+  assert.equal(tool.inputSchema.additionalProperties, false);
+  assert.equal(tool.inputSchema.properties.suggested_grant.additionalProperties, false);
+  assert.equal(tool.inputSchema.properties.suggested_grant.properties.expires_seconds.maximum, 604800);
+  // Nothing in the schema lets an Agent approve, grant or widen.
+  for (const key of ['choice', 'grantee', 'confirmation_token', 'view_digest', 'grant_id', 'approve']) {
+    assert.ok(!(key in tool.inputSchema.properties), key);
+  }
+});
+
+test('a disabled flag refuses the call before any database request', async () => {
+  const worker = await loadContinuityWorker();
+  const { calls, restore } = mockFetch(() => Response.json({ status: 'committed' }));
+  try {
+    const body = await (await worker.fetch(mcp(bindingToken, TOOL, { request_id: REQUEST_ID }), disabled, ctx)).json();
+    assert.match(body.error.message, /owner requests are disabled/);
+    assert.equal(calls.length, 0);
+  } finally { restore(); }
+});
+
+test('create goes to clued_owner_request_v1 with the Binding hash and returns an absolute confirm_url', async () => {
+  const worker = await loadContinuityWorker();
+  const args = {
+    action: 'release.production', resources: ['repo:tdoljyj/cross-memory-system/**'],
+    task_id: '11111111-1111-4111-8111-111111111111', suggested_grant: { expires_seconds: 14400 },
+    agent_note: 'Release PR #507', idempotency_key: 'release-507-request',
+  };
+  const { calls, restore } = mockFetch(() => Response.json({
+    status: 'committed', replayed: false, receipt_id: 'r-1', request: { ...publicRequest(), user_id: 'u-1' },
+  }));
+  try {
+    const response = await worker.fetch(mcp(bindingToken, TOOL, args), enabled, ctx);
+    const result = (await response.json()).result;
+    assert.equal(result.isError, false);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].rpc, 'clued_owner_request_v1');
+    assert.match(calls[0].body.p_token_hash, /^[0-9a-f]{64}$/);
+    assert.deepEqual(calls[0].body.p_input, args);
+    assert.equal(result.structuredContent.request.confirm_url, `https://clued.test/confirm/${REQUEST_ID}`);
+    assert.equal(result.structuredContent.request.user_id, undefined, 'identifiers are sanitized');
+  } finally { restore(); }
+});
+
+test('request_id alone reads status; mixing it with create fields is refused before the database', async () => {
+  const worker = await loadContinuityWorker();
+  const { calls, restore } = mockFetch(() => Response.json({ status: 'ok', request: publicRequest('granted') }));
+  try {
+    const status = (await (await worker.fetch(mcp(bindingToken, TOOL, { request_id: REQUEST_ID, scope: 'global' }), enabled, ctx)).json()).result;
+    assert.equal(status.isError, false);
+    assert.equal(calls[0].rpc, 'clued_owner_request_status_v1');
+    assert.deepEqual(calls[0].body.p_input, { request_id: REQUEST_ID, scope: 'global' });
+    assert.equal(status.structuredContent.request.status, 'granted');
+    assert.equal(status.structuredContent.request.confirm_url, `https://clued.test/confirm/${REQUEST_ID}`);
+
+    const mixed = (await (await worker.fetch(mcp(bindingToken, TOOL, { request_id: REQUEST_ID, action: 'release.production' }), enabled, ctx)).json()).result;
+    assert.equal(mixed.isError, true);
+    assert.deepEqual(mixed.structuredContent, { status: 'rejected', error_code: 'owner_request_status_fields_invalid' });
+    assert.equal(calls.length, 1);
+  } finally { restore(); }
+});
+
+test('account and legacy OAuth tokens are refused; no token is a 401', async () => {
+  const worker = await loadContinuityWorker();
+  const { calls, restore } = mockFetch(() => Response.json({ status: 'committed' }));
+  try {
+    const oauth = await (await worker.fetch(mcp(oauthToken, TOOL, { request_id: REQUEST_ID }), enabled, ctx)).json();
+    assert.match(oauth.error.message, /require a Clued Agent Binding/);
+    const none = await worker.fetch(mcp(null, TOOL, { request_id: REQUEST_ID }), enabled, ctx);
+    assert.ok(none.status === 401 || (await none.clone().json()).error, 'no token is refused');
+    assert.equal(calls.length, 0);
+  } finally { restore(); }
+});
+
+test('database contract rejections become tool errors naming the rule; other failures stay transport errors', async () => {
+  const worker = await loadContinuityWorker();
+  let reply = () => Response.json({ code: '22023', message: 'owner_grant_action_unknown' }, { status: 400 });
+  const { restore } = mockFetch(() => reply());
+  try {
+    const args = { action: 'deploy.anything', resources: ['repo:x/y/**'], idempotency_key: 'unknown-action' };
+    const rejected = (await (await worker.fetch(mcp(bindingToken, TOOL, args), enabled, ctx)).json()).result;
+    assert.equal(rejected.isError, true);
+    assert.deepEqual(rejected.structuredContent, { status: 'rejected', error_code: 'owner_grant_action_unknown' });
+
+    reply = () => Response.json({ code: '22023', message: 'work_claim_resource_kind_unknown' }, { status: 400 });
+    const kind = (await (await worker.fetch(mcp(bindingToken, TOOL, { ...args, action: 'release.production', resources: ['zz:x'] }), enabled, ctx)).json()).result;
+    assert.equal(kind.structuredContent.error_code, 'work_claim_resource_kind_unknown');
+
+    reply = () => Response.json({ status: 'rejected', error_code: 'owner_request_not_found' });
+    const missing = (await (await worker.fetch(mcp(bindingToken, TOOL, { request_id: REQUEST_ID }), enabled, ctx)).json()).result;
+    assert.equal(missing.isError, true);
+    assert.equal(missing.structuredContent.error_code, 'owner_request_not_found');
+
+    reply = () => Response.json({ code: '42501', message: 'binding_scope_denied' }, { status: 401 });
+    const denied = await (await worker.fetch(mcp(bindingToken, TOOL, args), enabled, ctx)).json();
+    assert.ok(denied.error, 'an authorization failure is not turned into a tool result');
+  } finally { restore(); }
+});

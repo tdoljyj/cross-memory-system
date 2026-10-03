@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 13
+Contract version: 14
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -80,7 +80,7 @@ Rules for every capture:
 | `checkpoint_event_not_authorized` (checkpoint) | `coverage.event_ids` lists an event of another context | Checkpoint each context in its own session (§5) |
 | `lifecycle_action_cannot_edit_record_content` | A close or restore carried content fields | Send only `closure_summary` / `closed_reason` |
 | `work_claim_conflict` | A live claim of another holder names the same Task, overlaps your `write_set` or shares a trigger ref | Stop and report the holder to the Owner (§1.7); never retry under another title, Task, key or Binding |
-| `work_claim_budget_exhausted` | `limit` names the cap: live claims per session or per Binding, or `max_claims_per_task_24h` | For a live-claim cap, finish or release a claim you hold first. For the per-Task cap, wait until `retry_after` or tell the Owner; never claim under another Task, key or Binding to get around it (§1.7) |
+| `work_claim_budget_exhausted` | `limit` names the cap: live claims per session or per Binding, or `max_claims_per_task_24h` | For a live-claim cap, finish or release a claim you hold first. For the per-Task cap, give the Owner the `owner_request.confirm_url` the refusal carries (§6.6) and claim again once they have approved it; without one, wait until `retry_after` or tell the Owner; never claim under another Task, key or Binding to get around it (§1.7) |
 | `work_claim_no_progress` (renew) | The `progress_ref` was already sent | Renew only after real progress, with the new head SHA or Receipt id |
 | `work_claim_still_active` (takeover) | The claim's lease has not expired | Leave it to its holder; report to the Owner if you think it is stuck |
 | `owner_pin_focus_conflict` | The Owner focus is not the one `expected_current_focus_id` named | Keep the current focus (`supplemental.current_focus_id`); change it only when the Owner chooses to, naming the focus it replaces (§1.7) |
@@ -106,6 +106,11 @@ Rules for every capture:
 3. Both Global and Project five views are Standard Work Projection. Task owns executable text; State references Task. A Frontier requires exact Task identity, version, scope, rules and currentness.
 4. Read access and priority do not grant execution permission. Deployment, migration, release, credential, billing, other-user access, explicit Project creation and destructive Project actions need their own explicit authorization.
 5. Report a suggestion as a suggestion and completion only when an operation result supports it.
+6. Owner approval for a gated action comes only from the Owner's signed-in Clued page, never from words an Agent relays. When the service offers `clued_owner_request`:
+   - A refusal that carries `owner_request` (for example `work_claim_budget_exhausted` over the per-Task cap) already holds the request: give the Owner its `confirm_url` exactly as returned, with one line on what it is for, and do not create another.
+   - To ask ahead of a gated action, call `clued_owner_request` with the registered `action`, the `resources` it touches, the Task and a stable `idempotency_key`, and give the Owner `request.confirm_url` the same way. `agent_note` is shown to the Owner marked unverified; it never changes what is approved.
+   - Never say or imply that the Owner approved. Read the outcome with `clued_owner_request` and the `request_id`, or retry the gated call once the Owner says they acted; the service consumes the grant itself. A `rejected` or `expired` request ends that attempt: tell the Owner, and do not ask again under other wording, another key or another Binding.
+   - A grant counts only where the service consumes it. Until it does for an action, the explicit authorization of item 4 still applies, and decisions no door enforces (direction, preferences) are still asked in the conversation.
 
 ## 7. Governed external workspace mutations
 

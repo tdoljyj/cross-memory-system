@@ -1,6 +1,26 @@
 # Owner Credential v0.1：范围授权与直达确认链接
 
-状态：**设计候选，未实施。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
+状态：**设计已合入（PR #505）；第 1–3 步已上线；第 5 步（合同增补）实施中。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
+
+- 第 1 步（Owner 授权 2026-10-02，Task `3b7adacc`）：迁移 `20261002220000_owner_grants_v1.sql`，测试 `apps/clued-cloud/tests/owner-grants-db.test.mjs`。
+  - Agent 侧：`clued_owner_request_v1`、`clued_owner_request_status_v1`（Binding）。
+  - Owner 侧（Native 登录会话）：`clued_owner_request_view_v1`、`clued_owner_grant_confirmation_issue_v1` + `clued_owner_grant_v1`、`clued_owner_request_reject_v1`、`clued_owner_grant_revoke_v1`、`clued_owner_grants_list_v1`。
+  - 门口消费：内部函数 `clued_private.owner_grant_consume_v1`。尚无门口调用它，现有行为不变。
+  - "只批一次"的授权 24 小时内有效、只能用一次；Owner 直接发起（不经请求）的授权一律给任何 Agent。
+  - 生产迁移已应用（2026-10-03，生产版本 `20261003005742`，Decision `ec16a36d`）。
+- 第 2 步（Owner 授权 2026-10-03，Task `9cabcfa0`）：
+  - MCP 工具 `clued_owner_request`（`apps/clued-cloud/worker/owner-requests.ts`，开关 `CLUED_OWNER_REQUESTS_V1`）：只带 `request_id` 时查状态，否则创建请求；结果带绝对链接 `confirm_url`。只接受 Binding（委托 OAuth 到这里已换成它的 Binding），账号或旧 OAuth 令牌被拒。
+  - 确认页 `/confirm/<id>`：打开即按默认选择（"管一段时间"，时长取 Agent 建议，否则 4 小时；只给发起的 Agent）签发确认；改选择就重新签发，只有页面上显示的那一版能被批准。点"批准"时若确认快过期，先按同样选择重签，只有 Clued 渲染出的内容完全相同才提交。Agent 说明单独一栏，标"未核实"。未登录可在页内登录。
+  - 授权列表页 `/grants`：有效授权的剩余时间和已用次数、一键撤销，以及等待确认的请求链接。
+  - 测试：`tests/owner-requests-transport.test.mjs`、`tests/owner-grants-ui.test.mjs`。
+  - §4 第 3 条"放宽或收窄范围"本步不做：数据库对来自请求的授权固定资源范围（`owner_grant_request_fields_fixed`）。
+  - 已发布（2026-10-03，发布 run 37089156567），Owner 已开 `CLUED_OWNER_REQUESTS_V1`。
+- 第 3 步（Owner 授权 2026-10-03，Task `13bb5d2c`）：迁移 `20261003030000_work_claims_owner_grants.sql`，测试 `tests/work-claims-owner-grants-db.test.mjs`。
+  - 超过每 Task 认领上限时，`work_claim_issue` 先认旧豁免（到期为止），否则在认领自己的事务里消费 `work_claim.extra_claims` 授权（资源 `record:<task_id>`、Task 限定、每次认领或接管用一次），认领 Receipt 记下授权 ID 与第几次。
+  - 都没有就拒绝，拒绝里带上这个 Binding 对该 Task 的待确认请求（没有就新建，建议 24 小时、5 次），Worker 补上绝对链接 `owner_request.confirm_url`；原来的 `owner_exemption_path` 不再返回。
+  - 新豁免停发：`clued_work_claim_exemption_confirmation_issue_v1` 返回 `work_claim_exemption_retired`；迁移前已发出的第 1 步令牌仍可确认。`/work-claims/exemption` 改为说明页，指向 `/grants`。
+  - 已上线（2026-10-03）：生产迁移版本 `20261003035202`（Decision `a9cb070a`），发布 run 37094621010。
+- 第 5 步（Owner 授权 2026-10-03，Task `340693ee`）：Agent 合同升到第 14 版，§6.6 写明 Owner 批准只来自 Owner 本人登录的页面、`confirm_url` 原样交给 Owner、不得自称已批准、被拒或过期就停；§4 错误表的 `work_claim_budget_exhausted` 改为先给 `owner_request.confirm_url`。尚无门口消费的动作（发布、迁移）仍按 §6.4 需要明确授权。Worker 发布后服务端 `/clued-agent.md` 才是第 14 版。
 日期：2026-10-02
 Task：`17ab25b3`（Global）。Owner 决定：方向与优先级见 Task `17ab25b3` v3，规则见 Decision `6fa79397`，待定三条见 Decision `667f588b`（§11）。
 相关：[GenericWorkClaim.v0.1.md](../execution-admission/GenericWorkClaim.v0.1.md)（门卫与资源模型）、[NativeWriteSurfaces.v0.1.md](../information-flow/NativeWriteSurfaces.v0.1.md)（现有 Owner 本人确认面）。
