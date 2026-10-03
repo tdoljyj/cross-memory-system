@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - "kernel/host/m2-restricted-entry-*.mjs"
+      - "kernel/host/m2-restricted-entry-python-candidate.py"
+      - "tests/test_m2_restricted_entry_python_candidate.py"
       - "kernel/runtime/runner-boundaries.mjs"
       - "tests/m2-restricted-entry-candidate.test.mjs"
       - "development/contracts/model-program/m2/RestrictedEntry.candidate.md"
@@ -52,6 +54,8 @@ jobs:
           node-version: 24.19.0
       - name: Empty-fixture contract only, no VM or model calls
         run: node --test tests/m2-restricted-entry-candidate.test.mjs
+      - name: Python candidate primitives on Linux, public fixtures only
+        run: python3 -m unittest discover -s tests -p test_m2_restricted_entry_python_candidate.py -v
   candidate-contract-untrusted:
     needs: admission-gate
     if: >-
@@ -66,3 +70,5 @@ jobs:
           persist-credentials: false
       - name: Empty-fixture contract only, no VM or model calls
         run: node --test tests/m2-restricted-entry-candidate.test.mjs
+      - name: Python candidate primitives on Linux, public fixtures only
+        run: python3 -m unittest discover -s tests -p test_m2_restricted_entry_python_candidate.py -v

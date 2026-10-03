@@ -70,3 +70,54 @@ acceptance is included. Tests validate candidate contract logic only, not VM,
 OS isolation, complete Agent tools or deployed MCP interoperability.
 
 Validation: `node --test tests/m2-restricted-entry-candidate.test.mjs`.
+
+## Python offline adapter primitives (candidate, not connected)
+
+The 2026-10-03 read-only guest preflight observed Python 3.13.5, no `node`
+command, Hyper-V/VSOCK kernel module configuration, and no visible VSOCK
+listeners. This is runtime evidence only; offline transport remains
+`NOT_CONFIGURED`. The Windows runner's existing `C:\clued-ci\tools\python.cmd`
+resolves Python 3.12.10. No runtime installation is required for candidate tests.
+
+`kernel/host/m2-restricted-entry-python-candidate.py` supplies a deliberately
+narrow Linux file/ledger component, not a replacement Agent Host or runnable
+server. Production role resolution uses only the fixed A/R account/root map.
+The internal directory primitive takes fixture roots for Linux unit tests;
+it must never be exposed as an Agent tool or accept roots from transport frames.
+It requires a private mode-0700 role-owned directory and matching effective UID.
+Ancestor ownership, immutable read-only inputs, local filesystem/mount policy,
+exclusive broker access and cross-process revocation serialization remain
+installation prerequisites; they are not proven by this constructor.
+
+Only a single ASCII filename is accepted (nested paths fail closed). Reads use
+`O_NOFOLLOW`, a held descriptor, regular/single-link/owner/device checks, bounded
+bytes, before/after metadata and frozen digest verification. Outputs are staged
+privately, fsynced, then linked create-only from `/proc/self/fd` to retain the
+actual open file identity; existing targets including symlinks fail. Directory
+fsync precedes return. Cancellation is checked immediately before the synchronous
+commit; a separate process cannot revoke it safely without the future broker's
+serialization boundary. An exception after link may leave committed output and
+must invalidate the entry rather than claim zero effects.
+
+The trusted broker must pre-provision a private SQLite database with
+`CREATE TABLE burns(instance TEXT NOT NULL, request TEXT NOT NULL,
+PRIMARY KEY(instance,request))`, delete journal mode and local durable storage.
+Runtime opens an existing database only, uses FULL synchronous commits and
+`BEGIN IMMEDIATE`, rejects duplicate IDs across connections/restarts and caps
+each trusted Host instance at 256 IDs. Instance IDs and ledger path are broker
+configuration, never tool arguments. The broker must burn IDs before every
+dispatch, including failed operations, and prevent arbitrary new instance IDs
+from evading replay limits. This component is not yet wired into the JS Host.
+
+`run_empty_probe` always rejects `LAUNCHER_NOT_CONFIGURED`. No listener, module
+load, SSH, process launcher or stop acknowledgement is implemented or implied.
+All entry qualification remains `NOT_ISSUED`. Minimum later approval must name
+the exact installed broker/role routing, protected ledger/roots, root-owned
+fixed empty launcher and enforced termination, chosen offline transport plus
+any Hyper-V registration, and complete three-tool Agent Host with its revocation
+and uninstall procedure. Candidate code tests do not authorize that installation.
+
+Validation: `python3 -m unittest discover -s tests
+-p test_m2_restricted_entry_python_candidate.py -v`. Windows executes ledger
+tests but explicitly skips Linux handle tests; the existing Linux candidate CI
+runs the complete public-fixture suite without installing Python.
