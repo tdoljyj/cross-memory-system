@@ -16,6 +16,9 @@
 //                     re-run when its claim no longer admits the PR (expired,
 //                     released, superseded, or bound to another PR), so a
 //                     green check does not outlive its claim
+//   --mode adopt      the run on a merged pull request: reports the merge to
+//                     Clued so that, when the Task runs as a multi-copy race,
+//                     the copy on this pull request is adopted (adoptMerged())
 //
 // The required check runs on `pull_request_target`: the workflow file and this
 // script come from the base branch, and no code of the PR is checked out or
@@ -1096,12 +1099,129 @@ export async function appCheck({ env, fetchImpl, now = () => Date.now() }) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Multi-copy write-back (GenericWorkClaim §5.3). When the Owner runs a Task as
+// a race, each copy works on its own pull request and every one is admitted.
+// The first copy's pull request to merge is the adopted copy: this mode runs
+// on `pull_request_target: closed` for a merged pull request and reports it to
+// Clued (clued_work_claim_adopt_v1, same endpoint, key and Binding token hash
+// as verify). Clued adopts the copy bound to this pull request, if any, and
+// puts the other copies out; their pull requests then fail the next
+// verification. A pull request that is not a copy is answered no_copy_for_pr
+// and nothing changes.
+
+export const ADOPT_RPC = "clued_work_claim_adopt_v1";
+
+export async function adoptMerged({ env, event, eventName, fetchImpl, workspace }) {
+  const pr = event && event.pull_request;
+  const result = { adopted: false, pr_ref: null, merge_sha: null, claim_id: null, scope: null, reason: null, error: null, payload: null };
+  if (eventName !== "pull_request_target" || !event || event.action !== "closed" || !pr || pr.merged !== true) {
+    result.reason = "not a merged pull request";
+    return result;
+  }
+  result.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
+  result.merge_sha = typeof pr.merge_commit_sha === "string" ? pr.merge_commit_sha.toLowerCase() : null;
+  if (!result.merge_sha || !/^[0-9a-f]{40}$/.test(result.merge_sha)) {
+    result.error = "the merged pull request has no merge commit SHA";
+    return result;
+  }
+  if (!env.CLUED_CONTEXT_READ_TOKEN) {
+    result.reason = "CLUED_CONTEXT_READ_TOKEN is not set; adoption skipped";
+    return result;
+  }
+  try {
+    // Only a pull request that names a claim can be a copy; its scope trailer
+    // picks the context the claim lives in.
+    let reference = parseClaimReference(pr.body);
+    if (!reference && env.GITHUB_TOKEN && pr.head && pr.head.sha) {
+      const commit = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/commits/${pr.head.sha}`);
+      reference = parseClaimReference(commit && commit.commit && commit.commit.message);
+    }
+    if (!reference) {
+      result.reason = "no Clued-Work-Claim trailer; not a copy";
+      return result;
+    }
+    result.claim_id = reference.claim_id;
+    result.scope = reference.scope;
+    const { url: base, key } = resolvePublicSupabaseConfig(env, workspace);
+    const response = await fetchImpl(`${base}/rest/v1/rpc/${ADOPT_RPC}`, {
+      method: "POST",
+      headers: {
+        apikey: key,
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json",
+        accept: "application/json",
+        "user-agent": "clued-work-admission",
+      },
+      body: JSON.stringify({
+        p_token_hash: sha256Hex(env.CLUED_CONTEXT_READ_TOKEN),
+        p_input: { scope: reference.scope, pr_ref: result.pr_ref, merge_sha: result.merge_sha },
+      }),
+    });
+    let text = "";
+    let body = null;
+    try {
+      text = await response.text();
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = null;
+    }
+    const detail = describe(response.status, body, text, response.headers);
+    if (response.status === 404 && body && body.code === "PGRST202") {
+      result.reason = `${ADOPT_RPC} is not deployed (${detail}); adoption skipped`;
+      return result;
+    }
+    if (response.status !== 200 || !body || typeof body !== "object") throw new Error(`Clued ${ADOPT_RPC} returned ${detail}`);
+    result.payload = body;
+    if (body.status === "rejected") {
+      result.reason = `${body.error_code ?? "rejected"}: another copy of this Task was adopted first`;
+      return result;
+    }
+    if (body.status !== "ok") throw new Error(`Clued ${ADOPT_RPC} returned status ${String(body.status)} (${detail})`);
+    result.adopted = body.adopted === true;
+    if (!result.adopted) result.reason = typeof body.reason === "string" ? body.reason : "not adopted";
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
+  }
+  return result;
+}
+
+function renderAdoptSummary(result) {
+  const lines = ["## clued-work-admission: multi-copy adoption", ""];
+  lines.push(`- Pull request: ${result.pr_ref ?? "n/a"}`);
+  if (result.merge_sha) lines.push(`- Merge commit: \`${result.merge_sha}\``);
+  if (result.claim_id) lines.push(`- Claim: \`${result.claim_id}\` (${result.scope})`);
+  if (result.adopted) {
+    const out = Array.isArray(result.payload?.not_adopted) ? result.payload.not_adopted.length : 0;
+    lines.push(`- Adopted copy ${result.payload?.copy_index ?? "?"} of Task \`${result.payload?.task_id ?? "?"}\`${result.payload?.replayed ? " (already adopted)" : ""}; ${out} other cop${out === 1 ? "y" : "ies"} put out.`);
+  }
+  if (result.reason) lines.push(`- ${result.reason}`);
+  if (result.error) lines.push(`- Error: ${result.error}`);
+  lines.push("");
+  return lines.join("\n");
+}
+
 export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch) {
   const modeIndex = argv.indexOf("--mode");
   const mode = modeIndex >= 0 ? argv[modeIndex + 1] : "required";
-  if (!["required", "gate", "reverify", "dispatch-admit", "app-check"].includes(mode)) {
-    console.error("usage: clued-work-admission.mjs --mode required|gate|reverify|dispatch-admit|app-check");
+  if (!["required", "gate", "reverify", "dispatch-admit", "app-check", "adopt"].includes(mode)) {
+    console.error("usage: clued-work-admission.mjs --mode required|gate|reverify|dispatch-admit|app-check|adopt");
     return 2;
+  }
+  if (mode === "adopt") {
+    let event = null;
+    if (env.GITHUB_EVENT_PATH && fs.existsSync(env.GITHUB_EVENT_PATH)) {
+      event = JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH, "utf8"));
+    }
+    const result = await adoptMerged({ env, event, eventName: env.GITHUB_EVENT_NAME ?? "", fetchImpl, workspace: env.GITHUB_WORKSPACE });
+    console.log(JSON.stringify(result, null, 2));
+    appendFile(env.GITHUB_STEP_SUMMARY, renderAdoptSummary(result));
+    if (result.error) {
+      console.error(`::error title=clued-work-admission adoption::${result.error}`);
+      return 1;
+    }
+    if (result.payload?.status === "rejected") console.error(`::warning title=clued-work-admission adoption::${result.reason}`);
+    return 0;
   }
   if (mode === "app-check") {
     const result = await appCheck({ env, fetchImpl });

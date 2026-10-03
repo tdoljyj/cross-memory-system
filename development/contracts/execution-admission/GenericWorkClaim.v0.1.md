@@ -1,6 +1,6 @@
 # Generic Work Claim v0.1：任意资源、一个门卫多个门口、领取模式
 
-状态：**设计已合入（PR #501）；§7.2 第 1、2、4 步已上生产，第 3 步（多份模式）实施中；§10 第 1、3 步已上生产。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
+状态：**设计已合入（PR #501）；§7.2 第 1、2、4 步已上生产，第 3 步（多份模式）数据库已上生产、第二个 PR 实施中；§10 第 1、3 步已上生产。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
 
 - 第 1 步（Owner 授权 2026-10-02，Task `e9a10dbb`）：迁移 `20261002210000_work_claims_resource_kinds.sql`，测试 `apps/clued-cloud/tests/work-claims-resource-kinds-db.test.mjs`。
   - 登记了 `repo`、`storage`、`record` 三个 kind，当前只有"认领时冲突"这一个门口。
@@ -21,7 +21,12 @@
     - 同 Task 的各份互不冲突（任务相同或资源相交都不算），与其他 Task 照常冲突；每份照常扣 Task 与 Binding 令牌。
     - 采纳：存储门口在写入的同一事务里，份写到共享资源即采纳；GitHub 由 `clued_work_claim_adopt_v1(pr_ref, merge_sha)` 采纳绑定该 PR 的那一份（用准入环境的只读 Binding，与 verify 绑定 PR 同理）。其余各份 `outcome=not_adopted`，活的转 SUPERSEDED；各门口返回 `copy_not_adopted`。采纳后该 Task 回到独占。
     - verify 对份不比较 fence（各份共用 Task 的 fence 序列），改看是否出局。
-  - 第二个 PR（待做）：Clued 页面开启入口、准入 workflow 合并后采纳运行、合同说明。
+    - PR #522 合并（6f7f1ec0）；Owner 在 clued-prod SQL Editor 应用（2026-10-03，生产版本 `20261003144411`，连接器对 `drop index` 等确认超时，未能由 Agent 应用）。
+  - 第二个 PR：
+    - 开启页 `/work-claims/race`（`apps/clued-cloud/app/work-claims/race/page.tsx`，测试 `work-claim-race-ui.test.mjs`），从"我的授权"页进入：填任务、范围、份数（2–8）与共享资源（每行一个），预览里显示建议份数，确认后开启。页面直接以登录会话调 Native RPC，不经 Worker。
+    - 准入 workflow 加 `closed` 类型：原检查 job 跳过 `closed`；新 job `clued-work-adopt` 只在已合并时运行（base 分支当前代码、`clued-admission` 环境），`scripts/ci/clued-work-admission.mjs --mode adopt` 从 PR 正文（或 head 提交）读认领与范围，调 `clued_work_claim_adopt_v1(scope, pr_ref, merge_sha)`。没有认领尾注的 PR 不调用；不是份的 PR 得到 `no_copy_for_pr`，什么都不变；已被别份抢先得到 `copy_not_adopted`，只警告。
+    - Agent 合同 18：§1.7 加多份模式说明，错误表加 `copy_not_adopted`、`work_claim_copies_full`。
+    - 合并后需发布 Worker（合同 18 经 `/clued-agent.md` 与 resume 的 `contract_version` 下发），另行授权。
 - 第 4 步（Owner 2026-10-03 选定，Task `ae40c8fe`，已上线，后续由合同 17 取代）：Agent 合同 16，§1.7 写明 `write_set` 的类型资源（`storage:`、`repo:`、`record:`）、Clued 存储写入检查认领与 `work_claim` 用法，错误表加入存储门卫的拒绝码；`clued_work_claim` 的 `write_set` 说明同步。resume 返回的认领仍是原样的 `write_set`，未另加资源 kind 字段（kind 已在条目前缀中）。合并与 Worker 发布各需 Owner 授权。
 - §10 次数与花费上限（2026-10-03，Decision `136a000e`，Task `c8778299`）：取代 v1 的每 Task 每 24 小时 10 次与每认领 20 个 head。第 1 步（令牌桶）迁移 `20261003050000_work_claims_rate_buckets.sql`、测试 `apps/clued-cloud/tests/work-claims-rate-buckets-db.test.mjs`（Decision `d3d0bbe8`，Task `00af11e4`），已应用 clued-prod（2026-10-03，生产版本 `20261003051745`）。第 3 步（合同 15 与认领工具说明）：Decision `c1fe7cca`，Task `12a42be8`。被拒回执补全（续期、接管前置检查与幂等重放的拒绝）：迁移 `20261003070000_work_claims_reject_receipts_renew_takeover.sql`、测试 `apps/clued-cloud/tests/work-claims-reject-receipts-db.test.mjs`（Decision `bd4243b6`，Task `91272c5d`），已应用 clued-prod（2026-10-03，生产版本 `20261003063641`）。
 日期：2026-10-02

@@ -69,7 +69,7 @@
     "test:authorization:migrations": "node --test --test-force-exit tests/authorization-migration-chain.test.mjs",
     "test:resource-center:authority": "node --test --test-force-exit tests/resource-center-*.test.mjs",
     "test:authorization:integration": "node --test --test-force-exit tests/authorization-end-to-end.test.mjs",
-    "test:authorization:pages": "node --test tests/consent-account-race.test.mjs tests/project-invitations-ui.test.mjs tests/supabase-browser.test.mjs tests/development-contexts-ui.test.mjs tests/context-policy-ui.test.mjs tests/work-claim-exemption-ui.test.mjs tests/owner-grants-ui.test.mjs tests/home-project-create.test.mjs",
+    "test:authorization:pages": "node --test tests/consent-account-race.test.mjs tests/project-invitations-ui.test.mjs tests/supabase-browser.test.mjs tests/development-contexts-ui.test.mjs tests/context-policy-ui.test.mjs tests/work-claim-exemption-ui.test.mjs tests/owner-grants-ui.test.mjs tests/work-claim-race-ui.test.mjs tests/home-project-create.test.mjs",
     "test:authorization:invitations": "node --test --test-force-exit tests/project-invitations-db.test.mjs",
     "test:information-flow:e2e": "node --require ./evals/information-flow-e2e/isolation-guard.cjs evals/information-flow-e2e/run.mjs",
     "information-flow:e2e:verify": "node evals/information-flow-e2e/verify-evidence.mjs"
