@@ -498,17 +498,44 @@ export default function StorageConnections() {
     if (operation.current || busy || !current?.active) return;
     const enable = !current.classes.includes(level);
     if (!window.confirm(enable ? writeText[level].on : writeText[level].off)) return;
-    const classes = enable ? [...current.classes, level].sort() : current.classes.filter(item => item !== level);
+    await changeWrite(c, [level], enable);
+  }
+  // Decision 62e796f9: every write level at once, behind one confirmation that
+  // shows each level's own text. The database still takes one level per change,
+  // each with its own disclosure, so the levels are changed one after another.
+  async function setAllWrite(c: Connection, enable: boolean) {
+    const current = writeAccess[c.id];
+    if (operation.current || busy || !current?.active) return;
+    const levels = writeLevels(current).filter(level => current.classes.includes(level) !== enable);
+    if (levels.length === 0) return;
+    if (!window.confirm((enable ? `一次允许以下 ${levels.length} 项：` : `一次停止以下 ${levels.length} 项：`) +
+      levels.map(level => `\n\n【${writeText[level].name}】${enable ? writeText[level].on : writeText[level].off}`).join(""))) return;
+    await changeWrite(c, enable ? levels : [...levels].reverse(), enable);
+  }
+  async function changeWrite(c: Connection, levels: WriteLevel[], enable: boolean) {
+    let current = writeAccess[c.id];
     operation.current = true; setBusy(true);
     const epoch = revision.current;
     let settled = epoch;
+    const receipts: string[] = [];
     try {
-      const result = await accountRequest({ action: "set_classes", connection_id: c.id, classes,
-        base_generation: current.policy_generation,
-        disclosure_version: writeDisclosure(current, level),
-        idempotency_key: crypto.randomUUID() }, "/v1/storage/write-access");
-      if (epoch !== revision.current) return;
-      if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
+      for (const level of levels) {
+        const classes = enable ? [...current.classes, level].sort() : current.classes.filter(item => item !== level);
+        const result = await accountRequest({ action: "set_classes", connection_id: c.id, classes,
+          base_generation: current.policy_generation,
+          disclosure_version: writeDisclosure(current, level),
+          idempotency_key: crypto.randomUUID() }, "/v1/storage/write-access");
+        if (epoch !== revision.current) return;
+        if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
+        receipts.push(result.receipt_id);
+        if (receipts.length < levels.length) {
+          // The next change is based on the generation this one produced.
+          const next = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/write-access");
+          if (epoch !== revision.current) return;
+          if (!isWriteAccess(next) || !next.active || next.classes.includes(level) !== enable) throw new Error("修改设置未确认。");
+          current = next;
+        }
+      }
       // refresh() starts a new revision and clears busy; the readback belongs
       // to that revision, and the operation keeps the page busy until it ends.
       const reloadedList = await refresh();
@@ -524,17 +551,22 @@ export default function StorageConnections() {
       if (!isWriteAccess(latest) || !isReadAccess(read)) throw new Error("修改设置未确认。");
       setWriteAccess(state => ({ ...state, [c.id]: latest }));
       setReadAccess(state => ({ ...state, [c.id]: read }));
-      setMessage(latest.classes.includes(level) === enable
-        ? `${enable ? "已允许" : "已停止"} Agent ${writeText[level].name}。回执：${result.receipt_id}` : "已提交，但最新状态未确认。请核对原回执。");
+      const done = levels.every(level => latest.classes.includes(level) === enable);
+      setMessage(!done ? "已提交，但最新状态未确认。请核对原回执。"
+        : levels.length === 1 ? `${enable ? "已允许" : "已停止"} Agent ${writeText[levels[0]].name}。回执：${receipts[0]}`
+        : `${enable ? "已允许" : "已停止"} Agent ${levels.map(level => writeText[level].name).join("、")}。回执：${receipts.join("、")}`);
     } catch (error) {
       // The policy (and the read access bound to it) may have changed: drop both.
       setWriteAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
       setReadAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
       if (settled === revision.current) {
-        setMessage(error instanceof RequestFailure && error.reason === "storage_root_busy"
+        // A partial run names what already changed; each change kept its own receipt.
+        const partial = receipts.length > 0 && receipts.length < levels.length
+          ? `已${enable ? "允许" : "停止"}：${levels.slice(0, receipts.length).map(level => writeText[level].name).join("、")}（回执：${receipts.join("、")}）；其余未完成。` : "";
+        setMessage(partial + (error instanceof RequestFailure && error.reason === "storage_root_busy"
           // Refused before any change: the root has a job that started and has not ended.
-          ? "未修改：此目录有一个已开始但未结束的任务，结束前不能修改 Agent 权限。没有动过网盘的任务约两分钟内会自动结束；之后重新读取设置再试。"
-          : "Agent 修改设置结果未确认。若此目录有已开始但未完成的任务，请等它结束后再试。请重新读取设置并核对，勿重复提交。");
+          ? `${partial ? "" : "未修改："}此目录有一个已开始但未结束的任务，结束前不能修改 Agent 权限。没有动过网盘的任务约两分钟内会自动结束；之后重新读取设置再试。`
+          : "Agent 修改设置结果未确认。若此目录有已开始但未完成的任务，请等它结束后再试。请重新读取设置并核对，勿重复提交。"));
       }
     } finally { operation.current = false; if (settled === revision.current) setBusy(false); }
   }
@@ -632,6 +664,12 @@ export default function StorageConnections() {
             <button disabled={busy} onClick={() => void toggleRead(c, "read_content")}>
               {readAccess[c.id].classes.includes("read_content") ? "停止 Agent 读正文" : "允许 Agent 读正文"}</button>
           </>}
+          {writeAccess[c.id]?.active && <div className="mt-2">
+            <button disabled={busy || writeLevels(writeAccess[c.id]).every(level => writeAccess[c.id].classes.includes(level))}
+              onClick={() => void setAllWrite(c, true)}>全部允许（写入等级）</button>{" "}
+            <button disabled={busy || writeLevels(writeAccess[c.id]).every(level => !writeAccess[c.id].classes.includes(level))}
+              onClick={() => void setAllWrite(c, false)}>全部停止（写入等级）</button>
+          </div>}
           {writeAccess[c.id]?.active && writeLevels(writeAccess[c.id]).map(level => <div key={level}>
             <p className="mt-2">Agent {writeText[level].name}：{writeAccess[c.id].classes.includes(level)
               ? level === "modify_subtree" ? "已允许（仅 Clued 创建或已纳管的文件夹）" : "已允许（仅 Clued 创建或已纳管的文件）" : "未允许"}</p>
