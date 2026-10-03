@@ -1,6 +1,6 @@
 # Owner Credential v0.1：范围授权与直达确认链接
 
-状态：**设计已合入（PR #505）；第 1–3 步已上线；第 5 步（合同增补）实施中。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
+状态：**设计已合入（PR #505）；第 1–3、5 步已上线；第 4 步（Task `2a31ca2a`）与第 6 步（Task `832658e0`，等宿主支持）未做。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
 
 - 第 1 步（Owner 授权 2026-10-02，Task `3b7adacc`）：迁移 `20261002220000_owner_grants_v1.sql`，测试 `apps/clued-cloud/tests/owner-grants-db.test.mjs`。
   - Agent 侧：`clued_owner_request_v1`、`clued_owner_request_status_v1`（Binding）。
