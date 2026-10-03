@@ -185,6 +185,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - `attempts_cap`：一个 Task 在任意 24 小时内最多 10 次新认领或接管；超出时 `clued_work_claim`／`clued_work_takeover` 返回 `work_claim_budget_exhausted`，`limit` 为 `max_claims_per_task_24h`，附 `claims_last_24h` 与 `retry_after`。已签发认领的幂等重放不受影响。
   - 每 claim 的 PR head 上限：带 `pr_ref` 与 `head_sha` 的 verify 在放行时把该 head 记入 `admitted_heads`；一个 claim 最多放行 20 个不同 head，再来新 head 判 REJECTED（`claim_head_cap_reached`），重任务不跑。同一 head 重跑或每小时复核不计数；不带 `pr_ref` 的 verify（手动触发、Agent 自查）不记录。
   - `budget` 字段仍原样保存、不校验；模型 token 不计。
+- **候选替代（2026-10-03，Decision `136a000e`）**：上面两个次数上限由 [GenericWorkClaim.v0.1.md §10](GenericWorkClaim.v0.1.md) 的令牌桶与门口计量取代，未实施。
 
 ### 4.6 执行层细节
 
