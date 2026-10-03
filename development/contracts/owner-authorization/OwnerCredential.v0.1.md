@@ -13,8 +13,11 @@
   - 确认页 `/confirm/<id>`：打开即按默认选择（"管一段时间"，时长取 Agent 建议，否则 4 小时；只给发起的 Agent）签发确认；改选择就重新签发，只有页面上显示的那一版能被批准。点"批准"时若确认快过期，先按同样选择重签，只有 Clued 渲染出的内容完全相同才提交。Agent 说明单独一栏，标"未核实"。未登录可在页内登录。
   - 授权列表页 `/grants`：有效授权的剩余时间和已用次数、一键撤销，以及等待确认的请求链接。
   - 测试：`tests/owner-requests-transport.test.mjs`、`tests/owner-grants-ui.test.mjs`。
-  - §4 第 3 条"放宽或收窄范围"本步不做（Task `fcd55008`）：数据库对来自请求的授权固定资源范围（`owner_grant_request_fields_fixed`）。
+  - §4 第 3 条"放宽或收窄范围"后来补上（Task `fcd55008`，见下）。
   - 已发布（2026-10-03，发布 run 37089156567），Owner 已开 `CLUED_OWNER_REQUESTS_V1`。
+- 放宽或收窄范围（§4 第 3 条，Task `fcd55008`，Owner Decision `c4e82dee`）：迁移 `20261003190000_owner_grants_scope_choice.sql`，测试 `tests/owner-grants-scope-db.test.mjs`、`tests/owner-grants-ui.test.mjs`。
+  - 选"管一段时间"时，请求里的每个资源单独一行：取消勾选即收窄（至少留一行），从下拉选 Clued 给出的上级通配即放宽（`owner_grant_scope_options_v1`：逐级到 `**`，`repo:` 最宽到 `<owner>/<name>/**`，`record:` 不能放宽）。不能手填、不能换资源类型；所选不在可选项里返回 `owner_grant_resources_not_offered`。
+  - 批准的仍是 Clued 按所选资源渲染、两步令牌绑定的那一版；"只批这一次"仍只覆盖请求里的资源。
 - 第 3 步（Owner 授权 2026-10-03，Task `13bb5d2c`）：迁移 `20261003030000_work_claims_owner_grants.sql`，测试 `tests/work-claims-owner-grants-db.test.mjs`。
   - 超过每 Task 认领上限时，`work_claim_issue` 先认旧豁免（到期为止），否则在认领自己的事务里消费 `work_claim.extra_claims` 授权（资源 `record:<task_id>`、Task 限定、每次认领或接管用一次），认领 Receipt 记下授权 ID 与第几次。
   - 都没有就拒绝，拒绝里带上这个 Binding 对该 Task 的待确认请求（没有就新建，建议 24 小时、5 次），Worker 补上绝对链接 `owner_request.confirm_url`；原来的 `owner_exemption_path` 不再返回。

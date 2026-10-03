@@ -1,0 +1,191 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import test from 'node:test';
+import EmbeddedPostgres from 'embedded-postgres';
+
+// Owner Credential v0.1 §4 item 3 (migration 20261003190000, Task fcd55008,
+// Owner Decision c4e82dee): for "grant for a while" the Owner keeps a subset of
+// a request's resources and may widen each to a parent wildcard Clued offers.
+// Nothing else is accepted, and "approve once" keeps the requested resources.
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const uuid = () => crypto.randomUUID();
+const hash = () => crypto.randomBytes(32).toString('hex');
+const nowEpoch = () => Math.floor(Date.now() / 1000);
+// An old sign-in on purpose: grants do not require a recent login (Decision 667f588b).
+const session = (sub, sessionId = 'sess-main', extra = {}) =>
+  ({ sub, role: 'authenticated', session_id: sessionId, aal: 'aal1',
+    amr: [{ method: 'password', timestamp: nowEpoch() - 3 * 86400 }], ...extra });
+
+async function freePort() {
+  const listener = net.createServer();
+  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
+  const port = listener.address().port;
+  await new Promise((resolve) => listener.close(resolve));
+  return port;
+}
+
+test('owner grants: the confirmation page narrows or widens a request\'s resources',
+  { timeout: 300000 }, async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-owner-grants-'));
+  const server = new EmbeddedPostgres({
+    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
+    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
+  });
+  const clients = [];
+  try {
+    await server.initialise();
+    await server.start();
+    const admin = server.getPgClient();
+    clients.push(admin);
+    await admin.connect();
+    await admin.query(`create role anon nologin; create role authenticated nologin;
+      create role service_role nologin bypassrls; create role authenticator nologin noinherit;
+      create schema auth; create schema extensions; create extension pgcrypto with schema extensions;
+      create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,
+        banned_until timestamptz,deleted_at timestamptz);
+      create function auth.uid() returns uuid language sql stable as
+        $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+      create function auth.jwt() returns jsonb language sql stable as
+        $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
+      grant usage on schema auth,extensions to anon,authenticated,service_role;
+      grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
+    for (const name of (await fs.readdir(path.join(root, 'supabase/migrations')))
+      .filter((name) => name.endsWith('.sql')).sort()) {
+      try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
+      catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
+    }
+
+    const userId = uuid();
+    const otherUser = uuid();
+    await admin.query(`insert into auth.users(id,email,email_confirmed_at)
+      values($1,'scope@example.invalid',now()),($2,'scope-other@example.invalid',now())`, [userId, otherUser]);
+    const tokens = {};
+    const bindingIds = {};
+    for (const [name, user, scopes] of [
+      ['claude', userId, ['context:read', 'context:write']], ['codex', userId, ['context:read', 'context:write']],
+      ['reader', userId, ['context:read']], ['stranger', otherUser, ['context:read', 'context:write']],
+    ]) {
+      tokens[name] = hash();
+      bindingIds[name] = (await admin.query(`insert into public.clued_agent_bindings
+        (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+        values($1,'synthetic',$2,$3,$4,array['*']) returning id`, [user, name, tokens[name], scopes])).rows[0].id;
+    }
+
+    const anon = server.getPgClient();
+    clients.push(anon);
+    await anon.connect();
+    await anon.query('set role anon');
+    const human = server.getPgClient();
+    clients.push(human);
+    await human.connect();
+    await human.query('set role authenticated');
+    const agent = async (who, name, input) =>
+      (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
+    const native = async (name, input, claims = session(userId)) => {
+      await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+        [claims.sub ?? '', JSON.stringify(claims)]);
+      return (await human.query(`select public.${name}($1) v`, [input])).rows[0].v;
+    };
+    const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
+    const consume = async (binding, action, resources, taskId = null) => (await admin.query(
+      'select clued_private.owner_grant_consume_v1($1,$2,$3,$4,$5) v',
+      [userId, binding, action, resources, taskId])).rows[0].v;
+    const confirm = async (input, claims) => {
+      const issued = await native('clued_owner_grant_confirmation_issue_v1', input, claims);
+      assert.equal(issued.status, 'issued', JSON.stringify(issued));
+      return issued;
+    };
+    const grant = (issued, claims, digest = issued.view_digest) =>
+      native('clued_owner_grant_v1', { confirmation_token: issued.confirmation_token, view_digest: digest }, claims);
+
+    const options = async (resource) => (await admin.query(
+      'select clued_private.owner_grant_scope_options_v1($1) v', [resource])).rows[0].v;
+    const ask = async (resources, key) => committed(await agent('claude', 'clued_owner_request_v1',
+      { action: 'release.production', resources, idempotency_key: key })).request;
+    const commit = 'repo:tdoljyj/cross-memory-system/4f49b0e8';
+    const record = 'record:2a31ca2a-0ece-476d-af7f-d4ee6dc4d1e0';
+
+    // --- Offered options: the resource itself, then parents, narrowest first. ---
+    assert.deepEqual(await options(commit), [commit, 'repo:tdoljyj/cross-memory-system/**']);
+    assert.deepEqual(await options('repo:o/n/apps/x/y.ts'),
+      ['repo:o/n/apps/x/y.ts', 'repo:o/n/apps/x/**', 'repo:o/n/apps/**', 'repo:o/n/**']);
+    assert.deepEqual(await options('repo:o/n/**'), ['repo:o/n/**'], 'never above <owner>/<name>');
+    assert.deepEqual(await options('repo:o/n/apps/*.ts'), ['repo:o/n/apps/*.ts', 'repo:o/n/apps/**', 'repo:o/n/**']);
+    assert.deepEqual(await options(record), [record], 'a record has no parent');
+    assert.deepEqual(await options('storage:c1/a/b.txt'), ['storage:c1/a/b.txt', 'storage:c1/a/**', 'storage:c1/**']);
+    assert.deepEqual(await options('docs/a.md'), ['docs/a.md', 'docs/**']);
+    await assert.rejects(() => anon.query('select clued_private.owner_grant_scope_options_v1($1)', [commit]),
+      /permission denied/);
+    await assert.rejects(() => human.query('select clued_private.owner_request_scope_options_v1($1)', [[commit]]),
+      /permission denied/);
+
+    // --- The request view lists the options for each requested resource. ---
+    const both = await ask([commit, record], 'scope-both');
+    const viewed = await native('clued_owner_request_view_v1', { request_id: both.request_id });
+    assert.deepEqual(viewed.resource_options, [
+      { resource: commit, options: [commit, 'repo:tdoljyj/cross-memory-system/**'] },
+      { resource: record, options: [record] },
+    ].sort((a, b) => (a.resource < b.resource ? -1 : 1)));
+
+    // --- Widen: the view and the grant carry the chosen parent. ---
+    const wide = await confirm({ request_id: both.request_id, choice: 'grant',
+      resources: ['repo:tdoljyj/cross-memory-system/**', record] });
+    assert.deepEqual(wide.confirmation_view.resources, ['record:2a31ca2a-0ece-476d-af7f-d4ee6dc4d1e0',
+      'repo:tdoljyj/cross-memory-system/**'].sort());
+    const widened = committed(await grant(wide));
+    assert.deepEqual(widened.grant.resources.slice().sort(), [record, 'repo:tdoljyj/cross-memory-system/**'].sort());
+    assert.ok(await consume(bindingIds.claude, 'release.production', ['repo:tdoljyj/cross-memory-system/ffffffff']),
+      'a widened grant covers another commit');
+    assert.equal((await native('clued_owner_request_view_v1', { request_id: both.request_id })).request.status, 'granted');
+
+    committed(await native('clued_owner_grant_revoke_v1', { grant_id: widened.grant.grant_id }));
+
+    // --- Narrow: keep one row; only that resource is granted. ---
+    const narrowReq = await ask([commit, record], 'scope-narrow');
+    const narrow = await confirm({ request_id: narrowReq.request_id, choice: 'grant', resources: [record] });
+    assert.deepEqual(narrow.confirmation_view.resources, [record]);
+    const narrowed = committed(await grant(narrow));
+    assert.deepEqual(narrowed.grant.resources, [record]);
+    assert.equal(await consume(bindingIds.claude, 'release.production', ['repo:tdoljyj/cross-memory-system/eeeeeeee']), null,
+      'an unticked resource is not granted');
+
+    // --- Refused: anything not offered, empty, other kinds, typed text, "once". ---
+    const refusedReq = await ask([commit], 'scope-refused');
+    const refuse = async (input) => (await native('clued_owner_grant_confirmation_issue_v1',
+      { request_id: refusedReq.request_id, ...input })).error_code;
+    for (const [resources, code] of [
+      [['repo:tdoljyj/**'], 'owner_grant_resources_not_offered'],
+      [['repo:tdoljyj/other-repo/**'], 'owner_grant_resources_not_offered'],
+      [['repo:tdoljyj/cross-memory-system/apps/**'], 'owner_grant_resources_not_offered'],
+      [['**'], 'owner_grant_resources_not_offered'],
+      [['storage:tdoljyj/cross-memory-system/**'], 'owner_grant_resources_not_offered'],
+      [[record], 'owner_grant_resources_not_offered'],
+      [[], 'owner_grant_resources_invalid'],
+      ['repo:tdoljyj/cross-memory-system/**', 'owner_grant_resources_invalid'],
+      [['calendar:x'], 'work_claim_resource_kind_unknown'],
+    ]) assert.equal(await refuse({ choice: 'grant', resources }), code, JSON.stringify(resources));
+    assert.equal(await refuse({ choice: 'once', resources: [commit] }), 'owner_grant_request_fields_fixed');
+    assert.equal(await refuse({ resources: ['repo:tdoljyj/cross-memory-system/**'], action: 'migration.production' }),
+      'owner_grant_request_fields_fixed');
+    // Normalized spellings of an offered option are the same option.
+    const spelled = await confirm({ request_id: refusedReq.request_id, choice: 'grant',
+      resources: [' REPO:tdoljyj//cross-memory-system/** '] });
+    assert.deepEqual(spelled.confirmation_view.resources, ['repo:tdoljyj/cross-memory-system/**']);
+    // Without resources the requested ones are kept, as before.
+    const kept = await confirm({ request_id: refusedReq.request_id, choice: 'grant' });
+    assert.deepEqual(kept.confirmation_view.resources, [commit]);
+    // Only the latest view can be approved: the earlier widened token is revoked.
+    assert.equal((await grant(spelled)).error_code, 'confirmation_token_revoked');
+    assert.deepEqual(committed(await grant(kept)).grant.resources, [commit]);
+  } finally {
+    for (const client of clients.reverse()) await client.end().catch(() => {});
+    await server.stop().catch(() => {});
+  }
+});
