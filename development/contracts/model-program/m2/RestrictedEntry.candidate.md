@@ -140,3 +140,50 @@ Local Python 3.12.10 candidate evidence: ten ledger/schema tests passed and
 eight Linux-only handle tests explicitly skipped; both new Python files passed
 `py_compile`, and the four-file change passed `git diff --check`. Linux handle
 evidence must come from the exact-head CI run, not these Windows results.
+
+## A-only deployable executor package (uninstalled)
+
+Owner accepted the independent A-only executor stage. The package does not make
+the current Windows Codex Host restricted: its general tools and the entire
+Windows management host remain outside the executor qualification and trusted
+TCB. It cannot be used as an untrusted Agent's A/R authorization channel; VSOCK
+CID/port selects routing, not a Windows caller identity. No R endpoint is included.
+
+The broker exposes only three operations. It burns the installed root-private
+ledger ID before dispatch, fixes A UID/GID/roots and the public marker digest,
+drops supplemental groups, passes no management FD and runs only the installed
+empty launcher or fixed read/write worker under isolated Python startup. Frames
+are bounded to 98304 bytes; output content to 65536 bytes. Duplicate JSON keys,
+role/root/command/launcher/instance injection and additional operations fail closed.
+Default broker/bridge/installer entry points deny activation. Explicit installed
+entry points are deployment actions requiring separate Owner approval.
+
+The foreground root supervisor uses one pre-provisioned cgroup v2, with 64MiB,
+8-task and 20% CPU limits; it does not create or enable parent controllers. There
+is no systemd unit, daemon or autostart. It uses a single-threaded native spawn
+path, attaches the child to the fixed group before dropping root, and admits no
+caller executable. Revoke, disconnect or timeout sends `cgroup.kill`; STOPPED
+requires unchanged group identity, `populated=0` and the reaped leader within
+100ms. Missing/late/failed proof returns UNKNOWN and permanently revokes entry.
+Kernel syscalls can block; a bridge timeout itself never proves guest stop or
+zero effects. Already committed output is not rolled back or misreported.
+
+Build: `python3 scripts/model-program/build_m2_a_executor_package.py --output
+<local-package.zip>`. Its ZIP/manifest hashes are deterministic with normalized
+LF bytes, no hash cycle or activation. The bounded archive contains code,
+installer and [exact installation plan](AExecutorInstall.candidate.json).
+Installer requires Owner root, the externally approved archive SHA and an
+explicit apply/rollback flag. It rejects existing targets, changed public marker
+and unavailable cgroup controllers; it never overwrites roles/roots or starts
+processes. Rollback refuses a populated group or changed installed code and
+retains the ledger. Partial installation failure must be inspected, not retried
+over existing paths. Windows code/profile ACL verification and named GUID
+registration are separate Owner actions, not performed by the package builder.
+
+Candidate tests run real SQLite replay, framing, package verification and the
+fixed public launcher. Dispatcher timeout/revoke and native cgroup/transport
+evidence use explicitly named mocks, not OS qualification. Installation, actual
+root750/640 positive reads, UID/GID drop, AF_HYPERV/AF_VSOCK connection, cgroup
+resource/descendant-kill/disconnect behavior and storage-fault durability still
+need separately approved VM tests after independent exact-head code review.
+Qualification remains NOT_ISSUED. No models, protected rows or production are used.
