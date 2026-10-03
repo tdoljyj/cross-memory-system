@@ -106,12 +106,23 @@ must invalidate the entry rather than claim zero effects.
 The trusted broker must pre-provision a private SQLite database with
 `CREATE TABLE burns(instance TEXT NOT NULL, request TEXT NOT NULL,
 PRIMARY KEY(instance,request))`, delete journal mode and local durable storage.
-Runtime opens an existing database only, uses FULL synchronous commits and
-`BEGIN IMMEDIATE`, rejects duplicate IDs across connections/restarts and caps
+Runtime opens an existing database only, sets `synchronous=EXTRA`, verifies
+effective synchronous value `3` and `journal_mode=delete` on every open/reopen,
+and uses `BEGIN IMMEDIATE` with explicit `INSERT OR ABORT`. The statement policy
+overrides provisioned PK `ON CONFLICT IGNORE`/`REPLACE` so duplicate IDs are
+rejected without replacing the original row across connections/restarts. It caps
 each trusted Host instance at 256 IDs. Instance IDs and ledger path are broker
 configuration, never tool arguments. The broker must burn IDs before every
 dispatch, including failed operations, and prevent arbitrary new instance IDs
 from evading replay limits. This component is not yet wired into the JS Host.
+
+[SQLite's synchronous documentation](https://www.sqlite.org/pragma.html#pragma_synchronous)
+requires EXTRA's additional journal-directory sync for DELETE-mode durability.
+EXTRA still requires qualification of the actual filesystem, storage and failure
+behavior. Clean close/reopen tests prove replay rejection and effective settings,
+not power-loss durability. No simultaneous-burn, power-loss or TOCTOU fault
+qualification is claimed. Existing root-owned 750/640 input positive behavior
+also remains unqualified; file IO fixtures use role-owned 700/400 profiles.
 
 `run_empty_probe` always rejects `LAUNCHER_NOT_CONFIGURED`. No listener, module
 load, SSH, process launcher or stop acknowledgement is implemented or implied.
@@ -125,7 +136,7 @@ Validation: `python3 -m unittest discover -s tests -p test_m2_restricted_entry_p
 tests but explicitly skips Linux handle tests; the existing Linux candidate CI
 runs the complete public-fixture suite without installing Python.
 
-Local Python 3.12.10 candidate evidence: six ledger/schema tests passed and
+Local Python 3.12.10 candidate evidence: ten ledger/schema tests passed and
 eight Linux-only handle tests explicitly skipped; both new Python files passed
 `py_compile`, and the four-file change passed `git diff --check`. Linux handle
 evidence must come from the exact-head CI run, not these Windows results.

@@ -35,12 +35,11 @@ class ReplayLedger:
     """
     def __init__(self, database):
         self.db = sqlite3.connect(database.as_uri() + "?mode=rw", uri=True, timeout=1)
-        self.db.execute("PRAGMA synchronous=FULL")
-        if self.db.execute("PRAGMA journal_mode").fetchone()[0] != "delete":
-            self.db.close()
-            raise Denied("LEDGER_PROFILE_INVALID")
         # Schema provisioning is an explicit installation step, not a runtime fallback.
         try:
+            self.db.execute("PRAGMA synchronous=EXTRA")
+            if self.db.execute("PRAGMA synchronous").fetchone()[0] != 3 or self.db.execute("PRAGMA journal_mode").fetchone()[0] != "delete":
+                raise Denied("LEDGER_PROFILE_INVALID")
             columns = self.db.execute("PRAGMA table_info(burns)").fetchall()
             if [(r[1], r[2], r[3], r[5]) for r in columns] != [("instance", "TEXT", 1, 1), ("request", "TEXT", 1, 2)]:
                 raise Denied("LEDGER_PROFILE_INVALID")
@@ -58,7 +57,9 @@ class ReplayLedger:
             count = self.db.execute("SELECT count(*) FROM burns WHERE instance=?", (instance,)).fetchone()[0]
             if count >= 256:
                 raise Denied("ENTRY_REQUEST_LIMIT")
-            self.db.execute("INSERT INTO burns(instance,request) VALUES (?,?)", (instance, request))
+            # Override a provisioned PK's IGNORE/REPLACE policy: duplicates must
+            # always raise and leave the existing burn unchanged.
+            self.db.execute("INSERT OR ABORT INTO burns(instance,request) VALUES (?,?)", (instance, request))
             self.db.commit()
         except sqlite3.IntegrityError:
             self.db.rollback()

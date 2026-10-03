@@ -54,6 +54,66 @@ class LedgerTests(unittest.TestCase):
             m2.ReplayLedger(missing)
         self.assertFalse(missing.exists())
 
+    def test_extra_delete_profile_on_independent_open_and_reopen(self):
+        first, second = m2.ReplayLedger(self.path), m2.ReplayLedger(self.path)
+        try:
+            for ledger in (first, second):
+                self.assertEqual(ledger.db.execute("PRAGMA synchronous").fetchone()[0], 3)
+                self.assertEqual(ledger.db.execute("PRAGMA journal_mode").fetchone()[0], "delete")
+        finally:
+            first.close()
+            second.close()
+        reopened = m2.ReplayLedger(self.path)
+        try:
+            self.assertEqual(reopened.db.execute("PRAGMA synchronous").fetchone()[0], 3)
+            self.assertEqual(reopened.db.execute("PRAGMA journal_mode").fetchone()[0], "delete")
+        finally:
+            reopened.close()
+
+    def test_preprovisioned_wal_profile_is_denied(self):
+        db = sqlite3.connect(self.path)
+        try:
+            self.assertEqual(db.execute("PRAGMA journal_mode=WAL").fetchone()[0], "wal")
+        finally:
+            db.close()
+        with self.assertRaisesRegex(m2.Denied, "LEDGER_PROFILE_INVALID"):
+            m2.ReplayLedger(self.path)
+
+    def assert_conflict_policy_replay_denied(self, policy):
+        # Both table policies pass the structural PK check. Per-statement ABORT
+        # must override them, including on a distinct connection and after reopen.
+        db = sqlite3.connect(self.path)
+        try:
+            db.execute("DROP TABLE burns")
+            db.execute("CREATE TABLE burns(instance TEXT NOT NULL, request TEXT NOT NULL, "
+                       f"PRIMARY KEY(instance,request) ON CONFLICT {policy})")
+            db.commit()
+        finally:
+            db.close()
+        first, second = m2.ReplayLedger(self.path), m2.ReplayLedger(self.path)
+        try:
+            first.burn("host1", "once")
+            original = first.db.execute("SELECT rowid,instance,request FROM burns ORDER BY rowid").fetchall()
+            with self.assertRaisesRegex(m2.Denied, "REPLAY_REJECTED"):
+                second.burn("host1", "once")
+            self.assertEqual(second.db.execute("SELECT rowid,instance,request FROM burns ORDER BY rowid").fetchall(), original)
+        finally:
+            first.close()
+            second.close()
+        reopened = m2.ReplayLedger(self.path)
+        try:
+            with self.assertRaisesRegex(m2.Denied, "REPLAY_REJECTED"):
+                reopened.burn("host1", "once")
+            self.assertEqual(reopened.db.execute("SELECT rowid,instance,request FROM burns ORDER BY rowid").fetchall(), original)
+        finally:
+            reopened.close()
+
+    def test_ignore_policy_replay_denied_across_connections_and_reopen(self):
+        self.assert_conflict_policy_replay_denied("IGNORE")
+
+    def test_replace_policy_replay_denied_across_connections_and_reopen(self):
+        self.assert_conflict_policy_replay_denied("REPLACE")
+
     def test_ledger_without_unique_key_is_denied(self):
         db = sqlite3.connect(self.path)
         try:
