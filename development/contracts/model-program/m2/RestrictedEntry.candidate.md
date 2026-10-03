@@ -1,4 +1,4 @@
-# M2 restricted entry — non-production candidate
+# M2 restricted entry �� non-production candidate
 
 This candidate implements a closed `listTools` / `callTool` Host surface using
 the existing `AllowedRootPolicy`. It does not install an executor, register a

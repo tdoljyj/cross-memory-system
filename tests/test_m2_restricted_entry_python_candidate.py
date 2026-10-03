@@ -76,7 +76,7 @@ class LedgerTests(unittest.TestCase):
             ledger.close()
 
     def test_unsafe_arguments_rejected(self):
-        for name in ("../file", "a/b", "", ".", "..", "a\\b", "é", "/absolute"):
+        for name in ("../file", "a/b", "", ".", "..", "a\\b", "��", "/absolute"):
             with self.subTest(name=name), self.assertRaises(m2.Denied):
                 m2.leaf(name)
         with self.assertRaisesRegex(m2.Denied, "LAUNCHER_NOT_CONFIGURED"):
