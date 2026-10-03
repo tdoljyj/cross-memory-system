@@ -74,18 +74,24 @@ class ReplayLedger:
 class DirectoryHandle:
     """Linux-only, single-component handle IO. Ancestor provisioning is external.
 
-    Private immutable input root and private output root are installation
+    Root-owned role-readable input and private output roots are installation
     prerequisites. No recursive paths, mounts, general filesystem RPC or shell.
     Root path inode is checked before/after IO; a drift invalidates the entry.
     """
-    def __init__(self, path, uid):
+    def __init__(self, path, uid, *, read_only=False, gid=None):
         if sys.platform != "linux" or os.geteuid() != uid:
             raise Denied("IDENTITY_OR_PLATFORM_INVALID")
         self.path, self.uid = path, uid
+        self.read_only = read_only
+        self.owner = 0 if read_only else uid
+        self.mode = 0o750 if read_only else 0o700
+        self.gid = gid if read_only else None
+        if read_only and (gid is None or os.getegid() != gid):
+            raise Denied("IDENTITY_OR_PLATFORM_INVALID")
         self.fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             s = os.fstat(self.fd)
-            if s.st_uid != uid or stat.S_IMODE(s.st_mode) != 0o700:
+            if s.st_uid != self.owner or stat.S_IMODE(s.st_mode) != self.mode or (read_only and s.st_gid != gid):
                 raise Denied("ROOT_PROFILE_INVALID")
             self.identity = (s.st_dev, s.st_ino)
             self.recheck()
@@ -95,7 +101,7 @@ class DirectoryHandle:
 
     def recheck(self):
         s = os.stat(self.path, follow_symlinks=False)
-        if (s.st_dev, s.st_ino) != self.identity or not stat.S_ISDIR(s.st_mode) or s.st_uid != self.uid or stat.S_IMODE(s.st_mode) != 0o700:
+        if (s.st_dev, s.st_ino) != self.identity or not stat.S_ISDIR(s.st_mode) or s.st_uid != self.owner or stat.S_IMODE(s.st_mode) != self.mode or (self.read_only and s.st_gid != self.gid):
             raise Denied("ROOT_IDENTITY_DRIFT")
 
     def read_frozen(self, name, expected):
@@ -106,7 +112,8 @@ class DirectoryHandle:
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=self.fd)
         try:
             before = os.fstat(fd)
-            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_dev != self.identity[0] or before.st_uid != self.uid or before.st_mode & 0o222:
+            permitted_mode = stat.S_IMODE(before.st_mode) == 0o640 if self.read_only else not before.st_mode & 0o222
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_dev != self.identity[0] or before.st_uid != self.owner or not permitted_mode or (self.read_only and before.st_gid != self.gid):
                 raise Denied("INPUT_PROFILE_INVALID")
             data = bytearray()
             while len(data) <= MAX_BYTES:
@@ -130,6 +137,8 @@ class DirectoryHandle:
         Caller must serialize revocation with this synchronous commit boundary;
         this function alone cannot fence cross-process cancellation.
         """
+        if self.read_only:
+            raise Denied("INPUT_WRITE_DENIED")
         name = leaf(name)
         if type(data) is not bytes or len(data) > MAX_BYTES:
             raise Denied("CONTENT_TOO_LARGE")
@@ -165,8 +174,9 @@ def fixed_role_handles(role):
         raise Denied("HOST_PROFILE_INVALID")
     import pwd
     principal, input_root, output_root = ROLES[role]
-    uid = pwd.getpwnam(principal).pw_uid
-    first = DirectoryHandle(input_root, uid)
+    account = pwd.getpwnam(principal)
+    uid = account.pw_uid
+    first = DirectoryHandle(input_root, uid, read_only=True, gid=account.pw_gid)
     try:
         return first, DirectoryHandle(output_root, uid)
     except BaseException:

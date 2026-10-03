@@ -85,7 +85,10 @@ narrow Linux file/ledger component, not a replacement Agent Host or runnable
 server. Production role resolution uses only the fixed A/R account/root map.
 The internal directory primitive takes fixture roots for Linux unit tests;
 it must never be exposed as an Agent tool or accept roots from transport frames.
-It requires a private mode-0700 role-owned directory and matching effective UID.
+Fixed input handles require the already approved root-owned mode-0750 directory
+and root-owned mode-0640 files with the role's primary GID; input handles reject
+every create operation. Output requires a role-owned mode-0700 directory and
+matching effective UID. No VM ACL change is needed for these existing profiles.
 Ancestor ownership, immutable read-only inputs, local filesystem/mount policy,
 exclusive broker access and cross-process revocation serialization remain
 installation prerequisites; they are not proven by this constructor.
@@ -123,6 +126,6 @@ tests but explicitly skips Linux handle tests; the existing Linux candidate CI
 runs the complete public-fixture suite without installing Python.
 
 Local Python 3.12.10 candidate evidence: six ledger/schema tests passed and
-seven Linux-only handle tests explicitly skipped; both new Python files passed
+eight Linux-only handle tests explicitly skipped; both new Python files passed
 `py_compile`, and the four-file change passed `git diff --check`. Linux handle
 evidence must come from the exact-head CI run, not these Windows results.

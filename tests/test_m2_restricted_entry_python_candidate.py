@@ -154,6 +154,10 @@ class HandleTests(unittest.TestCase):
             self.handle.create_only("output", b"x", lambda: False)
         self.assertFalse((self.root / "output").exists())
 
+    def test_fixed_input_profile_rejects_role_owned_output_root(self):
+        with self.assertRaisesRegex(m2.Denied, "ROOT_PROFILE_INVALID"):
+            m2.DirectoryHandle(str(self.root), os.geteuid(), read_only=True, gid=os.getegid())
+
 
 if __name__ == "__main__":
     unittest.main()
