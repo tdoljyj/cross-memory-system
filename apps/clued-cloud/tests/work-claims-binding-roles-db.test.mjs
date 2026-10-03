@@ -139,6 +139,15 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
       await assert.rejects(() => anon.query(`select public.${name}($1)`, [{}]), /permission denied/, name);
     }
     await assert.rejects(() => anon.query('select * from clued_private.binding_roles_v1'), /permission denied/);
+    // PostgREST runs a STABLE or IMMUTABLE RPC in a read-only transaction, and the
+    // Native owner check locks the account row (FOR SHARE), which a read-only
+    // transaction refuses. Every public RPC that makes the check is VOLATILE.
+    await human.query('begin read only');
+    await assert.rejects(() => native('clued_binding_roles_list_v1', {}), /read-only transaction/);
+    await human.query('rollback');
+    assert.deepEqual((await admin.query(`select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.provolatile<>'v' and p.prosrc like '%authorization_owner_v12%'
+      order by 1`)).rows.map((r) => r.proname), []);
     await assert.rejects(() => human.query('select * from clued_private.binding_roles_v1'), /permission denied/);
     await assert.rejects(() => anon.query('select clued_private.binding_role_admits_v1(b,$1) from public.clued_agent_bindings b limit 1',
       ['ci-admission']), /permission denied/);
