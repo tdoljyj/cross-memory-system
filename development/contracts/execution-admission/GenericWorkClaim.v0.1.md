@@ -1,6 +1,6 @@
 # Generic Work Claim v0.1：任意资源、一个门卫多个门口、领取模式
 
-状态：**设计已合入（PR #501）；§7.2 第 1 步已上生产，第 2 步已实施、未上生产；§10 第 1、3 步已上生产。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
+状态：**设计已合入（PR #501）；§7.2 第 1、2 步已上生产，第 4 步（合同 16）已实施、未发布；§10 第 1、3 步已上生产。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
 
 - 第 1 步（Owner 授权 2026-10-02，Task `e9a10dbb`）：迁移 `20261002210000_work_claims_resource_kinds.sql`，测试 `apps/clued-cloud/tests/work-claims-resource-kinds-db.test.mjs`。
   - 登记了 `repo`、`storage`、`record` 三个 kind，当前只有"认领时冲突"这一个门口。
@@ -8,12 +8,13 @@
   - verify 的覆盖判定保持字面：裸路径只被裸路径覆盖，`repo:` 不覆盖。GitHub 门口在第 5 步知道仓库身份后再放开。
   - kind 至少两个字符：单个字母加冒号（`C:/Clued/...`）是 Windows 盘符，按裸路径处理（生产里已有这种写集）。根目录文件名以两个以上字符加冒号开头（如 `ab:foo`）的变更路径会被当作未登记的 kind，verify 报错，按 fail closed 处理。
   - 已应用 clued-prod（2026-10-02，生产版本 `20261002181833`）。
-- 第 2 步（Owner 2026-10-03 选定，Decision `6214c17f`，Task `b244a345`）：迁移 `20261003080000_work_claims_storage_door.sql`，Worker `worker/storage-agent-tools.ts` 与 `worker/continuity.ts`，测试 `apps/clued-cloud/tests/resource-center-storage-work-claim-db.fixture.mjs` 与 `resource-center-agent-tools.test.mjs`。生产迁移与 Worker 发布各需 Owner 授权。与 §4.2 的不同与补充：
+- 第 2 步（Owner 2026-10-03 选定，Decision `6214c17f`，Task `b244a345`）：迁移 `20261003080000_work_claims_storage_door.sql`，Worker `worker/storage-agent-tools.ts` 与 `worker/continuity.ts`，测试 `apps/clued-cloud/tests/resource-center-storage-work-claim-db.fixture.mjs` 与 `resource-center-agent-tools.test.mjs`。PR #518 合并，已应用 clued-prod（2026-10-03，生产版本 `20261003071945`），Worker 已发布（release run 37106011605）。与 §4.2 的不同与补充：
   - 门卫是 `clued_private.work_claim_gate_v1`（§3.1 的判定，`mode` 支持 `collision_only` 与 `require_claim`），被拒时返回 `{status:"rejected", error_code, ...}` 而不抛异常，并写一条 `WORK_CLAIM_REJECTED` 回执（`attempted_operation` 为 `clued-storage:storage_submit` 或 `clued-storage:storage_trash_batch`）。
   - 门卫放在权限判定与重放检查之后：只有已获授权的 Binding 看得到认领；已有 job 的重放照常返回，不被拒。
   - 目录移动的目标也按 `<目标目录>/**` 计；带新名字的 untrash 另计目标路径；adopt 不改 Drive，不过门卫。
   - 认领的 write_set 不能含空白，含空格的文件名用通配覆盖（如 `storage:<connection>/20_P/**`）。
   - 门卫读已提交的认领，不加认领锁：与写入同时提交的认领可能看不到这次写入。legacy 模式连接（`clued_storage_jobs_v1`）不过门卫，生产没有这种连接。
+- 第 4 步（Owner 2026-10-03 选定，Task `ae40c8fe`）：Agent 合同 16，§1.7 写明 `write_set` 的类型资源（`storage:`、`repo:`、`record:`）、Clued 存储写入检查认领与 `work_claim` 用法，错误表加入存储门卫的拒绝码；`clued_work_claim` 的 `write_set` 说明同步。resume 返回的认领仍是原样的 `write_set`，未另加资源 kind 字段（kind 已在条目前缀中）。合并与 Worker 发布各需 Owner 授权。
 - §10 次数与花费上限（2026-10-03，Decision `136a000e`，Task `c8778299`）：取代 v1 的每 Task 每 24 小时 10 次与每认领 20 个 head。第 1 步（令牌桶）迁移 `20261003050000_work_claims_rate_buckets.sql`、测试 `apps/clued-cloud/tests/work-claims-rate-buckets-db.test.mjs`（Decision `d3d0bbe8`，Task `00af11e4`），已应用 clued-prod（2026-10-03，生产版本 `20261003051745`）。第 3 步（合同 15 与认领工具说明）：Decision `c1fe7cca`，Task `12a42be8`。被拒回执补全（续期、接管前置检查与幂等重放的拒绝）：迁移 `20261003070000_work_claims_reject_receipts_renew_takeover.sql`、测试 `apps/clued-cloud/tests/work-claims-reject-receipts-db.test.mjs`（Decision `bd4243b6`，Task `91272c5d`），已应用 clued-prod（2026-10-03，生产版本 `20261003063641`）。
 日期：2026-10-02
 Task：`52739939`（Global）。Owner 决定：门卫原则见 Task `52739939` v3，四条规则见 Decision `2a7391ff`，三条待定见 Decision `357fce4f`（§9）。

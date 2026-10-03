@@ -32,7 +32,7 @@ const uuid = { type: "string", format: "uuid" } as const;
 const writeSet = {
   type: "array", minItems: 1, maxItems: 200, uniqueItems: true,
   items: { type: "string", minLength: 1, maxLength: 400 },
-  description: "Repository paths or globs this work will change (\"*\" within a segment, \"**\" across segments). Normalized and sorted by the server.",
+  description: "Repository paths or globs this work will change (\"*\" within a segment, \"**\" across segments), or typed resources kind:value: storage:<connection_id>/<path under the registered root> (checked by the Clued storage write tools), repo:<owner>/<name>/<path>, record:<canonical id>. No whitespace; cover names with spaces by a glob. Normalized and sorted by the server.",
 } as const;
 const triggerRefs = {
   type: "array", maxItems: 50, uniqueItems: true,
