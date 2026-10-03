@@ -293,6 +293,16 @@ class FramingPackageTests(unittest.TestCase):
                 installer.verify_package(first, new_digest)
             self.assertFalse((Path(tmp).parent / "outside").exists())
 
+    def test_real_boundary_loading_leaves_installed_directory_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "boundary.py"
+            path.write_bytes((ROOT / "kernel/host/m2-restricted-entry-python-candidate.py").read_bytes())
+            before = {p.name: p.read_bytes() for p in path.parent.iterdir()}
+            with mock.patch.object(sys, "dont_write_bytecode", False):
+                loaded = entry.load_boundary(path)
+            self.assertTrue(callable(loaded.ReplayLedger))
+            self.assertEqual({p.name: p.read_bytes() for p in path.parent.iterdir()}, before)
+
 
 @unittest.skipUnless(sys.platform == "linux", "Real POSIX temp apply/rollback runs in Linux CI; no guest installation")
 class InstallerTemporaryFixtureTests(unittest.TestCase):
@@ -370,6 +380,33 @@ class InstallerTemporaryFixtureTests(unittest.TestCase):
             for name in ("CODE", "CONFIG", "CGROUP"):
                 self.assertFalse(paths[name].exists())
             self.assertEqual(ledger.read_bytes(), before)
+            self.assertEqual((paths["DATA"] / "install-receipt.json").read_bytes(), receipt)
+
+    def test_real_temp_install_load_run_and_rollback_without_bytecode_cache(self):
+        with self.installed() as (_, paths, manifest):
+            ledger_path = paths["DATA"] / "ledger.sqlite"
+            receipt = (paths["DATA"] / "install-receipt.json").read_bytes()
+            with mock.patch.object(sys, "dont_write_bytecode", False):
+                loaded = entry.load_boundary(paths["CODE"] / "boundary.py")
+            self.assertEqual(set(p.name for p in paths["CODE"].iterdir()), set(installer.INSTALLED_CODE))
+            ledger = loaded.ReplayLedger(ledger_path)
+            runner = FixtureRunner()
+            def run_empty(tool, payload, deadline, interrupted):
+                p = subprocess.run([sys.executable, "-I", "-S", str(paths["CODE"] / "empty_probe.py")], capture_output=True, timeout=2)
+                self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"EMPTY_MARKER_OK\n", b""))
+                return p.stdout.decode("ascii").strip()
+            runner.behavior = run_empty
+            host = entry.Executor(ledger, runner, "temp-installed-a", {})
+            try:
+                self.assertEqual(host.call(entry.TOOLS[2], {"request_id": "public-load-run-rollback"})["result"], "EMPTY_MARKER_OK")
+                host.revoke()
+            finally:
+                ledger.close()
+            before = ledger_path.read_bytes()
+            installer.rollback(manifest)
+            for name in ("CODE", "CONFIG", "CGROUP"):
+                self.assertFalse(paths[name].exists())
+            self.assertEqual(ledger_path.read_bytes(), before)
             self.assertEqual((paths["DATA"] / "install-receipt.json").read_bytes(), receipt)
 
     def test_real_temp_changed_instance_binding_or_filehash_fails_before_delete(self):

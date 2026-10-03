@@ -89,7 +89,9 @@ def protected(path, mode, directory=False):
 def load_boundary(path):
     spec = importlib.util.spec_from_file_location("m2_boundary", path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Execute the verified source directly: never read or create bytecode caches
+    # in the root-owned fixed installation directory.
+    exec(compile(Path(path).read_bytes(), str(path), "exec"), module.__dict__)
     return module
 
 
