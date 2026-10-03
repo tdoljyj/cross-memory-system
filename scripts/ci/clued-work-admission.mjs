@@ -627,6 +627,12 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
       outcome.admitted_heads = verified.payload.admitted_heads;
       outcome.max_heads_per_claim = verified.payload.max_heads_per_claim ?? null;
     }
+    // GitHub CI per Task in 24 hours (GenericWorkClaim §10.4, Task bb9f1e36).
+    if (Number.isInteger(verified.payload.task_ci_heads_24h)) {
+      outcome.task_ci_heads_24h = verified.payload.task_ci_heads_24h;
+      outcome.task_ci_head_cap = verified.payload.task_ci_head_cap ?? null;
+      outcome.ci_retry_after = verified.payload.ci_retry_after ?? null;
+    }
     if (verified.payload.claim && typeof verified.payload.claim === "object") {
       const { claim } = verified.payload;
       outcome.claim = {
@@ -1006,6 +1012,10 @@ export function renderSummary(outcome) {
     lines.push("");
     lines.push("Notices (not blocking):");
     for (const notice of outcome.notices) lines.push(`- ${notice}`);
+  }
+  if (outcome.reasons.includes("task_ci_head_cap_reached")) {
+    lines.push("");
+    lines.push(`This Task already ran CI on ${outcome.task_ci_heads_24h ?? "the maximum number of"} pull-request heads in the last 24 hours (cap ${outcome.task_ci_head_cap ?? 40}, all of its claims together). Each push is one head; the next place frees up at ${outcome.ci_retry_after ?? "the end of the 24-hour window"}. Another claim does not help; push again after that, or tell the Owner.`);
   }
   if (outcome.reasons.includes("claim_head_cap_reached")) {
     lines.push("");

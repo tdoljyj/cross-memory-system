@@ -124,7 +124,7 @@ test('work claims: per-Task and per-Binding rate buckets, exemptions and rejecti
     const profile = (await admin.query('select clued_private.work_claim_profile_v1() p')).rows[0].p;
     assert.deepEqual([profile.task_claim_bucket_capacity, profile.task_claim_bucket_refill_seconds,
       profile.binding_claim_bucket_capacity, profile.binding_claim_bucket_refill_seconds,
-      profile.max_claims_per_task_24h, profile.max_heads_per_claim], [8, 3600, 30, 900, undefined, 20]);
+      profile.max_claims_per_task_24h, profile.github_ci_heads_per_task_24h], [8, 3600, 30, 900, undefined, 40]);
 
     // --- Stepwise claim-and-release: eight starts, then the Task bucket is
     // empty. A replay of an issued claim still answers and takes nothing. ---
