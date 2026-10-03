@@ -309,64 +309,11 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     assert.equal(await covers('src', 'src/**'), true);
 
     // --- Count caps (migration 20261002100000, Owner Decision a264ea02,
-    // Task 80aea04a). ---
+    // Task 80aea04a). The per-Task 24-hour count is replaced by rate buckets
+    // (20261003050000), covered in work-claims-rate-buckets-db.test.mjs; the
+    // per-claim head cap stays. ---
     const caps = (await admin.query('select clued_private.work_claim_profile_v1() p')).rows[0].p;
-    assert.deepEqual([caps.max_claims_per_task_24h, caps.max_heads_per_claim], [10, 20]);
-    // attempts_cap: ten claims of one Task in 24 hours, then refused. A
-    // replay of an issued claim still answers.
-    const looped = await createTask('claim loop');
-    let loopKey;
-    let loopClaim;
-    for (let i = 0; i < 10; i += 1) {
-      loopKey = uuid();
-      loopClaim = committed(await claim(tokens.A, { idempotency_key: loopKey, task_id: looped, write_set: ['loop/x'] })).claim;
-      if (i < 9) committed(await release(tokens.A, loopClaim));
-    }
-    const loopReplay = committed(await claim(tokens.A, { idempotency_key: loopKey, task_id: looped, write_set: ['loop/x'] }));
-    assert.deepEqual([loopReplay.replayed, loopReplay.claim.claim_id], [true, loopClaim.claim_id]);
-    committed(await release(tokens.A, loopClaim));
-    const looping = await claim(tokens.A, { task_id: looped, write_set: ['loop/x'] });
-    assert.equal(looping.error_code, 'work_claim_budget_exhausted', JSON.stringify(looping));
-    assert.deepEqual([looping.limit, looping.max_claims_per_task_24h, looping.claims_last_24h],
-      ['max_claims_per_task_24h', 10, 10]);
-    assert.ok(Date.parse(looping.retry_after) > Date.now());
-    // At the cap, the oldest claim aging out readmits the Task. Over the cap
-    // (claims issued before the cap went live: Task 1502fd80 had 22) the count
-    // has to drop below it, so retry_after is the (claims_last_24h - cap + 1)-th
-    // oldest claim + 24 hours (20261002150000).
-    const loopIssued = (await admin.query(`select claim_id,issued_at from clued_private.work_claims_v1
-      where task_id=$1 order by issued_at`, [looped])).rows;
-    assert.equal(Date.parse(looping.retry_after), loopIssued[0].issued_at.getTime() + 86400000);
-    await admin.query(`insert into clued_private.work_claims_v1(user_id,task_id,context_key,
-        holder_binding_id,write_set,fence,issued_at,expires_at,hard_deadline_at,status,
-        released_outcome,idempotency_key)
-      select user_id,task_id,context_key,holder_binding_id,write_set,100+g,
-        issued_at-make_interval(hours=>g),issued_at-make_interval(hours=>g),issued_at,
-        'RELEASED','abandoned','pre-cap-history-'||g
-      from clued_private.work_claims_v1,generate_series(1,3) g where claim_id=$1`,
-      [loopIssued[0].claim_id]);
-    const overCap = await claim(tokens.A, { task_id: looped, write_set: ['loop/x'] });
-    assert.deepEqual([overCap.error_code, overCap.claims_last_24h], ['work_claim_budget_exhausted', 13],
-      JSON.stringify(overCap));
-    assert.equal(Date.parse(overCap.retry_after), loopIssued[0].issued_at.getTime() + 86400000);
-    // Another Task is not affected; claims older than 24 hours stop counting.
-    committed(await release(tokens.A, committed(await claim(tokens.A, { task_id: await createTask('loop other'), write_set: ['loop/y'] })).claim));
-    await admin.query(`update clued_private.work_claims_v1 set issued_at=issued_at-interval '25 hours'
-      where task_id=$1`, [looped]);
-    let current = committed(await claim(tokens.A, { task_id: looped, write_set: ['loop/x'] })).claim;
-    // Takeovers count as attempts too.
-    const expire = (c) => admin.query(`update clued_private.work_claims_v1
-      set expires_at=greatest(issued_at,clock_timestamp()-interval '1 second') where claim_id=$1`, [c.claim_id]);
-    for (let i = 0; i < 9; i += 1) {
-      await expire(current);
-      current = committed(await call(tokens.B, 'clued_work_takeover_v1', { scope: 'global',
-        claim_id: current.claim_id, idempotency_key: uuid() })).claim;
-    }
-    await expire(current);
-    const takeoverOver = await call(tokens.B, 'clued_work_takeover_v1', { scope: 'global',
-      claim_id: current.claim_id, idempotency_key: uuid() });
-    assert.deepEqual([takeoverOver.error_code, takeoverOver.limit, takeoverOver.claims_last_24h],
-      ['work_claim_budget_exhausted', 'max_claims_per_task_24h', 10], JSON.stringify(takeoverOver));
+    assert.deepEqual([caps.max_claims_per_task_24h, caps.max_heads_per_claim], [undefined, 20]);
 
     // A claim admits at most 20 distinct pull-request heads.
     const headClaim = committed(await claim(tokens.A, { task_id: await createTask('head cap'), write_set: ['heads/**'] })).claim;

@@ -131,6 +131,13 @@ test('work claims over the per-Task cap consume Owner Grants; refusals carry an 
     assert.equal(inFlight.status, 'issued', JSON.stringify(inFlight));
 
     await apply(migrations.filter((name) => name >= STEP3));
+    // From 20261003050000 the cap is the Task's rate bucket: an empty bucket
+    // stands for a Task at its cap.
+    const drain = (taskId) => admin.query(`insert into clued_private.work_claim_rate_buckets_v1
+        (user_id,bucket_kind,key_id,tokens,updated_at) values($1,'task',$2,0,clock_timestamp())
+      on conflict (user_id,bucket_kind,key_id) do update set tokens=0,updated_at=clock_timestamp()`, [userId, taskId]);
+    await drain(legacyTask);
+    await drain(pendingTask);
 
     // The legacy exemption still admits its five extra claims, without any request.
     for (let i = 0; i < 5; i += 1) committed(await release('claude', committed(await claim(legacyTask)).claim));
@@ -147,7 +154,7 @@ test('work claims over the per-Task cap consume Owner Grants; refusals carry an 
 
     // --- A Task at the cap: the refusal carries an Owner Request. ---
     const task = await createTask('grant target');
-    await fill(task);
+    await drain(task);
     const refused = await claim(task);
     assert.equal(refused.error_code, 'work_claim_budget_exhausted', JSON.stringify(refused));
     assert.equal(refused.owner_exemption_path, undefined);
@@ -195,7 +202,7 @@ test('work claims over the per-Task cap consume Owner Grants; refusals carry an 
     assert.equal((await claim(task, 'codex')).error_code, 'work_claim_budget_exhausted');
     // Another Task at its cap is not covered.
     const other = await createTask('not granted');
-    await fill(other);
+    await drain(other);
     assert.equal((await claim(other)).error_code, 'work_claim_budget_exhausted');
     // Four claims and one takeover use the five; the next takeover is refused.
     for (let i = 0; i < 4; i += 1) committed(await release('claude', committed(await claim(task)).claim));
@@ -220,7 +227,7 @@ test('work claims over the per-Task cap consume Owner Grants; refusals carry an 
 
     // A conflict refusal does not use a grant: conflicts are checked first.
     const conflictTask = await createTask('conflict check');
-    await fill(conflictTask);
+    await drain(conflictTask);
     const conflictGrant = await approve({ request_id: (await claim(conflictTask)).owner_request.request_id, choice: 'grant' });
     const holder = committed(await claim(conflictTask)).claim;
     const clash = await agent('claude', 'clued_work_claim_v1',
