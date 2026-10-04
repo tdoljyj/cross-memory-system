@@ -86,7 +86,7 @@ Rules for every capture:
 | `checkpoint_event_not_authorized` (checkpoint) | `coverage.event_ids` lists an event of another context | Checkpoint each context in its own session (§5) |
 | `lifecycle_action_cannot_edit_record_content` | A close or restore carried content fields | Send only `closure_summary` / `closed_reason` |
 | `decision_event_requires_record` | You sent a `decision`, `correction` or `retraction` Event to `clued_append_event` | Write it as a record: `clued_record_mutate` (a decision, or an `update` for a correction) or `clued_decision_supersede`; clear an existing active Event with `clued_event_carrier_transition`. Never resend it as another event type |
-| `insufficient_scope`, `binding_not_authorized`, `resource_action_not_authorized` | Your connection lacks the tool's Clued scope, the context you sent (`scope` / `context_key`) or the action. Some Hosts show it only as an HTTP 403 | Do not retry it unchanged or through another Binding. Request the missing permission yourself, in the same reply, as §6.7 says: just saying you cannot do it is not enough |
+| `insufficient_scope`, `binding_not_authorized`, `resource_action_not_authorized` | Your connection lacks the tool's Clued scope, the context you sent (`scope` / `context_key`) or the action. Some Hosts show it only as an HTTP 403 | Do not retry it unchanged or through another Binding. Request the missing permission yourself, in the same reply, with `clued_owner_request` (`connection.permission`) as §6.7 says: just saying you cannot do it is not enough |
 | `work_claim_conflict` | A live claim of another holder names the same Task, overlaps your `write_set` or shares a trigger ref; or, on a storage write, covers a path the write touches | Stop and report the holder to the Owner (§1.7); never retry under another title, Task, key, path, job or Binding |
 | `work_claim_not_covered`, `work_claim_not_holder`, `work_claim_fence_mismatch`, `work_claim_not_active`, `work_claim_not_found` (storage write with `work_claim`) | The `work_claim` you passed does not cover every path the write touches (`uncovered` lists them), is not yours, was taken over, has ended or does not exist | Renew your claim with the wider `write_set` first, or claim again; do not pass another holder's claim |
 | `work_claim_budget_exhausted` | `limit` names the cap: live claims per session or per Binding, or a start-rate bucket (`task_claim_rate`, `binding_claim_rate`) | For a live-claim cap, finish or release a claim you hold first. For a rate bucket, wait until `retry_after`, or give the Owner the `owner_request.confirm_url` the refusal carries (§6.6) and claim again once they have approved it; never claim under another Task, key or Binding to get around it (§1.7) |
@@ -129,16 +129,23 @@ Rules for every capture:
    - `resource_action_not_authorized`: the context is granted, but not this action, for example close or restore.
 
    You can request the permission, and you make the request yourself in the same reply. Saying only that you cannot do it, or pointing the Owner to a page without steps, is not a request.
-   - Work out the smallest grant the work needs: the scope (`context:read`, `context:write` or `audit:read`), the context (`global`, `profile`, or the project's name with `project:<id>`) and the action as Clued's authorization page labels it under 正式记忆 (读取, 新增和修改, 关闭和归档 or 恢复). Never ask for more than the work needs, such as every project, or Global write when one project's write is enough.
-   - If the Host lets you start the connector's authorization from the conversation (a reconnect or sign-in prompt it shows), start it. Otherwise say plainly that Clued cannot widen an existing connection or send a sign-in prompt, then give the Owner the request as steps they can follow without asking you back:
-     1. In this client, reconnect (re-authorize) the Clued connector. Say where the Host puts that control if you know.
-     2. On Clued's authorization page, tick exactly `<context>` → 正式记忆 → `<action>`. Keep ticked whatever the work still uses, and choose a lifetime.
-     3. Approve, then come back to this conversation and say it is done.
+   - Work out the smallest grant the work needs: for each refused call, the context (`global`, `profile` or `project:<id>`) and the action (`read`, `write`, `close`, `restore` or `audit`). Never ask for more than the work needs, such as every project, or Global write when one project's write is enough.
+   - When the service offers `clued_owner_request` with the `connection.permission` action, call it with:
+     - one resource per context and action, as `permission:<context>/<action>` (for example `permission:project:<id>/write`);
+     - a stable `idempotency_key`;
+     - an `agent_note` if it helps;
+     - no `task_id` and no `suggested_grant`.
 
-     Name the call that was refused, and the §3 writes or §5 checkpoint still owed because of it, and continue the work that does not depend on them.
-   - Re-authorizing creates a new connection with what the Owner ticked; it never adds to the old one. The old connection stays until the Owner revokes or reduces it on `/oauth/connections`. That page only reduces or revokes permissions; it cannot add any.
-   - Do not send the Owner to `/grants` (我的授权), to a `/confirm/` link or to `clued_owner_request` for this. Those carry Owner Grants for gated actions (item 6); they cannot add a scope, a context or an action to a connection. Never use another Binding, another client's token or a headless token to get around the refusal (§4.7).
-   - Once the Owner says they reconnected, resume again and check the permission with one cheap call in that context. Then make the owed writes with their original idempotency keys. If the call is still refused, report the exact error. Do not repeat the same request in other words.
+     Any live connection can send it, even one that cannot read or write that context. Give the Owner the returned `request.confirm_url` exactly as returned, with one line naming each permission, for example "M2 → 正式记忆 → 新增和修改". The Owner approves or rejects on that page. Approval adds exactly those permissions to this same connection, until the connection's own expiry. `owner_request_permission_already_granted` means the connection already has every permission you asked for: retry the call, and if it is still refused, report the error.
+   - Once the Owner says they approved, or the request's status reads `approved_once`, retry the refused call on the same connection; no reconnect is needed. Then make the owed writes with their original idempotency keys. A `rejected` or `expired` request ends that attempt (item 6).
+   - When the service does not offer that action, or the connection cannot reach `clued_owner_request`, a new connection is the only way. Tell the Owner to:
+     1. Reconnect (re-authorize) the Clued connector in this client.
+     2. On Clued's authorization page, tick exactly `<context>` → 正式记忆 → `<action>`, and keep ticked whatever the work still uses.
+
+     That creates a new connection. The old one stays until the Owner revokes or reduces it on `/oauth/connections`.
+   - Name the call that was refused and the §3 writes or §5 checkpoint still owed because of it, and continue the work that does not depend on them.
+   - Never use another Binding, another client's token or a headless token to get around the refusal (§4.7).
+   - Do not send the Owner to `/grants` (我的授权) for this: that page lists Owner Grants, not connection permissions.
 
 ## 7. Governed external workspace mutations
 

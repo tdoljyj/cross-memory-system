@@ -46,7 +46,7 @@ const publicRequest = (status = 'pending') => ({
   expires_at: '2026-10-04T00:00:00Z', decided_at: null, grant: null,
 });
 
-test('the tool is advertised only behind CLUED_OWNER_REQUESTS_V1, with context:write', async () => {
+test('the tool is advertised only behind CLUED_OWNER_REQUESTS_V1, with context:read', async () => {
   const worker = await loadContinuityWorker();
   const on = (await (await worker.fetch(list(bindingToken), enabled, ctx)).json()).result.tools;
   const off = (await (await worker.fetch(list(bindingToken), disabled, ctx)).json()).result.tools;
@@ -54,8 +54,12 @@ test('the tool is advertised only behind CLUED_OWNER_REQUESTS_V1, with context:w
   assert.ok(!off.some((tool) => tool.name === TOOL));
   const tool = on.find((entry) => entry.name === TOOL);
   assert.ok(tool);
-  assert.deepEqual(tool._meta['clued/requiredScopes'], ['context:write']);
-  assert.match(tool.description, /Required Clued scope: context:write\.$/);
+  // context:read is the lowest it advertises: connection.permission asks need no
+  // scope at all (the database checks the live connection), other actions need context:write.
+  assert.deepEqual(tool._meta['clued/requiredScopes'], ['context:read']);
+  assert.match(tool.description, /Required Clued scope: context:read\.$/);
+  assert.match(tool.description, /connection\.permission/);
+  assert.match(tool.description, /Other actions require context:write\./);
   assert.match(tool.description, /cannot approve/);
   assert.equal(tool.annotations.readOnlyHint, false);
   assert.equal(tool.annotations.destructiveHint, false);

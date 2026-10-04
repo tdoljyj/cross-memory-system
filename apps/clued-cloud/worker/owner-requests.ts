@@ -23,7 +23,7 @@ export const ownerRequestTools = [
   {
     name: OWNER_REQUEST_TOOL,
     description:
-      "Ask the Owner to approve an action that needs their permission (registered actions: release.production, migration.production, work_claim.extra_claims). Create: send action, resources (kind:value or repository paths/globs) and idempotency_key, optionally task_id, suggested_grant and agent_note. The result carries request_id and confirm_url: give confirm_url to the Owner as is. The Owner opens it signed in to Clued and approves once, grants a time-limited permission, or rejects; you cannot approve it and must not claim the Owner approved in your own words. Status: send request_id alone to read pending, approved_once, granted, rejected or expired. A request expires after 24 hours. Idempotent by idempotency_key.",
+      "Ask the Owner to approve an action that needs their permission (registered actions: release.production, migration.production, work_claim.extra_claims, connection.permission). Create: send action, resources (kind:value or repository paths/globs) and idempotency_key, optionally task_id, suggested_grant and agent_note. The result carries request_id and confirm_url: give confirm_url to the Owner as is. The Owner opens it signed in to Clued and approves once, grants a time-limited permission, or rejects; you cannot approve it and must not claim the Owner approved in your own words. connection.permission asks for a permission your own connection lacks, one resource per context and action: permission:<global|profile|project:<id>>/<read|write|close|restore|audit>, for example permission:project:<id>/write; no task_id or suggested_grant. Any live connection can send it, even one that cannot read or write that context. Once the Owner approves, the permission is on this same connection: retry the refused call, no reconnect needed. Status: send request_id alone to read pending, approved_once, granted, rejected or expired. A request expires after 24 hours. Idempotent by idempotency_key. Other actions require context:write.",
     inputSchema: {
       type: "object",
       properties: {
@@ -36,7 +36,7 @@ export const ownerRequestTools = [
         resources: {
           type: "array", minItems: 1, maxItems: 50, uniqueItems: true,
           items: { type: "string", minLength: 1, maxLength: 400 },
-          description: "What the action touches, as kind:value (repo:owner/name/**, storage:..., record:<id>) or repository paths/globs.",
+          description: "What the action touches, as kind:value (repo:owner/name/**, storage:..., record:<id>, permission:<context>/<action>) or repository paths/globs.",
         },
         task_id: { ...uuid, description: "Optional: the active Task this is for; a grant from this request then applies to that Task only." },
         suggested_grant: {
@@ -61,7 +61,7 @@ export const ownerRequestTools = [
 
 export const ownerRequestToolPolicies = {
   [OWNER_REQUEST_TOOL]: {
-    scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+    scopes: ["context:read"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
   },
 } as const;
 

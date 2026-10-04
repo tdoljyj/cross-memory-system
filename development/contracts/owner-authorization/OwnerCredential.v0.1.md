@@ -129,7 +129,7 @@ owner_requests_v1
   created_at, expires_at            -- 请求本身 24 小时内有效
 ```
 
-- Agent 用 MCP 工具 `clued_owner_request` 创建请求（需 `context:write`），返回 `request_id` 和直达链接 `https://clued.pixelgrav.com/confirm/<request_id>`。
+- Agent 用 MCP 工具 `clued_owner_request` 创建请求（需 `context:write`；`connection.permission` 例外，只需一个有效连接），返回 `request_id` 和直达链接 `https://clued.pixelgrav.com/confirm/<request_id>`。
 - 同一个工具可以查询状态，也可以由门口在拒绝时自动创建。
 - Agent 只能发起请求，不能批准请求。
 
@@ -143,6 +143,15 @@ owner_requests_v1
 - `release.production`：运行发布 workflow 的 deploy 模式；
 - `migration.production`：经 workflow 应用迁移到生产库；
 - `work_claim.extra_claims`：替代认领豁免。
+
+后续登记的动作：
+- `connection.permission`：给发起请求的连接加权限（Decision 43ba00e2，Task `e86eb58d`，迁移 `20261004150000_connection_permission_requests.sql`）。
+  - 资源写成 `permission:<global|profile|project:<id>>/<read|write|close|restore|audit>`，每个上下文加动作一条。
+  - 只能申请 Owner 连接时就能勾选的范围：个人记忆、个人资料和 Owner 自己的项目。
+  - 只能由请求发起，只能"只批这一次"，只给发起请求的连接。
+  - 批准时在同一事务里把这些权限加到该连接上（authorization entries、scopes、context_keys），并用掉这次授权。
+  - 连接的到期时间不变，Owner 仍可在 `/oauth/connections` 收窄或撤销。
+  - OAuth 网关按连接的实时 scope 检查，所以不用重新连接；客户端在刷新时自己收窄过的令牌仍以它自己的 scope 为上限。
 
 ---
 
