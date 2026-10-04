@@ -110,6 +110,16 @@ async function approve(f, clientId, flow, days = 1) {
 }
 const call = (token, name) => ({ method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: { record_type: 'state' } } }) });
+// A gateway scope refusal is a tool error (HTTP 200, isError) carrying what to request; Hosts drop 403 bodies.
+async function scopeDenied(response) {
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.id, 1);
+  assert.equal(body.result.isError, true);
+  assert.equal(body.result.structuredContent.error.code, 'insufficient_scope');
+  assert.deepEqual(JSON.parse(body.result.content[0].text), body.result.structuredContent);
+  return body.result.structuredContent.error;
+}
 
 test('real OAuth MCP storage tools retain live Binding and separate storage grant gates', async () => {
   const f = fixture();
@@ -257,10 +267,10 @@ test('refresh downscoping cannot retain write capability in encrypted applicatio
     const narrowed = await refreshed.json(); assert.equal(narrowed.scope, 'context:read');
     // The connection's live scopes still include write; the narrowed token does not regain it.
     for (const row of f.bindings.values()) row.scopes = ['context:read', 'context:write'];
-    assert.equal((await f.run('/mcp', call(narrowed.access_token, 'clued_record_mutate'))).status, 403);
-    assert.equal((await f.run('/mcp', call(narrowed.access_token, 'clued_event_carrier_transition'))).status, 403);
-    assert.equal((await f.run('/mcp', call(narrowed.access_token, 'clued_projection_rebuild'))).status, 403);
-    assert.equal((await f.run('/mcp', call(narrowed.access_token, 'clued_full_global_reconcile'))).status, 403);
+    await scopeDenied(await f.run('/mcp', call(narrowed.access_token, 'clued_record_mutate')));
+    await scopeDenied(await f.run('/mcp', call(narrowed.access_token, 'clued_event_carrier_transition')));
+    await scopeDenied(await f.run('/mcp', call(narrowed.access_token, 'clued_projection_rebuild')));
+    await scopeDenied(await f.run('/mcp', call(narrowed.access_token, 'clued_full_global_reconcile')));
     assert.equal(f.calls.some(c => c.name === 'clued_record_mutate'), false);
     assert.equal(f.calls.some(c => c.name === 'clued_mcp_event_carrier_transition'), false);
     assert.equal(f.calls.some(c => c.name === 'clued_mcp_projection_rebuild' || c.name === 'clued_mcp_full_global_reconcile'), false);
@@ -273,7 +283,12 @@ test('a connection the Owner widened uses its live scopes without reconnecting; 
     assert.equal(token.scope, 'context:read');
     // Before the Owner approves a connection.permission request: refused at the gateway.
     for (const row of f.bindings.values()) row.scopes = ['context:read'];
-    assert.equal((await f.run('/mcp', call(token.access_token, 'clued_record_mutate'))).status, 403);
+    const denied = await scopeDenied(await f.run('/mcp', call(token.access_token, 'clued_record_mutate')));
+    // The refusal names what is missing and the request that asks the Owner for it.
+    assert.deepEqual(denied.missing, { context: 'global', action: 'write', scope: 'context:write' });
+    assert.equal(denied.suggested_request.action, 'connection.permission');
+    assert.deepEqual(denied.suggested_request.resources, ['permission:global/write']);
+    assert.match(denied.suggested_request.idempotency_key, /^permission:global\/write:\d{8}$/);
     assert.equal(f.calls.some(c => c.name === 'clued_record_mutate'), false);
     // After approval the database reports write on the same connection: the same token passes the gateway.
     for (const row of f.bindings.values()) row.scopes = ['context:read', 'context:write'];
@@ -288,7 +303,7 @@ test('a connection the Owner widened uses its live scopes without reconnecting; 
     assert.equal(f.calls.filter(c => c.name === 'clued_record_mutate').length, before + 1);
     // When the Owner reduces the connection, the live scopes win over the token's.
     for (const row of f.bindings.values()) row.scopes = [];
-    assert.equal((await f.run('/mcp', call(renewed.access_token, 'clued_record_list'))).status, 403);
+    await scopeDenied(await f.run('/mcp', call(renewed.access_token, 'clued_record_list')));
   } finally { globalThis.fetch = originalFetch; }
 });
 test('a read-only connection can ask for a connection permission', async () => {
@@ -299,7 +314,7 @@ test('a read-only connection can ask for a connection permission', async () => {
     for (const row of f.bindings.values()) row.scopes = ['context:read'];
     const ask = (args) => ({ ...call(token.access_token, 'clued_owner_request'),
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'clued_owner_request', arguments: args } }) });
-    assert.equal((await f.run('/mcp', ask({ action: 'release.production', resources: ['repo:o/n/abc'], idempotency_key: 'release-key-1' }))).status, 403);
+    await scopeDenied(await f.run('/mcp', ask({ action: 'release.production', resources: ['repo:o/n/abc'], idempotency_key: 'release-key-1' })));
     assert.equal(f.calls.some(c => c.name === 'clued_owner_request_v1'), false);
     await f.run('/mcp', ask({ action: 'connection.permission', resources: ['permission:global/write'], idempotency_key: 'permission-key-1' }));
     assert.equal(f.calls.filter(c => c.name === 'clued_owner_request_v1').length, 1);

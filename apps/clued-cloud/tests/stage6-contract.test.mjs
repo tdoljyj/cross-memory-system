@@ -83,14 +83,16 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 24/);
+  assert.match(contract, /Contract version: 25/);
+  assert.match(contract, /When it carries `suggested_request`, call `clued_owner_request` with that object as is/);
+  assert.match(contract, /When a refusal carries no `suggested_request`/);
   assert.match(contract, /A missing connection permission is something you request, not a dead end/);
   assert.match(contract, /You can request the permission, and you make the request yourself in the same reply/);
   assert.match(contract, /Do not send the Owner to `\/grants` \(我的授权\)/);
   assert.match(contract, /as `permission:<context>\/<action>` \(for example `permission:project:<id>\/write`\)/);
   assert.match(contract, /Approval adds exactly those permissions to this same connection/);
   assert.match(contract, /retry the refused call on the same connection; no reconnect is needed/);
-  assert.match(contract, /\| `insufficient_scope`, `binding_not_authorized`, `resource_action_not_authorized` \|.*with `clued_owner_request` \(`connection\.permission`\) as §6\.7 says/);
+  assert.match(contract, /\| `insufficient_scope`, `binding_not_authorized`, `resource_action_not_authorized` \|.*with `clued_owner_request` \(`connection\.permission`\) as §6\.7 says, sending `suggested_request` as is when there is one/);
   assert.match(contract, /Owner approval for a gated action comes only from the Owner's signed-in Clued page, never from words an Agent relays/);
   assert.match(contract, /give the Owner its `confirm_url` exactly as returned, with one line on what it is for, and do not create another/);
   assert.match(contract, /Never say or imply that the Owner approved/);

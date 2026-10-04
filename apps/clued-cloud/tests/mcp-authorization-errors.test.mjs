@@ -17,25 +17,60 @@ const request = token => new Request('https://clued.example/mcp', {
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'clued_project_list', arguments: { limit: 10 } } }),
 });
 
-test('resource denials stay denied without triggering an OAuth challenge', async () => {
+test('a revoked or expired connection stays an HTTP 403 without an OAuth challenge', async () => {
   const original = globalThis.fetch;
   try {
-    for (const message of ['binding_not_authorized', 'resource_action_not_authorized', 'authorization_revoked_or_expired']) {
-      let calls = 0;
-      globalThis.fetch = async url => {
-        calls++;
-        assert.equal(new URL(url).pathname, '/rest/v1/rpc/clued_project_list_v2');
-        return Response.json({ code: '42501', message }, { status: 401 });
-      };
-      const response = await handle(request('clued_bnd_isolated-fixture'), env);
-      assert.equal(response.status, 403);
+    let calls = 0;
+    globalThis.fetch = async url => {
+      calls++;
+      assert.equal(new URL(url).pathname, '/rest/v1/rpc/clued_project_list_v2');
+      return Response.json({ code: '42501', message: 'authorization_revoked_or_expired' }, { status: 401 });
+    };
+    const response = await handle(request('clued_bnd_isolated-fixture'), env);
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.has('www-authenticate'), false);
+    const body = await response.json();
+    assert.equal(body.error.code, -32000);
+    assert.equal(body.error.message, 'authorization_revoked_or_expired');
+    assert.equal(body.error.data.code, '42501');
+    assert.equal(calls, 1);
+  } finally { globalThis.fetch = original; }
+});
+
+test('a missing context or action is a tool error that says what to request (PermissionSimplification §3.2)', async () => {
+  const original = globalThis.fetch;
+  const project = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+  const recordsEnv = { ...env, PROJECT_VIEWS_V2: 'true' };
+  const mutate = args => new Request('https://clued.example/mcp', {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer clued_bnd_isolated-fixture' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'clued_record_mutate', arguments: args } }),
+  });
+  try {
+    for (const message of ['binding_not_authorized', 'resource_action_not_authorized']) {
+      globalThis.fetch = async () => Response.json({ code: '42501', message }, { status: 401 });
+      const response = await handle(mutate({ operation: 'update', scope: `project:${project}` }), recordsEnv);
+      assert.equal(response.status, 200);
       assert.equal(response.headers.has('www-authenticate'), false);
-      const body = await response.json();
-      assert.equal(body.error.code, -32000);
-      assert.equal(body.error.message, message);
-      assert.equal(body.error.data.code, '42501');
-      assert.equal(calls, 1);
+      const { id, result } = await response.json();
+      assert.equal(id, 7);
+      assert.equal(result.isError, true);
+      const { error } = result.structuredContent;
+      assert.equal(error.code, message);
+      assert.equal(error.category, 'permission');
+      assert.deepEqual(error.missing, { context: `project:${project}`, action: 'write', scope: 'context:write' });
+      assert.deepEqual(error.suggested_request.resources, [`permission:project:${project}/write`]);
+      assert.equal(error.suggested_request.action, 'connection.permission');
+      assert.match(error.message, /clued_owner_request/);
+      assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
     }
+    globalThis.fetch = async () => Response.json({ code: '42501', message: 'resource_action_not_authorized' }, { status: 401 });
+    const close = (await (await handle(mutate({ operation: 'close', scope: 'global' }), recordsEnv)).json()).result;
+    assert.deepEqual(close.structuredContent.error.suggested_request.resources, ['permission:global/close']);
+    // Project lifecycle is not a connection.permission resource: no suggestion is guessed.
+    const projects = (await (await handle(request('clued_bnd_isolated-fixture'), env)).json()).result;
+    assert.equal(projects.isError, true);
+    assert.equal(projects.structuredContent.error.code, 'resource_action_not_authorized');
+    assert.equal('suggested_request' in projects.structuredContent.error, false);
   } finally { globalThis.fetch = original; }
 });
 
