@@ -823,6 +823,28 @@ class FaultObservationCandidateTests(unittest.TestCase):
                     fault_observer.read_process(101)
 
 
+class SandboxCleanupRegressionTests(unittest.TestCase):
+    setUp = FaultObservationCandidateTests.setUp
+    def test_cleanup_reaped_leader_still_kills_bound_live_child(self):
+        process = mock.Mock()
+        process.poll.return_value = -9
+        after = fault_observer.Observation(self.binding, (self.child,), (None, self.child), True)
+        with mock.patch.object(signal, "SIGKILL", 9, create=True), \
+             mock.patch.object(fault_observer, "observe", return_value=after), \
+             mock.patch.object(os, "killpg", create=True) as killed:
+            FaultSameUserSandboxTests.cleanup(process, [self.binding, self.before])
+        killed.assert_called_once_with(self.leader.pgid, 9)
+        process.communicate.assert_called_once_with(timeout=3)
+
+    def test_cleanup_unknown_identity_does_not_signal(self):
+        after = fault_observer.Observation(self.binding, (), (), False)
+        with mock.patch.object(fault_observer, "observe", return_value=after), \
+             mock.patch.object(os, "killpg", create=True) as killed:
+            with self.assertRaisesRegex(AssertionError, "identity is unknown"):
+                FaultSameUserSandboxTests.cleanup(mock.Mock(), [self.binding, self.before])
+        killed.assert_not_called()
+
+
 @unittest.skipUnless(sys.platform == "linux", "Linux /proc and same-user fork sandbox only; no VM evidence")
 class FaultSameUserSandboxTests(unittest.TestCase):
     """Actual subprocess identity/stop; simulated fault triggers, no native cgroup."""
@@ -831,20 +853,42 @@ class FaultSameUserSandboxTests(unittest.TestCase):
             str(ROOT / "kernel/host/m2-restricted-entry-a-fault-fixture.py"),
             fault_fixture.FIXED_ARG), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, start_new_session=True, close_fds=True)
-        self.addCleanup(self.cleanup, process)
+        cleanup_identity = []
+        self.addCleanup(self.cleanup, process, cleanup_identity)
         binding = fault_observer.bind_started_group(process.pid)
+        cleanup_identity.append(binding)
         end = time.monotonic() + 3  # Sandbox readiness watchdog, not acceptance.
         while time.monotonic() < end:
             before = fault_observer.observe(binding)
             if fault_observer.ready(before):
+                cleanup_identity.append(before)
                 return process, before
             time.sleep(0.005)
         self.fail("Fixed sandbox descendant did not become observable")
 
     @staticmethod
-    def cleanup(process):
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
+    def cleanup(process, identity):
+        if not identity:
+            # An unreaped Popen child cannot have its PID reused. This fallback
+            # is only for a failed initial identity read of our new session.
+            if process.poll() is None and os.getpgid(process.pid) == process.pid:
+                os.killpg(process.pid, signal.SIGKILL)
+        else:
+            binding = identity[0]
+            tracked = identity[1].members if len(identity) == 2 else ()
+            after = fault_observer.observe(binding, tracked)
+            leader = binding.leader
+            if not after.complete or any(
+                    (x.pgid, x.session, x.uid, x.gid) !=
+                    (leader.pgid, leader.session, leader.uid, leader.gid)
+                    for x in after.members):
+                raise AssertionError("Sandbox cleanup identity is unknown")
+            # A reaped leader can leave live descendants holding output pipes.
+            if any(x.state not in "ZXx" for x in after.members):
+                try:
+                    os.killpg(leader.pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # The verified group exited before the signal.
         process.communicate(timeout=3)
 
     def test_actual_group_stop_has_no_native_cgroup_qualification_for_each_simulated_fault(self):
