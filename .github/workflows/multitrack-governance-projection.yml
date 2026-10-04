@@ -24,6 +24,7 @@ concurrency:
 
 jobs:
   validate-trusted-self-hosted:
+    timeout-minutes: 20
     if: >-
       (github.event_name == 'push' &&
        github.actor == github.repository_owner) ||
@@ -44,6 +45,7 @@ jobs:
         run: python scripts/governance/validate_multitrack_projection.py
 
   validate-untrusted-hosted:
+    timeout-minutes: 20
     if: >-
       (github.event_name == 'push' &&
        github.actor != github.repository_owner) ||

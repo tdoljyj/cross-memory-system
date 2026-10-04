@@ -8,8 +8,13 @@ A job starts only when its run is one of the following:
 
 - **On `main`:** a push, a schedule, `workflow_run`, `pull_request_target`, or a manual dispatch.
 - **A pull request into `main` that changes no file under `.github/workflows/`.** Each workflow keeps its `admission-gate` job, which waits for the Clued admission of the pull request.
-- **A pull request into `main` that changes a workflow,** once the base-branch admission run for that pull request and head has succeeded. That run is `clued-work-admission.yml` on `pull_request_target`; it executes `main`'s code, which checks the workflow change.
-- **A manual dispatch on another branch that changes no workflow compared with `main`.** The workflow keeps its dispatch gate, which needs a Clued admission run for the dispatched commit.
+- **A pull request into `main` that changes a workflow,** once its head carries a successful `clued-admission-verified` check from the `clued-admission` GitHub App (the newest such check decides).
+  - Only `main`'s admission run can post that check. The App key lives in the `clued-admission` environment, which deploys from `main` only.
+  - That run executes `main`'s code, which checks the workflow change.
+  - A workflow run's `pull_requests` list is not used. It names every open pull request with the same head, not the one that triggered the run.
+- **A manual dispatch on another branch whose `.github/workflows` directory is exactly `main`'s** (same files, same object ids).
+  - A branch behind `main` must merge `main` first.
+  - The workflow keeps its dispatch gate, which needs a Clued admission run for the dispatched commit.
 
 Everything else is refused before any step runs: pushes to other branches, pull requests into other branches, and other events.
 
@@ -19,7 +24,7 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
 
 1. **Create a read-only token.**
    - Use a fine-grained GitHub token for this repository only.
-   - Grant Contents: read, Actions: read and Pull requests: read. Nothing else.
+   - Grant Contents: read, Actions: read, Checks: read and Pull requests: read. Nothing else.
 2. **Copy the check into a directory the runner's service account can read but not write.**
    - Linux or WSL2, as root:
 
@@ -44,6 +49,8 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
    CLUED_RUNNER_HOOK_ENFORCE=false
    ```
 
+   The check trusts the `clued-admission` App with id `5164952`. If the App is ever replaced, add `CLUED_RUNNER_HOOK_ADMISSION_APP_ID=<new id>`.
+
    On Windows, the hook line points to `C:\ProgramData\CluedRunnerHook\clued-runner-job-started.ps1`, and the node line points to `externals\node20\bin\node.exe`.
 4. **Check the output.** Watch one pull request run and one push to `main`. Each job log starts with a "Set up runner" section that shows `clued-runner-hook: ALLOW ...` or `WOULD REFUSE ...`.
 5. **Turn on enforcement.** Set `CLUED_RUNNER_HOOK_ENFORCE=true` and restart the runner.
@@ -51,4 +58,8 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
 ## What it does not protect
 
 - **Write access to the runner machine.** An Agent that can write the runner machine, its `.env` file, or this directory can change or remove the check. Keep Agents off the runner machines, or keep these files out of their reach.
-- **Non-workflow code.** A pull request that changes no workflow still runs its own code in the existing jobs. Those jobs are the ones `main` defines, and their heavy steps wait for the admission gate.
+- **Non-workflow code.** A pull request that changes no workflow still runs its own code in the jobs `main` defines.
+  - In the gated workflows, the heavy jobs wait for the admission gate.
+  - The ungated short checks run anyway, even for a pull request no claim covers. These are `model-program-*`, `mps03-native-agent`, `multitrack-governance-projection`, `node-profile-policy`, `runner-budget-policy`, `gitleaks` and `trivy`.
+  - Each of their jobs has a 20–25 minute timeout, except `model-program-m0`. That file's hash is pinned in the frozen M0 manifest, so it keeps GitHub's 6-hour default.
+- **`main`'s own runs.** Anyone who can dispatch workflows can start `main`'s workflows (for example `clued-integration-runtime-nightly.yml`). They run `main`'s reviewed code and are not metered.

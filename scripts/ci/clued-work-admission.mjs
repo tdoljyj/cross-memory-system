@@ -316,6 +316,10 @@ const GATE_JOB = "admission-gate";
 const GATE_CONDITION = "needs.admission-gate.outputs.admitted == 'true'";
 export const GATE_JOB_SHA256 = new Set([
   "9443b017da24280b22f86149e8f672b8dd37ea8fcdb4f939d4bb93bfdbc277b4",
+  // Re-review 2, N3c, step 1: the same gate job with `checks: read`, so it can
+  // read the admission App's check. Step 2 moves the workflows to it and
+  // drops the digest above.
+  "62f231ef508663a7c52567b465634dbbfc0ef36889d9b3875aa454171e3afc4b",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 
@@ -401,8 +405,15 @@ export function workflowIsGated(text) {
 // line is a blank or comment line, a bare `  <job>:` key line with nothing
 // after the colon, or indented four or more spaces. Quoted, flow-style or
 // aliased jobs, tabs and a second YAML document are refused.
+// Re-review 2: the line reader splits on \n only, but YAML parsers also break
+// lines at a lone \r (and some at U+0085, U+2028 and U+2029), so such a
+// character could hide a whole job from it. Those characters, and the other
+// control characters, are refused anywhere in the file.
+const HIDDEN_LINE_BREAK = /\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/;
 export function workflowFormFindings(text) {
-  const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
+  const raw = String(text ?? "");
+  if (HIDDEN_LINE_BREAK.test(raw)) return ["workflow_not_canonical:line_break"];
+  const lines = raw.replace(/\r\n/g, "\n").split("\n");
   const findings = [];
   const jobsLines = lines.map((line, i) => [line, i]).filter(([line]) => /^["']?jobs["']?\s*:/.test(line));
   if (jobsLines.length !== 1 || !/^jobs:\s*(#.*)?$/.test(jobsLines[0][0])) return ["workflow_not_canonical:jobs"];
@@ -793,18 +804,51 @@ export function renderReverifySummary(result) {
 // Gate. The admission-gate jobs run inside `pull_request` workflows, whose
 // workflow file and checkout come from the PR, so they must not hold the Clued
 // token. They do not ask Clued. They read the verdict of the trusted check:
-// the latest pull_request_target run of clued-work-admission.yml on this head
-// for this pull request. That run executes base-branch code; a `pull_request`
-// workflow cannot create one, so a PR that adds a look-alike job named
-// clued-work-admission does not satisfy the gate. A run made for another pull
-// request with the same head (one into a branch whose copy of the admission
-// workflow passes everything) does not count either (re-review N3). Both start on the same push, so the gate waits for that
-// run to finish. A PR that edits this script or its gate job changes only its
-// own cost gating; the required check, which merging needs, is unaffected.
+// the newest clued-admission-verified check of the clued-admission App on
+// this head (latestAdmissionCheck below), which only main's admission run can
+// post, so neither a look-alike job in a PR workflow nor an admission run of
+// a pull request into another branch satisfies the gate. Both start on the
+// same push, so the gate waits for the check. A PR that edits this script or
+// its gate job changes only its own cost gating; the required check, which
+// merging needs, is unaffected.
 
 export const GATE_WAIT_SECONDS = 480;
 export const GATE_POLL_SECONDS = 10;
 const ADMISSION_EVENT = "pull_request_target";
+
+// Re-review 2, N3c: the pull_requests list of a run names every open pull
+// request with that head, not the one that triggered it, so a pull request
+// into another branch, whose copy of the admission workflow passes anything,
+// could stand in. The trusted signal is the clued-admission-verified check of
+// the clued-admission App on the head: its key lives in the clued-admission
+// environment, which deploys from main only. The gate reads it when its token
+// can read checks (gate jobs with `checks: read`). An older gate job without
+// that permission still follows the admission run until its workflow is
+// updated (the second step of this change).
+export const ADMISSION_APP_ID = 5164952;
+
+export async function latestAdmissionCheck(fetchImpl, env, repository, headSha) {
+  const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
+  const route = `/repos/${repository}/commits/${headSha}/check-runs?check_name=${APP_CHECK_NAME}&filter=all&per_page=100`;
+  const response = await fetchImpl(`${base}${route}`, {
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${env.GITHUB_TOKEN}`,
+      "x-github-api-version": "2022-11-28",
+      "user-agent": "clued-work-admission",
+    },
+  });
+  if (response.status === 403) return { forbidden: true, check: null };
+  if (!response.ok) throw new Error(`GitHub API ${route} returned ${response.status}`);
+  const body = await response.json();
+  let latest = null;
+  for (const check of (body && body.check_runs) || []) {
+    if (check.name !== APP_CHECK_NAME || check.head_sha !== headSha) continue;
+    if (!check.app || Number(check.app.id) !== ADMISSION_APP_ID) continue;
+    if (!latest || Number(check.id) > Number(latest.id)) latest = check;
+  }
+  return { forbidden: false, check: latest };
+}
 
 export async function latestAdmissionRun(fetchImpl, env, repository, headSha, prNumber) {
   const body = await githubJson(fetchImpl, env,
@@ -849,26 +893,37 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   try {
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     let run = null;
+    let what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID}`;
     for (let waited = 0; ; waited += GATE_POLL_SECONDS) {
-      run = await latestAdmissionRun(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, pr.number);
+      const probe = await latestAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha);
+      if (probe.forbidden) {
+        if (!outcome.notices.some((n) => n.startsWith("gate job cannot read checks"))) {
+          outcome.notices.push(`gate job cannot read checks (no checks: read); following the ${ADMISSION_EVENT} run of ${ADMISSION_WORKFLOW} until its workflow is updated`);
+        }
+        what = `${ADMISSION_WORKFLOW} run`;
+        run = await latestAdmissionRun(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, pr.number);
+      } else {
+        run = probe.check;
+      }
       if ((run && run.status === "completed") || waited >= limit) break;
       await sleep(GATE_POLL_SECONDS * 1000);
     }
     if (run) {
-      outcome.admission_run = { id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url ?? null };
+      outcome.admission_run = { id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url ?? null,
+        source: what };
     }
     if (!run) {
       outcome.verdict = "NO_ADMISSION_RUN";
-      outcome.reasons.push(`no ${ADMISSION_EVENT} run of ${ADMISSION_WORKFLOW} on ${pr.head.sha} within ${limit}s`);
+      outcome.reasons.push(`no ${what} on ${pr.head.sha} within ${limit}s`);
     } else if (run.status !== "completed") {
       outcome.verdict = "ADMISSION_PENDING";
-      outcome.reasons.push(`${ADMISSION_WORKFLOW} run ${run.id} still ${run.status} after ${limit}s`);
+      outcome.reasons.push(`${what} ${run.id} still ${run.status} after ${limit}s`);
     } else if (run.conclusion === "success") {
       outcome.verdict = "ADMITTED";
       outcome.admitted = true;
     } else {
       outcome.verdict = "REJECTED";
-      outcome.reasons.push(`${ADMISSION_WORKFLOW} run ${run.id} concluded ${run.conclusion}`);
+      outcome.reasons.push(`${what} ${run.id} concluded ${run.conclusion}`);
     }
   } catch (error) {
     if (enforced) throw error;

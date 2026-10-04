@@ -37,6 +37,7 @@ concurrency:
 
 jobs:
   validate-trusted-self-hosted:
+    timeout-minutes: 20
     if: >-
       (github.event_name == 'push' &&
        github.actor == github.repository_owner) ||
@@ -71,6 +72,7 @@ jobs:
       - run: python -m unittest discover -s tests -p "test_model_program_m2_*.py" -v
 
   validate-untrusted-hosted:
+    timeout-minutes: 20
     if: >-
       (github.event_name == 'push' &&
        github.actor != github.repository_owner) ||

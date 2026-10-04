@@ -1,6 +1,6 @@
 # Work Claim Admission v0.1：多 Agent 执行准入与费用保护机制候选
 
-状态：**部分实施。** 第 1–6 步已在生产生效，强制开启。第 7 步实测已完成；独立评审 HOLD_FAIL 的修复已合入；2026-10-03 的复审（Task `869d2db7`）仍为 HOLD_FAIL，修复见下（Owner Decisions `38ddb8cf`、`b0c53143`）。方向由 Owner 接受（Decision `78ca0c07`），不是架构接受。
+状态：**部分实施。** 第 1–6 步已在生产生效，强制开启。第 7 步实测已完成；独立评审 HOLD_FAIL 的修复已合入；2026-10-03 的复审与 2026-10-04 的复审 2（Task `869d2db7`）均为 HOLD_FAIL，修复见下（Owner Decisions `38ddb8cf`、`b0c53143`），待再次复审。方向由 Owner 接受（Decision `78ca0c07`），不是架构接受。
 日期：2026-10-01（状态更新 2026-10-02）
 来源：Owner 上传的《Clued 多 Agent 执行协调与费用保护：讨论纪要与既有机制对账》（2026-10-01）的重新评估，以及对纪要第九节源码与合同的只读对账（固定在 commit `f7ba6ff312aa0e90095db1e28f5937920f30de3a`）。
 通用化后续：任意资源、一个门卫多个门口、领取模式（独占/拆分/多份）的设计候选见 [GenericWorkClaim.v0.1.md](GenericWorkClaim.v0.1.md)（Task `52739939`）。
@@ -29,6 +29,22 @@
       - N6：migrate 的授权资源写明迁移文件；整段事务用 `psql -c` 交给服务器，迁移文件里的 psql 元命令不会执行；授权在凭据检查之后才消费。
       - N7：合并后的采纳任务用单独的并发组。N8：被 workflow 守卫拒绝的 PR 只做只读核验，不计入 CI 额度。
     - 未修：PR 正文可以写别的 Agent 的认领 ID（仓库侧不知道 PR 由谁打开）；按 Task 计量，Task 越多额度越多。
+  - 复审 2（2026-10-04，Task `869d2db7`，对照 main `4f770dcd`）：fresh-context 只读评审，HOLD_FAIL。N1、N5（专用 Binding 有效期间）、N6、N7、N8 确认已修；N2、N3、N4 部分修复。
+    - 新发现：
+      - A（MAJOR）专用 Binding 撤销或过期后，角色检查回到「谁都能做」，N1、N2、N5 重新打开；
+      - B（MAJOR）runner 检查用 `main...sha` 比较，指向 main 旧提交（加闸之前）的分支看不出差别，可以手动触发无闸的自托管任务；
+      - N3c：gate 与 runner 检查都靠运行的 `pull_requests` 字段认 PR，但 GitHub 说明该字段列出的是同 head 的所有打开 PR，不是触发者；
+      - N4 剩余：单独的 `\r`（以及 U+0085、U+2028）在 YAML 里是换行，守卫看不见，可以藏一个自托管 job；
+      - C（MINOR）不加闸的自托管 workflow 没有超时，文档里加闸列表写错；D（MINOR）合同 §1.7 一句话拼接错。
+    - 修复（迁移 `20261004050000_binding_roles_fail_closed.sql`、`scripts/ci/clued-work-admission.mjs`、`scripts/runner/`、`/bindings` 页面）：
+      - A：某个用途只要 Owner 标过、且没在 `/bindings` 上取消，就一直锁着，持有它的 Binding 撤销或过期也一样。那时谁都做不了这件事，直到 Owner 给新的 Binding 标上，或取消。`/bindings` 列出已失效但仍持有用途的 Binding（只能取消）。从没标过的用途保持原行为。
+      - N4：workflow 文件里出现单独的 `\r`、U+0085、U+2028、U+2029 或其他控制字符，一律拒绝（`workflow_not_canonical:line_break`）。
+      - N3c：gate 与 runner 检查改认 clued-admission App 在该 head 上的 `clued-admission-verified` check（最新一条为准）。App 的私钥只在 `clued-admission` environment 里，只有 main 上的准入运行能发；不再看工作流运行的 `pull_requests`。gate 需要 `checks: read`，分两步：本次先在 `GATE_JOB_SHA256` 中加入新摘要（gate 读不到 check 时暂按旧办法），下一步把各 workflow 的 gate 改成新写法并去掉旧摘要与旧办法。
+      - B：runner 检查对手动触发要求该提交的 `.github/workflows` 与 main 完全一致（逐个文件对象 id），否则先把 main 合进分支。PR 仍按 merge base 比较（PR 的 workflow 来自 merge ref，即 main 加上 PR 的改动）。
+      - C：不加闸的自托管 workflow（`model-program-m1-*`、`mps03-native-agent`、`multitrack-governance-projection`、`node-profile-policy`、`runner-budget-policy`、`gitleaks`）每个 job 设 20 分钟超时（gitleaks 25 分钟）。`model-program-m0.yml` 不改：它的哈希登记在冻结的 `development/contracts/model-program/m0/SHA256SUMS.json` 里，job 仍用 GitHub 默认的 6 小时上限。D：合同 v23 改正该句。
+    - 仍未修，写明靠自觉：
+      - PR 正文可以写别的 Agent 的认领 ID；手动触发 `clued-work-admission-dispatch.yml` 时也可以填别的 Agent 的 `claim_id`，计入其 Task 的 CI 额度（仓库侧不知道是谁触发的）。两者都受每 Task 每天 40 个 head 的上限约束。
+      - 不加闸的自托管检查会跑 PR 的代码，未被认领覆盖的 PR 也会跑，每个 job 最多 20–25 分钟（`model-program-m0` 没有超时，见上）；`clued-integration-runtime-nightly.yml` 任何人都能在 main 上手动触发，跑的是 main 的代码，不计入额度。
 - **尚缺或与本文设计不符**（各条在对应小节标注）：
   - 每认领 CI 分钟预算与 finalize：改为次数上限，不做（§4.5，Owner Decision `a264ea02`）。
   - 备份恢复后 `max(fence)` 会回退，靠恢复后的手工步骤补救（§4.4、§6，Owner Decision `2b23eb0c`）。
@@ -100,7 +116,7 @@
 | 层 | 入口 | 谁强制 | 不依赖 Agent 自觉？ | 本设计给的保证 |
 | --- | --- | --- | --- | --- |
 | L0 | `main` 合并 | GitHub ruleset required check `clued-work-admission` | **是** | 没有有效 claim 覆盖该 PR 的 head、base、变更文件集，就不能合并 |
-| L0 | 自托管 CI 重任务（Information Flow E2E、Supabase migration/pgTAP、isolated-candidate、node22-install、model-program harness） | workflow 首个 job `admission-gate`（GitHub 托管 runner，秒级）；runner 机器上的开工前检查（`scripts/runner/`，Owner 安装后） | **装上 runner 检查后是**；只靠 `admission-gate` 时否：在改过 workflow 的分支上手动触发或 push 可以跳过它（复审 N3） | 未被 claim 覆盖的 PR 只跑 gitleaks、trivy 和 gate 本身；改了 workflow 的运行要有 base 代码的准入结果；非 main 的 push 与改了 workflow 的手动触发在开工前被拒 |
+| L0 | 自托管 CI 重任务（加闸的：Information Flow E2E、Supabase migration/pgTAP、connection authorization 与 isolated-candidate、node22-install、public-mcp behavior／protocol） | workflow 首个 job `admission-gate`（GitHub 托管 runner，秒级）；runner 机器上的开工前检查（`scripts/runner/`，Owner 安装后） | **装上 runner 检查后是**（复审 2 的修复之后，待再复审）；只靠 `admission-gate` 时否：在改过 workflow 的分支上手动触发或 push 可以跳过它（复审 N3） | 未被 claim 覆盖的 PR 不跑加闸的重任务；改了 workflow 的 PR 要有 clued-admission App 的准入 check；非 main 的 push、发往其他分支的 PR、workflow 与 main 不一致的手动触发在开工前被拒。不加闸的自托管短检查（`model-program-*`、`mps03-native-agent`、`multitrack-governance-projection`、`node-profile-policy`、`runner-budget-policy`、`gitleaks`、`trivy` 等）照常跑 PR 代码，有超时上限 |
 | L1 | Clued Canonical 与 claim 表 | Postgres 事务 + CAS + lease | **是** | 同一 write_set／trigger_ref／intent 只有一个有效 claim；过期、fence 不符的写被拒 |
 | L2 | Agent 开工前 | agent-contract §1 新增步骤；`clued_session_resume` 返回冲突 claim | 否 | 合规 Agent 在**第一次 Clued 调用**就看到冲突并停下，成本止于一次 resume |
 | L3 | Claude Code 本地 `git push`、`gh pr create`、`npm install`／`build`／`test` | PreToolUse hook（仓库 `.claude/settings.json`） | 否（可关、可删、只对本仓库 Claude Code） | 没有 `CLUED_WORK_CLAIM` 环境或 claim 文件时阻止这些命令一次 |
@@ -227,7 +243,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - 仓库检查（`scripts/ci/clued-work-admission.test.mjs`）断言只有上述 workflow 引用 `secrets.CLUED_CONTEXT_READ_TOKEN`。
   - 仍未覆盖：同名 check 伪造（见上）。另外 PR 可以改写自己的 workflow、删掉 `needs: admission-gate`：闸是 PR 自己的 job，只能控制合规 PR 的花费，不是强制边界。
 - **实现（加闸范围与手动触发，2026-10-02，Owner Decision `75abfe80`，Task `29128827`）**：
-  - 新增加闸：`public-mcp-behavior.yml`、`public-mcp-protocol.yml`（装依赖、起本地 MCP，behavior 还起数据库）。`model-program-*`、`mps03-native-agent`、`multitrack-governance-projection`、`node-profile-policy` 是几秒的 Python 校验，不加闸：闸任务本身的开销与等待超过它们。
+  - 新增加闸：`public-mcp-behavior.yml`、`public-mcp-protocol.yml`（装依赖、起本地 MCP，behavior 还起数据库）。`model-program-*`、`mps03-native-agent`、`multitrack-governance-projection`、`node-profile-policy` 是 Python 校验，不加闸：闸任务本身的开销与等待超过它们。（复审 2 更正：它们在自托管 Windows 上跑 PR 的代码，一次几分钟而不是几秒；现在每个 job 有 20 分钟超时，`model-program-m0` 除外，它的文件哈希被冻结的 m0 清单锁定。）
   - 手动触发：Agent 用 Owner 账号，「只许 Owner 触发」不等于要求认领。`clued-g4-database`、`information-flow-e2e`、`clued-connection-authorization` 的 `workflow_dispatch` 现在要带 `admission_run_id`。流程两步：
     1. 在默认分支触发 `clued-work-admission-dispatch.yml`，参数 `workflow`（上述三者之一）、`ref`、`claim_id`（可选 `scope`）。它在 `clued-admission` environment 中持有 token，向 Clued 校验该 claim（`clued_work_verify_v1`，带 ref 的 head，不带 changed_paths），运行名为 `admit <workflow> <ref> <claim_id>`；不在默认分支时 job 不运行。
     2. 在该 ref 上触发重任务 workflow，`admission_run_id` 填第 1 步的 run id。其 `admission-gate`（无 token）只在该运行是默认分支上的 `workflow_dispatch`、成功、30 分钟内、运行名指向本 workflow 与本 ref 时放行。
@@ -316,7 +332,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 ## 8. 实施顺序
 
-第 1–7 步均已执行。第 7 步的复审未做（Task `869d2db7`）；其余状态见文首「当前状态」。以下为原计划，保留原文。
+第 1–7 步均已执行。第 7 步的两次复审均为 HOLD_FAIL，修复后待再复审（Task `869d2db7`）；其余状态见文首「当前状态」。以下为原计划，保留原文。
 
 1. 迁移（Task `ca767208`）：`work_claims_v1` 表 + 五个 RPC + Event／Receipt 接线；DB 测试覆盖第 6 节矩阵。
 2. Worker（Task `ed816cd8`）：五个 MCP 工具；`clued_session_resume` 增加 `contract_version` 与 `active_work_claims`。

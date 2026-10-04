@@ -123,3 +123,22 @@ test('a refusal is shown in plain words', async t => {
   f.calls[1].resolve({ data: { status: 'rejected', error_code: 'binding_role_scope_missing' }, error: null }); await f.settle();
   assert.ok(f.text().includes('缺少该用途需要的权限'));
 });
+
+test('a revoked or expired Binding that still holds a role is shown as 已失效 and can only be ended', async t => {
+  const f = fixture(PAGE); t.after(() => f.unmount());
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', roles: ROLES, bindings: [
+    { binding_id: 'b-old', agent_name: 'old-admission', vendor: 'github', scopes: ['context:read'], roles: ['ci-admission'], live: false },
+    { binding_id: 'b-new', agent_name: 'new-admission', vendor: 'github', scopes: ['context:read'], roles: [], live: true },
+  ] }, error: null });
+  await f.settle();
+  const cards = f.nodes('div').filter(n => n.props.className === 'owner-grant');
+  const oldCard = cards.find(n => f.text(n).includes('old-admission'));
+  const newCard = cards.find(n => f.text(n).includes('new-admission'));
+  assert.ok(f.text(oldCard).includes('已失效'));
+  assert.deepEqual(f.nodes('button', oldCard).map(n => f.text(n)), ['取消：CI 准入'], 'a dead Binding offers only ending its role');
+  assert.ok(!f.text(newCard).includes('已失效'));
+  assert.deepEqual(f.nodes('button', newCard).map(n => f.text(n)), ['设为：CI 准入', '设为：发布门口']);
+  f.nodes('button', oldCard)[0].props.onClick();
+  assert.deepEqual(plain(f.calls[1].args.p_input), { binding_id: 'b-old', role: 'ci-admission', enabled: false });
+});

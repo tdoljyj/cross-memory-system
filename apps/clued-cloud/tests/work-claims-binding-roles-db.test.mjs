@@ -139,6 +139,15 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
       await assert.rejects(() => anon.query(`select public.${name}($1)`, [{}]), /permission denied/, name);
     }
     await assert.rejects(() => anon.query('select * from clued_private.binding_roles_v1'), /permission denied/);
+    // PostgREST runs a STABLE or IMMUTABLE RPC in a read-only transaction, and the
+    // Native owner check locks the account row (FOR SHARE), which a read-only
+    // transaction refuses. Every public RPC that makes the check is VOLATILE.
+    await human.query('begin read only');
+    await assert.rejects(() => native('clued_binding_roles_list_v1', {}), /read-only transaction/);
+    await human.query('rollback');
+    assert.deepEqual((await admin.query(`select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.provolatile<>'v' and p.prosrc like '%authorization_owner_v12%'
+      order by 1`)).rows.map((r) => r.proname), []);
     await assert.rejects(() => human.query('select * from clued_private.binding_roles_v1'), /permission denied/);
     await assert.rejects(() => anon.query('select clued_private.binding_role_admits_v1(b,$1) from public.clued_agent_bindings b limit 1',
       ['ci-admission']), /permission denied/);
@@ -231,19 +240,40 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     await assert.rejects(() => door('claude'), /owner_grant_door_binding_not_authorized/);
     assert.equal((await door('release')).consumed, false, 'the marked Binding opens its own request');
 
-    // --- Ending a role, or revoking its Binding, returns to the earlier behaviour. ---
+    // --- Ending a role explicitly returns to the earlier behaviour. ---
     committed(await setRole(bindingIds.release, 'release-door', false));
     assert.equal((await door('codex')).consumed, false);
     assert.equal(await issueErr({ binding_id: bindingIds.release, role: 'release-door', enabled: false }), 'binding_role_unchanged');
+
+    // --- Re-review 2, finding A: a revoked or expired holder keeps the role locked. ---
     const t2 = await createTask('roles revoked');
     const c2 = committed(await claim(t2, 'claude', 'session-d', ['roles2/**'])).claim;
     assert.deepEqual((await verifyAs('claude', c2, { pr_ref: 'o/r#12', head_sha: sha(13) })).reasons, ['admission_binding_required']);
     await admin.query('update public.clued_agent_bindings set revoked_at=now() where id=$1', [bindingIds.ci]);
-    v = await verifyAs('claude', c2, { pr_ref: 'o/r#12', head_sha: sha(13) });
-    assert.deepEqual([v.verdict, v.bound_pr], ['ADMITTED', 'o/r#12'], 'a revoked role Binding no longer locks the door');
+    assert.deepEqual((await verifyAs('claude', c2, { pr_ref: 'o/r#12', head_sha: sha(13) })).reasons, ['admission_binding_required'],
+      'a revoked CI Binding does not open binding to every Binding');
+    const stillLocked = await agent('codex', 'clued_work_claim_adopt_v1', { scope: 'global', pr_ref: 'o/r#12', merge_sha: sha(13) });
+    assert.deepEqual([stillLocked.adopted, stillLocked.reason], [false, 'admission_binding_required']);
+    committed(await setRole(bindingIds.release, 'release-door', true));
+    await admin.query("update public.clued_agent_bindings set expires_at=now()-interval '1 minute' where id=$1", [bindingIds.release]);
+    await assert.rejects(() => door('release'), /binding_not_authorized/, 'the expired holder itself is refused');
+    await assert.rejects(() => door('codex'), /owner_grant_door_binding_not_authorized/, 'an expired release Binding keeps the door locked');
+    // The Owner sees the dead holders and can end their roles, but cannot mark a dead Binding.
+    const held = (await native('clued_binding_roles_list_v1', {})).bindings;
+    assert.deepEqual(held.filter((b) => !b.live).map((b) => [b.binding_id, b.roles]).sort(),
+      [[bindingIds.ci, ['ci-admission']], [bindingIds.release, ['release-door']]].sort());
+    assert.ok(held.filter((b) => b.live).every((b) => ![bindingIds.ci, bindingIds.release].includes(b.binding_id)));
+    assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'release-door', enabled: true }), 'binding_role_binding_invalid');
+    // Rotation: mark a new live Binding; the dead one keeps nothing open.
+    committed(await setRole(bindingIds.codex, 'release-door', true));
+    assert.equal((await door('codex')).consumed, false, 'the new holder reaches the door');
+    await assert.rejects(() => door('claude'), /owner_grant_door_binding_not_authorized/);
+    // Ending the dead CI holder's role, the last one, reopens binding to every Binding.
+    committed(await setRole(bindingIds.ci, 'ci-admission', false));
+    const v2 = await verifyAs('claude', c2, { pr_ref: 'o/r#12', head_sha: sha(13) });
+    assert.deepEqual([v2.verdict, v2.bound_pr], ['ADMITTED', 'o/r#12'], 'no role marked any more: the earlier behaviour');
     assert.ok(!(await native('clued_binding_roles_list_v1', {})).bindings.some((b) => b.binding_id === bindingIds.ci),
-      'revoked Bindings are not listed');
-    assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'ci-admission', enabled: false }), 'binding_role_binding_invalid');
+      'a revoked Binding without a role is not listed');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

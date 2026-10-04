@@ -11,13 +11,20 @@
 //   - a pull request into main that changes no file under .github/workflows/.
 //     Its workflows are main's, so each keeps its admission-gate job, which
 //     waits for the Clued admission of the pull request.
-//   - a pull request into main that changes a workflow, once the base-branch
-//     admission run (clued-work-admission.yml, pull_request_target) for that
-//     pull request and head succeeded. That run executes main's code, which
-//     checks the workflow change.
-//   - a hand dispatch on another branch that changes no workflow against main.
-//     Its workflow keeps the dispatch gate, which needs a Clued admission run
-//     for the dispatched commit.
+//   - a pull request into main that changes a workflow, once the head carries
+//     a successful clued-admission-verified check from the clued-admission
+//     GitHub App. Only main's admission run can post it: the App key lives in
+//     the clued-admission environment, which deploys from main only. That run
+//     checks the workflow change. (Re-review 2, N3c: a workflow run's
+//     pull_requests list names every open pull request with the same head, not
+//     the one that triggered it, so an admission run of a pull request into
+//     another branch, whose copy of the admission workflow passes anything,
+//     could have stood in for it.)
+//   - a hand dispatch on another branch whose .github/workflows directory is
+//     exactly main's. Its workflow keeps the dispatch gate, which needs a
+//     Clued admission run for the dispatched commit. (Re-review 2, finding B:
+//     the earlier main...sha compare saw no change on a branch pointing at an
+//     old main commit, from before a workflow had its gate.)
 // Any workflow file counts, not only the one running: a called (reusable)
 // workflow runs under its caller's name.
 // Everything else is refused: pushes to other branches, pull requests into
@@ -26,7 +33,11 @@
 // Configuration (runner machine environment, e.g. the runner's .env file):
 //   CLUED_RUNNER_HOOK_REPOSITORY   owner/name this runner serves (required)
 //   CLUED_RUNNER_HOOK_TOKEN_FILE   file holding a read-only GitHub token
-//                                  (contents, actions, pull requests: read)
+//                                  (contents, actions, checks, pull requests:
+//                                  read)
+//   CLUED_RUNNER_HOOK_ADMISSION_APP_ID  id of the clued-admission App whose
+//                                  check admits a head (default: the Owner's
+//                                  App, ADMISSION_APP_ID below)
 //   CLUED_RUNNER_HOOK_ENFORCE      "true" refuses; anything else only reports
 //   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the admission run (480)
 // It needs Node 18 or newer (the runner bundles one under externals/).
@@ -35,7 +46,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const ADMISSION_WORKFLOW = "clued-work-admission.yml";
+export const ADMISSION_CHECK = "clued-admission-verified";
+export const ADMISSION_APP_ID = 5164952;
 const MAIN_EVENTS = new Set(["push", "schedule", "workflow_run", "pull_request_target", "workflow_dispatch"]);
 
 export function workflowPathOf(env) {
@@ -53,8 +65,9 @@ async function github(fetchImpl, token, url, { allowMissing = false } = {}) {
   return response.json();
 }
 
-// The workflow files a commit changes against the default branch (from their
-// merge base). A list GitHub truncates counts as changing workflows.
+// The workflow files a pull request changes against the default branch (from
+// their merge base). Its workflows run from the merge ref, which is main plus
+// these changes. A list GitHub truncates counts as changing workflows.
 export const COMPARE_FILE_LIMIT = 300;
 async function changedWorkflows(fetchImpl, token, repository, base, head) {
   const body = await github(fetchImpl, token, `/repos/${repository}/compare/${encodeURIComponent(base)}...${head}`);
@@ -64,14 +77,30 @@ async function changedWorkflows(fetchImpl, token, repository, base, head) {
     .filter((name) => name.startsWith(".github/workflows/"));
 }
 
-async function admissionSucceeded(fetchImpl, token, repository, prNumber, headSha) {
+// A hand dispatch runs the dispatched commit's own workflow files, so they
+// must be main's exactly: same entries, same blob (or tree) object ids.
+async function workflowsDifferFromMain(fetchImpl, token, repository, base, sha) {
+  const listing = async (ref) => {
+    const body = await github(fetchImpl, token, `/repos/${repository}/contents/.github/workflows?ref=${encodeURIComponent(ref)}`,
+      { allowMissing: true });
+    if (body === null) return new Map();
+    if (!Array.isArray(body)) throw new Error(".github/workflows is not a directory");
+    return new Map(body.map((entry) => [String(entry.path ?? entry.name ?? ""), `${entry.type}:${entry.sha}`]));
+  };
+  const [mine, main] = await Promise.all([listing(sha), listing(base)]);
+  const names = new Set([...mine.keys(), ...main.keys()]);
+  return [...names].filter((name) => mine.get(name) !== main.get(name)).sort();
+}
+
+// The newest clued-admission-verified check of the admission App on a head.
+async function admissionCheck(fetchImpl, token, repository, headSha, appId) {
   const body = await github(fetchImpl, token,
-    `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=pull_request_target&per_page=20`);
+    `/repos/${repository}/commits/${headSha}/check-runs?check_name=${ADMISSION_CHECK}&filter=all&per_page=100`);
   let latest = null;
-  for (const run of (body && body.workflow_runs) || []) {
-    if (run.event !== "pull_request_target" || run.head_sha !== headSha) continue;
-    if (!Array.isArray(run.pull_requests) || !run.pull_requests.some((p) => p && p.number === prNumber)) continue;
-    if (!latest || Date.parse(run.created_at) > Date.parse(latest.created_at)) latest = run;
+  for (const check of (body && body.check_runs) || []) {
+    if (check.name !== ADMISSION_CHECK || check.head_sha !== headSha) continue;
+    if (!check.app || Number(check.app.id) !== appId) continue;
+    if (!latest || Number(check.id) > Number(latest.id)) latest = check;
   }
   return latest;
 }
@@ -106,10 +135,10 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
   const sha = (env.GITHUB_SHA ?? "").trim();
   if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("GITHUB_SHA is not a commit SHA.");
   if (event === "workflow_dispatch") {
-    const changed = await changedWorkflows(fetchImpl, token, repository, defaultBranch, sha);
-    result.allow = changed.length === 0;
-    result.reason = result.allow ? `dispatch on ${result.ref}, no workflow changed from ${defaultBranch}`
-      : `dispatch on ${result.ref} changes ${[...new Set(changed)].join(", ")}`;
+    const differing = await workflowsDifferFromMain(fetchImpl, token, repository, defaultBranch, sha);
+    result.allow = differing.length === 0;
+    result.reason = result.allow ? `dispatch on ${result.ref}, workflows identical to ${defaultBranch}`
+      : `dispatch on ${result.ref}: workflows differ from ${defaultBranch} (${differing.join(", ")}); merge ${defaultBranch} into the branch first`;
     return result;
   }
   if (event === "pull_request") {
@@ -128,16 +157,18 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
     }
     const waitSeconds = Number.parseInt(env.CLUED_RUNNER_HOOK_WAIT_SECONDS ?? "", 10);
     const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : 480;
-    let run = null;
+    const configured = Number.parseInt((env.CLUED_RUNNER_HOOK_ADMISSION_APP_ID ?? "").trim(), 10);
+    const appId = Number.isInteger(configured) && configured > 0 ? configured : ADMISSION_APP_ID;
+    let check = null;
     for (let waited = 0; ; waited += 10) {
-      run = await admissionSucceeded(fetchImpl, token, repository, pr.number, pr.head.sha);
-      if ((run && run.status === "completed") || waited >= limit) break;
+      check = await admissionCheck(fetchImpl, token, repository, pr.head.sha, appId);
+      if ((check && check.status === "completed") || waited >= limit) break;
       await sleep(10_000);
     }
-    result.allow = Boolean(run && run.status === "completed" && run.conclusion === "success");
+    result.allow = Boolean(check && check.status === "completed" && check.conclusion === "success");
     const what = [...new Set(changed)].join(", ");
-    result.reason = result.allow ? `pull request #${pr.number} changes ${what}; admission run ${run.id} succeeded`
-      : `pull request #${pr.number} changes ${what}; no successful admission run for it (${run ? `${run.status}/${run.conclusion}` : "none"})`;
+    result.reason = result.allow ? `pull request #${pr.number} changes ${what}; ${ADMISSION_CHECK} ${check.id} succeeded`
+      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_CHECK} from App ${appId} on ${pr.head.sha} (${check ? `${check.status}/${check.conclusion}` : "none"})`;
     return result;
   }
   throw new Error(`unreachable event ${event}`);
