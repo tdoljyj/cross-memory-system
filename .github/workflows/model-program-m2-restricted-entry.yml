@@ -27,6 +27,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      checks: read
     outputs:
       admitted: ${{ steps.gate.outputs.admitted }}
       enforced: ${{ steps.gate.outputs.enforced }}
