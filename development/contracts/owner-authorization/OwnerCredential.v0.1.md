@@ -10,7 +10,7 @@
   - 生产迁移已应用（2026-10-03，生产版本 `20261003005742`，Decision `ec16a36d`）。
 - 第 2 步（Owner 授权 2026-10-03，Task `9cabcfa0`）：
   - MCP 工具 `clued_owner_request`（`apps/clued-cloud/worker/owner-requests.ts`，开关 `CLUED_OWNER_REQUESTS_V1`）：只带 `request_id` 时查状态，否则创建请求；结果带绝对链接 `confirm_url`。只接受 Binding（委托 OAuth 到这里已换成它的 Binding），账号或旧 OAuth 令牌被拒。
-  - 确认页 `/confirm/<id>`：打开即按默认选择（"管一段时间"，时长取 Agent 建议，否则 4 小时；只给发起的 Agent）签发确认；改选择就重新签发，只有页面上显示的那一版能被批准。点"批准"时若确认快过期，先按同样选择重签，只有 Clued 渲染出的内容完全相同才提交。Agent 说明单独一栏，标"未核实"。未登录可在页内登录。
+  - 确认页 `/confirm/<id>`：打开即按默认选择（见下方"默认选择按风险"；只给发起的 Agent）签发确认；改选择就重新签发，只有页面上显示的那一版能被批准。点"批准"时若确认快过期，先按同样选择重签，只有 Clued 渲染出的内容完全相同才提交。Agent 说明单独一栏，标"未核实"。未登录可在页内登录。
   - 授权列表页 `/grants`：有效授权的剩余时间和已用次数、一键撤销，以及等待确认的请求链接。
   - 测试：`tests/owner-requests-transport.test.mjs`、`tests/owner-grants-ui.test.mjs`。
   - §4 第 3 条"放宽或收窄范围"后来补上（Task `fcd55008`，见下）。
@@ -18,6 +18,10 @@
 - 放宽或收窄范围（§4 第 3 条，Task `fcd55008`，Owner Decision `c4e82dee`）：迁移 `20261003190000_owner_grants_scope_choice.sql`，测试 `tests/owner-grants-scope-db.test.mjs`、`tests/owner-grants-ui.test.mjs`。
   - 选"管一段时间"时，请求里的每个资源单独一行：取消勾选即收窄（至少留一行），从下拉选 Clued 给出的上级通配即放宽（`owner_grant_scope_options_v1`：逐级到 `**`，`repo:` 最宽到 `<owner>/<name>/**`，`record:` 不能放宽）。不能手填、不能换资源类型；所选不在可选项里返回 `owner_grant_resources_not_offered`。
   - 批准的仍是 Clued 按所选资源渲染、两步令牌绑定的那一版；"只批这一次"仍只覆盖请求里的资源。
+- 默认选择按风险（Owner Decision `b7053465`，Task `a72a4d0c`）：迁移 `20261004130000_owner_grant_default_by_risk.sql`，测试 `tests/owner-grants-db.test.mjs`、`tests/owner-grants-ui.test.mjs`。
+  - `owner_grant_actions.risk` 由 Clued 登记，Agent 不能声明：`release.production`、`migration.production` 为 `high`，`work_claim.extra_claims` 为 `routine`；新登记的动作默认 `high`。
+  - `clued_owner_request_view_v1` 返回 `default_choice` 与 `suggested_expires_seconds`：`high` 打开即"只批这一次"，`routine` 打开即"管一段时间"（时长取 Agent 建议，否则 4 小时）。Owner 仍可改选。
+  - 迁移前的服务端不返回 `default_choice`，页面照旧默认"管一段时间"。
 - 第 3 步（Owner 授权 2026-10-03，Task `13bb5d2c`）：迁移 `20261003030000_work_claims_owner_grants.sql`，测试 `tests/work-claims-owner-grants-db.test.mjs`。
   - 超过每 Task 认领上限时，`work_claim_issue` 先认旧豁免（到期为止），否则在认领自己的事务里消费 `work_claim.extra_claims` 授权（资源 `record:<task_id>`、Task 限定、每次认领或接管用一次），认领 Receipt 记下授权 ID 与第几次。
   - 都没有就拒绝，拒绝里带上这个 Binding 对该 Task 的待确认请求（没有就新建，建议 24 小时、5 次），Worker 补上绝对链接 `owner_request.confirm_url`；原来的 `owner_exemption_path` 不再返回。
@@ -149,12 +153,12 @@ owner_requests_v1
    - 没有授权：门口拒绝，并返回确认请求和链接。Agent 也可以事先主动创建请求。
 2. Agent 把链接发给 Owner。在对话里，链接就是弹窗文字的一部分。
 3. Owner 在电脑或手机浏览器打开链接，看到确认页（§5），有三个选择：
-   - **只批这一次**：生成一条 `max_uses=1` 的授权，只覆盖这次请求的资源。
-   - **批这一类，管一段时间**：时长默认 4 小时，可选到 7 天；范围默认等于请求的资源，Owner 可以在页面上放宽或收窄。
+   - **只批这一次**：生成一条 `max_uses=1` 的授权，只覆盖这次请求的资源。高风险动作打开时默认选这一项（Decision `b7053465`）。
+   - **批这一类，管一段时间**：时长默认取 Agent 建议，否则 4 小时，可选到 7 天；范围默认等于请求的资源，Owner 可以在页面上放宽或收窄。例行动作打开时默认选这一项。
    - **拒绝**。
 4. Agent 重试，门口消费授权后放行。
 
-Owner 同一天内同类的确认，只需要在第一次时选"管一段时间"。
+Owner 同一天内同类的确认，只需要在第一次时选"管一段时间"（高风险动作默认是"只批这一次"，要手动改选）。
 
 ---
 

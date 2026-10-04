@@ -56,6 +56,7 @@ const session = id => ({ user: { id, email: id + '@example.test' }, access_token
 const plain = value => JSON.parse(JSON.stringify(value));
 const request = (status = 'pending') => ({ request_id: REQUEST, action: 'release.production', resources: ['repo:o/n/**'],
   status, confirm_path: '/confirm/' + REQUEST, expires_at: '2099-01-01T00:00:00Z' });
+// Without default_choice (a server before migration 20261004130000) the page opens on grant.
 const loaded = (status = 'pending', seconds = 14400) => ({ data: { status: 'ok', request: request(status),
   view: { action: 'release.production', expires_seconds: seconds } }, error: null });
 const issued = ({ token = 'clued_ogr_a', digest = 'd'.repeat(64), choice = 'grant', seconds = 14400, anyAgent = false,
@@ -109,6 +110,32 @@ test('opening issues a token over the default view; 批准 commits exactly that 
   f.calls[2].resolve(committed); await f.settle();
   assert.ok(f.text().includes('已批准'));
   assert.equal(f.fetches.length, 0, 'the page never goes through a Worker route or forwards a token');
+});
+
+test('Clued sets the default choice by risk: a high-risk action opens on 只批这一次', async t => {
+  const f = fixture(CONFIRM); t.after(() => f.unmount());
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', request: request(), default_choice: 'once', suggested_expires_seconds: 86400,
+    view: { action: 'release.production', choice: 'once', expires_seconds: 86400, max_uses: 1 } }, error: null });
+  await f.settle();
+  assert.deepEqual(plain(f.calls[1].args.p_input), { request_id: REQUEST, choice: 'once', grantee: 'requester' });
+  assert.equal(f.button('只批这一次').props['aria-pressed'], true);
+  assert.equal(f.nodes('select').length, 0, 'no duration for once');
+  f.calls[1].resolve(issued({ choice: 'once' })); await f.settle();
+  assert.ok(f.text().includes('只这一次，24 小时内用掉'));
+  // Switching to grant uses the Agent's suggested duration, not the once view's 24 hours by accident.
+  f.button('这一类管一段时间').props.onClick();
+  assert.deepEqual(plain(f.calls[2].args.p_input), { request_id: REQUEST, choice: 'grant', expires_seconds: 86400, grantee: 'requester' });
+});
+
+test('a routine action opens on 这一类管一段时间 with the suggested duration', async t => {
+  const f = fixture(CONFIRM); t.after(() => f.unmount());
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', request: request(), default_choice: 'grant', suggested_expires_seconds: 3600,
+    view: { action: 'work_claim.extra_claims', choice: 'grant', expires_seconds: 3600 } }, error: null });
+  await f.settle();
+  assert.deepEqual(plain(f.calls[1].args.p_input), { request_id: REQUEST, choice: 'grant', expires_seconds: 3600, grantee: 'requester' });
+  assert.equal(f.button('这一类管一段时间').props['aria-pressed'], true);
 });
 
 test('the Agent\'s suggested duration is the default; changing the options issues a new token', async t => {
