@@ -102,7 +102,7 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
 
     // --- Only the Owner's Native account session can issue. ---
     for (const name of ['clued_headless_binding_list_v1', 'clued_headless_binding_confirmation_issue_v1',
-      'clued_headless_binding_issue_v1']) {
+      'clued_headless_binding_issue_v1', 'clued_headless_binding_revoke_v1']) {
       await assert.rejects(() => anon.query(`select public.${name}($1)`, [{}]), /permission denied/, name);
     }
     for (const name of ['headless_binding_eligible_v1', 'binding_expiry_sweep_v1']) {
@@ -295,6 +295,39 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
       [[untouched, oauthLike]])).rows.map((r) => r.revoked_at), [null, null]);
     listed = await native('clued_headless_binding_list_v1', {});
     assert.deepEqual(listed.bindings.map((b) => b.binding_id), [untouched]);
+
+    // --- A legacy Binding is revoked from the connections page, roles and all. ---
+    const revokeLegacy = (input, claims) => native('clued_headless_binding_revoke_v1', input, claims);
+    await assert.rejects(() => revokeLegacy({ binding_id: untouched }, { ...fresh(userId), client_id: 'some-oauth-client' }),
+      /direct_human_session_required/);
+    for (const input of [{}, { binding_id: 'nope' }, { binding_id: untouched, extra: 1 }, { binding_id: 7 }]) {
+      await assert.rejects(() => revokeLegacy(input), /headless_binding_input_invalid/, JSON.stringify(input));
+    }
+    // Only the Owner's own, live, legacy Bindings: OAuth and headless ones go through manage_v12.
+    await assert.rejects(() => revokeLegacy({ binding_id: untouched }, fresh(otherUser)), /headless_binding_revoke_target_invalid/);
+    await assert.rejects(() => revokeLegacy({ binding_id: oauthLike }), /headless_binding_revoke_target_invalid/);
+    await assert.rejects(() => revokeLegacy({ binding_id: rotated.result.binding_id }), /headless_binding_revoke_target_invalid/);
+    await assert.rejects(() => revokeLegacy({ binding_id: legacyId }), /headless_binding_revoke_target_invalid/);
+    const untouchedRole = await native('clued_binding_role_confirmation_issue_v1', { binding_id: untouched, role: 'ci-admission', enabled: true });
+    assert.equal((await native('clued_binding_role_set_v1',
+      { confirmation_token: untouchedRole.confirmation_token, view_digest: untouchedRole.view_digest })).status, 'committed');
+    const untouchedHash = (await admin.query('select token_hash from public.clued_agent_bindings where id=$1', [untouched])).rows[0].token_hash;
+    assert.equal((await resolve(untouchedHash, 'context:read', 'global')).rows[0].id, untouched);
+    const legacyRevoked = await revokeLegacy({ binding_id: untouched });
+    assert.equal(legacyRevoked.status, 'committed', JSON.stringify(legacyRevoked));
+    assert.deepEqual(legacyRevoked.roles_ended, ['ci-admission']);
+    await assert.rejects(() => resolve(untouchedHash, 'context:read', 'global'), /binding_not_authorized/);
+    assert.equal((await admin.query(`select count(*)::int n from clued_private.binding_roles_v1
+      where binding_id=$1 and revoked_at is null`, [untouched])).rows[0].n, 0);
+    const legacyReceipt = (await admin.query('select * from public.clued_audit_receipts where id=$1', [legacyRevoked.receipt_id])).rows[0];
+    assert.equal(legacyReceipt.metadata.receipt_kind, 'LEGACY_BINDING_REVOKED');
+    assert.equal(legacyReceipt.metadata.binding_id, untouched);
+    assert.deepEqual(legacyReceipt.metadata.roles_ended, ['ci-admission']);
+    assert.equal(legacyReceipt.metadata.principal, 'native_account_session');
+    assert.equal((await admin.query(`select count(*)::int n from clued_private.authorization_audit_v12
+      where binding_id=$1 and operation='legacy_revoke'`, [untouched])).rows[0].n, 1);
+    await assert.rejects(() => revokeLegacy({ binding_id: untouched }), /headless_binding_revoke_target_invalid/);
+    assert.deepEqual((await native('clued_headless_binding_list_v1', {})).bindings, []);
 
     // --- Limit: at most 50 live headless Bindings per Owner. ---
     for (let i = 0; i < 50; i++) {

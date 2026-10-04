@@ -40,6 +40,7 @@ const MESSAGES: Record<string, string> = {
   headless_binding_replace_target_invalid: "要替换的令牌已撤销、已过期或不能替换，请刷新页面。",
   headless_binding_role_scope_missing: "被替换的令牌带有专用角色，新令牌需要保留对应权限（CI 准入要读取，发布门口要新增和修改）。",
   headless_binding_limit_reached: "有效的无头令牌已达 50 个，请先撤销不用的。",
+  headless_binding_revoke_target_invalid: "这个令牌已撤销或不能在这里撤销，请刷新页面。",
 };
 class RequestFailure extends Error {}
 
@@ -193,13 +194,20 @@ export default function HeadlessBindings() {
     } finally { if (epoch.current === generation) setWorking(false); }
   }
 
+  // Headless tokens are revoked through their v12 authorization; legacy ones
+  // have none, so Clued revokes them through clued_headless_binding_revoke_v1.
   async function revoke(row: Row) {
-    if (working || row.kind !== "headless" || row.version === null) return;
-    if (!window.confirm(`撤销「${row.agent_name}」？使用这个令牌的客户端会立即失去访问。`)) return;
+    if (working || (row.kind === "headless" && row.version === null)) return;
+    const roles = row.roles.length ? `它带有专用角色 ${row.roles.map(r => ROLES[r] ?? r).join("、")}，撤销后角色一起结束。` : "";
+    if (!window.confirm(`撤销「${row.agent_name}」？使用这个令牌的客户端会立即失去访问。${roles}`)) return;
     const generation = epoch.current;
     setWorking(true); setError(""); setNotice("");
     try {
-      await rpc("clued_authorization_manage_v12", { op: "revoke", binding_id: row.binding_id, base_version: row.version });
+      if (row.kind === "headless") {
+        await rpc("clued_authorization_manage_v12", { op: "revoke", binding_id: row.binding_id, base_version: row.version });
+      } else {
+        await rpc("clued_headless_binding_revoke_v1", { binding_id: row.binding_id });
+      }
       if (epoch.current !== generation) return;
       setNotice(`已撤销「${row.agent_name}」。`);
       await load();
@@ -297,8 +305,8 @@ export default function HeadlessBindings() {
           <div className="oauth-actions">
             {!row.replaced_by && replaces?.binding_id !== row.binding_id && <button className="oauth-secondary" type="button"
               disabled={working || pending !== null} onClick={() => rotate(row)}>轮换为新令牌</button>}
-            {row.kind === "headless" && <button className="oauth-secondary" style={{ color: "#ffc5c5" }} type="button"
-              disabled={working || pending !== null} onClick={() => void revoke(row)}>撤销</button>}
+            <button className="oauth-secondary" style={{ color: "#ffc5c5" }} type="button"
+              disabled={working || pending !== null} onClick={() => void revoke(row)}>撤销</button>
           </div>
           {replaces?.binding_id === row.binding_id && form}
         </article>)}
