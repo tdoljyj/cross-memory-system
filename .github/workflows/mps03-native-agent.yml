@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   mps03-local-reference-and-static:
+    timeout-minutes: 20
     # Untrusted PR code must not execute on an internal self-hosted runner.
     if: >-
       (github.event_name == 'pull_request' &&
@@ -51,6 +52,7 @@ jobs:
         run: python -m compileall -q development/mps/mps03 development/mps/mps04 tests/mps03 tests/mps04 scripts/mps03 scripts/mps04
 
   mps04-live-native-nonprod-g6:
+    timeout-minutes: 20
     # This is the exact named credential host, not the interchangeable pool.
     if: >-
       github.event_name == 'pull_request' &&
