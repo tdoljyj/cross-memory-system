@@ -346,24 +346,12 @@ function bearerToken(request: Request) {
   return match?.[1] ?? null;
 }
 
-function base64Url(bytes: Uint8Array) {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
 async function sha256(value: string) {
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest), (byte) =>
     byte.toString(16).padStart(2, "0"),
   ).join("");
-}
-
-function issueBindingToken() {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return `clued_bnd_${base64Url(bytes)}`;
 }
 
 async function parseBody(request: Request) {
@@ -1110,32 +1098,6 @@ async function requireSupabaseUser(request: Request, env: ContinuityEnv) {
   return { user, token };
 }
 
-function normalizeScopes(value: unknown): Scope[] {
-  if (!Array.isArray(value)) return [...ALL_SCOPES];
-  const scopes = value.filter((scope): scope is Scope =>
-    ALL_SCOPES.includes(scope as Scope),
-  );
-  if (!scopes.length) throw new HttpError(400, "Choose at least one valid scope.");
-  return [...new Set(scopes)];
-}
-
-function normalizeContextKeys(value: unknown) {
-  if (!Array.isArray(value)) return ["*"];
-  const contextKeys = value
-    .filter((key): key is string => typeof key === "string")
-    .map((key) => key.trim())
-    .filter((key) => key.length > 0 && key.length <= 160)
-    .slice(0, 20);
-  if (!contextKeys.length) throw new HttpError(400, "Choose at least one context key.");
-  return [...new Set(contextKeys)];
-}
-
-function safeLabel(value: unknown, fallback: string, maxLength = 80) {
-  if (typeof value !== "string") return fallback;
-  const trimmed = value.trim();
-  return trimmed ? trimmed.slice(0, maxLength) : fallback;
-}
-
 async function listBindings(request: Request, env: ContinuityEnv) {
   const { token } = await requireSupabaseUser(request, env);
   const rows = (await supabaseRequest(
@@ -1144,56 +1106,6 @@ async function listBindings(request: Request, env: ContinuityEnv) {
     { method: "GET", userToken: token },
   )) as BindingRecord[];
   return json({ bindings: rows }, 200, corsHeaders(request));
-}
-
-async function createBinding(request: Request, env: ContinuityEnv) {
-  const { user, token: userToken } = await requireSupabaseUser(request, env);
-  const body = await parseBody(request);
-  const vendor = safeLabel(body.vendor, "Other", 40);
-  const agentName = safeLabel(body.agentName, `${vendor} agent`, 80);
-  const scopes = normalizeScopes(body.scopes);
-  const contextKeys = normalizeContextKeys(body.contextKeys);
-  const token = issueBindingToken();
-  const tokenHash = await sha256(token);
-  const rows = (await supabaseRequest(env, "/rest/v1/clued_agent_bindings", {
-    method: "POST",
-    userToken,
-    headers: { prefer: "return=representation" },
-    body: JSON.stringify({
-      user_id: user.id,
-      vendor,
-      agent_name: agentName,
-      scopes,
-      context_keys: contextKeys,
-      token_hash: tokenHash,
-    }),
-  })) as BindingRecord[];
-  return json(
-    {
-      binding: rows[0],
-      token,
-      mcpUrl: `${new URL(request.url).origin}/mcp`,
-      apiBaseUrl: `${new URL(request.url).origin}/v1/continuity`,
-      policyUrl: `${new URL(request.url).origin}/.well-known/clued-continuity`,
-      bootstrapUrl: `${new URL(request.url).origin}/v1/continuity/bootstrap`,
-      agentInstructionsUrl: `${new URL(request.url).origin}/clued-agent.md`,
-      requiredLifecycle: ["resume", "checkpoint"],
-      clientConfig: {
-        transport: "streamable-http",
-        mcp: {
-          url: `${new URL(request.url).origin}/mcp`,
-          headers: { authorization: `Bearer ${token}` },
-        },
-        rest: {
-          baseUrl: `${new URL(request.url).origin}/v1/continuity`,
-          authorization: `Bearer ${token}`,
-        },
-      },
-      note: "This token is shown once. Store it only in the authorized AI client.",
-    },
-    201,
-    corsHeaders(request),
-  );
 }
 
 async function revokeBinding(request: Request, env: ContinuityEnv) {
@@ -3287,7 +3199,12 @@ async function handleContinuityRequestInner(
         return new Response(null, { status: 204, headers: corsHeaders(request) });
       }
       if (request.method === "GET") return await listBindings(request, env);
-      if (request.method === "POST") return await createBinding(request, env);
+      // Retired (Owner Decision 6e0371e3): it issued full-scope Bindings without
+      // an expiry. OAuth clients connect through /oauth; CI, runners and scripts
+      // get a scoped, expiring token on /oauth/connections.
+      if (request.method === "POST") {
+        return json({ error: "Binding issuance moved.", replacement: "/oauth/connections" }, 410, corsHeaders(request));
+      }
       if (request.method === "DELETE") return await revokeBinding(request, env);
       return json({ error: "Method not allowed." }, 405, corsHeaders(request));
     }
