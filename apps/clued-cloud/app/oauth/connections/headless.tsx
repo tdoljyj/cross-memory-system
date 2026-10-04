@@ -216,6 +216,46 @@ export default function HeadlessBindings() {
   const view = pending?.view;
   const viewReplaces = view && object(view.replaces) ? view.replaces : null;
   const origin = typeof window === "undefined" ? "" : window.location.origin;
+  // The issue form, shown above the list or, while rotating, inside the card
+  // being rotated so the Owner sees it where they clicked.
+  const form = <div aria-label={replaces ? "轮换表单" : "签发表单"}>
+    <h3 style={{ fontSize: 17, margin: "22px 0 8px" }}>{replaces ? `轮换「${replaces.agent_name}」` : "签发新令牌"}</h3>
+    {replaces && <p className="oauth-copy">新令牌签发后，旧令牌再保留 1 小时，之后自动失效；它的专用角色会移到新令牌。
+      <button className="oauth-secondary" type="button" disabled={working || pending !== null} onClick={resetForm}>改为签发新令牌</button></p>}
+    <fieldset disabled={working || pending !== null} style={{ border: "none", padding: 0, margin: 0, minWidth: 0 }}>
+      <label className="oauth-form" style={{ display: "block" }}>名称（例如 GitHub CI 准入）
+        <input value={label} maxLength={80} onChange={event => setLabel(event.target.value)} /></label>
+      <label style={{ display: "block", margin: "12px 0" }}>有效期
+        <select value={days} onChange={event => setDays(Number(event.target.value))}>
+          {DAYS.map(d => <option key={d} value={d}>{`${d} 天`}</option>)}
+        </select></label>
+      {eligible.map(grant => <fieldset key={grantKey(grant)}
+        style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, margin: "12px 0", minWidth: 0 }}>
+        <legend style={{ fontSize: 12, overflowWrap: "anywhere" }}>{resourceName(grant)}</legend>
+        {grant.actions.map(action => <label key={action} style={{ display: "flex", alignItems: "center", gap: 10, margin: "9px 0", fontSize: 13 }}>
+          <input type="checkbox" style={{ width: 18, height: 18, accentColor: "var(--green)" }}
+            checked={(chosen[grantKey(grant)] ?? []).includes(action)}
+            onChange={event => toggle(grant, action, event.target.checked)} />{ACTIONS[action] ?? action}
+        </label>)}
+      </fieldset>)}
+      <button className="primary-button" type="button" onClick={() => void preview()}
+        disabled={!label.trim() || selection().length === 0}>预览</button>
+    </fieldset>
+    {pending && view && <section aria-label="确认签发" className="oauth-note" style={{ marginTop: 16 }}>
+      <strong>请确认要签发的令牌</strong>
+      <dl className="oauth-details">
+        <div><dt>名称</dt><dd>{String(view.label)}</dd></div>
+        <div><dt>有效期</dt><dd>{`签发后 ${String(view.days)} 天`}</dd></div>
+        <div><dt>权限</dt><dd>{grants(view.selected).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>
+        {viewReplaces && <div><dt>替换</dt><dd>{`「${String(viewReplaces.agent_name)}」，签发后 ${String(viewReplaces.grace_minutes)} 分钟失效`}
+          {strings(viewReplaces.roles).length ? `；角色 ${strings(viewReplaces.roles).map(r => ROLES[r] ?? r).join("、")} 移到新令牌` : ""}</dd></div>}
+      </dl>
+      <div className="oauth-actions">
+        <button className="oauth-secondary" type="button" disabled={working} onClick={() => setPending(null)}>取消</button>
+        <button className="primary-button" type="button" disabled={working} onClick={() => void confirm()}>{working ? "正在签发…" : "确认签发"}</button>
+      </div>
+    </section>}
+  </div>;
   return (
     <section aria-label="无头令牌" style={{ borderTop: "1px solid var(--line)", marginTop: 28, paddingTop: 20 }}>
       <h2 style={{ fontSize: 20, margin: "0 0 8px" }}>无头令牌（CI、runner、脚本）</h2>
@@ -243,6 +283,7 @@ export default function HeadlessBindings() {
       </div>}
 
       {list === null ? <p role="status">{working ? "正在读取无头令牌…" : "无头令牌尚未读取。"}</p> : <>
+        {!replaces && form}
         {list.length === 0 && <p className="oauth-copy">还没有无头令牌。</p>}
         {list.map(row => <article key={row.binding_id} style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 14, marginTop: 12 }}>
           <strong style={{ overflowWrap: "anywhere" }}>{row.agent_name}</strong>
@@ -254,50 +295,16 @@ export default function HeadlessBindings() {
             <div><dt>连接编号</dt><dd>{row.binding_id}</dd></div>
           </dl>
           <div className="oauth-actions">
-            {!row.replaced_by && <button className="oauth-secondary" type="button" disabled={working || pending !== null} onClick={() => rotate(row)}>轮换为新令牌</button>}
+            {!row.replaced_by && replaces?.binding_id !== row.binding_id && <button className="oauth-secondary" type="button"
+              disabled={working || pending !== null} onClick={() => rotate(row)}>轮换为新令牌</button>}
             {row.kind === "headless" && <button className="oauth-secondary" style={{ color: "#ffc5c5" }} type="button"
               disabled={working || pending !== null} onClick={() => void revoke(row)}>撤销</button>}
           </div>
+          {replaces?.binding_id === row.binding_id && form}
         </article>)}
 
-        <h3 style={{ fontSize: 17, margin: "22px 0 8px" }}>{replaces ? `轮换「${replaces.agent_name}」` : "签发新令牌"}</h3>
-        {replaces && <p className="oauth-copy">新令牌签发后，旧令牌再保留 1 小时，之后自动失效；它的专用角色会移到新令牌。
-          <button className="oauth-secondary" type="button" disabled={working || pending !== null} onClick={resetForm}>改为签发新令牌</button></p>}
-        <fieldset disabled={working || pending !== null} style={{ border: "none", padding: 0, margin: 0, minWidth: 0 }}>
-          <label className="oauth-form" style={{ display: "block" }}>名称（例如 GitHub CI 准入）
-            <input value={label} maxLength={80} onChange={event => setLabel(event.target.value)} /></label>
-          <label style={{ display: "block", margin: "12px 0" }}>有效期
-            <select value={days} onChange={event => setDays(Number(event.target.value))}>
-              {DAYS.map(d => <option key={d} value={d}>{`${d} 天`}</option>)}
-            </select></label>
-          {eligible.map(grant => <fieldset key={grantKey(grant)}
-            style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, margin: "12px 0", minWidth: 0 }}>
-            <legend style={{ fontSize: 12, overflowWrap: "anywhere" }}>{resourceName(grant)}</legend>
-            {grant.actions.map(action => <label key={action} style={{ display: "flex", alignItems: "center", gap: 10, margin: "9px 0", fontSize: 13 }}>
-              <input type="checkbox" style={{ width: 18, height: 18, accentColor: "var(--green)" }}
-                checked={(chosen[grantKey(grant)] ?? []).includes(action)}
-                onChange={event => toggle(grant, action, event.target.checked)} />{ACTIONS[action] ?? action}
-            </label>)}
-          </fieldset>)}
-          <button className="primary-button" type="button" onClick={() => void preview()}
-            disabled={!label.trim() || selection().length === 0}>预览</button>
-        </fieldset>
       </>}
 
-      {pending && view && <section aria-label="确认签发" className="oauth-note" style={{ marginTop: 16 }}>
-        <strong>请确认要签发的令牌</strong>
-        <dl className="oauth-details">
-          <div><dt>名称</dt><dd>{String(view.label)}</dd></div>
-          <div><dt>有效期</dt><dd>{`签发后 ${String(view.days)} 天`}</dd></div>
-          <div><dt>权限</dt><dd>{grants(view.selected).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>
-          {viewReplaces && <div><dt>替换</dt><dd>{`「${String(viewReplaces.agent_name)}」，签发后 ${String(viewReplaces.grace_minutes)} 分钟失效`}
-            {strings(viewReplaces.roles).length ? `；角色 ${strings(viewReplaces.roles).map(r => ROLES[r] ?? r).join("、")} 移到新令牌` : ""}</dd></div>}
-        </dl>
-        <div className="oauth-actions">
-          <button className="oauth-secondary" type="button" disabled={working} onClick={() => setPending(null)}>取消</button>
-          <button className="primary-button" type="button" disabled={working} onClick={() => void confirm()}>{working ? "正在签发…" : "确认签发"}</button>
-        </div>
-      </section>}
     </section>
   );
 }
