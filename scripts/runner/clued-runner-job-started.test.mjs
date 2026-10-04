@@ -27,14 +27,15 @@ function fakeFetch(script) {
   };
   return { fetchImpl, calls };
 }
-// The job's own run: re-runs are refused, and only the check of the admission
-// run of its own event counts (re-review 3, re-review 5).
+// The job's own run: re-runs are refused, and only the admission run of its
+// own event counts (re-review 3, re-review 5).
 const RUN = `${API}/actions/runs/555`;
 const RUN_CREATED = "2026-10-04T05:00:00Z";
 const thisRun = (overrides = {}) => ({ body: { id: 555, run_attempt: 1, created_at: RUN_CREATED, ...overrides } });
-// Main's admission runs on the head; the check names run 1 (re-review 5, n1).
+// Main's admission runs on the head (re-review 5, n1).
 const ADMISSION_RUNS = `${API}/actions/workflows/clued-work-admission.yml/runs?head_sha=${HEAD}&event=pull_request_target`;
-const admissionRun = (overrides = {}) => ({ id: 1, event: "pull_request_target", head_sha: HEAD, created_at: RUN_CREATED, ...overrides });
+const admissionRun = (overrides = {}) => ({ id: 1, event: "pull_request_target", head_sha: HEAD, created_at: RUN_CREATED,
+  status: "completed", conclusion: "success", ...overrides });
 const admissionRuns = (...list) => ({ body: { workflow_runs: list } });
 const run = async (overrides, script, event = prEvent()) => {
   const fake = fakeFetch({ [RUN]: thisRun(), [ADMISSION_RUNS]: admissionRuns(admissionRun()), ...script });
@@ -43,12 +44,6 @@ const run = async (overrides, script, event = prEvent()) => {
     readFile: (p) => (p === "/token" ? "ghp_read\n" : event) });
   return { result, calls: fake.calls, sleeps };
 };
-const APP = 5164952;
-const check = (overrides = {}) => ({ id: 3, name: "clued-admission-verified", head_sha: HEAD, status: "completed",
-  conclusion: "success", started_at: "2026-10-04T05:00:30Z", external_id: "pr:9:run:1", app: { id: APP, slug: "clued-admission" },
-  ...overrides });
-const CHECKS = `${API}/commits/${HEAD}/check-runs?check_name=clued-admission-verified`;
-const checks = (...list) => ({ body: { check_runs: list } });
 const COMPARE = `${API}/compare/main...`;
 const LIST = `${API}/contents/.github/workflows?ref=`;
 const listing = (entries) => ({ body: Object.entries(entries).map(([name, sha]) => ({ path: `.github/workflows/${name}`, type: "file", sha })) });
@@ -75,48 +70,45 @@ test("runner hook: other branches, other events and other repositories are refus
   assert.deepEqual([result.allow, result.reason], [false, "pull request into feature, not main"]);
 });
 
-test("runner hook: a pull request into main runs when it changes no workflow, else only after the admission App's check", async () => {
+test("runner hook: a pull request into main runs when it changes no workflow, else only after its admission run succeeds", async () => {
   let { result, calls } = await run({}, { [COMPARE]: files("apps/x.ts") });
   assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes no workflow"]);
   assert.equal(calls[0].url, RUN);
   assert.equal(calls[1].url, `${COMPARE}${HEAD}`);
   assert.equal(calls[1].auth, "Bearer ghp_read");
   // A changed workflow, even another one than the running job's (a called workflow), needs admission.
-  ({ result, calls } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml"), [CHECKS]: checks(check()) }));
-  assert.equal(result.allow, true);
-  assert.match(result.reason, /changes \.github\/workflows\/heavy\.yml; clued-admission-verified 3 of admission run 1 succeeded/);
-  assert.match(calls[2].url, /check-runs\?check_name=clued-admission-verified&filter=all/);
-  assert.equal(calls[3].url, `${ADMISSION_RUNS}&per_page=100`);
-  // Re-review 2, N3c: no workflow run's result is consulted (the run list only
-  // locates this event's admission run), so an admission run of a pull
-  // request into another branch cannot stand in. Only the App's check
-  // counts: not one posted by another App (a pull request's own workflow posts
-  // as github-actions), not a failed or unfinished one, not one on another head.
-  for (const list of [[check({ conclusion: "failure" })], [check({ app: { id: 15368, slug: "github-actions" } })],
-    [check({ head_sha: SHA })], [check({ name: "clued-work-admission" })], [check({ status: "in_progress", conclusion: null })], []]) {
-    ({ result } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml"), [CHECKS]: checks(...list) }));
-    assert.equal(result.allow, false, JSON.stringify(list));
+  const change = { [COMPARE]: files(".github/workflows/heavy.yml") };
+  ({ result, calls } = await run({}, change));
+  assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes .github/workflows/heavy.yml; admission run 1 succeeded"]);
+  assert.equal(calls[2].url, `${ADMISSION_RUNS}&per_page=100`);
+  // Task b979d5a2: a fine-grained token cannot read the Checks API, so nothing reads it.
+  assert.equal(calls.some((c) => /check-runs|check-suites/.test(c.url)), false);
+  // Not a failed or cancelled run, not one on another head, not another event's.
+  for (const overrides of [{ conclusion: "failure" }, { conclusion: "cancelled" }, { conclusion: "action_required" },
+    { head_sha: SHA }, { event: "pull_request" }, { event: "workflow_dispatch" }]) {
+    ({ result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun(overrides)) }));
+    assert.equal(result.allow, false, JSON.stringify(overrides));
   }
-  // The newest check of the App decides: a later failure withdraws an earlier success.
-  ({ result } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml"),
-    [CHECKS]: checks(check({ id: 3 }), check({ id: 4, conclusion: "failure" })) }));
-  assert.equal(result.allow, false);
-  ({ result } = await run({ CLUED_RUNNER_HOOK_ADMISSION_APP_ID: "77" }, { [COMPARE]: files(".github/workflows/heavy.yml"),
-    [CHECKS]: checks(check({ app: { id: 77 } })) }));
-  assert.equal(result.allow, true, "the App id can be configured");
+  ({ result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun({ conclusion: "failure" })) }));
+  assert.match(result.reason, /no successful clued-work-admission\.yml run on b{40} from this event .*admission run 1: completed\/failure/);
   // A renamed workflow counts by its old name too; a truncated list counts as changed.
-  ({ result } = await run({}, { [COMPARE]: { body: { files: [{ filename: "x.yml", previous_filename: ".github/workflows/old.yml" }] } },
-    [CHECKS]: checks() }));
-  assert.equal(result.allow, false);
+  ({ result, calls } = await run({}, { [COMPARE]: { body: { files: [{ filename: "x.yml", previous_filename: ".github/workflows/old.yml" }] } } }));
+  assert.match(result.reason, /changes \.github\/workflows\/old\.yml; admission run 1/);
+  assert.equal(calls.length, 3, "the admission run was consulted");
   const many = Array.from({ length: 300 }, (_, i) => `apps/f${i}.ts`);
-  ({ result } = await run({}, { [COMPARE]: files(...many), [CHECKS]: checks() }));
+  ({ result } = await run({}, { [COMPARE]: files(...many), [ADMISSION_RUNS]: admissionRuns() }));
+  assert.equal(result.allow, false);
   assert.match(result.reason, /truncated/);
-  // It waits for a check that is still running.
+  // It waits for a run that is still going.
   let polls = 0;
   let sleeps;
-  ({ result, sleeps } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml"),
-    [CHECKS]: () => { polls += 1; return checks(check(polls < 3 ? { status: "in_progress", conclusion: null } : {})); } }));
+  ({ result, sleeps } = await run({}, { ...change,
+    [ADMISSION_RUNS]: () => { polls += 1; return admissionRuns(admissionRun(polls < 3 ? { status: "in_progress", conclusion: null } : {})); } }));
   assert.deepEqual([result.allow, polls, sleeps.length], [true, 3, 2]);
+  // And gives up after CLUED_RUNNER_HOOK_WAIT_SECONDS.
+  ({ result, sleeps } = await run({}, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun({ status: "in_progress", conclusion: null })) }));
+  assert.deepEqual([result.allow, sleeps.length], [false, 2]);
+  assert.match(result.reason, /admission run 1: in_progress\/none/);
 });
 
 test("runner hook: a hand dispatch off main runs only when its workflow files are exactly main's", async () => {
@@ -163,7 +155,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
 });
 
 test("runner hook (re-review 3, N-R3): a re-run of a pull request or branch dispatch run is refused", async () => {
-  const workflowChange = { [COMPARE]: files(".github/workflows/heavy.yml"), [CHECKS]: checks(check()) };
+  const workflowChange = { [COMPARE]: files(".github/workflows/heavy.yml") };
   for (const [overrides, script] of [
     [{ GITHUB_RUN_ATTEMPT: "2" }, { [COMPARE]: files("apps/x.ts") }],
     [{}, { [RUN]: thisRun({ run_attempt: 2 }), [COMPARE]: files("apps/x.ts") }],
@@ -185,34 +177,27 @@ test("runner hook (re-review 3, N-R3): a re-run of a pull request or branch disp
 test("runner hook (re-review 3 N-R1, re-review 5 n1): only the admission run of this event decides", async () => {
   const change = { [COMPARE]: files(".github/workflows/heavy.yml") };
   const earlier = admissionRun({ created_at: "2026-10-04T04:59:44Z" });
-  let { result } = await run({}, { ...change, [CHECKS]: checks(check()), [ADMISSION_RUNS]: admissionRuns(earlier) });
+  let { result } = await run({}, { ...change, [ADMISSION_RUNS]: admissionRuns(earlier) });
   assert.equal(result.allow, false);
-  assert.match(result.reason, /for #9 from the admission run of this event \(created since 2026-10-04T05:00:00Z less 15s; no admission run\)/);
-  ({ result } = await run({}, { ...change, [CHECKS]: checks(check()), [ADMISSION_RUNS]: admissionRuns(admissionRun({ created_at: "2026-10-04T04:59:46Z" })) }));
+  assert.match(result.reason, /from this event \(created since 2026-10-04T05:00:00Z less 15s; no admission run\)/);
+  ({ result } = await run({}, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun({ created_at: "2026-10-04T04:59:46Z" })) }));
   assert.equal(result.allow, true, "a few seconds before the run (same event)");
   // Closed and reopened within seconds: the newer admission run decides.
-  const reopened = admissionRun({ id: 2, created_at: "2026-10-04T05:00:01Z" });
-  ({ result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...change, [CHECKS]: checks(check()), [ADMISSION_RUNS]: admissionRuns(admissionRun(), reopened) }));
-  assert.equal(result.allow, false);
-  assert.match(result.reason, /admission run 2: no check yet/);
-  ({ result } = await run({}, { ...change, [CHECKS]: checks(check({ id: 9 }), check({ id: 4, conclusion: "failure", external_id: "pr:9:run:2" })),
-    [ADMISSION_RUNS]: admissionRuns(admissionRun(), reopened) }));
-  assert.equal(result.allow, false);
-  // Another pull request's admission run on the same head is passed over.
-  ({ result } = await run({}, { ...change, [CHECKS]: checks(check(), check({ id: 7, external_id: "pr:10:run:2" })),
-    [ADMISSION_RUNS]: admissionRuns(admissionRun(), reopened) }));
+  const reopened = (overrides = {}) => admissionRun({ id: 2, created_at: "2026-10-04T05:00:01Z", ...overrides });
+  ({ result } = await run({}, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun(), reopened({ conclusion: "failure" })) }));
+  assert.deepEqual([result.allow, /admission run 2: completed\/failure/.test(result.reason)], [false, true]);
+  ({ result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...change,
+    [ADMISSION_RUNS]: admissionRuns(admissionRun(), reopened({ status: "queued", conclusion: null })) }));
+  assert.equal(result.allow, false, "an older success does not stand in while the newer run is going");
+  ({ result } = await run({}, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun({ conclusion: "failure" }), reopened()) }));
+  assert.deepEqual([result.allow, result.reason.endsWith("admission run 2 succeeded")], [true, true]);
+  // The same creation time: the higher run id decides.
+  ({ result } = await run({}, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun(), admissionRun({ id: 0, conclusion: "failure" })) }));
   assert.equal(result.allow, true);
   // A skipped admission run (a pull request into another branch) is passed over.
-  ({ result } = await run({}, { ...change, [CHECKS]: checks(check()),
+  ({ result } = await run({}, { ...change,
     [ADMISSION_RUNS]: admissionRuns(admissionRun(), admissionRun({ id: 3, created_at: "2026-10-04T05:00:02Z", conclusion: "skipped" })) }));
   assert.equal(result.allow, true);
-  // Re-review 4, m1: only a check naming this pull request and a run counts.
-  for (const externalId of [undefined, "pr:10:run:1", "pr:9", "pr:90:run:1"]) {
-    ({ result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...change, [CHECKS]: checks(check({ external_id: externalId })) }));
-    assert.equal(result.allow, false, String(externalId));
-  }
-  ({ result } = await run({}, { ...change, [CHECKS]: checks(check()), [ADMISSION_RUNS]: admissionRuns(admissionRun({ event: "pull_request" })) }));
-  assert.equal(result.allow, false, "only main's pull_request_target admission runs");
 });
 
 test("runner hook (re-review 3, N-R2): only the dispatch-gated workflows may be dispatched off main", async () => {
