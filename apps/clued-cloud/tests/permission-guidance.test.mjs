@@ -53,3 +53,12 @@ test('the suggestion is a valid connection.permission request and grants nothing
   assert.match(error.message, /confirm_url/);
   assert.match(error.message, /same connection/);
 });
+
+test('a project refusal also names the smallest preset role (PermissionSimplification §3.1)', () => {
+  const role = (...args) => permissionDenial('insufficient_scope', ...args).error.suggested_role;
+  assert.deepEqual(role('clued_record_mutate', { scope: `project:${project}` }, ['context:write']),
+    { role: 'developer', title: '项目开发者', resources: [`permission:project:${project}/developer`] });
+  assert.deepEqual(role('clued_record_list', { level: 'project', project_id: project }, ['context:read']),
+    { role: 'reader', title: '只读', resources: [`permission:project:${project}/reader`] });
+  assert.equal(role('clued_record_mutate', { scope: 'global' }, ['context:write']), undefined, 'no role for Global');
+});

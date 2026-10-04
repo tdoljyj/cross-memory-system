@@ -248,3 +248,73 @@ test('tri-state group checkbox isolates exact resources/environments and preserv
     assert.equal(master(row.name).props.disabled, true);
   }
 });
+
+// Preset roles and "我的全部项目（含以后新建的）" (PermissionSimplification.v0.1 §3.1, Task 0756c748).
+test('roles: 全部 over current projects by default; 项目开发者 and 我的全部项目 package the same rows', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  const all5 = ['read', 'write', 'close', 'restore', 'audit'];
+  const A = 'project:11111111-1111-4111-8111-111111111111';
+  const B = 'project:22222222-2222-4222-8222-222222222222';
+  const eligible = [
+    { resource_kind: 'scope', resource_id: 'global', environment: 'canonical', name: 'Personal memory', actions: all5 },
+    { resource_kind: 'scope', resource_id: 'profile', environment: 'canonical', name: 'Personal profile', actions: all5 },
+    { resource_kind: 'scope', resource_id: 'project:*', environment: 'canonical', name: '我的全部项目（含以后新建的）', actions: all5 },
+    { resource_kind: 'scope', resource_id: A, environment: 'canonical', name: 'M2', actions: all5 },
+    { resource_kind: 'scope', resource_id: B, environment: 'canonical', name: 'Other', actions: all5 },
+  ];
+  f.emit('INITIAL_SESSION', session('A')); f.runTimers();
+  f.respond(0, { ...details('A'), requested_scopes: ['context:read', 'context:write', 'audit:read'], eligible }); await f.settle();
+  const pressed = () => f.nodes('button').filter(n => n.props['aria-pressed'] === true).map(n => f.text(n.props.children[0]));
+  assert.deepEqual(pressed(), ['全部']);
+  // Each send is answered with a refusal so the next one can go out.
+  const send = async () => {
+    f.button('允许所选权限').props.onClick(); await f.settle();
+    const index = f.requests.length - 1;
+    const body = JSON.parse(f.requests[index].options.body);
+    f.respond(index, { error: 'not this time' }); await f.settle();
+    return Object.fromEntries(body.selected.map(row => [row.resource_id, row.actions]));
+  };
+  const role = title => f.nodes('button').find(n => n.props['aria-pressed'] !== undefined && f.text(n).startsWith(title));
+  // Default: everything on the current projects, nothing on project:*.
+  let sent = await send();
+  assert.deepEqual(sent, { global: all5, profile: all5, [A]: all5, [B]: all5 });
+  // 项目开发者: the projects get read/write/close/restore, Global read, profile nothing.
+  role('项目开发者').props.onClick(); f.render();
+  assert.deepEqual(pressed(), ['项目开发者']);
+  // Narrow to one project.
+  const projectBox = name => f.nodes('label').filter(n => n.props.className === 'oauth-project-choice')
+    .find(n => f.text(n).includes(name));
+  f.nodes('input', projectBox('Other'))[0].props.onChange({ target: { checked: false } }); f.render();
+  sent = await send();
+  assert.deepEqual(sent, { global: ['read'], [A]: ['read', 'write', 'close', 'restore'] });
+  // 我的全部项目（含以后新建的）: one project:* row instead of each project.
+  const radios = f.nodes('input').filter(n => n.props.type === 'radio');
+  assert.equal(radios.length, 2);
+  radios[1].props.onChange(); f.render();
+  assert.ok(f.text().includes('以后新建的项目也自动包含在内'));
+  sent = await send();
+  assert.deepEqual(sent, { global: ['read'], 'project:*': ['read', 'write', 'close', 'restore'] });
+  // 只读 keeps the range.
+  role('只读').props.onClick(); f.render();
+  sent = await send();
+  assert.deepEqual(sent, { global: ['read'], profile: ['read'], 'project:*': ['read'] });
+  // A change in 高级 makes the role 自定义 and hides the range.
+  const advanced = f.nodes('details')[0];
+  assert.ok(advanced, '高级 holds the per-row checkboxes');
+  const firstBox = f.nodes('input', advanced).find(n => n.props.type === 'checkbox' && n.props.className !== 'oauth-group-checkbox');
+  firstBox.props.onChange({ target: { checked: false } }); f.render();
+  assert.deepEqual(pressed(), []);
+  assert.ok(f.text().includes('自定义'));
+  assert.equal(f.nodes('input').filter(n => n.props.type === 'radio').length, 0);
+});
+
+test('roles: no project:* row on offer means no 我的全部项目 choice', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  const A = 'project:11111111-1111-4111-8111-111111111111';
+  f.emit('INITIAL_SESSION', session('A')); f.runTimers();
+  f.respond(0, { ...details('A'), eligible: [
+    { resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read'] },
+    { resource_kind: 'scope', resource_id: A, environment: 'canonical', name: 'M2', actions: ['read'] }] }); await f.settle();
+  assert.equal(f.nodes('input').filter(n => n.props.type === 'radio').length, 1);
+  assert.ok(!f.text().includes('我的全部项目（含以后新建的）'));
+});

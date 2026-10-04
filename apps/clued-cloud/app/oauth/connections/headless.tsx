@@ -84,7 +84,8 @@ function rows(value: unknown): Row[] {
     replaced_by: typeof item.replaced_by === "string" ? item.replaced_by : null })) : [];
 }
 const resourceName = (grant: Grant) => grant.resource_id === "global" ? "全局视图"
-  : grant.resource_id === "profile" ? "个人资料" : grant.name ? `${grant.name}（${grant.resource_id}）` : grant.resource_id;
+  : grant.resource_id === "profile" ? "个人资料" : grant.resource_id === "project:*" ? "我的全部项目（含以后新建的）"
+  : grant.name ? `${grant.name}（${grant.resource_id}）` : grant.resource_id;
 const when = (value: string | null) => value ? new Date(value).toLocaleString("zh-CN") : "未设定";
 const failure = (error: unknown, fallback: string) => error instanceof RequestFailure ? error.message : fallback;
 

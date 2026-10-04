@@ -34,6 +34,21 @@ function actionOf(scope: string | undefined, toolName: string, args: Json): stri
   return 'write';
 }
 
+// The smallest preset role (PermissionSimplification §3.1) that covers the
+// missing action on a project, as a connection.permission resource. Offered
+// next to suggested_request, which asks for that one action only.
+const ROLES: Record<string, { role: string; title: string }> = {
+  read: { role: 'reader', title: '只读' },
+  write: { role: 'developer', title: '项目开发者' },
+  close: { role: 'developer', title: '项目开发者' },
+  restore: { role: 'developer', title: '项目开发者' },
+  audit: { role: 'full', title: '全部' },
+};
+function roleFor(context: string, action: string) {
+  const role = context.startsWith('project:') ? ROLES[action] : undefined;
+  return role ? { ...role, resources: [`permission:${context}/${role.role}`] } : null;
+}
+
 /** The tool error for a permission refusal; missingScopes are the scopes the call needs that the connection lacks (or all it needs, for a database refusal). */
 export function permissionDenial(code: string, toolName: unknown, rawArgs: unknown, missingScopes: readonly string[] | null) {
   const name = typeof toolName === 'string' ? toolName : '';
@@ -46,6 +61,7 @@ export function permissionDenial(code: string, toolName: unknown, rawArgs: unkno
       message: 'This connection is not allowed to make this call. Tell the Owner which call was refused; reconnecting with the needed permission ticked is the fallback.' } };
   }
   const resource = `permission:${context}/${action}`;
+  const role = roleFor(context, action);
   const day = new Date().toISOString().slice(0, 10).split('-').join('');
   return {
     status: 'rejected',
@@ -54,6 +70,7 @@ export function permissionDenial(code: string, toolName: unknown, rawArgs: unkno
       message: `This connection lacks ${action} on ${context}. Call clued_owner_request with suggested_request as is, give the Owner the confirm_url it returns, and once it reads approved_once retry on this same connection. No reconnect is needed; do not send the Owner to /grants. If clued_owner_request refuses it, ask the Owner to reconnect this Host with the permission ticked.`,
       missing: { context, action, ...(scope ? { scope } : {}) },
       suggested_request: { action: 'connection.permission', resources: [resource], idempotency_key: `${resource}:${day}` },
+      ...(role ? { suggested_role: role } : {}),
     },
   };
 }
