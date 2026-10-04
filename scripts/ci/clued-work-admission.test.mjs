@@ -95,8 +95,9 @@ const PULL = `GET https://api.test/repos/o/r/pulls/452`;
 const OPEN_PULLS = `GET https://api.test/repos/o/r/pulls?state=open`;
 const ADMISSION_RUNS = `GET https://api.test/repos/o/r/actions/workflows/clued-work-admission.yml/runs`;
 const CHECKS = `GET https://api.test/repos/o/r/commits/${HEAD}/check-runs`;
-// A gate job without `checks: read` (the workflows before step 2) gets 403.
-const NO_CHECKS = { [CHECKS]: { status: 403, body: null } };
+const appCheckRun = (overrides = {}) => ({ id: 1, name: "clued-admission-verified", head_sha: HEAD, status: "completed",
+  conclusion: "success", app: { id: ADMISSION_APP_ID, slug: "clued-admission" }, ...overrides });
+const checksReturn = (list) => ({ [CHECKS]: { body: { check_runs: list } } });
 const RERUN = `POST https://api.test/repos/o/r/actions/runs/`;
 const COMMIT = `GET https://api.test/repos/o/r/commits/`;
 const COMPARE = `GET https://api.test/repos/o/r/compare/`;
@@ -341,9 +342,7 @@ test("main: exit codes and outputs in both modes, enforced and advisory", async 
   assert.match(read("s1"), /\| `gitleaks\.yml` \| yes \| unfiltered \| completed \/ success \|/);
   assert.match(read("s1"), /\| `clued-cloud-node22-install\.yml` \| yes \| matches apps\/clued-cloud\/package\.json \| none \|/);
 
-  const failedRun = { ...NO_CHECKS, [ADMISSION_RUNS]: { body: { workflow_runs: [
-    { id: 7, event: "pull_request_target", head_sha: HEAD, status: "completed", conclusion: "failure", created_at: "2026-10-02T04:00:00Z", pull_requests: [{ number: 452 }] },
-  ] } } };
+  const failedRun = checksReturn([appCheckRun({ id: 7, conclusion: "failure" })]);
   const gateCalls = fakeFetch(failedRun);
   code = await main(["--mode", "gate"], { ...base, CLUED_CONTEXT_READ_TOKEN: "", GITHUB_OUTPUT: out("o2"), GITHUB_STEP_SUMMARY: out("s2") }, gateCalls.fetchImpl);
   assert.equal(code, 0, "the gate job itself succeeds; heavy jobs read admitted=false");
@@ -487,85 +486,62 @@ test("main --mode reverify: exit 1 only when a PR could not be re-verified", asy
 
 // --- Token isolation: the gate reads the trusted pull_request_target check run.
 
-test("gate (job without checks: read): follows the pull_request_target admission run on this head, without Clued", async () => {
-  const run = (overrides) => ({ id: 1, event: "pull_request_target", head_sha: HEAD, status: "completed", conclusion: "success", created_at: "2026-10-02T04:00:00Z", pull_requests: [{ number: 452 }], ...overrides });
-  const gateWith = async (runs, extraEnv = {}, sleeps = []) => {
-    const { fetchImpl, calls } = fakeFetch({ ...NO_CHECKS, [ADMISSION_RUNS]: (call) => ({ body: { workflow_runs: typeof runs === "function" ? runs(call) : runs } }) });
+test("gate: deadlines, advisory mode, errors and fork pull requests, without Clued", async () => {
+  const gateWith = async (list, extraEnv = {}, sleeps = []) => {
+    const { fetchImpl, calls } = fakeFetch({ [CHECKS]: () => ({ body: { check_runs: typeof list === "function" ? list() : list } }) });
     const outcome = await gate({ env: env({ CLUED_CONTEXT_READ_TOKEN: "", ...extraEnv }), event: withClaim(), eventName: "pull_request", fetchImpl, sleep: async (ms) => { sleeps.push(ms); } });
     return { outcome, calls };
   };
-
-  let { outcome, calls } = await gateWith([run({})]);
-  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"]);
-  assert.equal(calls.length, 2);
-  assert.match(outcome.notices.join(" "), /gate job cannot read checks/);
-  const query = new URL(calls[1].url).searchParams;
-  assert.deepEqual([query.get("head_sha"), query.get("event")], [HEAD, "pull_request_target"]);
+  const { outcome: admitted, calls } = await gateWith([appCheckRun()]);
+  assert.deepEqual([admitted.admitted, admitted.verdict], [true, "ADMITTED"]);
   assert.ok(!calls.some((c) => c.method === "POST"), "no Clued call, no write");
 
-  // The latest run decides; look-alike runs from other events or heads are ignored.
-  ({ outcome } = await gateWith([
-    run({ id: 1, conclusion: "success", created_at: "2026-10-02T04:00:00Z" }),
-    run({ id: 2, conclusion: "failure", created_at: "2026-10-02T04:05:00Z" }),
-    run({ id: 3, event: "pull_request", conclusion: "success", created_at: "2026-10-02T04:06:00Z" }),
-    run({ id: 4, head_sha: "e".repeat(40), conclusion: "success", created_at: "2026-10-02T04:07:00Z" }),
-  ]));
-  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_run.id], [false, "REJECTED", 2]);
-  assert.match(outcome.reasons[0], /run 2 concluded failure/);
-
-  // Re-review N3: a passing run made for another pull request on the same head
-  // (one into a branch whose admission workflow passes everything) is ignored.
-  ({ outcome } = await gateWith([
-    run({ id: 5, conclusion: "failure", created_at: "2026-10-02T04:00:00Z" }),
-    run({ id: 6, conclusion: "success", created_at: "2026-10-02T04:09:00Z", pull_requests: [{ number: 999 }] }),
-    run({ id: 8, conclusion: "success", created_at: "2026-10-02T04:10:00Z", pull_requests: [] }),
-  ]));
-  assert.deepEqual([outcome.admitted, outcome.admission_run.id], [false, 5]);
-
-  // It waits for a run that has not started or finished yet.
+  // It waits for a check that has not been posted yet.
   let polls = 0;
   const sleeps = [];
-  ({ outcome } = await gateWith(() => {
-    polls += 1;
-    if (polls === 1) return [];
-    if (polls === 2) return [run({ status: "in_progress", conclusion: null })];
-    return [run({})];
-  }, {}, sleeps));
+  let { outcome } = await gateWith(() => { polls += 1; return polls < 3 ? [] : [appCheckRun()]; }, {}, sleeps);
   assert.deepEqual([outcome.admitted, polls, sleeps.length], [true, 3, 2]);
 
-  // Enforced: no run, or a run still pending, at the deadline fails closed.
+  // Enforced: no check, or a check still pending, at the deadline fails closed.
   ({ outcome } = await gateWith([], { CLUED_ADMISSION_GATE_WAIT_SECONDS: "20" }));
   assert.deepEqual([outcome.admitted, outcome.verdict], [false, "NO_ADMISSION_RUN"]);
-  ({ outcome } = await gateWith([run({ status: "queued", conclusion: null })], { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" }));
+  ({ outcome } = await gateWith([appCheckRun({ status: "queued", conclusion: null })], { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" }));
   assert.deepEqual([outcome.admitted, outcome.verdict], [false, "ADMISSION_PENDING"]);
 
   // Advisory: never blocks, but reports what it saw.
-  ({ outcome } = await gateWith([run({ conclusion: "failure" })], { CLUED_WORK_ADMISSION_ENFORCE: "" }));
+  ({ outcome } = await gateWith([appCheckRun({ conclusion: "failure" })], { CLUED_WORK_ADMISSION_ENFORCE: "" }));
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.advisory], [true, "REJECTED", true]);
-  const broken = await gate({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), event: withClaim(), eventName: "pull_request",
-    fetchImpl: fakeFetch({ ...NO_CHECKS, [ADMISSION_RUNS]: { status: 500, body: null } }).fetchImpl, sleep: async () => {} });
-  assert.deepEqual([broken.admitted, broken.verdict], [true, "NOT_ENFORCED"]);
+  for (const status of [500, 403]) {
+    const broken = await gate({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), event: withClaim(), eventName: "pull_request",
+      fetchImpl: fakeFetch({ [CHECKS]: { status, body: null } }).fetchImpl, sleep: async () => {} });
+    assert.deepEqual([broken.admitted, broken.verdict], [true, "NOT_ENFORCED"]);
+  }
   await assert.rejects(gate({ env: env(), event: withClaim(), eventName: "pull_request",
-    fetchImpl: fakeFetch({ ...NO_CHECKS, [ADMISSION_RUNS]: { status: 500, body: null } }).fetchImpl, sleep: async () => {} }), /returned 500/);
+    fetchImpl: fakeFetch({ [CHECKS]: { status: 500, body: null } }).fetchImpl, sleep: async () => {} }), /returned 500/);
+  // A gate job without `checks: read` fails closed and says why; it no
+  // longer falls back to the admission workflow run.
+  const noChecks = fakeFetch({ [CHECKS]: { status: 403, body: null } });
+  await assert.rejects(gate({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl: noChecks.fetchImpl,
+    sleep: async () => {} }), /403: the admission-gate job needs `checks: read`/);
+  assert.ok(!noChecks.calls.some((c) => c.url.includes("/actions/workflows/")));
 
   // A fork pull request may not see repository variables: an unset
-  // CLUED_WORK_ADMISSION_ENFORCE does not open the gate, the admission run decides.
+  // CLUED_WORK_ADMISSION_ENFORCE does not open the gate, the App check decides.
   const forkEvent = withClaim();
   forkEvent.pull_request.head.repo = { full_name: "someone/r" };
-  const forkGate = (runs) => gate({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "", CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" }),
-    event: forkEvent, eventName: "pull_request", sleep: async () => {},
-    fetchImpl: fakeFetch({ ...NO_CHECKS, [ADMISSION_RUNS]: { body: { workflow_runs: runs } } }).fetchImpl });
-  let fork = await forkGate([run({ conclusion: "failure" })]);
+  const forkGate = (list) => gate({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "", CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" }),
+    event: forkEvent, eventName: "pull_request", sleep: async () => {}, fetchImpl: fakeFetch(checksReturn(list)).fetchImpl });
+  let fork = await forkGate([appCheckRun({ conclusion: "failure" })]);
   assert.deepEqual([fork.admitted, fork.enforced, fork.verdict, fork.advisory], [false, true, "REJECTED", undefined]);
   assert.match(fork.notices[0], /fork pull request from someone\/r/);
   fork = await forkGate([]);
   assert.deepEqual([fork.admitted, fork.verdict], [false, "NO_ADMISSION_RUN"]);
-  fork = await forkGate([run({})]);
+  fork = await forkGate([appCheckRun()]);
   assert.deepEqual([fork.admitted, fork.verdict], [true, "ADMITTED"]);
   await assert.rejects(gate({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), event: forkEvent, eventName: "pull_request",
-    fetchImpl: fakeFetch({ ...NO_CHECKS, [ADMISSION_RUNS]: { status: 500, body: null } }).fetchImpl, sleep: async () => {} }), /returned 500/);
+    fetchImpl: fakeFetch({ [CHECKS]: { status: 500, body: null } }).fetchImpl, sleep: async () => {} }), /returned 500/);
   // A same-repository pull request keeps the variable's answer.
-  ({ outcome } = await gateWith([run({ conclusion: "failure" })], { CLUED_WORK_ADMISSION_ENFORCE: "" }));
+  ({ outcome } = await gateWith([appCheckRun({ conclusion: "failure" })], { CLUED_WORK_ADMISSION_ENFORCE: "" }));
   assert.ok(!outcome.notices.some((n) => /fork/.test(n)));
 
   // Non-PR events are not admission subjects.
@@ -574,8 +550,7 @@ test("gate (job without checks: read): follows the pull_request_target admission
 });
 
 test("gate (re-review 2, N3c): reads the clued-admission App's check on the head, never a workflow run", async () => {
-  const check = (overrides) => ({ id: 1, name: "clued-admission-verified", head_sha: HEAD, status: "completed", conclusion: "success",
-    app: { id: ADMISSION_APP_ID, slug: "clued-admission" }, ...overrides });
+  const check = appCheckRun;
   const gateWith = async (list, extraEnv = {}, sleeps = []) => {
     const { fetchImpl, calls } = fakeFetch({ [CHECKS]: () => ({ body: { check_runs: typeof list === "function" ? list() : list } }),
       [ADMISSION_RUNS]: { body: { workflow_runs: [{ id: 9, event: "pull_request_target", head_sha: HEAD, status: "completed",
@@ -609,13 +584,17 @@ test("gate (re-review 2, N3c): reads the clued-admission App's check on the head
   assert.deepEqual([outcome.admitted, polls, sleeps.length], [true, 3, 2]);
 });
 
-test("gate job digest: the workflows' gate job and its checks: read form are both accepted (step 1 of 2)", () => {
-  const g4text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-g4-database.yml"), "utf8");
-  const withChecks = g4text.replace("    permissions:\n      actions: read\n      contents: read\n",
-    "    permissions:\n      actions: read\n      checks: read\n      contents: read\n");
-  assert.notEqual(withChecks, g4text);
-  assert.deepEqual(gateFindings(g4text, g4text), []);
-  assert.deepEqual(gateFindings(withChecks, g4text), []);
+test("gate job digest: every gated workflow's gate job has checks: read; the form without it is refused", () => {
+  const dir = path.join(ROOT, ".github", "workflows");
+  const gated = fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f))
+    .map((f) => [f, fs.readFileSync(path.join(dir, f), "utf8")]).filter(([, text]) => workflowIsGated(text));
+  assert.equal(gated.length, 7);
+  for (const [file, text] of gated) {
+    assert.deepEqual(gateFindings(text, text), [], file);
+    const withoutChecks = text.replace("      actions: read\n      checks: read\n", "      actions: read\n");
+    assert.notEqual(withoutChecks, text, file);
+    assert.deepEqual(gateFindings(withoutChecks, text), ["admission_gate_changed"], file);
+  }
 });
 
 test("workflows: only base-branch jobs in the clued-admission environment get the Clued token", () => {

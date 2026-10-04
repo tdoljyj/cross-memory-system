@@ -315,10 +315,8 @@ export async function changedPathsOfPullRequest(fetchImpl, env, repository, numb
 const GATE_JOB = "admission-gate";
 const GATE_CONDITION = "needs.admission-gate.outputs.admitted == 'true'";
 export const GATE_JOB_SHA256 = new Set([
-  "9443b017da24280b22f86149e8f672b8dd37ea8fcdb4f939d4bb93bfdbc277b4",
-  // Re-review 2, N3c, step 1: the same gate job with `checks: read`, so it can
-  // read the admission App's check. Step 2 moves the workflows to it and
-  // drops the digest above.
+  // Re-review 2, N3c: the gate job has `checks: read`, so it can read the
+  // admission App's check.
   "62f231ef508663a7c52567b465634dbbfc0ef36889d9b3875aa454171e3afc4b",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
@@ -814,17 +812,14 @@ export function renderReverifySummary(result) {
 
 export const GATE_WAIT_SECONDS = 480;
 export const GATE_POLL_SECONDS = 10;
-const ADMISSION_EVENT = "pull_request_target";
 
 // Re-review 2, N3c: the pull_requests list of a run names every open pull
 // request with that head, not the one that triggered it, so a pull request
 // into another branch, whose copy of the admission workflow passes anything,
 // could stand in. The trusted signal is the clued-admission-verified check of
 // the clued-admission App on the head: its key lives in the clued-admission
-// environment, which deploys from main only. The gate reads it when its token
-// can read checks (gate jobs with `checks: read`). An older gate job without
-// that permission still follows the admission run until its workflow is
-// updated (the second step of this change).
+// environment, which deploys from main only. The gate job needs `checks: read`
+// to read it.
 export const ADMISSION_APP_ID = 5164952;
 
 export async function latestAdmissionCheck(fetchImpl, env, repository, headSha) {
@@ -838,7 +833,9 @@ export async function latestAdmissionCheck(fetchImpl, env, repository, headSha) 
       "user-agent": "clued-work-admission",
     },
   });
-  if (response.status === 403) return { forbidden: true, check: null };
+  if (response.status === 403) {
+    throw new Error(`GitHub API ${route} returned 403: the admission-gate job needs \`checks: read\``);
+  }
   if (!response.ok) throw new Error(`GitHub API ${route} returned ${response.status}`);
   const body = await response.json();
   let latest = null;
@@ -846,18 +843,6 @@ export async function latestAdmissionCheck(fetchImpl, env, repository, headSha) 
     if (check.name !== APP_CHECK_NAME || check.head_sha !== headSha) continue;
     if (!check.app || Number(check.app.id) !== ADMISSION_APP_ID) continue;
     if (!latest || Number(check.id) > Number(latest.id)) latest = check;
-  }
-  return { forbidden: false, check: latest };
-}
-
-export async function latestAdmissionRun(fetchImpl, env, repository, headSha, prNumber) {
-  const body = await githubJson(fetchImpl, env,
-    `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=${ADMISSION_EVENT}&per_page=20`);
-  let latest = null;
-  for (const run of (body && body.workflow_runs) || []) {
-    if (run.event !== ADMISSION_EVENT || run.head_sha !== headSha) continue;
-    if (!Array.isArray(run.pull_requests) || !run.pull_requests.some((p) => p && p.number === prNumber)) continue;
-    if (!latest || Date.parse(run.created_at) > Date.parse(latest.created_at)) latest = run;
   }
   return latest;
 }
@@ -879,8 +864,8 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   outcome.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
   // A fork pull request may not receive repository variables, so an unset
   // CLUED_WORK_ADMISSION_ENFORCE here proves nothing. The gate then follows
-  // the trusted pull_request_target run, which reads the variable in the base
-  // repository and succeeds whenever admission is advisory.
+  // the App check, which main's admission run posts after reading the
+  // variable in the base repository; it succeeds whenever admission is advisory.
   const headRepo = pr.head.repo && pr.head.repo.full_name;
   const baseRepo = (pr.base.repo && pr.base.repo.full_name) || env.GITHUB_REPOSITORY;
   if (!enforced && headRepo && baseRepo && headRepo !== baseRepo) {
@@ -893,18 +878,9 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   try {
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     let run = null;
-    let what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID}`;
+    const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID}`;
     for (let waited = 0; ; waited += GATE_POLL_SECONDS) {
-      const probe = await latestAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha);
-      if (probe.forbidden) {
-        if (!outcome.notices.some((n) => n.startsWith("gate job cannot read checks"))) {
-          outcome.notices.push(`gate job cannot read checks (no checks: read); following the ${ADMISSION_EVENT} run of ${ADMISSION_WORKFLOW} until its workflow is updated`);
-        }
-        what = `${ADMISSION_WORKFLOW} run`;
-        run = await latestAdmissionRun(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, pr.number);
-      } else {
-        run = probe.check;
-      }
+      run = await latestAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha);
       if ((run && run.status === "completed") || waited >= limit) break;
       await sleep(GATE_POLL_SECONDS * 1000);
     }
