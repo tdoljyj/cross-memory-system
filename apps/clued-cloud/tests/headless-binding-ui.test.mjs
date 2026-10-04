@@ -236,3 +236,30 @@ test('a refusal is shown in plain words', async t => {
   f.calls[2].resolve({ data: null, error: { message: 'direct_human_session_required', code: '42501' } }); await f.settle();
   assert.ok(f.text().includes('需要你本人直接登录 Clued'));
 });
+
+test('a role Binding names its GitHub secret, and a rotation says which secret to update', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await open(f);
+  const legacy = f.nodes('article').find(n => f.text(n).includes('clued-work-admission'));
+  assert.ok(f.text(legacy).includes('GitHub 环境 clued-admission 的 secret CLUED_ADMISSION_CLUED_TOKEN'));
+  const plainCard = f.nodes('article').find(n => f.text(n).includes('CI reader'));
+  assert.ok(!f.text(plainCard).includes('令牌存放在'), 'a Binding without a role names no secret');
+  f.button('轮换为新令牌', legacy).props.onClick(); f.render();
+  checkbox(f, '全局视图', '读取').props.onChange({ target: { checked: true } }); f.render();
+  f.button('预览').props.onClick();
+  f.calls[1].resolve({ data: { status: 'issued', confirmation_token: 'clued_hbc_r', view_digest: 'r'.repeat(64),
+    confirmation_view: { label: 'clued-work-admission', days: 30, selected: [], replaces: { binding_id: 'b-legacy',
+      agent_name: 'clued-work-admission', roles: ['ci-admission'], grace_minutes: 60 } } }, error: null });
+  await f.settle();
+  f.button('确认签发', f.nodes('section').find(n => n.props['aria-label'] === '确认签发')).props.onClick();
+  f.calls[2].resolve({ data: { status: 'committed', binding_id: 'b-new', token: 'clued_bnd_' + 'y'.repeat(43),
+    expires_at: '2099-04-01T00:00:00Z', replaced: { binding_id: 'b-legacy', expires_at: '2099-01-01T01:00:00Z',
+      roles_moved: ['ci-admission'] } }, error: null });
+  await f.settle();
+  f.calls[3].resolve(listed()); await f.settle();
+  const shown = f.nodes('div').find(n => n.props['aria-label'] === '新令牌');
+  const alert = f.nodes('p', shown).find(n => n.props.role === 'alert');
+  assert.ok(alert, 'the update reminder stands out');
+  assert.ok(f.text(alert).includes('CLUED_ADMISSION_CLUED_TOKEN'));
+  assert.ok(f.text(alert).includes('旧令牌'));
+});

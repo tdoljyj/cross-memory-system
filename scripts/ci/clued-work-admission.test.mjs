@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   ADMISSION_APP_ID,
+  ADMISSION_TOKEN_HINT,
+  withTokenHint,
   ADOPT_RPC,
   adoptMerged,
   PUBLIC_CONFIG_SOURCE,
@@ -1101,4 +1103,12 @@ test("gate guard (re-review 3, N-R5): an ungated workflow may not move a job to 
   const switched = ungated.replace(hosted.lines.join("\n"), hosted.lines.join("\n").replace(runsOn, "    runs-on: [self-hosted, Linux]\n    timeout-minutes: 5"));
   assert.notEqual(switched, ungated);
   assert.deepEqual(gateFindings(switched, ungated), [`self_hosted_job_switched_ungated:${hosted.name}`]);
+});
+
+test("a missing or role-less admission token names the secret to update", () => {
+  assert.equal(withTokenHint("CLUED_CONTEXT_READ_TOKEN is not set; admission cannot be verified."),
+    `CLUED_CONTEXT_READ_TOKEN is not set; admission cannot be verified. ${ADMISSION_TOKEN_HINT}`);
+  assert.match(withTokenHint("REJECTED: admission_binding_required"), /CLUED_ADMISSION_CLUED_TOKEN/);
+  assert.match(ADMISSION_TOKEN_HINT, /clued-admission environment/);
+  assert.equal(withTokenHint("REJECTED: claim_not_current"), "REJECTED: claim_not_current");
 });
