@@ -80,12 +80,45 @@ async function readResponse(response: Response, fallback: string): Promise<unkno
   try { return await response.json(); } catch { throw new Error(fallback); }
 }
 
+// "我的全部项目（含以后新建的）" (PermissionSimplification §3.1): Clued keeps one
+// project entry per project for a project:* grant. While project:* stays
+// selected, a project row it covers is not shown or sent; Clued rebuilds it
+// from project:*, so narrowing project:* narrows every covered project.
+const ALL_PROJECTS = "project:*";
+const allProjectsGrant = (binding: Binding) => binding.grants.find(grant =>
+  grant.resource_kind === "scope" && grant.resource_id === ALL_PROJECTS && grant.environment === "canonical");
+function chosenActions(binding: Binding, selection: Selection, grant: Grant) {
+  return grant.actions.filter(action => (selection[binding.binding_id]?.[rowKey(grant)] ?? []).includes(action));
+}
+function coveredByAll(binding: Binding, selection: Selection, grant: Grant) {
+  const all = allProjectsGrant(binding);
+  return !!all && grant !== all && grant.resource_kind === "scope" && grant.environment === "canonical"
+    && grant.resource_id.startsWith("project:") && grant.actions.every(action => all.actions.includes(action))
+    && chosenActions(binding, selection, all).length > 0;
+}
 function selectedGrants(binding: Binding, selection: Selection): Grant[] {
-  return binding.grants.map(grant => ({
+  return binding.grants.filter(grant => !coveredByAll(binding, selection, grant)).map(grant => ({
     resource_kind: grant.resource_kind, resource_id: grant.resource_id, environment: grant.environment,
-    actions: grant.actions.filter(action => (selection[binding.binding_id]?.[rowKey(grant)] ?? []).includes(action)),
+    actions: chosenActions(binding, selection, grant),
   })).filter(grant => grant.actions.length > 0);
 }
+// The preset role a connection's entries match (Decision b32fc5b9), else 自定义.
+const DEVELOPER = ["close", "read", "restore", "write"];
+function roleName(binding: Binding): string {
+  const scopes = binding.grants.filter(grant => grant.resource_kind === "scope" && grant.environment === "canonical");
+  if (!scopes.length || binding.grants.some(grant => grant.resource_kind !== "scope")) return "自定义";
+  const sorted = (grant: Grant) => [...grant.actions].sort().join(",");
+  const projects = scopes.filter(grant => grant.resource_id.startsWith("project:"));
+  const personal = scopes.filter(grant => !grant.resource_id.startsWith("project:"));
+  if (scopes.every(grant => sorted(grant) === "read")) return "只读";
+  if (personal.length === 1 && personal[0].resource_id === "global" && sorted(personal[0]) === "read"
+    && projects.length > 0 && projects.every(grant => sorted(grant) === DEVELOPER.join(","))) return "项目开发者";
+  if (personal.some(grant => grant.resource_id === "global") && personal.some(grant => grant.resource_id === "profile")
+    && scopes.every(grant => DEVELOPER.every(action => grant.actions.includes(action)))) return "全部";
+  return "自定义";
+}
+const grantTitle = (grant: Grant) => grant.resource_id === "global" ? "全局视图"
+  : grant.resource_id === "profile" ? "个人资料" : grant.resource_id === ALL_PROJECTS ? "我的全部项目（含以后新建的）" : grant.resource_id;
 
 export default function OAuthConnectionsPage() {
   const [session, setSession] = useState<Session | null>(null);
@@ -304,7 +337,10 @@ export default function OAuthConnectionsPage() {
       const confirmed = op === "revoke" ? !updated || !updated.active
         : updated && updated.version > binding.version && updated.grants.every(grant => {
           const allowed = selected.find(row => rowKey(row) === rowKey(grant));
-          return grant.actions.every(action => allowed?.actions.includes(action));
+          // A project row Clued rebuilt from project:* is allowed what project:* is.
+          const all = grant.resource_kind === "scope" && grant.resource_id.startsWith("project:")
+            ? selected.find(row => row.resource_kind === "scope" && row.resource_id === ALL_PROJECTS) : undefined;
+          return grant.actions.every(action => allowed?.actions.includes(action) || all?.actions.includes(action));
         });
       if (!confirmed) throw new Error("重新读取后尚未确认此次变更，请再次读取状态后再操作。");
       applyBindings(latest);
@@ -401,14 +437,17 @@ export default function OAuthConnectionsPage() {
                 <div><dt>最近使用</dt><dd>{binding.last_used_at ? <time dateTime={binding.last_used_at}>{new Date(binding.last_used_at).toLocaleString("zh-CN")}</time> : "暂无记录"}</dd></div>
                 <div><dt>有效期至</dt><dd><time dateTime={binding.expires_at}>{new Date(binding.expires_at).toLocaleString("zh-CN")}</time></dd></div>
                 <div><dt>连接编号</dt><dd>{binding.binding_id}</dd></div>
+                <div><dt>角色</dt><dd>{roleName(binding)}</dd></div>
+                {allProjectsGrant(binding) && <div><dt>项目范围</dt><dd>我的全部项目（含以后新建的，只含你自己的项目）</dd></div>}
               </dl>
               {binding.grants.length === 0 && <p className="oauth-copy">此连接没有业务访问权限。</p>}
-              {binding.grants.map(grant => <fieldset key={rowKey(grant)} disabled={busy || unavailable || needsReload}
+              {binding.grants.filter(grant => !coveredByAll(binding, selection, grant)).map(grant => <fieldset key={rowKey(grant)} disabled={busy || unavailable || needsReload}
                 style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, margin: "12px 0", minWidth: 0 }}>
                 <legend style={{ fontSize: 12, overflowWrap: "anywhere" }}>
-                  {grant.resource_id === "global" ? "全局视图" : grant.resource_id} · {environmentLabels[grant.environment] || grant.environment}
+                  {grantTitle(grant)} · {environmentLabels[grant.environment] || grant.environment}
                 </legend>
-                {grant.effective_actions && <p className="oauth-copy">当前实际可用：{grant.effective_actions.length ? grant.effective_actions.map(action => actionLabels[action] || action).join("、") : "无可用操作"}</p>}
+                {grant.resource_id === ALL_PROJECTS && <p className="oauth-copy">以后新建的项目自动包含在内。这里的勾选同时作用于下面没有单独列出的每个项目。</p>}
+                {grant.effective_actions && grant.resource_id !== ALL_PROJECTS && <p className="oauth-copy">当前实际可用：{grant.effective_actions.length ? grant.effective_actions.map(action => actionLabels[action] || action).join("、") : "无可用操作"}</p>}
                 {grant.actions.map(action => <label key={action} style={{ display: "flex", alignItems: "center", gap: 10, margin: "9px 0", fontSize: 13 }}>
                   <input type="checkbox" style={{ width: 18, height: 18, accentColor: "var(--green)" }}
                     checked={(selection[binding.binding_id]?.[rowKey(grant)] ?? []).includes(action)}

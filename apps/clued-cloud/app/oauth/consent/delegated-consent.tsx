@@ -9,8 +9,33 @@ type Details = { request_id: string; version: number; client_name: string; clien
 const actionLabels: Record<string, string> = { read: '读取', write: '新增和修改', close: '关闭和归档', restore: '恢复', feedback_submit: '提交反馈', audit: '查看审计回执' };
 const environmentLabels: Record<string, string> = { canonical: '正式记忆', test: '测试环境', preview: '预览环境', production: '生产环境' };
 const rowKey = (row: Resource) => JSON.stringify([row.resource_kind, row.resource_id, row.environment]);
-// Every eligible action starts selected; the Owner can untick any of them before approving.
-const allSelected = (rows: Resource[]) => Object.fromEntries(rows.map(row => [rowKey(row), [...row.actions]]));
+// Preset roles (PermissionSimplification.v0.1 §3.1, Decision b32fc5b9) are packaged
+// selections of the same rows; 高级 shows every row and any change there makes the
+// role 自定义. The page opens on 全部 over the Owner's current projects, which is
+// every eligible action except project:* ("我的全部项目（含以后新建的）"): that row
+// is selected only when the Owner picks it as the range.
+type Role = 'reader' | 'developer' | 'full' | 'custom';
+const ALL_PROJECTS = 'project:*';
+const ROLES: { role: Exclude<Role, 'custom'>; title: string; text: string }[] = [
+  { role: 'reader', title: '只读', text: '所选范围内每处：读取' },
+  { role: 'developer', title: '项目开发者', text: '所选项目：读取、新增和修改、关闭和归档、恢复；个人记忆：读取' },
+  { role: 'full', title: '全部', text: '个人记忆、个人资料、所选项目：全部权限' },
+];
+const PROJECT_ACTIONS: Record<Exclude<Role, 'custom'>, string[]> = {
+  reader: ['read'], developer: ['read', 'write', 'close', 'restore'], full: ['read', 'write', 'close', 'restore', 'audit'],
+};
+const isProject = (row: Resource) => row.resource_kind === 'scope' && row.resource_id.startsWith('project:') && row.resource_id !== ALL_PROJECTS;
+function preset(rows: Resource[], role: Exclude<Role, 'custom'>, allProjects: boolean, chosen: string[]) {
+  return Object.fromEntries(rows.map(row => {
+    let want: string[];
+    if (row.resource_kind === 'context') want = role === 'full' ? row.actions : role === 'reader' ? ['read'] : [];
+    else if (row.resource_id === ALL_PROJECTS) want = allProjects ? PROJECT_ACTIONS[role] : [];
+    else if (isProject(row)) want = !allProjects && chosen.includes(row.resource_id) ? PROJECT_ACTIONS[role] : [];
+    else if (role === 'full') want = row.actions;
+    else want = role === 'developer' && row.resource_id !== 'global' ? [] : ['read'];
+    return [rowKey(row), row.actions.filter(action => want.includes(action))];
+  }));
+}
 const lifetimeDays = [1, 7, 30, 90, 365];
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 function validDetails(value: unknown): value is Details {
@@ -28,6 +53,9 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
   const [session, setSession] = useState<Session | null>(null);
   const [details, setDetails] = useState<Details | null>(null);
   const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [role, setRole] = useState<Role>('full');
+  const [allProjects, setAllProjects] = useState(false);
+  const [chosen, setChosen] = useState<string[]>([]);
   const [days, setDays] = useState(30);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -67,7 +95,9 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
       if (!validDetails(value)) throw new Error('授权服务返回了不完整的资源列表。');
       if (value.user.id !== who.user.id) throw new Error('授权请求与当前账户不匹配，请重新读取。');
       if (accountEpoch.current !== epoch || currentSession.current?.user.id !== who.user.id || number !== readNumber.current || controller.signal.aborted) return;
-      setDetails(value); setSelected(allSelected(value.eligible));
+      const projects = value.eligible.filter(isProject).map(row => row.resource_id);
+      setDetails(value); setRole('full'); setAllProjects(false); setChosen(projects);
+      setSelected(preset(value.eligible, 'full', false, projects));
     } catch (failure) {
       if (accountEpoch.current === epoch && number === readNumber.current && !controller.signal.aborted) {
         setError(failure instanceof Error && !(failure instanceof TypeError) ? failure.message : '授权暂不可用，请稍后重试。');
@@ -168,7 +198,18 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
     }
   }, [details, loading, authBusy, selected, requestId, days]);
 
+  function choose(next: Exclude<Role, 'custom'>, nextAll = allProjects, nextChosen = chosen) {
+    if (!details) return;
+    setRole(next); setAllProjects(nextAll); setChosen(nextChosen);
+    setSelected(preset(details.eligible, next, nextAll, nextChosen));
+  }
+  // A change in 高级 makes the role 自定义.
+  function edit(change: (old: Record<string, string[]>) => Record<string, string[]>) {
+    setRole('custom'); setSelected(change);
+  }
   const busy = loading || authBusy || sending;
+  const projectRows = details?.eligible.filter(isProject) || [];
+  const offersAll = !!details?.eligible.some(row => row.resource_kind === 'scope' && row.resource_id === ALL_PROJECTS);
   const count = Object.values(selected).reduce((n, actions) => n + actions.length, 0);
   const groups = [
     { name: '个人记忆', rows: details?.eligible.filter(row => row.resource_kind === 'scope' && !row.resource_id.startsWith('project:')) || [] },
@@ -189,10 +230,27 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
     {details && <>
       <h1>允许 {details.client_name} 使用 Clued</h1>
       <dl className="oauth-details"><div><dt>当前账户</dt><dd className="oauth-account-inline">{details.user.email || details.user.id}<button className="oauth-account-switch" type="button" disabled={busy} onClick={() => void switchAccount()}>切换账户</button></dd></div><div><dt>客户端标识</dt><dd style={{ overflowWrap: 'anywhere' }}>{details.client_id}</dd></div></dl>
-      <p className="oauth-copy">已默认勾选全部权限，可按需取消。每组的全选仅作用于当前资源及环境，仍需点击下方按钮确认授权。</p>
+      <p className="oauth-copy">先选一个角色和范围；需要逐项调整时打开下方的“高级”。仍需点击最下方按钮确认授权。</p>
+      {details.eligible.length > 0 && <section className="oauth-roles" aria-label="角色">
+        <h2 style={{ fontSize: 18 }}>角色</h2>
+        <div className="oauth-role-list">{ROLES.map(item => <button key={item.role} type="button" aria-pressed={role === item.role}
+          disabled={busy} onClick={() => choose(item.role)}><strong>{item.title}</strong><small>{item.text}</small></button>)}</div>
+        {role === 'custom' && <p role="status">自定义：你在“高级”里改过勾选。点上面的角色可以重新套用。</p>}
+        {role !== 'custom' && (projectRows.length > 0 || offersAll) && <fieldset className="oauth-range" disabled={busy}>
+          <legend>项目范围</legend>
+          <label><input type="radio" name="project-range" checked={!allProjects} onChange={() => choose(role, false)} />指定项目</label>
+          {offersAll && <label><input type="radio" name="project-range" checked={allProjects} onChange={() => choose(role, true)} />我的全部项目（含以后新建的）</label>}
+          {allProjects && <small>以后新建的项目也自动包含在内；只包含你自己的项目，不含别人共享给你的。可以随时在连接管理里收窄。</small>}
+          {!allProjects && projectRows.map(row => <label key={rowKey(row)} className="oauth-project-choice">
+            <input type="checkbox" checked={chosen.includes(row.resource_id)} onChange={event => choose(role, false,
+              event.target.checked ? [...chosen.filter(id => id !== row.resource_id), row.resource_id] : chosen.filter(id => id !== row.resource_id))} />
+            {row.name || row.resource_id}</label>)}
+        </fieldset>}
+      </section>}
       {!details.eligible.length && <p role="status">身份已验证，尚无可授权的业务资源。项目开发资格需要资源所有者授予。</p>}
       <p><Link href="/oauth/projects" target="_blank" rel="noopener noreferrer">查看或接受开发项目邀请</Link></p>
-      <p className="oauth-scroll-hint">在下方区域滚动查看全部权限；每组可单独全选或清空。</p>
+      <details className="oauth-advanced"><summary>高级：逐项勾选（当前已选 {count} 项）</summary>
+      <p className="oauth-scroll-hint">在下方区域滚动查看全部权限；每组可单独全选或清空。每组的全选仅作用于当前资源及环境。</p>
       <div className="oauth-permissions oauth-permissions-scroll" role="region" aria-label="可授权的资源和权限" tabIndex={0}>
         {groups.map(group => <section key={group.name}><h2 style={{ fontSize: 18 }}>{group.name}</h2>{group.rows.map(row => <fieldset key={rowKey(row)} disabled={busy} style={{ marginBottom: 10, border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 12 }}>
           <legend>{row.name || (row.resource_id === 'global' ? '我的个人记忆' : row.resource_id)} · {environmentLabels[row.environment] || row.environment}</legend>
@@ -203,7 +261,7 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
                 aria-checked={row.actions.some(action => (selected[rowKey(row)] || []).includes(action)) && !row.actions.every(action => (selected[rowKey(row)] || []).includes(action)) ? 'mixed' : row.actions.length > 0 && row.actions.every(action => (selected[rowKey(row)] || []).includes(action))}
                 ref={node => { if (node) node.indeterminate = row.actions.some(action => (selected[rowKey(row)] || []).includes(action)) && !row.actions.every(action => (selected[rowKey(row)] || []).includes(action)); }}
                 disabled={busy || row.actions.length === 0}
-                onChange={() => setSelected(old => ({ ...old, [rowKey(row)]: row.actions.every(action => (old[rowKey(row)] || []).includes(action)) ? [] : [...row.actions] }))}
+                onChange={() => edit(old => ({ ...old, [rowKey(row)]: row.actions.every(action => (old[rowKey(row)] || []).includes(action)) ? [] : [...row.actions] }))}
               />本组全部权限
             </label>
             <span>已选 {row.actions.filter(action => (selected[rowKey(row)] || []).includes(action)).length}/{row.actions.length} 项</span>
@@ -211,12 +269,12 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
           {row.actions.map(action => <label key={action} style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '6px 0' }}>
             <input type="checkbox" checked={(selected[rowKey(row)] || []).includes(action)} onChange={event => {
               const checked = event.target.checked;
-              setSelected(old => { const current = (old[rowKey(row)] || []).filter(a => a !== action); return { ...old, [rowKey(row)]: checked ? [...current, action] : current }; });
+              edit(old => { const current = (old[rowKey(row)] || []).filter(a => a !== action); return { ...old, [rowKey(row)]: checked ? [...current, action] : current }; });
             }} />{row.resource_kind === "context" && action === "close" ? "关闭/撤回记录" : actionLabels[action] || action}
           </label>)}
           {row.resource_kind === 'context' && row.actions.includes('write') && <small>修改已有内容前，可另外选择读取权限来核对当前版本；系统不会自动追加。</small>}
         </fieldset>)}</section>)}
-      </div>
+      </div></details>
       <label className="oauth-form">授权有效期<select disabled={busy} value={days} onChange={e => setDays(Number(e.target.value))}>{lifetimeDays.map(n => <option key={n} value={n}>{n} 天</option>)}</select></label>
       <p className="oauth-note">此选择不包含成员管理、生产发布或大规模导出。可以随时在<Link href="/oauth/connections" target="_blank" rel="noopener noreferrer">连接管理</Link>中减少或撤销权限。</p>
       <div className="oauth-actions"><button className="oauth-secondary" type="button" disabled={busy} onClick={() => void decide('deny')}>取消</button><button className="primary-button" type="button" disabled={busy || count === 0} onClick={() => void decide('approve')}>允许所选权限</button></div>
