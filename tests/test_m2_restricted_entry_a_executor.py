@@ -943,5 +943,16 @@ class FaultSameUserSandboxTests(unittest.TestCase):
         process.communicate(timeout=3)
 
 
+def load_tests(loader, tests, pattern):
+    # Keep the existing Linux workflow entry; add only the companion regressions.
+    for filename in ("test_m2_restricted_entry_a_fault_management.py",
+                     "test_m2_restricted_entry_a_fault_install.py"):
+        spec = importlib.util.spec_from_file_location("integrated_" + filename[:-3], Path(__file__).with_name(filename))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        tests.addTests(loader.loadTestsFromModule(module))
+    return tests
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,18 @@
+{
+  "schema": "m2-a-fault-install-plan-v1",
+  "status": "CANDIDATE_REQUIRES_INDEPENDENT_REVIEW_AND_EXACT_OWNER_APPROVAL",
+  "qualification": "NOT_ISSUED",
+  "instance": "m2-a-public-empty-20261003",
+  "vm_id": "9d775385-4546-4450-a77f-08cdf4f696b6",
+  "guest_code": "/usr/local/lib/clued-m2-a-fault-fixture",
+  "guest_config": "/etc/clued-m2-a-fault",
+  "guest_log": "/var/log/clued-m2-a-fault",
+  "guest_receipt": "/var/log/clued-m2-a-fault/install-receipt.json",
+  "guest_modes": {"code_directory": "0755", "code_files": "0555", "config_directory": "0700", "profile": "0600", "log_directory": "0700", "receipt_and_case_logs": "0600"},
+  "request_ids": {"timeout": "m2-fault-20261004-timeout-01", "revoke": "m2-fault-20261004-revoke-01", "disconnect": "m2-fault-20261004-disconnect-01"},
+  "installation": "Root-only --install-approved; separately approved companion SHA plus exact previous base package SHA, retained receipt-head SHA, ledger SHA and optional backup SHA. Resume original same-instance A installer without changing its strict ledger/history validators.",
+  "rollback": "Root-only --rollback-approved; verify all new and base deletion targets, identities, hashes, members, limits, empty cgroup and complete receipt history before first unlink. Retain base ledger/receipts/backup and fault LOG/receipt/case logs.",
+  "failure": "Preserve partially created paths for inspection; no automatic overwrite, retry or cleanup.",
+  "host_responsibility": "Separate approved host helper verifies fixed VM, package, host ACL/profile/bridge and exact existing service GUID; DVD staging and restoration are host actions. Guest installer makes no host changes.",
+  "scope": "Repository candidate only; no installation, VM/root configuration, protected 48/Gold data, real model/training, release, activation or qualification. New companion archive approval is independent of original A package approval."
+}
