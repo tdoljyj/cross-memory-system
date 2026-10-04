@@ -106,6 +106,41 @@ test('create goes to clued_owner_request_v1 with the Binding hash and returns an
   } finally { restore(); }
 });
 
+test('actions creates one bundle through clued_owner_request_bundle_v1 (PermissionSimplification §3.3)', async () => {
+  const worker = await loadContinuityWorker();
+  const MEMBER = '44444444-4444-4444-8444-444444444444';
+  const args = {
+    actions: [
+      { action: 'migration.production', resources: ['repo:tdoljyj/cross-memory-system/' + 'a'.repeat(40) + '/apps/clued-cloud/supabase/migrations/20261004200000_x.sql'] },
+      { action: 'release.production', resources: ['repo:tdoljyj/cross-memory-system/' + 'a'.repeat(40)] },
+    ],
+    idempotency_key: 'release-bundle-1',
+  };
+  const bundle = [
+    { request_id: REQUEST_ID, action: 'migration.production', resources: args.actions[0].resources, status: 'pending', confirm_path: `/confirm/${REQUEST_ID}` },
+    { request_id: MEMBER, action: 'release.production', resources: args.actions[1].resources, status: 'pending', confirm_path: `/confirm/${MEMBER}` },
+  ];
+  const { calls, restore } = mockFetch(() => Response.json({
+    status: 'committed', replayed: false, receipt_id: 'r-1',
+    request: { ...publicRequest(), action: 'migration.production', resources: args.actions[0].resources, bundle },
+  }));
+  try {
+    const result = (await (await worker.fetch(mcp(bindingToken, TOOL, args), enabled, ctx)).json()).result;
+    assert.equal(result.isError, false);
+    assert.equal(calls[0].rpc, 'clued_owner_request_bundle_v1');
+    assert.deepEqual(calls[0].body.p_input, args);
+    assert.equal(result.structuredContent.request.confirm_url, `https://clued.test/confirm/${REQUEST_ID}`);
+    assert.deepEqual(result.structuredContent.request.bundle.map((m) => m.request_id), [REQUEST_ID, MEMBER]);
+    // actions with action or resources is refused before the database.
+    const mixed = (await (await worker.fetch(mcp(bindingToken, TOOL, { ...args, action: 'release.production' }), enabled, ctx)).json()).result;
+    assert.equal(mixed.isError, true);
+    assert.deepEqual(mixed.structuredContent, { status: 'rejected', error_code: 'owner_request_bundle_invalid' });
+    const status = (await (await worker.fetch(mcp(bindingToken, TOOL, { request_id: REQUEST_ID, actions: args.actions }), enabled, ctx)).json()).result;
+    assert.deepEqual(status.structuredContent, { status: 'rejected', error_code: 'owner_request_status_fields_invalid' });
+    assert.equal(calls.length, 1);
+  } finally { restore(); }
+});
+
 test('request_id alone reads status; mixing it with create fields is refused before the database', async () => {
   const worker = await loadContinuityWorker();
   const { calls, restore } = mockFetch(() => Response.json({ status: 'ok', request: publicRequest('granted') }));
