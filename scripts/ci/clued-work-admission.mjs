@@ -433,6 +433,14 @@ export function workflowFormFindings(text) {
   return [...new Set(findings)];
 }
 
+// A job's literal timeout-minutes, or null when it has none or an expression.
+export function jobTimeout(job) {
+  const value = jobField(job, "timeout-minutes");
+  if (value === null) return null;
+  const match = /^\s*(\d{1,4})\s*(#.*)?$/.exec(value.split("\n")[0]);
+  return match && value.split("\n").slice(1).every((line) => /^\s*(#.*)?$/.test(line)) ? Number(match[1]) : null;
+}
+
 // A job counts as GitHub-hosted only when its runs-on is one literal
 // ubuntu-*, windows-* or macos-* label and it neither calls a reusable
 // workflow nor merges YAML anchors; anything else may reach a self-hosted
@@ -457,11 +465,25 @@ export function gateFindings(headText, baseText) {
   const selfHosted = jobs.some((job) => !jobIsHosted(job));
   const required = baseText === null ? selfHosted : workflowIsGated(baseText);
   if (!required) {
-    // An existing ungated workflow (a short check) may not grow a new job that
-    // can reach a self-hosted runner.
+    // An existing ungated workflow (a short check) may not grow a job that can
+    // reach a self-hosted runner: no new one, no hosted job moved to a
+    // self-hosted runner, and (re-review 3, N-R5) no self-hosted job that
+    // drops or raises its timeout-minutes.
     if (baseText === null) return [];
-    const before = new Set(workflowJobs(baseText).map((job) => job.name));
-    return jobs.filter((job) => !before.has(job.name) && !jobIsHosted(job)).map((job) => `self_hosted_job_added_ungated:${job.name}`);
+    const before = new Map(workflowJobs(baseText).map((job) => [job.name, job]));
+    const findings = [];
+    for (const job of jobs) {
+      if (jobIsHosted(job)) continue;
+      const old = before.get(job.name);
+      if (!old) findings.push(`self_hosted_job_added_ungated:${job.name}`);
+      else if (jobIsHosted(old)) findings.push(`self_hosted_job_switched_ungated:${job.name}`);
+      else {
+        const was = jobTimeout(old);
+        const now = jobTimeout(job);
+        if (now === null || (was !== null && now > was)) findings.push(`self_hosted_timeout_raised_ungated:${job.name}`);
+      }
+    }
+    return findings;
   }
   const gate = jobs.find((job) => job.name === GATE_JOB);
   if (!gate) return ["admission_gate_missing"];
@@ -822,7 +844,13 @@ export const GATE_POLL_SECONDS = 10;
 // to read it.
 export const ADMISSION_APP_ID = 5164952;
 
-export async function latestAdmissionCheck(fetchImpl, env, repository, headSha) {
+// Re-review 3, N-R1: the App check is posted when an admission run ends, so
+// until then an older success on the same head (a force-push back to an
+// admitted commit, a reopened pull request, a second pull request with the
+// same head) would be the newest. Only a check posted after this run was
+// created (`since`, in ms) counts: it comes from the admission run of the same
+// event or a later one.
+export async function latestAdmissionCheck(fetchImpl, env, repository, headSha, since = 0) {
   const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
   const route = `/repos/${repository}/commits/${headSha}/check-runs?check_name=${APP_CHECK_NAME}&filter=all&per_page=100`;
   const response = await fetchImpl(`${base}${route}`, {
@@ -842,10 +870,23 @@ export async function latestAdmissionCheck(fetchImpl, env, repository, headSha) 
   for (const check of (body && body.check_runs) || []) {
     if (check.name !== APP_CHECK_NAME || check.head_sha !== headSha) continue;
     if (!check.app || Number(check.app.id) !== ADMISSION_APP_ID) continue;
+    const posted = Date.parse(check.started_at ?? check.completed_at ?? "");
+    if (!(posted >= since)) continue;
     if (!latest || Number(check.id) > Number(latest.id)) latest = check;
   }
   return latest;
 }
+
+// Re-review 3, N-R3: a re-run replays the run's own workflow file and event,
+// so one of a run from before the gates existed has no gate, and "re-run
+// failed jobs" keeps the gate's earlier output. The gate refuses re-runs of
+// pull request and branch dispatch runs; push a new commit instead (the
+// runner check refuses them before any job, including "re-run failed jobs").
+export function rerunAttempt(env) {
+  const attempt = Number.parseInt(String(env.GITHUB_RUN_ATTEMPT ?? "1"), 10);
+  return Number.isInteger(attempt) && attempt > 1 ? attempt : null;
+}
+const RERUN_HOWTO = "re-runs are not admitted; push a new commit";
 
 export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() }) {
   let enforced = enforcementEnabled(env);
@@ -877,10 +918,20 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : GATE_WAIT_SECONDS;
   try {
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
+    const attempt = rerunAttempt(env);
+    if (attempt) {
+      outcome.verdict = "RERUN_REFUSED";
+      outcome.reasons.push(`run attempt ${attempt}: ${RERUN_HOWTO}`);
+      throw Object.assign(new Error("refused"), { refused: true });
+    }
+    if (!/^[0-9]{1,20}$/.test(String(env.GITHUB_RUN_ID ?? ""))) throw new Error("GITHUB_RUN_ID is not set.");
+    const self = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`);
+    const since = Date.parse(self && self.created_at);
+    if (!Number.isFinite(since)) throw new Error(`run ${env.GITHUB_RUN_ID} has no created_at.`);
     let run = null;
-    const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID}`;
+    const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} posted since ${self.created_at}`;
     for (let waited = 0; ; waited += GATE_POLL_SECONDS) {
-      run = await latestAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha);
+      run = await latestAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, since);
       if ((run && run.status === "completed") || waited >= limit) break;
       await sleep(GATE_POLL_SECONDS * 1000);
     }
@@ -902,9 +953,11 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
       outcome.reasons.push(`${what} ${run.id} concluded ${run.conclusion}`);
     }
   } catch (error) {
-    if (enforced) throw error;
-    outcome.verdict = "NOT_ENFORCED";
-    outcome.reasons.push(`advisory gate unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    if (!(error && error.refused)) {
+      if (enforced) throw error;
+      outcome.verdict = "NOT_ENFORCED";
+      outcome.reasons.push(`advisory gate unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   if (!outcome.admitted && !enforced) {
     outcome.advisory = true;
@@ -977,8 +1030,12 @@ async function dispatchGate({ env, event, fetchImpl, now, outcome }) {
   }
   const defaultBranch = (event && event.repository && event.repository.default_branch) || "main";
   const runId = String((event && event.inputs && event.inputs.admission_run_id) ?? "").trim();
+  const attempt = rerunAttempt(env);
   try {
-    if (!/^[0-9]{1,20}$/.test(runId)) {
+    if (attempt) {
+      outcome.verdict = "RERUN_REFUSED";
+      outcome.reasons.push(`run attempt ${attempt}: ${RERUN_HOWTO}`);
+    } else if (!/^[0-9]{1,20}$/.test(runId)) {
       outcome.verdict = "REJECTED";
       outcome.reasons.push(`admission_run_missing: ${DISPATCH_HOWTO}`);
     } else {

@@ -20,13 +20,21 @@
 //     the one that triggered it, so an admission run of a pull request into
 //     another branch, whose copy of the admission workflow passes anything,
 //     could have stood in for it.)
-//   - a hand dispatch on another branch whose .github/workflows directory is
-//     exactly main's. Its workflow keeps the dispatch gate, which needs a
-//     Clued admission run for the dispatched commit. (Re-review 2, finding B:
-//     the earlier main...sha compare saw no change on a branch pointing at an
-//     old main commit, from before a workflow had its gate.)
+//     (Re-review 3, N-R1: only a check posted after this run was created
+//     counts, so an older success on the same head cannot stand in.)
+//   - a hand dispatch on another branch of one of DISPATCH_GATED_WORKFLOWS,
+//     whose .github/workflows directory is exactly main's. That workflow keeps
+//     the dispatch gate, which needs a Clued admission run for the dispatched
+//     commit. (Re-review 2, finding B: the earlier main...sha compare saw no
+//     change on a branch pointing at an old main commit, from before a
+//     workflow had its gate. Re-review 3, N-R2: other dispatchable workflows
+//     have no gate, so they run on main only.)
 // Any workflow file counts, not only the one running: a called (reusable)
 // workflow runs under its caller's name.
+// Re-review 3, N-R3: a re-run (run attempt 2 or later) of a pull request or
+// branch dispatch run is refused. A re-run replays its run's own workflow
+// file, which may be one from before the gates existed, and "re-run failed
+// jobs" keeps the gate's earlier output. Push a new commit instead.
 // Everything else is refused: pushes to other branches, pull requests into
 // other branches, other events.
 //
@@ -48,6 +56,9 @@ import { fileURLToPath } from "node:url";
 
 export const ADMISSION_CHECK = "clued-admission-verified";
 export const ADMISSION_APP_ID = 5164952;
+// The same list as DISPATCH_GATED_WORKFLOWS in scripts/ci/clued-work-admission.mjs
+// (this file is installed alone, so it keeps its own copy; a test compares them).
+export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml"];
 const MAIN_EVENTS = new Set(["push", "schedule", "workflow_run", "pull_request_target", "workflow_dispatch"]);
 
 export function workflowPathOf(env) {
@@ -92,14 +103,17 @@ async function workflowsDifferFromMain(fetchImpl, token, repository, base, sha) 
   return [...names].filter((name) => mine.get(name) !== main.get(name)).sort();
 }
 
-// The newest clued-admission-verified check of the admission App on a head.
-async function admissionCheck(fetchImpl, token, repository, headSha, appId) {
+// The newest clued-admission-verified check of the admission App on a head,
+// posted at or after `since` (ms).
+async function admissionCheck(fetchImpl, token, repository, headSha, appId, since) {
   const body = await github(fetchImpl, token,
     `/repos/${repository}/commits/${headSha}/check-runs?check_name=${ADMISSION_CHECK}&filter=all&per_page=100`);
   let latest = null;
   for (const check of (body && body.check_runs) || []) {
     if (check.name !== ADMISSION_CHECK || check.head_sha !== headSha) continue;
     if (!check.app || Number(check.app.id) !== appId) continue;
+    const posted = Date.parse(check.started_at ?? check.completed_at ?? "");
+    if (!(posted >= since)) continue;
     if (!latest || Number(check.id) > Number(latest.id)) latest = check;
   }
   return latest;
@@ -134,7 +148,20 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
   if (!token) throw new Error(`${tokenFile} is empty.`);
   const sha = (env.GITHUB_SHA ?? "").trim();
   if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("GITHUB_SHA is not a commit SHA.");
+  const runId = (env.GITHUB_RUN_ID ?? "").trim();
+  if (!/^[0-9]{1,20}$/.test(runId)) throw new Error("GITHUB_RUN_ID is not a run id.");
+  const run = await github(fetchImpl, token, `/repos/${repository}/actions/runs/${runId}`);
+  const attempt = Math.max(Number(run && run.run_attempt) || 1, Number.parseInt(env.GITHUB_RUN_ATTEMPT ?? "1", 10) || 1);
+  if (attempt > 1) {
+    result.reason = `${event} on ${result.ref}: run attempt ${attempt}; re-runs are refused, push a new commit`;
+    return result;
+  }
   if (event === "workflow_dispatch") {
+    const file = workflow.slice(".github/workflows/".length);
+    if (!DISPATCH_GATED_WORKFLOWS.includes(file)) {
+      result.reason = `dispatch of ${workflow} on ${result.ref}: only ${DISPATCH_GATED_WORKFLOWS.join(", ")} may be dispatched on another branch; this one runs on ${defaultBranch} only`;
+      return result;
+    }
     const differing = await workflowsDifferFromMain(fetchImpl, token, repository, defaultBranch, sha);
     result.allow = differing.length === 0;
     result.reason = result.allow ? `dispatch on ${result.ref}, workflows identical to ${defaultBranch}`
@@ -159,16 +186,18 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
     const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : 480;
     const configured = Number.parseInt((env.CLUED_RUNNER_HOOK_ADMISSION_APP_ID ?? "").trim(), 10);
     const appId = Number.isInteger(configured) && configured > 0 ? configured : ADMISSION_APP_ID;
+    const since = Date.parse(run && run.created_at);
+    if (!Number.isFinite(since)) throw new Error(`run ${runId} has no created_at.`);
     let check = null;
     for (let waited = 0; ; waited += 10) {
-      check = await admissionCheck(fetchImpl, token, repository, pr.head.sha, appId);
+      check = await admissionCheck(fetchImpl, token, repository, pr.head.sha, appId, since);
       if ((check && check.status === "completed") || waited >= limit) break;
       await sleep(10_000);
     }
     result.allow = Boolean(check && check.status === "completed" && check.conclusion === "success");
     const what = [...new Set(changed)].join(", ");
     result.reason = result.allow ? `pull request #${pr.number} changes ${what}; ${ADMISSION_CHECK} ${check.id} succeeded`
-      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_CHECK} from App ${appId} on ${pr.head.sha} (${check ? `${check.status}/${check.conclusion}` : "none"})`;
+      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_CHECK} from App ${appId} on ${pr.head.sha} posted since ${run.created_at} (${check ? `${check.status}/${check.conclusion}` : "none"})`;
     return result;
   }
   throw new Error(`unreachable event ${event}`);

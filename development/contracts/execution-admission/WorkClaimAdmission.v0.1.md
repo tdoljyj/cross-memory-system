@@ -1,6 +1,6 @@
 # Work Claim Admission v0.1：多 Agent 执行准入与费用保护机制候选
 
-状态：**部分实施。** 第 1–6 步已在生产生效，强制开启。第 7 步实测已完成；独立评审 HOLD_FAIL 的修复已合入；2026-10-03 的复审与 2026-10-04 的复审 2（Task `869d2db7`）均为 HOLD_FAIL，修复见下（Owner Decisions `38ddb8cf`、`b0c53143`），待再次复审。方向由 Owner 接受（Decision `78ca0c07`），不是架构接受。
+状态：**部分实施。** 第 1–6 步已在生产生效，强制开启。第 7 步实测已完成；独立评审 HOLD_FAIL 的修复已合入；2026-10-03 的复审、2026-10-04 的复审 2 与复审 3（Task `869d2db7`）均为 HOLD_FAIL，修复见下（Owner Decisions `38ddb8cf`、`b0c53143`），待再次复审。方向由 Owner 接受（Decision `78ca0c07`），不是架构接受。
 日期：2026-10-01（状态更新 2026-10-02）
 来源：Owner 上传的《Clued 多 Agent 执行协调与费用保护：讨论纪要与既有机制对账》（2026-10-01）的重新评估，以及对纪要第九节源码与合同的只读对账（固定在 commit `f7ba6ff312aa0e90095db1e28f5937920f30de3a`）。
 通用化后续：任意资源、一个门卫多个门口、领取模式（独占/拆分/多份）的设计候选见 [GenericWorkClaim.v0.1.md](GenericWorkClaim.v0.1.md)（Task `52739939`）。
@@ -45,6 +45,22 @@
     - 仍未修，写明靠自觉：
       - PR 正文可以写别的 Agent 的认领 ID；手动触发 `clued-work-admission-dispatch.yml` 时也可以填别的 Agent 的 `claim_id`，计入其 Task 的 CI 额度（仓库侧不知道是谁触发的）。两者都受每 Task 每天 40 个 head 的上限约束。
       - 不加闸的自托管检查会跑 PR 的代码，未被认领覆盖的 PR 也会跑，每个 job 最多 20–25 分钟（`model-program-m0` 没有超时，见上）；`clued-integration-runtime-nightly.yml` 任何人都能在 main 上手动触发，跑的是 main 的代码，不计入额度。
+  - 复审 3（2026-10-04，Task `869d2db7`，对照 main `d0100ff4`）：fresh-context 只读评审，HOLD_FAIL。A、B（有闸 workflow）、D 与此前大部分发现确认已修；数据库一侧与合并这一关成立。
+    - 新发现：
+      - N-R1（MAJOR，#533 引入）：gate 与 runner 检查认该 head 上最新的 App check，而 check 在准入运行结束时才发，在那之前同 head 上更早的成功 check 就是「最新」。强推回以前准入过的提交、重开已释放认领的 PR、另开同 head 的 PR、重跑重任务都会被放行，且不计入额度；
+      - N-R2（MAJOR）：runner 检查放行任何分支上「workflow 与 main 一致」的手动触发，但 `clued-integration-runtime-nightly`、`mps03-native-agent` 没有闸，会用分支的代码跑自托管机，不需要认领；
+      - N-R3（MAJOR）：重跑绕过 gate 与 runner 检查。重跑沿用该次运行自己的 workflow 文件（加闸之前的运行没有闸），「只重跑失败的 job」沿用 gate 上次的放行结果；
+      - N-R4（MAJOR）：准入 workflow 检出事件里的 base 提交，重跑旧的准入运行就会用当时的旧检查代码（例如 #532 之前看不见单独 `\r` 的守卫），拿到现在的 secret，发出成功的 App check；
+      - N-R5（MINOR）守卫没管已有托管 job 改到自托管 runner、自托管 job 去掉超时；N-R6（MINOR）准入出错时不发失败 check，更早的成功 check 仍是最新；N-R7（MINOR）文档缺漏（trivy 没有超时、重跑、草稿 PR、N-R2）。
+    - 修复（Owner 选择按最短路径全修）：
+      - N-R1：gate 与 runner 检查只认在本次运行创建之后发出的 App check（看 check 的发出时间，不看 id）。
+      - N-R2：runner 检查只允许在其他分支上手动触发三个有触发闸的 workflow（`DISPATCH_GATED_WORKFLOWS`）；其余可手动触发的 workflow 只能在 main 上跑。
+      - N-R3：runner 检查拒绝 PR 与分支手动触发运行的重跑（运行次数 2 及以上，包括「只重跑失败的 job」）；gate 也拒绝重跑（`RERUN_REFUSED`）。要重跑就推一个新提交。main 自己的运行可以重跑。
+      - N-R4：准入 workflow 改为检出 base 分支的当前提交（`base.ref`），重跑也跑现在的检查代码。App 私钥与 Clued token 的 secret 改名为 `CLUED_ADMISSION_APP_KEY`、`CLUED_ADMISSION_CLUED_TOKEN`（Owner 在 `clued-admission` environment 中新建，合并后删掉旧名），旧的运行定义重跑时拿不到任何一个，什么也发不出。
+      - N-R5：守卫拒绝不加闸 workflow 中已有托管 job 改到自托管 runner，以及自托管 job 去掉或调高 `timeout-minutes`。trivy 的自托管 job 设 25 分钟超时。
+      - N-R6：准入步骤出错、没报出 head 时，失败 check 发在事件的 head 上。
+      - N-R7：`scripts/runner/README.md` 写明重跑、草稿 PR、只能在 main 上跑的 workflow。
+    - 仍靠自觉或未覆盖：每小时的复核跳过草稿 PR；runner 检查装上之前，重跑与手动触发只受 gate 约束（「只重跑失败的 job」不经过 gate）。
 - **尚缺或与本文设计不符**（各条在对应小节标注）：
   - 每认领 CI 分钟预算与 finalize：改为次数上限，不做（§4.5，Owner Decision `a264ea02`）。
   - 备份恢复后 `max(fence)` 会回退，靠恢复后的手工步骤补救（§4.4、§6，Owner Decision `2b23eb0c`）。
@@ -238,9 +254,9 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
     - L0b 的 `admission-gate` 仍是 PR 定义的 job，PR 可以删掉 `needs:`。**处理（同一决定）**：准入检查读取 PR 新增或改动的 workflow：base 上已有闸的 workflow，或新加的含自托管 job 的 workflow，必须保留与 `GATE_JOB_SHA256` 一致的 `admission-gate` job，其余每个 job 都 `needs` 它，且 `if:` 为闸条件 `&&` 一个整体括号组；否则判 REJECTED（`workflow_gate:<文件>:<原因>`），PR 无法合入。闸 job 改为检出 base 分支（或默认分支）代码，PR 改脚本也绕不过。已知代价：被拒的 PR 上，重任务在拒绝前可能已经跑过一次。base 上已有、本来不加闸的轻量 workflow（Owner Decision `75abfe80`）不在检查范围。修改闸 job 本身需两步：先在 `GATE_JOB_SHA256` 中加入新摘要并合入，再改各 workflow。
     - 任何同仓 PR 的 workflow 都能引用仓库 secret，所以 `CLUED_CONTEXT_READ_TOKEN` 只能靠 environment 限定加轮换保护。
 - **实现（token 隔离，2026-10-02，Task `95a93218`，PR #479）**：
-  - `admission-gate` 不再调用 Clued，也不再拿 `CLUED_CONTEXT_READ_TOKEN`（它跑的是 PR 的代码）。它等待本 head 上 `clued-work-admission.yml` 最新一次 `pull_request_target` 运行结束，只在该运行成功时放行；其他事件或其他 head 的运行不算。强制模式下等不到运行、到期仍未结束（默认 480 秒）或 GitHub API 出错都不放行；advisory 模式从不拦截。来自 fork 的 PR 可能拿不到仓库变量，所以闸对 fork PR 一律按强制处理，只跟随准入运行的结果；准入运行在 base 仓库读变量，advisory 时总是成功（Task `27b4f5e8` 第 11 条，2026-10-02）。
+  - `admission-gate` 不再调用 Clued，也不再拿 `CLUED_CONTEXT_READ_TOKEN`（它跑的是 PR 的代码）。它等待本 head 上 clued-admission App 的 `clued-admission-verified` check，只认本次运行创建之后发出的、最新的那条，成功才放行（复审 2 N3c、复审 3 N-R1；原先看 `clued-work-admission.yml` 的 `pull_request_target` 运行）；重跑一律不放行（复审 3 N-R3）。强制模式下等不到运行、到期仍未结束（默认 480 秒）或 GitHub API 出错都不放行；advisory 模式从不拦截。来自 fork 的 PR 可能拿不到仓库变量，所以闸对 fork PR 一律按强制处理，只跟随准入运行的结果；准入运行在 base 仓库读变量，advisory 时总是成功（Task `27b4f5e8` 第 11 条，2026-10-02）。
   - 只有跑 base 分支代码的 workflow 引用该 token：`clued-work-admission.yml`、`clued-work-admission-reverify.yml`，以及 PR #480 起的 `clued-work-admission-dispatch.yml`。三者都在 `clued-admission` environment 中运行。Owner 已（2026-10-02）将该 environment 的部署分支限定为 `main`、不设审批人，把 token 移为 environment secret、删除仓库 secret 并轮换；此后PR 新增或改写的 workflow（运行在 `refs/pull/N/merge`）即使声明该 environment 也拿不到 token。
-  - 仓库检查（`scripts/ci/clued-work-admission.test.mjs`）断言只有上述 workflow 引用 `secrets.CLUED_CONTEXT_READ_TOKEN`。
+  - 仓库检查（`scripts/ci/clued-work-admission.test.mjs`）断言只有上述 workflow 引用该 token 的 secret（复审 3 起名为 `secrets.CLUED_ADMISSION_CLUED_TOKEN`，旧名 `CLUED_CONTEXT_READ_TOKEN` 已停用）。
   - 仍未覆盖：同名 check 伪造（见上）。另外 PR 可以改写自己的 workflow、删掉 `needs: admission-gate`：闸是 PR 自己的 job，只能控制合规 PR 的花费，不是强制边界。
 - **实现（加闸范围与手动触发，2026-10-02，Owner Decision `75abfe80`，Task `29128827`）**：
   - 新增加闸：`public-mcp-behavior.yml`、`public-mcp-protocol.yml`（装依赖、起本地 MCP，behavior 还起数据库）。`model-program-*`、`mps03-native-agent`、`multitrack-governance-projection`、`node-profile-policy` 是 Python 校验，不加闸：闸任务本身的开销与等待超过它们。（复审 2 更正：它们在自托管 Windows 上跑 PR 的代码，一次几分钟而不是几秒；现在每个 job 有 20 分钟超时，`model-program-m0` 除外，它的文件哈希被冻结的 m0 清单锁定。）
