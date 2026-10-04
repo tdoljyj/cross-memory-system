@@ -1375,7 +1375,7 @@ N1a (text bodies only, `format_unsupported` for other formats).
   contract), and an extractor two versions apart fails every PDF read closed.
   Deploy order: the production release workflow deploys the extractor
   (`npx wrangler deploy --config wrangler.pdf-extractor.jsonc`) with the same
-  `CLUED_CLOUDFLARE_DEPLOY_TOKEN` before the main Worker, and after both are
+  `CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2` before the main Worker, and after both are
   live `scripts/verify-pdf-extractor.mjs` requires
   `GET /v1/storage/pdf-extractor/check` (the extractor's fixed built-in
   one-page PDF through the binding) to return 200 with the expected text and

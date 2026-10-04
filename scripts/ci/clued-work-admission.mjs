@@ -481,6 +481,11 @@ export function gateFindings(headText, baseText) {
         const was = jobTimeout(old);
         const now = jobTimeout(job);
         if (now === null || (was !== null && now > was)) findings.push(`self_hosted_timeout_raised_ungated:${job.name}`);
+        // Re-review 4, m3: a new or changed strategy (a matrix) multiplies the
+        // job; one admitted head would buy many self-hosted runs.
+        if ((jobField(job, "strategy") ?? "").trim() !== (jobField(old, "strategy") ?? "").trim()) {
+          findings.push(`self_hosted_strategy_changed_ungated:${job.name}`);
+        }
       }
     }
     return findings;
@@ -850,7 +855,17 @@ export const ADMISSION_APP_ID = 5164952;
 // same head) would be the newest. Only a check posted after this run was
 // created (`since`, in ms) counts: it comes from the admission run of the same
 // event or a later one.
-export async function latestAdmissionCheck(fetchImpl, env, repository, headSha, since = 0) {
+// Re-review 4, m1/m2: main's admission run names its pull request in the
+// check's external_id ("pr:<number>:run:<run id>"), so a pull request with
+// the same head cannot ride another pull request's admission. Because both
+// runs start from the same event, a check posted up to CHECK_WINDOW_MS before
+// this run was created still counts when it names this pull request.
+export const CHECK_WINDOW_MS = 120_000;
+export function checkNamesPullRequest(check, prNumber) {
+  return new RegExp(`^pr:${Number(prNumber)}:run:[0-9]+$`).test(String((check && check.external_id) ?? ""));
+}
+
+export async function latestAdmissionCheck(fetchImpl, env, repository, headSha, since = 0, prNumber = null) {
   const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
   const route = `/repos/${repository}/commits/${headSha}/check-runs?check_name=${APP_CHECK_NAME}&filter=all&per_page=100`;
   const response = await fetchImpl(`${base}${route}`, {
@@ -870,8 +885,9 @@ export async function latestAdmissionCheck(fetchImpl, env, repository, headSha, 
   for (const check of (body && body.check_runs) || []) {
     if (check.name !== APP_CHECK_NAME || check.head_sha !== headSha) continue;
     if (!check.app || Number(check.app.id) !== ADMISSION_APP_ID) continue;
+    if (prNumber !== null && !checkNamesPullRequest(check, prNumber)) continue;
     const posted = Date.parse(check.started_at ?? check.completed_at ?? "");
-    if (!(posted >= since)) continue;
+    if (!(posted >= since - (prNumber !== null ? CHECK_WINDOW_MS : 0))) continue;
     if (!latest || Number(check.id) > Number(latest.id)) latest = check;
   }
   return latest;
@@ -929,9 +945,9 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     const since = Date.parse(self && self.created_at);
     if (!Number.isFinite(since)) throw new Error(`run ${env.GITHUB_RUN_ID} has no created_at.`);
     let run = null;
-    const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} posted since ${self.created_at}`;
+    const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} for #${pr.number} posted since ${self.created_at} (less ${CHECK_WINDOW_MS / 1000}s)`;
     for (let waited = 0; ; waited += GATE_POLL_SECONDS) {
-      run = await latestAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, since);
+      run = await latestAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, since, pr.number);
       if ((run && run.status === "completed") || waited >= limit) break;
       await sleep(GATE_POLL_SECONDS * 1000);
     }
@@ -1275,8 +1291,12 @@ export async function appCheck({ env, fetchImpl, now = () => Date.now() }) {
     const token = await appRequest(fetchImpl, env, "POST", `/app/installations/${installation.id}/access_tokens`, jwt,
       { repositories: [repository.split("/")[1]], permissions: { checks: "write" } });
     const verdict = (env.ADMISSION_VERDICT ?? "").trim() || (success ? "ADMITTED" : "NOT ADMITTED");
+    const prNumber = String(env.ADMISSION_PR_NUMBER ?? "").trim();
+    const runId = String(env.GITHUB_RUN_ID ?? "").trim();
+    const externalId = /^[0-9]{1,10}$/.test(prNumber) && /^[0-9]{1,20}$/.test(runId) ? `pr:${prNumber}:run:${runId}` : undefined;
     const check = await appRequest(fetchImpl, env, "POST", `/repos/${repository}/check-runs`, token.token, {
       name: APP_CHECK_NAME, head_sha: headSha, status: "completed", conclusion: success ? "success" : "failure",
+      ...(externalId ? { external_id: externalId } : {}),
       output: { title: verdict, summary: `clued-work-admission ${success ? "admitted" : "did not admit"} this head (run ${env.GITHUB_RUN_ID ?? "?"}).` },
     });
     return { posted: true, head_sha: headSha, conclusion: success ? "success" : "failure", check_run_id: check.id ?? null };

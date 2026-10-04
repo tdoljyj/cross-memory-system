@@ -95,6 +95,9 @@ jobs:
           # the head, the failure is still posted on the event's head, so an
           # older success does not stay the newest check.
           ADMISSION_HEAD_SHA: ${{ steps.admit.outputs.head_sha || github.event.pull_request.head.sha }}
+          # Re-review 4, m1/m2: the check names its pull request, so the gate
+          # accepts only its own pull request's admission.
+          ADMISSION_PR_NUMBER: ${{ github.event.pull_request.number }}
           ADMISSION_OUTCOME: ${{ steps.admit.outcome }}
           ADMISSION_VERDICT: ${{ steps.admit.outputs.verdict }}
           CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}

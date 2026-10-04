@@ -33,6 +33,7 @@ import {
   appCheck,
   appJwt,
   GATE_JOB_SHA256,
+  checkNamesPullRequest,
   gateFindings,
   jobIsHosted,
   jobTimeout,
@@ -107,7 +108,8 @@ const THIS_RUN = `GET https://api.test/repos/o/r/actions/runs/9001`;
 const RUN_CREATED = "2026-10-02T04:00:00Z";
 const SELF_RUN = { [THIS_RUN]: { body: { id: 9001, run_attempt: 1, created_at: RUN_CREATED } } };
 const appCheckRun = (overrides = {}) => ({ id: 1, name: "clued-admission-verified", head_sha: HEAD, status: "completed",
-  conclusion: "success", started_at: "2026-10-02T04:00:40Z", app: { id: ADMISSION_APP_ID, slug: "clued-admission" }, ...overrides });
+  conclusion: "success", started_at: "2026-10-02T04:00:40Z", external_id: "pr:452:run:77", app: { id: ADMISSION_APP_ID, slug: "clued-admission" },
+  ...overrides });
 const checksReturn = (list) => ({ ...SELF_RUN, [CHECKS]: { body: { check_runs: list } } });
 const RERUN = `POST https://api.test/repos/o/r/actions/runs/`;
 const COMMIT = `GET https://api.test/repos/o/r/commits/`;
@@ -914,7 +916,12 @@ test("app check: posts the admission result as the App on the evaluated head", a
     const post = calls[2];
     assert.equal(post.headers.authorization, "Bearer ghs_app");
     assert.deepEqual([post.body.name, post.body.head_sha, post.body.status, post.body.conclusion], [APP_CHECK_NAME, HEAD, "completed", conclusion]);
+    assert.equal(post.body.external_id, undefined, "no pull request number, no external_id");
   }
+  // Re-review 4, m1: the check names its pull request and admission run.
+  const named = script();
+  await appCheck({ env: appEnv({ ADMISSION_OUTCOME: "success", ADMISSION_PR_NUMBER: "452" }), fetchImpl: named.fetchImpl, now: () => 1_800_000_000_000 });
+  assert.equal(named.calls[2].body.external_id, "pr:452:run:77");
   // Not configured, or no evaluated head: nothing is posted.
   let quiet = await appCheck({ env: appEnv({ CLUED_ADMISSION_APP_PRIVATE_KEY: "" }), fetchImpl: fakeFetch({}).fetchImpl });
   assert.equal(quiet.posted, false);
@@ -1049,9 +1056,13 @@ test("gate (re-review 3, N-R1): an App check posted before this run was created 
   };
   // An older success on the same head (a force-push back to an admitted
   // commit, a reopened pull request, a second pull request with this head).
-  let { outcome } = await gateWith([appCheckRun({ id: 5, started_at: "2026-10-02T03:59:59Z" })]);
+  let { outcome } = await gateWith([appCheckRun({ id: 5, started_at: "2026-10-02T03:57:59Z" })]);
   assert.deepEqual([outcome.admitted, outcome.verdict], [false, "NO_ADMISSION_RUN"]);
-  assert.match(outcome.reasons[0], /posted since 2026-10-02T04:00:00Z/);
+  assert.match(outcome.reasons[0], /for #452 posted since 2026-10-02T04:00:00Z \(less 120s\)/);
+  // Re-review 4, m2: the admission run of the same event may post up to two
+  // minutes before this run was created.
+  ({ outcome } = await gateWith([appCheckRun({ id: 5, started_at: "2026-10-02T03:58:30Z" })]));
+  assert.equal(outcome.admitted, true);
   // A newer id does not help an older check; the posting time decides.
   ({ outcome } = await gateWith([appCheckRun({ id: 9, started_at: "2026-10-02T03:00:00Z" }), appCheckRun({ id: 3, conclusion: "failure" })]));
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_run.id], [false, "REJECTED", 3]);
@@ -1111,4 +1122,43 @@ test("a missing or role-less admission token names the secret to update", () => 
   assert.match(withTokenHint("REJECTED: admission_binding_required"), /CLUED_ADMISSION_CLUED_TOKEN/);
   assert.match(ADMISSION_TOKEN_HINT, /clued-admission environment/);
   assert.equal(withTokenHint("REJECTED: claim_not_current"), "REJECTED: claim_not_current");
+});
+
+test("gate (re-review 4, m1): only an App check naming this pull request admits it", async () => {
+  const gateWith = async (list) => gate({ env: env({ CLUED_CONTEXT_READ_TOKEN: "", CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" }),
+    event: withClaim(), eventName: "pull_request", fetchImpl: fakeFetch(checksReturn(list)).fetchImpl, sleep: async () => {} });
+  for (const externalId of [undefined, null, "", "pr:453:run:77", "pr:452", "pr:4520:run:77", "x pr:452:run:77"]) {
+    const outcome = await gateWith([appCheckRun({ external_id: externalId })]);
+    assert.equal(outcome.admitted, false, String(externalId));
+  }
+  // Another pull request's later success does not hide this one's failure.
+  const outcome = await gateWith([appCheckRun({ id: 1, conclusion: "failure" }), appCheckRun({ id: 2, external_id: "pr:453:run:78" })]);
+  assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"]);
+  assert.equal(checkNamesPullRequest({ external_id: "pr:452:run:77" }, 452), true);
+});
+
+test("app check (re-review 4, m1): the posted check names the pull request and the admission run", async () => {
+  const workflow = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission.yml"), "utf8");
+  assert.match(workflow, /ADMISSION_PR_NUMBER: \$\{\{ github\.event\.pull_request\.number \}\}/);
+});
+
+test("gate guard (re-review 4, m3): an ungated self-hosted job may not add or change its strategy", () => {
+  const ungated = fs.readFileSync(path.join(ROOT, ".github", "workflows", "trivy.yml"), "utf8");
+  const job = "trivy-trusted-self-hosted";
+  const matrix = ungated.replace("    timeout-minutes: 25\n", "    timeout-minutes: 25\n    strategy:\n      matrix:\n        shard: [1, 2, 3]\n");
+  assert.notEqual(matrix, ungated);
+  assert.deepEqual(gateFindings(matrix, ungated), [`self_hosted_strategy_changed_ungated:${job}`]);
+  assert.deepEqual(gateFindings(ungated, ungated), []);
+});
+
+test("workflows (re-review 4, M2 and m6): renamed deploy secrets; admission side jobs check out the default branch", () => {
+  const dir = path.join(ROOT, ".github", "workflows");
+  for (const file of fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f))) {
+    const text = fs.readFileSync(path.join(dir, file), "utf8");
+    assert.doesNotMatch(text, /secrets\.(CLUED_CLOUDFLARE_DEPLOY_TOKEN|CLUED_ATTESTATION_DATABASE_URL)\s*\}\}/, file);
+  }
+  for (const file of ["clued-work-admission-dispatch.yml", "clued-work-admission-reverify.yml"]) {
+    assert.match(fs.readFileSync(path.join(dir, file), "utf8"),
+      /ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}/, file);
+  }
 });

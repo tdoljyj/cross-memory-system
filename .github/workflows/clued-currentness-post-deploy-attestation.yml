@@ -37,7 +37,7 @@ jobs:
           ldconfig -p | grep 'libicuuc.so.60'
       - name: Verify exact deployed source and install G6 transport attestation
         env:
-          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL }}
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
         run: node scripts/verify-currentness-transport.mjs --production --evidence-out currentness-attestation.json
       - name: Preserve verification evidence
         if: always()

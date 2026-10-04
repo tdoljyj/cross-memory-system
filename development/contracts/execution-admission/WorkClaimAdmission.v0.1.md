@@ -1,6 +1,6 @@
 # Work Claim Admission v0.1：多 Agent 执行准入与费用保护机制候选
 
-状态：**部分实施。** 第 1–6 步已在生产生效，强制开启。第 7 步实测已完成；独立评审 HOLD_FAIL 的修复已合入；2026-10-03 的复审、2026-10-04 的复审 2 与复审 3（Task `869d2db7`）均为 HOLD_FAIL，修复见下（Owner Decisions `38ddb8cf`、`b0c53143`），待再次复审。方向由 Owner 接受（Decision `78ca0c07`），不是架构接受。
+状态：**部分实施。** 第 1–6 步已在生产生效，强制开启。第 7 步实测已完成；独立评审 HOLD_FAIL 的修复已合入；2026-10-03 的复审、2026-10-04 的复审 2、复审 3 与复审 4（Task `869d2db7`）均为 HOLD_FAIL，修复见下（Owner Decisions `38ddb8cf`、`b0c53143`），待再次复审。方向由 Owner 接受（Decision `78ca0c07`），不是架构接受。
 日期：2026-10-01（状态更新 2026-10-02）
 来源：Owner 上传的《Clued 多 Agent 执行协调与费用保护：讨论纪要与既有机制对账》（2026-10-01）的重新评估，以及对纪要第九节源码与合同的只读对账（固定在 commit `f7ba6ff312aa0e90095db1e28f5937920f30de3a`）。
 通用化后续：任意资源、一个门卫多个门口、领取模式（独占/拆分/多份）的设计候选见 [GenericWorkClaim.v0.1.md](GenericWorkClaim.v0.1.md)（Task `52739939`）。
@@ -61,6 +61,18 @@
       - N-R6：准入步骤出错、没报出 head 时，失败 check 发在事件的 head 上。
       - N-R7：`scripts/runner/README.md` 写明重跑、草稿 PR、只能在 main 上跑的 workflow。
     - 仍靠自觉或未覆盖：每小时的复核跳过草稿 PR；runner 检查装上之前，重跑与手动触发只受 gate 约束（「只重跑失败的 job」不经过 gate）。
+  - 复审 4（2026-10-04，Task `869d2db7`，对照 main `73895d93`）：fresh-context 只读评审，HOLD_FAIL。此前各轮的 CI 花费问题（含复审 3 的 N-R1 至 N-R7）在代码里都已修好；合并这一关成立（ruleset 要求 App 5164952 的 check，无豁免名单）。
+    - 新发现：
+      - M1（MAJOR，复审 2 A 的回归）：`/oauth/connections` 撤销旧 Binding（`clued_headless_binding_revoke_v1`，迁移 `20261004170000`，生产已执行）会把它持有的角色一起结束；该角色没有有效持有者后，角色检查回到「从没标过」，谁都能做。
+      - M2（MAJOR）：重跑发布门口上线之前的发布运行，用的是当时没有授权步骤的 workflow，又能读到仓库级的 `CLUED_CLOUDFLARE_DEPLOY_TOKEN` 与 `CLUED_ATTESTATION_DATABASE_URL`，可以不经 Owner 授权把生产回滚到旧提交。
+      - m1–m6（MINOR）：App check 不带 PR 身份，同 head 的另一个 PR 可借用；check 早于重任务运行创建时，合法运行被拒；守卫没管不加闸自托管 job 的 `strategy`；两个有闸 workflow 的自托管 job 没有超时；几处文档；dispatch 与 reverify 检出运行自己的提交。
+    - 修复：
+      - M1：迁移 `20261004220000_legacy_revoke_keeps_roles.sql`，撤销旧 Binding 不再结束角色，与 `manage_v12` 撤销一致：角色锁在已撤销的 Binding 上，直到 Owner 在 `/bindings` 给有效的 Binding 标上或取消。结果与回执写 `roles_kept`。连接页提示改为「撤销后这些角色仍然锁定」。
+      - M2：两个 secret 改名为 `CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2`、`CLUED_ATTESTATION_DATABASE_URL_V2`（发布、存储与核验 workflow 都改用新名）。Owner 合并前新建，合并后删除旧名；旧运行重跑时拿不到部署凭据。
+      - m1/m2：准入 App check 的 `external_id` 写成 `pr:<编号>:run:<准入运行 id>`；gate 与 runner 检查只认写着本 PR 的 check，并接受本次运行创建前两分钟之内发出的（同一次推送触发的准入常常先到）。
+      - m3：守卫拒绝不加闸 workflow 中自托管 job 新增或改动 `strategy`。m4：`public-mcp-behavior`、`public-mcp-protocol` 的自托管 job 设 25 分钟超时。
+      - m5：合同 v27 §1.7 写明不要重跑 PR 或分支手动触发的运行，要重试就推新提交；runner README 写准确「哪条 check 算数」。
+      - m6：dispatch 与 reverify 检出默认分支的当前提交。
 - **尚缺或与本文设计不符**（各条在对应小节标注）：
   - 每认领 CI 分钟预算与 finalize：改为次数上限，不做（§4.5，Owner Decision `a264ea02`）。
   - 备份恢复后 `max(fence)` 会回退，靠恢复后的手工步骤补救（§4.4、§6，Owner Decision `2b23eb0c`）。

@@ -27,9 +27,13 @@ as the string `{"mode": "deploy"}` (or `"preflight"`, `"backup"`,
   requires `source_request_id` and `source_request_digest`.
 - `deploy` builds, gates, deploys `clued-cloud` and runs the post-deploy checks.
 
-The workflow needs the existing `CLUED_ATTESTATION_DATABASE_URL` secret, a
-`CLUED_CLOUDFLARE_DEPLOY_TOKEN` secret scoped to edit the existing `clued-cloud`
-Worker, and the `CLUED_CLOUDFLARE_ACCOUNT_ID` repository variable. The token
+The workflow needs the `CLUED_ATTESTATION_DATABASE_URL_V2` secret, a
+`CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2` secret scoped to edit the existing `clued-cloud`
+Worker, and the `CLUED_CLOUDFLARE_ACCOUNT_ID` repository variable. Both secrets
+were renamed (from the names without `_V2`) after re-review 4, finding M2: a
+re-run replays a run's own workflow file, so a release run from before the
+Owner Grant door could deploy an old commit with no grant. With the old names
+removed, such a re-run gets no deploy credentials. The token
 belongs in GitHub secret storage; never put it in Git, logs, an artifact, or a
 command argument. Backup mode additionally requires a high-entropy
 `CLUED_PRODUCTION_BACKUP_KEY` GitHub secret; retain it while any encrypted

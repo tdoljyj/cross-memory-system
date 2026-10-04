@@ -103,17 +103,21 @@ async function workflowsDifferFromMain(fetchImpl, token, repository, base, sha) 
   return [...names].filter((name) => mine.get(name) !== main.get(name)).sort();
 }
 
-// The newest clued-admission-verified check of the admission App on a head,
-// posted at or after `since` (ms).
-async function admissionCheck(fetchImpl, token, repository, headSha, appId, since) {
+// The newest clued-admission-verified check of the admission App on a head
+// that names this pull request (external_id "pr:<number>:run:<id>"), posted
+// at or after `since` (ms) less CHECK_WINDOW_MS: both runs start from the same
+// event (re-review 4, m1/m2).
+export const CHECK_WINDOW_MS = 120_000;
+async function admissionCheck(fetchImpl, token, repository, headSha, appId, since, prNumber) {
   const body = await github(fetchImpl, token,
     `/repos/${repository}/commits/${headSha}/check-runs?check_name=${ADMISSION_CHECK}&filter=all&per_page=100`);
   let latest = null;
   for (const check of (body && body.check_runs) || []) {
     if (check.name !== ADMISSION_CHECK || check.head_sha !== headSha) continue;
     if (!check.app || Number(check.app.id) !== appId) continue;
+    if (!new RegExp(`^pr:${Number(prNumber)}:run:[0-9]+$`).test(String(check.external_id ?? ""))) continue;
     const posted = Date.parse(check.started_at ?? check.completed_at ?? "");
-    if (!(posted >= since)) continue;
+    if (!(posted >= since - CHECK_WINDOW_MS)) continue;
     if (!latest || Number(check.id) > Number(latest.id)) latest = check;
   }
   return latest;
@@ -190,14 +194,14 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
     if (!Number.isFinite(since)) throw new Error(`run ${runId} has no created_at.`);
     let check = null;
     for (let waited = 0; ; waited += 10) {
-      check = await admissionCheck(fetchImpl, token, repository, pr.head.sha, appId, since);
+      check = await admissionCheck(fetchImpl, token, repository, pr.head.sha, appId, since, pr.number);
       if ((check && check.status === "completed") || waited >= limit) break;
       await sleep(10_000);
     }
     result.allow = Boolean(check && check.status === "completed" && check.conclusion === "success");
     const what = [...new Set(changed)].join(", ");
     result.reason = result.allow ? `pull request #${pr.number} changes ${what}; ${ADMISSION_CHECK} ${check.id} succeeded`
-      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_CHECK} from App ${appId} on ${pr.head.sha} posted since ${run.created_at} (${check ? `${check.status}/${check.conclusion}` : "none"})`;
+      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_CHECK} from App ${appId} on ${pr.head.sha} for #${pr.number} posted since ${run.created_at} less ${CHECK_WINDOW_MS / 1000}s (${check ? `${check.status}/${check.conclusion}` : "none"})`;
     return result;
   }
   throw new Error(`unreachable event ${event}`);
