@@ -39,7 +39,7 @@
     - 修复（迁移 `20261004050000_binding_roles_fail_closed.sql`、`scripts/ci/clued-work-admission.mjs`、`scripts/runner/`、`/bindings` 页面）：
       - A：某个用途只要 Owner 标过、且没在 `/bindings` 上取消，就一直锁着，持有它的 Binding 撤销或过期也一样。那时谁都做不了这件事，直到 Owner 给新的 Binding 标上，或取消。`/bindings` 列出已失效但仍持有用途的 Binding（只能取消）。从没标过的用途保持原行为。
       - N4：workflow 文件里出现单独的 `\r`、U+0085、U+2028、U+2029 或其他控制字符，一律拒绝（`workflow_not_canonical:line_break`）。
-      - N3c：gate 与 runner 检查改认 clued-admission App 在该 head 上的 `clued-admission-verified` check（最新一条为准）。App 的私钥只在 `clued-admission` environment 里，只有 main 上的准入运行能发；不再看工作流运行的 `pull_requests`。gate 需要 `checks: read`，分两步：本次先在 `GATE_JOB_SHA256` 中加入新摘要（gate 读不到 check 时暂按旧办法），下一步把各 workflow 的 gate 改成新写法并去掉旧摘要与旧办法。
+      - N3c：gate 与 runner 检查改认 clued-admission App 在该 head 上的 `clued-admission-verified` check（最新一条为准）。App 的私钥只在 `clued-admission` environment 里，只有 main 上的准入运行能发；不再看工作流运行的 `pull_requests`。gate 需要 `checks: read`，分两步完成：PR #532 先在 `GATE_JOB_SHA256` 中加入新摘要，gate 读不到 check 时暂按旧办法；第二步 PR 给 7 个有闸 workflow 的 gate job 加上 `checks: read`，并去掉旧摘要与旧办法。现在 gate 读不到 check（403）即报错，强制模式下不放行。
       - B：runner 检查对手动触发要求该提交的 `.github/workflows` 与 main 完全一致（逐个文件对象 id），否则先把 main 合进分支。PR 仍按 merge base 比较（PR 的 workflow 来自 merge ref，即 main 加上 PR 的改动）。
       - C：不加闸的自托管 workflow（`model-program-m1-*`、`mps03-native-agent`、`multitrack-governance-projection`、`node-profile-policy`、`runner-budget-policy`、`gitleaks`）每个 job 设 20 分钟超时（gitleaks 25 分钟）。`model-program-m0.yml` 不改：它的哈希登记在冻结的 `development/contracts/model-program/m0/SHA256SUMS.json` 里，job 仍用 GitHub 默认的 6 小时上限。D：合同 v23 改正该句。
     - 仍未修，写明靠自觉：
