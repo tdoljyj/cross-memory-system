@@ -1456,11 +1456,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     "",
   ].join("\n"));
   if (outcome.error) {
-    console.error(`::error title=clued-work-admission::${outcome.error}`);
+    console.error(`::error title=clued-work-admission::${withTokenHint(outcome.error)}`);
     return 1;
   }
   if (!outcome.admitted) {
-    const text = `${outcome.verdict}: ${outcome.reasons.join("; ")}`;
+    const text = withTokenHint(`${outcome.verdict}: ${outcome.reasons.join("; ")}`);
     if (mode === "required" || mode === "dispatch-admit") {
       console.error(`::error title=clued-work-admission::${text}`);
       return 1;
@@ -1474,6 +1474,17 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     console.error(`::notice title=clued-work-admission::Advisory verdict ${outcome.verdict}${outcome.reasons.length ? ` (${outcome.reasons.join("; ")})` : ""}`);
   }
   return 0;
+}
+
+// PermissionSimplification §3.5: a missing token, or one whose Binding no
+// longer holds the ci-admission role (for example after a rotation moved the
+// role to a new token), names the secret to update instead of only the code.
+export const ADMISSION_TOKEN_HINT = "Fix: set the clued-admission environment secret CLUED_ADMISSION_CLUED_TOKEN "
+  + "to the token of the Binding that holds the ci-admission role (Clued /oauth/connections). "
+  + "A rotation moves the role to the new token at once; update the secret with the new token.";
+export function withTokenHint(text) {
+  return /CLUED_CONTEXT_READ_TOKEN is not set|admission_binding_required/.test(text)
+    ? `${text} ${ADMISSION_TOKEN_HINT}` : text;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

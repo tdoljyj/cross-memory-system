@@ -274,6 +274,11 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
     assert.equal(list.status, 'ok');
     const listed = list.grants.map((g) => g.grant_id);
     assert.ok(listed.includes(anyGrant.grant.grant_id));
+    // Ids the Owner can match against what an Agent quotes (PermissionSimplification §3.4).
+    const shown = list.grants.find((g) => g.grant_id === anyGrant.grant.grant_id);
+    assert.equal(shown.request_id, anyReq.request_id);
+    assert.equal(shown.task_id, taskId);
+    assert.equal(shown.task_title, 'grant fixture');
     assert.ok(!listed.includes(direct.grant.grant_id), 'revoked grants are not listed');
     assert.ok(!listed.includes(given.grant.grant_id), 'expired grants are not listed');
     assert.equal(list.pending_requests.length, 1);

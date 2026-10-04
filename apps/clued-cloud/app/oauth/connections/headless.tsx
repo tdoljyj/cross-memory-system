@@ -25,6 +25,13 @@ const ACTIONS: Record<string, string> = {
   read: "读取", write: "新增和修改", close: "关闭和归档", restore: "恢复记录", feedback_submit: "提交反馈", audit: "查看审计回执",
 };
 const ROLES: Record<string, string> = { "ci-admission": "CI 准入", "release-door": "发布门口" };
+// Where each role's token lives on GitHub (PermissionSimplification §3.5). A
+// rotation moves the role at once, but the stored secret does not follow.
+const ROLE_SECRETS: Record<string, string> = {
+  "ci-admission": "GitHub 环境 clued-admission 的 secret CLUED_ADMISSION_CLUED_TOKEN",
+  "release-door": "GitHub 环境 clued-release 的 secret CLUED_RELEASE_TOKEN",
+};
+const secretsFor = (roles: string[]) => roles.map(r => ROLE_SECRETS[r]).filter(Boolean);
 const DAYS = [7, 30, 90];
 const MESSAGES: Record<string, string> = {
   direct_human_session_required: "需要你本人直接登录 Clued，授权给应用的登录不能签发令牌。",
@@ -275,6 +282,9 @@ export default function HeadlessBindings() {
       {issued && <div className="oauth-note" role="status" aria-label="新令牌">
         <strong>令牌已签发，只显示这一次</strong>
         <p>现在把它存进客户端的密钥设置（例如 GitHub environment secret）。离开或刷新页面后无法再次查看。</p>
+        {issued.replaced && secretsFor(strings(issued.replaced.roles_moved)).length > 0 && <p role="alert">
+          <strong>请更新：</strong>{secretsFor(strings(issued.replaced.roles_moved)).join("；")}。
+          旧令牌 {when(String(issued.replaced.expires_at))} 失效，在那之前不更新，用到它的流程会失败。</p>}
         <p><code style={{ overflowWrap: "anywhere" }}>{issued.token}</code></p>
         <div className="oauth-actions">
           <button className="primary-button" type="button" onClick={() => void copy(issued.token)}>{copied ? "已复制" : "复制令牌"}</button>
@@ -299,6 +309,7 @@ export default function HeadlessBindings() {
             <div><dt>类型</dt><dd>{row.kind === "legacy" ? "旧方式创建（全部权限、无有效期）" : "无头令牌"}</dd></div>
             <div><dt>有效期至</dt><dd>{row.replaced_by ? `已被替换，${when(row.expires_at)} 失效` : when(row.expires_at)}</dd></div>
             {row.roles.length > 0 && <div><dt>专用角色</dt><dd>{row.roles.map(r => ROLES[r] ?? r).join("、")}</dd></div>}
+            {secretsFor(row.roles).length > 0 && <div><dt>令牌存放在</dt><dd>{secretsFor(row.roles).join("；")}</dd></div>}
             {row.grants && <div><dt>权限</dt><dd>{row.grants.map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>}
             <div><dt>连接编号</dt><dd>{row.binding_id}</dd></div>
           </dl>

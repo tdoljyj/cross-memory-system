@@ -45,6 +45,9 @@ function remaining(expiresAt: unknown, now: number) {
   return hours < 48 ? "还剩 " + hours + " 小时 " + (minutes % 60) + " 分钟" : "还剩 " + Math.floor(hours / 24) + " 天 " + (hours % 24) + " 小时";
 }
 const list = (value: unknown) => Array.isArray(value) ? value.map(String) : [];
+// The first 8 hex digits of an id: what Agents quote, so the Owner can match a
+// row to "授权 a0e3b847" or "申请 f6b2000e" without reading whole UUIDs.
+const shortId = (value: unknown) => typeof value === "string" && /^[0-9a-f]{8}-/i.test(value) ? value.slice(0, 8).toLowerCase() : "";
 
 export default function OwnerGrantsPage() {
   const [session, setSession] = useState<Session | null>(null);
@@ -112,14 +115,17 @@ export default function OwnerGrantsPage() {
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       {requests.length > 0 && <section aria-label="等待确认"><h2>等待你确认</h2>
         <ul>{requests.map(request => <li key={String(request.request_id)}>
+          {shortId(request.request_id) && <code>申请 {shortId(request.request_id)}</code>}{" "}
           <Link href={String(request.confirm_path)}>{String(request.action)}：{list(request.resources).join("、")}</Link>
           <span className="context-muted"> · {remaining(request.expires_at, now)}</span></li>)}</ul></section>}
       <section aria-label="有效授权"><h2>有效授权</h2>
         {grants === null ? <p role="status">正在读取…</p> : grants.length === 0 ? <p className="context-muted">目前没有有效授权。</p>
           : grants.map(grant => <div key={String(grant.grant_id)} className="owner-grant">
             <dl>
+              <dt>编号</dt><dd><code>授权 {shortId(grant.grant_id)}</code>{shortId(grant.request_id) && <>{" · "}<code>申请 {shortId(grant.request_id)}</code></>}</dd>
               <dt>动作</dt><dd>{String(grant.action_title ?? "")}（{String(grant.action ?? "")}）</dd>
               <dt>范围</dt><dd><ul>{list(grant.resources).map(resource => <li key={resource}>{resource}</li>)}</ul></dd>
+              {shortId(grant.task_id) && <><dt>任务</dt><dd>{typeof grant.task_title === "string" && grant.task_title ? grant.task_title + " " : ""}<code>{shortId(grant.task_id)}</code></dd></>}
               <dt>给谁</dt><dd>{grant.any_agent ? "我的任何 Agent" : String(grant.agent_name ?? "发起请求的 Agent")}</dd>
               <dt>剩余</dt><dd>{remaining(grant.expires_at, now)}</dd>
               <dt>已用</dt><dd>{String(grant.uses ?? 0)}{grant.max_uses == null ? " 次（不限）" : " / " + String(grant.max_uses) + " 次"}</dd>

@@ -323,3 +323,24 @@ test('grants page lists live grants and pending requests; 撤销 revokes one', a
   assert.ok(f.text().includes('目前没有有效授权'));
   assert.equal(f.fetches.length, 0);
 });
+
+test('grants page shows the ids Agents quote: grant, request and Task', async t => {
+  const f = fixture(GRANTS); t.after(() => f.unmount());
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok',
+    grants: [{ grant_id: 'a0e3b847-b0ef-4816-b1c3-863cb770af98', request_id: 'f6b2000e-c180-402b-a3e9-e2c1fc878da1',
+      task_id: 'e86eb58d-afa0-4268-98c2-e21ab754d545', task_title: '连接权限申请',
+      action: 'migration.production', action_title: '经发布 workflow 应用迁移到生产库', resources: ['repo:o/n/f04d5f50'],
+      any_agent: false, agent_name: 'Claude', expires_at: '2099-01-01T00:00:00Z', max_uses: 1, uses: 0 },
+    { grant_id: 'c1d2e3f4-0000-4000-8000-000000000000', request_id: null, task_id: null,
+      action: 'release.production', action_title: '运行生产发布（deploy 模式）', resources: ['repo:o/n/**'],
+      any_agent: true, expires_at: '2099-01-01T00:00:00Z', max_uses: null, uses: 0 }],
+    pending_requests: [request()] }, error: null });
+  await f.settle();
+  const text = f.text();
+  assert.ok(text.includes('授权 a0e3b847'));
+  assert.ok(text.includes('申请 f6b2000e'));
+  assert.ok(text.includes('连接权限申请 e86eb58d'));
+  assert.ok(text.includes('授权 c1d2e3f4'), 'a grant the Owner started has no request id');
+  assert.ok(text.includes('申请 33333333'), 'a pending request shows its id');
+});
