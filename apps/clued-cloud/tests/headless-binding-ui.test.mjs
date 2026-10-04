@@ -134,8 +134,18 @@ test('rotating the legacy CI Binding names it and shows the moving role', async 
   await open(f);
   const legacy = f.nodes('article').find(n => f.text(n).includes('clued-work-admission'));
   assert.deepEqual(f.nodes('button', legacy).map(n => f.text(n)), ['轮换为新令牌'], 'a legacy Binding can only be rotated here');
+  // Before rotating, the issue form sits above the list, not after it.
+  const inOrder = []; (function visit(n) { if (Array.isArray(n)) return n.forEach(visit); if (!n || typeof n !== 'object') return;
+    if (n.type === 'div' || n.type === 'article') inOrder.push(n); visit(n.props?.children); })(f.nodes('section')[0]);
+  const formAt = inOrder.findIndex(n => n.props['aria-label'] === '签发表单');
+  assert.ok(formAt >= 0 && formAt < inOrder.findIndex(n => n.type === 'article'), 'issue form before the first card');
   f.button('轮换为新令牌', legacy).props.onClick(); f.render();
   assert.ok(f.text().includes('轮换「clued-work-admission」'));
+  // The rotation form opens inside the card that was clicked, which no longer offers the button.
+  const rotating = f.nodes('article').find(n => f.text(n).includes('clued-work-admission'));
+  assert.ok(f.nodes('div', rotating).some(n => n.props['aria-label'] === '轮换表单'), 'form inside the clicked card');
+  assert.ok(!f.nodes('button', rotating).some(n => f.text(n) === '轮换为新令牌'));
+  assert.equal(f.nodes('div').filter(n => n.props['aria-label'] === '签发表单').length, 0, 'no second form at the top');
   checkbox(f, '全局视图', '读取').props.onChange({ target: { checked: true } }); f.render();
   f.button('预览').props.onClick();
   assert.deepEqual(plain(f.calls[1].args.p_input), { label: 'clued-work-admission', days: 30, replaces_binding_id: 'b-legacy',
