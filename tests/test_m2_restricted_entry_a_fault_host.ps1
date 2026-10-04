@@ -4,6 +4,8 @@ $ErrorActionPreference='Stop'
 trap { Write-Host $_.ScriptStackTrace; throw $_ }
 . (Join-Path $PSScriptRoot '../kernel/host/m2-restricted-entry-a-fault-host.ps1')
 Set-StrictMode -Version Latest
+$script:HarmlessTestPython='C:\Users\Windows\AppData\Local\Programs\Python\Python312\python.exe'
+# Test-only executable for print/exit children. Production Get-M2FaultConstants stays pinned to Program Files.
 $script:checks=0
 function Assert($Condition,[string]$Message) { if(!$Condition) { throw "ASSERT: $Message" }; $script:checks++ }
 function Denies([scriptblock]$Action,[string]$Message) {
@@ -18,13 +20,13 @@ function New-FakeProcess($ExitCode,[switch]$GetterError,[switch]$Timeout,[switch
     $value
 }
 function New-HarmlessPythonProcess([int]$Code,[string]$Text='harmless') {
-    $psi=[Diagnostics.ProcessStartInfo]::new(); $psi.FileName=(Get-M2FaultConstants).Python
+    $psi=[Diagnostics.ProcessStartInfo]::new(); $psi.FileName=$script:HarmlessTestPython
     $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true; $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true
     foreach($argument in @('-I','-S','-c',"import sys; print('$Text'); sys.exit($Code)")) { $psi.ArgumentList.Add($argument) }
     $process=[Diagnostics.Process]::new(); $process.StartInfo=$psi; Assert ($process.Start()) 'harmless Python starts'; $process
 }
-$python=(Get-M2FaultConstants).Python
-Assert (Test-Path -LiteralPath $python) 'fixed existing Python available'
+$python=$script:HarmlessTestPython
+Assert (Test-Path -LiteralPath $python) 'explicit harmless test Python available'
 # Compile declarations only; do not call any native method. FILETIME alignment must match Windows ABI.
 Initialize-M2FaultNative
 Assert ([Runtime.InteropServices.Marshal]::SizeOf([type][M2FaultNative+FileInfo]) -eq 52) 'native file identity structure size'
@@ -91,7 +93,7 @@ foreach($stderr in @($validAudit,'malformed trusted audit')) {
     # Real harmless fixed Python child prints summary+audit, never imports or starts the bridge.
     $stdout64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($validSummary))
     $stderr64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($stderr))
-    $psi=[Diagnostics.ProcessStartInfo]::new(); $psi.FileName=(Get-M2FaultConstants).Python; $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true; $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true
+    $psi=[Diagnostics.ProcessStartInfo]::new(); $psi.FileName=$script:HarmlessTestPython; $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true; $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true
     $code="import base64,sys; sys.stdout.write(base64.b64decode('$stdout64').decode()); sys.stderr.write(base64.b64decode('$stderr64').decode()); sys.exit(0)"
     foreach($argument in @('-B','-I','-S','-c',$code)) { $psi.ArgumentList.Add($argument) }
     $child=[Diagnostics.Process]::new(); $child.StartInfo=$psi
@@ -114,9 +116,9 @@ foreach($name in @('Install-M2FaultHost','Invoke-M2FaultHost','Remove-M2FaultHos
     $parameters=(Get-Command $name).Parameters
     foreach($forbidden in @('Command','Role','Root','AgentMode','VmId','Python')) { Assert (!$parameters.ContainsKey($forbidden)) "$name has no arbitrary $forbidden" }
 }
-Denies { Install-M2FaultHost -ExactZip 'C:\invalid.zip' -ApprovedSha256 ('a'*64) } 'install denies missing Owner approval before any native operation'
-Denies { Invoke-M2FaultHost -ApprovedSha256 ('a'*64) -ApprovedReceiptSha256 ('b'*64) } 'run denies missing Owner approval'
-Denies { Remove-M2FaultHost -ApprovedSha256 ('a'*64) -ApprovedReceiptSha256 ('b'*64) } 'cleanup denies missing Owner approval'
+Denies { Install-M2FaultHost -ExactZip 'C:\invalid.zip' -ApprovedSha256 ('a'*64) -RuntimePackage 'C:\invalid-runtime.zip' -ApprovedRuntimePackageSha256 ('c'*64) } 'install denies missing Owner approval before any native operation'
+Denies { Invoke-M2FaultHost -ApprovedSha256 ('a'*64) -ApprovedReceiptSha256 ('b'*64) -ApprovedRuntimePackageSha256 ('c'*64) } 'run denies missing Owner approval'
+Denies { Remove-M2FaultHost -ApprovedSha256 ('a'*64) -ApprovedReceiptSha256 ('b'*64) -ApprovedRuntimePackageSha256 ('c'*64) } 'cleanup denies missing Owner approval'
 
 # Package bytes: actual ZIP I/O; ACL boundary alone replaced so test never needs elevation.
 $originalPrivate=(Get-Command Assert-M2FaultPrivatePath).ScriptBlock
@@ -209,29 +211,30 @@ try {
 } finally { Set-Item Function:Get-M2FaultUtcNow $originalClock }
 # Cleanup all-or-deny and post-failure single-delete behavior, entirely mocked.
 $savedFunctions=@{}
-foreach($name in @('Assert-M2FaultOwner','Assert-M2FaultVm','Read-M2FaultReceipt','Add-M2FaultAudit','Remove-Item','Test-Path','Get-Acl')) { $command=Get-Command $name; $savedFunctions[$name]=if($command.CommandType -eq 'Function'){$command.ScriptBlock}else{$null} }
+foreach($name in @('Assert-M2FaultOwner','Assert-M2FaultVm','Read-M2FaultReceipt','Add-M2FaultAudit','Remove-Item','Remove-M2FaultRuntimeDirectory','Test-Path','Get-Acl')) { $command=Get-Command $name; $savedFunctions[$name]=if($command.CommandType -eq 'Function'){$command.ScriptBlock}else{$null} }
 $script:deletes=[Collections.Generic.List[string]]::new(); $script:auditEvents=[Collections.Generic.List[string]]::new()
 $script:receiptError=$true; $script:postPresent=$false
 $c=Get-M2FaultConstants
-$script:cleanupReceipt=@{stage='retained-stage';files=@(@{path=(Join-Path $c.Root 'fault_bridge.py')},@{path=(Join-Path $c.Root 'fault-profile.json')});guid=@{path=$c.RegistryParent+'\'+$c.ServiceId};registry_parent_dacl='unchanged'}
+$script:cleanupReceipt=@{stage='retained-stage';files=@(@{path=(Join-Path $c.Root 'fault_bridge.py')},@{path=(Join-Path $c.Root 'fault-profile.json')},@{path=(Join-Path $c.Root 'runtime-manifest.json')});runtime_files=@(foreach($name in Get-M2FaultRuntimeMembers){@{path=(Join-Path $c.Runtime $name)}});runtime_directory=@{path=$c.Runtime};guid=@{path=$c.RegistryParent+'\'+$c.ServiceId};registry_parent_dacl='unchanged'}
 function Assert-M2FaultOwner { param([switch]$OwnerApproved) }
 function Assert-M2FaultVm { @{Id=(Get-M2FaultConstants).VmId} }
-function Read-M2FaultReceipt { param($ApprovedSha256,$ApprovedReceiptSha256) if($script:receiptError){throw 'FILE_IDENTITY_CHANGED'}; $script:cleanupReceipt }
+function Read-M2FaultReceipt { param($ApprovedSha256,$ApprovedReceiptSha256,$ApprovedRuntimePackageSha256) if($script:receiptError){throw 'FILE_IDENTITY_CHANGED'}; $script:cleanupReceipt }
 function Add-M2FaultAudit { param($Stage,$Record) $script:auditEvents.Add($Record.event) }
 function Remove-Item { param($LiteralPath,[switch]$Force,$ErrorAction) $script:deletes.Add($LiteralPath) }
+function Remove-M2FaultRuntimeDirectory { $script:deletes.Add((Get-M2FaultConstants).Runtime) }
 function Test-Path { param($LiteralPath) $script:postPresent }
 function Get-Acl { param($LiteralPath) [pscustomobject]@{Sddl='unchanged'} }
 try {
-    Denies { Remove-M2FaultHost -ApprovedSha256 ('a'*64) -ApprovedReceiptSha256 ('b'*64) -OwnerApproved } 'any identity preassert failure prevents deletion'
+    Denies { Remove-M2FaultHost -ApprovedSha256 ('a'*64) -ApprovedReceiptSha256 ('b'*64) -ApprovedRuntimePackageSha256 ('c'*64) -OwnerApproved } 'any identity preassert failure prevents deletion'
     Assert ($script:deletes.Count -eq 0 -and $script:auditEvents.Count -eq 0) 'all targets validated before first delete'
     $script:receiptError=$false; $script:postPresent=$true
-    Denies { Remove-M2FaultHost -ApprovedSha256 ('a'*64) -ApprovedReceiptSha256 ('b'*64) -OwnerApproved } 'independent read postassert failure reported'
-    Assert ($script:deletes.Count -eq 3) 'exactly three deletions, no postassert retry'
+    Denies { Remove-M2FaultHost -ApprovedSha256 ('a'*64) -ApprovedReceiptSha256 ('b'*64) -ApprovedRuntimePackageSha256 ('c'*64) -OwnerApproved } 'independent read postassert failure reported'
+    Assert ($script:deletes.Count -eq 42) 'exactly 3 host files +37 runtime files +1 empty runtime directory +1 GUID, no postassert retry'
     Assert (!$script:deletes.Contains('retained-stage')) 'stage receipt and audit retained'
     $script:deletes.Clear(); $script:auditEvents.Clear(); $script:postPresent=$false
-    $clean=Remove-M2FaultHost -ApprovedSha256 ('a'*64) -ApprovedReceiptSha256 ('b'*64) -OwnerApproved
+    $clean=Remove-M2FaultHost -ApprovedSha256 ('a'*64) -ApprovedReceiptSha256 ('b'*64) -ApprovedRuntimePackageSha256 ('c'*64) -OwnerApproved
     Assert ($clean.status -eq 'CLEANUP_READ_POST_CONFIRMED' -and !$clean.dvd_changed) 'independent read post success, existing DVD untouched'
-    Assert ($script:deletes.Count -eq 3 -and $script:auditEvents[-1] -eq 'cleanup-read-post-confirmed') 'cleanup audit appended after post confirmation'
+    Assert ($script:deletes.Count -eq 42 -and $script:auditEvents[-1] -eq 'cleanup-read-post-confirmed') 'cleanup audit appended after post confirmation'
 } finally {
     foreach($name in $savedFunctions.Keys) { if($savedFunctions[$name]){Set-Item ("Function:"+$name) $savedFunctions[$name]}else{Microsoft.PowerShell.Management\Remove-Item ("Function:"+$name)} }
 }

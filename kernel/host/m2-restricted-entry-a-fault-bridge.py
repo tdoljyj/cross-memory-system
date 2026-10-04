@@ -14,7 +14,7 @@ import uuid
 
 VM_ID = '9d775385-4546-4450-a77f-08cdf4f696b6'
 SERVICE_ID = '0000ac45-facb-11e6-bd58-64006a7986d3'
-PROFILE = Path(r'C:\Clued\M2Isolation\host-a\fault-profile.json')
+PROFILE = Path(r'C:\Program Files\CluedM2Fault\host-a\fault-profile.json')
 CASES = ('timeout', 'revoke', 'disconnect')
 REQUEST_IDS = {case: 'm2-fault-20261004-' + case + '-01' for case in CASES}
 MAX_FRAME = 98304

@@ -86,13 +86,31 @@ Host revoke/disconnect latency qualification. All records retain NOT_ISSUED.
 
 The PowerShell7.2 helper is inert when dot-sourced and denies direct CLI use. Its
 explicit install/run/remove functions require OwnerApproved, exact package SHA
-and, after install, independently approved receipt SHA. It pins DESK-W-591 and
-VM9d775385-4546-4450-a77f-08cdf4f696b6, offline1CPU/2GiB, the existing Python312
-path, service GUID0000ac45-facb-11e6-bd58-64006a7986d3 and fixed host-a paths.
-Collision aborts. Parent, code, profile and registry ACL/identity checks are
-management-owned and forbid nonmanagement writes; the helper never repairs ACLs.
-These prerequisites may currently fail closed on ordinary user-owned Python
-parents. Such remediation requires its own precise scope and permission.
+and, after install, independently approved receipt SHA. Each operation also
+requires the independently approved host-only runtime-package SHA. It pins
+DESK-W-591 and VM9d775385-4546-4450-a77f-08cdf4f696b6, offline1CPU/2GiB,
+`C:\Program Files\CluedM2Fault\host-a`, and the separate protected
+`python-3.14.8-amd64` runtime under that anchor. The existing service GUID remains
+0000ac45-facb-11e6-bd58-64006a7986d3. The two-member runtime package contains the
+fixed official archive plus its closed 37-member hash manifest; it is never put
+inside the bounded nine-member guest companion. Source signature verification
+requires the independent fixed-release verifier receipt; hashing alone does not
+verify the publisher.
+
+Collision aborts. New directories/files and the fixed registry key receive
+BA/SYSTEM ownership and a protected management DACL atomically at creation.
+Exact OS ancestors admit TrustedInstaller ownership with effective mutation
+rights checked; inherit-only ACEs do not grant rights on their current object.
+Other owners, effective generic write/all, replacement rights, reparse points,
+hardlinks, runtime-member drift and unknown members fail closed. The helper
+does not modify any existing parent ACL. The fixed Windows/System32 dependency
+directories are checked and receipt-bound; OS dynamic DLL dependencies remain
+a trusted OS boundary rather than complete AgentHost qualification.
+
+Before launch the helper rejects inherited nonempty DLL search state, verifies
+the entire runtime including stdlib ZIP and `_pth`, uses a protected fixed
+working directory, clears the inherited environment, and supplies only fixed
+SystemRoot/WINDIR/System32 PATH and protected TEMP/TMP. Python uses `-B -I -S`.
 
 The helper retains Process.Handle before WaitForExit, accepts only an integer
 exit code and preserves null/getter/timeout as UNKNOWN. Successful stderr is
@@ -105,8 +123,10 @@ is no AttachThreadInput or arbitrary guest command parameter.
 
 Host stage/receipt/audit remain under `host-a/fault-stage-<full-companion-SHA>`.
 Matched cleanup validates every deletion target before deletion, removes only
-the two installed files and exact GUID, then independently reads absences. Stage,
-receipts/audit and parent ACL remain; failure causes no repeat deletion. DVD is
+the three installed host files, 37 runtime files, empty runtime directory and
+exact GUID, then independently reads absences. Stage, receipts/audit, anchor,
+host directory, private temporary directory and parent ACL remain; failure
+causes no repeat deletion. DVD is
 untouched. This helper does not create an ISO, change DVD media, load hv_sock or
 alter guest network. A future staging/module/mount action is outside its scope
 and must name exact targets and matching read-post cleanup in the runtime packet.

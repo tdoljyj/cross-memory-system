@@ -4,10 +4,13 @@
 function Get-M2FaultConstants {
     [pscustomobject]@{
         VmId='9d775385-4546-4450-a77f-08cdf4f696b6'; VmName='m2-isolation-probe'; HostName='DESK-W-591'
-        Root='C:\Clued\M2Isolation\host-a'; Python='C:\Users\Windows\AppData\Local\Programs\Python\Python312\python.exe'
+        Anchor='C:\Program Files\CluedM2Fault'; Root='C:\Program Files\CluedM2Fault\host-a'
+        Runtime='C:\Program Files\CluedM2Fault\python-3.14.8-amd64'; Python='C:\Program Files\CluedM2Fault\python-3.14.8-amd64\python.exe'
+        RuntimeSha256='a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310'
+        RuntimeArchive='python-3.14.8-embed-amd64.zip'; RuntimeDirectory='python-3.14.8-amd64'
         ServiceId='0000ac45-facb-11e6-bd58-64006a7986d3'
         RegistryParent='HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Virtualization\GuestCommunicationServices'
-        ElementName='Clued M2 A Empty Probe'; TimeoutMs=30000; MaxZipBytes=16777216
+        ElementName='Clued M2 A Empty Probe'; TimeoutMs=30000; MaxZipBytes=2097152
         Members=@('base-a.zip','fault_fixture.py','fault_observer.py','management.py','fault_bridge.py','host-helper.ps1','fault-installer.py','fault-plan.json','manifest.json')
         GuestRun='/usr/bin/python3 -B -I -S /usr/local/lib/clued-m2-a-fault-fixture/management.py --run-fixed-batch'
         GuestSummary='/usr/bin/python3 -B -I -S /usr/local/lib/clued-m2-a-fault-fixture/management.py --summarize-fixed-batch'
@@ -16,6 +19,70 @@ function Get-M2FaultConstants {
 function Get-M2FaultHash([byte[]]$Bytes) {
     $sha=[Security.Cryptography.SHA256]::Create()
     try { ([BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+}
+function Get-M2FaultRuntimeMembers {
+    @('python.exe','pythonw.exe','python314.dll','python3.dll','vcruntime140.dll','vcruntime140_1.dll','LICENSE.txt','pyexpat.pyd','select.pyd','unicodedata.pyd','winsound.pyd','_asyncio.pyd','_bz2.pyd','_ctypes.pyd','_decimal.pyd','_elementtree.pyd','_hashlib.pyd','_lzma.pyd','_multiprocessing.pyd','_overlapped.pyd','_queue.pyd','_remote_debugging.pyd','_socket.pyd','_sqlite3.pyd','_ssl.pyd','_uuid.pyd','_wmi.pyd','_zoneinfo.pyd','_zstd.pyd','libcrypto-3.dll','libffi-8.dll','libssl-3.dll','libtommath.dll','sqlite3.dll','python314.zip','python314._pth','python.cat')
+}
+function Read-M2FaultImmutableSnapshot([string]$Path,[string]$Sha256,[int]$MaximumBytes) {
+    if($Sha256 -cnotmatch '^[0-9a-f]{64}$' -or ![IO.Path]::IsPathFullyQualified($Path)) { throw 'SOURCE_APPROVAL_REQUIRED' }
+    if(((Get-Item -LiteralPath $Path -Force -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'SOURCE_REPARSE_DENIED' }
+    $stream=[IO.File]::Open($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+    try {
+        if($stream.Length -le 0 -or $stream.Length -gt $MaximumBytes) { throw 'SOURCE_SIZE_INVALID' }
+        $bytes=[byte[]]::new([int]$stream.Length); $offset=0
+        while($offset -lt $bytes.Length) { $read=$stream.Read($bytes,$offset,$bytes.Length-$offset); if($read -le 0) { throw 'SOURCE_TRUNCATED' }; $offset+=$read }
+        if($stream.ReadByte() -ne -1 -or (Get-M2FaultHash $bytes) -cne $Sha256) { throw 'SOURCE_HASH_INVALID' }
+        return ,$bytes
+    } finally { $stream.Dispose() }
+}
+function Expand-M2FaultClosedZip([byte[]]$Bytes,[string[]]$Members,[int]$MaximumExpandedBytes) {
+    $memory=[IO.MemoryStream]::new($Bytes,$false); $archive=[IO.Compression.ZipArchive]::new($memory,[IO.Compression.ZipArchiveMode]::Read,$false)
+    try {
+        $payload=@{}; $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal); [long]$total=0
+        foreach($entry in $archive.Entries) {
+            $total+=$entry.Length
+            $mode=($entry.ExternalAttributes -shr 16) -band 0xF000
+            # Official Windows archive regular entries have Unix regular modes. No directories, symlinks or extras.
+            if(!$seen.Add($entry.FullName) -or $entry.FullName -cnotin $Members -or $entry.Length -lt 0 -or $total -gt $MaximumExpandedBytes -or $mode -ne 0x8000) { throw 'RUNTIME_ZIP_MEMBER_INVALID' }
+            $inputStream=$entry.Open(); $output=[IO.MemoryStream]::new()
+            try {
+                $buffer=[byte[]]::new(8192)
+                while(($read=$inputStream.Read($buffer,0,$buffer.Length)) -gt 0) { if($output.Length+$read -gt $entry.Length) { throw 'RUNTIME_ZIP_MEMBER_LENGTH_INVALID' }; $output.Write($buffer,0,$read) }
+                if($output.Length -ne $entry.Length) { throw 'RUNTIME_ZIP_MEMBER_LENGTH_INVALID' }
+                $payload[$entry.FullName]=$output.ToArray()
+            } finally { $inputStream.Dispose(); $output.Dispose() }
+        }
+        if($seen.Count -ne $Members.Count) { throw 'RUNTIME_ZIP_MEMBER_MISSING' }
+        $payload
+    } finally { $archive.Dispose(); $memory.Dispose() }
+}
+function Assert-M2FaultRuntimeManifest($Manifest) {
+    $c=Get-M2FaultConstants
+    Assert-M2FaultKeys $Manifest @('schema','archive_sha256','runtime_directory','files')
+    if($Manifest.schema -cne 'm2-a-fault-runtime-v1' -or $Manifest.archive_sha256 -cne $c.RuntimeSha256 -or $Manifest.runtime_directory -cne $c.RuntimeDirectory) { throw 'RUNTIME_MANIFEST_INVALID' }
+    Assert-M2FaultKeys $Manifest.files (Get-M2FaultRuntimeMembers)
+    foreach($name in $Manifest.files.Keys) { if($Manifest.files[$name] -isnot [string] -or $Manifest.files[$name] -cnotmatch '^[0-9a-f]{64}$') { throw 'RUNTIME_MANIFEST_HASH_INVALID' } }
+}
+function Read-M2FaultRuntimePackage([string]$RuntimePackage,[string]$ApprovedRuntimePackageSha256) {
+    $c=Get-M2FaultConstants
+    $bytes=Read-M2FaultImmutableSnapshot $RuntimePackage $ApprovedRuntimePackageSha256 18874368
+    $outer=Expand-M2FaultClosedZip $bytes @($c.RuntimeArchive,'runtime-manifest.json') 18874368
+    $manifest=ConvertFrom-M2FaultJson $outer['runtime-manifest.json']; Assert-M2FaultRuntimeManifest $manifest
+    if((Get-M2FaultHash $outer[$c.RuntimeArchive]) -cne $c.RuntimeSha256) { throw 'OFFICIAL_RUNTIME_ARCHIVE_HASH_INVALID' }
+    $files=Expand-M2FaultClosedZip $outer[$c.RuntimeArchive] (Get-M2FaultRuntimeMembers) 67108864
+    foreach($name in $files.Keys) { if((Get-M2FaultHash $files[$name]) -cne $manifest.files[$name]) { throw 'RUNTIME_MEMBER_HASH_INVALID' } }
+    [pscustomobject]@{sha256=$ApprovedRuntimePackageSha256;manifest=$manifest;manifest_bytes=$outer['runtime-manifest.json'];files=$files}
+}
+function Assert-M2FaultInstalledRuntime($Manifest) {
+    Assert-M2FaultRuntimeManifest $Manifest
+    $c=Get-M2FaultConstants; Assert-M2FaultPrivatePath $c.Runtime
+    $children=@(Get-ChildItem -LiteralPath $c.Runtime -Force -ErrorAction Stop)
+    if((@($children.Name|Sort-Object)-join '|') -cne (@((Get-M2FaultRuntimeMembers)|Sort-Object)-join '|')) { throw 'RUNTIME_INSTALLED_CLOSED_MEMBERS_INVALID' }
+    foreach($item in $children) {
+        if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'RUNTIME_INSTALLED_REPARSE_OR_DIRECTORY' }
+        $actual=Get-M2FaultPathEvidence $item.FullName
+        if($actual.sha256 -cne $Manifest.files[$item.Name]) { throw 'RUNTIME_INSTALLED_HASH_INVALID' }
+    }
 }
 function Assert-M2FaultKeys($Value,[string[]]$Keys) {
     $actual=@($Value.Keys | Sort-Object); $expected=@($Keys | Sort-Object)
@@ -42,7 +109,7 @@ function ConvertFrom-M2FaultJson([byte[]]$Bytes) {
 function Read-M2FaultPackage([string]$ExactZip,[string]$ApprovedSha256) {
     $c=Get-M2FaultConstants
     if ($ApprovedSha256 -cnotmatch '^[0-9a-f]{64}$' -or ![IO.Path]::IsPathFullyQualified($ExactZip)) { throw 'PACKAGE_APPROVAL_REQUIRED' }
-    Assert-M2FaultPrivatePath $ExactZip
+    if(((Get-Item -LiteralPath $ExactZip -Force -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'SOURCE_REPARSE_DENIED' }
     # One bounded immutable byte snapshot under a read-only sharing lease. No extraction from a second open.
     $stream=[IO.File]::Open($ExactZip,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
     try {
@@ -81,41 +148,47 @@ function Read-M2FaultPackage([string]$ExactZip,[string]$ApprovedSha256) {
         [pscustomobject]@{Sha256=$ApprovedSha256; Payload=$payload; Manifest=$manifest; ExactZip=[IO.Path]::GetFullPath($ExactZip)}
     } finally { $archive.Dispose(); $memory.Dispose() }
 }
+function Get-M2FaultManagementSids { @('S-1-5-18','S-1-5-32-544') }
+function Get-M2FaultServicingSid { 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464' }
+function Assert-M2FaultPathAcl([string]$Path,$Acl) {
+    $full=[IO.Path]::GetFullPath($Path).TrimEnd('\'); if($full -ceq 'C:') { $full='C:\' }
+    $c=Get-M2FaultConstants; $osAncestor=$full -cin @('C:\','C:\Program Files','C:\Windows','C:\Windows\System32')
+    $protectedTarget=$full -ceq $c.Anchor -or $full.StartsWith($c.Anchor+'\',[StringComparison]::Ordinal)
+    if(!$osAncestor -and !$protectedTarget) { throw 'PATH_OUTSIDE_FIXED_ANCHOR' }
+    $management=@(Get-M2FaultManagementSids); $trusted=@($management)
+    if($osAncestor) { $trusted+=Get-M2FaultServicingSid }
+    $owner=$Acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if($owner -cnotin $trusted -or (!$osAncestor -and !$Acl.AreAccessRulesProtected)) { throw 'UNTRUSTED_OWNER_OR_INHERITED_TARGET_DACL' }
+    foreach($rule in $Acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
+        # An inherit-only ACE is not effective on this object. Descendants are checked independently.
+        if($rule.AccessControlType -ne 'Allow' -or ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0 -or $rule.IdentityReference.Value -cin $trusted) { continue }
+        $mask=[long]$rule.FileSystemRights
+        # Raw generic access bits may not intersect the enum's low write/delete mask.
+        if(($mask -band 0x50000000L) -ne 0) { throw 'NON_MANAGEMENT_GENERIC_MUTATION_DENIED' }
+        $forbidden=[long]([Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership)
+        if($full -ceq 'C:\') { $forbidden=$forbidden -band (-bnot [long][Security.AccessControl.FileSystemRights]::CreateDirectories) }
+        if(($mask -band $forbidden) -ne 0) { throw 'NON_MANAGEMENT_EFFECTIVE_PATH_MUTATION_DENIED' }
+    }
+}
 function Assert-M2FaultPrivatePath([string]$Path) {
     $cursor=[IO.Path]::GetFullPath($Path)
     while($cursor) {
         $item=Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
         if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'REPARSE_PATH_DENIED' }
         $acl=Get-Acl -LiteralPath $cursor -ErrorAction Stop
-        if($acl.Owner -notin @('BUILTIN\Administrators','NT AUTHORITY\SYSTEM')) { throw 'UNTRUSTED_OWNER' }
-        foreach($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
-            $writeMask=[Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
-            if($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $writeMask) -ne 0 -and $rule.IdentityReference.Value -notin @('S-1-5-18','S-1-5-32-544')) { throw 'NON_MANAGEMENT_WRITE_DENIED' }
-        }
+        Assert-M2FaultPathAcl $cursor $acl
         $parent=[IO.Directory]::GetParent($cursor); if(!$parent) { break }; $cursor=$parent.FullName
     }
 }
-function Set-M2FaultPrivateAcl([string]$Path,[switch]$Directory,[switch]$Registry) {
-    $acl=if($Registry) { [Security.AccessControl.RegistrySecurity]::new() } elseif($Directory) { [Security.AccessControl.DirectorySecurity]::new() } else { [Security.AccessControl.FileSecurity]::new() }
-    $acl.SetAccessRuleProtection($true,$false)
-    $admins=[Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'); $acl.SetOwner($admins)
-    foreach($sid in @('S-1-5-18','S-1-5-32-544')) {
-        $identity=[Security.Principal.SecurityIdentifier]::new($sid)
-        if($Registry) { $rule=[Security.AccessControl.RegistryAccessRule]::new($identity,'FullControl','Allow') }
-        elseif($Directory) { $rule=[Security.AccessControl.FileSystemAccessRule]::new($identity,'FullControl','ContainerInherit,ObjectInherit','None','Allow') }
-        else { $rule=[Security.AccessControl.FileSystemAccessRule]::new($identity,'FullControl','Allow') }
-        $acl.AddAccessRule($rule)
-    }
-    Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
-}
 function Initialize-M2FaultNative {
-    if('M2FaultNative' -as [type]) { return }
+    if('M2FaultNative' -as [type]) { if([M2FaultNative]::RuntimeSecurityVersion -cne 'm2-atomic-runtime-v1') { throw 'NATIVE_HELPER_TYPE_COLLISION' }; return }
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 public static class M2FaultNative {
+ public const string RuntimeSecurityVersion="m2-atomic-runtime-v1";
  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd,StringBuilder text,int count);
@@ -128,6 +201,21 @@ public static class M2FaultNative {
  [DllImport("kernel32.dll",SetLastError=true)] public static extern bool GetFileInformationByHandle(SafeFileHandle handle,out FileInfo info);
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern SafeFileHandle CreateFile(string name,uint access,uint share,IntPtr security,uint disposition,uint flags,IntPtr template);
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode)] public static extern int RegQueryInfoKey(IntPtr key,IntPtr name,IntPtr length,IntPtr reserved,IntPtr subkeys,IntPtr maxSubkey,IntPtr maxClass,IntPtr values,IntPtr maxValueName,IntPtr maxValueLength,IntPtr securityLength,out long lastWrite);
+ [StructLayout(LayoutKind.Sequential)] private struct SecurityAttributes { public int length; public IntPtr descriptor; [MarshalAs(UnmanagedType.Bool)] public bool inheritHandle; }
+ [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string sddl,uint revision,out IntPtr descriptor,out uint size);
+ [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr handle);
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool CreateDirectory(string path,ref SecurityAttributes security);
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool RemoveDirectory(string path);
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern SafeFileHandle CreateFile(string path,uint access,uint share,ref SecurityAttributes security,uint disposition,uint flags,IntPtr template);
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern uint GetDllDirectory(uint size,StringBuilder path);
+ [DllImport("advapi32.dll",CharSet=CharSet.Unicode)] private static extern int RegCreateKeyEx(IntPtr root,string subkey,uint reserved,string cls,uint options,uint access,ref SecurityAttributes security,out IntPtr key,out uint disposition);
+ [DllImport("advapi32.dll")] private static extern int RegCloseKey(IntPtr key);
+ private static SecurityAttributes Security(string sddl) { IntPtr descriptor; uint size; if(!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl,1,out descriptor,out size)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); return new SecurityAttributes { length=Marshal.SizeOf(typeof(SecurityAttributes)),descriptor=descriptor,inheritHandle=false }; }
+ public static void CreateProtectedDirectory(string path) { var security=Security("O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"); try { if(!CreateDirectory(path,ref security)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); } finally { LocalFree(security.descriptor); } }
+ public static void RemoveEmptyDirectory(string path) { if(!RemoveDirectory(path)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); }
+ public static SafeFileHandle CreateProtectedFile(string path) { var security=Security("O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)"); try { var handle=CreateFile(path,0x40000000,0,ref security,1,0x00200080,IntPtr.Zero); if(handle.IsInvalid) { int error=Marshal.GetLastWin32Error(); handle.Dispose(); throw new System.ComponentModel.Win32Exception(error); } return handle; } finally { LocalFree(security.descriptor); } }
+ public static void CreateProtectedServiceKey() { var security=Security("O:BAG:BAD:P(A;;KA;;;SY)(A;;KA;;;BA)"); IntPtr key=IntPtr.Zero; try { uint disposition; int error=RegCreateKeyEx(new IntPtr(unchecked((int)0x80000002)),"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Virtualization\\GuestCommunicationServices\\0000ac45-facb-11e6-bd58-64006a7986d3",0,null,0,0xF003F,ref security,out key,out disposition); if(error!=0) throw new System.ComponentModel.Win32Exception(error); if(disposition!=1) throw new InvalidOperationException("SERVICE_GUID_COLLISION"); } finally { if(key!=IntPtr.Zero) RegCloseKey(key); LocalFree(security.descriptor); } }
+ public static string InheritedDllDirectory() { var path=new StringBuilder(32768); uint count=GetDllDirectory((uint)path.Capacity,path); if(count>=path.Capacity) throw new InvalidOperationException("DLL_DIRECTORY_UNBOUNDED"); if(count==0 && Marshal.GetLastWin32Error()!=0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); return path.ToString(); }
 }
 '@
 }
@@ -136,7 +224,7 @@ function Get-M2FaultFileIdentity([string]$Path) {
     $handle=[M2FaultNative]::CreateFile($Path,0,1,[IntPtr]::Zero,3,0x02200000,[IntPtr]::Zero)
     try {
         $info=[M2FaultNative+FileInfo]::new()
-        if($handle.IsInvalid -or ![M2FaultNative]::GetFileInformationByHandle($handle,[ref]$info) -or ($info.attributes -band 0x400) -ne 0) { throw 'FILE_IDENTITY_UNAVAILABLE' }
+        if($handle.IsInvalid -or ![M2FaultNative]::GetFileInformationByHandle($handle,[ref]$info) -or ($info.attributes -band 0x400) -ne 0 -or (($info.attributes -band 0x10) -eq 0 -and $info.links -ne 1)) { throw 'FILE_IDENTITY_UNAVAILABLE_OR_HARDLINK' }
         '{0}:{1}:{2}' -f $info.volume,$info.indexHigh,$info.indexLow
     } finally { $handle.Dispose() }
 }
@@ -162,9 +250,9 @@ function Get-M2FaultRegistryEvidence {
     $key=Get-Item -LiteralPath $path -ErrorAction Stop
     if(@($key.GetSubKeyNames()).Count -ne 0 -or (@($key.GetValueNames()) -join '|') -cne 'ElementName' -or $key.GetValue('ElementName') -cne $c.ElementName -or $key.GetValueKind('ElementName') -ne 'String') { throw 'SERVICE_GUID_COLLISION' }
     $acl=Get-Acl -LiteralPath $path
-    if(!$acl.AreAccessRulesProtected -or $acl.Owner -notin @('BUILTIN\Administrators','NT AUTHORITY\SYSTEM')) { throw 'GUID_ACL_INVALID' }
+    if(!$acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cnotin (Get-M2FaultManagementSids)) { throw 'GUID_ACL_INVALID' }
     foreach($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
-        if($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin @('S-1-5-18','S-1-5-32-544')) { throw 'GUID_ACL_INVALID' }
+        if($rule.AccessControlType -eq 'Allow' -and ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and $rule.IdentityReference.Value -cnotin (Get-M2FaultManagementSids)) { throw 'GUID_ACL_INVALID' }
     }
     Initialize-M2FaultNative; [long]$lastWrite=0
     if([M2FaultNative]::RegQueryInfoKey($key.Handle.DangerousGetHandle(),[IntPtr]::Zero,[IntPtr]::Zero,[IntPtr]::Zero,[IntPtr]::Zero,[IntPtr]::Zero,[IntPtr]::Zero,[IntPtr]::Zero,[IntPtr]::Zero,[IntPtr]::Zero,[IntPtr]::Zero,[ref]$lastWrite) -ne 0) { throw 'GUID_IDENTITY_UNAVAILABLE' }
@@ -182,71 +270,103 @@ function Assert-M2FaultProfile($Profile,[string]$BridgeSha256) {
     foreach($key in $expected.request_ids.Keys) { if($Profile.request_ids[$key] -cne $expected.request_ids[$key]) { throw 'PROFILE_INVALID' } }
 }
 function Write-M2FaultNewFile([string]$Path,[byte[]]$Bytes) {
-    $stream=[IO.File]::Open($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    Assert-M2FaultPrivatePath ([IO.Path]::GetDirectoryName($Path))
+    Initialize-M2FaultNative; $handle=[M2FaultNative]::CreateProtectedFile($Path)
+    $stream=[IO.FileStream]::new($handle,[IO.FileAccess]::Write)
     try { $stream.Write($Bytes,0,$Bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
-    Set-M2FaultPrivateAcl $Path
+    Assert-M2FaultPrivatePath $Path; $null=Get-M2FaultFileIdentity $Path
+}
+function New-M2FaultPrivateDirectory([string]$Path) {
+    $c=Get-M2FaultConstants
+    if($Path -cne $c.Anchor -and !$Path.StartsWith($c.Anchor+'\',[StringComparison]::Ordinal)) { throw 'DIRECTORY_OUTSIDE_FIXED_ANCHOR' }
+    Assert-M2FaultPrivatePath ([IO.Path]::GetDirectoryName($Path))
+    Initialize-M2FaultNative; [M2FaultNative]::CreateProtectedDirectory($Path)
+    Assert-M2FaultPrivatePath $Path
+}
+function Remove-M2FaultRuntimeDirectory {
+    $c=Get-M2FaultConstants; Assert-M2FaultPrivatePath $c.Runtime
+    Initialize-M2FaultNative; [M2FaultNative]::RemoveEmptyDirectory($c.Runtime)
 }
 function Add-M2FaultAudit([string]$Stage,[hashtable]$Record) {
     Assert-M2FaultPrivatePath $Stage
     $file=Join-Path $Stage 'host-audit.jsonl'
     if(!(Test-Path -LiteralPath $file)) { Write-M2FaultNewFile $file ([byte[]]@()) }
     Assert-M2FaultPrivatePath $file
+    $null=Get-M2FaultFileIdentity $file
     $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($Record|ConvertTo-Json -Compress -Depth 20)+"`n")
     $stream=[IO.File]::Open($file,[IO.FileMode]::Append,[IO.FileAccess]::Write,[IO.FileShare]::Read)
     try { $stream.Write($bytes,0,$bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
 }
 function Install-M2FaultHost {
-    [CmdletBinding()]param([Parameter(Mandatory)][string]$ExactZip,[Parameter(Mandatory)][string]$ApprovedSha256,[switch]$OwnerApproved)
+    [CmdletBinding()]param([Parameter(Mandatory)][Alias('SourceFaultPackage')][string]$ExactZip,[Parameter(Mandatory)][string]$ApprovedSha256,[Parameter(Mandatory)][string]$RuntimePackage,[Parameter(Mandatory)][string]$ApprovedRuntimePackageSha256,[switch]$OwnerApproved)
     Assert-M2FaultOwner -OwnerApproved:$OwnerApproved
     $null=Assert-M2FaultVm; $c=Get-M2FaultConstants
     $package=Read-M2FaultPackage $ExactZip $ApprovedSha256
-    Assert-M2FaultPrivatePath $c.Root
+    $runtime=Read-M2FaultRuntimePackage $RuntimePackage $ApprovedRuntimePackageSha256
+    foreach($path in @('C:\Program Files','C:\Windows','C:\Windows\System32')) { Assert-M2FaultPrivatePath $path }
     $bridge=Join-Path $c.Root 'fault_bridge.py'; $profile=Join-Path $c.Root 'fault-profile.json'
     $stage=Join-Path $c.Root ('fault-stage-'+$ApprovedSha256)
     $guid=$c.RegistryParent+'\'+$c.ServiceId
-    foreach($path in @($bridge,$profile,$stage,$guid)) { if(Test-Path -LiteralPath $path) { throw 'INSTALL_TARGET_COLLISION' } }
+    foreach($path in @($c.Anchor,$guid)) { if(Test-Path -LiteralPath $path) { throw 'INSTALL_TARGET_COLLISION' } }
     # The parent ACL is evidence only; never rewritten.
     $parentDacl=(Get-Acl -LiteralPath $c.RegistryParent).Sddl
     $parentAcl=Get-Acl -LiteralPath $c.RegistryParent
-    if($parentAcl.Owner -notin @('BUILTIN\Administrators','NT AUTHORITY\SYSTEM')) { throw 'REGISTRY_PARENT_OWNER_DENIED' }
+    if($parentAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cnotin (Get-M2FaultManagementSids)) { throw 'REGISTRY_PARENT_OWNER_DENIED' }
     foreach($rule in $parentAcl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
         $mask=[Security.AccessControl.RegistryRights]::WriteKey -bor [Security.AccessControl.RegistryRights]::Delete -bor [Security.AccessControl.RegistryRights]::ChangePermissions -bor [Security.AccessControl.RegistryRights]::TakeOwnership
-        if($rule.AccessControlType -eq 'Allow' -and ($rule.RegistryRights -band $mask) -ne 0 -and $rule.IdentityReference.Value -notin @('S-1-5-18','S-1-5-32-544')) { throw 'REGISTRY_PARENT_WRITE_DENIED' }
+        if($rule.AccessControlType -eq 'Allow' -and ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and ($rule.RegistryRights -band $mask) -ne 0 -and $rule.IdentityReference.Value -cnotin (Get-M2FaultManagementSids)) { throw 'REGISTRY_PARENT_WRITE_DENIED' }
     }
-    $null=[IO.Directory]::CreateDirectory($stage); Set-M2FaultPrivateAcl $stage -Directory
+    foreach($directory in @($c.Anchor,$c.Root,$stage,$c.Runtime,(Join-Path $c.Anchor 'temp'))) { New-M2FaultPrivateDirectory $directory }
     # Persist intent before mutation. Partial failures remain visible; never erase evidence or retry deletion.
-    Add-M2FaultAudit $stage @{schema='m2-a-fault-host-audit-v1';event='install-intent';package_sha256=$ApprovedSha256;targets=@($bridge,$profile,$guid);utc=[DateTime]::UtcNow.ToString('o')}
+    Add-M2FaultAudit $stage @{schema='m2-a-fault-host-audit-v1';event='install-intent';package_sha256=$ApprovedSha256;runtime_package_sha256=$ApprovedRuntimePackageSha256;targets=@($bridge,$profile,$guid,$c.Runtime);utc=[DateTime]::UtcNow.ToString('o')}
+    foreach($name in Get-M2FaultRuntimeMembers) { Write-M2FaultNewFile (Join-Path $c.Runtime $name) $runtime.files[$name] }
+    Write-M2FaultNewFile (Join-Path $c.Root 'runtime-manifest.json') $runtime.manifest_bytes
+    Assert-M2FaultInstalledRuntime $runtime.manifest
     Write-M2FaultNewFile $bridge $package.Payload['fault_bridge.py']
     $profileBytes=[Text.UTF8Encoding]::new($false).GetBytes(((New-M2FaultProfile $package.Manifest.files['fault_bridge.py'])|ConvertTo-Json -Depth 5)+"`n")
     Write-M2FaultNewFile $profile $profileBytes
-    $null=New-Item -Path $guid -ErrorAction Stop
-    Set-M2FaultPrivateAcl $guid -Registry
+    Initialize-M2FaultNative; [M2FaultNative]::CreateProtectedServiceKey()
     $null=New-ItemProperty -LiteralPath $guid -Name ElementName -Value $c.ElementName -PropertyType String -ErrorAction Stop
-    $receipt=@{schema='m2-a-fault-host-receipt-v1';package_sha256=$ApprovedSha256;exact_zip=$package.ExactZip;stage=$stage;root=Get-M2FaultPathEvidence $c.Root;stage_identity=Get-M2FaultFileIdentity $stage;stage_evidence=Get-M2FaultPathEvidence $stage;files=@((Get-M2FaultPathEvidence $bridge),(Get-M2FaultPathEvidence $profile));guid=Get-M2FaultRegistryEvidence;registry_parent_dacl=$parentDacl;utc=[DateTime]::UtcNow.ToString('o')}
+    $receipt=@{schema='m2-a-fault-host-receipt-v2';package_sha256=$ApprovedSha256;runtime_package_sha256=$ApprovedRuntimePackageSha256;exact_zip=$package.ExactZip;stage=$stage;anchor=Get-M2FaultPathEvidence $c.Anchor;root=Get-M2FaultPathEvidence $c.Root;temp=Get-M2FaultPathEvidence (Join-Path $c.Anchor 'temp');runtime_directory=Get-M2FaultPathEvidence $c.Runtime;runtime_files=@(foreach($name in Get-M2FaultRuntimeMembers){Get-M2FaultPathEvidence (Join-Path $c.Runtime $name)});os_dependencies=@((Get-M2FaultPathEvidence 'C:\Windows'),(Get-M2FaultPathEvidence 'C:\Windows\System32'));stage_identity=Get-M2FaultFileIdentity $stage;stage_evidence=Get-M2FaultPathEvidence $stage;files=@((Get-M2FaultPathEvidence $bridge),(Get-M2FaultPathEvidence $profile),(Get-M2FaultPathEvidence (Join-Path $c.Root 'runtime-manifest.json')));guid=Get-M2FaultRegistryEvidence;registry_parent_dacl=$parentDacl;utc=[DateTime]::UtcNow.ToString('o')}
     if((Get-Acl -LiteralPath $c.RegistryParent).Sddl -cne $parentDacl) { throw 'REGISTRY_PARENT_CHANGED' }
     Write-M2FaultNewFile (Join-Path $stage 'host-receipt.json') ([Text.UTF8Encoding]::new($false).GetBytes(($receipt|ConvertTo-Json -Depth 20)+"`n"))
     Add-M2FaultAudit $stage @{event='install-complete';receipt_sha256=Get-M2FaultHash ([IO.File]::ReadAllBytes((Join-Path $stage 'host-receipt.json')));utc=[DateTime]::UtcNow.ToString('o')}
     $receipt
 }
-function Read-M2FaultReceipt([string]$ApprovedSha256,[string]$ApprovedReceiptSha256) {
-    if($ApprovedSha256 -cnotmatch '^[0-9a-f]{64}$' -or $ApprovedReceiptSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'RECEIPT_APPROVAL_REQUIRED' }
+function Read-M2FaultReceipt([string]$ApprovedSha256,[string]$ApprovedReceiptSha256,[string]$ApprovedRuntimePackageSha256) {
+    if($ApprovedSha256 -cnotmatch '^[0-9a-f]{64}$' -or $ApprovedReceiptSha256 -cnotmatch '^[0-9a-f]{64}$' -or $ApprovedRuntimePackageSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'RECEIPT_APPROVAL_REQUIRED' }
     $c=Get-M2FaultConstants; $stage=Join-Path $c.Root ('fault-stage-'+$ApprovedSha256); $path=Join-Path $stage 'host-receipt.json'
     Assert-M2FaultPrivatePath $path
+    $null=Get-M2FaultFileIdentity $path
     if((Get-Item -LiteralPath $path).Length -gt 65536) { throw 'RECEIPT_OVERSIZE' }
     $bytes=[IO.File]::ReadAllBytes($path)
     if((Get-M2FaultHash $bytes) -cne $ApprovedReceiptSha256) { throw 'RECEIPT_HASH_INVALID' }
     $receipt=ConvertFrom-M2FaultJson $bytes
-    Assert-M2FaultKeys $receipt @('schema','package_sha256','exact_zip','stage','root','stage_identity','stage_evidence','files','guid','registry_parent_dacl','utc')
-    if($receipt.schema -cne 'm2-a-fault-host-receipt-v1' -or $receipt.package_sha256 -cne $ApprovedSha256 -or $receipt.stage -cne $stage -or $receipt.root.path -cne $c.Root -or $receipt.stage_identity -cne (Get-M2FaultFileIdentity $stage)) { throw 'RECEIPT_IDENTITY_INVALID' }
+    Assert-M2FaultKeys $receipt @('schema','package_sha256','runtime_package_sha256','exact_zip','stage','anchor','root','temp','runtime_directory','runtime_files','os_dependencies','stage_identity','stage_evidence','files','guid','registry_parent_dacl','utc')
+    if($receipt.schema -cne 'm2-a-fault-host-receipt-v2' -or $receipt.package_sha256 -cne $ApprovedSha256 -or $receipt.runtime_package_sha256 -cne $ApprovedRuntimePackageSha256 -or $receipt.stage -cne $stage -or $receipt.root.path -cne $c.Root -or $receipt.stage_identity -cne (Get-M2FaultFileIdentity $stage)) { throw 'RECEIPT_IDENTITY_INVALID' }
     if($receipt.root.identity -cne (Get-M2FaultFileIdentity $c.Root) -or $receipt.root.dacl -cne (Get-Acl -LiteralPath $c.Root).Sddl) { throw 'ROOT_IDENTITY_CHANGED' }
     $stageActual=Get-M2FaultPathEvidence $stage
     foreach($key in @('path','identity','dacl','sha256')) { if($stageActual[$key] -cne $receipt.stage_evidence[$key]) { throw 'STAGE_IDENTITY_CHANGED' } }
-    $expectedPaths=@((Join-Path $c.Root 'fault_bridge.py'),(Join-Path $c.Root 'fault-profile.json'))
-    if(@($receipt.files).Count -ne 2 -or (@($receipt.files.path|Sort-Object)-join '|') -cne (@($expectedPaths|Sort-Object)-join '|')) { throw 'RECEIPT_TARGETS_INVALID' }
+    foreach($pair in @(@('anchor',$c.Anchor),@('temp',(Join-Path $c.Anchor 'temp')),@('runtime_directory',$c.Runtime))) {
+        $evidence=$receipt[$pair[0]]
+        if($evidence.path -cne $pair[1]) { throw 'RECEIPT_DIRECTORY_PATH_INVALID' }
+        $actual=Get-M2FaultPathEvidence $pair[1]
+        foreach($key in @('path','identity','dacl','sha256')) { if($actual[$key] -cne $evidence[$key]) { throw 'RECEIPT_DIRECTORY_IDENTITY_CHANGED' } }
+    }
+    Assert-M2FaultOsDependencies $receipt.os_dependencies
+    $expectedPaths=@((Join-Path $c.Root 'fault_bridge.py'),(Join-Path $c.Root 'fault-profile.json'),(Join-Path $c.Root 'runtime-manifest.json'))
+    if(@($receipt.files).Count -ne 3 -or (@($receipt.files.path|Sort-Object)-join '|') -cne (@($expectedPaths|Sort-Object)-join '|')) { throw 'RECEIPT_TARGETS_INVALID' }
     foreach($evidence in $receipt.files) {
         $actual=Get-M2FaultPathEvidence $evidence.path
         foreach($key in @('path','identity','dacl','sha256')) { if($actual[$key] -cne $evidence[$key]) { throw 'FILE_IDENTITY_CHANGED' } }
     }
+    $runtimePaths=@(foreach($name in Get-M2FaultRuntimeMembers){Join-Path $c.Runtime $name})
+    if(@($receipt.runtime_files).Count -ne $runtimePaths.Count -or (@($receipt.runtime_files.path|Sort-Object)-join '|') -cne (@($runtimePaths|Sort-Object)-join '|')) { throw 'RECEIPT_RUNTIME_TARGETS_INVALID' }
+    foreach($evidence in $receipt.runtime_files) {
+        $actual=Get-M2FaultPathEvidence $evidence.path
+        foreach($key in @('path','identity','dacl','sha256')) { if($actual[$key] -cne $evidence[$key]) { throw 'RUNTIME_IDENTITY_CHANGED' } }
+    }
+    Assert-M2FaultInstalledRuntime (ConvertFrom-M2FaultJson ([IO.File]::ReadAllBytes((Join-Path $c.Root 'runtime-manifest.json'))))
     $actualGuid=Get-M2FaultRegistryEvidence
     foreach($key in @('path','service_id','element_name','dacl','last_write_identity')) { if($actualGuid[$key] -cne $receipt.guid[$key]) { throw 'GUID_IDENTITY_CHANGED' } }
     if((Get-Acl -LiteralPath $c.RegistryParent).Sddl -cne $receipt.registry_parent_dacl) { throw 'REGISTRY_PARENT_CHANGED' }
@@ -314,17 +434,39 @@ function Assert-M2FaultFiniteNumber($Value,[double]$Minimum,[double]$MaximumExcl
     $number=[double]$Value
     if([double]::IsNaN($number) -or [double]::IsInfinity($number) -or $number -lt $Minimum -or $number -ge $MaximumExclusive) { throw 'BRIDGE_NUMBER_BOUND_INVALID' }
 }
-function Invoke-M2FaultHost {
-    [CmdletBinding()]param([Parameter(Mandatory)][string]$ApprovedSha256,[Parameter(Mandatory)][string]$ApprovedReceiptSha256,[switch]$OwnerApproved)
-    Assert-M2FaultOwner -OwnerApproved:$OwnerApproved; $null=Assert-M2FaultVm
-    $receipt=Read-M2FaultReceipt $ApprovedSha256 $ApprovedReceiptSha256; $c=Get-M2FaultConstants
-    Assert-M2FaultPrivatePath $c.Python
+function Get-M2FaultInheritedDllDirectory { Initialize-M2FaultNative; [M2FaultNative]::InheritedDllDirectory() }
+function Assert-M2FaultOsDependencies($Evidence) {
+    $paths=@('C:\Windows','C:\Windows\System32')
+    if($Evidence -isnot [array] -or $Evidence.Count -ne 2 -or (@($Evidence.path|Sort-Object)-join '|') -cne (@($paths|Sort-Object)-join '|')) { throw 'OS_DEPENDENCY_BOUNDARY_INVALID' }
+    foreach($expected in $Evidence) {
+        Assert-M2FaultKeys $expected @('path','identity','dacl','sha256')
+        $actual=Get-M2FaultPathEvidence $expected.path
+        foreach($key in @('path','identity','dacl','sha256')) { if($actual[$key] -cne $expected[$key]) { throw 'OS_DEPENDENCY_IDENTITY_OR_DACL_CHANGED' } }
+    }
+}
+function New-M2FaultProcessStartInfo {
+    $c=Get-M2FaultConstants
+    if((Get-M2FaultInheritedDllDirectory) -cne '') { throw 'INHERITED_DLL_DIRECTORY_DENIED' }
+    foreach($path in @($c.Python,$c.Root,(Join-Path $c.Anchor 'temp'),'C:\Windows','C:\Windows\System32')) { Assert-M2FaultPrivatePath $path }
     $psi=[Diagnostics.ProcessStartInfo]::new(); $psi.FileName=$c.Python
     foreach($flag in @('-B','-I','-S')) { $psi.ArgumentList.Add($flag) }
     $psi.ArgumentList.Add((Join-Path $c.Root 'fault_bridge.py')); $psi.ArgumentList.Add('--run-fixed-batch')
+    $psi.Environment.Clear()
+    $psi.Environment['SystemRoot']='C:\Windows'; $psi.Environment['WINDIR']='C:\Windows'; $psi.Environment['PATH']='C:\Windows\System32'
+    $psi.Environment['TEMP']=Join-Path $c.Anchor 'temp'; $psi.Environment['TMP']=Join-Path $c.Anchor 'temp'
+    $psi.WorkingDirectory=$c.Root
     $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true; $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true
+    $psi
+}
+function Invoke-M2FaultHost {
+    [CmdletBinding()]param([Parameter(Mandatory)][string]$ApprovedSha256,[Parameter(Mandatory)][string]$ApprovedReceiptSha256,[Parameter(Mandatory)][string]$ApprovedRuntimePackageSha256,[switch]$OwnerApproved)
+    Assert-M2FaultOwner -OwnerApproved:$OwnerApproved; $null=Assert-M2FaultVm
+    $receipt=Read-M2FaultReceipt $ApprovedSha256 $ApprovedReceiptSha256 $ApprovedRuntimePackageSha256; $c=Get-M2FaultConstants
+    $psi=New-M2FaultProcessStartInfo
     $process=[Diagnostics.Process]::new(); $process.StartInfo=$psi; $started=$false
     try {
+        if((Get-M2FaultInheritedDllDirectory) -cne '') { throw 'INHERITED_DLL_DIRECTORY_DENIED' }
+        Assert-M2FaultOsDependencies $receipt.os_dependencies
         $started=$process.Start(); if(!$started) { throw 'BRIDGE_START_FAILED' }; $result=Wait-M2FaultProcess $process $c.TimeoutMs
         if($result.bridge_status -eq 'BRIDGE_EXITED_ZERO') {
             try { $summary=Assert-M2FaultBatchOutput $result; $result|Add-Member -NotePropertyName batch_observation -NotePropertyValue $summary }
@@ -338,14 +480,15 @@ function Invoke-M2FaultHost {
     $result # Transport exit never establishes guest STOPPED; inspect independent guest summary.
 }
 function Remove-M2FaultHost {
-    [CmdletBinding()]param([Parameter(Mandatory)][string]$ApprovedSha256,[Parameter(Mandatory)][string]$ApprovedReceiptSha256,[switch]$OwnerApproved)
+    [CmdletBinding()]param([Parameter(Mandatory)][string]$ApprovedSha256,[Parameter(Mandatory)][string]$ApprovedReceiptSha256,[Parameter(Mandatory)][string]$ApprovedRuntimePackageSha256,[switch]$OwnerApproved)
     Assert-M2FaultOwner -OwnerApproved:$OwnerApproved; $null=Assert-M2FaultVm
-    $receipt=Read-M2FaultReceipt $ApprovedSha256 $ApprovedReceiptSha256
+    $receipt=Read-M2FaultReceipt $ApprovedSha256 $ApprovedReceiptSha256 $ApprovedRuntimePackageSha256
     Add-M2FaultAudit $receipt.stage @{event='cleanup-intent';utc=[DateTime]::UtcNow.ToString('o')}
     # Validate every target before the first deletion. Retain stage, receipt/audit, ledger and parent ACL.
-    foreach($file in $receipt.files) { Remove-Item -LiteralPath $file.path -Force -ErrorAction Stop }
+    foreach($file in @($receipt.files)+@($receipt.runtime_files)) { Remove-Item -LiteralPath $file.path -Force -ErrorAction Stop }
+    Remove-M2FaultRuntimeDirectory # native empty-directory removal; no recursive PowerShell prompt or fallback
     Remove-Item -LiteralPath $receipt.guid.path -ErrorAction Stop # no recursion: subkeys were forbidden
-    $remaining=@($receipt.files.path)+@($receipt.guid.path)|Where-Object { Test-Path -LiteralPath $_ }
+    $remaining=@($receipt.files.path)+@($receipt.runtime_files.path)+@($receipt.runtime_directory.path)+@($receipt.guid.path)|Where-Object { Test-Path -LiteralPath $_ }
     if(@($remaining).Count -ne 0 -or (Get-Acl -LiteralPath (Get-M2FaultConstants).RegistryParent).Sddl -cne $receipt.registry_parent_dacl) { throw 'CLEANUP_POSTASSERT_FAILED_NO_RETRY' }
     Add-M2FaultAudit $receipt.stage @{event='cleanup-read-post-confirmed';utc=[DateTime]::UtcNow.ToString('o')}
     [pscustomobject]@{status='CLEANUP_READ_POST_CONFIRMED';stage_retained=$receipt.stage;dvd_changed=$false}
