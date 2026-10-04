@@ -4,9 +4,9 @@ name: clued-work-admission
 # WorkClaimAdmission.v0.1.md). An unfiltered check on every pull request, a
 # `main` ruleset required check like gitleaks and trivy. It makes one Clued
 # call per run: clued_work_verify_v1 on the Clued database's PostgREST endpoint
-# (public publishable key, SHA-256 of the read-only Binding token in
-# CLUED_CONTEXT_READ_TOKEN), asking whether the claim named in the PR body or
-# head commit (`Clued-Work-Claim: <id>`) admits this head, base, changed-file
+# (public publishable key, SHA-256 of the read-only Binding token in the
+# environment secret CLUED_ADMISSION_CLUED_TOKEN), asking whether the claim
+# named in the PR body or head commit (`Clued-Work-Claim: <id>`) admits this head, base, changed-file
 # set and pull request. It also prints which path-filtered workflows apply to
 # the changed paths and what each concluded on this head. The admission-gate
 # jobs of the heavy workflows read this run's result instead of calling Clued.
@@ -18,6 +18,11 @@ name: clued-work-admission
 # the check when the PR body (and so the trailer) changes; the hourly
 # clued-work-admission-reverify.yml re-runs a passing check whose claim no
 # longer admits the PR.
+#
+# Re-review 3, N-R4: a re-run replays the run's own copy of this file. The
+# token and the App key were renamed (CLUED_ADMISSION_CLUED_TOKEN,
+# CLUED_ADMISSION_APP_KEY) and the old names retired, so a re-run of a run from
+# before this change gets neither and posts nothing.
 #
 # The token lives in the `clued-admission` environment (Owner setting:
 # deployment branches limited to main, no reviewers). A pull_request_target
@@ -61,10 +66,12 @@ jobs:
     timeout-minutes: 5
     environment: clued-admission
     steps:
-      # The base commit, never the PR head or merge ref.
+      # The base branch as it is now, never the PR head or merge ref.
+      # Re-review 3, N-R4: not the event's base commit, which a re-run of an
+      # old run would replay together with that commit's older checks.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.ref }}
           persist-credentials: false
       - name: Self-test the admission script (no network, mocked fetch)
         run: |
@@ -73,7 +80,7 @@ jobs:
       - name: Verify the work claim with Clued and summarize applicable workflows
         id: admit
         env:
-          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_CONTEXT_READ_TOKEN }}
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
           CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode required
@@ -84,11 +91,14 @@ jobs:
       - name: Post the result as the clued-admission App
         if: ${{ !cancelled() }}
         env:
-          ADMISSION_HEAD_SHA: ${{ steps.admit.outputs.head_sha }}
+          # Re-review 3, N-R6: when the admission step fails before it names
+          # the head, the failure is still posted on the event's head, so an
+          # older success does not stay the newest check.
+          ADMISSION_HEAD_SHA: ${{ steps.admit.outputs.head_sha || github.event.pull_request.head.sha }}
           ADMISSION_OUTCOME: ${{ steps.admit.outcome }}
           ADMISSION_VERDICT: ${{ steps.admit.outputs.verdict }}
           CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
-          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_PRIVATE_KEY }}
+          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
         run: node scripts/ci/clued-work-admission.mjs --mode app-check
 
   # GenericWorkClaim §5.3, multi-copy write-back: a merged pull request is
@@ -112,6 +122,6 @@ jobs:
           persist-credentials: false
       - name: Report the merge to Clued for multi-copy adoption
         env:
-          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_CONTEXT_READ_TOKEN }}
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode adopt
