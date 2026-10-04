@@ -95,9 +95,9 @@ async function begin(f, clientId) {
   assert.equal(read.status, 200, await read.clone().text());
   return { id, cookie, headers, verifier, prepared: await read.json() };
 }
-async function approve(f, clientId, flow) {
+async function approve(f, clientId, flow, days = 1) {
   const response = await f.run(`/oauth/decision?request_id=${flow.id}`, { method: 'POST', headers: { ...flow.headers, Origin: origin, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'approve', version: flow.prepared.version, days: 1, selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write'] }] }) });
+    body: JSON.stringify({ action: 'approve', version: flow.prepared.version, days, selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write'] }] }) });
   assert.equal(response.status, 200, await response.clone().text());
   const body = await response.json();
   assert.equal(JSON.stringify(body).includes('clued_bnd_'), false);
@@ -212,6 +212,30 @@ test('two consent instances for the same client issue independent simultaneously
     for (const token of [a.access_token, b.access_token]) assert.equal((await f.run('/mcp', call(token, 'clued_record_list'))).status, 200);
   } finally { globalThis.fetch = originalFetch; }
 });
+test('refresh token lifetime follows the chosen authorization lifetime, up to 365 days', async () => {
+  const f = fixture();
+  try {
+    const id = await client(f);
+    for (const days of [1, 90, 365]) {
+      const before = Math.floor(Date.now() / 1000);
+      const token = await approve(f, id, await begin(f, id), days);
+      const [userId, grantId] = token.refresh_token.split(':');
+      const grant = JSON.parse(await f.env.OAUTH_KV.get(`grant:${userId}:${grantId}`));
+      const lifetime = grant.expiresAt - before;
+      assert.ok(lifetime > days * 86400 - 60 && lifetime <= days * 86400 + 1, `${days} days: ${lifetime}s`);
+      const refresh = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, resource }) });
+      assert.equal(refresh.status, 200, await refresh.clone().text());
+    }
+    for (const days of [0, 31, 366]) {
+      const flow = await begin(f, id);
+      const response = await f.run(`/oauth/decision?request_id=${flow.id}`, { method: 'POST', headers: { ...flow.headers, Origin: origin, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve', version: flow.prepared.version, days, selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read'] }] }) });
+      assert.equal(response.status, 400, `${days} days is not an offered lifetime`);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('OAuth MCP forwards the Worker execution context to the independent projection Builder', async () => {
   const f = fixture(); try {
     f.env.CLUED_PROJECTION_BUILDER_TOKEN = `clued_bnd_${'p'.repeat(43)}`;

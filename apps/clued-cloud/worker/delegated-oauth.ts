@@ -1,11 +1,13 @@
 /** OAuth protocol is delegated to the maintained provider; Clued retains live grants. */
-import { OAuthProvider, OAuthError, type AuthRequest, type OAuthHelpers } from '@cloudflare/workers-oauth-provider';
+import { OAuthProvider, OAuthError, GrantType, type AuthRequest, type OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import { handleContinuityRequest, publicToolPolicies, type ContinuityEnv } from './continuity';
 import { isStorageAgentTool } from './storage-agent-tools';
 import { storageReadTool, storageContentTool } from './storage-read-agent';
 
 const SCOPES = ['context:read', 'context:write', 'audit:read'];
 const PENDING_TTL = 600;
+// Owner-selectable authorization lifetimes; the database caps expiry at 365 days.
+const LIFETIME_DAYS = [1, 7, 30, 90, 365];
 export interface DelegatedOAuthEnv extends ContinuityEnv {
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
@@ -209,7 +211,7 @@ async function consentRoute(request: Request, env: DelegatedOAuthEnv): Promise<R
     await env.OAUTH_KV!.delete(`clued:pending:${id}`);
     return json({ redirect_url: terminalRedirect(pending.auth, 'access_denied') });
   }
-  if (body.action !== 'approve' || !Array.isArray(body.selected) || !body.selected.length || ![1, 7, 30].includes(Number(body.days))) return json({ error: '请选择至少一项权限和有效期。' }, 400);
+  if (body.action !== 'approve' || !Array.isArray(body.selected) || !body.selected.length || !LIFETIME_DAYS.includes(Number(body.days))) return json({ error: '请选择至少一项权限和有效期。' }, 400);
   const bindingToken = `clued_bnd_${randomHex()}`;
   const expiresAt = new Date(Date.now() + Number(body.days) * 86400000).toISOString();
   const approved = await rpc(env, token, 'clued_authorization_approve_v12', {
@@ -282,11 +284,15 @@ export async function handleDelegatedOAuth(request: Request, env: DelegatedOAuth
       defaultHandler: { async fetch(req, boundEnv) { return await consentRoute(req, boundEnv) || await fallback(req); } },
       authorizeEndpoint: '/oauth/authorize', tokenEndpoint: '/oauth/token', clientRegistrationEndpoint: '/oauth/register',
       scopesSupported: SCOPES, clientIdMetadataDocumentEnabled: false, allowPlainPKCE: false, allowImplicitFlow: false,
-      accessTokenTTL: 900, refreshTokenTTL: 30 * 86400,
+      accessTokenTTL: 900, refreshTokenTTL: 365 * 86400,
       resourceMetadata: { resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: SCOPES, resource_name: 'Clued' },
-      tokenExchangeCallback: async ({ props, requestedScope }) => {
+      tokenExchangeCallback: async ({ grantType, props, requestedScope }) => {
         await checkBinding(env, props);
-        return { accessTokenProps: { ...props, scopes: requestedScope } };
+        // The provider fixes the refresh token lifetime at code exchange and never
+        // extends it, so bind it to the lifetime the Owner chose for this grant.
+        if (grantType !== GrantType.AUTHORIZATION_CODE) return { accessTokenProps: { ...props, scopes: requestedScope } };
+        const remaining = Math.ceil((Date.parse((props as AuthProps).expiresAt) - Date.now()) / 1000);
+        return { accessTokenProps: { ...props, scopes: requestedScope }, refreshTokenTTL: Math.max(60, remaining) };
       },
       onError: ({ status }) => json({ error: transient(status) ? 'temporarily_unavailable' : 'invalid_request', message: transient(status) ? '授权服务暂不可用，请稍后重试。' : '授权请求未通过验证。' }, status),
     });
