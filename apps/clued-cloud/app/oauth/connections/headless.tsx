@@ -206,7 +206,7 @@ export default function HeadlessBindings() {
   // have none, so Clued revokes them through clued_headless_binding_revoke_v1.
   async function revoke(row: Row) {
     if (working || (row.kind === "headless" && row.version === null)) return;
-    const roles = row.roles.length ? `它带有专用角色 ${row.roles.map(r => ROLES[r] ?? r).join("、")}，撤销后角色一起结束。` : "";
+    const roles = row.roles.length ? `它带有专用角色 ${row.roles.map(r => ROLES[r] ?? r).join("、")}，撤销后这些角色仍然锁定：在你到「专用 Binding」页（/bindings）给有效的连接标上或取消之前，任何连接都做不了这些事。` : "";
     if (!window.confirm(`撤销「${row.agent_name}」？使用这个令牌的客户端会立即失去访问。${roles}`)) return;
     const generation = epoch.current;
     setWorking(true); setError(""); setNotice("");

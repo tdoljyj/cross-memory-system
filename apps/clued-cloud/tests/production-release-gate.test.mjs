@@ -253,7 +253,7 @@ test('production release deploys the PDF extractor Worker first and verifies the
     verify = index('Verify the PDF extractor service binding');
   assert.ok(build >= 0 && build < extractor && extractor < main && main < live && live < verify, JSON.stringify({ build, extractor, main, live, verify }));
   // Same deploy token and account as the main Worker; no vars, secrets or extra flags for the extractor.
-  assert.match(steps[extractor], /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLUED_CLOUDFLARE_DEPLOY_TOKEN \}\}/);
+  assert.match(steps[extractor], /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 \}\}/);
   assert.match(steps[extractor], /CLOUDFLARE_ACCOUNT_ID: \$\{\{ vars\.CLUED_CLOUDFLARE_ACCOUNT_ID \}\}/);
   assert.match(steps[extractor], /\n        run: npx wrangler deploy --config wrangler\.pdf-extractor\.jsonc\n?$/);
   assert.match(steps[main], /npx wrangler deploy --config wrangler\.production\.jsonc --keep-vars/);

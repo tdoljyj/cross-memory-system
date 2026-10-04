@@ -197,9 +197,12 @@ test('revoking a legacy Binding uses its own RPC and warns about its roles', asy
   assert.equal(f.dialogs.length, 1);
   assert.ok(f.dialogs[0].includes('撤销「clued-work-admission」'));
   assert.ok(f.dialogs[0].includes('专用角色 CI 准入'), f.dialogs[0]);
+  // Re-review 4, M1: the role stays locked after the revoke.
+  assert.ok(f.dialogs[0].includes('仍然锁定'), f.dialogs[0]);
+  assert.ok(!f.dialogs[0].includes('一起结束'), f.dialogs[0]);
   assert.deepEqual(plain([f.calls[1].name, f.calls[1].args]), ['clued_headless_binding_revoke_v1',
     { p_input: { binding_id: 'b-legacy' } }]);
-  f.calls[1].resolve({ data: { status: 'committed', binding_id: 'b-legacy', roles_ended: ['ci-admission'] }, error: null });
+  f.calls[1].resolve({ data: { status: 'committed', binding_id: 'b-legacy', roles_kept: ['ci-admission'] }, error: null });
   await f.settle();
   assert.equal(f.calls[2].name, 'clued_headless_binding_list_v1');
   f.calls[2].resolve(listed([ROWS[0]])); await f.settle();

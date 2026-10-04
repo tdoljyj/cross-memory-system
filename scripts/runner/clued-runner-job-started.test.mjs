@@ -41,7 +41,8 @@ const run = async (overrides, script, event = prEvent()) => {
 };
 const APP = 5164952;
 const check = (overrides = {}) => ({ id: 3, name: "clued-admission-verified", head_sha: HEAD, status: "completed",
-  conclusion: "success", started_at: "2026-10-04T05:00:30Z", app: { id: APP, slug: "clued-admission" }, ...overrides });
+  conclusion: "success", started_at: "2026-10-04T05:00:30Z", external_id: "pr:9:run:1", app: { id: APP, slug: "clued-admission" },
+  ...overrides });
 const CHECKS = `${API}/commits/${HEAD}/check-runs?check_name=clued-admission-verified`;
 const checks = (...list) => ({ body: { check_runs: list } });
 const COMPARE = `${API}/compare/main...`;
@@ -177,9 +178,16 @@ test("runner hook (re-review 3, N-R3): a re-run of a pull request or branch disp
 
 test("runner hook (re-review 3, N-R1): an App check posted before this run was created does not admit it", async () => {
   const change = { [COMPARE]: files(".github/workflows/heavy.yml") };
-  let { result } = await run({}, { ...change, [CHECKS]: checks(check({ started_at: "2026-10-04T04:59:59Z" })) });
+  let { result } = await run({}, { ...change, [CHECKS]: checks(check({ started_at: "2026-10-04T04:57:59Z" })) });
   assert.equal(result.allow, false);
-  assert.match(result.reason, /posted since 2026-10-04T05:00:00Z \(none\)/);
+  assert.match(result.reason, /for #9 posted since 2026-10-04T05:00:00Z less 120s \(none\)/);
+  ({ result } = await run({}, { ...change, [CHECKS]: checks(check({ started_at: "2026-10-04T04:58:30Z" })) }));
+  assert.equal(result.allow, true, "within two minutes before the run (same event)");
+  // Re-review 4, m1: only a check naming this pull request counts.
+  for (const externalId of [undefined, "pr:10:run:1", "pr:9", "pr:90:run:1"]) {
+    ({ result } = await run({}, { ...change, [CHECKS]: checks(check({ external_id: externalId })) }));
+    assert.equal(result.allow, false, String(externalId));
+  }
   ({ result } = await run({}, { ...change, [CHECKS]: checks(check({ id: 9, started_at: "2026-10-04T04:00:00Z" }), check({ id: 2 })) }));
   assert.equal(result.allow, true, "the newer posting decides, not the higher id");
   ({ result } = await run({}, { ...change, [CHECKS]: checks(check({ started_at: undefined })) }));

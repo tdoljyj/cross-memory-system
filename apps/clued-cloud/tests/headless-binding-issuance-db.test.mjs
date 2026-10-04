@@ -296,7 +296,7 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
     listed = await native('clued_headless_binding_list_v1', {});
     assert.deepEqual(listed.bindings.map((b) => b.binding_id), [untouched]);
 
-    // --- A legacy Binding is revoked from the connections page, roles and all. ---
+    // --- A legacy Binding is revoked from the connections page; its roles stay locked (re-review 4, M1). ---
     const revokeLegacy = (input, claims) => native('clued_headless_binding_revoke_v1', input, claims);
     await assert.rejects(() => revokeLegacy({ binding_id: untouched }, { ...fresh(userId), client_id: 'some-oauth-client' }),
       /direct_human_session_required/);
@@ -315,14 +315,19 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
     assert.equal((await resolve(untouchedHash, 'context:read', 'global')).rows[0].id, untouched);
     const legacyRevoked = await revokeLegacy({ binding_id: untouched });
     assert.equal(legacyRevoked.status, 'committed', JSON.stringify(legacyRevoked));
-    assert.deepEqual(legacyRevoked.roles_ended, ['ci-admission']);
+    assert.deepEqual(legacyRevoked.roles_kept, ['ci-admission']);
+    assert.equal(legacyRevoked.roles_ended, undefined);
     await assert.rejects(() => resolve(untouchedHash, 'context:read', 'global'), /binding_not_authorized/);
+    // The role row stays, so the role stays locked: no other Binding of the
+    // Owner is admitted for it until the Owner marks a live one or ends it.
     assert.equal((await admin.query(`select count(*)::int n from clued_private.binding_roles_v1
-      where binding_id=$1 and revoked_at is null`, [untouched])).rows[0].n, 0);
+      where binding_id=$1 and revoked_at is null`, [untouched])).rows[0].n, 1);
+    assert.equal((await admin.query(`select clued_private.binding_role_admits_v1(b,'ci-admission') ok
+      from public.clued_agent_bindings b where b.id=$1`, [oauthLike])).rows[0].ok, false);
     const legacyReceipt = (await admin.query('select * from public.clued_audit_receipts where id=$1', [legacyRevoked.receipt_id])).rows[0];
     assert.equal(legacyReceipt.metadata.receipt_kind, 'LEGACY_BINDING_REVOKED');
     assert.equal(legacyReceipt.metadata.binding_id, untouched);
-    assert.deepEqual(legacyReceipt.metadata.roles_ended, ['ci-admission']);
+    assert.deepEqual(legacyReceipt.metadata.roles_kept, ['ci-admission']);
     assert.equal(legacyReceipt.metadata.principal, 'native_account_session');
     assert.equal((await admin.query(`select count(*)::int n from clued_private.authorization_audit_v12
       where binding_id=$1 and operation='legacy_revoke'`, [untouched])).rows[0].n, 1);
