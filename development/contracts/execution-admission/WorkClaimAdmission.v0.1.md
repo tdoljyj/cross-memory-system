@@ -41,10 +41,10 @@
       - N4：workflow 文件里出现单独的 `\r`、U+0085、U+2028、U+2029 或其他控制字符，一律拒绝（`workflow_not_canonical:line_break`）。
       - N3c：gate 与 runner 检查改认 clued-admission App 在该 head 上的 `clued-admission-verified` check（最新一条为准）。App 的私钥只在 `clued-admission` environment 里，只有 main 上的准入运行能发；不再看工作流运行的 `pull_requests`。gate 需要 `checks: read`，分两步：本次先在 `GATE_JOB_SHA256` 中加入新摘要（gate 读不到 check 时暂按旧办法），下一步把各 workflow 的 gate 改成新写法并去掉旧摘要与旧办法。
       - B：runner 检查对手动触发要求该提交的 `.github/workflows` 与 main 完全一致（逐个文件对象 id），否则先把 main 合进分支。PR 仍按 merge base 比较（PR 的 workflow 来自 merge ref，即 main 加上 PR 的改动）。
-      - C：不加闸的自托管 workflow（`model-program-*`、`mps03-native-agent`、`multitrack-governance-projection`、`node-profile-policy`、`runner-budget-policy`、`gitleaks`）每个 job 设 20 分钟超时（gitleaks 25 分钟）。D：合同 v23 改正该句。
+      - C：不加闸的自托管 workflow（`model-program-m1-*`、`mps03-native-agent`、`multitrack-governance-projection`、`node-profile-policy`、`runner-budget-policy`、`gitleaks`）每个 job 设 20 分钟超时（gitleaks 25 分钟）。`model-program-m0.yml` 不改：它的哈希登记在冻结的 `development/contracts/model-program/m0/SHA256SUMS.json` 里，job 仍用 GitHub 默认的 6 小时上限。D：合同 v23 改正该句。
     - 仍未修，写明靠自觉：
       - PR 正文可以写别的 Agent 的认领 ID；手动触发 `clued-work-admission-dispatch.yml` 时也可以填别的 Agent 的 `claim_id`，计入其 Task 的 CI 额度（仓库侧不知道是谁触发的）。两者都受每 Task 每天 40 个 head 的上限约束。
-      - 不加闸的自托管检查会跑 PR 的代码，未被认领覆盖的 PR 也会跑，每个 job 最多 20–25 分钟；`clued-integration-runtime-nightly.yml` 任何人都能在 main 上手动触发，跑的是 main 的代码，不计入额度。
+      - 不加闸的自托管检查会跑 PR 的代码，未被认领覆盖的 PR 也会跑，每个 job 最多 20–25 分钟（`model-program-m0` 没有超时，见上）；`clued-integration-runtime-nightly.yml` 任何人都能在 main 上手动触发，跑的是 main 的代码，不计入额度。
 - **尚缺或与本文设计不符**（各条在对应小节标注）：
   - 每认领 CI 分钟预算与 finalize：改为次数上限，不做（§4.5，Owner Decision `a264ea02`）。
   - 备份恢复后 `max(fence)` 会回退，靠恢复后的手工步骤补救（§4.4、§6，Owner Decision `2b23eb0c`）。
@@ -243,7 +243,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - 仓库检查（`scripts/ci/clued-work-admission.test.mjs`）断言只有上述 workflow 引用 `secrets.CLUED_CONTEXT_READ_TOKEN`。
   - 仍未覆盖：同名 check 伪造（见上）。另外 PR 可以改写自己的 workflow、删掉 `needs: admission-gate`：闸是 PR 自己的 job，只能控制合规 PR 的花费，不是强制边界。
 - **实现（加闸范围与手动触发，2026-10-02，Owner Decision `75abfe80`，Task `29128827`）**：
-  - 新增加闸：`public-mcp-behavior.yml`、`public-mcp-protocol.yml`（装依赖、起本地 MCP，behavior 还起数据库）。`model-program-*`、`mps03-native-agent`、`multitrack-governance-projection`、`node-profile-policy` 是 Python 校验，不加闸：闸任务本身的开销与等待超过它们。（复审 2 更正：它们在自托管 Windows 上跑 PR 的代码，一次几分钟而不是几秒；现在每个 job 有 20 分钟超时。）
+  - 新增加闸：`public-mcp-behavior.yml`、`public-mcp-protocol.yml`（装依赖、起本地 MCP，behavior 还起数据库）。`model-program-*`、`mps03-native-agent`、`multitrack-governance-projection`、`node-profile-policy` 是 Python 校验，不加闸：闸任务本身的开销与等待超过它们。（复审 2 更正：它们在自托管 Windows 上跑 PR 的代码，一次几分钟而不是几秒；现在每个 job 有 20 分钟超时，`model-program-m0` 除外，它的文件哈希被冻结的 m0 清单锁定。）
   - 手动触发：Agent 用 Owner 账号，「只许 Owner 触发」不等于要求认领。`clued-g4-database`、`information-flow-e2e`、`clued-connection-authorization` 的 `workflow_dispatch` 现在要带 `admission_run_id`。流程两步：
     1. 在默认分支触发 `clued-work-admission-dispatch.yml`，参数 `workflow`（上述三者之一）、`ref`、`claim_id`（可选 `scope`）。它在 `clued-admission` environment 中持有 token，向 Clued 校验该 claim（`clued_work_verify_v1`，带 ref 的 head，不带 changed_paths），运行名为 `admit <workflow> <ref> <claim_id>`；不在默认分支时 job 不运行。
     2. 在该 ref 上触发重任务 workflow，`admission_run_id` 填第 1 步的 run id。其 `admission-gate`（无 token）只在该运行是默认分支上的 `workflow_dispatch`、成功、30 分钟内、运行名指向本 workflow 与本 ref 时放行。

@@ -60,5 +60,6 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
 - **Write access to the runner machine.** An Agent that can write the runner machine, its `.env` file, or this directory can change or remove the check. Keep Agents off the runner machines, or keep these files out of their reach.
 - **Non-workflow code.** A pull request that changes no workflow still runs its own code in the jobs `main` defines.
   - In the gated workflows, the heavy jobs wait for the admission gate.
-  - The ungated short checks run anyway, even for a pull request no claim covers. Each job has a 20–25 minute timeout. These are `model-program-*`, `mps03-native-agent`, `multitrack-governance-projection`, `node-profile-policy`, `runner-budget-policy`, `gitleaks` and `trivy`.
+  - The ungated short checks run anyway, even for a pull request no claim covers. These are `model-program-*`, `mps03-native-agent`, `multitrack-governance-projection`, `node-profile-policy`, `runner-budget-policy`, `gitleaks` and `trivy`.
+  - Each of their jobs has a 20–25 minute timeout, except `model-program-m0`. That file's hash is pinned in the frozen M0 manifest, so it keeps GitHub's 6-hour default.
 - **`main`'s own runs.** Anyone who can dispatch workflows can start `main`'s workflows (for example `clued-integration-runtime-nightly.yml`). They run `main`'s reviewed code and are not metered.
