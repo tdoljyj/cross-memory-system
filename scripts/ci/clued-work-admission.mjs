@@ -829,9 +829,9 @@ export function renderReverifySummary(result) {
 // Gate. The admission-gate jobs run inside `pull_request` workflows, whose
 // workflow file and checkout come from the PR, so they must not hold the Clued
 // token. They do not ask Clued. They read the verdict of the trusted check:
-// the newest clued-admission-verified check of the clued-admission App on
-// this head (latestAdmissionCheck below), which only main's admission run can
-// post, so neither a look-alike job in a PR workflow nor an admission run of
+// the clued-admission-verified check of the clued-admission App that main's
+// admission run of the same event posts on this head (eventAdmissionCheck
+// below); only main's admission run can post it, so neither a look-alike job in a PR workflow nor an admission run of
 // a pull request into another branch satisfies the gate. Both start on the
 // same push, so the gate waits for the check. A PR that edits this script or
 // its gate job changes only its own cost gating; the required check, which
@@ -845,27 +845,35 @@ export const GATE_POLL_SECONDS = 10;
 // into another branch, whose copy of the admission workflow passes anything,
 // could stand in. The trusted signal is the clued-admission-verified check of
 // the clued-admission App on the head: its key lives in the clued-admission
-// environment, which deploys from main only. The gate job needs `checks: read`
-// to read it.
+// environment, which deploys from main only, and main's admission job checks
+// out main and runs only for pull requests into main (re-review 6, B1). The
+// gate job needs `checks: read` to read it.
 export const ADMISSION_APP_ID = 5164952;
 
 // Re-review 3, N-R1: the App check is posted when an admission run ends, so
 // until then an older success on the same head (a force-push back to an
 // admitted commit, a reopened pull request, a second pull request with the
-// same head) would be the newest. Only a check posted after this run was
-// created (`since`, in ms) counts: it comes from the admission run of the same
-// event or a later one.
-// Re-review 4, m1/m2: main's admission run names its pull request in the
-// check's external_id ("pr:<number>:run:<run id>"), so a pull request with
-// the same head cannot ride another pull request's admission. Because both
-// runs start from the same event, a check posted up to CHECK_WINDOW_MS before
-// this run was created still counts when it names this pull request.
-export const CHECK_WINDOW_MS = 120_000;
+// same head) could stand in for it.
+// Re-review 4, m1: main's admission run names its pull request and itself in
+// the check's external_id ("pr:<number>:run:<run id>"), so a pull request with
+// the same head cannot ride another pull request's admission.
+// Re-review 5, n1: the check's posting time does not tell events apart (a pull
+// request closed and reopened within two minutes), so the gate binds to the
+// admission run of its own event instead. GitHub creates the runs of one event
+// together (measured: within a second). The event's admission run is the newest
+// main admission run (pull_request_target, this head) created no earlier than
+// SAME_EVENT_MS before this run, leaving out runs whose check names another
+// pull request. Only that run's check decides; while the run has posted
+// nothing, the gate waits. The run list only locates the run: the authority
+// stays the App check, which only main's admission run can post.
+export const SAME_EVENT_MS = 15_000;
+const EXTERNAL_ID = /^pr:([0-9]{1,10}):run:([0-9]{1,20})$/;
 export function checkNamesPullRequest(check, prNumber) {
-  return new RegExp(`^pr:${Number(prNumber)}:run:[0-9]+$`).test(String((check && check.external_id) ?? ""));
+  const match = EXTERNAL_ID.exec(String((check && check.external_id) ?? ""));
+  return Boolean(match) && Number(match[1]) === Number(prNumber);
 }
 
-export async function latestAdmissionCheck(fetchImpl, env, repository, headSha, since = 0, prNumber = null) {
+export async function eventAdmissionCheck(fetchImpl, env, repository, headSha, since, prNumber) {
   const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
   const route = `/repos/${repository}/commits/${headSha}/check-runs?check_name=${APP_CHECK_NAME}&filter=all&per_page=100`;
   const response = await fetchImpl(`${base}${route}`, {
@@ -881,16 +889,28 @@ export async function latestAdmissionCheck(fetchImpl, env, repository, headSha, 
   }
   if (!response.ok) throw new Error(`GitHub API ${route} returned ${response.status}`);
   const body = await response.json();
-  let latest = null;
+  // The newest App check of each admission run, with the pull request it names.
+  const posted = new Map();
   for (const check of (body && body.check_runs) || []) {
     if (check.name !== APP_CHECK_NAME || check.head_sha !== headSha) continue;
     if (!check.app || Number(check.app.id) !== ADMISSION_APP_ID) continue;
-    if (prNumber !== null && !checkNamesPullRequest(check, prNumber)) continue;
-    const posted = Date.parse(check.started_at ?? check.completed_at ?? "");
-    if (!(posted >= since - (prNumber !== null ? CHECK_WINDOW_MS : 0))) continue;
-    if (!latest || Number(check.id) > Number(latest.id)) latest = check;
+    const match = EXTERNAL_ID.exec(String(check.external_id ?? ""));
+    if (!match) continue;
+    const prior = posted.get(match[2]);
+    if (!prior || Number(check.id) > Number(prior.check.id)) posted.set(match[2], { check, pr: Number(match[1]) });
   }
-  return latest;
+  const runs = (await githubJson(fetchImpl, env,
+    `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=pull_request_target&per_page=100`)).workflow_runs ?? [];
+  const fresh = runs
+    .filter((run) => run && run.event === "pull_request_target" && run.conclusion !== "skipped"
+      && Date.parse(run.created_at) >= since - SAME_EVENT_MS)
+    .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)));
+  for (const run of fresh) {
+    const entry = posted.get(String(run.id));
+    if (entry && entry.pr !== Number(prNumber)) continue;
+    return { run, check: entry ? entry.check : null };
+  }
+  return { run: null, check: null };
 }
 
 // Re-review 3, N-R3: a re-run replays the run's own workflow file and event,
@@ -944,23 +964,24 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     const self = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`);
     const since = Date.parse(self && self.created_at);
     if (!Number.isFinite(since)) throw new Error(`run ${env.GITHUB_RUN_ID} has no created_at.`);
-    let run = null;
-    const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} for #${pr.number} posted since ${self.created_at} (less ${CHECK_WINDOW_MS / 1000}s)`;
+    let found = { run: null, check: null };
+    const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} for #${pr.number} from the admission run of this event (created since ${self.created_at} less ${SAME_EVENT_MS / 1000}s)`;
     for (let waited = 0; ; waited += GATE_POLL_SECONDS) {
-      run = await latestAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, since, pr.number);
-      if ((run && run.status === "completed") || waited >= limit) break;
+      found = await eventAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, since, pr.number);
+      if ((found.check && found.check.status === "completed") || waited >= limit) break;
       await sleep(GATE_POLL_SECONDS * 1000);
     }
+    const run = found.check;
     if (run) {
       outcome.admission_run = { id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url ?? null,
-        source: what };
+        workflow_run_id: found.run.id, source: what };
     }
-    if (!run) {
+    if (!found.run) {
       outcome.verdict = "NO_ADMISSION_RUN";
       outcome.reasons.push(`no ${what} on ${pr.head.sha} within ${limit}s`);
-    } else if (run.status !== "completed") {
+    } else if (!run || run.status !== "completed") {
       outcome.verdict = "ADMISSION_PENDING";
-      outcome.reasons.push(`${what} ${run.id} still ${run.status} after ${limit}s`);
+      outcome.reasons.push(`${what}: run ${found.run.id} ${run ? `check ${run.id} still ${run.status}` : "has posted no check"} after ${limit}s`);
     } else if (run.conclusion === "success") {
       outcome.verdict = "ADMITTED";
       outcome.admitted = true;

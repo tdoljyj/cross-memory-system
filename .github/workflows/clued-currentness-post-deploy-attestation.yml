@@ -15,6 +15,9 @@ jobs:
     # The owner dispatches this only after a production deployment; the live
     # Worker SHA and the privileged database credential must both verify.
     if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    # Re-review 5, N1: the deploy token and attestation URL are secrets of the
+    # clued-release environment (main only), never repository secrets.
+    environment: clued-release
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:

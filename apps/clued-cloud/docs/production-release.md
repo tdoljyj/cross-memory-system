@@ -33,7 +33,14 @@ Worker, and the `CLUED_CLOUDFLARE_ACCOUNT_ID` repository variable. Both secrets
 were renamed (from the names without `_V2`) after re-review 4, finding M2: a
 re-run replays a run's own workflow file, so a release run from before the
 Owner Grant door could deploy an old commit with no grant. With the old names
-removed, such a re-run gets no deploy credentials. The token
+removed, such a re-run gets no deploy credentials. Both `_V2` secrets are
+secrets of the `clued-release` environment (deployment branches: `main` only),
+never repository secrets (re-review 5, finding N1): a repository secret reaches
+a workflow that any pushed branch adds, while an environment secret reaches
+only jobs that declare the environment and run from `main`. Every job that
+reads them (this release job, the storage executor window, the storage read
+config and the post-deploy attestation) declares `environment: clued-release`;
+`tests/production-release-gate.test.mjs` checks that. The token
 belongs in GitHub secret storage; never put it in Git, logs, an artifact, or a
 command argument. Backup mode additionally requires a high-entropy
 `CLUED_PRODUCTION_BACKUP_KEY` GitHub secret; retain it while any encrypted

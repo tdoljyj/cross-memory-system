@@ -73,6 +73,19 @@
       - m3：守卫拒绝不加闸 workflow 中自托管 job 新增或改动 `strategy`。m4：`public-mcp-behavior`、`public-mcp-protocol` 的自托管 job 设 25 分钟超时。
       - m5：合同 v27 §1.7 写明不要重跑 PR 或分支手动触发的运行，要重试就推新提交；runner README 写准确「哪条 check 算数」。
       - m6：dispatch 与 reverify 检出默认分支的当前提交。
+  - 复审 5（2026-10-04，Task `869d2db7`，对照 main `1f1be647`）：fresh-context 只读评审，HOLD_FAIL。M1、m1–m6 已修好；生产迁移 `20261004220000`（md5 `597fd91d…`）与 v27 已核对；此前各轮没有回归。
+    - 新发现：
+      - N1（MAJOR，M2 的剩余部分）：`_V2` 两个 secret 是仓库级的（存储与核验三个 workflow 不声明 environment 也读它们），任何能推分支的 Agent 都可以加一个 `on: push` 的托管 runner workflow，直接用部署 token 部署生产，不经 Owner 授权；合并闸、准入、runner 检查都不经过。
+      - n1（MINOR，N-R1 的窄回归）：两分钟的发出时间窗口分不清事件：PR 在窗口内关闭再重开时，前一个事件的成功 check 可放行后一个事件的重任务。
+      - n2（MINOR）：合同 v27 §1.7 说 gate 与 runner 检查拒绝重跑（含「只重跑失败的 job」），但 runner 检查尚未安装，「只重跑失败的 job」也不经过 gate。
+    - 修复（Owner 选择 N1+n1+n2 一起修）：
+      - N1：两个 `_V2` secret 只放在 `clued-release` environment（只限 main）。`clued-storage-executor-window`、`clued-storage-read-config`、`clued-currentness-post-deploy-attestation` 的 job 都声明 `environment: clued-release`。测试检查：凡读这两个 secret 的 job 都声明该 environment 且只在 main 上跑，job 之外不出现它们，也没有按计算名读 secret 或整体转交。Owner 合并前在 `clued-release` 中新建两个值，合并后删除仓库级的 `_V2`，并作废旧 Cloudflare token。
+      - n1：gate 与 runner 检查改为绑定本事件的准入运行：同一事件的运行一起创建（实测相差一秒内），本事件的准入运行就是该 head 上本次运行创建前 15 秒以来最新的 main 准入运行（`pull_request_target`），写着别的 PR 的不算；只有它的 check 算数，它还没发出 check 时就等。运行列表只用来找运行，判定仍只看 App check。
+      - n2：合同 v28 §1.7 写明 gate 只拒绝「全部重跑」，「只重跑失败的 job」只有装了 runner 检查的自托管 runner 能拦，其余靠 Agent 遵守。
+    - 仍靠自觉或未覆盖：runner 检查未安装；Agent 仍有生产 Supabase 写权限（OwnerCredential §9）；PR 正文可写别的 Agent 的认领；旧的数据库密码是否被 `_V2` 复用未知，Owner 选择暂不轮换。
+  - 复审 6（2026-10-04，Task `869d2db7`，对照 PR #547 head `fd7dfd97`）：N1、n1、n2 已修好，#547 本身没有新问题；另发现一个早已存在的 BLOCKER：
+    - B1：准入 workflow 对任何目标分支的 PR 都运行，并检出 PR 的目标分支（`base.ref`）上的脚本，同时拿着 App 私钥与 Clued token。GitHub 2025-12-08 起 `pull_request_target` 一律以默认分支运行，main 限定的 `clued-admission` environment 也会给出 secret。Agent 推一个分支 X、改掉 X 上的准入脚本、开一个合并到 X 的 PR，就能拿走私钥或给任何 PR 伪造准入 check。
+    - 修复（Owner：发现问题原地修、原地审，并入 #547）：准入与 adopt 两个 job 只对目标是默认分支的 PR 运行，并且固定检出默认分支；测试检查两者。合并到其他分支的 PR 没有准入 check，gate 与 runner 检查照常拒绝。
 - **尚缺或与本文设计不符**（各条在对应小节标注）：
   - 每认领 CI 分钟预算与 finalize：改为次数上限，不做（§4.5，Owner Decision `a264ea02`）。
   - 备份恢复后 `max(fence)` 会回退，靠恢复后的手工步骤补救（§4.4、§6，Owner Decision `2b23eb0c`）。
@@ -266,7 +279,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
     - L0b 的 `admission-gate` 仍是 PR 定义的 job，PR 可以删掉 `needs:`。**处理（同一决定）**：准入检查读取 PR 新增或改动的 workflow：base 上已有闸的 workflow，或新加的含自托管 job 的 workflow，必须保留与 `GATE_JOB_SHA256` 一致的 `admission-gate` job，其余每个 job 都 `needs` 它，且 `if:` 为闸条件 `&&` 一个整体括号组；否则判 REJECTED（`workflow_gate:<文件>:<原因>`），PR 无法合入。闸 job 改为检出 base 分支（或默认分支）代码，PR 改脚本也绕不过。已知代价：被拒的 PR 上，重任务在拒绝前可能已经跑过一次。base 上已有、本来不加闸的轻量 workflow（Owner Decision `75abfe80`）不在检查范围。修改闸 job 本身需两步：先在 `GATE_JOB_SHA256` 中加入新摘要并合入，再改各 workflow。
     - 任何同仓 PR 的 workflow 都能引用仓库 secret，所以 `CLUED_CONTEXT_READ_TOKEN` 只能靠 environment 限定加轮换保护。
 - **实现（token 隔离，2026-10-02，Task `95a93218`，PR #479）**：
-  - `admission-gate` 不再调用 Clued，也不再拿 `CLUED_CONTEXT_READ_TOKEN`（它跑的是 PR 的代码）。它等待本 head 上 clued-admission App 的 `clued-admission-verified` check，只认本次运行创建之后发出的、最新的那条，成功才放行（复审 2 N3c、复审 3 N-R1；原先看 `clued-work-admission.yml` 的 `pull_request_target` 运行）；重跑一律不放行（复审 3 N-R3）。强制模式下等不到运行、到期仍未结束（默认 480 秒）或 GitHub API 出错都不放行；advisory 模式从不拦截。来自 fork 的 PR 可能拿不到仓库变量，所以闸对 fork PR 一律按强制处理，只跟随准入运行的结果；准入运行在 base 仓库读变量，advisory 时总是成功（Task `27b4f5e8` 第 11 条，2026-10-02）。
+  - `admission-gate` 不再调用 Clued，也不再拿 `CLUED_CONTEXT_READ_TOKEN`（它跑的是 PR 的代码）。它等待本 head 上 clued-admission App 的 `clued-admission-verified` check，只认本事件的 main 准入运行发出的、写着本 PR 的那条（该运行发出多条时看最新的），成功才放行（复审 2 N3c、复审 3 N-R1、复审 4 m1、复审 5 n1；原先看 `clued-work-admission.yml` 的 `pull_request_target` 运行的结论，现在运行列表只用来找本事件的准入运行）；重跑一律不放行（复审 3 N-R3）。强制模式下等不到运行、到期仍未结束（默认 480 秒）或 GitHub API 出错都不放行；advisory 模式从不拦截。来自 fork 的 PR 可能拿不到仓库变量，所以闸对 fork PR 一律按强制处理，只跟随准入运行的结果；准入运行在 base 仓库读变量，advisory 时总是成功（Task `27b4f5e8` 第 11 条，2026-10-02）。
   - 只有跑 base 分支代码的 workflow 引用该 token：`clued-work-admission.yml`、`clued-work-admission-reverify.yml`，以及 PR #480 起的 `clued-work-admission-dispatch.yml`。三者都在 `clued-admission` environment 中运行。Owner 已（2026-10-02）将该 environment 的部署分支限定为 `main`、不设审批人，把 token 移为 environment secret、删除仓库 secret 并轮换；此后PR 新增或改写的 workflow（运行在 `refs/pull/N/merge`）即使声明该 environment 也拿不到 token。
   - 仓库检查（`scripts/ci/clued-work-admission.test.mjs`）断言只有上述 workflow 引用该 token 的 secret（复审 3 起名为 `secrets.CLUED_ADMISSION_CLUED_TOKEN`，旧名 `CLUED_CONTEXT_READ_TOKEN` 已停用）。
   - 仍未覆盖：同名 check 伪造（见上）。另外 PR 可以改写自己的 workflow、删掉 `needs: admission-gate`：闸是 PR 自己的 job，只能控制合规 PR 的花费，不是强制边界。

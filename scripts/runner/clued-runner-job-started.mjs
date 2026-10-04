@@ -20,8 +20,9 @@
 //     the one that triggered it, so an admission run of a pull request into
 //     another branch, whose copy of the admission workflow passes anything,
 //     could have stood in for it.)
-//     (Re-review 3, N-R1: only a check posted after this run was created
-//     counts, so an older success on the same head cannot stand in.)
+//     (Re-review 3, N-R1, and re-review 5, n1: only the check of the
+//     admission run of this run's own event counts, so an older success on
+//     the same head cannot stand in.)
 //   - a hand dispatch on another branch of one of DISPATCH_GATED_WORKFLOWS,
 //     whose .github/workflows directory is exactly main's. That workflow keeps
 //     the dispatch gate, which needs a Clued admission run for the dispatched
@@ -103,24 +104,43 @@ async function workflowsDifferFromMain(fetchImpl, token, repository, base, sha) 
   return [...names].filter((name) => mine.get(name) !== main.get(name)).sort();
 }
 
-// The newest clued-admission-verified check of the admission App on a head
-// that names this pull request (external_id "pr:<number>:run:<id>"), posted
-// at or after `since` (ms) less CHECK_WINDOW_MS: both runs start from the same
-// event (re-review 4, m1/m2).
-export const CHECK_WINDOW_MS = 120_000;
+// The clued-admission-verified check that main's admission run of this event
+// posted on the head (re-review 5, n1; same rule as eventAdmissionCheck in
+// scripts/ci/clued-work-admission.mjs). The check names its pull request and
+// admission run in external_id ("pr:<number>:run:<id>", re-review 4, m1). The
+// runs of one event are created together, so this event's admission run is
+// the newest main admission run (pull_request_target, this head) created no
+// earlier than SAME_EVENT_MS before this run, leaving out runs whose check
+// names another pull request. A check's posting time does not tell a closed
+// and reopened pull request's events apart; the run does.
+export const SAME_EVENT_MS = 15_000;
+const ADMISSION_WORKFLOW = "clued-work-admission.yml";
+const EXTERNAL_ID = /^pr:([0-9]{1,10}):run:([0-9]{1,20})$/;
 async function admissionCheck(fetchImpl, token, repository, headSha, appId, since, prNumber) {
   const body = await github(fetchImpl, token,
     `/repos/${repository}/commits/${headSha}/check-runs?check_name=${ADMISSION_CHECK}&filter=all&per_page=100`);
-  let latest = null;
+  const posted = new Map();
   for (const check of (body && body.check_runs) || []) {
     if (check.name !== ADMISSION_CHECK || check.head_sha !== headSha) continue;
     if (!check.app || Number(check.app.id) !== appId) continue;
-    if (!new RegExp(`^pr:${Number(prNumber)}:run:[0-9]+$`).test(String(check.external_id ?? ""))) continue;
-    const posted = Date.parse(check.started_at ?? check.completed_at ?? "");
-    if (!(posted >= since - CHECK_WINDOW_MS)) continue;
-    if (!latest || Number(check.id) > Number(latest.id)) latest = check;
+    const match = EXTERNAL_ID.exec(String(check.external_id ?? ""));
+    if (!match) continue;
+    const prior = posted.get(match[2]);
+    if (!prior || Number(check.id) > Number(prior.check.id)) posted.set(match[2], { check, pr: Number(match[1]) });
   }
-  return latest;
+  const runs = (await github(fetchImpl, token,
+    `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=pull_request_target&per_page=100`))
+    ?.workflow_runs ?? [];
+  const fresh = runs
+    .filter((run) => run && run.event === "pull_request_target" && run.conclusion !== "skipped"
+      && Date.parse(run.created_at) >= since - SAME_EVENT_MS)
+    .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)));
+  for (const run of fresh) {
+    const entry = posted.get(String(run.id));
+    if (entry && entry.pr !== Number(prNumber)) continue;
+    return { run, check: entry ? entry.check : null };
+  }
+  return { run: null, check: null };
 }
 
 export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
@@ -192,16 +212,18 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
     const appId = Number.isInteger(configured) && configured > 0 ? configured : ADMISSION_APP_ID;
     const since = Date.parse(run && run.created_at);
     if (!Number.isFinite(since)) throw new Error(`run ${runId} has no created_at.`);
-    let check = null;
+    let found = { run: null, check: null };
     for (let waited = 0; ; waited += 10) {
-      check = await admissionCheck(fetchImpl, token, repository, pr.head.sha, appId, since, pr.number);
-      if ((check && check.status === "completed") || waited >= limit) break;
+      found = await admissionCheck(fetchImpl, token, repository, pr.head.sha, appId, since, pr.number);
+      if ((found.check && found.check.status === "completed") || waited >= limit) break;
       await sleep(10_000);
     }
+    const { check } = found;
     result.allow = Boolean(check && check.status === "completed" && check.conclusion === "success");
     const what = [...new Set(changed)].join(", ");
-    result.reason = result.allow ? `pull request #${pr.number} changes ${what}; ${ADMISSION_CHECK} ${check.id} succeeded`
-      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_CHECK} from App ${appId} on ${pr.head.sha} for #${pr.number} posted since ${run.created_at} less ${CHECK_WINDOW_MS / 1000}s (${check ? `${check.status}/${check.conclusion}` : "none"})`;
+    const seen = !found.run ? "no admission run" : `admission run ${found.run.id}: ${check ? `${check.status}/${check.conclusion}` : "no check yet"}`;
+    result.reason = result.allow ? `pull request #${pr.number} changes ${what}; ${ADMISSION_CHECK} ${check.id} of admission run ${found.run.id} succeeded`
+      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_CHECK} from App ${appId} on ${pr.head.sha} for #${pr.number} from the admission run of this event (created since ${run.created_at} less ${SAME_EVENT_MS / 1000}s; ${seen})`;
     return result;
   }
   throw new Error(`unreachable event ${event}`);
