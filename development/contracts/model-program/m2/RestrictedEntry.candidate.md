@@ -187,3 +187,10 @@ root750/640 positive reads, UID/GID drop, AF_HYPERV/AF_VSOCK connection, cgroup
 resource/descendant-kill/disconnect behavior and storage-fault durability still
 need separately approved VM tests after independent exact-head code review.
 Qualification remains NOT_ISSUED. No models, protected rows or production are used.
+
+The separate [fixed descendant stop qualification candidate](AStopQualification.candidate.md)
+adds uninstalled management-only fixtures and identity-bound stop observations.
+It reuses the existing cgroup stop proof, preserves all Agent schemas and the
+approved package, and keeps real same-user sandbox observations separate from
+native VM qualification. Real installation and fault cases remain pending
+under Task `1502fd80`; default fixture activation is denied.

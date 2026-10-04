@@ -10,11 +10,13 @@ import importlib.util
 import io
 import json
 import os
+import signal
 from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 import zipfile
@@ -34,6 +36,8 @@ bridge = load("a_bridge", "kernel/host/m2-restricted-entry-a-bridge.py")
 boundary = load("a_boundary", "kernel/host/m2-restricted-entry-python-candidate.py")
 builder = load("a_builder", "scripts/model-program/build_m2_a_executor_package.py")
 installer = load("a_installer", "scripts/model-program/install_m2_a_executor.py")
+fault_observer = load("a_fault_observer", "kernel/host/m2-restricted-entry-a-fault-observer.py")
+fault_fixture = load("a_fault_fixture", "kernel/host/m2-restricted-entry-a-fault-fixture.py")
 
 PROOF = {"scope": "entire_cgroup", "cgroup_empty": True, "leader_reaped": True, "identity_unchanged": True}
 
@@ -88,7 +92,8 @@ class BrokerCandidateTests(unittest.TestCase):
     def test_unknown_tools_and_authority_fields_never_dispatch(self):
         for tool in ("shell", "stop", "install", "m2_read_other_role", "activate", "registry"):
             self.assertEqual(self.host.call(tool, {"request_id": "x"})["error_code"], "TOOL_NOT_ALLOWED")
-        for field in ("role", "uid", "root", "command", "launcher", "instance", "transport", "deadline"):
+        for field in ("role", "uid", "root", "command", "launcher", "instance", "transport", "deadline",
+                      "fault_case", "fixture", "stop_timeout", "proc_root"):
             self.assertEqual(self.host.call(entry.TOOLS[2], {"request_id": "x", field: "root"})["error_code"], "REQUEST_INVALID")
         self.assertEqual(self.runner.calls, [])
 
@@ -700,6 +705,198 @@ class SuccessorLedgerSnapshotTests(unittest.TestCase):
         for candidate in (b"bad", raw[:18] + b"\x02\x02" + raw[20:]):
             with self.assertRaises(ValueError):
                 installer.ledger_burns(candidate)
+
+
+class FaultObservationCandidateTests(unittest.TestCase):
+    """Deterministic evidence reducers; no native cgroup or VM qualification."""
+    def setUp(self):
+        self.leader = fault_observer.ProcessIdentity(101, 111, 101, 101, 1001, 1001, "S")
+        self.child = fault_observer.ProcessIdentity(102, 112, 101, 101, 1001, 1001, "S")
+        self.binding = fault_observer.GroupBinding("00000000-0000-0000-0000-000000000001", self.leader)
+        self.before = fault_observer.Observation(self.binding, (self.leader, self.child), (), True)
+        self.after = fault_observer.Observation(self.binding, (), (None, None), True)
+        self.runner = mock.Mock()
+        self.runner.stop.return_value = dict(PROOF)
+
+    def check(self, after=None, end=0.01, timeout=None):
+        ticks = iter((0, end))
+        with mock.patch.object(fault_observer, "observe", return_value=after or self.after):
+            return fault_observer.stop_and_observe(self.runner, self.before,
+                entry.STOP_TIMEOUT if timeout is None else timeout, clock=lambda: next(ticks))
+
+    def test_bound_matches_existing_supervisor_and_fixed_command_is_management_only(self):
+        self.assertEqual(fault_observer.STOP_TIMEOUT, entry.STOP_TIMEOUT)
+        self.assertEqual(fault_observer.FIXED_COMMAND, ("/usr/bin/python3", "-B", "-I", "-S",
+            "/usr/local/lib/clued-m2-a-fault-fixture/fault_fixture.py", "--fixed-management-fixture"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            for args in ([], ["--fixed-management-fixture", "root"], ["--command", "sh"]):
+                self.assertEqual(fault_fixture.main(args), 2)
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "a.zip"
+            builder.build(package)
+            with zipfile.ZipFile(package) as z:
+                self.assertFalse(any("fault" in n for n in z.namelist()))
+
+    def test_complete_mock_evidence_requires_all_native_fields(self):
+        self.assertEqual(self.check()["execution_state"], "STOPPED")
+        self.assertEqual(self.check()["qualification"], "NOT_ISSUED")
+        for field in PROOF:
+            with self.subTest(field=field):
+                self.runner.stop.return_value = {k: v for k, v in PROOF.items() if k != field}
+                self.assertEqual(self.check()["execution_state"], "UNKNOWN")
+
+    def test_live_or_escaped_descendant_unknown_even_with_mock_native_ack(self):
+        after = fault_observer.Observation(self.binding, (self.child,), (None, self.child), True)
+        self.assertEqual(self.check(after)["execution_state"], "UNKNOWN")
+        # No group members is insufficient when a tracked child remains alive.
+        after = fault_observer.Observation(self.binding, (), (None, self.child), True)
+        self.assertEqual(self.check(after)["execution_state"], "UNKNOWN")
+
+    def test_missing_incomplete_wrong_binding_and_no_live_descendant_unknown(self):
+        other = fault_observer.GroupBinding("00000000-0000-0000-0000-000000000002", self.leader)
+        for after in (fault_observer.Observation(self.binding, (), (), True),
+                      fault_observer.Observation(self.binding, (), (None, None), False),
+                      fault_observer.Observation(other, (), (None, None), True)):
+            self.assertEqual(self.check(after)["execution_state"], "UNKNOWN")
+        self.before = fault_observer.Observation(self.binding, (self.leader,), (), True)
+        self.runner.reset_mock()
+        self.assertEqual(self.check()["execution_state"], "UNKNOWN")
+        self.runner.stop.assert_not_called()
+
+    def test_late_negative_clock_and_changed_acceptance_bound_unknown(self):
+        for end in (entry.STOP_TIMEOUT, 0.2, -0.01, float("nan")):
+            self.assertEqual(self.check(end=end)["execution_state"], "UNKNOWN")
+        self.runner.reset_mock()
+        for timeout in (1.0, 0.0, True, float("nan")):
+            self.assertEqual(self.check(timeout=timeout)["execution_state"], "UNKNOWN")
+        self.runner.stop.assert_not_called()
+
+    def test_pid_reuse_boot_drift_group_churn_and_unreadable_scan_unknown(self):
+        reused = fault_observer.ProcessIdentity(101, 999, 101, 101, 1001, 1001, "S")
+        with mock.patch.object(fault_observer, "boot_id", return_value=self.binding.boot_id), \
+             mock.patch.object(fault_observer, "read_process", return_value=reused):
+            self.assertFalse(fault_observer.observe(self.binding).complete)
+        with mock.patch.object(fault_observer, "boot_id", return_value="changed"):
+            self.assertFalse(fault_observer.observe(self.binding).complete)
+        for scans in ((self.before.members, (self.leader,)), PermissionError("fixture")):
+            with mock.patch.object(fault_observer, "boot_id", return_value=self.binding.boot_id), \
+                 mock.patch.object(fault_observer, "read_process", return_value=self.leader), \
+                 mock.patch.object(fault_observer, "scan_group", side_effect=scans):
+                self.assertFalse(fault_observer.observe(self.binding).complete)
+
+    def test_tracked_generation_change_unknown_after_group_empty(self):
+        escaped = fault_observer.ProcessIdentity(102, 112, 999, 999, 1001, 1001, "S")
+        with mock.patch.object(fault_observer, "boot_id", return_value=self.binding.boot_id), \
+             mock.patch.object(fault_observer, "scan_group", return_value=()), \
+             mock.patch.object(fault_observer, "read_process", side_effect=[FileNotFoundError(), escaped]):
+            self.assertFalse(fault_observer.observe(self.binding, (self.child,)).complete)
+
+    def test_stop_exception_unknown(self):
+        self.runner.stop.side_effect = OSError("fixture")
+        self.assertEqual(self.check()["execution_state"], "UNKNOWN")
+
+    def test_readiness_requires_bound_session_and_role(self):
+        for child in (fault_observer.ProcessIdentity(102, 112, 101, 999, 1001, 1001, "S"),
+                      fault_observer.ProcessIdentity(102, 112, 101, 101, 0, 0, "S")):
+            self.before = fault_observer.Observation(self.binding, (self.leader, child), (), True)
+            self.assertEqual(self.check()["execution_state"], "UNKNOWN")
+        self.runner.stop.assert_not_called()
+
+    def test_proc_parser_binds_start_time_and_handles_parentheses_in_comm(self):
+        raw = b"101 (odd ) name) " + b" ".join([b"S", b"1", b"101", b"101"] +
+            [b"0"] * 15 + [b"111"] + [b"0"] * 30) + b"\n"
+        s = mock.Mock(st_mode=0o100400, st_uid=1001, st_gid=1001)
+        with mock.patch.object(fault_observer.os, "O_NOFOLLOW", 0x20000, create=True), \
+             mock.patch.object(fault_observer.os, "open", return_value=10), \
+             mock.patch.object(fault_observer.os, "fstat", return_value=s), \
+             mock.patch.object(fault_observer.os, "read", return_value=raw), \
+             mock.patch.object(fault_observer.os, "close") as closed:
+            self.assertEqual(fault_observer.read_process(101), self.leader)
+            closed.assert_called_once_with(10)
+        for raw in (b"101 (x) broken", b"102 (x) S 1", b"x" * (fault_observer.MAX_STAT_BYTES + 1)):
+            with mock.patch.object(fault_observer.os, "O_NOFOLLOW", 0x20000, create=True), \
+                 mock.patch.object(fault_observer.os, "open", return_value=10), \
+                 mock.patch.object(fault_observer.os, "fstat", return_value=s), \
+                 mock.patch.object(fault_observer.os, "read", return_value=raw), \
+                 mock.patch.object(fault_observer.os, "close"):
+                with self.assertRaises(fault_observer.Uncertain):
+                    fault_observer.read_process(101)
+
+
+@unittest.skipUnless(sys.platform == "linux", "Linux /proc and same-user fork sandbox only; no VM evidence")
+class FaultSameUserSandboxTests(unittest.TestCase):
+    """Actual subprocess identity/stop; simulated fault triggers, no native cgroup."""
+    def launch(self):
+        process = subprocess.Popen((sys.executable, "-B", "-I", "-S",
+            str(ROOT / "kernel/host/m2-restricted-entry-a-fault-fixture.py"),
+            fault_fixture.FIXED_ARG), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, start_new_session=True, close_fds=True)
+        self.addCleanup(self.cleanup, process)
+        binding = fault_observer.bind_started_group(process.pid)
+        end = time.monotonic() + 3  # Sandbox readiness watchdog, not acceptance.
+        while time.monotonic() < end:
+            before = fault_observer.observe(binding)
+            if fault_observer.ready(before):
+                return process, before
+            time.sleep(0.005)
+        self.fail("Fixed sandbox descendant did not become observable")
+
+    @staticmethod
+    def cleanup(process):
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+        process.communicate(timeout=3)
+
+    def test_actual_group_stop_has_no_native_cgroup_qualification_for_each_simulated_fault(self):
+        for trigger in ("timeout", "revoke", "disconnect"):
+            with self.subTest(simulated_trigger=trigger):
+                owner = self
+                closed = [False]
+                class SameUserSandboxRunner:
+                    def run(self, tool, payload, deadline, interrupted):
+                        self.process, self.before = owner.launch()
+                        if trigger == "timeout":
+                            while time.monotonic() < deadline:
+                                time.sleep(0.005)
+                            raise TimeoutError()
+                        if trigger == "revoke":
+                            self.host.revoke()
+                        else:
+                            closed[0] = True  # Simulated transport interruption.
+                        return "EMPTY_MARKER_OK"
+
+                    def stop(self, timeout):
+                        if self.process.poll() is None:
+                            os.killpg(self.process.pid, signal.SIGKILL)
+                        self.process.communicate(timeout=3)
+                        return {}  # Actual sandbox group kill is no cgroup proof.
+                runner = SameUserSandboxRunner()
+                runner.host = entry.Executor(mock.Mock(), runner, "fixed-a")
+                result = runner.host.call(entry.TOOLS[2], {"request_id": "sandbox"}, lambda: closed[0])
+                self.assertEqual(result["execution_state"], "UNKNOWN")
+                self.assertEqual(result["error_code"], "EXECUTION_STOP_UNCONFIRMED")
+                before = runner.before
+                after = fault_observer.observe(before.binding, before.members)
+                self.assertTrue(fault_observer.terminated(before, after))
+                observed_runner = mock.Mock()
+                observed_runner.stop.return_value = {}
+                with mock.patch.object(fault_observer, "observe", return_value=after):
+                    result = fault_observer.stop_and_observe(observed_runner, before, entry.STOP_TIMEOUT)
+                self.assertEqual(result["execution_state"], "UNKNOWN")
+                self.assertEqual(result["qualification"], "NOT_ISSUED")
+
+    def test_leader_only_kill_leaves_observed_descendant_and_cannot_confirm_stop(self):
+        process, before = self.launch()
+        os.kill(process.pid, signal.SIGKILL)
+        process.wait(timeout=3)
+        after = fault_observer.observe(before.binding, before.members)
+        self.assertFalse(fault_observer.terminated(before, after))
+        self.assertTrue(any(x is not None and x.pid != process.pid and x.state not in "ZXx"
+                            for x in after.tracked))
+        # Leader has been reaped, but its same-user group is still ours and was
+        # bound before the fault. Terminate that known sandbox descendant group.
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate(timeout=3)
 
 
 if __name__ == "__main__":
