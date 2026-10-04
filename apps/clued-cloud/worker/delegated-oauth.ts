@@ -4,6 +4,7 @@ import { handleContinuityRequest, publicToolPolicies, type ContinuityEnv } from 
 import { isStorageAgentTool } from './storage-agent-tools';
 import { storageReadTool, storageContentTool } from './storage-read-agent';
 import { OWNER_REQUEST_TOOL } from './owner-requests';
+import { permissionDenial, permissionDenialResult } from './permission-guidance';
 
 const SCOPES = ['context:read', 'context:write', 'audit:read'];
 const PENDING_TTL = 600;
@@ -277,7 +278,13 @@ async function scopedApi(request: Request, env: DelegatedOAuthEnv, props: AuthPr
     if (payload.method === 'tools/call') {
       const params = payload.params as Json | undefined;
       const required = requiredToolScopes(String(params?.name), (params?.arguments || {}) as Json);
-      if (!required || required.some(scope => !scopes.includes(scope))) return json({ error: 'insufficient_scope' }, 403);
+      // A tool error, not an HTTP 403: Hosts drop the body of a 403, and the
+      // Agent needs it to ask the Owner for the missing permission.
+      if (!required || required.some(scope => !scopes.includes(scope))) {
+        const missing = required ? required.filter(scope => !scopes.includes(scope)) : null;
+        const denial = permissionDenial('insufficient_scope', params?.name, params?.arguments, missing);
+        return json({ jsonrpc: '2.0', id: payload.id ?? null, result: permissionDenialResult(denial) }, 200);
+      }
     }
   }
   const headers = new Headers(request.headers);

@@ -55,6 +55,7 @@ import {
   type OwnerRequestFeatureEnv,
 } from "./owner-requests";
 import { measurePack } from "./context-pack";
+import { permissionDenial, permissionDenialResult } from "./permission-guidance";
 import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION } from "./generated/agent-contract";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
 import { createStorageGoogleRecoveryOAuth } from "./storage-google-recovery-oauth";
@@ -1954,6 +1955,18 @@ function recordValidationRejection(error: unknown) {
   };
 }
 
+// PermissionSimplification §3.2: the connection lacks a context or action the
+// call needs. Returned as a tool error carrying what to request; a revoked or
+// expired connection stays an HTTP 403, since only reconnecting helps there.
+function permissionRejection(error: unknown, name: string, args: unknown) {
+  if (!(error instanceof HttpError) || error.status !== 403) return null;
+  const details = error.details as Record<string, unknown> | null | undefined;
+  if (details?.code !== "42501") return null;
+  if (error.message !== "binding_not_authorized" && error.message !== "resource_action_not_authorized") return null;
+  const policy = publicToolPolicies[name as keyof typeof publicToolPolicies] as { scopes: readonly string[] } | undefined;
+  return permissionDenial(error.message, name, args, policy ? policy.scopes : null);
+}
+
 function requestRuleRejection(error: unknown) {
   if (!(error instanceof HttpError) || error.status !== 403) return null;
   const details = error.details as Record<string, unknown> | null | undefined;
@@ -2163,6 +2176,8 @@ async function callTool(
   try {
     rawResult = await callRpc(request, env, name as keyof typeof rpcByTool, args);
   } catch (error) {
+    const denial = permissionRejection(error, name, args);
+    if (denial) return permissionDenialResult(denial);
     const rejection = (name === "clued_record_mutate" ? recordValidationRejection(error) : null) ?? requestRuleRejection(error);
     if (!rejection) throw error;
     return { content: [{ type: "text", text: JSON.stringify(rejection) }],
