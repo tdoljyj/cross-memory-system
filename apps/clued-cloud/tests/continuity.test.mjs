@@ -230,31 +230,12 @@ test("rejects MCP memory access without a scoped binding token", async () => {
   assert.match(response.headers.get("www-authenticate") ?? "", /Clued/);
 });
 
-test("issues a one-time binding token without storing the raw secret", async () => {
+test("the retired binding issuance route issues nothing and points to /oauth/connections", async () => {
   const worker = await loadWorker();
   const originalFetch = globalThis.fetch;
   const calls = [];
   globalThis.fetch = async (input, init = {}) => {
     calls.push({ url: String(input), init });
-    if (String(input).endsWith("/auth/v1/user")) {
-      return Response.json({ id: "ca1aeea5-9a2b-4e91-8a0e-8402c8be6a56", email: "user@example.com" });
-    }
-    if (String(input).endsWith("/rest/v1/clued_agent_bindings")) {
-      const body = JSON.parse(init.body);
-      assert.match(body.token_hash, /^[0-9a-f]{64}$/);
-      assert.doesNotMatch(init.body, /clued_bnd_/);
-      return Response.json([
-        {
-          id: "b5eb6c34-d18d-4100-9a20-f7a63020b04d",
-          vendor: body.vendor,
-          agent_name: body.agent_name,
-          scopes: body.scopes,
-          created_at: "2026-08-23T00:00:00Z",
-          last_used_at: null,
-          revoked_at: null,
-        },
-      ]);
-    }
     return Response.json({ message: "unexpected request" }, { status: 500 });
   };
 
@@ -271,11 +252,11 @@ test("issues a one-time binding token without storing the raw secret", async () 
       env,
       ctx,
     );
-    assert.equal(response.status, 201);
+    assert.equal(response.status, 410);
     const result = await response.json();
-    assert.match(result.token, /^clued_bnd_[A-Za-z0-9_-]{40,}$/);
-    assert.equal(result.mcpUrl, "https://clued.test/mcp");
-    assert.equal(calls.length, 2);
+    assert.equal(result.replacement, "/oauth/connections");
+    assert.equal(result.token, undefined);
+    assert.equal(calls.length, 0, "no database call, no Binding row");
   } finally {
     globalThis.fetch = originalFetch;
   }

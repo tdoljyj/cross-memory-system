@@ -27,7 +27,6 @@ type Binding = {
   last_used_at: string | null;
   revoked_at: string | null;
 };
-type IssuedBinding = { token: string; mcpUrl: string; binding: Binding };
 type Project = {
   id: string;
   name: string;
@@ -122,17 +121,8 @@ const copy = {
     untitledMemory: "Memory",
     continuityTitle: "AI continuity",
     continuityCopy: "Authorize an AI once. It can then restore this context at session start and checkpoint changes before handoff.",
-    vendor: "Provider",
-    agentName: "Agent name",
-    agentPlaceholder: "e.g. My ChatGPT",
-    createBinding: "Create AI connection",
-    creatingBinding: "Creating secure connection…",
-    connectionReady: "Connection ready",
-    connectionReadyCopy: "Add this MCP endpoint and one-time token to the AI client. Clued never shows the token again.",
-    mcpEndpoint: "MCP endpoint",
-    bindingToken: "One-time binding token",
-    copy: "Copy",
-    copied: "Copied",
+    connectHow: "Claude and ChatGPT connect from the client itself (OAuth). For CI, runners and scripts, issue a scoped token with an expiry on the connections page.",
+    manageConnections: "Manage connections and issue tokens",
     activeConnections: "Authorized AI connections",
     noConnections: "No AI connections yet.",
     lastUsed: "Last used",
@@ -261,17 +251,8 @@ const copy = {
     untitledMemory: "记忆",
     continuityTitle: "AI 连续性",
     continuityCopy: "只授权一次。此后 AI 会在会话开始恢复上下文，在交接或结束前提交检查点。",
-    vendor: "厂商",
-    agentName: "智能体名称",
-    agentPlaceholder: "例如：我的 ChatGPT",
-    createBinding: "创建 AI 连接",
-    creatingBinding: "正在创建安全连接…",
-    connectionReady: "连接已就绪",
-    connectionReadyCopy: "把这个 MCP 地址和一次性令牌添加到 AI 客户端。Clued 不会再次显示令牌。",
-    mcpEndpoint: "MCP 地址",
-    bindingToken: "一次性绑定令牌",
-    copy: "复制",
-    copied: "已复制",
+    connectHow: "Claude、ChatGPT 在客户端里直接连接（OAuth）。CI、runner、脚本请到连接管理页签发只含所需权限、带有效期的令牌。",
+    manageConnections: "管理连接和签发令牌",
     activeConnections: "已授权的 AI 连接",
     noConnections: "还没有 AI 连接。",
     lastUsed: "上次使用",
@@ -395,12 +376,8 @@ export default function Home() {
   const [error, setError] = useState<NoticeKey | "">("");
   const [minimumPasswordError, setMinimumPasswordError] = useState<number>();
   const [bindings, setBindings] = useState<Binding[]>([]);
-  const [bindingVendor, setBindingVendor] = useState("OpenAI");
-  const [bindingAgentName, setBindingAgentName] = useState("");
   const [bindingBusy, setBindingBusy] = useState(false);
   const [bindingError, setBindingError] = useState(false);
-  const [issuedBinding, setIssuedBinding] = useState<IssuedBinding | null>(null);
-  const [copiedField, setCopiedField] = useState<"endpoint" | "token" | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectName, setProjectName] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
@@ -668,37 +645,6 @@ export default function Home() {
     resetNotices();
   }
 
-  async function handleCreateBinding(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!session) return;
-    setBindingBusy(true);
-    setBindingError(false);
-    setIssuedBinding(null);
-    try {
-      const response = await fetch("/api/bindings", {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${session.access_token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          vendor: bindingVendor,
-          agentName: bindingAgentName || `${bindingVendor} agent`,
-          scopes: ["context:read", "context:write", "audit:read"],
-        }),
-      });
-      if (!response.ok) throw new Error("binding-create-failed");
-      const result = (await response.json()) as IssuedBinding;
-      setIssuedBinding(result);
-      setBindings((current) => [result.binding, ...current]);
-      setBindingAgentName("");
-    } catch {
-      setBindingError(true);
-    } finally {
-      setBindingBusy(false);
-    }
-  }
-
   async function handleRevokeBinding(id: string) {
     if (!session) return;
     setBindingBusy(true);
@@ -710,18 +656,11 @@ export default function Home() {
       });
       if (!response.ok) throw new Error("binding-revoke-failed");
       setBindings((current) => current.filter((binding) => binding.id !== id));
-      if (issuedBinding?.binding.id === id) setIssuedBinding(null);
     } catch {
       setBindingError(true);
     } finally {
       setBindingBusy(false);
     }
-  }
-
-  async function copyValue(field: "endpoint" | "token", value: string) {
-    await navigator.clipboard.writeText(value);
-    setCopiedField(field);
-    window.setTimeout(() => setCopiedField(null), 1600);
   }
 
   async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
@@ -1337,57 +1276,11 @@ export default function Home() {
                   <span className="protocol-badge">{t.continuityProtocol}</span>
                 </div>
 
-                <form className="binding-form" onSubmit={handleCreateBinding}>
-                  <label>
-                    {t.vendor}
-                    <select
-                      value={bindingVendor}
-                      onChange={(event) => setBindingVendor(event.target.value)}
-                    >
-                      <option>OpenAI</option>
-                      <option>Anthropic</option>
-                      <option>Google</option>
-                      <option>Microsoft</option>
-                      <option>DeepSeek</option>
-                      <option>Other</option>
-                    </select>
-                  </label>
-                  <label>
-                    {t.agentName}
-                    <input
-                      value={bindingAgentName}
-                      onChange={(event) => setBindingAgentName(event.target.value)}
-                      placeholder={t.agentPlaceholder}
-                      maxLength={80}
-                    />
-                  </label>
-                  <button className="primary-button" type="submit" disabled={bindingBusy}>
-                    {bindingBusy ? t.creatingBinding : t.createBinding}
-                  </button>
-                </form>
+                <p className="binding-how">
+                  {t.connectHow} <Link href="/oauth/connections">{t.manageConnections}</Link>
+                </p>
 
                 {bindingError && <p className="notice error">{t.bindingError}</p>}
-
-                {issuedBinding && (
-                  <div className="issued-binding" role="status">
-                    <strong>{t.connectionReady}</strong>
-                    <p>{t.connectionReadyCopy}</p>
-                    <div className="credential-row">
-                      <span>{t.mcpEndpoint}</span>
-                      <code>{issuedBinding.mcpUrl}</code>
-                      <button type="button" onClick={() => copyValue("endpoint", issuedBinding.mcpUrl)}>
-                        {copiedField === "endpoint" ? t.copied : t.copy}
-                      </button>
-                    </div>
-                    <div className="credential-row">
-                      <span>{t.bindingToken}</span>
-                      <code>{issuedBinding.token}</code>
-                      <button type="button" onClick={() => copyValue("token", issuedBinding.token)}>
-                        {copiedField === "token" ? t.copied : t.copy}
-                      </button>
-                    </div>
-                  </div>
-                )}
 
                 <div className="binding-list">
                   <h4>{t.activeConnections}</h4>

@@ -4,8 +4,12 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { type Session } from "@supabase/supabase-js";
 import { supabase } from "../../supabase-browser";
 import Link from "next/link";
+import HeadlessBindings from "./headless";
 
 const API = "/oauth/connections/api";
+// Headless Bindings share the v12 authorization table; they are listed and
+// managed in their own section (./headless.tsx), not as OAuth connections.
+const HEADLESS_CLIENT = "clued-headless";
 
 type Grant = {
   resource_kind: "scope" | "context";
@@ -155,7 +159,7 @@ export default function OAuthConnectionsPage() {
         throw new Error("连接服务返回了不完整的状态，请稍后重新读取。");
       }
       if (accountEpoch.current !== epoch || request !== readNumber.current || controller.signal.aborted) return null;
-      const rows: Binding[] = value.bindings;
+      const rows: Binding[] = value.bindings.filter((binding: Binding) => binding.client_id !== HEADLESS_CLIENT);
       if (apply) {
         applyBindings(rows);
         try { await readStorageAccess(who, epoch); } catch { if (accountEpoch.current === epoch) { setStorageAccess({}); setStorageLoaded(false); } }
@@ -439,6 +443,7 @@ export default function OAuthConnectionsPage() {
             </article>;
           })}
           <p className="oauth-note">减少或撤销权限会阻止之后的相应访问，不能收回客户端此前已经取得的数据。不同连接分别管理。</p>
+          <HeadlessBindings />
         </>}
       </section>
     </main>
