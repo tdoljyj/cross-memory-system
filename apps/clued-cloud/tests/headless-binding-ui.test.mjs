@@ -171,6 +171,14 @@ test('rotating a headless Binding starts from its current grants; revoking uses 
   assert.ok(f.text().includes('已撤销「CI reader」'));
 });
 
+test('a replaced Binding shows when it retires and cannot be rotated again', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await open(f, [{ ...ROWS[1], expires_at: '2099-01-01T01:00:00Z', replaced_by: 'b-new' }]);
+  const legacy = f.nodes('article')[0];
+  assert.ok(f.text(legacy).includes('已被替换'));
+  assert.deepEqual(f.nodes('button', legacy).map(n => f.text(n)), []);
+});
+
 test('declining the revoke dialog makes no call', async t => {
   const f = fixture({ confirmAnswer: false }); t.after(() => f.unmount());
   await open(f);

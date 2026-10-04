@@ -163,8 +163,7 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
     assert.equal(binding.client_id, 'clued-headless');
     assert.deepEqual(binding.scopes, ['context:read', 'context:write']);
     assert.deepEqual(binding.context_keys, ['global', `project:${projectId}`]);
-    assert.equal(binding.expires_at.getTime(), binding.auth_expires.getTime());
-    const days = (binding.expires_at.getTime() - Date.now()) / 86400000;
+    const days = (binding.auth_expires.getTime() - Date.now()) / 86400000;
     assert.ok(days > 29.9 && days <= 30, String(days));
     // The raw token is nowhere in the database.
     const dump = JSON.stringify((await admin.query(`select (select jsonb_agg(r) from public.clued_audit_receipts r) a,
@@ -239,13 +238,17 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
     const roles = (await admin.query(`select binding_id from clued_private.binding_roles_v1
       where role='ci-admission' and revoked_at is null`)).rows.map((r) => r.binding_id);
     assert.deepEqual(roles, [rotated.result.binding_id]);
-    // The old token keeps working for the one-hour grace period, then stops.
-    const legacyRow = (await admin.query('select expires_at,revoked_at from public.clued_agent_bindings where id=$1', [legacyId])).rows[0];
-    const grace = (legacyRow.expires_at.getTime() - Date.now()) / 60000;
+    // The old token keeps working for the one-hour grace period; then the sweep revokes it.
+    const retirement = (await admin.query(`select r.retire_at,r.replaced_by,b.revoked_at from clued_private.binding_retirements_v1 r
+      join public.clued_agent_bindings b on b.id=r.binding_id where r.binding_id=$1`, [legacyId])).rows[0];
+    const grace = (retirement.retire_at.getTime() - Date.now()) / 60000;
     assert.ok(grace > 59 && grace <= 60, String(grace));
-    assert.equal(legacyRow.revoked_at, null);
+    assert.equal(retirement.replaced_by, rotated.result.binding_id);
+    assert.equal(retirement.revoked_at, null);
     assert.equal((await resolve(legacyToken, 'context:read', 'global')).rows[0].id, legacyId);
-    await admin.query("update public.clued_agent_bindings set expires_at=now()-interval '1 second' where id=$1", [legacyId]);
+    assert.equal((await admin.query('select clued_private.binding_expiry_sweep_v1() n')).rows[0].n, 0, 'not due yet');
+    await admin.query("update clued_private.binding_retirements_v1 set retire_at=now()-interval '1 second' where binding_id=$1", [legacyId]);
+    assert.equal((await admin.query('select clued_private.binding_expiry_sweep_v1() n')).rows[0].n, 1);
     await assert.rejects(() => resolve(legacyToken, 'context:read', 'global'), /binding_not_authorized/);
     // A replaced or expired Binding cannot be replaced again.
     assert.equal(await step1Error({ label: 'again', days: 7, selected: readGlobal, replaces_binding_id: legacyId }),
@@ -264,29 +267,39 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
 
     // --- Expiry: the resolvers refuse at once; the sweep revokes for every other path. ---
     const rotatedHash = sha256(rotated.result.token);
-    await admin.query(`update public.clued_agent_bindings set expires_at=now()-interval '1 second' where id=$1;
-      update clued_private.authorizations_v12 set expires_at=now()-interval '1 second' where binding_id=$1`.replaceAll('$1', `'${rotated.result.binding_id}'`));
-    await assert.rejects(() => resolve(rotatedHash, 'context:read', 'global'), /binding_not_authorized|authorization_revoked_or_expired/);
+    await admin.query("update clued_private.authorizations_v12 set expires_at=now()-interval '1 second' where binding_id=$1",
+      [rotated.result.binding_id]);
+    await assert.rejects(() => resolve(rotatedHash, 'context:read', 'global'), /authorization_revoked_or_expired/);
     const swept = (await admin.query('select clued_private.binding_expiry_sweep_v1() n')).rows[0].n;
-    assert.equal(swept, 2);
+    assert.equal(swept, 1);
     const revoked = (await admin.query(`select b.id,b.revoked_at is not null b_revoked,a.revoked_at is not null a_revoked
       from public.clued_agent_bindings b left join clued_private.authorizations_v12 a on a.binding_id=b.id
       where b.id = any($1) order by b.id`, [[legacyId, rotated.result.binding_id]])).rows;
     assert.deepEqual(revoked.map((r) => r.b_revoked), [true, true]);
     assert.equal(revoked.find((r) => r.id === rotated.result.binding_id).a_revoked, true);
     assert.equal((await admin.query('select clued_private.binding_expiry_sweep_v1() n')).rows[0].n, 0);
-    // Bindings without their own expiry (OAuth and untouched legacy ones) are never swept.
+    // OAuth Bindings and legacy Bindings never replaced are not swept.
     const untouched = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'Other','untouched',$2,array['context:read'],array['*']) returning id`, [userId, hex()])).rows[0].id;
+    const oauthLike = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'OAuth','expired oauth',$2,array['context:read'],array['global']) returning id`, [userId, hex()])).rows[0].id;
+    const issuer = hex();
+    await admin.query("insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,'https://clued.test/mcp','t')", [issuer]);
+    const requestId = (await admin.query(`insert into clued_private.authorization_requests_v12(owner_id,issuer_hash,request_digest,client_id,client_name,
+      redirect_uri,resource,requested_scopes,eligible,status) values($1,$2,$3,'c','c','https://x','https://clued.test/mcp',array['context:read'],'[]','approved')
+      returning id`, [userId, issuer, hex()])).rows[0].id;
+    await admin.query(`insert into clued_private.authorizations_v12(binding_id,request_id,owner_id,client_id,client_name,resource,expires_at)
+      values($1,$2,$3,'c','c','https://clued.test/mcp',now()-interval '1 day')`, [oauthLike, requestId, userId]);
     assert.equal((await admin.query('select clued_private.binding_expiry_sweep_v1() n')).rows[0].n, 0);
-    assert.equal((await admin.query('select revoked_at from public.clued_agent_bindings where id=$1', [untouched])).rows[0].revoked_at, null);
+    assert.deepEqual((await admin.query('select revoked_at from public.clued_agent_bindings where id = any($1)',
+      [[untouched, oauthLike]])).rows.map((r) => r.revoked_at), [null, null]);
     listed = await native('clued_headless_binding_list_v1', {});
     assert.deepEqual(listed.bindings.map((b) => b.binding_id), [untouched]);
 
     // --- Limit: at most 50 live headless Bindings per Owner. ---
     for (let i = 0; i < 50; i++) {
-      const id = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys,expires_at)
-        values($1,'Headless',$2,$3,array['context:read'],array['global'],now()+interval '1 day') returning id`, [userId, `bulk ${i}`, hex()])).rows[0].id;
+      const id = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+        values($1,'Headless',$2,$3,array['context:read'],array['global']) returning id`, [userId, `bulk ${i}`, hex()])).rows[0].id;
       await admin.query(`insert into clued_private.authorizations_v12(binding_id,request_id,owner_id,client_id,client_name,resource,expires_at,issuance)
         values($1,null,$2,'clued-headless','bulk','clued:headless',now()+interval '1 day','headless')`, [id, userId]);
     }

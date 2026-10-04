@@ -13,7 +13,7 @@ import { supabase } from "../../supabase-browser";
 type Json = Record<string, unknown>;
 type Grant = { resource_kind: string; resource_id: string; environment: string; actions: string[]; name?: string };
 type Row = { binding_id: string; agent_name: string; vendor: string; kind: string; expires_at: string | null;
-  created_at: string | null; version: number | null; grants: Grant[] | null; roles: string[] };
+  created_at: string | null; version: number | null; grants: Grant[] | null; roles: string[]; replaced_by: string | null };
 type Pending = { confirmation_token: string; view_digest: string; view: Json };
 type Issued = { token: string; binding_id: string; expires_at: string; replaced: Json | null };
 
@@ -72,7 +72,8 @@ function rows(value: unknown): Row[] {
     expires_at: typeof item.expires_at === "string" ? item.expires_at : null,
     created_at: typeof item.created_at === "string" ? item.created_at : null,
     version: typeof item.version === "number" ? item.version : null,
-    grants: Array.isArray(item.grants) ? grants(item.grants) : null, roles: strings(item.roles) })) : [];
+    grants: Array.isArray(item.grants) ? grants(item.grants) : null, roles: strings(item.roles),
+    replaced_by: typeof item.replaced_by === "string" ? item.replaced_by : null })) : [];
 }
 const resourceName = (grant: Grant) => grant.resource_id === "global" ? "全局视图"
   : grant.resource_id === "profile" ? "个人资料" : grant.name ? `${grant.name}（${grant.resource_id}）` : grant.resource_id;
@@ -247,13 +248,13 @@ export default function HeadlessBindings() {
           <strong style={{ overflowWrap: "anywhere" }}>{row.agent_name}</strong>
           <dl className="oauth-details">
             <div><dt>类型</dt><dd>{row.kind === "legacy" ? "旧方式创建（全部权限、无有效期）" : "无头令牌"}</dd></div>
-            <div><dt>有效期至</dt><dd>{when(row.expires_at)}</dd></div>
+            <div><dt>有效期至</dt><dd>{row.replaced_by ? `已被替换，${when(row.expires_at)} 失效` : when(row.expires_at)}</dd></div>
             {row.roles.length > 0 && <div><dt>专用角色</dt><dd>{row.roles.map(r => ROLES[r] ?? r).join("、")}</dd></div>}
             {row.grants && <div><dt>权限</dt><dd>{row.grants.map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>}
             <div><dt>连接编号</dt><dd>{row.binding_id}</dd></div>
           </dl>
           <div className="oauth-actions">
-            <button className="oauth-secondary" type="button" disabled={working || pending !== null} onClick={() => rotate(row)}>轮换为新令牌</button>
+            {!row.replaced_by && <button className="oauth-secondary" type="button" disabled={working || pending !== null} onClick={() => rotate(row)}>轮换为新令牌</button>}
             {row.kind === "headless" && <button className="oauth-secondary" style={{ color: "#ffc5c5" }} type="button"
               disabled={working || pending !== null} onClick={() => void revoke(row)}>撤销</button>}
           </div>
