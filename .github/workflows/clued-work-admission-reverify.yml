@@ -36,7 +36,7 @@ jobs:
           persist-credentials: false
       - name: Re-verify open pull requests with a passing admission check
         env:
-          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_CONTEXT_READ_TOKEN }}
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
           CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode reverify
