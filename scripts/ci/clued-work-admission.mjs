@@ -902,7 +902,8 @@ export async function eventAdmissionCheck(fetchImpl, env, repository, headSha, s
   const runs = (await githubJson(fetchImpl, env,
     `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=pull_request_target&per_page=100`)).workflow_runs ?? [];
   const fresh = runs
-    .filter((run) => run && run.event === "pull_request_target" && Date.parse(run.created_at) >= since - SAME_EVENT_MS)
+    .filter((run) => run && run.event === "pull_request_target" && run.conclusion !== "skipped"
+      && Date.parse(run.created_at) >= since - SAME_EVENT_MS)
     .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)));
   for (const run of fresh) {
     const entry = posted.get(String(run.id));

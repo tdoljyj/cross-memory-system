@@ -1093,6 +1093,10 @@ test("gate (re-review 3 N-R1, re-review 5 n1): only the admission run of this ev
   const other = admissionTargetRun({ id: 79, created_at: "2026-10-02T04:00:02Z" });
   ({ outcome } = await gateWith([appCheckRun(), appCheckRun({ id: 7, external_id: "pr:453:run:79" })], [admissionTargetRun(), other]));
   assert.deepEqual([outcome.admitted, outcome.admission_run.workflow_run_id], [true, 77]);
+  // A skipped admission run (a pull request with this head into another
+  // branch, re-review 6) posts nothing and is passed over.
+  ({ outcome } = await gateWith([appCheckRun()], [admissionTargetRun(), admissionTargetRun({ id: 80, created_at: "2026-10-02T04:00:03Z", conclusion: "skipped" })]));
+  assert.deepEqual([outcome.admitted, outcome.admission_run.workflow_run_id], [true, 77]);
   // Only main's pull_request_target admission runs are looked at.
   ({ outcome } = await gateWith([appCheckRun()], [admissionTargetRun({ event: "pull_request" })]));
   assert.deepEqual([outcome.admitted, outcome.verdict], [false, "NO_ADMISSION_RUN"]);

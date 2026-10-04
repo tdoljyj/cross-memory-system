@@ -202,6 +202,10 @@ test("runner hook (re-review 3 N-R1, re-review 5 n1): only the admission run of 
   ({ result } = await run({}, { ...change, [CHECKS]: checks(check(), check({ id: 7, external_id: "pr:10:run:2" })),
     [ADMISSION_RUNS]: admissionRuns(admissionRun(), reopened) }));
   assert.equal(result.allow, true);
+  // A skipped admission run (a pull request into another branch) is passed over.
+  ({ result } = await run({}, { ...change, [CHECKS]: checks(check()),
+    [ADMISSION_RUNS]: admissionRuns(admissionRun(), admissionRun({ id: 3, created_at: "2026-10-04T05:00:02Z", conclusion: "skipped" })) }));
+  assert.equal(result.allow, true);
   // Re-review 4, m1: only a check naming this pull request and a run counts.
   for (const externalId of [undefined, "pr:10:run:1", "pr:9", "pr:90:run:1"]) {
     ({ result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...change, [CHECKS]: checks(check({ external_id: externalId })) }));
