@@ -17,6 +17,7 @@ import "../owner.css";
 // session; the database refuses Bindings and delegated OAuth tokens.
 // For "grant for a while" each requested resource is a row the Owner can untick
 // (narrow) or widen to a parent Clued offers (Decision c4e82dee); "" is unticked.
+// The page opens on the choice Clued sets by the action's risk (Decision b7053465).
 type Json = Record<string, unknown>;
 type Choice = "once" | "grant";
 type Options = { choice: Choice; seconds: number; anyAgent: boolean; scope: string[] };
@@ -136,9 +137,12 @@ export default function OwnerConfirmPage() {
       if (!object(value.request)) throw new RequestFailure("请求内容不完整，请刷新页面。");
       setRequest(value.request);
       const view = object(value.view) ? value.view : {};
-      const seconds = Number(view.expires_seconds);
+      // Clued picks the default choice by the action's risk (Decision b7053465);
+      // a server without default_choice keeps "grant" and the view's duration.
+      const seconds = Number(value.suggested_expires_seconds ?? view.expires_seconds);
       const offered = scopeRows(value.resource_options);
-      const initial: Options = { choice: "grant", seconds: Number.isInteger(seconds) && seconds >= 60 ? seconds : 14400,
+      const initial: Options = { choice: value.default_choice === "once" ? "once" : "grant",
+        seconds: Number.isInteger(seconds) && seconds >= 60 ? seconds : 14400,
         anyAgent: false, scope: offered.map(row => row.resource) };
       setRows(offered); setOptions(initial);
       if (value.request.status === "pending") await issue(id, initial, generation, offered);

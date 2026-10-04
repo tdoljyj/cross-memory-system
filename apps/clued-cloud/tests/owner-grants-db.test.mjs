@@ -156,7 +156,16 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
     assert.equal(view.view.action_title, '运行生产发布（deploy 模式）');
     assert.deepEqual(view.view.resources, [commit]);
     assert.equal(view.view.grantee.binding_id, bindingIds.claude);
-    assert.equal(view.view.expires_seconds, 7200);
+    // A high-risk action opens on "approve once" (Decision b7053465); the
+    // Agent's suggested duration stays available for "grant for a while".
+    assert.equal(view.default_choice, 'once');
+    assert.equal(view.suggested_expires_seconds, 7200);
+    assert.equal(view.view.choice, 'once');
+    assert.equal(view.view.expires_seconds, 86400);
+    assert.equal(view.view.max_uses, 1);
+    assert.deepEqual((await admin.query(`select action,risk from clued_private.owner_grant_actions order by action`)).rows,
+      [{ action: 'migration.production', risk: 'high' }, { action: 'release.production', risk: 'high' },
+        { action: 'work_claim.extra_claims', risk: 'routine' }]);
     assert.equal(view.view.request.agent_note_unverified, '发布 #502 的数据库函数，已备份');
 
     // --- Nothing is consumable before the Owner confirms. ---
@@ -215,6 +224,12 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
     const anyReq = committed(await agent('claude', 'clued_owner_request_v1', { action: 'work_claim.extra_claims',
       resources: [`record:${taskId}`], task_id: taskId, idempotency_key: 'extra-claims-1',
       suggested_grant: { expires_seconds: 86400, max_uses: 5 } })).request;
+    // A routine action opens on "grant for a while" with the Agent's suggestion.
+    const routine = await native('clued_owner_request_view_v1', { request_id: anyReq.request_id });
+    assert.equal(routine.default_choice, 'grant');
+    assert.equal(routine.view.choice, 'grant');
+    assert.equal(routine.view.expires_seconds, 86400);
+    assert.equal(routine.view.max_uses, 5);
     const anyGrant = committed(await grant(await confirm({ request_id: anyReq.request_id, grantee: 'any_agent' })));
     assert.equal(anyGrant.grant.any_agent, true);
     assert.equal(anyGrant.grant.max_uses, 5);
