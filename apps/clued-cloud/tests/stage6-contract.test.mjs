@@ -83,7 +83,9 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 25/);
+  assert.match(contract, /Contract version: 26/);
+  assert.match(contract, /`migration\.production`: one resource per migration file the run applies/);
+  assert.match(contract, /ask for everything the release needs in one call: `clued_owner_request` with `actions`/);
   assert.match(contract, /When it carries `suggested_request`, call `clued_owner_request` with that object as is/);
   assert.match(contract, /When a refusal carries no `suggested_request`/);
   assert.match(contract, /A missing connection permission is something you request, not a dead end/);
