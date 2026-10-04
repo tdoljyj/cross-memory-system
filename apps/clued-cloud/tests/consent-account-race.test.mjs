@@ -53,6 +53,25 @@ async function ready(t, id = 'A') {
   checkbox(f).props.onChange({ target: { checked: true } }); f.render(); return f;
 }
 
+test('consent defaults to every eligible permission and a 30-day lifetime of up to 365 days', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  f.emit('INITIAL_SESSION', session('A')); f.runTimers();
+  f.respond(0, { ...details('A'), eligible: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write', 'close'] }] }); await f.settle();
+  const boxes = f.nodes('input').filter(node => node.props.type === 'checkbox' && node.props.className !== 'oauth-group-checkbox');
+  assert.deepEqual(boxes.map(node => node.props.checked), [true, true, true]);
+  // Re-ticking an already selected action must not duplicate it.
+  boxes[0].props.onChange({ target: { checked: true } }); f.render();
+  assert.ok(f.text().replaceAll(' ', '').includes('已选3/3'));
+  const select = f.nodes('select')[0];
+  assert.equal(select.props.value, 30);
+  assert.deepEqual(f.nodes('option', select).map(node => node.props.value), [1, 7, 30, 90, 365]);
+  select.props.onChange({ target: { value: '365' } }); f.render();
+  f.button('允许所选权限').props.onClick(); await f.settle();
+  const decision = JSON.parse(f.requests[1].options.body);
+  assert.equal(decision.days, 365);
+  assert.deepEqual(decision.selected, [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write', 'close'] }]);
+});
+
 test('late account A GET cannot overwrite B identity or selected permissions', async t => {
   const f = fixture(); t.after(() => f.unmount());
   f.emit('INITIAL_SESSION', session('A')); f.runTimers();
@@ -188,9 +207,11 @@ test('tri-state group checkbox isolates exact resources/environments and preserv
     input.props.onChange({ target: { checked: !input.props.checked } }); f.render();
   };
   for (const row of eligible) {
-    assert.deepEqual(choice(row.name), row.actions.map(() => false)); checkState(row.name, 'none');
-    assert.ok(f.text(group(row.name)).replaceAll(' ', '').includes('已选0/' + row.actions.length));
+    assert.deepEqual(choice(row.name), row.actions.map(() => true), 'every eligible action starts selected'); checkState(row.name, 'all');
+    assert.ok(f.text(group(row.name)).replaceAll(' ', '').includes(`已选${row.actions.length}/${row.actions.length}`));
   }
+  assert.equal(f.button('允许所选权限').props.disabled, false);
+  for (const row of eligible) { clickMaster(row.name); checkState(row.name, 'none'); }
   assert.equal(f.button('允许所选权限').props.disabled, true);
   boxes('Test workspace')[1].props.onChange({ target: { checked: true } }); f.render();
   assert.deepEqual(choice('Test workspace'), [false, true, false], 'manual write does not silently add read');

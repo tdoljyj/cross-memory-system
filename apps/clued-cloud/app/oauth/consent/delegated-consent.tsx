@@ -9,6 +9,9 @@ type Details = { request_id: string; version: number; client_name: string; clien
 const actionLabels: Record<string, string> = { read: '读取', write: '新增和修改', close: '关闭和归档', restore: '恢复', feedback_submit: '提交反馈', audit: '查看审计回执' };
 const environmentLabels: Record<string, string> = { canonical: '正式记忆', test: '测试环境', preview: '预览环境', production: '生产环境' };
 const rowKey = (row: Resource) => JSON.stringify([row.resource_kind, row.resource_id, row.environment]);
+// Every eligible action starts selected; the Owner can untick any of them before approving.
+const allSelected = (rows: Resource[]) => Object.fromEntries(rows.map(row => [rowKey(row), [...row.actions]]));
+const lifetimeDays = [1, 7, 30, 90, 365];
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 function validDetails(value: unknown): value is Details {
   return isObject(value) && typeof value.request_id === 'string' && typeof value.version === 'number'
@@ -25,7 +28,7 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
   const [session, setSession] = useState<Session | null>(null);
   const [details, setDetails] = useState<Details | null>(null);
   const [selected, setSelected] = useState<Record<string, string[]>>({});
-  const [days, setDays] = useState(7);
+  const [days, setDays] = useState(30);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(true);
@@ -64,7 +67,7 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
       if (!validDetails(value)) throw new Error('授权服务返回了不完整的资源列表。');
       if (value.user.id !== who.user.id) throw new Error('授权请求与当前账户不匹配，请重新读取。');
       if (accountEpoch.current !== epoch || currentSession.current?.user.id !== who.user.id || number !== readNumber.current || controller.signal.aborted) return;
-      setDetails(value);
+      setDetails(value); setSelected(allSelected(value.eligible));
     } catch (failure) {
       if (accountEpoch.current === epoch && number === readNumber.current && !controller.signal.aborted) {
         setError(failure instanceof Error && !(failure instanceof TypeError) ? failure.message : '授权暂不可用，请稍后重试。');
@@ -186,7 +189,7 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
     {details && <>
       <h1>允许 {details.client_name} 使用 Clued</h1>
       <dl className="oauth-details"><div><dt>当前账户</dt><dd className="oauth-account-inline">{details.user.email || details.user.id}<button className="oauth-account-switch" type="button" disabled={busy} onClick={() => void switchAccount()}>切换账户</button></dd></div><div><dt>客户端标识</dt><dd style={{ overflowWrap: 'anywhere' }}>{details.client_id}</dd></div></dl>
-      <p className="oauth-copy">默认不选择任何权限，请按需勾选。全选仅作用于当前资源及环境，仍需点击下方按钮确认授权。</p>
+      <p className="oauth-copy">已默认勾选全部权限，可按需取消。每组的全选仅作用于当前资源及环境，仍需点击下方按钮确认授权。</p>
       {!details.eligible.length && <p role="status">身份已验证，尚无可授权的业务资源。项目开发资格需要资源所有者授予。</p>}
       <p><Link href="/oauth/projects" target="_blank" rel="noopener noreferrer">查看或接受开发项目邀请</Link></p>
       <p className="oauth-scroll-hint">在下方区域滚动查看全部权限；每组可单独全选或清空。</p>
@@ -208,13 +211,13 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
           {row.actions.map(action => <label key={action} style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '6px 0' }}>
             <input type="checkbox" checked={(selected[rowKey(row)] || []).includes(action)} onChange={event => {
               const checked = event.target.checked;
-              setSelected(old => ({ ...old, [rowKey(row)]: checked ? [...(old[rowKey(row)] || []), action] : (old[rowKey(row)] || []).filter(a => a !== action) }));
+              setSelected(old => { const current = (old[rowKey(row)] || []).filter(a => a !== action); return { ...old, [rowKey(row)]: checked ? [...current, action] : current }; });
             }} />{row.resource_kind === "context" && action === "close" ? "关闭/撤回记录" : actionLabels[action] || action}
           </label>)}
           {row.resource_kind === 'context' && row.actions.includes('write') && <small>修改已有内容前，可另外选择读取权限来核对当前版本；系统不会自动追加。</small>}
         </fieldset>)}</section>)}
       </div>
-      <label className="oauth-form">授权有效期<select disabled={busy} value={days} onChange={e => setDays(Number(e.target.value))}><option value={1}>1 天</option><option value={7}>7 天</option><option value={30}>30 天</option></select></label>
+      <label className="oauth-form">授权有效期<select disabled={busy} value={days} onChange={e => setDays(Number(e.target.value))}>{lifetimeDays.map(n => <option key={n} value={n}>{n} 天</option>)}</select></label>
       <p className="oauth-note">此选择不包含成员管理、生产发布或大规模导出。可以随时在<Link href="/oauth/connections" target="_blank" rel="noopener noreferrer">连接管理</Link>中减少或撤销权限。</p>
       <div className="oauth-actions"><button className="oauth-secondary" type="button" disabled={busy} onClick={() => void decide('deny')}>取消</button><button className="primary-button" type="button" disabled={busy || count === 0} onClick={() => void decide('approve')}>允许所选权限</button></div>
     </>}

@@ -82,10 +82,13 @@ configure these on the same reviewed Worker version:
 | `CLUED_DEVELOPMENT_CONTEXT_V14` | Explicitly enable the new development tools; the retired `CONTEXT_OWNERSHIP_V11` flag does not enable them |
 | Auth redirect allowlist | Include the exact approved origin `/?type=recovery` and the reviewed account/invitation verification callbacks |
 
-Do not copy credentials across environments. OAuth consent defaults to no
-selected actions; lifetime choices are 1, 7 or 30 days, access tokens last
-15 minutes, and database expiry/revocation remains authoritative on every
-protected call and refresh.
+Do not copy credentials across environments. OAuth consent starts with every
+eligible action selected (the Owner can untick any before approving) and a
+30-day lifetime; lifetime choices are 1, 7, 30, 90 or 365 days, and the
+database refuses an expiry beyond 365 days (migration
+`20261004140000_authorization_expiry_365.sql`). Access tokens last 15 minutes,
+the refresh token lives exactly as long as the chosen lifetime, and database
+expiry/revocation remains authoritative on every protected call and refresh.
 
 The browser build uses `VITE_CLUED_SUPABASE_URL` and
 `VITE_CLUED_SUPABASE_PUBLISHABLE_KEY`. Supply both for the approved environment;
