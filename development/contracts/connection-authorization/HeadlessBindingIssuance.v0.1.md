@@ -1,6 +1,6 @@
 # 无头 Binding 签发 v0.1
 
-Owner Decision `6e0371e3`，Task `364212a1`。迁移 `apps/clued-cloud/supabase/migrations/20261004120000_headless_binding_issuance.sql`。
+Owner Decision `6e0371e3`，Task `364212a1`。迁移 `apps/clued-cloud/supabase/migrations/20261004120000_headless_binding_issuance.sql`、`20261004170000_headless_legacy_binding_revoke.sql`。
 
 ## 用途
 
@@ -15,6 +15,7 @@ Owner Decision `6e0371e3`，Task `364212a1`。迁移 `apps/clued-cloud/supabase/
 5. **令牌只出现一次。** 原始令牌在数据库内生成，只在第二步的响应里返回一次，库里只存 SHA-256；重放第二步返回 `token: null`。回执（`HEADLESS_BINDING_ISSUED`）记录 Binding、权限、有效期、确认视图摘要和会话，不含令牌。
 6. **轮换。** 第一步可以指定被替换的 Binding（无头令牌，或没有 v12 授权记录的旧 Binding；OAuth 连接不能被替换）。签发后旧 Binding 再保留 1 小时然后失效（退役时间记在 `clued_private.binding_retirements_v1`，无头的旧 Binding 同时缩短其授权有效期；到点由同一个清扫撤销），它的 Binding 角色（`ci-admission`、`release-door`）在同一事务里移到新 Binding；新权限必须包含角色需要的权限，否则第一步就拒绝。
 7. **上限。** 每个 Owner 同时最多 50 个有效的无头 Binding。
+8. **撤销旧方式创建的 Binding。** 没有 v12 授权记录的旧 Binding，`clued_authorization_manage_v12` 撤销不了，改由 `clued_headless_binding_revoke_v1` 在同一页面撤销：同样只接受 Owner 本人的直接登录会话，只能撤销自己名下、仍有效、没有 v12 授权记录的 Binding（无头令牌和 OAuth 连接仍走 `manage_v12`）。它同时结束这个 Binding 的角色，写回执 `LEGACY_BINDING_REVOKED`（含被结束的角色）和 v12 审计记录 `legacy_revoke`。被轮换、等待退役的旧 Binding 也可以这样提前撤销。
 
 ## 令牌能用在哪里
 
@@ -24,7 +25,7 @@ Owner Decision `6e0371e3`，Task `364212a1`。迁移 `apps/clued-cloud/supabase/
 
 ## 旧入口
 
-首页的「创建 AI 连接」表单和 `POST /api/bindings` 已下线（返回 410，指向 `/oauth/connections`）。它签发的是全部权限、`context_keys=*`、没有有效期、没有确认的令牌。`GET`、`DELETE /api/bindings`（列出与撤销）保留。
+首页的「创建 AI 连接」表单和 `POST /api/bindings` 已下线（返回 410，指向 `/oauth/connections`）。它签发的是全部权限、`context_keys=*`、没有有效期、没有确认的令牌。首页的连接列表也已下线：OAuth 连接、无头令牌和旧 Binding 都在 `/oauth/connections` 查看和撤销，首页只留指向这个页面的链接。`GET`、`DELETE /api/bindings` 接口暂时保留，页面不再调用；`DELETE` 直接写 `revoked_at`，不写回执、不结束角色。
 
 ## 上线后
 

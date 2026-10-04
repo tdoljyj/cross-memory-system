@@ -18,15 +18,6 @@ const LANGUAGE_STORAGE_KEY = "clued-language";
 
 type View = "loading" | "login" | "create" | "set-password" | "account";
 type Locale = "zh-CN" | "en";
-type Binding = {
-  id: string;
-  vendor: string;
-  agent_name: string;
-  scopes: string[];
-  created_at: string;
-  last_used_at: string | null;
-  revoked_at: string | null;
-};
 type Project = {
   id: string;
   name: string;
@@ -92,7 +83,7 @@ const copy = {
     activateClued: "Activate Clued",
     accountActive: "Account active",
     accountReadyTitle: "You’re in.",
-    accountReadyCopy: "Your Clued identity is ready. Device and AI bindings will appear here as they are connected.",
+    accountReadyCopy: "Your Clued identity is ready.",
     memoriesTitle: "My memories",
     memoriesCopy: "Create and manage the private context you want Clued to remember.",
     memoryTitle: "Title",
@@ -123,12 +114,6 @@ const copy = {
     continuityCopy: "Authorize an AI once. It can then restore this context at session start and checkpoint changes before handoff.",
     connectHow: "Claude and ChatGPT connect from the client itself (OAuth). For CI, runners and scripts, issue a scoped token with an expiry on the connections page.",
     manageConnections: "Manage connections and issue tokens",
-    activeConnections: "Authorized AI connections",
-    noConnections: "No AI connections yet.",
-    lastUsed: "Last used",
-    neverUsed: "Not used yet",
-    revoke: "Revoke",
-    bindingError: "Clued could not update AI connections. The continuity database may still need its migration.",
     continuityProtocol: "Automatic protocol: restore → work events → checkpoint",
     projectsTitle: "Projects",
     projectsCopy: "Once Clued recognizes an item as a Project, it is created here. Recognition confidence stays in private evidence; work progress remains independent.",
@@ -222,7 +207,7 @@ const copy = {
     activateClued: "激活 Clued",
     accountActive: "账户已激活",
     accountReadyTitle: "登录成功",
-    accountReadyCopy: "你的 Clued 身份已经就绪。设备和 AI 连接将在接入后显示在这里。",
+    accountReadyCopy: "你的 Clued 身份已经就绪。",
     memoriesTitle: "我的记忆",
     memoriesCopy: "新增并管理你希望 Clued 长期记住的私人上下文。",
     memoryTitle: "标题",
@@ -253,12 +238,6 @@ const copy = {
     continuityCopy: "只授权一次。此后 AI 会在会话开始恢复上下文，在交接或结束前提交检查点。",
     connectHow: "Claude、ChatGPT 在客户端里直接连接（OAuth）。CI、runner、脚本请到连接管理页签发只含所需权限、带有效期的令牌。",
     manageConnections: "管理连接和签发令牌",
-    activeConnections: "已授权的 AI 连接",
-    noConnections: "还没有 AI 连接。",
-    lastUsed: "上次使用",
-    neverUsed: "尚未使用",
-    revoke: "撤销",
-    bindingError: "Clued 暂时无法更新 AI 连接；连续性数据库迁移可能尚未生效。",
     continuityProtocol: "自动协议：恢复 → 工作事件 → 检查点",
     projectsTitle: "项目",
     projectsCopy: "Clued 识别为项目后会直接在这里创建；识别置信度只保留在后台证据中，工作进度独立管理。",
@@ -375,9 +354,6 @@ export default function Home() {
   const [message, setMessage] = useState<NoticeKey | "">("");
   const [error, setError] = useState<NoticeKey | "">("");
   const [minimumPasswordError, setMinimumPasswordError] = useState<number>();
-  const [bindings, setBindings] = useState<Binding[]>([]);
-  const [bindingBusy, setBindingBusy] = useState(false);
-  const [bindingError, setBindingError] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectName, setProjectName] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
@@ -461,12 +437,6 @@ export default function Home() {
     if (!session || view !== "account") return;
     let cancelled = false;
     Promise.allSettled([
-      fetch("/api/bindings", {
-        headers: { authorization: `Bearer ${session.access_token}` },
-      }).then(async (response) => {
-        if (!response.ok) throw new Error("binding-list-failed");
-        return response.json() as Promise<{ bindings: Binding[] }>;
-      }),
       fetch("/v1/projects", {
         headers: { authorization: `Bearer ${session.access_token}` },
       }).then(async (response) => {
@@ -474,14 +444,8 @@ export default function Home() {
         return response.json() as Promise<{ projects: Project[] }>;
       }),
     ])
-      .then(([bindingResult, projectResult]) => {
+      .then(([projectResult]) => {
         if (cancelled) return;
-        if (bindingResult.status === "fulfilled") {
-          setBindings(bindingResult.value.bindings.filter((binding) => !binding.revoked_at));
-          setBindingError(false);
-        } else {
-          setBindingError(true);
-        }
         if (projectResult.status === "fulfilled") {
           setProjects(projectResult.value.projects);
           setProjectError(false);
@@ -643,24 +607,6 @@ export default function Home() {
     setEmail("");
     setView("login");
     resetNotices();
-  }
-
-  async function handleRevokeBinding(id: string) {
-    if (!session) return;
-    setBindingBusy(true);
-    setBindingError(false);
-    try {
-      const response = await fetch(`/api/bindings?id=${encodeURIComponent(id)}`, {
-        method: "DELETE",
-        headers: { authorization: `Bearer ${session.access_token}` },
-      });
-      if (!response.ok) throw new Error("binding-revoke-failed");
-      setBindings((current) => current.filter((binding) => binding.id !== id));
-    } catch {
-      setBindingError(true);
-    } finally {
-      setBindingBusy(false);
-    }
   }
 
   async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
@@ -1279,34 +1225,6 @@ export default function Home() {
                 <p className="binding-how">
                   {t.connectHow} <Link href="/oauth/connections">{t.manageConnections}</Link>
                 </p>
-
-                {bindingError && <p className="notice error">{t.bindingError}</p>}
-
-                <div className="binding-list">
-                  <h4>{t.activeConnections}</h4>
-                  {bindings.length === 0 ? (
-                    <p className="empty-bindings">{t.noConnections}</p>
-                  ) : (
-                    bindings.map((binding) => (
-                      <div className="binding-item" key={binding.id}>
-                        <div>
-                          <strong>{binding.agent_name}</strong>
-                          <span>{binding.vendor}</span>
-                          <small>
-                            {t.lastUsed}: {binding.last_used_at ? new Date(binding.last_used_at).toLocaleString(locale) : t.neverUsed}
-                          </small>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRevokeBinding(binding.id)}
-                          disabled={bindingBusy}
-                        >
-                          {t.revoke}
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
               </div>
               <button
                 className="secondary-button"

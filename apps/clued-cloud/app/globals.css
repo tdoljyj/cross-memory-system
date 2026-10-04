@@ -742,29 +742,7 @@ select {
   outline: none;
   background: #181d1a;
 }
-.binding-item button {
-  padding: 5px 8px;
-  color: #9ba69f;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  cursor: pointer;
-  background: rgba(255,255,255,.04);
-  font-size: 10px;
-}
-.binding-list h4 { margin: 0 0 10px; color: #c9d1cd; font-size: 11px; font-weight: 650; }
 .empty-bindings { margin: 0; color: #68726c; font-size: 11px; }
-.binding-item {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 11px 0;
-  border-top: 1px solid rgba(255,255,255,.06);
-}
-.binding-item > div { display: grid; gap: 3px; min-width: 0; }
-.binding-item strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.binding-item span { color: var(--green); font-size: 10px; }
-.binding-item small { color: #69736d; font-size: 9px; }
 footer {
   position: absolute;
   right: 24px;

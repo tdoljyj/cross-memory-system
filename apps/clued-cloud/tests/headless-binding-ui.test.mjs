@@ -12,7 +12,7 @@ const compile = path => ts.transpileModule(readFileSync(new URL(path, import.met
 const COMPONENT = compile('../app/oauth/connections/headless.tsx');
 
 function fixture({ confirmAnswer = true } = {}) {
-  const hooks = [], effects = [], calls = [], fetches = [], copied = [];
+  const hooks = [], effects = [], calls = [], fetches = [], copied = [], dialogs = [];
   let cursor = 0, authCallback, root;
   const equal = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
   const React = {
@@ -32,7 +32,7 @@ function fixture({ confirmAnswer = true } = {}) {
     if (name.endsWith('/supabase-browser')) return { supabase };
     throw Error(name);
   }, Error, Date, Number, String, Math, Array, JSON, Object,
-  window: { location: { origin: 'https://clued.test' }, confirm: () => confirmAnswer },
+  window: { location: { origin: 'https://clued.test' }, confirm: message => { dialogs.push(message); return confirmAnswer; } },
   navigator: { clipboard: { writeText: async value => { copied.push(value); } } },
   fetch(url) { fetches.push(url); return new Promise(() => {}); } });
   function render() { cursor = 0; root = exports.default({}); while (effects.length) effects.shift()(); return root; }
@@ -44,7 +44,7 @@ function fixture({ confirmAnswer = true } = {}) {
   function emit(e, s) { authCallback(e, s); render(); }
   function button(t, from) { const n = nodes('button', from).find(n => text(n) === t); assert.ok(n, t); return n; }
   render();
-  return { calls, fetches, copied, render, nodes, text, settle, emit, button, unmount: () => hooks.forEach(h => h?.cleanup?.()) };
+  return { calls, fetches, copied, dialogs, render, nodes, text, settle, emit, button, unmount: () => hooks.forEach(h => h?.cleanup?.()) };
 }
 
 const session = id => ({ user: { id, email: id + '@example.test' }, access_token: 'fixture-' + id });
@@ -133,7 +133,7 @@ test('rotating the legacy CI Binding names it and shows the moving role', async 
   const f = fixture(); t.after(() => f.unmount());
   await open(f);
   const legacy = f.nodes('article').find(n => f.text(n).includes('clued-work-admission'));
-  assert.deepEqual(f.nodes('button', legacy).map(n => f.text(n)), ['轮换为新令牌'], 'a legacy Binding can only be rotated here');
+  assert.deepEqual(f.nodes('button', legacy).map(n => f.text(n)), ['轮换为新令牌', '撤销']);
   // Before rotating, the issue form sits above the list, not after it.
   const inOrder = []; (function visit(n) { if (Array.isArray(n)) return n.forEach(visit); if (!n || typeof n !== 'object') return;
     if (n.type === 'div' || n.type === 'article') inOrder.push(n); visit(n.props?.children); })(f.nodes('section')[0]);
@@ -181,12 +181,40 @@ test('rotating a headless Binding starts from its current grants; revoking uses 
   assert.ok(f.text().includes('已撤销「CI reader」'));
 });
 
-test('a replaced Binding shows when it retires and cannot be rotated again', async t => {
+test('a replaced Binding shows when it retires, cannot be rotated again, and can be revoked early', async t => {
   const f = fixture(); t.after(() => f.unmount());
-  await open(f, [{ ...ROWS[1], expires_at: '2099-01-01T01:00:00Z', replaced_by: 'b-new' }]);
+  await open(f, [{ ...ROWS[1], expires_at: '2099-01-01T01:00:00Z', replaced_by: 'b-new', roles: [] }]);
   const legacy = f.nodes('article')[0];
   assert.ok(f.text(legacy).includes('已被替换'));
-  assert.deepEqual(f.nodes('button', legacy).map(n => f.text(n)), []);
+  assert.deepEqual(f.nodes('button', legacy).map(n => f.text(n)), ['撤销']);
+});
+
+test('revoking a legacy Binding uses its own RPC and warns about its roles', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await open(f);
+  const legacy = f.nodes('article').find(n => f.text(n).includes('clued-work-admission'));
+  f.button('撤销', legacy).props.onClick();
+  assert.equal(f.dialogs.length, 1);
+  assert.ok(f.dialogs[0].includes('撤销「clued-work-admission」'));
+  assert.ok(f.dialogs[0].includes('专用角色 CI 准入'), f.dialogs[0]);
+  assert.deepEqual(plain([f.calls[1].name, f.calls[1].args]), ['clued_headless_binding_revoke_v1',
+    { p_input: { binding_id: 'b-legacy' } }]);
+  f.calls[1].resolve({ data: { status: 'committed', binding_id: 'b-legacy', roles_ended: ['ci-admission'] }, error: null });
+  await f.settle();
+  assert.equal(f.calls[2].name, 'clued_headless_binding_list_v1');
+  f.calls[2].resolve(listed([ROWS[0]])); await f.settle();
+  assert.ok(f.text().includes('已撤销「clued-work-admission」'));
+  assert.equal(f.nodes('article').length, 1);
+  assert.equal(f.fetches.length, 0, 'no Worker route');
+});
+
+test('a legacy revoke that Clued refuses is shown in plain words', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await open(f);
+  const legacy = f.nodes('article').find(n => f.text(n).includes('clued-work-admission'));
+  f.button('撤销', legacy).props.onClick();
+  f.calls[1].resolve({ data: null, error: { message: 'headless_binding_revoke_target_invalid', code: '22023' } }); await f.settle();
+  assert.ok(f.text().includes('这个令牌已撤销或不能在这里撤销'));
 });
 
 test('declining the revoke dialog makes no call', async t => {
