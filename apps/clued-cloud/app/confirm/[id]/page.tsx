@@ -21,11 +21,18 @@ import "../owner.css";
 // A connection.permission request (Decision 43ba00e2) is approved once, for the
 // requesting connection only: the page names each context and action and
 // what the connection already has, and approval adds them to that connection.
+// A bundle (PermissionSimplification §3.3, Task 23045c17) is several requests
+// the Agent or the release door opened together, for example a production
+// migration and the deploy of the same commit. The page shows every pending
+// member and "批准" approves all of them: each still gets its own two-step
+// confirmation over its own view, with the same choice; scope rows are not
+// offered for a bundle.
 type Json = Record<string, unknown>;
 type Choice = "once" | "grant";
 type Options = { choice: Choice; seconds: number; anyAgent: boolean; scope: string[] };
 type ScopeRow = { resource: string; options: string[] };
 type Issued = { confirmation_token: string; view_digest: string; expires_at: string; view: Json; options: Options };
+type Member = { id: string; issued: Issued | null };
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DURATIONS: [number, string][] = [[3600, "1 小时"], [14400, "4 小时"], [86400, "24 小时"], [604800, "7 天"]];
@@ -91,6 +98,11 @@ function durationText(seconds: number) {
   return seconds % 3600 === 0 ? seconds / 3600 + " 小时" : Math.round(seconds / 60) + " 分钟";
 }
 const list = (value: unknown) => Array.isArray(value) ? value.map(String) : [];
+// The other members of this request's bundle, as listed by Clued.
+function bundleOthers(request: Json, id: string): Json[] {
+  return Array.isArray(request.bundle) ? request.bundle.filter(object)
+    .filter(member => typeof member.request_id === "string" && REQUEST_ID.test(member.request_id) && member.request_id !== id) : [];
+}
 const PERMISSION_ACTION = "connection.permission";
 const ACTION_LABELS: Record<string, string> = { read: "读取", write: "新增和修改", close: "关闭和归档", restore: "恢复", audit: "查看审计回执" };
 const CONTEXT_LABELS: Record<string, string> = { global: "个人记忆", profile: "个人资料" };
@@ -115,7 +127,8 @@ export default function OwnerConfirmPage() {
   const [rows, setRows] = useState<ScopeRow[]>([]);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [pending, setPending] = useState<Issued | null>(null);
-  const [done, setDone] = useState<{ kind: "granted" | "rejected"; grant?: Json } | null>(null);
+  const [done, setDone] = useState<{ kind: "granted" | "rejected"; grant?: Json; count?: number } | null>(null);
+  const [members, setMembers] = useState<Member[]>([]);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
@@ -132,7 +145,7 @@ export default function OwnerConfirmPage() {
       current.current = next; setSession(next); setReady(true);
       if (!changed) return;
       ++epoch.current;
-      setRequest(null); setIssued(null); setPending(null); setDone(null); setError(""); setWorking(false); setRows([]);
+      setRequest(null); setIssued(null); setPending(null); setDone(null); setError(""); setWorking(false); setRows([]); setMembers([]);
     });
     return () => { disposed = true; ++lifetime.current; data.subscription.unsubscribe(); };
   }, []);
@@ -155,12 +168,18 @@ export default function OwnerConfirmPage() {
       // Clued picks the default choice by the action's risk (Decision b7053465);
       // a server without default_choice keeps "grant" and the view's duration.
       const seconds = Number(value.suggested_expires_seconds ?? view.expires_seconds);
-      const offered = scopeRows(value.resource_options);
+      const others = bundleOthers(value.request, id).filter(member => member.status === "pending");
+      const offered = others.length ? [] : scopeRows(value.resource_options);
       const initial: Options = { choice: value.default_choice === "once" ? "once" : "grant",
         seconds: Number.isInteger(seconds) && seconds >= 60 ? seconds : 14400,
         anyAgent: false, scope: offered.map(row => row.resource) };
       setRows(offered); setOptions(initial);
-      if (value.request.status === "pending") await issue(id, initial, generation, offered);
+      const next: Member[] = others.map(member => ({ id: String(member.request_id), issued: null }));
+      setMembers(next);
+      if (value.request.status === "pending") {
+        await issue(id, initial, generation, offered);
+        await issueMembers(next, initial, generation);
+      }
     } catch (failure) {
       if (epoch.current === generation) setError(failure instanceof RequestFailure ? failure.message : "暂时无法读取请求。");
     } finally { if (epoch.current === generation) setWorking(false); }
@@ -181,11 +200,29 @@ export default function OwnerConfirmPage() {
     return result;
   }
 
+  // The same choice for every other pending member of the bundle.
+  async function issueMembers(list: Member[], next: Options, generation: number): Promise<Member[] | null> {
+    const result: Member[] = [];
+    for (const member of list) {
+      const value = await rpc("clued_owner_grant_confirmation_issue_v1", issueInput(member.id, next, []));
+      if (epoch.current !== generation) return null;
+      if (value.status !== "issued" || typeof value.confirmation_token !== "string" || typeof value.view_digest !== "string"
+        || typeof value.expires_at !== "string" || !object(value.confirmation_view)) {
+        throw new RequestFailure("确认内容不完整，请刷新页面。");
+      }
+      result.push({ id: member.id, issued: { confirmation_token: value.confirmation_token, view_digest: value.view_digest,
+        expires_at: value.expires_at, view: value.confirmation_view, options: next } });
+    }
+    setMembers(current => current.map(member => result.find(item => item.id === member.id) ?? member));
+    return result;
+  }
+
   async function choose(next: Options) {
     if (!requestId || working || !current.current) return;
     const generation = epoch.current;
-    setOptions(next); setIssued(null); setWorking(true); setError("");
-    try { await issue(requestId, next, generation); } catch (failure) {
+    setOptions(next); setIssued(null); setMembers(members.map(member => ({ id: member.id, issued: null })));
+    setWorking(true); setError("");
+    try { await issue(requestId, next, generation); await issueMembers(members, next, generation); } catch (failure) {
       if (epoch.current === generation) setError(failure instanceof RequestFailure ? failure.message : "暂时无法生成确认。");
     } finally { if (epoch.current === generation) setWorking(false); }
   }
@@ -224,7 +261,10 @@ export default function OwnerConfirmPage() {
       if (value.status !== "committed" || !object(value.grant) || typeof value.grant.grant_id !== "string") {
         throw new RequestFailure("批准结果尚未确认，请核对原操作。", true);
       }
-      setDone({ kind: "granted", grant: value.grant }); setPending(null);
+      setPending(null);
+      const count = await approveMembers(target.options, generation);
+      if (count === null) return;
+      setDone({ kind: "granted", grant: value.grant, count: count + 1 });
     } catch (failure) {
       if (epoch.current !== generation) return;
       const uncertain = !(failure instanceof RequestFailure) || failure.uncertain;
@@ -233,12 +273,41 @@ export default function OwnerConfirmPage() {
     } finally { if (epoch.current === generation) setWorking(false); }
   }
 
+  // After the request on the page: every other member, each over its own
+  // view. A member whose token is about to expire is reissued first and used
+  // only if Clued renders the identical view.
+  async function approveMembers(chosen: Options, generation: number): Promise<number | null> {
+    let count = 0;
+    for (const member of members) {
+      const stop = (reason: string) => new RequestFailure("前 " + (count + 1) + " 项已批准，第 " + (count + 2) + " 项未完成："
+        + reason + "请刷新页面核对剩下的。");
+      let target = member.issued;
+      if (!target) throw stop("确认还没生成。");
+      if (Date.parse(target.expires_at) - Date.now() < REFRESH_MS) {
+        const fresh = await issueMembers([member], chosen, generation);
+        if (!fresh) return null;
+        if (fresh[0].issued?.view_digest !== target.view_digest || !fresh[0].issued) throw stop("内容有变化。");
+        target = fresh[0].issued;
+      }
+      try {
+        const value = await rpc("clued_owner_grant_v1", { confirmation_token: target.confirmation_token, view_digest: target.view_digest });
+        if (epoch.current !== generation) return null;
+        if (value.status !== "committed") throw new RequestFailure("批准结果尚未确认。");
+      } catch (failure) {
+        throw stop(failure instanceof RequestFailure ? failure.message : "批准结果尚未确认。");
+      }
+      count++;
+    }
+    return count;
+  }
+
   async function reject() {
     if (!requestId || !current.current || working) return;
     const generation = epoch.current;
     setWorking(true); setError("");
     try {
       await rpc("clued_owner_request_reject_v1", { request_id: requestId });
+      for (const member of members) await rpc("clued_owner_request_reject_v1", { request_id: member.id });
       if (epoch.current !== generation) return;
       setIssued(null); setDone({ kind: "rejected" });
     } catch (failure) {
@@ -258,7 +327,7 @@ export default function OwnerConfirmPage() {
 
   async function signOut() {
     ++epoch.current; current.current = null; setSession(null);
-    setRequest(null); setIssued(null); setPending(null); setDone(null); setError("");
+    setRequest(null); setIssued(null); setPending(null); setDone(null); setError(""); setMembers([]);
     try { await supabase.auth.signOut(); } catch { setError("退出尚未确认，请重新加载页面后检查登录状态。"); }
   }
 
@@ -273,6 +342,7 @@ export default function OwnerConfirmPage() {
   const connection = view && object(view.connection) ? view.connection : null;
   const permissions = view && Array.isArray(view.permissions) ? view.permissions.filter(object) : [];
   const existing = connection && Array.isArray(connection.current) ? connection.current.filter(object) : [];
+  const leftover = request && status !== "pending" ? bundleOthers(request, requestId ?? "").filter(member => member.status === "pending") : [];
 
   return <main className="context-page owner-confirm">
     <header><Link href="/">Clued</Link><Link href="/grants">我的授权</Link></header>
@@ -292,11 +362,14 @@ export default function OwnerConfirmPage() {
           <p>权限已加到这个连接上。Agent 重试刚才被拒的操作即可，不用重新连接。</p>
           <p>可以在 <Link href="/oauth/connections">连接管理</Link> 随时收窄或撤销这个连接的权限。</p></section>}
         {done?.kind === "granted" && !permission && <section aria-label="已批准" role="status"><h2>已批准</h2>
+          {(done.count ?? 1) > 1 && <p>同一批 {done.count} 项都已批准，每项各自生成一个授权。</p>}
           <p>{done.grant?.max_uses === 1 ? "只允许这一次" : "授权已生效"}，有效期至 {new Date(String(done.grant?.expires_at)).toLocaleString()}。</p>
           <p>Agent 重试时会自动用上这次批准。可以在 <Link href="/grants">我的授权</Link> 随时撤销。</p></section>}
         {done?.kind === "rejected" && <section aria-label="已拒绝" role="status"><h2>已拒绝</h2><p>Agent 不会得到这次授权。</p></section>}
         {!done && request && status !== "pending" && <section aria-label="请求状态"><h2>{STATUS[status] ?? status}</h2>
-          <p>这个请求已不需要处理。{status === "expired" ? "如仍需要，请让 Agent 重新发起。" : ""}</p></section>}
+          <p>这个请求已不需要处理。{status === "expired" ? "如仍需要，请让 Agent 重新发起。" : ""}</p>
+          {leftover.length > 0 && <><p>同一批还有 {leftover.length} 项等你确认：</p><ul>{leftover.map(member =>
+            <li key={String(member.request_id)}><Link href={"/confirm/" + String(member.request_id)}>{String(member.action ?? "")}</Link></li>)}</ul></>}</section>}
         {!done && status === "pending" && <>
           {!permission && <section aria-label="选择" className="owner-choice"><h2>怎么批</h2>
             <div className="context-row">
@@ -350,11 +423,23 @@ export default function OwnerConfirmPage() {
               <dt>给谁</dt><dd>{grantee?.any_agent ? "我的任何 Agent" : String(grantee?.agent_name ?? "发起请求的 Agent") + (grantee?.vendor ? "（" + String(grantee.vendor) + "）" : "")}</dd>
               <dt>期限</dt><dd>{view.choice === "once" ? "只这一次，24 小时内用掉" : durationText(Number(view.expires_seconds)) + "内有效"}</dd>
               <dt>次数</dt><dd>{view.max_uses == null ? "不限" : "最多 " + String(view.max_uses) + " 次"}</dd>
-            </dl></section>}
+            </dl>
+            {members.length > 0 && <section aria-label="同一批" className="owner-bundle">
+              <h3>同一批，一起批准（共 {members.length + 1} 项）</h3>
+              <p className="context-muted">点“批准全部”会把下面每一项也按上面的选择批准，每项各自生成一个授权。</p>
+              {members.map(member => {
+                const other = member.issued?.view;
+                return <dl key={member.id}>
+                  <dt>动作</dt><dd>{other ? String(other.action_title ?? "") + "（" + String(other.action ?? "") + "）" : "正在生成…"}</dd>
+                  {other && <><dt>范围</dt><dd><ul>{list(other.resources).map(resource => <li key={resource}>{resource}</li>)}</ul></dd></>}
+                </dl>;
+              })}
+            </section>}</section>}
           {note && <section aria-label="Agent 说明" className="owner-note"><h2>Agent 说明（未核实）</h2>
             <p className="context-muted">这段话是 Agent 自己写的，不改变上面要批准的内容。</p><p>{note}</p></section>}
           {!pending && <div className="owner-actions">
-            <button type="button" disabled={working || !issued} onClick={() => void approve()}>批准</button>
+            <button type="button" disabled={working || !issued || members.some(member => !member.issued)} onClick={() => void approve()}>
+              {members.length ? "批准全部 " + (members.length + 1) + " 项" : "批准"}</button>
             <button type="button" disabled={working} onClick={() => void reject()}>拒绝</button>
           </div>}
         </>}

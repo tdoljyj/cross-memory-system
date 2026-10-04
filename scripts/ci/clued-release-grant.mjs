@@ -16,6 +16,12 @@
 // the admission check calls verify. With no grant, Clued opens a pending
 // request and the run prints its confirmation link; only the Owner approves.
 //
+// For migrate the call also names the deploy of the same commit (`with`), so
+// when no grant admits the run, Clued opens one bundle and the Owner approves
+// the migration and the deploy with one click (PermissionSimplification §3.3,
+// Task 23045c17). A database without `with` refuses the input; the run then
+// asks again without it.
+//
 // Enforcement is the Owner's switch, the repository variable
 // CLUED_RELEASE_GRANT_ENFORCE=true (Owner choice 2026-10-03). Until it is on,
 // the result is reported and the run continues. Once on, a missing grant, a
@@ -56,7 +62,7 @@ export function commitResource(env) {
 export async function checkGrant({ env, mode, fetchImpl, workspace }) {
   const result = {
     mode, action: ACTIONS[mode] ?? null, resource: null, resources: [], enforced: grantEnforced(env),
-    consumed: false, grant: null, request_id: null, confirm_url: null, reason: null, error: null,
+    consumed: false, grant: null, request_id: null, confirm_url: null, bundle: [], reason: null, error: null,
   };
   try {
     if (!result.action) throw new Error(`mode ${mode} needs no Owner Grant`);
@@ -67,26 +73,33 @@ export async function checkGrant({ env, mode, fetchImpl, workspace }) {
       return result;
     }
     const { url: base, key } = resolvePublicSupabaseConfig(env, workspace);
-    const response = await fetchImpl(`${base}/rest/v1/rpc/${DOOR_RPC}`, {
-      method: "POST",
-      headers: {
-        apikey: key,
-        authorization: `Bearer ${key}`,
-        "content-type": "application/json",
-        accept: "application/json",
-        "user-agent": "clued-release-grant",
-      },
-      body: JSON.stringify({
-        p_token_hash: sha256Hex(env.CLUED_RELEASE_TOKEN.trim()),
-        p_input: { action: result.action, resources: result.resources },
-      }),
-    });
-    let body = null;
-    try {
-      const text = await response.text();
-      body = text ? JSON.parse(text) : null;
-    } catch {
-      body = null;
+    const call = async (input) => {
+      const response = await fetchImpl(`${base}/rest/v1/rpc/${DOOR_RPC}`, {
+        method: "POST",
+        headers: {
+          apikey: key,
+          authorization: `Bearer ${key}`,
+          "content-type": "application/json",
+          accept: "application/json",
+          "user-agent": "clued-release-grant",
+        },
+        body: JSON.stringify({ p_token_hash: sha256Hex(env.CLUED_RELEASE_TOKEN.trim()), p_input: input }),
+      });
+      let body = null;
+      try {
+        const text = await response.text();
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        body = null;
+      }
+      return { response, body };
+    };
+    const input = { action: result.action, resources: result.resources };
+    if (mode === "migrate") input.with = [{ action: ACTIONS.deploy, resources: [commitResource(env)] }];
+    let { response, body } = await call(input);
+    if (input.with && response.status === 400 && body?.message === "owner_grant_door_input_invalid") {
+      delete input.with;
+      ({ response, body } = await call(input));
     }
     if (response.status === 404 && body && body.code === "PGRST202") {
       result.reason = `${DOOR_RPC} is not deployed`;
@@ -103,6 +116,10 @@ export async function checkGrant({ env, mode, fetchImpl, workspace }) {
     }
     const request = body.owner_request ?? {};
     result.request_id = typeof request.request_id === "string" ? request.request_id : null;
+    if (Array.isArray(request.bundle)) {
+      result.bundle = request.bundle.filter((m) => m && typeof m.action === "string")
+        .map((m) => ({ action: m.action, request_id: typeof m.request_id === "string" ? m.request_id : null }));
+    }
     if (typeof request.confirm_path === "string" && /^\/confirm\/[0-9a-f-]{36}$/.test(request.confirm_path)) {
       result.confirm_url = (env.CLUED_CONFIRM_ORIGIN ?? DEFAULT_ORIGIN).replace(/\/$/, "") + request.confirm_path;
     }
@@ -128,6 +145,7 @@ export function renderSummary(result) {
     if (result.reason) lines.push(`- ${result.reason}`);
     if (result.error) lines.push(`- Error: ${result.error}`);
     if (result.confirm_url) lines.push(`- Ask the Owner to approve: ${result.confirm_url}`);
+    if (result.bundle.length > 1) lines.push(`- The link covers ${result.bundle.map((m) => `\`${m.action}\``).join(" and ")}: one approval.`);
   }
   lines.push("");
   return lines.join("\n");

@@ -44,7 +44,9 @@ test("release grant: deploy consumes for the exact commit, migrate for the named
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, DOOR);
     assert.equal(calls[0].headers.apikey, PUBLIC.key);
-    assert.deepEqual(calls[0].body, { p_token_hash: sha256Hex("clued_bnd_release"), p_input: { action, resources } });
+    const input = mode === "migrate" ? { action, resources, with: [{ action: "release.production", resources: [`repo:o/r/${SHA}`] }] }
+      : { action, resources };
+    assert.deepEqual(calls[0].body, { p_token_hash: sha256Hex("clued_bnd_release"), p_input: input });
   }
   for (const [migrations, message] of [["", /1 to 50/], ["x.sql", /Not a migration file name/], ["../a.sql", /Not a migration/]]) {
     const { r, calls } = await run({ MIGRATIONS: migrations }, null, "migrate");
@@ -65,6 +67,31 @@ test("release grant: no grant fails when enforced and prints the confirmation li
   assert.equal(r.confirm_url, `https://example.test/confirm/${REQUEST}`);
   ({ r } = await run({}, () => ({ body: { status: "ok", consumed: false, owner_request: { confirm_path: "https://evil/x" } } })));
   assert.equal(r.confirm_url, null, "only a /confirm/<id> path becomes a link");
+});
+
+test("release grant: migrate opens one bundle with the deploy; an older door is asked again without it", async () => {
+  const OTHER = "44444444-4444-4444-8444-444444444444";
+  const bundled = () => ({ body: { status: "ok", consumed: false, owner_request: { request_id: REQUEST, status: "pending",
+    confirm_path: `/confirm/${REQUEST}`, bundle: [{ request_id: REQUEST, action: "migration.production" },
+      { request_id: OTHER, action: "release.production" }] } } });
+  let { r, calls } = await run({ MIGRATIONS: "20261003170000_a.sql" }, bundled, "migrate");
+  assert.equal(calls.length, 1);
+  assert.deepEqual(r.bundle, [{ action: "migration.production", request_id: REQUEST }, { action: "release.production", request_id: OTHER }]);
+  assert.equal(r.confirm_url, `https://clued.pixelgrav.com/confirm/${REQUEST}`);
+  // A door that does not know `with` yet: one retry without it.
+  let first = true;
+  ({ r, calls } = await run({ MIGRATIONS: "20261003170000_a.sql" }, () => {
+    if (first) { first = false; return { status: 400, body: { code: "22023", message: "owner_grant_door_input_invalid" } }; }
+    return { body: { status: "ok", consumed: true, grant: { grant_id: "g-1", use: 1, max_uses: 1 } } };
+  }, "migrate"));
+  assert.equal(calls.length, 2);
+  assert.ok(calls[0].body.p_input.with);
+  assert.equal("with" in calls[1].body.p_input, false);
+  assert.deepEqual([r.consumed, r.error], [true, null]);
+  // Deploy never names other actions, and is not retried.
+  ({ r, calls } = await run({}, () => ({ status: 400, body: { code: "22023", message: "owner_grant_door_input_invalid" } })));
+  assert.equal(calls.length, 1);
+  assert.match(r.error, /owner_grant_door_input_invalid/);
 });
 
 test("release grant: missing token, missing RPC and errors stop only when enforced", async () => {

@@ -52,6 +52,7 @@
   - `suggested_role`：能覆盖这次操作的最小预设角色，例如"M2 项目开发者"。
 - `connection.permission` 申请除了逐项写 `permission:<context>/<action>`，也可以写角色，例如 `permission:project:<id>/developer`。确认页把角色展开成具体的勾选给 Owner 看，批准后仍落成同样的条目。
 - 合同 §6.7 随之简化为一句：被拒时把结果里的 `suggested_request` 原样提交，把返回的链接交给 Owner。
+- 第 2 步（PR #543）已实现 `missing` 和 `suggested_request`；`suggested_role` 和 `missing` 里的项目名随第 4 步（Task `0756c748`）一起做，因为角色在那一步才有。
 
 ### 3.3 发布一次批准（Task `23045c17`）
 
@@ -59,6 +60,10 @@
 - 确认页一次批准，为每个动作分别生成授权；发布门口仍按动作各自扣减，每次使用仍有独立回执。
 - 发布流程在没有授权时自己开的申请，也改为一次列出这次要用的全部动作和资源。
 - 顺带修正合同 §6.6：迁移授权的资源是 `repo:<owner>/<name>/<commit>/apps/clued-cloud/supabase/migrations/<file>`，不是提交本身。
+- 实现（迁移 `20261004200000_owner_request_bundles`）：一批申请是几条普通申请共用一个 `bundle_id`，每条仍有自己的动作、范围、状态、授权和回执，门口照旧各自扣减。
+  - Agent 用 `clued_owner_request` 的 `actions: [{action, resources}, ...]`（2 到 5 个不同动作，不含 `connection.permission`）一次发起，得到一个链接；
+  - 发布 workflow 的 migrate 模式在没有授权时，把同一提交的部署（`with`）一起开进这一批，已有有效授权的动作不再申请；
+  - 确认页列出这一批里所有待确认的项，"批准全部"对每一项各走一遍两步确认，用的是每项自己的视图；成批时不提供范围收窄和放宽。
 
 ### 3.4 授权页显示编号
 

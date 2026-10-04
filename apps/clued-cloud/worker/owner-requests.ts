@@ -16,6 +16,7 @@ export function ownerRequestsEnabled(env: OwnerRequestFeatureEnv) {
 export const OWNER_REQUEST_TOOL = "clued_owner_request";
 export const OWNER_REQUEST_CREATE_RPC = "clued_owner_request_v1";
 export const OWNER_REQUEST_STATUS_RPC = "clued_owner_request_status_v1";
+export const OWNER_REQUEST_BUNDLE_RPC = "clued_owner_request_bundle_v1";
 
 const uuid = { type: "string", format: "uuid" } as const;
 
@@ -23,7 +24,7 @@ export const ownerRequestTools = [
   {
     name: OWNER_REQUEST_TOOL,
     description:
-      "Ask the Owner to approve an action that needs their permission (registered actions: release.production, migration.production, work_claim.extra_claims, connection.permission). Create: send action, resources (kind:value or repository paths/globs) and idempotency_key, optionally task_id, suggested_grant and agent_note. The result carries request_id and confirm_url: give confirm_url to the Owner as is. The Owner opens it signed in to Clued and approves once, grants a time-limited permission, or rejects; you cannot approve it and must not claim the Owner approved in your own words. connection.permission asks for a permission your own connection lacks, one resource per context and action: permission:<global|profile|project:<id>>/<read|write|close|restore|audit>, for example permission:project:<id>/write; no task_id or suggested_grant. Any live connection can send it, even one that cannot read or write that context. Once the Owner approves, the permission is on this same connection: retry the refused call, no reconnect needed. Status: send request_id alone to read pending, approved_once, granted, rejected or expired. A request expires after 24 hours. Idempotent by idempotency_key. Other actions require context:write.",
+      "Ask the Owner to approve an action that needs their permission (registered actions: release.production, migration.production, work_claim.extra_claims, connection.permission). Create: send action, resources (kind:value or repository paths/globs) and idempotency_key, optionally task_id, suggested_grant and agent_note. The result carries request_id and confirm_url: give confirm_url to the Owner as is. The Owner opens it signed in to Clued and approves once, grants a time-limited permission, or rejects; you cannot approve it and must not claim the Owner approved in your own words. connection.permission asks for a permission your own connection lacks, one resource per context and action: permission:<global|profile|project:<id>>/<read|write|close|restore|audit>, for example permission:project:<id>/write; no task_id or suggested_grant. Any live connection can send it, even one that cannot read or write that context. Once the Owner approves, the permission is on this same connection: retry the refused call, no reconnect needed. Several actions for the same work, for example a production migration and the deploy of the same commit: send actions [{action, resources}, ...] (2 to 5, distinct, not connection.permission) instead of action and resources; you get one confirm_url, the Owner approves all of them with one click, and request.bundle lists each member's request_id and status. Status: send request_id alone to read pending, approved_once, granted, rejected or expired. A request expires after 24 hours. Idempotent by idempotency_key. Other actions require context:write.",
     inputSchema: {
       type: "object",
       properties: {
@@ -33,6 +34,19 @@ export const ownerRequestTools = [
         },
         request_id: { ...uuid, description: "Status read: the request to check. Send it without the create fields." },
         action: { type: "string", minLength: 3, maxLength: 130, description: "Registered action, for example release.production." },
+        actions: {
+          type: "array", minItems: 2, maxItems: 5,
+          items: {
+            type: "object",
+            properties: {
+              action: { type: "string", minLength: 3, maxLength: 130 },
+              resources: { type: "array", minItems: 1, maxItems: 50, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 400 } },
+            },
+            required: ["action", "resources"],
+            additionalProperties: false,
+          },
+          description: "Instead of action and resources: several actions the Owner approves with one click, for example migration.production with one resource per migration file and release.production for the same commit.",
+        },
         resources: {
           type: "array", minItems: 1, maxItems: 50, uniqueItems: true,
           items: { type: "string", minLength: 1, maxLength: 400 },
@@ -65,15 +79,20 @@ export const ownerRequestToolPolicies = {
   },
 } as const;
 
-const CREATE_FIELDS = ["action", "resources", "task_id", "suggested_grant", "agent_note", "idempotency_key"];
+const CREATE_FIELDS = ["action", "actions", "resources", "task_id", "suggested_grant", "agent_note", "idempotency_key"];
 
 export class OwnerRequestInputError extends Error {}
 
 // Picks the RPC: request_id alone (with an optional scope) reads status,
-// anything else creates. Mixing the two is refused rather than guessed.
+// actions creates a bundle, anything else creates one request. Mixing them is
+// refused rather than guessed.
 export function ownerRequestCall(args: unknown): { rpc: string; input: Record<string, unknown> } {
   if (!args || typeof args !== "object" || Array.isArray(args)) throw new OwnerRequestInputError("owner_request_input_invalid");
   const input = args as Record<string, unknown>;
+  if ("actions" in input && !("request_id" in input)) {
+    if ("action" in input || "resources" in input) throw new OwnerRequestInputError("owner_request_bundle_invalid");
+    return { rpc: OWNER_REQUEST_BUNDLE_RPC, input };
+  }
   if (!("request_id" in input)) return { rpc: OWNER_REQUEST_CREATE_RPC, input };
   if (CREATE_FIELDS.some((field) => field in input)) throw new OwnerRequestInputError("owner_request_status_fields_invalid");
   return { rpc: OWNER_REQUEST_STATUS_RPC, input };

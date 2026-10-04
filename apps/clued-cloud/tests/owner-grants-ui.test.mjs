@@ -145,6 +145,93 @@ test('a connection permission request: names each permission and the connection,
   assert.ok(f.nodes('a').some(n => n.props.href === '/oauth/connections'));
 });
 
+test('a bundle: every pending member is shown and 批准全部 confirms each over its own view (PermissionSimplification §3.3)', async t => {
+  const f = fixture(CONFIRM); t.after(() => f.unmount());
+  const MEMBER = '44444444-4444-4444-8444-444444444444';
+  const DONE = '55555555-5555-4555-8555-555555555555';
+  const commit = 'repo:o/n/' + 'a'.repeat(40);
+  const file = commit + '/apps/clued-cloud/supabase/migrations/20261004200000_x.sql';
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', default_choice: 'once', suggested_expires_seconds: 14400,
+    resource_options: [{ resource: file, options: [file, commit + '/**'] }],
+    request: { ...request(), action: 'migration.production', resources: [file], bundle: [
+      { request_id: REQUEST, action: 'migration.production', resources: [file], status: 'pending' },
+      { request_id: MEMBER, action: 'release.production', resources: [commit], status: 'pending' },
+      { request_id: DONE, action: 'release.production', resources: ['repo:o/n/old'], status: 'approved_once' }] },
+    view: { action: 'migration.production', choice: 'once', expires_seconds: 86400, max_uses: 1 } }, error: null });
+  await f.settle();
+  assert.deepEqual(plain(f.calls[1].args.p_input), { request_id: REQUEST, choice: 'once', grantee: 'requester' });
+  const view = (action, title, resources, token, digest) => ({ data: { status: 'issued', confirmation_token: token,
+    view_digest: digest, expires_at: '2099-01-01T00:05:00Z', confirmation_view: { action, action_title: title, resources,
+      grantee: { any_agent: false, agent_name: 'Claude Code' }, choice: 'once', expires_seconds: 86400, max_uses: 1 } }, error: null });
+  f.calls[1].resolve(view('migration.production', '经发布 workflow 应用迁移到生产库', [file], 'clued_ogr_m', 'm'.repeat(64)));
+  await f.settle();
+  // The other pending member gets its own token with the same choice; a decided one is left alone.
+  assert.deepEqual(plain([f.calls[2].name, f.calls[2].args.p_input]),
+    ['clued_owner_grant_confirmation_issue_v1', { request_id: MEMBER, choice: 'once', grantee: 'requester' }]);
+  assert.equal(f.calls.length, 3);
+  f.calls[2].resolve(view('release.production', '运行生产发布（deploy 模式）', [commit], 'clued_ogr_r', 'r'.repeat(64)));
+  await f.settle();
+  const what = f.text(f.nodes('section').find(n => n.props['aria-label'] === '要批准什么'));
+  assert.ok(what.includes('经发布 workflow 应用迁移到生产库'));
+  assert.ok(what.includes('同一批，一起批准（共 2 项）'));
+  assert.ok(what.includes('运行生产发布（deploy 模式）'));
+  assert.ok(what.includes(commit));
+  assert.equal(f.nodes('fieldset').length, 0, 'no scope rows for a bundle');
+  f.button('批准全部 2 项').props.onClick();
+  assert.deepEqual(plain([f.calls[3].name, f.calls[3].args.p_input]),
+    ['clued_owner_grant_v1', { confirmation_token: 'clued_ogr_m', view_digest: 'm'.repeat(64) }]);
+  f.calls[3].resolve({ data: { status: 'committed', grant: { grant_id: 'g-m', expires_at: '2099-01-02T00:00:00Z', max_uses: 1 } }, error: null });
+  await f.settle();
+  assert.deepEqual(plain([f.calls[4].name, f.calls[4].args.p_input]),
+    ['clued_owner_grant_v1', { confirmation_token: 'clued_ogr_r', view_digest: 'r'.repeat(64) }]);
+  f.calls[4].resolve({ data: { status: 'committed', grant: { grant_id: 'g-r', expires_at: '2099-01-02T00:00:00Z', max_uses: 1 } }, error: null });
+  await f.settle();
+  assert.ok(f.text().includes('同一批 2 项都已批准'));
+});
+
+test('a bundle: a member that fails says which were approved; 拒绝 rejects every pending member', async t => {
+  const MEMBER = '44444444-4444-4444-8444-444444444444';
+  const bundle = [{ request_id: REQUEST, action: 'migration.production', status: 'pending' },
+    { request_id: MEMBER, action: 'release.production', status: 'pending' }];
+  const start = async f => {
+    f.emit('INITIAL_SESSION', session('owner'));
+    f.calls[0].resolve({ data: { status: 'ok', default_choice: 'once', request: { ...request(), bundle },
+      view: { action: 'migration.production' } }, error: null });
+    await f.settle();
+    f.calls[1].resolve(issued({ token: 'clued_ogr_m', choice: 'once' })); await f.settle();
+    f.calls[2].resolve(issued({ token: 'clued_ogr_r', digest: 'r'.repeat(64), choice: 'once' })); await f.settle();
+  };
+  const f = fixture(CONFIRM); t.after(() => f.unmount());
+  await start(f);
+  f.button('批准全部 2 项').props.onClick();
+  f.calls[3].resolve(committed); await f.settle();
+  f.calls[4].resolve({ data: null, error: { message: 'owner_request_decided', code: '55000' } }); await f.settle();
+  const alert = f.nodes('p').find(n => n.props.role === 'alert');
+  assert.match(f.text(alert), /前 1 项已批准，第 2 项未完成：这个请求已经处理过了。/);
+  const g = fixture(CONFIRM); t.after(() => g.unmount());
+  await start(g);
+  g.button('拒绝').props.onClick();
+  assert.deepEqual(plain([g.calls[3].name, g.calls[3].args.p_input]), ['clued_owner_request_reject_v1', { request_id: REQUEST }]);
+  g.calls[3].resolve({ data: { status: 'ok' }, error: null }); await g.settle();
+  assert.deepEqual(plain([g.calls[4].name, g.calls[4].args.p_input]), ['clued_owner_request_reject_v1', { request_id: MEMBER }]);
+  g.calls[4].resolve({ data: { status: 'ok' }, error: null }); await g.settle();
+  assert.ok(g.text().includes('已拒绝'));
+});
+
+test('a decided bundle member links to the members still pending', async t => {
+  const f = fixture(CONFIRM); t.after(() => f.unmount());
+  const MEMBER = '44444444-4444-4444-8444-444444444444';
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', request: { ...request('approved_once'), bundle: [
+    { request_id: REQUEST, action: 'migration.production', status: 'approved_once' },
+    { request_id: MEMBER, action: 'release.production', status: 'pending' }] }, view: {} }, error: null });
+  await f.settle();
+  assert.equal(f.calls.length, 1, 'no token for a decided request');
+  assert.ok(f.text().includes('同一批还有 1 项等你确认'));
+  assert.ok(f.nodes('a').some(n => n.props.href === '/confirm/' + MEMBER));
+});
+
 test('Clued sets the default choice by risk: a high-risk action opens on 只批这一次', async t => {
   const f = fixture(CONFIRM); t.after(() => f.unmount());
   f.emit('INITIAL_SESSION', session('owner'));
