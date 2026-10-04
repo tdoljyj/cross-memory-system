@@ -37,6 +37,9 @@ jobs:
       github.ref == 'refs/heads/main' &&
       github.actor == github.repository_owner &&
       github.triggering_actor == github.repository_owner
+    # Re-review 5, N1: the deploy token and attestation URL are secrets of the
+    # clued-release environment (main only), never repository secrets.
+    environment: clued-release
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:

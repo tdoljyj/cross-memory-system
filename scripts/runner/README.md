@@ -9,9 +9,9 @@ A job starts only when its run is one of the following:
 - **On `main`:** a push, a schedule, `workflow_run`, `pull_request_target`, or a manual dispatch.
 - **A pull request into `main` that changes no file under `.github/workflows/`.** Each workflow keeps its `admission-gate` job, which waits for the Clued admission of the pull request.
 - **A pull request into `main` that changes a workflow,** once its head carries a successful `clued-admission-verified` check from the `clued-admission` GitHub App.
-  - The check must name this pull request (its `external_id` is `pr:<number>:run:<admission run id>`) and be posted no earlier than two minutes before the job's run was created. The admission run of the same push often posts it first.
-  - Among those checks, the newest when the job starts decides. A check still to come does not withdraw one already completed.
-  - An older success on the same head does not count: for example after a force-push back to an admitted commit, a reopened pull request, or another pull request with the same head.
+  - The check must come from `main`'s admission run of the same event as the job's run. The check names its pull request and admission run (`external_id` `pr:<number>:run:<admission run id>`). GitHub creates the runs of one event together, so that admission run is the newest `pull_request_target` run of `clued-work-admission.yml` on the head created no earlier than 15 seconds before the job's run, leaving out runs whose check names another pull request.
+  - While that admission run has posted no check, the job waits for it (up to `CLUED_RUNNER_HOOK_WAIT_SECONDS`). If it was re-run, its newest check decides.
+  - An older success on the same head does not count: for example after a force-push back to an admitted commit, a pull request closed and reopened (even within seconds), or another pull request with the same head.
   - Only `main`'s admission run can post that check. The App key lives in the `clued-admission` environment, which deploys from `main` only.
   - That run executes `main`'s current code, which checks the workflow change.
   - A workflow run's `pull_requests` list is not used. It names every open pull request with the same head, not the one that triggered the run.

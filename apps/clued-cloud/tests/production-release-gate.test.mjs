@@ -356,3 +356,40 @@ test('deploy and migrate consume an Owner Grant before they change production', 
   assert.match(productionWorkflow, /release-evidence\/production-migrations\.json\n/);
   assert.match(productionWorkflow, /\n    environment: clued-release\n/);
 });
+
+// Re-review 5, N1: a repository secret reaches every branch's workflows (a
+// pushed branch may add an `on: push` workflow on a hosted runner), so the
+// production deploy token and attestation URL live only in the clued-release
+// environment, which deploys from main only. Every job that names them
+// declares that environment and runs on main only; nothing outside a job
+// names them, and no workflow reads secrets by a computed name or passes all
+// of them on.
+test('production deploy and attestation secrets are read only by main-only clued-release jobs', async () => {
+  const dir = new URL('../../../.github/workflows/', import.meta.url);
+  const names = (await readdir(dir)).filter((name) => /\.ya?ml$/.test(name)).sort();
+  const secret = /secrets\.(CLUED_CLOUDFLARE_DEPLOY_TOKEN|CLUED_ATTESTATION_DATABASE_URL)(_V2)?\b/;
+  const users = [];
+  for (const name of names) {
+    const text = (await readFile(new URL(name, dir), 'utf8')).replace(/\r\n?/g, '\n');
+    assert.doesNotMatch(text, /secrets\s*\[|toJSON\(\s*secrets\s*\)|secrets:\s*inherit/, name);
+    const jobsAt = text.search(/^jobs:\s*$/m);
+    assert.ok(jobsAt >= 0, `${name} has a jobs: block`);
+    assert.doesNotMatch(text.slice(0, jobsAt), secret, `${name} names a production secret outside a job`);
+    const jobs = text.slice(jobsAt).split(/^(?= {2}[A-Za-z0-9_-]+:\s*$)/m).slice(1);
+    for (const job of jobs) {
+      if (!secret.test(job)) continue;
+      const id = job.match(/^ {2}([A-Za-z0-9_-]+):/)[1];
+      users.push(`${name}:${id}`);
+      assert.match(job, /^ {4}environment: clued-release$/m, `${name}:${id} declares the clued-release environment`);
+      assert.match(job, /github\.ref == 'refs\/heads\/main'/, `${name}:${id} runs on main only`);
+    }
+  }
+  assert.deepEqual(users, [
+    'clued-cloud-production-release.yml:release',
+    'clued-currentness-post-deploy-attestation.yml:verify-and-attest',
+    'clued-storage-executor-window.yml:open-window',
+    'clued-storage-executor-window.yml:open',
+    'clued-storage-executor-window.yml:close',
+    'clued-storage-read-config.yml:configure',
+  ]);
+});
