@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 23
+Contract version: 24
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -37,7 +37,7 @@ This file is the single normative source for how any Agent, on any Host, uses Cl
 3. Unknown, stale, conflicting or incomplete results never mean no work; never recover current actions from old Markdown, pointers or checkpoint prose. A checkpoint `next_action` is a dated note; reconcile it with later records and evidence before acting on it. When an old checkpoint or active Task conflicts with later terminal evidence, report the conflict, verify the exact subject and repair the records (§3) before recommending anything; never recommend repeating completed work because an old Task still ranks high.
 4. Resolve Projects by canonical ID. A mention is not a Project. To find something whose scope you do not know, call `clued_search_context` without `context_key` (or with `scope: "all"`): it searches Global and every project you may read. A search with no match is not evidence that the record does not exist; say so rather than reporting it as absent.
 5. Report `sources_read` for every current-status answer.
-6. Current-state answers come only from Clued. Any question about the current or latest state of the user's projects, records or of Clued itself — what is the latest or current version, what is frozen, fixed, accepted or cancelled, the current task, the latest decision, what changed — is answered only from records read in this session after `clued_session_resume` (§2.1). The Host's own memory, Host-side conversation summaries, earlier replies, cached files, repository snapshots and old checkpoints are not sources for such an answer, even when they appear to contain it; use them at most to decide what to search. Answering from them without the read above is a contract violation. When Clued cannot be read (no Binding, denied scope, unavailable service), say that the current state is unknown and why, instead of answering from those sources.
+6. Current-state answers come only from Clued. Any question about the current or latest state of the user's projects, records or of Clued itself — what is the latest or current version, what is frozen, fixed, accepted or cancelled, the current task, the latest decision, what changed — is answered only from records read in this session after `clued_session_resume` (§2.1). The Host's own memory, Host-side conversation summaries, earlier replies, cached files, repository snapshots and old checkpoints are not sources for such an answer, even when they appear to contain it; use them at most to decide what to search. Answering from them without the read above is a contract violation. When Clued cannot be read (no Binding, denied scope, unavailable service), say that the current state is unknown and why, instead of answering from those sources; for a denied scope, also request it (§6.7).
 
 ## 3. Capture
 
@@ -86,6 +86,7 @@ Rules for every capture:
 | `checkpoint_event_not_authorized` (checkpoint) | `coverage.event_ids` lists an event of another context | Checkpoint each context in its own session (§5) |
 | `lifecycle_action_cannot_edit_record_content` | A close or restore carried content fields | Send only `closure_summary` / `closed_reason` |
 | `decision_event_requires_record` | You sent a `decision`, `correction` or `retraction` Event to `clued_append_event` | Write it as a record: `clued_record_mutate` (a decision, or an `update` for a correction) or `clued_decision_supersede`; clear an existing active Event with `clued_event_carrier_transition`. Never resend it as another event type |
+| `insufficient_scope`, `binding_not_authorized`, `resource_action_not_authorized` | Your connection lacks the tool's Clued scope, the context you sent (`scope` / `context_key`) or the action. Some Hosts show it only as an HTTP 403 | Do not retry it unchanged or through another Binding. Request the missing permission yourself, in the same reply, with `clued_owner_request` (`connection.permission`) as §6.7 says: just saying you cannot do it is not enough |
 | `work_claim_conflict` | A live claim of another holder names the same Task, overlaps your `write_set` or shares a trigger ref; or, on a storage write, covers a path the write touches | Stop and report the holder to the Owner (§1.7); never retry under another title, Task, key, path, job or Binding |
 | `work_claim_not_covered`, `work_claim_not_holder`, `work_claim_fence_mismatch`, `work_claim_not_active`, `work_claim_not_found` (storage write with `work_claim`) | The `work_claim` you passed does not cover every path the write touches (`uncovered` lists them), is not yours, was taken over, has ended or does not exist | Renew your claim with the wider `write_set` first, or claim again; do not pass another holder's claim |
 | `work_claim_budget_exhausted` | `limit` names the cap: live claims per session or per Binding, or a start-rate bucket (`task_claim_rate`, `binding_claim_rate`) | For a live-claim cap, finish or release a claim you hold first. For a rate bucket, wait until `retry_after`, or give the Owner the `owner_request.confirm_url` the refusal carries (§6.6) and claim again once they have approved it; never claim under another Task, key or Binding to get around it (§1.7) |
@@ -96,7 +97,7 @@ Rules for every capture:
 | `owner_pin_focus_conflict` | The Owner focus is not the one `expected_current_focus_id` named | Keep the current focus (`supplemental.current_focus_id`); change it only when the Owner chooses to, naming the focus it replaces (§1.7) |
 | `INVALID_RECORD_FIELDS` | Missing or malformed fields; MCP returns an HTTP 200 `isError: true` rejected tool result | Read `error.missing_fields` and `error.invalid_fields`, fix the listed fields and retry once; field paths and error codes are returned without request values |
 
-5. Treat revoked or expired credentials as hard stops and resume again instead of overwriting; missing capability or failed admission remains unavailable. Report exactly what is unavailable and continue unrelated work.
+5. Treat revoked or expired credentials as hard stops and resume again instead of overwriting; missing capability or failed admission remains unavailable. Report exactly what is unavailable and continue unrelated work. A missing connection permission is not a reason to stop there: request it as §6.7 says.
 6. Some Hosts show every HTTP 403 as "blocked by a firewall or security service". Clued returns 403 for authorization denials and for contract-rule rejections it has not yet mapped to a tool error, so check your arguments against the tool's contract before calling it a network or infrastructure failure, and label any unverified cause as a guess.
 7. A Host may refuse a Clued call itself, before it leaves the Host: a permission classifier, a tool allowlist or a sandbox rule. The refusal comes from the Host, names the Host's reason (for example "denied by the Claude Code auto mode classifier"), and the call never reached Clued. It is not a Clued error, a Binding, scope or currentness failure, or evidence that Clued is unavailable. Do not retry it unchanged, do not reach the same effect through another tool, another Binding or a different call, and do not write the outcome anywhere else as a substitute (§3.5 and §6.1). Say which call the Host refused and the Host's stated reason, say which §3 writes or §5 checkpoint are still owed because of it, continue the work that does not depend on them, and ask the Owner to allow the call. Once the Owner allows it, make the owed writes first (same idempotency keys), then continue.
 
@@ -122,6 +123,29 @@ Rules for every capture:
    - Never say or imply that the Owner approved. Read the outcome with `clued_owner_request` and the `request_id`, or retry the gated call once the Owner says they acted; the service consumes the grant itself. A `rejected` or `expired` request ends that attempt: tell the Owner, and do not ask again under other wording, another key or another Binding.
    - The production release workflow consumes grants for its `deploy` mode (`release.production`) and its `migrate` mode (`migration.production`), for the resource `repo:<owner>/<name>/<commit>` with the full 40-hex commit it runs on. Before you dispatch either mode, request that action for that exact commit and give the Owner the link; a run with no grant prints its own `confirm_url` in its summary, which you hand over the same way. Once the Owner has set up its environment, apply production migrations through the `migrate` mode rather than a direct database connection.
    - A grant counts only where the service consumes it. Until it does for an action, the explicit authorization of item 4 still applies, and decisions no door enforces (direction, preferences) are still asked in the conversation.
+7. A missing connection permission is something you request, not a dead end. Clued refuses a call when your connection lacks the scope, the context or the action it needs:
+   - `insufficient_scope`: some Hosts show it only as an HTTP 403. The connection lacks the scope the tool's description names under `Required Clued scope`.
+   - `binding_not_authorized`: the connection has no grant for the `scope` or `context_key` you sent, for example a project that was not selected when the connection was approved.
+   - `resource_action_not_authorized`: the context is granted, but not this action, for example close or restore.
+
+   You can request the permission, and you make the request yourself in the same reply. Saying only that you cannot do it, or pointing the Owner to a page without steps, is not a request.
+   - Work out the smallest grant the work needs: for each refused call, the context (`global`, `profile` or `project:<id>`) and the action (`read`, `write`, `close`, `restore` or `audit`). Never ask for more than the work needs, such as every project, or Global write when one project's write is enough.
+   - When the service offers `clued_owner_request` with the `connection.permission` action, call it with:
+     - one resource per context and action, as `permission:<context>/<action>` (for example `permission:project:<id>/write`);
+     - a stable `idempotency_key`;
+     - an `agent_note` if it helps;
+     - no `task_id` and no `suggested_grant`.
+
+     Any live connection can send it, even one that cannot read or write that context. Give the Owner the returned `request.confirm_url` exactly as returned, with one line naming each permission, for example "M2 → 正式记忆 → 新增和修改". The Owner approves or rejects on that page. Approval adds exactly those permissions to this same connection, until the connection's own expiry. `owner_request_permission_already_granted` means the connection already has every permission you asked for: retry the call, and if it is still refused, report the error.
+   - Once the Owner says they approved, or the request's status reads `approved_once`, retry the refused call on the same connection; no reconnect is needed. Then make the owed writes with their original idempotency keys. A `rejected` or `expired` request ends that attempt (item 6).
+   - When the service does not offer that action, or the connection cannot reach `clued_owner_request`, a new connection is the only way. Tell the Owner to:
+     1. Reconnect (re-authorize) the Clued connector in this client.
+     2. On Clued's authorization page, tick exactly `<context>` → 正式记忆 → `<action>`, and keep ticked whatever the work still uses.
+
+     That creates a new connection. The old one stays until the Owner revokes or reduces it on `/oauth/connections`.
+   - Name the call that was refused and the §3 writes or §5 checkpoint still owed because of it, and continue the work that does not depend on them.
+   - Never use another Binding, another client's token or a headless token to get around the refusal (§4.7).
+   - Do not send the Owner to `/grants` (我的授权) for this: that page lists Owner Grants, not connection permissions.
 
 ## 7. Governed external workspace mutations
 

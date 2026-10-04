@@ -164,8 +164,8 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
     assert.equal(view.view.expires_seconds, 86400);
     assert.equal(view.view.max_uses, 1);
     assert.deepEqual((await admin.query(`select action,risk from clued_private.owner_grant_actions order by action`)).rows,
-      [{ action: 'migration.production', risk: 'high' }, { action: 'release.production', risk: 'high' },
-        { action: 'work_claim.extra_claims', risk: 'routine' }]);
+      [{ action: 'connection.permission', risk: 'high' }, { action: 'migration.production', risk: 'high' },
+        { action: 'release.production', risk: 'high' }, { action: 'work_claim.extra_claims', risk: 'routine' }]);
     assert.equal(view.view.request.agent_note_unverified, '发布 #502 的数据库函数，已备份');
 
     // --- Nothing is consumable before the Owner confirms. ---

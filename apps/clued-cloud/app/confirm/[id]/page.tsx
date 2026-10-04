@@ -18,6 +18,9 @@ import "../owner.css";
 // For "grant for a while" each requested resource is a row the Owner can untick
 // (narrow) or widen to a parent Clued offers (Decision c4e82dee); "" is unticked.
 // The page opens on the choice Clued sets by the action's risk (Decision b7053465).
+// A connection.permission request (Decision 43ba00e2) is approved once, for the
+// requesting connection only: the page names each context and action and
+// what the connection already has, and approval adds them to that connection.
 type Json = Record<string, unknown>;
 type Choice = "once" | "grant";
 type Options = { choice: Choice; seconds: number; anyAgent: boolean; scope: string[] };
@@ -88,6 +91,18 @@ function durationText(seconds: number) {
   return seconds % 3600 === 0 ? seconds / 3600 + " 小时" : Math.round(seconds / 60) + " 分钟";
 }
 const list = (value: unknown) => Array.isArray(value) ? value.map(String) : [];
+const PERMISSION_ACTION = "connection.permission";
+const ACTION_LABELS: Record<string, string> = { read: "读取", write: "新增和修改", close: "关闭和归档", restore: "恢复", audit: "查看审计回执" };
+const CONTEXT_LABELS: Record<string, string> = { global: "个人记忆", profile: "个人资料" };
+function permissionText(context: string, name: unknown, action: string) {
+  const label = typeof name === "string" && name ? name : CONTEXT_LABELS[context] ?? context;
+  return label + " → 正式记忆 → " + (ACTION_LABELS[action] ?? action);
+}
+function currentText(row: Json) {
+  const id = String(row.resource_id ?? "");
+  const where = row.resource_kind === "scope" ? CONTEXT_LABELS[id] ?? id : id;
+  return where + "：" + list(row.actions).map(action => ACTION_LABELS[action] ?? action).join("、");
+}
 
 export default function OwnerConfirmPage() {
   const [session, setSession] = useState<Session | null>(null);
@@ -254,6 +269,10 @@ export default function OwnerConfirmPage() {
   const grantee = view && object(view.grantee) ? view.grantee : null;
   const task = view && object(view.task) ? view.task : null;
   const kept = options.scope.filter(Boolean).length;
+  const permission = request?.action === PERMISSION_ACTION;
+  const connection = view && object(view.connection) ? view.connection : null;
+  const permissions = view && Array.isArray(view.permissions) ? view.permissions.filter(object) : [];
+  const existing = connection && Array.isArray(connection.current) ? connection.current.filter(object) : [];
 
   return <main className="context-page owner-confirm">
     <header><Link href="/">Clued</Link><Link href="/grants">我的授权</Link></header>
@@ -269,14 +288,17 @@ export default function OwnerConfirmPage() {
         <p className="context-muted">也可以先在 <Link href="/">Clued 首页</Link> 登录，再重新打开这个链接。</p></section>
       : <>
         <p className="context-muted">已登录 {session.user.email || session.user.id} <button type="button" onClick={() => void signOut()}>退出</button></p>
-        {done?.kind === "granted" && <section aria-label="已批准" role="status"><h2>已批准</h2>
+        {done?.kind === "granted" && permission && <section aria-label="已批准" role="status"><h2>已批准</h2>
+          <p>权限已加到这个连接上。Agent 重试刚才被拒的操作即可，不用重新连接。</p>
+          <p>可以在 <Link href="/oauth/connections">连接管理</Link> 随时收窄或撤销这个连接的权限。</p></section>}
+        {done?.kind === "granted" && !permission && <section aria-label="已批准" role="status"><h2>已批准</h2>
           <p>{done.grant?.max_uses === 1 ? "只允许这一次" : "授权已生效"}，有效期至 {new Date(String(done.grant?.expires_at)).toLocaleString()}。</p>
           <p>Agent 重试时会自动用上这次批准。可以在 <Link href="/grants">我的授权</Link> 随时撤销。</p></section>}
         {done?.kind === "rejected" && <section aria-label="已拒绝" role="status"><h2>已拒绝</h2><p>Agent 不会得到这次授权。</p></section>}
         {!done && request && status !== "pending" && <section aria-label="请求状态"><h2>{STATUS[status] ?? status}</h2>
           <p>这个请求已不需要处理。{status === "expired" ? "如仍需要，请让 Agent 重新发起。" : ""}</p></section>}
         {!done && status === "pending" && <>
-          <section aria-label="选择" className="owner-choice"><h2>怎么批</h2>
+          {!permission && <section aria-label="选择" className="owner-choice"><h2>怎么批</h2>
             <div className="context-row">
               <button type="button" aria-pressed={options.choice === "once"} disabled={working}
                 onClick={() => void choose({ ...options, choice: "once" })}>只批这一次</button>
@@ -308,8 +330,18 @@ export default function OwnerConfirmPage() {
                 </div>;
               })}
             </fieldset>}
-          </section>
-          {view && <section aria-label="要批准什么"><h2>要批准什么</h2>
+          </section>}
+          {view && permission && <section aria-label="要批准什么"><h2>要批准什么</h2>
+            <p className="context-muted">以下内容由 Clued 生成，Agent 改不了。批准后权限加到这个连接上，不用重新连接。</p>
+            <dl>
+              <dt>给哪个连接</dt><dd>{String(connection?.client_name ?? grantee?.agent_name ?? "发起请求的连接")}</dd>
+              <dt>要加的权限</dt><dd><ul>{permissions.map(item => <li key={String(item.resource)}>
+                {permissionText(String(item.context ?? ""), item.context_name, String(item.action ?? ""))}</li>)}</ul></dd>
+              <dt>它现在已有</dt><dd><ul>{existing.map(row => <li key={String(row.resource_kind) + ":" + String(row.resource_id)}>{currentText(row)}</li>)}</ul></dd>
+              {task && <><dt>任务</dt><dd>{String(task.title ?? "")}</dd></>}
+              <dt>期限</dt><dd>{connection?.expires_at ? "跟这个连接一样，到 " + new Date(String(connection.expires_at)).toLocaleString() + " 为止" : "跟这个连接一样"}</dd>
+            </dl></section>}
+          {view && !permission && <section aria-label="要批准什么"><h2>要批准什么</h2>
             <p className="context-muted">以下内容由 Clued 生成，Agent 改不了。</p>
             <dl>
               <dt>动作</dt><dd>{String(view.action_title ?? "")}（{String(view.action ?? "")}）</dd>

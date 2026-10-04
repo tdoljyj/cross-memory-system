@@ -112,6 +112,39 @@ test('opening issues a token over the default view; 批准 commits exactly that 
   assert.equal(f.fetches.length, 0, 'the page never goes through a Worker route or forwards a token');
 });
 
+test('a connection permission request: names each permission and the connection, approves once, no reconnect', async t => {
+  const f = fixture(CONFIRM); t.after(() => f.unmount());
+  f.emit('INITIAL_SESSION', session('owner'));
+  const P = 'project:44444444-4444-4444-8444-444444444444';
+  f.calls[0].resolve({ data: { status: 'ok', default_choice: 'once', suggested_expires_seconds: 14400,
+    request: { ...request(), action: 'connection.permission', resources: ['permission:' + P + '/write'] },
+    view: { action: 'connection.permission', choice: 'once', expires_seconds: 86400, max_uses: 1 } }, error: null });
+  await f.settle();
+  assert.deepEqual(plain(f.calls[1].args.p_input), { request_id: REQUEST, choice: 'once', grantee: 'requester' });
+  assert.equal(f.nodes('section').some(n => n.props['aria-label'] === '选择'), false, 'no grant-for-a-while or any-Agent choice');
+  f.calls[1].resolve({ data: { status: 'issued', confirmation_token: 'clued_ogr_p', view_digest: 'e'.repeat(64),
+    expires_at: '2099-01-01T00:05:00Z', confirmation_view: { action: 'connection.permission', action_title: '给发起请求的连接加权限',
+      resources: ['permission:' + P + '/write'], grantee: { any_agent: false, agent_name: 'ChatGPT', vendor: 'OAuth' },
+      choice: 'once', expires_seconds: 86400, max_uses: 1,
+      connection: { binding_id: 'b-1', client_name: 'ChatGPT', expires_at: '2099-02-01T00:00:00Z',
+        current: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read'] }] },
+      permissions: [{ resource: 'permission:' + P + '/write', context: P, context_name: 'M2', action: 'write' }],
+      request: { request_id: REQUEST, status: 'pending', agent_note_unverified: null } } }, error: null });
+  await f.settle();
+  const what = f.text(f.nodes('section').find(n => n.props['aria-label'] === '要批准什么'));
+  assert.ok(what.includes('ChatGPT'));
+  assert.ok(what.includes('M2 → 正式记忆 → 新增和修改'));
+  assert.ok(what.includes('个人记忆：读取'));
+  assert.ok(what.includes('不用重新连接'));
+  f.button('批准').props.onClick();
+  assert.deepEqual(plain([f.calls[2].name, f.calls[2].args]),
+    ['clued_owner_grant_v1', { p_input: { confirmation_token: 'clued_ogr_p', view_digest: 'e'.repeat(64) } }]);
+  f.calls[2].resolve({ data: { status: 'committed', grant: { grant_id: 'g-p', expires_at: '2099-01-02T00:00:00Z', max_uses: 1 } }, error: null });
+  await f.settle();
+  assert.ok(f.text().includes('权限已加到这个连接上'));
+  assert.ok(f.nodes('a').some(n => n.props.href === '/oauth/connections'));
+});
+
 test('Clued sets the default choice by risk: a high-risk action opens on 只批这一次', async t => {
   const f = fixture(CONFIRM); t.after(() => f.unmount());
   f.emit('INITIAL_SESSION', session('owner'));
