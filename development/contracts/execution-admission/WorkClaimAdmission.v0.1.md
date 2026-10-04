@@ -83,6 +83,9 @@
       - n1：gate 与 runner 检查改为绑定本事件的准入运行：同一事件的运行一起创建（实测相差一秒内），本事件的准入运行就是该 head 上本次运行创建前 15 秒以来最新的 main 准入运行（`pull_request_target`），写着别的 PR 的不算；只有它的 check 算数，它还没发出 check 时就等。运行列表只用来找运行，判定仍只看 App check。
       - n2：合同 v28 §1.7 写明 gate 只拒绝「全部重跑」，「只重跑失败的 job」只有装了 runner 检查的自托管 runner 能拦，其余靠 Agent 遵守。
     - 仍靠自觉或未覆盖：runner 检查未安装；Agent 仍有生产 Supabase 写权限（OwnerCredential §9）；PR 正文可写别的 Agent 的认领；旧的数据库密码是否被 `_V2` 复用未知，Owner 选择暂不轮换。
+  - 复审 6（2026-10-04，Task `869d2db7`，对照 PR #547 head `fd7dfd97`）：N1、n1、n2 已修好，#547 本身没有新问题；另发现一个早已存在的 BLOCKER：
+    - B1：准入 workflow 对任何目标分支的 PR 都运行，并检出 PR 的目标分支（`base.ref`）上的脚本，同时拿着 App 私钥与 Clued token。GitHub 2025-12-08 起 `pull_request_target` 一律以默认分支运行，main 限定的 `clued-admission` environment 也会给出 secret。Agent 推一个分支 X、改掉 X 上的准入脚本、开一个合并到 X 的 PR，就能拿走私钥或给任何 PR 伪造准入 check。
+    - 修复（Owner：发现问题原地修、原地审，并入 #547）：准入与 adopt 两个 job 只对目标是默认分支的 PR 运行，并且固定检出默认分支；测试检查两者。合并到其他分支的 PR 没有准入 check，gate 与 runner 检查照常拒绝。
 - **尚缺或与本文设计不符**（各条在对应小节标注）：
   - 每认领 CI 分钟预算与 finalize：改为次数上限，不做（§4.5，Owner Decision `a264ea02`）。
   - 备份恢复后 `max(fence)` 会回退，靠恢复后的手工步骤补救（§4.4、§6，Owner Decision `2b23eb0c`）。

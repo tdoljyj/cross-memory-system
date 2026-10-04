@@ -942,10 +942,14 @@ test("app check: the admission workflow posts it after the admission step, keys 
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission.yml"), "utf8");
   assert.match(text, /id: admit\n/);
   assert.match(text, /if: \$\{\{ !cancelled\(\) \}\}\n[\s\S]*ADMISSION_HEAD_SHA: \$\{\{ steps\.admit\.outputs\.head_sha \|\| github\.event\.pull_request\.head\.sha \}\}[\s\S]*secrets\.CLUED_ADMISSION_APP_KEY[\s\S]*--mode app-check/);
-  // Re-review 3, N-R4: the admission job checks out the base branch as it is
-  // now, not the event's base commit that a re-run would replay.
-  assert.match(text, /ref: \$\{\{ github\.event\.pull_request\.base\.ref \}\}\n[\s\S]*--mode required/);
+  // Re-review 3, N-R4: the admission job checks out the branch as it is now,
+  // not the event's base commit that a re-run would replay. Re-review 6, B1:
+  // always the default branch, never the pull request's base branch, whose
+  // script an Agent could have edited, since pull_request_target hands this
+  // environment's secrets to a pull request into any branch.
+  assert.match(text, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}\n[\s\S]*--mode required/);
   assert.doesNotMatch(text, /pull_request\.base\.sha/);
+  assert.doesNotMatch(text, /ref: \$\{\{ github\.event\.pull_request\.base\.ref/);
   assert.match(text, /environment: clued-admission/);
 });
 
@@ -1038,14 +1042,20 @@ test("adopt: main exits 1 only on an error and writes a summary", async () => {
   } finally { console.log = log; console.error = error; }
 });
 
-test("adopt: the admission workflow runs it only for a merged pull request, from the base branch", () => {
+test("adopt: the admission workflow runs it only for a merged pull request, from the default branch", () => {
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission.yml"), "utf8");
   assert.match(text, /types: \[opened, synchronize, reopened, edited, ready_for_review, closed\]/);
-  assert.match(text, /clued-work-admission:\n {4}name: clued-work-admission\n {4}if: github\.event\.action != 'closed'\n/);
+  // Re-review 6, B1: both jobs hold the environment's secrets, so both run
+  // only for pull requests into the default branch.
+  const intoDefault = "github.event.pull_request.base.ref == github.event.repository.default_branch";
+  const admit = text.slice(text.indexOf("  clued-work-admission:"), text.indexOf("  clued-work-adopt:"));
+  assert.match(admit, /^ {4}if: >-\n {6}github\.event\.action != 'closed' &&\n/m);
+  assert.ok(admit.includes(`\n      ${intoDefault}\n`), "admission runs only for pull requests into the default branch");
   const job = text.slice(text.indexOf("  clued-work-adopt:"));
-  assert.match(job, /if: github\.event\.action == 'closed' && github\.event\.pull_request\.merged == true\n/);
+  assert.match(job, /^ {4}if: >-\n {6}github\.event\.action == 'closed' && github\.event\.pull_request\.merged == true &&\n/m);
+  assert.ok(job.includes(`\n      ${intoDefault}\n`), "adoption runs only for merges into the default branch");
   assert.match(job, /^ {4}environment: clued-admission$/m);
-  assert.match(job, /ref: \$\{\{ github\.event\.pull_request\.base\.ref \}\}\n {10}persist-credentials: false/);
+  assert.match(job, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}\n {10}persist-credentials: false/);
   assert.match(job, /--mode adopt$/m);
   assert.doesNotMatch(job, /head\.sha|head\.ref|merge_commit_sha/);
 });

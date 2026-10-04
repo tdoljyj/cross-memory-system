@@ -845,8 +845,9 @@ export const GATE_POLL_SECONDS = 10;
 // into another branch, whose copy of the admission workflow passes anything,
 // could stand in. The trusted signal is the clued-admission-verified check of
 // the clued-admission App on the head: its key lives in the clued-admission
-// environment, which deploys from main only. The gate job needs `checks: read`
-// to read it.
+// environment, which deploys from main only, and main's admission job checks
+// out main and runs only for pull requests into main (re-review 6, B1). The
+// gate job needs `checks: read` to read it.
 export const ADMISSION_APP_ID = 5164952;
 
 // Re-review 3, N-R1: the App check is posted when an admission run ends, so
