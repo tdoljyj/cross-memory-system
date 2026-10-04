@@ -29,6 +29,7 @@ concurrency:
 
 jobs:
   validate-trusted-self-hosted:
+    timeout-minutes: 20
     if: >-
       (github.event_name == 'push' &&
        github.actor == github.repository_owner) ||
@@ -57,6 +58,7 @@ jobs:
       - run: python -m unittest tests.test_model_program_m1_harness -v
 
   validate-untrusted-hosted:
+    timeout-minutes: 20
     if: >-
       (github.event_name == 'push' &&
        github.actor != github.repository_owner) ||

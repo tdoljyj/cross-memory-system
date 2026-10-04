@@ -32,10 +32,14 @@ const run = async (overrides, script, event = prEvent()) => {
     readFile: (p) => (p === "/token" ? "ghp_read\n" : event) });
   return { result, calls: fake.calls, sleeps };
 };
-const admission = (overrides = {}) => ({ id: 3, event: "pull_request_target", head_sha: HEAD, status: "completed",
-  conclusion: "success", created_at: "2026-10-03T20:00:00Z", pull_requests: [{ number: 9 }], ...overrides });
-const RUNS = `${API}/actions/workflows/clued-work-admission.yml/runs`;
+const APP = 5164952;
+const check = (overrides = {}) => ({ id: 3, name: "clued-admission-verified", head_sha: HEAD, status: "completed",
+  conclusion: "success", app: { id: APP, slug: "clued-admission" }, ...overrides });
+const CHECKS = `${API}/commits/${HEAD}/check-runs?check_name=clued-admission-verified`;
+const checks = (...list) => ({ body: { check_runs: list } });
 const COMPARE = `${API}/compare/main...`;
+const LIST = `${API}/contents/.github/workflows?ref=`;
+const listing = (entries) => ({ body: Object.entries(entries).map(([name, sha]) => ({ path: `.github/workflows/${name}`, type: "file", sha })) });
 
 test("runner hook: main's own runs start without any call", async () => {
   for (const event of ["push", "schedule", "workflow_run", "pull_request_target", "workflow_dispatch"]) {
@@ -59,42 +63,64 @@ test("runner hook: other branches, other events and other repositories are refus
   assert.deepEqual([result.allow, result.reason], [false, "pull request into feature, not main"]);
 });
 
-test("runner hook: a pull request into main runs when it changes no workflow, else only after its admission", async () => {
+test("runner hook: a pull request into main runs when it changes no workflow, else only after the admission App's check", async () => {
   let { result, calls } = await run({}, { [COMPARE]: files("apps/x.ts") });
   assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes no workflow"]);
   assert.equal(calls[0].url, `${COMPARE}${HEAD}`);
   assert.equal(calls[0].auth, "Bearer ghp_read");
   // A changed workflow, even another one than the running job's (a called workflow), needs admission.
-  ({ result } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml"), [RUNS]: { body: { workflow_runs: [admission()] } } }));
+  ({ result, calls } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml"), [CHECKS]: checks(check()) }));
   assert.equal(result.allow, true);
-  assert.match(result.reason, /changes \.github\/workflows\/heavy\.yml; admission run 3 succeeded/);
-  for (const runs of [[admission({ conclusion: "failure" })], [admission({ pull_requests: [{ number: 10 }] })],
-    [admission({ head_sha: SHA })], [admission({ event: "pull_request" })], []]) {
-    ({ result } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml"), [RUNS]: { body: { workflow_runs: runs } } }));
-    assert.equal(result.allow, false, JSON.stringify(runs));
+  assert.match(result.reason, /changes \.github\/workflows\/heavy\.yml; clued-admission-verified 3 succeeded/);
+  assert.match(calls[1].url, /check-runs\?check_name=clued-admission-verified&filter=all/);
+  // Re-review 2, N3c: no workflow run is consulted, so an admission run of a
+  // pull request into another branch cannot stand in. Only the App's check
+  // counts: not one posted by another App (a pull request's own workflow posts
+  // as github-actions), not a failed or unfinished one, not one on another head.
+  for (const list of [[check({ conclusion: "failure" })], [check({ app: { id: 15368, slug: "github-actions" } })],
+    [check({ head_sha: SHA })], [check({ name: "clued-work-admission" })], [check({ status: "in_progress", conclusion: null })], []]) {
+    ({ result } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml"), [CHECKS]: checks(...list) }));
+    assert.equal(result.allow, false, JSON.stringify(list));
   }
+  // The newest check of the App decides: a later failure withdraws an earlier success.
+  ({ result } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml"),
+    [CHECKS]: checks(check({ id: 3 }), check({ id: 4, conclusion: "failure" })) }));
+  assert.equal(result.allow, false);
+  ({ result } = await run({ CLUED_RUNNER_HOOK_ADMISSION_APP_ID: "77" }, { [COMPARE]: files(".github/workflows/heavy.yml"),
+    [CHECKS]: checks(check({ app: { id: 77 } })) }));
+  assert.equal(result.allow, true, "the App id can be configured");
   // A renamed workflow counts by its old name too; a truncated list counts as changed.
   ({ result } = await run({}, { [COMPARE]: { body: { files: [{ filename: "x.yml", previous_filename: ".github/workflows/old.yml" }] } },
-    [RUNS]: { body: { workflow_runs: [] } } }));
+    [CHECKS]: checks() }));
   assert.equal(result.allow, false);
   const many = Array.from({ length: 300 }, (_, i) => `apps/f${i}.ts`);
-  ({ result } = await run({}, { [COMPARE]: files(...many), [RUNS]: { body: { workflow_runs: [] } } }));
+  ({ result } = await run({}, { [COMPARE]: files(...many), [CHECKS]: checks() }));
   assert.match(result.reason, /truncated/);
-  // It waits for an admission run that is still going.
+  // It waits for a check that is still running.
   let polls = 0;
   let sleeps;
   ({ result, sleeps } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml"),
-    [RUNS]: () => { polls += 1; return { body: { workflow_runs: [admission(polls < 3 ? { status: "in_progress", conclusion: null } : {})] } }; } }));
+    [CHECKS]: () => { polls += 1; return checks(check(polls < 3 ? { status: "in_progress", conclusion: null } : {})); } }));
   assert.deepEqual([result.allow, polls, sleeps.length], [true, 3, 2]);
 });
 
-test("runner hook: a hand dispatch off main runs only when it changes no workflow", async () => {
+test("runner hook: a hand dispatch off main runs only when its workflow files are exactly main's", async () => {
   const dispatch = { GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/feature/x" };
-  let { result, calls } = await run(dispatch, { [COMPARE]: files("apps/x.ts") });
-  assert.equal(result.allow, true);
-  assert.equal(calls[0].url, `${COMPARE}${SHA}`);
-  ({ result } = await run(dispatch, { [COMPARE]: files(".github/workflows/clued-g4-database.yml") }));
-  assert.deepEqual([result.allow, result.reason], [false, "dispatch on refs/heads/feature/x changes .github/workflows/clued-g4-database.yml"]);
+  const same = { "clued-g4-database.yml": "1".repeat(40), "trivy.yml": "2".repeat(40) };
+  const script = (mine) => ({ [`${LIST}${SHA}`]: listing(mine), [`${LIST}main`]: listing(same) });
+  let { result, calls } = await run(dispatch, script(same));
+  assert.deepEqual([result.allow, result.reason], [true, "dispatch on refs/heads/feature/x, workflows identical to main"]);
+  assert.deepEqual(calls.map((c) => c.url).sort(), [`${LIST}${SHA}`, `${LIST}main`].sort());
+  // Re-review 2, finding B: a branch at an old main commit (from before a
+  // workflow had its gate) has older workflow files; that is a difference,
+  // although a three-dot compare from the merge base shows none.
+  ({ result } = await run(dispatch, script({ ...same, "clued-g4-database.yml": "9".repeat(40) })));
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /workflows differ from main \(\.github\/workflows\/clued-g4-database\.yml\); merge main/);
+  ({ result } = await run(dispatch, script({ ...same, "extra.yml": "3".repeat(40) })));
+  assert.match(result.reason, /extra\.yml/, "an added workflow differs");
+  ({ result } = await run(dispatch, script({ "trivy.yml": "2".repeat(40) })));
+  assert.match(result.reason, /clued-g4-database\.yml/, "a removed workflow differs");
 });
 
 test("runner hook: exit codes, enforcement and failures", async () => {
@@ -116,7 +142,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
       fakeFetch({}).fetchImpl), 0);
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
-  const { result } = await run({ GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/x" }, { [COMPARE]: { status: 403, body: null } })
+  const { result } = await run({ GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/x" }, { [LIST]: { status: 403, body: null } })
     .catch((error) => ({ result: { error: error.message } }));
   assert.match(result.error, /returned 403/);
 });

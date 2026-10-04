@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   trusted-self-hosted:
+    timeout-minutes: 20
     name: >-
       ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||
              (github.event_name == 'pull_request' &&
@@ -40,6 +41,7 @@ jobs:
       - run: python scripts/ci/validate_runner_budget_policy.py
 
   untrusted-hosted:
+    timeout-minutes: 20
     name: >-
       ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||
              (github.event_name == 'pull_request' &&

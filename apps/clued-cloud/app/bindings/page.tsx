@@ -14,6 +14,9 @@ import "../confirm/owner.css";
 // the Native two-step confirmation: the page issues a single-use token over
 // the view Clued renders, and "确认" commits exactly that view. All RPCs run as
 // this signed-in account session; Bindings and delegated OAuth are refused.
+// A role stays locked while any Binding holds it, even a revoked or expired
+// one (re-review 2, finding A), so such a Binding is listed as 已失效 with
+// only its "取消" buttons: the Owner ends its role here, or marks a new one.
 type Json = Record<string, unknown>;
 type Pending = { confirmation_token: string; view_digest: string; view: Json };
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -130,7 +133,7 @@ export default function BindingRolesPage() {
   return <main className="context-page owner-confirm">
     <header><Link href="/">Clued</Link> <Link href="/grants">我的授权</Link></header>
     <h1>专用 Binding</h1>
-    <p className="context-muted">把 GitHub 上 CI 准入用的 Binding、生产发布用的 Binding 标出来。标出之后，只有它们能做对应的事，其他 Agent 的 Binding 都不行。没有标出时，保持原来的行为。</p>
+    <p className="context-muted">把 GitHub 上 CI 准入用的 Binding、生产发布用的 Binding 标出来。标出之后，只有它们能做对应的事，其他 Agent 的 Binding 都不行。标出的 Binding 撤销或过期后，这件事谁都做不了，直到你在这里给新的 Binding 标上，或者取消它。从没标出过的用途，保持原来的行为。</p>
     {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 Clued</Link> 后管理专用 Binding。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       {view && <section aria-label="确认更改" className="owner-note"><h2>确认更改</h2>
@@ -140,7 +143,7 @@ export default function BindingRolesPage() {
           <dt>权限</dt><dd>{list(view.scopes).join("、")}</dd>
           <dt>用途</dt><dd>{String(view.role_title ?? view.role ?? "")}</dd>
           <dt>操作</dt><dd>{view.enabled ? "设为专用" : "取消专用"}</dd>
-          {others.length > 0 && <><dt>同一用途</dt><dd>{others.map(other => String(other.agent_name ?? "")).join("、")}（仍然有效）</dd></>}
+          {others.length > 0 && <><dt>同一用途</dt><dd>{others.map(other => String(other.agent_name ?? "") + (other.live === false ? "（已失效）" : "")).join("、")}（仍然保留这个用途）</dd></>}
         </dl>
         <div className="owner-actions">
           <button type="button" disabled={working} onClick={() => void confirm()}>确认</button>
@@ -150,15 +153,17 @@ export default function BindingRolesPage() {
         {bindings === null ? <p role="status">正在读取…</p> : bindings.length === 0 ? <p className="context-muted">目前没有有效的 Binding。</p>
           : bindings.map(binding => {
             const held = list(binding.roles);
+            const live = binding.live !== false;
             return <div key={String(binding.binding_id)} className="owner-grant">
               <dl>
-                <dt>名称</dt><dd>{String(binding.agent_name ?? "")}（{String(binding.vendor ?? "")}）</dd>
+                <dt>名称</dt><dd>{String(binding.agent_name ?? "")}（{String(binding.vendor ?? "")}）{live ? "" : "，已失效"}</dd>
                 <dt>权限</dt><dd>{list(binding.scopes).join("、")}</dd>
                 <dt>专用</dt><dd>{held.length ? held.map(role => String(roles.find(r => r.role === role)?.title ?? role)).join("；") : "无"}</dd>
               </dl>
               <div className="context-row">{roles.map(role => {
                 const name = String(role.role);
                 const has = held.includes(name);
+                if (!live && !has) return null;
                 return <button key={name} type="button" disabled={working || !!pending}
                   onClick={() => void ask(String(binding.binding_id), name, !has)}>
                   {(has ? "取消：" : "设为：") + (name === "ci-admission" ? "CI 准入" : "发布门口")}</button>;
