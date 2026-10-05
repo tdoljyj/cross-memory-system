@@ -1222,7 +1222,9 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         from pg_class c join pg_namespace n on n.oid = c.relnamespace
         cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
         where n.nspname = 'clued_private' and c.relname like 'integration\\_%' and c.relkind in ('r', 'S', 'v', 'm', 'p')
-        group by c.oid, c.relname, c.relkind, c.relrowsecurity, c.relacl, c.relowner order by c.relname`);
+          -- PR-1's own objects; later S2c PRs add tables that their own test files cover (PR-2: integration-runtime-identity-db)
+          and (c.relkind <> 'r' or c.relname = any($1))
+        group by c.oid, c.relname, c.relkind, c.relrowsecurity, c.relacl, c.relowner order by c.relname`, [TABLES]);
       assert.deepEqual(rows.filter((r) => r.relkind === 'r').map((r) => r.relname), TABLES);
       assert.deepEqual(rows.filter((r) => r.relkind !== 'r'), [], 'PR-1 creates no sequence or view');
       for (const row of rows) {
@@ -1244,17 +1246,15 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
           bool_or(has_function_privilege(r.rolname, p.oid, 'execute')) any_role
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
-        where n.nspname = 'clued_private' and p.proname like 'integration\\_%'
-        group by p.oid, p.proacl order by 1`);
+        where n.nspname = 'clued_private' and p.oid::regprocedure::text = any($1)
+        group by p.oid, p.proacl order by 1`, [PURE.map((fn) => `clued_private.${fn}`)]);
       assert.deepEqual(rows.map((r) => r.fn), PURE.map((fn) => `clued_private.${fn}`).sort());
       for (const row of rows) {
         assert.equal(row.default_acl, false, `${row.fn} keeps the default PUBLIC EXECUTE`);
         assert.equal(row.public_grant, false, row.fn);
         assert.equal(row.any_role, false, row.fn);
       }
-      // PR-1 creates no Integration public RPC, so none can be granted (§5.13, OQ-21)
-      assert.equal(Number((await admin.query(`select count(*) n from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'public' and p.proname like '%integration%'`)).rows[0].n), 0);
+      // PR-1 creates no Integration public RPC (§5.13, OQ-21); PR-2's public RPCs are covered by its own T-S-2
     });
 
     await t.test('registries: v1 seeds (§5.1) and scope map v1 (§9.1)', async () => {
@@ -1535,8 +1535,8 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
       // here instead of shipping uncovered (Owner Decision 0402d831).
       const { rows: constraints } = await admin.query(`select co.conname, cl.relname from pg_constraint co
         join pg_class cl on cl.oid = co.conrelid join pg_namespace n on n.oid = cl.relnamespace
-        where n.nspname = 'clued_private' and cl.relname like 'integration\\_%\\_v1' and co.contype = 'c'
-        order by cl.relname, co.conname`);
+        where n.nspname = 'clued_private' and cl.relname = any($1) and co.contype = 'c'
+        order by cl.relname, co.conname`, [TABLES]);
       assert.ok(constraints.length > 0);
       await admin.query(`insert into clued_private.integration_hosts_v1(host, tenant_dimension, account_dimension,
         first_authorization_required, registry_version, capability_snapshot_ref)
