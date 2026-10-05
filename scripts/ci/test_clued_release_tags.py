@@ -90,6 +90,20 @@ class ProductTagTest(unittest.TestCase):
             rt.apply(plan, push=False, root=self.repo.dir)
         self.assertEqual(len(rt.check("HEAD", self.repo.dir)), 1)
 
+    def test_push_sends_the_tag_and_a_refused_push_leaves_no_local_tag(self):
+        remote = Path(tempfile.mkdtemp(prefix="clued-release-tags-remote-"))
+        self.addCleanup(shutil.rmtree, remote, True)
+        self.repo.git("remote", "add", "origin", str(remote / "missing.git"))
+        plan = rt.product_plan("HEAD", self.repo.dir)
+        with self.assertRaisesRegex(rt.TagError, "pushing Clued-v1.6 failed: .+"):
+            rt.apply(plan, push=True, root=self.repo.dir)
+        self.assertIsNone(rt.existing_target("Clued-v1.6", self.repo.dir))
+        subprocess.run(["git", "init", "-q", "--bare", str(remote / "missing.git")], check=True)
+        self.assertIn("and pushed", rt.apply(plan, push=True, root=self.repo.dir))
+        pushed = subprocess.run(["git", "rev-parse", "Clued-v1.6^{commit}"], cwd=remote / "missing.git",
+                                check=True, capture_output=True, text=True).stdout.strip()
+        self.assertEqual(pushed, self.repo.commits["v16"])
+
     def test_version_must_be_a_valid_tag_name(self):
         self.repo.commit("bad", {"VERSION": "Clued v1.7\n"})
         problems = rt.check("HEAD", self.repo.dir)
