@@ -40,6 +40,7 @@ on:
       - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'
       - 'apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs'
       - 'apps/clued-cloud/tests/integration-runtime-verification-db.test.mjs'
+      - 'apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs'
       - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'
       - 'apps/clued-cloud/tests/mtpe-*.test.mjs'
       - 'apps/clued-cloud/tests/production-release-gate.test.mjs'
@@ -89,6 +90,7 @@ on:
       - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'
       - 'apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs'
       - 'apps/clued-cloud/tests/integration-runtime-verification-db.test.mjs'
+      - 'apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs'
       - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'
       - 'apps/clued-cloud/tests/mtpe-*.test.mjs'
       - 'apps/clued-cloud/tests/production-release-gate.test.mjs'
@@ -203,6 +205,7 @@ jobs:
       - run: npm run test:integration-runtime:db
       - run: npm run test:integration-runtime:identity
       - run: npm run test:integration-runtime:verification
+      - run: npm run test:integration-runtime:lifecycle
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
       - run: npm run test:resource-center:authority
@@ -266,6 +269,7 @@ jobs:
       - run: npm run test:integration-runtime:db
       - run: npm run test:integration-runtime:identity
       - run: npm run test:integration-runtime:verification
+      - run: npm run test:integration-runtime:lifecycle
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
       - run: npm run test:resource-center:authority
