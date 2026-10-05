@@ -427,6 +427,7 @@ test('production deploy and attestation secrets are read only by main-only clued
   assert.deepEqual(users, [
     'clued-cloud-production-release.yml:release',
     'clued-currentness-post-deploy-attestation.yml:verify-and-attest',
+    'clued-integration-runtime-config.yml:configure',
     'clued-storage-executor-window.yml:open-window',
     'clued-storage-executor-window.yml:open',
     'clued-storage-executor-window.yml:close',

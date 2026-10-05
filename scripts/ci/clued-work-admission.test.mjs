@@ -1341,7 +1341,7 @@ test("owner review: the workflows on main that hold an environment are exactly t
     assert.deepEqual(ownerReviewFindings(text, text).filter((f) => f !== "environment_workflow_changed"), [], file);
   }
   assert.deepEqual(holders, ["clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml",
-    "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
+    "clued-integration-runtime-config.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
     "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
 });
 
