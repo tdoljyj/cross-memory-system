@@ -186,6 +186,10 @@ test('work claims: a private lease key lets another Binding of the same user ren
     const old = issued(committed(await claim(takeTask)));
     await admin.query(`update clued_private.work_claims_v1
       set expires_at=greatest(issued_at,clock_timestamp()-interval '1 second') where claim_id=$1`, [old.claim.claim_id]);
+    // An expired claim moves to nobody: its holder hears work_claim_expired even
+    // with the right key, and another Binding's key does not revive it.
+    rejected(await renew('claude', old.claim, { lease_key: old.lease_key }), 'work_claim_expired');
+    rejected(await renew('codex', old.claim, { lease_key: old.lease_key }), 'work_claim_expired');
     const took = issued(committed(await takeover('codex', old.claim.claim_id)));
     assert.equal(took.claim.fence, old.claim.fence + 1);
     assert.equal(await storedHash(old.claim.claim_id), null);
