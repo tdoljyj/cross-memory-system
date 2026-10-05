@@ -107,6 +107,21 @@ class CheckTest(unittest.TestCase):
         cc.update(self.repo.dir)
         self.assertEqual(cc.check(self.repo.dir), [])
 
+    def test_bump_keeps_the_blank_line_after_the_marker(self):
+        skill = self.repo.dir / "pkg" / "SKILL.md"
+        write(skill, '---\nname: x\nmetadata:\n  version: "1.0.0"\n\n---\nbody\n')
+        cc.bump("pkg", "1.1.0", self.repo.dir)
+        self.assertEqual(skill.read_text(), '---\nname: x\nmetadata:\n  version: "1.1.0"\n\n---\nbody\n')
+
+    def test_bump_writes_a_marker_with_a_backslash_literally(self):
+        data = json.loads((self.repo.dir / cc.MANIFEST).read_text())
+        cc.by_id(data)["pkg"]["version_marker"]["pattern"] = r"  path: C:\x {version}"
+        write(self.repo.dir / cc.MANIFEST, json.dumps(data))
+        skill = self.repo.dir / "pkg" / "SKILL.md"
+        write(skill, "  path: C:\\x 1.0.0\nbody\n")
+        cc.bump("pkg", "1.1.0", self.repo.dir)
+        self.assertEqual(skill.read_text(), "  path: C:\\x 1.1.0\nbody\n")
+
     def test_bump_refuses_lower_or_equal(self):
         with self.assertRaises(SystemExit):
             cc.bump("pkg", "1.0.0", self.repo.dir)

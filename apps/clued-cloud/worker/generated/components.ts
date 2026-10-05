@@ -11,7 +11,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "hook.version-check": "1.0.0",
   "hook.run-python": "1.0.0",
   "hook.settings": "1.0.0",
-  "script.components": "1.0.0",
+  "script.components": "1.0.1",
   "script.update-clued-skills": "1.0.0",
   "script.memory-sync": "1.0.0"
 };
