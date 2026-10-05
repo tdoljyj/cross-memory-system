@@ -212,6 +212,13 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
   const projectRows = details?.eligible.filter(isProject) || [];
   const offersAll = !!details?.eligible.some(row => row.resource_kind === 'scope' && row.resource_id === ALL_PROJECTS);
   const count = Object.values(selected).reduce((n, actions) => n + actions.length, 0);
+  // project:* is expanded onto each of the Owner's projects when the grant is written,
+  // so 高级 shows those actions ticked and locked on each project row.
+  const allRow = details?.eligible.find(row => row.resource_kind === 'scope' && row.resource_id === ALL_PROJECTS);
+  const allActions = allRow ? selected[rowKey(allRow)] || [] : [];
+  const covered = (row: Resource, action: string) => isProject(row) && allActions.includes(action);
+  const shown = (row: Resource) => row.actions.filter(action => (selected[rowKey(row)] || []).includes(action) || covered(row, action));
+  const editable = (row: Resource) => row.actions.filter(action => !covered(row, action));
   const groups = [
     { name: '个人记忆', rows: details?.eligible.filter(row => row.resource_kind === 'scope' && !row.resource_id.startsWith('project:')) || [] },
     { name: '项目协作', rows: details?.eligible.filter(row => row.resource_kind === 'scope' && row.resource_id.startsWith('project:')) || [] },
@@ -258,21 +265,26 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
           <div className="oauth-group-actions">
             <label>
               <input className="oauth-group-checkbox" type="checkbox"
-                checked={row.actions.length > 0 && row.actions.every(action => (selected[rowKey(row)] || []).includes(action))}
-                aria-checked={row.actions.some(action => (selected[rowKey(row)] || []).includes(action)) && !row.actions.every(action => (selected[rowKey(row)] || []).includes(action)) ? 'mixed' : row.actions.length > 0 && row.actions.every(action => (selected[rowKey(row)] || []).includes(action))}
-                ref={node => { if (node) node.indeterminate = row.actions.some(action => (selected[rowKey(row)] || []).includes(action)) && !row.actions.every(action => (selected[rowKey(row)] || []).includes(action)); }}
-                disabled={busy || row.actions.length === 0}
-                onChange={() => edit(old => ({ ...old, [rowKey(row)]: row.actions.every(action => (old[rowKey(row)] || []).includes(action)) ? [] : [...row.actions] }))}
+                checked={row.actions.length > 0 && shown(row).length === row.actions.length}
+                aria-checked={shown(row).length > 0 && shown(row).length < row.actions.length ? 'mixed' : row.actions.length > 0 && shown(row).length === row.actions.length}
+                ref={node => { if (node) node.indeterminate = shown(row).length > 0 && shown(row).length < row.actions.length; }}
+                disabled={busy || editable(row).length === 0}
+                onChange={() => edit(old => {
+                  const own = editable(row);
+                  const current = (old[rowKey(row)] || []).filter(action => !own.includes(action));
+                  return { ...old, [rowKey(row)]: own.every(action => (old[rowKey(row)] || []).includes(action)) ? current : [...current, ...own] };
+                })}
               />本组全部权限
             </label>
-            <span>已选 {row.actions.filter(action => (selected[rowKey(row)] || []).includes(action)).length}/{row.actions.length} 项</span>
+            <span>已选 {shown(row).length}/{row.actions.length} 项</span>
           </div>
           {row.actions.map(action => <label key={action} style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '6px 0' }}>
-            <input type="checkbox" checked={(selected[rowKey(row)] || []).includes(action)} onChange={event => {
+            <input type="checkbox" checked={shown(row).includes(action)} disabled={covered(row, action)} onChange={event => {
               const checked = event.target.checked;
               edit(old => { const current = (old[rowKey(row)] || []).filter(a => a !== action); return { ...old, [rowKey(row)]: checked ? [...current, action] : current }; });
             }} />{row.resource_kind === "context" && action === "close" ? "关闭/撤回记录" : actionLabels[action] || action}
           </label>)}
+          {row.actions.some(action => covered(row, action)) && <small className="oauth-range-note">由“我的全部项目（含以后新建的）”覆盖，批准后这个项目自动获得勾上的权限。要单独调整这个项目，请把“项目范围”改回“指定项目”。</small>}
           {row.resource_id === ALL_PROJECTS && !(selected[rowKey(row)] || []).length && <small className="oauth-range-note">这一组只在“项目范围”选“我的全部项目（含以后新建的）”时才勾选；选“指定项目”时，权限落在各个项目自己的组里。</small>}
           {row.resource_kind === 'context' && row.actions.includes('write') && <small>修改已有内容前，可另外选择读取权限来核对当前版本；系统不会自动追加。</small>}
         </fieldset>)}</section>)}
