@@ -171,7 +171,8 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
         group by p.oid`);
       for (const row of rows) assert.equal(row.any_execute, false, row.f);
       const publicRpcs = rows.map((row) => row.f).filter((f) => !f.startsWith('clued_private.')).map((f) => f.replace(/\(.*$/, '')).sort();
-      assert.deepEqual(publicRpcs, [...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1'].sort());
+      // PR-2 + PR-3 public RPCs; later S2c PRs add theirs, covered by their own test files (PR-4: integration-runtime-lifecycle-db)
+      for (const name of [...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1']) assert.ok(publicRpcs.includes(name), name);
     });
 
     // the §5.13 target grants, exactly as the flag-enabling migration will apply them (§13.0)
@@ -329,9 +330,8 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
           has_function_privilege(r.rolname, p.oid, 'execute')) roles
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
-        where n.nspname = 'public' and (p.proname like 'clued\\_integration\\_%'
-          or p.proname in ('clued_user_integration_v1', 'clued_admin_integration_v1'))
-        group by p.proname order by p.proname`);
+        where n.nspname = 'public' and p.proname = any($1)
+        group by p.proname order by p.proname`, [[...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1']]);
       assert.equal(rows.length, BINDING_RPCS.length + 2);
       for (const row of rows) {
         assert.deepEqual(row.roles, row.proname.startsWith('clued_integration_') ? ['anon', 'authenticated'] : ['authenticated'], row.proname);
@@ -801,7 +801,7 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       await expectCode(operator({ op: 'fact_set', integration_id: id }, user), 'platform_admin_required');
       await expectCode(operator({ op: 'fact_set', integration_id: id }, operatorUser, { client_id: 'some-client' }), 'direct_human_session_required');
       await expectCode(operator({ op: 'fact_set', integration_id: uid() }), 'integration_not_owned');
-      await expectCode(operator({ op: 'revoke', integration_id: id }), 'invalid_integration_operation');
+      await expectCode(operator({ op: 'declare', integration_id: id }), 'invalid_integration_operation');
       const missingReason = await fact('fact_set', id, { truth_class: 'qualification_state', value: 'SUSPENDED' });
       assert.equal(missingReason.error_code, 'invalid_integration_fact');
       const badValue = await fact('fact_set', id, { truth_class: 'qualification_state', value: 'NOT_EVALUATED', reason: 'x' });

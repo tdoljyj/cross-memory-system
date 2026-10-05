@@ -11,7 +11,8 @@ import EmbeddedPostgres from 'embedded-postgres';
 // S2c Integration Runtime PR-2 (IntegrationRuntime v0.1.8 §14.1): Integration identity, Installation
 // Requests, the Claim Store, connections and explicit Binding ownership, normalization and the PR-2
 // operations. Proves G-A10 (except the cases that need PR-3's ACTIVE), the DB parts of T-A3-1 / 3 / 6,
-// T-A7-9's DB layer, T-A9-1, T-A9-11, T-S-1…6 and the PR-2 gating test T-A11-26.
+// T-A7-9's DB layer, T-A9-1, T-A9-11 and T-S-1…6. The PR-2 gating test T-A11-26 was removed by PR-4 (§13.5,
+// v0.1.8 NIT-3), which replaces the temporary REPLACE_HOLDER refusal with rule 2 (T-A11-15(c)(e)).
 // Every database runs as a non-root OS user (embedded-postgres refuses root).
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -737,24 +738,6 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       assert.equal(conflict.error_code, 'integration_version_conflict');
     });
 
-    await t.test('T-A11-26 PR-2 refuses REPLACE_HOLDER over a revoked holder (temporary; PR-4 removes it)', async () => {
-      const { user, h, i } = await conflictPair();
-      // explicit revoke is PR-4: the fixture inserts H's open revocation row directly
-      await admin.query(`insert into clued_private.integration_revocations_v1(integration_id, revoked_by, reason, revoked_binding_ids, receipt_id)
-        values ($1, 'USER', 'fixture', '{}', gen_random_uuid())`, [h]);
-      const c0 = await counts();
-      const r = await native(admin, user, { op: 'reconcile', idempotency_key: key(), integration_id: i, resolution: 'REPLACE_HOLDER',
-        base_version: (await integration(i)).version, holder_base_version: (await integration(h)).version });
-      assert.equal(r.status, 'rejected');
-      assert.equal(r.error_code, 'integration_revoked_requires_explicit_restore');
-      const c1 = await counts();
-      assert.deepEqual({ ...c1, receipts: c0.receipts }, c0, 'no business write');
-      assert.equal((await integration(h)).identity_claim_state, 'CURRENT_CLAIM_HOLDER');
-      const p2 = await conflictPair();
-      const ok = await native(admin, p2.user, { op: 'reconcile', idempotency_key: key(), integration_id: p2.i, resolution: 'REPLACE_HOLDER',
-        base_version: (await integration(p2.i)).version, holder_base_version: (await integration(p2.h)).version });
-      assert.equal(ok.status, 'committed');
-    });
     // ---- fail-closed branches (review MAJOR-1…3) -------------------------------------------------
     // business rows of a rejected bind: the Request itself was committed by request_open beforehand
     const business = async () => { const c = await counts(); delete c.receipts; delete c.requests; return c; };
@@ -1602,7 +1585,7 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       const list = await native(admin, user, { op: 'list' });
       assert.deepEqual(list.integrations.map((x) => x.integration_id), [id]);
       await expectCode(native(admin, await newUser(), { op: 'status', integration_id: id }), 'integration_not_owned');
-      await expectCode(native(admin, user, { op: 'revoke', integration_id: id }), 'invalid_integration_operation');
+      await expectCode(native(admin, user, { op: 'declare', integration_id: id }), 'invalid_integration_operation');
       // an OAuth client JWT is not a Native session
       await admin.query('begin');
       try {
