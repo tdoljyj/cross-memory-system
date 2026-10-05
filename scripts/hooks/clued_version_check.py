@@ -40,7 +40,7 @@ CONTRACT_ID = "agent-contract"
 TIMEOUT_SECONDS = 3
 
 
-def checkout_root(payload: dict) -> Path:
+def checkout_root() -> Path:
     """The checkout this script belongs to; its manifest is the local truth."""
     return SCRIPTS.parent
 
@@ -132,7 +132,7 @@ def describe_copy(path: Path, skill: dict, root: Path, newest: str) -> str | Non
 
 
 def session_report(payload: dict) -> str:
-    root = checkout_root(payload)
+    root = checkout_root()
     manifest = cc.load_manifest(root)
     local = local_versions(root)
     skill = cc.by_id(manifest)[SKILL_ID]
@@ -199,7 +199,7 @@ def resume_report(payload: dict) -> str | None:
     if not body:
         return None
     served = served_versions(body)
-    local = local_versions(checkout_root(payload))
+    local = local_versions(checkout_root())
     lines = []
     contract_local, contract_served = local.get(CONTRACT_ID), served.get(CONTRACT_ID)
     if contract_served and contract_local and contract_served != contract_local:
