@@ -82,6 +82,16 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   assert.deepEqual(byName.clued_work_takeover.inputSchema.required, ['claim_id', 'idempotency_key']);
   assert.deepEqual(byName.clued_work_release.inputSchema.properties.outcome.enum, ['completed', 'abandoned', 'draining']);
   for (const name of WORK_TOOLS) assert.equal(byName[name].inputSchema.additionalProperties, false, name);
+  // The private lease key (migration 20261005190000) is an optional input of renew and release only.
+  for (const name of ['clued_work_renew', 'clued_work_release']) {
+    assert.equal(byName[name].inputSchema.properties.lease_key.pattern, '^clued_lk_[0-9a-f]{64}$', name);
+    assert.ok(!byName[name].inputSchema.required.includes('lease_key'), name);
+  }
+  for (const name of ['clued_work_claim', 'clued_work_verify', 'clued_work_takeover']) {
+    assert.equal(byName[name].inputSchema.properties.lease_key, undefined, name);
+  }
+  assert.ok(byName.clued_work_renew.inputSchema.properties.holder_session_ref);
+  assert.match(byName.clued_work_claim.description, /lease_key is the claim's private key: keep it in this session only/);
   assert.equal(byName.clued_work_claim._meta['clued/scopeEnforcement'], 'server-side');
 });
 
@@ -110,13 +120,16 @@ test('Binding and OAuth callers reach the same step-1 RPCs with the arguments pa
     clued_work_claim: { scope: 'global', task_id: '11111111-1111-4111-8111-111111111111',
       write_set: ['apps/clued-cloud/package.json', 'apps/clued-cloud/package-lock.json'],
       trigger_refs: ['ghsa:GHSA-vcvr-r3jv-pc5j'], idempotency_key: 'host-a:task:claim', base_commit: 'f7ba6ff3' },
-    clued_work_renew: { claim_id: '22222222-2222-4222-8222-222222222222', fence: 1, lease_version: 1, progress_ref: 'sha-1' },
-    clued_work_release: { claim_id: '22222222-2222-4222-8222-222222222222', fence: 1, outcome: 'completed', evidence_ref: 'pr:450' },
+    clued_work_renew: { claim_id: '22222222-2222-4222-8222-222222222222', fence: 1, lease_version: 1, progress_ref: 'sha-1',
+      lease_key: `clued_lk_${'a'.repeat(64)}`, holder_session_ref: 'session-new' },
+    clued_work_release: { claim_id: '22222222-2222-4222-8222-222222222222', fence: 1, outcome: 'completed', evidence_ref: 'pr:450',
+      lease_key: `clued_lk_${'a'.repeat(64)}` },
     clued_work_verify: { claim_id: '22222222-2222-4222-8222-222222222222', changed_paths: ['apps/clued-cloud/package.json'], head_sha: '3329174e', pr_ref: 'tdoljyj/cross-memory-system#482' },
     clued_work_takeover: { claim_id: '22222222-2222-4222-8222-222222222222', idempotency_key: 'host-b:claim:takeover' },
   };
   const { calls, restore } = mockFetch(({ rpc, body }) =>
-    Response.json({ status: 'committed', echo: rpc ?? body.p_tool, claim: { claim_id: '22222222-2222-4222-8222-222222222222', holder_binding_id: 'b-1' } }));
+    Response.json({ status: 'committed', echo: rpc ?? body.p_tool, lease_key: `clued_lk_${'b'.repeat(64)}`,
+      claim: { claim_id: '22222222-2222-4222-8222-222222222222', holder_binding_id: 'b-1' } }));
   try {
     for (const name of WORK_TOOLS) {
       for (const token of [bindingToken, oauthToken]) {
@@ -127,6 +140,8 @@ test('Binding and OAuth callers reach the same step-1 RPCs with the arguments pa
         assert.equal(result.structuredContent.status, 'committed');
         // holder_binding_id is a different key from binding_id and survives sanitization.
         assert.equal(result.structuredContent.claim.holder_binding_id, 'b-1');
+        // The lease key reaches the caller that took the claim.
+        assert.equal(result.structuredContent.lease_key, `clued_lk_${'b'.repeat(64)}`);
         const call = calls.at(-1);
         if (token === bindingToken) {
           assert.equal(call.rpc, expectedRpc[name]);

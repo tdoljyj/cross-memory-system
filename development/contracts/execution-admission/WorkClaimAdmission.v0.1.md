@@ -297,6 +297,14 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - **已知限制（Owner Decision `2b23eb0c`，2026-10-02）**：不改 fence 来源。数据库从备份恢复后、Agent 再开工前，运行 `apps/clued-cloud/scripts/work-claims-after-restore.sql` 一次：恢复回来的 ACTIVE／DRAINING 认领标为 RELEASED（abandoned），所有 fence 加一百万，使新认领与接管拿到的 fence 高于恢复前签发过的任何 fence。步骤写在 `apps/clued-cloud/docs/production-release.md`「After a database restore」，验收测试 `work-claims-acceptance-db` 覆盖。
 - **多资源一次性获取**：write_set 整体在一个事务中判定，没有逐路径加锁，没有持锁等锁，不会死锁。
 - **优先级不抢占**：Global Frontier 的 Pin 或 priority 变化不自动 takeover 一个 ACTIVE claim。
+- **私有租约钥匙（Task `f165eb56`，Owner Decision `22b9bd9e`，设计 Note `3ad61f76`，迁移 `20261005190000_work_claims_lease_key.sql`，合同 v31）**：
+  - 问题：持有者按 Binding 记，而认领的其他字段对同一用户的所有 Binding 可见，不能证明谁在干这份活。Host 重连换了 Binding（claude.ai 连接器重连即如此），正在干活的会话续期与释放都得到 `work_claim_not_holder`，只能等过期后接管。
+  - `clued_work_claim`／`clued_work_takeover` 成功时在回答顶层返回一次 `lease_key`（`clued_lk_` 加 32 字节随机数的 64 位十六进制），库里只存 sha256。持有者的幂等重放返回新钥匙，旧钥匙作废；接管后被替换认领的钥匙清空；释放（completed／abandoned）清空。
+  - `clued_work_renew`／`clued_work_release` 可带 `lease_key`：持有者 Binding 照旧；它对仍有效且有钥匙的认领带错钥匙，拒绝 `work_claim_lease_key_invalid`，对已结束的认领则照常回答状态拒绝（如 `work_claim_not_active`）。同一用户的另一个 Binding 带对钥匙可以续期（认领转到它名下，fence 不变，`holder_session_ref` 换成它报的会话，回答带 `transferred: true` 和一把新钥匙，出示的旧钥匙作废；回执写 `via_lease_key` 与 `transferred_from_binding`）或释放（不转移，回执写 `via_lease_key`）；没有或不对的钥匙仍是 `work_claim_not_holder`。转入走续期，所以照样需要新的 `progress_ref`，受续期次数与硬截止约束；用完时只能带钥匙释放再重新认领。转入方受每会话 3、每 Binding 10 个活认领上限约束；它若已有同一幂等键的认领，拒绝 `work_claim_idempotency_conflict`。
+  - 认领记下签发它的 Binding（`issued_binding_id`）。认领转走后，签发方用原幂等键重放，返回 `work_claim_idempotency_spent`（带 `transferred: true`），不会另起一个认领（多份赛马里也不会多占一份）。
+  - 已过期认领的哈希留在表里，无人能用（续期与释放都按状态拒绝），不另清理。
+  - 钥匙不出现在 `work_claim_view`、活跃列表、resume、冲突与拒绝回答、回执、事件或日志；比较的是哈希，不是钥匙。迁移前签发的认领没有钥匙，行为不变。
+  - 不变的部分：同一 Binding 的会话之间仍按 Binding 判持有者（GenericWorkClaim §4.1，复审 7 m4），钥匙不改变这一点。
 
 ### 4.5 预算
 

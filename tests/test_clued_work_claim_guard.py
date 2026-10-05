@@ -195,6 +195,17 @@ class WorkClaimGuardTest(unittest.TestCase):
         self.post("mcp__Clued__clued_work_takeover", committed(claim(claim_id=new_id)), {"claim_id": CLAIM_ID})
         self.assertEqual(set(self.stored()), {new_id})
 
+    def test_lease_key_is_never_stored(self):
+        # The claim's private lease key (contract §1.7, migration 20261005190000)
+        # stays in the session: neither the answer's key nor a renewal's input
+        # reaches .clued/work-claim.json.
+        key = "clued_lk_" + "a" * 64
+        self.post("mcp__Clued__clued_work_claim", {**committed(claim()), "lease_key": key})
+        self.post("mcp__Clued__clued_work_renew", {**committed({**claim(), "lease_version": 2}), "transferred": True},
+                  {"claim_id": CLAIM_ID, "lease_key": key})
+        self.assertEqual(self.stored()[CLAIM_ID]["lease_version"], 2)
+        self.assertNotIn(key, (self.project / ".clued" / "work-claim.json").read_text(encoding="utf-8"))
+
     def test_other_tools_are_ignored(self):
         self.post("mcp__Clued__clued_record_mutate", committed(claim()))
         self.assertEqual(self.stored(), {})

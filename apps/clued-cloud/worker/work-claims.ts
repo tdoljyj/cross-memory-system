@@ -44,12 +44,16 @@ const baseCommit = { type: "string", pattern: "^[0-9a-f]{7,64}$" } as const;
 const holderSessionRef = { type: "string", minLength: 1, maxLength: 200, description: "Host session id, audit only." } as const;
 const budget = { type: "object", description: "Declared estimates (model tokens, CI minutes). Recorded, not enforced in v1." } as const;
 const leaseSeconds = { type: "integer", minimum: 60, maximum: 7200, description: "Shorter than the profile default (7200) if the work is small." } as const;
+const leaseKey = {
+  type: "string", pattern: "^clued_lk_[0-9a-f]{64}$",
+  description: "The claim's private lease key, from the clued_work_claim or clued_work_takeover answer. Only needed when your Binding is not the holder (after a reconnect, or when the Owner handed the claim to you). Never write it to a file, commit, pull request, record or log.",
+} as const;
 
 export const workClaimTools = [
   {
     name: "clued_work_claim",
     description:
-      "Claim one existing active Task for execution before spending anything on it: before model calls, installs, builds, tests, CI or subtasks. Declares the write set (paths or globs) and trigger refs. Rejected with work_claim_conflict when another live claim names the same task, intersects the write set, or shares a trigger ref; the conflict names the holder so you stop, not retry under another title. One session (holder_session_ref) holds at most 3 live claims and one Binding at most 10 across its sessions. Each new claim or takeover takes a token from the Task's bucket (8, one back per hour) and the Binding's bucket (30, one back per 15 minutes); claiming per step or keeping one claim are both fine. work_claim_budget_exhausted names the limit hit, with retry_after for a rate bucket. The claim carries a fence and a lease (profile: 2 h, hard deadline 24 h). Idempotent by idempotency_key.",
+      "Claim one existing active Task for execution before spending anything on it: before model calls, installs, builds, tests, CI or subtasks. Declares the write set (paths or globs) and trigger refs. Rejected with work_claim_conflict when another live claim names the same task, intersects the write set, or shares a trigger ref; the conflict names the holder so you stop, not retry under another title. One session (holder_session_ref) holds at most 3 live claims and one Binding at most 10 across its sessions. Each new claim or takeover takes a token from the Task's bucket (8, one back per hour) and the Binding's bucket (30, one back per 15 minutes); claiming per step or keeping one claim are both fine. work_claim_budget_exhausted names the limit hit, with retry_after for a rate bucket. The claim carries a fence and a lease (profile: 2 h, hard deadline 24 h). The answer's lease_key is the claim's private key: keep it in this session only, never in a file, commit, pull request, record or log; it lets this work continue after a reconnect gives you a new Binding. Idempotent by idempotency_key; a replay returns a new lease_key and the earlier one stops working.",
     inputSchema: {
       type: "object",
       required: ["task_id", "write_set", "idempotency_key"],
@@ -63,13 +67,14 @@ export const workClaimTools = [
   {
     name: "clued_work_renew",
     description:
-      "Extend a claim's lease. Requires a new progress_ref (a head SHA or Receipt id you did not send before): a heartbeat without progress is refused with work_claim_no_progress. Bumps lease_version, never the fence. Bounded by the profile's renewal count and hard deadline. A changed write_set or trigger_refs re-runs conflict detection before it is accepted.",
+      "Extend a claim's lease. Requires a new progress_ref (a head SHA or Receipt id you did not send before): a heartbeat without progress is refused with work_claim_no_progress. Bumps lease_version, never the fence. Bounded by the profile's renewal count and hard deadline. A changed write_set or trigger_refs re-runs conflict detection before it is accepted. When your Binding is not the holder (a reconnect gave you a new one), pass the claim's lease_key with a new progress_ref (for example reconnect:<session id>): the renewal then moves the claim to your Binding (transferred: true; fence unchanged), holder_session_ref names your session, and the answer carries a new lease_key that replaces the one you sent; keep it private. Without the right key it is work_claim_not_holder; a wrong key from the holder is work_claim_lease_key_invalid.",
     inputSchema: {
       type: "object",
       required: ["claim_id", "fence", "lease_version", "progress_ref"],
       properties: {
         scope, claim_id: uuid, fence: { type: "integer", minimum: 1 }, lease_version: { type: "integer", minimum: 1 },
         progress_ref: { type: "string", minLength: 1, maxLength: 200 }, write_set: writeSet, trigger_refs: triggerRefs,
+        lease_key: leaseKey, holder_session_ref: { ...holderSessionRef, description: "Host session id, audit only; recorded when lease_key moves the claim to your Binding." },
       },
       additionalProperties: false,
     },
@@ -77,7 +82,7 @@ export const workClaimTools = [
   {
     name: "clued_work_release",
     description:
-      "Release a claim you hold. completed or abandoned ends it; draining keeps it blocking conflicts while an already-dispatched, uncancellable action settles, and accepts no further renewal.",
+      "Release a claim you hold. completed or abandoned ends it; draining keeps it blocking conflicts while an already-dispatched, uncancellable action settles, and accepts no further renewal. When your Binding is not the holder, pass the claim's lease_key.",
     inputSchema: {
       type: "object",
       required: ["claim_id", "fence", "outcome"],
@@ -85,6 +90,7 @@ export const workClaimTools = [
         scope, claim_id: uuid, fence: { type: "integer", minimum: 1 },
         outcome: { type: "string", enum: ["completed", "abandoned", "draining"] },
         evidence_ref: { type: "string", minLength: 1, maxLength: 200, description: "PR, commit or Receipt the outcome rests on." },
+        lease_key: leaseKey,
       },
       additionalProperties: false,
     },
@@ -108,7 +114,7 @@ export const workClaimTools = [
   {
     name: "clued_work_takeover",
     description:
-      "Take over an expired claim (lease lapsed, holder gone). Issues a new claim on the same task with fence + 1 and marks the old one SUPERSEDED, so the old holder's fence is refused at verify and renew. A live, unexpired claim is refused with work_claim_still_active: priority never preempts. Inherits the old write set and trigger refs unless you pass new ones (re-checked for conflicts). Idempotent by idempotency_key.",
+      "Take over an expired claim (lease lapsed, holder gone). Issues a new claim on the same task with fence + 1 and marks the old one SUPERSEDED, so the old holder's fence is refused at verify and renew. A live, unexpired claim is refused with work_claim_still_active: priority never preempts. Inherits the old write set and trigger refs unless you pass new ones (re-checked for conflicts). Returns a new lease_key for the new claim (keep it private, as for clued_work_claim); the old claim's key stops working. Idempotent by idempotency_key.",
     inputSchema: {
       type: "object",
       required: ["claim_id", "idempotency_key"],
