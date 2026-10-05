@@ -11,18 +11,13 @@
 //   - a pull request into main that changes no file under .github/workflows/.
 //     Its workflows are main's, so each keeps its admission-gate job, which
 //     waits for the Clued admission of the pull request.
-//   - a pull request into main that changes a workflow, once the head carries
-//     a successful clued-admission-verified check from the clued-admission
-//     GitHub App. Only main's admission run can post it: the App key lives in
-//     the clued-admission environment, which deploys from main only. That run
-//     checks the workflow change. (Re-review 2, N3c: a workflow run's
-//     pull_requests list names every open pull request with the same head, not
-//     the one that triggered it, so an admission run of a pull request into
-//     another branch, whose copy of the admission workflow passes anything,
-//     could have stood in for it.)
-//     (Re-review 3, N-R1, and re-review 5, n1: only the check of the
-//     admission run of this run's own event counts, so an older success on
-//     the same head cannot stand in.)
+//   - a pull request into main that changes a workflow, once the admission
+//     run of this run's own event (clued-work-admission.yml, triggered by
+//     pull_request_target) has succeeded. That run checks the workflow change.
+//     (Re-review 3, N-R1, and re-review 5, n1: an older success on the same
+//     head cannot stand in.) Task b979d5a2: the hook reads that run, not the
+//     clued-admission App's check, because a fine-grained token cannot read
+//     the Checks API. See admissionRun below.
 //   - a hand dispatch on another branch of one of DISPATCH_GATED_WORKFLOWS,
 //     whose .github/workflows directory is exactly main's. That workflow keeps
 //     the dispatch gate, which needs a Clued admission run for the dispatched
@@ -41,12 +36,8 @@
 //
 // Configuration (runner machine environment, e.g. the runner's .env file):
 //   CLUED_RUNNER_HOOK_REPOSITORY   owner/name this runner serves (required)
-//   CLUED_RUNNER_HOOK_TOKEN_FILE   file holding a read-only GitHub token
-//                                  (contents, actions, checks, pull requests:
-//                                  read)
-//   CLUED_RUNNER_HOOK_ADMISSION_APP_ID  id of the clued-admission App whose
-//                                  check admits a head (default: the Owner's
-//                                  App, ADMISSION_APP_ID below)
+//   CLUED_RUNNER_HOOK_TOKEN_FILE   file holding a read-only fine-grained
+//                                  GitHub token (actions and contents: read)
 //   CLUED_RUNNER_HOOK_ENFORCE      "true" refuses; anything else only reports
 //   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the admission run (480)
 // It needs Node 18 or newer (the runner bundles one under externals/).
@@ -55,8 +46,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const ADMISSION_CHECK = "clued-admission-verified";
-export const ADMISSION_APP_ID = 5164952;
 // The same list as DISPATCH_GATED_WORKFLOWS in scripts/ci/clued-work-admission.mjs
 // (this file is installed alone, so it keeps its own copy; a test compares them).
 export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml"];
@@ -104,43 +93,40 @@ async function workflowsDifferFromMain(fetchImpl, token, repository, base, sha) 
   return [...names].filter((name) => mine.get(name) !== main.get(name)).sort();
 }
 
-// The clued-admission-verified check that main's admission run of this event
-// posted on the head (re-review 5, n1; same rule as eventAdmissionCheck in
-// scripts/ci/clued-work-admission.mjs). The check names its pull request and
-// admission run in external_id ("pr:<number>:run:<id>", re-review 4, m1). The
-// runs of one event are created together, so this event's admission run is
-// the newest main admission run (pull_request_target, this head) created no
-// earlier than SAME_EVENT_MS before this run, leaving out runs whose check
-// names another pull request. A check's posting time does not tell a closed
-// and reopened pull request's events apart; the run does.
+// The admission run of this run's own event (re-review 5, n1; the same
+// selection as eventAdmissionCheck in scripts/ci/clued-work-admission.mjs).
+// The runs of one event are created together, so it is the newest
+// pull_request_target run of the admission workflow on this head created no
+// earlier than SAME_EVENT_MS before this run. A run's creation time, not a
+// later posting time, tells a closed and reopened pull request's events apart.
+// Skipped runs are passed over: the admission job skips a pull request into
+// another branch, and an Agent can open one on the same head.
+//
+// The run stands in for the clued-admission App's check, which a fine-grained
+// token cannot read (Task b979d5a2):
+//   - pull_request_target always runs the default branch's copy of the
+//     workflow, whatever the pull request's base, and that copy admits only
+//     pull requests into the default branch (re-review 6, B1). No branch's
+//     edited copy of the file runs on pull_request_target. Runs are listed by
+//     the workflow's file name, so a workflow another file adds under the same
+//     display name does not count.
+//   - The run succeeds only when its admit step does, the same condition on
+//     which it posts a successful check.
+// The check also named its pull request (re-review 4, m1); a run does not
+// (its pull_requests list names every open pull request with the same head).
+// Another pull request into main with the same head and an event within
+// SAME_EVENT_MS can therefore stand in. Its run judged the same commit and the
+// same workflow changes.
 export const SAME_EVENT_MS = 15_000;
 const ADMISSION_WORKFLOW = "clued-work-admission.yml";
-const EXTERNAL_ID = /^pr:([0-9]{1,10}):run:([0-9]{1,20})$/;
-async function admissionCheck(fetchImpl, token, repository, headSha, appId, since, prNumber) {
-  const body = await github(fetchImpl, token,
-    `/repos/${repository}/commits/${headSha}/check-runs?check_name=${ADMISSION_CHECK}&filter=all&per_page=100`);
-  const posted = new Map();
-  for (const check of (body && body.check_runs) || []) {
-    if (check.name !== ADMISSION_CHECK || check.head_sha !== headSha) continue;
-    if (!check.app || Number(check.app.id) !== appId) continue;
-    const match = EXTERNAL_ID.exec(String(check.external_id ?? ""));
-    if (!match) continue;
-    const prior = posted.get(match[2]);
-    if (!prior || Number(check.id) > Number(prior.check.id)) posted.set(match[2], { check, pr: Number(match[1]) });
-  }
+async function admissionRun(fetchImpl, token, repository, headSha, since) {
   const runs = (await github(fetchImpl, token,
     `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=pull_request_target&per_page=100`))
     ?.workflow_runs ?? [];
-  const fresh = runs
-    .filter((run) => run && run.event === "pull_request_target" && run.conclusion !== "skipped"
+  return runs
+    .filter((run) => run && run.event === "pull_request_target" && run.head_sha === headSha && run.conclusion !== "skipped"
       && Date.parse(run.created_at) >= since - SAME_EVENT_MS)
-    .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)));
-  for (const run of fresh) {
-    const entry = posted.get(String(run.id));
-    if (entry && entry.pr !== Number(prNumber)) continue;
-    return { run, check: entry ? entry.check : null };
-  }
-  return { run: null, check: null };
+    .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)))[0] ?? null;
 }
 
 export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
@@ -208,22 +194,19 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
     }
     const waitSeconds = Number.parseInt(env.CLUED_RUNNER_HOOK_WAIT_SECONDS ?? "", 10);
     const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : 480;
-    const configured = Number.parseInt((env.CLUED_RUNNER_HOOK_ADMISSION_APP_ID ?? "").trim(), 10);
-    const appId = Number.isInteger(configured) && configured > 0 ? configured : ADMISSION_APP_ID;
     const since = Date.parse(run && run.created_at);
     if (!Number.isFinite(since)) throw new Error(`run ${runId} has no created_at.`);
-    let found = { run: null, check: null };
+    let found = null;
     for (let waited = 0; ; waited += 10) {
-      found = await admissionCheck(fetchImpl, token, repository, pr.head.sha, appId, since, pr.number);
-      if ((found.check && found.check.status === "completed") || waited >= limit) break;
+      found = await admissionRun(fetchImpl, token, repository, pr.head.sha, since);
+      if ((found && found.status === "completed") || waited >= limit) break;
       await sleep(10_000);
     }
-    const { check } = found;
-    result.allow = Boolean(check && check.status === "completed" && check.conclusion === "success");
+    result.allow = Boolean(found && found.status === "completed" && found.conclusion === "success");
     const what = [...new Set(changed)].join(", ");
-    const seen = !found.run ? "no admission run" : `admission run ${found.run.id}: ${check ? `${check.status}/${check.conclusion}` : "no check yet"}`;
-    result.reason = result.allow ? `pull request #${pr.number} changes ${what}; ${ADMISSION_CHECK} ${check.id} of admission run ${found.run.id} succeeded`
-      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_CHECK} from App ${appId} on ${pr.head.sha} for #${pr.number} from the admission run of this event (created since ${run.created_at} less ${SAME_EVENT_MS / 1000}s; ${seen})`;
+    const seen = !found ? "no admission run" : `admission run ${found.id}: ${found.status}/${found.conclusion ?? "none"}`;
+    result.reason = result.allow ? `pull request #${pr.number} changes ${what}; admission run ${found.id} succeeded`
+      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_WORKFLOW} run on ${pr.head.sha} from this event (created since ${run.created_at} less ${SAME_EVENT_MS / 1000}s; ${seen})`;
     return result;
   }
   throw new Error(`unreachable event ${event}`);

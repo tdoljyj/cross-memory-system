@@ -8,13 +8,13 @@ A job starts only when its run is one of the following:
 
 - **On `main`:** a push, a schedule, `workflow_run`, `pull_request_target`, or a manual dispatch.
 - **A pull request into `main` that changes no file under `.github/workflows/`.** Each workflow keeps its `admission-gate` job, which waits for the Clued admission of the pull request.
-- **A pull request into `main` that changes a workflow,** once its head carries a successful `clued-admission-verified` check from the `clued-admission` GitHub App.
-  - The check must come from `main`'s admission run of the same event as the job's run. The check names its pull request and admission run (`external_id` `pr:<number>:run:<admission run id>`). GitHub creates the runs of one event together, so that admission run is the newest `pull_request_target` run of `clued-work-admission.yml` on the head created no earlier than 15 seconds before the job's run, leaving out runs whose check names another pull request.
-  - While that admission run has posted no check, the job waits for it (up to `CLUED_RUNNER_HOOK_WAIT_SECONDS`). If it was re-run, its newest check decides.
-  - An older success on the same head does not count: for example after a force-push back to an admitted commit, a pull request closed and reopened (even within seconds), or another pull request with the same head.
-  - Only `main`'s admission run can post that check. The App key lives in the `clued-admission` environment, which deploys from `main` only. Because `pull_request_target` runs the default branch's workflow whatever the pull request's base, that run checks out `main` and runs only for pull requests into `main` (re-review 6, B1), so no other branch's script ever holds the key.
-  - That run executes `main`'s current code, which checks the workflow change.
-  - A workflow run's `pull_requests` list is not used. It names every open pull request with the same head, not the one that triggered the run.
+- **A pull request into `main` that changes a workflow,** once `main`'s admission run of the same event as the job's run has succeeded.
+  - That admission run is the newest `pull_request_target` run of `clued-work-admission.yml` on the head created no earlier than 15 seconds before the job's run. GitHub creates the runs of one event together. Skipped runs are left out: the admission job skips pull requests into other branches.
+  - While that admission run is still going, the job waits for it (up to `CLUED_RUNNER_HOOK_WAIT_SECONDS`).
+  - An older success on the same head does not count: for example after a force-push back to an admitted commit, or a pull request closed and reopened (even within seconds).
+  - Only `main`'s code decides. `pull_request_target` runs the default branch's copy of the workflow whatever the pull request's base, and that copy checks out `main` and runs only for pull requests into `main` (re-review 6, B1). A branch's edited copy never runs on `pull_request_target`.
+  - The run succeeds only when its admission step does. That is the same condition on which it posts the `clued-admission-verified` App check.
+  - The check itself is not read: a fine-grained token cannot read the Checks API (Task `b979d5a2`). Unlike the check, a run does not name its pull request. Another pull request into `main` with the same head, whose event came within 15 seconds, can therefore stand in. Its admission run judged the same commit and the same workflow changes.
 - **A manual dispatch on another branch of `clued-connection-authorization.yml`, `clued-g4-database.yml` or `information-flow-e2e.yml`,** when the branch's `.github/workflows` directory is exactly `main`'s (same files, same object ids).
   - A branch behind `main` must merge `main` first.
   - These workflows keep their dispatch gate, which needs a Clued admission run for the dispatched commit.
@@ -30,7 +30,7 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
 
 1. **Create a read-only token.**
    - Use a fine-grained GitHub token for this repository only.
-   - Grant Contents: read, Actions: read, Checks: read and Pull requests: read. Nothing else.
+   - Grant Actions: read and Contents: read. Nothing else (Metadata: read comes with them).
 2. **Copy the check into a directory the runner's service account can read but not write.**
    - Linux or WSL2, as root:
 
@@ -55,8 +55,6 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
    CLUED_RUNNER_HOOK_ENFORCE=false
    ```
 
-   The check trusts the `clued-admission` App with id `5164952`. If the App is ever replaced, add `CLUED_RUNNER_HOOK_ADMISSION_APP_ID=<new id>`.
-
    On Windows, the hook line points to `C:\ProgramData\CluedRunnerHook\clued-runner-job-started.ps1`, and the node line points to `externals\node20\bin\node.exe`.
 4. **Check the output.** Watch one pull request run and one push to `main`. Each job log starts with a "Set up runner" section that shows `clued-runner-hook: ALLOW ...` or `WOULD REFUSE ...`.
 5. **Turn on enforcement.** Set `CLUED_RUNNER_HOOK_ENFORCE=true` and restart the runner.
@@ -69,5 +67,5 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
   - The ungated short checks run anyway, even for a pull request no claim covers. These are the self-hosted workflows without an `admission-gate` job, for example `model-program-*`, `mps03-native-agent`, `multitrack-governance-projection`, `node-profile-policy`, `runner-budget-policy`, `gitleaks` and `trivy`.
   - Each of their self-hosted jobs has a timeout of 25 minutes or less, except `model-program-m0`. That file's hash is pinned in the frozen M0 manifest, so it keeps GitHub's 6-hour default. (`clued-integration-runtime-nightly` has 75 minutes, but runs on `main` only.)
   - The admission check refuses a pull request that adds a self-hosted job to an ungated workflow, moves a hosted job to a self-hosted runner, drops or raises a self-hosted job's timeout, or adds or changes its `strategy` (a matrix).
-- **Draft pull requests.** The hourly re-verification skips drafts, so a draft's admission is not re-checked after its claim ends. A draft's runs still need a check posted after they were created.
+- **Draft pull requests.** The hourly re-verification skips drafts, so a draft's admission is not re-checked after its claim ends. A draft's runs still need an admission run of their own event.
 - **`main`'s own runs.** Anyone who can dispatch workflows can start `main`'s workflows (for example `clued-integration-runtime-nightly.yml`). They run `main`'s reviewed code and are not metered.
