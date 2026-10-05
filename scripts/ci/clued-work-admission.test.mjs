@@ -607,7 +607,7 @@ test("gate job digest: every gated workflow's gate job has checks: read; the for
   const dir = path.join(ROOT, ".github", "workflows");
   const gated = fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f))
     .map((f) => [f, fs.readFileSync(path.join(dir, f), "utf8")]).filter(([, text]) => workflowIsGated(text));
-  assert.equal(gated.length, 7);
+  assert.equal(gated.length, 8);
   for (const [file, text] of gated) {
     assert.deepEqual(gateFindings(text, text), [], file);
     const withoutChecks = text.replace("      actions: read\n      checks: read\n", "      actions: read\n");
@@ -768,7 +768,7 @@ const g4 = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-g4-dat
 
 test("gate guard: every gated workflow on this branch passes and uses a listed gate job", () => {
   assert.deepEqual(GATED_FILES.sort(), [
-    "clued-cloud-node22-install.yml", "clued-connection-authorization.yml", "clued-g4-database.yml",
+    "clued-cloud-node22-install.yml", "clued-components.yml", "clued-connection-authorization.yml", "clued-g4-database.yml",
     "design-refs.yml", "information-flow-e2e.yml", "public-mcp-behavior.yml", "public-mcp-protocol.yml",
   ]);
   for (const name of GATED_FILES) {
