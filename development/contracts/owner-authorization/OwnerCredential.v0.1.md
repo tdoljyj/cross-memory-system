@@ -201,7 +201,8 @@ Owner 同一天内同类的确认，只需要在第一次时选"管一段时间"
 
   有了这个模式，迁移不再需要 Agent 直接连生产库。
   每个文件和它的 `schema_migrations` 行在同一个事务里写入（`statements` 就是文件原文）；已登记过的名字拒绝，不重放。连接串是 `clued-release` environment 里的 `CLUED_MIGRATION_DATABASE_URL`。
-- **`deploy` 与 `migrate` 的第一步是授权检查**（传话口）：
+  文件经 psql 标准输入以 COPY 数据送到服务器，psql 不会把其中内容当元命令执行，也没有大小上限；服务器先核对重建文本的 md5 与文件一致，再执行（2026-10-05，Decision 8956d3f3：原先整段事务用一个 `psql -c` 参数，单个参数最多 128 KiB，装不下 174 KB 的迁移）。
+- **`deploy` 与 `migrate` 改动生产之前先做授权检查**（传话口）：`migrate` 在迁移凭据检查之后、应用之前；`deploy` 在发布前门与部署凭据检查都通过之后、第一个改动生产的步骤之前，所以被门拦下的发布不消耗授权（2026-10-05，run 37329072487 消耗了授权后才被门拦下）。
   - 调用 Clued 的 `clued_owner_grant_door_consume_v1`，动作分别是 `release.production`、`migration.production`，资源是 `repo:tdoljyj/cross-memory-system/<40 位提交>`。
   - 调用使用 `clued-release` environment 里的 Binding token（`CLUED_RELEASE_TOKEN`）。这个 environment 限 `main`，与 `clued-admission` 的做法相同。
   - 门口只看动作和提交，不看是哪个 Agent 申请的、挂在哪个 Task 上（Owner 选择 2026-10-03）。

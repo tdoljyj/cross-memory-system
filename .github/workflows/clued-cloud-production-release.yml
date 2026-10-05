@@ -168,12 +168,13 @@ jobs:
           [ "$connected" = "1" ] || { echo "::error::Unexpected answer from the migration database; no grant was used"; exit 1; }
           echo "Migration database connection works"
       # OwnerCredential §6.1 (Task 2a31ca2a): before anything changes production,
-      # consume one use of the Owner's grant for this commit (deploy) or for the
-      # named migration files of this commit (migrate). Advisory until the Owner
-      # sets CLUED_RELEASE_GRANT_ENFORCE=true; then no grant, no run. It runs
-      # after the credential checks, so a run that cannot proceed uses no grant.
-      - name: Consume the Owner Grant for this commit
-        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'migrate' }}
+      # consume one use of the Owner's grant for the named migration files of
+      # this commit. Advisory until the Owner sets CLUED_RELEASE_GRANT_ENFORCE=true;
+      # then no grant, no run. It runs after the credential check, so a run that
+      # cannot proceed uses no grant. deploy consumes its grant further down,
+      # after the release gate.
+      - name: Consume the Owner Grant for the named migrations
+        if: ${{ inputs.mode == 'migrate' }}
         working-directory: .
         env:
           RELEASE_MODE: ${{ inputs.mode }}
@@ -185,6 +186,11 @@ jobs:
       # own transaction together with its schema_migrations row (statements =
       # the file's exact text), then md5(statements) is checked against the file.
       # A file whose name is already recorded is refused, never re-applied.
+      # The file reaches the server as COPY data on psql's standard input, which
+      # psql never reads as meta-commands (\! would run a shell next to the
+      # credential, re-review N6), and which has no size limit (a psql -c
+      # argument holds at most 128 KiB). The server rebuilds the text and checks
+      # its md5 against the file before it runs it.
       - name: Apply the named migrations
         if: ${{ inputs.mode == 'migrate' }}
         env:
@@ -205,21 +211,28 @@ jobs:
             short="${name#*_}"; short="${short%.sql}"
             recorded=$(psql -tA -c "select count(*) from supabase_migrations.schema_migrations where name='$short'")
             [ "$recorded" = "0" ] || { echo "::error::$short is already recorded in production; not re-applied"; exit 1; }
-            tag="mig_$(openssl rand -hex 8)"
-            if grep -qF "\$$tag\$" "$file"; then echo "::error::quote tag collision"; exit 1; fi
-            version=$(date -u +%Y%m%d%H%M%S)
-            # The whole transaction goes to the server as one psql -c string, which
-            # psql never scans for meta-commands, so a backslash line in a file
-            # (\! would run a shell next to the credential) is only a syntax
-            # error (re-review N6). One argument holds at most 128 KiB.
-            sql=$(printf 'begin;\n'; cat "$file"
-              printf "\ninsert into supabase_migrations.schema_migrations(version,name,statements) values('%s','%s',array[\$%s\$" "$version" "$short" "$tag"
-              cat "$file"
-              printf '$%s$]);\ncommit;' "$tag")
-            [ "${#sql}" -le 120000 ] || { echo "::error::$name is too large for migrate mode (${#sql} characters with its record); apply it another way"; exit 1; }
-            psql -c "$sql"
-            stored=$(psql -tA -c "select md5(array_to_string(statements,'')) from supabase_migrations.schema_migrations where version='$version' and name='$short'")
+            # COPY reads one line per row: the file must end with a newline and hold
+            # no carriage return, no \x01 or \x02 (the CSV delimiter and quote) and
+            # no line that is only \. (the end of COPY data).
+            [ -z "$(tail -c1 "$file")" ] || { echo "::error::$name does not end with a newline"; exit 1; }
+            if LC_ALL=C grep -q $'[\r\x01\x02]' "$file" || grep -qx '\\\.' "$file"; then
+              echo "::error::$name holds a carriage return, \\x01, \\x02 or a line that is only \\."; exit 1
+            fi
             expected=$(md5sum "$file" | cut -d' ' -f1)
+            [[ "$expected" =~ ^[0-9a-f]{32}$ ]] || { echo "::error::no md5 for $name"; exit 1; }
+            version=$(date -u +%Y%m%d%H%M%S)
+            psql -q \
+              -c "create temp table migration_lines(n bigserial primary key, line text)" \
+              -c "copy migration_lines(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')" \
+              -c "begin;
+          do \$apply\$ declare s text := (select string_agg(coalesce(line, ''), e'\n' order by n) from migration_lines) || e'\n';
+          begin
+            if md5(s) <> '$expected' then raise exception 'migration text differs from the file'; end if;
+            execute s;
+            insert into supabase_migrations.schema_migrations(version, name, statements) values ('$version', '$short', array[s]);
+          end \$apply\$;
+          commit;" < "$file"
+            stored=$(psql -tA -c "select md5(array_to_string(statements,'')) from supabase_migrations.schema_migrations where version='$version' and name='$short'")
             [ "$stored" = "$expected" ] || { echo "::error::$short md5 $stored differs from the file $expected"; exit 1; }
             echo "Applied $short as $version (md5 $expected)"
             applied=$(node -e 'const a=JSON.parse(process.argv[1]);a.push({file:process.argv[2],name:process.argv[3],version:process.argv[4],md5:process.argv[5]});process.stdout.write(JSON.stringify(a))' "$applied" "$name" "$short" "$version" "$expected")
@@ -277,6 +290,18 @@ jobs:
         run: |
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
+      # OwnerCredential §6.1: consume one use of the Owner's grant for this
+      # commit before anything changes production. It runs after the release
+      # gate and the credential checks, so a deploy the gate stops uses no grant
+      # (run 37329072487 used its grant and then stopped at the gate).
+      - name: Consume the Owner Grant for this commit
+        if: ${{ inputs.mode == 'deploy' }}
+        working-directory: .
+        env:
+          RELEASE_MODE: ${{ inputs.mode }}
+          CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
+          CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
+        run: node scripts/ci/clued-release-grant.mjs --mode "$RELEASE_MODE"
       - name: Ensure Storage job queue exists
         if: ${{ inputs.mode == 'deploy' }}
         env:
