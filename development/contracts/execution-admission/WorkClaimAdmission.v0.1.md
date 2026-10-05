@@ -303,6 +303,12 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - `clued_work_renew`／`clued_work_release` 可带 `lease_key`：持有者 Binding 照旧；它对仍有效且有钥匙的认领带错钥匙，拒绝 `work_claim_lease_key_invalid`，对已结束的认领则照常回答状态拒绝（如 `work_claim_not_active`）。同一用户的另一个 Binding 带对钥匙可以续期（认领转到它名下，fence 不变，`holder_session_ref` 换成它报的会话，回答带 `transferred: true` 和一把新钥匙，出示的旧钥匙作废；回执写 `via_lease_key` 与 `transferred_from_binding`）或释放（不转移，回执写 `via_lease_key`）；没有或不对的钥匙仍是 `work_claim_not_holder`。转入走续期，所以照样需要新的 `progress_ref`，受续期次数与硬截止约束；用完时只能带钥匙释放再重新认领。转入方受每会话 3、每 Binding 10 个活认领上限约束；它若已有同一幂等键的认领，拒绝 `work_claim_idempotency_conflict`。
   - 认领记下签发它的 Binding（`issued_binding_id`）。认领转走后，签发方用原幂等键重放，返回 `work_claim_idempotency_spent`（带 `transferred: true`），不会另起一个认领（多份赛马里也不会多占一份）。
   - 已过期认领的哈希留在表里，无人能用（续期与释放都按状态拒绝），不另清理。
+- **认领列表与 Owner 交接（Task `f165eb56` 第 2 个 PR，Owner Decision `22b9bd9e`、`4bcc424d`，迁移 `20261005200000_work_claims_owner_handover.sql`，合同 v32）**：
+  - `holder_label`：Agent 认领、接管、续期时自报的一行字（在做什么、哪个客户端、哪台电脑），≤200 字、不含控制字符，写入 `work_claim_view`。Clued 不核实，页面标为 Agent 自报。
+  - `/work-claims` 页面（Native，`clued_work_claims_owner_list_v1`，只认本人登录）：列出本账号所有有效认领的任务标题、连接名（`clued_agent_bindings.agent_name` 与 vendor）、标签、会话（`holder_session_ref` 为 `session_…` 时给出 `https://claude.ai/code/<ref>` 链接）、到期时间、绑定的 PR、fence。
+  - 交接两步（同多份模式）：`clued_work_claim_handover_confirmation_issue_v1` 对认领生成一次性确认（视图不含租约时钟，卡住的会话自己续期不会让确认失效）；`clued_work_claim_handover_v1` 把 fence 移到该 Task 全部 fence 之上、轮换钥匙并只返回这一次、`lease_key_required=true`、租约从现在起重计（不超过硬截止、不计续期次数），回执 `WORK_CLAIM_HANDOVER` 记新旧 fence、不记钥匙。重放第 2 步不再返回钥匙。
+  - `lease_key_required` 之后，续期与释放都必须带当前钥匙，持有者 Binding 也一样（Owner 的所有 Claude Code 会话共用一个 Binding，只靠 Binding 判不出卡住的旧会话），否则 `work_claim_lease_key_required`。新会话用交接文字续期：同一 Binding 直接续上；另一个 Binding 则按第 1 个 PR 的规则转到它名下并换新钥匙。
+  - 限制：认领 id 不变，PR 准入（`clued_work_verify`）仍按认领判，不区分新旧会话；存储写入出示 `work_claim` 时也不要求钥匙。交接只保证旧会话续不了期、释放不了。
   - 钥匙不出现在 `work_claim_view`、活跃列表、resume、冲突与拒绝回答、回执、事件或日志；比较的是哈希，不是钥匙。迁移前签发的认领没有钥匙，行为不变。
   - 不变的部分：同一 Binding 的会话之间仍按 Binding 判持有者（GenericWorkClaim §4.1，复审 7 m4），钥匙不改变这一点。
 

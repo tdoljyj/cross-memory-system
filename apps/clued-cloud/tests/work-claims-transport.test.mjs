@@ -91,6 +91,12 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
     assert.equal(byName[name].inputSchema.properties.lease_key, undefined, name);
   }
   assert.ok(byName.clued_work_renew.inputSchema.properties.holder_session_ref);
+  // The self-reported holder label (migration 20261005200000) on claim, takeover and renew.
+  for (const name of ['clued_work_claim', 'clued_work_takeover', 'clued_work_renew']) {
+    assert.deepEqual([byName[name].inputSchema.properties.holder_label.type, byName[name].inputSchema.properties.holder_label.maxLength],
+      ['string', 200], name);
+  }
+  assert.match(byName.clued_work_renew.description, /work_claim_lease_key_required/);
   assert.match(byName.clued_work_claim.description, /lease_key is the claim's private key: keep it in this session only/);
   assert.equal(byName.clued_work_claim._meta['clued/scopeEnforcement'], 'server-side');
 });
@@ -119,7 +125,8 @@ test('Binding and OAuth callers reach the same step-1 RPCs with the arguments pa
   const args = {
     clued_work_claim: { scope: 'global', task_id: '11111111-1111-4111-8111-111111111111',
       write_set: ['apps/clued-cloud/package.json', 'apps/clued-cloud/package-lock.json'],
-      trigger_refs: ['ghsa:GHSA-vcvr-r3jv-pc5j'], idempotency_key: 'host-a:task:claim', base_commit: 'f7ba6ff3' },
+      trigger_refs: ['ghsa:GHSA-vcvr-r3jv-pc5j'], idempotency_key: 'host-a:task:claim', base_commit: 'f7ba6ff3',
+      holder_label: 'npm audit fix · Claude Code · laptop' },
     clued_work_renew: { claim_id: '22222222-2222-4222-8222-222222222222', fence: 1, lease_version: 1, progress_ref: 'sha-1',
       lease_key: `clued_lk_${'a'.repeat(64)}`, holder_session_ref: 'session-new' },
     clued_work_release: { claim_id: '22222222-2222-4222-8222-222222222222', fence: 1, outcome: 'completed', evidence_ref: 'pr:450',

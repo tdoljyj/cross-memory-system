@@ -44,6 +44,10 @@ const baseCommit = { type: "string", pattern: "^[0-9a-f]{7,64}$" } as const;
 const holderSessionRef = { type: "string", minLength: 1, maxLength: 200, description: "Host session id, audit only." } as const;
 const budget = { type: "object", description: "Declared estimates (model tokens, CI minutes). Recorded, not enforced in v1." } as const;
 const leaseSeconds = { type: "integer", minimum: 60, maximum: 7200, description: "Shorter than the profile default (7200) if the work is small." } as const;
+const holderLabel = {
+  type: "string", minLength: 1, maxLength: 200,
+  description: "One line for people, shown to the Owner on the Clued work claims page as self-reported: what you are doing, which client, which machine (for example \"C-3 baseline refreeze · Claude Code · office laptop\"). Send it with every claim and takeover.",
+} as const;
 const leaseKey = {
   type: "string", pattern: "^clued_lk_[0-9a-f]{64}$",
   description: "The claim's private lease key, from the clued_work_claim or clued_work_takeover answer. Only needed when your Binding is not the holder (after a reconnect, or when the Owner handed the claim to you). Never write it to a file, commit, pull request, record or log.",
@@ -59,7 +63,8 @@ export const workClaimTools = [
       required: ["task_id", "write_set", "idempotency_key"],
       properties: {
         scope, task_id: uuid, write_set: writeSet, trigger_refs: triggerRefs, idempotency_key: idempotencyKey,
-        base_commit: baseCommit, holder_session_ref: holderSessionRef, budget, lease_seconds: leaseSeconds,
+        base_commit: baseCommit, holder_session_ref: holderSessionRef, holder_label: holderLabel, budget,
+        lease_seconds: leaseSeconds,
       },
       additionalProperties: false,
     },
@@ -67,7 +72,7 @@ export const workClaimTools = [
   {
     name: "clued_work_renew",
     description:
-      "Extend a claim's lease. Requires a new progress_ref (a head SHA or Receipt id you did not send before): a heartbeat without progress is refused with work_claim_no_progress. Bumps lease_version, never the fence. Bounded by the profile's renewal count and hard deadline. A changed write_set or trigger_refs re-runs conflict detection before it is accepted. When your Binding is not the holder (a reconnect gave you a new one), pass the claim's lease_key with a new progress_ref (for example reconnect:<session id>): the renewal then moves the claim to your Binding (transferred: true; fence unchanged), holder_session_ref names your session, and the answer carries a new lease_key that replaces the one you sent; keep it private. Without the right key it is work_claim_not_holder; a wrong key from the holder is work_claim_lease_key_invalid.",
+      "Extend a claim's lease. Requires a new progress_ref (a head SHA or Receipt id you did not send before): a heartbeat without progress is refused with work_claim_no_progress. Bumps lease_version, never the fence. Bounded by the profile's renewal count and hard deadline. A changed write_set or trigger_refs re-runs conflict detection before it is accepted. When your Binding is not the holder (a reconnect gave you a new one), pass the claim's lease_key with a new progress_ref (for example reconnect:<session id>): the renewal then moves the claim to your Binding (transferred: true; fence unchanged), holder_session_ref names your session, and the answer carries a new lease_key that replaces the one you sent; keep it private. Without the right key it is work_claim_not_holder; a wrong key from the holder is work_claim_lease_key_invalid. After the Owner hands a claim over on the Clued page (new fence, new key), every renew and release must carry the current key, even from the holder Binding; without it they are refused with work_claim_lease_key_required.",
     inputSchema: {
       type: "object",
       required: ["claim_id", "fence", "lease_version", "progress_ref"],
@@ -75,6 +80,7 @@ export const workClaimTools = [
         scope, claim_id: uuid, fence: { type: "integer", minimum: 1 }, lease_version: { type: "integer", minimum: 1 },
         progress_ref: { type: "string", minLength: 1, maxLength: 200 }, write_set: writeSet, trigger_refs: triggerRefs,
         lease_key: leaseKey, holder_session_ref: { ...holderSessionRef, description: "Host session id, audit only; recorded when lease_key moves the claim to your Binding." },
+        holder_label: { ...holderLabel, description: "Replaces the claim's label (see clued_work_claim); omit to keep it." },
       },
       additionalProperties: false,
     },
@@ -120,7 +126,8 @@ export const workClaimTools = [
       required: ["claim_id", "idempotency_key"],
       properties: {
         scope, claim_id: uuid, idempotency_key: idempotencyKey, write_set: writeSet, trigger_refs: triggerRefs,
-        base_commit: baseCommit, holder_session_ref: holderSessionRef, budget, lease_seconds: leaseSeconds,
+        base_commit: baseCommit, holder_session_ref: holderSessionRef, holder_label: holderLabel, budget,
+        lease_seconds: leaseSeconds,
       },
       additionalProperties: false,
     },
