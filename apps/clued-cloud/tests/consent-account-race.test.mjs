@@ -250,7 +250,7 @@ test('tri-state group checkbox isolates exact resources/environments and preserv
 });
 
 // Preset roles and "我的全部项目（含以后新建的）" (PermissionSimplification.v0.1 §3.1, Task 0756c748).
-test('roles: 全部 over current projects by default; 项目开发者 and 我的全部项目 package the same rows', async t => {
+test('roles: 全部 over 我的全部项目 by default; 指定项目 and 项目开发者 package the same rows', async t => {
   const f = fixture(); t.after(() => f.unmount());
   const all5 = ['read', 'write', 'close', 'restore', 'audit'];
   const A = 'project:11111111-1111-4111-8111-111111111111';
@@ -275,9 +275,21 @@ test('roles: 全部 over current projects by default; 项目开发者 and 我的
     return Object.fromEntries(body.selected.map(row => [row.resource_id, row.actions]));
   };
   const role = title => f.nodes('button').find(n => n.props['aria-pressed'] !== undefined && f.text(n).startsWith(title));
-  // Default: everything on the current projects, nothing on project:*.
+  const radios = () => f.nodes('input').filter(n => n.props.type === 'radio');
+  const rangeNote = '这一组只在“项目范围”选“我的全部项目（含以后新建的）”时才勾选';
+  // Default (Decision d4c06a24): 全部 over 我的全部项目, one project:* row instead of each project.
+  assert.equal(radios().length, 2);
+  assert.equal(radios()[1].props.checked, true);
+  assert.ok(f.text().includes('以后新建的项目也自动包含在内'));
+  assert.ok(!f.text().includes(rangeNote));
   let sent = await send();
+  assert.deepEqual(sent, { global: all5, profile: all5, 'project:*': all5 });
+  // 指定项目: everything on the current projects, nothing on project:*.
+  radios()[0].props.onChange(); f.render();
+  sent = await send();
   assert.deepEqual(sent, { global: all5, profile: all5, [A]: all5, [B]: all5 });
+  // The empty project:* group in 高级 says why it is empty.
+  assert.ok(f.text().includes(rangeNote));
   // 项目开发者: the projects get read/write/close/restore, Global read, profile nothing.
   role('项目开发者').props.onClick(); f.render();
   assert.deepEqual(pressed(), ['项目开发者']);
@@ -288,16 +300,20 @@ test('roles: 全部 over current projects by default; 项目开发者 and 我的
   sent = await send();
   assert.deepEqual(sent, { global: ['read'], [A]: ['read', 'write', 'close', 'restore'] });
   // 我的全部项目（含以后新建的）: one project:* row instead of each project.
-  const radios = f.nodes('input').filter(n => n.props.type === 'radio');
-  assert.equal(radios.length, 2);
-  radios[1].props.onChange(); f.render();
-  assert.ok(f.text().includes('以后新建的项目也自动包含在内'));
+  radios()[1].props.onChange(); f.render();
+  assert.ok(!f.text().includes(rangeNote), 'the note goes once project:* is selected');
   sent = await send();
   assert.deepEqual(sent, { global: ['read'], 'project:*': ['read', 'write', 'close', 'restore'] });
   // 只读 keeps the range.
   role('只读').props.onClick(); f.render();
   sent = await send();
   assert.deepEqual(sent, { global: ['read'], profile: ['read'], 'project:*': ['read'] });
+  // 全部 from 指定项目 moves the range to 我的全部项目.
+  radios()[0].props.onChange(); f.render();
+  role('全部').props.onClick(); f.render();
+  assert.equal(radios()[1].props.checked, true);
+  sent = await send();
+  assert.deepEqual(sent, { global: all5, profile: all5, 'project:*': all5 });
   // A change in 高级 makes the role 自定义 and hides the range.
   const advanced = f.nodes('details')[0];
   assert.ok(advanced, '高级 holds the per-row checkboxes');
@@ -317,4 +333,13 @@ test('roles: no project:* row on offer means no 我的全部项目 choice', asyn
     { resource_kind: 'scope', resource_id: A, environment: 'canonical', name: 'M2', actions: ['read'] }] }); await f.settle();
   assert.equal(f.nodes('input').filter(n => n.props.type === 'radio').length, 1);
   assert.ok(!f.text().includes('我的全部项目（含以后新建的）'));
+});
+
+test('roles and project range are styled: role cards show the chosen one, radios are not text inputs', () => {
+  const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
+  assert.match(css, /\.oauth-card input\[type="radio"\]\s*\{[^}]*width:\s*18px[^}]*height:\s*18px/s);
+  assert.match(css, /\.oauth-card label:has\(> input\[type="radio"\]\)\s*\{[^}]*display:\s*flex/s);
+  assert.match(css, /\.oauth-role-list button::before\s*\{[^}]*border-radius:\s*50%/s);
+  assert.match(css, /\.oauth-role-list button\[aria-pressed="true"\]::before\s*\{[^}]*background:/s);
+  assert.match(css, /\.oauth-range\s*\{/);
 });
