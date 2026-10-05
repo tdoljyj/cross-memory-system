@@ -224,6 +224,12 @@ function git(args) {
   return r.status === 0 ? r.stdout.trim() : null;
 }
 
+// The parent SHAs a commit object names. They are read from the object itself, not resolved as `HEAD^2`:
+// CI checks out the pull_request merge commit at depth 1, where the parents are named but not fetched.
+export function commitParents(catFile) {
+  return String(catFile ?? '').split('\n').map((line) => /^parent ([0-9a-f]{40})$/.exec(line)?.[1]).filter(Boolean);
+}
+
 // Run as a top-level test runner even when this script is itself started under node:test, which marks
 // its children with NODE_TEST_CONTEXT and would make them stream to the parent instead of the reporters.
 function childEnv() {
@@ -272,7 +278,7 @@ export async function main(argv = process.argv.slice(2)) {
   const status = git(['status', '--porcelain', '--', 'apps/clued-cloud', 'development/contracts/integration-runtime']);
   // On a pull_request run HEAD is GitHub's merge commit, whose second parent is the PR head.
   const prHead = process.env.CLUED_EVIDENCE_PR_HEAD_SHA || null;
-  const prHeadMatches = !prHead || prHead === head || prHead === git(['rev-parse', '--verify', '--quiet', 'HEAD^2']);
+  const prHeadMatches = !prHead || prHead === head || commitParents(git(['cat-file', '-p', 'HEAD']))[1] === prHead;
   // The commit is the evidence's subject: unknown, a dirty tree, or a PR head that is not what ran makes
   // the whole document FAIL, whatever the tests said (§17 item 2).
   const commitProblems = [!head && 'HEAD unknown', status === null && 'tree state unknown',

@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  APP_ROOT, CONTRACT, DEFAULT_FILES, GATES, REPO_ROOT, SCHEMA, buildEvidence, extractIds, extractRefs, fileSeeds, main,
-  parseContract, propertySamples,
+  APP_ROOT, CONTRACT, DEFAULT_FILES, GATES, REPO_ROOT, SCHEMA, buildEvidence, commitParents, extractIds, extractRefs, fileSeeds,
+  main, parseContract, propertySamples,
 } from '../evals/integration-runtime/gate-evidence.mjs';
 
 // S2c Integration Runtime PR-6 (IntegrationRuntime v0.1.8 §14.1, §17 item 2): the gate evidence generator.
@@ -67,6 +67,14 @@ test('a test name proves the IDs it carries, with the parts it names', () => {
   assert.deepEqual(extractIds('T-A1-10 is not T-A1-1'), ['T-A1-10', 'T-A1-1']);
   assert.deepEqual(extractIds('T-A11-4bis and T-A11-40xy'), [], 'no ID inside a longer token');
   assert.deepEqual(extractIds('registries: v1 seeds (§5.1)'), []);
+});
+
+test('the PR head is the merge commit\'s second parent, read from the object even in a depth-1 checkout', () => {
+  const merge = ['tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904', `parent ${'1'.repeat(40)}`, `parent ${'2'.repeat(40)}`,
+    'author a <a@b> 0 +0000', 'committer a <a@b> 0 +0000', '', `Merge ${'2'.repeat(40)} into ${'1'.repeat(40)}`].join('\n');
+  assert.deepEqual(commitParents(merge), ['1'.repeat(40), '2'.repeat(40)]);
+  assert.deepEqual(commitParents('tree x\n\nparent in the message body'), []);
+  assert.deepEqual(commitParents(null), []);
 });
 
 test('the property layer reports its seeds and sample counts', async () => {
