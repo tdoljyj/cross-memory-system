@@ -17,6 +17,8 @@ import EmbeddedPostgres from 'embedded-postgres';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATION = '20261005090000_integration_runtime_identity_claim.sql';
+// the stage C §5.13 grant migration: held back until T-S-2 has checked the S2c-only database (§13.0)
+const GRANTS = '20261005163000_integration_runtime_grants.sql';
 const STATES = ['INSTALL_PENDING', 'INSTALLED', 'AUTH_PENDING', 'VERIFYING', 'ACTIVE', 'DEGRADED', 'BLOCKED',
   'REAUTH_REQUIRED', 'INCOMPATIBLE', 'REVOKED'];
 const BINDING_RPCS = ['clued_integration_request_open_v1', 'clued_integration_create_or_bind_v1',
@@ -176,7 +178,8 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
     const before = await snapshot();
     await apply(MIGRATION);
     const after = await snapshot();
-    for (const name of migrations.filter((name) => name > MIGRATION)) await apply(name);
+    assert.ok(migrations.includes(GRANTS));
+    for (const name of migrations.filter((name) => name > MIGRATION && name !== GRANTS)) await apply(name);
 
     await t.test('T-S-3 applying the migration leaves every existing object unchanged', () => {
       for (const kind of ['functions', 'relations', 'policies', 'schemas']) {
@@ -241,9 +244,8 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       for (const name of [...BINDING_RPCS, 'clued_user_integration_v1']) assert.ok(publicRpcs.includes(name), name);
     });
 
-    // the §5.13 target grants, exactly as the flag-enabling migration will apply them (§13.0)
-    for (const rpc of BINDING_RPCS) await admin.query(`grant execute on function public.${rpc}(text, jsonb) to anon, authenticated`);
-    await admin.query('grant execute on function public.clued_user_integration_v1(jsonb) to authenticated');
+    // the §5.13 target grants: the stage C grant migration itself (§13.0)
+    await apply(GRANTS);
 
     await t.test('T-S-2 after the target grants: exactly §5.13', async () => {
       const { rows } = await admin.query(`select p.proname, array_agg(r.rolname order by r.rolname) filter (where

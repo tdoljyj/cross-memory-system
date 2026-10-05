@@ -16,6 +16,8 @@ import EmbeddedPostgres from 'embedded-postgres';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATION = '20261005130000_integration_runtime_verification.sql';
+// the stage C §5.13 grant migration: held back until T-S-2 has checked the S2c-only database (§13.0)
+const GRANTS = '20261005163000_integration_runtime_grants.sql';
 const PR2_RPCS = ['clued_integration_request_open_v1', 'clued_integration_create_or_bind_v1',
   'clued_integration_identity_update_v1', 'clued_integration_reconcile_request_v1', 'clued_integration_status_v1'];
 const PR3_BINDING_RPCS = ['clued_integration_declare_v1', 'clued_integration_report_v1', 'clued_integration_verify_v1'];
@@ -116,7 +118,8 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
     const before = await snapshot();
     await apply(MIGRATION);
     const after = await snapshot();
-    for (const name of migrations.filter((name) => name > MIGRATION)) await apply(name);
+    assert.ok(migrations.includes(GRANTS));
+    for (const name of migrations.filter((name) => name > MIGRATION && name !== GRANTS)) await apply(name);
 
     await t.test('T-S-3 the migration adds only PR-3 objects and replaces only the two PR-2 entry points', () => {
       for (const kind of ['relations', 'policies']) {
@@ -175,10 +178,8 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       for (const name of [...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1']) assert.ok(publicRpcs.includes(name), name);
     });
 
-    // the §5.13 target grants, exactly as the flag-enabling migration will apply them (§13.0)
-    for (const rpc of BINDING_RPCS) await admin.query(`grant execute on function public.${rpc}(text, jsonb) to anon, authenticated`);
-    await admin.query('grant execute on function public.clued_user_integration_v1(jsonb) to authenticated');
-    await admin.query('grant execute on function public.clued_admin_integration_v1(jsonb) to authenticated');
+    // the §5.13 target grants: the stage C grant migration itself (§13.0)
+    await apply(GRANTS);
 
     // ---- fixtures ----------------------------------------------------------------------------
     const newUser = async () => {
