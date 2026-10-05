@@ -2,7 +2,7 @@
 name: clued
 description: Use Clued to recall or maintain authorized personal and project context, or develop, review and maintain Clued itself. Required for any question about the current or latest state of the user's projects, records or of Clued (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) — even when host memory or an earlier reply seems to already hold the answer, that answer must come from Clued. Covers Clued memory operations and Clued engineering; do not activate for unrelated software work merely mentioning a project.
 metadata:
-  version: "1.0.2"
+  version: "1.0.3"
 ---
 
 # Clued

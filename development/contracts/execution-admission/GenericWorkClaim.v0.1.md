@@ -147,6 +147,8 @@ Agent 经 Clued 写入时，门卫只拦撞车（Decision `2a7391ff` 第 1 条�
 
 "别人"按认领判，不按 Binding 判：同一 Binding 下的另一个会话持有的认领也算别人，因为 Owner 的所有 Claude Code 会话共用一个 Binding（Decision `533a5286`）。这只在写入方**不出示**认领时成立（复审 7 m4 更正）：持有者按 Binding 记，`active_work_claims` 把 `claim_id`、`fence`、`lease_version` 给同一用户的所有会话，所以同一 Binding 的任何会话都能出示、续期、释放或改为 DRAINING 另一个会话的认领。这是有意的（合同 §1.7：任何会话都能续期），同一 Binding 的会话之间因此彼此不受保护，只防误撞、不防故意。
 
+另一个 Binding 只有出示认领的私有租约钥匙（`lease_key`，迁移 `20261005190000`，WorkClaimAdmission §4.4）才能续期或释放它；续期会把认领转到出示方的 Binding。钥匙只在认领与接管的回答里出现一次，其他 Binding 从活跃列表、resume、冲突或回执里都拿不到。
+
 ### 4.2 Clued 存储（首个默认门口）
 
 `clued_storage_submit` 与 `clued_storage_trash_batch` 在建 job 之前、同一事务内调用门卫：
