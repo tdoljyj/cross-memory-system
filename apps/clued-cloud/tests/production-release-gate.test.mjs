@@ -362,6 +362,8 @@ test('deploy and migrate consume an Owner Grant before they change production', 
   // used its grant and then stopped at the gate.
   const gate = names.indexOf('name: Block release unless database and Worker heartbeat are ready');
   assert.ok(gate > 0 && gate < deployGrant);
+  assert.match(steps[gate], /if: \$\{\{[^\n]*inputs\.mode == 'deploy'/);
+  assert.match(steps[deployGrant], /NODE_OPTIONS: ''/);
   steps.forEach((step, index) => {
     if (/Apply the named migrations/.test(step)) assert.ok(index > migrateGrant, names[index]);
     if (/wrangler (deploy|queues create)/.test(step)) assert.ok(index > deployGrant, names[index]);
@@ -380,11 +382,15 @@ test('deploy and migrate consume an Owner Grant before they change production', 
   const apply = steps.find((step) => step.startsWith('name: Apply the named migrations'));
   assert.match(apply, /copy migration_lines\(line\) from stdin with \(format csv, delimiter e'\\x01', quote e'\\x02'\)/);
   assert.match(apply, /commit;" < "\$file"/);
-  assert.match(apply, /if md5\(s\) <> '\$expected' then raise exception[^\n]*\n\s*execute s;\n\s*insert into supabase_migrations\.schema_migrations/);
+  assert.match(apply, /if md5\(s\) is distinct from '\$expected' then raise exception[^\n]*\n\s*execute s;\n\s*insert into supabase_migrations\.schema_migrations/);
   assert.match(apply, /\[\[ "\$expected" =~ \^\[0-9a-f\]\{32\}\$ \]\]/);
   assert.match(apply, /grep -q \$'\[\\r\\x01\\x02\]' "\$file" \|\| grep -qx '\\\\\\\.' "\$file"/);
   assert.match(apply, /\[ -z "\$\(tail -c1 "\$file"\)" \]/);
-  assert.doesNotMatch(apply, /\\i |psql -f|-c "\$sql"/);
+  // test -f only checks the file exists; nothing else may name -f or --file.
+  assert.doesNotMatch(apply.replace('test -f "$file"', ''), /(^|\s)(-f|--file)(\s|=)|\\i |\\copy|-c "\$sql"/);
+  assert.match(apply, /postgres:17-alpine psql "\$database_url" -v ON_ERROR_STOP=1 -X "\$@"/);
+  assert.match(apply, /\[ -s "\$file" \]/);
+  assert.match(apply, /md5\(s\) is distinct from '\$expected'/);
   // The applied-migration record is kept with the run's evidence.
   assert.match(apply, /> "\$evidence_dir\/production-migrations\.json"/);
   assert.match(productionWorkflow, /release-evidence\/production-migrations\.json\n/);

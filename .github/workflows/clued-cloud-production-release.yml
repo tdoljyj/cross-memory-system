@@ -190,7 +190,10 @@ jobs:
       # psql never reads as meta-commands (\! would run a shell next to the
       # credential, re-review N6), and which has no size limit (a psql -c
       # argument holds at most 128 KiB). The server rebuilds the text and checks
-      # its md5 against the file before it runs it.
+      # its md5 against the file before it runs it. The text runs through plpgsql
+      # EXECUTE, so a file may not hold transaction control (begin, commit,
+      # savepoint, rollback) or end with SELECT ... INTO; either fails and rolls
+      # back, leaving no record.
       - name: Apply the named migrations
         if: ${{ inputs.mode == 'migrate' }}
         env:
@@ -214,6 +217,7 @@ jobs:
             # COPY reads one line per row: the file must end with a newline and hold
             # no carriage return, no \x01 or \x02 (the CSV delimiter and quote) and
             # no line that is only \. (the end of COPY data).
+            [ -s "$file" ] || { echo "::error::$name is empty"; exit 1; }
             [ -z "$(tail -c1 "$file")" ] || { echo "::error::$name does not end with a newline"; exit 1; }
             if LC_ALL=C grep -q $'[\r\x01\x02]' "$file" || grep -qx '\\\.' "$file"; then
               echo "::error::$name holds a carriage return, \\x01, \\x02 or a line that is only \\."; exit 1
@@ -221,13 +225,13 @@ jobs:
             expected=$(md5sum "$file" | cut -d' ' -f1)
             [[ "$expected" =~ ^[0-9a-f]{32}$ ]] || { echo "::error::no md5 for $name"; exit 1; }
             version=$(date -u +%Y%m%d%H%M%S)
-            psql -q \
+            psql -q -v VERBOSITY=terse \
               -c "create temp table migration_lines(n bigserial primary key, line text)" \
               -c "copy migration_lines(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')" \
               -c "begin;
           do \$apply\$ declare s text := (select string_agg(coalesce(line, ''), e'\n' order by n) from migration_lines) || e'\n';
           begin
-            if md5(s) <> '$expected' then raise exception 'migration text differs from the file'; end if;
+            if md5(s) is distinct from '$expected' then raise exception 'migration text differs from the file'; end if;
             execute s;
             insert into supabase_migrations.schema_migrations(version, name, statements) values ('$version', '$short', array[s]);
           end \$apply\$;
@@ -298,6 +302,9 @@ jobs:
         if: ${{ inputs.mode == 'deploy' }}
         working-directory: .
         env:
+          # Steps before this one ran dependency code (npm ci, tests, build);
+          # none of it may preload code into the grant check.
+          NODE_OPTIONS: ''
           RELEASE_MODE: ${{ inputs.mode }}
           CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
           CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
