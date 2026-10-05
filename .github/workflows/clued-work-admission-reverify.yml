@@ -12,6 +12,9 @@ name: clued-work-admission-reverify
 # Code comes from the default branch; no PR code is checked out. The Clued
 # token and the App key come from the `clued-admission` environment, as for
 # the check itself.
+# Owner review (CLUED_OWNER_REVIEW_ENFORCE) is enforced from 2026-10-05
+# (Owner Decision 43d36f03): a pull request that changes this file needs an
+# Owner Grant on its head commit before it is admitted.
 
 on:
   schedule:
