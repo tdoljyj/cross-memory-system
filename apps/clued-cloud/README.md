@@ -90,7 +90,7 @@ Record/Project mutations use the current governed RPC/MCP implementation. Do not
 The MCP surface is generated from the runtime code and verified against the machine baseline:
 
 - runtime tools: `worker/continuity.ts`, `worker/records.ts`, `worker/projects.ts`
-- frozen production-equivalent baseline: `evals/public-mcp/tools-list.baseline.json`
+- frozen production-equivalent baseline: `evals/public-mcp/tools-list.baseline.json`, the list production serves with the flags in `evals/public-mcp/tool-versions.json` (`production_equivalent`; the Integration Runtime is on since S2c stage C). After changing a production flag, refreeze it and update that entry together.
 - flag matrix: `evals/public-mcp/verify-flag-matrix.ts`
 
 Do not hardcode an MCP tool count in human documentation. Tool names, schemas, annotations and required scopes must be checked against the generated runtime surface and frozen baseline.
