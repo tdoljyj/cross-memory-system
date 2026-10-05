@@ -262,20 +262,6 @@ async function githubJson(fetchImpl, env, route, { allowMissing = false } = {}) 
   return await response.json();
 }
 
-async function githubPost(fetchImpl, env, route) {
-  const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
-  const response = await fetchImpl(`${base}${route}`, {
-    method: "POST",
-    headers: {
-      accept: "application/vnd.github+json",
-      authorization: `Bearer ${env.GITHUB_TOKEN}`,
-      "x-github-api-version": "2022-11-28",
-      "user-agent": "clued-work-admission",
-    },
-  });
-  if (!response.ok) throw new Error(`GitHub API POST ${route} returned ${response.status}`);
-}
-
 async function githubPaged(fetchImpl, env, route, key) {
   const items = [];
   for (let page = 1; page <= 50; page += 1) {
@@ -550,31 +536,41 @@ export async function workflowGateFindings(fetchImpl, env, repository, files, he
 }
 
 // ---------------------------------------------------------------------------
-// Owner review (re-review 7, MAJOR-3). The main ruleset requires no approving
-// review, so whatever the admission check admits can be merged by an Agent,
-// and a merged change to the code that guards production applies to every
-// later run: it could drop the release door's grant step, read the
-// clued-release or clued-admission environment's secrets, point admission at
-// another server or give a self-hosted workflow a schedule. Such a pull
-// request is admitted only with an Owner Grant of repo.protected_change on its
-// head commit (OwnerCredential §6.3), asked of Clued's admission door with the
-// admission Binding. Enforced when CLUED_OWNER_REVIEW_ENFORCE=true (the
-// Owner's switch, set once migration 20261005120000 is applied); until then
-// the finding is reported only.
+// Owner review (re-review 7, MAJOR-3; re-review 8, Owner Decision f2bf949a).
+// The main ruleset requires no approving review, so whatever the admission
+// check admits can be merged by an Agent, and a merged change to the code that
+// guards production applies to every later run: it could drop the release
+// door's grant step, read the clued-release or clued-admission environment's
+// secrets, point admission at another server or give a self-hosted workflow a
+// schedule. A pull request that changes any PROTECTED_PATHS entry is admitted
+// only with an Owner Grant of repo.protected_change on its exact head commit
+// (OwnerCredential §6.3), asked of Clued's admission door with the admission
+// Binding. Enforced when CLUED_OWNER_REVIEW_ENFORCE=true (the Owner's switch,
+// set once migration 20261005120000 is applied); until then it is reported.
+// Re-review 8, MAJOR-1/2: the decision is by path only. Reading a workflow's
+// environments, secrets and triggers line by line missed YAML escapes,
+// explicit keys and aliases, and the admission job's own tests ran with its
+// keys; ownerReviewFindings now only adds hints to the summary.
 //
-// Not covered, and written down (WorkClaimAdmission §4.7): other scripts that
-// a workflow with secrets runs, repository-level secrets and hosted minutes
-// (any branch can add an on: push workflow), and anyone holding the
-// repository's admin rights (ruleset, variables, environments).
+// Not covered, and written down (WorkClaimAdmission §4.7): code outside these
+// paths that a job with secrets imports or builds (the Worker source), the
+// repository-level secrets and hosted minutes (any branch can add an on: push
+// workflow), and anyone holding the repository's admin rights.
 
 export const OWNER_REVIEW_ACTION = "repo.protected_change";
 export const OWNER_REVIEW_RPC = "clued_owner_grant_admission_door_v1";
 export const PROTECTED_PATHS = [
-  "scripts/ci/clued-work-admission.mjs",
-  "scripts/ci/clued-release-grant.mjs",
+  // Every workflow, and what the jobs holding secrets run: the CI and release
+  // scripts (including the admission job's own self-tests), the runner check,
+  // the release scripts and the dependencies they load, the Worker deploy
+  // configuration, and where admission asks Clued.
+  ".github/**",
+  "scripts/ci/**",
   "scripts/runner/**",
-  ".github/workflows/clued-work-admission*.yml",
-  ".github/workflows/clued-cloud-production-release.yml",
+  "apps/clued-cloud/scripts/**",
+  "apps/clued-cloud/package.json",
+  "apps/clued-cloud/package-lock.json",
+  "apps/clued-cloud/wrangler*.jsonc",
   PUBLIC_CONFIG_SOURCE,
 ];
 
@@ -670,7 +666,7 @@ export function ownerReviewFindings(headText, baseText) {
   return findings;
 }
 
-export async function ownerReviewDoor(fetchImpl, env, repository, headSha, workspace) {
+export async function ownerReviewDoor(fetchImpl, env, repository, headSha, workspace, note) {
   const { url: base, key } = resolvePublicSupabaseConfig(env, workspace);
   const resource = `repo:${repository}/${headSha}`;
   const response = await fetchImpl(`${base}/rest/v1/rpc/${OWNER_REVIEW_RPC}`, {
@@ -682,7 +678,8 @@ export async function ownerReviewDoor(fetchImpl, env, repository, headSha, works
       accept: "application/json",
       "user-agent": "clued-work-admission",
     },
-    body: JSON.stringify({ p_token_hash: sha256Hex(env.CLUED_CONTEXT_READ_TOKEN), p_input: { action: OWNER_REVIEW_ACTION, resources: [resource] } }),
+    body: JSON.stringify({ p_token_hash: sha256Hex(env.CLUED_CONTEXT_READ_TOKEN),
+      p_input: { action: OWNER_REVIEW_ACTION, resources: [resource], ...(note ? { note } : {}) } }),
   });
   let text = "";
   let body = null;
@@ -804,9 +801,13 @@ async function summarizeWorkflows(fetchImpl, env, repository, headSha, changedPa
 async function ownerReview(fetchImpl, env, repository, headSha, workspace, findings, outcome) {
   const enforced = ownerReviewEnforced(env);
   const summary = findings.join(", ");
+  // Re-review 8, MINOR-3: the request tells the Owner which pull request and
+  // which changes it is for (shown on the confirmation page as unverified).
+  const listed = findings.slice(0, 30).map((finding) => finding.replace(/^protected_path:/, "")).join(", ");
+  const note = `${outcome.pr_ref ?? repository} @ ${headSha.slice(0, 12)}: ${listed}${findings.length > 30 ? ` and ${findings.length - 30} more` : ""}`.slice(0, 2000);
   let door;
   try {
-    door = await ownerReviewDoor(fetchImpl, env, repository, headSha, workspace);
+    door = await ownerReviewDoor(fetchImpl, env, repository, headSha, workspace, note);
   } catch (error) {
     door = { kind: "refused", detail: error instanceof Error ? error.message : String(error) };
   }
@@ -865,8 +866,9 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     const workflowResult = await workflowFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha);
     const gateFindingsOfPr = workflowResult.gate;
     if (gateFindingsOfPr.length) outcome.workflow_gate_findings = gateFindingsOfPr;
-    const ownerFindings = [...protectedPathFindings(changed.paths), ...workflowResult.owner];
+    const ownerFindings = protectedPathFindings(changed.paths);
     if (ownerFindings.length) outcome.owner_review_findings = ownerFindings;
+    for (const hint of workflowResult.owner) outcome.notices.push(`workflow_review_hint:${hint}`);
     if (withSummary && workspace) {
       await summarizeWorkflows(fetchImpl, env, repository, pr.head.sha, outcome.changed_paths, workspace, outcome);
     }
@@ -1002,8 +1004,8 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
 // admission job is skipped) or a cancelled run then hid the first one's run,
 // and its green check outlived its claim. It now reads the App checks, which
 // name their pull request, and posts the failing check itself. Without the
-// App's key it falls back to re-running this pull request's own admission run
-// (named by its newest App check); with neither, the pull request is an error.
+// App's key it re-verifies nothing and fails (re-review 8: re-running a run
+// named by an App check could pick the re-verification's own run).
 // Transport errors are reported, never turned into a verdict.
 
 export const ADMISSION_WORKFLOW = "clued-work-admission.yml";
@@ -1018,12 +1020,18 @@ export async function appChecksOnHead(fetchImpl, env, repository, headSha) {
 }
 
 export async function reverify({ env, fetchImpl, workspace, now = () => Date.now() }) {
-  const result = { enforced: enforcementEnabled(env), checked: [], reran: [], blocked: [], errors: [] };
+  const result = { enforced: enforcementEnabled(env), checked: [], blocked: [], errors: [] };
   if (!result.enforced) {
     result.skipped = "CLUED_WORK_ADMISSION_ENFORCE is not set; checks are advisory";
     return result;
   }
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
+  // Re-review 8, NIT: without the App nothing can be blocked, and the App
+  // checks this reads would not exist; say so instead of passing quietly.
+  if (!(env.CLUED_ADMISSION_APP_ID ?? "").trim() || !(env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? "").trim()) {
+    result.errors.push({ pr: null, error: "the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY); nothing can be re-verified" });
+    return result;
+  }
   const repository = env.GITHUB_REPOSITORY;
   const pulls = await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`);
   for (const pr of pulls) {
@@ -1042,15 +1050,8 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
         env, fetchImpl, now, headSha: pr.head.sha, success: false, title: verdict, prNumber: pr.number,
         summary: `The hourly re-verification no longer admits #${pr.number}: ${outcome.reasons.join("; ") || "no reason given"}. Push a commit or edit the pull request once its claim admits it again.`,
       });
-      if (posted.posted) {
-        result.blocked.push({ pr: pr.number, check_run_id: posted.check_run_id, verdict: outcome.verdict, reasons: outcome.reasons });
-        continue;
-      }
-      const own = checks.map((check) => EXTERNAL_ID.exec(String(check.external_id ?? "")))
-        .find((match) => match && Number(match[1]) === Number(pr.number));
-      if (!own) throw new Error(`not admitted (${outcome.verdict}) and no failing check could be posted: ${posted.error ?? posted.reason}; no admission run of #${pr.number} to re-run`);
-      await githubPost(fetchImpl, env, `/repos/${repository}/actions/runs/${own[2]}/rerun`);
-      result.reran.push({ pr: pr.number, run_id: Number(own[2]), verdict: outcome.verdict, reasons: outcome.reasons });
+      if (!posted.posted) throw new Error(`not admitted (${outcome.verdict}) and no failing check could be posted: ${posted.error ?? posted.reason}`);
+      result.blocked.push({ pr: pr.number, check_run_id: posted.check_run_id, verdict: outcome.verdict, reasons: outcome.reasons });
     } catch (error) {
       result.errors.push({ pr: pr.number, error: error instanceof Error ? error.message : String(error) });
     }
@@ -1064,10 +1065,9 @@ export function renderReverifySummary(result) {
     lines.push(`Skipped: ${result.skipped}.`, "");
     return lines.join("\n");
   }
-  lines.push(`Open PRs with a passing admission check checked: ${result.checked.length} · failing checks posted: ${result.blocked.length} · re-runs requested: ${result.reran.length} · errors: ${result.errors.length}`);
+  lines.push(`Open PRs with a passing admission check checked: ${result.checked.length} · failing checks posted: ${result.blocked.length} · errors: ${result.errors.length}`);
   for (const blocked of result.blocked) lines.push(`- #${blocked.pr}: failing check ${blocked.check_run_id} posted, ${blocked.verdict}: ${blocked.reasons.join("; ")}`);
-  for (const rerun of result.reran) lines.push(`- #${rerun.pr}: run ${rerun.run_id} re-run, ${rerun.verdict}: ${rerun.reasons.join("; ")}`);
-  for (const error of result.errors) lines.push(`- #${error.pr}: error ${error.error}`);
+  for (const error of result.errors) lines.push(`- ${error.pr === null ? "re-verification" : `#${error.pr}`}: error ${error.error}`);
   lines.push("");
   return lines.join("\n");
 }

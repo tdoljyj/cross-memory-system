@@ -110,8 +110,9 @@ test('owner grants: the admission door admits a protected commit once per grant 
     const commitB = 'repo:tdoljyj/cross-memory-system/b0b0b0b0bbbb';
     const uses = async (grantId) => (await admin.query('select uses from clued_private.owner_grants_v1 where id=$1', [grantId])).rows[0].uses;
 
-    // --- No grant: one pending request, reused, with the admission origin. ---
-    let result = await door('admission', { action, resources: [commitA] });
+    // --- No grant: one pending request, reused, with the admission origin and
+    // the check's note for the Owner. ---
+    let result = await door('admission', { action, resources: [commitA], note: 'o/r#559 @ 4f49b0e8aaaa: .github/workflows/x.yml' });
     assert.deepEqual([result.status, result.admitted], ['ok', false]);
     const pending = result.owner_request;
     assert.deepEqual([pending.status, pending.action, pending.resources, pending.confirm_path],
@@ -120,6 +121,8 @@ test('owner grants: the admission door admits a protected commit once per grant 
     const origin = (await admin.query(`select r.metadata from public.clued_audit_receipts r
       join clued_private.owner_requests_v1 q on q.receipt_id=r.id where q.id=$1`, [pending.request_id])).rows[0].metadata;
     assert.equal(origin.origin, 'ci-admission');
+    assert.equal((await admin.query('select agent_note from clued_private.owner_requests_v1 where id=$1', [pending.request_id])).rows[0].agent_note,
+      'o/r#559 @ 4f49b0e8aaaa: .github/workflows/x.yml');
 
     // --- The Owner approves once: that commit is admitted, and stays admitted
     // on later runs without taking another use; another commit is not. ---
@@ -136,15 +139,24 @@ test('owner grants: the admission door admits a protected commit once per grant 
     assert.equal(await uses(once.grant.grant_id), 1, 'replays take no use');
     assert.equal((await door('admission', { action, resources: [commitB] })).admitted, false, 'a used once grant admits no other commit');
 
-    // --- A grant for the repository glob covers any commit; revoking it ends
-    // every admission it gave, replays included. ---
-    const wide = committed(await grant(await confirm({ action, resources: ['repo:tdoljyj/cross-memory-system/**'] })));
+    // --- Re-review 8, MINOR-3: a grant for the repository glob admits no
+    // commit; only a grant that names the commit does. ---
+    committed(await grant(await confirm({ action, resources: ['repo:tdoljyj/cross-memory-system/**'] })));
+    assert.equal((await door('admission', { action, resources: [commitB] })).admitted, false);
+    const exactB = committed(await grant(await confirm({ action, resources: [commitB] })));
     result = await door('admission', { action, resources: [commitB] });
-    assert.deepEqual([result.admitted, result.grant.grant_id], [true, wide.grant.grant_id]);
-    committed(await native('clued_owner_grant_revoke_v1', { grant_id: wide.grant.grant_id }));
+    assert.deepEqual([result.admitted, result.grant.grant_id], [true, exactB.grant.grant_id]);
+    // A used grant keeps admitting its commit after its time runs out, until revoked.
+    await admin.query(`update clued_private.owner_grants_v1 set granted_at=now()-interval '2 days',
+      expires_at=now()-interval '1 day' where id=$1`, [once.grant.grant_id]);
+    assert.deepEqual([(await door('admission', { action, resources: [commitA] })).admitted], [true]);
+    committed(await native('clued_owner_grant_revoke_v1', { grant_id: exactB.grant.grant_id }));
     assert.equal((await door('admission', { action, resources: [commitB] })).admitted, false);
     committed(await native('clued_owner_grant_revoke_v1', { grant_id: once.grant.grant_id }));
     assert.equal((await door('admission', { action, resources: [commitA] })).admitted, false);
+    await assert.rejects(() => door('admission', { action, resources: ['repo:tdoljyj/cross-memory-system/*'] }),
+      /owner_grant_door_resources_invalid/);
+    await assert.rejects(() => door('admission', { action, resources: [commitA], note: 5 }), /owner_grant_door_input_invalid/);
 
     // --- The release actions are not this door's, nor this action the release door's. ---
     await assert.rejects(() => door('admission', { action: 'release.production', resources: [commitA] }),

@@ -19,15 +19,22 @@
 --
 -- A grant is used once per commit: the first admission of a commit takes one
 -- use and records it; later runs of the same commit (the hourly
--- re-verification, an edited pull request) are admitted by that record while
--- the grant is live (not revoked, not expired), without taking another use.
--- A grant approved once therefore admits exactly one commit.
+-- re-verification, an edited pull request) are admitted by that record until
+-- the grant is revoked, without taking another use, also after the grant's
+-- time runs out (re-review 8: a once approval should not turn a waiting pull
+-- request red after 24 hours). A grant approved once therefore admits exactly
+-- one commit.
+-- Re-review 8, MINOR-3: only a grant that names the commit itself admits it.
+-- An Agent can ask for repo:<owner>/<name>/** and the Owner might approve it
+-- once by default; a glob never covers a protected change.
+-- The door's request carries the check's note (pull request and changed
+-- paths), shown to the Owner as the Agent's unverified note.
 
 insert into clued_private.owner_grant_actions(action,doors,title,risk) values
   ('repo.protected_change',array['ci-admission'],'合并改动准入、发布、runner 检查或 workflow 环境/密钥/触发器的提交','high');
 
 create function clued_private.owner_grant_admission_request_v1(
-  p_binding public.clued_agent_bindings,p_action text,p_resources text[]
+  p_binding public.clued_agent_bindings,p_action text,p_resources text[],p_note text
 ) returns clued_private.owner_requests_v1 language plpgsql volatile security definer set search_path='' as $$
 declare v_req clued_private.owner_requests_v1%rowtype; v_receipt uuid;
 begin
@@ -42,9 +49,9 @@ begin
       'resources',to_jsonb(p_resources),'origin','ci-admission'))
   returning id into v_receipt;
   insert into clued_private.owner_requests_v1(user_id,binding_id,idempotency_key,action,resources,
-    suggested_max_uses,expires_at,receipt_id)
+    suggested_max_uses,agent_note,expires_at,receipt_id)
   values(p_binding.user_id,p_binding.id,'admission-door:'||gen_random_uuid()::text,p_action,p_resources,
-    1,clock_timestamp()+interval '24 hours',v_receipt)
+    1,p_note,clock_timestamp()+interval '24 hours',v_receipt)
   returning * into v_req;
   return v_req;
 end $$;
@@ -62,8 +69,7 @@ begin
       and r.object_type='owner_grant' and r.object_id=x.id::text
       and r.metadata->>'door'='ci-admission' and r.metadata->'resources'=to_jsonb(p_resources)
     where x.user_id=p_user_id and x.action=p_action and x.revoked_at is null
-      and x.expires_at>clock_timestamp()
-    order by x.expires_at desc limit 1;
+    order by x.granted_at desc limit 1;
   if v_prior_grant is not null then
     select * into g from clued_private.owner_grants_v1 where id=v_prior_grant;
     return jsonb_build_object('grant_id',g.id,'receipt_id',v_prior,'use',g.uses,'max_uses',g.max_uses,
@@ -72,8 +78,7 @@ begin
   select * into g from clued_private.owner_grants_v1 x
     where x.user_id=p_user_id and x.action=p_action and x.revoked_at is null
       and x.expires_at>clock_timestamp() and (x.max_uses is null or x.uses<x.max_uses)
-      and cardinality(p_resources)>0
-      and not exists(select 1 from unnest(p_resources) r where not clued_private.owner_grant_covers_v1(x.resources,r))
+      and cardinality(p_resources)>0 and x.resources @> p_resources
     order by x.expires_at,x.granted_at limit 1 for update;
   if not found then return null; end if;
   update clued_private.owner_grants_v1 set uses=uses+1 where id=g.id;
@@ -89,11 +94,11 @@ end $$;
 create function public.clued_owner_grant_admission_door_v1(p_token_hash text,p_input jsonb)
 returns jsonb language plpgsql volatile security definer set search_path='' as $$
 declare v_binding public.clued_agent_bindings; v_action clued_private.owner_grant_actions%rowtype;
-  v_resources text[]; v_grant jsonb; v_req clued_private.owner_requests_v1%rowtype;
+  v_resources text[]; v_grant jsonb; v_req clued_private.owner_requests_v1%rowtype; v_note text;
 begin
   perform clued_private.intake_payload_cap_v1(p_input);
   if jsonb_typeof(p_input) is distinct from 'object'
-      or exists(select 1 from jsonb_object_keys(p_input) k where k not in ('action','resources')) then
+      or exists(select 1 from jsonb_object_keys(p_input) k where k not in ('action','resources','note')) then
     raise exception 'owner_grant_door_input_invalid' using errcode='22023'; end if;
   v_binding:=clued_private.resolve_binding(p_token_hash,'context:read','global');
   if not clued_private.binding_role_admits_v1(v_binding,'ci-admission') then
@@ -105,19 +110,25 @@ begin
       or jsonb_array_length(p_input->'resources') not between 1 and 50 then
     raise exception 'owner_grant_door_resources_invalid' using errcode='22023'; end if;
   v_resources:=clued_private.work_claim_normalize_paths(p_input->'resources');
-  if cardinality(v_resources) not between 1 and 50 then
+  if cardinality(v_resources) not between 1 and 50
+      or exists(select 1 from unnest(v_resources) r where r ~ '[*?]') then
     raise exception 'owner_grant_door_resources_invalid' using errcode='22023'; end if;
+  if p_input ? 'note' then
+    if jsonb_typeof(p_input->'note') is distinct from 'string' then
+      raise exception 'owner_grant_door_input_invalid' using errcode='22023'; end if;
+    v_note:=nullif(left(btrim(p_input->>'note'),2000),'');
+  end if;
   v_grant:=clued_private.owner_grant_admission_use_v1(v_binding.user_id,v_binding.id,v_action.action,v_resources);
   if v_grant is not null then
     return jsonb_build_object('status','ok','admitted',true,'action',v_action.action,
       'resources',to_jsonb(v_resources),'grant',v_grant);
   end if;
-  v_req:=clued_private.owner_grant_admission_request_v1(v_binding,v_action.action,v_resources);
+  v_req:=clued_private.owner_grant_admission_request_v1(v_binding,v_action.action,v_resources,v_note);
   return jsonb_build_object('status','ok','admitted',false,'action',v_action.action,
     'resources',to_jsonb(v_resources),'owner_request',clued_private.owner_request_public_v1(v_req));
 end $$;
 
-revoke all on function clued_private.owner_grant_admission_request_v1(public.clued_agent_bindings,text,text[]),
+revoke all on function clued_private.owner_grant_admission_request_v1(public.clued_agent_bindings,text,text[],text),
   clued_private.owner_grant_admission_use_v1(uuid,uuid,text,text[]),
   public.clued_owner_grant_admission_door_v1(text,jsonb)
   from public,anon,authenticated,service_role;

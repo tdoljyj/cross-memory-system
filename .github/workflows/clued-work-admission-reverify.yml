@@ -6,8 +6,8 @@ name: clued-work-admission-reverify
 # re-evaluate a green check. Every hour this re-checks each open, non-draft PR
 # into the default branch whose newest clued-admission-verified App check
 # passed, and when the claim no longer admits the PR posts a failing App check
-# on its head, which blocks the merge (re-review 7, MAJOR-1; without the App
-# key it re-runs that PR's own admission run). Runs only when
+# on its head, which blocks the merge (re-review 7, MAJOR-1). Without the App
+# key it fails rather than pass quietly (re-review 8). Runs only when
 # CLUED_WORK_ADMISSION_ENFORCE=true; otherwise it reports and does nothing.
 # Code comes from the default branch; no PR code is checked out. The Clued
 # token and the App key come from the `clued-admission` environment, as for
@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
+  actions: read
   checks: read
   contents: read
   pull-requests: read

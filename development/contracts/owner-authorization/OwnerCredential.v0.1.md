@@ -223,10 +223,11 @@ Owner 同一天内同类的确认，只需要在第一次时选"管一段时间"
 
 ### 6.3 准入的 Owner 复核（复审 7 MAJOR-3）
 
-- 原因：ruleset 不要求审批，Agent 合并自己的 PR。改动准入、发布门口、runner 检查或声明 environment 的 workflow 的 PR 合并后，就能去掉这些守护（WorkClaimAdmission §4.6）。
-- 做法：准入检查（`clued-work-admission`）发现这类改动时，用准入 Binding 调 `clued_owner_grant_admission_door_v1`，动作 `repo.protected_change`（`risk: high`，确认页默认"只批这一次"），资源 `repo:<owner>/<name>/<head 提交>`。
-  - 有覆盖该提交的有效授权即放行。一份授权对同一提交只用一次，之后同一提交的运行凭第一次的 `OWNER_GRANT_USED` 回执（`door: ci-admission`）放行，直到授权撤销或过期。
-  - 没有授权就复用或新建这个 Binding 的待确认请求（建议 1 次、24 小时），准入判 REJECTED 并给出确认链接。
+- 原因：ruleset 不要求审批，Agent 合并自己的 PR。改动 workflow、CI 与发布脚本、runner 检查的 PR 合并后，就能去掉这些守护（WorkClaimAdmission §4.6）。
+- 做法：准入检查（`clued-work-admission`）发现 PR 改动了保护路径（复审 8 起只按路径，见 WorkClaimAdmission §4.6）时，用准入 Binding 调 `clued_owner_grant_admission_door_v1`，动作 `repo.protected_change`（`risk: high`，确认页默认"只批这一次"），资源 `repo:<owner>/<name>/<head 提交>`。
+  - 只有资源里精确写着该提交的有效授权放行，通配的不算；门口拒绝带 `*`、`?` 的资源（复审 8 MINOR-3）。一份授权对同一提交只用一次，之后同一提交的运行凭第一次的 `OWNER_GRANT_USED` 回执（`door: ci-admission`）放行，授权到期也不影响，直到撤销。
+  - 没有授权就复用或新建这个 Binding 的待确认请求（建议 1 次、24 小时），附上 PR 与改动路径作为 Agent 说明（`agent_note`，确认页标「未核实」），准入判 REJECTED 并给出确认链接。
+  - Agent 也可以在推送前用 `clued_owner_request` 为该提交申请（合同 v29 §1.7）。
   - 只有标了 `ci-admission` 的 Binding 能调（标出之前任何 Binding 都能，与其他角色相同），只需 `context:read`。
 - 迁移 `20261005120000_owner_grants_admission_door.sql`，测试 `apps/clued-cloud/tests/owner-grants-admission-door-db.case.mjs`（由 `owner-grants-release-door-db.test.mjs` 引入运行）、`scripts/ci/clued-work-admission.test.mjs`。Owner 设仓库变量 `CLUED_OWNER_REVIEW_ENFORCE=true` 后才拦，之前只提示。
 
@@ -257,7 +258,7 @@ Clued 维护一张"受信宿主公钥"表，由 Owner 在 Native 页面登记。
 
 - 没有门口的动作，例如 Agent 直接调用的外部工具，或本机命令。
 - Agent 绕过发布 workflow、直接用有写权限的数据库连接修改生产。需要 Owner 把该连接设为只读才能堵上（§6.1）。
-- Agent 合并改动发布门口本身的 PR（复审 7 MAJOR-3）：ruleset 不要求审批，合并后的 workflow 就是下一次发布运行的 workflow，删掉授权步骤即不再需要授权。§6.3 的 Owner 复核在准入时拦下这类 PR，但要 Owner 打开 `CLUED_OWNER_REVIEW_ENFORCE`；发布 workflow 调用的其他脚本与依赖不在保护路径内（WorkClaimAdmission §4.7）。
+- Agent 合并改动发布门口本身的 PR（复审 7 MAJOR-3）：ruleset 不要求审批，合并后的 workflow 就是下一次发布运行的 workflow，删掉授权步骤即不再需要授权。§6.3 的 Owner 复核在准入时拦下这类 PR，但要 Owner 打开 `CLUED_OWNER_REVIEW_ENFORCE`；发布脚本加载的应用源码不在保护路径内（WorkClaimAdmission §4.7）。
 - 持有仓库管理权限的凭据（复审 7 m7）：Agent 用 Owner 的 GitHub 身份时，能改 `CLUED_RELEASE_GRANT_ENFORCE`、`CLUED_OWNER_REVIEW_ENFORCE`、environment 与 ruleset，所有授权检查都可被关掉。
 - Owner 自己在确认页上批准了不该批准的事。系统生成的主体能减少误导，但无法替 Owner 判断。
 - 授权期内的滥用：在授权覆盖的范围和时长内，Agent 的每次使用都会放行。授权越宽，风险越大，所以默认 4 小时、最长 7 天，并且可以随时撤销。
