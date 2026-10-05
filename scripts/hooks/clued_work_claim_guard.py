@@ -35,6 +35,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+__version__ = "1.0.0"
+
 CLAIM_FILE = Path(".clued") / "work-claim.json"
 PUBLIC_CONFIG_SOURCE = Path("apps/clued-cloud/app/supabase-public-config.ts")
 ACTIVE_RPC = "clued_work_claims_active_v1"

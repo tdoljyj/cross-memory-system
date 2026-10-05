@@ -8,6 +8,8 @@ import shutil
 import tempfile
 import uuid
 
+__version__ = "1.0.0"
+
 SOURCE = Path(__file__).resolve().parents[1] / 'skills'
 NAME = 'clued'
 RETIRED_NAMES = ('clued-developer', 'clued-user', 'clued-continuity')

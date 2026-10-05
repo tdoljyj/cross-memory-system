@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { loadContinuityWorker as loadWorker } from "./worker-continuity-loader.mjs";
+
+// Task 6dfd7560: every resume reports the component versions the build was made from.
+const CLUED_COMPONENTS = {
+  schema: "clued.components/1",
+  versions: Object.fromEntries(JSON.parse(readFileSync(new URL("../../../config/clued-components.json", import.meta.url), "utf8"))
+    .components.map((c) => [c.id, String(c.version)])),
+  source_commit: null,
+};
 
 const env = {
   PROJECT_VIEWS_V2: "true",
@@ -29,7 +38,7 @@ test("M-LIVE-01: resume and log transport preserve omitted constraints and separ
   try {
     for (const [tool, pathname, expected] of [
       // BUG-20260924-001 L1: resume reports capture completeness next to currentness.
-      ["clued_session_resume", "/v1/continuity/resume", { ...resume, authority_capture_completeness: {
+      ["clued_session_resume", "/v1/continuity/resume", { ...resume, clued_components: CLUED_COMPONENTS, authority_capture_completeness: {
         state: "unknown", basis: "server_observes_only_writes_that_reached_clued", independent_of: "currentness" } }],
       ["clued_read_log", "/v1/continuity/log", log],
     ]) {
