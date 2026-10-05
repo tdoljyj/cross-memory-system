@@ -282,14 +282,33 @@ test('roles: 全部 over 我的全部项目 by default; 指定项目 and 项目�
   assert.equal(radios()[1].props.checked, true);
   assert.ok(f.text().includes('以后新建的项目也自动包含在内'));
   assert.ok(!f.text().includes(rangeNote));
+  // 高级 shows each project project:* covers as ticked and locked.
+  const coveredNote = '由“我的全部项目（含以后新建的）”覆盖';
+  const advancedRow = name => f.nodes('fieldset', f.nodes('details')[0]).find(n => f.text(f.nodes('legend', n)[0]).startsWith(name));
+  const boxes = name => f.nodes('input', advancedRow(name)).filter(n => n.props.type === 'checkbox' && n.props.className !== 'oauth-group-checkbox');
+  for (const name of ['M2', 'Other']) {
+    assert.deepEqual(boxes(name).map(n => [n.props.checked, n.props.disabled]), all5.map(() => [true, true]), name);
+    assert.ok(f.text(advancedRow(name)).includes(coveredNote));
+    assert.ok(f.text(advancedRow(name)).includes('已选 5/5 项'));
+  }
+  assert.ok(!f.text(advancedRow('Personal memory')).includes(coveredNote));
   let sent = await send();
-  assert.deepEqual(sent, { global: all5, profile: all5, 'project:*': all5 });
+  assert.deepEqual(sent, { global: all5, profile: all5, 'project:*': all5 }, 'covered projects are not sent on their own');
+  // Narrowing project:* in 高级 narrows what each covered project shows, and frees that action.
+  boxes('我的全部项目')[4].props.onChange({ target: { checked: false } }); f.render();
+  assert.deepEqual(boxes('M2').map(n => [n.props.checked, n.props.disabled]), [[true, true], [true, true], [true, true], [true, true], [false, false]]);
+  boxes('M2')[4].props.onChange({ target: { checked: true } }); f.render();
+  sent = await send();
+  assert.deepEqual(sent, { global: all5, profile: all5, 'project:*': ['read', 'write', 'close', 'restore'], [A]: ['audit'] });
+  role('全部').props.onClick(); f.render();
   // 指定项目: everything on the current projects, nothing on project:*.
   radios()[0].props.onChange(); f.render();
   sent = await send();
   assert.deepEqual(sent, { global: all5, profile: all5, [A]: all5, [B]: all5 });
-  // The empty project:* group in 高级 says why it is empty.
+  // The empty project:* group in 高级 says why it is empty; projects are editable again.
   assert.ok(f.text().includes(rangeNote));
+  assert.ok(!f.text().includes(coveredNote));
+  assert.ok(boxes('M2').every(n => n.props.checked && !n.props.disabled));
   // 项目开发者: the projects get read/write/close/restore, Global read, profile nothing.
   role('项目开发者').props.onClick(); f.render();
   assert.deepEqual(pressed(), ['项目开发者']);
