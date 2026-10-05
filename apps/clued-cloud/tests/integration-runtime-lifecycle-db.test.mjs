@@ -18,6 +18,8 @@ import EmbeddedPostgres from 'embedded-postgres';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATION = '20261005150000_integration_runtime_revocation_lifecycle.sql';
+// the stage C §5.13 grant migration: held back until T-S-2 has checked the S2c-only database (§13.0)
+const GRANTS = '20261005163000_integration_runtime_grants.sql';
 const EARLIER_RPCS = ['clued_integration_request_open_v1', 'clued_integration_create_or_bind_v1',
   'clued_integration_identity_update_v1', 'clued_integration_reconcile_request_v1', 'clued_integration_status_v1',
   'clued_integration_declare_v1', 'clued_integration_report_v1', 'clued_integration_verify_v1'];
@@ -111,7 +113,8 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
     const before = await snapshot();
     await apply(MIGRATION);
     const after = await snapshot();
-    for (const name of migrations.filter((name) => name > MIGRATION)) await apply(name);
+    assert.ok(migrations.includes(GRANTS));
+    for (const name of migrations.filter((name) => name > MIGRATION && name !== GRANTS)) await apply(name);
 
 
     // ---- structure (§13.7) -------------------------------------------------------------------------
@@ -151,10 +154,35 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       assert.deepEqual(publicRpcs, [...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1'].sort());
     });
 
-    // the §5.13 target grants, exactly as the flag-enabling migration will apply them (§13.0)
-    for (const rpc of BINDING_RPCS) await admin.query(`grant execute on function public.${rpc}(text, jsonb) to anon, authenticated`);
-    await admin.query('grant execute on function public.clued_user_integration_v1(jsonb) to authenticated');
-    await admin.query('grant execute on function public.clued_admin_integration_v1(jsonb) to authenticated');
+    // the §5.13 target grants: the stage C grant migration itself (§13.0)
+    const acls = async () => (await admin.query(`select jsonb_build_object(
+      'functions', (select jsonb_object_agg(p.oid::regprocedure::text, coalesce(p.proacl::text, '')) from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace where n.nspname not in ('pg_catalog', 'information_schema')),
+      'relations', (select jsonb_object_agg(c.oid::regclass::text, coalesce(c.relacl::text, '')) from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace where n.nspname not in ('pg_catalog', 'information_schema')
+          and n.nspname not like 'pg_toast%'),
+      'schemas', (select jsonb_object_agg(nspname, coalesce(nspacl::text, '')) from pg_namespace),
+      'default_acl', (select coalesce(jsonb_agg(defaclacl::text order by defaclrole, defaclnamespace, defaclobjtype), '[]')
+        from pg_default_acl)) s`)).rows[0].s;
+    const beforeGrants = await acls();
+    await apply(GRANTS);
+    const afterGrants = await acls();
+
+    await t.test('T-S-2 the grant migration changes the ACL of exactly the §5.13 public RPCs and nothing else', async () => {
+      const sql = await fs.readFile(path.join(root, 'supabase/migrations', GRANTS), 'utf8');
+      const statements = sql.split('\n').filter((line) => line.trim() && !line.startsWith('--'));
+      assert.deepEqual(statements, [
+        ...BINDING_RPCS.map((rpc) => `grant execute on function public.${rpc}(text, jsonb) to anon, authenticated;`),
+        'grant execute on function public.clued_user_integration_v1(jsonb) to authenticated;',
+        'grant execute on function public.clued_admin_integration_v1(jsonb) to authenticated;']);
+      for (const kind of ['relations', 'schemas', 'default_acl']) assert.deepEqual(afterGrants[kind], beforeGrants[kind], kind);
+      const changed = Object.keys(afterGrants.functions).filter((f) => afterGrants.functions[f] !== beforeGrants.functions[f]).sort();
+      assert.deepEqual(Object.keys(afterGrants.functions).sort(), Object.keys(beforeGrants.functions).sort());
+      assert.deepEqual(changed, [...BINDING_RPCS.map((rpc) => `${rpc}(text,jsonb)`), 'clued_admin_integration_v1(jsonb)',
+        'clued_user_integration_v1(jsonb)'].sort());
+      // PUBLIC (an ACL entry with an empty grantee) never gains EXECUTE
+      for (const f of changed) assert.doesNotMatch(afterGrants.functions[f], /(^|[{,])=/, f);
+    });
 
     await t.test('T-S-2 after the target grants: exactly §5.13', async () => {
       const { rows } = await admin.query(`select p.proname, array_agg(r.rolname order by r.rolname) filter (where
