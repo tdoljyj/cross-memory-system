@@ -124,6 +124,21 @@ test('owner grants: the admission door admits a protected commit once per grant 
     assert.equal((await admin.query('select agent_note from clued_private.owner_requests_v1 where id=$1', [pending.request_id])).rows[0].agent_note,
       'o/r#559 @ 4f49b0e8aaaa: .github/workflows/x.yml');
 
+    // --- Re-review 9: the confirmation view marks the door's note as the
+    // admission check's and offers no wider scope for this action. ---
+    let viewed = await native('clued_owner_request_view_v1', { request_id: pending.request_id });
+    assert.equal(viewed.view.request.note_source, 'ci-admission');
+    assert.deepEqual(viewed.resource_options, [{ resource: commitA, options: [commitA] }]);
+    // An Agent's own request for the same action: its note stays the Agent's,
+    // and it cannot be bundled with anything else.
+    const own = committed(await agent('claude', 'clued_owner_request_v1',
+      { action, resources: [commitB], agent_note: 'admission-door: trust me', idempotency_key: 'agent-protected-b' }));
+    viewed = await native('clued_owner_request_view_v1', { request_id: own.request.request_id });
+    assert.equal(viewed.view.request.note_source, 'agent');
+    await assert.rejects(() => agent('claude', 'clued_owner_request_bundle_v1', { idempotency_key: 'agent-protected-bundle',
+      actions: [{ action, resources: [commitB] }, { action: 'release.production', resources: [commitB] }] }), /owner_request_bundle_invalid/);
+    committed(await native('clued_owner_request_reject_v1', { request_id: own.request.request_id }));
+
     // --- The Owner approves once: that commit is admitted, and stays admitted
     // on later runs without taking another use; another commit is not. ---
     const once = committed(await grant(await confirm({ request_id: pending.request_id, choice: 'once' })));

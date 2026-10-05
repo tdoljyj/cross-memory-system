@@ -572,6 +572,12 @@ export const PROTECTED_PATHS = [
   "apps/clued-cloud/package-lock.json",
   "apps/clued-cloud/wrangler*.jsonc",
   PUBLIC_CONFIG_SOURCE,
+  // Re-review 9, MINOR-2: checkout attributes can re-encode or filter what
+  // every later job runs (working-tree-encoding, filters), and submodules
+  // bring in code from elsewhere.
+  ".gitattributes",
+  "**/.gitattributes",
+  ".gitmodules",
 ];
 
 export function ownerReviewEnforced(env) {
@@ -691,6 +697,9 @@ export async function ownerReviewDoor(fetchImpl, env, repository, headSha, works
   }
   const detail = describe(response.status, body, text, response.headers);
   if (response.status === 404 && body && body.code === "PGRST202") return { kind: "rpc_unavailable", detail, resource };
+  // Re-review 9, MINOR-4: a server or gateway error says nothing about the
+  // pull request; the hourly re-verification must not turn a check red for it.
+  if (response.status >= 500 || response.status === 429) return { kind: "transient", detail, resource };
   if (response.status !== 200 || !body || body.status !== "ok") return { kind: "refused", detail, resource };
   const request = body.owner_request;
   const confirmUrl = request && typeof request.confirm_path === "string"
@@ -797,19 +806,30 @@ async function summarizeWorkflows(fetchImpl, env, repository, headSha, changedPa
 
 // Re-review 7, MAJOR-3: a pull request with owner-review findings needs an
 // Owner Grant on its head commit. Enforced, anything short of a grant rejects
-// it; otherwise the result is a notice.
-async function ownerReview(fetchImpl, env, repository, headSha, workspace, findings, outcome) {
+// it. Re-review 9, NIT: until the Owner turns enforcement on, the door is not
+// asked at all (it would open an Owner request for every such head); the
+// summary only says that the Owner would be asked.
+async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, outcome) {
   const enforced = ownerReviewEnforced(env);
+  const headSha = pr.head.sha;
   const summary = findings.join(", ");
-  // Re-review 8, MINOR-3: the request tells the Owner which pull request and
-  // which changes it is for (shown on the confirmation page as unverified).
+  if (!enforced) {
+    outcome.owner_review = { enforced, kind: "not_asked", resource: `repo:${repository}/${headSha}`, confirm_url: null, grant_id: null };
+    outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): an Owner Grant on ${headSha} would be needed (${summary})`);
+    return;
+  }
+  // Re-review 8, MINOR-3; re-review 9, MAJOR-2: the request tells the Owner
+  // which pull request and which changes it is for, with the compare link of
+  // the pushed commits (the confirmation page marks this note as written by
+  // the admission check, not by an Agent).
   const listed = findings.slice(0, 30).map((finding) => finding.replace(/^protected_path:/, "")).join(", ");
-  const note = `${outcome.pr_ref ?? repository} @ ${headSha.slice(0, 12)}: ${listed}${findings.length > 30 ? ` and ${findings.length - 30} more` : ""}`.slice(0, 2000);
+  const compare = `https://github.com/${repository}/compare/${pr.base.sha}...${headSha}`;
+  const note = `${outcome.pr_ref ?? repository} @ ${headSha.slice(0, 12)}: ${compare} changes ${listed}${findings.length > 30 ? ` and ${findings.length - 30} more` : ""}`.slice(0, 2000);
   let door;
   try {
     door = await ownerReviewDoor(fetchImpl, env, repository, headSha, workspace, note);
   } catch (error) {
-    door = { kind: "refused", detail: error instanceof Error ? error.message : String(error) };
+    door = { kind: "transient", detail: error instanceof Error ? error.message : String(error) };
   }
   outcome.owner_review = { enforced, kind: door.kind, resource: door.resource ?? null, confirm_url: door.confirm_url ?? null,
     grant_id: door.grant && door.grant.grant_id ? door.grant.grant_id : null };
@@ -817,15 +837,34 @@ async function ownerReview(fetchImpl, env, repository, headSha, workspace, findi
     outcome.notices.push(`owner_review_granted:${outcome.owner_review.grant_id} (${summary})`);
     return;
   }
-  const why = door.kind === "pending"
+  outcome.verdict = "REJECTED";
+  outcome.reasons.push(door.kind === "pending"
     ? `owner_review_required (${summary}); ask the Owner to approve ${door.confirm_url ?? "the pending request"}`
-    : `owner_review_unavailable:${door.kind} (${summary}; ${door.detail})`;
-  if (enforced) {
-    outcome.verdict = "REJECTED";
-    outcome.reasons.push(why);
-  } else {
-    outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): ${why}`);
+    : `owner_review_unavailable:${door.kind} (${summary}; ${door.detail})`);
+}
+
+// Re-review 9, MAJOR-1: the pull request's file list is relative to its merge
+// base, which stays put while main moves on, so a branch can carry a change to
+// a protected path that cancels out against an older main and comes back once
+// main has moved. GitHub's test merge commit is the pull request merged into
+// the base as it is now; the files it changes against the base are what a
+// merge would change. Both lists are checked for protected paths. The hourly
+// re-verification reads the pull request again, so a main that moves later is
+// caught within the hour; the Owner's "require branches to be up to date"
+// ruleset setting closes the window.
+export const MERGE_DIFF_LIMIT = 300;
+export async function mergeDiffPaths(fetchImpl, env, repository, pr) {
+  const merge = typeof pr.merge_commit_sha === "string" && /^[0-9a-f]{40}$/.test(pr.merge_commit_sha) ? pr.merge_commit_sha : null;
+  if (!merge || pr.mergeable === false) return { paths: [], unavailable: merge ? "the pull request does not merge cleanly" : "GitHub has not computed the test merge commit yet" };
+  const body = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${pr.base.sha}...${merge}`, { allowMissing: true });
+  if (!body || !Array.isArray(body.files)) return { paths: [], unavailable: `compare ${pr.base.sha}...${merge} is unavailable` };
+  if (body.files.length >= MERGE_DIFF_LIMIT) return { paths: [], unavailable: `the merge changes ${body.files.length} or more files` };
+  const paths = new Set();
+  for (const file of body.files) {
+    if (typeof file.filename === "string") paths.add(file.filename);
+    if (typeof file.previous_filename === "string") paths.add(file.previous_filename);
   }
+  return { paths: [...paths].sort(), unavailable: null };
 }
 
 export async function evaluate({ env, event, eventName, fetchImpl, workspace, withSummary }) {
@@ -866,7 +905,11 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     const workflowResult = await workflowFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha);
     const gateFindingsOfPr = workflowResult.gate;
     if (gateFindingsOfPr.length) outcome.workflow_gate_findings = gateFindingsOfPr;
-    const ownerFindings = protectedPathFindings(changed.paths);
+    const mergeDiff = await mergeDiffPaths(fetchImpl, env, repository, pr);
+    const ownerFindings = protectedPathFindings([...new Set([...changed.paths, ...mergeDiff.paths])].sort());
+    // Without the merge diff, any protected path the merge might bring back
+    // cannot be ruled out: the Owner is asked.
+    if (mergeDiff.unavailable) ownerFindings.push(`protected_path_unknown:${mergeDiff.unavailable}`);
     if (ownerFindings.length) outcome.owner_review_findings = ownerFindings;
     for (const hint of workflowResult.owner) outcome.notices.push(`workflow_review_hint:${hint}`);
     if (withSummary && workspace) {
@@ -967,7 +1010,7 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
       outcome.verdict = "REJECTED";
       outcome.reasons.push(...gateFindingsOfPr);
     }
-    if (ownerFindings.length && outcome.verdict === "ADMITTED") await ownerReview(fetchImpl, env, repository, pr.head.sha, workspace, ownerFindings, outcome);
+    if (ownerFindings.length && outcome.verdict === "ADMITTED") await ownerReview(fetchImpl, env, repository, pr, workspace, ownerFindings, outcome);
     // Re-review 7, m2: the file list was read after the head, so a push in
     // between would pair this head's verdict with another head's files.
     if (outcome.verdict === "ADMITTED") {
@@ -1045,6 +1088,10 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
       const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false });
       result.checked.push({ pr: pr.number, verdict: outcome.verdict, reasons: outcome.reasons });
       if (outcome.admitted) continue;
+      if (outcome.owner_review && outcome.owner_review.kind === "transient"
+        && outcome.reasons.every((reason) => reason.startsWith("owner_review_unavailable:"))) {
+        throw new Error(`Clued's Owner review door is unavailable (${outcome.reasons.join("; ")}); the check stays as it is until the next run`);
+      }
       const verdict = `RE-VERIFIED: ${outcome.verdict ?? "NOT ADMITTED"}`;
       const posted = await postAppCheck({
         env, fetchImpl, now, headSha: pr.head.sha, success: false, title: verdict, prNumber: pr.number,

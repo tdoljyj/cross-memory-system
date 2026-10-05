@@ -335,6 +335,10 @@ export default function OwnerConfirmPage() {
   const status = request ? String(request.status ?? "") : "";
   const viewRequest = view && object(view.request) ? view.request : null;
   const note = viewRequest && typeof viewRequest.agent_note_unverified === "string" ? viewRequest.agent_note_unverified : "";
+  // Re-review 9: a note the admission check wrote (repo.protected_change) is
+  // not an Agent's claim; it names the pull request and links its compare view.
+  const admissionNote = Boolean(viewRequest && viewRequest.note_source === "ci-admission");
+  const compareLink = admissionNote ? (/https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/compare\/[0-9a-f]{40}\.\.\.[0-9a-f]{40}/.exec(note)?.[0] ?? "") : "";
   const grantee = view && object(view.grantee) ? view.grantee : null;
   const task = view && object(view.task) ? view.task : null;
   const kept = options.scope.filter(Boolean).length;
@@ -435,7 +439,10 @@ export default function OwnerConfirmPage() {
                 </dl>;
               })}
             </section>}</section>}
-          {note && <section aria-label="Agent 说明" className="owner-note"><h2>Agent 说明（未核实）</h2>
+          {note && admissionNote && <section aria-label="准入检查说明" className="owner-note"><h2>准入检查说明</h2>
+            <p className="context-muted">这段话由 Clued 的准入检查根据 PR 写出，不是 Agent 自述；批准前请打开链接看这些提交改了什么。</p><p>{note}</p>
+            {compareLink && <p><a href={compareLink} target="_blank" rel="noreferrer">在 GitHub 上查看这些提交的改动</a></p>}</section>}
+          {note && !admissionNote && <section aria-label="Agent 说明" className="owner-note"><h2>Agent 说明（未核实）</h2>
             <p className="context-muted">这段话是 Agent 自己写的，不改变上面要批准的内容。</p><p>{note}</p></section>}
           {!pending && <div className="owner-actions">
             <button type="button" disabled={working || !issued || members.some(member => !member.issued)} onClick={() => void approve()}>
