@@ -44,7 +44,15 @@ These describe the released build. A checkout ahead of production is unreleased 
 
 The hook adds context and never blocks. `CLUED_VERSION_CHECK=off` disables it; `=offline` skips the service read; `CLUED_ORIGIN` sets the service origin.
 
-## 5. Open items
+## 5. Git tags
 
-- The root `VERSION` is registered as the `product` component; tying it to git tags and releases stays with Task `6dfd7560`.
-- Hosts other than Claude Code run no hook. On them the Agent compares versions itself from the resume fields of §3; automatic repair belongs to Task `456e9348`.
+`scripts/ci/clued_release_tags.py` and the `clued-release-tags` workflow keep two kinds of annotated tag. Both are created once and never moved; a tag that already exists on another commit is an error.
+
+- **Product version tag.** Its name is exactly the root `VERSION` text, for example `Clued-v1.6`, and it points at the commit on `main` that set `VERSION` to that value. This is the convention of the older `vNext-1.3` and `vNext-2.0` tags. A push to `main` that changes `VERSION` creates it.
+- **Release tag.** `release/<YYYY-MM-DD>-r<run number>` points at the commit a successful production deploy put live: a `workflow_dispatch` run of `clued-cloud-production-release.yml` on `main` whose "Deploy Clued production Worker" step succeeded. Its message names the run, the deploy time, `VERSION` and every component version of `config/clued-components.json` at that commit. Runs that only preflight, back up, migrate or capture a source get no tag.
+
+`clued_release_tags.py check` runs in the `clued-components` workflow: `VERSION` must be a valid tag name, and if its tag exists it must be on the commit that set `VERSION`, so a new product version always needs a new `VERSION` value. A missing tag is backfilled with `workflow_dispatch` (`product`, or `release_run_id`).
+
+## 6. Hosts without hooks
+
+Hosts other than Claude Code run no hook. On them the Agent compares versions itself from the resume fields of §3; automatic repair belongs to Task `456e9348`.

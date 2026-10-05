@@ -1,0 +1,59 @@
+name: clued-release-tags
+
+# Keeps git tags in step with the root VERSION and with production releases
+# (Task 6dfd7560, development/contracts/components/ComponentVersioning.v0.1.md):
+# - a push to main that changes VERSION tags the commit that set it with the
+#   exact VERSION text (for example Clued-v1.6), like vNext-1.3 and vNext-2.0;
+# - a successful production deploy tags the deployed commit
+#   release/<date>-r<run number>, with VERSION and component versions.
+# Tags are created once and never moved. Default-branch code only, no PR
+# trigger, no install; workflow_dispatch backfills a missing tag.
+
+on:
+  push:
+    branches: [main]
+    paths: ['VERSION']
+  workflow_run:
+    workflows: ['Clued Cloud production release']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      product:
+        description: Create the product version tag for the VERSION on main if it is missing
+        type: boolean
+        default: false
+      release_run_id:
+        description: Run id of a successful production deploy to tag (backfill)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clued-release-tags
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Product version tag
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.product)
+        run: python3 scripts/ci/clued_release_tags.py product --ref origin/main --apply
+      - name: Release tag
+        if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.release_run_id != '')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.release_run_id }}
+        run: python3 scripts/ci/clued_release_tags.py release --run-id "$RUN_ID" --apply
