@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 import { contractVersionOf } from '../scripts/verify-served-agent-contract.mjs';
 
+// Task 6dfd7560: every resume reports the component versions the build was made from.
+const CLUED_COMPONENTS = {
+  schema: 'clued.components/1',
+  versions: Object.fromEntries(JSON.parse(readFileSync(new URL('../../../config/clued-components.json', import.meta.url), 'utf8'))
+    .components.map((c) => [c.id, String(c.version)])),
+  source_commit: null,
+};
 const CONTRACT_VERSION = contractVersionOf(await readFile(new URL('../../../skills/clued/references/agent-contract.md', import.meta.url), 'utf8'));
 
 // Work Claim Admission v0.1, step 2: the five work-claim tools and the resume
@@ -189,6 +197,7 @@ test('resume folds in contract_version and the live claims; a failed claims read
     work_claim_profile: { profile_id: 'work-claim-v1-default', lease_seconds: 7200 } };
   const expected = {
     ...resume,
+    clued_components: CLUED_COMPONENTS,
     authority_capture_completeness: { state: 'unknown', basis: 'server_observes_only_writes_that_reached_clued', independent_of: 'currentness' },
     contract_version: CONTRACT_VERSION,
     active_work_claims: claims.active_work_claims,
@@ -239,6 +248,7 @@ test('resume folds in contract_version and the live claims; a failed claims read
       const result = (await response.json()).result.structuredContent;
       assert.equal('contract_version' in result, false);
       assert.equal('active_work_claims' in result, false);
+      assert.deepEqual(result.clued_components, CLUED_COMPONENTS, 'component versions do not depend on the work-claims flag');
       assert.equal(calls.length, 1);
     } finally { restore(); }
   }

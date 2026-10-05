@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { loadContinuityWorker as loadWorker } from "./worker-continuity-loader.mjs";
 
 const env = {
   ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
 };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
+const CLUED_COMPONENT_VERSIONS = Object.fromEntries(
+  JSON.parse(readFileSync(new URL("../../../config/clued-components.json", import.meta.url), "utf8"))
+    .components.map((c) => [c.id, String(c.version)]),
+);
 
 test("publishes a continuity health contract", async () => {
   const worker = await loadWorker();
@@ -15,6 +20,7 @@ test("publishes a continuity health contract", async () => {
     status: "ok",
     service: "clued-continuity",
     version: "0.4.0",
+    components: CLUED_COMPONENT_VERSIONS,
     canonicalStore: "supabase",
     mcp: "/mcp",
     api: "/v1/continuity",

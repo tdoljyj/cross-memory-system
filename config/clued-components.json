@@ -1,0 +1,174 @@
+{
+  "schema": "clued.components/1",
+  "about": "Every self-developed Clued component and its version. Content-bound: scripts/clued_components.py check fails when a component's files change without a version bump. The service reports these versions in /.well-known/clued-continuity and clued_session_resume; scripts/hooks/clued_version_check.py compares them with this machine. Task 6dfd7560.",
+  "components": [
+    {
+      "id": "product",
+      "kind": "product",
+      "version": "1.6",
+      "description": "Clued product version (root VERSION).",
+      "root": ".",
+      "files": [
+        "VERSION"
+      ],
+      "content_sha256": "3ea30a4ec5707eb188f3f050470c524649cf19d73a080d6e0ee7f3fe8c58eea7",
+      "version_marker": {
+        "file": "VERSION",
+        "pattern": "Clued-v{version}"
+      }
+    },
+    {
+      "id": "skill.clued",
+      "kind": "skill",
+      "version": "1.0.0",
+      "description": "The Clued Skill package (SKILL.md and references/), installed on Claude, Codex and other hosts.",
+      "root": "skills/clued",
+      "files": [
+        "**/*"
+      ],
+      "content_sha256": "a27e9f66f3e648730711b1deb462dd9d7187fa8c282298b780c780f597788ef9",
+      "version_marker": {
+        "file": "SKILL.md",
+        "pattern": "  version: \"{version}\""
+      }
+    },
+    {
+      "id": "agent-contract",
+      "kind": "contract",
+      "version": "28",
+      "description": "Clued Agent Contract, served at /clued-agent.md.",
+      "root": "skills/clued/references",
+      "files": [
+        "agent-contract.md"
+      ],
+      "content_sha256": "be0dbebef1e04b98cb69a001446aa6304a0f9e51ef307ebd935fb5b34ebe8dbc",
+      "version_marker": {
+        "file": "agent-contract.md",
+        "pattern": "Contract version: {version}"
+      }
+    },
+    {
+      "id": "mcp.server",
+      "kind": "service",
+      "version": "0.4.0",
+      "description": "Clued MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
+    },
+    {
+      "id": "hook.capture-guard",
+      "kind": "hook",
+      "version": "1.0.0",
+      "description": "Claude Code Stop hook enforcing Clued capture.",
+      "root": "scripts/hooks",
+      "files": [
+        "clued_capture_guard.py"
+      ],
+      "content_sha256": "33c198fb9d3a900b3f17b0c611263ff4fcb248a9b15016609ae95258949ebbcf",
+      "version_marker": {
+        "file": "clued_capture_guard.py",
+        "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "hook.work-claim-guard",
+      "kind": "hook",
+      "version": "1.0.0",
+      "description": "Claude Code work-claim hooks.",
+      "root": "scripts/hooks",
+      "files": [
+        "clued_work_claim_guard.py"
+      ],
+      "content_sha256": "aadb060dd361b85c42b625cbcf2b7ce5acc37026e816ffcb574fb306641b40a0",
+      "version_marker": {
+        "file": "clued_work_claim_guard.py",
+        "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "hook.version-check",
+      "kind": "hook",
+      "version": "1.0.0",
+      "description": "Claude Code hook comparing component versions with the service.",
+      "root": "scripts/hooks",
+      "files": [
+        "clued_version_check.py"
+      ],
+      "content_sha256": "9c6f6e515945b0b35f081fdb6c3c9d3f62d3b6a567f120bdeaefd1e9d7df9fdb",
+      "version_marker": {
+        "file": "clued_version_check.py",
+        "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "hook.run-python",
+      "kind": "hook",
+      "version": "1.0.0",
+      "description": "Python launcher used by every Claude Code hook.",
+      "root": "scripts/hooks",
+      "files": [
+        "run_python.sh"
+      ],
+      "content_sha256": "9d6af1f74aa5b92e5da04af0a86ae0df39c440bc28bb0ae87646e32845134c9d",
+      "version_marker": {
+        "file": "run_python.sh",
+        "pattern": "# Version: {version}"
+      }
+    },
+    {
+      "id": "hook.settings",
+      "kind": "hook",
+      "version": "1.0.0",
+      "description": "Claude Code hook registration (.claude/settings.json).",
+      "root": ".claude",
+      "files": [
+        "settings.json"
+      ],
+      "content_sha256": "e01d551fc4ccddca6bf0c9cf730f55f021ae7cfa13d5b448d485b165b1bd4a36"
+    },
+    {
+      "id": "script.components",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Component manifest tool (this manifest's checker).",
+      "root": "scripts",
+      "files": [
+        "clued_components.py"
+      ],
+      "content_sha256": "3ffaa7819a1af7d27361fe291b816826f206c400e71e35e2a7d277f9fa63bbd9",
+      "version_marker": {
+        "file": "clued_components.py",
+        "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "script.update-clued-skills",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Installer for the Clued Skill on Codex endpoints.",
+      "root": "scripts",
+      "files": [
+        "update_clued_skills.py"
+      ],
+      "content_sha256": "604c10131081a75431713561c42a01a07483ca8b265b47e329d0766271b0c824",
+      "version_marker": {
+        "file": "update_clued_skills.py",
+        "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "script.memory-sync",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Read-only memory snapshot mirror and doctor (sync-memory, memory.py).",
+      "root": ".",
+      "files": [
+        "sync-memory.py",
+        "sync-memory.ps1",
+        "memory.py",
+        "scripts/sync-memory.py",
+        "scripts/memory.py",
+        "scripts/verification_context.py"
+      ],
+      "content_sha256": "b29372a66112e714df44b564298a978d259683626afd3e8ddf37bdace286e74f"
+    }
+  ]
+}

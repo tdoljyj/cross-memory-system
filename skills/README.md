@@ -1,6 +1,6 @@
 # Clued Skill：维护与按需更新
 
-`clued/SKILL.md` 是唯一主动入口；记忆业务与工程维护流程分别维护在同一包的 `references/memory-operations.md` 和 `references/engineering.md` 中，按实际操作加载。版本以本目录的 Git 提交及逐文件 SHA256 为准。原 `clued-developer`、`clued-user`、`clued-continuity` 不再作为主动入口或安装源；它们的 Git 历史及执行计划中的旧验收副本保持原有历史含义，不改写为本次验收。
+`clued/SKILL.md` 是唯一主动入口；记忆业务与工程维护流程分别维护在同一包的 `references/memory-operations.md` 和 `references/engineering.md` 中，按实际操作加载。版本号写在 `clued/SKILL.md` 的 `metadata.version`，与 `config/clued-components.json` 中 `skill.clued` 的版本和内容摘要绑定（见下文“组件版本”）。原 `clued-developer`、`clued-user`、`clued-continuity` 不再作为主动入口或安装源；它们的 Git 历史及执行计划中的旧验收副本保持原有历史含义，不改写为本次验收。
 
 在已核对并对齐远端的授权仓库中，从仓库根目录运行：
 
@@ -18,3 +18,20 @@ python scripts/update_clued_skills.py --check
 今后修改：编辑本包 → 运行 Skill 格式及受影响行为验证 → 按现行工程授权提交与推送 → 在对应端明确更新并运行 `--check`。版本核查只按任务触发，不定时执行。安装成功只证明磁盘一致；已打开任务可能保留旧上下文，新任务是否仅发现 `clued` 仍需在客户端实测。
 
 Skill 迁移不创建账户、不修改 MCP Binding、不增加权限，也不替代真实客户端 OAuth 与读写验收。工程流程遵守根 `AGENTS.md` 的统一 `-AlignAndVerify`／`-Pull` 入口，已经内置 doctor 的同一请求不得再单独运行 doctor。正式受治理合同、历史冻结文件与发布主体不因合并 Skill 而改变。
+
+## 组件版本
+
+Skill、Agent 合同、Claude Code hooks、本地脚本和 MCP 服务的版本统一登记在 `config/clued-components.json`（规则见 `development/contracts/components/ComponentVersioning.v0.1.md`）。每个组件的文件内容有摘要；内容变了版本必须升，CI 的 `clued-components` 检查会拒绝没升版本的改动。
+
+改动一个组件：
+
+```sh
+python3 scripts/clued_components.py bump skill.clued 1.1.0   # 升版本并改写 SKILL.md 里的版本号
+python3 scripts/clued_components.py update                   # 重新记录内容摘要
+node apps/clued-cloud/scripts/generate-agent-contract.mjs    # 让服务端报告的新版本号跟上
+python3 scripts/clued_components.py check --base origin/main
+```
+
+查看本机各组件版本：`python3 scripts/clued_components.py versions`。
+
+过期检测：Claude Code 开会话时，`scripts/hooks/clued_version_check.py` 读取服务的 `/.well-known/clued-continuity` 中的组件版本，与本 checkout 和本机安装的 Clued Skill 副本（`~/.claude/skills`、claude.ai 同步副本、`$CODEX_HOME/skills`）比对，旧版本、无版本号或文件不全都会提示；`clued_session_resume` 返回后再比对一次合同版本与组件版本。只在会话开始和 resume 时检查，不定时运行；`CLUED_VERSION_CHECK=off` 关闭，`=offline` 不读服务。
