@@ -7,7 +7,9 @@
 //
 // A job may start when its run comes from:
 //   - main: push, schedule, workflow_run, pull_request_target, or a hand
-//     dispatch on main. Those workflow files are main's own.
+//     dispatch on main. Those workflow files are main's own. A
+//     pull_request_target run counts only for a pull request into main
+//     (re-review 7, m1).
 //   - a pull request into main that changes no file under .github/workflows/.
 //     Its workflows are main's, so each keeps its admission-gate job, which
 //     waits for the Clued admission of the pull request.
@@ -144,6 +146,17 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
   if (!workflow) throw new Error(`GITHUB_WORKFLOW_REF is not a workflow path: ${env.GITHUB_WORKFLOW_REF}`);
   const event = result.event;
   if (MAIN_EVENTS.has(event) && result.ref === mainRef) {
+    // Re-review 7, m1: pull_request_target runs on the default branch's ref
+    // whatever the pull request's base, and a workflow may check out that
+    // base, which an Agent controls when it is another branch.
+    if (event === "pull_request_target") {
+      const payload = JSON.parse(String(readFile(env.GITHUB_EVENT_PATH, "utf8")));
+      const base = payload && payload.pull_request && payload.pull_request.base;
+      if (!base || base.ref !== defaultBranch) {
+        result.reason = `pull_request_target for a pull request into ${base ? base.ref : "(unknown)"}, not ${defaultBranch}`;
+        return result;
+      }
+    }
     result.allow = true;
     result.reason = `${event} on ${defaultBranch}`;
     return result;

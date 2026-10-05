@@ -4,11 +4,14 @@ name: clued-work-admission-reverify
 # clued-work-admission check is a verdict at one moment; its claim can expire
 # (2 h lease), be released or be taken over later, and the ruleset does not
 # re-evaluate a green check. Every hour this re-checks each open, non-draft PR
-# whose latest admission run passed, and re-runs that run when the claim no
-# longer admits the PR, which turns the required check red. Runs only when
+# into the default branch whose newest clued-admission-verified App check
+# passed, and when the claim no longer admits the PR posts a failing App check
+# on its head, which blocks the merge (re-review 7, MAJOR-1). Without the App
+# key it fails rather than pass quietly (re-review 8). Runs only when
 # CLUED_WORK_ADMISSION_ENFORCE=true; otherwise it reports and does nothing.
 # Code comes from the default branch; no PR code is checked out. The Clued
-# token comes from the `clued-admission` environment, as for the check itself.
+# token and the App key come from the `clued-admission` environment, as for
+# the check itself.
 
 on:
   schedule:
@@ -16,7 +19,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
+  actions: read
+  checks: read
   contents: read
   pull-requests: read
 
@@ -40,6 +44,10 @@ jobs:
       - name: Re-verify open pull requests with a passing admission check
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
+          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
+          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
           CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
+          # Re-review 7, MAJOR-3: protected changes need an Owner Grant on the head.
+          CLUED_OWNER_REVIEW_ENFORCE: ${{ vars.CLUED_OWNER_REVIEW_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode reverify
