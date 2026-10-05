@@ -113,6 +113,9 @@ jobs:
         env:
           CLUED_PRODUCTION_BACKUP_KEY: ${{ secrets.CLUED_PRODUCTION_BACKUP_KEY }}
         run: test -n "$CLUED_PRODUCTION_BACKUP_KEY"
+      # The connection URLs are written for node-postgres, whose sslmode=no-verify
+      # (encrypt, do not verify the certificate) libpq rejects; libpq's require
+      # means the same, so the libpq tools below get require instead.
       - name: Create and verify encrypted pre-migration backup
         if: ${{ inputs.mode == 'backup' }}
         env:
@@ -125,7 +128,7 @@ jobs:
           encrypted_path="$dump_path.enc"
           verified_path="$dump_path.verified"
           mkdir -p "$evidence_dir"
-          database_url=$(node -e 'const url = new URL(process.env.CLUED_ATTESTATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); process.stdout.write(url.toString())')
+          database_url=$(node -e 'const url = new URL(process.env.CLUED_ATTESTATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             -e DATABASE_URL="$database_url" \
@@ -158,7 +161,7 @@ jobs:
           test -n "$CLUED_MIGRATION_DATABASE_URL"
           # A malformed URL (for example an unencoded @ or # in the password)
           # is reported without echoing the value.
-          database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL; URL-encode special characters in the password"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); process.stdout.write(url.toString())')
+          database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL; URL-encode special characters in the password"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
           connected=$(docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine \
             psql "$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select 1') \
             || { echo "::error::Cannot connect with CLUED_MIGRATION_DATABASE_URL; no grant was used"; exit 1; }
@@ -191,7 +194,7 @@ jobs:
           set -euo pipefail
           evidence_dir=.sites-runtime/release-evidence
           mkdir -p "$evidence_dir"
-          database_url=$(node -e 'const url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); process.stdout.write(url.toString())')
+          database_url=$(node -e 'const url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
           psql() { docker run --rm -i --user "$(id -u):$(id -g)" -e DATABASE_URL="$database_url" \
             -v "$PWD:/work:ro" -w /work postgres:17-alpine psql "$database_url" -v ON_ERROR_STOP=1 -X "$@"; }
           applied='[]'

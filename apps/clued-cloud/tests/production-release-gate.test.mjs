@@ -229,6 +229,22 @@ test('lag that outlasts the run budget, or no newer run, still blocks the releas
   assert.equal(reads, 0);
 });
 
+test('libpq tools get sslmode=require where the node-postgres URL says no-verify', () => {
+  const scripts = [...productionWorkflow.matchAll(/node -e '((?:const|let) url[^']*)'/g)].map((m) => m[1]);
+  assert.equal(scripts.length, 3);
+  for (const script of scripts) {
+    const run = (value) => spawnSync(process.execPath, ['-e', script], {
+      env: { ...process.env, CLUED_ATTESTATION_DATABASE_URL: value, CLUED_MIGRATION_DATABASE_URL: value },
+      encoding: 'utf8',
+    });
+    const mapped = run('postgresql://u:p@db.example:5432/postgres?sslmode=no-verify&uselibpqcompat=true');
+    assert.equal(mapped.status, 0, mapped.stderr);
+    assert.equal(mapped.stdout, 'postgresql://u:p@db.example:5432/postgres?sslmode=require');
+    const kept = run('postgresql://u:p@db.example:5432/postgres?sslmode=verify-full');
+    assert.equal(kept.stdout, 'postgresql://u:p@db.example:5432/postgres?sslmode=verify-full');
+  }
+});
+
 test('production backup mode encrypts and verifies the dump before removing plaintext', () => {
   assert.match(productionWorkflow, /if: \$\{\{ inputs\.mode == 'backup' \}\}/);
   assert.match(productionWorkflow, /CLUED_PRODUCTION_BACKUP_KEY/);
