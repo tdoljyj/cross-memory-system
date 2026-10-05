@@ -60,6 +60,17 @@ function remaining(expiresAt: unknown, now: number) {
   return minutes < 60 ? "还剩 " + minutes + " 分钟" : "还剩 " + Math.floor(minutes / 60) + " 小时 " + (minutes % 60) + " 分钟";
 }
 const text = (value: unknown) => typeof value === "string" ? value : "";
+const list = (value: unknown) => Array.isArray(value) ? value.map(String) : [];
+// Times read in the Owner's zone, Beijing time (Decision 4bcc424d v2).
+const BEIJING = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit",
+  day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+function beijing(value: unknown) {
+  const ms = Date.parse(text(value));
+  return Number.isFinite(ms) ? BEIJING.format(new Date(ms)) + "（北京时间）" : "";
+}
+const STATES: Record<string, string> = { ACTIVE: "有效", DRAINING: "收尾中", RELEASED: "已释放", EXPIRED: "已过期", SUPERSEDED: "被接管" };
+const OUTCOMES: Record<string, string> = { completed: "完成", abandoned: "放弃" };
+const ENDED_HOURS = 24;
 const shortId = (value: unknown) => typeof value === "string" && /^[0-9a-f]{8}-/i.test(value) ? value.slice(0, 8).toLowerCase() : "";
 // "owner/repo#123" → its GitHub page; anything else is shown as text.
 function pullUrl(ref: unknown) {
@@ -88,6 +99,8 @@ export default function WorkClaimsPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [claims, setClaims] = useState<Json[] | null>(null);
+  const [ended, setEnded] = useState<Json[]>([]);
+  const [showEnded, setShowEnded] = useState(false);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [handed, setHanded] = useState<Handed | null>(null);
   const [working, setWorking] = useState(false);
@@ -105,7 +118,7 @@ export default function WorkClaimsPage() {
       current.current = next; setSession(next); setReady(true);
       if (!changed) return;
       ++epoch.current;
-      setClaims(null); setIssued(null); setHanded(null); setError(""); setNotice(""); setWorking(false);
+      setClaims(null); setEnded([]); setShowEnded(false); setIssued(null); setHanded(null); setError(""); setNotice(""); setWorking(false);
     });
     return () => { disposed = true; ++lifetime.current; data.subscription.unsubscribe(); };
   }, []);
@@ -115,13 +128,14 @@ export default function WorkClaimsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user.id]);
 
-  async function load() {
+  async function load(withEnded = showEnded) {
     const generation = epoch.current;
     setWorking(true); setError("");
     try {
-      const value = await rpc("clued_work_claims_owner_list_v1", {});
+      const value = await rpc("clued_work_claims_owner_list_v1", withEnded ? { ended_within_hours: ENDED_HOURS } : {});
       if (epoch.current !== generation) return;
       setClaims(Array.isArray(value.claims) ? value.claims.filter(object) : []);
+      setEnded(withEnded && Array.isArray(value.ended) ? value.ended.filter(object) : []);
     } catch (failure) {
       if (epoch.current === generation) setError(failure instanceof RequestFailure ? failure.message : "暂时无法读取认领。");
     } finally { if (epoch.current === generation) setWorking(false); }
@@ -200,29 +214,55 @@ export default function WorkClaimsPage() {
       </section>}
       <section aria-label="进行中的认领"><h2>进行中的认领</h2>
         {claims === null ? <p role="status">正在读取…</p> : claims.length === 0 ? <p className="context-muted">目前没有进行中的认领。</p>
-          : claims.map(claim => {
-            const pull = pullUrl(claim.bound_pr);
-            const link = sessionUrl(claim.holder_session_url);
-            return <div key={text(claim.claim_id)} className="owner-grant">
-              <dl>
-                <dt>任务</dt><dd>{text(claim.task_title) || "（无标题）"} <code>{shortId(claim.task_id)}</code></dd>
-                <dt>谁在做</dt><dd>{text(claim.holder_label) ? <>{text(claim.holder_label)} <span className="context-muted">（Agent 自报）</span></> : <span className="context-muted">（Agent 没有填标签）</span>}</dd>
-                <dt>连接</dt><dd>{text(claim.holder_name)}{text(claim.holder_vendor) && "（" + text(claim.holder_vendor) + "）"}{claim.holder_connection_live === false && " · 已断开"}</dd>
-                <dt>会话</dt><dd>{link ? <a href={link} target="_blank" rel="noreferrer">打开会话</a>
-                  : text(claim.holder_session_ref) ? <code>{text(claim.holder_session_ref)}</code> : <span className="context-muted">未报</span>}</dd>
-                <dt>到期</dt><dd>{remaining(claim.expires_at, now)}{claim.status === "DRAINING" && " · 收尾中"}</dd>
-                <dt>关联 PR</dt><dd>{pull ? <a href={pull} target="_blank" rel="noreferrer">{text(claim.bound_pr)}</a> : <span className="context-muted">无</span>}</dd>
-                <dt>编号</dt><dd><code>认领 {shortId(claim.claim_id)}</code> · fence {String(claim.fence)}{claim.lease_key_required === true && " · 已交接过，续租必须带钥匙"}</dd>
-              </dl>
-              {claim.handover_available === true && <div className="owner-actions">
-                <button type="button" disabled={working} onClick={() => void preview(text(claim.claim_id))}>交给新会话</button></div>}
-              <hr />
-            </div>;
-          })}
+          : claims.map(claim => claimRow(claim, now,
+            claim.handover_available === true ? () => void preview(text(claim.claim_id)) : null, working))}
       </section>
+      <label><input type="checkbox" checked={showEnded} disabled={working}
+        onChange={event => { setShowEnded(event.target.checked); void load(event.target.checked); }} /> 显示最近 {ENDED_HOURS} 小时结束的认领</label>
+      {showEnded && <section aria-label="最近结束的认领"><h2>最近 {ENDED_HOURS} 小时结束的认领</h2>
+        {ended.length === 0 ? <p className="context-muted">没有。</p>
+          : ended.map(claim => claimRow(claim, now, null, working))}
+      </section>}
       <button type="button" disabled={working} onClick={() => void load()}>刷新</button>
     </>}
     {notice && <p role="status">{notice}</p>}
     {error && <p role="alert">{error}</p>}
   </main>;
+}
+
+// One claim, one block: who (client, connection, session), on what (Task and
+// scope), since when and until when, how far, and what it may change. Every
+// field the Agent reported about itself is marked as self-reported.
+function claimRow(claim: Json, now: number, onHandover: (() => void) | null, working: boolean) {
+  const pull = pullUrl(claim.bound_pr);
+  const link = sessionUrl(claim.holder_session_url);
+  const ref = text(claim.holder_session_ref);
+  const codex = /codex/i.test(text(claim.holder_client) + " " + text(claim.holder_vendor)) && ref && !link;
+  const state = text(claim.state) || text(claim.status);
+  const live = state === "ACTIVE" || state === "DRAINING";
+  const renewals = Number.isInteger(claim.renewals) ? String(claim.renewals) : "?";
+  const maxRenewals = Number.isInteger(claim.max_renewals) ? String(claim.max_renewals) : "?";
+  return <div key={text(claim.claim_id)} className="owner-grant">
+    <dl>
+      <dt>Agent</dt><dd>{text(claim.holder_client) ? <>{text(claim.holder_client)} <span className="context-muted">（Agent 自报）</span></> : <span className="context-muted">客户端未报</span>}
+        {" · 连接 "}{text(claim.holder_name)}{text(claim.holder_vendor) && "（" + text(claim.holder_vendor) + "）"}{claim.holder_connection_live === false && " · 连接已断开"}</dd>
+      <dt>会话</dt><dd>{text(claim.holder_session_title) ? <>{text(claim.holder_session_title)} <span className="context-muted">（Agent 自报）</span></> : <span className="context-muted">标题未报</span>}
+        {" · "}{link ? <a href={link} target="_blank" rel="noreferrer">打开会话 {ref}</a> : ref ? <code>{ref}</code> : <span className="context-muted">会话 ID 未报</span>}
+        {codex && <>{" · "}<code>codex resume {ref}</code></>}</dd>
+      <dt>在做什么</dt><dd>{text(claim.holder_label) ? <>{text(claim.holder_label)} <span className="context-muted">（Agent 自报）</span></> : <span className="context-muted">（Agent 没有填标签）</span>}</dd>
+      <dt>任务</dt><dd>{text(claim.task_title) || "（无标题）"} <code>{text(claim.task_id)}</code> · {text(claim.context_key)}</dd>
+      <dt>认领</dt><dd><code>{text(claim.claim_id)}</code> · fence {String(claim.fence)}{claim.lease_key_required === true && " · 已交接过，续租必须带钥匙"}</dd>
+      <dt>状态</dt><dd>{STATES[state] ?? state}{state === "RELEASED" && text(claim.released_outcome) && "（" + (OUTCOMES[text(claim.released_outcome)] ?? text(claim.released_outcome)) + "）"}
+        {!live && text(claim.ended_at) && " · 结束于 " + beijing(claim.ended_at)}</dd>
+      <dt>领取</dt><dd>{beijing(claim.issued_at)}</dd>
+      <dt>到期</dt><dd>{beijing(claim.expires_at)}{live && " · " + remaining(claim.expires_at, now)}</dd>
+      <dt>最晚到期</dt><dd>{beijing(claim.hard_deadline_at)}</dd>
+      <dt>续期</dt><dd>{renewals} / {maxRenewals} 次{text(claim.progress_ref) && <> · 最近进展 <code>{text(claim.progress_ref)}</code></>}</dd>
+      <dt>关联 PR</dt><dd>{pull ? <a href={pull} target="_blank" rel="noreferrer">{text(claim.bound_pr)}</a> : text(claim.bound_pr) ? <code>{text(claim.bound_pr)}</code> : <span className="context-muted">无</span>}</dd>
+      <dt>触发来源</dt><dd>{list(claim.trigger_refs).length ? list(claim.trigger_refs).map(item => <code key={item}>{item} </code>) : <span className="context-muted">无</span>}</dd>
+      <dt>改动范围</dt><dd><ul>{list(claim.write_set).map(item => <li key={item}><code>{item}</code></li>)}</ul></dd>
+    </dl>
+    {onHandover && <div className="owner-actions"><button type="button" disabled={working} onClick={onHandover}>交给新会话</button></div>}
+    <hr />
+  </div>;
 }

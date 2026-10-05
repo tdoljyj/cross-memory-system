@@ -40,7 +40,7 @@ function fixture(compiled) {
     if (name.endsWith('.css')) return {};
     if (name === 'next/link') return { __esModule: true, default: 'a' };
     throw Error(name);
-  }, Error, Date, Number, String, Array, JSON,
+  }, Error, Date, Number, String, Array, JSON, Intl,
   navigator: { clipboard: { writeText: async value => { copied.push(value); } } } });
   function render() { cursor = 0; root = exports.default({}); while (effects.length) effects.shift()(); return root; }
   function nodes(type) { const out = []; (function visit(n) { if (Array.isArray(n)) return n.forEach(visit);
@@ -58,13 +58,17 @@ function fixture(compiled) {
 const session = id => ({ user: { id, email: id + '@example.test' }, access_token: 'fixture-' + id });
 const plain = value => JSON.parse(JSON.stringify(value));
 const row = (extra = {}) => ({ claim_id: CLAIM, task_id: TASK, task_title: 'C-3 refreeze', context_key: 'project:0597aa60-9b98-4da6-a4ab-63d7705b632f',
-  status: 'ACTIVE', fence: 7, lease_version: 2, expires_at: new Date(Date.now() + 90 * 60000).toISOString(),
+  status: 'ACTIVE', state: 'ACTIVE', ended_at: null, fence: 7, lease_version: 2, expires_at: new Date(Date.now() + 90 * 60000).toISOString(),
+  issued_at: '2026-10-05T19:15:10Z', hard_deadline_at: '2026-10-06T19:15:10Z', renewals: 1, max_renewals: 12,
+  progress_ref: 'deploy:37361482034', trigger_refs: ['record:a109eb63-8683-4312-93b9-57bf795573ba'],
+  write_set: ['apps/clued-cloud/evals/public-mcp/**'], holder_client: 'Claude Code', holder_session_title: 'S2c C-3',
   bound_pr: 'tdoljyj/cross-memory-system#571', holder_label: 'C-3 · Claude Code · 笔记本',
   holder_session_ref: 'session_01CmqMMByJcMoDqW3PyWd9Ta', holder_session_url: 'https://claude.ai/code/session_01CmqMMByJcMoDqW3PyWd9Ta',
   holder_name: 'Claude connector', holder_vendor: 'anthropic', holder_connection_live: true,
   lease_key_required: false, handover_available: true, ...extra });
-const codexRow = row({ claim_id: OTHER, task_title: 'Runner hardening', holder_label: null, holder_session_ref: 'codex-thread-7',
-  holder_session_url: null, holder_name: 'Codex', holder_vendor: 'openai', bound_pr: null, handover_available: false });
+const codexRow = row({ claim_id: OTHER, task_title: 'Runner hardening', holder_label: null, holder_session_ref: '0199a1b2-c3d4',
+  holder_session_url: null, holder_name: 'Codex desktop', holder_vendor: 'openai', holder_client: 'Codex', holder_session_title: null,
+  bound_pr: null, handover_available: false });
 async function listed(f, claims = [row(), codexRow]) {
   f.emit('INITIAL_SESSION', session('owner'));
   assert.deepEqual(plain([f.calls[0].name, f.calls[0].args]), ['clued_work_claims_owner_list_v1', { p_input: {} }]);
@@ -80,8 +84,11 @@ test('work claims page: each live claim shows who holds it, its label as self-re
   const f = fixture(PAGE); t.after(() => f.unmount());
   await listed(f);
   const page = f.text();
-  for (const expected of ['C-3 refreeze', 'C-3 · Claude Code · 笔记本', '（Agent 自报）', 'Claude connector（anthropic）',
-    'Runner hardening', '（Agent 没有填标签）', 'Codex（openai）', 'codex-thread-7', '认领 22222222', 'fence 7']) {
+  for (const expected of ['C-3 refreeze', TASK, 'project:0597aa60-9b98-4da6-a4ab-63d7705b632f', 'C-3 · Claude Code · 笔记本 （Agent 自报）',
+    'Claude Code （Agent 自报） · 连接 Claude connector（anthropic）', 'S2c C-3 （Agent 自报）', '打开会话 session_01CmqMMByJcMoDqW3PyWd9Ta',
+    'Runner hardening', '（Agent 没有填标签）', '连接 Codex desktop（openai）', '标题未报', 'codex resume 0199a1b2-c3d4',
+    CLAIM, 'fence 7', '有效', '2026/10/06 03:15（北京时间）', '2026/10/07 03:15（北京时间）', '1 / 12 次', 'deploy:37361482034',
+    'record:a109eb63-8683-4312-93b9-57bf795573ba', 'apps/clued-cloud/evals/public-mcp/**']) {
     assert.ok(page.includes(expected), expected);
   }
   const hrefs = f.nodes('a').map(n => n.props.href);
@@ -90,6 +97,25 @@ test('work claims page: each live claim shows who holds it, its label as self-re
   // Only the claim that has a key can be handed over.
   assert.equal(f.buttons('交给新会话').length, 1);
   assert.ok(!page.includes(KEY));
+});
+
+test('work claims page: recently ended claims on request, with when and how they ended', async t => {
+  const f = fixture(PAGE); t.after(() => f.unmount());
+  await listed(f, [row()]);
+  const toggle = f.nodes('input').find(n => n.props.type === 'checkbox');
+  toggle.props.onChange({ target: { checked: true } }); f.render();
+  assert.deepEqual(plain(f.calls[1].args), { p_input: { ended_within_hours: 24 } });
+  f.calls[1].resolve({ data: { status: 'ok', claims: [row()], ended: [
+    row({ claim_id: OTHER, task_title: 'Done task', state: 'RELEASED', status: 'RELEASED', released_outcome: 'completed',
+      ended_at: '2026-10-05T18:59:00Z', handover_available: false }),
+    row({ claim_id: '44444444-4444-4444-8444-444444444444', task_title: 'Lapsed task', state: 'EXPIRED', status: 'ACTIVE',
+      ended_at: '2026-10-05T19:03:56Z', handover_available: false })] }, error: null });
+  await f.settle();
+  const page = f.text();
+  for (const expected of ['最近 24 小时结束的认领', 'Done task', '已释放（完成） · 结束于 2026/10/06 02:59（北京时间）',
+    'Lapsed task', '已过期 · 结束于 2026/10/06 03:03（北京时间）']) assert.ok(page.includes(expected), expected);
+  // Ended claims cannot be handed over.
+  assert.equal(f.buttons('交给新会话').length, 1);
 });
 
 test('work claims page: only a claude.ai session link from the server is linked', async t => {

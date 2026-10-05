@@ -1,14 +1,20 @@
 -- Work Claims: who holds what, and the Owner's "hand over to a new session"
 -- (Task f165eb56, PR 2; Owner Decisions 22b9bd9e and 4bcc424d; design Note 3ad61f76).
 --
--- 1. holder_label: one line the Agent writes for people (what it is doing, which
---    client, which machine). clued_work_claim, clued_work_takeover and
---    clued_work_renew accept it; it is self-reported and never checked. It is
---    part of work_claim_view, so every Binding of the account sees it.
--- 2. clued_work_claims_owner_list_v1: the signed-in Owner's live claims with
---    the Task title, the holder's connection name, label and session (a link
---    for a Claude Code session_… ref), expiry and bound pull request. Native
---    only (authorization_owner_v12), volatile like the other Owner reads.
+-- 1. What the Agent says about itself (Decision 4bcc424d v2), all self-reported
+--    and never checked: holder_client (Claude Code, Codex, ChatGPT…),
+--    holder_session_title, and holder_label, one line for people (what it is
+--    doing, which machine). clued_work_claim, clued_work_takeover and
+--    clued_work_renew accept them; they are part of work_claim_view, so every
+--    Binding of the account sees them. holder_session_ref stays the client's
+--    own session id.
+-- 2. clued_work_claims_owner_list_v1: the signed-in Owner's live claims, and
+--    on request those that ended in the last hours, with the Task title and
+--    scope, the holder's connection name and self-report, session (a link for
+--    a Claude Code session_… ref), claim time, expiry, hard deadline,
+--    renewals of the profile maximum, last progress, bound pull request,
+--    trigger refs, write set and state. Native only (authorization_owner_v12),
+--    volatile like the other Owner reads; it never writes.
 -- 3. Handover, two Native steps like the race page:
 --    clued_work_claim_handover_confirmation_issue_v1 renders the claim, then
 --    clued_work_claim_handover_v1 consumes the single-use confirmation and
@@ -28,19 +34,22 @@
 
 alter table clued_private.work_claims_v1
   add column holder_label text check (holder_label is null or char_length(holder_label) between 1 and 200),
+  add column holder_client text check (holder_client is null or char_length(holder_client) between 1 and 80),
+  add column holder_session_title text check (holder_session_title is null or char_length(holder_session_title) between 1 and 200),
   add column lease_key_required boolean not null default false;
 
--- The label from an input, or null when absent. Invalid labels are refused.
-create function clued_private.work_claim_holder_label_v1(p_input jsonb) returns text
+-- One self-reported text field from an input, or null when absent; an invalid
+-- value is refused with work_claim_<field>_invalid.
+create function clued_private.work_claim_self_report_v1(p_input jsonb,p_field text,p_max integer) returns text
 language plpgsql immutable set search_path='' as $$
 declare v text;
 begin
-  if not (p_input ? 'holder_label') or p_input->'holder_label'='null'::jsonb then return null; end if;
-  if jsonb_typeof(p_input->'holder_label')<>'string' then
-    raise exception 'work_claim_holder_label_invalid' using errcode='22023'; end if;
-  v:=nullif(btrim(p_input->>'holder_label'),'');
-  if v is null or char_length(v)>200 or v ~ '[[:cntrl:]]' then
-    raise exception 'work_claim_holder_label_invalid' using errcode='22023'; end if;
+  if not (p_input ? p_field) or p_input->p_field='null'::jsonb then return null; end if;
+  if jsonb_typeof(p_input->p_field)<>'string' then
+    raise exception '%', 'work_claim_'||p_field||'_invalid' using errcode='22023'; end if;
+  v:=nullif(btrim(p_input->>p_field),'');
+  if v is null or char_length(v)>p_max or v ~ '[[:cntrl:]]' then
+    raise exception '%', 'work_claim_'||p_field||'_invalid' using errcode='22023'; end if;
   return v;
 end $$;
 
@@ -49,7 +58,7 @@ create or replace function clued_private.work_claim_view(c clued_private.work_cl
 language sql immutable set search_path='' as $$
   select jsonb_build_object('claim_id',c.claim_id,'task_id',c.task_id,'context_key',c.context_key,
     'holder_binding_id',c.holder_binding_id,'holder_session_ref',c.holder_session_ref,
-    'holder_label',c.holder_label,
+    'holder_label',c.holder_label,'holder_client',c.holder_client,'holder_session_title',c.holder_session_title,
     'base_commit',c.base_commit,'write_set',to_jsonb(c.write_set),'trigger_refs',to_jsonb(c.trigger_refs),
     'fence',c.fence,'lease_version',c.lease_version,'issued_at',c.issued_at,
     'expires_at',c.expires_at,'hard_deadline_at',c.hard_deadline_at,'renewals',c.renewals,
@@ -78,36 +87,58 @@ language sql stable set search_path='' as $$
   from k
 $$;
 
--- What the Owner sees of one live claim.
+-- What the Owner sees of one claim. state is the effective one: a live claim
+-- past its expiry reads EXPIRED even before a write persists it.
 create function clued_private.work_claim_owner_row_v1(c clued_private.work_claims_v1) returns jsonb
 language sql stable security definer set search_path='' as $$
   select jsonb_build_object('claim_id',c.claim_id,'task_id',c.task_id,
     'task_title',(select m.title from public.clued_memories m where m.id=c.task_id and m.user_id=c.user_id),
-    'context_key',c.context_key,'status',c.status,'fence',c.fence,'lease_version',c.lease_version,
+    'context_key',c.context_key,'status',c.status,'state',x.state,'ended_at',x.ended_at,
+    'released_outcome',c.released_outcome,'superseded_by',c.superseded_by,'outcome',c.outcome,
+    'fence',c.fence,'lease_version',c.lease_version,
     'issued_at',c.issued_at,'expires_at',c.expires_at,'hard_deadline_at',c.hard_deadline_at,
-    'renewals',c.renewals,'progress_ref',c.progress_ref,'bound_pr',c.bound_pr,'copy_index',c.copy_index,
-    'write_set',to_jsonb(c.write_set),'holder_label',c.holder_label,'holder_session_ref',c.holder_session_ref,
+    'renewals',c.renewals,'max_renewals',(clued_private.work_claim_profile_v1()->>'max_renewals')::integer,
+    'progress_ref',c.progress_ref,'bound_pr',c.bound_pr,'copy_index',c.copy_index,
+    'trigger_refs',to_jsonb(c.trigger_refs),'write_set',to_jsonb(c.write_set),
+    'holder_label',c.holder_label,'holder_client',c.holder_client,'holder_session_title',c.holder_session_title,
+    'holder_session_ref',c.holder_session_ref,
     'holder_session_url',case when c.holder_session_ref ~ '^session_[A-Za-z0-9]{8,64}$'
       then 'https://claude.ai/code/'||c.holder_session_ref end,
     'holder_binding_id',c.holder_binding_id,
     'holder_name',b.agent_name,'holder_vendor',b.vendor,
     'holder_connection_live',coalesce(clued_private.binding_live_v1(b),false),
     'lease_key_required',c.lease_key_required,
-    'handover_available',c.status='ACTIVE' and c.lease_key_hash is not null)
-  from (select 1) one left join public.clued_agent_bindings b on b.id=c.holder_binding_id
+    'handover_available',x.state='ACTIVE' and c.lease_key_hash is not null)
+  from (select case when c.status in ('ACTIVE','DRAINING') and c.expires_at<=pg_catalog.clock_timestamp() then 'EXPIRED'
+      else c.status end state,
+    case when c.status in ('ACTIVE','DRAINING') and c.expires_at>pg_catalog.clock_timestamp() then null
+      when c.status in ('ACTIVE','DRAINING','EXPIRED') then c.expires_at else c.updated_at end ended_at) x
+  left join public.clued_agent_bindings b on b.id=c.holder_binding_id
 $$;
 
 create function public.clued_work_claims_owner_list_v1(p_input jsonb)
 returns jsonb language plpgsql volatile security definer set search_path='' as $$
 declare v_owner uuid:=clued_private.authorization_owner_v12(); v_now timestamptz:=pg_catalog.clock_timestamp();
+  v_input jsonb:=coalesce(p_input,'{}'::jsonb); v_hours integer;
 begin
-  if jsonb_typeof(coalesce(p_input,'{}'::jsonb)) is distinct from 'object'
-      or exists(select 1 from jsonb_object_keys(coalesce(p_input,'{}'::jsonb))) then
+  if jsonb_typeof(v_input) is distinct from 'object'
+      or exists(select 1 from jsonb_object_keys(v_input) k where k<>'ended_within_hours')
+      or (v_input ? 'ended_within_hours' and (jsonb_typeof(v_input->'ended_within_hours') is distinct from 'number'
+        or (v_input->>'ended_within_hours') !~ '^[0-9]{1,3}$'
+        or (v_input->>'ended_within_hours')::integer not between 1 and 168)) then
     return jsonb_build_object('status','rejected','error_code','work_claim_owner_list_input_invalid'); end if;
+  v_hours:=(v_input->>'ended_within_hours')::integer;
   return jsonb_build_object('status','ok','observed_at',v_now,
     'claims',coalesce((select jsonb_agg(clued_private.work_claim_owner_row_v1(w) order by w.expires_at,w.claim_id)
       from clued_private.work_claims_v1 w
-      where w.user_id=v_owner and w.status in ('ACTIVE','DRAINING') and w.expires_at>v_now),'[]'::jsonb));
+      where w.user_id=v_owner and w.status in ('ACTIVE','DRAINING') and w.expires_at>v_now),'[]'::jsonb),
+    'ended',case when v_hours is null then '[]'::jsonb else coalesce((select jsonb_agg(r order by r->>'ended_at' desc)
+      from (select clued_private.work_claim_owner_row_v1(w) r from clued_private.work_claims_v1 w
+        where w.user_id=v_owner and not (w.status in ('ACTIVE','DRAINING') and w.expires_at>v_now)
+          and (case when w.status in ('ACTIVE','DRAINING','EXPIRED') then w.expires_at else w.updated_at end)
+            >v_now-make_interval(hours=>v_hours)
+        order by case when w.status in ('ACTIVE','DRAINING','EXPIRED') then w.expires_at else w.updated_at end desc
+        limit 100) e),'[]'::jsonb) end);
 end $$;
 
 -- The confirmation view of a handover: what the Owner checks, without the
@@ -253,7 +284,9 @@ language plpgsql volatile security definer set search_path='' as $$
 declare v_binding public.clued_agent_bindings%rowtype; v_task public.clued_memories%rowtype;
   v_existing clued_private.work_claims_v1%rowtype; v_none clued_private.work_claims_v1%rowtype;
   v_scope text:=coalesce(p_input->>'scope','global'); v_hash text; v_result jsonb;
-  v_label text:=clued_private.work_claim_holder_label_v1(p_input);
+  v_label text:=clued_private.work_claim_self_report_v1(p_input,'holder_label',200);
+  v_client text:=clued_private.work_claim_self_report_v1(p_input,'holder_client',80);
+  v_title text:=clued_private.work_claim_self_report_v1(p_input,'holder_session_title',200);
 begin
   v_binding:=clued_private.resolve_binding(p_token_hash,'context:write',v_scope);
   perform clued_private.work_claim_idempotency(p_input->>'idempotency_key');
@@ -275,7 +308,8 @@ begin
   v_task:=clued_private.work_claim_task(v_binding.user_id,v_scope,p_input->>'task_id');
   v_result:=clued_private.work_claim_issue(v_binding,p_input,v_task,v_none,'work_claim');
   if v_result->>'status'='committed' then
-    update clued_private.work_claims_v1 set request_hash=v_hash,issued_binding_id=v_binding.id,holder_label=v_label
+    update clued_private.work_claims_v1 set request_hash=v_hash,issued_binding_id=v_binding.id,holder_label=v_label,
+        holder_client=v_client,holder_session_title=v_title
       where claim_id=(v_result#>>'{claim,claim_id}')::uuid returning * into v_existing;
     v_result:=v_result||jsonb_build_object('claim',clued_private.work_claim_view(v_existing));
   end if;
@@ -287,7 +321,9 @@ language plpgsql volatile security definer set search_path='' as $$
 declare v_binding public.clued_agent_bindings%rowtype; v_old clued_private.work_claims_v1%rowtype;
   v_existing clued_private.work_claims_v1%rowtype; v_task public.clued_memories%rowtype;
   v_scope text:=coalesce(p_input->>'scope','global'); v_hash text; v_result jsonb;
-  v_label text:=clued_private.work_claim_holder_label_v1(p_input);
+  v_label text:=clued_private.work_claim_self_report_v1(p_input,'holder_label',200);
+  v_client text:=clued_private.work_claim_self_report_v1(p_input,'holder_client',80);
+  v_title text:=clued_private.work_claim_self_report_v1(p_input,'holder_session_title',200);
 begin
   v_binding:=clued_private.resolve_binding(p_token_hash,'context:write',v_scope);
   perform clued_private.work_claim_idempotency(p_input->>'idempotency_key');
@@ -324,7 +360,8 @@ begin
   v_task:=clued_private.work_claim_task(v_binding.user_id,v_scope,v_old.task_id::text);
   v_result:=clued_private.work_claim_issue(v_binding,p_input,v_task,v_old,'work_claim_takeover');
   if v_result->>'status'='committed' then
-    update clued_private.work_claims_v1 set request_hash=v_hash,issued_binding_id=v_binding.id,holder_label=v_label
+    update clued_private.work_claims_v1 set request_hash=v_hash,issued_binding_id=v_binding.id,holder_label=v_label,
+        holder_client=v_client,holder_session_title=v_title
       where claim_id=(v_result#>>'{claim,claim_id}')::uuid returning * into v_existing;
     v_result:=v_result||jsonb_build_object('claim',clued_private.work_claim_view(v_existing));
     -- The replaced claim's key is spent.
@@ -340,7 +377,9 @@ declare v_binding public.clued_agent_bindings%rowtype; c clued_private.work_clai
   v_scope text:=coalesce(p_input->>'scope','global'); v_progress text; v_claim_id uuid;
   v_write_set text[]; v_triggers text[]; v_conflicts jsonb; v_receipt uuid; v_expires timestamptz;
   v_access text; v_from uuid; v_session text; v_active integer; v_active_session integer;
-  v_label text:=clued_private.work_claim_holder_label_v1(p_input);
+  v_label text:=clued_private.work_claim_self_report_v1(p_input,'holder_label',200);
+  v_client text:=clued_private.work_claim_self_report_v1(p_input,'holder_client',80);
+  v_title text:=clued_private.work_claim_self_report_v1(p_input,'holder_session_title',200);
 begin
   v_binding:=clued_private.resolve_binding(p_token_hash,'context:write',v_scope);
   perform clued_private.work_claim_lock(v_binding.user_id);
@@ -440,6 +479,8 @@ begin
     holder_binding_id=v_binding.id,
     holder_session_ref=case when v_from is null then holder_session_ref else v_session end,
     holder_label=case when p_input ? 'holder_label' then v_label else holder_label end,
+    holder_client=case when p_input ? 'holder_client' then v_client else holder_client end,
+    holder_session_title=case when p_input ? 'holder_session_title' then v_title else holder_session_title end,
     updated_at=v_now where claim_id=c.claim_id returning * into c;
   insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,
     object_type,object_id,version,metadata)
@@ -458,7 +499,7 @@ begin
 end $$;
 
 revoke all on function
-  clued_private.work_claim_holder_label_v1(jsonb),
+  clued_private.work_claim_self_report_v1(jsonb,text,integer),
   clued_private.work_claim_owner_row_v1(clued_private.work_claims_v1),
   clued_private.work_claim_handover_view_v1(clued_private.work_claims_v1)
   from public,anon,authenticated,service_role;

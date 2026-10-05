@@ -75,11 +75,11 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   assert.equal(byName.clued_work_takeover.annotations.destructiveHint, true, 'takeover supersedes another claim');
   assert.equal(byName.clued_work_claim.annotations.idempotentHint, true);
   assert.equal(byName.clued_work_renew.annotations.idempotentHint, false);
-  assert.deepEqual(byName.clued_work_claim.inputSchema.required, ['task_id', 'write_set', 'idempotency_key']);
+  assert.deepEqual(byName.clued_work_claim.inputSchema.required, ['task_id', 'write_set', 'idempotency_key', 'holder_label']);
   assert.deepEqual(byName.clued_work_renew.inputSchema.required, ['claim_id', 'fence', 'lease_version', 'progress_ref']);
   assert.deepEqual(byName.clued_work_release.inputSchema.required, ['claim_id', 'fence', 'outcome']);
   assert.deepEqual(byName.clued_work_verify.inputSchema.required, ['claim_id']);
-  assert.deepEqual(byName.clued_work_takeover.inputSchema.required, ['claim_id', 'idempotency_key']);
+  assert.deepEqual(byName.clued_work_takeover.inputSchema.required, ['claim_id', 'idempotency_key', 'holder_label']);
   assert.deepEqual(byName.clued_work_release.inputSchema.properties.outcome.enum, ['completed', 'abandoned', 'draining']);
   for (const name of WORK_TOOLS) assert.equal(byName[name].inputSchema.additionalProperties, false, name);
   // The private lease key (migration 20261005190000) is an optional input of renew and release only.
@@ -93,8 +93,9 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   assert.ok(byName.clued_work_renew.inputSchema.properties.holder_session_ref);
   // The self-reported holder label (migration 20261005200000) on claim, takeover and renew.
   for (const name of ['clued_work_claim', 'clued_work_takeover', 'clued_work_renew']) {
-    assert.deepEqual([byName[name].inputSchema.properties.holder_label.type, byName[name].inputSchema.properties.holder_label.maxLength],
-      ['string', 200], name);
+    const props = byName[name].inputSchema.properties;
+    assert.deepEqual([props.holder_label.maxLength, props.holder_client.maxLength, props.holder_session_title.maxLength],
+      [200, 80, 200], name);
   }
   assert.match(byName.clued_work_renew.description, /work_claim_lease_key_required/);
   assert.match(byName.clued_work_claim.description, /lease_key is the claim's private key: keep it in this session only/);
@@ -132,7 +133,8 @@ test('Binding and OAuth callers reach the same step-1 RPCs with the arguments pa
     clued_work_release: { claim_id: '22222222-2222-4222-8222-222222222222', fence: 1, outcome: 'completed', evidence_ref: 'pr:450',
       lease_key: `clued_lk_${'a'.repeat(64)}` },
     clued_work_verify: { claim_id: '22222222-2222-4222-8222-222222222222', changed_paths: ['apps/clued-cloud/package.json'], head_sha: '3329174e', pr_ref: 'tdoljyj/cross-memory-system#482' },
-    clued_work_takeover: { claim_id: '22222222-2222-4222-8222-222222222222', idempotency_key: 'host-b:claim:takeover' },
+    clued_work_takeover: { claim_id: '22222222-2222-4222-8222-222222222222', idempotency_key: 'host-b:claim:takeover',
+      holder_label: 'takeover · Codex · desktop', holder_client: 'Codex' },
   };
   const { calls, restore } = mockFetch(({ rpc, body }) =>
     Response.json({ status: 'committed', echo: rpc ?? body.p_tool, lease_key: `clued_lk_${'b'.repeat(64)}`,

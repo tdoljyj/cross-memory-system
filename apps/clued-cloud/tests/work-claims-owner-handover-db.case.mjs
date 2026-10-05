@@ -118,19 +118,28 @@ test('work claims: holder labels, the Owner list and the Owner handover to a new
 
     // --- holder_label: stored, shown in the view, replaced on renew, validated. ---
     const labelTask = await createTask('label task');
-    const labelled = committed(await claim(labelTask, 'claude', { holder_label: '  修 C-3 · Claude Code · 笔记本  ',
+    const labelled = committed(await claim(labelTask, 'claude', { holder_label: '  修 C-3 · 笔记本  ',
+      holder_client: 'Claude Code', holder_session_title: 'S2c C-3 eval baseline',
       holder_session_ref: 'session_01CmqMMByJcMoDqW3PyWd9Ta' }));
     kept(labelled.lease_key);
-    assert.equal(labelled.claim.holder_label, '修 C-3 · Claude Code · 笔记本');
+    assert.deepEqual([labelled.claim.holder_label, labelled.claim.holder_client, labelled.claim.holder_session_title],
+      ['修 C-3 · 笔记本', 'Claude Code', 'S2c C-3 eval baseline']);
     let held = committed(await renew('claude', labelled.claim, { holder_label: 'C-3 PR 等 CI' })).claim;
     assert.equal(held.holder_label, 'C-3 PR 等 CI');
     held = committed(await renew('claude', held)).claim;
     assert.equal(held.holder_label, 'C-3 PR 等 CI', 'a renewal without a label keeps it');
+    assert.equal(held.holder_client, 'Claude Code', 'a renewal without a client keeps it');
+    held = committed(await renew('claude', held, { holder_session_title: 'C-3 waiting for CI' })).claim;
+    assert.equal(held.holder_session_title, 'C-3 waiting for CI');
     const badTask = await createTask('bad label');
     for (const bad of [42, 'x'.repeat(201), 'line\nbreak', '   ']) {
       await assert.rejects(() => claim(badTask, 'claude', { holder_label: bad }),
         /work_claim_holder_label_invalid/, JSON.stringify(bad));
     }
+    await assert.rejects(() => claim(badTask, 'claude', { holder_label: 'ok', holder_client: 'x'.repeat(81) }),
+      /work_claim_holder_client_invalid/);
+    await assert.rejects(() => claim(badTask, 'claude', { holder_label: 'ok', holder_session_title: 'tab\there' }),
+      /work_claim_holder_session_title_invalid/);
     const unlabelled = committed(await claim(await createTask('codex task'), 'codex',
       { holder_session_ref: 'codex-thread-7' }));
     kept(unlabelled.lease_key);
@@ -142,19 +151,38 @@ test('work claims: holder labels, the Owner list and the Owner handover to a new
     const byId = Object.fromEntries(listed.claims.map((row) => [row.claim_id, row]));
     assert.deepEqual(Object.keys(byId).sort(), [held.claim_id, unlabelled.claim.claim_id].sort());
     const mine = byId[held.claim_id];
-    assert.deepEqual([mine.task_title, mine.holder_name, mine.holder_vendor, mine.holder_label, mine.holder_session_url,
-      mine.holder_connection_live, mine.lease_key_required, mine.handover_available],
-    ['label task', 'claude connection', 'anthropic', 'C-3 PR 等 CI',
-      'https://claude.ai/code/session_01CmqMMByJcMoDqW3PyWd9Ta', true, false, true]);
+    assert.deepEqual([mine.task_title, mine.context_key, mine.holder_name, mine.holder_vendor, mine.holder_label,
+      mine.holder_client, mine.holder_session_title, mine.holder_session_url,
+      mine.holder_connection_live, mine.lease_key_required, mine.handover_available, mine.state, mine.ended_at],
+    ['label task', 'global', 'claude connection', 'anthropic', 'C-3 PR 等 CI', 'Claude Code', 'C-3 waiting for CI',
+      'https://claude.ai/code/session_01CmqMMByJcMoDqW3PyWd9Ta', true, false, true, 'ACTIVE', null]);
+    assert.deepEqual([mine.renewals, mine.max_renewals, typeof mine.progress_ref, mine.write_set, mine.trigger_refs],
+      [held.renewals, 12, 'string', held.write_set, held.trigger_refs]);
+    assert.deepEqual(listed.ended, [], 'ended claims only on request');
     assert.deepEqual([byId[unlabelled.claim.claim_id].holder_session_ref, byId[unlabelled.claim.claim_id].holder_session_url],
       ['codex-thread-7', null]);
     rejected(await native('clued_work_claims_owner_list_v1', { all: true }), 'work_claim_owner_list_input_invalid');
+    for (const bad of [0, 169, 1.5, '24']) {
+      rejected(await native('clued_work_claims_owner_list_v1', { ended_within_hours: bad }), 'work_claim_owner_list_input_invalid');
+    }
     // Another account sees none of these; a delegated OAuth token and Bindings cannot call it.
     assert.deepEqual((await native('clued_work_claims_owner_list_v1', {}, fresh(strangerId))).claims, []);
     await assert.rejects(() => native('clued_work_claims_owner_list_v1', {}, { ...fresh(userId), client_id: 'oauth-client' }),
       /direct_human_session_required/);
     await assert.rejects(() => anon.query('select public.clued_work_claims_owner_list_v1($1)', [{}]), /permission denied/);
     committed(await release('codex', unlabelled.claim));
+    // Ended claims on request: released with its outcome, and a lapsed one as EXPIRED before any write persists it.
+    const lapsed = committed(await claim(await createTask('lapsed task'), 'codex'));
+    kept(lapsed.lease_key);
+    await admin.query(`update clued_private.work_claims_v1
+      set expires_at=greatest(issued_at,clock_timestamp()-interval '1 second') where claim_id=$1`, [lapsed.claim.claim_id]);
+    const ended = await native('clued_work_claims_owner_list_v1', { ended_within_hours: 24 });
+    const endedById = Object.fromEntries(ended.ended.map((row) => [row.claim_id, row]));
+    assert.deepEqual([endedById[unlabelled.claim.claim_id].state, endedById[unlabelled.claim.claim_id].released_outcome,
+      typeof endedById[unlabelled.claim.claim_id].ended_at], ['RELEASED', 'completed', 'string']);
+    assert.deepEqual([endedById[lapsed.claim.claim_id].state, endedById[lapsed.claim.claim_id].handover_available],
+      ['EXPIRED', false]);
+    assert.ok(!ended.claims.some((row) => row.claim_id === lapsed.claim.claim_id), 'a lapsed claim is not live');
 
     // --- Handover, step by step. ---
     const stuck = held;
@@ -247,7 +275,7 @@ test('work claims: holder labels, the Owner list and the Owner handover to a new
       assert.deepEqual([await can('authenticated'), await can('anon'), await can('service_role')], [true, false, false], fn);
     }
     for (const role of ['anon', 'authenticated', 'service_role']) {
-      for (const fn of ['work_claim_holder_label_v1', 'work_claim_owner_row_v1', 'work_claim_handover_view_v1']) {
+      for (const fn of ['work_claim_self_report_v1', 'work_claim_owner_row_v1', 'work_claim_handover_view_v1']) {
         const allowed = (await admin.query(`select bool_or(has_function_privilege($1,p.oid,'execute')) v
           from pg_proc p join pg_namespace n on n.oid=p.pronamespace
           where n.nspname='clued_private' and p.proname=$2`, [role, fn])).rows[0].v;

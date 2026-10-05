@@ -304,8 +304,8 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - 认领记下签发它的 Binding（`issued_binding_id`）。认领转走后，签发方用原幂等键重放，返回 `work_claim_idempotency_spent`（带 `transferred: true`），不会另起一个认领（多份赛马里也不会多占一份）。
   - 已过期认领的哈希留在表里，无人能用（续期与释放都按状态拒绝），不另清理。
 - **认领列表与 Owner 交接（Task `f165eb56` 第 2 个 PR，Owner Decision `22b9bd9e`、`4bcc424d`，迁移 `20261005200000_work_claims_owner_handover.sql`，合同 v32）**：
-  - `holder_label`：Agent 认领、接管、续期时自报的一行字（在做什么、哪个客户端、哪台电脑），≤200 字、不含控制字符，写入 `work_claim_view`。Clued 不核实，页面标为 Agent 自报。
-  - `/work-claims` 页面（Native，`clued_work_claims_owner_list_v1`，只认本人登录）：列出本账号所有有效认领的任务标题、连接名（`clued_agent_bindings.agent_name` 与 vendor）、标签、会话（`holder_session_ref` 为 `session_…` 时给出 `https://claude.ai/code/<ref>` 链接）、到期时间、绑定的 PR、fence。
+  - Agent 自报（Decision `4bcc424d` v2）：`holder_label`（一行人话：在做什么、哪台电脑，≤200 字；MCP 工具里认领与接管必填）、`holder_client`（Claude Code、Codex、ChatGPT…，≤80 字）、`holder_session_title`（客户端里的会话标题，≤200 字），均不含控制字符，认领、接管、续期可带，写入 `work_claim_view`。`holder_session_ref` 应为客户端真实会话 ID，拿不到就不填。Clued 不核实，页面标为 Agent 自报。
+  - `/work-claims` 页面（Native，`clued_work_claims_owner_list_v1`，只认本人登录，只读）：每条认领一块，显示 Agent/客户端与连接名（`clued_agent_bindings.agent_name` 与 vendor）、会话标题与会话 ID（`session_…` 给出 `https://claude.ai/code/<ref>` 链接，客户端为 Codex 时附 `codex resume <id>`）、标签、任务标题 + Task ID + scope、认领 ID、领取时间、到期与剩余时间、最晚到期、续期次数/上限与最近进展、关联 PR、触发来源、改动范围、状态（有效/收尾中/已释放/已过期/被接管，过了到期时间但尚未写回的也显示为已过期）。可勾选查看最近 24 小时结束的认领（`ended_within_hours` 1–168）及其结束时间与结果。时间按北京时间显示。网站暂无任务详情页，Task ID 只能显示、不能点进。
   - 交接两步（同多份模式）：`clued_work_claim_handover_confirmation_issue_v1` 对认领生成一次性确认（视图不含租约时钟，卡住的会话自己续期不会让确认失效）；`clued_work_claim_handover_v1` 把 fence 移到该 Task 全部 fence 之上、轮换钥匙并只返回这一次、`lease_key_required=true`、租约从现在起重计（不超过硬截止、不计续期次数），回执 `WORK_CLAIM_HANDOVER` 记新旧 fence、不记钥匙。重放第 2 步不再返回钥匙。
   - `lease_key_required` 之后，续期与释放都必须带当前钥匙，持有者 Binding 也一样（Owner 的所有 Claude Code 会话共用一个 Binding，只靠 Binding 判不出卡住的旧会话），否则 `work_claim_lease_key_required`。新会话用交接文字续期：同一 Binding 直接续上；另一个 Binding 则按第 1 个 PR 的规则转到它名下并换新钥匙。
   - 限制：认领 id 不变，PR 准入（`clued_work_verify`）仍按认领判，不区分新旧会话；存储写入出示 `work_claim` 时也不要求钥匙。交接只保证旧会话续不了期、释放不了。

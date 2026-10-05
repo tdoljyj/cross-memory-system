@@ -41,13 +41,15 @@ const triggerRefs = {
 } as const;
 const idempotencyKey = { type: "string", minLength: 8, maxLength: 160 } as const;
 const baseCommit = { type: "string", pattern: "^[0-9a-f]{7,64}$" } as const;
-const holderSessionRef = { type: "string", minLength: 1, maxLength: 200, description: "Host session id, audit only." } as const;
+const holderSessionRef = { type: "string", minLength: 1, maxLength: 200, description: "Your client's own session id (Claude Code: the session_01… id; Codex: its session id), never a name you made up; leave it out when you cannot get it. The Owner opens your session from it." } as const;
 const budget = { type: "object", description: "Declared estimates (model tokens, CI minutes). Recorded, not enforced in v1." } as const;
 const leaseSeconds = { type: "integer", minimum: 60, maximum: 7200, description: "Shorter than the profile default (7200) if the work is small." } as const;
 const holderLabel = {
   type: "string", minLength: 1, maxLength: 200,
   description: "One line for people, shown to the Owner on the Clued work claims page as self-reported: what you are doing, which client, which machine (for example \"C-3 baseline refreeze · Claude Code · office laptop\"). Send it with every claim and takeover.",
 } as const;
+const holderClient = { type: "string", minLength: 1, maxLength: 80, description: "Your client, as people know it: Claude Code, Codex, ChatGPT, claude.ai… Self-reported." } as const;
+const holderSessionTitle = { type: "string", minLength: 1, maxLength: 200, description: "Your session's title as the Owner sees it in your client, when you can read it. Self-reported." } as const;
 const leaseKey = {
   type: "string", pattern: "^clued_lk_[0-9a-f]{64}$",
   description: "The claim's private lease key, from the clued_work_claim or clued_work_takeover answer. Only needed when your Binding is not the holder (after a reconnect, or when the Owner handed the claim to you). Never write it to a file, commit, pull request, record or log.",
@@ -60,11 +62,11 @@ export const workClaimTools = [
       "Claim one existing active Task for execution before spending anything on it: before model calls, installs, builds, tests, CI or subtasks. Declares the write set (paths or globs) and trigger refs. Rejected with work_claim_conflict when another live claim names the same task, intersects the write set, or shares a trigger ref; the conflict names the holder so you stop, not retry under another title. One session (holder_session_ref) holds at most 3 live claims and one Binding at most 10 across its sessions. Each new claim or takeover takes a token from the Task's bucket (8, one back per hour) and the Binding's bucket (30, one back per 15 minutes); claiming per step or keeping one claim are both fine. work_claim_budget_exhausted names the limit hit, with retry_after for a rate bucket. The claim carries a fence and a lease (profile: 2 h, hard deadline 24 h). The answer's lease_key is the claim's private key: keep it in this session only, never in a file, commit, pull request, record or log; it lets this work continue after a reconnect gives you a new Binding. Idempotent by idempotency_key; a replay returns a new lease_key and the earlier one stops working.",
     inputSchema: {
       type: "object",
-      required: ["task_id", "write_set", "idempotency_key"],
+      required: ["task_id", "write_set", "idempotency_key", "holder_label"],
       properties: {
         scope, task_id: uuid, write_set: writeSet, trigger_refs: triggerRefs, idempotency_key: idempotencyKey,
-        base_commit: baseCommit, holder_session_ref: holderSessionRef, holder_label: holderLabel, budget,
-        lease_seconds: leaseSeconds,
+        base_commit: baseCommit, holder_session_ref: holderSessionRef, holder_label: holderLabel,
+        holder_client: holderClient, holder_session_title: holderSessionTitle, budget, lease_seconds: leaseSeconds,
       },
       additionalProperties: false,
     },
@@ -81,6 +83,7 @@ export const workClaimTools = [
         progress_ref: { type: "string", minLength: 1, maxLength: 200 }, write_set: writeSet, trigger_refs: triggerRefs,
         lease_key: leaseKey, holder_session_ref: { ...holderSessionRef, description: "Host session id, audit only; recorded when lease_key moves the claim to your Binding." },
         holder_label: { ...holderLabel, description: "Replaces the claim's label (see clued_work_claim); omit to keep it." },
+        holder_client: holderClient, holder_session_title: holderSessionTitle,
       },
       additionalProperties: false,
     },
@@ -123,11 +126,11 @@ export const workClaimTools = [
       "Take over an expired claim (lease lapsed, holder gone). Issues a new claim on the same task with fence + 1 and marks the old one SUPERSEDED, so the old holder's fence is refused at verify and renew. A live, unexpired claim is refused with work_claim_still_active: priority never preempts. Inherits the old write set and trigger refs unless you pass new ones (re-checked for conflicts). Returns a new lease_key for the new claim (keep it private, as for clued_work_claim); the old claim's key stops working. Idempotent by idempotency_key.",
     inputSchema: {
       type: "object",
-      required: ["claim_id", "idempotency_key"],
+      required: ["claim_id", "idempotency_key", "holder_label"],
       properties: {
         scope, claim_id: uuid, idempotency_key: idempotencyKey, write_set: writeSet, trigger_refs: triggerRefs,
-        base_commit: baseCommit, holder_session_ref: holderSessionRef, holder_label: holderLabel, budget,
-        lease_seconds: leaseSeconds,
+        base_commit: baseCommit, holder_session_ref: holderSessionRef, holder_label: holderLabel,
+        holder_client: holderClient, holder_session_title: holderSessionTitle, budget, lease_seconds: leaseSeconds,
       },
       additionalProperties: false,
     },
