@@ -14,7 +14,8 @@
 --   (b) the A-class verification table (§5.7) is created here read-only, like (a), with the §7.4
 --       subject digest; §7.2 normalization reads it. Its write operation (verify) is PR-3, so a PR-2
 --       build reaches ACTIVE / DEGRADED only through a test fixture row (§14.1 moves those cases to
---       PR-3), and PR-3 adds objects without replacing any PR-2 function.
+--       PR-3). The status view already reads the latest row (§10.9); PR-3 still extends that view for
+--       its READY projection.
 --   (c) OQ-15: no Event is written. Every operation writes its M1 Receipt only and declares
 --       event_ids = [] (§11.3 alternative), so resume / work log / checkpoint counts / capture state and
 --       projections cannot be changed by Integration operations (T-S-6).
@@ -1179,7 +1180,8 @@ begin
     'host_surface', v_surface,
     'compatibility_rule', case when v_rule_found then pg_catalog.jsonb_build_object('host', v_rule.host,
                             'adapter_family', v_rule.adapter_family, 'registry_version', v_rule.registry_version) end,
-    'dropped_scopes', pg_catalog.to_jsonb(v_dropped)));
+    'dropped_scopes', pg_catalog.to_jsonb(v_dropped),
+    'crv_verification_id', v_facts #> '{canonical_runtime_verification_facts,verification_id}'));
 end $$;
 
 create function clued_private.integration_normalize_v1(p_integration_id uuid, p_as_of timestamptz)
@@ -1326,7 +1328,11 @@ begin
         else
           update clued_private.integration_claims_v1 set claim_status = 'RELEASED', ended_at = pg_catalog.clock_timestamp(),
             ended_receipt_id = p_receipt_id where integration_id = i.integration_id and claim_status = 'CURRENT';
-          v_state := 'CLAIM_CONFLICT';   -- §6.4 step 4, also when I was PENDING_RECONCILE
+          -- §6.4 step 4 is CLAIM_CONFLICT; §6.5 has no edge out of PENDING_RECONCILE other than the Owner's
+          -- reconcile, and MINOR-N27 / T-A11-17(e) keep PENDING_RECONCILE across a write that keeps the key
+          -- and holder. Both fail closed; §6.5 governs, so the Owner's pending reconcile is not dropped.
+          v_state := case when i.identity_claim_state = 'PENDING_RECONCILE' and i.claim_key_sha256 = v_key
+                            and i.conflicting_integration_id = v_holder then 'PENDING_RECONCILE' else 'CLAIM_CONFLICT' end;
           v_conflicting := v_holder;
         end if;
         exit;
@@ -2239,8 +2245,14 @@ begin
                          and c.claim_status = 'CURRENT' and c.integration_id = h.integration_id) then
       raise exception 'reconcile_not_applicable' using errcode = '42501';
     end if;
-    ei0 := clued_private.integration_evaluate_v1(i.integration_id, v_call_at);
-    eh0 := clued_private.integration_evaluate_v1(h.integration_id, v_call_at);
+    -- evaluate in integration_id order, as list does, so first-occurrence diagnostic locks never cycle
+    if i.integration_id < h.integration_id then
+      ei0 := clued_private.integration_evaluate_v1(i.integration_id, v_call_at);
+      eh0 := clued_private.integration_evaluate_v1(h.integration_id, v_call_at);
+    else
+      eh0 := clued_private.integration_evaluate_v1(h.integration_id, v_call_at);
+      ei0 := clued_private.integration_evaluate_v1(i.integration_id, v_call_at);
+    end if;
     if clued_private.integration_revocation_status_v1(i.integration_id) <> 'NOT_REVOKED' then
       raise exception 'integration_revoked_requires_explicit_restore' using errcode = '42501';
     end if;
@@ -2338,8 +2350,13 @@ begin
       pg_catalog.jsonb_build_object('resolution', v_resolution), null, 'CURRENT_CLAIM_HOLDER', v_receipt.id);
     perform clued_private.integration_log_v1(p_owner, p_actor, null, v_loser, v_winner, 'SUPERSEDE',
       pg_catalog.jsonb_build_object('resolution', v_resolution), null, 'SUPERSEDED', v_receipt.id);
-    ei1 := clued_private.integration_evaluate_v1(i.integration_id, pg_catalog.clock_timestamp());
-    eh1 := clued_private.integration_evaluate_v1(h.integration_id, pg_catalog.clock_timestamp());
+    if i.integration_id < h.integration_id then
+      ei1 := clued_private.integration_evaluate_v1(i.integration_id, pg_catalog.clock_timestamp());
+      eh1 := clued_private.integration_evaluate_v1(h.integration_id, pg_catalog.clock_timestamp());
+    else
+      eh1 := clued_private.integration_evaluate_v1(h.integration_id, pg_catalog.clock_timestamp());
+      ei1 := clued_private.integration_evaluate_v1(i.integration_id, pg_catalog.clock_timestamp());
+    end if;
     if clued_private.integration_gate_violated_v1(ei0->'reason_codes', ei1->'reason_codes')
        or clued_private.integration_gate_violated_v1(eh0->'reason_codes', eh1->'reason_codes') then
       v_supp := pg_catalog.jsonb_build_object('reason_codes', ei1->'reason_codes', 'holder_reason_codes', eh1->'reason_codes');
@@ -2400,7 +2417,14 @@ begin
     'identity_claim_evidence_ref', pg_catalog.jsonb_build_object('identity_snapshot_id', i.current_identity_snapshot_id,
       'receipt_id', (select s.receipt_id from clued_private.integration_identity_snapshots_v1 s
                       where s.snapshot_id = i.current_identity_snapshot_id)),
-    'canonical_verification_evidence_ref', null, 'last_canonical_verified_at', null,
+    'canonical_verification_evidence_ref', (select pg_catalog.jsonb_build_object('verification_id', v.verification_id,
+        'receipt_id', v.receipt_id, 'evidence_sha256', v.evidence_sha256)
+      from clued_private.integration_canonical_verifications_v1 v
+      where v.integration_id = p_integration_id and v.verified_at <= p_as_of
+      order by v.verified_at desc, v.verification_id desc limit 1),
+    'last_canonical_verified_at', (select v.verified_at from clued_private.integration_canonical_verifications_v1 v
+      where v.integration_id = p_integration_id and v.verified_at <= p_as_of
+      order by v.verified_at desc, v.verification_id desc limit 1),
     'last_successful_resume', case when v_has_cur then (select max(s.started_at) from public.clued_continuity_sessions s
       where s.binding_id = v_cur.binding_id and s.started_at >= v_cur.linked_at) end,
     'last_successful_tool_use', case when v_has_cur then (select pg_catalog.jsonb_build_object('receipt_id', r.id, 'at', r.created_at)
@@ -2577,9 +2601,11 @@ begin
   elsif v_op = 'binding_inventory' then
     return clued_private.integration_binding_inventory_v1(u);
   elsif v_op = 'list' then
-    return pg_catalog.jsonb_build_object('integrations', coalesce((select pg_catalog.jsonb_agg(
-        clued_private.integration_view_v1(i.integration_id, pg_catalog.clock_timestamp()) order by i.created_at desc, i.integration_id)
-      from clued_private.integrations_v1 i where i.owner_id = u), '[]'::jsonb));
+    -- views are computed in integration_id order (diagnostic lock order), then listed newest first
+    return pg_catalog.jsonb_build_object('integrations', coalesce((select pg_catalog.jsonb_agg(x.view order by x.created_at desc,
+        x.integration_id) from (select i.integration_id, i.created_at,
+          clued_private.integration_view_v1(i.integration_id, pg_catalog.clock_timestamp()) as view
+        from clued_private.integrations_v1 i where i.owner_id = u order by i.integration_id offset 0) x), '[]'::jsonb));
   elsif v_op = 'status' then
     return pg_catalog.jsonb_build_object('integration', clued_private.integration_view_v1(
       clued_private.integration_native_owned_v1(u, v_input), pg_catalog.clock_timestamp()));

@@ -787,6 +787,18 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       }
       const holder = await integration(h);
       assert.equal(holder.superseded_by_integration_id, i, "H's lineage stays under the survivor");
+      // a holder that re-keyed away no longer conflicts with I: neither resolution applies
+      const p = await conflictPair();
+      assert.equal((await rpc(admin, 'clued_integration_identity_update_v1', p.bh, { idempotency_key: key(), integration_id: p.h,
+        base_version: (await integration(p.h)).version, tenant: tenant('Q') })).supplemental.identity_claim_state, 'CURRENT_CLAIM_HOLDER');
+      assert.equal((await integration(p.i)).conflicting_integration_id, p.h, 'the stored pointer is stale');
+      for (const resolution of ['REBIND_TO_HOLDER', 'REPLACE_HOLDER']) {
+        const c0 = await business();
+        assert.equal((await reconcile(p.user, p.i, p.h, resolution)).error_code, 'reconcile_not_applicable', resolution);
+        assert.deepEqual(await business(), c0, `${resolution}: no business write`);
+      }
+      assert.equal(await currentBinding(p.h), p.bh.id);
+      assert.equal((await integration(p.h)).historical, 'NONE');
       assert.equal(await currentBinding(h), null);
       assert.equal(await currentBinding(i2), b2.id);
       assert.equal((await admin.query('select integration_id from clued_private.integration_binding_owners_v1 where binding_id = $1', [b2.id])).rows[0].integration_id, i2);
@@ -839,6 +851,8 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
         assert.equal(created.status, 'rejected');
         assert.equal(created.error_code, 'derivation_input_invalid');
         assert.ok(created.supplemental.reason_codes.length > 0, JSON.stringify(created.supplemental));
+        assert.ok(Array.isArray(created.target_refs));
+        assert.equal(created.target_refs.some((ref) => ref.kind === 'integration'), false, 'no ref to the rolled-back Integration');
         assert.deepEqual(await business(), c0, 'CREATE: business rows unchanged');
         // SAME_PROVIDER rebind: I stays on b0, version unchanged
         const b1 = await oauthBinding(user, { client });
@@ -914,6 +928,19 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
         assert.equal(await currentBinding(p.i), p.bi.id);
         assert.equal((await integration(p.h)).identity_claim_state, 'CURRENT_CLAIM_HOLDER');
       }
+    });
+
+    await t.test('§6.5 a same-key write keeps PENDING_RECONCILE; only the Owner reconcile leaves it (MINOR-N27)', async () => {
+      const p = await conflictPair();
+      assert.equal((await rpc(admin, 'clued_integration_reconcile_request_v1', p.bi, { idempotency_key: key(), integration_id: p.i,
+        base_version: (await integration(p.i)).version })).status, 'committed');
+      const u = await rpc(admin, 'clued_integration_identity_update_v1', p.bi, { idempotency_key: key(), integration_id: p.i,
+        base_version: (await integration(p.i)).version, tenant: tenant('P') });
+      assert.equal(u.status, 'committed', JSON.stringify(u));
+      assert.equal(u.supplemental.identity_claim_state, 'PENDING_RECONCILE');
+      const row = await integration(p.i);
+      assert.equal(row.identity_claim_state, 'PENDING_RECONCILE');
+      assert.equal(row.conflicting_integration_id, p.h);
     });
 
     await t.test('T-A11-20(d) REBIND_TO_HOLDER clears H\'s reauth marks raised before b\'s grant and keeps later ones', async () => {
@@ -1441,6 +1468,11 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       assert.equal(crvOf(active).verification_id, v1);
       assert.equal(active.integration_state, 'ACTIVE');
       assert.equal(active.integration_operable, true);
+      assert.equal(active.sources_read.crv_verification_id, v1);
+      const view = (await native(admin, user, { op: 'status', integration_id: id })).integration;
+      assert.equal(view.canonical_verification_evidence_ref.verification_id, v1);
+      assert.ok(view.canonical_verification_evidence_ref.receipt_id && view.canonical_verification_evidence_ref.evidence_sha256);
+      assert.ok(view.last_canonical_verified_at);
       const expired = await evaluate(id, new Date(Date.now() + 7_200_000).toISOString());
       assert.equal(crvOf(expired).status, 'EXPIRED');
       assert.notEqual(expired.integration_state, 'ACTIVE');
