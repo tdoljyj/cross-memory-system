@@ -153,8 +153,10 @@ export function buildEvidence({ criteria, events, seedsByFile = {}, exitStatus =
   };
 }
 
+// Read-only git calls. safe.directory names only this checkout, so a run as another user (the DB suites
+// refuse root) can still read the commit instead of silently recording none.
 function git(args) {
-  const r = spawnSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8' });
+  const r = spawnSync('git', ['-c', `safe.directory=${REPO_ROOT}`, ...args], { cwd: REPO_ROOT, encoding: 'utf8' });
   return r.status === 0 ? r.stdout.trim() : null;
 }
 
@@ -194,15 +196,22 @@ export async function main(argv = process.argv.slice(2)) {
     ? fs.readFileSync(stream, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [];
   fs.rmSync(scratch, { recursive: true, force: true });
   const evidence = buildEvidence({ criteria, events, seedsByFile, exitStatus: run.status ?? 1 });
+  const head = git(['rev-parse', 'HEAD']);
+  const status = git(['status', '--porcelain', '--', 'apps/clued-cloud', 'development/contracts/integration-runtime']);
+  // evidence that cannot name its commit, or whose tree state is unknown, proves nothing (§17 item 2)
+  if (!head || status === null) {
+    evidence.verdict = 'FAIL';
+    evidence.summary.commit_unknown = true;
+  }
   const document = {
     schema: SCHEMA,
     statement: 'S2c gate evidence (IntegrationRuntime v0.1.8 §17). It is not READY, Qualification or GA.',
     contract: { path: CONTRACT, sha256: sha256(contractText) },
     commit: {
-      head: git(['rev-parse', 'HEAD']),
+      head,
       // on a pull_request run HEAD is GitHub's merge commit; the workflow passes the PR head here
       pr_head: process.env.CLUED_EVIDENCE_PR_HEAD_SHA || null,
-      dirty: (git(['status', '--porcelain', '--', 'apps/clued-cloud', 'development/contracts/integration-runtime']) ?? '') !== '',
+      dirty: status === null ? null : status !== '',
     },
     run: {
       started_at: startedAt, finished_at: new Date().toISOString(), node: process.version,
