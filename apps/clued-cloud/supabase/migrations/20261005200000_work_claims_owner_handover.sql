@@ -18,8 +18,8 @@
 -- 3. Handover, two Native steps like the race page:
 --    clued_work_claim_handover_confirmation_issue_v1 renders the claim, then
 --    clued_work_claim_handover_v1 consumes the single-use confirmation and
---      * moves the fence past every fence of the Task, so the stuck session's
---        fence is refused at verify, renew and release;
+--      * moves the fence past every fence of the Task, so a renew or release
+--        with the stuck session's fence is refused;
 --      * rotates the lease key and returns it once (only its hash is stored);
 --      * marks the claim lease_key_required: from then on every renew and
 --        release must present the current key, even from the holder Binding,
@@ -29,6 +29,14 @@
 --    The new session renews with claim_id, fence, lease_version and the key;
 --    from another Binding that renewal moves the claim to it (20261005190000).
 --    The Receipt WORK_CLAIM_HANDOVER records the old and new fence, never the key.
+--    Limits: the claim id does not change, so pull request admission
+--    (clued_work_verify) still admits the stuck session's pull request, and a
+--    storage write that presents the claim with its new fence is not asked for
+--    the key. A replay of the original claim or takeover by the holder Binding
+--    is refused with work_claim_lease_key_required instead of minting a key.
+--    The new session's holder_session_ref is recorded when it renews with the
+--    key, on the same Binding too. A claim with no renewal left, or within 10
+--    minutes of its hard deadline, cannot be handed over.
 --    A replayed step 2 cannot show the key again: the Owner hands over anew.
 -- A claim without lease_key_required behaves as before.
 
@@ -48,7 +56,8 @@ begin
   if jsonb_typeof(p_input->p_field)<>'string' then
     raise exception '%', 'work_claim_'||p_field||'_invalid' using errcode='22023'; end if;
   v:=nullif(btrim(p_input->>p_field),'');
-  if v is null or char_length(v)>p_max or v ~ '[[:cntrl:]]' then
+  -- Control and invisible format characters (bidi overrides, zero-width) are refused.
+  if v is null or char_length(v)>p_max or v ~ '[[:cntrl:]\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]' then
     raise exception '%', 'work_claim_'||p_field||'_invalid' using errcode='22023'; end if;
   return v;
 end $$;
@@ -152,6 +161,17 @@ language sql stable security definer set search_path='' as $$
   from (select clued_private.work_claim_owner_row_v1(c) r) x
 $$;
 
+-- The new session takes over by renewing, so a claim with no renewal left, or
+-- within 10 minutes of its hard deadline, cannot be handed over: release it
+-- and claim again instead.
+create function clued_private.work_claim_handover_renewable_v1(c clued_private.work_claims_v1) returns void
+language plpgsql stable set search_path='' as $$
+begin
+  if c.renewals>=(clued_private.work_claim_profile_v1()->>'max_renewals')::integer
+      or c.hard_deadline_at<=pg_catalog.clock_timestamp()+interval '10 minutes' then
+    raise exception 'work_claim_handover_no_renewal_left' using errcode='55000'; end if;
+end $$;
+
 -- Step 1. Input {claim_id}.
 create function public.clued_work_claim_handover_confirmation_issue_v1(p_input jsonb)
 returns jsonb language plpgsql volatile security definer set search_path='' as $$
@@ -176,6 +196,7 @@ begin
     if c.status<>'ACTIVE' or c.expires_at<=clock_timestamp() then
       raise exception 'work_claim_not_active' using errcode='55000'; end if;
     if c.lease_key_hash is null then raise exception 'work_claim_handover_unavailable' using errcode='55000'; end if;
+    perform clued_private.work_claim_handover_renewable_v1(c);
     v_view:=clued_private.work_claim_handover_view_v1(c);
     v_digest:=clued_private.m1_sha256(v_view);
     update clued_private.native_confirmation_tokens set revoked_at=clock_timestamp()
@@ -239,6 +260,7 @@ begin
     if c.status<>'ACTIVE' or c.expires_at<=clock_timestamp() then
       raise exception 'work_claim_not_active' using errcode='55000'; end if;
     if c.lease_key_hash is null then raise exception 'work_claim_handover_unavailable' using errcode='55000'; end if;
+    perform clued_private.work_claim_handover_renewable_v1(c);
     if clued_private.m1_sha256(clued_private.work_claim_handover_view_v1(c))<>v_token.view_digest then
       raise exception 'confirmation_view_stale' using errcode='40001'; end if;
     v_now:=clock_timestamp();
@@ -301,6 +323,11 @@ begin
     return clued_private.work_claim_reject_log_v1(v_binding,v_existing.context_key,v_existing.task_id,
       v_existing.claim_id,'work_claim','work_claim_idempotency_spent',
       jsonb_build_object('claim',clued_private.work_claim_view(v_existing),'transferred',true)); end if;
+  if found and v_existing.lease_key_required and v_existing.status in ('ACTIVE','DRAINING') then
+    -- Handed over by the Owner: a replay must not mint a key that displaces the new session's.
+    return clued_private.work_claim_reject_log_v1(v_binding,v_existing.context_key,v_existing.task_id,
+      v_existing.claim_id,'work_claim','work_claim_lease_key_required',
+      jsonb_build_object('claim',clued_private.work_claim_view(v_existing))); end if;
   if found then
     return clued_private.work_claim_with_lease_key_v1(
       clued_private.work_claim_replay_logged_v1(v_binding,v_existing,v_hash,'work_claim')); end if;
@@ -338,6 +365,11 @@ begin
     return clued_private.work_claim_reject_log_v1(v_binding,v_existing.context_key,v_existing.task_id,
       v_existing.claim_id,'work_claim_takeover','work_claim_idempotency_spent',
       jsonb_build_object('claim',clued_private.work_claim_view(v_existing),'transferred',true)); end if;
+  if found and v_existing.lease_key_required and v_existing.status in ('ACTIVE','DRAINING') then
+    -- Handed over by the Owner: a replay must not mint a key that displaces the new session's.
+    return clued_private.work_claim_reject_log_v1(v_binding,v_existing.context_key,v_existing.task_id,
+      v_existing.claim_id,'work_claim_takeover','work_claim_lease_key_required',
+      jsonb_build_object('claim',clued_private.work_claim_view(v_existing))); end if;
   if found then
     return clued_private.work_claim_with_lease_key_v1(
       clued_private.work_claim_replay_logged_v1(v_binding,v_existing,v_hash,'work_claim_takeover')); end if;
@@ -442,8 +474,8 @@ begin
     end if;
   end if;
 
+  v_session:=nullif(btrim(coalesce(p_input->>'holder_session_ref','')),'');
   if v_access='key' then
-    v_session:=nullif(btrim(coalesce(p_input->>'holder_session_ref','')),'');
     -- The receiving Binding's caps apply as at a new claim.
     select count(*)::integer,
            count(*) filter (where coalesce(w.holder_session_ref,'')=coalesce(v_session,''))::integer
@@ -477,7 +509,9 @@ begin
       then array[v_progress] else array[c.progress_ref,v_progress] end,
     write_set=v_write_set,trigger_refs=v_triggers,
     holder_binding_id=v_binding.id,
-    holder_session_ref=case when v_from is null then holder_session_ref else v_session end,
+    -- A new session that holds a handed-over claim's key names itself, on the same Binding too.
+    holder_session_ref=case when v_from is not null then v_session
+      when c.lease_key_required and p_input ? 'holder_session_ref' then v_session else holder_session_ref end,
     holder_label=case when p_input ? 'holder_label' then v_label else holder_label end,
     holder_client=case when p_input ? 'holder_client' then v_client else holder_client end,
     holder_session_title=case when p_input ? 'holder_session_title' then v_title else holder_session_title end,
@@ -501,7 +535,8 @@ end $$;
 revoke all on function
   clued_private.work_claim_self_report_v1(jsonb,text,integer),
   clued_private.work_claim_owner_row_v1(clued_private.work_claims_v1),
-  clued_private.work_claim_handover_view_v1(clued_private.work_claims_v1)
+  clued_private.work_claim_handover_view_v1(clued_private.work_claims_v1),
+  clued_private.work_claim_handover_renewable_v1(clued_private.work_claims_v1)
   from public,anon,authenticated,service_role;
 revoke all on function
   public.clued_work_claims_owner_list_v1(jsonb),

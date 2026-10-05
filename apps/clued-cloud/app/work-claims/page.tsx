@@ -11,8 +11,9 @@ import "../confirm/owner.css";
 // to a new session" (Decision 22b9bd9e). The list shows every live claim of
 // this account; the label is the Agent's own words. A handover is two Native
 // steps like the race page: a single-use confirmation over the exact claim,
-// then the handover itself, which moves the fence (the old session is refused
-// from then on), rotates the lease key and shows the new key once, here only.
+// then the handover itself, which moves the fence (the old session can no
+// longer renew or release the claim), rotates the lease key and shows the new
+// key once, here only.
 // All RPCs run as this signed-in account session; Bindings and delegated OAuth
 // tokens are refused by the database.
 type Json = Record<string, unknown>;
@@ -25,6 +26,7 @@ const MESSAGES: Record<string, string> = {
   work_claim_not_found: "找不到这条认领。",
   work_claim_not_active: "这条认领已经结束或过期，不能交接。",
   work_claim_handover_unavailable: "这条认领是旧版本签发的，没有钥匙，不能交接。等它过期后由新会话接管即可。",
+  work_claim_handover_no_renewal_left: "这条认领的续期次数已用完或快到最晚到期时间，新会话接不上。请让新会话等它结束后重新领取。",
   confirmation_token_expired: "确认已超过 5 分钟有效期，请重新点“交给新会话”。",
   confirmation_token_reused: "这次确认已经用过，请重新点“交给新会话”。",
   confirmation_token_revoked: "这次确认已被新的预览取代，请使用最新的预览。",
@@ -194,7 +196,7 @@ export default function WorkClaimsPage() {
   return <main className="context-page owner-confirm">
     <header><Link href="/">Clued</Link> <Link href="/grants">我的授权</Link> <Link href="/work-claims/race">多份模式</Link></header>
     <h1>谁在做哪个任务</h1>
-    <p className="context-muted">这里列出你名下所有正在进行的认领。“标签”是 Agent 自己报的，Clued 无法核实。某个会话卡住时，可以把它的认领“交给新会话”：原会话立即失效，新会话凭这里显示一次的交接文字接着干。</p>
+    <p className="context-muted">这里列出你名下所有正在进行的认领。“标签”是 Agent 自己报的，Clued 无法核实。某个会话卡住时，可以把它的认领“交给新会话”：原会话再也续不了期、也释放不了它，新会话凭这里显示一次的交接文字接着干。</p>
     {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 Clued</Link> 后查看认领。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       {handed && <section aria-label="交接文字" role="status"><h2>交接文字（只显示这一次）</h2>
@@ -207,7 +209,7 @@ export default function WorkClaimsPage() {
         <p>任务：{text(issued.view.task_title)}（{shortId(issued.view.task_id)}）</p>
         <p>现在的持有者：{text(issued.view.holder_name)}{text(issued.view.holder_vendor) && "（" + text(issued.view.holder_vendor) + "）"}
           {text(issued.view.holder_label) && " · 自报：" + text(issued.view.holder_label)}</p>
-        <p>交接后：原会话的续租和释放都会被拒绝（它拿不到新钥匙）；新钥匙只显示一次；之后每次续租和释放都必须带钥匙。认领编号不变，PR 里的认领标记不用改。</p>
+        <p>交接后：原会话的续租和释放都会被拒绝（它拿不到新钥匙）；新钥匙只显示一次；之后每次续租和释放都必须带钥匙。认领编号不变，PR 里的认领标记不用改，所以原会话若还在推送同一个 PR，准入检查不会拦它，请同时停掉原会话。</p>
         <p>预览有效期至 {new Date(issued.expires_at).toLocaleTimeString()}。</p>
         <button type="button" disabled={working} onClick={() => void confirm()}>确认交接</button>
         <button type="button" disabled={working} onClick={() => setIssued(null)}>取消</button>
@@ -215,7 +217,7 @@ export default function WorkClaimsPage() {
       <section aria-label="进行中的认领"><h2>进行中的认领</h2>
         {claims === null ? <p role="status">正在读取…</p> : claims.length === 0 ? <p className="context-muted">目前没有进行中的认领。</p>
           : claims.map(claim => claimRow(claim, now,
-            claim.handover_available === true ? () => void preview(text(claim.claim_id)) : null, working))}
+            claim.handover_available === true ? () => void preview(text(claim.claim_id)) : null, working || handed !== null))}
       </section>
       <label><input type="checkbox" checked={showEnded} disabled={working}
         onChange={event => { setShowEnded(event.target.checked); void load(event.target.checked); }} /> 显示最近 {ENDED_HOURS} 小时结束的认领</label>

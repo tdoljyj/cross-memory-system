@@ -153,6 +153,8 @@ test('work claims page: a handover previews, confirms with the exact token, and 
   }
   // The list reloads after the handover.
   assert.equal(f.calls[3].name, 'clued_work_claims_owner_list_v1');
+  // While the key is on screen, no other handover can start and replace it.
+  assert.equal(f.button('交给新会话').props.disabled, true);
   f.button('复制交接文字').props.onClick(); await f.settle();
   assert.equal(f.copied[0], shown);
   f.button('我已交给新会话，关闭').props.onClick(); f.render();

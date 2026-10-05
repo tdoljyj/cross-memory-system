@@ -118,7 +118,8 @@ test('work claims: holder labels, the Owner list and the Owner handover to a new
 
     // --- holder_label: stored, shown in the view, replaced on renew, validated. ---
     const labelTask = await createTask('label task');
-    const labelled = committed(await claim(labelTask, 'claude', { holder_label: '  修 C-3 · 笔记本  ',
+    const labelKey = uuid();
+    const labelled = committed(await claim(labelTask, 'claude', { idempotency_key: labelKey, holder_label: '  修 C-3 · 笔记本  ',
       holder_client: 'Claude Code', holder_session_title: 'S2c C-3 eval baseline',
       holder_session_ref: 'session_01CmqMMByJcMoDqW3PyWd9Ta' }));
     kept(labelled.lease_key);
@@ -132,7 +133,7 @@ test('work claims: holder labels, the Owner list and the Owner handover to a new
     held = committed(await renew('claude', held, { holder_session_title: 'C-3 waiting for CI' })).claim;
     assert.equal(held.holder_session_title, 'C-3 waiting for CI');
     const badTask = await createTask('bad label');
-    for (const bad of [42, 'x'.repeat(201), 'line\nbreak', '   ']) {
+    for (const bad of [42, 'x'.repeat(201), 'line\nbreak', '   ', 'safe\u202eevil', 'zero\u200bwidth']) {
       await assert.rejects(() => claim(badTask, 'claude', { holder_label: bad }),
         /work_claim_holder_label_invalid/, JSON.stringify(bad));
     }
@@ -222,10 +223,16 @@ test('work claims: holder labels, the Owner list and the Owner handover to a new
     rejected(await release('claude', latest), 'work_claim_lease_key_required');
 
     // The new session (same Binding, new key) takes over and keeps the key requirement.
-    const taken = committed(await renew('claude', latest, { lease_key: newKey, holder_session_ref: 'ignored-for-holder',
+    // The stuck session replaying its original claim gets no key back.
+    rejected(await claim(labelTask, 'claude', { idempotency_key: labelKey, holder_label: '  修 C-3 · 笔记本  ',
+      holder_client: 'Claude Code', holder_session_title: 'S2c C-3 eval baseline',
+      holder_session_ref: 'session_01CmqMMByJcMoDqW3PyWd9Ta' }), 'work_claim_lease_key_required');
+    const taken = committed(await renew('claude', latest, { lease_key: newKey, holder_session_ref: 'session_01NewSessionAfterHandover',
       holder_label: '接手 · 新会话' }));
-    assert.deepEqual([taken.transferred, taken.claim.lease_key_required, taken.claim.holder_label],
-      [undefined, true, '接手 · 新会话']);
+    assert.deepEqual([taken.transferred, taken.claim.lease_key_required, taken.claim.holder_label, taken.claim.holder_session_ref],
+      [undefined, true, '接手 · 新会话', 'session_01NewSessionAfterHandover']);
+    const relisted = (await native('clued_work_claims_owner_list_v1', {})).claims.find((row) => row.claim_id === taken.claim.claim_id);
+    assert.equal(relisted.holder_session_url, 'https://claude.ai/code/session_01NewSessionAfterHandover');
     rejected(await renew('claude', taken.claim), 'work_claim_lease_key_required');
     // From another Binding the key moves the claim, and the key rotates.
     const across = committed(await renew('codex', taken.claim, { lease_key: newKey, holder_session_ref: 'codex-thread-8' }));
@@ -248,6 +255,16 @@ test('work claims: holder labels, the Owner list and the Owner handover to a new
     committed(await release('claude', { claim_id: current.claim_id, fence: current.fence }));
     rejected(await handover(endedIssued), 'work_claim_not_active');
     rejected(await issue(staleClaim.claim.claim_id), 'work_claim_not_active');
+    // A claim the new session could not renew cannot be handed over.
+    const spent = committed(await claim(await createTask('spent handover')));
+    kept(spent.lease_key);
+    await admin.query(`update clued_private.work_claims_v1 set renewals=12 where claim_id=$1`, [spent.claim.claim_id]);
+    rejected(await issue(spent.claim.claim_id), 'work_claim_handover_no_renewal_left');
+    await admin.query(`update clued_private.work_claims_v1 set renewals=0 where claim_id=$1`, [spent.claim.claim_id]);
+    const spentIssued = await issue(spent.claim.claim_id);
+    await admin.query(`update clued_private.work_claims_v1 set hard_deadline_at=clock_timestamp()+interval '5 minutes',
+      expires_at=least(expires_at,clock_timestamp()+interval '5 minutes') where claim_id=$1`, [spent.claim.claim_id]);
+    rejected(await handover(spentIssued), 'work_claim_handover_no_renewal_left');
     // A legacy claim with no key cannot be handed over.
     const legacy = committed(await claim(await createTask('legacy handover')));
     kept(legacy.lease_key);
