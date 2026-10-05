@@ -272,6 +272,7 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
               edit(old => { const current = (old[rowKey(row)] || []).filter(a => a !== action); return { ...old, [rowKey(row)]: checked ? [...current, action] : current }; });
             }} />{row.resource_kind === "context" && action === "close" ? "关闭/撤回记录" : actionLabels[action] || action}
           </label>)}
+          {row.resource_id === ALL_PROJECTS && !(selected[rowKey(row)] || []).length && <small className="oauth-range-note">这一组只在“项目范围”选“我的全部项目（含以后新建的）”时才勾选；选“指定项目”时，权限落在各个项目自己的组里。</small>}
           {row.resource_kind === 'context' && row.actions.includes('write') && <small>修改已有内容前，可另外选择读取权限来核对当前版本；系统不会自动追加。</small>}
         </fieldset>)}</section>)}
       </div></details>

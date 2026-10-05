@@ -278,6 +278,9 @@ test('roles: 全部 over current projects by default; 项目开发者 and 我的
   // Default: everything on the current projects, nothing on project:*.
   let sent = await send();
   assert.deepEqual(sent, { global: all5, profile: all5, [A]: all5, [B]: all5 });
+  // The empty project:* group in 高级 says why it is empty.
+  const rangeNote = '这一组只在“项目范围”选“我的全部项目（含以后新建的）”时才勾选';
+  assert.ok(f.text().includes(rangeNote));
   // 项目开发者: the projects get read/write/close/restore, Global read, profile nothing.
   role('项目开发者').props.onClick(); f.render();
   assert.deepEqual(pressed(), ['项目开发者']);
@@ -292,6 +295,7 @@ test('roles: 全部 over current projects by default; 项目开发者 and 我的
   assert.equal(radios.length, 2);
   radios[1].props.onChange(); f.render();
   assert.ok(f.text().includes('以后新建的项目也自动包含在内'));
+  assert.ok(!f.text().includes(rangeNote), 'the note goes once project:* is selected');
   sent = await send();
   assert.deepEqual(sent, { global: ['read'], 'project:*': ['read', 'write', 'close', 'restore'] });
   // 只读 keeps the range.
@@ -317,4 +321,13 @@ test('roles: no project:* row on offer means no 我的全部项目 choice', asyn
     { resource_kind: 'scope', resource_id: A, environment: 'canonical', name: 'M2', actions: ['read'] }] }); await f.settle();
   assert.equal(f.nodes('input').filter(n => n.props.type === 'radio').length, 1);
   assert.ok(!f.text().includes('我的全部项目（含以后新建的）'));
+});
+
+test('roles and project range are styled: role cards show the chosen one, radios are not text inputs', () => {
+  const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
+  assert.match(css, /\.oauth-card input\[type="radio"\]\s*\{[^}]*width:\s*18px[^}]*height:\s*18px/s);
+  assert.match(css, /\.oauth-card label:has\(> input\[type="radio"\]\)\s*\{[^}]*display:\s*flex/s);
+  assert.match(css, /\.oauth-role-list button::before\s*\{[^}]*border-radius:\s*50%/s);
+  assert.match(css, /\.oauth-role-list button\[aria-pressed="true"\]::before\s*\{[^}]*background:/s);
+  assert.match(css, /\.oauth-range\s*\{/);
 });
