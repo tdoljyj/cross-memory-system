@@ -217,10 +217,11 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
     await admin.query(`insert into clued_private.integration_hosts_v1(host, tenant_dimension, account_dimension,
         tenant_evidence_kinds, account_evidence_kinds, first_authorization_required, registry_version, capability_snapshot_ref)
       values ('test.complete', 'NOT_APPLICABLE', 'NOT_APPLICABLE', '{}', '{}', true, 1, 'test'),
+             ('test.noauth', 'NOT_APPLICABLE', 'NOT_APPLICABLE', '{}', '{}', false, 1, 'test'),
              ('test.tenant', 'REQUIRED', 'NOT_APPLICABLE', '{TEST_TENANT_ID}', '{}', true, 1, 'test')`);
     await admin.query(`insert into clued_private.integration_host_surfaces_v1(host, surface, capability_ceiling, host_features, registry_version)
       select h, 'default', $1::text[], '{"mcp_tools":true,"oauth":true,"hooks":false}', 1
-        from unnest(array['test.complete','test.tenant']) h`, [FULL]);
+        from unnest(array['test.complete','test.noauth','test.tenant']) h`, [FULL]);
     await admin.query(`insert into clued_private.integration_host_surfaces_v1(host, surface, capability_ceiling, host_features, registry_version)
       values ('test.complete', 'narrow', '{context.read,audit.read}', '{"mcp_tools":true}', 1)`);
     const PROFILE = (id, capabilities, rules, { version = 1, qualification = 'ANY', ttl = '1 day' } = {}) => admin.query(
@@ -230,7 +231,7 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
     const RESUME = { kind: 'resume_after_link' };
     await PROFILE('test.read', ['context.read'], { 'context.read': RESUME });
     await PROFILE('test.audit', ['audit.read'], { 'audit.read': RESUME });
-    await PROFILE('test.write', ['context.write'], { 'context.write': { kind: 'committed_receipt_after_link', families: ['integration_declare'] } });
+    await PROFILE('test.write', ['context.write'], { 'context.write': { kind: 'committed_receipt_after_link', families: ['record_mutation'] } });
     await PROFILE('test.qualified', ['context.read'], { 'context.read': RESUME }, { qualification: 'QUALIFIED' });
     const operatorUser = await newUser();
     await admin.query('insert into clued_private.platform_admin_v13(subject_id, version) values ($1, 1)', [operatorUser]);
@@ -300,11 +301,28 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       assert.equal(await state(id), 'ACTIVE');
       return { user, binding, id };
     };
+    // one committed M1 Receipt of an ordinary tool family by this Binding (server-observable use, §10.8)
+    const toolUse = async (binding, family = 'record_mutation') => {
+      const input = { idempotency_key: key('use') };
+      const r = (await admin.query(`select (clued_private.m1_begin_receipt($1, $2, $3, $4::jsonb, $5)).id`,
+        [binding.user, binding.id, family, JSON.stringify(input), sha(uid())])).rows[0].id;
+      await admin.query(`select clued_private.m1_finish_receipt($1, 'committed', '[]', '{}', '{}', '{}', '{}', null)`, [r]);
+      return r;
+    };
+    // a PASS READY row for the current subject, backed by a real Receipt (fixture for states no verify can reach)
+    const passRow = async (id, profile, verifiedAt = null) => (await admin.query(`insert into clued_private.integration_ready_verifications_v1(
+        integration_id, profile_id, profile_version, result, checks, subject_digest, evidence_sha256, receipt_id, valid_until, verified_at)
+      values ($1, $2, 1, 'PASS', '[]', clued_private.integration_subject_digest_v1($1), $3,
+        (select id from public.clued_audit_receipts order by created_at desc limit 1), clock_timestamp() + interval '1 day',
+        coalesce($4::timestamptz, clock_timestamp() - interval '1 minute')) returning verification_id`,
+    [id, profile, sha(uid()), verifiedAt])).rows[0].verification_id;
     const rowHash = async (table) => (await admin.query(`select md5(coalesce(string_agg(x::text, '|' order by x::text), '')) h
       from ${table} x`)).rows[0].h;
     const guarded = async () => Object.fromEntries(await Promise.all(['clued_private.integration_canonical_verifications_v1',
       'clued_private.integrations_v1', 'clued_private.integration_facts_v1', 'public.clued_agent_bindings',
-      'clued_private.authorizations_v12', 'clued_private.authorization_entries_v12'].map(async (table) => [table, await rowHash(table)])));
+      'clued_private.authorizations_v12', 'clued_private.authorization_entries_v12', 'clued_private.integration_connections_v1',
+      'clued_private.integration_binding_owners_v1', 'clued_private.integration_revocations_v1',
+      'clued_private.integration_capability_declarations_v1', 'clued_private.integration_claims_v1'].map(async (table) => [table, await rowHash(table)])));
 
     await t.test('T-S-2 after the target grants: exactly §5.13', async () => {
       const { rows } = await admin.query(`select p.proname, array_agg(r.rolname order by r.rolname) filter (where
@@ -402,18 +420,29 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       const b = checks.filter((c) => c.t.endsWith('ready_verifications_v1')).map((c) => c.d).join(' ');
       assert.match(a, /CANONICAL_RUNTIME_BASELINE/); assert.doesNotMatch(a, /READY_PROFILE_VERIFICATION/);
       assert.match(b, /READY_PROFILE_VERIFICATION/); assert.doesNotMatch(b, /CANONICAL_RUNTIME_BASELINE/);
-      const scanned = ['integration_normalize_v1', 'integration_normalize_detail_v1', 'integration_derive_v1',
-        'integration_candidate_v1', 'integration_predicates_v1', 'integration_select_state_v1', 'integration_facts_validate_v1',
-        'integration_crv_facts_v1', 'integration_subject_digest_v1', 'integration_evaluate_v1', 'integration_verify_baseline_core_v1'];
-      const { rows } = await admin.query(`select p.proname, p.prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'clued_private' and p.proname = any($1)`, [scanned]);
-      assert.deepEqual(rows.map((r) => r.proname).sort(), [...scanned].sort());
-      for (const row of rows) assert.doesNotMatch(row.prosrc, /integration_ready|ready_profile|READY_PROFILE/i, row.proname);
-      const deps = (await admin.query(`select count(*) n from pg_depend d join pg_proc p on p.oid = d.objid
-        where d.classid = 'pg_proc'::regclass and p.proname = any($1)
-          and d.refobjid in ('clued_private.integration_ready_profiles_v1'::regclass, 'clued_private.integration_ready_verifications_v1'::regclass)`,
-      [scanned])).rows[0].n;
-      assert.equal(Number(deps), 0);
+      // every function reachable from the roots (the call closure through clued_private.integration_* names in
+      // prosrc; PostgreSQL records no table dependency for plpgsql / SQL-string bodies, so pg_depend proves nothing)
+      const roots = ['integration_normalize_v1', 'integration_normalize_detail_v1', 'integration_derive_v1',
+        'integration_candidate_v1', 'integration_evaluate_v1', 'integration_verify_baseline_core_v1'];
+      const sources = Object.fromEntries((await admin.query(`select p.proname, string_agg(p.prosrc, ' ') src from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'clued_private' and p.proname like 'integration\\_%'
+        group by p.proname`)).rows.map((r) => [r.proname, r.src]));
+      const closure = new Set();
+      const queue = [...roots];
+      while (queue.length) {
+        const name = queue.pop();
+        if (closure.has(name)) continue;
+        assert.ok(sources[name], `missing ${name}`);
+        closure.add(name);
+        for (const m of sources[name].matchAll(/clued_private\.(integration_[a-z0-9_]+)/g)) {
+          if (sources[m[1]] && !closure.has(m[1])) queue.push(m[1]);
+        }
+      }
+      for (const name of ['integration_predicates_v1', 'integration_select_state_v1', 'integration_facts_validate_v1',
+        'integration_crv_facts_v1', 'integration_subject_digest_v1', 'integration_revocation_status_v1', 'integration_lattice_merge_v1']) {
+        assert.ok(closure.has(name), `closure misses ${name}`);
+      }
+      for (const name of closure) assert.doesNotMatch(sources[name], /integration_ready|ready_profile|READY_PROFILE/i, name);
       // a facts document carrying a READY key is C1 (§7.1 rule 2)
       const { id } = await active();
       const facts = (await evaluate(id)).facts;
@@ -504,18 +533,25 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
           await expectCode(verifyReady(fixture.binding, fixture.id, 'test.read'), 'binding_not_authorized');
         }
       }
-      // every one of the 8 non-operable states, against an existing PASS verification row (projection rule)
-      const { binding, id } = await active();
-      await verifyReady(binding, id, 'test.read');
-      assert.equal((await project(id, 'test.read')).ready, true);
-      const e = await evaluate(id);
-      for (const s of NON_OPERABLE) {
-        const forced = { ...e, integration_state: s, integration_operable: false, effective_capabilities: [] };
-        const p = (await admin.query(`select clued_private.integration_ready_assess_v1($1, 'test.read', 1, clock_timestamp(), $2::jsonb) p`,
-          [id, JSON.stringify(forced)])).rows[0].p;
-        assert.equal(p.ready, false, s);
-        assert.ok(p.reasons.includes('NOT_OPERABLE'), s);
+      // the three states no Binding can verify in: real Native Integrations, each with a PASS READY row for its
+      // current subject and a real Receipt (a fixture: §10.8 refuses the verification itself)
+      const reached = new Set(Object.keys(scenarios));
+      const user = await newUser();
+      for (const [expected, host, phase] of [['INSTALL_PENDING', 'test.complete', 'STARTED'], ['AUTH_PENDING', 'test.complete', 'COMPLETED'],
+        ['INSTALLED', 'test.noauth', 'COMPLETED']]) {
+        const request = await native(user, { op: 'request_open', request_key: key('native'), intent: 'create_or_bind', host,
+          host_surface: 'default', provider: 'clued.oauth.v12', adapter_family: 'test-adapter', adapter_version: '1.0.0', installation_phase: phase });
+        const created = await native(user, { op: 'create_or_bind', idempotency_key: key(), request_id: request.request_id, binding_intent: 'CREATE_OR_BIND' });
+        const id = created.supplemental.integration_id;
+        assert.equal(await state(id), expected);
+        await passRow(id, 'test.read');
+        const p = await project(id, 'test.read');
+        assert.equal(p.ready, false, expected);
+        assert.ok(p.reasons.includes('NOT_OPERABLE'), `${expected} ${JSON.stringify(p.reasons)}`);
+        assert.equal(p.reasons.includes('READY_VERIFICATION_NONE'), false, 'the PASS row is found');
+        reached.add(expected);
       }
+      assert.deepEqual([...reached].sort(), [...NON_OPERABLE].sort());
     });
 
     await t.test('T-A7-1 / T-A7-2 (P4) READY profiles and READY verifications never change normalization or state', async () => {
@@ -530,19 +566,29 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
         assert.equal((await evaluate(id, asOf)).integration_state, s0, label);
       };
       const digest = (await admin.query('select clued_private.integration_subject_digest_v1($1) d', [id])).rows[0].d;
+      const receiptId = (await admin.query(`select id from public.clued_audit_receipts where binding_id = $1 and status = 'committed'
+        order by created_at desc limit 1`, [binding.id])).rows[0].id;
       const insertRow = (profile, result, validUntil, verifiedAt = null) => admin.query(`insert into clued_private.integration_ready_verifications_v1(
           integration_id, profile_id, profile_version, result, checks, subject_digest, evidence_sha256, receipt_id, valid_until, verified_at)
         values ($1, $2, 1, $3, '[]', $4, $5, $6, $7, coalesce($8, clock_timestamp())) returning verification_id`,
-      [id, profile, result, digest, sha(uid()), uid(), validUntil, verifiedAt]);
+      [id, profile, result, digest, sha(uid()), receiptId, validUntil, verifiedAt]);
       await PROFILE('test.p4', ['context.read'], { 'context.read': RESUME });
       await check('new profile');
       const rows = [];
-      rows.push((await insertRow('test.p4', 'PASS', new Date(Date.now() + 86_400_000))).rows[0].verification_id);
-      await check('PASS row');
-      rows.push((await insertRow('test.p4', 'FAIL', new Date(Date.now() + 86_400_000))).rows[0].verification_id);
-      await check('FAIL row');
+      const before = new Date(new Date(asOf).getTime() - 60_000);
+      const tomorrow = new Date(Date.now() + 86_400_000);
+      // rows a regression reading READY "as of p_as_of" would see: verified before as_of, current subject, not expired
+      rows.push((await insertRow('test.p4', 'PASS', tomorrow, before)).rows[0].verification_id);
+      await check('PASS row before as_of');
+      rows.push((await insertRow('test.audit', 'FAIL', tomorrow, before)).rows[0].verification_id);
+      await check('FAIL row before as_of');
+      rows.push((await insertRow('test.p4', 'PASS', tomorrow)).rows[0].verification_id);
+      await check('PASS row after as_of');
       rows.push((await insertRow('test.read', 'PASS', new Date(Date.now() - 1000), new Date(Date.now() - 86_400_000))).rows[0].verification_id);
       await check('expired row, verified before as_of');
+      await admin.query(`update clued_private.integration_ready_verifications_v1 set result = 'FAIL', valid_until = clock_timestamp() - interval '1 hour'
+        where integration_id = $1 and profile_id = 'test.read'`, [id]);
+      await check('existing READY rows modified');
       await admin.query(`update clued_private.integration_ready_profiles_v1 set freshness_ttl = interval '1 hour',
         required_qualification = 'QUALIFIED' where profile_id = 'test.p4'`);
       await check('modified profile');
@@ -550,6 +596,7 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       await admin.query(`delete from clued_private.integration_ready_profiles_v1 where profile_id = 'test.p4'`);
       await check('deleted rows and profile');
       // status(profiles=[A]) vs status(profiles=[B]): same Canonical state and facts
+      await verifyReady(binding, id, 'test.read');
       const a = await rpc(admin, 'clued_integration_status_v1', binding, { integration_id: id, profiles: [{ id: 'test.read', version: 1 }] });
       const b = await rpc(admin, 'clued_integration_status_v1', binding, { integration_id: id, profiles: [{ id: 'test.audit', version: 1 }] });
       assert.notEqual(a.integration.ready[0].ready, b.integration.ready[0].ready);
@@ -560,20 +607,22 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
     await t.test('§9.5 READY reasons: none, failed, invalidated, expired, qualification; evidence by receipt family', async () => {
       const { user, binding, id } = await active();
       assert.deepEqual((await project(id, 'test.read')).reasons, ['READY_VERIFICATION_NONE']);
-      // test.write needs a committed integration_declare Receipt by this Binding after the link
+      // test.write needs a committed record_mutation Receipt by this Binding after the link; the runtime's own
+      // committed Receipts (a FAIL ready verification, a declaration) are not evidence (placement choice (b))
       const failed = await verifyReady(binding, id, 'test.write');
       assert.equal(failed.supplemental.result, 'FAIL');
+      assert.equal((await verifyReady(binding, id, 'test.write')).supplemental.result, 'FAIL', 'a FAIL row never proves the next');
       assert.deepEqual((await project(id, 'test.write')).reasons, ['READY_VERIFICATION_FAILED']);
       assert.equal((await declare(binding, id)).status, 'committed');
       assert.equal(await state(id), 'VERIFYING', 'the first declaration names the surface: a new subject (§7.4)');
       assert.equal((await verify(binding, id)).supplemental.result, 'PASS');
       assert.equal((await declare(binding, id)).status, 'committed');
       assert.equal(await state(id), 'ACTIVE', 'an unchanged declaration keeps the subject digest');
+      assert.equal((await verifyReady(binding, id, 'test.write')).supplemental.result, 'FAIL');
+      const use = await toolUse(binding);
       const passed = await verifyReady(binding, id, 'test.write');
       assert.equal(passed.supplemental.result, 'PASS', JSON.stringify(passed.supplemental.checks));
-      assert.equal(passed.supplemental.checks[0].evidence_ref,
-        (await admin.query(`select id from public.clued_audit_receipts where binding_id = $1 and operation_family = 'integration_declare'
-          order by created_at desc limit 1`, [binding.id])).rows[0].id);
+      assert.equal(passed.supplemental.checks[0].evidence_ref, use);
       assert.equal((await project(id, 'test.write')).ready, true);
       await verifyReady(binding, id, 'test.read');
       const later = new Date(Date.now() + 2 * 86_400_000).toISOString();
@@ -616,10 +665,13 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       assert.deepEqual(receipt.metadata.supplemental.projections.map((p) => [p.profile.id, p.ready]), [['test.read', true], ['test.audit', false]]);
       assert.deepEqual(receipt.metadata.supplemental.projections, first.integration.ready);
       assert.ok(receipt.target_refs.some((r) => r.role === 'ready_verification'));
+      // a READY verification after the original request: a fresh projection would differ, the replay does not
+      await verifyReady(binding, id, 'test.audit');
       const receipts = Number((await admin.query('select count(*) n from public.clued_audit_receipts')).rows[0].n);
       const replay = await rpc(admin, 'clued_integration_status_v1', binding, input);
       assert.equal(replay.ready_projection_receipt.replayed, true);
       assert.equal(replay.ready_projection_receipt.receipt_id, envelope.receipt_id);
+      assert.deepEqual(replay.integration.ready, first.integration.ready, 'a replay answers with the bound projections');
       assert.equal(Number((await admin.query('select count(*) n from public.clued_audit_receipts')).rows[0].n), receipts);
       // without the flag: no Receipt; malformed requests are refused before anything is written
       const plain = await rpc(admin, 'clued_integration_status_v1', binding, { integration_id: id, profiles: [{ id: 'test.read', version: 1 }] });
@@ -628,6 +680,8 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
         emit_ready_receipt: true }), 'invalid_ready_profiles');
       await expectCode(rpc(admin, 'clued_integration_status_v1', binding, { integration_id: id, profiles: [{ id: 'test.read' }] }),
         'invalid_ready_profiles');
+      await expectCode(rpc(admin, 'clued_integration_status_v1', binding, { integration_id: id,
+        profiles: [{ id: 'test.read', version: 1 }, { version: 1, id: 'test.read' }] }), 'invalid_ready_profiles');
       await expectCode(rpc(admin, 'clued_integration_status_v1', binding, { integration_id: id, profiles: [{ id: 'test.none', version: 1 }] }),
         'ready_profile_unknown');
       await expectCode(project(id, 'test.none'), 'ready_profile_unknown');
@@ -844,6 +898,44 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       assert.equal(await state(holder.id), 'ACTIVE');
     });
 
+    await t.test('§10.1 a PR-3 write on a connection-revoked Integration materializes the revocation; a rejected one leaves none', async () => {
+      const revocations = async (id) => (await admin.query(`select revocation_source, receipt_id, revoked_by, adopted_from
+        from clued_private.integration_revocations_v1 where integration_id = $1`, [id])).rows;
+      const a = await active();
+      await admin.query('update public.clued_agent_bindings set revoked_at = now() where id = $1', [a.binding.id]);
+      assert.equal(await state(a.id), 'REVOKED');
+      assert.deepEqual(await revocations(a.id), [], 'derived REVOKED, not yet materialized');
+      const committed = await fact('fact_set', a.id, { truth_class: 'environment_state', value: 'BLOCKED', reason: 'incident' });
+      assert.equal(committed.status, 'committed', JSON.stringify(committed));
+      assert.ok(committed.supplemental.outcome_flags.includes('REVOCATION_MATERIALIZED'));
+      const rows = await revocations(a.id);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].revocation_source, 'CONNECTION_REVOKE_ADOPTED');
+      assert.equal(rows[0].receipt_id, committed.receipt_id);
+      assert.equal(rows[0].adopted_from.binding_id, a.binding.id);
+      const ref = committed.target_refs.find((r) => r.role === 'revocation');
+      assert.equal(ref.kind, 'integration_revocation');
+      assert.equal(await state(a.id), 'REVOKED');
+      // a rejected write rolls its materialization back with it
+      const b = await active();
+      await admin.query('update public.clued_agent_bindings set revoked_at = now() where id = $1', [b.binding.id]);
+      const stale = await operator({ op: 'fact_set', idempotency_key: key(), integration_id: b.id, base_version: (await version(b.id)) - 1,
+        truth_class: 'environment_state', value: 'BLOCKED', reason: 'x' });
+      assert.equal(stale.error_code, 'integration_version_conflict');
+      const invalid = await fact('fact_set', b.id, { truth_class: 'environment_state', value: 'NOPE', reason: 'x' });
+      assert.equal(invalid.error_code, 'invalid_integration_fact');
+      assert.deepEqual(await revocations(b.id), []);
+    });
+
+    await t.test('§10.7 CRV-3 accepts exactly the MCP versions the Worker supports', async () => {
+      const source = await fs.readFile(path.join(root, 'worker/continuity.ts'), 'utf8');
+      const block = source.match(/const SUPPORTED_MCP_VERSIONS = \[([^\]]*)\]/);
+      assert.ok(block, 'SUPPORTED_MCP_VERSIONS not found in worker/continuity.ts');
+      const worker = [...block[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+      const sql = (await admin.query('select clued_private.integration_supported_mcp_versions_v1() v')).rows[0].v;
+      assert.deepEqual(sql, worker);
+    });
+
     await t.test('READY profile rows: the evidence rules CHECK (placement choice (b))', async () => {
       const bad = [
         [['context.read'], {}],
@@ -855,6 +947,8 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
         [['context.read', 'context.read'], { 'context.read': RESUME }],
         [['telepathy'], { telepathy: RESUME }],
         [['context.read'], [RESUME]],
+        [['context.read'], { 'context.read': { kind: 'committed_receipt_after_link', families: ['integration_verify_ready'] } }],
+        [['context.read'], { 'context.read': { kind: 'committed_receipt_after_link', families: ['record_mutation', 'integration_ready_projection'] } }],
       ];
       for (const [i, [caps, rules]] of bad.entries()) {
         await assert.rejects(PROFILE(`test.bad-${i}`, caps, rules), /violates check constraint/, JSON.stringify(rules));

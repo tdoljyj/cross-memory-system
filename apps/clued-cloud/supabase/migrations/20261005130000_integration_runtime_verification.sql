@@ -8,7 +8,10 @@
 --   (b) READY evidence rules (§5.1 evidence_rules, §10.8: "规则由 profile 定义（S3 定稿）") are given a
 --       minimal v1 shape so that a profile row can be checked by a CHECK: an object with exactly one rule
 --       per required capability, each {"kind":"resume_after_link"} or {"kind":"committed_receipt_after_link",
---       "families":[...]}. No production profile is seeded (§5.1); tests bring their own.
+--       "families":[...]}. A family may not be one of the Integration runtime's own (integration_*): those
+--       Receipts are written by verify / status themselves and are not evidence of ordinary use (a FAIL
+--       ready verification's committed Receipt would otherwise prove the next one). No production profile
+--       is seeded (§5.1); tests bring their own.
 --   (c) report (§10.6) takes action 'set' | 'clear'. An adapter may only set a narrowing value
 --       (host_state DEGRADED / HARD_UNAVAILABLE, adapter_state DEGRADED / BLOCKED); returning to the healthy
 --       value is a 'clear' of its own report. Every other class, and a healthy value, is
@@ -54,7 +57,8 @@ begin
         return false;
       end if;
       for v_family in select f from pg_catalog.jsonb_array_elements(v_rule->'families') f loop
-        if pg_catalog.jsonb_typeof(v_family) <> 'string' or pg_catalog.char_length(v_family #>> '{}') not between 1 and 80 then
+        if pg_catalog.jsonb_typeof(v_family) <> 'string' or pg_catalog.char_length(v_family #>> '{}') not between 1 and 80
+           or (v_family #>> '{}') like 'integration\_%' then
           return false;
         end if;
       end loop;
@@ -555,6 +559,7 @@ begin
       elsif v_rule->>'kind' = 'committed_receipt_after_link' then
         select a.id into v_evidence from public.clued_audit_receipts a
          where a.binding_id = v_caller and a.status = 'committed' and a.created_at >= c.linked_at
+           and a.operation_family not like 'integration\_%'
            and a.operation_family = any(array(select pg_catalog.jsonb_array_elements_text(v_rule->'families')))
          order by a.created_at desc, a.id limit 1;
       end if;
@@ -602,6 +607,9 @@ begin
     if pg_catalog.jsonb_typeof(v_profiles) <> 'array' or pg_catalog.jsonb_array_length(v_profiles) not between 1 and 10 then
       raise exception 'invalid_ready_profiles' using errcode = '22023';
     end if;
+    if (select count(distinct x) from pg_catalog.jsonb_array_elements(v_profiles) x) <> pg_catalog.jsonb_array_length(v_profiles) then
+      raise exception 'invalid_ready_profiles' using errcode = '22023';
+    end if;
     for v_profile in select x from pg_catalog.jsonb_array_elements(v_profiles) x loop
       if pg_catalog.jsonb_typeof(v_profile) <> 'object' or (v_profile - 'id' - 'version') <> '{}'::jsonb
          or pg_catalog.jsonb_typeof(v_profile->'id') is distinct from 'string'
@@ -634,8 +642,12 @@ begin
   v_receipt := clued_private.m1_begin_receipt(p_owner, p_binding_id, 'integration_ready_projection', p_input,
     clued_private.integration_request_hash_v1('integration_ready_projection', p_input));
   if v_receipt.status <> 'pending' then
-    return pg_catalog.jsonb_build_object('integration', v_view, 'ready_projection_receipt',
-      clued_private.integration_replay_v1(v_receipt));
+    -- a replay answers with the projections the original request bound into its Receipt, so the two never
+    -- disagree; the Canonical view itself is read fresh
+    v_envelope := clued_private.integration_replay_v1(v_receipt);
+    return pg_catalog.jsonb_build_object('integration', v_view || pg_catalog.jsonb_build_object('ready',
+        coalesce(v_envelope #> '{supplemental,projections}', 'null'::jsonb)),
+      'ready_projection_receipt', v_envelope);
   end if;
   v_refs := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('role', 'primary', 'kind', 'integration',
     'id', p_integration_id)) || coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('role', 'ready_verification',
@@ -770,9 +782,9 @@ returns jsonb language plpgsql security definer set search_path='' as $$
 declare u uuid := clued_private.authorization_owner_v12(); v_op text := p_input->>'op'; v_input jsonb := p_input - 'op';
   v_id uuid; v_owner uuid; v_actor jsonb;
 begin
-  if not exists (select 1 from clued_private.platform_admin_v13 where subject_id = u) then
-    raise exception 'platform_admin_required' using errcode = '42501';
-  end if;
+  -- FOR SHARE on the singleton row serializes with platform_admin_recover_v13, as the other operator paths do
+  perform 1 from clued_private.platform_admin_v13 where subject_id = u for share;
+  if not found then raise exception 'platform_admin_required' using errcode = '42501'; end if;
   begin
     v_id := (v_input->>'integration_id')::uuid;
   exception when others then v_id := null;
