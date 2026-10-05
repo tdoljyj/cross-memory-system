@@ -12,7 +12,8 @@ import EmbeddedPostgres from 'embedded-postgres';
 // Operator), restore / regrant, reauth mark / clear, capability_expansion, lifecycle, §10.5 REPLACE_HOLDER
 // rule 2. Proves G-A11 (T-A11-1…25 except the Worker transport cases T-A11-4b(a)(d), which are PR-5, and the
 // PR-2 cases T-A11-15(d), T-A11-17(a), T-A11-20(c)(d) already in integration-runtime-identity-db), T-A9-2 and the
-// remaining G-A9 criteria (T-A9-4, -5, -6, -8, -10, -12), and the PR-4 structure checks (T-S-1…3, T-S-5).
+// remaining G-A9 criteria (T-A9-3 end to end, -4, -5, -6, -8, -9, -10 over all ten states × twelve operations,
+// -12), and the PR-4 structure checks (T-S-1…3, T-S-5).
 // Every database runs as a non-root OS user (embedded-postgres refuses root).
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,16 +43,6 @@ async function freePort() {
   const { port } = socket.address();
   await new Promise((resolve) => socket.close(resolve));
   return port;
-}
-
-async function expectCode(promise, code) {
-  try {
-    const result = await promise;
-    assert.fail(`expected ${code}, got ${JSON.stringify(result)}`);
-  } catch (error) {
-    if (error instanceof assert.AssertionError) throw error;
-    assert.equal(error.message, code);
-  }
 }
 
 test('S2c PR-4: revocation, restore, reauth marks, capability expansion and lifecycle', { timeout: 1_800_000 }, async (t) => {
@@ -156,7 +147,8 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
         group by p.oid`);
       for (const row of rows) assert.equal(row.any_execute, false, row.f);
       const publicRpcs = rows.map((row) => row.f).filter((f) => !f.startsWith('clued_private.')).map((f) => f.replace(/\(.*$/, '')).sort();
-      for (const name of [...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1']) assert.ok(publicRpcs.includes(name), name);
+      // the latest S2c suite pins the exact public surface
+      assert.deepEqual(publicRpcs, [...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1'].sort());
     });
 
     // the §5.13 target grants, exactly as the flag-enabling migration will apply them (§13.0)
@@ -271,20 +263,12 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
     const verify = async (binding, id, input = {}) => rpc(admin, 'clued_integration_verify_v1', binding, {
       kind: 'canonical_baseline', idempotency_key: key('verify'), integration_id: id, base_version: await version(id),
       transport: TRANSPORT, ...input });
-    const verifyReady = async (binding, id, profileId, input = {}) => rpc(admin, 'clued_integration_verify_v1', binding, {
-      kind: 'ready_profile', idempotency_key: key('ready'), integration_id: id, base_version: await version(id),
-      profile_id: profileId, profile_version: 1, ...input });
     const declare = async (binding, id, input = {}) => rpc(admin, 'clued_integration_declare_v1', binding, {
       idempotency_key: key('declare'), integration_id: id, base_version: await version(id), host_surface: 'default',
       declared_capabilities: FULL, host_features: { mcp_tools: true }, adapter_family: 'test-adapter', adapter_version: '1.0.0',
       ...input });
     const report = async (binding, id, input) => rpc(admin, 'clued_integration_report_v1', binding, {
       idempotency_key: key('report'), integration_id: id, base_version: await version(id), ...input });
-    const fact = async (op, id, input) => operator({ op, idempotency_key: key('fact'), integration_id: id,
-      base_version: await version(id), ...input });
-    const project = async (id, profileId, asOf = null, profileVersion = 1) => (await admin.query(
-      'select clued_private.integration_ready_project_v1($1, $2, $3, coalesce($4::timestamptz, clock_timestamp())) p',
-      [id, profileId, profileVersion, asOf])).rows[0].p;
     const state = async (id) => (await evaluate(id)).integration_state;
     // a fresh ACTIVE Integration: install, one resume after the link, A-class verification
     const active = async (input = {}, bindingOptions = {}, owner = null) => {
@@ -299,21 +283,6 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       assert.equal(await state(id), 'ACTIVE');
       return { user, binding, id };
     };
-    // one committed M1 Receipt of an ordinary tool family by this Binding (server-observable use, §10.8)
-    const toolUse = async (binding, family = 'record_mutation') => {
-      const input = { idempotency_key: key('use') };
-      const r = (await admin.query(`select (clued_private.m1_begin_receipt($1, $2, $3, $4::jsonb, $5)).id`,
-        [binding.user, binding.id, family, JSON.stringify(input), sha(uid())])).rows[0].id;
-      await admin.query(`select clued_private.m1_finish_receipt($1, 'committed', '[]', '{}', '{}', '{}', '{}', null)`, [r]);
-      return r;
-    };
-    // a PASS READY row for the current subject, backed by a real Receipt (fixture for states no verify can reach)
-    const passRow = async (id, profile, verifiedAt = null) => (await admin.query(`insert into clued_private.integration_ready_verifications_v1(
-        integration_id, profile_id, profile_version, result, checks, subject_digest, evidence_sha256, receipt_id, valid_until, verified_at)
-      values ($1, $2, 1, 'PASS', '[]', clued_private.integration_subject_digest_v1($1), $3,
-        (select id from public.clued_audit_receipts order by created_at desc limit 1), clock_timestamp() + interval '1 day',
-        coalesce($4::timestamptz, clock_timestamp() - interval '1 minute')) returning verification_id`,
-    [id, profile, sha(uid()), verifiedAt])).rows[0].verification_id;
     const rowHash = async (table) => (await admin.query(`select md5(coalesce(string_agg(x::text, '|' order by x::text), '')) h
       from ${table} x`)).rows[0].h;
     const guarded = async () => Object.fromEntries(await Promise.all(['clued_private.integration_canonical_verifications_v1',
@@ -432,10 +401,17 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       const { binding, id } = await active();
       const other = await active();
       const sameOwner = await oauthBinding(other.user);
+      const expiredOwn = await active();
+      const expiredCaller = await oauthBinding(expiredOwn.user);
+      await admin.query(`update clued_private.authorizations_v12 set expires_at = clock_timestamp() - interval '1 second'
+        where binding_id = $1`, [expiredCaller.id]);
       const r0 = await receiptCount(); const g0 = await guarded();
       assert.equal((await revokeSelf({ hash: sha('nobody') }, id)).thrown, 'binding_not_authorized');
       assert.equal((await revokeSelf({ hash: 'not-a-hash' }, id)).thrown, 'binding_not_authorized');
       assert.equal((await revokeSelf(other.binding, id)).thrown, 'integration_not_owned');
+      // a non-live caller is binding_not_authorized before any Integration row is read (§10.1 step 3)
+      assert.equal((await revokeSelf(expiredCaller, id)).thrown, 'binding_not_authorized', 'another owner');
+      assert.equal((await revokeSelf(expiredCaller, expiredOwn.id)).thrown, 'binding_not_authorized', 'own, not current');
       assert.equal((await revokeSelf(sameOwner, other.id)).thrown, 'integration_connection_required');
       assert.equal(await receiptCount(), r0);
       assert.deepEqual(await guarded(), g0);
@@ -891,7 +867,16 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       const id = await install(bOld);
       const bCur = await oauthBinding(user, { client });
       assert.equal((await bindTo(bCur, id, 'REAUTHORIZATION')).status, 'committed');
-      // (a)
+      // (a), also through the Host-disconnect path (revoke_issuer)
+      const u0 = await newUser();
+      const o0 = await oauthBinding(u0, { client });
+      const i0 = await install(o0);
+      const c0 = await oauthBinding(u0, { client });
+      await bindTo(c0, i0, 'REAUTHORIZATION');
+      await issuerRevoke(c0);
+      assert.equal(await state(i0), 'REVOKED');
+      assert.equal(await rowCount(i0), 0);
+      assert.equal(await tool(o0), 'ok');
       await selfRevokeV12(bCur);
       assert.equal(await state(id), 'REVOKED');
       assert.equal(await rowCount(id), 0);
@@ -977,6 +962,26 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       const c = await bindTo(consent, id, 'REAUTHORIZATION');
       assert.equal(c.status, 'committed', JSON.stringify(c));
       assert.ok(c.supplemental.outcome_flags.includes('AUTHORITY_EXPANDED_BY_CONSENT'));
+      // v0.1.3 MINOR-N11: a reduce on a HISTORICAL Binding does not count; the same reduce while it was CURRENT does
+      const PROJECT = { resource_kind: 'context', resource_id: `project:${uid()}`, environment: 'canonical', actions: ['read'] };
+      const eff = async (x) => (await admin.query('select clued_private.integration_ceiling_eff_v1($1) e', [x])).rows[0].e;
+      const u2 = await newUser();
+      const h0 = await oauthBinding(u2, { client, entries: [...DEFAULT_ENTRIES, PROJECT] });
+      const hid = await install(h0);
+      const h1 = await oauthBinding(u2, { client });
+      assert.equal((await bindTo(h1, hid, 'REAUTHORIZATION')).status, 'committed');
+      const before = await eff(hid);
+      await manage(h0, { op: 'reduce', selected: [PROJECT] });                     // h0 is HISTORICAL now
+      assert.deepEqual(await eff(hid), before, 'C_eff unchanged');
+      assert.equal((await bindTo(h1, hid, 'VERIFICATION_REPAIR')).status, 'committed');
+      assert.equal((await bindTo(h1, hid, 'REAUTHORIZATION')).status, 'committed');
+      const u3 = await newUser();
+      const k0 = await oauthBinding(u3, { client, entries: [...DEFAULT_ENTRIES, PROJECT] });
+      const kid = await install(k0);
+      const k1 = await oauthBinding(u3, { client });                               // issued before the reduce
+      await manage(k0, { op: 'reduce', selected: [PROJECT] });                     // k0 is CURRENT: it counts
+      assert.notDeepEqual((await eff(kid)).ceiling, (await integration(kid)).authorization_ceiling);
+      assert.equal((await bindTo(k1, kid, 'REAUTHORIZATION')).error_code, 'reauthorization_scope_expansion_forbidden');
     });
 
     await t.test('T-A11-14 a revoked Integration with invalid facts still refuses a reauthorization', async () => {
@@ -1020,6 +1025,9 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       assert.equal(moved.status, 'committed', JSON.stringify(moved));
       assert.deepEqual(sorted(moved.supplemental.ownership_transfer.map((x) => x.binding_id)), sorted([iOld.id, iCur.id]));
       assert.equal(await currentBinding(pa.h), iCur.id);
+      assert.equal(Number((await admin.query(`select count(*) n from clued_private.integration_connections_v1
+        where integration_id = $1 and binding_id = $2`, [pa.h, iOld.id])).rows[0].n), 0, 'ownership only, no connection row on H');
+      assert.deepEqual((await admin.query('select clued_private.integration_owned_unrevoked_v1($1) o', [pa.i])).rows[0].o, []);
       await resume(iCur);
       assert.equal((await verify(iCur, pa.h)).supplemental.result, 'PASS');
       assert.equal(await state(pa.h), 'ACTIVE');
@@ -1391,6 +1399,25 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       assert.ok(await revoked(o2));
       assert.equal(await tool(pre2), 'ok');
       assert.equal(await state(id2), 'VERIFYING');
+      // concurrency: a restore holding B_old's L1 blocks B_old's REBIND, which fails once the restore commits
+      const u3 = await newUser();
+      const o3 = await oauthBinding(u3, { client });
+      const id3 = await install(o3);
+      const c3b = await oauthBinding(u3, { client });
+      await bindTo(c3b, id3, 'REAUTHORIZATION');
+      await issuerRevoke(c3b);
+      const n3 = await oauthBinding(u3, { client });
+      const reb = await openReq(o3, { intent: 'rebind', target_integration_id: id3 });
+      await c2.query('begin');
+      const held = await sessionIn(c2, 'clued_user_integration_v1', u3, { op: 'restore', idempotency_key: key(), integration_id: id3,
+        base_version: await version(id3), new_binding_id: n3.id });
+      assert.equal(held.status, 'committed', JSON.stringify(held));
+      const blocked = inTx(c3, () => rpc(c3, 'clued_integration_create_or_bind_v1', o3, { idempotency_key: key('bind'),
+        request_id: reb.request_id, binding_intent: 'REBIND' }));
+      await waitLocked(pid3);
+      await c2.query('commit');
+      assert.equal((await blocked).thrown, 'binding_not_authorized');
+      assert.equal(await currentBinding(id3), n3.id);
     });
 
     await t.test('T-A11-22 sweep concurrency boundaries', async () => {
@@ -1560,6 +1587,44 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       assert.equal(await state(id), 'DEGRADED');
     });
 
+    await t.test('T-A9-3 the Native-initiated path: INSTALL_PENDING → AUTH_PENDING → VERIFYING → ACTIVE', async () => {
+      const user = await newUser();
+      const id = await nativeCreate(user, 'test.complete', 'STARTED');
+      assert.equal(await state(id), 'INSTALL_PENDING');
+      assert.equal((await lifecycle(user, id, 'installation_completed')).status, 'committed');
+      assert.equal(await state(id), 'AUTH_PENDING');
+      const req = await native(user, { op: 'request_open', request_key: key('bind'), intent: 'bind_connection', target_integration_id: id,
+        host: 'test.complete', host_surface: 'default', adapter_family: 'test-adapter', adapter_version: '1.0.0' });
+      const b = await oauthBinding(user);
+      const linked = await rpc(admin, 'clued_integration_create_or_bind_v1', b, { idempotency_key: key('bind'),
+        request_id: req.request_id, binding_intent: 'BIND_CONNECTION' });
+      assert.equal(linked.status, 'committed', JSON.stringify(linked));
+      assert.equal(linked.supplemental.link_authority, 'NATIVE_BIND_REQUEST');
+      assert.equal(await state(id), 'VERIFYING');
+      assert.equal((await integration(id)).identity_completeness, 'COMPLETE');
+      await resume(b);
+      assert.equal((await verify(b, id)).supplemental.result, 'PASS');
+      assert.equal(await state(id), 'ACTIVE');
+    });
+
+    await t.test('T-A9-9 a SUPERSEDED Integration never returns to ACTIVE / DEGRADED / REAUTH_REQUIRED', async () => {
+      const pair = await conflictPair();
+      assert.equal((await reconcile(pair.user, pair.i, pair.h, 'REBIND_TO_HOLDER')).status, 'committed');
+      const e = await evaluate(pair.i);
+      assert.equal(e.integration_state, 'BLOCKED');
+      assert.equal(e.predicates.credential_lost, true);
+      // the Binding channel cannot reach it (no CURRENT connection): verify and declare are 403
+      assert.equal((await call(verify(pair.bi, pair.i))).thrown, 'integration_connection_required');
+      assert.equal((await call(declare(pair.bi, pair.i))).thrown, 'integration_connection_required');
+      // Native and Operator writes are refused as superseded
+      assert.equal((await lifecycle(pair.user, pair.i, 'pause')).error_code, 'integration_superseded');
+      assert.equal((await mark(pair.i)).error_code, 'integration_superseded');
+      const fresh = await oauthBinding(pair.user, { client: pair.client });
+      assert.equal((await restore(pair.user, pair.i, fresh)).error_code, 'integration_superseded');
+      assert.equal((await bindTo(fresh, pair.i, 'REAUTHORIZATION')).error_code, 'integration_superseded');
+      assert.equal(await state(pair.i), 'BLOCKED');
+    });
+
     await t.test('T-A9-4 every state is reached by a real RPC sequence', async () => {
       const reached = new Set();
       const user = await newUser();
@@ -1656,6 +1721,13 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       assert.equal((await opLifecycle('policy_resume', id)).status, 'committed');
       assert.equal(await state(id), 'ACTIVE');
       assert.equal((await opLifecycle('policy_resume', id)).error_code, 'lifecycle_transition_invalid');
+      // a policy pause laid over an Owner pause gives the Owner pause back (placement choice (g))
+      assert.equal((await lifecycle(user, id, 'pause')).status, 'committed');
+      assert.equal((await opLifecycle('policy_pause', id)).supplemental.from, 'PAUSED_BY_OWNER');
+      const back = await opLifecycle('policy_resume', id);
+      assert.equal(back.supplemental.to, 'PAUSED_BY_OWNER', JSON.stringify(back.supplemental));
+      assert.equal(await state(id), 'BLOCKED');
+      assert.equal((await lifecycle(user, id, 'resume')).status, 'committed');
       assert.equal((await call(native(user, { op: 'lifecycle', idempotency_key: key(), integration_id: id, base_version: await version(id),
         action: 'policy_pause' }))).error_code, 'invalid_lifecycle', 'Owner cannot use the Operator actions');
       assert.equal((await opLifecycle('recovery_policy', id, { value: 'SOMETIMES' })).error_code, 'invalid_lifecycle');
@@ -1670,37 +1742,69 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
     await t.test('T-A9-10 the (state, operation) transition table; every success has its Receipt and operation log', async () => {
       const fixtures = {
         INSTALL_PENDING: async () => { const user = await newUser(); return { user, id: await nativeCreate(user, 'test.complete', 'STARTED') }; },
+        INSTALLED: async () => {
+          const user = await newUser();
+          const id = await nativeCreate(user, 'test.noauth', 'STARTED');
+          await lifecycle(user, id, 'installation_completed');
+          return { user, id };
+        },
+        AUTH_PENDING: async () => { const user = await newUser(); return { user, id: await nativeCreate(user, 'test.complete', 'COMPLETED') }; },
         VERIFYING: async () => { const user = await newUser(); const binding = await oauthBinding(user); return { user, binding, id: await install(binding) }; },
         ACTIVE: async () => active(),
+        DEGRADED: async () => { const x = await active(); await report(x.binding, x.id, DEGRADE); return x; },
         BLOCKED: async () => { const x = await active(); await lifecycle(x.user, x.id, 'pause'); return x; },
-        REAUTH_REQUIRED: async () => { const x = await active(); await mark(x.id); return x; },
+        REAUTH_REQUIRED: async () => { const x = await active(); const m = await mark(x.id); return { ...x, markId: m.supplemental.mark_id }; },
+        INCOMPATIBLE: async () => {
+          const family = `t-a9-10-${uid()}`;
+          await admin.query(`insert into clued_private.integration_compatibility_rules_v1(host, adapter_family, min_adapter_version,
+            below_minimum, registry_version) values ('test.complete', $1, '2.0.0', 'HARD_INCOMPATIBLE', 1)`, [family]);
+          const x = await active({ adapter_family: family, adapter_version: '2.0.0' });
+          await declare(x.binding, x.id, { adapter_family: family, adapter_version: '1.0.0' });
+          return x;
+        },
         REVOKED: async () => { const x = await active(); await revoke(x.user, x.id); return x; },
       };
       const NOT = 'lifecycle_transition_invalid';
+      const NA = 'reconcile_not_applicable';
+      const CLOSED = 'reauth_mark_not_open';
+      const REV = 'integration_revoked_requires_explicit_restore';
       const ops = {
         revoke: async (x) => revoke(x.user, x.id),
         reauth_mark: async (x) => mark(x.id),
+        reauth_clear: async (x) => clearMark(x.id, x.markId ?? uid()),
         pause: async (x) => lifecycle(x.user, x.id, 'pause'),
         resume: async (x) => lifecycle(x.user, x.id, 'resume'),
         installation_completed: async (x) => lifecycle(x.user, x.id, 'installation_completed'),
         policy_pause: async (x) => opLifecycle('policy_pause', x.id),
+        policy_resume: async (x) => opLifecycle('policy_resume', x.id),
+        recovery_policy: async (x) => opLifecycle('recovery_policy', x.id, { value: 'FORBIDS_REAUTH' }),
+        capability_expansion: async (x) => native(x.user, { op: 'capability_expansion', idempotency_key: key(), integration_id: x.id,
+          base_version: await version(x.id), new_ceiling: (await integration(x.id)).authorization_ceiling
+            ?? { scopes: ['context:read'], entries: 'LEGACY_UNRESTRICTED' } }),
         restore: async (x) => restore(x.user, x.id, await oauthBinding(x.user, { client: x.binding?.client })),
+        reconcile: async (x) => native(x.user, { op: 'reconcile', idempotency_key: key(), integration_id: x.id, resolution: 'REPLACE_HOLDER',
+          base_version: await version(x.id), holder_base_version: 1 }),
       };
-      // [state][op] = expected result state on commit (§8.4 precedence: REAUTH_REQUIRED before BLOCKED), or the rejection code
+      // [state][op] = expected result state on commit (§8.4 precedence: REVOKED, INCOMPATIBLE, REAUTH_REQUIRED,
+      // AUTH_PENDING, VERIFYING, BLOCKED, …), or the rejection code
+      const same = (st, extra = {}) => ({ revoke: 'REVOKED', reauth_mark: st, reauth_clear: CLOSED, pause: 'BLOCKED', resume: NOT,
+        installation_completed: NOT, policy_pause: 'BLOCKED', policy_resume: NOT, recovery_policy: st, capability_expansion: st,
+        restore: NOT, reconcile: NA, ...extra });
       const table = {
-        INSTALL_PENDING: { revoke: 'REVOKED', reauth_mark: 'INSTALL_PENDING', pause: 'BLOCKED', resume: NOT,
-          installation_completed: 'AUTH_PENDING', policy_pause: 'BLOCKED', restore: NOT },
-        VERIFYING: { revoke: 'REVOKED', reauth_mark: 'REAUTH_REQUIRED', pause: 'BLOCKED', resume: NOT, installation_completed: NOT,
-          policy_pause: 'BLOCKED', restore: NOT },
-        ACTIVE: { revoke: 'REVOKED', reauth_mark: 'REAUTH_REQUIRED', pause: 'BLOCKED', resume: NOT, installation_completed: NOT,
-          policy_pause: 'BLOCKED', restore: NOT },
-        BLOCKED: { revoke: 'REVOKED', reauth_mark: 'REAUTH_REQUIRED', pause: NOT, resume: 'ACTIVE', installation_completed: NOT,
-          policy_pause: 'BLOCKED', restore: NOT },
-        REAUTH_REQUIRED: { revoke: 'REVOKED', reauth_mark: 'REAUTH_REQUIRED', pause: 'REAUTH_REQUIRED', resume: NOT,
-          installation_completed: NOT, policy_pause: 'REAUTH_REQUIRED', restore: NOT },
-        REVOKED: { revoke: 'REVOKED', reauth_mark: 'integration_revoked_requires_explicit_restore', pause: 'REVOKED', resume: NOT,
-          installation_completed: NOT, policy_pause: 'REVOKED', restore: 'VERIFYING' },
+        INSTALL_PENDING: same('INSTALL_PENDING', { installation_completed: 'AUTH_PENDING' }),
+        INSTALLED: same('INSTALLED'),
+        AUTH_PENDING: same('AUTH_PENDING', { pause: 'AUTH_PENDING', policy_pause: 'AUTH_PENDING' }),
+        VERIFYING: same('VERIFYING', { reauth_mark: 'REAUTH_REQUIRED' }),
+        ACTIVE: same('ACTIVE', { reauth_mark: 'REAUTH_REQUIRED' }),
+        DEGRADED: same('DEGRADED', { reauth_mark: 'REAUTH_REQUIRED' }),
+        BLOCKED: same('BLOCKED', { reauth_mark: 'REAUTH_REQUIRED', pause: NOT, resume: 'ACTIVE' }),
+        REAUTH_REQUIRED: same('REAUTH_REQUIRED', { reauth_clear: 'ACTIVE', pause: 'REAUTH_REQUIRED', policy_pause: 'REAUTH_REQUIRED',
+          recovery_policy: 'BLOCKED' }),
+        INCOMPATIBLE: same('INCOMPATIBLE', { pause: 'INCOMPATIBLE', policy_pause: 'INCOMPATIBLE' }),
+        REVOKED: same('REVOKED', { reauth_mark: REV, pause: 'REVOKED', policy_pause: 'REVOKED', capability_expansion: REV,
+          restore: 'VERIFYING' }),
       };
+      assert.deepEqual(Object.keys(table).sort(), [...STATES].sort(), 'every state');
       for (const [from, row] of Object.entries(table)) {
         for (const [op, expected] of Object.entries(row)) {
           const x = await fixtures[from]();
@@ -1785,7 +1889,7 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       assert.notEqual(rv.receipt_id, rs.receipt_id);
     });
 
-    await t.test('Operator entry: admin only, input validation, revoke_self family and replay', async () => {
+    await t.test('Operator entry: admin only, input validation, idempotent replay and key conflicts', async () => {
       const { user, binding, id } = await active();
       assert.equal((await call(operator({ op: 'revoke', integration_id: id, idempotency_key: key(), reason: 'x', revoked_by: 'SECURITY' },
         user))).thrown, 'platform_admin_required');
@@ -1807,8 +1911,34 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       assert.equal(view.revocation.revoked_by, 'USER_VIA_HOST');
       assert.deepEqual(view.revocation.revoked_binding_ids, [binding.id]);
       assert.equal(view.lifecycle.ordinary_runtime, 'PERMITTED');
-      const replay = await revoke(user, id, { idempotency_key: key('again') });
-      assert.equal(replay.supplemental.outcome, 'ALREADY_REVOKED');
+      const again = await revoke(user, id, { idempotency_key: key('again') });
+      assert.equal(again.supplemental.outcome, 'ALREADY_REVOKED');
+      assert.equal(again.supplemental.revoked_by, 'USER_VIA_HOST', 'the row\'s revoked_by, not the caller\'s');
+      assert.equal(again.supplemental.requested_by, 'USER');
+      // the Binding is revoked now: a replay of the same revoke_self is a 403 by design (placement choice (b))
+      assert.equal((await call(rpc(admin, 'clued_integration_revoke_self_v1', binding, input))).thrown, 'binding_not_authorized');
+      // Operator: revoked_by / raised_by are part of the idempotency payload
+      const x = await active();
+      const k1 = key('op');
+      const bad = await operator({ op: 'revoke', idempotency_key: k1, integration_id: x.id, reason: 'r', revoked_by: 'USER' });
+      assert.equal(bad.error_code, 'invalid_revoke');
+      const other = await operator({ op: 'revoke', idempotency_key: k1, integration_id: x.id, reason: 'r', revoked_by: 'SECURITY' });
+      assert.equal(other.status, 'rejected', JSON.stringify(other));
+      assert.match(other.error_code, /IDEMPOTENCY/i);
+      assert.equal(await state(x.id), 'ACTIVE');
+      const k2 = key('mark');
+      const m1 = await operator({ op: 'reauth_mark', idempotency_key: k2, integration_id: x.id, base_version: await version(x.id),
+        reason: 'PROVIDER_RECONFIRMATION', raised_by: 'CLUED' });
+      assert.equal(m1.status, 'committed', JSON.stringify(m1));
+      const m2 = await operator({ op: 'reauth_mark', idempotency_key: k2, integration_id: x.id, base_version: Number(m1.committed_versions[x.id]) - 1,
+        reason: 'PROVIDER_RECONFIRMATION', raised_by: 'SECURITY' });
+      assert.match(m2.error_code ?? '', /IDEMPOTENCY/i, JSON.stringify(m2));
+      const m3 = await operator({ op: 'reauth_mark', idempotency_key: k2, integration_id: x.id, base_version: Number(m1.committed_versions[x.id]) - 1,
+        reason: 'PROVIDER_RECONFIRMATION', raised_by: 'CLUED' });
+      assert.equal(m3.replayed, true);
+      assert.equal(m3.receipt_id, m1.receipt_id);
+      const r1 = await opRevoke(x.id);
+      assert.equal(r1.status, 'committed');
     });
 
   } finally {

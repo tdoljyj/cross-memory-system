@@ -8,7 +8,8 @@
 --       invalid_revoke (22023) rather than silently ignored.
 --   (b) revoke_self's LINEAGE (§10.10 step 4) compares each Binding's identity on I: the latest connection
 --       snapshot of that Binding on I, else (a Binding I owns without a connection row on I, i.e. one moved
---       to I by reconcile) its server-derived identity (§6.2).
+--       to I by reconcile) its server-derived identity (§6.2). The caller must be live before any Integration
+--       row is read. A successful revoke_self revokes the caller, so its idempotent replay is a 403 by design.
 --   (c) ALREADY_REVOKED (§10.10 step 5) writes the Receipt and the operation log only: no revocation row,
 --       no Binding, and no integrations_v1 version bump (T-A11-11(c), T-A11-24).
 --   (d) restore checks, in order: integration_superseded, lifecycle_transition_invalid (nothing to restore),
@@ -19,11 +20,13 @@
 --   (e) Operator reauth_mark takes raised_by ∈ {CLUED, POLICY, SECURITY}, as Operator revoke takes
 --       revoked_by; SERVER is only reachable through integration_reauth_mark_core_v1 from the server.
 --   (f) capability_expansion (§10.11, optional raw-Binding path) only widens: new_ceiling must be a valid
---       ceiling that covers the stored one, else invalid_capability_expansion (22023).
+--       ceiling that covers the stored one, else invalid_capability_expansion (22023). On a revoked Integration
+--       it is integration_revoked_requires_explicit_restore (a ceiling change is not a restore).
 --   (g) lifecycle request_close / request_archive take request_id and the Request's base_version; close is
 --       OPEN | BOUND → CLOSED, archive is any non-ARCHIVED status → ARCHIVED. Neither touches integrations_v1
---       (§5.3 rule 3, T-A9-5). policy_pause also covers PAUSED_BY_OWNER (policy wins; policy_resume returns to
---       PERMITTED). A lifecycle action that does not change the value is lifecycle_transition_invalid.
+--       (§5.3 rule 3, T-A9-5). policy_pause also covers PAUSED_BY_OWNER; policy_resume then returns to the value
+--       the policy pause replaced (PAUSED_BY_OWNER or PERMITTED), so an Operator cycle never lifts an Owner pause.
+--       A lifecycle action that does not change the value is lifecycle_transition_invalid.
 --       lifecycle, reauth_mark and capability_expansion on a SUPERSEDED Integration are integration_superseded.
 --   (h) The status view gains a revocation block: the open row (if any) and the full revoked set of the
 --       current revocation episode — the row's revoked_binding_ids ∪ the affected_binding_ids of every
@@ -354,7 +357,8 @@ begin
     end if;
     e1 := clued_private.integration_evaluate_v1(v_id, pg_catalog.clock_timestamp());
     v_supp := pg_catalog.jsonb_build_object('integration_id', v_id, 'outcome', v_outcome, 'revocation_id', v_revocation,
-      'revoked_by', p_revoked_by, 't_cut', v_cut, 'revoked_binding_ids', v_done->'revoked',
+      'revoked_by', case when v_outcome = 'ALREADY_REVOKED' then r.revoked_by else p_revoked_by end,
+      'requested_by', p_revoked_by, 't_cut', v_cut, 'revoked_binding_ids', v_done->'revoked',
       'swept_unowned_binding_ids', v_done->'swept', 'foreign_binding_count', v_foreign,
       'outcome_flags', pg_catalog.to_jsonb(v_flags), 'evaluation', e1 - 'facts' - 'sources_read');
     if v_partial then
@@ -865,7 +869,13 @@ begin
         when v_action = 'pause' and t.ordinary_runtime = 'PERMITTED' then 'PAUSED_BY_OWNER'
         when v_action = 'resume' and t.ordinary_runtime = 'PAUSED_BY_OWNER' then 'PERMITTED'
         when v_action = 'policy_pause' and t.ordinary_runtime <> 'PAUSED_BY_POLICY' then 'PAUSED_BY_POLICY'
-        when v_action = 'policy_resume' and t.ordinary_runtime = 'PAUSED_BY_POLICY' then 'PERMITTED' end;
+        -- a policy pause laid over an Owner pause gives the Owner pause back (never fails open on it)
+        when v_action = 'policy_resume' and t.ordinary_runtime = 'PAUSED_BY_POLICY' then
+          case when (select o.source_provenance->>'from' from clued_private.integration_operation_log_v1 o
+                      where o.integration_id = v_id and o.operation_type = 'LIFECYCLE'
+                        and o.source_provenance->>'action' = 'policy_pause'
+                      order by o.recorded_at desc, o.operation_id desc limit 1) = 'PAUSED_BY_OWNER'
+               then 'PAUSED_BY_OWNER' else 'PERMITTED' end end;
       if v_to is null then raise exception 'lifecycle_transition_invalid' using errcode = '42501'; end if;
       update clued_private.integrations_v1 set ordinary_runtime = v_to where integration_id = v_id;
     end if;
@@ -1442,14 +1452,23 @@ end $$;
 create function public.clued_integration_revoke_self_v1(p_token_hash text, p_input jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare b0 public.clued_agent_bindings; b public.clued_agent_bindings; v_id uuid; v_t_rev timestamptz; v_cut timestamptz;
-  v_s0 uuid[];
+  v_s0 uuid[]; v_found boolean;
 begin
   if p_token_hash is null or p_token_hash !~ '^[0-9a-f]{64}$' then
     raise exception 'binding_not_authorized' using errcode = '42501';
   end if;
-  -- unlocked discovery: the caller (re-authenticated under L1 below) and its Integration
+  -- unlocked discovery: the caller must already be live (not revoked or expired, account usable, v12 grant
+  -- live) before any Integration row is read; it is re-authenticated under L1 below. No lock is taken here.
   select * into b0 from public.clued_agent_bindings where token_hash = p_token_hash;
-  if not found or b0.revoked_at is not null then raise exception 'binding_not_authorized' using errcode = '42501'; end if;
+  v_found := found;
+  if not v_found or b0.revoked_at is not null
+     or coalesce((pg_catalog.to_jsonb(b0)->>'expires_at')::timestamptz <= pg_catalog.clock_timestamp(), false)
+     or exists (select 1 from clued_private.authorizations_v12 a where a.binding_id = b0.id
+                 and (a.revoked_at is not null or a.expires_at <= pg_catalog.clock_timestamp()))
+     or not exists (select 1 from auth.users u where u.id = b0.user_id and (pg_catalog.to_jsonb(u)->>'deleted_at') is null
+                     and not coalesce((pg_catalog.to_jsonb(u)->>'banned_until')::timestamptz > pg_catalog.clock_timestamp(), false)) then
+    raise exception 'binding_not_authorized' using errcode = '42501';
+  end if;
   perform clued_private.integration_require_connection_v1(b0, p_input);
   v_id := (p_input->>'integration_id')::uuid;
   v_t_rev := pg_catalog.clock_timestamp();
@@ -1579,7 +1598,8 @@ begin
   elsif v_op = 'status' then
     return clued_private.integration_status_ready_v1(v_owner, null, v_id, v_input);
   elsif v_op = 'revoke' then
-    return clued_private.integration_revoke_core_v1(v_actor, v_owner, v_input - 'revoked_by',
+    -- revoked_by stays in the Receipt input, so a different revoked_by under the same key is a conflict
+    return clued_private.integration_revoke_core_v1(v_actor, v_owner, v_input,
       clued_private.integration_request_hash_v1('integration_revoke', v_input),
       case when v_input->>'revoked_by' in ('CLUED','POLICY','SECURITY') then v_input->>'revoked_by' end, null, null, null);
   elsif v_op = 'restore' then
@@ -1593,7 +1613,7 @@ begin
     return clued_private.integration_restore_core_v1(v_actor, v_owner, v_input,
       clued_private.integration_request_hash_v1('integration_restore', v_input), 'OPERATOR');
   elsif v_op = 'reauth_mark' then
-    return clued_private.integration_reauth_mark_core_v1(v_actor, v_owner, v_input - 'raised_by',
+    return clued_private.integration_reauth_mark_core_v1(v_actor, v_owner, v_input,
       clued_private.integration_request_hash_v1('integration_reauth_mark', v_input),
       case when v_input->>'raised_by' in ('CLUED','POLICY','SECURITY') then v_input->>'raised_by' end);
   elsif v_op = 'reauth_clear' then
