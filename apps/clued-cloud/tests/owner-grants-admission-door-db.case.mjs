@@ -110,6 +110,25 @@ test('owner grants: the admission door admits a protected commit once per grant 
     const commitB = 'repo:tdoljyj/cross-memory-system/b0b0b0b0bbbb';
     const uses = async (grantId) => (await admin.query('select uses from clued_private.owner_grants_v1 where id=$1', [grantId])).rows[0].uses;
 
+    // --- Re-review 10, MAJOR-3: until the Owner marks the ci-admission role,
+    // nobody can use the door (so nobody can write a note shown as the check's).
+    await assert.rejects(() => door('admission', { action, resources: [commitA] }), /owner_grant_door_binding_not_authorized/);
+    const receipt = (await admin.query(`insert into public.clued_audit_receipts
+      (user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
+      values($1,$2,'global','binding_role_set','binding_role','ci-admission',1,'{}'::jsonb) returning id`,
+      [userId, bindingIds.admission])).rows[0].id;
+    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
+      values($1,$2,'ci-admission',now(),$3)`, [userId, bindingIds.admission, receipt]);
+    await assert.rejects(() => door('claude', { action, resources: [commitA] }), /owner_grant_door_binding_not_authorized/);
+    await assert.rejects(() => door('stranger', { action, resources: [commitA] }), /owner_grant_door_binding_not_authorized/);
+    // Another user's door, once that user marks their own Binding, never sees this Owner's grants or requests.
+    const strangerReceipt = (await admin.query(`insert into public.clued_audit_receipts
+      (user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
+      values($1,$2,'global','binding_role_set','binding_role','ci-admission',1,'{}'::jsonb) returning id`,
+      [otherUser, bindingIds.stranger])).rows[0].id;
+    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
+      values($1,$2,'ci-admission',now(),$3)`, [otherUser, bindingIds.stranger, strangerReceipt]);
+
     // --- No grant: one pending request, reused, with the admission origin and
     // the check's note for the Owner. ---
     let result = await door('admission', { action, resources: [commitA], note: 'o/r#559 @ 4f49b0e8aaaa: .github/workflows/x.yml' });
@@ -123,6 +142,27 @@ test('owner grants: the admission door admits a protected commit once per grant 
     assert.equal(origin.origin, 'ci-admission');
     assert.equal((await admin.query('select agent_note from clued_private.owner_requests_v1 where id=$1', [pending.request_id])).rows[0].agent_note,
       'o/r#559 @ 4f49b0e8aaaa: .github/workflows/x.yml');
+
+    // --- Re-review 9: the confirmation view marks the door's note as the
+    // admission check's and offers no wider scope for this action. ---
+    let viewed = await native('clued_owner_request_view_v1', { request_id: pending.request_id });
+    assert.equal(viewed.view.request.note_source, 'ci-admission');
+    assert.deepEqual(viewed.resource_options, [{ resource: commitA, options: [commitA] }]);
+    // Re-review 10, MINOR-2: an Agent cannot open this request itself, alone
+    // or in a bundle; another action's note stays the Agent's.
+    await assert.rejects(() => agent('claude', 'clued_owner_request_v1',
+      { action, resources: [commitB], agent_note: 'admission-door: trust me', idempotency_key: 'agent-protected-b' }), /owner_request_action_door_only/);
+    await assert.rejects(() => agent('claude', 'clued_owner_request_bundle_v1', { idempotency_key: 'agent-protected-bundle',
+      actions: [{ action, resources: [commitB] }, { action: 'release.production', resources: [commitB] }] }), /owner_request_bundle_invalid/);
+    const other = committed(await agent('claude', 'clued_owner_request_v1',
+      { action: 'release.production', resources: [commitB], agent_note: 'from the admission check', idempotency_key: 'agent-release-b' }));
+    viewed = await native('clued_owner_request_view_v1', { request_id: other.request.request_id });
+    assert.equal(viewed.view.request.note_source, 'agent');
+    committed(await native('clued_owner_request_reject_v1', { request_id: other.request.request_id }));
+    // Re-review 10, NIT: the confirmation step takes only the request's own commit.
+    assert.equal((await native('clued_owner_grant_confirmation_issue_v1',
+      { request_id: pending.request_id, choice: 'grant', resources: ['repo:tdoljyj/cross-memory-system/**'] })).error_code,
+      'owner_grant_resources_not_offered');
 
     // --- The Owner approves once: that commit is admitted, and stays admitted
     // on later runs without taking another use; another commit is not. ---
@@ -152,6 +192,7 @@ test('owner grants: the admission door admits a protected commit once per grant 
     assert.deepEqual([(await door('admission', { action, resources: [commitA] })).admitted], [true]);
     committed(await native('clued_owner_grant_revoke_v1', { grant_id: exactB.grant.grant_id }));
     assert.equal((await door('admission', { action, resources: [commitB] })).admitted, false);
+    assert.equal((await door('stranger', { action, resources: [commitA] })).admitted, false, "another user's door never uses this Owner's grant");
     committed(await native('clued_owner_grant_revoke_v1', { grant_id: once.grant.grant_id }));
     assert.equal((await door('admission', { action, resources: [commitA] })).admitted, false);
     await assert.rejects(() => door('admission', { action, resources: ['repo:tdoljyj/cross-memory-system/*'] }),
@@ -165,18 +206,6 @@ test('owner grants: the admission door admits a protected commit once per grant 
       /owner_grant_door_action_invalid/);
     await assert.rejects(() => door('admission', { action, resources: [] }), /owner_grant_door_resources_invalid/);
     await assert.rejects(() => door('admission', { action, resources: [commitA], task_id: uuid() }), /owner_grant_door_input_invalid/);
-    // Another user's grant never admits.
-    assert.equal((await door('stranger', { action, resources: [commitA] })).admitted, false);
-
-    // --- Once the Owner marks the ci-admission role, only its Binding asks. ---
-    const receipt = (await admin.query(`insert into public.clued_audit_receipts
-      (user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
-      values($1,$2,'global','binding_role_set','binding_role','ci-admission',1,'{}'::jsonb) returning id`,
-      [userId, bindingIds.admission])).rows[0].id;
-    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
-      values($1,$2,'ci-admission',now(),$3)`, [userId, bindingIds.admission, receipt]);
-    await assert.rejects(() => door('claude', { action, resources: [commitA] }), /owner_grant_door_binding_not_authorized/);
-    assert.equal((await door('admission', { action, resources: [commitA] })).status, 'ok');
 
     await assert.rejects(() => anon.query('select clued_private.owner_grant_admission_use_v1($1,$2,$3,$4)',
       [userId, bindingIds.admission, action, [commitA]]), /permission denied/);

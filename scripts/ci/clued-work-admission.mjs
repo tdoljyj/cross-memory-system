@@ -572,6 +572,16 @@ export const PROTECTED_PATHS = [
   "apps/clued-cloud/package-lock.json",
   "apps/clued-cloud/wrangler*.jsonc",
   PUBLIC_CONFIG_SOURCE,
+  // Re-review 9, MINOR-2: checkout attributes can re-encode or filter what
+  // every later job runs (working-tree-encoding, filters), and submodules
+  // bring in code from elsewhere.
+  ".gitattributes",
+  "**/.gitattributes",
+  ".gitmodules",
+  // Re-review 11, NIT: npm configuration decides where the dependencies
+  // that run with production credentials come from.
+  ".npmrc",
+  "**/.npmrc",
 ];
 
 export function ownerReviewEnforced(env) {
@@ -691,6 +701,9 @@ export async function ownerReviewDoor(fetchImpl, env, repository, headSha, works
   }
   const detail = describe(response.status, body, text, response.headers);
   if (response.status === 404 && body && body.code === "PGRST202") return { kind: "rpc_unavailable", detail, resource };
+  // Re-review 9, MINOR-4: a server or gateway error says nothing about the
+  // pull request; the hourly re-verification must not turn a check red for it.
+  if (response.status >= 500 || response.status === 429) return { kind: "transient", detail, resource };
   if (response.status !== 200 || !body || body.status !== "ok") return { kind: "refused", detail, resource };
   const request = body.owner_request;
   const confirmUrl = request && typeof request.confirm_path === "string"
@@ -797,19 +810,41 @@ async function summarizeWorkflows(fetchImpl, env, repository, headSha, changedPa
 
 // Re-review 7, MAJOR-3: a pull request with owner-review findings needs an
 // Owner Grant on its head commit. Enforced, anything short of a grant rejects
-// it; otherwise the result is a notice.
-async function ownerReview(fetchImpl, env, repository, headSha, workspace, findings, outcome) {
+// it. Re-review 9, NIT: until the Owner turns enforcement on, the door is not
+// asked at all (it would open an Owner request for every such head); the
+// summary only says that the Owner would be asked.
+// Path names come from the pull request: only plain characters reach the
+// summary, the Owner's note and the check (re-review 10 MINOR-1, re-review 11 NIT).
+export function plainFinding(finding) {
+  return String(finding).replace(/[^A-Za-z0-9._/*:() -]/g, "?").slice(0, 160);
+}
+
+async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, outcome, baseTip) {
   const enforced = ownerReviewEnforced(env);
-  const summary = findings.join(", ");
-  // Re-review 8, MINOR-3: the request tells the Owner which pull request and
-  // which changes it is for (shown on the confirmation page as unverified).
-  const listed = findings.slice(0, 30).map((finding) => finding.replace(/^protected_path:/, "")).join(", ");
-  const note = `${outcome.pr_ref ?? repository} @ ${headSha.slice(0, 12)}: ${listed}${findings.length > 30 ? ` and ${findings.length - 30} more` : ""}`.slice(0, 2000);
+  const headSha = pr.head.sha;
+  const summary = findings.slice(0, 10).map(plainFinding).join(", ") + (findings.length > 10 ? `, and ${findings.length - 10} more` : "");
+  if (!enforced) {
+    outcome.owner_review = { enforced, kind: "not_asked", resource: `repo:${repository}/${headSha}`, confirm_url: null, grant_id: null };
+    outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): an Owner Grant on ${headSha} would be needed (${summary})`);
+    return;
+  }
+  // Re-review 8, MINOR-3; re-review 9, MAJOR-2: the request tells the Owner
+  // which pull request and which changes it is for, with the compare link of
+  // the pushed commits (the confirmation page marks this note as written by
+  // the admission check, not by an Agent).
+  // Re-review 10, MINOR-1: path names come from the pull request, so they are
+  // reduced to plain characters and only counted beyond the first ten; the
+  // compare link is the record of what changed.
+  const listed = findings.slice(0, 10)
+    .map((finding) => finding.replace(/^protected_path:/, "").replace(/[^A-Za-z0-9._/*-]/g, "?").slice(0, 120)).join(", ");
+  // Re-review 11, NIT: compared with the tip the pull request must contain.
+  const compare = `https://github.com/${repository}/compare/${baseTip ?? pr.base.sha}...${headSha}`;
+  const note = `${outcome.pr_ref ?? repository} @ ${headSha.slice(0, 12)}: ${findings.length} protected path(s) changed, see ${compare} (${listed}${findings.length > 10 ? `, and ${findings.length - 10} more` : ""})`.slice(0, 2000);
   let door;
   try {
     door = await ownerReviewDoor(fetchImpl, env, repository, headSha, workspace, note);
   } catch (error) {
-    door = { kind: "refused", detail: error instanceof Error ? error.message : String(error) };
+    door = { kind: "transient", detail: error instanceof Error ? error.message : String(error) };
   }
   outcome.owner_review = { enforced, kind: door.kind, resource: door.resource ?? null, confirm_url: door.confirm_url ?? null,
     grant_id: door.grant && door.grant.grant_id ? door.grant.grant_id : null };
@@ -817,15 +852,44 @@ async function ownerReview(fetchImpl, env, repository, headSha, workspace, findi
     outcome.notices.push(`owner_review_granted:${outcome.owner_review.grant_id} (${summary})`);
     return;
   }
-  const why = door.kind === "pending"
+  outcome.verdict = "REJECTED";
+  outcome.reasons.push(door.kind === "pending"
     ? `owner_review_required (${summary}); ask the Owner to approve ${door.confirm_url ?? "the pending request"}`
-    : `owner_review_unavailable:${door.kind} (${summary}; ${door.detail})`;
-  if (enforced) {
-    outcome.verdict = "REJECTED";
-    outcome.reasons.push(why);
-  } else {
-    outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): ${why}`);
+    : `owner_review_unavailable:${door.kind} (${summary}; ${door.detail})`);
+}
+
+// Re-review 9 MAJOR-1, re-review 10 MAJOR-1/2 (Owner Decision 5a3b4935): a
+// pull request's file list is relative to a merge base that stays put while
+// main moves on, so a branch could carry a change to a protected path that
+// cancels out against an older main and comes back once main has moved, and a
+// grant on its head would keep admitting it. Two rules close this:
+//   - the protected paths are read from the pull request's files and from
+//     the compare of the base branch's current tip with the head (whose merge
+//     base moves with main), and
+//   - a pull request with protected paths must contain that tip (the head is
+//     ahead of it, or is it), so merging it yields exactly the head the Owner
+//     approved. When main moves, the next evaluation (a push to main runs the
+//     re-verification) refuses it until main is merged in: a new head, a new
+//     grant.
+export const BASE_COMPARE_LIMIT = 300;
+export async function baseTipCompare(fetchImpl, env, repository, pr) {
+  const branch = await githubJson(fetchImpl, env, `/repos/${repository}/branches/${encodeURIComponent(pr.base.ref)}`);
+  const tip = branch && branch.commit && branch.commit.sha;
+  if (typeof tip !== "string" || !/^[0-9a-f]{40}$/.test(tip)) throw new Error(`the tip of ${pr.base.ref} could not be read`);
+  if (tip === pr.head.sha) return { tip, upToDate: true, paths: [], truncated: false };
+  const body = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${tip}...${pr.head.sha}`);
+  const files = body && Array.isArray(body.files) ? body.files : [];
+  const paths = new Set();
+  for (const file of files) {
+    if (typeof file.filename === "string") paths.add(file.filename);
+    if (typeof file.previous_filename === "string") paths.add(file.previous_filename);
   }
+  return {
+    tip,
+    upToDate: Boolean(body) && (body.status === "ahead" || body.status === "identical"),
+    paths: [...paths].sort(),
+    truncated: !body || !Array.isArray(body.files) || files.length >= BASE_COMPARE_LIMIT,
+  };
 }
 
 export async function evaluate({ env, event, eventName, fetchImpl, workspace, withSummary }) {
@@ -866,7 +930,10 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     const workflowResult = await workflowFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha);
     const gateFindingsOfPr = workflowResult.gate;
     if (gateFindingsOfPr.length) outcome.workflow_gate_findings = gateFindingsOfPr;
-    const ownerFindings = protectedPathFindings(changed.paths);
+    const tipCompare = await baseTipCompare(fetchImpl, env, repository, pr);
+    const ownerFindings = protectedPathFindings([...new Set([...changed.paths, ...tipCompare.paths])].sort());
+    // A long compare may hide a protected path: the Owner is asked.
+    if (tipCompare.truncated) ownerFindings.push(`protected_path_unknown:the compare of ${tipCompare.tip} with the head is unavailable or lists ${BASE_COMPARE_LIMIT} or more files`);
     if (ownerFindings.length) outcome.owner_review_findings = ownerFindings;
     for (const hint of workflowResult.owner) outcome.notices.push(`workflow_review_hint:${hint}`);
     if (withSummary && workspace) {
@@ -967,7 +1034,15 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
       outcome.verdict = "REJECTED";
       outcome.reasons.push(...gateFindingsOfPr);
     }
-    if (ownerFindings.length && outcome.verdict === "ADMITTED") await ownerReview(fetchImpl, env, repository, pr.head.sha, workspace, ownerFindings, outcome);
+    if (ownerFindings.length && outcome.verdict === "ADMITTED") {
+      if (!tipCompare.upToDate && ownerReviewEnforced(env)) {
+        outcome.verdict = "REJECTED";
+        outcome.reasons.push(`protected_change_not_up_to_date:${tipCompare.tip} (merge ${pr.base.ref} into the branch first; ${ownerFindings.slice(0, 10).map(plainFinding).join(", ")}${ownerFindings.length > 10 ? `, and ${ownerFindings.length - 10} more` : ""})`);
+      } else {
+        if (!tipCompare.upToDate) outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): the branch would first need ${pr.base.ref} at ${tipCompare.tip}`);
+        await ownerReview(fetchImpl, env, repository, pr, workspace, ownerFindings, outcome, tipCompare.tip);
+      }
+    }
     // Re-review 7, m2: the file list was read after the head, so a push in
     // between would pair this head's verdict with another head's files.
     if (outcome.verdict === "ADMITTED") {
@@ -1045,10 +1120,18 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
       const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false });
       result.checked.push({ pr: pr.number, verdict: outcome.verdict, reasons: outcome.reasons });
       if (outcome.admitted) continue;
+      // The Owner review runs only on an otherwise admitted pull request, so a
+      // transient door error is the only thing standing against it (re-review 10, NIT).
+      if (outcome.owner_review && outcome.owner_review.kind === "transient") {
+        throw new Error(`Clued's Owner review door is unavailable (${outcome.reasons.join("; ")}); the check stays as it is until the next run`);
+      }
       const verdict = `RE-VERIFIED: ${outcome.verdict ?? "NOT ADMITTED"}`;
       const posted = await postAppCheck({
         env, fetchImpl, now, headSha: pr.head.sha, success: false, title: verdict, prNumber: pr.number,
-        summary: `The hourly re-verification no longer admits #${pr.number}: ${outcome.reasons.join("; ") || "no reason given"}. Push a commit or edit the pull request once its claim admits it again.`,
+        summary: `The re-verification no longer admits #${pr.number}: ${outcome.reasons.join("; ") || "no reason given"}. `
+          + (outcome.reasons.some((reason) => reason.startsWith("protected_change_not_up_to_date:"))
+            ? `Merge ${pr.base.ref} into the branch and push; the new head needs its own Owner Grant.`
+            : "Push a commit or edit the pull request once it is admitted again."),
       });
       if (!posted.posted) throw new Error(`not admitted (${outcome.verdict}) and no failing check could be posted: ${posted.error ?? posted.reason}`);
       result.blocked.push({ pr: pr.number, check_run_id: posted.check_run_id, verdict: outcome.verdict, reasons: outcome.reasons });

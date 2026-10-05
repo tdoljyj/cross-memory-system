@@ -74,6 +74,36 @@ async function open(f, status = 'pending', seconds = 14400) {
   f.calls[0].resolve(loaded(status, seconds)); await f.settle();
 }
 
+// Re-review 9: a note the admission check wrote is labelled as such and links
+// the compare view; the same words from an Agent stay the Agent's.
+test('a note written by the admission check is shown as the check\'s, with its compare link', async t => {
+  const link = `https://github.com/o/n/compare/${'b'.repeat(40)}...${'a'.repeat(40)}`;
+  for (const [source, label] of [['ci-admission', '准入检查说明'], ['agent', 'Agent 说明']]) {
+    const f = fixture(CONFIRM); t.after(() => f.unmount());
+    await open(f);
+    const answer = issued();
+    answer.data.confirmation_view.resources = [`repo:o/n/${'a'.repeat(40)}`];
+    answer.data.confirmation_view.request = { request_id: REQUEST, status: 'pending', note_source: source,
+      agent_note_unverified: `o/n#559 @ aaaaaaaaaaaa: ${link} changes .github/workflows/x.yml` };
+    f.calls[1].resolve(answer); await f.settle();
+    const note = f.nodes('section').find(n => n.props['aria-label'] === label);
+    assert.ok(note, source);
+    const anchors = f.nodes('a').filter(n => n.props.href === link);
+    assert.equal(anchors.length, source === 'ci-admission' ? 1 : 0, source);
+    if (source === 'agent') assert.ok(f.text(note).includes('Agent 说明（未核实）'));
+  }
+  // Re-review 10: a link that does not end at the granted commit is hidden.
+  const f = fixture(CONFIRM); t.after(() => f.unmount());
+  await open(f);
+  const answer = issued();
+  answer.data.confirmation_view.resources = [`repo:o/n/${'c'.repeat(40)}`];
+  answer.data.confirmation_view.request = { request_id: REQUEST, status: 'pending', note_source: 'ci-admission',
+    agent_note_unverified: `o/n#559 @ aaaaaaaaaaaa: 1 protected path(s) changed, see ${link} (x)` };
+  f.calls[1].resolve(answer); await f.settle();
+  assert.equal(f.nodes('a').filter(n => n.props.href === link).length, 0);
+  assert.ok(f.text().includes('说明里的链接与要批准的提交不一致'));
+});
+
 test('signed out: no calls, an inline sign-in form', async t => {
   const f = fixture(CONFIRM); t.after(() => f.unmount()); f.emit('INITIAL_SESSION', null);
   assert.equal(f.calls.length, 0);

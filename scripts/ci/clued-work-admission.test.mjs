@@ -56,6 +56,9 @@ const CLAIM = "0f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
 const HEAD = "a".repeat(40);
 const BASE = "b".repeat(40);
 const CLAIM_BASE = "c".repeat(40);
+// Re-review 10: the base branch's tip as GitHub reports it now (it may be
+// ahead of the event's base.sha).
+const TIP = "7".repeat(39) + "6";
 // The public project values are read from the repository file, never copied here.
 const PUBLIC = resolvePublicSupabaseConfig({}, ROOT);
 const RPC_URL = `${PUBLIC.url}/rest/v1/rpc/clued_work_verify_v1`;
@@ -91,7 +94,14 @@ function fakeFetch(script) {
     const call = { url: String(url), method, headers: init.headers ?? {}, body: init.body ? JSON.parse(init.body) : null };
     calls.push(call);
     const key = Object.keys(script).find((k) => k.startsWith(`${method} `) && call.url.startsWith(k.slice(method.length + 1)));
-    const responder = key ? script[key] : undefined;
+    let responder = key ? script[key] : undefined;
+    // Re-review 10: unless a test scripts them, the base branch's tip is TIP
+    // and the head is ahead of it with no files of its own.
+    const tipCompare = `https://api.test/repos/o/r/compare/${TIP}...`;
+    if (call.url.startsWith(tipCompare) && !Object.keys(script).some((k) => k.startsWith(`GET ${tipCompare}`))) {
+      responder = { body: { status: "ahead", files: [] } };
+    }
+    if (!responder && /\/branches\/[^/]+$/.test(call.url)) responder = { body: { name: "main", commit: { sha: TIP } } };
     if (!responder) return { ok: false, status: 599, headers: { get: () => null }, json: async () => ({ error: `unscripted ${call.url}` }), text: async () => "" };
     const result = typeof responder === "function" ? responder(call) : responder;
     const status = result.status ?? 200;
@@ -178,7 +188,7 @@ test("enforced: the RPC is called on PostgREST with the publishable key and the 
   });
   assert.equal(sha256Hex("clued_bnd_test").length, 64);
   assert.ok(!JSON.stringify(call.body).includes("clued_bnd_test"), "only the hash leaves the runner");
-  assert.ok(calls.find((c) => c.url.includes("/compare/")).url.endsWith(`/compare/${CLAIM_BASE}...${BASE}`));
+  assert.ok(calls.find((c) => c.url.includes("/compare/") && !c.url.includes(`/compare/${TIP}...`)).url.endsWith(`/compare/${CLAIM_BASE}...${BASE}`));
 });
 
 test("enforced: trailer in the head commit, project scope and a custom Supabase URL are honored", async () => {
@@ -213,7 +223,7 @@ test("enforced: REJECTED with paths outside the write set is not admitted and li
   assert.equal(outcome.admitted, false);
   assert.deepEqual(outcome.reasons, ["paths_outside_write_set"]);
   assert.deepEqual(outcome.paths_outside_write_set, ["docs/new.md"]);
-  assert.ok(!calls.some((c) => c.url.includes("/compare/")), "no base comparison after a rejection");
+  assert.ok(!calls.some((c) => c.url.includes("/compare/") && !c.url.includes(`/compare/${TIP}...`)), "no claim base comparison after a rejection");
   assert.match(renderSummary(outcome), /docs\/new\.md/);
 });
 
@@ -1351,7 +1361,7 @@ test("evaluate (re-review 7, MAJOR-3): a protected change is admitted only with 
   assert.match(outcome.reasons[0], /^owner_review_required \(protected_path:scripts\/ci\/clued-work-admission\.mjs\); ask the Owner to approve https:\/\/clued\.pixelgrav\.com\/confirm\/r1$/);
   const asked = calls.find((c) => c.url.endsWith(OWNER_REVIEW_RPC));
   assert.deepEqual(asked.body.p_input, { action: "repo.protected_change", resources: [`repo:o/r/${HEAD}`],
-    note: "o/r#452 @ aaaaaaaaaaaa: scripts/ci/clued-work-admission.mjs" });
+    note: `o/r#452 @ aaaaaaaaaaaa: 1 protected path(s) changed, see https://github.com/o/r/compare/${TIP}...${HEAD} (scripts/ci/clued-work-admission.mjs)` });
   assert.equal(asked.body.p_token_hash, sha256Hex("clued_bnd_test"));
   ({ outcome } = await run({ body: { status: "ok", admitted: true, grant: { grant_id: "g1", replayed: true } } }));
   assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"]);
@@ -1360,9 +1370,16 @@ test("evaluate (re-review 7, MAJOR-3): a protected change is admitted only with 
   ({ outcome } = await run({ status: 404, body: { code: "PGRST202" } }));
   assert.equal(outcome.admitted, false);
   assert.match(outcome.reasons[0], /^owner_review_unavailable:rpc_unavailable/);
-  ({ outcome } = await run(pending, { CLUED_OWNER_REVIEW_ENFORCE: "" }));
+  // Re-review 9, NIT: not enforced, the door is not asked (no Owner request).
+  let calls2;
+  ({ outcome, calls: calls2 } = await run(pending, { CLUED_OWNER_REVIEW_ENFORCE: "" }));
   assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"]);
-  assert.ok(outcome.notices.some((n) => /^not enforced \(CLUED_OWNER_REVIEW_ENFORCE is not set\): owner_review_required/.test(n)));
+  assert.ok(outcome.notices.some((n) => /^not enforced \(CLUED_OWNER_REVIEW_ENFORCE is not set\): an Owner Grant on a{40} would be needed/.test(n)));
+  assert.ok(!calls2.some((c) => c.url.endsWith(OWNER_REVIEW_RPC)));
+  // Re-review 9, MINOR-4: a server error is "transient", still a rejection at admission time.
+  ({ outcome } = await run({ status: 502, body: null }));
+  assert.equal(outcome.owner_review.kind, "transient");
+  assert.match(outcome.reasons[0], /^owner_review_unavailable:transient/);
   // A pull request already rejected for its claim does not ask the Owner.
   const rejected = fakeFetch({ [FILES]: protectedFiles, [VERIFY]: { body: { ...admittedPayload, verdict: "REJECTED", reasons: ["claim_not_current"] } },
     [COMPARE]: { body: { status: "ahead" } }, [DOOR]: pending });
@@ -1395,4 +1412,86 @@ test("gate guard (re-review 7, n2): a # without whitespace before it is part of 
   assert.equal(jobTimeout(job("timeout-minutes: 20#x")), null);
   assert.equal(jobTimeout(job("timeout-minutes: 20 # short")), 20);
   assert.equal(jobTimeout(job("timeout-minutes: 20")), 20);
+});
+
+test("evaluate (re-review 10, MAJOR-1/2): protected paths are also read against the base tip, and such a pull request must contain it", async () => {
+  const DOOR = `POST ${PUBLIC.url}/rest/v1/rpc/${OWNER_REVIEW_RPC}`;
+  const pending = { body: { status: "ok", admitted: false, owner_request: { request_id: "r1", status: "pending", confirm_path: "/confirm/r1" } } };
+  const TIP_COMPARE = `GET https://api.test/repos/o/r/compare/${TIP}...${HEAD}`;
+  const run = async (tipAnswer, extraEnv = { CLUED_OWNER_REVIEW_ENFORCE: "true" }, prFiles = files) => {
+    const { fetchImpl, calls } = fakeFetch({ [FILES]: prFiles, [TIP_COMPARE]: tipAnswer, [COMPARE]: { body: { status: "ahead" } },
+      [VERIFY]: { body: admittedPayload }, [DOOR]: pending });
+    const outcome = await evaluateIn({ env: env(extraEnv), event: withClaim(), eventName: "pull_request", fetchImpl });
+    return { outcome, calls };
+  };
+  const asked = (calls) => calls.some((c) => c.url.endsWith(OWNER_REVIEW_RPC));
+  // The pull request's own files touch nothing protected; against the current
+  // tip (main moved), the head would revert the admission script.
+  let { outcome, calls } = await run({ body: { status: "diverged", files: [{ filename: "scripts/ci/clued-work-admission.mjs" }] } });
+  assert.equal(outcome.verdict, "REJECTED");
+  assert.deepEqual(outcome.owner_review_findings, ["protected_path:scripts/ci/clued-work-admission.mjs"]);
+  assert.match(outcome.reasons[0], new RegExp(`^protected_change_not_up_to_date:${TIP} \\(merge main into the branch first`));
+  assert.ok(!asked(calls), "a stale head is refused before the Owner is asked");
+  // Up to date with the tip: the Owner is asked about that exact head.
+  ({ outcome, calls } = await run({ body: { status: "ahead", files: [{ filename: "scripts/ci/clued-work-admission.mjs" }] } }));
+  assert.match(outcome.reasons[0], /^owner_review_required/);
+  assert.ok(asked(calls));
+  // A stale head that changes nothing protected is admitted as before.
+  ({ outcome } = await run({ body: { status: "diverged", files: [{ filename: "docs/x.md" }] } }));
+  assert.deepEqual([outcome.verdict, outcome.owner_review_findings], ["ADMITTED", undefined]);
+  // A long or unreadable compare: the Owner is asked.
+  ({ outcome } = await run({ body: { status: "ahead", files: Array.from({ length: 300 }, (_, i) => ({ filename: `docs/${i}.md` })) } }));
+  assert.match(outcome.owner_review_findings.at(-1), /^protected_path_unknown:/);
+  ({ outcome } = await run({ body: { status: "ahead" } }));
+  assert.match(outcome.owner_review_findings.at(-1), /^protected_path_unknown:/);
+  // Not enforced: a notice only, and the door is not asked.
+  ({ outcome, calls } = await run({ body: { status: "diverged", files: [{ filename: ".github/workflows/x.yml" }] } }, {}));
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"]);
+  assert.ok(outcome.notices.some((n) => n.includes(`would first need main at ${TIP}`)));
+  assert.ok(!asked(calls));
+});
+
+test("owner review (re-review 10, MINOR-1): the note's path names are plain and only the first ten are listed", async () => {
+  const DOOR = `POST ${PUBLIC.url}/rest/v1/rpc/${OWNER_REVIEW_RPC}`;
+  const many = { body: [{ filename: ".github/workflows/safe <b>docs</b> only — approve.yml" },
+    ...Array.from({ length: 11 }, (_, i) => ({ filename: `scripts/ci/f${i}.mjs` }))] };
+  const { fetchImpl, calls } = fakeFetch({ [FILES]: many, [COMPARE]: { body: { status: "ahead" } }, [VERIFY]: { body: admittedPayload },
+    [DOOR]: { body: { status: "ok", admitted: false, owner_request: { request_id: "r1", status: "pending", confirm_path: "/confirm/r1" } } } });
+  await evaluateIn({ env: env({ CLUED_OWNER_REVIEW_ENFORCE: "true" }), event: withClaim(), eventName: "pull_request", fetchImpl });
+  const note = calls.find((c) => c.url.endsWith(OWNER_REVIEW_RPC)).body.p_input.note;
+  assert.match(note, /^o\/r#452 @ aaaaaaaaaaaa: 12 protected path\(s\) changed, see https:\/\/github\.com\/o\/r\/compare\//);
+  assert.ok(!note.includes("<b>") && !note.includes("—"), note);
+  assert.match(note, /, and 2 more\)$/);
+});
+
+test("owner review (re-review 9, MINOR-2): checkout attributes, submodules and npm configuration are protected", () => {
+  assert.deepEqual(protectedPathFindings([".gitattributes", "apps/clued-cloud/.gitattributes", ".gitmodules", "docs/.gitkeep", "apps/clued-cloud/.npmrc", ".npmrc"]),
+    ["protected_path:.gitattributes", "protected_path:apps/clued-cloud/.gitattributes", "protected_path:.gitmodules",
+      "protected_path:apps/clued-cloud/.npmrc", "protected_path:.npmrc"]);
+});
+
+test("reverify (re-review 9, MINOR-4): an unavailable Owner review door leaves the check alone", async () => {
+  const DOOR = `POST ${PUBLIC.url}/rest/v1/rpc/${OWNER_REVIEW_RPC}`;
+  const pull = freshPull({ number: 452 });
+  const protectedFiles = { body: [{ filename: "scripts/ci/clued-work-admission.mjs", status: "modified" }] };
+  const { fetchImpl, calls } = reverifyScript([pull], () => [appCheckOn("d".repeat(40), 3, "success", "pr:452:run:77")], {
+    [VERIFY]: { body: admittedPayload }, [DOOR]: { status: 503, body: null },
+    // The protected path shows against the base tip (reverifyScript fixes the
+    // pull request's own file list).
+    [`GET https://api.test/repos/o/r/compare/${TIP}...${"d".repeat(40)}`]: { body: { status: "ahead", files: protectedFiles.body } } });
+  const result = await reverify({ env: env({ CLUED_OWNER_REVIEW_ENFORCE: "true", CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: appKeyPem() }),
+    fetchImpl, workspace: ROOT, now: () => 1_800_000_000_000 });
+  assert.deepEqual(result.blocked, [], JSON.stringify(result));
+  assert.deepEqual(result.errors.map((e) => e.pr), [452], JSON.stringify(result));
+  assert.match(result.errors[0].error, /Owner review door is unavailable/);
+  assert.ok(!calls.some((c) => c.method === "POST" && c.url.endsWith("/check-runs")));
+});
+
+test("evaluate (re-review 11, NIT): refusal reasons carry only plain path characters", async () => {
+  const TIP_COMPARE = `GET https://api.test/repos/o/r/compare/${TIP}...${HEAD}`;
+  const { fetchImpl } = fakeFetch({ [FILES]: { body: [{ filename: ".github/workflows/ok <b>approve</b>.yml" }] },
+    [TIP_COMPARE]: { body: { status: "diverged", files: [] } }, [COMPARE]: { body: { status: "ahead" } }, [VERIFY]: { body: admittedPayload } });
+  const outcome = await evaluateIn({ env: env({ CLUED_OWNER_REVIEW_ENFORCE: "true" }), event: withClaim(), eventName: "pull_request", fetchImpl });
+  assert.match(outcome.reasons[0], /^protected_change_not_up_to_date:/);
+  assert.ok(!outcome.reasons[0].includes("<b>"), outcome.reasons[0]);
 });
