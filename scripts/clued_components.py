@@ -29,7 +29,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path("config/clued-components.json")
@@ -91,7 +91,9 @@ def content_digest(base: Path, patterns: list[str]) -> str | None:
 
 def marker_regex(pattern: str) -> re.Pattern:
     head, _, tail = pattern.partition("{version}")
-    return re.compile(r"^" + re.escape(head) + r"([0-9][0-9.]*)" + re.escape(tail) + r"\s*$", re.MULTILINE)
+    # The lookahead checks the rest of the line without consuming it, so a
+    # substitution keeps the line ending and any blank line after the marker.
+    return re.compile(r"^" + re.escape(head) + r"([0-9][0-9.]*)" + re.escape(tail) + r"(?=[ \t\r]*$)", re.MULTILINE)
 
 
 def read_marker(text: str, pattern: str) -> str | None:
@@ -204,7 +206,8 @@ def bump(component_id: str, version: str, root: Path = ROOT) -> None:
         regex = marker_regex(marker["pattern"])
         if not regex.search(text):
             raise SystemExit(f"{path} has no version marker {marker['pattern']!r}")
-        path.write_text(regex.sub(marker["pattern"].replace("{version}", version), text, count=1), encoding="utf-8")
+        line = marker["pattern"].replace("{version}", version)
+        path.write_text(regex.sub(lambda _: line, text, count=1), encoding="utf-8")
     component["version"] = version
     save_manifest(data, root)
 

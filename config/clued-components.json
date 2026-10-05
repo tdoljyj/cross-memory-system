@@ -127,13 +127,13 @@
     {
       "id": "script.components",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Component manifest tool (this manifest's checker).",
       "root": "scripts",
       "files": [
         "clued_components.py"
       ],
-      "content_sha256": "3ffaa7819a1af7d27361fe291b816826f206c400e71e35e2a7d277f9fa63bbd9",
+      "content_sha256": "d50a82a6915f840b533d6549a0790d22c533430e0943e23f673fced575b3147b",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
