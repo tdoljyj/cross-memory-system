@@ -228,7 +228,7 @@ Owner 同一天内同类的确认，只需要在第一次时选"管一段时间"
   - 有覆盖该提交的有效授权即放行。一份授权对同一提交只用一次，之后同一提交的运行凭第一次的 `OWNER_GRANT_USED` 回执（`door: ci-admission`）放行，直到授权撤销或过期。
   - 没有授权就复用或新建这个 Binding 的待确认请求（建议 1 次、24 小时），准入判 REJECTED 并给出确认链接。
   - 只有标了 `ci-admission` 的 Binding 能调（标出之前任何 Binding 都能，与其他角色相同），只需 `context:read`。
-- 迁移 `20261005120000_owner_grants_admission_door.sql`，测试 `apps/clued-cloud/tests/owner-grants-admission-door-db.test.mjs`、`scripts/ci/clued-work-admission.test.mjs`。Owner 设仓库变量 `CLUED_OWNER_REVIEW_ENFORCE=true` 后才拦，之前只提示。
+- 迁移 `20261005120000_owner_grants_admission_door.sql`，测试 `apps/clued-cloud/tests/owner-grants-admission-door-db.case.mjs`（由 `owner-grants-release-door-db.test.mjs` 引入运行）、`scripts/ci/clued-work-admission.test.mjs`。Owner 设仓库变量 `CLUED_OWNER_REVIEW_ENFORCE=true` 后才拦，之前只提示。
 
 ---
 

@@ -7,6 +7,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+// Re-review 7, MAJOR-3: the admission door's case runs with this file, which
+// the authorization database job already lists.
+import './owner-grants-admission-door-db.case.mjs';
 
 // Owner Credential v0.1, rollout step 4 (migration 20261003170000_owner_grants_release_door;
 // OwnerCredential.v0.1.md §6.1): the production release workflow consumes an
