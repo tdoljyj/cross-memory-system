@@ -16,6 +16,11 @@ name: clued-work-admission-reverify
 on:
   schedule:
     - cron: "17 * * * *"
+  # Re-review 10: a pull request that changes protected paths must contain the
+  # current main, so each push to main re-checks the open pull requests at
+  # once instead of within the hour.
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:

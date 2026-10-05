@@ -56,7 +56,9 @@ const CLAIM = "0f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
 const HEAD = "a".repeat(40);
 const BASE = "b".repeat(40);
 const CLAIM_BASE = "c".repeat(40);
-const MERGE_SHA = "9".repeat(39) + "8";
+// Re-review 10: the base branch's tip as GitHub reports it now (it may be
+// ahead of the event's base.sha).
+const TIP = "7".repeat(39) + "6";
 // The public project values are read from the repository file, never copied here.
 const PUBLIC = resolvePublicSupabaseConfig({}, ROOT);
 const RPC_URL = `${PUBLIC.url}/rest/v1/rpc/clued_work_verify_v1`;
@@ -68,7 +70,6 @@ function event(overrides = {}) {
       body: overrides.body ?? "## Why\n\nSome PR.",
       head: { sha: HEAD, repo: { full_name: "o/r" } },
       base: { sha: BASE, ref: "main" },
-      merge_commit_sha: MERGE_SHA,
     },
   };
 }
@@ -94,9 +95,13 @@ function fakeFetch(script) {
     calls.push(call);
     const key = Object.keys(script).find((k) => k.startsWith(`${method} `) && call.url.startsWith(k.slice(method.length + 1)));
     let responder = key ? script[key] : undefined;
-    // Re-review 9, MAJOR-1: unless a test scripts it, the test merge commit
-    // changes nothing against the base.
-    if (!responder && call.url.endsWith(`...${MERGE_SHA}`)) responder = { body: { files: [] } };
+    // Re-review 10: unless a test scripts them, the base branch's tip is TIP
+    // and the head is ahead of it with no files of its own.
+    const tipCompare = `https://api.test/repos/o/r/compare/${TIP}...`;
+    if (call.url.startsWith(tipCompare) && !Object.keys(script).some((k) => k.startsWith(`GET ${tipCompare}`))) {
+      responder = { body: { status: "ahead", files: [] } };
+    }
+    if (!responder && /\/branches\/[^/]+$/.test(call.url)) responder = { body: { name: "main", commit: { sha: TIP } } };
     if (!responder) return { ok: false, status: 599, headers: { get: () => null }, json: async () => ({ error: `unscripted ${call.url}` }), text: async () => "" };
     const result = typeof responder === "function" ? responder(call) : responder;
     const status = result.status ?? 200;
@@ -140,19 +145,13 @@ const withClaim = () => event({ body: `Body\n\nClued-Work-Claim: ${CLAIM}` });
 // Re-review 7, m2: an admitted evaluation reads the pull request once more to
 // see that its head did not move. Tests that do not script that read get the
 // event's head back.
-// Re-review 9, MAJOR-1: it also compares the base with GitHub's test merge
-// commit; tests that do not script that compare get a merge that changes nothing.
 const evaluateIn = (options) => {
   const inner = options.fetchImpl;
   const number = options.event?.pull_request?.number;
   const fetchImpl = async (url, init = {}) => {
-    if (String(url).endsWith(`...${MERGE_SHA}`) && !options.mergeFiles) {
-      return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ files: [] }), text: async () => '{"files":[]}' };
-    }
     const response = await inner(url, init);
     if (response.status === 599 && (init.method ?? "GET") === "GET" && String(url) === `https://api.test/repos/o/r/pulls/${number}`) {
-      const body = { number, head: options.event.pull_request.head, base: options.event.pull_request.base,
-        merge_commit_sha: options.event.pull_request.merge_commit_sha };
+      const body = { number, head: options.event.pull_request.head, base: options.event.pull_request.base };
       return { ok: true, status: 200, headers: { get: () => null }, json: async () => body, text: async () => JSON.stringify(body) };
     }
     return response;
@@ -189,7 +188,7 @@ test("enforced: the RPC is called on PostgREST with the publishable key and the 
   });
   assert.equal(sha256Hex("clued_bnd_test").length, 64);
   assert.ok(!JSON.stringify(call.body).includes("clued_bnd_test"), "only the hash leaves the runner");
-  assert.ok(calls.find((c) => c.url.includes("/compare/")).url.endsWith(`/compare/${CLAIM_BASE}...${BASE}`));
+  assert.ok(calls.find((c) => c.url.includes("/compare/") && !c.url.includes(`/compare/${TIP}...`)).url.endsWith(`/compare/${CLAIM_BASE}...${BASE}`));
 });
 
 test("enforced: trailer in the head commit, project scope and a custom Supabase URL are honored", async () => {
@@ -224,7 +223,7 @@ test("enforced: REJECTED with paths outside the write set is not admitted and li
   assert.equal(outcome.admitted, false);
   assert.deepEqual(outcome.reasons, ["paths_outside_write_set"]);
   assert.deepEqual(outcome.paths_outside_write_set, ["docs/new.md"]);
-  assert.ok(!calls.some((c) => c.url.includes("/compare/")), "no base comparison after a rejection");
+  assert.ok(!calls.some((c) => c.url.includes("/compare/") && !c.url.includes(`/compare/${TIP}...`)), "no claim base comparison after a rejection");
   assert.match(renderSummary(outcome), /docs\/new\.md/);
 });
 
@@ -1362,7 +1361,7 @@ test("evaluate (re-review 7, MAJOR-3): a protected change is admitted only with 
   assert.match(outcome.reasons[0], /^owner_review_required \(protected_path:scripts\/ci\/clued-work-admission\.mjs\); ask the Owner to approve https:\/\/clued\.pixelgrav\.com\/confirm\/r1$/);
   const asked = calls.find((c) => c.url.endsWith(OWNER_REVIEW_RPC));
   assert.deepEqual(asked.body.p_input, { action: "repo.protected_change", resources: [`repo:o/r/${HEAD}`],
-    note: `o/r#452 @ aaaaaaaaaaaa: https://github.com/o/r/compare/${BASE}...${HEAD} changes scripts/ci/clued-work-admission.mjs` });
+    note: `o/r#452 @ aaaaaaaaaaaa: 1 protected path(s) changed, see https://github.com/o/r/compare/${BASE}...${HEAD} (scripts/ci/clued-work-admission.mjs)` });
   assert.equal(asked.body.p_token_hash, sha256Hex("clued_bnd_test"));
   ({ outcome } = await run({ body: { status: "ok", admitted: true, grant: { grant_id: "g1", replayed: true } } }));
   assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"]);
@@ -1415,37 +1414,54 @@ test("gate guard (re-review 7, n2): a # without whitespace before it is part of 
   assert.equal(jobTimeout(job("timeout-minutes: 20")), 20);
 });
 
-test("evaluate (re-review 9, MAJOR-1): protected paths are also read from the test merge commit against the current base", async () => {
+test("evaluate (re-review 10, MAJOR-1/2): protected paths are also read against the base tip, and such a pull request must contain it", async () => {
   const DOOR = `POST ${PUBLIC.url}/rest/v1/rpc/${OWNER_REVIEW_RPC}`;
   const pending = { body: { status: "ok", admitted: false, owner_request: { request_id: "r1", status: "pending", confirm_path: "/confirm/r1" } } };
-  const MERGE_COMPARE = `GET https://api.test/repos/o/r/compare/${BASE}...${MERGE_SHA}`;
-  const run = async (mergeAnswer, pullOverrides = {}) => {
-    const ev = withClaim();
-    Object.assign(ev.pull_request, pullOverrides);
-    const { fetchImpl, calls } = fakeFetch({ [FILES]: files, [MERGE_COMPARE]: mergeAnswer, [COMPARE]: { body: { status: "ahead" } },
+  const TIP_COMPARE = `GET https://api.test/repos/o/r/compare/${TIP}...${HEAD}`;
+  const run = async (tipAnswer, extraEnv = { CLUED_OWNER_REVIEW_ENFORCE: "true" }, prFiles = files) => {
+    const { fetchImpl, calls } = fakeFetch({ [FILES]: prFiles, [TIP_COMPARE]: tipAnswer, [COMPARE]: { body: { status: "ahead" } },
       [VERIFY]: { body: admittedPayload }, [DOOR]: pending });
-    const outcome = await evaluateIn({ env: env({ CLUED_OWNER_REVIEW_ENFORCE: "true" }), event: ev, eventName: "pull_request", fetchImpl, mergeFiles: true });
+    const outcome = await evaluateIn({ env: env(extraEnv), event: withClaim(), eventName: "pull_request", fetchImpl });
     return { outcome, calls };
   };
-  // The pull request's own files touch nothing protected; the merge into the
-  // current main would change the admission script (the branch reverts it).
-  let { outcome } = await run({ body: { files: [{ filename: "scripts/ci/clued-work-admission.mjs" }] } });
+  const asked = (calls) => calls.some((c) => c.url.endsWith(OWNER_REVIEW_RPC));
+  // The pull request's own files touch nothing protected; against the current
+  // tip (main moved), the head would revert the admission script.
+  let { outcome, calls } = await run({ body: { status: "diverged", files: [{ filename: "scripts/ci/clued-work-admission.mjs" }] } });
   assert.equal(outcome.verdict, "REJECTED");
   assert.deepEqual(outcome.owner_review_findings, ["protected_path:scripts/ci/clued-work-admission.mjs"]);
-  // A merge that changes nothing protected needs no Owner.
-  ({ outcome } = await run({ body: { files: [{ filename: "docs/x.md" }] } }));
+  assert.match(outcome.reasons[0], new RegExp(`^protected_change_not_up_to_date:${TIP} \\(merge main into the branch first`));
+  assert.ok(!asked(calls), "a stale head is refused before the Owner is asked");
+  // Up to date with the tip: the Owner is asked about that exact head.
+  ({ outcome, calls } = await run({ body: { status: "ahead", files: [{ filename: "scripts/ci/clued-work-admission.mjs" }] } }));
+  assert.match(outcome.reasons[0], /^owner_review_required/);
+  assert.ok(asked(calls));
+  // A stale head that changes nothing protected is admitted as before.
+  ({ outcome } = await run({ body: { status: "diverged", files: [{ filename: "docs/x.md" }] } }));
   assert.deepEqual([outcome.verdict, outcome.owner_review_findings], ["ADMITTED", undefined]);
-  // No test merge commit, a conflicting one, a missing compare or a long one: the Owner is asked.
-  for (const [answer, overrides, why] of [
-    [{ body: { files: [] } }, { merge_commit_sha: null }, /not computed/],
-    [{ body: { files: [] } }, { mergeable: false }, /does not merge cleanly/],
-    [{ status: 404, body: {} }, {}, /unavailable/],
-    [{ body: { files: Array.from({ length: 300 }, (_, i) => ({ filename: `docs/${i}.md` })) } }, {}, /300 or more files/],
-  ]) {
-    ({ outcome } = await run(answer, overrides));
-    assert.equal(outcome.verdict, "REJECTED", String(why));
-    assert.match(outcome.owner_review_findings.at(-1), why);
-  }
+  // A long or unreadable compare: the Owner is asked.
+  ({ outcome } = await run({ body: { status: "ahead", files: Array.from({ length: 300 }, (_, i) => ({ filename: `docs/${i}.md` })) } }));
+  assert.match(outcome.owner_review_findings.at(-1), /^protected_path_unknown:/);
+  ({ outcome } = await run({ body: { status: "ahead" } }));
+  assert.match(outcome.owner_review_findings.at(-1), /^protected_path_unknown:/);
+  // Not enforced: a notice only, and the door is not asked.
+  ({ outcome, calls } = await run({ body: { status: "diverged", files: [{ filename: ".github/workflows/x.yml" }] } }, {}));
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"]);
+  assert.ok(outcome.notices.some((n) => n.includes(`would first need main at ${TIP}`)));
+  assert.ok(!asked(calls));
+});
+
+test("owner review (re-review 10, MINOR-1): the note's path names are plain and only the first ten are listed", async () => {
+  const DOOR = `POST ${PUBLIC.url}/rest/v1/rpc/${OWNER_REVIEW_RPC}`;
+  const many = { body: [{ filename: ".github/workflows/safe <b>docs</b> only — approve.yml" },
+    ...Array.from({ length: 11 }, (_, i) => ({ filename: `scripts/ci/f${i}.mjs` }))] };
+  const { fetchImpl, calls } = fakeFetch({ [FILES]: many, [COMPARE]: { body: { status: "ahead" } }, [VERIFY]: { body: admittedPayload },
+    [DOOR]: { body: { status: "ok", admitted: false, owner_request: { request_id: "r1", status: "pending", confirm_path: "/confirm/r1" } } } });
+  await evaluateIn({ env: env({ CLUED_OWNER_REVIEW_ENFORCE: "true" }), event: withClaim(), eventName: "pull_request", fetchImpl });
+  const note = calls.find((c) => c.url.endsWith(OWNER_REVIEW_RPC)).body.p_input.note;
+  assert.match(note, /^o\/r#452 @ aaaaaaaaaaaa: 12 protected path\(s\) changed, see https:\/\/github\.com\/o\/r\/compare\//);
+  assert.ok(!note.includes("<b>") && !note.includes("—"), note);
+  assert.match(note, /, and 2 more\)$/);
 });
 
 test("owner review (re-review 9, MINOR-2): checkout attributes and submodules are protected", () => {
@@ -1459,11 +1475,13 @@ test("reverify (re-review 9, MINOR-4): an unavailable Owner review door leaves t
   const protectedFiles = { body: [{ filename: "scripts/ci/clued-work-admission.mjs", status: "modified" }] };
   const { fetchImpl, calls } = reverifyScript([pull], () => [appCheckOn("d".repeat(40), 3, "success", "pr:452:run:77")], {
     [VERIFY]: { body: admittedPayload }, [DOOR]: { status: 503, body: null },
-    "GET https://api.test/repos/o/r/pulls/452/files": protectedFiles });
+    // The protected path shows against the base tip (reverifyScript fixes the
+    // pull request's own file list).
+    [`GET https://api.test/repos/o/r/compare/${TIP}...${"d".repeat(40)}`]: { body: { status: "ahead", files: protectedFiles.body } } });
   const result = await reverify({ env: env({ CLUED_OWNER_REVIEW_ENFORCE: "true", CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: appKeyPem() }),
     fetchImpl, workspace: ROOT, now: () => 1_800_000_000_000 });
-  assert.deepEqual(result.blocked, []);
-  assert.deepEqual(result.errors.map((e) => e.pr), [452]);
+  assert.deepEqual(result.blocked, [], JSON.stringify(result));
+  assert.deepEqual(result.errors.map((e) => e.pr), [452], JSON.stringify(result));
   assert.match(result.errors[0].error, /Owner review door is unavailable/);
   assert.ok(!calls.some((c) => c.method === "POST" && c.url.endsWith("/check-runs")));
 });

@@ -12,6 +12,14 @@
 --    which only that door writes) is shown as the admission check's, with the
 --    compare link of the pushed commits; any other note stays the Agent's,
 --    unverified.
+-- 4. Re-review 10, MAJOR-3: the admission door answers only a Binding the
+--    Owner marked ci-admission. Before the Owner marks one, nobody can use it,
+--    so no Agent can write a request that the page shows as the admission
+--    check's (binding_role_admits_v1 lets anyone in while a role is unmarked).
+-- 5. Re-review 10, MINOR-2: an Agent cannot open a repo.protected_change
+--    request itself; only the admission door does, with its own note.
+-- 6. Re-review 10, NIT: the confirmation step accepts, for this action, only
+--    the request's own resources, as the page offers.
 --
 -- Anchored patches: each replaces one statement and fails unless the anchor
 -- occurs exactly once.
@@ -43,6 +51,22 @@ $r$        'agent_note_unverified',v_req.agent_note,
         'note_source',case when exists(select 1 from public.clued_audit_receipts rc
             where rc.id=v_req.receipt_id and rc.operation='owner_request_create'
               and rc.metadata->>'origin'='ci-admission') then 'ci-admission' else 'agent' end) end);$r$);
+
+select clued_private.owner_review_hardening_patch_v1('public.clued_owner_grant_admission_door_v1(text,jsonb)',
+$a$  if not clued_private.binding_role_admits_v1(v_binding,'ci-admission') then$a$,
+$r$  if not exists(select 1 from clued_private.binding_roles_v1 r
+      where r.binding_id=v_binding.id and r.role='ci-admission' and r.revoked_at is null) then$r$);
+
+select clued_private.owner_review_hardening_patch_v1('public.clued_owner_request_v1(text,jsonb)',
+$a$    raise exception 'owner_grant_action_unknown' using errcode='22023'; end if;$a$,
+$r$    raise exception 'owner_grant_action_unknown' using errcode='22023'; end if;
+  if p_input->>'action'='repo.protected_change' then
+    raise exception 'owner_request_action_door_only' using errcode='22023'; end if;$r$);
+
+select clued_private.owner_review_hardening_patch_v1('public.clued_owner_grant_confirmation_issue_v1(jsonb)',
+$a$            from jsonb_array_elements(clued_private.owner_request_scope_options_v1(v_req.resources)) o))) then$a$,
+$r$            from jsonb_array_elements(clued_private.owner_request_scope_options_v1(v_req.resources)) o))
+            or (v_req.action='repo.protected_change' and not (v_resources <@ v_req.resources))) then$r$);
 
 drop function clued_private.owner_review_hardening_patch_v1(text,text,text);
 

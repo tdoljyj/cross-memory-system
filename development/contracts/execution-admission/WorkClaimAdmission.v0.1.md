@@ -1,6 +1,6 @@
 # Work Claim Admission v0.1：多 Agent 执行准入与费用保护机制候选
 
-状态：**部分实施。** 第 1–6 步已在生产生效，强制开启。第 7 步实测已完成；独立评审 HOLD_FAIL 的修复已合入；2026-10-03 的复审、2026-10-04 的复审 2 至复审 6（Task `869d2db7`）与 2026-10-05 的复审 7（Task `737699cd`）、复审 8（Task `c7b721ee`）、复审 9（PR #559 合并后，Task `d811ab16`）均为 HOLD_FAIL，修复见下（Owner Decisions `38ddb8cf`、`b0c53143`、`b43f8b8a`、`f2bf949a`、`9dba872f`），待复审 10。方向由 Owner 接受（Decision `78ca0c07`），不是架构接受。
+状态：**部分实施。** 第 1–6 步已在生产生效，强制开启。第 7 步实测已完成；独立评审 HOLD_FAIL 的修复已合入；2026-10-03 的复审、2026-10-04 的复审 2 至复审 6（Task `869d2db7`）与 2026-10-05 的复审 7（Task `737699cd`）、复审 8（Task `c7b721ee`）、复审 9（PR #559 合并后，Task `d811ab16`）与复审 10（PR #561）均为 HOLD_FAIL，修复见下（Owner Decisions `38ddb8cf`、`b0c53143`、`b43f8b8a`、`f2bf949a`、`9dba872f`、`5a3b4935`），待复审 11。方向由 Owner 接受（Decision `78ca0c07`），不是架构接受。
 日期：2026-10-01（状态更新 2026-10-05）
 来源：Owner 上传的《Clued 多 Agent 执行协调与费用保护：讨论纪要与既有机制对账》（2026-10-01）的重新评估，以及对纪要第九节源码与合同的只读对账（固定在 commit `f7ba6ff312aa0e90095db1e28f5937920f30de3a`）。
 通用化后续：任意资源、一个门卫多个门口、领取模式（独占/拆分/多份）的设计候选见 [GenericWorkClaim.v0.1.md](GenericWorkClaim.v0.1.md)（Task `52739939`）。
@@ -132,6 +132,17 @@
       - MINOR-2：`.gitattributes`（任意目录）与 `.gitmodules` 受保护。MINOR-3：确认页对这个动作只给出精确提交一个选项。MINOR-4：门口 5xx/429/网络错误记为 `transient`；复核遇到它不发失败 check，记为复核错误。
       - NIT：文档更正；`clued_owner_request` 工具说明列出该动作与写法；合同版本行后的空行补回、错误表加 `owner_review_*`；开关打开前不再调用门口，摘要只说明需要 Owner。
       - MINOR-1：按评审的定性只改文档（§4.7），发布流水线未改。
+  - 复审 10（2026-10-05，对照 PR #561 head `a52bb86`）：fresh-context 只读评审，HOLD_FAIL（BLOCKER 0 / MAJOR 3 / MINOR 3 / NIT 3，Note `883b07d1`）。复审 9 的 MINOR-2、MINOR-4、禁止打包、开关前不调门口属实。
+    - 新发现：
+      - MAJOR-1：合并差异比较 `pr.base.sha...merge_commit_sha`，不核对合并提交的父提交，`mergeable` 为空时也用；base 落后时混入 main 后来的改动，既误报也可能漏报。
+      - MAJOR-2：授权只绑 head，不绑合并结果；Owner 批准 head 后，main 吃进中间提交，同一 head 的合并结果会把保护文件改回旧版，而门口对同 head 回放授权。
+      - MAJOR-3：Owner 还没标 `ci-admission` 时，任何 Binding 都能调门口，写出确认页显示为「准入检查说明」的请求，附一个无害的比较链接；页面也不核对链接里的提交。
+      - MINOR：说明里的文件名由 PR 控制、只列前 30 条（1）；Agent 仍能自建这个动作的请求，工具说明与合同矛盾（2）；合并提交未算出或冲突时直接要 Owner（3）。NIT：§4.6 清单与「未核实」措辞；确认步骤服务端仍接受通配；复核的瞬时错误判断偏窄。
+    - 修复（Owner Decision `5a3b4935`：改为「必须是最新」）：
+      - MAJOR-1/2、MINOR-3：去掉合并差异。保护路径按 PR 文件与「base 分支当前 tip 对 head」的比较一起判定；有保护路径的 PR 必须包含当前 tip（`baseTipCompare`，否则 `protected_change_not_up_to_date`），合并结果因此就是 Owner 批准的 head。main 有推送时复核 workflow 立即运行，把落后的这类 PR 打红；合入 main 后是新 head，需要新授权。
+      - MAJOR-3：门口只认 Owner 已标出 `ci-admission` 的 Binding，标出之前谁都不能用（迁移 `20261005140000`）；确认页只在链接终点正是要批准的提交时显示链接。
+      - MINOR-1：说明里的文件名只保留普通字符、只列前十条，其余计数，链接为准。MINOR-2：Agent 自建 `repo.protected_change` 请求被拒（`owner_request_action_door_only`），工具说明与合同 v30 同步。
+      - NIT：清单补 `.gitattributes`、`.gitmodules`，「未核实」措辞更正；确认步骤服务端对这个动作只接受请求本身的资源；复核按 `owner_review.kind` 判断瞬时错误。
 - **尚缺或与本文设计不符**（各条在对应小节标注）：
   - 每认领 CI 分钟预算与 finalize：改为次数上限，不做（§4.5，Owner Decision `a264ea02`）。
   - 备份恢复后 `max(fence)` 会回退，靠恢复后的手工步骤补救（§4.4、§6，Owner Decision `2b23eb0c`）。
@@ -339,15 +350,15 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 - **实现（复审 7，2026-10-05，Owner Decision `b43f8b8a`，Task `c7b721ee`；复审 8 改为按路径，Owner Decision `f2bf949a`）：Owner 复核。**
   - 原因：ruleset 不要求审批，Agent 合并自己的 PR，准入放行的改动合并后就是 `main` 的代码，之后所有运行都按它执行。改掉守护生产的代码，守护就没了。
-  - 需要 Owner 复核的改动只按路径判定（`protectedPathFindings`，改名前后的路径都算）：`.github/**`（所有 workflow 与 action）、`scripts/ci/**`（准入、发布授权、发布标签脚本与准入 job 自己跑的自测）、`scripts/runner/**`、`apps/clued-cloud/scripts/**`（带生产凭据运行的发布与核验脚本）、`apps/clued-cloud/package.json` 与 `package-lock.json`（这些脚本加载的依赖）、`apps/clued-cloud/wrangler*.jsonc`、`apps/clued-cloud/app/supabase-public-config.ts`（准入向哪个 Clued 查询）。
+  - 需要 Owner 复核的改动只按路径判定（`protectedPathFindings`，改名前后的路径都算）：`.github/**`（所有 workflow 与 action）、`scripts/ci/**`（准入、发布授权、发布标签脚本与准入 job 自己跑的自测）、`scripts/runner/**`、`apps/clued-cloud/scripts/**`（带生产凭据运行的发布与核验脚本）、`apps/clued-cloud/package.json` 与 `package-lock.json`（这些脚本加载的依赖）、`apps/clued-cloud/wrangler*.jsonc`、`apps/clued-cloud/app/supabase-public-config.ts`（准入向哪个 Clued 查询）、任意目录的 `.gitattributes` 与 `.gitmodules`（复审 9）。
   - 复审 7 的逐行识别（environment、新 secret、自托管 workflow 的触发器）只写进摘要（`workflow_review_hint`），不再决定是否需要 Owner：它能被 YAML 转义、显式键、别名等写法躲过（复审 8 MAJOR-2）。
   - 做法：准入判定为 ADMITTED 后，用准入 Binding 调 Clued 的 `clued_owner_grant_admission_door_v1`，动作 `repo.protected_change`，资源 `repo:<owner>/<name>/<head 提交>`。有覆盖它的有效授权就放行（摘要写 `owner_review_granted`）；没有就开（或复用）一条待确认请求，判 REJECTED 并在原因里给出确认链接。Owner 在登录的 Clued 页面批准后，编辑 PR 或推提交即重新判定。
-  - 只有资源里精确写着该提交的授权才放行，带通配的不算（复审 8 MINOR-3）。门口建的请求附上 PR 与改动路径（`agent_note`，确认页标「未核实」）。
+  - 只有资源里精确写着该提交的授权才放行，带通配的不算（复审 8 MINOR-3）。门口建的请求附上 PR、受保护路径数与 compare 链接（`agent_note`）；确认页把它标为「准入检查说明」（复审 9），其余请求的说明仍是「Agent 说明（未核实）」。
   - 一份授权对一个提交只用一次：第一次准入用掉一次并记 `OWNER_GRANT_USED`（`door: ci-admission`），之后同一提交的运行（复核、编辑 PR）凭这条记录放行，不再用次数；授权到期不影响已用过的提交，撤销后不再放行。「只批这一次」因此恰好覆盖一个提交。
-  - 保护路径同时按 GitHub 的测试合并提交相对当前 base 的改动判定（复审 9 MAJOR-1），拿不到合并比较时按需要 Owner 处理。
-  - 流程（合同 v30 §1.7，复审 9 MAJOR-2）：先推送；准入检查拒绝并开请求，说明里有 PR 与 compare 链接，确认页标为「准入检查说明」；Owner 看过改动后批准；编辑 PR 重新准入；加闸任务在该 head 上已被跳过，需关闭再重开一次 PR 或再提交（新授权）。这个动作不能打包，确认页只给精确提交一个选项。
+  - 保护路径同时按 base 分支当前 tip 与 head 的比较判定；有保护路径的 PR 必须包含当前 tip，否则判 `protected_change_not_up_to_date`，不调用门口（复审 10，取代复审 9 的合并差异）。比较列出 ≥300 个文件或读不到时按需要 Owner 处理。main 有推送时复核立即运行。
+  - 流程（合同 v30 §1.7，复审 9 MAJOR-2）：先推送（包含当前 main）；准入检查拒绝并开请求，说明里有 PR 与 compare 链接，确认页标为「准入检查说明」；Owner 看过改动后批准；编辑 PR 重新准入；加闸任务在该 head 上已被跳过，需关闭再重开一次 PR 或再提交（新授权）。这个动作不能打包，确认页只给精确提交一个选项。
   - 强制开关打开之前不调用门口（不给 Owner 开请求），摘要只写明需要 Owner。门口的服务器错误记为 `transient`：准入时仍拒绝，每小时复核时不改动 check。
-  - 只有准入 Binding（Owner 标了 `ci-admission` 之后）能调这个门口，只需 `context:read`。
+  - 只有 Owner 标了 `ci-admission` 的 Binding 能调这个门口，标出之前谁都不能用（复审 10 MAJOR-3），只需 `context:read`。Agent 不能自己开这个动作的请求（复审 10 MINOR-2）。确认页只在说明里的链接终点正是要批准的提交时显示链接。
   - 强制开关是 Owner 的仓库变量 `CLUED_OWNER_REVIEW_ENFORCE=true`。未打开时只在摘要里提示；打开后门口缺失、被拒或传输错误都判 REJECTED。
 
 **L0b：重任务 workflow 的 `admission-gate` job**
@@ -384,7 +395,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - `main` 上未经人审的代码（复审 7 MAJOR-3）：ruleset 不要求审批，Agent 合并自己的 PR。Owner 复核（§4.6）只覆盖其中列出的路径。不覆盖：Worker 与应用源码（`apps/clued-cloud/worker/**`、`app/**` 等），它们被构建并部署（部署要 Owner 对该提交的发布授权），也被带凭据的测试与脚本间接加载；发布 workflow 在授权步骤之前的检查与 `preflight` 模式会带着数据库凭据运行 `apps/clued-cloud/scripts/` 下的脚本与其依赖（这些路径受保护，但脚本加载的其他源码不受保护）。Owner 复核开关打开之前，以上所有改动都不需要 Owner。
 - Owner 复核的信任根是 Clued 数据库里的门口函数与授权表（复审 9）。Agent 仍有生产 Supabase 的写权限（OwnerCredential §9），能直接改这些函数或插入授权，让门口永远放行；在 Owner 把 Agent 的数据库连接改为只读之前，这一层只防合规 Agent 与仓库内的改动。
 - 发布 workflow 的 `preflight` 与部署后核验（复审 9 MINOR-1）：同一个 job 先运行不受保护的测试（`apps/clued-cloud/tests/**`）与 typecheck，之后的步骤带着生产数据库凭据运行受保护的脚本；前面的测试可以改写磁盘上的这些脚本或 `node_modules`。`verify-currentness-transport.mjs` 还把带凭据的完整环境交给它列出的测试（与它们 import 的 Worker 源码），这些都不在保护路径内。`preflight` 不需要 Owner 授权。也就是说，只要一个 PR 合并并有人在 main 上触发 `preflight` 或部署后核验，就能拿到生产数据库凭据。修法是把这些测试放到不带凭据的另一个 job，或把它们与其 import 的源码纳入保护路径；目前只写明。
-- main 移动后的合并差异（复审 9 MAJOR-1）：准入按测试合并提交判定，main 之后前进时由每小时复核补查，窗口最长约一小时；Owner 在 main ruleset 开「要求分支最新」后关闭。
+- main 移动后（复审 9、10）：有保护路径的 PR 必须包含当前 main，main 有推送时复核 workflow 立即重判并打红落后的 PR。从 main 推送到复核发出失败 check 之间仍有几分钟窗口；Owner 在 main ruleset 开「要求分支最新」后关闭。
 - 准入读 head 与文件列表之间的 ABA（复审 8 NIT）：判定后再读一次 head，只比较 SHA。Agent 在几秒内把 head 推走再推回，判定可能用到另一个提交的文件列表。
 - 仓库级 secret 与 GitHub 托管 runner 分钟（复审 7 m5）：任何能推分支的 Agent 都能加一个 `on: push`（任意分支）的托管 workflow，最多 256 份 matrix、每份 6 小时，读取所有仓库级 secret（例如 `OPENAI_API_KEY`、`CI_HEALTH_GITHUB_TOKEN`、`CLUED_E2E_EMAIL` / `CLUED_E2E_PASSWORD`）。准入、gate、runner 检查都不经过。生产相关的 secret 应放在只限 `main` 的 environment（`clued-release`、`clued-admission`）里；`CLUED_RELEASE_TAG_TOKEN` 的 job 已进 `clued-release`，secret 由 Owner 移入。`CLUED_PRODUCTION_BACKUP_KEY`、`CLUED_STORAGE_SOURCE_*` 是否只在 environment 中，从仓库无法核验。
 - Agent 的 GitHub 凭据（复审 7 m7）：Agent 用 Owner 的 GitHub 身份，即仓库管理员（`docs/maintenance/main-admission-self-test-deadlock.md`）。持有管理权限的凭据能改 ruleset、`CLUED_WORK_ADMISSION_ENFORCE`、`CLUED_RELEASE_GRANT_ENFORCE`、`CLUED_OWNER_REVIEW_ENFORCE` 等变量、environment 的分支策略与 secret，本设计的所有 GitHub 侧保证都以 Agent 不这样做为前提。要去掉这个前提，Agent 需要一个没有 Administration、Secrets、Variables、Environments 权限的凭据（例如只有 Contents 与 Pull requests 写权限的 GitHub App 或细粒度 token）。

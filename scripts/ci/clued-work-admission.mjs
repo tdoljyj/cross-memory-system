@@ -822,9 +822,13 @@ async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, 
   // which pull request and which changes it is for, with the compare link of
   // the pushed commits (the confirmation page marks this note as written by
   // the admission check, not by an Agent).
-  const listed = findings.slice(0, 30).map((finding) => finding.replace(/^protected_path:/, "")).join(", ");
+  // Re-review 10, MINOR-1: path names come from the pull request, so they are
+  // reduced to plain characters and only counted beyond the first ten; the
+  // compare link is the record of what changed.
+  const listed = findings.slice(0, 10)
+    .map((finding) => finding.replace(/^protected_path:/, "").replace(/[^A-Za-z0-9._/*-]/g, "?").slice(0, 120)).join(", ");
   const compare = `https://github.com/${repository}/compare/${pr.base.sha}...${headSha}`;
-  const note = `${outcome.pr_ref ?? repository} @ ${headSha.slice(0, 12)}: ${compare} changes ${listed}${findings.length > 30 ? ` and ${findings.length - 30} more` : ""}`.slice(0, 2000);
+  const note = `${outcome.pr_ref ?? repository} @ ${headSha.slice(0, 12)}: ${findings.length} protected path(s) changed, see ${compare} (${listed}${findings.length > 10 ? `, and ${findings.length - 10} more` : ""})`.slice(0, 2000);
   let door;
   try {
     door = await ownerReviewDoor(fetchImpl, env, repository, headSha, workspace, note);
@@ -843,28 +847,38 @@ async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, 
     : `owner_review_unavailable:${door.kind} (${summary}; ${door.detail})`);
 }
 
-// Re-review 9, MAJOR-1: the pull request's file list is relative to its merge
-// base, which stays put while main moves on, so a branch can carry a change to
-// a protected path that cancels out against an older main and comes back once
-// main has moved. GitHub's test merge commit is the pull request merged into
-// the base as it is now; the files it changes against the base are what a
-// merge would change. Both lists are checked for protected paths. The hourly
-// re-verification reads the pull request again, so a main that moves later is
-// caught within the hour; the Owner's "require branches to be up to date"
-// ruleset setting closes the window.
-export const MERGE_DIFF_LIMIT = 300;
-export async function mergeDiffPaths(fetchImpl, env, repository, pr) {
-  const merge = typeof pr.merge_commit_sha === "string" && /^[0-9a-f]{40}$/.test(pr.merge_commit_sha) ? pr.merge_commit_sha : null;
-  if (!merge || pr.mergeable === false) return { paths: [], unavailable: merge ? "the pull request does not merge cleanly" : "GitHub has not computed the test merge commit yet" };
-  const body = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${pr.base.sha}...${merge}`, { allowMissing: true });
-  if (!body || !Array.isArray(body.files)) return { paths: [], unavailable: `compare ${pr.base.sha}...${merge} is unavailable` };
-  if (body.files.length >= MERGE_DIFF_LIMIT) return { paths: [], unavailable: `the merge changes ${body.files.length} or more files` };
+// Re-review 9 MAJOR-1, re-review 10 MAJOR-1/2 (Owner Decision 5a3b4935): a
+// pull request's file list is relative to a merge base that stays put while
+// main moves on, so a branch could carry a change to a protected path that
+// cancels out against an older main and comes back once main has moved, and a
+// grant on its head would keep admitting it. Two rules close this:
+//   - the protected paths are read from the pull request's files and from
+//     the compare of the base branch's current tip with the head (whose merge
+//     base moves with main), and
+//   - a pull request with protected paths must contain that tip (the head is
+//     ahead of it, or is it), so merging it yields exactly the head the Owner
+//     approved. When main moves, the next evaluation (a push to main runs the
+//     re-verification) refuses it until main is merged in: a new head, a new
+//     grant.
+export const BASE_COMPARE_LIMIT = 300;
+export async function baseTipCompare(fetchImpl, env, repository, pr) {
+  const branch = await githubJson(fetchImpl, env, `/repos/${repository}/branches/${encodeURIComponent(pr.base.ref)}`);
+  const tip = branch && branch.commit && branch.commit.sha;
+  if (typeof tip !== "string" || !/^[0-9a-f]{40}$/.test(tip)) throw new Error(`the tip of ${pr.base.ref} could not be read`);
+  if (tip === pr.head.sha) return { tip, upToDate: true, paths: [], truncated: false };
+  const body = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${tip}...${pr.head.sha}`);
+  const files = body && Array.isArray(body.files) ? body.files : [];
   const paths = new Set();
-  for (const file of body.files) {
+  for (const file of files) {
     if (typeof file.filename === "string") paths.add(file.filename);
     if (typeof file.previous_filename === "string") paths.add(file.previous_filename);
   }
-  return { paths: [...paths].sort(), unavailable: null };
+  return {
+    tip,
+    upToDate: Boolean(body) && (body.status === "ahead" || body.status === "identical"),
+    paths: [...paths].sort(),
+    truncated: !body || !Array.isArray(body.files) || files.length >= BASE_COMPARE_LIMIT,
+  };
 }
 
 export async function evaluate({ env, event, eventName, fetchImpl, workspace, withSummary }) {
@@ -905,11 +919,10 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     const workflowResult = await workflowFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha);
     const gateFindingsOfPr = workflowResult.gate;
     if (gateFindingsOfPr.length) outcome.workflow_gate_findings = gateFindingsOfPr;
-    const mergeDiff = await mergeDiffPaths(fetchImpl, env, repository, pr);
-    const ownerFindings = protectedPathFindings([...new Set([...changed.paths, ...mergeDiff.paths])].sort());
-    // Without the merge diff, any protected path the merge might bring back
-    // cannot be ruled out: the Owner is asked.
-    if (mergeDiff.unavailable) ownerFindings.push(`protected_path_unknown:${mergeDiff.unavailable}`);
+    const tipCompare = await baseTipCompare(fetchImpl, env, repository, pr);
+    const ownerFindings = protectedPathFindings([...new Set([...changed.paths, ...tipCompare.paths])].sort());
+    // A long compare may hide a protected path: the Owner is asked.
+    if (tipCompare.truncated) ownerFindings.push(`protected_path_unknown:the compare of ${tipCompare.tip} with the head is unavailable or lists ${BASE_COMPARE_LIMIT} or more files`);
     if (ownerFindings.length) outcome.owner_review_findings = ownerFindings;
     for (const hint of workflowResult.owner) outcome.notices.push(`workflow_review_hint:${hint}`);
     if (withSummary && workspace) {
@@ -1010,7 +1023,15 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
       outcome.verdict = "REJECTED";
       outcome.reasons.push(...gateFindingsOfPr);
     }
-    if (ownerFindings.length && outcome.verdict === "ADMITTED") await ownerReview(fetchImpl, env, repository, pr, workspace, ownerFindings, outcome);
+    if (ownerFindings.length && outcome.verdict === "ADMITTED") {
+      if (!tipCompare.upToDate && ownerReviewEnforced(env)) {
+        outcome.verdict = "REJECTED";
+        outcome.reasons.push(`protected_change_not_up_to_date:${tipCompare.tip} (merge ${pr.base.ref} into the branch first; ${ownerFindings.join(", ")})`);
+      } else {
+        if (!tipCompare.upToDate) outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): the branch would first need ${pr.base.ref} at ${tipCompare.tip}`);
+        await ownerReview(fetchImpl, env, repository, pr, workspace, ownerFindings, outcome);
+      }
+    }
     // Re-review 7, m2: the file list was read after the head, so a push in
     // between would pair this head's verdict with another head's files.
     if (outcome.verdict === "ADMITTED") {
@@ -1088,8 +1109,9 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
       const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false });
       result.checked.push({ pr: pr.number, verdict: outcome.verdict, reasons: outcome.reasons });
       if (outcome.admitted) continue;
-      if (outcome.owner_review && outcome.owner_review.kind === "transient"
-        && outcome.reasons.every((reason) => reason.startsWith("owner_review_unavailable:"))) {
+      // The Owner review runs only on an otherwise admitted pull request, so a
+      // transient door error is the only thing standing against it (re-review 10, NIT).
+      if (outcome.owner_review && outcome.owner_review.kind === "transient") {
         throw new Error(`Clued's Owner review door is unavailable (${outcome.reasons.join("; ")}); the check stays as it is until the next run`);
       }
       const verdict = `RE-VERIFIED: ${outcome.verdict ?? "NOT ADMITTED"}`;
