@@ -1234,8 +1234,8 @@ test('S2c PR-1: integration registries and pure derivation', { timeout: 3_600_00
         assert.equal(Number(row.policies), 0, row.relname);
         assert.equal(row.any_privilege, false, row.relname);
       }
-      // READY profiles are PR-3; no public view (§5.14)
-      assert.equal((await admin.query(`select to_regclass('clued_private.integration_ready_profiles_v1') r`)).rows[0].r, null);
+      // READY profiles are PR-3, not PR-1; no public view (§5.14)
+      assert.equal('clued_private.integration_ready_profiles_v1' in after.relations, false);
       assert.equal(Number((await admin.query(`select count(*) n from pg_class c join pg_namespace n on n.oid = c.relnamespace
         where n.nspname = 'public' and c.relname like '%integration%'`)).rows[0].n), 0);
     });
