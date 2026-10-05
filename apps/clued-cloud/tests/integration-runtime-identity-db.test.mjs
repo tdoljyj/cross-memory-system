@@ -1356,6 +1356,64 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       assert.equal(covers, false);
     });
 
+    await t.test('ERRATA-004 a ceiling project:* covers the project:<id> entries it materializes', async () => {
+      const covers = async (c, a) => (await admin.query('select clued_private.integration_covers_v1($1::jsonb, $2::jsonb) c',
+        [JSON.stringify(c), JSON.stringify(a)])).rows[0].c;
+      const entry = (resourceId, actions, environment = 'canonical') => ({ resource_kind: 'scope', resource_id: resourceId, environment, actions });
+      const shape = (...entries) => ({ scopes: ['context:read', 'context:write'], entries });
+      const [u1, u2] = [uid(), uid()];
+      const wild = shape(entry('project:*', ['read', 'write']), entry(`project:${u1}`, ['read', 'write']));
+      assert.equal(await covers(wild, shape(entry(`project:${u2}`, ['read']))), true, 'a later project under project:*');
+      assert.equal(await covers(wild, shape(entry(`project:${u2}`, ['read', 'write']), entry('project:*', ['read']))), true);
+      assert.equal(await covers(shape(entry('project:*', ['read'])), shape(entry(`project:${u2}`, ['read', 'write']))), false, 'actions beyond project:*');
+      assert.equal(await covers(wild, shape(entry(`project:${u2}`, ['read'], 'other'))), false, 'another environment');
+      assert.equal(await covers(wild, shape(entry('project:not-a-uuid', ['read']))), false, 'not a project id');
+      assert.equal(await covers(wild, shape(entry('global', ['read']))), false, 'project:* is not global');
+      assert.equal(await covers(wild, shape(entry(`project:${u2}`.toUpperCase().replace('PROJECT:', 'project:'), ['read']))), false,
+        'not the canonical lowercase id');
+      assert.equal(await covers(wild, shape({ resource_kind: 'context', resource_id: `project:${u2}`, environment: 'canonical', actions: ['read'] })),
+        false, 'project:* covers scope entries only');
+      assert.equal(await covers(shape(entry(`project:${u1}`, ['read', 'write'])), shape(entry(`project:${u2}`, ['read']))), false,
+        'without project:* a new project is an expansion');
+      const inter = (await admin.query('select clued_private.integration_ceiling_intersect_v1($1::jsonb, $2::jsonb) i',
+        [JSON.stringify(shape(entry('project:*', ['read', 'write']), entry(`project:${u1}`, ['read']))),
+          JSON.stringify(shape(entry(`project:${u1}`, ['read', 'write']), entry(`project:${u2}`, ['write']), entry('global', ['read'])))])).rows[0].i;
+      assert.deepEqual(inter.entries, [entry(`project:${u1}`, ['read', 'write']), entry(`project:${u2}`, ['write'])].sort(
+        (a, b) => (a.resource_id < b.resource_id ? -1 : 1)));
+      // the rule is symmetric: the same result with project:* only on the right
+      const flipped = (await admin.query('select clued_private.integration_ceiling_intersect_v1($1::jsonb, $2::jsonb) i',
+        [JSON.stringify(shape(entry(`project:${u1}`, ['read', 'write']), entry(`project:${u2}`, ['write']), entry('global', ['read']))),
+          JSON.stringify(shape(entry('project:*', ['read', 'write']), entry(`project:${u1}`, ['read'])))])).rows[0].i;
+      assert.deepEqual(flipped, inter);
+      // end to end: an Integration whose connection holds project:*, then the Owner creates a project
+      const user = await newUser();
+      const project = async () => {
+        const id = uid();
+        await admin.query('insert into public.clued_projects(id, user_id, name, normalized_name, context_key) values ($1, $2, $3, $3, $4)',
+          [id, user, `p-${id.slice(0, 8)}`, `project:${id}`]);
+        return id;
+      };
+      const p1 = await project();
+      const b = await oauthBinding(user, { client: `wild-${uid()}`, entries: [entry('project:*', ['read', 'write'])] });
+      const entriesOf = async (bindingId) => (await admin.query(`select resource_id from clued_private.authorization_entries_v12
+        where binding_id = $1 order by resource_id`, [bindingId])).rows.map((r) => r.resource_id);
+      assert.deepEqual(await entriesOf(b.id), [`project:${p1}`, 'project:*'].sort());
+      const id = (await install(b, { host: 'test.complete' })).supplemental.integration_id;
+      assert.ok((await integration(id)).authorization_ceiling.entries.some((e) => e.resource_id === 'project:*'));
+      const p2 = await project();
+      assert.ok((await entriesOf(b.id)).includes(`project:${p2}`), 'migration 20261004210000 materialized the new project');
+      const repaired = await install(b, { intent: 'verification_repair', target_integration_id: id, host: 'test.complete' }, 'VERIFICATION_REPAIR');
+      assert.equal(repaired.status, 'committed', JSON.stringify(repaired));
+      assert.equal(repaired.supplemental.link_authority, 'SELF');
+      // a connection granted one named project gains another without project:* → still an expansion
+      const narrow = await oauthBinding(user, { client: `named-${uid()}`, entries: [entry(`project:${p1}`, ['read', 'write'])] });
+      const id2 = (await install(narrow, { host: 'test.complete' })).supplemental.integration_id;
+      await admin.query(`insert into clued_private.authorization_entries_v12(binding_id, resource_kind, resource_id, environment, actions)
+        values ($1, 'scope', $2, 'canonical', '{read}')`, [narrow.id, `project:${p2}`]);
+      const refused = await install(narrow, { intent: 'verification_repair', target_integration_id: id2, host: 'test.complete' }, 'VERIFICATION_REPAIR');
+      assert.equal(refused.error_code, 'reauthorization_scope_expansion_forbidden');
+    });
+
     await t.test('T-A9-11 adoption is explicit, one Binding at a time; P5 Bindings are not adoptable', async () => {
       const user = await newUser();
       const b = await rawBinding(user);

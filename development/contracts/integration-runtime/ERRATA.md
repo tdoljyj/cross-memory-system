@@ -282,6 +282,68 @@ budget or procurement authority.
 
 ---
 
+## ERRATA-004 — `§10.3` a ceiling's `project:*` covers the `project:<id>` entries it materializes
+
+- **Authority:** Owner Decision `82e4534a-feb9-418a-b1c9-b817f3183901` (2026-10-05).
+- **Raised by:** the Fresh-Context review of S2c PR-2 (tdoljyj/cross-memory-system#551),
+  finding MINOR-7.
+- **Status:** in force. Implemented by migration `20261005100000`, which replaces the PR-2
+  functions `integration_covers_v1` and `integration_ceiling_intersect_v1` with unchanged
+  signatures. No object older than S2c is changed.
+
+**What the frozen text says.** `§10.3` compares a ceiling `C` with an authority `A`
+entry by entry: `covers(C, A)` holds when every entry of `A` has an entry in `C` with
+the same `resource_kind`, `resource_id` and `environment` whose `actions` contain its
+own. `C_eff` lowers the ceiling with the same per-entry intersection.
+
+**Why that is incomplete.** Migration `20261004210000` (after the freeze) lets the
+Owner grant "我的全部项目（含以后新建的）" as one `scope` entry `project:*`. It then
+materializes that grant as one `scope` entry `project:<id>` per project, and adds one
+more whenever the Owner creates a project. That new entry is not in an Integration's
+stored ceiling, so `covers` reads it as a scope expansion. The Integration's own
+connection is then refused as `reauthorization_scope_expansion_forbidden`, including
+a `SELF` verification repair, although the Owner consented to future projects when
+granting `project:*`.
+
+**What replaces it.** In a ceiling-shaped value, an entry
+`{resource_kind: 'scope', resource_id: 'project:*', environment: E, actions: X}` also
+grants `X` on every `{resource_kind: 'scope', resource_id: 'project:<uuid>',
+environment: E}` entry. For any `(kind, id, environment)`, the actions a value grants
+are the union of two sets:
+
+- the exact entry's actions;
+- for a `project:<uuid>` target only, the same environment's `project:*` actions.
+
+Both operations use these granted actions:
+
+- `covers(C, A)` holds when, for every entry of `A`, its actions are a subset of what
+  `C` grants on that key.
+- `C ∩ A` contains, for every key named on either side, the actions both sides grant,
+  and omits a key whose intersection is empty.
+
+Everything else is unchanged:
+
+- A ceiling without `project:*` does not cover a new project. That is still an
+  expansion and still needs `fresh_consent`.
+- `project:*` covers only `scope` entries whose id is the canonical lowercase
+  `project:<uuid>` form, in the same environment. It never covers `global`,
+  `profile`, an uppercase or otherwise non-canonical id, or another resource kind.
+- Actions beyond `project:*`'s are still an expansion.
+
+**Rejected alternatives.**
+
+- Excluding materialized entries from the comparison. That would require marking
+  entries as materialized, a larger change.
+- Keeping the refusal and requiring a new OAuth consent after every project the Owner
+  creates.
+
+### Boundary
+
+As ERRATA-001: semantics only, no production, release, flag, grant, visibility,
+budget or procurement authority.
+
+---
+
 ## Note — `§13.2` P2 (c) sample counts are two obligations
 
 Not an erratum: the frozen text is correct and is restated here because PR-1
