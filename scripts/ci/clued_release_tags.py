@@ -145,7 +145,11 @@ def apply(plan: Plan, push: bool, root: Path = ROOT) -> str:
     subprocess.run(["git", "tag", "-a", plan.name, plan.target, "-F", "-"], cwd=root, input=plan.message,
                    text=True, check=True, env=env)
     if push:
-        subprocess.run(["git", "push", "origin", f"refs/tags/{plan.name}"], cwd=root, check=True)
+        pushed = subprocess.run(["git", "push", "origin", f"refs/tags/{plan.name}"], cwd=root,
+                                capture_output=True, text=True)
+        if pushed.returncode != 0:
+            subprocess.run(["git", "tag", "-d", plan.name], cwd=root, capture_output=True)
+            raise TagError(f"pushing {plan.name} failed: {pushed.stderr.strip()}")
     return f"created {plan.name} on {plan.target[:12]}" + (" and pushed" if push else "")
 
 

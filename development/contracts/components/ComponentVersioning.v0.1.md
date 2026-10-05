@@ -53,6 +53,8 @@ The hook adds context and never blocks. `CLUED_VERSION_CHECK=off` disables it; `
 
 `clued_release_tags.py check` runs in the `clued-components` workflow: `VERSION` must be a valid tag name, and if its tag exists it must be on the commit that set `VERSION`, so a new product version always needs a new `VERSION` value. A missing tag is backfilled with `workflow_dispatch` (`product`, or `release_run_id`).
 
+Tags are pushed with the repository secret `CLUED_RELEASE_TAG_TOKEN`, a fine-grained token for this repository with Contents and Workflows read/write: GitHub treats a new tag on a commit whose workflow files differ from `main` as a workflow change, and `GITHUB_TOKEN` cannot hold the `workflows` permission. The workflow fails with that explanation when the secret is missing.
+
 ## 6. Hosts without hooks
 
 Hosts other than Claude Code run no hook. On them the Agent compares versions itself from the resume fields of §3; automatic repair belongs to Task `456e9348`.
