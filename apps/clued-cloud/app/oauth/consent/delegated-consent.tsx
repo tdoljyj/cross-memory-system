@@ -11,9 +11,9 @@ const environmentLabels: Record<string, string> = { canonical: '正式记忆', t
 const rowKey = (row: Resource) => JSON.stringify([row.resource_kind, row.resource_id, row.environment]);
 // Preset roles (PermissionSimplification.v0.1 §3.1, Decision b32fc5b9) are packaged
 // selections of the same rows; 高级 shows every row and any change there makes the
-// role 自定义. The page opens on 全部 over the Owner's current projects, which is
-// every eligible action except project:* ("我的全部项目（含以后新建的）"): that row
-// is selected only when the Owner picks it as the range.
+// role 自定义. 全部 takes "我的全部项目（含以后新建的）" (project:*) as its range whenever
+// that row is on offer (Decision d4c06a24), so the page opens on every eligible action;
+// the Owner can still switch the range back to 指定项目.
 type Role = 'reader' | 'developer' | 'full' | 'custom';
 const ALL_PROJECTS = 'project:*';
 const ROLES: { role: Exclude<Role, 'custom'>; title: string; text: string }[] = [
@@ -96,8 +96,9 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
       if (value.user.id !== who.user.id) throw new Error('授权请求与当前账户不匹配，请重新读取。');
       if (accountEpoch.current !== epoch || currentSession.current?.user.id !== who.user.id || number !== readNumber.current || controller.signal.aborted) return;
       const projects = value.eligible.filter(isProject).map(row => row.resource_id);
-      setDetails(value); setRole('full'); setAllProjects(false); setChosen(projects);
-      setSelected(preset(value.eligible, 'full', false, projects));
+      const all = value.eligible.some(row => row.resource_kind === 'scope' && row.resource_id === ALL_PROJECTS);
+      setDetails(value); setRole('full'); setAllProjects(all); setChosen(projects);
+      setSelected(preset(value.eligible, 'full', all, projects));
     } catch (failure) {
       if (accountEpoch.current === epoch && number === readNumber.current && !controller.signal.aborted) {
         setError(failure instanceof Error && !(failure instanceof TypeError) ? failure.message : '授权暂不可用，请稍后重试。');
@@ -234,7 +235,7 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
       {details.eligible.length > 0 && <section className="oauth-roles" aria-label="角色">
         <h2 style={{ fontSize: 18 }}>角色</h2>
         <div className="oauth-role-list">{ROLES.map(item => <button key={item.role} type="button" aria-pressed={role === item.role}
-          disabled={busy} onClick={() => choose(item.role)}><strong>{item.title}</strong><small>{item.text}</small></button>)}</div>
+          disabled={busy} onClick={() => choose(item.role, item.role === 'full' ? offersAll || allProjects : allProjects)}><strong>{item.title}</strong><small>{item.text}</small></button>)}</div>
         {role === 'custom' && <p role="status">自定义：你在“高级”里改过勾选。点上面的角色可以重新套用。</p>}
         {role !== 'custom' && (projectRows.length > 0 || offersAll) && <fieldset className="oauth-range" disabled={busy}>
           <legend>项目范围</legend>
