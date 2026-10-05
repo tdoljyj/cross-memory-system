@@ -43,6 +43,9 @@ on:
       - 'apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs'
       - 'apps/clued-cloud/tests/integration-runtime-worker.test.mjs'
       - 'apps/clued-cloud/tests/integration-runtime-transport.test.mjs'
+      - 'apps/clued-cloud/tests/integration-runtime-gate-evidence.test.mjs'
+      - 'apps/clued-cloud/evals/integration-runtime/**'
+      - 'development/contracts/integration-runtime/**'
       - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'
       - 'apps/clued-cloud/tests/mtpe-*.test.mjs'
       - 'apps/clued-cloud/tests/production-release-gate.test.mjs'
@@ -95,6 +98,9 @@ on:
       - 'apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs'
       - 'apps/clued-cloud/tests/integration-runtime-worker.test.mjs'
       - 'apps/clued-cloud/tests/integration-runtime-transport.test.mjs'
+      - 'apps/clued-cloud/tests/integration-runtime-gate-evidence.test.mjs'
+      - 'apps/clued-cloud/evals/integration-runtime/**'
+      - 'development/contracts/integration-runtime/**'
       - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'
       - 'apps/clued-cloud/tests/mtpe-*.test.mjs'
       - 'apps/clued-cloud/tests/production-release-gate.test.mjs'
@@ -206,12 +212,20 @@ jobs:
       - run: npm run test:records:db
       - run: npm run test:mtpe:intake
       - run: npm run test:production:release-gate
-      - run: npm run test:integration-runtime:db
-      - run: npm run test:integration-runtime:identity
-      - run: npm run test:integration-runtime:verification
-      - run: npm run test:integration-runtime:lifecycle
-      - run: npm run test:integration-runtime:worker
-      - run: npm run test:integration-runtime:transport
+      - run: npm run test:integration-runtime:gate-evidence
+      # IntegrationRuntime §17 item 2: every S2c suite runs once, here, through the gate evidence
+      # generator, which fails the step unless G-A3/7/8/9/10/11 are all PASS and every test passed.
+      - name: S2c gate evidence
+        env:
+          CLUED_EVIDENCE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: npm run integration-runtime:gate-evidence -- --out "$RUNNER_TEMP/integration-runtime-gate-evidence.json"
+      - name: Upload S2c gate evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: integration-runtime-gate-evidence-self-hosted
+          path: ${{ runner.temp }}/integration-runtime-gate-evidence.json
+          if-no-files-found: warn
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
       - run: npm run test:resource-center:authority
@@ -272,12 +286,20 @@ jobs:
       - run: npm run test:records:db
       - run: npm run test:mtpe:intake
       - run: npm run test:production:release-gate
-      - run: npm run test:integration-runtime:db
-      - run: npm run test:integration-runtime:identity
-      - run: npm run test:integration-runtime:verification
-      - run: npm run test:integration-runtime:lifecycle
-      - run: npm run test:integration-runtime:worker
-      - run: npm run test:integration-runtime:transport
+      - run: npm run test:integration-runtime:gate-evidence
+      # IntegrationRuntime §17 item 2: every S2c suite runs once, here, through the gate evidence
+      # generator, which fails the step unless G-A3/7/8/9/10/11 are all PASS and every test passed.
+      - name: S2c gate evidence
+        env:
+          CLUED_EVIDENCE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: npm run integration-runtime:gate-evidence -- --out "$RUNNER_TEMP/integration-runtime-gate-evidence.json"
+      - name: Upload S2c gate evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: integration-runtime-gate-evidence-hosted
+          path: ${{ runner.temp }}/integration-runtime-gate-evidence.json
+          if-no-files-found: warn
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
       - run: npm run test:resource-center:authority
