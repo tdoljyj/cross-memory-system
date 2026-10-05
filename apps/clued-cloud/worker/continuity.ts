@@ -57,6 +57,7 @@ import {
 import { measurePack } from "./context-pack";
 import { permissionDenial, permissionDenialResult } from "./permission-guidance";
 import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION } from "./generated/agent-contract";
+import { CLUED_COMPONENTS_SCHEMA, CLUED_COMPONENT_VERSIONS, MCP_SERVER_VERSION } from "./generated/components";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
 import { createStorageGoogleRecoveryOAuth } from "./storage-google-recovery-oauth";
 import { createStorageGoogleOnboard } from "./storage-google-onboard";
@@ -93,7 +94,8 @@ const SUPPORTED_MCP_VERSIONS = [
   "2025-03-26",
 ] as const;
 const MAX_JSON_BYTES = 1024 * 1024;
-const KERNEL_VERSION = "0.4.0";
+// The mcp.server version in config/clued-components.json (Task 6dfd7560).
+const KERNEL_VERSION = MCP_SERVER_VERSION;
 const RESOURCE_CENTER_AUTHORITY_CONTRACT = "clued.resource-center-authority/1";
 
 type Scope = (typeof ALL_SCOPES)[number];
@@ -218,11 +220,23 @@ function corsHeaders(request: Request) {
   };
 }
 
+function buildSourceCommit(): string | null {
+  return typeof __CLUED_BUILD_SHA__ === "string" &&
+    /^[0-9a-f]{40}$/.test(__CLUED_BUILD_SHA__) ? __CLUED_BUILD_SHA__ : null;
+}
+
+// The component versions this build was made from, so a client can tell
+// whether its Skill, hooks and scripts are current (scripts/hooks/clued_version_check.py).
+function cluedComponents() {
+  return { schema: CLUED_COMPONENTS_SCHEMA, versions: CLUED_COMPONENT_VERSIONS, source_commit: buildSourceCommit() };
+}
+
 function bootstrapContract(origin: string, env?: ContinuityEnv) {
   return {
     schema_version: "1.0",
     service: "clued-continuity",
     kernel_version: KERNEL_VERSION,
+    components: cluedComponents(),
     canonical_store: "clued-cloud/supabase",
     context_model: "user_id + context_key",
     work_log: "日志.md",
@@ -2195,8 +2209,7 @@ async function callTool(
     measurementRefused = measured.httpStatus !== undefined;
   }
   const sanitized = name in contextRpcByTool ? sanitizeContextResult(rawResult) : sanitizeCluedResult(rawResult);
-  const sourceCommit = typeof __CLUED_BUILD_SHA__ === "string" &&
-    /^[0-9a-f]{40}$/.test(__CLUED_BUILD_SHA__) ? __CLUED_BUILD_SHA__ : null;
+  const sourceCommit = buildSourceCommit();
   const gated = name === "clued_currentness_g6_gate" &&
     (sanitized as Record<string, unknown> | null)?.status === "transport_precheck_ready"
     ? sourceCommit
@@ -2251,7 +2264,14 @@ async function callWorkClaimsActive(request: Request, env: ContinuityEnv, scope:
   });
 }
 
-async function withWorkClaims(request: Request, env: ContinuityEnv, name: string, args: unknown, value: unknown): Promise<unknown> {
+function withComponentVersions(name: string, value: unknown): unknown {
+  if (name !== "clued_session_resume" || !value || typeof value !== "object" || Array.isArray(value)) return value;
+  if ((value as Record<string, unknown>).error) return value;
+  return { ...(value as Record<string, unknown>), clued_components: cluedComponents() };
+}
+
+async function withWorkClaims(request: Request, env: ContinuityEnv, name: string, args: unknown, raw: unknown): Promise<unknown> {
+  const value = withComponentVersions(name, raw);
   if (name !== "clued_session_resume" || !workClaimsEnabled(env)) return value;
   if (!value || typeof value !== "object" || Array.isArray(value) || (value as Record<string, unknown>).error) return value;
   const scope = args && typeof args === "object" && !Array.isArray(args)
@@ -2758,12 +2778,12 @@ async function handleContinuityRequestInner(
   const url = new URL(request.url);
   try {
     if (url.pathname === "/healthz" && request.method === "GET") {
-      const sourceCommit = typeof __CLUED_BUILD_SHA__ === "string" &&
-        /^[0-9a-f]{40}$/.test(__CLUED_BUILD_SHA__) ? __CLUED_BUILD_SHA__ : null;
+      const sourceCommit = buildSourceCommit();
       return json({
         status: "ok",
         service: "clued-continuity",
         version: KERNEL_VERSION,
+        components: CLUED_COMPONENT_VERSIONS,
         canonicalStore: "supabase",
         mcp: "/mcp",
         api: "/v1/continuity",

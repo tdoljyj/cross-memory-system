@@ -305,7 +305,7 @@ class HookLauncherTest(unittest.TestCase):
         prefix = 'sh "$CLAUDE_PROJECT_DIR/scripts/hooks/run_python.sh" "$CLAUDE_PROJECT_DIR/'
         commands = [hook["command"] for groups in settings["hooks"].values()
                     for group in groups for hook in group["hooks"]]
-        self.assertEqual(len(commands), 4)
+        self.assertEqual(len(commands), 6)
         for command in commands:
             with self.subTest(command=command):
                 self.assertTrue(command.startswith(prefix), command)

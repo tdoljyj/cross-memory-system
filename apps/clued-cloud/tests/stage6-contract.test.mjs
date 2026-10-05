@@ -197,3 +197,24 @@ test("the Worker serves the single agent contract and advertises capture", async
   assert.equal(lifecycle.contract.url, "https://clued.test/clued-agent.md");
   assert.equal(lifecycle.durable_changes.capture, "material_outcomes_in_same_turn_before_reporting");
 });
+
+// Task 6dfd7560: the service reports the component versions of
+// config/clued-components.json, so a client can tell whether its Skill, hooks
+// and scripts are current (scripts/hooks/clued_version_check.py).
+test("the Worker reports the component versions of config/clued-components.json", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../../../config/clued-components.json", import.meta.url), "utf8"));
+  const versions = Object.fromEntries(manifest.components.map((c) => [c.id, String(c.version)]));
+  const { renderComponentsModule } = await import("../scripts/generate-agent-contract.mjs");
+  const committed = await readFile(new URL("../worker/generated/components.ts", import.meta.url), "utf8");
+  assert.equal(committed, await renderComponentsModule(), "run node scripts/generate-agent-contract.mjs");
+  const worker = await loadWorker();
+  for (const path of ["/v1/continuity/bootstrap", "/.well-known/clued-continuity"]) {
+    const body = await (await worker.fetch(new Request(`https://clued.test${path}`), baseEnv, ctx)).json();
+    assert.deepEqual(body.components, { schema: "clued.components/1", versions, source_commit: null }, path);
+    assert.equal(body.kernel_version, versions["mcp.server"], `${path} kernel_version comes from the manifest`);
+    assert.equal(String(body.lifecycle.contract.version), versions["agent-contract"], `${path} contract version`);
+  }
+  const health = await (await worker.fetch(new Request("https://clued.test/healthz"), baseEnv, ctx)).json();
+  assert.deepEqual(health.components, versions);
+  assert.equal(health.version, versions["mcp.server"]);
+});

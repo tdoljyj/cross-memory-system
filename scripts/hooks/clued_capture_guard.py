@@ -49,6 +49,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+__version__ = "1.0.0"
+
 CLUED_WRITE_TOOLS = (
     "clued_record_mutate",
     "clued_decision_supersede",

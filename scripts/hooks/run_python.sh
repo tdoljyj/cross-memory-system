@@ -9,6 +9,7 @@
 #
 # Usage: sh run_python.sh <script.py> [args...]
 # CLUED_HOOK_PYTHON names an interpreter to use instead of probing.
+# Version: 1.0.0
 
 probe() {
   "$@" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' </dev/null >/dev/null 2>&1
