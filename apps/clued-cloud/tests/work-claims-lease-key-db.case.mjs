@@ -152,23 +152,34 @@ test('work claims: a private lease key lets another Binding of the same user ren
       where id=$1`, [moved.receipt_id])).rows[0];
     assert.deepEqual([renewReceipt.binding_id, renewReceipt.metadata.via_lease_key,
       renewReceipt.metadata.transferred_from_binding], [bindingIds.codex, true, bindingIds.claude]);
+    // The transfer returns a new key; the presented one works once.
+    issued(moved);
+    assert.notEqual(moved.lease_key, replay.lease_key);
+    assert.equal(await storedHash(held.claim_id), sha256(moved.lease_key));
     held = moved.claim;
-    // The new holder renews without the key; the old Binding no longer can.
+    // The new holder renews without the key; the old Binding no longer can, nor with the spent key.
     held = committed(await renew('codex', held)).claim;
     rejected(await renew('claude', held), 'work_claim_not_holder');
-    // The key still opens the claim for the old Binding (the same work, back again).
-    const back = committed(await renew('claude', held, { lease_key: replay.lease_key }));
+    rejected(await renew('claude', held, { lease_key: replay.lease_key }), 'work_claim_not_holder');
+    // A replay of the claim by the Binding that issued it does not start a new claim.
+    const spent = rejected(await claim(task, 'claude', { idempotency_key: idem }), 'work_claim_idempotency_spent');
+    assert.deepEqual([spent.transferred, spent.claim.claim_id], [true, held.claim_id]);
+    // The current key opens it for the old Binding again (the same work, back again).
+    const back = issued(committed(await renew('claude', held, { lease_key: moved.lease_key })));
     assert.equal(back.claim.holder_binding_id, bindingIds.claude);
     assert.equal(back.claim.holder_session_ref, null);
     held = back.claim;
 
     // --- Release with the key: ends the claim, the holder stays, the key is cleared. ---
-    const released = committed(await release('codex', held, { lease_key: replay.lease_key }));
+    rejected(await release('codex', held, { lease_key: moved.lease_key }), 'work_claim_not_holder');
+    const released = committed(await release('codex', held, { lease_key: back.lease_key }));
     assert.deepEqual([released.claim.status, released.claim.holder_binding_id], ['RELEASED', bindingIds.claude]);
     const releaseReceipt = (await admin.query('select binding_id,metadata from public.clued_audit_receipts where id=$1',
       [released.receipt_id])).rows[0];
     assert.deepEqual([releaseReceipt.binding_id, releaseReceipt.metadata.via_lease_key], [bindingIds.codex, true]);
     assert.equal(await storedHash(held.claim_id), null);
+    // The holder retrying with its key on the ended claim hears that it ended.
+    rejected(await release('claude', held, { lease_key: back.lease_key }), 'work_claim_not_active');
 
     // --- Takeover issues a new key; the replaced claim's key is spent. ---
     const takeTask = await createTask('lease key takeover');
@@ -179,7 +190,9 @@ test('work claims: a private lease key lets another Binding of the same user ren
     assert.equal(took.claim.fence, old.claim.fence + 1);
     assert.equal(await storedHash(old.claim.claim_id), null);
     assert.equal(await storedHash(took.claim.claim_id), sha256(took.lease_key));
-    const tookBack = committed(await renew('claude', took.claim, { lease_key: took.lease_key }));
+    // The old holder with its old key hears that its claim ended (taken over).
+    rejected(await renew('claude', old.claim, { lease_key: old.lease_key }), 'work_claim_not_active');
+    const tookBack = issued(committed(await renew('claude', took.claim, { lease_key: took.lease_key })));
     assert.equal(tookBack.claim.holder_binding_id, bindingIds.claude);
     committed(await release('claude', tookBack.claim));
 
@@ -189,8 +202,9 @@ test('work claims: a private lease key lets another Binding of the same user ren
     await admin.query('update clued_private.work_claims_v1 set lease_key_hash=null where claim_id=$1',
       [legacy.claim.claim_id]);
     rejected(await renew('codex', legacy.claim, { lease_key: legacy.lease_key }), 'work_claim_not_holder');
-    rejected(await renew('claude', legacy.claim, { lease_key: legacy.lease_key }), 'work_claim_lease_key_invalid');
-    committed(await release('claude', committed(await renew('claude', legacy.claim)).claim));
+    // The holder needs no key for it; one it presents is not checked.
+    committed(await release('claude', committed(await renew('claude', legacy.claim,
+      { lease_key: legacy.lease_key })).claim));
 
     // --- The receiving Binding's idempotency keys stay unique. ---
     const clashKey = uuid();

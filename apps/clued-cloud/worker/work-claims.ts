@@ -67,7 +67,7 @@ export const workClaimTools = [
   {
     name: "clued_work_renew",
     description:
-      "Extend a claim's lease. Requires a new progress_ref (a head SHA or Receipt id you did not send before): a heartbeat without progress is refused with work_claim_no_progress. Bumps lease_version, never the fence. Bounded by the profile's renewal count and hard deadline. A changed write_set or trigger_refs re-runs conflict detection before it is accepted. When your Binding is not the holder (a reconnect gave you a new one), pass the claim's lease_key: the renewal then moves the claim to your Binding (transferred: true; fence unchanged) and holder_session_ref names your session. Without the right key it is work_claim_not_holder; a wrong key from the holder is work_claim_lease_key_invalid.",
+      "Extend a claim's lease. Requires a new progress_ref (a head SHA or Receipt id you did not send before): a heartbeat without progress is refused with work_claim_no_progress. Bumps lease_version, never the fence. Bounded by the profile's renewal count and hard deadline. A changed write_set or trigger_refs re-runs conflict detection before it is accepted. When your Binding is not the holder (a reconnect gave you a new one), pass the claim's lease_key with a new progress_ref (for example reconnect:<session id>): the renewal then moves the claim to your Binding (transferred: true; fence unchanged), holder_session_ref names your session, and the answer carries a new lease_key that replaces the one you sent; keep it private. Without the right key it is work_claim_not_holder; a wrong key from the holder is work_claim_lease_key_invalid.",
     inputSchema: {
       type: "object",
       required: ["claim_id", "fence", "lease_version", "progress_ref"],

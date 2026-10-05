@@ -15,15 +15,22 @@
 --     The holder Binding acts as before; a wrong key from it is refused with
 --     work_claim_lease_key_invalid. Another Binding of the same user that
 --     presents the key may act too: a renewal moves the claim to that Binding
---     (fence unchanged, the Receipt names the Binding it came from), a release
---     ends it. Without the right key it is still work_claim_not_holder.
+--     (fence unchanged, the Receipt names the Binding it came from) and returns
+--     a new key, so the one presented works once; a release ends it. Without
+--     the right key it is still work_claim_not_holder. A wrong key from the
+--     holder on a live claim is work_claim_lease_key_invalid; on an ended
+--     claim the status refusal answers.
+--   * A claim remembers the Binding that issued it. A replay of its
+--     idempotency key by that Binding after the claim moved away is refused
+--     with work_claim_idempotency_spent instead of starting a new claim.
 -- The key never appears in work_claim_view, refusals, Receipts or events; the
 -- Receipts say only that a key was used. Hashes are compared, not keys, so a
 -- comparison's timing says nothing about the key. Claims issued before this
 -- migration have no key and behave as before.
 
 alter table clued_private.work_claims_v1
-  add column lease_key_hash text check (lease_key_hash is null or lease_key_hash ~ '^[0-9a-f]{64}$');
+  add column lease_key_hash text check (lease_key_hash is null or lease_key_hash ~ '^[0-9a-f]{64}$'),
+  add column issued_binding_id uuid references public.clued_agent_bindings(id) on delete set null;
 
 create function clued_private.work_claim_lease_key_hash_v1(p_key text) returns text
 language sql immutable set search_path='' as $$
@@ -52,7 +59,9 @@ begin
 end $$;
 
 -- How the calling Binding may act on claim c: 'holder', 'key' (another
--- Binding of the same user with the claim's key), or the refusal code.
+-- Binding of the same user with the claim's key), or the refusal code. The
+-- holder's key is checked only on a live claim that has one, so an ended claim
+-- answers with its status refusal.
 create function clued_private.work_claim_lease_access_v1(c clued_private.work_claims_v1,
   p_binding_id uuid,p_input jsonb) returns text
 language sql stable set search_path='' as $$
@@ -60,7 +69,8 @@ language sql stable set search_path='' as $$
     then clued_private.work_claim_lease_key_hash_v1(p_input->>'lease_key') end h)
   select case
     when c.holder_binding_id=p_binding_id then
-      case when k.h is not null and k.h is distinct from c.lease_key_hash
+      case when k.h is not null and c.lease_key_hash is not null and c.status in ('ACTIVE','DRAINING')
+          and k.h<>c.lease_key_hash
         then 'work_claim_lease_key_invalid' else 'holder' end
     when k.h is not null and k.h=c.lease_key_hash then 'key'
     else 'work_claim_not_holder' end
@@ -87,8 +97,14 @@ begin
   v_hash:=clued_private.work_claim_request_hash('work_claim',p_input);
   perform clued_private.work_claim_lock(v_binding.user_id);
   select * into v_existing from clued_private.work_claims_v1 w
-    where w.user_id=v_binding.user_id and w.holder_binding_id=v_binding.id
-      and w.idempotency_key=p_input->>'idempotency_key';
+    where w.user_id=v_binding.user_id and w.idempotency_key=p_input->>'idempotency_key'
+      and (w.holder_binding_id=v_binding.id or w.issued_binding_id=v_binding.id)
+    order by (w.holder_binding_id=v_binding.id) desc,w.issued_at desc limit 1;
+  if found and v_existing.holder_binding_id<>v_binding.id then
+    -- Issued here, since moved to another Binding with its key.
+    return clued_private.work_claim_reject_log_v1(v_binding,v_existing.context_key,v_existing.task_id,
+      v_existing.claim_id,'work_claim','work_claim_idempotency_spent',
+      jsonb_build_object('claim',clued_private.work_claim_view(v_existing),'transferred',true)); end if;
   if found then
     return clued_private.work_claim_with_lease_key_v1(
       clued_private.work_claim_replay_logged_v1(v_binding,v_existing,v_hash,'work_claim')); end if;
@@ -96,7 +112,7 @@ begin
   v_task:=clued_private.work_claim_task(v_binding.user_id,v_scope,p_input->>'task_id');
   v_result:=clued_private.work_claim_issue(v_binding,p_input,v_task,v_none,'work_claim');
   if v_result->>'status'='committed' then
-    update clued_private.work_claims_v1 set request_hash=v_hash
+    update clued_private.work_claims_v1 set request_hash=v_hash,issued_binding_id=v_binding.id
       where claim_id=(v_result#>>'{claim,claim_id}')::uuid;
   end if;
   return clued_private.work_claim_with_lease_key_v1(v_result);
@@ -113,8 +129,14 @@ begin
   v_hash:=clued_private.work_claim_request_hash('work_claim_takeover',p_input);
   perform clued_private.work_claim_lock(v_binding.user_id);
   select * into v_existing from clued_private.work_claims_v1 w
-    where w.user_id=v_binding.user_id and w.holder_binding_id=v_binding.id
-      and w.idempotency_key=p_input->>'idempotency_key';
+    where w.user_id=v_binding.user_id and w.idempotency_key=p_input->>'idempotency_key'
+      and (w.holder_binding_id=v_binding.id or w.issued_binding_id=v_binding.id)
+    order by (w.holder_binding_id=v_binding.id) desc,w.issued_at desc limit 1;
+  if found and v_existing.holder_binding_id<>v_binding.id then
+    -- Issued here, since moved to another Binding with its key.
+    return clued_private.work_claim_reject_log_v1(v_binding,v_existing.context_key,v_existing.task_id,
+      v_existing.claim_id,'work_claim_takeover','work_claim_idempotency_spent',
+      jsonb_build_object('claim',clued_private.work_claim_view(v_existing),'transferred',true)); end if;
   if found then
     return clued_private.work_claim_with_lease_key_v1(
       clued_private.work_claim_replay_logged_v1(v_binding,v_existing,v_hash,'work_claim_takeover')); end if;
@@ -137,7 +159,7 @@ begin
   v_task:=clued_private.work_claim_task(v_binding.user_id,v_scope,v_old.task_id::text);
   v_result:=clued_private.work_claim_issue(v_binding,p_input,v_task,v_old,'work_claim_takeover');
   if v_result->>'status'='committed' then
-    update clued_private.work_claims_v1 set request_hash=v_hash
+    update clued_private.work_claims_v1 set request_hash=v_hash,issued_binding_id=v_binding.id
       where claim_id=(v_result#>>'{claim,claim_id}')::uuid;
     -- The replaced claim's key is spent.
     update clued_private.work_claims_v1 set lease_key_hash=null where claim_id=v_old.claim_id;
@@ -148,7 +170,8 @@ end $$;
 -- clued_work_renew_v1: 20261003070000 with the holder check replaced by
 -- work_claim_lease_access_v1. A renewal with the key from another Binding
 -- moves the claim to it once every other check has passed, within that
--- Binding's live-claim caps; holder_session_ref then names the new session.
+-- Binding's live-claim caps; holder_session_ref then names the new session,
+-- and the answer carries a new key (the presented one stops working).
 create or replace function public.clued_work_renew_v1(p_token_hash text,p_input jsonb) returns jsonb
 language plpgsql volatile security definer set search_path='' as $$
 declare v_binding public.clued_agent_bindings%rowtype; c clued_private.work_claims_v1%rowtype;
@@ -267,7 +290,8 @@ begin
   returning id into v_receipt;
   return jsonb_build_object('status','committed','receipt_id',v_receipt,
     'claim',clued_private.work_claim_view(c))
-    ||case when v_from is null then '{}'::jsonb else jsonb_build_object('transferred',true) end;
+    ||case when v_from is null then '{}'::jsonb else jsonb_build_object('transferred',true,
+      'lease_key',clued_private.work_claim_lease_key_issue_v1(c.claim_id)) end;
 end $$;
 
 -- clued_work_release_v1: 20261001060000 with the holder check replaced by
