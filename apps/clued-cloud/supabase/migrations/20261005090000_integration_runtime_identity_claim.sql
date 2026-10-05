@@ -11,18 +11,18 @@
 --   (a) integration_facts_v1 and integration_capability_declarations_v1 (§5.6, §5.10) are created here,
 --       read-only: §7.2 normalization reads them, and their write operations (declare / report /
 --       fact_set) stay in PR-3, exactly as the revocation tables are created here with writes in PR-4.
---   (b) the A-class verification table (§5.7) is PR-3. Until then integration_crv_facts_v1 reports
---       canonical_runtime_verification_facts.status = NONE; PR-3 replaces only that helper, so ACTIVE /
---       DEGRADED are not reachable in a PR-2 build (§14.1 moves the ACTIVE-dependent cases to PR-3).
+--   (b) the A-class verification table (§5.7) is created here read-only, like (a), with the §7.4
+--       subject digest; §7.2 normalization reads it. Its write operation (verify) is PR-3, so a PR-2
+--       build reaches ACTIVE / DEGRADED only through a test fixture row (§14.1 moves those cases to
+--       PR-3), and PR-3 adds objects without replacing any PR-2 function.
 --   (c) OQ-15: no Event is written. Every operation writes its M1 Receipt only and declares
 --       event_ids = [] (§11.3 alternative), so resume / work log / checkpoint counts / capture state and
 --       projections cannot be changed by Integration operations (T-S-6).
 --   (d) Headless Bindings (authorizations_v12.issuance = 'headless', added after the freeze) all carry
---       client_id 'clued-headless'. They are not an OAuth client identity, so §6.2 OAUTH_V12_CLIENT_ID
---       evidence would make every headless Binding of an owner one provider connection. This migration
---       derives them as clued.binding.v1 (provider_connection_id = binding_id), the fail-closed reading;
---       their authorization still comes from authorizations_v12 / authorization_entries_v12. Pending an
---       Owner erratum.
+--       client_id 'clued-headless', which is not an OAuth client identity. ERRATA-003 (Owner Decision
+--       591a0fc6) derives them as clued.binding.v1 (provider_connection_id = binding_id), one provider
+--       connection each, connection kind OAUTH_V12; their authority still comes from
+--       authorizations_v12 / authorization_entries_v12, and fresh_consent and O7 do not apply to them.
 --   (e) Binding-channel rebind under REBIND_CLASS keeps T's tenant / account values unless the Request
 --       payload names them; a VALUE → UNAVAILABLE change is only accepted for REBIND / ADAPTER_MIGRATION
 --       (§10.4), otherwise identity_dimension_downgrade_forbidden.
@@ -246,6 +246,25 @@ create table clued_private.integration_capability_declarations_v1 (
   primary key (integration_id, declaration_version)
 );
 
+-- §5.7 A-class verification, created read-only here like (a): §7.2 normalization reads it; the verify
+-- operation that writes it is PR-3 (placement choice (b)).
+create table clued_private.integration_canonical_verifications_v1 (
+  verification_id uuid primary key default gen_random_uuid(),
+  integration_id uuid not null references clued_private.integrations_v1(integration_id),
+  verification_contract text not null check (verification_contract = 'clued.crv.v1'),
+  verification_class text not null default 'CANONICAL_RUNTIME_BASELINE' check (verification_class = 'CANONICAL_RUNTIME_BASELINE'),
+  result text not null check (result in ('PASS','FAIL')),
+  checks jsonb not null,
+  subject_digest text not null check (subject_digest ~ '^[0-9a-f]{64}$'),
+  connection_id uuid not null,
+  evidence_sha256 text not null check (evidence_sha256 ~ '^[0-9a-f]{64}$'),
+  receipt_id uuid not null,
+  verified_at timestamptz not null default clock_timestamp(),
+  valid_until timestamptz not null
+);
+create index integration_canonical_verifications_v1_latest
+  on clued_private.integration_canonical_verifications_v1(integration_id, verified_at desc);
+
 -- §5.9: revocation / regrant / reauth marks. PR-2 creates the tables, their immutability triggers and
 -- the read helper; the write operations (revoke, restore, reauth_mark / reauth_clear) are PR-4. The
 -- only PR-2 writer is §10.1 connection-revoke materialization.
@@ -350,13 +369,11 @@ create trigger integration_regrants_v1_append_only
   for each row execute function clued_private.integration_append_only_v1('integration_regrant_immutable');
 
 -- §5.3 rule 2: bound_integration_id changes only null → value, once. request_key, owner, intent, target,
--- payload and its hash never change.
+-- payload and its hash never change. DELETE is not refused: the owner_id cascade from auth.users is the
+-- only deletion path (§5.2 point 3), and no function here deletes a Request.
 create function clued_private.integration_request_bound_immutable_v1()
 returns trigger language plpgsql security definer set search_path='' as $$
 begin
-  if tg_op = 'DELETE' then
-    raise exception 'installation_request_bound_immutable' using errcode = '55000';
-  end if;
   if old.bound_integration_id is not null and new.bound_integration_id is distinct from old.bound_integration_id then
     raise exception 'installation_request_bound_immutable' using errcode = '55000';
   end if;
@@ -372,7 +389,7 @@ begin
   return new;
 end $$;
 create trigger integration_installation_requests_v1_bound_immutable
-  before update or delete on clued_private.integration_installation_requests_v1
+  before update on clued_private.integration_installation_requests_v1
   for each row execute function clued_private.integration_request_bound_immutable_v1();
 
 -- §5.9 trigger: exactly two kinds of UPDATE, never combined — (a) restore: restored_by_regrant_id
@@ -494,6 +511,7 @@ alter table clued_private.integration_binding_owners_v1 enable row level securit
 alter table clued_private.integration_binding_ownership_log_v1 enable row level security;
 alter table clued_private.integration_facts_v1 enable row level security;
 alter table clued_private.integration_capability_declarations_v1 enable row level security;
+alter table clued_private.integration_canonical_verifications_v1 enable row level security;
 alter table clued_private.integration_revocations_v1 enable row level security;
 alter table clued_private.integration_regrants_v1 enable row level security;
 alter table clued_private.integration_reauth_marks_v1 enable row level security;
@@ -505,7 +523,8 @@ revoke all on table clued_private.integrations_v1, clued_private.integration_ide
   clued_private.integration_binding_ownership_log_v1, clued_private.integration_facts_v1,
   clued_private.integration_capability_declarations_v1, clued_private.integration_revocations_v1,
   clued_private.integration_regrants_v1, clued_private.integration_reauth_marks_v1,
-  clued_private.integration_operation_log_v1, clued_private.integration_derivation_diagnostics_v1
+  clued_private.integration_operation_log_v1, clued_private.integration_derivation_diagnostics_v1,
+  clued_private.integration_canonical_verifications_v1
   from public, anon, authenticated, service_role;
 
 -- =============================================================================================
@@ -606,7 +625,7 @@ end $$;
 -- issuance (placement choice (d)): clued.binding.v1 / binding_id. connection_kind follows where the
 -- authorization lives: authorizations_v12 → OAUTH_V12, none → RAW_BINDING.
 create function clued_private.integration_binding_identity_v1(p_binding_id uuid)
-returns jsonb language plpgsql stable security definer set search_path='' as $$
+returns jsonb language plpgsql volatile security definer set search_path='' as $$
 declare b public.clued_agent_bindings; a clued_private.authorizations_v12; v_has_a boolean;
   v_expires timestamptz; v_account_ok boolean; v_provider text; v_pcid text;
 begin
@@ -634,7 +653,7 @@ begin
     'authority', clued_private.integration_binding_authority_v1(b.id),
     'authorization_created_at', case when v_has_a then a.created_at else b.created_at end,
     'authorization_request_id', case when v_has_a then a.request_id end,
-    'p5', b.organization_id is not null,
+    'p5', pg_catalog.to_jsonb(b)->>'organization_id' is not null,   -- column absent where P5 is not installed
     'revoked', b.revoked_at is not null or (v_has_a and a.revoked_at is not null),
     'live', b.revoked_at is null and (v_expires is null or v_expires > pg_catalog.clock_timestamp()) and v_account_ok
             and (not v_has_a or (a.revoked_at is null and a.expires_at > pg_catalog.clock_timestamp())),
@@ -842,7 +861,11 @@ create function clued_private.integration_binding_predates_revocation_v1(p_ident
 returns boolean language plpgsql stable security definer set search_path='' as $$
 declare v_x uuid; v_rev_at timestamptz;
 begin
-  if p_identity is null or p_identity->>'provider' is distinct from 'clued.oauth.v12' then return false; end if;
+  if p_identity is null or not exists (select 1 from clued_private.integration_providers_v1 p
+                                        where p.provider = p_identity->>'provider'
+                                          and p.connection_source = 'OAUTH_V12_CLIENT_ID_SHA256') then
+    return false;
+  end if;
   for v_x in
     with recursive chain(integration_id) as (
       select distinct c.integration_id from clued_private.integration_connections_v1 c
@@ -892,12 +915,45 @@ begin
   return pg_catalog.jsonb_build_object('value', v_value, 'mask', null);
 end $$;
 
--- canonical_runtime_verification_facts (§7.2). The A-class table is PR-3 (placement choice (b)):
--- until PR-3 replaces this helper there is no verification row, so the status is NONE.
-create function clued_private.integration_crv_facts_v1(p_integration_id uuid, p_as_of timestamptz)
-returns jsonb language sql stable security definer set search_path='' as $$
-  select '{"status":"NONE","verification_id":null,"valid_until":null}'::jsonb
+-- §7.4 subject digest: canonical_json is jsonb::text (§6.2). host_surface is the latest declaration's
+-- (null before the first declaration); derivation_contract is the PR-1 contract.
+create function clued_private.integration_subject_digest_v1(p_integration_id uuid)
+returns text language sql stable security definer set search_path='' as $$
+  select clued_private.integration_sha256_v1(pg_catalog.jsonb_build_object(
+    'integration_id', i.integration_id,
+    'current_connection_id', c.connection_id,
+    'binding_id', c.binding_id,
+    'adapter_family', i.adapter_family, 'adapter_version', i.adapter_version, 'package_version', i.package_version,
+    'claim_key_sha256', i.claim_key_sha256,
+    'host_surface', (select d.host_surface from clued_private.integration_capability_declarations_v1 d
+                      where d.integration_id = i.integration_id order by d.declaration_version desc limit 1),
+    'derivation_contract', 'clued.integration-derivation.v1')::text)
+    from clued_private.integrations_v1 i
+    left join clued_private.integration_connections_v1 c
+      on c.integration_id = i.integration_id and c.link_status = 'CURRENT'
+   where i.integration_id = p_integration_id
 $$;
+
+-- canonical_runtime_verification_facts (§7.2 table): the latest A-class row at as_of. No row → NONE;
+-- FAIL → FAILED; subject digest differs → INVALIDATED; valid_until <= as_of → EXPIRED; else VALID.
+create function clued_private.integration_crv_facts_v1(p_integration_id uuid, p_as_of timestamptz)
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+declare v clued_private.integration_canonical_verifications_v1;
+begin
+  select * into v from clued_private.integration_canonical_verifications_v1
+   where integration_id = p_integration_id and verified_at <= p_as_of
+   order by verified_at desc, verification_id desc limit 1;
+  if not found then
+    return '{"status":"NONE","verification_id":null,"valid_until":null}'::jsonb;
+  end if;
+  return pg_catalog.jsonb_build_object('status', case
+      when v.result = 'FAIL' then 'FAILED'
+      when v.subject_digest is distinct from clued_private.integration_subject_digest_v1(p_integration_id) then 'INVALIDATED'
+      when v.valid_until <= p_as_of then 'EXPIRED'
+      else 'VALID' end,
+    'verification_id', v.verification_id,
+    'valid_until', clued_private.integration_instant_text_v1(v.valid_until));
+end $$;
 
 -- §7.1 / §7.2 normalization with its read provenance: {facts, sources_read}. Never reads READY tables.
 create function clued_private.integration_normalize_detail_v1(p_integration_id uuid, p_as_of timestamptz)
@@ -1143,6 +1199,10 @@ begin
   v_detail := clued_private.integration_normalize_detail_v1(p_integration_id, p_as_of);
   v_result := clued_private.integration_derive_v1(v_detail->'facts');
   if not (v_result->>'valid')::boolean then
+    -- serialize first occurrence per (Integration, facts) so concurrent evaluations never race on the
+    -- diagnostic Receipt's idempotency key
+    perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+      'clued.integration.diagnostic:' || p_integration_id || ':' || (v_result->>'facts_sha256'), 0));
     update clued_private.integration_derivation_diagnostics_v1
        set occurrences = occurrences + 1, last_seen_at = pg_catalog.clock_timestamp()
      where integration_id = p_integration_id and derivation_contract = v_result->>'derivation_contract'
@@ -1266,9 +1326,7 @@ begin
         else
           update clued_private.integration_claims_v1 set claim_status = 'RELEASED', ended_at = pg_catalog.clock_timestamp(),
             ended_receipt_id = p_receipt_id where integration_id = i.integration_id and claim_status = 'CURRENT';
-          -- a conflict that is already being reconciled stays PENDING_RECONCILE for the same key and holder
-          v_state := case when i.identity_claim_state = 'PENDING_RECONCILE' and i.claim_key_sha256 = v_key
-                            and i.conflicting_integration_id = v_holder then 'PENDING_RECONCILE' else 'CLAIM_CONFLICT' end;
+          v_state := 'CLAIM_CONFLICT';   -- §6.4 step 4, also when I was PENDING_RECONCILE
           v_conflicting := v_holder;
         end if;
         exit;
@@ -1380,9 +1438,16 @@ $$;
 create function clued_private.integration_finish_v1(p_receipt_id uuid, p_status text, p_target_refs jsonb,
   p_committed jsonb, p_error text, p_supplemental jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
-declare v_result jsonb;
+declare v_result jsonb; v_refs jsonb := coalesce(p_target_refs, '[]'::jsonb);
 begin
-  v_result := clued_private.m1_finish_receipt(p_receipt_id, p_status, coalesce(p_target_refs, '[]'::jsonb), '{}',
+  if p_status <> 'committed' then
+    -- a rejected write rolled its subtransaction back: never name an Integration it created
+    select coalesce(pg_catalog.jsonb_agg(x order by n), '[]'::jsonb) into v_refs
+      from pg_catalog.jsonb_array_elements(v_refs) with ordinality e(x, n)
+     where x->>'kind' <> 'integration'
+        or exists (select 1 from clued_private.integrations_v1 i where i.integration_id::text = x->>'id');
+  end if;
+  v_result := clued_private.m1_finish_receipt(p_receipt_id, p_status, v_refs, '{}',
     coalesce(p_committed, '{}'::jsonb), '{}', '{}', p_error);
   update public.clued_audit_receipts set metadata = pg_catalog.jsonb_build_object('supplemental', coalesce(p_supplemental, '{}'::jsonb))
    where id = p_receipt_id;
@@ -1542,7 +1607,7 @@ begin
     'source_provenance', coalesce(p_input->'source_provenance', '{}'::jsonb),
     'callback_provenance', p_input->'callback_provenance'));
   v_sha := clued_private.integration_sha256_v1(v_payload::text);
-  select installation_request_ttl into v_ttl from clued_private.integration_policy_v1 where policy_version = 1;
+  select installation_request_ttl into v_ttl from clued_private.integration_policy_v1 order by policy_version desc limit 1;
 
   insert into clued_private.integration_installation_requests_v1(owner_id, request_key, intent, target_integration_id,
     created_via, creator_binding_id, request_payload, request_payload_sha256, source_provenance, callback_provenance, expires_at)
@@ -1554,7 +1619,9 @@ begin
   returning * into r;
   if not found then
     select * into r from clued_private.integration_installation_requests_v1 where owner_id = p_owner and request_key = v_key;
-    if r.request_payload_sha256 <> v_sha then
+    -- a replay is the same caller: the channel and the creating Binding are part of the Request
+    if r.request_payload_sha256 <> v_sha or r.created_via <> (p_actor->>'kind')
+       or r.creator_binding_id is distinct from (p_actor->>'binding_id')::uuid then
       raise exception 'installation_request_key_conflict' using errcode = '42501';
     end if;
     return pg_catalog.jsonb_build_object('request_id', r.request_id, 'replayed', true, 'intent', r.intent,
@@ -1951,7 +2018,10 @@ begin
       v_id := (p_input->>'integration_id')::uuid; v_base := (p_input->>'base_version')::bigint;
     exception when others then raise exception 'invalid_identity_update' using errcode = '22023';
     end;
-    if v_id is null or v_base is null then raise exception 'invalid_identity_update' using errcode = '22023'; end if;
+    if v_id is null or v_base is null or p_input ? 'provider' or p_input ? 'provider_connection_id' then
+      -- provider and provider_connection_id are derived by the server, never accepted as input (§10.4)
+      raise exception 'invalid_identity_update' using errcode = '22023';
+    end if;
     select * into t0 from clued_private.integrations_v1 where integration_id = v_id and owner_id = p_owner;
     if not found then raise exception 'integration_not_owned' using errcode = '42501'; end if;
     v_target_refs := pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('role', 'primary', 'kind', 'integration', 'id', v_id));
@@ -1980,6 +2050,11 @@ begin
     select * into t from clued_private.integrations_v1 where integration_id = v_id for update;
     if t.version <> t0.version or t.version <> v_base then
       raise exception 'integration_version_conflict' using errcode = '40001';
+    end if;
+    -- §10.1: the Binding channel's current-connection precondition is rechecked under L5
+    if p_actor->>'kind' = 'binding'
+       and clued_private.integration_current_binding_v1(v_id) is distinct from (p_actor->>'binding_id')::uuid then
+      raise exception 'integration_connection_required' using errcode = '42501';
     end if;
     -- §10.1 materialization before this write's own change
     v_revocation := clued_private.integration_materialize_connection_revoke_v1(v_id, v_receipt.id, v_call_at);
@@ -2043,6 +2118,10 @@ begin
     select * into t from clued_private.integrations_v1 where integration_id = v_id and owner_id = p_owner for update;
     if not found then raise exception 'integration_not_owned' using errcode = '42501'; end if;
     if t.version <> v_base then raise exception 'integration_version_conflict' using errcode = '40001'; end if;
+    if p_actor->>'kind' = 'binding'
+       and clued_private.integration_current_binding_v1(v_id) is distinct from (p_actor->>'binding_id')::uuid then
+      raise exception 'integration_connection_required' using errcode = '42501';
+    end if;
     v_revocation := clued_private.integration_materialize_connection_revoke_v1(v_id, v_receipt.id, v_call_at);
     if v_revocation is not null then
       v_flags := v_flags || 'REVOCATION_MATERIALIZED'::text;
@@ -2119,7 +2198,9 @@ begin
     if i0.identity_claim_state not in ('CLAIM_CONFLICT','PENDING_RECONCILE') then
       raise exception 'reconcile_not_applicable' using errcode = '42501';
     end if;
-    select * into h0 from clued_private.integrations_v1 where integration_id = i0.conflicting_integration_id;
+    select * into h0 from clued_private.integrations_v1
+     where integration_id = i0.conflicting_integration_id and owner_id = p_owner;
+    if h0.integration_id is null then raise exception 'reconcile_not_applicable' using errcode = '42501'; end if;
     v_target_refs := v_target_refs || pg_catalog.jsonb_build_object('role', 'holder', 'kind', 'integration', 'id', h0.integration_id);
     -- L1 (+ owner rows) and L2 over every Binding this reconcile may move, then L4, then L5
     v_i_cur := clued_private.integration_current_binding_v1(i0.integration_id);
@@ -2142,6 +2223,22 @@ begin
                  then i.integration_id else h.integration_id end) <@ v_locked) then
       raise exception 'integration_version_conflict' using errcode = '40001';
     end if;
+    -- The stored conflict pointer is only a hint: under L4 and L5, H must still be the CURRENT holder of
+    -- I's own (D, K). A SUPERSEDED H is terminal (§6.5) and neither receives a connection nor is superseded
+    -- again; that would move a live Binding outside every survivor's revocation set, or rewrite H's
+    -- superseded_by and cut its lineage out of Lin*(survivor) (§5.5 O5).
+    if h.historical <> 'NONE' or h.identity_claim_state = 'SUPERSEDED' then
+      v_supp := pg_catalog.jsonb_build_object('holder_superseded_by', h.superseded_by_integration_id);
+      raise exception 'integration_superseded' using errcode = '42501';
+    end if;
+    if h.identity_claim_state <> 'CURRENT_CLAIM_HOLDER' or i.claim_key_sha256 is null
+       or h.claim_key_sha256 is distinct from i.claim_key_sha256
+       or h.active_binding_domain is distinct from i.active_binding_domain
+       or not exists (select 1 from clued_private.integration_claims_v1 c
+                       where c.active_binding_domain = i.active_binding_domain and c.claim_key_sha256 = i.claim_key_sha256
+                         and c.claim_status = 'CURRENT' and c.integration_id = h.integration_id) then
+      raise exception 'reconcile_not_applicable' using errcode = '42501';
+    end if;
     ei0 := clued_private.integration_evaluate_v1(i.integration_id, v_call_at);
     eh0 := clued_private.integration_evaluate_v1(h.integration_id, v_call_at);
     if clued_private.integration_revocation_status_v1(i.integration_id) <> 'NOT_REVOKED' then
@@ -2151,8 +2248,6 @@ begin
       -- REBIND_TO_HOLDER rule 2; for REPLACE_HOLDER this is the PR-2 temporary refusal (T-A11-26)
       raise exception 'integration_revoked_requires_explicit_restore' using errcode = '42501';
     end if;
-    if i.host <> h.host then raise exception 'integration_host_mismatch' using errcode = '42501'; end if;
-    if i.provider <> h.provider then raise exception 'integration_provider_mismatch' using errcode = '42501'; end if;
 
     if v_resolution = 'REBIND_TO_HOLDER' then
       v_winner := h.integration_id; v_loser := i.integration_id;
@@ -2173,6 +2268,8 @@ begin
           v_expanded := true;
         end if;
       end if;
+      if i.host <> h.host then raise exception 'integration_host_mismatch' using errcode = '42501'; end if;
+      if i.provider <> h.provider then raise exception 'integration_provider_mismatch' using errcode = '42501'; end if;
       update clued_private.integration_connections_v1 set link_status = 'HISTORICAL', unlinked_at = pg_catalog.clock_timestamp(),
         unlink_receipt_id = v_receipt.id
        where integration_id in (i.integration_id, h.integration_id) and link_status = 'CURRENT';
@@ -2213,6 +2310,8 @@ begin
         superseded_by_integration_id = h.integration_id, conflicting_integration_id = null
        where integration_id = i.integration_id;
     else
+      if i.host <> h.host then raise exception 'integration_host_mismatch' using errcode = '42501'; end if;
+      if i.provider <> h.provider then raise exception 'integration_provider_mismatch' using errcode = '42501'; end if;
       v_winner := i.integration_id; v_loser := h.integration_id;
       update clued_private.integration_claims_v1 set claim_status = 'SUPERSEDED', ended_at = pg_catalog.clock_timestamp(),
         ended_receipt_id = v_receipt.id where integration_id = h.integration_id and claim_status = 'CURRENT';
@@ -2311,14 +2410,14 @@ end $$;
 
 -- §5.15 / §10.14 binding_inventory: the owner's live, unowned, non-P5 Bindings. Writes nothing.
 create function clued_private.integration_binding_inventory_v1(p_owner uuid)
-returns jsonb language sql stable security definer set search_path='' as $$
+returns jsonb language sql volatile security definer set search_path='' as $$
   select pg_catalog.jsonb_build_object('bindings', coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
       'binding_id', b.id, 'vendor', b.vendor, 'agent_name', b.agent_name, 'created_at', b.created_at,
       'provider', x->>'provider', 'provider_connection_prefix', pg_catalog.left(x->>'provider_connection_id', 8),
       'connection_kind', x->>'connection_kind') order by b.created_at, b.id), '[]'::jsonb))
     from public.clued_agent_bindings b
     cross join lateral (select clued_private.integration_binding_identity_v1(b.id) x) ident
-   where b.user_id = p_owner and b.organization_id is null and (x->>'live')::boolean
+   where b.user_id = p_owner and not (x->>'p5')::boolean and (x->>'live')::boolean
      and not exists (select 1 from clued_private.integration_binding_owners_v1 o where o.binding_id = b.id)
 $$;
 
@@ -2333,7 +2432,9 @@ returns jsonb language plpgsql security definer set search_path='' as $$
 declare b public.clued_agent_bindings;
 begin
   b := clued_private.integration_auth_binding_v1(p_token_hash, '{}', false);
-  if b.organization_id is not null then raise exception 'binding_not_adoptable' using errcode = '42501'; end if;
+  if pg_catalog.to_jsonb(b)->>'organization_id' is not null then
+    raise exception 'binding_not_adoptable' using errcode = '42501';
+  end if;
   return clued_private.integration_request_open_core_v1(pg_catalog.jsonb_build_object('kind', 'binding',
     'binding_id', b.id, 'user_id', b.user_id), b.user_id, coalesce(p_input, '{}'::jsonb));
 end $$;
@@ -2343,7 +2444,9 @@ returns jsonb language plpgsql security definer set search_path='' as $$
 declare b public.clued_agent_bindings; v_owner uuid;
 begin
   b := clued_private.integration_auth_binding_v1(p_token_hash, '{}', true);
-  if b.organization_id is not null then raise exception 'binding_not_adoptable' using errcode = '42501'; end if;
+  if pg_catalog.to_jsonb(b)->>'organization_id' is not null then
+    raise exception 'binding_not_adoptable' using errcode = '42501';
+  end if;
   begin
     select owner_id into v_owner from clued_private.integration_installation_requests_v1
      where request_id = (p_input->>'request_id')::uuid;
@@ -2412,6 +2515,21 @@ begin
   return pg_catalog.jsonb_build_object('integration', clued_private.integration_view_v1(v_id, pg_catalog.clock_timestamp()));
 end $$;
 
+-- Native ownership pre-check (§10.1 MINOR-4): unlocked, before any lock and before the Receipt; the
+-- core rechecks under its locks.
+create function clued_private.integration_native_owned_v1(p_user uuid, p_input jsonb)
+returns uuid language plpgsql stable security definer set search_path='' as $$
+declare v_id uuid; v_owner uuid;
+begin
+  begin
+    v_id := (p_input->>'integration_id')::uuid;
+  exception when others then v_id := null;
+  end;
+  select owner_id into v_owner from clued_private.integrations_v1 where integration_id = v_id;
+  if v_owner is null or v_owner <> p_user then raise exception 'integration_not_owned' using errcode = '42501'; end if;
+  return v_id;
+end $$;
+
 -- Native account session (§10.1): one entry point dispatched by op.
 create function public.clued_user_integration_v1(p_input jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
@@ -2427,7 +2545,10 @@ begin
         v_binding := (v_input->>'binding_id')::uuid;
       exception when others then v_binding := null;
       end;
-      if v_binding is null then raise exception 'binding_not_owned' using errcode = '42501'; end if;
+      -- unlocked ownership check first, so no caller can take L1 / L2 on another user's credential rows
+      if v_binding is null or not exists (select 1 from public.clued_agent_bindings where id = v_binding and user_id = u) then
+        raise exception 'binding_not_owned' using errcode = '42501';
+      end if;
       perform clued_private.integration_lock_bindings_v1(array[v_binding]);
       if not exists (select 1 from public.clued_agent_bindings where id = v_binding and user_id = u) then
         raise exception 'binding_not_owned' using errcode = '42501';
@@ -2446,9 +2567,11 @@ begin
       case v_op when 'create_or_bind' then 'NATIVE_CREATE' when 'confirm_rebind' then 'CONFIRM_REBIND' else 'ADOPT' end,
       v_binding, clued_private.integration_request_hash_v1(v_family, v_input));
   elsif v_op = 'identity_update' then
+    perform clued_private.integration_native_owned_v1(u, v_input);
     return clued_private.integration_identity_update_core_v1(v_actor, u, v_input,
       clued_private.integration_request_hash_v1('integration_identity_update', v_input));
   elsif v_op = 'reconcile' then
+    perform clued_private.integration_native_owned_v1(u, v_input);
     return clued_private.integration_reconcile_core_v1(v_actor, u, v_input,
       clued_private.integration_request_hash_v1('integration_reconcile', v_input));
   elsif v_op = 'binding_inventory' then
@@ -2458,13 +2581,8 @@ begin
         clued_private.integration_view_v1(i.integration_id, pg_catalog.clock_timestamp()) order by i.created_at desc, i.integration_id)
       from clued_private.integrations_v1 i where i.owner_id = u), '[]'::jsonb));
   elsif v_op = 'status' then
-    begin
-      select owner_id into v_owner from clued_private.integrations_v1 where integration_id = (v_input->>'integration_id')::uuid;
-    exception when others then v_owner := null;
-    end;
-    if v_owner is null or v_owner <> u then raise exception 'integration_not_owned' using errcode = '42501'; end if;
-    return pg_catalog.jsonb_build_object('integration',
-      clued_private.integration_view_v1((v_input->>'integration_id')::uuid, pg_catalog.clock_timestamp()));
+    return pg_catalog.jsonb_build_object('integration', clued_private.integration_view_v1(
+      clued_private.integration_native_owned_v1(u, v_input), pg_catalog.clock_timestamp()));
   end if;
   raise exception 'invalid_integration_operation' using errcode = '22023';
 end $$;

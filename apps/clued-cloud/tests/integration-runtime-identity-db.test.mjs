@@ -21,7 +21,8 @@ const STATES = ['INSTALL_PENDING', 'INSTALLED', 'AUTH_PENDING', 'VERIFYING', 'AC
 const BINDING_RPCS = ['clued_integration_request_open_v1', 'clued_integration_create_or_bind_v1',
   'clued_integration_identity_update_v1', 'clued_integration_reconcile_request_v1', 'clued_integration_status_v1'];
 const TABLES = ['integration_binding_owners_v1', 'integration_binding_ownership_log_v1',
-  'integration_capability_declarations_v1', 'integration_claims_v1', 'integration_connections_v1',
+  'integration_canonical_verifications_v1', 'integration_capability_declarations_v1', 'integration_claims_v1',
+  'integration_connections_v1',
   'integration_derivation_diagnostics_v1', 'integration_facts_v1', 'integration_identity_snapshots_v1',
   'integration_installation_requests_v1', 'integration_operation_log_v1', 'integration_reauth_marks_v1',
   'integration_regrants_v1', 'integration_revocations_v1', 'integrations_v1'];
@@ -324,8 +325,9 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
         where n.nspname = 'clued_private' and a.attname = 'integration_id' and c.relkind = 'r'
           and c.relname in ('integration_claims_v1','integration_connections_v1','integration_facts_v1',
             'integration_capability_declarations_v1','integration_revocations_v1','integration_regrants_v1',
-            'integration_reauth_marks_v1','integration_identity_snapshots_v1','integration_binding_owners_v1')`);
-      assert.equal(rows.length, 9);
+            'integration_reauth_marks_v1','integration_identity_snapshots_v1','integration_binding_owners_v1',
+            'integration_canonical_verifications_v1')`);
+      assert.equal(rows.length, 10);
       for (const row of rows) assert.ok(row.attnotnull && row.fk, row.relname);
       const stateColumns = (await admin.query(`select c.relname, a.attname from pg_attribute a join pg_class c on c.oid = a.attrelid
         join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'clued_private' and c.relname like 'integration%'
@@ -343,6 +345,10 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
           binding_intent: 'CREATE_OR_BIND' }), 'binding_not_authorized');
         await expectCode(rpc(admin, 'clued_integration_request_open_v1', bad, { request_key: key('request') }), 'binding_not_authorized');
         await expectCode(rpc(admin, 'clued_integration_status_v1', bad, {}), 'binding_not_authorized');
+        await expectCode(rpc(admin, 'clued_integration_identity_update_v1', bad, { idempotency_key: key(), integration_id: uid(),
+          base_version: 1 }), 'binding_not_authorized');
+        await expectCode(rpc(admin, 'clued_integration_reconcile_request_v1', bad, { idempotency_key: key(), integration_id: uid(),
+          base_version: 1 }), 'binding_not_authorized');
       }
       const revoked = await rawBinding(user);
       await admin.query('update public.clued_agent_bindings set revoked_at = now() where id = $1', [revoked.id]);
@@ -747,6 +753,227 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
         base_version: (await integration(p2.i)).version, holder_base_version: (await integration(p2.h)).version });
       assert.equal(ok.status, 'committed');
     });
+    // ---- fail-closed branches (review MAJOR-1…3) -------------------------------------------------
+    // business rows of a rejected bind: the Request itself was committed by request_open beforehand
+    const business = async () => { const c = await counts(); delete c.receipts; delete c.requests; return c; };
+    const unbound = async () => Number((await admin.query(`select count(*) n from clued_private.integration_installation_requests_v1
+      where request_status = 'OPEN'`)).rows[0].n);
+    const codeOf = async (promise) => {
+      try { const r = await promise; return r.error_code ?? r.status; } catch (error) { return error.message; }
+    };
+    const reconcile = async (user, i, h, resolution) => native(admin, user, { op: 'reconcile', idempotency_key: key(), integration_id: i,
+      resolution, base_version: (await integration(i)).version, holder_base_version: (await integration(h)).version });
+    const revokeFixture = (id) => admin.query(`insert into clued_private.integration_revocations_v1(integration_id, revoked_by, reason,
+        revoked_binding_ids, receipt_id) values ($1, 'USER', 'fixture', '{}', gen_random_uuid())`, [id]);
+
+    await t.test('reconcile re-resolves the holder under L4 / L5: a SUPERSEDED holder never receives or loses a survivor (MAJOR-1)', async () => {
+      const client = `tri-${uid()}`;
+      const { user, h, i } = await conflictPair(client);
+      const b2 = await oauthBinding(user, { client });
+      const i2 = (await install(b2, { host: 'test.tenant' })).supplemental.integration_id;
+      const u = await rpc(admin, 'clued_integration_identity_update_v1', b2, { idempotency_key: key(), integration_id: i2,
+        base_version: (await integration(i2)).version, tenant: tenant('P') });
+      assert.equal(u.supplemental.identity_claim_state, 'CLAIM_CONFLICT');
+      assert.equal((await integration(i2)).conflicting_integration_id, h);
+      assert.equal((await reconcile(user, i, h, 'REPLACE_HOLDER')).status, 'committed');
+      assert.equal((await integration(h)).superseded_by_integration_id, i);
+      for (const resolution of ['REBIND_TO_HOLDER', 'REPLACE_HOLDER']) {
+        const c0 = await business();
+        const r = await reconcile(user, i2, h, resolution);
+        assert.equal(r.status, 'rejected', resolution);
+        assert.equal(r.error_code, 'integration_superseded', resolution);
+        assert.equal(r.supplemental.holder_superseded_by, i, resolution);
+        assert.deepEqual(await business(), c0, `${resolution}: no business write`);
+      }
+      const holder = await integration(h);
+      assert.equal(holder.superseded_by_integration_id, i, "H's lineage stays under the survivor");
+      assert.equal(await currentBinding(h), null);
+      assert.equal(await currentBinding(i2), b2.id);
+      assert.equal((await admin.query('select integration_id from clued_private.integration_binding_owners_v1 where binding_id = $1', [b2.id])).rows[0].integration_id, i2);
+      assert.equal((await integration(i2)).identity_claim_state, 'CLAIM_CONFLICT');
+    });
+
+    await t.test('Native identity_update / reconcile refuse a foreign Integration with 403 before any Receipt (MAJOR-2)', async () => {
+      const { h, i } = await conflictPair();
+      const stranger = await newUser();
+      const c0 = await counts();
+      for (const target of [i, uid(), 'not-a-uuid']) {
+        await expectCode(native(admin, stranger, { op: 'identity_update', idempotency_key: key(), integration_id: target, base_version: 1,
+          tenant: tenant('X') }), 'integration_not_owned');
+        await expectCode(native(admin, stranger, { op: 'reconcile', idempotency_key: key(), integration_id: target, base_version: 1,
+          holder_base_version: 1, resolution: 'REPLACE_HOLDER' }), 'integration_not_owned');
+      }
+      // confirm_rebind / adopt_binding check Binding ownership before taking any lock
+      const foreign = await oauthBinding((await integration(h)).owner_id, { client: `f-${uid()}` });
+      await expectCode(native(admin, stranger, { op: 'adopt_binding', idempotency_key: key(), binding_id: foreign.id, host: 'test.complete',
+        host_surface: 'default', adapter_family: 'x', adapter_version: '1', installation_phase: 'COMPLETED' }), 'binding_not_owned');
+      assert.deepEqual(await counts(), c0, 'no Receipt and no business row');
+    });
+
+    await t.test('the post-write validity gate rejects a write whose result adds a reason code (G-A10, T-A7-9)', async () => {
+      // fault injection: drop the owner row a link has just written, so the result reads connection_store
+      // OWNER_ROW_MISSING (C7) although the facts before the write were valid
+      await admin.query(`create table public.test_gate_fault(binding_id uuid primary key);
+        create function public.test_gate_fault_fn() returns trigger language plpgsql as $f$
+        begin
+          if exists (select 1 from public.test_gate_fault f where f.binding_id = new.binding_id) then
+            delete from clued_private.integration_binding_owners_v1 where binding_id = new.binding_id;
+          end if;
+          return null;
+        end $f$;
+        create trigger test_gate_fault after insert or update on clued_private.integration_binding_owners_v1
+          for each row execute function public.test_gate_fault_fn();`);
+      try {
+        const user = await newUser();
+        const client = `gate-${uid()}`;
+        const b0 = await oauthBinding(user, { client });
+        const id = (await install(b0, { host: 'test.complete' })).supplemental.integration_id;
+        const v0 = (await integration(id)).version;
+        // CREATE: a new Integration whose own result is invalid is never written
+        const bc = await oauthBinding(user, { client: `gate-c-${uid()}` });
+        await admin.query('insert into public.test_gate_fault values ($1)', [bc.id]);
+        let c0 = await business();
+        const open0 = await unbound();
+        const created = await install(bc, { host: 'test.complete' });
+        assert.equal(await unbound(), open0 + 1, 'the Request stays OPEN');
+        assert.equal(created.status, 'rejected');
+        assert.equal(created.error_code, 'derivation_input_invalid');
+        assert.ok(created.supplemental.reason_codes.length > 0, JSON.stringify(created.supplemental));
+        assert.deepEqual(await business(), c0, 'CREATE: business rows unchanged');
+        // SAME_PROVIDER rebind: I stays on b0, version unchanged
+        const b1 = await oauthBinding(user, { client });
+        await admin.query('insert into public.test_gate_fault values ($1)', [b1.id]);
+        c0 = await business();
+        const rebound = await install(b1, { intent: 'rebind', target_integration_id: id, host: 'test.complete' }, 'REBIND');
+        assert.equal(rebound.error_code, 'derivation_input_invalid', JSON.stringify(rebound));
+        assert.deepEqual(await business(), c0, 'REBIND: business rows unchanged');
+        assert.equal(await currentBinding(id), b0.id);
+        assert.equal((await integration(id)).version, v0);
+        // the same rebind without the fault commits
+        await admin.query('delete from public.test_gate_fault');
+        assert.equal((await install(b1, { intent: 'rebind', target_integration_id: id, host: 'test.complete' }, 'REBIND')).status, 'committed');
+      } finally {
+        await admin.query(`drop trigger test_gate_fault on clued_private.integration_binding_owners_v1;
+          drop function public.test_gate_fault_fn(); drop table public.test_gate_fault;`);
+      }
+    });
+
+    await t.test('T-A10-14(b) a same-client Binding owned by J cannot be linked to I through the Binding channel (O3)', async () => {
+      const user = await newUser();
+      const client = `o3-${uid()}`;
+      const bi = await oauthBinding(user, { client });
+      const i = (await install(bi, { host: 'test.tenant', tenant: tenant('A') })).supplemental.integration_id;
+      const bj = await oauthBinding(user, { client });
+      const j = (await install(bj, { host: 'test.tenant', tenant: tenant('B') })).supplemental.integration_id;
+      // bj becomes J's HISTORICAL connection, still owned by J
+      assert.equal((await install(await oauthBinding(user, { client }), { intent: 'rebind', target_integration_id: j, host: 'test.tenant' },
+        'REBIND')).status, 'committed');
+      const c0 = await business();
+      for (const intent of ['REBIND', 'REAUTHORIZATION']) {
+        const r = await install(bj, { intent: intent.toLowerCase(), target_integration_id: i, host: 'test.tenant' }, intent);
+        assert.equal(r.error_code, 'binding_owned_by_other_integration', `${intent} ${JSON.stringify(r)}`);
+      }
+      assert.deepEqual(await business(), c0);
+      assert.equal((await admin.query('select integration_id from clued_private.integration_binding_owners_v1 where binding_id = $1', [bj.id])).rows[0].integration_id, j);
+    });
+
+    await t.test('FORBIDS_REAUTH refuses a new connection at the bind site and at REBIND_TO_HOLDER (T-A11-20(c))', async () => {
+      const user = await newUser();
+      const client = `fr-${uid()}`;
+      const b0 = await oauthBinding(user, { client });
+      const id = (await install(b0, { host: 'test.complete' })).supplemental.integration_id;
+      assert.ok((await integration(id)).first_authorized_at);
+      // the recovery policy is set by fixture (its Operator write is PR-4)
+      await admin.query(`update clued_private.integrations_v1 set recovery_policy = 'FORBIDS_REAUTH' where integration_id = $1`, [id]);
+      const c0 = await business();
+      const r = await install(await oauthBinding(user, { client }), { intent: 'rebind', target_integration_id: id, host: 'test.complete' }, 'REBIND');
+      assert.equal(r.error_code, 'integration_recovery_forbidden');
+      assert.deepEqual(await business(), c0);
+      // the current connection itself (SELF) is not a new connection
+      assert.equal((await install(b0, { intent: 'verification_repair', target_integration_id: id, host: 'test.complete' },
+        'VERIFICATION_REPAIR')).status, 'committed');
+      const p = await conflictPair();
+      await admin.query(`update clued_private.integrations_v1 set recovery_policy = 'FORBIDS_REAUTH' where integration_id = $1`, [p.h]);
+      const c1 = await business();
+      const rr = await reconcile(p.user, p.i, p.h, 'REBIND_TO_HOLDER');
+      assert.equal(rr.error_code, 'integration_recovery_forbidden');
+      assert.deepEqual(await business(), c1);
+      assert.equal(await currentBinding(p.h), p.bh.id);
+      assert.equal(await currentBinding(p.i), p.bi.id);
+    });
+
+    await t.test('T-A11-17(a) / T-A11-15(d) reconcile refuses a revoked I either way, and REBIND_TO_HOLDER a revoked H', async () => {
+      for (const [revoke, resolution] of [['i', 'REBIND_TO_HOLDER'], ['i', 'REPLACE_HOLDER'], ['h', 'REBIND_TO_HOLDER']]) {
+        const p = await conflictPair();
+        await revokeFixture(p[revoke]);
+        const c0 = await business();
+        const r = await reconcile(p.user, p.i, p.h, resolution);
+        assert.equal(r.error_code, 'integration_revoked_requires_explicit_restore', `${revoke} ${resolution}`);
+        assert.deepEqual(await business(), c0, `${revoke} ${resolution}: no business write`);
+        assert.equal(await currentBinding(p.h), p.bh.id);
+        assert.equal(await currentBinding(p.i), p.bi.id);
+        assert.equal((await integration(p.h)).identity_claim_state, 'CURRENT_CLAIM_HOLDER');
+      }
+    });
+
+    await t.test('T-A11-20(d) REBIND_TO_HOLDER clears H\'s reauth marks raised before b\'s grant and keeps later ones', async () => {
+      const p = await conflictPair();
+      const mark = async (raisedAt) => (await admin.query(`insert into clued_private.integration_reauth_marks_v1(integration_id, reason,
+          raised_by, raised_receipt_id, raised_at) values ($1, 'PROVIDER_RECONFIRMATION', 'CLUED', gen_random_uuid(), $2) returning mark_id`,
+      [p.h, raisedAt])).rows[0].mark_id;
+      const early = await mark('2020-01-01T00:00:00Z');
+      const late = await mark(new Date(Date.now() + 60_000).toISOString());
+      const r = await reconcile(p.user, p.i, p.h, 'REBIND_TO_HOLDER');
+      assert.equal(r.status, 'committed', JSON.stringify(r));
+      assert.deepEqual(r.supplemental.cleared_reauth_mark_ids, [early]);
+      const rows = (await admin.query(`select mark_id, cleared_by, cleared_receipt_id from clued_private.integration_reauth_marks_v1
+        where integration_id = $1`, [p.h])).rows;
+      assert.deepEqual(rows.find((x) => x.mark_id === early), { mark_id: early, cleared_by: 'REAUTHORIZATION_REBIND', cleared_receipt_id: r.receipt_id });
+      assert.equal(rows.find((x) => x.mark_id === late).cleared_by, null);
+    });
+
+    await t.test('request_open and create_or_bind refuse unregistered hosts, surfaces and unverified connection evidence', async () => {
+      const user = await newUser();
+      const b = await oauthBinding(user, { client: `reg-${uid()}` });
+      const c0 = await business();
+      assert.equal(await codeOf(open(b, { host: 'not.registered' })), 'host_not_registered');
+      assert.equal(await codeOf(open(b, { host: 'test.complete', host_surface: 'nope' })), 'host_surface_not_registered');
+      assert.deepEqual(await business(), c0);
+      const opened = await open(b, { host: 'test.complete', provider_connection_id: sha('some-other-client') });
+      if (opened.request_id) {
+        const r = await bind(b, opened.request_id);
+        assert.equal(r.error_code, 'identity_dimension_evidence_unverified', JSON.stringify(r));
+      } else {
+        assert.equal(opened.error_code ?? opened.status, 'identity_dimension_evidence_unverified');
+      }
+      // identity_update never accepts a provider connection id
+      const ok = await install(await oauthBinding(user, { client: `reg2-${uid()}` }), { host: 'test.complete' });
+      const id = ok.supplemental.integration_id;
+      const cur = (await admin.query(`select b.token_hash from clued_private.integration_connections_v1 c join public.clued_agent_bindings b
+        on b.id = c.binding_id where c.integration_id = $1 and c.link_status = 'CURRENT'`, [id])).rows[0].token_hash;
+      const r = await rpc(admin, 'clued_integration_identity_update_v1', cur, { idempotency_key: key(), integration_id: id,
+        base_version: (await integration(id)).version, provider_connection_id: sha('x') });
+      assert.equal(r.error_code, 'invalid_identity_update');
+    });
+
+    await t.test('a request_key replays only for its own channel and Binding; account deletion cascades over Requests', async () => {
+      const user = await newUser();
+      const b = await rawBinding(user);
+      const requestKey = key('replay');
+      const first = await open(b, { request_key: requestKey });
+      assert.equal((await open(b, { request_key: requestKey })).request_id, first.request_id);
+      assert.equal(await codeOf(open(await rawBinding(user), { request_key: requestKey })), 'installation_request_key_conflict');
+      assert.equal(await codeOf(native(admin, user, { op: 'request_open', request_key: requestKey, intent: 'create_or_bind',
+        host: 'test.complete', host_surface: 'default', provider: 'clued.binding.v1', adapter_family: 'test-adapter',
+        adapter_version: '1.0.0', installation_phase: 'COMPLETED' })), 'installation_request_key_conflict');
+      // §5.2 point 3: an account that only opened Requests can be deleted
+      const gone = await newUser();
+      await open(await rawBinding(gone), {});
+      await admin.query('delete from auth.users where id = $1', [gone]);
+      assert.equal(Number((await admin.query('select count(*) n from clued_private.integration_installation_requests_v1 where owner_id = $1',
+        [gone])).rows[0].n), 0);
+    });
+
     await t.test('T-A10-9 / T-A7-9 a Claim Store divergence fails closed with one diagnostic and one Receipt', async () => {
       const user = await newUser();
       const b = await oauthBinding(user, { client: `div-${uid()}` });
@@ -1193,7 +1420,63 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       }
     });
 
-    await t.test('headless Bindings derive as clued.binding.v1, one provider connection each (placement choice (d))', async () => {
+    await t.test('T-A3-3 DB: A-class verification facts from fixture rows (verify is PR-3); REAUTH_REQUIRED and INCOMPATIBLE', async () => {
+      const user = await newUser();
+      const client = `crv-${uid()}`;
+      const b0 = await oauthBinding(user, { client });
+      const id = (await install(b0, { host: 'test.complete' })).supplemental.integration_id;
+      const crv = async (result, validUntil, digest = null) => (await admin.query(`insert into clued_private.integration_canonical_verifications_v1(
+          integration_id, verification_contract, result, checks, subject_digest, connection_id, evidence_sha256, receipt_id, valid_until)
+        select $1, 'clued.crv.v1', $2, '[]', coalesce($4, clued_private.integration_subject_digest_v1($1)), c.connection_id, $5,
+          gen_random_uuid(), $3::timestamptz
+          from clued_private.integration_connections_v1 c where c.integration_id = $1 and c.link_status = 'CURRENT'
+        returning verification_id`, [id, result, validUntil, digest, sha(uid())])).rows[0].verification_id;
+      const crvOf = (e) => e.facts.canonical_runtime_verification_facts;
+      assert.deepEqual(crvOf(await evaluate(id)), { status: 'NONE', verification_id: null, valid_until: null });
+      const inOneHour = new Date(Date.now() + 3_600_000).toISOString();
+      const v1 = await crv('PASS', inOneHour);
+      const active = await evaluate(id);
+      assert.equal(active.valid, true, JSON.stringify(active.reason_codes));
+      assert.equal(crvOf(active).status, 'VALID');
+      assert.equal(crvOf(active).verification_id, v1);
+      assert.equal(active.integration_state, 'ACTIVE');
+      assert.equal(active.integration_operable, true);
+      const expired = await evaluate(id, new Date(Date.now() + 7_200_000).toISOString());
+      assert.equal(crvOf(expired).status, 'EXPIRED');
+      assert.notEqual(expired.integration_state, 'ACTIVE');
+      // a later FAIL row is the latest
+      await crv('FAIL', inOneHour);
+      assert.equal(crvOf(await evaluate(id)).status, 'FAILED');
+      assert.notEqual((await evaluate(id)).integration_state, 'ACTIVE');
+      // a PASS for another subject is INVALIDATED; a rebind changes the subject digest of a VALID row
+      await crv('PASS', inOneHour, sha('another subject'));
+      assert.equal(crvOf(await evaluate(id)).status, 'INVALIDATED');
+      await crv('PASS', inOneHour);
+      assert.equal((await evaluate(id)).integration_state, 'ACTIVE');
+      assert.equal((await install(await oauthBinding(user, { client }), { intent: 'rebind', target_integration_id: id, host: 'test.complete' },
+        'REBIND')).status, 'committed');
+      const rebound = await evaluate(id);
+      assert.equal(crvOf(rebound).status, 'INVALIDATED');
+      assert.equal(rebound.integration_state, 'VERIFYING', 'back to VERIFYING, not INSTALL_PENDING (§7.4)');
+      // REAUTH_REQUIRED: the current OAuth grant has expired after a first authorization
+      const b2 = await oauthBinding(user, { client: `exp-${uid()}` });
+      const id2 = (await install(b2, { host: 'test.complete' })).supplemental.integration_id;
+      await admin.query(`update clued_private.authorizations_v12 set expires_at = now() - interval '1 minute' where binding_id = $1`, [b2.id]);
+      const e2 = await evaluate(id2);
+      assert.equal(e2.valid, true, JSON.stringify(e2.reason_codes));
+      assert.equal(e2.integration_state, 'REAUTH_REQUIRED');
+      assert.deepEqual(e2.effective_capabilities, []);
+      // INCOMPATIBLE: a hard compatibility fact (fact rows written by the fixture; fact_set is PR-3)
+      const id3 = (await install(await oauthBinding(user, { client: `inc-${uid()}` }), { host: 'test.complete' })).supplemental.integration_id;
+      await admin.query(`insert into clued_private.integration_facts_v1(integration_id, truth_class, source, value, fact_status, receipt_id)
+        values ($1, 'compatibility_state', 'operator', 'HARD_INCOMPATIBLE', 'CURRENT', gen_random_uuid())`, [id3]);
+      const e3 = await evaluate(id3);
+      assert.equal(e3.integration_state, 'INCOMPATIBLE');
+      assert.equal(e3.integration_operable, false);
+      assert.deepEqual(e3.effective_capabilities, []);
+    });
+
+    await t.test('ERRATA-003 headless Bindings derive as clued.binding.v1, one provider connection each', async () => {
       const user = await newUser();
       const h1 = await oauthBinding(user, { issuance: 'headless' });
       const h2 = await oauthBinding(user, { issuance: 'headless' });
@@ -1239,6 +1522,82 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
+    await server.stop();
+  }
+});
+
+// The production database does not carry the P5 migrations (authorization-migration-chain's
+// production-installed-shape), so clued_agent_bindings has no organization_id / expires_at there. The
+// PR-2 functions must run on that shape, not only compile.
+test('S2c PR-2 runs on the production-installed shape (no P5 migrations)', { timeout: 600_000 }, async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-integration-prodshape-'));
+  const server = new EmbeddedPostgres({
+    databaseDir: directory, user: 'postgres', password: sha(uid()), port: await freePort(),
+    persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
+  });
+  let db;
+  try {
+    await server.initialise();
+    await server.start();
+    db = server.getPgClient();
+    await db.connect();
+    await db.query(`create role anon nologin; create role authenticated nologin;
+      create role service_role nologin bypassrls; create role authenticator nologin noinherit;
+      create schema auth; create schema extensions; create extension pgcrypto with schema extensions;
+      create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz);
+      create function auth.uid() returns uuid language sql stable as
+        $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+      create function auth.jwt() returns jsonb language sql stable as
+        $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
+      grant usage on schema auth,extensions to anon,authenticated,service_role;
+      grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
+    const names = (await fs.readdir(path.join(root, 'supabase/migrations')))
+      .filter((name) => name.endsWith('.sql') && !name.includes('p5_')).sort();
+    for (const name of names) {
+      try { await db.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
+      catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
+    }
+    const columns = (await db.query(`select array_agg(attname::text) c from pg_attribute
+      where attrelid = 'public.clued_agent_bindings'::regclass and attnum > 0 and not attisdropped`)).rows[0].c;
+    assert.equal(columns.includes('organization_id'), false, 'the shape under test has no P5 columns');
+    const user = uid();
+    await db.query('insert into auth.users(id, email) values ($1, $2)', [user, `${user}@clued.test`]);
+    const binding = async (name) => {
+      const token = `clued_bnd_${crypto.randomBytes(24).toString('hex')}`;
+      const { rows } = await db.query(`insert into public.clued_agent_bindings(user_id, vendor, agent_name, token_hash)
+        values ($1, 'Test', $2, $3) returning id`, [user, name, sha(token)]);
+      return { id: rows[0].id, hash: sha(token) };
+    };
+    const call = async (name, b, input) => (await db.query(`select public.${name}($1, $2::jsonb) r`, [b.hash, JSON.stringify(input)])).rows[0].r;
+    const b1 = await binding('first');
+    const b2 = await binding('second');
+    const opened = await call('clued_integration_request_open_v1', b1, { request_key: key('request'), intent: 'create_or_bind',
+      host: 'generic.mcp', host_surface: 'default', adapter_family: 'legacy', adapter_version: '0.1', installation_phase: 'COMPLETED' });
+    const created = await call('clued_integration_create_or_bind_v1', b1, { idempotency_key: key(), request_id: opened.request_id,
+      binding_intent: 'CREATE_OR_BIND' });
+    assert.equal(created.status, 'committed', JSON.stringify(created));
+    const id = created.supplemental.integration_id;
+    const status = await call('clued_integration_status_v1', b1, { integration_id: id });
+    assert.equal(status.integration.evaluation.valid, true);
+    const native = async (input) => {
+      await db.query('begin');
+      try {
+        await db.query(`select set_config('request.jwt.claim.sub', $1, true), set_config('request.jwt.claims', '{}', true)`, [user]);
+        const result = (await db.query('select public.clued_user_integration_v1($1::jsonb) r', [JSON.stringify(input)])).rows[0].r;
+        await db.query('commit');
+        return result;
+      } catch (error) {
+        await db.query('rollback');
+        throw error;
+      }
+    };
+    assert.deepEqual((await native({ op: 'binding_inventory' })).bindings.map((x) => x.binding_id), [b2.id]);
+    const adopted = await native({ op: 'adopt_binding', idempotency_key: key(), binding_id: b2.id, host: 'generic.mcp',
+      host_surface: 'default', adapter_family: 'legacy', adapter_version: '0.1', installation_phase: 'COMPLETED' });
+    assert.equal(adopted.status, 'committed', JSON.stringify(adopted));
+    assert.equal((await native({ op: 'list' })).integrations.length, 2);
+  } finally {
+    if (db) await db.end().catch(() => {});
     await server.stop();
   }
 });

@@ -228,6 +228,60 @@ budget or procurement authority.
 
 ---
 
+## ERRATA-003 — `§6.2` headless Bindings are one provider connection each
+
+- **Authority:** Owner Decision `591a0fc6-9d93-47a6-802b-480448b45212` (2026-10-05).
+- **Raised by:** the Fresh-Context review of S2c PR-2 (tdoljyj/cross-memory-system#551),
+  finding MAJOR-4.
+- **Status:** in force. Implemented by PR-2 (migration `20261005090000`).
+
+**What the frozen text says.** `§6.2` derives the connection identity of an OAuth
+Binding from `OAUTH_V12_CLIENT_ID` evidence: the server reads
+`authorizations_v12.client_id`, and `provider_connection_id = sha256(client_id)`.
+Every Binding that has an `authorizations_v12` row is therefore provider
+`clued.oauth.v12`, connection kind `OAUTH_V12`.
+
+**Why that is incomplete.** Headless issuance (`authorizations_v12.issuance =
+'headless'`) was added after the freeze, by migration `20261004120000`. Every
+headless authorization carries the same `client_id`, `clued-headless`: it names
+the issuance path, not an OAuth client. Read literally, `§6.2` would make all of
+one owner's headless Bindings a single provider connection, so that any of them
+could take over another's Integration as a `SAME_PROVIDER_CONNECTION` rebind
+(`§10.3`), and `§5.5` O5 / O7 would revoke or block all of them together. That is
+a fail-open reading: the shared `client_id` is not evidence that two headless
+Bindings are the same connection.
+
+**What replaces it.** For a Binding whose `authorizations_v12.issuance` is
+`headless`, `§6.2` derives:
+
+- provider `clued.binding.v1`, with `provider_connection_id = binding_id`, exactly
+  as for a raw Binding: one provider connection per Binding;
+- connection kind `OAUTH_V12`: authority (scopes and entries), liveness and expiry
+  still come from `authorizations_v12` and `authorization_entries_v12`, as for any
+  OAuth Binding.
+
+Two consequences follow, and both are part of this erratum:
+
+- `fresh_consent` (`§10.3`) applies to `issuance = 'oauth'` only; a headless grant
+  is never fresh consent for a ceiling expansion.
+- `§5.5` O7's revocation-boundary check reads only providers whose
+  `connection_source` is `OAUTH_V12_CLIENT_ID_SHA256`, so it does not apply to a
+  headless Binding.
+
+The provider-and-kind pair `clued.binding.v1` / `OAUTH_V12` is new; no other
+provider or kind changes.
+
+**Rejected alternative.** Refusing headless Bindings as connection callers and
+adoption targets (`binding_not_adoptable`) until an erratum existed. It is safe,
+but it leaves headless users unable to use Integrations at all.
+
+### Boundary
+
+As ERRATA-001: semantics only, no production, release, flag, grant, visibility,
+budget or procurement authority.
+
+---
+
 ## Note — `§13.2` P2 (c) sample counts are two obligations
 
 Not an erratum: the frozen text is correct and is restated here because PR-1
