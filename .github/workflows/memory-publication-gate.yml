@@ -18,16 +18,21 @@ concurrency:
 jobs:
   trusted-self-hosted:
     name: memory-publication-gate
+    # Re-review 7, m1: pull_request_target runs for a pull request into any
+    # branch, and that branch is the Agent's to edit; only pull requests into
+    # the default branch run on the self-hosted runner, and both jobs take the
+    # verifier from the default branch as it is now.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor == github.repository_owner
+      github.actor == github.repository_owner &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
     runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24]
     timeout-minutes: 5
     steps:
-      - name: Check out trusted verifier from the base revision
+      - name: Check out trusted verifier from the default branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           path: trusted
           persist-credentials: false
       - name: Check out candidate without persisted credentials
@@ -54,14 +59,15 @@ jobs:
     name: memory-publication-gate
     if: >-
       github.event.pull_request.head.repo.full_name != github.repository ||
-      github.actor != github.repository_owner
+      github.actor != github.repository_owner ||
+      github.event.pull_request.base.ref != github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check out trusted verifier from the base revision
+      - name: Check out trusted verifier from the default branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           path: trusted
           persist-credentials: false
       - name: Check out candidate without persisted credentials

@@ -437,7 +437,8 @@ export function workflowFormFindings(text) {
 export function jobTimeout(job) {
   const value = jobField(job, "timeout-minutes");
   if (value === null) return null;
-  const match = /^\s*(\d{1,4})\s*(#.*)?$/.exec(value.split("\n")[0]);
+  // Re-review 7, n2: a comment needs whitespace before its #, as in YAML.
+  const match = /^\s*(\d{1,4})(\s+#.*|\s*)$/.exec(value.split("\n")[0]);
   return match && value.split("\n").slice(1).every((line) => /^\s*(#.*)?$/.test(line)) ? Number(match[1]) : null;
 }
 
@@ -450,7 +451,7 @@ export function jobIsHosted(job) {
   if (job.lines.some((line) => /^ {4}uses:/.test(line) || /^\s*<<\s*:/.test(line))) return false;
   const value = jobField(job, "runs-on");
   if (value === null) return false;
-  const text = value.replace(/#.*$/gm, "").trim();
+  const text = value.replace(/(^|\s)#.*$/gm, "").trim();
   if (text.includes("\n")) return false;
   return HOSTED_LABEL.test(unquote(text));
 }
@@ -510,17 +511,196 @@ async function fileAt(fetchImpl, env, repository, path, ref) {
   return Buffer.from(body.content, "base64").toString("utf8");
 }
 
-export async function workflowGateFindings(fetchImpl, env, repository, files, headSha, baseSha) {
-  const findings = [];
+// The base version a changed workflow is compared with. Re-review 7, MAJOR-2:
+// a file renamed into .github/workflows/ from anywhere else, or copied, is a
+// new workflow; only a rename between two workflow files keeps its base.
+export function workflowBasePath(file) {
+  if (file.status === "added" || file.status === "copied") return null;
+  if (file.status === "renamed") return WORKFLOW_FILE.test(file.previous_filename ?? "") ? file.previous_filename : null;
+  return file.filename;
+}
+
+// Workflow findings of a pull request: `gate` are refused outright (the gate
+// guard above), `owner` need an Owner Grant on the head commit (ownerReviewFindings).
+export async function workflowFindings(fetchImpl, env, repository, files, headSha, baseSha) {
+  const gate = [];
+  const owner = [];
   for (const file of files) {
     if (file.status === "removed" || !WORKFLOW_FILE.test(file.filename ?? "")) continue;
     const head = await fileAt(fetchImpl, env, repository, file.filename, headSha);
     if (head === null) throw new Error(`${file.filename} is missing at ${headSha}.`);
-    const base = await fileAt(fetchImpl, env, repository, file.previous_filename ?? file.filename, baseSha);
-    for (const finding of gateFindings(head, base)) findings.push(`workflow_gate:${file.filename}:${finding}`);
+    const basePath = workflowBasePath(file);
+    const base = basePath === null ? null : await fileAt(fetchImpl, env, repository, basePath, baseSha);
+    for (const finding of gateFindings(head, base)) gate.push(`workflow_gate:${file.filename}:${finding}`);
+    for (const finding of ownerReviewFindings(head, base)) owner.push(`${file.filename}:${finding}`);
+  }
+  // A workflow the pull request deletes or renames away may be the one that
+  // holds a guard (an environment, the release door): its removal is owner-reviewed too.
+  for (const file of files) {
+    const gone = file.status === "removed" ? file.filename : file.status === "renamed" ? file.previous_filename : null;
+    if (!gone || !WORKFLOW_FILE.test(gone) || (file.status === "renamed" && WORKFLOW_FILE.test(file.filename ?? ""))) continue;
+    const base = await fileAt(fetchImpl, env, repository, gone, baseSha);
+    if (base !== null && workflowHasEnvironment(base)) owner.push(`${gone}:environment_workflow_removed`);
+  }
+  return { gate, owner };
+}
+
+export async function workflowGateFindings(fetchImpl, env, repository, files, headSha, baseSha) {
+  return (await workflowFindings(fetchImpl, env, repository, files, headSha, baseSha)).gate;
+}
+
+// ---------------------------------------------------------------------------
+// Owner review (re-review 7, MAJOR-3). The main ruleset requires no approving
+// review, so whatever the admission check admits can be merged by an Agent,
+// and a merged change to the code that guards production applies to every
+// later run: it could drop the release door's grant step, read the
+// clued-release or clued-admission environment's secrets, point admission at
+// another server or give a self-hosted workflow a schedule. Such a pull
+// request is admitted only with an Owner Grant of repo.protected_change on its
+// head commit (OwnerCredential §6.3), asked of Clued's admission door with the
+// admission Binding. Enforced when CLUED_OWNER_REVIEW_ENFORCE=true (the
+// Owner's switch, set once migration 20261005120000 is applied); until then
+// the finding is reported only.
+//
+// Not covered, and written down (WorkClaimAdmission §4.7): other scripts that
+// a workflow with secrets runs, repository-level secrets and hosted minutes
+// (any branch can add an on: push workflow), and anyone holding the
+// repository's admin rights (ruleset, variables, environments).
+
+export const OWNER_REVIEW_ACTION = "repo.protected_change";
+export const OWNER_REVIEW_RPC = "clued_owner_grant_admission_door_v1";
+export const PROTECTED_PATHS = [
+  "scripts/ci/clued-work-admission.mjs",
+  "scripts/ci/clued-release-grant.mjs",
+  "scripts/runner/**",
+  ".github/workflows/clued-work-admission*.yml",
+  ".github/workflows/clued-cloud-production-release.yml",
+  PUBLIC_CONFIG_SOURCE,
+];
+
+export function ownerReviewEnforced(env) {
+  return /^(1|true|on|enabled)$/i.test((env.CLUED_OWNER_REVIEW_ENFORCE ?? "").trim());
+}
+
+export function protectedPathFindings(paths) {
+  const patterns = PROTECTED_PATHS.map((pattern) => [pattern, globToRegExp(pattern)]);
+  const findings = [];
+  for (const changed of paths) {
+    const hit = patterns.find(([, regex]) => regex.test(changed));
+    if (hit) findings.push(`protected_path:${changed}`);
   }
   return findings;
 }
+
+// A YAML comment starts at a # that follows whitespace (or starts the line)
+// outside quotes.
+function stripComment(line) {
+  let quote = null;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === "#" && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i);
+  }
+  return line;
+}
+
+function codeLines(text) {
+  return String(text ?? "").replace(/\r\n/g, "\n").split("\n").map(stripComment);
+}
+
+// Any environment key, quoted or not, block or flow; or an anchor merge,
+// which could carry one.
+export function workflowHasEnvironment(text) {
+  return codeLines(text).some((line) => /["']?\benvironment\b["']?\s*:/.test(line) || /<<\s*:/.test(line));
+}
+
+// The secrets a workflow names; "*" when it reads them by a computed name,
+// passes them all on, or serializes them.
+export function workflowSecrets(text) {
+  const names = new Set();
+  for (const line of codeLines(text)) {
+    for (const match of line.matchAll(/\bsecrets\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)/g)) names.add(match[1]);
+    if (/\bsecrets\s*\[|toJSON\s*\(\s*secrets\s*\)|secrets\s*:\s*inherit|\bsecrets\s*[),}]/.test(line)) names.add("*");
+  }
+  names.delete("GITHUB_TOKEN");
+  return names;
+}
+
+// The top-level `on:` block (or `true:`, the same key in YAML 1.1), comments
+// and blank lines dropped.
+export function workflowTriggers(text) {
+  const lines = codeLines(text);
+  const start = lines.findIndex((line) => /^["']?(on|true)["']?\s*:/.test(line));
+  if (start < 0) return "";
+  const block = [lines[start].trim()];
+  for (let i = start + 1; i < lines.length && !/^\S/.test(lines[i]); i += 1) {
+    if (lines[i].trim()) block.push(lines[i].trimEnd());
+  }
+  return block.join("\n");
+}
+
+const PR_ONLY_TRIGGERS = /^(on|true)\s*:\s*(\[\s*)?(pull_request|workflow_dispatch)(\s*,\s*(pull_request|workflow_dispatch))*(\s*\])?\s*$/;
+function triggersArePrOnly(triggers) {
+  const [first, ...rest] = triggers.split("\n");
+  if (PR_ONLY_TRIGGERS.test(first.replace(/["']/g, ""))) return rest.length === 0;
+  if (!/^["']?(on|true)["']?\s*:\s*$/.test(first)) return false;
+  const keys = rest.filter((line) => /^  \S/.test(line)).map((line) => line.trim().replace(/["']/g, "").replace(/:.*$/, ""));
+  return keys.length > 0 && keys.every((key) => key === "pull_request" || key === "workflow_dispatch");
+}
+
+// Findings for one workflow that need the Owner; baseText is null for a new one.
+export function ownerReviewFindings(headText, baseText) {
+  const findings = [];
+  if (workflowHasEnvironment(headText) || (baseText !== null && workflowHasEnvironment(baseText))) {
+    findings.push("environment_workflow_changed");
+  }
+  const before = baseText === null ? new Set() : workflowSecrets(baseText);
+  const added = [...workflowSecrets(headText)].filter((name) => !before.has(name)).sort();
+  for (const name of added) findings.push(`secret_added:${name}`);
+  if (workflowJobs(headText).some((job) => !jobIsHosted(job))) {
+    const triggers = workflowTriggers(headText);
+    if (baseText === null ? !triggersArePrOnly(triggers) : triggers !== workflowTriggers(baseText)) {
+      findings.push("self_hosted_triggers_changed");
+    }
+  }
+  return findings;
+}
+
+export async function ownerReviewDoor(fetchImpl, env, repository, headSha, workspace) {
+  const { url: base, key } = resolvePublicSupabaseConfig(env, workspace);
+  const resource = `repo:${repository}/${headSha}`;
+  const response = await fetchImpl(`${base}/rest/v1/rpc/${OWNER_REVIEW_RPC}`, {
+    method: "POST",
+    headers: {
+      apikey: key,
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json",
+      accept: "application/json",
+      "user-agent": "clued-work-admission",
+    },
+    body: JSON.stringify({ p_token_hash: sha256Hex(env.CLUED_CONTEXT_READ_TOKEN), p_input: { action: OWNER_REVIEW_ACTION, resources: [resource] } }),
+  });
+  let text = "";
+  let body = null;
+  try {
+    text = await response.text();
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null;
+  }
+  const detail = describe(response.status, body, text, response.headers);
+  if (response.status === 404 && body && body.code === "PGRST202") return { kind: "rpc_unavailable", detail, resource };
+  if (response.status !== 200 || !body || body.status !== "ok") return { kind: "refused", detail, resource };
+  const request = body.owner_request;
+  const confirmUrl = request && typeof request.confirm_path === "string"
+    ? (env.CLUED_CONFIRM_ORIGIN ?? DEFAULT_CONFIRM_ORIGIN).replace(/\/$/, "") + request.confirm_path : null;
+  return { kind: body.admitted === true ? "granted" : "pending", resource, grant: body.grant ?? null, confirm_url: confirmUrl };
+}
+const DEFAULT_CONFIRM_ORIGIN = "https://clued.pixelgrav.com";
 
 // ---------------------------------------------------------------------------
 // Clued database RPC (PostgREST, publishable key, Binding token hash).
@@ -618,6 +798,35 @@ async function summarizeWorkflows(fetchImpl, env, repository, headSha, changedPa
   });
 }
 
+// Re-review 7, MAJOR-3: a pull request with owner-review findings needs an
+// Owner Grant on its head commit. Enforced, anything short of a grant rejects
+// it; otherwise the result is a notice.
+async function ownerReview(fetchImpl, env, repository, headSha, workspace, findings, outcome) {
+  const enforced = ownerReviewEnforced(env);
+  const summary = findings.join(", ");
+  let door;
+  try {
+    door = await ownerReviewDoor(fetchImpl, env, repository, headSha, workspace);
+  } catch (error) {
+    door = { kind: "refused", detail: error instanceof Error ? error.message : String(error) };
+  }
+  outcome.owner_review = { enforced, kind: door.kind, resource: door.resource ?? null, confirm_url: door.confirm_url ?? null,
+    grant_id: door.grant && door.grant.grant_id ? door.grant.grant_id : null };
+  if (door.kind === "granted") {
+    outcome.notices.push(`owner_review_granted:${outcome.owner_review.grant_id} (${summary})`);
+    return;
+  }
+  const why = door.kind === "pending"
+    ? `owner_review_required (${summary}); ask the Owner to approve ${door.confirm_url ?? "the pending request"}`
+    : `owner_review_unavailable:${door.kind} (${summary}; ${door.detail})`;
+  if (enforced) {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push(why);
+  } else {
+    outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): ${why}`);
+  }
+}
+
 export async function evaluate({ env, event, eventName, fetchImpl, workspace, withSummary }) {
   const enforced = enforcementEnabled(env);
   const outcome = emptyOutcome(eventName, enforced);
@@ -653,8 +862,11 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     const changed = await changedPathsOfPullRequest(fetchImpl, env, repository, pr.number);
     outcome.changed_paths = changed.paths;
     const truncated = Number.isInteger(pr.changed_files) && changed.file_count < pr.changed_files;
-    const gateFindingsOfPr = await workflowGateFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha);
+    const workflowResult = await workflowFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha);
+    const gateFindingsOfPr = workflowResult.gate;
     if (gateFindingsOfPr.length) outcome.workflow_gate_findings = gateFindingsOfPr;
+    const ownerFindings = [...protectedPathFindings(changed.paths), ...workflowResult.owner];
+    if (ownerFindings.length) outcome.owner_review_findings = ownerFindings;
     if (withSummary && workspace) {
       await summarizeWorkflows(fetchImpl, env, repository, pr.head.sha, outcome.changed_paths, workspace, outcome);
     }
@@ -753,6 +965,15 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
       outcome.verdict = "REJECTED";
       outcome.reasons.push(...gateFindingsOfPr);
     }
+    if (ownerFindings.length && outcome.verdict === "ADMITTED") await ownerReview(fetchImpl, env, repository, pr.head.sha, workspace, ownerFindings, outcome);
+    // Re-review 7, m2: the file list was read after the head, so a push in
+    // between would pair this head's verdict with another head's files.
+    if (outcome.verdict === "ADMITTED") {
+      const now = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${pr.number}`);
+      if (!now || !now.head || now.head.sha !== pr.head.sha) {
+        throw new Error(`the pull request's head moved from ${pr.head.sha} to ${now && now.head ? now.head.sha : "(unknown)"} during admission; the next run judges the new head`);
+      }
+    }
     if (enforced) {
       outcome.admitted = outcome.verdict === "ADMITTED";
     } else {
@@ -769,16 +990,35 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
 
 // ---------------------------------------------------------------------------
 // Re-verification. A check run is a verdict at one moment; the claim behind it
-// can expire, be released or be taken over afterwards. For every open,
-// non-draft PR, the latest successful run of the admission workflow on its
-// head (per triggering event) is re-run when a fresh evaluation no longer
-// admits the PR. The re-run evaluates again and turns the check red. Transport
-// errors are reported, never turned into a re-run.
+// can expire, be released or be taken over afterwards. Every hour, for every
+// open, non-draft pull request into the default branch whose newest
+// clued-admission-verified App check (the one the ruleset reads) is a success,
+// the pull request is evaluated again; when it is no longer admitted, a failing
+// App check is posted on its head, which blocks the merge until a new event
+// re-admits it.
+// Re-review 7, MAJOR-1: this used to pick the newest admission run on the
+// head, whatever pull request it belonged to, and re-run it only when it had
+// succeeded. A second pull request with the same head into another branch (its
+// admission job is skipped) or a cancelled run then hid the first one's run,
+// and its green check outlived its claim. It now reads the App checks, which
+// name their pull request, and posts the failing check itself. Without the
+// App's key it falls back to re-running this pull request's own admission run
+// (named by its newest App check); with neither, the pull request is an error.
+// Transport errors are reported, never turned into a verdict.
 
 export const ADMISSION_WORKFLOW = "clued-work-admission.yml";
 
-export async function reverify({ env, fetchImpl, workspace }) {
-  const result = { enforced: enforcementEnabled(env), checked: [], reran: [], errors: [] };
+export async function appChecksOnHead(fetchImpl, env, repository, headSha) {
+  const checks = await githubPaged(fetchImpl, env,
+    `/repos/${repository}/commits/${headSha}/check-runs?check_name=${APP_CHECK_NAME}&filter=all`, "check_runs");
+  return checks
+    .filter((check) => check && check.name === APP_CHECK_NAME && check.head_sha === headSha
+      && check.app && Number(check.app.id) === ADMISSION_APP_ID)
+    .sort((a, b) => Number(b.id) - Number(a.id));
+}
+
+export async function reverify({ env, fetchImpl, workspace, now = () => Date.now() }) {
+  const result = { enforced: enforcementEnabled(env), checked: [], reran: [], blocked: [], errors: [] };
   if (!result.enforced) {
     result.skipped = "CLUED_WORK_ADMISSION_ENFORCE is not set; checks are advisory";
     return result;
@@ -788,23 +1028,29 @@ export async function reverify({ env, fetchImpl, workspace }) {
   const pulls = await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`);
   for (const pr of pulls) {
     if (pr.draft || !pr.head || !pr.base) continue;
+    const defaultBranch = pr.base.repo && pr.base.repo.default_branch;
+    if (defaultBranch && pr.base.ref !== defaultBranch) continue;
     try {
-      const runs = (await githubJson(fetchImpl, env,
-        `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${pr.head.sha}&per_page=50`)).workflow_runs ?? [];
-      const latest = new Map();
-      for (const run of runs) {
-        const prior = latest.get(run.event);
-        if (!prior || Date.parse(run.created_at) > Date.parse(prior.created_at)) latest.set(run.event, run);
-      }
-      const passing = [...latest.values()].filter((run) => run.status === "completed" && run.conclusion === "success");
-      if (passing.length === 0) continue;
+      const checks = await appChecksOnHead(fetchImpl, env, repository, pr.head.sha);
+      const newest = checks[0];
+      if (!newest || newest.status !== "completed" || newest.conclusion !== "success") continue;
       const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false });
       result.checked.push({ pr: pr.number, verdict: outcome.verdict, reasons: outcome.reasons });
       if (outcome.admitted) continue;
-      for (const run of passing) {
-        await githubPost(fetchImpl, env, `/repos/${repository}/actions/runs/${run.id}/rerun`);
-        result.reran.push({ pr: pr.number, run_id: run.id, event: run.event, verdict: outcome.verdict, reasons: outcome.reasons });
+      const verdict = `RE-VERIFIED: ${outcome.verdict ?? "NOT ADMITTED"}`;
+      const posted = await postAppCheck({
+        env, fetchImpl, now, headSha: pr.head.sha, success: false, title: verdict, prNumber: pr.number,
+        summary: `The hourly re-verification no longer admits #${pr.number}: ${outcome.reasons.join("; ") || "no reason given"}. Push a commit or edit the pull request once its claim admits it again.`,
+      });
+      if (posted.posted) {
+        result.blocked.push({ pr: pr.number, check_run_id: posted.check_run_id, verdict: outcome.verdict, reasons: outcome.reasons });
+        continue;
       }
+      const own = checks.map((check) => EXTERNAL_ID.exec(String(check.external_id ?? "")))
+        .find((match) => match && Number(match[1]) === Number(pr.number));
+      if (!own) throw new Error(`not admitted (${outcome.verdict}) and no failing check could be posted: ${posted.error ?? posted.reason}; no admission run of #${pr.number} to re-run`);
+      await githubPost(fetchImpl, env, `/repos/${repository}/actions/runs/${own[2]}/rerun`);
+      result.reran.push({ pr: pr.number, run_id: Number(own[2]), verdict: outcome.verdict, reasons: outcome.reasons });
     } catch (error) {
       result.errors.push({ pr: pr.number, error: error instanceof Error ? error.message : String(error) });
     }
@@ -818,8 +1064,9 @@ export function renderReverifySummary(result) {
     lines.push(`Skipped: ${result.skipped}.`, "");
     return lines.join("\n");
   }
-  lines.push(`Open PRs with a passing admission run checked: ${result.checked.length} · re-runs requested: ${result.reran.length} · errors: ${result.errors.length}`);
-  for (const rerun of result.reran) lines.push(`- #${rerun.pr}: run ${rerun.run_id} (${rerun.event}) re-run, ${rerun.verdict}: ${rerun.reasons.join("; ")}`);
+  lines.push(`Open PRs with a passing admission check checked: ${result.checked.length} · failing checks posted: ${result.blocked.length} · re-runs requested: ${result.reran.length} · errors: ${result.errors.length}`);
+  for (const blocked of result.blocked) lines.push(`- #${blocked.pr}: failing check ${blocked.check_run_id} posted, ${blocked.verdict}: ${blocked.reasons.join("; ")}`);
+  for (const rerun of result.reran) lines.push(`- #${rerun.pr}: run ${rerun.run_id} re-run, ${rerun.verdict}: ${rerun.reasons.join("; ")}`);
   for (const error of result.errors) lines.push(`- #${error.pr}: error ${error.error}`);
   lines.push("");
   return lines.join("\n");
@@ -1298,32 +1545,45 @@ async function appRequest(fetchImpl, env, method, route, bearer, body) {
   return response.json();
 }
 
-export async function appCheck({ env, fetchImpl, now = () => Date.now() }) {
+// Posts one completed clued-admission-verified check as the App. externalId
+// names the pull request and the run that decided ("pr:<n>:run:<run id>").
+export async function postAppCheck({ env, fetchImpl, now = () => Date.now(), headSha, success, title, summary, prNumber }) {
   const appId = (env.CLUED_ADMISSION_APP_ID ?? "").trim();
   const key = (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? "").trim();
   if (!appId || !key) return { posted: false, reason: "the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)" };
-  const headSha = (env.ADMISSION_HEAD_SHA ?? "").trim();
-  if (!/^[0-9a-f]{40}$/.test(headSha)) return { posted: false, reason: "the admission step reported no head commit; nothing to post (the required check stays missing)" };
-  const success = env.ADMISSION_OUTCOME === "success";
   const repository = env.GITHUB_REPOSITORY;
   try {
     const jwt = appJwt(appId, key, Math.floor(now() / 1000));
     const installation = await appRequest(fetchImpl, env, "GET", `/repos/${repository}/installation`, jwt);
     const token = await appRequest(fetchImpl, env, "POST", `/app/installations/${installation.id}/access_tokens`, jwt,
       { repositories: [repository.split("/")[1]], permissions: { checks: "write" } });
-    const verdict = (env.ADMISSION_VERDICT ?? "").trim() || (success ? "ADMITTED" : "NOT ADMITTED");
-    const prNumber = String(env.ADMISSION_PR_NUMBER ?? "").trim();
+    const number = String(prNumber ?? "").trim();
     const runId = String(env.GITHUB_RUN_ID ?? "").trim();
-    const externalId = /^[0-9]{1,10}$/.test(prNumber) && /^[0-9]{1,20}$/.test(runId) ? `pr:${prNumber}:run:${runId}` : undefined;
+    const externalId = /^[0-9]{1,10}$/.test(number) && /^[0-9]{1,20}$/.test(runId) ? `pr:${number}:run:${runId}` : undefined;
     const check = await appRequest(fetchImpl, env, "POST", `/repos/${repository}/check-runs`, token.token, {
       name: APP_CHECK_NAME, head_sha: headSha, status: "completed", conclusion: success ? "success" : "failure",
       ...(externalId ? { external_id: externalId } : {}),
-      output: { title: verdict, summary: `clued-work-admission ${success ? "admitted" : "did not admit"} this head (run ${env.GITHUB_RUN_ID ?? "?"}).` },
+      output: { title, summary },
     });
     return { posted: true, head_sha: headSha, conclusion: success ? "success" : "failure", check_run_id: check.id ?? null };
   } catch (error) {
     return { posted: false, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+export async function appCheck({ env, fetchImpl, now = () => Date.now() }) {
+  const headSha = (env.ADMISSION_HEAD_SHA ?? "").trim();
+  if (!/^[0-9a-f]{40}$/.test(headSha)) {
+    const configured = (env.CLUED_ADMISSION_APP_ID ?? "").trim() && (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? "").trim();
+    if (!configured) return { posted: false, reason: "the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)" };
+    return { posted: false, reason: "the admission step reported no head commit; nothing to post (the required check stays missing)" };
+  }
+  const success = env.ADMISSION_OUTCOME === "success";
+  const verdict = (env.ADMISSION_VERDICT ?? "").trim() || (success ? "ADMITTED" : "NOT ADMITTED");
+  return postAppCheck({
+    env, fetchImpl, now, headSha, success, title: verdict, prNumber: env.ADMISSION_PR_NUMBER,
+    summary: `clued-work-admission ${success ? "admitted" : "did not admit"} this head (run ${env.GITHUB_RUN_ID ?? "?"}).`,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1338,6 +1598,7 @@ export async function appCheck({ env, fetchImpl, now = () => Date.now() }) {
 // and nothing changes.
 
 export const ADOPT_RPC = "clued_work_claim_adopt_v1";
+export const ADOPT_QUIET_REASONS = new Set(["no_copy_for_pr", "not_a_copy"]);
 
 export async function adoptMerged({ env, event, eventName, fetchImpl, workspace }) {
   const pr = event && event.pull_request;
@@ -1406,7 +1667,13 @@ export async function adoptMerged({ env, event, eventName, fetchImpl, workspace 
     }
     if (body.status !== "ok") throw new Error(`Clued ${ADOPT_RPC} returned status ${String(body.status)} (${detail})`);
     result.adopted = body.adopted === true;
-    if (!result.adopted) result.reason = typeof body.reason === "string" ? body.reason : "not adopted";
+    if (!result.adopted) {
+      result.reason = typeof body.reason === "string" ? body.reason : "not adopted";
+      // Re-review 7, m6: only "this pull request is no copy" is a quiet
+      // outcome. Anything else (admission_binding_required after a rotation,
+      // an unknown answer) leaves the race undecided, so the job fails.
+      if (!ADOPT_QUIET_REASONS.has(result.reason)) result.error = `not adopted: ${result.reason}`;
+    }
   } catch (error) {
     result.error = error instanceof Error ? error.message : String(error);
   }

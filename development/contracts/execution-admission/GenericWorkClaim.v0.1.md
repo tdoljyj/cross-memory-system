@@ -1,6 +1,6 @@
 # Generic Work Claim v0.1：任意资源、一个门卫多个门口、领取模式
 
-状态：**设计已合入（PR #501）；§7.2 第 1–4 步已上生产（第 3 步多份模式 2026-10-03 随 PR #523 与 Worker 发布上线）；§10 第 1、3 步已上生产。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
+状态：**设计已合入（PR #501）；复审 7 的文档更正见 §4.1、§8、§10.6；§7.2 第 1–4 步已上生产（第 3 步多份模式 2026-10-03 随 PR #523 与 Worker 发布上线）；§10 第 1、3 步已上生产。** 本文不授予实施、迁移、发布、合并或权限变更；每一步实施由 Owner 逐步授权。
 
 - 第 1 步（Owner 授权 2026-10-02，Task `e9a10dbb`）：迁移 `20261002210000_work_claims_resource_kinds.sql`，测试 `apps/clued-cloud/tests/work-claims-resource-kinds-db.test.mjs`。
   - 登记了 `repo`、`storage`、`record` 三个 kind，当前只有"认领时冲突"这一个门口。
@@ -145,7 +145,7 @@ Agent 经 Clued 写入时，门卫只拦撞车（Decision `2a7391ff` 第 1 条�
 - 别人的活认领（ACTIVE 或 DRAINING、未过期）覆盖这份资源：拒绝，返回 `work_claim_conflict` 和冲突认领的 Task、持有者、到期时间、重叠的资源。不排队、不重试。
 - 写入方出示了自己的认领（`claim_id` + `fence`）：该认领须有效且覆盖本次资源，否则拒绝（与 v1 一致：认领不能"顺便"覆盖它没声明的东西）。
 
-"别人"按认领判，不按 Binding 判：同一 Binding 下的另一个会话持有的认领也算别人，因为 Owner 的所有 Claude Code 会话共用一个 Binding（Decision `533a5286`）。
+"别人"按认领判，不按 Binding 判：同一 Binding 下的另一个会话持有的认领也算别人，因为 Owner 的所有 Claude Code 会话共用一个 Binding（Decision `533a5286`）。这只在写入方**不出示**认领时成立（复审 7 m4 更正）：持有者按 Binding 记，`active_work_claims` 把 `claim_id`、`fence`、`lease_version` 给同一用户的所有会话，所以同一 Binding 的任何会话都能出示、续期、释放或改为 DRAINING 另一个会话的认领。这是有意的（合同 §1.7：任何会话都能续期），同一 Binding 的会话之间因此彼此不受保护，只防误撞、不防故意。
 
 ### 4.2 Clued 存储（首个默认门口）
 
@@ -247,6 +247,8 @@ Record 已经有 CAS（`base_version`）：两个 Agent 同时改同一条 Recor
 - `collision_only` 门口下，两个都**没有**认领的 Agent 同时写同一份资源：门卫放行两者，由资源自身的版本机制（Drive revision、Record CAS）兜底。
 - 多份模式在 GitHub 上：从第一份合并到采纳记录完成之间合并的第二份（§5.3）。
 - 判定只在门口调用时成立；认领之后的过期、被接管，只影响之后的写入。
+- 同一 Binding 的会话之间（复审 7 m4，§4.1）：能出示、续期、释放彼此的认领。
+- GitHub 门口：PR 正文可以写别人的认领，用它合并或把它绑到自己的 PR（WorkClaimAdmission §4.7）。多份模式里也能借此决定采纳哪一份。
 
 ---
 
@@ -348,6 +350,7 @@ Owner 定的原则：规则要能支撑不同宿主的习惯，要成本低、�
 - 模型 token 仍然看不见。令牌桶只限制开工速度，不计 token。
 - Agent 不认领直接干活：与 v1 相同，只有门口（GitHub 合并、CI 重任务、Clued 写工具）拦得住。
 - 参数是按 2026-10-01 到 10-03 的数据定的，样本小；上线后按被拒回执调整。
+- 对抗性耗尽（复审 7）：令牌桶按「诚实并发」设计。任一 Binding 可以反复认领并释放别人的 Task，耗尽该 Task 的桶（8 个，每小时补 1 个）；同一 Binding 的会话也可以用不同的 `holder_session_ref` 占满该 Binding 的 10 个活认领。只能事后从回执发现。
 
 ### 10.7 分步（每步单独请 Owner 授权）
 

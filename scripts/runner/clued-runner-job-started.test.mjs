@@ -56,6 +56,11 @@ test("runner hook: main's own runs start without any call", async () => {
   assert.equal(workflowPathOf(env()), ".github/workflows/clued-g4-database.yml");
 });
 
+test("runner hook (re-review 7, m1): pull_request_target counts as main only for a pull request into main", async () => {
+  const { result, calls } = await run({ GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REF: "refs/heads/main" }, {}, prEvent("feature"));
+  assert.deepEqual([result.allow, result.reason, calls.length], [false, "pull_request_target for a pull request into feature, not main", 0]);
+});
+
 test("runner hook: other branches, other events and other repositories are refused", async () => {
   for (const [overrides, reason] of [
     [{ GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/feat/clued-two-level-views-v1" }, /push on refs\/heads\/feat/],

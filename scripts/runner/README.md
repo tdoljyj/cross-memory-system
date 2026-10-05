@@ -6,7 +6,7 @@ Task `869d2db7`, Owner Decision `b0c53143`. Every self-hosted runner that serves
 
 A job starts only when its run is one of the following:
 
-- **On `main`:** a push, a schedule, `workflow_run`, `pull_request_target`, or a manual dispatch.
+- **On `main`:** a push, a schedule, `workflow_run`, `pull_request_target`, or a manual dispatch. A `pull_request_target` run counts only for a pull request into `main` (re-review 7, m1): it runs on `main`'s ref whatever the pull request's base, and a workflow may check out that base, which is the Agent's to edit when it is another branch.
 - **A pull request into `main` that changes no file under `.github/workflows/`.** Each workflow keeps its `admission-gate` job, which waits for the Clued admission of the pull request.
 - **A pull request into `main` that changes a workflow,** once `main`'s admission run of the same event as the job's run has succeeded.
   - That admission run is the newest `pull_request_target` run of `clued-work-admission.yml` on the head created no earlier than 15 seconds before the job's run. GitHub creates the runs of one event together. Skipped runs are left out: the admission job skips pull requests into other branches.
@@ -58,14 +58,22 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
    On Windows, the hook line points to `C:\ProgramData\CluedRunnerHook\clued-runner-job-started.ps1`, and the node line points to `externals\node20\bin\node.exe`.
 4. **Check the output.** Watch one pull request run and one push to `main`. Each job log starts with a "Set up runner" section that shows `clued-runner-hook: ALLOW ...` or `WOULD REFUSE ...`.
 5. **Turn on enforcement.** Set `CLUED_RUNNER_HOOK_ENFORCE=true` and restart the runner.
+6. **Make the setting unreachable from jobs (required for a hard guarantee).** Every job runs as the runner's service account, including the ungated short checks that run a pull request's own code. On a standard install that account owns the runner directory and its `.env`, so a job can delete the hook line or set `CLUED_RUNNER_HOOK_ENFORCE=false`, and the next listener restart (a self-update, a service restart, a reboot) turns the check off for every later job (re-review 7, MAJOR-4). Do one of the following:
+   - **Ephemeral runners (recommended).** Register each runner with `--ephemeral` (or a just-in-time config) on a machine or VM that is reset after one job. A job then cannot leave anything behind for the next one.
+   - **A hardened persistent runner.**
+     - Linux: put the five settings in a root-owned systemd drop-in (`/etc/systemd/system/<runner service>.d/clued-hook.conf`, one `Environment=` line each) instead of `.env`. Make the runner directory, `.env`, `.runner`, `.credentials*`, `bin/` and `externals/` owned by root and only readable by the service account; leave `_work/` and `_diag/` writable. Configure the runner with `--disableupdate` (a self-update needs to write `bin/`) and update it by hand. Set `kernel.yama.ptrace_scope` to 1 or more so a job cannot attach to the listener.
+     - Windows: put the settings in the service's `Environment` value under `HKLM\SYSTEM\CurrentControlSet\Services\<runner service>` (administrators only). Give the service account Read on the runner folder except `_work` and `_diag`, and configure the runner with `--disableupdate`.
+   - Either way, check after a restart that `clued-runner-hook: ALLOW ...` still appears in a job's "Set up runner" section.
+
+   The token file stays readable by jobs: the check runs as the same account. It is a read-only token (Actions and Contents: read) for this repository, which the job's own `GITHUB_TOKEN` can already read.
 
 ## What it does not protect
 
-- **Write access to the runner machine.** An Agent that can write the runner machine, its `.env` file, or this directory can change or remove the check. Keep Agents off the runner machines, or keep these files out of their reach.
+- **Write access to the runner machine.** A job is an Agent's code on the runner machine. Without step 6, any job that runs a pull request's code (the ungated short checks below) can turn the check off for later jobs by editing `.env`. An Agent that can log in to the runner machine, or a job on a runner without step 6, can change or remove the check.
 - **Non-workflow code.** A pull request that changes no workflow still runs its own code in the jobs `main` defines.
   - In the gated workflows, the heavy jobs wait for the admission gate.
-  - The ungated short checks run anyway, even for a pull request no claim covers. These are the self-hosted workflows without an `admission-gate` job, for example `model-program-*`, `mps03-native-agent`, `multitrack-governance-projection`, `node-profile-policy`, `runner-budget-policy`, `gitleaks` and `trivy`.
+  - The ungated short checks run anyway, even for a pull request no claim covers. These are the self-hosted workflows without an `admission-gate` job, for example `model-program-*`, `mps03-native-agent`, `multitrack-governance-projection`, `node-profile-policy`, `runner-budget-policy`, `gitleaks` and `trivy`; also `memory-publication-gate` (`pull_request_target`, pull requests into `main` only, `main`'s verifier) and `public-mcp-gate-receipt` (`workflow_run`, `main`'s code), which run once per qualifying pull request event with no claim.
   - Each of their self-hosted jobs has a timeout of 25 minutes or less, except `model-program-m0`. That file's hash is pinned in the frozen M0 manifest, so it keeps GitHub's 6-hour default. (`clued-integration-runtime-nightly` has 75 minutes, but runs on `main` only.)
   - The admission check refuses a pull request that adds a self-hosted job to an ungated workflow, moves a hosted job to a self-hosted runner, drops or raises a self-hosted job's timeout, or adds or changes its `strategy` (a matrix).
 - **Draft pull requests.** The hourly re-verification skips drafts, so a draft's admission is not re-checked after its claim ends. A draft's runs still need an admission run of their own event.
-- **`main`'s own runs.** Anyone who can dispatch workflows can start `main`'s workflows (for example `clued-integration-runtime-nightly.yml`). They run `main`'s reviewed code and are not metered.
+- **`main`'s own runs.** Anyone who can dispatch workflows can start `main`'s workflows (for example `clued-integration-runtime-nightly.yml`). They run `main`'s code and are not metered. `main`'s code is not reviewed by a person: the ruleset requires no approval, and Agents merge their own pull requests once the checks pass. Admission asks the Owner (an Owner Grant on the head commit) only for the changes listed in WorkClaimAdmission §4.6 (this directory, the admission and release guards, workflows with an environment, new secrets, new triggers on self-hosted workflows); any other change to a workflow's steps or to the code a job runs reaches `main` without the Owner.

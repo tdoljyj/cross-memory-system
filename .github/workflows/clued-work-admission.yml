@@ -90,6 +90,8 @@ jobs:
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
           CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
+          # Re-review 7, MAJOR-3: protected changes need an Owner Grant on the head.
+          CLUED_OWNER_REVIEW_ENFORCE: ${{ vars.CLUED_OWNER_REVIEW_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode required
       # Owner Decision 37e01bb1: the same result once more as the Owner's
