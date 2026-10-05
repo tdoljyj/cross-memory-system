@@ -236,7 +236,8 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       for (const row of rows) assert.equal(row.any_execute, false, row.f);
       const publicRpcs = rows.filter((row) => row.f.startsWith('clued_integration_') || row.f.startsWith('clued_user_integration_v1'))
         .map((row) => row.f.replace(/\(.*$/, '')).sort();
-      assert.deepEqual(publicRpcs, [...BINDING_RPCS, 'clued_user_integration_v1'].sort());
+      // PR-2's public RPCs; later S2c PRs add theirs, covered by their own test files (PR-3: integration-runtime-verification-db)
+      for (const name of [...BINDING_RPCS, 'clued_user_integration_v1']) assert.ok(publicRpcs.includes(name), name);
     });
 
     // the §5.13 target grants, exactly as the flag-enabling migration will apply them (§13.0)
@@ -248,8 +249,9 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
           has_function_privilege(r.rolname, p.oid, 'execute')) roles
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
-        where n.nspname = 'public' and (p.proname like 'clued\\_integration\\_%' or p.proname = 'clued_user_integration_v1')
-        group by p.proname order by p.proname`);
+        where n.nspname = 'public' and p.proname = any($1)
+        group by p.proname order by p.proname`, [[...BINDING_RPCS, 'clued_user_integration_v1']]);
+      assert.equal(rows.length, BINDING_RPCS.length + 1);
       for (const row of rows) {
         assert.deepEqual(row.roles, row.proname === 'clued_user_integration_v1' ? ['authenticated'] : ['anon', 'authenticated'], row.proname);
       }
