@@ -578,6 +578,10 @@ export const PROTECTED_PATHS = [
   ".gitattributes",
   "**/.gitattributes",
   ".gitmodules",
+  // Re-review 11, NIT: npm configuration decides where the dependencies
+  // that run with production credentials come from.
+  ".npmrc",
+  "**/.npmrc",
 ];
 
 export function ownerReviewEnforced(env) {
@@ -809,10 +813,16 @@ async function summarizeWorkflows(fetchImpl, env, repository, headSha, changedPa
 // it. Re-review 9, NIT: until the Owner turns enforcement on, the door is not
 // asked at all (it would open an Owner request for every such head); the
 // summary only says that the Owner would be asked.
-async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, outcome) {
+// Path names come from the pull request: only plain characters reach the
+// summary, the Owner's note and the check (re-review 10 MINOR-1, re-review 11 NIT).
+export function plainFinding(finding) {
+  return String(finding).replace(/[^A-Za-z0-9._/*:() -]/g, "?").slice(0, 160);
+}
+
+async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, outcome, baseTip) {
   const enforced = ownerReviewEnforced(env);
   const headSha = pr.head.sha;
-  const summary = findings.join(", ");
+  const summary = findings.slice(0, 10).map(plainFinding).join(", ") + (findings.length > 10 ? `, and ${findings.length - 10} more` : "");
   if (!enforced) {
     outcome.owner_review = { enforced, kind: "not_asked", resource: `repo:${repository}/${headSha}`, confirm_url: null, grant_id: null };
     outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): an Owner Grant on ${headSha} would be needed (${summary})`);
@@ -827,7 +837,8 @@ async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, 
   // compare link is the record of what changed.
   const listed = findings.slice(0, 10)
     .map((finding) => finding.replace(/^protected_path:/, "").replace(/[^A-Za-z0-9._/*-]/g, "?").slice(0, 120)).join(", ");
-  const compare = `https://github.com/${repository}/compare/${pr.base.sha}...${headSha}`;
+  // Re-review 11, NIT: compared with the tip the pull request must contain.
+  const compare = `https://github.com/${repository}/compare/${baseTip ?? pr.base.sha}...${headSha}`;
   const note = `${outcome.pr_ref ?? repository} @ ${headSha.slice(0, 12)}: ${findings.length} protected path(s) changed, see ${compare} (${listed}${findings.length > 10 ? `, and ${findings.length - 10} more` : ""})`.slice(0, 2000);
   let door;
   try {
@@ -1026,10 +1037,10 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     if (ownerFindings.length && outcome.verdict === "ADMITTED") {
       if (!tipCompare.upToDate && ownerReviewEnforced(env)) {
         outcome.verdict = "REJECTED";
-        outcome.reasons.push(`protected_change_not_up_to_date:${tipCompare.tip} (merge ${pr.base.ref} into the branch first; ${ownerFindings.join(", ")})`);
+        outcome.reasons.push(`protected_change_not_up_to_date:${tipCompare.tip} (merge ${pr.base.ref} into the branch first; ${ownerFindings.slice(0, 10).map(plainFinding).join(", ")}${ownerFindings.length > 10 ? `, and ${ownerFindings.length - 10} more` : ""})`);
       } else {
         if (!tipCompare.upToDate) outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): the branch would first need ${pr.base.ref} at ${tipCompare.tip}`);
-        await ownerReview(fetchImpl, env, repository, pr, workspace, ownerFindings, outcome);
+        await ownerReview(fetchImpl, env, repository, pr, workspace, ownerFindings, outcome, tipCompare.tip);
       }
     }
     // Re-review 7, m2: the file list was read after the head, so a push in
@@ -1117,7 +1128,10 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
       const verdict = `RE-VERIFIED: ${outcome.verdict ?? "NOT ADMITTED"}`;
       const posted = await postAppCheck({
         env, fetchImpl, now, headSha: pr.head.sha, success: false, title: verdict, prNumber: pr.number,
-        summary: `The hourly re-verification no longer admits #${pr.number}: ${outcome.reasons.join("; ") || "no reason given"}. Push a commit or edit the pull request once its claim admits it again.`,
+        summary: `The re-verification no longer admits #${pr.number}: ${outcome.reasons.join("; ") || "no reason given"}. `
+          + (outcome.reasons.some((reason) => reason.startsWith("protected_change_not_up_to_date:"))
+            ? `Merge ${pr.base.ref} into the branch and push; the new head needs its own Owner Grant.`
+            : "Push a commit or edit the pull request once it is admitted again."),
       });
       if (!posted.posted) throw new Error(`not admitted (${outcome.verdict}) and no failing check could be posted: ${posted.error ?? posted.reason}`);
       result.blocked.push({ pr: pr.number, check_run_id: posted.check_run_id, verdict: outcome.verdict, reasons: outcome.reasons });

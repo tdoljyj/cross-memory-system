@@ -121,6 +121,13 @@ test('owner grants: the admission door admits a protected commit once per grant 
       values($1,$2,'ci-admission',now(),$3)`, [userId, bindingIds.admission, receipt]);
     await assert.rejects(() => door('claude', { action, resources: [commitA] }), /owner_grant_door_binding_not_authorized/);
     await assert.rejects(() => door('stranger', { action, resources: [commitA] }), /owner_grant_door_binding_not_authorized/);
+    // Another user's door, once that user marks their own Binding, never sees this Owner's grants or requests.
+    const strangerReceipt = (await admin.query(`insert into public.clued_audit_receipts
+      (user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
+      values($1,$2,'global','binding_role_set','binding_role','ci-admission',1,'{}'::jsonb) returning id`,
+      [otherUser, bindingIds.stranger])).rows[0].id;
+    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
+      values($1,$2,'ci-admission',now(),$3)`, [otherUser, bindingIds.stranger, strangerReceipt]);
 
     // --- No grant: one pending request, reused, with the admission origin and
     // the check's note for the Owner. ---
@@ -185,6 +192,7 @@ test('owner grants: the admission door admits a protected commit once per grant 
     assert.deepEqual([(await door('admission', { action, resources: [commitA] })).admitted], [true]);
     committed(await native('clued_owner_grant_revoke_v1', { grant_id: exactB.grant.grant_id }));
     assert.equal((await door('admission', { action, resources: [commitB] })).admitted, false);
+    assert.equal((await door('stranger', { action, resources: [commitA] })).admitted, false, "another user's door never uses this Owner's grant");
     committed(await native('clued_owner_grant_revoke_v1', { grant_id: once.grant.grant_id }));
     assert.equal((await door('admission', { action, resources: [commitA] })).admitted, false);
     await assert.rejects(() => door('admission', { action, resources: ['repo:tdoljyj/cross-memory-system/*'] }),

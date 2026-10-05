@@ -228,7 +228,7 @@ Owner 同一天内同类的确认，只需要在第一次时选"管一段时间"
   - 只有资源里精确写着该提交的有效授权放行，通配的不算；门口拒绝带 `*`、`?` 的资源（复审 8 MINOR-3）。一份授权对同一提交只用一次，之后同一提交的运行凭第一次的 `OWNER_GRANT_USED` 回执（`door: ci-admission`）放行，授权到期也不影响，直到撤销。
   - 没有授权就复用或新建这个 Binding 的待确认请求（建议 1 次、24 小时），附上 PR、受保护路径数与 compare 链接作为说明（`agent_note`，确认页标为「准入检查说明」，复审 9），准入判 REJECTED 并给出确认链接。
   - 复审 9 起（合同 v30 §1.7）：Agent 先推送，由准入检查开请求，说明里有 PR 与 compare 链接；只有门口写的请求（回执 `origin: ci-admission`）在确认页标为「准入检查说明」，其余仍是 Agent 说明（未核实）。`repo.protected_change` 不能打包，确认页只给精确提交一个选项（迁移 `20261005140000_owner_review_hardening.sql`）。强制开关打开前不调用门口。
-  - 只有标了 `ci-admission` 的 Binding 能调，Owner 标出之前谁都不能用（复审 10 MAJOR-3，与其他角色「未标出时谁都能做」不同），只需 `context:read`。Agent 不能用 `clued_owner_request` 开这个动作的请求（`owner_request_action_door_only`）；确认步骤只接受请求本身的提交。PR 必须包含 base 分支当前 tip（复审 10），所以授权的提交就是合并结果。
+  - 只有标了 `ci-admission` 的 Binding 能调，Owner 标出之前谁都不能用（复审 10 MAJOR-3，与其他角色「未标出时谁都能做」不同），只需 `context:read`。Agent 不能用 `clued_owner_request` 开这个动作的请求（`owner_request_action_door_only`）；确认步骤只接受请求本身的提交。PR 必须包含 base 分支当前 tip（复审 10），所以在合并时 main 没有前进的前提下，授权的提交就是合并结果；main ruleset 打开「要求分支最新」后这个前提才由 GitHub 保证（WorkClaimAdmission §4.7）。
 - 迁移 `20261005120000_owner_grants_admission_door.sql`，测试 `apps/clued-cloud/tests/owner-grants-admission-door-db.case.mjs`（由 `owner-grants-release-door-db.test.mjs` 引入运行）、`scripts/ci/clued-work-admission.test.mjs`。Owner 设仓库变量 `CLUED_OWNER_REVIEW_ENFORCE=true` 后才拦，之前只提示。
 
 ---

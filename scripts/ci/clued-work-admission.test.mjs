@@ -1361,7 +1361,7 @@ test("evaluate (re-review 7, MAJOR-3): a protected change is admitted only with 
   assert.match(outcome.reasons[0], /^owner_review_required \(protected_path:scripts\/ci\/clued-work-admission\.mjs\); ask the Owner to approve https:\/\/clued\.pixelgrav\.com\/confirm\/r1$/);
   const asked = calls.find((c) => c.url.endsWith(OWNER_REVIEW_RPC));
   assert.deepEqual(asked.body.p_input, { action: "repo.protected_change", resources: [`repo:o/r/${HEAD}`],
-    note: `o/r#452 @ aaaaaaaaaaaa: 1 protected path(s) changed, see https://github.com/o/r/compare/${BASE}...${HEAD} (scripts/ci/clued-work-admission.mjs)` });
+    note: `o/r#452 @ aaaaaaaaaaaa: 1 protected path(s) changed, see https://github.com/o/r/compare/${TIP}...${HEAD} (scripts/ci/clued-work-admission.mjs)` });
   assert.equal(asked.body.p_token_hash, sha256Hex("clued_bnd_test"));
   ({ outcome } = await run({ body: { status: "ok", admitted: true, grant: { grant_id: "g1", replayed: true } } }));
   assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"]);
@@ -1464,9 +1464,10 @@ test("owner review (re-review 10, MINOR-1): the note's path names are plain and 
   assert.match(note, /, and 2 more\)$/);
 });
 
-test("owner review (re-review 9, MINOR-2): checkout attributes and submodules are protected", () => {
-  assert.deepEqual(protectedPathFindings([".gitattributes", "apps/clued-cloud/.gitattributes", ".gitmodules", "docs/.gitkeep"]),
-    ["protected_path:.gitattributes", "protected_path:apps/clued-cloud/.gitattributes", "protected_path:.gitmodules"]);
+test("owner review (re-review 9, MINOR-2): checkout attributes, submodules and npm configuration are protected", () => {
+  assert.deepEqual(protectedPathFindings([".gitattributes", "apps/clued-cloud/.gitattributes", ".gitmodules", "docs/.gitkeep", "apps/clued-cloud/.npmrc", ".npmrc"]),
+    ["protected_path:.gitattributes", "protected_path:apps/clued-cloud/.gitattributes", "protected_path:.gitmodules",
+      "protected_path:apps/clued-cloud/.npmrc", "protected_path:.npmrc"]);
 });
 
 test("reverify (re-review 9, MINOR-4): an unavailable Owner review door leaves the check alone", async () => {
@@ -1484,4 +1485,13 @@ test("reverify (re-review 9, MINOR-4): an unavailable Owner review door leaves t
   assert.deepEqual(result.errors.map((e) => e.pr), [452], JSON.stringify(result));
   assert.match(result.errors[0].error, /Owner review door is unavailable/);
   assert.ok(!calls.some((c) => c.method === "POST" && c.url.endsWith("/check-runs")));
+});
+
+test("evaluate (re-review 11, NIT): refusal reasons carry only plain path characters", async () => {
+  const TIP_COMPARE = `GET https://api.test/repos/o/r/compare/${TIP}...${HEAD}`;
+  const { fetchImpl } = fakeFetch({ [FILES]: { body: [{ filename: ".github/workflows/ok <b>approve</b>.yml" }] },
+    [TIP_COMPARE]: { body: { status: "diverged", files: [] } }, [COMPARE]: { body: { status: "ahead" } }, [VERIFY]: { body: admittedPayload } });
+  const outcome = await evaluateIn({ env: env({ CLUED_OWNER_REVIEW_ENFORCE: "true" }), event: withClaim(), eventName: "pull_request", fetchImpl });
+  assert.match(outcome.reasons[0], /^protected_change_not_up_to_date:/);
+  assert.ok(!outcome.reasons[0].includes("<b>"), outcome.reasons[0]);
 });

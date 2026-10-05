@@ -20,6 +20,10 @@
 --    request itself; only the admission door does, with its own note.
 -- 6. Re-review 10, NIT: the confirmation step accepts, for this action, only
 --    the request's own resources, as the page offers.
+-- 7. Re-review 11, MINOR-3: a repo.protected_change request still pending
+--    from before this migration may have been opened by any Binding (before
+--    item 4) or by an Agent (before item 5), so it is closed as expired.
+--    Grants already given stay; the Owner reviews them on /grants.
 --
 -- Anchored patches: each replaces one statement and fails unless the anchor
 -- occurs exactly once.
@@ -69,5 +73,9 @@ $r$            from jsonb_array_elements(clued_private.owner_request_scope_optio
             or (v_req.action='repo.protected_change' and not (v_resources <@ v_req.resources))) then$r$);
 
 drop function clued_private.owner_review_hardening_patch_v1(text,text,text);
+
+update clued_private.owner_requests_v1
+  set expires_at=greatest(created_at+interval '1 millisecond',clock_timestamp())
+  where action='repo.protected_change' and status='pending' and expires_at>clock_timestamp();
 
 notify pgrst,'reload schema';
