@@ -54,6 +54,21 @@ import {
   withConfirmUrl,
   type OwnerRequestFeatureEnv,
 } from "./owner-requests";
+import {
+  INTEGRATION_REQUEST_RULE_REJECTIONS,
+  integrationBootstrap,
+  integrationCalls,
+  integrationHttpStatus,
+  integrationNativeRoute,
+  integrationRuleEnvelope,
+  integrationRuntimeEnabled,
+  integrationToolPolicies,
+  integrationTools,
+  isIntegrationPath,
+  isIntegrationTool,
+  type IntegrationFeatureEnv,
+  type IntegrationToolName,
+} from "./integrations";
 import { measurePack } from "./context-pack";
 import { permissionDenial, permissionDenialResult } from "./permission-guidance";
 import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION } from "./generated/agent-contract";
@@ -100,7 +115,8 @@ const RESOURCE_CENTER_AUTHORITY_CONTRACT = "clued.resource-center-authority/1";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
-export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv {
+export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv,
+  IntegrationFeatureEnv {
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
@@ -331,6 +347,8 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
         canary_phases: P6_CANARY_PHASES,
         canary_budget: P6_CANARY_BUDGET,
       },
+      // IntegrationRuntime §12.4: present only with CLUED_INTEGRATION_RUNTIME_V1 on
+      ...(env && integrationRuntimeEnabled(env) ? { integration_runtime: integrationBootstrap() } : {}),
     },
     supported_mcp_versions: SUPPORTED_MCP_VERSIONS,
   };
@@ -1465,6 +1483,7 @@ const tools = [
   ...contextTools,
   ...workClaimTools,
   ...ownerRequestTools,
+  ...integrationTools,
 ] as const;
 
 type PublicToolName = (typeof tools)[number]["name"];
@@ -1591,6 +1610,7 @@ export const publicToolPolicies = {
   },
   ...workClaimToolPolicies,
   ...ownerRequestToolPolicies,
+  ...integrationToolPolicies,
 } as const satisfies Record<PublicToolName, PublicToolPolicy>;
 
 function publishTool<T extends (typeof tools)[number]>(tool: T) {
@@ -1615,13 +1635,14 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {
   };
 }
 
-export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_WORK_CLAIMS_V1" | "CLUED_OWNER_REQUESTS_V1" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1">) {
+export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_WORK_CLAIMS_V1" | "CLUED_OWNER_REQUESTS_V1" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1" | "CLUED_INTEGRATION_RUNTIME_V1">) {
   const existing = tools.filter((tool) =>
     (!(tool.name in recordRpcByTool || tool.name in informationFlowRpcByTool) || recordsV2Enabled(env))
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
     && (!(tool.name in contextRpcByTool) || contextsEnabled(env))
     && (!(tool.name in workClaimRpcByTool) || workClaimsEnabled(env))
     && (tool.name !== OWNER_REQUEST_TOOL || ownerRequestsEnabled(env))
+    && (!isIntegrationTool(tool.name) || integrationRuntimeEnabled(env))
   ).map(publishTool);
   const binary = storageBinaryEnabled(env);
   return [...existing, ...(storageJobsEnabled(env) ? storageAgentToolsFor(binary) : []), ...(binary ? [storageUploadBeginTool] : []),
@@ -1929,6 +1950,8 @@ const REQUEST_RULE_REJECTIONS: Readonly<Record<string, string | null>> = {
   project_scope_mismatch: null,
   terminal_receipt_not_verified: null,
   terminal_restore_requires_explicit_authorization: null,
+  // IntegrationRuntime §11.2 (rule codes only; the authorization codes stay HTTP 403)
+  ...INTEGRATION_REQUEST_RULE_REJECTIONS,
 };
 
 // BUG-20261001-001: Hosts discard JSON-RPC data on non-200 responses. Project
@@ -2022,6 +2045,67 @@ async function callOwnerRequest(request: Request, env: ContinuityEnv, args: unkn
   const body = withConfirmUrl(sanitizeCluedResult(result), new URL(request.url).origin);
   const failed = (body as Record<string, unknown> | null)?.status === "rejected";
   return { content: [{ type: "text", text: JSON.stringify(body) }], structuredContent: body, isError: failed };
+}
+
+// IntegrationRuntime §12.3: Binding channel only (a clued_bnd_ token, else 403). The RPCs authenticate
+// the token hash themselves. A rule rejection, before or inside the Receipt, renders as one
+// request_rule shape; authorization denials stay HTTP 403; a Receipt-level conflict is retryable.
+async function callIntegrationTool(request: Request, env: ContinuityEnv, name: IntegrationToolName, args: unknown) {
+  const token = bearerToken(request);
+  if (!token) throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
+  if (!token.startsWith("clued_bnd_")) throw new HttpError(403, "Integration operations require a Clued Agent Binding.");
+  const tokenHash = await sha256(token);
+  // The transport facts the Canonical baseline checks (CRV-3) come from this request, never from the
+  // caller: an absent MCP-Protocol-Version header means 2025-03-26 (MCP Streamable HTTP).
+  const transport = { protocol_version: request.headers.get("mcp-protocol-version") ?? "2025-03-26",
+    build_sha: buildSourceCommit() };
+  let result: unknown;
+  try {
+    let previous: Record<string, unknown> | null = null;
+    for (const call of integrationCalls(name, args, transport)) {
+      const input = "request_id" in call.input && call.input.request_id === null
+        ? { ...call.input, request_id: previous?.request_id ?? null } : call.input;
+      result = await supabaseRequest(env, `/rest/v1/rpc/${call.rpc}`, {
+        method: "POST", body: JSON.stringify({ p_token_hash: tokenHash, p_input: input }),
+      });
+      previous = result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : null;
+    }
+  } catch (error) {
+    const rejection = requestRuleRejection(error);
+    if (!rejection) throw error;
+    return { content: [{ type: "text", text: JSON.stringify(rejection) }], structuredContent: rejection, isError: true };
+  }
+  const body = integrationRuleEnvelope(sanitizeCluedResult(result), REQUEST_RULE_REJECTIONS);
+  const status = (body as Record<string, unknown> | null)?.status;
+  return { content: [{ type: "text", text: JSON.stringify(body) }], structuredContent: body,
+    isError: status === "rejected" || status === "failed" };
+}
+
+// IntegrationRuntime §12.4 Native REST: account JWT only, every route forwards to
+// clued_user_integration_v1; flag off → 404. Path parameters override body fields.
+async function handleIntegrationApi(request: Request, env: ContinuityEnv) {
+  // flag off: 404 before anything else, including the origin check (§12.4)
+  if (!integrationRuntimeEnabled(env)) return json({ error: "Not found." }, 404);
+  validateOrigin(request, env);
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
+  const url = new URL(request.url);
+  const route = integrationNativeRoute(request.method, url.pathname);
+  if (!route) return json({ error: "Not found." }, 404, corsHeaders(request));
+  const { token } = await requireSupabaseUser(request, env);
+  const body = route.method === "POST" ? await parseBody(request) : {};
+  const input = { ...body, ...(route.bind ?? {}), op: route.op };
+  let result: unknown;
+  try {
+    result = await supabaseRequest(env, "/rest/v1/rpc/clued_user_integration_v1", {
+      method: "POST", userToken: token, body: JSON.stringify({ p_input: input }),
+    });
+  } catch (error) {
+    // A rule raised before the Receipt is the same 422 as one inside it, never an authorization 403.
+    const rejection = requestRuleRejection(error);
+    if (!rejection) throw error;
+    return json(rejection, 422, corsHeaders(request));
+  }
+  return json(result, integrationHttpStatus(result), corsHeaders(request));
 }
 
 async function callTool(
@@ -2182,6 +2266,11 @@ async function callTool(
   if (name === OWNER_REQUEST_TOOL) {
     if (!ownerRequestsEnabled(env)) throw new HttpError(404, "Clued owner requests are disabled.");
     return await callOwnerRequest(request, env, args);
+  }
+  if (isIntegrationTool(name)) {
+    // flag off: the name is unknown, exactly like any other (IntegrationRuntime §13.8 T-W-2)
+    if (!integrationRuntimeEnabled(env)) throw new HttpError(404, "Unknown Clued continuity tool.");
+    return await callIntegrationTool(request, env, name, args);
   }
   if (typeof name !== "string" || !(name in rpcByTool)) {
     throw new HttpError(404, "Unknown Clued continuity tool.");
@@ -3229,6 +3318,7 @@ async function handleContinuityRequestInner(
       return await handleRecordApi(request, env);
     }
     if (isInformationFlowPath(url.pathname)) return await handleInformationFlowApi(request, env);
+    if (isIntegrationPath(url.pathname)) return await handleIntegrationApi(request, env);
     if (url.pathname === "/api/bindings") {
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: corsHeaders(request) });
