@@ -39,6 +39,9 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-work-admission-reverify.yml": (
         "Work Claim Admission hourly re-verification: re-runs a passing admission check whose claim expired or moved; default-branch code only, no install, no pull request trigger."
     ),
+    "clued-release-tags.yml": (
+        "Release tagging (Task 6dfd7560): creates the VERSION and release/<date>-r<run> tags after a VERSION change on main or a successful production deploy; default-branch code only, no install, no pull request trigger."
+    ),
     "phase2-naming-surface-inventory.yml": (
         "Frozen historical exact-byte inventory workflow; modifying its execution contract would invalidate bound evidence."
     ),

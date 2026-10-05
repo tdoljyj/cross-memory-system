@@ -3,7 +3,8 @@ name: clued-components
 # Clued component versions (config/clued-components.json, Task 6dfd7560):
 # every component's files match its recorded digest and version marker, the
 # Worker's generated module matches the manifest, and a component that changed
-# against the base carries a higher version. Also runs the unit tests of the
+# against the base carries a higher version, and that VERSION and its git tag
+# agree (scripts/ci/clued_release_tags.py). Also runs the unit tests of the
 # manifest tool and of the SessionStart / resume version-check hook.
 # No paths filter: a component can live anywhere in the repository.
 
@@ -77,6 +78,9 @@ jobs:
           BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
         run: python3 scripts/clued_components.py check --base "$BASE"
       - run: python3 -m unittest tests.test_clued_components tests.test_clued_version_check -v
+      - name: VERSION and its git tag agree
+        run: python3 scripts/ci/clued_release_tags.py check
+      - run: python3 -m unittest scripts/ci/test_clued_release_tags.py -v
 
   untrusted-hosted:
     name: >-
@@ -105,3 +109,6 @@ jobs:
           BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
         run: python3 scripts/clued_components.py check --base "$BASE"
       - run: python3 -m unittest tests.test_clued_components tests.test_clued_version_check -v
+      - name: VERSION and its git tag agree
+        run: python3 scripts/ci/clued_release_tags.py check
+      - run: python3 -m unittest scripts/ci/test_clued_release_tags.py -v

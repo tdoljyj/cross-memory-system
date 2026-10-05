@@ -34,4 +34,6 @@ python3 scripts/clued_components.py check --base origin/main
 
 查看本机各组件版本：`python3 scripts/clued_components.py versions`。
 
+版本与 git tag：根 `VERSION` 的值就是产品版本 tag 名（如 `Clued-v1.6`），指向把 VERSION 改成该值的提交；每次生产发布成功会打 `release/<日期>-r<run 编号>`，说明里写明 VERSION 和各组件版本。两者都由 `clued-release-tags` 工作流自动创建，规则见 `ComponentVersioning.v0.1.md` §5。
+
 过期检测：Claude Code 开会话时，`scripts/hooks/clued_version_check.py` 读取服务的 `/.well-known/clued-continuity` 中的组件版本，与本 checkout 和本机安装的 Clued Skill 副本（`~/.claude/skills`、claude.ai 同步副本、`$CODEX_HOME/skills`）比对，旧版本、无版本号或文件不全都会提示；`clued_session_resume` 返回后再比对一次合同版本与组件版本。只在会话开始和 resume 时检查，不定时运行；`CLUED_VERSION_CHECK=off` 关闭，`=offline` 不读服务。
