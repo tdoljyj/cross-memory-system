@@ -114,7 +114,7 @@ class HookTest(unittest.TestCase):
                             CODEX_HOME=str(self.home / "codex"))
         self.assertIn(f"Clued Skill at {path} is version {LOCAL['skill.clued']}, "
                       f"the latest is {newer['skill.clued']}", text)
-        self.assertIn(f"This checkout is older than the Clued service: skill.clued", text)
+        self.assertIn("This checkout is older than the Clued service: skill.clued", text)
 
     def test_same_version_with_missing_files_is_reported(self):
         path = self.install_skill(".claude/skills/clued", LOCAL["skill.clued"], complete=False)
