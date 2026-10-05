@@ -29,6 +29,8 @@
     "test:integration-runtime:lifecycle": "node --test --test-force-exit tests/integration-runtime-lifecycle-db.test.mjs",
     "test:integration-runtime:worker": "node --test --test-force-exit tests/integration-runtime-worker.test.mjs",
     "test:integration-runtime:transport": "node --test --test-force-exit tests/integration-runtime-transport.test.mjs",
+    "test:integration-runtime:gate-evidence": "node --test --test-force-exit tests/integration-runtime-gate-evidence.test.mjs",
+    "integration-runtime:gate-evidence": "node evals/integration-runtime/gate-evidence.mjs",
     "test:mtpe:intake": "node --test --test-force-exit tests/mtpe-universal-intake-db.test.mjs tests/mtpe-frontier-eligibility-v2-db.test.mjs tests/mtpe-frontier-eligibility-v2-1-db.test.mjs tests/mtpe-owner-pin-consistency-db.test.mjs tests/mtpe-universal-intake-transport.test.mjs",
     "test:v2:red": "node --test tests/v2-red/*.test.mjs",
     "db:start": "npx --yes supabase@2.115.0 start",
