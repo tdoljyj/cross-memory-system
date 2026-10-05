@@ -148,6 +148,9 @@ test('T-W-2 flag off: bootstrap carries no integration_runtime key; /v1/integrat
       assert.equal(response.status, 404, `${method} ${pathname}`);
       assert.deepEqual(response.body, { error: 'Not found.' });
     }
+    // the flag check precedes the origin check: a cross-origin request is the same 404
+    const crossOrigin = await rest(production, 'POST', `/v1/integrations/${ID}/revoke`, { body: {}, headers: { origin: 'https://elsewhere.example' } });
+    assert.deepEqual(crossOrigin, { status: 404, body: { error: 'Not found.' } });
     for (const name of TOOLS) {
       const response = await callTool(production, name, { integration_id: ID });
       assert.equal(response.status, 404, name);
@@ -181,6 +184,8 @@ test('T-W-3 flag on: the seven tools match §12.2 and every existing tool defini
   const verify = on.find((tool) => tool.name === 'clued_integration_verify');
   assert.equal('transport' in verify.inputSchema.properties, false, 'the transport is never a caller input');
   assert.deepEqual(verify.inputSchema.properties.kind.enum, ['canonical_baseline', 'ready_profile']);
+  const identity = on.find((tool) => tool.name === 'clued_integration_identity_update');
+  assert.ok('active_binding_domain' in identity.inputSchema.properties, '§10.4 optional input');
   const install = on.find((tool) => tool.name === 'clued_integration_install');
   assert.deepEqual(install.inputSchema.properties.intent.enum, ['create_or_bind', 'bind_connection', 'rebind', 'reauthorization',
     'reinstall', 'recovery', 'adapter_migration', 'verification_repair']);
@@ -203,6 +208,15 @@ test('T-W-4 every 42501 code in the Integration migrations is exactly one class,
   }
   assert.ok(raised.size >= 40, `the scan found ${raised.size} codes`);
   const rules = Object.keys(integrations.INTEGRATION_REQUEST_RULE_REJECTIONS);
+  // the tables are exactly §11.2's, including rule codes raised only inside the Receipt
+  const contract = await fs.readFile(path.join(root, '../../development/contracts/integration-runtime/IntegrationRuntime.v0.1.8.md'), 'utf8');
+  const section = (start, end) => {
+    const text = contract.slice(contract.indexOf(start), contract.indexOf(end, contract.indexOf(start)));
+    return text.split('\n').filter((line) => /^\| `/.test(line))
+      .flatMap((line) => [...line.split('|')[1].matchAll(/`([a-z0-9_]+)`/g)].map((match) => match[1]));
+  };
+  assert.deepEqual(section('**授权（HTTP 403）**', '**请求规则').sort(), [...AUTHORIZATION].sort());
+  assert.deepEqual(section('**请求规则', 'v0.1.2（MINOR-N3）').sort(), [...rules].sort());
   assert.deepEqual([...integrations.INTEGRATION_AUTHORIZATION_CODES], AUTHORIZATION);
   assert.deepEqual(AUTHORIZATION.filter((code) => rules.includes(code)), [], 'the classes are disjoint');
   for (const code of raised) assert.ok(AUTHORIZATION.includes(code) !== rules.includes(code), `${code} is in exactly one class`);
@@ -259,6 +273,14 @@ test('T-W-4 every 42501 code in the Integration migrations is exactly one class,
     assert.equal(ok.body.result.isError, false);
     assert.equal(ok.body.result.structuredContent.supplemental.integration_state, 'ACTIVE');
 
+    // REST: a rule raised before the Receipt is the same 422 as one inside it; authorization stays 403
+    reply = () => Response.json({ code: '42501', message: 'binding_not_adoptable' }, { status: 403 });
+    const raisedRest = await rest(enabled, 'POST', '/v1/integrations/adopt-binding', { body: { binding_id: ID } });
+    assert.equal(raisedRest.status, 422);
+    assert.deepEqual(raisedRest.body, { status: 'rejected', error: { code: 'binding_not_adoptable', category: 'request_rule',
+      message: RULE_MESSAGE, hint: integrations.INTEGRATION_REQUEST_RULE_REJECTIONS.binding_not_adoptable } });
+    reply = () => Response.json({ code: '42501', message: 'integration_not_owned' }, { status: 403 });
+    assert.equal((await rest(enabled, 'GET', `/v1/integrations/${ID}`)).status, 403);
     // REST: a rule rejection is 422, a conflict 409, committed 200; the body is the Native envelope
     for (const [body, status] of [[{ status: 'rejected', error_code: 'lifecycle_transition_invalid' }, 422],
       [{ status: 'rejected', error_code: 'integration_version_conflict' }, 409],
@@ -285,6 +307,12 @@ test('T-W-5 verify: the Worker injects the transport facts and overwrites a call
     // no header → MCP Streamable HTTP 2025-03-26; a Node test build has no 40-hex build SHA → null
     assert.deepEqual(first.body.p_input, { ...args, transport: { protocol_version: '2025-03-26', build_sha: null } });
     assert.deepEqual(second.body.p_input.transport, { protocol_version: '2025-06-18', build_sha: null });
+    // ready_profile never reads it: no transport at all, so a retry's idempotency hash is stable
+    const ready = { ...args, kind: 'ready_profile', profile_id: 'test.read', profile_version: 1 };
+    await callTool(enabled, 'clued_integration_verify', ready, { headers: { 'mcp-protocol-version': '2025-06-18' } });
+    const { transport: _ignored, ...readyInput } = ready;
+    void _ignored;
+    assert.deepEqual(rpcCalls().at(-1).body.p_input, readyInput);
   } finally { restore(); }
 });
 

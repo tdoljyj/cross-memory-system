@@ -2084,8 +2084,9 @@ async function callIntegrationTool(request: Request, env: ContinuityEnv, name: I
 // IntegrationRuntime §12.4 Native REST: account JWT only, every route forwards to
 // clued_user_integration_v1; flag off → 404. Path parameters override body fields.
 async function handleIntegrationApi(request: Request, env: ContinuityEnv) {
+  // flag off: 404 before anything else, including the origin check (§12.4)
+  if (!integrationRuntimeEnabled(env)) return json({ error: "Not found." }, 404);
   validateOrigin(request, env);
-  if (!integrationRuntimeEnabled(env)) return json({ error: "Not found." }, 404, corsHeaders(request));
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
   const url = new URL(request.url);
   const route = integrationNativeRoute(request.method, url.pathname);
@@ -2093,9 +2094,17 @@ async function handleIntegrationApi(request: Request, env: ContinuityEnv) {
   const { token } = await requireSupabaseUser(request, env);
   const body = route.method === "POST" ? await parseBody(request) : {};
   const input = { ...body, ...(route.bind ?? {}), op: route.op };
-  const result = await supabaseRequest(env, "/rest/v1/rpc/clued_user_integration_v1", {
-    method: "POST", userToken: token, body: JSON.stringify({ p_input: input }),
-  });
+  let result: unknown;
+  try {
+    result = await supabaseRequest(env, "/rest/v1/rpc/clued_user_integration_v1", {
+      method: "POST", userToken: token, body: JSON.stringify({ p_input: input }),
+    });
+  } catch (error) {
+    // A rule raised before the Receipt is the same 422 as one inside it, never an authorization 403.
+    const rejection = requestRuleRejection(error);
+    if (!rejection) throw error;
+    return json(rejection, 422, corsHeaders(request));
+  }
   return json(result, integrationHttpStatus(result), corsHeaders(request));
 }
 

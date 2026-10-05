@@ -29,16 +29,29 @@ const BINDING_RPCS = ['clued_integration_request_open_v1', 'clued_integration_cr
 const sha = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const key = (label) => `${label}-${crypto.randomUUID()}`;
 
+// Workers KV as the provider uses it, including expiry: expirationTtl / expiration evict a row once
+// Date.now passes it. That eviction is the provider's expiry cleanup; it never goes through delete.
 class MemoryKV {
   rows = new Map();
-  async get(name, type) {
-    const value = this.rows.get(name);
-    return value === undefined ? null : type === 'json' || type?.type === 'json' ? JSON.parse(value) : value;
+  deletes = [];
+  live(name) {
+    const row = this.rows.get(name);
+    if (row && row.expiresAt !== null && Date.now() >= row.expiresAt) this.rows.delete(name);
+    return this.rows.get(name);
   }
-  async put(name, value) { this.rows.set(name, value); }
-  async delete(name) { this.rows.delete(name); }
+  async get(name, type) {
+    const row = this.live(name);
+    return row === undefined ? null : type === 'json' || type?.type === 'json' ? JSON.parse(row.value) : row.value;
+  }
+  async put(name, value, options = {}) {
+    const expiresAt = options.expiration ? options.expiration * 1000
+      : options.expirationTtl ? Date.now() + options.expirationTtl * 1000 : null;
+    this.rows.set(name, { value, expiresAt });
+  }
+  async delete(name) { this.deletes.push(name); this.rows.delete(name); }
   async list({ prefix = '' } = {}) {
-    return { keys: [...this.rows.keys()].filter((name) => name.startsWith(prefix)).map((name) => ({ name })), list_complete: true, cursor: '' };
+    const keys = [...this.rows.keys()].filter((name) => name.startsWith(prefix) && this.live(name));
+    return { keys: keys.map((name) => ({ name })), list_complete: true, cursor: '' };
   }
 }
 
@@ -290,12 +303,21 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
       const evaluation = await evaluate(id);
       assert.equal(evaluation.integration_state, 'REAUTH_REQUIRED');
 
-      // the provider's own expiry handling, past the token and grant lifetimes
+      // the provider's own expiry cleanup: past the token and grant lifetimes Workers KV evicts the grant
+      // and its tokens (the provider stores them with expiration / expirationTtl)
+      const [userId, grantId] = tokens.access_token.split(':');
+      const grantRows = async () => (await env.OAUTH_KV.list({ prefix: `grant:${userId}:${grantId}` })).keys.length
+        + (await env.OAUTH_KV.list({ prefix: `token:${userId}:${grantId}:` })).keys.length;
+      assert.ok(await grantRows() > 0, 'the grant and its tokens are stored before expiry');
+      const deletes = env.OAUTH_KV.deletes.length;
       Date.now = () => previousNow() + 3 * 86_400_000;
       try {
+        assert.equal(await grantRows(), 0, 'expired: evicted');
         assert.ok((await run('/oauth/token', form({ grant_type: 'refresh_token', refresh_token: refresh, client_id: clientId, resource }))).status >= 400);
         assert.ok((await mcp(tokens.access_token, 'clued_integration_status', { integration_id: id })).status >= 400);
       } finally { Date.now = previousNow; }
+      assert.deepEqual(env.OAUTH_KV.deletes.slice(deletes).filter((name) => name.includes(grantId)), [],
+        'the cleanup is eviction, not a delete through the revocation hook');
 
       assert.equal(rpcLog.includes('clued_authorization_revoke_issuer_v12'), false, rpcLog.join());
       assert.equal(await issuerAudit(), audit, 'no revoke_issuer audit row');

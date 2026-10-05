@@ -134,6 +134,7 @@ export const integrationTools = [
         base_version: baseVersionSchema,
         tenant: dimensionSchema,
         account: dimensionSchema,
+        active_binding_domain: { type: "string", minLength: 1, maxLength: 80 },
       },
       additionalProperties: false,
     },
@@ -141,7 +142,7 @@ export const integrationTools = [
   {
     name: "clued_integration_verify",
     description:
-      "Record a verification of this Integration: kind canonical_baseline checks the Canonical runtime baseline from server-observed evidence (the Worker supplies the MCP transport facts; a caller-supplied transport is ignored); kind ready_profile checks one READY profile and requires the Integration to be operable. Failures are recorded as FAIL results with a Receipt." + INTEGRATION_CONNECTION_SELF,
+      "Record a verification of this Integration: kind canonical_baseline checks the Canonical runtime baseline from server-observed evidence (the Worker supplies the MCP transport facts; a caller-supplied transport is ignored); kind ready_profile checks one READY profile and requires the Integration to be operable. Failures are recorded as FAIL results with a Receipt. A canonical_baseline retry with the same idempotency_key replays only under the same MCP protocol version and Clued build; after either changes, verify again with a new idempotency_key." + INTEGRATION_CONNECTION_SELF,
     inputSchema: {
       type: "object",
       required: ["kind", "idempotency_key", "integration_id", "base_version"],
@@ -231,7 +232,8 @@ function objectArgs(args: unknown): Record<string, unknown> {
 
 // The RPC calls one tool call makes, in order. For install, the second call's request_id is filled
 // in from the first call's result by the caller. verify's transport is always the Worker's (§13.8
-// T-W-5): a caller field of the same name is overwritten.
+// T-W-5): a caller field of the same name is overwritten for canonical_baseline (CRV-3) and dropped
+// for every other kind, which never reads it, so it stays out of their idempotency hash.
 export function integrationCalls(name: IntegrationToolName, args: unknown,
   transport: { protocol_version: string | null; build_sha: string | null }): IntegrationRpcCall[] {
   const input = objectArgs(args);
@@ -253,8 +255,12 @@ export function integrationCalls(name: IntegrationToolName, args: unknown,
       }
       return [{ rpc: "clued_integration_identity_update_v1", input: rest }];
     }
-    case "clued_integration_verify":
-      return [{ rpc: "clued_integration_verify_v1", input: { ...input, transport } }];
+    case "clued_integration_verify": {
+      const { transport: _caller, ...rest } = input;
+      void _caller;
+      return [{ rpc: "clued_integration_verify_v1",
+        input: rest.kind === "canonical_baseline" ? { ...rest, transport } : rest }];
+    }
     default:
       return [{ rpc: integrationRpcByTool[name], input }];
   }
@@ -310,6 +316,9 @@ export const INTEGRATION_REQUEST_RULE_REJECTIONS: Readonly<Record<string, string
   ready_profile_unknown: null,
   ready_verification_requires_operable: null,
   lifecycle_transition_invalid: null,
+  // raised inside the Receipt (22023 → M1 rejected envelope), never as 42501
+  derivation_input_invalid:
+    "The change would make this Integration's inputs contradictory; supplemental.reason_codes names them.",
 };
 
 // Receipt-level rejections that are concurrency, not rules (§11.1): retryable conflicts.
