@@ -246,7 +246,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 ### 4.4 租约、续期、过期、接管、fence
 
 - **期限来自 profile**，不是无限 TTL：默认 claim 期限 2 小时，hard_deadline 24 小时，最多续期 12 次。数值在 `protocol/.../work-claim.profile.json` 中定义并随测试接受；缺省配置视为失败，不视为无限。
-- **续期必须带进展**：heartbeat 不是进展。progress_ref 不变即拒绝续期，到期自然过期。（复审 7 m3 更正：服务端只检查 progress_ref 非空且没用过，不核验它是不是提交或 Receipt。它只挡住原样重复的心跳；一个不做事的 Agent 换着字符串续期，实际上限是续期次数（12）与 24 小时硬截止，之后还能重新认领。）
+- **续期必须带进展**：heartbeat 不是进展。progress_ref 不变即拒绝续期，到期自然过期。（复审 7 m3 更正：服务端只检查 progress_ref 非空且没用过，不核验它是不是提交或 Receipt。它只挡住原样重复的心跳；一个空转的 Agent 换着字符串续期，实际上限是续期次数（12）与 24 小时硬截止；硬截止过了，它也可以重新认领同一 Task。）
   - **实现（2026-10-02，迁移 `20261002072000`）**：本 claim 以前任何一次续期用过的 progress_ref 都会被拒，`x,y,x,y` 交替不再通过（`progress_refs` 列记录历史）。
 - **幂等键只代表一件工作（迁移 `20261002072000`）**：`clued_work_claim`／`clued_work_takeover` 记下操作、scope、Task（或被接管的 claim）与规范化 write_set 的哈希。
   - 同一个键换了这些内容，返回 `work_claim_idempotency_conflict`，不再返回无关的旧 claim。
