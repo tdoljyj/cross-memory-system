@@ -1369,6 +1369,10 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       assert.equal(await covers(wild, shape(entry(`project:${u2}`, ['read'], 'other'))), false, 'another environment');
       assert.equal(await covers(wild, shape(entry('project:not-a-uuid', ['read']))), false, 'not a project id');
       assert.equal(await covers(wild, shape(entry('global', ['read']))), false, 'project:* is not global');
+      assert.equal(await covers(wild, shape(entry(`project:${u2}`.toUpperCase().replace('PROJECT:', 'project:'), ['read']))), false,
+        'not the canonical lowercase id');
+      assert.equal(await covers(wild, shape({ resource_kind: 'context', resource_id: `project:${u2}`, environment: 'canonical', actions: ['read'] })),
+        false, 'project:* covers scope entries only');
       assert.equal(await covers(shape(entry(`project:${u1}`, ['read', 'write'])), shape(entry(`project:${u2}`, ['read']))), false,
         'without project:* a new project is an expansion');
       const inter = (await admin.query('select clued_private.integration_ceiling_intersect_v1($1::jsonb, $2::jsonb) i',
@@ -1376,6 +1380,11 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
           JSON.stringify(shape(entry(`project:${u1}`, ['read', 'write']), entry(`project:${u2}`, ['write']), entry('global', ['read'])))])).rows[0].i;
       assert.deepEqual(inter.entries, [entry(`project:${u1}`, ['read', 'write']), entry(`project:${u2}`, ['write'])].sort(
         (a, b) => (a.resource_id < b.resource_id ? -1 : 1)));
+      // the rule is symmetric: the same result with project:* only on the right
+      const flipped = (await admin.query('select clued_private.integration_ceiling_intersect_v1($1::jsonb, $2::jsonb) i',
+        [JSON.stringify(shape(entry(`project:${u1}`, ['read', 'write']), entry(`project:${u2}`, ['write']), entry('global', ['read']))),
+          JSON.stringify(shape(entry('project:*', ['read', 'write']), entry(`project:${u1}`, ['read'])))])).rows[0].i;
+      assert.deepEqual(flipped, inter);
       // end to end: an Integration whose connection holds project:*, then the Owner creates a project
       const user = await newUser();
       const project = async () => {

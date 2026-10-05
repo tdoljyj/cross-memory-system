@@ -325,8 +325,9 @@ Everything else is unchanged:
 
 - A ceiling without `project:*` does not cover a new project. That is still an
   expansion and still needs `fresh_consent`.
-- `project:*` covers only well-formed `project:<uuid>` ids of the same environment,
-  never `global`, `profile` or another kind.
+- `project:*` covers only `scope` entries whose id is the canonical lowercase
+  `project:<uuid>` form, in the same environment. It never covers `global`,
+  `profile`, an uppercase or otherwise non-canonical id, or another resource kind.
 - Actions beyond `project:*`'s are still an expansion.
 
 **Rejected alternatives.**
