@@ -346,27 +346,51 @@ test('deploy and migrate consume an Owner Grant before they change production', 
   // Owner Credential v0.1 §6.1 (Task 2a31ca2a): the grant step comes first.
   const steps = productionWorkflow.split(/\n      - /).slice(1);
   const names = steps.map((step) => step.split('\n')[0]);
-  const grant = names.indexOf('name: Consume the Owner Grant for this commit');
-  assert.ok(grant > 0);
-  assert.match(steps[grant], /inputs\.mode == 'deploy' \|\| inputs\.mode == 'migrate'/);
-  assert.match(steps[grant], /node scripts\/ci\/clued-release-grant\.mjs --mode "\$RELEASE_MODE"/);
-  assert.match(steps[grant], /CLUED_RELEASE_TOKEN: \$\{\{ secrets\.CLUED_RELEASE_TOKEN \}\}/);
-  // Steps that change production come after the grant; the credential checks
-  // come before it, so a run that cannot proceed uses no grant (re-review N6).
+  const migrateGrant = names.indexOf('name: Consume the Owner Grant for the named migrations');
+  const deployGrant = names.indexOf('name: Consume the Owner Grant for this commit');
+  assert.ok(migrateGrant > 0 && deployGrant > 0);
+  assert.match(steps[migrateGrant], /if: \$\{\{ inputs\.mode == 'migrate' \}\}/);
+  assert.match(steps[deployGrant], /if: \$\{\{ inputs\.mode == 'deploy' \}\}/);
+  for (const grant of [migrateGrant, deployGrant]) {
+    assert.match(steps[grant], /node scripts\/ci\/clued-release-grant\.mjs --mode "\$RELEASE_MODE"/);
+    assert.match(steps[grant], /CLUED_RELEASE_TOKEN: \$\{\{ secrets\.CLUED_RELEASE_TOKEN \}\}/);
+  }
+  assert.match(steps[migrateGrant], /MIGRATIONS: \$\{\{ inputs\.migrations \}\}/);
+  // Steps that change production come after their grant; the credential
+  // checks come before it, so a run that cannot proceed uses no grant
+  // (re-review N6). deploy also runs the release gate first: run 37329072487
+  // used its grant and then stopped at the gate.
+  const gate = names.indexOf('name: Block release unless database and Worker heartbeat are ready');
+  assert.ok(gate > 0 && gate < deployGrant);
+  assert.match(steps[gate], /if: \$\{\{[^\n]*inputs\.mode == 'deploy'/);
+  assert.match(steps[deployGrant], /NODE_OPTIONS: ''/);
   steps.forEach((step, index) => {
-    if (/wrangler deploy|Apply the named migrations/.test(step)) assert.ok(index > grant, names[index]);
-    if (/^name: Check (production|migration) database credential/.test(step)) assert.ok(index < grant, names[index]);
+    if (/Apply the named migrations/.test(step)) assert.ok(index > migrateGrant, names[index]);
+    if (/wrangler (deploy|queues create)/.test(step)) assert.ok(index > deployGrant, names[index]);
+    if (/^name: Check migration database credential/.test(step)) assert.ok(index < migrateGrant, names[index]);
+    if (/^name: Check (production database|Cloudflare deployment) credential/.test(step)) {
+      assert.ok(index < deployGrant, names[index]);
+    }
   });
-  assert.match(steps[grant], /MIGRATIONS: \$\{\{ inputs\.migrations \}\}/);
   // The migration credential check connects, so a bad password stops the run
   // before a grant is used (trial run 37155374056).
   const check = steps.find((step) => step.startsWith('name: Check migration database credential'));
   assert.match(check, /psql "\$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select 1'/);
-  // The migration runs as one psql -c string, never through \i or -f, so psql
-  // meta-commands in a file are not executed.
+  // The file reaches the server as COPY data on psql's standard input, never
+  // through \\i or -f, so psql meta-commands in a file are not executed, and
+  // the server checks its md5 against the file before it runs it.
   const apply = steps.find((step) => step.startsWith('name: Apply the named migrations'));
-  assert.match(apply, /psql -c "\$sql"/);
-  assert.doesNotMatch(apply, /\\i |psql -f/);
+  assert.match(apply, /copy migration_lines\(line\) from stdin with \(format csv, delimiter e'\\x01', quote e'\\x02'\)/);
+  assert.match(apply, /commit;" < "\$file"/);
+  assert.match(apply, /if md5\(s\) is distinct from '\$expected' then raise exception[^\n]*\n\s*execute s;\n\s*insert into supabase_migrations\.schema_migrations/);
+  assert.match(apply, /\[\[ "\$expected" =~ \^\[0-9a-f\]\{32\}\$ \]\]/);
+  assert.match(apply, /grep -q \$'\[\\r\\x01\\x02\]' "\$file" \|\| grep -qx '\\\\\\\.' "\$file"/);
+  assert.match(apply, /\[ -z "\$\(tail -c1 "\$file"\)" \]/);
+  // test -f only checks the file exists; nothing else may name -f or --file.
+  assert.doesNotMatch(apply.replace('test -f "$file"', ''), /(^|\s)(-f|--file)(\s|=)|\\i |\\copy|-c "\$sql"/);
+  assert.match(apply, /postgres:17-alpine psql "\$database_url" -v ON_ERROR_STOP=1 -X "\$@"/);
+  assert.match(apply, /\[ -s "\$file" \]/);
+  assert.match(apply, /md5\(s\) is distinct from '\$expected'/);
   // The applied-migration record is kept with the run's evidence.
   assert.match(apply, /> "\$evidence_dir\/production-migrations\.json"/);
   assert.match(productionWorkflow, /release-evidence\/production-migrations\.json\n/);
