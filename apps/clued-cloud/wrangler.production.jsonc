@@ -11,6 +11,7 @@
   ],
   "compatibility_date": "2026-08-23",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "limits": { "subrequests": 1000 },
   "assets": {
     "binding": "ASSETS",
     "directory": "./dist/client"
@@ -24,8 +25,20 @@
       "binding": "CLUED_CONNECT_SERVICE",
       "service": "clued-connect",
       "environment": "production"
-    }
+    },
+    { "binding": "PDF_EXTRACTOR", "service": "clued-storage-pdf" }
   ],
+  "r2_buckets": [
+    { "binding": "CLUED_STORAGE_STAGING", "bucket_name": "clued-storage-staging" }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "CLUED_STORAGE_JOB_QUEUE", "queue": "clued-storage-jobs" }
+    ],
+    "consumers": [
+      { "queue": "clued-storage-jobs", "max_batch_size": 1, "max_batch_timeout": 0, "max_retries": 0 }
+    ]
+  },
   "triggers": { "crons": ["* * * * *"] },
   "observability": {
     "enabled": true,

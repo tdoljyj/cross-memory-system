@@ -59,26 +59,38 @@ $mutex=New-Object System.Threading.Mutex($false,'Local\__MUTEX__'); if(-not $mut
 $winRoot='__WIN_ROOT__'; $winExe=Join-Path $winRoot 'bin\Runner.Listener.exe'; $winLauncher='__WIN_LAUNCHER__'
 $distro='__DISTRO__'; $linuxUser='__LINUX_USER__'; $linuxUnits=@(__LINUX_UNITS__); $manageDocker=__MANAGE_DOCKER__
 $suspendMem=__SUSPEND_MEM__; $resumeMem=__RESUME_MEM__; $suspendDisk=__SUSPEND_DISK__; $resumeDisk=__RESUME_DISK__; $interval=__INTERVAL__; $capacitySuspended=$false
+$lastDeferral=''
+# A suspend held back for the same reason is logged once per low-capacity episode.
+function Log-Deferral([string]$m){if($m -ne $script:lastDeferral){Log $m; $script:lastDeferral=$m}}
 function Test-LinuxBusy {
-  & wsl.exe -d $distro -u $linuxUser -e bash -lc 'pgrep -f "[R]unner.Worker" >/dev/null' 2>$null
-  if($LASTEXITCODE -eq 0){return $true}
+  # A Runner.Worker process exists exactly while a job runs. Sample twice, a few
+  # seconds apart, so a job the listener is just starting is not taken for idle.
+  foreach($sample in 1,2){
+    & wsl.exe -d $distro -u $linuxUser -e bash -lc 'pgrep -f "[R]unner.Worker" >/dev/null' 2>$null
+    if($LASTEXITCODE -eq 0){return $true}
+    if($LASTEXITCODE -ne 1){Log-Deferral 'Capacity suspend deferred: cannot query Linux runner processes';return $true}
+    if($sample -eq 1){Start-Sleep -Seconds 5}
+  }
+  # The listener's own log can still show a job it accepted but has not started a
+  # worker for. A missing or unreadable log no longer blocks the suspend: the
+  # worker check above is the authority.
   foreach($linuxUnit in $linuxUnits){
     $events=@(& wsl.exe -d $distro -u root -e journalctl -u $linuxUnit -n 200 --no-pager -o cat 2>$null)
-    if($LASTEXITCODE -ne 0){Log ("Capacity suspend deferred: cannot read runner state for {0}" -f $linuxUnit);return $true}
+    if($LASTEXITCODE -ne 0){continue}
     $lastRunnerEvent=$events | Where-Object {$_ -match 'Listening for Jobs|Running job:|Job .* completed with result:'} | Select-Object -Last 1
-    if(-not $lastRunnerEvent){Log ("Capacity suspend deferred: runner state unknown for {0}" -f $linuxUnit);return $true}
-    if($lastRunnerEvent -match 'Running job:'){return $true}
-    if($lastRunnerEvent -notmatch 'Listening for Jobs|Job .* completed with result:'){Log ("Capacity suspend deferred: ambiguous runner state for {0}" -f $linuxUnit);return $true}
+    if($lastRunnerEvent -match 'Running job:'){Log-Deferral ("Capacity suspend deferred: {0} reports a job starting" -f $linuxUnit);return $true}
   }
   return $false
 }
 Log 'Clued P13 host watchdog started.'
 try{while($true){
   $os=Get-CimInstance Win32_OperatingSystem; $freeMem=[math]::Round($os.FreePhysicalMemory*1KB/1GB,2); $freeDisk=[math]::Round((Get-PSDrive C).Free/1GB,1)
-  $linuxBusy=Test-LinuxBusy
-  if(-not $capacitySuspended -and ($freeMem -lt $suspendMem -or $freeDisk -lt $suspendDisk) -and -not $linuxBusy){
+  $belowSuspend=($freeMem -lt $suspendMem -or $freeDisk -lt $suspendDisk)
+  if(-not $belowSuspend){$lastDeferral=''}
+  # Only inspect the Linux runner when a suspend is actually due.
+  if(-not $capacitySuspended -and $belowSuspend -and -not (Test-LinuxBusy)){
     if($manageDocker){& wsl.exe -d $distro -u root -e systemctl stop $linuxUnits docker containerd 2>$null}else{& wsl.exe -d $distro -u root -e systemctl stop $linuxUnits 2>$null}
-    $capacitySuspended=$true; Log ("Capacity suspend: mem={0}GB disk={1}GB" -f $freeMem,$freeDisk)
+    $capacitySuspended=$true; $lastDeferral=''; Log ("Capacity suspend: mem={0}GB disk={1}GB" -f $freeMem,$freeDisk)
   } elseif($capacitySuspended -and $freeMem -ge $resumeMem -and $freeDisk -ge $resumeDisk){
     if($manageDocker){& wsl.exe -d $distro -u root -e systemctl start containerd docker $linuxUnits 2>$null}else{& wsl.exe -d $distro -u root -e systemctl start $linuxUnits 2>$null}
     $capacitySuspended=$false; Log ("Capacity resume: mem={0}GB disk={1}GB" -f $freeMem,$freeDisk)

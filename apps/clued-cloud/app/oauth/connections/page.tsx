@@ -4,8 +4,12 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { type Session } from "@supabase/supabase-js";
 import { supabase } from "../../supabase-browser";
 import Link from "next/link";
+import HeadlessBindings from "./headless";
 
 const API = "/oauth/connections/api";
+// Headless Bindings share the v12 authorization table; they are listed and
+// managed in their own section (./headless.tsx), not as OAuth connections.
+const HEADLESS_CLIENT = "clued-headless";
 
 type Grant = {
   resource_kind: "scope" | "context";
@@ -27,6 +31,8 @@ type Binding = {
   grants: Grant[];
 };
 type Selection = Record<string, Record<string, string[]>>;
+type StorageAccess = { binding_id: string; denied: boolean; generation: number; receipt_id: string | null };
+
 
 const actionLabels: Record<string, string> = {
   read: "读取", write: "新增和修改", close: "关闭和归档", restore: "恢复记录",
@@ -74,12 +80,45 @@ async function readResponse(response: Response, fallback: string): Promise<unkno
   try { return await response.json(); } catch { throw new Error(fallback); }
 }
 
+// "我的全部项目（含以后新建的）" (PermissionSimplification §3.1): Clued keeps one
+// project entry per project for a project:* grant. While project:* stays
+// selected, a project row it covers is not shown or sent; Clued rebuilds it
+// from project:*, so narrowing project:* narrows every covered project.
+const ALL_PROJECTS = "project:*";
+const allProjectsGrant = (binding: Binding) => binding.grants.find(grant =>
+  grant.resource_kind === "scope" && grant.resource_id === ALL_PROJECTS && grant.environment === "canonical");
+function chosenActions(binding: Binding, selection: Selection, grant: Grant) {
+  return grant.actions.filter(action => (selection[binding.binding_id]?.[rowKey(grant)] ?? []).includes(action));
+}
+function coveredByAll(binding: Binding, selection: Selection, grant: Grant) {
+  const all = allProjectsGrant(binding);
+  return !!all && grant !== all && grant.resource_kind === "scope" && grant.environment === "canonical"
+    && grant.resource_id.startsWith("project:") && grant.actions.every(action => all.actions.includes(action))
+    && chosenActions(binding, selection, all).length > 0;
+}
 function selectedGrants(binding: Binding, selection: Selection): Grant[] {
-  return binding.grants.map(grant => ({
+  return binding.grants.filter(grant => !coveredByAll(binding, selection, grant)).map(grant => ({
     resource_kind: grant.resource_kind, resource_id: grant.resource_id, environment: grant.environment,
-    actions: grant.actions.filter(action => (selection[binding.binding_id]?.[rowKey(grant)] ?? []).includes(action)),
+    actions: chosenActions(binding, selection, grant),
   })).filter(grant => grant.actions.length > 0);
 }
+// The preset role a connection's entries match (Decision b32fc5b9), else 自定义.
+const DEVELOPER = ["close", "read", "restore", "write"];
+function roleName(binding: Binding): string {
+  const scopes = binding.grants.filter(grant => grant.resource_kind === "scope" && grant.environment === "canonical");
+  if (!scopes.length || binding.grants.some(grant => grant.resource_kind !== "scope")) return "自定义";
+  const sorted = (grant: Grant) => [...grant.actions].sort().join(",");
+  const projects = scopes.filter(grant => grant.resource_id.startsWith("project:"));
+  const personal = scopes.filter(grant => !grant.resource_id.startsWith("project:"));
+  if (scopes.every(grant => sorted(grant) === "read")) return "只读";
+  if (personal.length === 1 && personal[0].resource_id === "global" && sorted(personal[0]) === "read"
+    && projects.length > 0 && projects.every(grant => sorted(grant) === DEVELOPER.join(","))) return "项目开发者";
+  if (personal.some(grant => grant.resource_id === "global") && personal.some(grant => grant.resource_id === "profile")
+    && scopes.every(grant => DEVELOPER.every(action => grant.actions.includes(action)))) return "全部";
+  return "自定义";
+}
+const grantTitle = (grant: Grant) => grant.resource_id === "global" ? "全局视图"
+  : grant.resource_id === "profile" ? "个人资料" : grant.resource_id === ALL_PROJECTS ? "我的全部项目（含以后新建的）" : grant.resource_id;
 
 export default function OAuthConnectionsPage() {
   const [session, setSession] = useState<Session | null>(null);
@@ -88,6 +127,8 @@ export default function OAuthConnectionsPage() {
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [bindings, setBindings] = useState<Binding[]>([]);
+  const [storageAccess, setStorageAccess] = useState<Record<string, StorageAccess>>({});
+  const [storageLoaded, setStorageLoaded] = useState(false);
   const [selection, setSelection] = useState<Selection>({});
   const [pending, setPending] = useState<string | null>(null);
   const [needsReload, setNeedsReload] = useState(false);
@@ -112,6 +153,26 @@ export default function OAuthConnectionsPage() {
     setNeedsReload(false);
   }, []);
 
+  const readStorageAccess = useCallback(async (who: Session, epoch: number): Promise<Record<string, StorageAccess> | null> => {
+    const response = await fetch("/v1/storage/owner", {
+      method: "POST", credentials: "same-origin", cache: "no-store",
+      headers: { Authorization: `Bearer ${who.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "clients" }),
+    });
+    const value = await readResponse(response, "无法读取客户端网盘访问状态。");
+    if (!isObject(value) || !Array.isArray(value.clients) || !value.clients.every(row => isObject(row)
+      && typeof row.binding_id === "string" && typeof row.denied === "boolean"
+      && typeof row.generation === "number" && Number.isSafeInteger(row.generation) && row.generation >= 0
+      && (row.receipt_id === null || typeof row.receipt_id === "string"))) {
+      throw new Error("客户端网盘访问状态未确认。");
+    }
+    const latest = await supabase.auth.getSession();
+    if (accountEpoch.current !== epoch || latest.error || latest.data.session?.user.id !== who.user.id) return null;
+    const rows = Object.fromEntries((value.clients as StorageAccess[]).map(row => [row.binding_id, row]));
+    setStorageAccess(rows); setStorageLoaded(true);
+    return rows;
+  }, []);
+
   const readBindings = useCallback(async (who: Session, epoch: number, apply = true): Promise<Binding[] | null> => {
     if (accountEpoch.current !== epoch) return null;
     readController.current?.abort();
@@ -131,8 +192,11 @@ export default function OAuthConnectionsPage() {
         throw new Error("连接服务返回了不完整的状态，请稍后重新读取。");
       }
       if (accountEpoch.current !== epoch || request !== readNumber.current || controller.signal.aborted) return null;
-      const rows: Binding[] = value.bindings;
-      if (apply) applyBindings(rows);
+      const rows: Binding[] = value.bindings.filter((binding: Binding) => binding.client_id !== HEADLESS_CLIENT);
+      if (apply) {
+        applyBindings(rows);
+        try { await readStorageAccess(who, epoch); } catch { if (accountEpoch.current === epoch) { setStorageAccess({}); setStorageLoaded(false); } }
+      }
       return rows;
     } catch (failure) {
       if (accountEpoch.current !== epoch || controller.signal.aborted) return null;
@@ -141,7 +205,7 @@ export default function OAuthConnectionsPage() {
     } finally {
       if (accountEpoch.current === epoch && request === readNumber.current) setLoading(false);
     }
-  }, [applyBindings]);
+  }, [applyBindings, readStorageAccess]);
 
   useEffect(() => {
     let disposed = false;
@@ -161,6 +225,7 @@ export default function OAuthConnectionsPage() {
       writeController.current = null;
       window.clearTimeout(timer);
       setBindings([]);
+      setStorageAccess({}); setStorageLoaded(false);
       setSelection({});
       setLoaded(false);
       setPending(null);
@@ -272,7 +337,10 @@ export default function OAuthConnectionsPage() {
       const confirmed = op === "revoke" ? !updated || !updated.active
         : updated && updated.version > binding.version && updated.grants.every(grant => {
           const allowed = selected.find(row => rowKey(row) === rowKey(grant));
-          return grant.actions.every(action => allowed?.actions.includes(action));
+          // A project row Clued rebuilt from project:* is allowed what project:* is.
+          const all = grant.resource_kind === "scope" && grant.resource_id.startsWith("project:")
+            ? selected.find(row => row.resource_kind === "scope" && row.resource_id === ALL_PROJECTS) : undefined;
+          return grant.actions.every(action => allowed?.actions.includes(action) || all?.actions.includes(action));
         });
       if (!confirmed) throw new Error("重新读取后尚未确认此次变更，请再次读取状态后再操作。");
       applyBindings(latest);
@@ -288,6 +356,38 @@ export default function OAuthConnectionsPage() {
       if (accountEpoch.current === epoch) setPending(null);
     }
   }, [applyBindings, needsReload, readBindings, selection]);
+
+  async function revokeStorage(binding: Binding) {
+    const who = currentSession.current, epoch = accountEpoch.current;
+    const prior = storageAccess[binding.binding_id];
+    if (!who || !storageLoaded || !prior || prior.denied || writeController.current || needsReload) return;
+    if (!window.confirm(`仅撤销 ${binding.client_name} 的网盘访问？此客户端的 Clued 记忆权限、其他客户端和整个网盘连接不变。已开始的文件操作仍需核对原回执。`)) return;
+    const controller = new AbortController();
+    writeController.current = controller; setPending(binding.binding_id); setError(""); setNotice("");
+    try {
+      const response = await fetch("/v1/storage/owner", {
+        method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal,
+        headers: { Authorization: `Bearer ${who.access_token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "revoke_client", binding_id: binding.binding_id,
+          base_generation: prior.generation, idempotency_key: crypto.randomUUID() }),
+      });
+      const value = await readResponse(response, "网盘访问撤销结果未确认。");
+      if (!isObject(value) || value.status !== "committed" || typeof value.receipt_id !== "string")
+        throw new Error("网盘访问回执未确认。");
+      const latest = await readStorageAccess(who, epoch);
+      if (!latest?.[binding.binding_id]?.denied || latest[binding.binding_id].generation <= prior.generation)
+        throw new Error("撤销回读未确认。");
+      if (accountEpoch.current === epoch) setNotice(`此客户端的网盘访问已撤销。回执：${value.receipt_id}；记忆权限不变。`);
+    } catch {
+      if (accountEpoch.current === epoch && !controller.signal.aborted) {
+        setStorageLoaded(false); setNeedsReload(true);
+        setError("网盘访问撤销结果未确认。请重新读取当前状态和原回执，不要再次提交。");
+      }
+    } finally {
+      if (writeController.current === controller) writeController.current = null;
+      if (accountEpoch.current === epoch) setPending(null);
+    }
+  }
 
   const busy = authBusy || loading || pending !== null;
   return (
@@ -337,14 +437,17 @@ export default function OAuthConnectionsPage() {
                 <div><dt>最近使用</dt><dd>{binding.last_used_at ? <time dateTime={binding.last_used_at}>{new Date(binding.last_used_at).toLocaleString("zh-CN")}</time> : "暂无记录"}</dd></div>
                 <div><dt>有效期至</dt><dd><time dateTime={binding.expires_at}>{new Date(binding.expires_at).toLocaleString("zh-CN")}</time></dd></div>
                 <div><dt>连接编号</dt><dd>{binding.binding_id}</dd></div>
+                <div><dt>角色</dt><dd>{roleName(binding)}</dd></div>
+                {allProjectsGrant(binding) && <div><dt>项目范围</dt><dd>我的全部项目（含以后新建的，只含你自己的项目）</dd></div>}
               </dl>
               {binding.grants.length === 0 && <p className="oauth-copy">此连接没有业务访问权限。</p>}
-              {binding.grants.map(grant => <fieldset key={rowKey(grant)} disabled={busy || unavailable || needsReload}
+              {binding.grants.filter(grant => !coveredByAll(binding, selection, grant)).map(grant => <fieldset key={rowKey(grant)} disabled={busy || unavailable || needsReload}
                 style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, margin: "12px 0", minWidth: 0 }}>
                 <legend style={{ fontSize: 12, overflowWrap: "anywhere" }}>
-                  {grant.resource_id === "global" ? "全局视图" : grant.resource_id} · {environmentLabels[grant.environment] || grant.environment}
+                  {grantTitle(grant)} · {environmentLabels[grant.environment] || grant.environment}
                 </legend>
-                {grant.effective_actions && <p className="oauth-copy">当前实际可用：{grant.effective_actions.length ? grant.effective_actions.map(action => actionLabels[action] || action).join("、") : "无可用操作"}</p>}
+                {grant.resource_id === ALL_PROJECTS && <p className="oauth-copy">以后新建的项目自动包含在内。这里的勾选同时作用于下面没有单独列出的每个项目。</p>}
+                {grant.effective_actions && grant.resource_id !== ALL_PROJECTS && <p className="oauth-copy">当前实际可用：{grant.effective_actions.length ? grant.effective_actions.map(action => actionLabels[action] || action).join("、") : "无可用操作"}</p>}
                 {grant.actions.map(action => <label key={action} style={{ display: "flex", alignItems: "center", gap: 10, margin: "9px 0", fontSize: 13 }}>
                   <input type="checkbox" style={{ width: 18, height: 18, accentColor: "var(--green)" }}
                     checked={(selection[binding.binding_id]?.[rowKey(grant)] ?? []).includes(action)}
@@ -361,6 +464,12 @@ export default function OAuthConnectionsPage() {
                     }} />{grant.resource_kind === "context" && action === "close" ? "关闭/撤回记录" : actionLabels[action] || action}
                 </label>)}
               </fieldset>)}
+              {storageLoaded && storageAccess[binding.binding_id] && <div className="oauth-actions">
+                <p className="oauth-copy">{storageAccess[binding.binding_id].denied ? "网盘访问已单独撤销" : "网盘访问按账号规则单独管理"}</p>
+                {!storageAccess[binding.binding_id].denied && <button className="oauth-secondary" type="button"
+                  disabled={busy || needsReload} onClick={() => void revokeStorage(binding)}>仅撤销此客户端的网盘访问</button>}
+              </div>}
+              {!storageLoaded && <p className="oauth-copy">网盘访问状态未确认；重新读取连接后再管理。</p>}
               {unavailable ? <p className="oauth-copy">此连接无法恢复。需要继续访问时，请从客户端重新发起授权。</p> : <>
                 <p className="oauth-copy" style={{ marginBottom: 14 }}>{changed ? "权限调整尚未保存。保存后不能在此重新增加已移除的权限。" : "取消勾选可减少权限；新增权限需要重新授权。"}</p>
                 <div className="oauth-actions">
@@ -373,6 +482,7 @@ export default function OAuthConnectionsPage() {
             </article>;
           })}
           <p className="oauth-note">减少或撤销权限会阻止之后的相应访问，不能收回客户端此前已经取得的数据。不同连接分别管理。</p>
+          <HeadlessBindings />
         </>}
       </section>
     </main>

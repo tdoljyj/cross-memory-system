@@ -1,0 +1,282 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import test from 'node:test';
+import EmbeddedPostgres from 'embedded-postgres';
+
+// Binding roles (migration 20261003200000, Task 869d2db7, Owner Decision
+// 38ddb8cf): once the Owner marks a CI admission Binding, only it binds claims
+// to pull requests, meters heads, admits hand dispatches and reports merges;
+// once the Owner marks a release-door Binding, only it consumes release grants.
+// Before a role is marked, every Binding keeps the earlier behaviour.
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const uuid = () => crypto.randomUUID();
+const hash = () => crypto.randomBytes(32).toString('hex');
+const nowEpoch = () => Math.floor(Date.now() / 1000);
+const fresh = (sub, session = 'sess-main') =>
+  ({ sub, role: 'authenticated', session_id: session, aal: 'aal1', amr: [{ method: 'password', timestamp: nowEpoch() }] });
+
+async function freePort() {
+  const listener = net.createServer();
+  await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
+  const port = listener.address().port;
+  await new Promise((resolve) => listener.close(resolve));
+  return port;
+}
+
+test('binding roles: CI admission and release-door Bindings, set by the Owner in two Native steps',
+  { timeout: 300000 }, async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-binding-roles-'));
+  const server = new EmbeddedPostgres({
+    databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
+    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
+  });
+  const clients = [];
+  try {
+    await server.initialise();
+    await server.start();
+    const admin = server.getPgClient();
+    clients.push(admin);
+    await admin.connect();
+    await admin.query(`create role anon nologin; create role authenticated nologin;
+      create role service_role nologin bypassrls; create role authenticator nologin noinherit;
+      create schema auth; create schema extensions; create extension pgcrypto with schema extensions;
+      create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,
+        banned_until timestamptz,deleted_at timestamptz);
+      create function auth.uid() returns uuid language sql stable as
+        $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+      create function auth.jwt() returns jsonb language sql stable as
+        $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
+      grant usage on schema auth,extensions to anon,authenticated,service_role;
+      grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
+    for (const name of (await fs.readdir(path.join(root, 'supabase/migrations')))
+      .filter((name) => name.endsWith('.sql')).sort()) {
+      try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
+      catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
+    }
+
+    const userId = uuid();
+    const otherUser = uuid();
+    await admin.query(`insert into auth.users(id,email,email_confirmed_at)
+      values($1,'roles@example.invalid',now()),($2,'roles-other@example.invalid',now())`, [userId, otherUser]);
+    const tokens = {};
+    const bindingIds = {};
+    for (const name of ['claude', 'codex', 'reader', 'ci', 'release']) {
+      tokens[name] = hash();
+      bindingIds[name] = (await admin.query(`insert into public.clued_agent_bindings
+        (user_id,vendor,agent_name,token_hash,scopes,context_keys)
+        values($1,'synthetic',$2,$3,$4,array['*']) returning id`,
+        [userId, name, tokens[name], name === 'reader' || name === 'ci' ? ['context:read'] : ['context:read', 'context:write']])).rows[0].id;
+    }
+    const anon = server.getPgClient();
+    clients.push(anon);
+    await anon.connect();
+    await anon.query('set role anon');
+    const human = server.getPgClient();
+    clients.push(human);
+    await human.connect();
+    await human.query('set role authenticated');
+    const agent = async (who, name, input) =>
+      (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
+    const native = async (name, input, claims = fresh(userId)) => {
+      await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+        [claims.sub ?? '', JSON.stringify(claims)]);
+      return (await human.query(`select public.${name}($1) v`, [input])).rows[0].v;
+    };
+    const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
+    const createTask = async (title) => committed(await agent('claude', 'clued_record_mutate', {
+      operation: 'create', record_type: 'task', record_schema_version: 1, lifecycle_status: 'active',
+      scope: 'global', idempotency_key: uuid(), authority: 'observed',
+      confidence_reason: 'race fixture', source_refs: [], source_unavailable_reason: 'fixture',
+      mutation: { title, content: 'fixture', type_fields: { execution_bucket: 'next' }, relations: {} },
+    })).target_refs[0].id;
+    const claim = (taskId, who = 'claude', session = 'session-a', writeSet = ['storage:c1/**']) =>
+      agent(who, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), task_id: taskId,
+        write_set: writeSet, holder_session_ref: session });
+    const release = (who, c) => agent(who, 'clued_work_release_v1',
+      { scope: 'global', claim_id: c.claim_id, fence: c.fence, outcome: 'completed' });
+    const verify = (c, pr, head = crypto.randomBytes(20).toString('hex')) => agent('reader', 'clued_work_verify_v1',
+      { scope: 'global', claim_id: c.claim_id, pr_ref: pr, head_sha: head });
+    const gate = async (who, c, resources) => (await admin.query(
+      `select clued_private.work_claim_gate_v1($1,$2,'clued-storage','storage_submit','collision_only',$3,$4) v`,
+      [userId, bindingIds[who], resources, c ? { claim_id: c.claim_id, fence: c.fence } : null])).rows[0].v;
+    const enable = async (input, claims) => {
+      const issued = await native('clued_work_claim_multi_confirmation_issue_v1', input, claims);
+      assert.equal(issued.status, 'issued', JSON.stringify(issued));
+      return { issued, enabled: await native('clued_work_claim_multi_enable_v1',
+        { confirmation_token: issued.confirmation_token, view_digest: issued.view_digest }, claims) };
+    };
+    const row = async (claimId) => (await admin.query(
+      'select status,outcome,copy_index,superseded_by from clued_private.work_claims_v1 where claim_id=$1', [claimId])).rows[0];
+    const shared = ['storage:c1/final/**'];
+
+    const sha = (i) => i.toString(16).padStart(40, '0');
+    const usage = async (taskId) => Number((await admin.query(`select count(*) n from clued_private.work_claim_door_usage_v1
+      where user_id=$1 and door='github-ci' and task_id=$2`, [userId, taskId])).rows[0].n);
+    const verifyAs = (who, c, input) => agent(who, 'clued_work_verify_v1', { scope: 'global', claim_id: c.claim_id, ...input });
+    const setRole = async (binding, role, enabled, claims) => {
+      const issued = await native('clued_binding_role_confirmation_issue_v1', { binding_id: binding, role, enabled }, claims);
+      assert.equal(issued.status, 'issued', JSON.stringify(issued));
+      return native('clued_binding_role_set_v1',
+        { confirmation_token: issued.confirmation_token, view_digest: issued.view_digest }, claims);
+    };
+
+    // --- Before any role is marked, every Binding keeps the earlier behaviour. ---
+    const legacyTask = await createTask('legacy');
+    const legacy = committed(await claim(legacyTask, 'claude', 'session-a', ['legacy/**'])).claim;
+    let v = await verifyAs('reader', legacy, { pr_ref: 'o/r#1', head_sha: sha(1) });
+    assert.deepEqual([v.verdict, v.bound_pr, v.task_ci_heads_24h], ['ADMITTED', 'o/r#1', 1]);
+    committed(await release('claude', legacy));
+
+    // --- Only the Owner's Native session manages roles. ---
+    for (const name of ['clued_binding_roles_list_v1', 'clued_binding_role_confirmation_issue_v1', 'clued_binding_role_set_v1']) {
+      await assert.rejects(() => anon.query(`select public.${name}($1)`, [{}]), /permission denied/, name);
+    }
+    await assert.rejects(() => anon.query('select * from clued_private.binding_roles_v1'), /permission denied/);
+    // PostgREST runs a STABLE or IMMUTABLE RPC in a read-only transaction, and the
+    // Native owner check locks the account row (FOR SHARE), which a read-only
+    // transaction refuses. Every public RPC that makes the check is VOLATILE.
+    await human.query('begin read only');
+    await assert.rejects(() => native('clued_binding_roles_list_v1', {}), /read-only transaction/);
+    await human.query('rollback');
+    assert.deepEqual((await admin.query(`select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.provolatile<>'v' and p.prosrc like '%authorization_owner_v12%'
+      order by 1`)).rows.map((r) => r.proname), []);
+    await assert.rejects(() => human.query('select * from clued_private.binding_roles_v1'), /permission denied/);
+    await assert.rejects(() => anon.query('select clued_private.binding_role_admits_v1(b,$1) from public.clued_agent_bindings b limit 1',
+      ['ci-admission']), /permission denied/);
+    const issueErr = async (input, claims) => (await native('clued_binding_role_confirmation_issue_v1', input, claims)).error_code;
+    assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'merge', enabled: true }), 'binding_role_invalid');
+    assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'ci-admission', enabled: 'yes' }), 'binding_role_input_invalid');
+    assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'ci-admission', enabled: true, x: 1 }), 'binding_role_input_invalid');
+    assert.equal(await issueErr({ binding_id: bindingIds.reader, role: 'release-door', enabled: true }), 'binding_role_scope_missing');
+    assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'ci-admission', enabled: false }), 'binding_role_unchanged');
+    assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'ci-admission', enabled: true },
+      fresh(otherUser)), 'binding_role_binding_invalid', "another user's Binding");
+    const { session_id: _omit, ...noSession } = fresh(userId);
+    assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'ci-admission', enabled: true }, noSession),
+      'confirmation_token_session_id_required');
+    // The view is rendered by Clued; a newer issue revokes the older token.
+    const first = await native('clued_binding_role_confirmation_issue_v1', { binding_id: bindingIds.ci, role: 'ci-admission', enabled: true });
+    assert.deepEqual([first.confirmation_view.agent_name, first.confirmation_view.role, first.confirmation_view.enabled,
+      first.confirmation_view.others], ['ci', 'ci-admission', true, []]);
+    assert.match(first.confirmation_view.role_title, /GitHub CI 准入/);
+    const second = await native('clued_binding_role_confirmation_issue_v1', { binding_id: bindingIds.ci, role: 'ci-admission', enabled: true });
+    assert.equal((await native('clued_binding_role_set_v1', { confirmation_token: first.confirmation_token,
+      view_digest: first.view_digest })).error_code, 'confirmation_token_revoked');
+    assert.equal((await native('clued_binding_role_set_v1', { confirmation_token: second.confirmation_token,
+      view_digest: 'f'.repeat(64) })).error_code, 'confirmation_token_binding_mismatch');
+    const marked = await setRole(bindingIds.ci, 'ci-admission', true);
+    committed(marked);
+    assert.equal((await native('clued_binding_role_set_v1', { confirmation_token: second.confirmation_token,
+      view_digest: second.view_digest })).error_code, 'confirmation_token_reused', 'a burned token stays burned');
+    const receipt = (await admin.query('select metadata from public.clued_audit_receipts where id=$1', [marked.receipt_id])).rows[0].metadata;
+    assert.deepEqual([receipt.receipt_kind, receipt.role, receipt.principal], ['BINDING_ROLE_GRANTED', 'ci-admission', 'native_account_session']);
+    const listed = await native('clued_binding_roles_list_v1', {});
+    assert.deepEqual(listed.bindings.find((b) => b.binding_id === bindingIds.ci).roles, ['ci-admission']);
+    assert.deepEqual(listed.bindings.find((b) => b.binding_id === bindingIds.claude).roles, []);
+    assert.deepEqual(listed.roles.map((r) => r.role), ['ci-admission', 'release-door']);
+
+    // --- N2: once marked, only the CI Binding binds, meters and admits dispatches. ---
+    const task = await createTask('roles');
+    const mine = committed(await claim(task, 'claude', 'session-a', ['roles/**'])).claim;
+    for (const who of ['claude', 'codex', 'reader']) {
+      v = await verifyAs(who, mine, { pr_ref: 'o/r#666', head_sha: sha(2) });
+      assert.deepEqual([v.verdict, v.reasons], ['REJECTED', ['admission_binding_required']], who);
+      v = await verifyAs(who, mine, { head_sha: sha(3), ci_dispatch: true });
+      assert.deepEqual([v.verdict, v.reasons], ['REJECTED', ['admission_binding_required']], who);
+    }
+    assert.equal(await usage(task), 0, 'nothing metered');
+    v = await verifyAs('codex', mine, { changed_paths: ['roles/a'] });
+    assert.deepEqual([v.verdict, v.bound_pr], ['ADMITTED', null], 'read-only verify stays open to every Binding');
+    v = await verifyAs('ci', mine, { pr_ref: 'o/r#7', head_sha: sha(4), changed_paths: ['roles/a'] });
+    assert.deepEqual([v.verdict, v.bound_pr, v.task_ci_heads_24h, v.admitted_heads], ['ADMITTED', 'o/r#7', 1, 1]);
+    // A hand dispatch meters its head without binding a pull request.
+    v = await verifyAs('ci', mine, { head_sha: sha(5), ci_dispatch: true });
+    assert.deepEqual([v.verdict, v.bound_pr, v.task_ci_heads_24h, v.admitted_heads], ['ADMITTED', 'o/r#7', 2, 1]);
+    v = await verifyAs('ci', mine, { head_sha: sha(5), ci_dispatch: true });
+    assert.equal(v.task_ci_heads_24h, 2, 'the same dispatched head is counted once');
+    await admin.query(`insert into clued_private.work_claim_door_usage_v1(user_id,door,task_id,binding_id,claim_id,unit_key,used_at)
+      select $1,'github-ci',$2,$3,$4,lpad(to_hex(g),40,'e'),now() from generate_series(1,38) g`,
+    [userId, task, bindingIds.ci, mine.claim_id]);
+    v = await verifyAs('ci', mine, { head_sha: sha(6), ci_dispatch: true });
+    assert.deepEqual([v.verdict, v.reasons], ['REJECTED', ['task_ci_head_cap_reached']]);
+    for (const input of [{ head_sha: sha(6), ci_dispatch: 'true' }, { ci_dispatch: true },
+      { head_sha: sha(6), ci_dispatch: true, pr_ref: 'o/r#7' }]) {
+      await assert.rejects(() => verifyAs('ci', mine, input), /work_claim_ci_dispatch_invalid/, JSON.stringify(input));
+    }
+    committed(await release('claude', mine));
+
+    // --- N1: only the CI Binding reports a merge. ---
+    const raceTask = await createTask('roles race');
+    assert.equal((await enable({ task_id: raceTask, copies: 2, shared_resources: ['storage:c9/final/**'] })).enabled.status, 'committed');
+    const copyA = committed(await claim(raceTask, 'claude', 'session-b', ['storage:c9/**'])).claim;
+    const copyB = committed(await claim(raceTask, 'codex', 'session-c', ['storage:c9/**'])).claim;
+    v = await verifyAs('codex', copyB, { pr_ref: 'o/r#999', head_sha: sha(9) });
+    assert.deepEqual(v.reasons, ['admission_binding_required'], 'a copy cannot bind itself to a made-up PR');
+    v = await verifyAs('ci', copyB, { pr_ref: 'o/r#11', head_sha: sha(10) });
+    assert.equal(v.verdict, 'ADMITTED');
+    let adopted = await agent('codex', 'clued_work_claim_adopt_v1', { scope: 'global', pr_ref: 'o/r#11', merge_sha: sha(11) });
+    assert.deepEqual([adopted.adopted, adopted.reason], [false, 'admission_binding_required']);
+    assert.equal((await row(copyA.claim_id)).status, 'ACTIVE', 'the honest copy is untouched');
+    adopted = await agent('ci', 'clued_work_claim_adopt_v1', { scope: 'global', pr_ref: 'o/r#11', merge_sha: sha(11) });
+    assert.deepEqual([adopted.adopted, adopted.copy_index], [true, 2]);
+    assert.equal((await row(copyA.claim_id)).outcome, 'not_adopted');
+
+    // --- N5: the release door, legacy first, then only the marked Binding. ---
+    const commit = 'repo:tdoljyj/cross-memory-system/' + sha(12);
+    const door = (who) => agent(who, 'clued_owner_grant_door_consume_v1', { action: 'release.production', resources: [commit] });
+    const pending = await door('codex');
+    assert.equal(pending.consumed, false, 'legacy: any write Binding reaches the door');
+    await assert.rejects(() => door('reader'), /binding_not_authorized/);
+    committed(await setRole(bindingIds.release, 'release-door', true));
+    await assert.rejects(() => door('codex'), /owner_grant_door_binding_not_authorized/);
+    await assert.rejects(() => door('claude'), /owner_grant_door_binding_not_authorized/);
+    assert.equal((await door('release')).consumed, false, 'the marked Binding opens its own request');
+
+    // --- Ending a role explicitly returns to the earlier behaviour. ---
+    committed(await setRole(bindingIds.release, 'release-door', false));
+    assert.equal((await door('codex')).consumed, false);
+    assert.equal(await issueErr({ binding_id: bindingIds.release, role: 'release-door', enabled: false }), 'binding_role_unchanged');
+
+    // --- Re-review 2, finding A: a revoked or expired holder keeps the role locked. ---
+    const t2 = await createTask('roles revoked');
+    const c2 = committed(await claim(t2, 'claude', 'session-d', ['roles2/**'])).claim;
+    assert.deepEqual((await verifyAs('claude', c2, { pr_ref: 'o/r#12', head_sha: sha(13) })).reasons, ['admission_binding_required']);
+    await admin.query('update public.clued_agent_bindings set revoked_at=now() where id=$1', [bindingIds.ci]);
+    assert.deepEqual((await verifyAs('claude', c2, { pr_ref: 'o/r#12', head_sha: sha(13) })).reasons, ['admission_binding_required'],
+      'a revoked CI Binding does not open binding to every Binding');
+    const stillLocked = await agent('codex', 'clued_work_claim_adopt_v1', { scope: 'global', pr_ref: 'o/r#12', merge_sha: sha(13) });
+    assert.deepEqual([stillLocked.adopted, stillLocked.reason], [false, 'admission_binding_required']);
+    committed(await setRole(bindingIds.release, 'release-door', true));
+    await admin.query("update public.clued_agent_bindings set expires_at=now()-interval '1 minute' where id=$1", [bindingIds.release]);
+    await assert.rejects(() => door('release'), /binding_not_authorized/, 'the expired holder itself is refused');
+    await assert.rejects(() => door('codex'), /owner_grant_door_binding_not_authorized/, 'an expired release Binding keeps the door locked');
+    // The Owner sees the dead holders and can end their roles, but cannot mark a dead Binding.
+    const held = (await native('clued_binding_roles_list_v1', {})).bindings;
+    assert.deepEqual(held.filter((b) => !b.live).map((b) => [b.binding_id, b.roles]).sort(),
+      [[bindingIds.ci, ['ci-admission']], [bindingIds.release, ['release-door']]].sort());
+    assert.ok(held.filter((b) => b.live).every((b) => ![bindingIds.ci, bindingIds.release].includes(b.binding_id)));
+    assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'release-door', enabled: true }), 'binding_role_binding_invalid');
+    // Rotation: mark a new live Binding; the dead one keeps nothing open.
+    committed(await setRole(bindingIds.codex, 'release-door', true));
+    assert.equal((await door('codex')).consumed, false, 'the new holder reaches the door');
+    await assert.rejects(() => door('claude'), /owner_grant_door_binding_not_authorized/);
+    // Ending the dead CI holder's role, the last one, reopens binding to every Binding.
+    committed(await setRole(bindingIds.ci, 'ci-admission', false));
+    const v2 = await verifyAs('claude', c2, { pr_ref: 'o/r#12', head_sha: sha(13) });
+    assert.deepEqual([v2.verdict, v2.bound_pr], ['ADMITTED', 'o/r#12'], 'no role marked any more: the earlier behaviour');
+    assert.ok(!(await native('clued_binding_roles_list_v1', {})).bindings.some((b) => b.binding_id === bindingIds.ci),
+      'a revoked Binding without a role is not listed');
+  } finally {
+    for (const client of clients.reverse()) await client.end().catch(() => {});
+    await server.stop().catch(() => {});
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

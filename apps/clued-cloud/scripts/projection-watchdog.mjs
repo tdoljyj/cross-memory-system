@@ -38,9 +38,11 @@ export function evaluateProjectionWatchdog(snapshot, options = {}) {
     add('projections:none', 'NO_PROJECTIONS', 'No tracked Global projection heads were returned.');
   }
   const keysByTenant = new Map();
+  const unservedTenants = new Set();
   for (const row of snapshot.projections) {
     if (!row || !APPROVED_KEYS.has(row.projection_key) ||
       typeof row.tenant_key !== 'string' || !/^[0-9a-f]{64}$/.test(row.tenant_key) ||
+      !['boolean', 'undefined'].includes(typeof row.builder_served) ||
       !Number.isSafeInteger(row.invalidation_revision) ||
       !Number.isSafeInteger(row.resolved_through_revision) ||
       !['match', 'mismatch', 'unavailable', 'not_applicable'].includes(row.source_digest_status)) {
@@ -55,6 +57,12 @@ export function evaluateProjectionWatchdog(snapshot, options = {}) {
     if ((lag === 0 && row.source_digest_status === 'not_applicable') ||
       (lag !== 0 && row.source_digest_status !== 'not_applicable')) {
       throw new Error('invalid_watchdog_digest_status');
+    }
+    // The running Builder cannot rebuild a tenant it holds no grant for, so such
+    // rows are counted once below instead of alerting on each projection.
+    if (row.builder_served === false) {
+      unservedTenants.add(row.tenant_key);
+      continue;
     }
     const summary = `${row.projection_key} revision ${row.resolved_through_revision}/${row.invalidation_revision}`;
     if (lag < 0) add(`${prefix}:revision_invariant`, 'REVISION_INVARIANT', summary);
@@ -79,12 +87,17 @@ export function evaluateProjectionWatchdog(snapshot, options = {}) {
     }
   }
   for (const [tenantKey, keys] of keysByTenant) {
+    if (unservedTenants.has(tenantKey)) continue;
     for (const approvedKey of APPROVED_KEYS) {
       if (!keys.has(approvedKey)) {
         add(`${tenantKey}:${approvedKey}:head_missing`, 'HEAD_MISSING',
           `${approvedKey} was absent from the bounded status snapshot.`);
       }
     }
+  }
+  if (unservedTenants.size) {
+    add('tenants:unserved', 'UNSERVED_TENANTS',
+      `${unservedTenants.size} tenant(s) have Global projections the running Builder is not granted to rebuild.`);
   }
   return incidents.sort((a, b) => a.key.localeCompare(b.key));
 }

@@ -6,12 +6,18 @@ on:
       - '.github/workflows/public-mcp-*.yml'
       - 'apps/clued-cloud/**'
       - 'protocol/continuity/v1/**'
+      - 'skills/clued/references/agent-contract.md'
+      - 'kernel/policy/resource-center-mutation-policy.mjs'
+      - 'kernel/host/resource-center-*.mjs'
   push:
     branches: [main]
     paths:
       - '.github/workflows/public-mcp-*.yml'
       - 'apps/clued-cloud/**'
       - 'protocol/continuity/v1/**'
+      - 'skills/clued/references/agent-contract.md'
+      - 'kernel/policy/resource-center-mutation-policy.mjs'
+      - 'kernel/host/resource-center-*.mjs'
 
 permissions:
   contents: read
@@ -21,6 +27,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when
+  # Clued admits this pull request. The gate does not call Clued and gets no
+  # Clued token (this job runs PR code): it waits for the trusted
+  # pull_request_target run of clued-work-admission.yml on this head and reads
+  # its result. Until the Owner sets the repository variable
+  # CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits; push
+  # events are admitted. Hosted runner, no install.
+  admission-gate:
+    name: admission-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - id: gate
+        env:
+          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
   trusted-self-hosted:
     name: >-
       ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||
@@ -28,13 +64,16 @@ jobs:
               github.event.pull_request.head.repo.full_name == github.repository &&
               github.actor == github.repository_owner)))
           && 'public-mcp-protocol' || 'public-mcp-protocol-self-hosted-skipped' }}
+    needs: admission-gate
     if: >-
+      needs.admission-gate.outputs.admitted == 'true' && (
       (github.event_name == 'push' &&
        github.actor == github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       github.actor == github.repository_owner)
+       github.actor == github.repository_owner))
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: apps/clued-cloud
@@ -54,6 +93,8 @@ jobs:
           timeout --signal=TERM --kill-after=15s 4m
           npm ci --cache "$HOME/.npm" --prefer-offline
           --fetch-retries=2 --fetch-timeout=30000
+      - name: Verify governed Resource Center mutation contract
+        run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/resource-center-storage-read-transport.test.mjs tests/resource-center-storage-read-formats.test.mjs tests/resource-center-zip-reader.test.mjs tests/resource-center-ooxml-text.test.mjs tests/stage6-contract.test.mjs tests/k-cont-contract.test.mjs
       - name: Serialize fixed public MCP ports with other runners on this host
         run: |
           "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" acquire public-mcp-ports
@@ -98,12 +139,14 @@ jobs:
               (github.event.pull_request.head.repo.full_name != github.repository ||
                github.actor != github.repository_owner))))
           && 'public-mcp-protocol' || 'public-mcp-protocol-hosted-skipped' }}
+    needs: admission-gate
     if: >-
+      needs.admission-gate.outputs.admitted == 'true' && (
       (github.event_name == 'push' &&
        github.actor != github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        (github.event.pull_request.head.repo.full_name != github.repository ||
-        github.actor != github.repository_owner))
+        github.actor != github.repository_owner)))
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -120,6 +163,8 @@ jobs:
       - name: Verify gate terminal-state and timeout regressions
         run: npm run mcp:gate-receipt:test
       - run: npm ci
+      - name: Verify governed Resource Center mutation contract
+        run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/resource-center-storage-read-transport.test.mjs tests/resource-center-storage-read-formats.test.mjs tests/resource-center-zip-reader.test.mjs tests/resource-center-ooxml-text.test.mjs tests/stage6-contract.test.mjs tests/k-cont-contract.test.mjs
       - name: Start isolated MCP
         run: |
           printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\n' > evals/public-mcp/.dev.vars.public-mcp

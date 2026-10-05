@@ -1,0 +1,141 @@
+name: clued-work-admission
+
+# Work Claim Admission v0.1 §4.6 L0a (development/contracts/execution-admission/
+# WorkClaimAdmission.v0.1.md). An unfiltered check on every pull request, a
+# `main` ruleset required check like gitleaks and trivy. It makes one Clued
+# call per run: clued_work_verify_v1 on the Clued database's PostgREST endpoint
+# (public publishable key, SHA-256 of the read-only Binding token in the
+# environment secret CLUED_ADMISSION_CLUED_TOKEN), asking whether the claim
+# named in the PR body or head commit (`Clued-Work-Claim: <id>`) admits this head, base, changed-file
+# set and pull request. It also prints which path-filtered workflows apply to
+# the changed paths and what each concluded on this head. The admission-gate
+# jobs of the heavy workflows read this run's result instead of calling Clued.
+#
+# `pull_request_target` (step 7 review, BLOCKER 95a93218): this file and
+# scripts/ci/clued-work-admission.mjs are taken from the base branch, and no
+# code of the PR is checked out or executed, so a PR cannot change how its own
+# admission is judged. The PR is read through the API only. `edited` re-runs
+# the check when the PR body (and so the trailer) changes; the hourly
+# clued-work-admission-reverify.yml re-runs a passing check whose claim no
+# longer admits the PR.
+#
+# Re-review 3, N-R4: a re-run replays the run's own copy of this file. The
+# token and the App key were renamed (CLUED_ADMISSION_CLUED_TOKEN,
+# CLUED_ADMISSION_APP_KEY) and the old names retired, so a re-run of a run from
+# before this change gets neither and posts nothing.
+#
+# The token lives in the `clued-admission` environment (Owner setting:
+# deployment branches limited to main, no reviewers). A pull_request_target
+# run and the scheduled re-verification run on main, so they get it; a
+# workflow a PR adds or edits runs on refs/pull/N/merge and does not, even if
+# it names the environment. No `pull_request` trigger here: every PR, one that
+# edits this file included, is judged by the base-branch copy.
+#
+# Not covered here: a PR can add another workflow whose job is also named
+# clued-work-admission; both are GitHub Actions check runs. Closing that needs
+# a check identity a PR workflow cannot use (a GitHub App, or required
+# workflows), which is an Owner setting outside the repository.
+#
+# Enforcement is the Owner's repository variable
+# CLUED_WORK_ADMISSION_ENFORCE=true; until then the check is advisory. Once
+# enforced, a missing claim, a REJECTED verdict, a missing RPC, a refused token
+# or a transport error all fail closed. Hosted runner on purpose: seconds of
+# work, no install, no self-hosted capacity.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review, closed]
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+
+# The merge report (clued-work-adopt) runs in its own group, so a later edit
+# of the merged pull request cannot cancel it (re-review N7).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.action == 'closed' && 'closed' || 'open' }}
+  cancel-in-progress: ${{ github.event.action != 'closed' }}
+
+jobs:
+  clued-work-admission:
+    name: clued-work-admission
+    # Re-review 6, B1: pull_request_target runs the default branch's workflow
+    # with the default branch's ref whatever the pull request's base, so this
+    # environment's secrets would reach a pull request into any branch. Only
+    # pull requests into the default branch are admitted here; the gates and
+    # the runner check refuse the others (no admission check).
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: clued-admission
+    steps:
+      # The default branch as it is now, never the PR head or merge ref, and
+      # never another base branch, whose script an Agent could have edited.
+      # Re-review 3, N-R4: not the event's base commit, which a re-run of an
+      # old run would replay together with that commit's older checks.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Self-test the admission script (no network, mocked fetch)
+        run: |
+          node --version
+          node --test scripts/ci/clued-work-admission.test.mjs scripts/ci/clued-release-grant.test.mjs scripts/runner/clued-runner-job-started.test.mjs
+      - name: Verify the work claim with Clued and summarize applicable workflows
+        id: admit
+        env:
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
+          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode required
+      # Owner Decision 37e01bb1: the same result once more as the Owner's
+      # clued-admission GitHub App. Its key lives only in this environment, so
+      # a pull request's own workflow cannot post this check and the main
+      # ruleset can require it by App. Posts nothing until the App is set up.
+      - name: Post the result as the clued-admission App
+        if: ${{ !cancelled() }}
+        env:
+          # Re-review 3, N-R6: when the admission step fails before it names
+          # the head, the failure is still posted on the event's head, so an
+          # older success does not stay the newest check.
+          ADMISSION_HEAD_SHA: ${{ steps.admit.outputs.head_sha || github.event.pull_request.head.sha }}
+          # Re-review 4, m1/m2: the check names its pull request, so the gate
+          # accepts only its own pull request's admission.
+          ADMISSION_PR_NUMBER: ${{ github.event.pull_request.number }}
+          ADMISSION_OUTCOME: ${{ steps.admit.outcome }}
+          ADMISSION_VERDICT: ${{ steps.admit.outputs.verdict }}
+          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
+          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
+        run: node scripts/ci/clued-work-admission.mjs --mode app-check
+
+  # GenericWorkClaim §5.3, multi-copy write-back: a merged pull request is
+  # reported to Clued once (clued_work_claim_adopt_v1). When its Task runs as
+  # a race, the copy bound to this pull request is adopted and the other
+  # copies are put out; their pull requests fail the next verification. A
+  # pull request that is not a copy changes nothing. Base-branch code and the
+  # same environment as the check above; no pull request branch is executed.
+  clued-work-adopt:
+    name: clued-work-adopt
+    # Re-review 6, B1: merges into the default branch only (see above).
+    if: >-
+      github.event.action == 'closed' && github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: clued-admission
+    steps:
+      # The default branch as it is now (the merge included), not the pull
+      # request's older base commit, which may predate this mode.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Report the merge to Clued for multi-copy adoption
+        env:
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode adopt

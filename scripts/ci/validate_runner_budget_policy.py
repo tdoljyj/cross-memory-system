@@ -18,8 +18,26 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-cloud-production-release.yml": (
         "Owner-dispatched production release uses a clean Ubuntu worker with ICU and isolated database and Cloudflare deployment credentials; it does not run on pull requests."
     ),
+    "clued-storage-executor-window.yml": (
+        "Owner-dispatched Storage executor gate (on until closed, a five-minute window, or close) uses a clean Ubuntu worker with the isolated Cloudflare deployment credential; it does not run on pull requests or check out code."
+    ),
+    "clued-storage-read-config.yml": (
+        "Owner-dispatched Storage read key provisioning and read-flag switch uses a clean Ubuntu worker with the isolated Cloudflare deployment credential; it does not run on pull requests or check out code."
+    ),
+    "clued-information-flow-prod-e2e.yml": (
+        "Owner-dispatched production E2E reaches the public Worker with a dedicated test account; it holds no database or deployment credential and does not run on pull requests."
+    ),
     "clued-ci-health.yml": (
         "The lightweight monitor must remain independent of the self-hosted pool so it can detect complete Windows/Linux capability-pool loss."
+    ),
+    "clued-work-admission.yml": (
+        "Work Claim Admission L0a: an unfiltered required check that makes one Clued call per pull request and must not wait on self-hosted capacity; it runs base-branch code only (pull_request_target), installs nothing and executes no PR code."
+    ),
+    "clued-work-admission-dispatch.yml": (
+        "Work Claim Admission hand-dispatch check: verifies a claim before a heavy workflow is dispatched; default-branch code only, one Clued call, no install, no pull request trigger."
+    ),
+    "clued-work-admission-reverify.yml": (
+        "Work Claim Admission hourly re-verification: re-runs a passing admission check whose claim expired or moved; default-branch code only, no install, no pull request trigger."
     ),
     "phase2-naming-surface-inventory.yml": (
         "Frozen historical exact-byte inventory workflow; modifying its execution contract would invalidate bound evidence."

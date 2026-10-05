@@ -187,12 +187,165 @@ class CluedCiHealthTests(unittest.TestCase):
         )
         self.assertTrue(all(item["kind"] == "queued" for item in anomaly_details["jobs"]))
 
+    def routed_job(self, job_id, runner_name, created, started, completed, labels=None, name=None):
+        return {
+            "id": job_id,
+            "run_id": 900 + job_id,
+            "name": name or f"job-{job_id}",
+            "status": "completed",
+            "conclusion": "success",
+            "runner_name": runner_name,
+            "labels": labels or self.expected[runner_name]["required_labels"],
+            "created_at": health.isoformat(created),
+            "started_at": health.isoformat(started),
+            "completed_at": health.isoformat(completed),
+        }
+
+    def secretless_report(self, jobs):
+        return health.build_report(
+            "tdoljyj/cross-memory-system", self.inventory, None, jobs,
+            datetime(2026, 9, 23, 4, 0, tzinfo=timezone.utc),
+        )
+
+    def slow_entries(self, report):
+        pools = report["observations"]["startup_delays"]["slow_occurrences_by_pool"]
+        return {entry["job_id"]: entry for entries in pools.values() for entry in entries}
+
+    def test_wait_behind_another_job_is_runner_occupied(self):
+        name = "clued-ci-company-win-01"
+        t0 = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc)
+        gate = self.routed_job(
+            1, name, t0 - timedelta(minutes=2), t0 - timedelta(minutes=2), t0 + timedelta(minutes=12),
+            labels=["self-hosted", "Windows", "X64", "clued", "pool-general", "trust-internal", "cap-node24"],
+            name="public-mcp-gate-receipt",
+        )
+        probe = self.routed_job(
+            2, name, t0, t0 + timedelta(minutes=12, seconds=4), t0 + timedelta(minutes=12, seconds=14),
+            name=f"{health.HEARTBEAT_PREFIX}{name}",
+        )
+        entry = self.slow_entries(self.secretless_report([gate, probe]))["2"]
+        self.assertEqual(entry["wait_cause"], "runner_occupied")
+        self.assertEqual(entry["runner_name"], name)
+        self.assertEqual([item["name"] for item in entry["occupied_by"]], ["public-mcp-gate-receipt"])
+
+    def test_idle_runner_while_eligible_work_queued_notifies(self):
+        idle = "clued-ci-home-linux-01"
+        busy = "clued-ci-company-linux-01"
+        t0 = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc)
+        generic = ["self-hosted", "Linux", "X64", "clued", "pool-general", "trust-internal", "cap-docker-linux"]
+        jobs = [
+            self.routed_job(1, idle, t0, t0 + timedelta(minutes=40), t0 + timedelta(minutes=41),
+                            name=f"{health.HEARTBEAT_PREFIX}{idle}"),
+            self.routed_job(2, busy, t0 + timedelta(minutes=5), t0 + timedelta(minutes=13),
+                            t0 + timedelta(minutes=14), labels=generic),
+            self.routed_job(3, busy, t0 + timedelta(minutes=6), t0 + timedelta(minutes=15),
+                            t0 + timedelta(minutes=16), labels=generic),
+        ]
+        report = self.secretless_report(jobs)
+        entry = self.slow_entries(report)["1"]
+        self.assertEqual(entry["wait_cause"], "runner_idle_while_work_queued")
+        self.assertEqual({str(item["job_id"]) for item in entry["queued_eligible_jobs"]}, {"2", "3"})
+        keys = [item["key"] for item in report["anomalies"]]
+        self.assertIn(f"runner:{idle}:idle-while-work-queued", keys)
+
+        restored = self.secretless_report(health.previous_delay_jobs(report))
+        self.assertIn(f"runner:{idle}:idle-while-work-queued", [item["key"] for item in restored["anomalies"]])
+        self.assertEqual(self.slow_entries(restored)["1"]["wait_cause"], "runner_idle_while_work_queued")
+
+    def test_single_queued_eligible_job_does_not_flag_idle_runner(self):
+        idle = "clued-ci-home-linux-01"
+        t0 = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc)
+        generic = ["self-hosted", "Linux", "X64", "clued", "pool-general", "trust-internal", "cap-docker-linux"]
+        jobs = [
+            self.routed_job(1, idle, t0, t0 + timedelta(minutes=40), t0 + timedelta(minutes=41),
+                            name=f"{health.HEARTBEAT_PREFIX}{idle}"),
+            self.routed_job(2, "clued-ci-company-linux-01", t0 + timedelta(minutes=5),
+                            t0 + timedelta(minutes=13), t0 + timedelta(minutes=14), labels=generic),
+            # Another runner's exact route is not work the idle runner could serve.
+            self.routed_job(3, "clued-ci-company-linux-02", t0, t0 + timedelta(minutes=20),
+                            t0 + timedelta(minutes=21), name=f"{health.HEARTBEAT_PREFIX}clued-ci-company-linux-02"),
+        ]
+        report = self.secretless_report(jobs)
+        self.assertNotIn("RUNNER_IDLE_WHILE_WORK_QUEUED", [item["code"] for item in report["anomalies"]])
+
     def test_slow_starts_in_different_pools_do_not_combine(self):
         report = self.report(jobs=[
             self.slow_job(1, "windows-general-v1"),
             self.slow_job(2, "linux-docker-wsl2-v1"),
         ])
         self.assertEqual(report["status"], "HEALTHY")
+
+    def test_old_unexplained_wait_is_corrected_by_recovered_occupation(self):
+        name = "clued-ci-company-linux-02"
+        t0 = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc)
+        probe = self.routed_job(2, name, t0, t0 + timedelta(seconds=385), t0 + timedelta(seconds=395))
+        probe.update(wait_cause="unexplained", idle_seconds=385)
+        occupier = self.routed_job(1, name, t0 - timedelta(minutes=1), t0 - timedelta(minutes=1), t0 + timedelta(seconds=381))
+        entry = self.slow_entries(self.report(jobs=[probe, occupier]))["2"]
+        self.assertEqual(entry["wait_cause"], "runner_occupied")
+        self.assertEqual(entry["idle_seconds"], 4)
+
+    def test_partial_occupation_does_not_explain_a_five_minute_wait(self):
+        name = "clued-ci-company-linux-02"
+        t0 = datetime(2026, 9, 23, 3, 0, tzinfo=timezone.utc)
+        probe = self.routed_job(2, name, t0, t0 + timedelta(seconds=304), t0 + timedelta(seconds=310))
+        occupier = self.routed_job(1, name, t0, t0, t0 + timedelta(seconds=5))
+        entry = self.slow_entries(self.report(jobs=[probe, occupier]))["2"]
+        self.assertEqual(entry["wait_cause"], "unexplained")
+
+    def test_capacity_classification_changes_fingerprint_without_hiding_threshold(self):
+        jobs = [self.slow_job(1, "linux-docker-wsl2-v1"), self.slow_job(2, "linux-docker-wsl2-v1")]
+        unknown = self.report(jobs=jobs)
+        for job in jobs:
+            job.update(wait_cause="runner_occupied", idle_seconds=4, occupied_by=[{"job_id": 100}])
+        capacity = self.report(jobs=jobs)
+        self.assertEqual(capacity["status"], "ANOMALY")
+        self.assertTrue(capacity["notify_model"])
+        self.assertEqual(capacity["anomalies"][0]["details"]["classification"], "capacity_pressure")
+        self.assertEqual(capacity["anomalies"][0]["details"]["severity"], "info")
+        self.assertNotEqual(capacity["fingerprint"], unknown["fingerprint"])
+        jobs[0]["wait_cause"] = "unexplained"
+        mixed = self.report(jobs=jobs)
+        self.assertEqual(mixed["anomalies"][0]["details"]["severity"], "warning")
+
+    def test_missing_occupation_details_cannot_be_capacity_only(self):
+        jobs = [self.slow_job(1, "linux-docker-wsl2-v1"), self.slow_job(2, "linux-docker-wsl2-v1")]
+        for job in jobs:
+            job["wait_cause"] = "runner_occupied"
+        report = self.report(jobs=jobs)
+        self.assertEqual(report["anomalies"][0]["details"]["classification"], "startup_delay_needs_investigation")
+
+    def test_carried_queued_job_keeps_waiting_instead_of_becoming_success(self):
+        jobs = [self.slow_job(1, "linux-docker-wsl2-v1"), self.slow_job(2, "linux-docker-wsl2-v1")]
+        for job in jobs:
+            job.update(status="queued", started_at=job["created_at"])
+        report = self.report(jobs=jobs)
+        restored = health.previous_delay_jobs(report)
+        self.assertTrue(all(job["status"] == "queued" and job["conclusion"] is None for job in restored))
+        self.assertTrue(all(entry["kind"] == "queued" for entry in self.slow_entries(self.report(jobs=restored)).values()))
+
+    def test_context_recovery_fetches_old_run_assignment_and_obeys_budget(self):
+        calls = []
+        old = self.slow_job(1, "linux-docker-wsl2-v1")
+        old.update(wait_cause="unexplained", runner_name="")
+        class Client:
+            def get(self, path, params):
+                calls.append((path, params))
+                if path.endswith("/actions/runs"):
+                    return {"workflow_runs": [{"id": 200}, {"id": 201}, {"id": 202}]}
+                return {"jobs": [{"id": old["id"], "runner_name": "clued-ci-company-linux-02"}]}
+        recovered = health.collect_delay_context_jobs(Client(), "tdoljyj/cross-memory-system", [old], [],
+                                                     datetime(2026, 9, 23, tzinfo=timezone.utc), 2)
+        self.assertEqual(sum(path.endswith("/jobs") for path, _ in calls), 2)
+        self.assertEqual(recovered[0]["runner_name"], "clued-ci-company-linux-02")
+        self.assertIn("..", next(params["created"] for path, params in calls if path.endswith("/actions/runs")))
+
+    def test_capacity_only_history_does_not_trigger_extra_collection(self):
+        class Client:
+            def get(self, *_):
+                raise AssertionError("capacity-only history must not add requests")
+        self.assertEqual(health.collect_delay_context_jobs(Client(), "repo", [{"wait_cause": "runner_occupied"}], [],
+                                                         datetime(2026, 9, 23, tzinfo=timezone.utc), 20), [])
 
     def test_fingerprint_ignores_observation_timestamps(self):
         first = self.report(jobs=[self.slow_job(1, "windows-general-v1"), self.slow_job(2, "windows-general-v1")])

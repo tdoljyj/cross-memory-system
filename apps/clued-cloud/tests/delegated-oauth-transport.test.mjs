@@ -29,6 +29,8 @@ const resource = `${origin}/mcp`;
 const originalFetch = globalThis.fetch;
 function fixture() {
   const bindings = new Map(); const prepared = new Map(); const calls = []; const background = [];
+  const storageGrants = new Set();
+  const grantScopes = ['context:read', 'context:write'];
   const env = { OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin,
     CLUED_AUTHORIZATION_ISSUER_TOKEN: 'isolated-issuer-test-value', SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'test-public-key', PROJECT_VIEWS_V2: 'true' };
   const run = (route, options = {}) => handle(new Request(`${origin}${route}`, options), env, { waitUntil(promise) { background.push(promise); }, passThroughOnException() {}, props: {} }, async () => new Response('fallback', { status: 404 }));
@@ -45,7 +47,7 @@ function fixture() {
       const entry = [...prepared.values()].find(p => p.request_id === body.p_request_id);
       if (!entry || entry.version !== body.p_base_version) return Response.json({ error: 'conflict' }, { status: 409 });
       entry.version++;
-      const binding = { binding_id: crypto.randomUUID(), active: true, version: 1, expires_at: body.p_expires_at, granted_scopes: ['context:read', 'context:write'] };
+      const binding = { binding_id: crypto.randomUUID(), active: true, version: 1, expires_at: body.p_expires_at, granted_scopes: [...grantScopes] };
       bindings.set(body.p_binding_hash, binding); return Response.json(binding);
     }
     if (name === 'clued_authorization_revoke_issuer_v12') {
@@ -60,10 +62,22 @@ function fixture() {
     }
     if (name === 'clued_authorization_status_v12') return Response.json(bindings.get(body.p_token_hash) || { active: false });
     if (name === 'clued_record_list') return Response.json({ status: 'ok', records: [] });
+    if (name === 'clued_storage_jobs_v1') {
+      if (!bindings.get(body.p_token_hash)?.active || !storageGrants.has(body.p_token_hash)) {
+        return Response.json({ message: 'storage_binding_denied', code: '42501' }, { status: 403 });
+      }
+      return Response.json({ connection_id: body.p_input.connection_id, job_id: body.p_input.job_id,
+        request_digest: 'a'.repeat(64), status: 'queued', intent_id: null,
+        receipt_id: '30000000-0000-4000-8000-000000000001', execution_permitted: false });
+    }
+    if (name === 'clued_storage_read_v1') {
+      // No Owner read access in this fixture: the read evaluator denies every admit.
+      return Response.json({ message: 'storage_read_denied', code: '42501' }, { status: 403 });
+    }
     if (name === 'clued_mcp_projection_refresh_claim') return Response.json({ status: 'idle' });
     throw new Error(`Unexpected storage route: ${name}`);
   };
-  return { env, run, bindings, calls, background };
+  return { env, run, bindings, calls, background, storageGrants, grantScopes };
 }
 async function client(f) {
   const response = await f.run('/oauth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_name: 'Isolated client', redirect_uris: ['https://client.example/callback'], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }) });
@@ -82,9 +96,9 @@ async function begin(f, clientId) {
   assert.equal(read.status, 200, await read.clone().text());
   return { id, cookie, headers, verifier, prepared: await read.json() };
 }
-async function approve(f, clientId, flow) {
+async function approve(f, clientId, flow, days = 1) {
   const response = await f.run(`/oauth/decision?request_id=${flow.id}`, { method: 'POST', headers: { ...flow.headers, Origin: origin, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'approve', version: flow.prepared.version, days: 1, selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write'] }] }) });
+    body: JSON.stringify({ action: 'approve', version: flow.prepared.version, days, selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write'] }] }) });
   assert.equal(response.status, 200, await response.clone().text());
   const body = await response.json();
   assert.equal(JSON.stringify(body).includes('clued_bnd_'), false);
@@ -96,6 +110,85 @@ async function approve(f, clientId, flow) {
 }
 const call = (token, name) => ({ method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: { record_type: 'state' } } }) });
+// A gateway scope refusal is a tool error (HTTP 200, isError) carrying what to request; Hosts drop 403 bodies.
+async function scopeDenied(response) {
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.id, 1);
+  assert.equal(body.result.isError, true);
+  assert.equal(body.result.structuredContent.error.code, 'insufficient_scope');
+  assert.deepEqual(JSON.parse(body.result.content[0].text), body.result.structuredContent);
+  return body.result.structuredContent.error;
+}
+
+test('real OAuth MCP storage tools retain live Binding and separate storage grant gates', async () => {
+  const f = fixture();
+  try {
+    f.env.CLUED_STORAGE_ACCOUNT_V1 = 'true'; f.env.CLUED_STORAGE_JOBS_V1 = 'true';
+    const id = await client(f), flow = await begin(f, id), token = await approve(f, id, flow);
+    const ref = { connection_id: '20000000-0000-4000-8000-000000000001', job_id: '10000000-0000-4000-8000-000000000001' };
+    const mutation = { operation: 'create', target_kind: 'file', destination_path: 'G:/My Drive/Clued_资料中心/track/topic/test.md', content: 'fixture' };
+    const storageCall = (access, name, args) => ({ ...call(access, name), body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
+    // Actual provider issued a context:write token, but no storage grant exists.
+    let response = await f.run('/mcp', storageCall(token.access_token, 'clued_storage_submit', { ...ref, mutation }));
+    assert.equal(response.status, 200); assert.equal((await response.json()).result.isError, true);
+    const bindingHash = [...f.bindings.keys()][0]; f.storageGrants.add(bindingHash);
+    // Narrowing memory scopes does not substitute for or erase the separate grant.
+    const refresh = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, scope: 'context:read', resource }) });
+    assert.equal(refresh.status, 200); const narrowed = await refresh.json();
+    assert.equal(narrowed.scope, 'context:read');
+    for (const [name, args] of [['clued_storage_submit', { ...ref, mutation }], ['clued_storage_inspect', ref]]) {
+      response = await f.run('/mcp', storageCall(narrowed.access_token, name, args));
+      assert.equal(response.status, 200); const body = (await response.json()).result;
+      assert.equal(body.isError, false); assert.equal(body.structuredContent.execution_permitted, false);
+      assert.equal(f.calls.filter(x => x.name === 'clued_storage_jobs_v1').at(-1).body.p_token_hash, bindingHash);
+    }
+    f.storageGrants.delete(bindingHash);
+    response = await f.run('/mcp', storageCall(narrowed.access_token, 'clued_storage_inspect', ref));
+    assert.equal((await response.json()).result.isError, true);
+    f.storageGrants.add(bindingHash); f.env.CLUED_STORAGE_JOBS_V1 = 'false';
+    let before = f.calls.filter(x => x.name === 'clued_storage_jobs_v1').length;
+    assert.equal((await f.run('/mcp', storageCall(narrowed.access_token, 'clued_storage_submit', { ...ref, mutation }))).status, 404);
+    assert.equal(f.calls.filter(x => x.name === 'clued_storage_jobs_v1').length, before);
+    f.env.CLUED_STORAGE_JOBS_V1 = 'true'; f.bindings.get(bindingHash).active = false;
+    before = f.calls.filter(x => x.name === 'clued_storage_jobs_v1').length;
+    assert.equal((await f.run('/mcp', storageCall(narrowed.access_token, 'clued_storage_inspect', ref))).status, 400);
+    assert.equal(f.calls.filter(x => x.name === 'clued_storage_jobs_v1').length, before);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('real OAuth MCP clued_storage_browse reaches the read evaluator with any memory scope', async () => {
+  const f = fixture();
+  try {
+    Object.assign(f.env, { CLUED_STORAGE_ACCOUNT_V1: 'true', CLUED_STORAGE_GOOGLE_V1: 'true', CLUED_STORAGE_READ_V1: 'true',
+      CLUED_STORAGE_CONNECTOR_ISSUER: 'i'.repeat(40), CLUED_STORAGE_GOOGLE_CLIENT_ID: 'read-client',
+      CLUED_STORAGE_VAULT_KEYS: JSON.stringify({ current_key_id: 'v1', keys: { v1: Buffer.alloc(32, 7).toString('base64url') } }),
+      CLUED_STORAGE_READ_CURSOR_KEY: btoa('c'.repeat(32)), CLUED_STORAGE_READ_RECEIPT_KEYS: JSON.stringify({ current: 'k1', keys: { k1: btoa('h'.repeat(32)) } }) });
+    const id = await client(f), token = await approve(f, id, await begin(f, id));
+    const refresh = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, scope: 'context:read', resource }) });
+    assert.equal(refresh.status, 200); const narrowed = await refresh.json();
+    const bindingHash = [...f.bindings.keys()][0];
+    const browse = access => ({ ...call(access, 'clued_storage_browse'), body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'clued_storage_browse', arguments: { connection_id: '20000000-0000-4000-8000-000000000001', operation: 'list' } } }) });
+    const reads = () => f.calls.filter(x => x.name === 'clued_storage_read_v1');
+    for (const access of [token.access_token, narrowed.access_token]) {
+      const before = reads().length;
+      const response = await f.run('/mcp', browse(access));
+      // Not the OAuth scope gate's 403: the call reaches the read evaluator, whose denial is a tool error.
+      assert.equal(response.status, 200, await response.clone().text());
+      const body = (await response.json()).result;
+      assert.equal(body.isError, true); assert.equal(body.structuredContent.error, 'storage_read_unavailable');
+      assert.equal(reads().length, before + 1);
+      assert.equal(reads().at(-1).body.p_token_hash, bindingHash); assert.equal(reads().at(-1).body.p_input.action, 'admit');
+    }
+    f.env.CLUED_STORAGE_READ_V1 = 'false';
+    const before = reads().length;
+    assert.equal((await f.run('/mcp', browse(narrowed.access_token))).status, 404);
+    assert.equal(reads().length, before);
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 test('real OAuth discovery challenges unauthenticated MCP and advertises the new issuer', async () => {
   const f = fixture(); try {
@@ -130,6 +223,30 @@ test('two consent instances for the same client issue independent simultaneously
     for (const token of [a.access_token, b.access_token]) assert.equal((await f.run('/mcp', call(token, 'clued_record_list'))).status, 200);
   } finally { globalThis.fetch = originalFetch; }
 });
+test('refresh token lifetime follows the chosen authorization lifetime, up to 365 days', async () => {
+  const f = fixture();
+  try {
+    const id = await client(f);
+    for (const days of [1, 90, 365]) {
+      const before = Math.floor(Date.now() / 1000);
+      const token = await approve(f, id, await begin(f, id), days);
+      const [userId, grantId] = token.refresh_token.split(':');
+      const grant = JSON.parse(await f.env.OAUTH_KV.get(`grant:${userId}:${grantId}`));
+      const lifetime = grant.expiresAt - before;
+      assert.ok(lifetime > days * 86400 - 60 && lifetime <= days * 86400 + 1, `${days} days: ${lifetime}s`);
+      const refresh = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, resource }) });
+      assert.equal(refresh.status, 200, await refresh.clone().text());
+    }
+    for (const days of [0, 31, 366]) {
+      const flow = await begin(f, id);
+      const response = await f.run(`/oauth/decision?request_id=${flow.id}`, { method: 'POST', headers: { ...flow.headers, Origin: origin, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve', version: flow.prepared.version, days, selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read'] }] }) });
+      assert.equal(response.status, 400, `${days} days is not an offered lifetime`);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('OAuth MCP forwards the Worker execution context to the independent projection Builder', async () => {
   const f = fixture(); try {
     f.env.CLUED_PROJECTION_BUILDER_TOKEN = `clued_bnd_${'p'.repeat(43)}`;
@@ -148,13 +265,59 @@ test('refresh downscoping cannot retain write capability in encrypted applicatio
     const refreshed = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, scope: 'context:read', resource }) });
     assert.equal(refreshed.status, 200, await refreshed.clone().text());
     const narrowed = await refreshed.json(); assert.equal(narrowed.scope, 'context:read');
-    assert.equal((await f.run('/mcp', call(narrowed.access_token, 'clued_record_mutate'))).status, 403);
-    assert.equal((await f.run('/mcp', call(narrowed.access_token, 'clued_event_carrier_transition'))).status, 403);
-    assert.equal((await f.run('/mcp', call(narrowed.access_token, 'clued_projection_rebuild'))).status, 403);
-    assert.equal((await f.run('/mcp', call(narrowed.access_token, 'clued_full_global_reconcile'))).status, 403);
+    // The connection's live scopes still include write; the narrowed token does not regain it.
+    for (const row of f.bindings.values()) row.scopes = ['context:read', 'context:write'];
+    await scopeDenied(await f.run('/mcp', call(narrowed.access_token, 'clued_record_mutate')));
+    await scopeDenied(await f.run('/mcp', call(narrowed.access_token, 'clued_event_carrier_transition')));
+    await scopeDenied(await f.run('/mcp', call(narrowed.access_token, 'clued_projection_rebuild')));
+    await scopeDenied(await f.run('/mcp', call(narrowed.access_token, 'clued_full_global_reconcile')));
     assert.equal(f.calls.some(c => c.name === 'clued_record_mutate'), false);
     assert.equal(f.calls.some(c => c.name === 'clued_mcp_event_carrier_transition'), false);
     assert.equal(f.calls.some(c => c.name === 'clued_mcp_projection_rebuild' || c.name === 'clued_mcp_full_global_reconcile'), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+test('a connection the Owner widened uses its live scopes without reconnecting; a reduced one loses them', async () => {
+  const f = fixture(); try {
+    f.grantScopes.splice(0, f.grantScopes.length, 'context:read');
+    const id = await client(f); const token = await approve(f, id, await begin(f, id));
+    assert.equal(token.scope, 'context:read');
+    // Before the Owner approves a connection.permission request: refused at the gateway.
+    for (const row of f.bindings.values()) row.scopes = ['context:read'];
+    const denied = await scopeDenied(await f.run('/mcp', call(token.access_token, 'clued_record_mutate')));
+    // The refusal names what is missing and the request that asks the Owner for it.
+    assert.deepEqual(denied.missing, { context: 'global', action: 'write', scope: 'context:write' });
+    assert.equal(denied.suggested_request.action, 'connection.permission');
+    assert.deepEqual(denied.suggested_request.resources, ['permission:global/write']);
+    assert.match(denied.suggested_request.idempotency_key, /^permission:global\/write:\d{8}$/);
+    assert.equal(f.calls.some(c => c.name === 'clued_record_mutate'), false);
+    // After approval the database reports write on the same connection: the same token passes the gateway.
+    for (const row of f.bindings.values()) row.scopes = ['context:read', 'context:write'];
+    await f.run('/mcp', call(token.access_token, 'clued_record_mutate'));
+    assert.equal(f.calls.some(c => c.name === 'clued_record_mutate'), true);
+    // A refreshed token that keeps the whole grant follows the live scopes too.
+    const refreshed = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, resource }) });
+    assert.equal(refreshed.status, 200, await refreshed.clone().text());
+    const renewed = await refreshed.json();
+    const before = f.calls.filter(c => c.name === 'clued_record_mutate').length;
+    await f.run('/mcp', call(renewed.access_token, 'clued_record_mutate'));
+    assert.equal(f.calls.filter(c => c.name === 'clued_record_mutate').length, before + 1);
+    // When the Owner reduces the connection, the live scopes win over the token's.
+    for (const row of f.bindings.values()) row.scopes = [];
+    await scopeDenied(await f.run('/mcp', call(renewed.access_token, 'clued_record_list')));
+  } finally { globalThis.fetch = originalFetch; }
+});
+test('a read-only connection can ask for a connection permission', async () => {
+  const f = fixture(); try {
+    f.env.CLUED_OWNER_REQUESTS_V1 = 'true';
+    f.grantScopes.splice(0, f.grantScopes.length, 'context:read');
+    const id = await client(f); const token = await approve(f, id, await begin(f, id));
+    for (const row of f.bindings.values()) row.scopes = ['context:read'];
+    const ask = (args) => ({ ...call(token.access_token, 'clued_owner_request'),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'clued_owner_request', arguments: args } }) });
+    await scopeDenied(await f.run('/mcp', ask({ action: 'release.production', resources: ['repo:o/n/abc'], idempotency_key: 'release-key-1' })));
+    assert.equal(f.calls.some(c => c.name === 'clued_owner_request_v1'), false);
+    await f.run('/mcp', ask({ action: 'connection.permission', resources: ['permission:global/write'], idempotency_key: 'permission-key-1' }));
+    assert.equal(f.calls.filter(c => c.name === 'clued_owner_request_v1').length, 1);
   } finally { globalThis.fetch = originalFetch; }
 });
 test('database revocation denies existing access and refresh even when provider KV remains unchanged', async () => {
@@ -175,6 +338,12 @@ test('context write requires an explicit write scope and unknown tools fail clos
   assert.deepEqual(requiredToolScopes('clued_projection_rebuild'), ['context:write']);
   assert.deepEqual(requiredToolScopes('clued_full_global_reconcile'), ['context:write']);
   assert.deepEqual(requiredToolScopes('clued_currentness_g6_gate'), ['context:read']);
+  assert.deepEqual(requiredToolScopes('clued_owner_request'), ['context:write']);
+  assert.deepEqual(requiredToolScopes('clued_owner_request', { action: 'release.production' }), ['context:write']);
+  assert.deepEqual(requiredToolScopes('clued_owner_request', { action: 'connection.permission' }), []);
+  assert.deepEqual(requiredToolScopes('clued_owner_request', { request_id: '10000000-0000-4000-8000-000000000001' }), []);
+  assert.deepEqual(requiredToolScopes('clued_storage_browse'), []);
+  assert.deepEqual(requiredToolScopes('clued_storage_read'), []);
   assert.equal(requiredToolScopes('clued_context', { op: 'publish' }), null);
   assert.equal(requiredToolScopes('clued_mcp_event_carrier_transition'), null);
   assert.equal(requiredToolScopes('invented_admin_tool'), null);

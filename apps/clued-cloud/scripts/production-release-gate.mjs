@@ -59,9 +59,12 @@ export function verifyReleaseState({ baseline, sourceSql, history, changedPaths,
     if (match[1] <= migrationVersion) continue;
     const matching = history.filter((row) => row.name === match[2]);
     const sql = migrationSources[filename];
+    const acceptedStatements = typeof sql === 'string'
+      ? [sql, sql + '\r\n', ...(sql.endsWith('\n') ? [sql.slice(0, -1)] : [])]
+      : [];
     if (matching.length !== 1 || typeof sql !== 'string' ||
         matching[0].statements?.length !== 1 ||
-        ![sql, sql + '\r\n'].includes(matching[0].statements[0])) {
+        !acceptedStatements.includes(matching[0].statements[0])) {
       errors.push(`unapplied_or_mismatched_migration:${filename}`);
     }
   }
@@ -86,18 +89,72 @@ export function verifyReleaseState({ baseline, sourceSql, history, changedPaths,
     if (minHeartbeatAt !== null && heartbeatAt <= Date.parse(minHeartbeatAt)) {
       errors.push('worker_has_not_run_after_deployment');
     }
+    // Only tenants the running Builder serves can become current; rows of other
+    // tenants (for example a production E2E account) are left to the watchdog.
     for (const key of requiredKeys) {
-      const matching = Array.isArray(watchdog.projections)
-        ? watchdog.projections.filter((row) => row.projection_key === key) : [];
-      const row = matching[0];
-      if (matching.length !== 1 || row.job_status !== 'completed' ||
-          row.invalidation_revision !== row.resolved_through_revision ||
-          row.stale_since !== null || row.source_digest_status !== 'match') {
+      const served = Array.isArray(watchdog.projections)
+        ? watchdog.projections.filter((row) => row?.projection_key === key &&
+          row.builder_served === true) : [];
+      if (served.length === 0 ||
+          new Set(served.map((row) => row.tenant_key)).size !== served.length ||
+          served.some((row) => row.job_status !== 'completed' ||
+            row.invalidation_revision !== row.resolved_through_revision ||
+            row.stale_since !== null || row.source_digest_status !== 'match')) {
         errors.push(`projection_not_current:${key}`);
       }
     }
   }
   return errors;
+}
+
+// The Builder runs every minute and marks the heartbeat 'running' while it
+// works, so a snapshot read in that window is not a settled state.
+export function builderRunInProgress(watchdog, now = new Date()) {
+  const startedAt = Date.parse(watchdog?.heartbeat?.last_started_at);
+  return watchdog?.heartbeat?.last_result === 'running' && Number.isFinite(startedAt) &&
+    now.getTime() - startedAt <= 120_000 && startedAt <= now.getTime() + 10_000;
+}
+
+export function onlyProjectionLag(errors) {
+  return errors.length > 0 &&
+    errors.every((error) => error.startsWith('projection_not_current:'));
+}
+
+// A Clued write between two Builder runs leaves a projection stale until the
+// next run, which starts every minute. When that staleness is the only finding,
+// wait for up to `maxRuns` newer completed Builder runs and evaluate again; any
+// other finding, or no newer run within `runTimeoutMs`, returns as it stands.
+export async function settleProjectionLag({ errors, watchdog, readWatchdog,
+  evaluate, maxRuns = 3, pollMs = 10_000, runTimeoutMs = 120_000,
+  sleep = (ms) => new Promise((done) => setTimeout(done, ms)),
+  now = () => Date.now() }) {
+  let current = { errors, watchdog };
+  for (let run = 0; run < maxRuns && onlyProjectionLag(current.errors); run += 1) {
+    const previous = current.watchdog?.heartbeat?.last_finished_at;
+    const deadline = now() + runTimeoutMs;
+    let next = current.watchdog;
+    const settled = () => next?.heartbeat?.last_finished_at !== previous &&
+      !builderRunInProgress(next, new Date(now()));
+    while (!settled() && now() < deadline) {
+      await sleep(pollMs);
+      next = await readWatchdog();
+    }
+    if (!settled()) break;
+    current = { errors: evaluate(next), watchdog: next };
+  }
+  return current;
+}
+
+async function readWatchdog(dbUrl) {
+  const client = new pg.Client({ connectionString: dbUrl });
+  await client.connect();
+  try {
+    const result = await client.query(
+      'select clued_watchdog.projection_watchdog_snapshot() as snapshot');
+    return result.rows[0]?.snapshot;
+  } finally {
+    await client.end();
+  }
 }
 
 async function main() {
@@ -168,9 +225,20 @@ async function main() {
   } finally {
     await client.end();
   }
+  // Wait out a Builder run in progress (at most six re-reads, 5 s apart) and
+  // evaluate the snapshot taken after it; every check below stays unchanged.
+  for (let reads = 0; reads < 6 && builderRunInProgress(watchdog); reads += 1) {
+    await new Promise((done) => setTimeout(done, 5_000));
+    watchdog = await readWatchdog(dbUrl);
+  }
 
-  const errors = verifyReleaseState({ baseline, sourceSql, history, changedPaths,
-    migrationFiles, migrationSources, frontierDefinition, watchdog, minHeartbeatAt });
+  const evaluate = (snapshot) => verifyReleaseState({ baseline, sourceSql, history,
+    changedPaths, migrationFiles, migrationSources, frontierDefinition,
+    watchdog: snapshot, minHeartbeatAt });
+  const settled = await settleProjectionLag({ errors: evaluate(watchdog), watchdog,
+    readWatchdog: () => readWatchdog(dbUrl), evaluate });
+  watchdog = settled.watchdog;
+  const { errors } = settled;
   if (errors.length) throw new Error(`production_release_blocked:${errors.join(',')}`);
   const result = {
     status: 'passed', source_commit: commit,

@@ -2,10 +2,14 @@ name: Clued G4 Database Gate
 
 on:
   workflow_dispatch:
+    inputs:
+      admission_run_id:
+        description: Id of a successful clued-work-admission-dispatch run that admitted this workflow and ref
+        required: false
+        type: string
   push:
     branches:
       - main
-      - feat/clued-two-level-views-v1
     paths:
       - .github/workflows/clued-g4-database.yml
       - apps/clued-cloud/package.json
@@ -26,15 +30,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when
+  # Clued admits this pull request. The gate does not call Clued and gets no
+  # Clued token (this job runs PR code): it waits for the trusted
+  # pull_request_target run of clued-work-admission.yml on this head and reads
+  # its result. Until the Owner sets the repository variable
+  # CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits. A hand
+  # dispatch needs admission_run_id from clued-work-admission-dispatch.yml;
+  # push events are admitted. Hosted runner, no install.
+  admission-gate:
+    name: admission-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - id: gate
+        env:
+          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
   database-gate-trusted-self-hosted:
+    needs: admission-gate
     if: >-
-      (github.event_name == 'workflow_dispatch' &&
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'workflow_dispatch' &&
        github.actor == github.repository_owner) ||
       (github.event_name == 'push' &&
        github.actor == github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       github.actor == github.repository_owner)
+       github.actor == github.repository_owner))
     name: Supabase migration, RLS, transaction, and pgTAP
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]
     timeout-minutes: 25
@@ -112,17 +149,31 @@ jobs:
 
       - name: Stop isolated Supabase runtime
         if: always()
-        run: npx --yes supabase@2.115.0 stop --no-backup
+        run: |
+          # The CLI may return nonzero while pruning unrelated containers on
+          # this persistent runner. The gate still requires this run's isolated
+          # runtime to be stopped; Docker errors must not be mistaken for clean.
+          npx --yes supabase@2.115.0 stop --no-backup || stop_status=$?
+          running=$(docker ps --format '{{.Names}}') || exit 1
+          if grep -Eq '^supabase_.*_clued-g4-${{ github.run_id }}$' <<< "$running"; then
+            echo '::error::Isolated Supabase containers remain running'
+            exit 1
+          fi
+          if [ "${stop_status:-0}" -ne 0 ]; then
+            echo '::warning::Supabase global prune failed after this run stopped'
+          fi
 
   database-gate-untrusted-hosted:
+    needs: admission-gate
     if: >-
-      (github.event_name == 'workflow_dispatch' &&
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'workflow_dispatch' &&
        github.actor != github.repository_owner) ||
       (github.event_name == 'push' &&
        github.actor != github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        (github.event.pull_request.head.repo.full_name != github.repository ||
-        github.actor != github.repository_owner))
+        github.actor != github.repository_owner)))
     name: Supabase migration, RLS, transaction, and pgTAP (hosted)
     runs-on: ubuntu-24.04
     timeout-minutes: 25

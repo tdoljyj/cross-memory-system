@@ -21,13 +21,31 @@ on:
       - 'apps/clued-cloud/tests/priority-projection-db.test.mjs'
       - 'apps/clued-cloud/tests/context-v2-*.test.mjs'
       - 'apps/clued-cloud/tests/currentness-*.test.mjs'
+      - 'apps/clued-cloud/tests/work-claims-*.test.mjs'
+      - 'apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs'
+      - 'apps/clued-cloud/tests/resume-constraint-index-db.test.mjs'
+      - 'apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs'
       - 'apps/clued-cloud/tests/projection-refresh-*.test.mjs'
       - 'apps/clued-cloud/tests/record-update-field-merge-db.test.mjs'
+      - 'apps/clued-cloud/tests/task-dependency-guard-db.test.mjs'
+      - 'apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs'
       - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'
       - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'
+      - 'apps/clued-cloud/tests/resource-center-*.test.mjs'
+      - 'kernel/host/resource-center-*.mjs'
+      - 'kernel/host/resource-center-*.py'
+      - 'apps/clued-cloud/scripts/*resource-center*.mjs'
+      - 'kernel/policy/resource-center-*.mjs'
       - 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql'
       - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'
       - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'
+      - 'apps/clued-cloud/tests/mtpe-*.test.mjs'
+      - 'apps/clued-cloud/tests/production-release-gate.test.mjs'
+      - 'apps/clued-cloud/tests/served-agent-contract.test.mjs'
+      - 'apps/clued-cloud/scripts/production-release-*'
+      - 'apps/clued-cloud/scripts/verify-served-agent-contract.mjs'
+      - 'skills/clued/references/agent-contract.md'
+      - '.github/workflows/clued-cloud-production-release.yml'
       - 'apps/clued-cloud/package*.json'
   push:
     branches: [main]
@@ -50,15 +68,38 @@ on:
       - 'apps/clued-cloud/tests/priority-projection-db.test.mjs'
       - 'apps/clued-cloud/tests/context-v2-*.test.mjs'
       - 'apps/clued-cloud/tests/currentness-*.test.mjs'
+      - 'apps/clued-cloud/tests/work-claims-*.test.mjs'
+      - 'apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs'
+      - 'apps/clued-cloud/tests/resume-constraint-index-db.test.mjs'
+      - 'apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs'
       - 'apps/clued-cloud/tests/projection-refresh-*.test.mjs'
       - 'apps/clued-cloud/tests/record-update-field-merge-db.test.mjs'
+      - 'apps/clued-cloud/tests/task-dependency-guard-db.test.mjs'
+      - 'apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs'
       - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'
       - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'
+      - 'apps/clued-cloud/tests/resource-center-*.test.mjs'
+      - 'kernel/host/resource-center-*.mjs'
+      - 'kernel/host/resource-center-*.py'
+      - 'apps/clued-cloud/scripts/*resource-center*.mjs'
+      - 'kernel/policy/resource-center-*.mjs'
       - 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql'
       - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'
       - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'
+      - 'apps/clued-cloud/tests/mtpe-*.test.mjs'
+      - 'apps/clued-cloud/tests/production-release-gate.test.mjs'
+      - 'apps/clued-cloud/tests/served-agent-contract.test.mjs'
+      - 'apps/clued-cloud/scripts/production-release-*'
+      - 'apps/clued-cloud/scripts/verify-served-agent-contract.mjs'
+      - 'skills/clued/references/agent-contract.md'
+      - '.github/workflows/clued-cloud-production-release.yml'
       - 'apps/clued-cloud/package*.json'
   workflow_dispatch:
+    inputs:
+      admission_run_id:
+        description: Id of a successful clued-work-admission-dispatch run that admitted this workflow and ref
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -68,15 +109,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when
+  # Clued admits this pull request. The gate does not call Clued and gets no
+  # Clued token (this job runs PR code): it waits for the trusted
+  # pull_request_target run of clued-work-admission.yml on this head and reads
+  # its result. Until the Owner sets the repository variable
+  # CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits. A hand
+  # dispatch needs admission_run_id from clued-work-admission-dispatch.yml;
+  # push events are admitted. Hosted runner, no install.
+  admission-gate:
+    name: admission-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - id: gate
+        env:
+          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
   isolated-candidate-trusted-self-hosted:
+    needs: admission-gate
     if: >-
-      (github.event_name == 'workflow_dispatch' &&
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'workflow_dispatch' &&
        github.actor == github.repository_owner) ||
       (github.event_name == 'push' &&
        github.actor == github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       github.actor == github.repository_owner)
+       github.actor == github.repository_owner))
     name: >-
       ${{ ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
              (github.event_name == 'push' && github.actor == github.repository_owner) ||
@@ -111,6 +185,8 @@ jobs:
       - run: npm run test:authorization:database
       - run: npm run test:context:v2
       - run: npm run test:projection:refresh
+      - run: npm run test:work:claims
+      - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs
       - run: npm run test:information-flow:candidates
       - run: npm run test:information-flow:intake
       - run: npm run test:information-flow:promotion
@@ -118,21 +194,26 @@ jobs:
       - run: npm run test:information-flow:invalidation
       - run: npm run test:information-flow:hardening
       - run: npm run test:records:db
+      - run: npm run test:mtpe:intake
+      - run: npm run test:production:release-gate
       - run: npm run test:integration-runtime:db
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
+      - run: npm run test:resource-center:authority
       - run: npm run test:authorization:integration
       - run: npm run test:authorization:pages
 
   isolated-candidate-untrusted-hosted:
+    needs: admission-gate
     if: >-
-      (github.event_name == 'workflow_dispatch' &&
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'workflow_dispatch' &&
        github.actor != github.repository_owner) ||
       (github.event_name == 'push' &&
        github.actor != github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        (github.event.pull_request.head.repo.full_name != github.repository ||
-        github.actor != github.repository_owner))
+        github.actor != github.repository_owner)))
     name: >-
       ${{ ((github.event_name == 'workflow_dispatch' && github.actor != github.repository_owner) ||
              (github.event_name == 'push' && github.actor != github.repository_owner) ||
@@ -165,6 +246,8 @@ jobs:
       - run: npm run test:authorization:database
       - run: npm run test:context:v2
       - run: npm run test:projection:refresh
+      - run: npm run test:work:claims
+      - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs
       - run: npm run test:information-flow:candidates
       - run: npm run test:information-flow:intake
       - run: npm run test:information-flow:promotion
@@ -172,8 +255,11 @@ jobs:
       - run: npm run test:information-flow:invalidation
       - run: npm run test:information-flow:hardening
       - run: npm run test:records:db
+      - run: npm run test:mtpe:intake
+      - run: npm run test:production:release-gate
       - run: npm run test:integration-runtime:db
       - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
+      - run: npm run test:resource-center:authority
       - run: npm run test:authorization:integration
       - run: npm run test:authorization:pages

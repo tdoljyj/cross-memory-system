@@ -347,6 +347,15 @@ test('post-commit projection refresh is coalesced, least-privilege, CAS-safe, an
       ['global.__aggregate__', 'global.priority_frontier']);
     assert.ok(healthySnapshot.projections.every((row) => row.source_digest_status === 'match'));
     assert.ok(healthySnapshot.projections.every((row) => /^[0-9a-f]{64}$/.test(row.tenant_key)));
+    assert.ok(healthySnapshot.projections.every((row) => row.builder_served === true));
+    await admin.query(`update clued_private.projection_builder_grants set active=false
+      where user_id=$1 and projection_key='global.__aggregate__'`, [userId]);
+    const unservedSnapshot = (await watchdog.query(
+      'select clued_watchdog.projection_watchdog_snapshot() as snapshot')).rows[0].snapshot;
+    assert.deepEqual(unservedSnapshot.projections.map((row) => [row.projection_key, row.builder_served]),
+      [['global.__aggregate__', false], ['global.priority_frontier', true]]);
+    await admin.query(`update clued_private.projection_builder_grants set active=true
+      where user_id=$1 and projection_key='global.__aggregate__'`, [userId]);
     await admin.query(`insert into public.clued_audit_receipts
       (user_id,binding_id,context_key,operation,object_type,object_id,version,metadata,created_at)
       values($1,$2,'global','projection_refresh','projection','global.__aggregate__',999,

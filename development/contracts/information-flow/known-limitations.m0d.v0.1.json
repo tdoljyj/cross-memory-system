@@ -66,6 +66,12 @@
       "status": "OPEN",
       "evidence_refs": [
         "e2e/E2E-14.json"
+      ],
+      "history": [
+        {
+          "change": "On 2026-09-29 production showed that any active global work_log Event with the decision dimension shadowed every approving Decision, so every accepted policy was refused with policy_decision_not_current (Task 9351fc10-4978-4271-9b6b-99a416d06f80). Under Owner Decision 0b183c2e-8d20-4736-8ce5-7d41ae8ce6f9, migration 20260929150000 judges the approving Decision on its own lifecycle, so an Event no longer disables a policy. A Binding can still edit or supersede the approving Decision and shadow pack items through Events, so the entry stays OPEN.",
+          "previous_status": "OPEN"
+        }
       ]
     },
     {
@@ -313,7 +319,7 @@
       "statement": "S1 was applied to clued-prod per PR #307. The Owner authorized that apply retroactively in Canonical Decision 7040b127-2a42-4ff6-ba46-060a594a9c1d (Receipt cef0f0dd-c89e-4eac-b805-18c0816b4449), Agent-written and disclosed under OPEN_BY_OD-5, quoting the Owner: “补记授权，结论保持“本地验证” (推荐)”. S2-S5 were not applied; the production release gate blocks releases. No full apply has been read back.",
       "consequence": "Every verdict keeps _LOCAL_QUALIFIED; B08 is scoped to the S6 qualification runs as the Decision states; the Task criterion 'truly connected to the Canonical Store' is not met.",
       "successor": "A separately authorized production apply with backup and read-back.",
-      "status": "OPEN",
+      "status": "CLOSED",
       "evidence_refs": [
         "isolation.json"
       ],
@@ -331,8 +337,34 @@
         {
           "change": "On 2026-09-24 the production Worker exposing the S1-S5 Native routes was released at main 51a4fa9c under Owner Decision 42e98d90-2dc5-4722-9e57-5af07cd383f4 (Receipt 35be25a6-9909-4829-821a-a24d6a6a890e); the post-deploy attestation run 36005493986 and the read-only preflight run 36005497777 passed (Note 2d6540a4-4df8-4d2f-9717-538fabe3fd4d). No separate backup was taken before the S3-S5 apply, and no end-to-end qualification has been run against production, so the entry stays OPEN; verdicts keep _LOCAL_QUALIFIED.",
           "previous_status": "OPEN"
+        },
+        {
+          "change": "On 2026-09-29 the production E2E ran against the live Worker after the backup (run 36029141729) and passed 16/16 (run 36606631294; an earlier run 36603899345 failed on script expectations fixed in PR #399). Closed by Owner Decision 325fd110.",
+          "previous_status": "OPEN"
         }
-      ]
+      ],
+      "resolution": {
+        "state": "PRODUCTION_QUALIFIED_CLOSED",
+        "backup": {
+          "run": "https://github.com/tdoljyj/cross-memory-system/actions/runs/36029141729",
+          "taken_at": "2026-09-24",
+          "note_id": "e445b73a"
+        },
+        "production_e2e": {
+          "workflow": ".github/workflows/clued-information-flow-prod-e2e.yml",
+          "run": "https://github.com/tdoljyj/cross-memory-system/actions/runs/36606631294",
+          "source_commit": "b4a189221f1bf01c1a7b75c3b3b2007d606728ae",
+          "verdict": "PASS 16/16",
+          "chain": "dedicated test account: sign-in, Native intake and list, two-step promotion, run-scoped Context Policy issue and accept, pack ok and measured by the live Worker with the bound tokenizer (digest checked, execution NOT_GRANTED), Evidence withdrawal, earlier manifest revalidates STALE (evidence_withdrawn), recompile excludes the record",
+          "evidence_artifact": "11051736537 (zip sha256 a475dce1e4f0d05976778e9ab615494e5c9e2832c15bc655ed375aec6df99ef6, 90-day retention)",
+          "note_id": "d58e204b-2276-4a4b-a573-11e2f3e6f7d7"
+        },
+        "agent_pack_path": "The OAuth/MCP clued_context_pack path was observed separately under the Owner's accepted policy on 2026-09-29: status ok, measured, 3101/8000 tokens.",
+        "closure": {
+          "decision_id": "325fd110-05cf-4f27-8bb6-a800207d2d6a",
+          "receipt_id": "c57464e5-a903-4206-b376-262ad2d2c666"
+        }
+      }
     },
     {
       "id": "L27",
@@ -610,6 +642,22 @@
       "kind": "Canonical Decision",
       "items": {
         "L14": "keep OPEN; upgrade to the Cloudflare Workers Paid plan before the first Context Policy is accepted, then observe first-pack CPU in production"
+      }
+    },
+    {
+      "decision_id": "0b183c2e-8d20-4736-8ce5-7d41ae8ce6f9",
+      "receipt_id": "8cff2453-0461-4e89-9159-00ad889a2ff9",
+      "kind": "Canonical Decision",
+      "items": {
+        "contract_6.1": "the approving Decision of a Context Policy is judged on its own lifecycle (exact version, not archived/merged/closed/superseded, Native marker) and is not shadowed by unrelated active Events"
+      }
+    },
+    {
+      "decision_id": "325fd110-05cf-4f27-8bb6-a800207d2d6a",
+      "receipt_id": "c57464e5-a903-4206-b376-262ad2d2c666",
+      "kind": "Canonical Decision",
+      "items": {
+        "L26": "close: production backup and production end-to-end qualification are complete"
       }
     }
   ],

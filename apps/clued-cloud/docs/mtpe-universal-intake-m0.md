@@ -6,7 +6,7 @@ Implementation contract: `mtpe-universal-intake.v1`.
 
 Canonical Records remain the only editable work authority. The MTPE tables are a deterministic projection keyed by `(user_id, record_id)` and are rebuilt by database triggers after Canonical Record commits. They do not duplicate Task text or create executable wrappers.
 
-An Owner Pin is accepted only through `clued_mtpe_owner_pin` with explicit user confirmation, exact Task version, write authorization and an idempotency key. That M1 mutation supplies the Event and immutable Receipt. Stored `type_fields.owner_pin` values are inert, so replaying or updating an older Task cannot silently steal focus. Runtime projection rows are private and have no direct Agent grants.
+An Owner Pin is accepted only through `clued_mtpe_owner_pin` with explicit user confirmation, exact Task version, write authorization and an idempotency key. The Owner focus is one per user, so a `set` also names the focus it replaces: `expected_current_focus_id` is the current focus's record ID, or `null` when no focus is expected; a mismatch is rejected with `owner_pin_focus_conflict` and the rejection returns `supplemental.current_focus_id`. Parallel execution is a work claim (`clued_work_claim`), never an Owner Pin. That M1 mutation supplies the Event and immutable Receipt. Stored `type_fields.owner_pin` values are inert, so replaying or updating an older Task cannot silently steal focus. Runtime projection rows are private and have no direct Agent grants.
 
 ## Intake and routing
 

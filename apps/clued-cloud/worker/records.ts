@@ -83,7 +83,7 @@ export const recordTools = [
   {
     name: "clued_record_mutate",
     description:
-      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). On an existing record, mutation.type_fields and mutation.relations merge into the stored top-level keys: omitted keys are kept and a key sent as null is removed; field_mode=replace replaces each object sent whole. Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint.",
+      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt. authority=user_explicit (the record's main claim is the Owner's own words in this conversation) requires user_confirmed=true; those words are the confirmation, so do not ask the Owner again before writing. Otherwise use the actual observed/inferred authority. Create requires mutation, source_refs, and source_unavailable_reason; mutation.type_fields requires rationale (decision), state_kind (state), execution_bucket (task), fact_kind (profile_fact), or note_kind (note). execution_bucket accepts only now, next, blocked, later. The database requires the other four keys but imposes no value enum: use a rationale explaining the decision, state_kind=manual for a manual State, fact_kind=preference for a preference, or note_kind=log for a follow-up note. On an existing record, mutation.type_fields and mutation.relations merge into the stored top-level keys: omitted keys are kept and a key sent as null is removed; field_mode=replace replaces each object sent whole. Restore requires explicit user confirmation, a reason, and the current terminal Receipt ID. Use decision.type_fields.constraint=true for a resident constraint. source_refs accepts Evidence IDs only ([] when there are none), never Record IDs; relations.supersedes changes only through clued_decision_supersede.",
     inputSchema: {
       type: "object",
       required: ["operation", "record_type", "record_schema_version", "lifecycle_status", "scope", "idempotency_key", "authority", "confidence_reason"],
@@ -98,14 +98,20 @@ export const recordTools = [
         scope: { type: "string", pattern: "^(profile|global|project:[0-9a-fA-F-]{36})$" },
         base_version: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] },
         field_mode: { type: "string", enum: ["merge", "replace"] },
-        source_refs: { type: "array", uniqueItems: true, items: { type: "string", format: "uuid" } },
+        source_refs: { type: "array", uniqueItems: true, items: { type: "string", format: "uuid" }, description: "Evidence IDs only ([] when there are none). A Record ID is rejected as evidence_not_authorized." },
         source_unavailable_reason: { anyOf: [{ type: "string", maxLength: 1000 }, { type: "null" }] },
         mutation: {
           type: "object",
           properties: {
             title: { type: "string" },
             content: { type: "string" },
-            type_fields: { type: "object" },
+            type_fields: { type: "object", description: "Create requires the key for record_type. Only execution_bucket has a database value enum; other required keys have no value enum.", properties: {
+              execution_bucket: { type: "string", enum: ["now", "next", "blocked", "later"], description: "Required for task." },
+              rationale: { description: "Required for decision; explain the decision. No database value enum." },
+              state_kind: { description: "Required for state; manual is used for a manual State. No database value enum." },
+              fact_kind: { description: "Required for profile_fact; preference is used for a preference. No database value enum." },
+              note_kind: { description: "Required for note; log is used for a follow-up note. No database value enum." },
+            } },
             relations: { type: "object" },
             closure_summary: { type: "string" },
             closed_reason: { type: "string" },
@@ -116,7 +122,7 @@ export const recordTools = [
         reopen_reason: { type: "string", minLength: 1, maxLength: 1000 },
         terminal_receipt_id: { type: "string", format: "uuid" },
         authority: { type: "string", enum: ["user_explicit", "observed", "inferred", "imported"] },
-        user_confirmed: { type: "boolean" },
+        user_confirmed: { type: "boolean", description: "Must be true with authority=user_explicit. It records that the main claim is the Owner's own words in this conversation; it is not a step to ask the Owner again." },
         observed_at: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] },
         confidence: { anyOf: [{ type: "number", minimum: 0, maximum: 1 }, { type: "null" }] },
         confidence_reason: { type: "string", minLength: 1 },
@@ -126,11 +132,44 @@ export const recordTools = [
   },
   {
     name: "clued_decision_supersede",
-    description: "Atomically replace one or more active Decisions using multi-target CAS.",
+    description:
+      "Atomically replace one or more active Decisions using multi-target CAS. source_decisions names each active Decision to retire with its current version as base_version; all must share one scope. replacement is the new Decision created in the same transaction and needs the same fields as a clued_record_mutate create: record_schema_version 1, the sources' scope, title, content, type_fields.rationale, relations.supersedes equal to the set of source_decisions ids, source_refs (Evidence IDs only, [] when there are none; a Record ID is rejected as evidence_not_authorized), source_unavailable_reason (string or null) and authority; authority=user_explicit requires top-level user_confirmed=true. A replacement that omits record_schema_version, scope or authority is rejected (replacement_record_schema_version_required, replacement_scope_required, invalid_authority) and no source Decision is closed.",
     inputSchema: { type: "object", required: ["source_decisions", "replacement", "supersede_reason", "idempotency_key"], properties: {
-      source_decisions: { type: "array", minItems: 1, items: { type: "object" } }, replacement: { type: "object" },
+      source_decisions: {
+        type: "array", minItems: 1, maxItems: 100, description: "Active Decisions to supersede; all must share one scope.",
+        items: { type: "object", required: ["id", "base_version"], properties: {
+          id: { type: "string", format: "uuid" },
+          base_version: { type: "integer", minimum: 1, description: "The source Decision's current version (CAS)." },
+        } },
+      },
+      replacement: {
+        type: "object",
+        description: "The new Decision. Same shape as a clued_record_mutate create, flattened: record fields next to the mutation fields.",
+        required: ["record_schema_version", "scope", "title", "content", "type_fields", "relations", "source_refs", "source_unavailable_reason", "authority"],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          record_schema_version: { type: "integer", const: 1 },
+          scope: { type: "string", pattern: "^(profile|global|project:[0-9a-fA-F-]{36})$", description: "Must equal the scope of every source Decision." },
+          title: { type: "string" },
+          content: { type: "string" },
+          type_fields: { type: "object", required: ["rationale"], properties: {
+            rationale: { description: "Required; explain the decision. No database value enum." },
+            constraint: { type: "boolean", description: "true marks a resident constraint." },
+          } },
+          relations: { type: "object", required: ["supersedes"], properties: {
+            supersedes: { type: "array", uniqueItems: true, items: { type: "string", format: "uuid" }, description: "Must equal the set of source_decisions ids (supersedes_set_mismatch otherwise)." },
+          } },
+          source_refs: { type: "array", uniqueItems: true, items: { type: "string", format: "uuid" }, description: "Evidence IDs only ([] when there are none). A Record ID is rejected as evidence_not_authorized." },
+          source_unavailable_reason: { anyOf: [{ type: "string", maxLength: 1000 }, { type: "null" }] },
+          authority: { type: "string", enum: ["user_explicit", "observed", "inferred", "imported"] },
+          observed_at: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] },
+          confidence: { anyOf: [{ type: "number", minimum: 0, maximum: 1 }, { type: "null" }] },
+          confidence_reason: { type: "string" },
+        },
+      },
       supersede_reason: { type: "string", minLength: 1 }, idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
-      request_hash: { type: "string", pattern: "^[0-9a-f]{64}$" }, user_confirmed: { type: "boolean" },
+      request_hash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      user_confirmed: { type: "boolean", description: "Must be true with replacement.authority=user_explicit. It records that the replacement's main claim is the Owner's own words in this conversation; it is not a step to ask the Owner again." },
     }, additionalProperties: false },
   },
   {

@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import pg from 'pg';
-import { PRODUCTION_HEALTH_URL, verifyLiveSourceCommit, waitForLiveSourceCommit } from './currentness-live-build.mjs';
+import { PRODUCTION_HEALTH_URL, waitForLiveSourceCommit } from './currentness-live-build.mjs';
 
 const TEST_FILES = Object.freeze([
   'tests/user-memory-bundle.test.mjs',
@@ -69,7 +69,10 @@ const output = `${run.stdout || ''}\n${run.stderr || ''}`;
 process.stdout.write(output);
 if (run.error) throw run.error;
 if (run.status !== 0) throw new Error(`Currentness/retained/Major verification failed (${run.status}); G6 attestation not written`);
-if (production) await verifyLiveSourceCommit(commit);
+// Recheck after the tests: Cloudflare can still route some requests to the
+// previous version after the first match, so this recheck waits too (only a
+// commit mismatch is retried; anything else still fails closed).
+if (production) await waitForLiveSourceCommit(commit, { log: (line) => process.stderr.write(`${line}\n`) });
 const digest = sha256(JSON.stringify({ commit, dirty, test_files: TEST_FILES, output }));
 const evidence = {
   source_commit: commit,

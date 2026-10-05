@@ -450,29 +450,6 @@ def cmd_bootstrap() -> int:
     return 0
 
 
-def cmd_commit_repo() -> int:
-    manifest, errors = validate(REPO / "memory")
-    if errors:
-        raise RuntimeError("refusing commit: " + "; ".join(errors[:10]))
-    run("git", "add", "-A")
-    staged = run("git", "diff", "--cached", "--name-only").stdout.strip()
-    if staged:
-        run("git", "-c", "user.name=Codex@TURING", "-c", "user.email=tdoljyj@users.noreply.github.com", "commit", "-m", f"memory v1.6 root cutover [Codex@TURING]: {manifest['snapshot_version']}")
-    run("git", "fetch", "origin", "main")
-    remote = run("git", "rev-parse", "FETCH_HEAD").stdout.strip()
-    head = run("git", "rev-parse", "HEAD").stdout.strip()
-    if run("git", "merge-base", "--is-ancestor", remote, head, check=False).returncode != 0:
-        run("git", "-c", "user.name=Codex@TURING", "-c", "user.email=tdoljyj@users.noreply.github.com", "merge", "--no-edit", "FETCH_HEAD")
-    run("git", "push", "origin", "HEAD:main")
-    remote_after = run("git", "ls-remote", "origin", "refs/heads/main").stdout.split()[0]
-    head_after = run("git", "rev-parse", "HEAD").stdout.strip()
-    run("git", "fetch", "origin", "main")
-    if run("git", "merge-base", "--is-ancestor", head_after, remote_after, check=False).returncode:
-        raise RuntimeError("remote verification failed")
-    print(f"repository committed and pushed: {head_after}")
-    return 0
-
-
 def main() -> int:
     mode = sys.argv[1] if len(sys.argv) > 1 else "doctor"
     if mode == "doctor":
@@ -483,8 +460,6 @@ def main() -> int:
         return cmd_push()
     if mode == "bootstrap":
         return cmd_bootstrap()
-    if mode == "commit-repo":
-        return cmd_commit_repo()
     if mode == "mirror":
         context = new_verification_context("AUDIT_FULL")
         mirror(context=context)

@@ -78,10 +78,12 @@ test('frontier eligibility v2 keeps backlog / later / 暂缓 / do-not-recommend 
     const write = (input) => rpc(hostToken, 'clued_record_mutate', input);
     const snapshot = () => rpc(hostToken, 'clued_mcp_mtpe_snapshot');
     const validate = () => rpc(hostToken, 'clued_mcp_mtpe_validate');
-    const pin = (operation, recordId, baseVersion) => rpc(hostToken, 'clued_mcp_mtpe_owner_pin', {
-      operation, record_id: recordId, base_version: baseVersion,
-      idempotency_key: uuid(), user_confirmed: true, reason: 'Owner focus fixture',
-    });
+    const pin = (operation, recordId, baseVersion, expectedFocus = null) =>
+      rpc(hostToken, 'clued_mcp_mtpe_owner_pin', {
+        operation, record_id: recordId, base_version: baseVersion,
+        ...(operation === 'set' ? { expected_current_focus_id: expectedFocus } : {}),
+        idempotency_key: uuid(), user_confirmed: true, reason: 'Owner focus fixture',
+      });
     const row = (view, id) => view.candidate_universe.find((entry) => entry.record_id === id);
     const frontierProjection = async () => (await admin.query(`select type_fields
       from public.clued_memories where user_id=$1 and record_type='state'

@@ -63,13 +63,25 @@ The monitor preserves the current alert thresholds:
 
 Startup latency is evaluated by the deterministic hourly schedule. Each scheduled run reads at most the 20 most recent general workflow runs plus the 20 most recent heartbeat runs and applies the two-occurrence rule; pull-request validation does not scan job history. Previously observed slow starts are carried forward from the machine-owned transport report until they leave the 24-hour window, so a busy repository cannot evict threshold evidence merely by creating newer runs. An exact runner route becomes unavailable only after two probes for that route each exceed five minutes. GitHub exposes `workflow_job` as a webhook event but not as a GitHub Actions workflow trigger, so the schedule plus repository-local heartbeat is the smallest secretless transport that covers every workflow and all four exact routes without external infrastructure.
 
+For carried delays whose occupation is unresolved, the hourly scan re-reads their exact runs to recover runner assignment and collects older runs anchored around their wait windows. This recovery adds at most `--max-runs` job-list requests (20 in the workflow), with nearby waits sharing an hourly anchor. Fresh job objects replace historical entries, so a queued job is not invented as completed/successful. The bounded sample can still miss occupation; missing evidence never proves online/idleness or an outage.
+
+Each slow start records the runner that finally took it and a `wait_cause`, derived only from the collected jobs:
+
+- `runner_occupied`: observed jobs cover that runner's wait except at most 30 seconds of dispatch grace (or the configured threshold if lower). The entry lists them in `occupied_by`, for example a long Linux job ahead of that runner's exact-route heartbeat. (`public-mcp-gate-receipt` used to poll for up to an hour on a Windows runner; it now evaluates once each time a required check completes.)
+- `runner_idle_while_work_queued`: no collected job covers a long wait while other compatible jobs (their labels are a subset of its required labels) also queued. This is missing occupation evidence, not verified online/idleness. At least two such jobs raise `RUNNER_IDLE_WHILE_WORK_QUEUED` for investigation, without asserting offline, suspension or a pool outage.
+- `unassigned`: the job is still queued. `unexplained`: neither pattern applies, or the runner is not in the inventory.
+
+Jobs from runs outside the collected window are invisible, so causes are best-effort evidence, not proof. They are carried forward with the slow start. For a Linux runner flagged `runner_idle_while_work_queued`, read the host watchdog log (`C:\clued-ci\logs\watchdog-<host_id>.log`) for `Capacity suspend` / `Capacity resume` lines in that interval before looking elsewhere: the watchdog deliberately stops an idle Linux runner when host memory or disk crosses the profile's danger threshold.
+
+The existing 300-second / two-occurrence / 24-hour gate is unchanged. Repeated waits fully explained by occupation are `classification=capacity_pressure`, `severity=info`; any unexplained or unassigned wait keeps `classification=startup_delay_needs_investigation`, `severity=warning`. Both retain evidence and transport notification. The classification participates in the anomaly key/fingerprint so a change from capacity pressure to unknown waiting is not lost to deduplication. Timestamps and individual delay fluctuations still do not churn the fingerprint. `idle_seconds` measures time not covered by sampled jobs; it must never be presented as proof that a runner was online and idle.
+
 Threshold-reaching anomalies are published to the dedicated draft PR head `automation/clued-ci-health-event`, with title `[Clued CI Health] anomaly event transport` and labels `ci-health-anomaly-event` plus `do-not-merge`. Its body carries a prominent `DO NOT MERGE` warning. The evidence lives at `.github/ci-health-events/latest.json`. Identical anomaly fingerprints are a no-op; recovery closes the PR; a later anomaly reopens it and restores the warning and labels. Retiring the transport means closing the PR and deleting its branch without merging. Transport commits use `[skip ci]` so the alert path does not add load to the unhealthy pool.
 
 For ChatGPT Work, bootstrap the dedicated anomaly PR first, then create an event-triggered task on the web or supported mobile app. Restrict its GitHub trigger to this repository, the exact anomaly PR, title, and label, and select **commit updates only**. The saved prompt must re-read the structured evidence, verify the exact head branch, and require `status=ANOMALY` plus `notify_model=true` before analysis. Ordinary PR activity, reviews, comments, merges, transport closure/recovery, and unchanged fingerprints must not enter analysis.
 
 After saving the Work task, run the transport once with `--force-event` to publish a single commit update for an already-open current anomaly. This is only a bootstrap/replay control; normal scheduled runs omit it and retain fingerprint deduplication.
 
-The Scheduled Task UI can explicitly choose a model and reasoning effort when those choices are available to the account/workspace. Select `gpt-6-luna` with low reasoning if the Work task offers it, then verify the saved task. This repository cannot set or verify that ChatGPT-side choice, so do not claim the model is fixed unless the saved task actually shows it.
+The `Clued CI Health Anomaly` Work task uses platform runtime defaults for model and reasoning effort: both are **unfixed**. Do not select or claim a specific model for that task. This repository cannot set or verify ChatGPT-side model fields. Its Work path does not use the OpenAI API and must not request or create an API key.
 
 An explicit OpenAI API fallback is included but disabled by default. Set repository variable `CLUED_CI_HEALTH_ANALYSIS_MODE=openai_api` and add an `OPENAI_API_KEY` secret only after deliberately choosing API billing. That path calls `gpt-6-luna` with low reasoning, and it still runs only for `notify_model=true`. The repository does not create, infer, or require an API key for the default ChatGPT Work transport.
 
@@ -118,6 +130,8 @@ Required:
 - Windows-side WSL keepalive/watchdog
 
 Docker Desktop WSL integration is not part of the CI capability contract. A node advertising `cap-docker-linux` must have a working native Linux engine.
+
+The bootstrap also installs a systemd drop-in with `KillMode=control-group`. This is a Clued containment invariant: stopping or capacity-suspending a Linux runner must terminate every process left in that runner service cgroup, including orphaned job descendants such as `worker-host` and `workerd`. The watchdog already defers capacity suspension while `Runner.Worker` is present, so process containment does not replace the busy-job safety check.
 
 ## Capacity profiles
 
@@ -305,7 +319,7 @@ The rendered watchdog is intentionally conservative:
 - keeps the declared WSL distro alive;
 - restores native Docker and the Linux systemd runner;
 - gives the Windows runner `BelowNormal` process priority;
-- suspends Linux CI only after the current Linux job is idle and host memory/disk crosses the profile's danger threshold;
+- suspends Linux CI only after the current Linux job is idle and host memory/disk crosses the profile's danger threshold. It inspects the runner only when a suspend is due. A `Runner.Worker` process, sampled twice a few seconds apart, marks the runner busy; so does a listener log whose last event is `Running job:`. A missing or unreadable listener log no longer holds the suspend back. When WSL cannot be queried, the suspend is deferred. Each deferral reason is logged once per low-capacity episode;
 - resumes Linux CI after the profile's recovery threshold is satisfied;
 - never changes GitHub Secrets, production deployment authority, DNS, database state, or production traffic.
 

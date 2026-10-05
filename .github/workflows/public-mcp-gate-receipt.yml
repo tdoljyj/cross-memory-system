@@ -1,38 +1,46 @@
 name: public-mcp-gate-receipt
 
+# Evaluated each time one of the four required checks completes, instead of one
+# job polling for up to an hour per pull request push: that poll held a Windows
+# runner for as long as the Linux checks queued (clued-ci-company-win-01 on
+# 2026-09-29). Each run reads the candidate's check runs once and reports the
+# verdict as the `public-mcp-gate-receipt` commit status on the candidate. It is
+# a no-op for candidates public-mcp-behavior does not run for, which keeps the
+# gate on the same paths as before. A terminal verdict is also written as the
+# completed check run `public-mcp-gate-receipt-verdict`, because commit statuses
+# raise no check-suite events for pull request watchers. The job runs the default
+# branch's gate code and never checks out the pull request.
 on:
-  pull_request_target:
-    paths:
-      - '.github/workflows/public-mcp-*.yml'
-      - 'apps/clued-cloud/**'
-      - 'protocol/continuity/v1/**'
+  workflow_run:
+    workflows: [public-mcp-protocol, public-mcp-behavior, gitleaks, trivy]
+    types: [completed]
 
 permissions:
   actions: read
-  checks: read
+  checks: write
   contents: read
-  pull-requests: read
+  statuses: write
 
+# Serialize evaluations of one candidate so an earlier snapshot never posts
+# after a later one; a newer pending evaluation supersedes an older pending one.
 concurrency:
-  group: public-mcp-gate-receipt-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: public-mcp-gate-receipt-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
 
 jobs:
   trusted-self-hosted:
-    name: public-mcp-gate-receipt
+    name: public-mcp-gate-receipt-evaluate
     if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor == github.repository_owner
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.actor.login == github.repository_owner
     runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24]
-    # The four required checks run on the self-hosted Linux pool and can queue
-    # well past 15 minutes; the gate polls from Windows, so waiting longer does
-    # not hold capacity they need.
-    timeout-minutes: 70
+    timeout-minutes: 5
     steps:
-      - name: Check out trusted gate implementation from the base revision
+      - name: Check out trusted gate implementation from the default branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.sha }}
           path: trusted-gate
           persist-credentials: false
       - name: Verify pre-provisioned Node.js 24
@@ -40,53 +48,55 @@ jobs:
         run: |
           node --version
           node -e "const [m]=process.versions.node.split('.').map(Number); if (m !== 24) process.exit(1)"
-      - name: Verify exact-SHA four-green gate and issue receipt
+      - name: Evaluate exact-SHA four-green gate once and report its status
         env:
-          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
           GATE_REPOSITORY: ${{ github.repository }}
-          GATE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GATE_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          GATE_MODE: once
+          GATE_STATUS_TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GATE_RECEIPT_OUTPUT: ${{ runner.temp }}\public-mcp-gate-receipt.json
-          GATE_TIMEOUT_SECONDS: '3600'
           GH_TOKEN: ${{ github.token }}
         shell: powershell
         run: node trusted-gate/apps/clued-cloud/evals/public-mcp/gate-receipt.mjs
-      - name: Hash gate receipt
+      - name: Report immutable receipt digest without writing an Artifact
         shell: powershell
         run: |
           $receipt = "${{ runner.temp }}\public-mcp-gate-receipt.json"
-          $sums = "${{ runner.temp }}\SHA256SUMS"
+          if (-not (Test-Path $receipt)) { Write-Output 'No receipt: required checks still running or gate not applicable.'; exit 0 }
           $hash = (Get-FileHash -Path $receipt -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  public-mcp-gate-receipt.json" | Set-Content -Path $sums -Encoding ascii
-      - name: Report immutable receipt digest without writing an Artifact
-        shell: powershell
-        run: Get-Content "${{ runner.temp }}\SHA256SUMS"
+          Write-Output "$hash  public-mcp-gate-receipt.json"
 
   untrusted-hosted:
-    name: public-mcp-gate-receipt
+    name: public-mcp-gate-receipt-evaluate
     if: >-
-      github.event.pull_request.head.repo.full_name != github.repository ||
-      github.actor != github.repository_owner
+      github.event.workflow_run.event == 'pull_request' &&
+      (github.event.workflow_run.head_repository.full_name != github.repository ||
+       github.event.workflow_run.actor.login != github.repository_owner)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
-      - name: Check out trusted gate implementation from the base revision
+      - name: Check out trusted gate implementation from the default branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.sha }}
           path: trusted-gate
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24.19.0
-      - name: Verify exact-SHA four-green gate and issue receipt
+      - name: Evaluate exact-SHA four-green gate once and report its status
         env:
-          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
           GATE_REPOSITORY: ${{ github.repository }}
-          GATE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GATE_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          GATE_MODE: once
+          GATE_STATUS_TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GATE_RECEIPT_OUTPUT: ${{ runner.temp }}/public-mcp-gate-receipt.json
           GH_TOKEN: ${{ github.token }}
         run: node trusted-gate/apps/clued-cloud/evals/public-mcp/gate-receipt.mjs
-      - name: Hash gate receipt
-        run: sha256sum "${{ runner.temp }}/public-mcp-gate-receipt.json" > "${{ runner.temp }}/SHA256SUMS"
       - name: Report immutable receipt digest without writing an Artifact
-        run: cat "${{ runner.temp }}/SHA256SUMS"
+        run: |
+          receipt="${{ runner.temp }}/public-mcp-gate-receipt.json"
+          if [ ! -f "$receipt" ]; then echo 'No receipt: required checks still running or gate not applicable.'; exit 0; fi
+          (cd "$(dirname "$receipt")" && sha256sum public-mcp-gate-receipt.json)

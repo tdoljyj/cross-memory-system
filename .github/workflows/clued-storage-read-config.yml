@@ -1,0 +1,102 @@
+name: Clued Storage read config
+
+# StorageFullCapability.v0.1 P1. Configures the production Worker's read tool:
+# provision_keys creates CLUED_STORAGE_READ_RECEIPT_KEYS and
+# CLUED_STORAGE_READ_CURSOR_KEY once (never overwrites; values are generated on
+# the runner, masked and never printed); enable / disable set
+# CLUED_STORAGE_READ_V1. The database read_enabled switch and the Owner's read
+# access remain separate gates. Each run must name the authorizing Decision.
+# No repository code is checked out or run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: provision_keys creates missing read keys; enable/disable set the Worker read flag
+        type: choice
+        options:
+          - provision_keys
+          - enable
+          - disable
+        default: provision_keys
+      decision_id:
+        description: Clued Decision UUID that authorizes this run
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  WORKER_NAME: clued-cloud
+  WRANGLER: wrangler@4.125.0
+
+jobs:
+  configure:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner
+    # Re-review 5, N1: the deploy token and attestation URL are secrets of the
+    # clued-release environment (main only), never repository secrets.
+    environment: clued-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: clued-storage-read-config
+      cancel-in-progress: false
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Validate inputs and credentials
+        env:
+          MODE: ${{ inputs.mode }}
+          DECISION_ID: ${{ inputs.decision_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$MODE" =~ ^(provision_keys|enable|disable)$ ]] || { echo "unknown mode"; exit 1; }
+          [[ "$DECISION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo "decision_id must be a lowercase UUID"; exit 1; }
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          echo "decision_id=$DECISION_ID mode=$MODE"
+      - name: Provision missing read keys
+        if: inputs.mode == 'provision_keys'
+        working-directory: ${{ runner.temp }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          names="$(npx --yes "$WRANGLER" secret list --name "$WORKER_NAME" --format json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{for(const x of JSON.parse(s))console.log(x.name)})')"
+          if grep -qx CLUED_STORAGE_READ_RECEIPT_KEYS <<<"$names"; then
+            echo "CLUED_STORAGE_READ_RECEIPT_KEYS already present; not overwritten"
+          else
+            key="$(openssl rand -base64 32)"; echo "::add-mask::$key"
+            ring="$(KEY="$key" node -e 'process.stdout.write(JSON.stringify({current:"k1",keys:{k1:process.env.KEY}}))')"; echo "::add-mask::$ring"
+            printf '%s' "$ring" | npx --yes "$WRANGLER" secret put CLUED_STORAGE_READ_RECEIPT_KEYS --name "$WORKER_NAME"
+            unset key ring
+            echo "CLUED_STORAGE_READ_RECEIPT_KEYS created"
+          fi
+          if grep -qx CLUED_STORAGE_READ_CURSOR_KEY <<<"$names"; then
+            echo "CLUED_STORAGE_READ_CURSOR_KEY already present; not overwritten"
+          else
+            key="$(openssl rand -base64 32)"; echo "::add-mask::$key"
+            printf '%s' "$key" | npx --yes "$WRANGLER" secret put CLUED_STORAGE_READ_CURSOR_KEY --name "$WORKER_NAME"
+            unset key
+            echo "CLUED_STORAGE_READ_CURSOR_KEY created"
+          fi
+      - name: Set Worker read flag
+        if: inputs.mode == 'enable' || inputs.mode == 'disable'
+        working-directory: ${{ runner.temp }}
+        env:
+          MODE: ${{ inputs.mode }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          value=false; [[ "$MODE" == enable ]] && value=true
+          printf '%s' "$value" | npx --yes "$WRANGLER" secret put CLUED_STORAGE_READ_V1 --name "$WORKER_NAME"
+          echo "CLUED_STORAGE_READ_V1=$value set_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"

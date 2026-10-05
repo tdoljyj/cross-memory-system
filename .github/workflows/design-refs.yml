@@ -1,0 +1,107 @@
+# Design-gap prevention, rule B (Task b896173e): every step-list item and
+# every deferral sentence in development/contracts/** names its Clued Task or
+# Decision. See scripts/ci/check_design_refs.py.
+name: design-refs
+
+on:
+  pull_request:
+    paths:
+      - 'development/contracts/**'
+      - 'scripts/ci/check_design_refs.py'
+      - 'scripts/ci/test_check_design_refs.py'
+      - '.github/workflows/design-refs.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'development/contracts/**'
+      - 'scripts/ci/check_design_refs.py'
+      - 'scripts/ci/test_check_design_refs.py'
+      - '.github/workflows/design-refs.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when
+  # Clued admits this pull request. The gate does not call Clued and gets no
+  # Clued token (this job runs PR code): it waits for the trusted
+  # pull_request_target run of clued-work-admission.yml on this head and reads
+  # its result. Until the Owner sets the repository variable
+  # CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits; non-PR
+  # events are admitted. Hosted runner, no install.
+  admission-gate:
+    name: admission-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - id: gate
+        env:
+          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
+  design-refs-trusted-self-hosted:
+    name: >-
+      ${{ ((github.event_name == 'push' &&
+                     github.actor == github.repository_owner) ||
+                    (github.event_name == 'pull_request' &&
+                     github.event.pull_request.head.repo.full_name == github.repository &&
+                     github.actor == github.repository_owner))
+          && 'design-refs' || 'design-refs-self-hosted-skipped' }}
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'push' &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner))
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest scripts/ci/test_check_design_refs.py
+      - run: python3 scripts/ci/check_design_refs.py
+
+  design-refs-untrusted-hosted:
+    name: >-
+      ${{ ((github.event_name == 'push' &&
+                     github.actor != github.repository_owner) ||
+                    (github.event_name == 'pull_request' &&
+                     (github.event.pull_request.head.repo.full_name != github.repository ||
+                      github.actor != github.repository_owner)))
+          && 'design-refs' || 'design-refs-hosted-skipped' }}
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'push' &&
+       github.actor != github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       (github.event.pull_request.head.repo.full_name != github.repository ||
+        github.actor != github.repository_owner)))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest scripts/ci/test_check_design_refs.py
+      - run: python3 scripts/ci/check_design_refs.py

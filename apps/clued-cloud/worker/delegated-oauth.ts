@@ -1,9 +1,15 @@
 /** OAuth protocol is delegated to the maintained provider; Clued retains live grants. */
-import { OAuthProvider, OAuthError, type AuthRequest, type OAuthHelpers } from '@cloudflare/workers-oauth-provider';
+import { OAuthProvider, OAuthError, GrantType, type AuthRequest, type OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import { handleContinuityRequest, publicToolPolicies, type ContinuityEnv } from './continuity';
+import { isStorageAgentTool } from './storage-agent-tools';
+import { storageReadTool, storageContentTool } from './storage-read-agent';
+import { OWNER_REQUEST_TOOL } from './owner-requests';
+import { permissionDenial, permissionDenialResult } from './permission-guidance';
 
 const SCOPES = ['context:read', 'context:write', 'audit:read'];
 const PENDING_TTL = 600;
+// Owner-selectable authorization lifetimes; the database caps expiry at 365 days.
+const LIFETIME_DAYS = [1, 7, 30, 90, 365];
 export interface DelegatedOAuthEnv extends ContinuityEnv {
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
@@ -11,7 +17,9 @@ export interface DelegatedOAuthEnv extends ContinuityEnv {
   OAUTH_KV?: KVNamespace;
   OAUTH_PROVIDER?: OAuthHelpers;
 }
-interface AuthProps { userId: string; bindingId: string; bindingToken: string; scopes: string[]; expiresAt: string }
+// narrowed: false only on an access token whose scopes are the whole grant's
+// (no refresh downscoping); absent on tokens issued before it existed.
+interface AuthProps { userId: string; bindingId: string; bindingToken: string; scopes: string[]; expiresAt: string; narrowed?: boolean }
 interface Pending { auth: AuthRequest; clientName: string; cookieHash: string; createdAt: number }
 type Json = Record<string, unknown>;
 class AuthorizationFailure extends Error {
@@ -75,11 +83,19 @@ async function bindingRpc(env: DelegatedOAuthEnv, name: string, bindingToken: st
   }
   return await response.json() as Json;
 }
-async function checkBinding(env: DelegatedOAuthEnv, props: AuthProps) {
+// Returns the scopes this access token may use. The Owner can widen a
+// connection after its client token was issued (connection.permission
+// requests), so a token that carries the whole grant follows the connection's
+// live scopes. A token the client narrowed on refresh, or one issued before
+// the flag existed, never exceeds its own scopes.
+async function checkBinding(env: DelegatedOAuthEnv, props: AuthProps): Promise<readonly string[]> {
   const expiry = Date.parse(props?.expiresAt);
   if (!props || !/^clued_bnd_[a-f0-9]{64}$/.test(props.bindingToken) || !Array.isArray(props.scopes) || !Number.isFinite(expiry) || expiry <= Date.now()) throw new OAuthError('invalid_grant', { description: 'Clued authorization is expired or revoked.' });
   const status = await bindingRpc(env, 'clued_authorization_status_v12', props.bindingToken);
   if (status.active !== true || status.binding_id !== props.bindingId) throw new OAuthError('invalid_grant', { description: 'Clued authorization is expired or revoked.' });
+  const live = status.scopes;
+  if (!Array.isArray(live) || !live.every(scope => typeof scope === 'string')) return props.scopes;
+  return props.narrowed === false ? live as string[] : props.scopes.filter(scope => live.includes(scope));
 }
 async function identity(env: DelegatedOAuthEnv, token: string): Promise<{ id: string; email?: string }> {
   const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, { headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY!, Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) });
@@ -207,7 +223,7 @@ async function consentRoute(request: Request, env: DelegatedOAuthEnv): Promise<R
     await env.OAUTH_KV!.delete(`clued:pending:${id}`);
     return json({ redirect_url: terminalRedirect(pending.auth, 'access_denied') });
   }
-  if (body.action !== 'approve' || !Array.isArray(body.selected) || !body.selected.length || ![1, 7, 30].includes(Number(body.days))) return json({ error: '请选择至少一项权限和有效期。' }, 400);
+  if (body.action !== 'approve' || !Array.isArray(body.selected) || !body.selected.length || !LIFETIME_DAYS.includes(Number(body.days))) return json({ error: '请选择至少一项权限和有效期。' }, 400);
   const bindingToken = `clued_bnd_${randomHex()}`;
   const expiresAt = new Date(Date.now() + Number(body.days) * 86400000).toISOString();
   const approved = await rpc(env, token, 'clued_authorization_approve_v12', {
@@ -234,6 +250,18 @@ async function consentRoute(request: Request, env: DelegatedOAuthEnv): Promise<R
   }
 }
 export function requiredToolScopes(name: string, args: Json = {}): readonly string[] | null {
+  // Storage authority is a separate native-Owner grant, not context:write.
+  // scopedApi still checks the live v12 Binding before the storage RPC performs
+  // its exact connection/action grant check. This does not issue any grant.
+  // The read tool is gated the same way: its read evaluator checks the Binding,
+  // the Owner's read access row and the issuer read switch.
+  if (isStorageAgentTool(name) || name === storageReadTool.name || name === storageContentTool.name) return [];
+  // Asking the Owner for a connection permission, and reading a request, need
+  // no scope here: the database checks the live connection (and, for a status
+  // read of another request, context:read). Other requests need context:write.
+  if (name === OWNER_REQUEST_TOOL) {
+    return args.action === 'connection.permission' || 'request_id' in args ? [] : ['context:write'];
+  }
   if (name === 'clued_context') {
     const operation = String(args.op);
     if (['context_list', 'record_list'].includes(operation)) return ['context:read'];
@@ -243,14 +271,20 @@ export function requiredToolScopes(name: string, args: Json = {}): readonly stri
   return publicToolPolicies[name as keyof typeof publicToolPolicies]?.scopes ?? null;
 }
 async function scopedApi(request: Request, env: DelegatedOAuthEnv, props: AuthProps, ctx: ExecutionContext): Promise<Response> {
-  await checkBinding(env, props);
+  const scopes = await checkBinding(env, props);
   if (request.method === 'POST') {
     const payload = await request.clone().json() as Json;
     if (Array.isArray(payload)) return json({ error: 'batch_not_supported' }, 400);
     if (payload.method === 'tools/call') {
       const params = payload.params as Json | undefined;
       const required = requiredToolScopes(String(params?.name), (params?.arguments || {}) as Json);
-      if (!required || required.some(scope => !props.scopes.includes(scope))) return json({ error: 'insufficient_scope' }, 403);
+      // A tool error, not an HTTP 403: Hosts drop the body of a 403, and the
+      // Agent needs it to ask the Owner for the missing permission.
+      if (!required || required.some(scope => !scopes.includes(scope))) {
+        const missing = required ? required.filter(scope => !scopes.includes(scope)) : null;
+        const denial = permissionDenial('insufficient_scope', params?.name, params?.arguments, missing);
+        return json({ jsonrpc: '2.0', id: payload.id ?? null, result: permissionDenialResult(denial) }, 200);
+      }
     }
   }
   const headers = new Headers(request.headers);
@@ -274,11 +308,16 @@ export async function handleDelegatedOAuth(request: Request, env: DelegatedOAuth
       defaultHandler: { async fetch(req, boundEnv) { return await consentRoute(req, boundEnv) || await fallback(req); } },
       authorizeEndpoint: '/oauth/authorize', tokenEndpoint: '/oauth/token', clientRegistrationEndpoint: '/oauth/register',
       scopesSupported: SCOPES, clientIdMetadataDocumentEnabled: false, allowPlainPKCE: false, allowImplicitFlow: false,
-      accessTokenTTL: 900, refreshTokenTTL: 30 * 86400,
+      accessTokenTTL: 900, refreshTokenTTL: 365 * 86400,
       resourceMetadata: { resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: SCOPES, resource_name: 'Clued' },
-      tokenExchangeCallback: async ({ props, requestedScope }) => {
+      tokenExchangeCallback: async ({ grantType, props, scope, requestedScope }) => {
         await checkBinding(env, props);
-        return { accessTokenProps: { ...props, scopes: requestedScope } };
+        const narrowed = scope.some(item => !requestedScope.includes(item));
+        // The provider fixes the refresh token lifetime at code exchange and never
+        // extends it, so bind it to the lifetime the Owner chose for this grant.
+        if (grantType !== GrantType.AUTHORIZATION_CODE) return { accessTokenProps: { ...props, scopes: requestedScope, narrowed } };
+        const remaining = Math.ceil((Date.parse((props as AuthProps).expiresAt) - Date.now()) / 1000);
+        return { accessTokenProps: { ...props, scopes: requestedScope, narrowed }, refreshTokenTTL: Math.max(60, remaining) };
       },
       onError: ({ status }) => json({ error: transient(status) ? 'temporarily_unavailable' : 'invalid_request', message: transient(status) ? '授权服务暂不可用，请稍后重试。' : '授权请求未通过验证。' }, status),
     });

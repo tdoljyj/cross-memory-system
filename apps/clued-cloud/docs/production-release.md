@@ -9,17 +9,38 @@ stops before `wrangler deploy`.
 The production Wrangler configuration also runs the read-only preflight as its
 build command, so a direct Wrangler deployment using that configuration fails
 when the database credential or required production state is missing.
-Use the workflow's `preflight_only` option to verify the live database and
-store evidence without needing a Cloudflare token or changing production.
-Use `backup_only` before an authorized schema migration when the target has no
-confirmed managed backup/PITR restore point. It creates a custom-format dump of
-the schemas affected by Clued migrations, validates the dump and encrypted
-round-trip, destroys runner plaintext, and uploads only the encrypted dump plus
-a checksum manifest.
+Every dispatch chooses exactly one `mode`; only `deploy` changes production.
+The default is `preflight`, and an unknown mode fails before any production
+credential is read, so a dispatch whose inputs are missing or misparsed never
+falls through to a deploy. From the GitHub API or a connector, pass the input
+as the string `{"mode": "deploy"}` (or `"preflight"`, `"backup"`,
+`"source-capture"`).
 
-The workflow needs the existing `CLUED_ATTESTATION_DATABASE_URL` secret, a
-`CLUED_CLOUDFLARE_DEPLOY_TOKEN` secret scoped to edit the existing `clued-cloud`
-Worker, and the `CLUED_CLOUDFLARE_ACCOUNT_ID` repository variable. The token
+- `preflight` verifies the live database and stores evidence without needing a
+  Cloudflare token or changing production.
+- `backup` runs before an authorized schema migration when the target has no
+  confirmed managed backup/PITR restore point. It creates a custom-format dump
+  of the schemas affected by Clued migrations, validates the dump and encrypted
+  round-trip, destroys runner plaintext, and uploads only the encrypted dump
+  plus a checksum manifest.
+- `source-capture` captures one reviewed nonsecret storage client source and
+  requires `source_request_id` and `source_request_digest`.
+- `deploy` builds, gates, deploys `clued-cloud` and runs the post-deploy checks.
+
+The workflow needs the `CLUED_ATTESTATION_DATABASE_URL_V2` secret, a
+`CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2` secret scoped to edit the existing `clued-cloud`
+Worker, and the `CLUED_CLOUDFLARE_ACCOUNT_ID` repository variable. Both secrets
+were renamed (from the names without `_V2`) after re-review 4, finding M2: a
+re-run replays a run's own workflow file, so a release run from before the
+Owner Grant door could deploy an old commit with no grant. With the old names
+removed, such a re-run gets no deploy credentials. Both `_V2` secrets are
+secrets of the `clued-release` environment (deployment branches: `main` only),
+never repository secrets (re-review 5, finding N1): a repository secret reaches
+a workflow that any pushed branch adds, while an environment secret reaches
+only jobs that declare the environment and run from `main`. Every job that
+reads them (this release job, the storage executor window, the storage read
+config and the post-deploy attestation) declares `environment: clued-release`;
+`tests/production-release-gate.test.mjs` checks that. The token
 belongs in GitHub secret storage; never put it in Git, logs, an artifact, or a
 command argument. Backup mode additionally requires a high-entropy
 `CLUED_PRODUCTION_BACKUP_KEY` GitHub secret; retain it while any encrypted
@@ -51,6 +72,18 @@ migration is missing or the SQL differs, apply or reconcile the migration
 through an authorized, evidence-backed operation, then rerun the release.
 Do not run a blind `supabase db push` against this historically divergent
 production ledger or mark a migration applied without checking its live SQL.
+
+## After a database restore
+
+Restoring production from a backup or PITR point brings the work-claims table
+back to that point, and a claim's fence is `max(fence)+1` over that table, so
+new claims would get fences already issued after the restore point. Before
+any Agent works again, run
+[`scripts/work-claims-after-restore.sql`](../scripts/work-claims-after-restore.sql)
+once against the restored database. It abandons the claims the restore brought
+back as live and raises every fence by one million. Agents then claim again;
+a claim issued after the restore point verifies as `claim_not_found`. This is
+a known limit of Work Claim Admission v0.1 (§4.4, Owner Decision `2b23eb0c`).
 
 ## Release evidence
 

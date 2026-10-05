@@ -730,12 +730,8 @@ textarea:focus {
   background: rgba(65,226,155,.07);
   font-size: 10px;
 }
-.binding-form {
-  display: grid;
-  grid-template-columns: minmax(100px,.8fr) minmax(140px,1.2fr);
-  gap: 12px;
-}
-.binding-form .primary-button { grid-column: 1 / -1; width: 100%; }
+.binding-how { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.binding-how a { color: #9af2c3; }
 select {
   width: 100%;
   height: 48px;
@@ -746,55 +742,7 @@ select {
   outline: none;
   background: #181d1a;
 }
-.issued-binding {
-  display: grid;
-  gap: 10px;
-  padding: 15px;
-  border: 1px solid rgba(65,226,155,.22);
-  border-radius: 12px;
-  background: rgba(65,226,155,.065);
-}
-.issued-binding > strong { color: #9af2c3; font-size: 13px; }
-.issued-binding > p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
-.credential-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 6px 10px;
-  align-items: center;
-}
-.credential-row > span { grid-column: 1 / -1; color: #758079; font-size: 10px; }
-.credential-row code {
-  min-width: 0;
-  overflow: hidden;
-  color: #d9e2dd;
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.credential-row button,
-.binding-item button {
-  padding: 5px 8px;
-  color: #9ba69f;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  cursor: pointer;
-  background: rgba(255,255,255,.04);
-  font-size: 10px;
-}
-.binding-list h4 { margin: 0 0 10px; color: #c9d1cd; font-size: 11px; font-weight: 650; }
 .empty-bindings { margin: 0; color: #68726c; font-size: 11px; }
-.binding-item {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 11px 0;
-  border-top: 1px solid rgba(255,255,255,.06);
-}
-.binding-item > div { display: grid; gap: 3px; min-width: 0; }
-.binding-item strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.binding-item span { color: var(--green); font-size: 10px; }
-.binding-item small { color: #69736d; font-size: 9px; }
 footer {
   position: absolute;
   right: 24px;
@@ -835,8 +783,6 @@ footer {
   .auth-card { padding: 28px 22px; border-radius: 18px; }
   .project-create-form, .project-columns { grid-template-columns: 1fr; }
   .project-create-form .primary-button { width: 100%; }
-  .binding-form { grid-template-columns: 1fr; }
-  .binding-form .primary-button { grid-column: auto; }
   .memory-form-actions { flex-direction: column; }
   .memory-cancel { min-height: 44px; }
   .audit-item { grid-template-columns: auto minmax(0,1fr); }
@@ -908,6 +854,67 @@ footer {
   border-radius: 3px;
   accent-color: var(--green);
 }
+
+/* Radios share the checkbox layout instead of the full-width text input. */
+.oauth-card label:has(> input[type="radio"]) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.oauth-card input[type="radio"] {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--green);
+}
+
+/* Preset roles are a single choice: each role is a card with a radio dot, the pressed one filled. */
+.oauth-roles { margin: 16px 0; }
+.oauth-roles h2 { margin: 0 0 10px; }
+.oauth-role-list { display: grid; gap: 8px; }
+.oauth-role-list button {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px 12px 44px;
+  text-align: left;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: rgba(255,255,255,.03);
+  cursor: pointer;
+}
+.oauth-role-list button::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #6f7a73;
+  border-radius: 50%;
+}
+.oauth-role-list button[aria-pressed="true"] { border-color: var(--green); background: rgba(65,226,155,.08); }
+.oauth-role-list button[aria-pressed="true"]::before { border-color: var(--green); background: radial-gradient(circle, var(--green) 0 4px, transparent 4.5px); }
+.oauth-role-list button:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.oauth-role-list button:disabled { cursor: wait; opacity: .55; }
+.oauth-role-list strong { font-size: 14px; }
+.oauth-role-list small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+@media (forced-colors: active) {
+  .oauth-role-list button[aria-pressed="true"] { border-width: 3px; }
+  .oauth-role-list button[aria-pressed="true"]::before { forced-color-adjust: none; border-color: CanvasText; background: Highlight; }
+}
+.oauth-range { display: grid; gap: 8px; margin: 12px 0 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px; }
+.oauth-range legend { padding: 0 4px; color: #c7ceca; font-size: 12px; font-weight: 600; }
+.oauth-range small, .oauth-range-note { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.oauth-card .oauth-project-choice { padding-left: 26px; }
 
 .oauth-details { display: grid; margin: 0 0 22px; border-top: 1px solid var(--line); }
 .oauth-details div { display: grid; grid-template-columns: 92px minmax(0,1fr); gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }

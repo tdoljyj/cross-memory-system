@@ -88,7 +88,12 @@ test('OAuth consent, MCP record receipt, replay and revoke use the real database
     assert.equal((await db.query('select count(*)::int n from clued_private.authorizations_v12')).rows[0].n, 2);
     const call = (token, input) => run('/mcp', { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'clued_context', arguments: { context_id: context, mode: 'development_history', ...input } } }) });
     const input = { op: 'record_put', record_type: 'note', body: { content: 'Integration record' }, idempotency_key: crypto.randomUUID() };
-    assert.equal((await call(read.access_token, input)).status, 403);
+    // The gateway's scope refusal is a tool error (PermissionSimplification §3.2); a
+    // Development Context write is not a connection.permission resource, so no request is suggested.
+    const refused = await call(read.access_token, input); assert.equal(refused.status, 200);
+    const refusal = (await refused.json()).result; assert.equal(refusal.isError, true);
+    assert.equal(refusal.structuredContent.error.code, 'insufficient_scope');
+    assert.equal('suggested_request' in refusal.structuredContent.error, false);
     const written = await call(write.access_token, input); assert.equal(written.status, 200, await written.clone().text());
     const repeated = await call(write.access_token, input); assert.equal(repeated.status, 200, await repeated.clone().text());
     const operations = await db.query("select id,receipt_id,event_id from clued_private.development_operations_v14 where op='record_put' and idempotency_key=$1", [input.idempotency_key]);
@@ -109,7 +114,8 @@ test('OAuth consent, MCP record receipt, replay and revoke use the real database
     const membership = await humanApi('fixture-developer', { op: 'invite_accept', invite_token: invitation.invite_token, base_version: inspected.version, idempotency_key: crypto.randomUUID() });
     const developer = await connect(['read'], 'fixture-developer');
     assert.equal((await call(developer.access_token, { op: 'record_list' })).status, 200);
-    assert.equal((await call(developer.access_token, input)).status, 403);
+    const developerRefused = await call(developer.access_token, input); assert.equal(developerRefused.status, 200);
+    assert.equal((await developerRefused.json()).result.structuredContent.error.code, 'insufficient_scope');
     const resumed = await run('/mcp', { method: 'POST', headers: { Authorization: 'Bearer ' + developer.access_token, 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'clued_session_resume', arguments: { context_key: 'global', client_session_id: 'integration-developer' } } }) });
     assert.equal(resumed.status, 200, await resumed.clone().text());
     const envelope = await resumed.json();

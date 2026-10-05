@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 const migration = readFileSync(
@@ -104,9 +104,25 @@ test("K-CONT-01 resolves canonical record targets for mutation events", () => {
   assert.match(migration, /'target_refs',coalesce\(e\.target_refs/);
 });
 
+test("K-CONT-01 resolves resume record targets by primary key", () => {
+  // Matching m.id::text scanned every memory per event and ran the scope
+  // authorization check for each row, so a 20+ event page hit the anon
+  // statement_timeout in production (HTTP 500 surfaced as 502).
+  const directory = new URL("../supabase/migrations/", import.meta.url);
+  const live = readdirSync(directory).filter((name) => name.endsWith(".sql")).sort()
+    .map((name) => readFileSync(new URL(name, directory), "utf8"))
+    .filter((sql) => /create or replace function public\.clued_mcp_restore_before_project_access_v13\(/.test(sql))
+    .at(-1);
+  const body = live.slice(live.indexOf("create or replace function public.clued_mcp_restore_before_project_access_v13("));
+  const restore = body.slice(0, body.indexOf("end $$;"));
+  assert.match(restore, /m\.id=\(case when \(t->>'id'\) ~\* '\^\[0-9a-f\]\{8\}-/);
+  assert.doesNotMatch(restore, /m\.id::text=lower\(t->>'id'\)/);
+});
+
 test("K-CONT-05 advertises the create mutation shape", () => {
   assert.match(records, /Create requires mutation, source_refs, and source_unavailable_reason/);
-  assert.match(records, /type_fields: \{ type: "object" \}/);
+  // Object schemas may advertise descriptions and per-field guidance as well.
+  assert.match(records, /type_fields: \{ type: "object"(?:,| \})/);
   assert.match(records, /relations: \{ type: "object" \}/);
 });
 

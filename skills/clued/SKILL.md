@@ -1,6 +1,6 @@
 ---
 name: clued
-description: Use Clued to recall or maintain authorized personal and project context, or develop, review and maintain Clued itself. Covers Clued memory operations and Clued engineering; do not activate for unrelated software work merely mentioning a project.
+description: Use Clued to recall or maintain authorized personal and project context, or develop, review and maintain Clued itself. Required for any question about the current or latest state of the user's projects, records or of Clued (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) — even when host memory or an earlier reply seems to already hold the answer, that answer must come from Clued. Covers Clued memory operations and Clued engineering; do not activate for unrelated software work merely mentioning a project.
 ---
 
 # Clued
@@ -28,6 +28,10 @@ Use the current advertised tool schema and actual authorization. Never treat an 
 For protected context work, satisfy applicable higher-priority endpoint/repository prerequisites, then resume the authorized Clued session before reading context. Do not invent extra repository prerequisites for ordinary service use; do not waive prerequisites explicitly imposed by the user or governing workspace. Repository alignment and trusted-reader checks belong to the affected engineering work where required.
 
 ## Shared execution rules
+
+Before spending on work that changes the repository or runs installs, builds, tests or CI, claim its Task as the contract's §1.7 says. A `work_claim_conflict` means another holder is on it: stop and tell the Owner, never retry under another title or Task.
+
+As the contract's §3.6 says, write each outcome as it happens and never right after you start a release, migration or other production action; when the Host itself refuses a Clued call, follow §4.7: report the refusal and the owed writes, and ask the Owner to allow the call rather than retrying or working around it. Before each capture write, say in one line what you record, where and on what authority (§3.7); it is a statement, not a question.
 
 Preserve already explicit user intent and authority; do not request duplicate confirmation for the same authorized action. Scope expansion, protected writes and production changes still require the authority applicable to that operation.
 
