@@ -16,9 +16,14 @@
 //                     re-run when its claim no longer admits the PR (expired,
 //                     released, superseded, or bound to another PR), so a
 //                     green check does not outlive its claim
-//   --mode adopt      the run on a merged pull request: reports the merge to
+//   --mode adopt      the run on a closed pull request: reports a merge to
 //                     Clued so that, when the Task runs as a multi-copy race,
-//                     the copy on this pull request is adopted (adoptMerged())
+//                     the copy on this pull request is adopted (adoptMerged()),
+//                     and returns the merge slot of a merged or closed one
+//
+// The admission run also posts the clued-merge-slot check (mergeSlotState()):
+// a pull request that contains the base branch's tip can merge only while its
+// claim holds the merge slot (agent contract §1.7).
 //
 // The required check runs on `pull_request_target`: the workflow file and this
 // script come from the base branch, and no code of the PR is checked out or
@@ -1052,6 +1057,10 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
         throw new Error(`the pull request's head moved from ${pr.head.sha} to ${now && now.head ? now.head.sha : "(unknown)"} during admission; the next run judges the new head`);
       }
     }
+    // Owner Decision 2ea795e4: a head that contains the base branch's tip can
+    // merge, so only the claim holding the merge slot may have it.
+    outcome.merge_slot = mergeSlotState({ repository, branch: pr.base.ref, tip: tipCompare.tip,
+      upToDate: tipCompare.upToDate, claim: verified.payload.claim, verifiedAt: verified.payload.verified_at });
     if (enforced) {
       outcome.admitted = outcome.verdict === "ADMITTED";
     } else {
@@ -1063,6 +1072,74 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
   } catch (error) {
     if (enforced) throw error;
     return notEnforced(`advisory verification unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Merge slot (agent contract v33 §1.7; Owner Decisions 0edf7889, 2ea795e4).
+// The default branch requires a pull request to contain its tip before it
+// merges, so a merge by another session during a CI run wastes that run. The
+// merge slot, the trigger ref merge:<owner>/<name>:<branch>, is held by one
+// live claim at a time (Clued's conflict check) and lapses 45 minutes after it
+// was last taken or refreshed (migration 20261006120000). The admission run
+// posts the clued-merge-slot check as the clued-admission App: it fails while
+// the head contains the base branch's tip and the claim does not hold the slot,
+// so once the Owner makes the check required, nobody can merge without it.
+// A head that does not contain the tip passes: GitHub blocks its merge anyway.
+// It is a check of its own because the heavy workflows' gates follow
+// clued-admission-verified, and they must still run on a head that merely
+// happens to contain the tip.
+export const MERGE_SLOT_CHECK_NAME = "clued-merge-slot";
+
+export function mergeSlotRef(repository, branch) {
+  return `merge:${repository}:${branch}`;
+}
+
+// states: held, not_needed (the head does not contain the tip), not_reported
+// (the Clued service predates merge slots), missing.
+export function mergeSlotState({ repository, branch, tip, upToDate, claim, verifiedAt }) {
+  const ref = mergeSlotRef(repository, branch);
+  const base = { ref, tip: tip ?? null, until: null };
+  if (!upToDate) return { ...base, state: "not_needed" };
+  if (!claim || typeof claim !== "object" || !Object.hasOwn(claim, "merge_slot_until")) return { ...base, state: "not_reported" };
+  const refs = Array.isArray(claim.trigger_refs) ? claim.trigger_refs : [];
+  const named = refs.some((value) => typeof value === "string" && value.toLowerCase() === ref.toLowerCase());
+  const until = typeof claim.merge_slot_until === "string" ? claim.merge_slot_until : null;
+  const at = Date.parse(verifiedAt ?? "");
+  const live = until !== null && Number.isFinite(at) && Date.parse(until) > at;
+  return { ...base, until, state: named && live ? "held" : "missing" };
+}
+
+// The check for one admission result: admitted and holding (or not needing)
+// the slot passes; everything else fails.
+export function mergeSlotCheck({ admitted, state, ref, until, tip, claimId, branch }) {
+  const slot = ref || "merge:<owner>/<name>:<branch>";
+  const target = branch || "the base branch";
+  if (!admitted) {
+    return { success: false, title: "Not admitted",
+      summary: "clued-work-admission did not admit this head, so it cannot hold the merge slot." };
+  }
+  switch (state) {
+    case "held":
+      return { success: true, title: `Merge slot held until ${until}`,
+        summary: `The claim holds \`${slot}\` until ${until}. Merge, then give the slot back (renew without the ref, or release the claim).` };
+    case "not_needed":
+      return { success: true, title: `Not needed: the branch does not contain ${target}'s tip`,
+        summary: `This head does not contain ${tip ? `\`${tip}\`` : `the tip of ${target}`}, so GitHub does not let it merge yet. Take \`${slot}\` before you bring ${target} in for the final run.` };
+    case "not_reported":
+      return { success: true, title: "Not checked: Clued does not report merge slots yet",
+        summary: "The Clued service does not report merge_slot_until yet (migration 20261006120000 is not applied), so the merge slot is not checked." };
+    case "not_checked":
+      return { success: true, title: "Not checked: admission is advisory",
+        summary: "CLUED_WORK_ADMISSION_ENFORCE is not set, so the merge slot is not checked." };
+    case "missing":
+      return { success: false, title: "Merge slot not held",
+        summary: `This head contains the tip of ${target}, so it could merge now, and only the session holding the merge slot may merge. `
+          + `Renew the claim${claimId ? ` \`${claimId}\`` : ""} with \`${slot}\` added to its trigger_refs (agent contract §1.7; on work_claim_conflict another session holds it: wait and try again). `
+          + "Then push, or edit the pull request body, to run this check again." };
+    default:
+      return { success: false, title: "Merge slot unknown",
+        summary: "The admission run reported no merge slot state for this head." };
   }
 }
 
@@ -1086,11 +1163,11 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
 
 export const ADMISSION_WORKFLOW = "clued-work-admission.yml";
 
-export async function appChecksOnHead(fetchImpl, env, repository, headSha) {
+export async function appChecksOnHead(fetchImpl, env, repository, headSha, name = APP_CHECK_NAME) {
   const checks = await githubPaged(fetchImpl, env,
-    `/repos/${repository}/commits/${headSha}/check-runs?check_name=${APP_CHECK_NAME}&filter=all`, "check_runs");
+    `/repos/${repository}/commits/${headSha}/check-runs?check_name=${name}&filter=all`, "check_runs");
   return checks
-    .filter((check) => check && check.name === APP_CHECK_NAME && check.head_sha === headSha
+    .filter((check) => check && check.name === name && check.head_sha === headSha
       && check.app && Number(check.app.id) === ADMISSION_APP_ID)
     .sort((a, b) => Number(b.id) - Number(a.id));
 }
@@ -1115,12 +1192,27 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
     const defaultBranch = pr.base.repo && pr.base.repo.default_branch;
     if (defaultBranch && pr.base.ref !== defaultBranch) continue;
     try {
-      const checks = await appChecksOnHead(fetchImpl, env, repository, pr.head.sha);
-      const newest = checks[0];
-      if (!newest || newest.status !== "completed" || newest.conclusion !== "success") continue;
+      const green = (checks) => Boolean(checks[0]) && checks[0].status === "completed" && checks[0].conclusion === "success";
+      const admissionGreen = green(await appChecksOnHead(fetchImpl, env, repository, pr.head.sha));
+      // A merge slot that lapsed or was given back since its check passed
+      // (Owner Decision 2ea795e4).
+      const slotGreen = green(await appChecksOnHead(fetchImpl, env, repository, pr.head.sha, MERGE_SLOT_CHECK_NAME));
+      if (!admissionGreen && !slotGreen) continue;
       const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false });
-      result.checked.push({ pr: pr.number, verdict: outcome.verdict, reasons: outcome.reasons });
-      if (outcome.admitted) continue;
+      result.checked.push({ pr: pr.number, verdict: outcome.verdict, reasons: outcome.reasons,
+        ...(outcome.merge_slot ? { merge_slot: outcome.merge_slot.state } : {}) });
+      if (slotGreen && outcome.merge_slot && (outcome.merge_slot.state === "missing" || !outcome.admitted)) {
+        const slot = mergeSlotCheck({ admitted: outcome.admitted, state: outcome.merge_slot.state, ref: outcome.merge_slot.ref,
+          tip: outcome.merge_slot.tip, claimId: outcome.claim_id, branch: pr.base.ref });
+        const posted = await postAppCheck({
+          env, fetchImpl, now, headSha: pr.head.sha, success: false, title: `RE-VERIFIED: ${slot.title}`, prNumber: pr.number,
+          name: MERGE_SLOT_CHECK_NAME, summary: slot.summary,
+        });
+        if (!posted.posted) throw new Error(`merge slot not held and no failing ${MERGE_SLOT_CHECK_NAME} check could be posted: ${posted.error ?? posted.reason}`);
+        result.blocked.push({ pr: pr.number, check: MERGE_SLOT_CHECK_NAME, check_run_id: posted.check_run_id,
+          verdict: slot.title, reasons: [outcome.merge_slot.ref] });
+      }
+      if (!admissionGreen || outcome.admitted) continue;
       // The Owner review runs only on an otherwise admitted pull request, so a
       // transient door error is the only thing standing against it (re-review 10, NIT).
       if (outcome.owner_review && outcome.owner_review.kind === "transient") {
@@ -1150,7 +1242,7 @@ export function renderReverifySummary(result) {
     return lines.join("\n");
   }
   lines.push(`Open PRs with a passing admission check checked: ${result.checked.length} · failing checks posted: ${result.blocked.length} · errors: ${result.errors.length}`);
-  for (const blocked of result.blocked) lines.push(`- #${blocked.pr}: failing check ${blocked.check_run_id} posted, ${blocked.verdict}: ${blocked.reasons.join("; ")}`);
+  for (const blocked of result.blocked) lines.push(`- #${blocked.pr}: failing ${blocked.check ?? "check"} ${blocked.check_run_id} posted, ${blocked.verdict}: ${blocked.reasons.join("; ")}`);
   for (const error of result.errors) lines.push(`- ${error.pr === null ? "re-verification" : `#${error.pr}`}: error ${error.error}`);
   lines.push("");
   return lines.join("\n");
@@ -1542,6 +1634,9 @@ export function renderSummary(outcome) {
   }
   if (outcome.head_sha) lines.push(`**Head:** \`${outcome.head_sha}\` · **Base:** \`${outcome.base_sha}\``);
   if (outcome.claim && outcome.claim.bound_pr) lines.push(`**Claim bound to:** \`${outcome.claim.bound_pr}\``);
+  if (outcome.merge_slot) {
+    lines.push(`**Merge slot:** \`${outcome.merge_slot.ref}\` · ${outcome.merge_slot.state}${outcome.merge_slot.until ? ` until ${outcome.merge_slot.until}` : ""}`);
+  }
   if (outcome.admission_run) {
     const run = outcome.admission_run;
     lines.push(`**Admission run:** ${run.html_url ? `[${run.id}](${run.html_url})` : run.id} · ${run.status}${run.conclusion ? ` / ${run.conclusion}` : ""}`);
@@ -1631,7 +1726,7 @@ async function appRequest(fetchImpl, env, method, route, bearer, body) {
 
 // Posts one completed clued-admission-verified check as the App. externalId
 // names the pull request and the run that decided ("pr:<n>:run:<run id>").
-export async function postAppCheck({ env, fetchImpl, now = () => Date.now(), headSha, success, title, summary, prNumber }) {
+export async function postAppCheck({ env, fetchImpl, now = () => Date.now(), headSha, success, title, summary, prNumber, name = APP_CHECK_NAME }) {
   const appId = (env.CLUED_ADMISSION_APP_ID ?? "").trim();
   const key = (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? "").trim();
   if (!appId || !key) return { posted: false, reason: "the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)" };
@@ -1645,7 +1740,7 @@ export async function postAppCheck({ env, fetchImpl, now = () => Date.now(), hea
     const runId = String(env.GITHUB_RUN_ID ?? "").trim();
     const externalId = /^[0-9]{1,10}$/.test(number) && /^[0-9]{1,20}$/.test(runId) ? `pr:${number}:run:${runId}` : undefined;
     const check = await appRequest(fetchImpl, env, "POST", `/repos/${repository}/check-runs`, token.token, {
-      name: APP_CHECK_NAME, head_sha: headSha, status: "completed", conclusion: success ? "success" : "failure",
+      name, head_sha: headSha, status: "completed", conclusion: success ? "success" : "failure",
       ...(externalId ? { external_id: externalId } : {}),
       output: { title, summary },
     });
@@ -1664,10 +1759,20 @@ export async function appCheck({ env, fetchImpl, now = () => Date.now() }) {
   }
   const success = env.ADMISSION_OUTCOME === "success";
   const verdict = (env.ADMISSION_VERDICT ?? "").trim() || (success ? "ADMITTED" : "NOT ADMITTED");
-  return postAppCheck({
+  const result = await postAppCheck({
     env, fetchImpl, now, headSha, success, title: verdict, prNumber: env.ADMISSION_PR_NUMBER,
     summary: `clued-work-admission ${success ? "admitted" : "did not admit"} this head (run ${env.GITHUB_RUN_ID ?? "?"}).`,
   });
+  // The merge slot check on the same head (Owner Decision 2ea795e4).
+  const slot = mergeSlotCheck({ admitted: success, state: (env.ADMISSION_MERGE_SLOT ?? "").trim(),
+    ref: (env.ADMISSION_MERGE_SLOT_REF ?? "").trim(), until: (env.ADMISSION_MERGE_SLOT_UNTIL ?? "").trim(),
+    tip: (env.ADMISSION_MERGE_SLOT_TIP ?? "").trim(), claimId: (env.ADMISSION_CLAIM_ID ?? "").trim(),
+    branch: (env.ADMISSION_BASE_REF ?? "").trim() });
+  result.merge_slot = await postAppCheck({
+    env, fetchImpl, now, headSha, success: slot.success, title: slot.title, summary: slot.summary,
+    prNumber: env.ADMISSION_PR_NUMBER, name: MERGE_SLOT_CHECK_NAME,
+  });
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1683,10 +1788,87 @@ export async function appCheck({ env, fetchImpl, now = () => Date.now() }) {
 
 export const ADOPT_RPC = "clued_work_claim_adopt_v1";
 export const ADOPT_QUIET_REASONS = new Set(["no_copy_for_pr", "not_a_copy"]);
+// A pull request closed without a merge gives its merge slot back
+// (migration 20261006120000, Owner Decision 2ea795e4).
+export const MERGE_SLOT_RETURN_RPC = "clued_work_merge_slot_return_v1";
+
+async function claimReferenceOf(fetchImpl, env, pr) {
+  let reference = parseClaimReference(pr.body);
+  if (!reference && env.GITHUB_TOKEN && pr.head && pr.head.sha) {
+    const commit = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/commits/${pr.head.sha}`);
+    reference = parseClaimReference(commit && commit.commit && commit.commit.message);
+  }
+  return reference;
+}
+
+async function cluedRpc(fetchImpl, env, workspace, rpc, input) {
+  const { url: base, key } = resolvePublicSupabaseConfig(env, workspace);
+  const response = await fetchImpl(`${base}/rest/v1/rpc/${rpc}`, {
+    method: "POST",
+    headers: {
+      apikey: key,
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json",
+      accept: "application/json",
+      "user-agent": "clued-work-admission",
+    },
+    body: JSON.stringify({ p_token_hash: sha256Hex(env.CLUED_CONTEXT_READ_TOKEN), p_input: input }),
+  });
+  let text = "";
+  let body = null;
+  try {
+    text = await response.text();
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null;
+  }
+  return { status: response.status, body, detail: describe(response.status, body, text, response.headers) };
+}
+
+async function returnMergeSlot({ env, pr, fetchImpl, workspace, result }) {
+  result.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
+  result.closed_unmerged = true;
+  if (!env.CLUED_CONTEXT_READ_TOKEN) {
+    result.reason = "CLUED_CONTEXT_READ_TOKEN is not set; merge slot not returned";
+    return result;
+  }
+  try {
+    const reference = await claimReferenceOf(fetchImpl, env, pr);
+    if (!reference) {
+      result.reason = "no Clued-Work-Claim trailer; no merge slot to return";
+      return result;
+    }
+    result.claim_id = reference.claim_id;
+    result.scope = reference.scope;
+    const { status, body, detail } = await cluedRpc(fetchImpl, env, workspace, MERGE_SLOT_RETURN_RPC,
+      { scope: reference.scope, pr_ref: result.pr_ref });
+    if (status === 404 && body && body.code === "PGRST202") {
+      result.reason = `${MERGE_SLOT_RETURN_RPC} is not deployed (${detail}); the slot lapses on its own`;
+      return result;
+    }
+    if (status !== 200 || !body || typeof body !== "object" || body.status !== "ok") {
+      throw new Error(`Clued ${MERGE_SLOT_RETURN_RPC} returned ${detail}`);
+    }
+    result.payload = body;
+    if (body.reason === "admission_binding_required") {
+      result.error = "merge slot not returned: admission_binding_required";
+      return result;
+    }
+    const returned = Array.isArray(body.merge_slot_returned) ? body.merge_slot_returned : [];
+    result.merge_slot_returned = returned;
+    result.reason = returned.length ? `closed without a merge; merge slot returned (${returned.join(", ")})` : "closed without a merge; no merge slot held";
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
+  }
+  return result;
+}
 
 export async function adoptMerged({ env, event, eventName, fetchImpl, workspace }) {
   const pr = event && event.pull_request;
   const result = { adopted: false, pr_ref: null, merge_sha: null, claim_id: null, scope: null, reason: null, error: null, payload: null };
+  if (eventName === "pull_request_target" && event && event.action === "closed" && pr && pr.merged === false) {
+    return returnMergeSlot({ env, pr, fetchImpl, workspace, result });
+  }
   if (eventName !== "pull_request_target" || !event || event.action !== "closed" || !pr || pr.merged !== true) {
     result.reason = "not a merged pull request";
     return result;
@@ -1704,47 +1886,23 @@ export async function adoptMerged({ env, event, eventName, fetchImpl, workspace 
   try {
     // Only a pull request that names a claim can be a copy; its scope trailer
     // picks the context the claim lives in.
-    let reference = parseClaimReference(pr.body);
-    if (!reference && env.GITHUB_TOKEN && pr.head && pr.head.sha) {
-      const commit = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/commits/${pr.head.sha}`);
-      reference = parseClaimReference(commit && commit.commit && commit.commit.message);
-    }
+    const reference = await claimReferenceOf(fetchImpl, env, pr);
     if (!reference) {
       result.reason = "no Clued-Work-Claim trailer; not a copy";
       return result;
     }
     result.claim_id = reference.claim_id;
     result.scope = reference.scope;
-    const { url: base, key } = resolvePublicSupabaseConfig(env, workspace);
-    const response = await fetchImpl(`${base}/rest/v1/rpc/${ADOPT_RPC}`, {
-      method: "POST",
-      headers: {
-        apikey: key,
-        authorization: `Bearer ${key}`,
-        "content-type": "application/json",
-        accept: "application/json",
-        "user-agent": "clued-work-admission",
-      },
-      body: JSON.stringify({
-        p_token_hash: sha256Hex(env.CLUED_CONTEXT_READ_TOKEN),
-        p_input: { scope: reference.scope, pr_ref: result.pr_ref, merge_sha: result.merge_sha },
-      }),
-    });
-    let text = "";
-    let body = null;
-    try {
-      text = await response.text();
-      body = text ? JSON.parse(text) : null;
-    } catch {
-      body = null;
-    }
-    const detail = describe(response.status, body, text, response.headers);
+    const response = await cluedRpc(fetchImpl, env, workspace, ADOPT_RPC,
+      { scope: reference.scope, pr_ref: result.pr_ref, merge_sha: result.merge_sha });
+    const { body, detail } = response;
     if (response.status === 404 && body && body.code === "PGRST202") {
       result.reason = `${ADOPT_RPC} is not deployed (${detail}); adoption skipped`;
       return result;
     }
     if (response.status !== 200 || !body || typeof body !== "object") throw new Error(`Clued ${ADOPT_RPC} returned ${detail}`);
     result.payload = body;
+    if (Array.isArray(body.merge_slot_returned)) result.merge_slot_returned = body.merge_slot_returned;
     if (body.status === "rejected") {
       result.reason = `${body.error_code ?? "rejected"}: another copy of this Task was adopted first`;
       return result;
@@ -1765,7 +1923,8 @@ export async function adoptMerged({ env, event, eventName, fetchImpl, workspace 
 }
 
 function renderAdoptSummary(result) {
-  const lines = ["## clued-work-admission: multi-copy adoption", ""];
+  const lines = [result.closed_unmerged ? "## clued-work-admission: merge slot of a closed pull request"
+    : "## clued-work-admission: multi-copy adoption", ""];
   lines.push(`- Pull request: ${result.pr_ref ?? "n/a"}`);
   if (result.merge_sha) lines.push(`- Merge commit: \`${result.merge_sha}\``);
   if (result.claim_id) lines.push(`- Claim: \`${result.claim_id}\` (${result.scope})`);
@@ -1773,10 +1932,24 @@ function renderAdoptSummary(result) {
     const out = Array.isArray(result.payload?.not_adopted) ? result.payload.not_adopted.length : 0;
     lines.push(`- Adopted copy ${result.payload?.copy_index ?? "?"} of Task \`${result.payload?.task_id ?? "?"}\`${result.payload?.replayed ? " (already adopted)" : ""}; ${out} other cop${out === 1 ? "y" : "ies"} put out.`);
   }
+  if (!result.closed_unmerged && Array.isArray(result.merge_slot_returned) && result.merge_slot_returned.length) {
+    lines.push(`- Merge slot returned: ${result.merge_slot_returned.map((id) => `\`${id}\``).join(", ")}`);
+  }
   if (result.reason) lines.push(`- ${result.reason}`);
   if (result.error) lines.push(`- Error: ${result.error}`);
   lines.push("");
   return lines.join("\n");
+}
+
+// The merge slot state for the app-check step. Without one (admission was
+// advisory, or it stopped before verifying), an advisory run is not_checked
+// and anything else unknown, which fails the check.
+export function mergeSlotOutputs(outcome) {
+  const slot = outcome.merge_slot;
+  const clean = (value) => String(value ?? "").replace(/[\r\n]/g, " ");
+  const state = slot ? slot.state : (outcome.admitted && !outcome.enforced ? "not_checked" : "unknown");
+  return [`merge_slot=${clean(state)}`, `merge_slot_ref=${clean(slot && slot.ref)}`,
+    `merge_slot_until=${clean(slot && slot.until)}`, `merge_slot_tip=${clean(slot && slot.tip)}`];
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch) {
@@ -1806,6 +1979,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     console.log(JSON.stringify(result, null, 2));
     if (result.error) {
       console.error(`::error title=${APP_CHECK_NAME}::${result.error}`);
+      return 1;
+    }
+    if (result.merge_slot && result.merge_slot.error) {
+      console.error(`::error title=${MERGE_SLOT_CHECK_NAME}::${result.merge_slot.error}`);
       return 1;
     }
     if (!result.posted) console.error(`::notice title=${APP_CHECK_NAME}::${result.reason}`);
@@ -1845,6 +2022,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     `verdict=${outcome.verdict ?? ""}`,
     `claim_id=${outcome.claim_id ?? ""}`,
     `head_sha=${outcome.head_sha ?? ""}`,
+    ...mergeSlotOutputs(outcome),
     "",
   ].join("\n"));
   if (outcome.error) {

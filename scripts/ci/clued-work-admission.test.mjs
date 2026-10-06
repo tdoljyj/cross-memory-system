@@ -49,6 +49,11 @@ import {
   workflowHasEnvironment,
   workflowSecrets,
   OWNER_REVIEW_RPC,
+  MERGE_SLOT_CHECK_NAME,
+  MERGE_SLOT_RETURN_RPC,
+  mergeSlotCheck,
+  mergeSlotOutputs,
+  mergeSlotState,
 } from "./clued-work-admission.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -1073,9 +1078,8 @@ test("adopt: not a copy, a lost race and an unmerged close change nothing; failu
   assert.deepEqual([r.adopted, r.error], [false, null]);
   assert.match(r.reason, /copy_not_adopted/);
 
-  // No Clued call at all: closed without merging, other events, no trailer, no token.
-  for (const [value, name] of [[merged({ pull_request: { merged: false } }), "pull_request_target"],
-    [merged({ action: "synchronize" }), "pull_request_target"], [merged(), "pull_request"]]) {
+  // No Clued call at all: other events, no trailer, no token.
+  for (const [value, name] of [[merged({ action: "synchronize" }), "pull_request_target"], [merged(), "pull_request"]]) {
     const { fetchImpl, calls } = fakeFetch({});
     r = await adoptMerged({ env: env(), event: value, eventName: name, fetchImpl, workspace: ROOT });
     assert.deepEqual([r.adopted, r.reason, calls.length], [false, "not a merged pull request", 0]);
@@ -1128,7 +1132,7 @@ test("adopt: main exits 1 only on an error and writes a summary", async () => {
   } finally { console.log = log; console.error = error; }
 });
 
-test("adopt: the admission workflow runs it only for a merged pull request, from the default branch", () => {
+test("adopt: the admission workflow runs it for a closed pull request into the default branch, from the default branch", () => {
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission.yml"), "utf8");
   assert.match(text, /types: \[opened, synchronize, reopened, edited, ready_for_review, closed\]/);
   // Re-review 6, B1: both jobs hold the environment's secrets, so both run
@@ -1138,8 +1142,9 @@ test("adopt: the admission workflow runs it only for a merged pull request, from
   assert.match(admit, /^ {4}if: >-\n {6}github\.event\.action != 'closed' &&\n/m);
   assert.ok(admit.includes(`\n      ${intoDefault}\n`), "admission runs only for pull requests into the default branch");
   const job = text.slice(text.indexOf("  clued-work-adopt:"));
-  assert.match(job, /^ {4}if: >-\n {6}github\.event\.action == 'closed' && github\.event\.pull_request\.merged == true &&\n/m);
-  assert.ok(job.includes(`\n      ${intoDefault}\n`), "adoption runs only for merges into the default branch");
+  // Owner Decision 2ea795e4: a close without a merge returns the merge slot.
+  assert.match(job, /^ {4}if: >-\n {6}github\.event\.action == 'closed' &&\n/m);
+  assert.ok(job.includes(`\n      ${intoDefault}\n`), "adoption runs only for pull requests into the default branch");
   assert.match(job, /^ {4}environment: clued-admission$/m);
   assert.match(job, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}\n {10}persist-credentials: false/);
   assert.match(job, /--mode adopt$/m);
@@ -1512,4 +1517,192 @@ test("evaluate (re-review 11, NIT): refusal reasons carry only plain path charac
   const outcome = await evaluateIn({ env: env({ CLUED_OWNER_REVIEW_ENFORCE: "true" }), event: withClaim(), eventName: "pull_request", fetchImpl });
   assert.match(outcome.reasons[0], /^protected_change_not_up_to_date:/);
   assert.ok(!outcome.reasons[0].includes("<b>"), outcome.reasons[0]);
+});
+
+// --- Merge slot (agent contract v33 §1.7; Owner Decisions 0edf7889, 2ea795e4).
+
+const SLOT = "merge:o/r:main";
+const VERIFIED_AT = "2026-10-06T10:00:00Z";
+const slotClaim = (extra = {}) => ({ ...admittedPayload.claim, trigger_refs: [SLOT], merge_slot_until: "2026-10-06T10:45:00Z", ...extra });
+
+test("merge slot: needed only when the head contains the tip; held only while live and named", () => {
+  const at = { repository: "o/r", branch: "main", tip: TIP, verifiedAt: VERIFIED_AT };
+  assert.equal(MERGE_SLOT_CHECK_NAME, "clued-merge-slot");
+  assert.deepEqual(mergeSlotState({ ...at, upToDate: false, claim: slotClaim({ trigger_refs: [] }) }),
+    { ref: SLOT, tip: TIP, until: null, state: "not_needed" });
+  assert.equal(mergeSlotState({ ...at, upToDate: true, claim: admittedPayload.claim }).state, "not_reported",
+    "a Clued service without merge_slot_until is not checked");
+  assert.equal(mergeSlotState({ ...at, upToDate: true, claim: null }).state, "not_reported");
+  assert.deepEqual(mergeSlotState({ ...at, upToDate: true, claim: slotClaim() }),
+    { ref: SLOT, tip: TIP, until: "2026-10-06T10:45:00Z", state: "held" });
+  assert.equal(mergeSlotState({ ...at, upToDate: true, claim: slotClaim({ trigger_refs: ["MERGE:O/R:Main"] }) }).state, "held",
+    "refs match without case");
+  for (const claim of [slotClaim({ merge_slot_until: null }), slotClaim({ merge_slot_until: "2026-10-06T09:59:59Z" }),
+    slotClaim({ trigger_refs: ["merge:o/r:release"] }), slotClaim({ trigger_refs: ["task:x"] })]) {
+    assert.equal(mergeSlotState({ ...at, upToDate: true, claim }).state, "missing", JSON.stringify(claim));
+  }
+  assert.equal(mergeSlotState({ ...at, verifiedAt: null, upToDate: true, claim: slotClaim() }).state, "missing");
+});
+
+test("merge slot: the check passes when held, not needed or not reported, and fails otherwise", () => {
+  const base = { admitted: true, ref: SLOT, until: "2026-10-06T10:45:00Z", tip: TIP, claimId: CLAIM, branch: "main" };
+  for (const [state, success, title] of [["held", true, /^Merge slot held until 2026-10-06T10:45:00Z$/],
+    ["not_needed", true, /^Not needed: the branch does not contain main's tip$/], ["not_reported", true, /^Not checked/],
+    ["not_checked", true, /advisory/], ["missing", false, /^Merge slot not held$/], ["unknown", false, /unknown/], ["", false, /unknown/]]) {
+    const check = mergeSlotCheck({ ...base, state });
+    assert.deepEqual([check.success, title.test(check.title)], [success, true], state);
+  }
+  const missing = mergeSlotCheck({ ...base, state: "missing" });
+  assert.match(missing.summary, new RegExp(`claim \`${CLAIM}\` with \`${SLOT}\` added to its trigger_refs`));
+  assert.match(missing.summary, /edit the pull request body/);
+  assert.deepEqual([mergeSlotCheck({ ...base, admitted: false, state: "held" }).success,
+    mergeSlotCheck({ ...base, admitted: false, state: "held" }).title], [false, "Not admitted"]);
+  // The outputs of the admission step for it.
+  assert.deepEqual(mergeSlotOutputs({ admitted: true, enforced: true, merge_slot: { state: "held", ref: SLOT, until: "u", tip: TIP } }),
+    ["merge_slot=held", `merge_slot_ref=${SLOT}`, "merge_slot_until=u", `merge_slot_tip=${TIP}`]);
+  assert.equal(mergeSlotOutputs({ admitted: true, enforced: false })[0], "merge_slot=not_checked");
+  assert.equal(mergeSlotOutputs({ admitted: false, enforced: true })[0], "merge_slot=unknown");
+  assert.equal(mergeSlotOutputs({ admitted: true, enforced: true, merge_slot: { state: "held\nx=1", ref: "a\rb" } })[0], "merge_slot=held x=1");
+});
+
+test("merge slot: evaluate reports it without changing admission, so the heavy gates still run", async () => {
+  for (const [compare, claim, state] of [["ahead", slotClaim(), "held"], ["identical", slotClaim({ merge_slot_until: null }), "missing"],
+    ["behind", slotClaim({ trigger_refs: [] }), "not_needed"], ["diverged", slotClaim({ trigger_refs: [] }), "not_needed"],
+    ["ahead", admittedPayload.claim, "not_reported"]]) {
+    const { fetchImpl } = fakeFetch({ [FILES]: files,
+      [COMPARE]: (call) => ({ body: { status: call.url.includes(`/compare/${TIP}...`) ? compare : "ahead", files: [] } }),
+      [`GET https://api.test/repos/o/r/compare/${TIP}...`]: { body: { status: compare, files: [] } },
+      [VERIFY]: { body: { ...admittedPayload, verified_at: VERIFIED_AT, claim } } });
+    const outcome = await evaluateIn({ env: env(), event: withClaim(), eventName: "pull_request", fetchImpl });
+    assert.deepEqual([outcome.admitted, outcome.verdict, outcome.merge_slot.state, outcome.merge_slot.ref], [true, "ADMITTED", state, SLOT], compare);
+    assert.match(renderSummary(outcome), new RegExp(`\\*\\*Merge slot:\\*\\* \`${SLOT}\` · ${state}`));
+  }
+});
+
+test("merge slot: the app-check step posts clued-merge-slot after the admission check, on the same head", async () => {
+  const pem = appKeyPem();
+  const appEnv = (extra) => ({ GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: "https://api.test", GITHUB_RUN_ID: "77",
+    CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: pem, ADMISSION_HEAD_SHA: HEAD, ADMISSION_PR_NUMBER: "452",
+    ADMISSION_MERGE_SLOT_REF: SLOT, ADMISSION_CLAIM_ID: CLAIM, ADMISSION_BASE_REF: "main", ...extra });
+  const script = () => fakeFetch({
+    "GET https://api.test/repos/o/r/installation": { body: { id: 99 } },
+    "POST https://api.test/app/installations/99/access_tokens": { status: 201, body: { token: "ghs_app" } },
+    "POST https://api.test/repos/o/r/check-runs": (call) => ({ status: 201, body: { id: call.body.name === APP_CHECK_NAME ? 5 : 6 } }),
+  });
+  for (const [outcome, slot, admission, conclusion] of [["success", "held", "success", "success"], ["success", "missing", "success", "failure"],
+    ["success", "not_needed", "success", "success"], ["failure", "held", "failure", "failure"], ["success", "", "success", "failure"]]) {
+    const { fetchImpl, calls } = script();
+    const result = await appCheck({ env: appEnv({ ADMISSION_OUTCOME: outcome, ADMISSION_MERGE_SLOT: slot, ADMISSION_MERGE_SLOT_UNTIL: "2026-10-06T10:45:00Z" }),
+      fetchImpl, now: () => 1_800_000_000_000 });
+    const posts = calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs"));
+    assert.deepEqual(posts.map((c) => [c.body.name, c.body.head_sha, c.body.conclusion, c.body.external_id]),
+      [[APP_CHECK_NAME, HEAD, admission, "pr:452:run:77"], [MERGE_SLOT_CHECK_NAME, HEAD, conclusion, "pr:452:run:77"]], `${outcome}/${slot}`);
+    assert.deepEqual([result.posted, result.check_run_id, result.merge_slot.posted, result.merge_slot.check_run_id], [true, 5, true, 6]);
+  }
+  // A failure to post the merge slot check fails the step.
+  let posted = 0;
+  const flaky = fakeFetch({
+    "GET https://api.test/repos/o/r/installation": { body: { id: 99 } },
+    "POST https://api.test/app/installations/99/access_tokens": { status: 201, body: { token: "ghs_app" } },
+    "POST https://api.test/repos/o/r/check-runs": () => (posted++ === 0 ? { status: 201, body: { id: 5 } } : { status: 502, body: {} }),
+  });
+  const code = await main(["--mode", "app-check"], appEnv({ ADMISSION_OUTCOME: "success", ADMISSION_MERGE_SLOT: "held" }), flaky.fetchImpl);
+  assert.equal(code, 1);
+});
+
+test("merge slot: the admission workflow hands the slot state to the app-check step", () => {
+  const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission.yml"), "utf8");
+  const step = text.slice(text.indexOf("- name: Post the result as the clued-admission App"), text.indexOf("--mode app-check"));
+  for (const line of ["ADMISSION_MERGE_SLOT: ${{ steps.admit.outputs.merge_slot }}",
+    "ADMISSION_MERGE_SLOT_REF: ${{ steps.admit.outputs.merge_slot_ref }}",
+    "ADMISSION_MERGE_SLOT_UNTIL: ${{ steps.admit.outputs.merge_slot_until }}",
+    "ADMISSION_MERGE_SLOT_TIP: ${{ steps.admit.outputs.merge_slot_tip }}",
+    "ADMISSION_CLAIM_ID: ${{ steps.admit.outputs.claim_id }}",
+    "ADMISSION_BASE_REF: ${{ github.event.pull_request.base.ref }}"]) {
+    assert.ok(step.includes(line), line);
+  }
+});
+
+test("merge slot: main --mode required writes the slot state for the app-check step", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clued-work-admission-slot-"));
+  const out = path.join(dir, "output");
+  const eventFile = path.join(dir, "event.json");
+  fs.writeFileSync(eventFile, JSON.stringify(withClaim()));
+  const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { body: { status: "ahead" } },
+    [VERIFY]: { body: { ...admittedPayload, verified_at: VERIFIED_AT, claim: slotClaim() } },
+    [PULL]: { body: { ...withClaim().pull_request } } });
+  const code = await main(["--mode", "required"], { ...env(), GITHUB_EVENT_NAME: "pull_request_target", GITHUB_EVENT_PATH: eventFile,
+    GITHUB_WORKSPACE: ROOT, GITHUB_OUTPUT: out }, fetchImpl);
+  assert.equal(code, 0);
+  const lines = fs.readFileSync(out, "utf8").split("\n");
+  assert.ok(lines.includes("admitted=true"));
+  assert.ok(lines.includes("merge_slot=held"));
+  assert.ok(lines.includes(`merge_slot_ref=${SLOT}`));
+  assert.ok(lines.includes("merge_slot_until=2026-10-06T10:45:00Z"));
+});
+
+test("merge slot: re-verification fails a green clued-merge-slot check whose slot lapsed", async () => {
+  const sha = (c) => c.repeat(40);
+  const other = "1f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
+  const pulls = [
+    freshPull({ number: 460, head: { sha: sha("1") }, body: `x\n\nClued-Work-Claim: ${other}` }), // slot lapsed
+    freshPull({ number: 461, head: { sha: sha("2") }, body: `x\n\nClued-Work-Claim: ${other}` }), // slot check already failed
+    freshPull({ number: 462, head: { sha: sha("3") }, body: `x\n\nClued-Work-Claim: ${other}` }), // behind main now
+  ];
+  const slotCheck = (head, id, conclusion) => appCheckRun({ id, name: MERGE_SLOT_CHECK_NAME, head_sha: head, conclusion, external_id: `pr:0:run:${id}` });
+  const checksFor = (head) => ({
+    [sha("1")]: [appCheckOn(sha("1"), 11, "success", "pr:460:run:1"), slotCheck(sha("1"), 12, "success")],
+    [sha("2")]: [appCheckOn(sha("2"), 21, "success", "pr:461:run:2"), slotCheck(sha("2"), 22, "failure")],
+    [sha("3")]: [appCheckOn(sha("3"), 31, "success", "pr:462:run:3"), slotCheck(sha("3"), 32, "success")],
+  })[head] ?? null;
+  const { fetchImpl, calls } = reverifyScript(pulls, checksFor, {
+    [VERIFY]: { body: { ...admittedPayload, verified_at: VERIFIED_AT, claim: slotClaim({ merge_slot_until: null }) } },
+    // #462 no longer contains the tip; every other compare is ahead.
+    [COMPARE]: (call) => ({ body: { status: call.url.endsWith(`/compare/${TIP}...${sha("3")}`) ? "diverged" : "ahead", files: [] } }),
+    [`GET https://api.test/repos/o/r/compare/${TIP}...`]: { body: { status: "ahead", files: [] } },
+  });
+  const result = await reverify({ env: env({ CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: appKeyPem() }),
+    fetchImpl, workspace: ROOT, now: () => 1_800_000_000_000 });
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.checked.map((c) => [c.pr, c.verdict, c.merge_slot]),
+    [[460, "ADMITTED", "missing"], [461, "ADMITTED", "missing"], [462, "ADMITTED", "not_needed"]]);
+  assert.deepEqual(result.blocked.map((b) => [b.pr, b.check]), [[460, MERGE_SLOT_CHECK_NAME]]);
+  const posts = calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs"));
+  assert.deepEqual(posts.map((c) => [c.body.name, c.body.head_sha, c.body.conclusion, c.body.external_id]),
+    [[MERGE_SLOT_CHECK_NAME, sha("1"), "failure", "pr:460:run:9001"]]);
+  assert.match(posts[0].body.output.title, /^RE-VERIFIED: Merge slot not held$/);
+  assert.match(renderReverifySummary(result), /#460: failing clued-merge-slot 5005 posted, Merge slot not held: merge:o\/r:main/);
+});
+
+const SLOT_RETURN = `POST ${PUBLIC.url}/rest/v1/rpc/${MERGE_SLOT_RETURN_RPC}`;
+test("merge slot: a pull request closed without a merge gives its slot back; a merge reports what it returned", async () => {
+  const closed = () => merged({ pull_request: { merged: false, merge_commit_sha: null } });
+  let { fetchImpl, calls } = fakeFetch({ [SLOT_RETURN]: { body: { status: "ok", returned: true, pr_ref: "o/r#452", merge_slot_returned: [CLAIM] } } });
+  let r = await adoptMerged({ env: env(), event: closed(), eventName: "pull_request_target", fetchImpl, workspace: ROOT });
+  assert.deepEqual([r.adopted, r.error, r.closed_unmerged, r.merge_slot_returned], [false, null, true, [CLAIM]]);
+  assert.match(r.reason, /merge slot returned/);
+  assert.deepEqual(calls.map((c) => c.url), [`${PUBLIC.url}/rest/v1/rpc/${MERGE_SLOT_RETURN_RPC}`]);
+  assert.deepEqual(calls[0].body, { p_token_hash: sha256Hex("clued_bnd_test"), p_input: { scope: "global", pr_ref: "o/r#452" } });
+  // Nothing held, not deployed yet, no trailer, no token: quiet.
+  for (const [script, reason] of [[{ [SLOT_RETURN]: { body: { status: "ok", returned: false, merge_slot_returned: [] } } }, /no merge slot held/],
+    [{ [SLOT_RETURN]: { status: 404, body: { code: "PGRST202" } } }, /not deployed/]]) {
+    r = await adoptMerged({ env: env(), event: closed(), eventName: "pull_request_target", fetchImpl: fakeFetch(script).fetchImpl, workspace: ROOT });
+    assert.deepEqual([r.error, reason.test(r.reason)], [null, true]);
+  }
+  ({ fetchImpl, calls } = fakeFetch({ [COMMIT]: { body: { commit: { message: "no trailer" } } } }));
+  r = await adoptMerged({ env: env(), event: merged({ body: "none", pull_request: { merged: false } }), eventName: "pull_request_target", fetchImpl, workspace: ROOT });
+  assert.match(r.reason, /no Clued-Work-Claim trailer/);
+  assert.ok(!calls.some((c) => c.url.startsWith(PUBLIC.url)));
+  r = await adoptMerged({ env: env({ CLUED_CONTEXT_READ_TOKEN: "" }), event: closed(), eventName: "pull_request_target", fetchImpl: fakeFetch({}).fetchImpl, workspace: ROOT });
+  assert.match(r.reason, /not set/);
+  // Refusals are errors.
+  for (const script of [{ [SLOT_RETURN]: { body: { status: "ok", returned: false, reason: "admission_binding_required" } } },
+    { [SLOT_RETURN]: { status: 400, body: { code: "22023", message: "work_claim_pr_ref_invalid" } } }, {}]) {
+    r = await adoptMerged({ env: env(), event: closed(), eventName: "pull_request_target", fetchImpl: fakeFetch(script).fetchImpl, workspace: ROOT });
+    assert.ok(r.error, JSON.stringify(script));
+  }
+  // A merge: adoption answers with the slots it returned.
+  ({ fetchImpl } = fakeFetch({ [ADOPT]: { body: { status: "ok", adopted: false, reason: "no_copy_for_pr", merge_slot_returned: [CLAIM] } } }));
+  r = await adoptMerged({ env: env(), event: merged(), eventName: "pull_request_target", fetchImpl, workspace: ROOT });
+  assert.deepEqual([r.adopted, r.reason, r.error, r.merge_slot_returned], [false, "no_copy_for_pr", null, [CLAIM]]);
 });

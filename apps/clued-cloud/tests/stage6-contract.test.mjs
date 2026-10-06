@@ -88,6 +88,9 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /The slot is the trigger ref `merge:<owner>\/<name>:<branch>`/);
   assert.match(contract, /Here a conflict means wait; do not stop or tell the Owner for it/);
   assert.match(contract, /Merge dependent pull requests one at a time/);
+  // Owner Decision 2ea795e4: the slot lapses on its own clock and a required App check enforces it.
+  assert.match(contract, /The slot lapses 45 minutes after you last took or renewed it/);
+  assert.match(contract, /posts a `clued-merge-slot` check on every head/);
   assert.match(contract, /`migration\.production`: one resource per migration file the run applies/);
   assert.match(contract, /ask for everything the release needs in one call: `clued_owner_request` with `actions`/);
   assert.match(contract, /When it carries `suggested_request`, call `clued_owner_request` with that object as is/);
