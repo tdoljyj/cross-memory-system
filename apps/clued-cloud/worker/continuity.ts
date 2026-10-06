@@ -55,6 +55,18 @@ import {
   type OwnerRequestFeatureEnv,
 } from "./owner-requests";
 import {
+  AGENT_INBOX_SUMMARY_OAUTH_TOOL,
+  AGENT_INBOX_SUMMARY_RPC,
+  agentMessageRpcByTool,
+  agentMessageToolPolicies,
+  agentMessageTools,
+  agentMessagesEnabled,
+  withAgentInbox,
+  withAgentMessageNotice,
+  withCoordinationHint,
+  type AgentMessageFeatureEnv,
+} from "./agent-messages";
+import {
   INTEGRATION_REQUEST_RULE_REJECTIONS,
   integrationBootstrap,
   integrationCalls,
@@ -116,7 +128,7 @@ const RESOURCE_CENTER_AUTHORITY_CONTRACT = "clued.resource-center-authority/1";
 type Scope = (typeof ALL_SCOPES)[number];
 
 export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv,
-  IntegrationFeatureEnv {
+  AgentMessageFeatureEnv, IntegrationFeatureEnv {
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
@@ -1483,6 +1495,7 @@ const tools = [
   ...contextTools,
   ...workClaimTools,
   ...ownerRequestTools,
+  ...agentMessageTools,
   ...integrationTools,
 ] as const;
 
@@ -1610,6 +1623,7 @@ export const publicToolPolicies = {
   },
   ...workClaimToolPolicies,
   ...ownerRequestToolPolicies,
+  ...agentMessageToolPolicies,
   ...integrationToolPolicies,
 } as const satisfies Record<PublicToolName, PublicToolPolicy>;
 
@@ -1635,13 +1649,14 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {
   };
 }
 
-export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_WORK_CLAIMS_V1" | "CLUED_OWNER_REQUESTS_V1" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1" | "CLUED_INTEGRATION_RUNTIME_V1">) {
+export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_WORK_CLAIMS_V1" | "CLUED_OWNER_REQUESTS_V1" | "CLUED_AGENT_MESSAGES_V1" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1" | "CLUED_INTEGRATION_RUNTIME_V1">) {
   const existing = tools.filter((tool) =>
     (!(tool.name in recordRpcByTool || tool.name in informationFlowRpcByTool) || recordsV2Enabled(env))
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
     && (!(tool.name in contextRpcByTool) || contextsEnabled(env))
     && (!(tool.name in workClaimRpcByTool) || workClaimsEnabled(env))
     && (tool.name !== OWNER_REQUEST_TOOL || ownerRequestsEnabled(env))
+    && (!(tool.name in agentMessageRpcByTool) || agentMessagesEnabled(env))
     && (!isIntegrationTool(tool.name) || integrationRuntimeEnabled(env))
   ).map(publishTool);
   const binary = storageBinaryEnabled(env);
@@ -1726,6 +1741,7 @@ const rpcByTool = {
   ...informationFlowRpcByTool,
   ...p5RpcByTool,
   ...workClaimRpcByTool,
+  ...agentMessageRpcByTool,
 } as const;
 
 
@@ -2263,6 +2279,9 @@ async function callTool(
   if (typeof name === "string" && name in workClaimRpcByTool && !workClaimsEnabled(env)) {
     throw new HttpError(404, "Clued work claims are disabled.");
   }
+  if (typeof name === "string" && name in agentMessageRpcByTool && !agentMessagesEnabled(env)) {
+    throw new HttpError(404, "Clued agent messages are disabled.");
+  }
   if (name === OWNER_REQUEST_TOOL) {
     if (!ownerRequestsEnabled(env)) throw new HttpError(404, "Clued owner requests are disabled.");
     return await callOwnerRequest(request, env, args);
@@ -2306,7 +2325,8 @@ async function callTool(
       : { status: "not_ready", gate: "G6_CURRENTNESS",
           missing_requirements: ["all_path_checkpoint_enforcement"] }
     : sanitized;
-  const captured = await withWorkClaims(request, env, name, args, withAuthorityCapture(name, gated));
+  const captured = await withAgentMessages(request, env, name, args,
+    await withWorkClaims(request, env, name, args, withAuthorityCapture(name, gated)));
   const result = name in workClaimRpcByTool ? withConfirmUrl(captured, new URL(request.url).origin, "owner_request") : captured;
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
@@ -2373,6 +2393,58 @@ async function withWorkClaims(request: Request, env: ContinuityEnv, name: string
     claims = null;
   }
   return withWorkClaimContext(value, AGENT_CONTRACT_VERSION, claims);
+}
+
+// Agent Messaging v0.1: what other Agents sent this caller. A failed summary
+// read is reported in the result, never thrown into the call it is folded into.
+async function callAgentInboxSummary(request: Request, env: ContinuityEnv, input: Record<string, unknown>) {
+  const token = bearerToken(request);
+  if (!token) throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
+  if (!token.startsWith("clued_bnd_")) {
+    return await supabaseRequest(env, "/rest/v1/rpc/clued_oauth_call", {
+      method: "POST",
+      userToken: token,
+      body: JSON.stringify({ p_tool: AGENT_INBOX_SUMMARY_OAUTH_TOOL, p_input: input }),
+    });
+  }
+  return await supabaseRequest(env, `/rest/v1/rpc/${AGENT_INBOX_SUMMARY_RPC}`, {
+    method: "POST",
+    body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
+  });
+}
+
+function stringArg(args: unknown, key: string): string | null {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return null;
+  const value = (args as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : null;
+}
+
+// Resume: agent_inbox for this session (client_session_id), every context the
+// connection reads. Renewal: agent_inbox for the renewed claim only. A
+// work-claim conflict: who to write to. Inbox: the notice next to the text.
+async function withAgentMessages(request: Request, env: ContinuityEnv, name: string, args: unknown, value: unknown): Promise<unknown> {
+  if (!agentMessagesEnabled(env)) return value;
+  const body = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  if (!body || body.error) return value;
+  if (name === "clued_session_resume" || (name === "clued_work_renew" && body.status === "committed")) {
+    const input: Record<string, unknown> = { scope: name === "clued_session_resume"
+      ? stringArg(args, "context_key") ?? "global" : stringArg(args, "scope") ?? "global" };
+    if (name === "clued_session_resume") {
+      const session = stringArg(args, "client_session_id");
+      if (session) input.session_ref = session;
+    } else {
+      input.claim_id = stringArg(args, "claim_id");
+    }
+    let summary: unknown = null;
+    try {
+      summary = sanitizeCluedResult(await callAgentInboxSummary(request, env, input));
+    } catch {
+      summary = null;
+    }
+    return withAgentInbox(value, summary);
+  }
+  if (name in workClaimRpcByTool) return withCoordinationHint(value);
+  return withAgentMessageNotice(name, value);
 }
 
 function rpcResult(id: JsonRpcId | undefined, result: unknown) {
