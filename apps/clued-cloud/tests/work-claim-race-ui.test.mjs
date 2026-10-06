@@ -4,6 +4,9 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import ts from 'typescript';
+// The Owner work claims page (list and handover) runs with this file, under
+// npm run test:authorization:pages.
+import './work-claims-owner-ui.case.mjs';
 
 const compile = path => ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2020, esModuleInterop: true },

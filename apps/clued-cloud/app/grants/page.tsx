@@ -108,7 +108,7 @@ export default function OwnerGrantsPage() {
 
   const now = Date.now();
   return <main className="context-page owner-confirm">
-    <header><Link href="/">Clued</Link> <Link href="/work-claims/race">多份模式</Link> <Link href="/bindings">专用 Binding</Link></header>
+    <header><Link href="/">Clued</Link> <Link href="/work-claims">谁在做哪个任务</Link> <Link href="/work-claims/race">多份模式</Link> <Link href="/bindings">专用 Binding</Link></header>
     <h1>我的授权</h1>
     <p className="context-muted">你给 Agent 的授权都在这里。撤销立即生效。</p>
     {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 Clued</Link> 后查看你的授权。</p> : <>
