@@ -1059,8 +1059,10 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     }
     // Owner Decision 2ea795e4: a head that contains the base branch's tip can
     // merge, so only the claim holding the merge slot may have it.
-    outcome.merge_slot = mergeSlotState({ repository, branch: pr.base.ref, tip: tipCompare.tip,
+    // Advisory admission does not enforce it either (review MINOR-4).
+    const slot = mergeSlotState({ repository, branch: pr.base.ref, tip: tipCompare.tip,
       upToDate: tipCompare.upToDate, claim: verified.payload.claim, verifiedAt: verified.payload.verified_at });
+    outcome.merge_slot = enforced ? slot : { ...slot, observed: slot.state, state: "not_checked" };
     if (enforced) {
       outcome.admitted = outcome.verdict === "ADMITTED";
     } else {
@@ -1201,16 +1203,23 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
       const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false });
       result.checked.push({ pr: pr.number, verdict: outcome.verdict, reasons: outcome.reasons,
         ...(outcome.merge_slot ? { merge_slot: outcome.merge_slot.state } : {}) });
-      if (slotGreen && outcome.merge_slot && (outcome.merge_slot.state === "missing" || !outcome.admitted)) {
-        const slot = mergeSlotCheck({ admitted: outcome.admitted, state: outcome.merge_slot.state, ref: outcome.merge_slot.ref,
-          tip: outcome.merge_slot.tip, claimId: outcome.claim_id, branch: pr.base.ref });
+      // A transient Owner review door leaves both checks as they are (review MINOR-2).
+      const transient = Boolean(outcome.owner_review && outcome.owner_review.kind === "transient");
+      if (slotGreen && !transient && (!outcome.admitted || (outcome.merge_slot && outcome.merge_slot.state === "missing"))) {
+        const slot = mergeSlotCheck({ admitted: outcome.admitted, state: outcome.merge_slot ? outcome.merge_slot.state : "unknown",
+          ref: outcome.merge_slot ? outcome.merge_slot.ref : mergeSlotRef(repository, pr.base.ref),
+          tip: outcome.merge_slot ? outcome.merge_slot.tip : null, claimId: outcome.claim_id, branch: pr.base.ref });
         const posted = await postAppCheck({
           env, fetchImpl, now, headSha: pr.head.sha, success: false, title: `RE-VERIFIED: ${slot.title}`, prNumber: pr.number,
           name: MERGE_SLOT_CHECK_NAME, summary: slot.summary,
         });
-        if (!posted.posted) throw new Error(`merge slot not held and no failing ${MERGE_SLOT_CHECK_NAME} check could be posted: ${posted.error ?? posted.reason}`);
-        result.blocked.push({ pr: pr.number, check: MERGE_SLOT_CHECK_NAME, check_run_id: posted.check_run_id,
-          verdict: slot.title, reasons: [outcome.merge_slot.ref] });
+        // Reported, and the admission check below is still handled (review MINOR-3).
+        if (!posted.posted) {
+          result.errors.push({ pr: pr.number, error: `no failing ${MERGE_SLOT_CHECK_NAME} check could be posted: ${posted.error ?? posted.reason}` });
+        } else {
+          result.blocked.push({ pr: pr.number, check: MERGE_SLOT_CHECK_NAME, check_run_id: posted.check_run_id,
+            verdict: slot.title, reasons: [outcome.merge_slot ? outcome.merge_slot.ref : outcome.verdict ?? "not admitted"] });
+        }
       }
       if (!admissionGreen || outcome.admitted) continue;
       // The Owner review runs only on an otherwise admitted pull request, so a
@@ -1941,9 +1950,9 @@ function renderAdoptSummary(result) {
   return lines.join("\n");
 }
 
-// The merge slot state for the app-check step. Without one (admission was
-// advisory, or it stopped before verifying), an advisory run is not_checked
-// and anything else unknown, which fails the check.
+// The merge slot state for the app-check step: not_checked whenever admission
+// is advisory; without one (admission stopped before verifying), unknown,
+// which fails the check.
 export function mergeSlotOutputs(outcome) {
   const slot = outcome.merge_slot;
   const clean = (value) => String(value ?? "").replace(/[\r\n]/g, " ");

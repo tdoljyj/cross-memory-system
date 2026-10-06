@@ -19,6 +19,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 const SLOT = 'merge:tdoljyj/cross-memory-system:main';
+const nowEpoch = () => Math.floor(Date.now() / 1000);
+const fresh = (sub, session = 'sess-owner') =>
+  ({ sub, role: 'authenticated', session_id: session, aal: 'aal1', amr: [{ method: 'password', timestamp: nowEpoch() }] });
 
 async function freePort() {
   const listener = net.createServer();
@@ -75,6 +78,15 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const human = server.getPgClient();
+    clients.push(human);
+    await human.connect();
+    await human.query('set role authenticated');
+    const native = async (name, input, claims = fresh(userId)) => {
+      await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+        [claims.sub ?? '', JSON.stringify(claims)]);
+      return (await human.query(`select public.${name}($1) v`, [input])).rows[0].v;
+    };
     const agent = async (who, name, input) =>
       (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
@@ -201,6 +213,41 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.equal(c.merge_slot_until, null);
     a = committed(await renew('claude', await view(a), { trigger_refs: [SLOT] })).claim;
     assert.ok(a.merge_slot_until);
+
+    // --- The copies of a race share the one slot too (review MAJOR-1). ---
+    a = committed(await renew('claude', a, { trigger_refs: [] })).claim;
+    const raceTask = await createTask('race for the slot');
+    const shared = ['merge-slot/race/final/**'];
+    const issued = await native('clued_work_claim_multi_confirmation_issue_v1', { task_id: raceTask, copies: 2, shared_resources: shared });
+    assert.equal(issued.status, 'issued', JSON.stringify(issued));
+    committed(await native('clued_work_claim_multi_enable_v1',
+      { confirmation_token: issued.confirmation_token, view_digest: issued.view_digest }));
+    const copy = async (session) => committed(await agent('claude', 'clued_work_claim_v1', { scope: 'global',
+      idempotency_key: uuid(), task_id: raceTask, write_set: ['merge-slot/race/**'], trigger_refs: ['task:race'],
+      holder_session_ref: session })).claim;
+    let c1 = await copy('race-1');
+    let c2 = await copy('race-2');
+    assert.deepEqual([c1.copy_index, c2.copy_index], [1, 2], 'siblings with the same paths and refs do not conflict');
+    c1 = committed(await renew('claude', c1, { trigger_refs: ['task:race', SLOT] })).claim;
+    assert.ok(c1.merge_slot_until);
+    const sibling = rejected(await renew('claude', c2, { trigger_refs: ['task:race', SLOT] }), 'work_claim_conflict');
+    assert.deepEqual(sibling.conflicts.map((row) => [row.claim_id, row.overlap.same_task, row.overlap.paths, row.overlap.trigger_refs]),
+      [[c1.claim_id, false, [], [SLOT]]], 'only the live slot conflicts between copies');
+    c2 = committed(await renew('claude', c2)).claim;
+    c1 = committed(await renew('claude', c1)).claim;
+    assert.ok(c1.merge_slot_until, 'the holder copy refreshes its slot');
+    // A copy issued while a sibling holds the slot waits for it.
+    rejected(await agent('claude', 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), task_id: raceTask,
+      write_set: ['merge-slot/race/**'], trigger_refs: [SLOT], holder_session_ref: 'race-3' }), 'work_claim_conflict');
+
+    // --- The return drops only the pull request's own repository's slots. ---
+    c1 = committed(await renew('claude', c1, { trigger_refs: ['task:race', SLOT, 'merge:other/repo:main'] })).claim;
+    const boundC1 = await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: c1.claim_id,
+      head_sha: 'e'.repeat(40), base_sha: 'b'.repeat(40), pr_ref: 'tdoljyj/Cross-Memory-System#9' });
+    assert.equal(boundC1.verdict, 'ADMITTED', JSON.stringify(boundC1));
+    assert.deepEqual((await agent('ci', 'clued_work_merge_slot_return_v1',
+      { scope: 'global', pr_ref: 'tdoljyj/Cross-Memory-System#9' })).merge_slot_returned, [c1.claim_id]);
+    assert.deepEqual((await view(c1)).trigger_refs, ['merge:other/repo:main', 'task:race']);
 
     // --- Grants: the return RPC to anon (the admission door) only; helpers to nobody. ---
     const can = async (role, signature) => (await admin.query(

@@ -1706,3 +1706,41 @@ test("merge slot: a pull request closed without a merge gives its slot back; a m
   r = await adoptMerged({ env: env(), event: merged(), eventName: "pull_request_target", fetchImpl, workspace: ROOT });
   assert.deepEqual([r.adopted, r.reason, r.error, r.merge_slot_returned], [false, "no_copy_for_pr", null, [CLAIM]]);
 });
+
+test("merge slot (review MINOR-2/3/4): advisory runs do not enforce it; a transient door or a failed post does not stop re-verification", async () => {
+  // Advisory admission: the slot is reported but not checked.
+  const { fetchImpl } = fakeFetch({ [FILES]: files, [COMPARE]: { body: { status: "ahead", files: [] } },
+    [VERIFY]: { body: { ...admittedPayload, verified_at: VERIFIED_AT, claim: slotClaim({ merge_slot_until: null }) } } });
+  const advisory = await evaluateIn({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), event: withClaim(), eventName: "pull_request", fetchImpl });
+  assert.deepEqual([advisory.admitted, advisory.merge_slot.state, advisory.merge_slot.observed], [true, "not_checked", "missing"]);
+  assert.equal(mergeSlotOutputs(advisory)[0], "merge_slot=not_checked");
+
+  const sha = (c) => c.repeat(40);
+  const both = (head, pr) => [appCheckOn(head, 1, "success", `pr:${pr}:run:1`),
+    appCheckRun({ id: 2, name: MERGE_SLOT_CHECK_NAME, head_sha: head, conclusion: "success", external_id: `pr:${pr}:run:1` })];
+  // #470: its claim is no longer current and the slot check cannot be posted; the admission check is still failed.
+  let posts = 0;
+  let { fetchImpl: f1, calls } = reverifyScript([freshPull({ number: 470, head: { sha: sha("4") } })], (head) => both(head, 470), {
+    "POST https://api.test/repos/o/r/check-runs": (call) => (call.body.name === MERGE_SLOT_CHECK_NAME ? { status: 502, body: {} } : { status: 201, body: { id: 7000 + posts++ } }),
+  });
+  let result = await reverify({ env: env({ CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: appKeyPem() }),
+    fetchImpl: f1, workspace: ROOT, now: () => 1_800_000_000_000 });
+  assert.deepEqual(result.errors.map((e) => e.pr), [470]);
+  assert.match(result.errors[0].error, /clued-merge-slot/);
+  assert.deepEqual(result.blocked.map((b) => [b.pr, b.check ?? APP_CHECK_NAME]), [[470, APP_CHECK_NAME]]);
+  assert.deepEqual(calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs")).map((c) => [c.body.name, c.body.conclusion]),
+    [[MERGE_SLOT_CHECK_NAME, "failure"], [APP_CHECK_NAME, "failure"]]);
+
+  // #471: a protected change whose Owner review door is down: neither check is touched.
+  const other = "1f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
+  ({ fetchImpl: f1, calls } = reverifyScript([freshPull({ number: 471, head: { sha: sha("5") }, body: `x\n\nClued-Work-Claim: ${other}` })],
+    (head) => both(head, 471)));
+  const protectedFiles = async (url, init) => (String(url).startsWith("https://api.test/repos/o/r/pulls/471/files")
+    ? { ok: true, status: 200, headers: { get: () => null }, json: async () => [{ filename: "scripts/ci/x.mjs" }, { filename: "docs/x.md" }], text: async () => "" }
+    : f1(url, init));
+  result = await reverify({ env: env({ CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: appKeyPem(), CLUED_OWNER_REVIEW_ENFORCE: "true" }),
+    fetchImpl: protectedFiles, workspace: ROOT, now: () => 1_800_000_000_000 });
+  assert.deepEqual(result.errors.map((e) => e.pr), [471], JSON.stringify(result));
+  assert.match(result.errors[0].error, /Owner review door is unavailable/);
+  assert.equal(calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs")).length, 0);
+});

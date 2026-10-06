@@ -111,12 +111,14 @@ language sql stable set search_path='' as $$
 $$;
 
 -- work_claim_conflicts: 20261003120000, except that a claim's merge refs
--- count only while its slot is live.
+-- count only while its slot is live, and that the copies of a Task in an open
+-- race still conflict with each other on a live merge slot (one slot per
+-- branch, whatever Task holds it).
 create or replace function clued_private.work_claim_conflicts(
   p_user_id uuid,p_task_id uuid,p_write_set text[],p_triggers text[],p_exclude uuid
 ) returns jsonb language plpgsql stable set search_path='' as $$
 declare v_out jsonb:='[]'::jsonb; c clued_private.work_claims_v1%rowtype;
-  v_paths text[]; v_trig text[]; v_slot boolean;
+  v_paths text[]; v_trig text[]; v_slot boolean; v_sibling boolean; v_same boolean;
   -- Copies of a Task in an open race never conflict with each other.
   v_open boolean:=p_task_id is not null
     and (clued_private.work_claim_open_race_v1(p_user_id,p_task_id)).task_id is not null;
@@ -126,18 +128,21 @@ begin
       and w.expires_at>pg_catalog.clock_timestamp()
       and (p_exclude is null or w.claim_id<>p_exclude)
     order by w.issued_at loop
-    continue when v_open and c.task_id=p_task_id and c.copy_index is not null;
-    v_paths:=clued_private.work_claim_paths_overlap(c.write_set,p_write_set);
+    -- A sibling copy conflicts only on a live merge slot.
+    v_sibling:=v_open and c.task_id=p_task_id and c.copy_index is not null;
+    v_same:=coalesce(c.task_id=p_task_id,false) and not v_sibling;
+    v_paths:=case when v_sibling then '{}'::text[]
+      else clued_private.work_claim_paths_overlap(c.write_set,p_write_set) end;
     v_slot:=clued_private.work_claim_merge_slot_live_v1(c);
     select coalesce(array_agg(t order by t),'{}'::text[]) into v_trig
       from unnest(c.trigger_refs) t
-      where (v_slot or t not like 'merge:%')
+      where (case when t like 'merge:%' then v_slot else not v_sibling end)
         and exists(select 1 from unnest(p_triggers) n where clued_private.work_claim_triggers_match(t,n));
-    if c.task_id=p_task_id or cardinality(v_paths)>0 or cardinality(v_trig)>0 then
+    if v_same or cardinality(v_paths)>0 or cardinality(v_trig)>0 then
       v_out:=v_out||jsonb_build_array(jsonb_build_object('claim_id',c.claim_id,'task_id',c.task_id,
         'holder_binding_id',c.holder_binding_id,'holder_session_ref',c.holder_session_ref,
         'status',c.status,'fence',c.fence,'expires_at',c.expires_at,
-        'overlap',jsonb_build_object('same_task',c.task_id=p_task_id,
+        'overlap',jsonb_build_object('same_task',v_same,
           'paths',to_jsonb(v_paths),'trigger_refs',to_jsonb(v_trig)))
         ||case when v_slot and exists(select 1 from unnest(v_trig) t where t like 'merge:%')
           then jsonb_build_object('merge_slot_until',clued_private.work_claim_merge_slot_until_v1(c)) else '{}'::jsonb end);
@@ -146,22 +151,26 @@ begin
   return v_out;
 end $$;
 
--- Drops the merge refs of the live claims bound to a pull request, with one
--- Receipt per claim; returns the claim ids. Called under the user lock.
+-- Drops the merge refs of the pull request's repository from the live claims
+-- bound to it, with one Receipt per claim; returns the claim ids. Called
+-- under the user lock.
 create function clued_private.work_claim_merge_slot_return_core_v1(
   p_user_id uuid,p_binding_id uuid,p_scope text,p_pr text,p_why text,p_ref jsonb
 ) returns uuid[] language plpgsql volatile security definer set search_path='' as $$
 declare c clued_private.work_claims_v1%rowtype; v_out uuid[]:='{}'::uuid[]; v_now timestamptz:=pg_catalog.clock_timestamp();
   v_refs text[];
+  -- Only the slots of the pull request's own repository: merge:<owner>/<name>:<branch>.
+  v_prefix text:='merge:'||lower(split_part(p_pr,'#',1))||':';
 begin
   for c in select * from clued_private.work_claims_v1 w
     where w.user_id=p_user_id and w.context_key=p_scope and w.bound_pr=p_pr
       and w.status in ('ACTIVE','DRAINING')
-      and cardinality(clued_private.work_claim_merge_refs_v1(w.trigger_refs))>0
+      and exists(select 1 from unnest(w.trigger_refs) t where left(lower(t),length(v_prefix))=v_prefix)
     order by w.issued_at for update loop
-    v_refs:=clued_private.work_claim_merge_refs_v1(c.trigger_refs);
+    select coalesce(array_agg(t order by t),'{}'::text[]) into v_refs
+      from unnest(c.trigger_refs) t where left(lower(t),length(v_prefix))=v_prefix;
     update clued_private.work_claims_v1
-      set trigger_refs=array(select t from unnest(c.trigger_refs) t where t not like 'merge:%' order by t),
+      set trigger_refs=array(select t from unnest(c.trigger_refs) t where not (t=any(v_refs)) order by t),
         updated_at=v_now
       where claim_id=c.claim_id;
     insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,
