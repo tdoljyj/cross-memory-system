@@ -48,7 +48,8 @@ begin
     exception when others then content:=null; end;
     if written is null and not read_ok and content is null then continue; end if;
     total:=total+1;
-    if total>max_listed then continue; end if;
+    -- One usable connection past the cap is enough to answer complete:false.
+    if total>max_listed then exit; end if;
     select * into p from clued_private.resource_center_profiles_v1 where id=c.profile_id and user_id=c.owner_id;
     select coalesce(jsonb_agg(x order by array_position(array['create_file','create_topic','modify','overwrite',
         'modify_subtree','destructive'],x)),'[]'::jsonb) into levels
@@ -56,7 +57,7 @@ begin
     reads:=case when read_ok and content is not null then '["read","read_content"]'::jsonb
       when read_ok then '["read"]'::jsonb when content is not null then '["read_content"]'::jsonb else '[]'::jsonb end;
     listed:=listed||jsonb_build_array(jsonb_build_object('connection_id',c.id,
-      'name',substring(rtrim(p.managed_root,'/') from '[^/]+$'),
+      'name',coalesce(substring(rtrim(p.managed_root,'/') from '[^/]+$'),p.managed_root),
       'managed_root',p.managed_root,'project_id',p.project_id,
       'tracks',coalesce(p.cloud_runtime->'allowed_root_children','[]'::jsonb),
       'inspect',written is not null,'write_levels',levels,'read',reads,
