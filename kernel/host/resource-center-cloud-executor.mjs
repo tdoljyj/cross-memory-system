@@ -253,6 +253,10 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         provider_identity:await resolveProvider({profile,mutation:input})});
       const invoke=async input=>rpc(Object.freeze({...ref,...input}));
       let authorityLookupCount=0;
+      // A destination folder Clued has not registered (for example one made
+      // in Drive before registration, or outside Clued) is refused with its
+      // own fixed reason, so the Agent can adopt it first (PARENT_UNREGISTERED).
+      let authorityRefusal=null;
       const resolveAuthority=async({mutation:input})=>{
         const phase=["initial","revalidation","pre_effect"][Math.min(authorityLookupCount++,2)];
         let request;
@@ -272,7 +276,10 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           throw error;
         }
         if(result?.status!=="resolved"){
-          if(result?.status==="denied") logAuthorityFailure(phase,"canonical_result","AUTHORITY_RPC_DENIED",result.reason);
+          if(result?.status==="denied"){
+            logAuthorityFailure(phase,"canonical_result","AUTHORITY_RPC_DENIED",result.reason);
+            if(phase==="initial" && result.reason==="parent_unregistered") authorityRefusal="PARENT_UNREGISTERED";
+          }
           else logAuthorityFailure(phase,"canonical_result","AUTHORITY_RESPONSE_INVALID");
           fail();
         }
@@ -535,6 +542,11 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         // Refused in prepare_write, before the durable start: nothing was reserved.
         logDiagnostic("deny",scopeRefusal);
         return {status:"deny",error_code:scopeRefusal,side_effects:0,execution_permitted:false};
+      }
+      if(authorityRefusal && result.status==="deny" && result.error_code==="ARTIFACT_AUTHORITY_RESOLUTION_FAILED" && result.side_effects===0){
+        // Refused at the first authority lookup, before any reservation.
+        logDiagnostic("deny",authorityRefusal);
+        return {status:"deny",error_code:authorityRefusal,side_effects:0,execution_permitted:false};
       }
       if(result.status==="unreconciled" || result.status==="deny") {
         // Keep the original journal fenced, but leave a stable diagnostic.

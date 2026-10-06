@@ -300,6 +300,40 @@ test('authority diagnostics distinguish revalidation after initial resolution',a
     {event:'storage_cloud_denied',error_code:'ARTIFACT_AUTHORITY_REVALIDATION_FAILED'},
   ]);
 });
+test('an unregistered destination folder is refused with PARENT_UNREGISTERED before any reservation',async()=>{
+  const f=fixture(),rpc=f.config.rpc;let lookups=0;
+  f.config.rpc=async input=>{
+    if(input.action==='authority'){ lookups++; return {status:'denied',reason:'parent_unregistered'}; }
+    return rpc(input);
+  };
+  const logs=[],original=console.warn;
+  console.warn=message=>logs.push(message);
+  let result;
+  try { result=await f.run().run(f.reference); }
+  finally { console.warn=original; }
+  assert.deepEqual(result,{status:'deny',error_code:'PARENT_UNREGISTERED',side_effects:0,execution_permitted:false});
+  assert.deepEqual(cloudDispatchOutcome(result),{status:'denied',reason:{code:'PARENT_UNREGISTERED'}});
+  assert.equal(lookups,1);
+  assert.equal(f.info().starts,0);assert.equal(f.info().posts,0);
+  assert.deepEqual(logs.map(message=>JSON.parse(message)),[
+    {event:'storage_cloud_authority_failed',phase:'initial',stage:'canonical_result',error_code:'AUTHORITY_RPC_DENIED',reason:'parent_unregistered'},
+    {event:'storage_cloud_denied',error_code:'PARENT_UNREGISTERED'},
+  ]);
+});
+test('a parent that becomes unregistered at revalidation keeps the revalidation code',async()=>{
+  const f=fixture(),rpc=f.config.rpc;let lookups=0;
+  f.config.rpc=async input=>{
+    if(input.action==='authority' && ++lookups===2) return {status:'denied',reason:'parent_unregistered'};
+    return rpc(input);
+  };
+  const original=console.warn;
+  console.warn=()=>{};
+  let result;
+  try { result=await f.run().run(f.reference); }
+  finally { console.warn=original; }
+  assert.equal(result.error_code,'ARTIFACT_AUTHORITY_REVALIDATION_FAILED');
+  assert.equal(f.info().starts,0);assert.equal(f.info().posts,0);
+});
 test('authority denial logs only an allowlisted fixed reason label',async()=>{
   for(const [reason,expected] of [['parent_version_mismatch','parent_version_mismatch'],['root_version_mismatch','root_version_mismatch'],
     ['private detail /Clued_资料中心/x',undefined],[{nested:true},undefined],[undefined,undefined]]){
