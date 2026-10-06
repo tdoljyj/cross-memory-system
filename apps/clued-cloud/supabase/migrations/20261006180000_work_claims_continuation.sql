@@ -17,9 +17,12 @@
 --      that no earlier claim of the chain released with;
 --   3. the new claim comes within continuation_window_seconds (900) of that
 --      release, and at least a minute before the chain's hard deadline;
---   4. no claim conflict refusal named it while it was live (contested_at),
---      and no Agent message request from another session was addressed to it.
--- A continuation takes no Task or Binding token and no Owner Grant use. It
+--   4. nobody else was waiting for it while it was live: no conflict refusal
+--      of another holder or session named it and no takeover of it was refused
+--      as still active (contested_at), and no Agent message request from
+--      another session was addressed to it.
+-- A continuation takes no Task or Binding token, no Owner Grant use and no
+-- legacy exemption allowance. It
 -- keeps the first claim's hard deadline (the chain is bounded by 24 hours as
 -- one renewed claim is), starts at renewals 0, and its lease ends at the
 -- earlier of the usual lease and that deadline. The claim, its Receipt and
@@ -30,6 +33,8 @@ alter table clued_private.work_claims_v1
   add column continued_from uuid references clued_private.work_claims_v1(claim_id) on delete set null,
   add column chain_evidence_refs text[] not null default '{}'::text[],
   add column contested_at timestamptz;
+create index work_claims_v1_continued_from_idx
+  on clued_private.work_claims_v1(continued_from) where continued_from is not null;
 
 -- Profile: 20261006120000 plus continuation_window_seconds.
 create or replace function clued_private.work_claim_profile_v1() returns jsonb
@@ -68,19 +73,29 @@ language sql stable set search_path='' as $$
     'continued_from',c.continued_from)
 $$;
 
--- work_claim_reject_log_v1: 20261003070000, plus every refusal that names
--- conflicting claims marks them contested_at, whether or not the rate-limited
--- Receipt is written. A contested claim is never continued.
+-- work_claim_reject_log_v1: 20261003070000, plus: a refusal marks contested_at
+-- on each claim it says was in someone else's way, whether or not the
+-- rate-limited Receipt is written. Those are the conflicting claims, except
+-- one held by the refused caller's own Binding and session
+-- (requester_session_ref, sent by work_claim_issue), and the target of a
+-- takeover refused as still active. Rows another transaction holds are
+-- skipped rather than waited for. A contested claim is never continued.
 create or replace function clued_private.work_claim_reject_log_v1(p_binding public.clued_agent_bindings,
   p_context_key text,p_task_id uuid,p_claim_id uuid,p_operation text,p_code text,p_detail jsonb)
 returns jsonb language plpgsql volatile security definer set search_path='' as $$
 declare v_limit text:=p_detail->>'limit'; v_object text:=coalesce(p_task_id,p_claim_id)::text;
+  v_session text:=p_detail->>'requester_session_ref';
 begin
   update clued_private.work_claims_v1 w set contested_at=pg_catalog.clock_timestamp()
-    where w.user_id=p_binding.user_id and w.contested_at is null
-      and w.claim_id in (select (c->>'claim_id')::uuid
-        from jsonb_array_elements(coalesce(p_detail->'conflicts','[]'::jsonb)) c
-        where c->>'claim_id' ~* '^[0-9a-f-]{36}$');
+    where w.claim_id in (select x.claim_id from clued_private.work_claims_v1 x
+      where x.user_id=p_binding.user_id and x.contested_at is null
+        and (x.claim_id in (select (c->>'claim_id')::uuid
+              from jsonb_array_elements(coalesce(p_detail->'conflicts','[]'::jsonb)) c
+              where c->>'claim_id' ~* '^[0-9a-f-]{36}$'
+                and not (c->>'holder_binding_id'=p_binding.id::text and v_session is not null
+                  and c->>'holder_session_ref' is not distinct from v_session))
+          or (p_code='work_claim_still_active' and x.claim_id=p_claim_id))
+      for update skip locked);
   if v_object is not null and not exists(select 1 from public.clued_audit_receipts r
       where r.user_id=p_binding.user_id and r.context_key=p_context_key
         and r.created_at>pg_catalog.clock_timestamp()-interval '1 minute'
@@ -100,26 +115,24 @@ end $$;
 -- Whether a new claim of p_task by this Binding and session continues the
 -- Task's last claim. Returns null when the Task has no claim yet;
 -- {continued_from, hard_deadline_at, chain_evidence_refs} when it continues;
--- otherwise {reason, prior_claim_id}. Called under work_claim_lock.
+-- otherwise {reason, prior_claim_id}. The checks that read only the claim row
+-- run first; the release Receipt is looked up only inside the window. The
+-- chain keeps md5 digests of its release evidence, not the text. Called under
+-- work_claim_lock.
 create function clued_private.work_claim_continuation_v1(p_binding public.clued_agent_bindings,
   p_task public.clued_memories,p_session text,p_now timestamptz) returns jsonb
 language plpgsql stable security definer set search_path='' as $$
 declare p clued_private.work_claims_v1%rowtype; r public.clued_audit_receipts%rowtype;
   v_evidence text; v_reason text;
-  v_window integer:=(clued_private.work_claim_profile_v1()->>'continuation_window_seconds')::integer;
+  v_window interval:=make_interval(secs=>
+    (clued_private.work_claim_profile_v1()->>'continuation_window_seconds')::integer);
 begin
   select * into p from clued_private.work_claims_v1 w
     where w.user_id=p_binding.user_id and w.task_id=p_task.id
     order by w.fence desc,w.issued_at desc limit 1;
   if not found then return null; end if;
-  if p.status='RELEASED' then
-    select * into r from public.clued_audit_receipts x
-      where x.user_id=p.user_id and x.context_key=p.context_key and x.created_at>=p.issued_at
-        and x.operation='work_claim_release' and x.object_id=p.claim_id::text
-        and x.metadata->>'receipt_kind'='WORK_CLAIM_RELEASED'
-      order by x.created_at desc limit 1;
-    v_evidence:=nullif(btrim(coalesce(r.metadata->>'evidence_ref','')),'');
-  end if;
+  -- updated_at is the release time of a RELEASED claim: nothing writes an
+  -- ended claim's row afterwards.
   v_reason:=case
     when p_session is null then 'no_session_ref'
     when p.holder_binding_id<>p_binding.id or p.holder_session_ref is distinct from p_session
@@ -127,17 +140,29 @@ begin
     when p.status<>'RELEASED' or p.released_outcome is distinct from 'completed' then 'prior_not_completed'
     when p.copy_index is not null then 'prior_race_copy'
     when p.lease_key_required then 'prior_handed_over'
-    when r.id is null or r.binding_id<>p_binding.id
-      or coalesce((r.metadata->>'via_lease_key')::boolean,false) then 'prior_released_by_other'
-    when p_now>r.created_at+make_interval(secs=>v_window) then 'window_passed'
+    when p_now>p.updated_at+v_window then 'window_passed'
     when p_now+interval '1 minute'>p.hard_deadline_at then 'chain_deadline_reached'
-    when v_evidence is null or v_evidence=any(p.chain_evidence_refs) then 'no_new_evidence'
     when p.contested_at is not null then 'prior_contested'
-    when exists(select 1 from clued_private.agent_messages_v1 m
-        where m.user_id=p.user_id and m.to_claim_id=p.claim_id and m.kind='request'
-          and not (m.sender_binding_id=p_binding.id and m.sender_session_ref is not distinct from p_session))
-      then 'prior_requested'
   end;
+  if v_reason is null then
+    select * into r from public.clued_audit_receipts x
+      where x.user_id=p.user_id and x.context_key=p.context_key
+        and x.created_at>=greatest(p.issued_at,p_now-v_window-interval '1 minute')
+        and x.operation='work_claim_release' and x.object_id=p.claim_id::text
+        and x.metadata->>'receipt_kind'='WORK_CLAIM_RELEASED'
+      order by x.created_at desc limit 1;
+    v_evidence:=md5(nullif(btrim(coalesce(r.metadata->>'evidence_ref','')),''));
+    v_reason:=case
+      when r.id is null or r.binding_id<>p_binding.id
+        or coalesce((r.metadata->>'via_lease_key')::boolean,false) then 'prior_released_by_other'
+      when p_now>r.created_at+v_window then 'window_passed'
+      when v_evidence is null or v_evidence=any(p.chain_evidence_refs) then 'no_new_evidence'
+      when exists(select 1 from clued_private.agent_messages_v1 m
+          where m.user_id=p.user_id and m.to_claim_id=p.claim_id and m.kind='request'
+            and not (m.sender_binding_id=p_binding.id and m.sender_session_ref is not distinct from p_session))
+        then 'prior_requested'
+    end;
+  end if;
   if v_reason is not null then
     return jsonb_build_object('reason',v_reason,'prior_claim_id',p.claim_id);
   end if;
@@ -145,8 +170,27 @@ begin
     'chain_evidence_refs',to_jsonb(p.chain_evidence_refs||v_evidence));
 end $$;
 
+-- Legacy exemption status (20261003180000): a continuation uses no allowance.
+create or replace function clued_private.work_claim_exemption_status_v1(p_user_id uuid,p_task_id uuid)
+returns jsonb language sql stable security definer set search_path='' as $$
+  select jsonb_build_object(
+    'claims_last_24h',(select count(*) from clued_private.work_claims_v1 w
+      where w.user_id=p_user_id and w.task_id=p_task_id and w.issued_at>clock_timestamp()-interval '24 hours'),
+    'active_exemptions',coalesce((select jsonb_agg(jsonb_build_object('exemption_id',e.id,
+        'granted_at',e.granted_at,'expires_at',e.expires_at,'extra_claims',e.extra_claims,
+        'used',(select count(*) from clued_private.work_claims_v1 w
+          where w.user_id=e.user_id and w.task_id=e.task_id and w.issued_at>=e.granted_at
+            and w.continued_from is null))
+      order by e.granted_at)
+      from clued_private.work_claim_exemptions_v1 e
+      where e.user_id=p_user_id and e.task_id=p_task_id and e.expires_at>clock_timestamp()),'[]'::jsonb))
+$$;
+
 -- work_claim_issue: 20261003120000 except the continuation, which skips the
--- rate buckets and the exemption and Owner Grant they fall back to.
+-- rate buckets and the exemption and Owner Grant they fall back to; a
+-- conflict refusal names the caller's session (requester_session_ref) so
+-- the caller's own claims are not marked contested; and continuations do not
+-- count against a legacy exemption's allowance.
 create or replace function clued_private.work_claim_issue(
   p_binding public.clued_agent_bindings,p_input jsonb,p_task public.clued_memories,
   p_supersedes clued_private.work_claims_v1,p_operation text
@@ -196,7 +240,8 @@ begin
   if jsonb_array_length(v_conflicts)>0 then
     return clued_private.work_claim_reject_logged_v1(p_binding,p_task,p_operation,'work_claim_conflict',
       jsonb_build_object('conflicts',v_conflicts,'task_id',p_task.id,
-        'write_set',to_jsonb(v_write_set),'trigger_refs',to_jsonb(v_triggers)));
+        'write_set',to_jsonb(v_write_set),'trigger_refs',to_jsonb(v_triggers),
+        'requester_session_ref',v_session));
   end if;
   -- One session (holder_session_ref, as the Agent declares it; claims without
   -- one share a group) holds at most max_active_per_session live claims, and
@@ -278,7 +323,8 @@ begin
       select e.id into v_exemption_id from clued_private.work_claim_exemptions_v1 e
         where e.user_id=p_binding.user_id and e.task_id=p_task.id and e.expires_at>v_now
           and (select count(*) from clued_private.work_claims_v1 w
-                where w.user_id=e.user_id and w.task_id=e.task_id and w.issued_at>=e.granted_at)<e.extra_claims
+                where w.user_id=e.user_id and w.task_id=e.task_id and w.issued_at>=e.granted_at
+                  and w.continued_from is null)<e.extra_claims
         order by e.granted_at limit 1;
       if v_exemption_id is null then
         v_resources:=clued_private.work_claim_normalize_paths(jsonb_build_array('record:'||p_task.id::text));
@@ -378,5 +424,6 @@ end $$;
 revoke all on function
   clued_private.work_claim_continuation_v1(public.clued_agent_bindings,public.clued_memories,text,timestamptz),
   clued_private.work_claim_reject_log_v1(public.clued_agent_bindings,text,uuid,uuid,text,text,jsonb),
+  clued_private.work_claim_exemption_status_v1(uuid,uuid),
   clued_private.work_claim_issue(public.clued_agent_bindings,jsonb,public.clued_memories,clued_private.work_claims_v1,text)
   from public,anon,authenticated,service_role;

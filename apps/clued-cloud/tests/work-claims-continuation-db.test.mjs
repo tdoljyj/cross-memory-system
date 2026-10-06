@@ -17,6 +17,9 @@ import EmbeddedPostgres from 'embedded-postgres';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
+const nowEpoch = () => Math.floor(Date.now() / 1000);
+const fresh = (sub, session = 'sess-main') =>
+  ({ sub, role: 'authenticated', session_id: session, aal: 'aal1', amr: [{ method: 'password', timestamp: nowEpoch() }] });
 
 async function freePort() {
   const listener = net.createServer();
@@ -74,6 +77,15 @@ test('work claims: a same-session continuation of a completed claim takes no tok
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const human = server.getPgClient();
+    clients.push(human);
+    await human.connect();
+    await human.query('set role authenticated');
+    const native = async (name, input, claims = fresh(userId)) => {
+      await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+        [claims.sub ?? '', JSON.stringify(claims)]);
+      return (await human.query(`select public.${name}($1) v`, [input])).rows[0].v;
+    };
     const agent = async (who, name, input) =>
       (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
@@ -238,10 +250,10 @@ test('work claims: a same-session continuation of a completed claim takes no tok
     // A fresh start after the chain ends gets a fresh 24 hours.
     await admin.query(`delete from clued_private.work_claim_rate_buckets_v1 where user_id=$1 and key_id=$2`,
       [userId, deadlineTask]);
-    const fresh = committed(await claim(deadlineTask));
-    assert.equal(fresh.continued_from, undefined);
-    assert.ok(Date.parse(fresh.claim.hard_deadline_at) - Date.now() > 23.9 * 3600 * 1000);
-    committed(await release(fresh.claim));
+    const restart = committed(await claim(deadlineTask));
+    assert.equal(restart.continued_from, undefined);
+    assert.ok(Date.parse(restart.claim.hard_deadline_at) - Date.now() > 23.9 * 3600 * 1000);
+    committed(await release(restart.claim));
 
     // --- Nobody may have been waiting: a conflict refusal naming the claim, or
     // a request from another session addressed to it.
@@ -280,7 +292,88 @@ test('work claims: a same-session continuation of a completed claim takes no tok
     committed(await release(codexBetween, { who: 'codex' }));
     assert.equal(await notContinued(betweenTask, codexBetween), 'prior_other_holder');
 
-    // --- A takeover is a start, never a continuation.
+    // --- The holder's own conflict (claiming the next step before releasing
+    // this one) does not contest its claim.
+    const ownTask = await createTask('own conflict');
+    const ownFirst = committed(await claim(ownTask)).claim;
+    assert.equal((await claim(ownTask)).error_code, 'work_claim_conflict');
+    committed(await release(ownFirst));
+    const ownNext = committed(await claim(ownTask));
+    assert.equal(ownNext.continued_from, ownFirst.claim_id);
+    // Another session of the same Binding is someone else: it contests.
+    assert.equal((await claim(ownTask, { session: 'session-b' })).error_code, 'work_claim_conflict');
+    committed(await release(ownNext.claim));
+    assert.equal(await notContinued(ownTask, ownNext.claim), 'prior_contested');
+
+    // --- A takeover refused as still active contests the claim.
+    const stillTask = await createTask('takeover attempt');
+    const still = committed(await claim(stillTask)).claim;
+    const attempt = await agent('codex', 'clued_work_takeover_v1',
+      { scope: 'global', claim_id: still.claim_id, idempotency_key: uuid() });
+    assert.equal(attempt.error_code, 'work_claim_still_active', JSON.stringify(attempt));
+    committed(await release(still));
+    assert.equal(await notContinued(stillTask, still), 'prior_contested');
+
+    // --- A refusal whose Receipt the one-minute dedupe drops still contests.
+    const dedupeTask = await createTask('dedupe holder');
+    const dedupeWaiter = await createTask('dedupe waiter');
+    const d1 = committed(await claim(dedupeTask, { write_set: ['shared/dedupe/**'] })).claim;
+    assert.equal((await claim(dedupeWaiter, { who: 'codex', session: 'codex-2', write_set: ['shared/dedupe/x'] }))
+      .error_code, 'work_claim_conflict');
+    committed(await release(d1));
+    await resetBindingBucket('claude');
+    const d2 = committed(await claim(dedupeTask, { write_set: ['shared/dedupe/**'] })).claim;
+    assert.equal(d2.continued_from, null, 'd1 was contested');
+    assert.equal((await claim(dedupeWaiter, { who: 'codex', session: 'codex-2', write_set: ['shared/dedupe/x'] }))
+      .error_code, 'work_claim_conflict');
+    assert.equal((await admin.query(`select count(*)::integer n from public.clued_audit_receipts
+      where operation='work_claim_reject' and object_id=$1`, [dedupeWaiter])).rows[0].n, 1, 'one Receipt a minute');
+    committed(await release(d2));
+    assert.equal(await notContinued(dedupeTask, d2, { write_set: ['shared/dedupe/**'] }), 'prior_contested');
+
+    // --- A race copy and a claim the Owner handed over are not continued.
+    const copyTask = await createTask('copy');
+    const copy = committed(await claim(copyTask)).claim;
+    committed(await release(copy));
+    await admin.query('update clued_private.work_claims_v1 set copy_index=1 where claim_id=$1', [copy.claim_id]);
+    assert.equal(await notContinued(copyTask, copy), 'prior_race_copy');
+    const handedTask = await createTask('handed over');
+    const handed = committed(await claim(handedTask)).claim;
+    committed(await release(handed));
+    await admin.query('update clued_private.work_claims_v1 set lease_key_required=true where claim_id=$1',
+      [handed.claim_id]);
+    assert.equal(await notContinued(handedTask, handed), 'prior_handed_over');
+
+    // --- Draining, then completed: the completed release counts.
+    const drainTask = await createTask('draining');
+    const drain = committed(await claim(drainTask)).claim;
+    committed(await release(drain, { outcome: 'draining', evidence: null }));
+    committed(await release(drain));
+    assert.equal(committed(await claim(drainTask)).continued_from, drain.claim_id);
+    await admin.query(`update clued_private.work_claims_v1 set status='RELEASED',released_outcome='abandoned'
+      where task_id=$1 and status='ACTIVE'`, [drainTask]);
+
+    // --- A continuation on an empty bucket leaves an Owner Grant unused.
+    await resetBindingBucket('claude');
+    const grantTask = await createTask('grant untouched');
+    const g1 = committed(await claim(grantTask)).claim;
+    committed(await release(g1));
+    await empty(grantTask);
+    const askGrant = await claim(grantTask, { session: 'session-b' });
+    assert.equal(askGrant.limit, 'task_claim_rate');
+    const issued = await native('clued_owner_grant_confirmation_issue_v1',
+      { request_id: askGrant.owner_request.request_id, choice: 'once' });
+    assert.equal(issued.status, 'issued', JSON.stringify(issued));
+    const grant = committed(await native('clued_owner_grant_v1', { confirmation_token: issued.confirmation_token,
+      view_digest: issued.view_digest })).grant;
+    const g2 = committed(await claim(grantTask));
+    assert.equal(g2.continued_from, g1.claim_id);
+    assert.equal((await admin.query('select uses from clued_private.owner_grants_v1 where id=$1',
+      [grant.grant_id])).rows[0].uses, 0, 'the grant is still unused');
+    assert.equal((await issuedReceipt(g2.claim.claim_id)).owner_grant_id, undefined);
+    committed(await release(g2.claim));
+
+    // --- A takeover takes a token as before.
     const takeoverTask = await createTask('takeover');
     const taken = committed(await claim(takeoverTask)).claim;
     await admin.query(`update clued_private.work_claims_v1

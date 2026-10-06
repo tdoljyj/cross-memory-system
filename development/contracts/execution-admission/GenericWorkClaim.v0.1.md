@@ -371,11 +371,16 @@ Owner 定的原则：规则要能支撑不同宿主的习惯，要成本低、�
 1. 上一条认领是这个 Task 最新的一条（之后这个 Task 没有别的认领），由同一 Binding 持有，并且两条带同样的 `holder_session_ref`。没带会话标识的认领不续接。
 2. 上一条由持有者自己以 `completed` 释放，没有用租约钥匙，没有被 Owner 交接，不是赛跑副本，并且释放时带的 `evidence_ref` 在这一串里没出现过。
 3. 新认领在那次释放后 `continuation_window_seconds`（900 秒）之内发起，并且离这一串的硬截止还有至少 1 分钟。
-4. 上一条存续期间，没有冲突拒绝点过它的名（`contested_at`），也没有别的会话给它发过 Agent 消息请求（`kind=request`；`info` 不算）。
+4. 上一条存续期间没有人在等它，具体是三种情况：
+   - 没有别的持有者或会话因冲突被拒时点过它的名；持有者自己同一会话的冲突不算，比如没放下一步就先认领下一步。
+   - 没有人想接管它、因为它还有效而被拒。
+   - 没有别的会话给它发过 Agent 消息请求（`kind=request`；`info` 不算）。
+
+   前两种记在 `contested_at` 上。
 
 续接的效果：
 
-- 不从 Task 桶和 Binding 桶取令牌，也不动用 Owner 授权或旧豁免。
+- 不从 Task 桶和 Binding 桶取令牌，不动用 Owner 授权，也不占旧豁免的次数。
 - 沿用这一串第一条认领的 `hard_deadline_at`，所以一串续接和一条续租到底的认领一样，最长 24 小时。新认领的续租次数从 0 开始，租约取"2 小时"和"硬截止"中较早的那个。
 - 认领、它的 Receipt 和回答都写明 `continued_from`（上一条的 `claim_id`）。fence 照常加 1。
 
@@ -399,15 +404,18 @@ Owner 定的原则：规则要能支撑不同宿主的习惯，要成本低、�
 **实现**：
 
 - `work_claims_v1` 加 `continued_from`、`chain_evidence_refs`（这一串用过的释放证据）和 `contested_at`。
-- `work_claim_reject_log_v1`：凡是列出冲突认领的拒绝，都把那些认领标上 `contested_at`，不管这次回执有没有因为一分钟去重而省掉。
-- `work_claim_continuation_v1` 做判断；`work_claim_issue` 在令牌桶之前调它。
-- profile 加 `continuation_window_seconds`。`work_claim_view` 加 `continued_from`，所以幂等重放也会带上它。
+- `work_claim_reject_log_v1` 给这些认领标 `contested_at`：拒绝里列出的冲突认领（调用方自己 Binding 和会话的除外，会话标识由 `work_claim_issue` 以 `requester_session_ref` 传入），以及接管时因为还有效而被拒的那条。不管这次回执有没有因为一分钟去重而省掉，都照样标；别的事务正锁着的行跳过，不等。
+- `work_claim_continuation_v1` 做判断；`work_claim_issue` 在令牌桶之前调它。只看认领行的条件先判；释放回执只在窗口之内查。这一串只存释放证据的 md5，不存原文。
+- 旧豁免的次数（`work_claim_issue` 与 `work_claim_exemption_status_v1`）不算续接认领。`continued_from` 有部分索引。
+- profile 加 `continuation_window_seconds`。`work_claim_view` 加 `continued_from`，所以幂等重放回答的 `claim` 里也带它；回答顶层的 `continued_from` 只在新发出的认领里有。
 
 **不保护什么**：
 
 - 证据和会话标识都是自报的。一个会编证据、编固定会话 id 的循环，每 15 分钟内至少释放一次，就能在 24 小时内不取令牌地反复认领。好在这一串不会超过 24 小时，被拒回执和认领页面上的 `continued_from` 能看出来。
 - 迁移前发生过的冲突没有 `contested_at`，所以上线时还活着的认领不会因为以前的冲突被挡。
 - 租约自己过期（不是释放）后再认领，不算续接。
+- Agent 消息不在认领锁里写。和释放几乎同时发出的请求，可能晚于续接判断提交，这一次就挡不住。
+- 不填会话标识的存储写入撞上冲突，也会把冲突认领标成被等待，包括它自己的认领。这是保守的做法。
 
 **分步（每步单独请 Owner 授权）**：
 
