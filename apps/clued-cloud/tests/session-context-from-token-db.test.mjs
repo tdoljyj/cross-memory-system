@@ -31,7 +31,8 @@ test("checkpoint and reconcile take the context from the session token", { timeo
     password: hash(),
     port: await freePort(),
     persistent: false,
-    postgresFlags: ["-c", "io_method=sync"],
+    // track_functions lets the test count binding_read_scopes_v2 calls.
+    postgresFlags: ["-c", "io_method=sync", "-c", "track_functions=all"],
     onLog() {},
     onError(message) { process.stderr.write(`${message}\n`); },
   });
@@ -150,6 +151,47 @@ test("checkpoint and reconcile take the context from the session token", { timeo
     await admin.query("update public.clued_agent_bindings set revoked_at=now() where token_hash=$1", [otherTokenHash]);
     await assert.rejects(checkpoint(narrowed.session_token, narrowed.version, "global", "global", otherTokenHash),
       /binding_not_authorized/);
+
+    // 2026-10-06: the current-view queries recomputed the Binding's read
+    // scopes for every record, so a project of 632 records passed the anon
+    // role's 3 s statement_timeout and its reconcile and checkpoint failed.
+    // The scopes are now evaluated once per statement, whatever the count.
+    const recordCount = 40;
+    // Resume reads only Decisions, reconcile State/Task/Decision: half of each.
+    for (let index = 0; index < recordCount; index += 1) {
+      const [recordType, typeFields] = index % 2
+        ? ["decision", { rationale: "Fixture" }]
+        : ["task", { execution_bucket: "later" }];
+      await admin.query(`insert into public.clued_memories(user_id,title,content,scope,project_id,record_type,status,
+          record_schema_version,lifecycle_status,canonical_scope,type_fields,relations,source_refs,authority,confidence_reason)
+        values($1,$2,'Synthetic','project',$3,$4,'active',1,'active',$5,$6,'{}','{}','observed','Fixture')`,
+        [userId, `Scope fixture ${index}`, projectContext.slice(8), recordType, projectContext, typeFields]);
+    }
+    const scopeCalls = async (work) => {
+      await anon.query("begin");
+      try {
+        const value = await work();
+        const { rows } = await anon.query(`select coalesce(sum(calls),0)::int calls from pg_stat_xact_user_functions
+          where schemaname='clued_private' and funcname='binding_read_scopes_v2'`);
+        return { value, calls: rows[0].calls };
+      } finally {
+        await anon.query("rollback");
+      }
+    };
+    const busy = await restore(projectContext);
+    const measured = {
+      resume: await scopeCalls(() => restore(projectContext)),
+      reconcile: await scopeCalls(() => rpc("clued_mcp_session_reconcile", { session_token: busy.session_token })),
+      checkpoint: await scopeCalls(() => checkpoint(busy.session_token, busy.version, undefined, projectContext)),
+      log: await scopeCalls(() => rpc("clued_mcp_read_log", { context_key: projectContext, session_token: busy.session_token })),
+    };
+    assert.equal(measured.reconcile.value.admission_eligible, true, JSON.stringify(measured.reconcile.value));
+    assert.equal(measured.checkpoint.value.status, "committed", JSON.stringify(measured.checkpoint.value));
+    assert.equal(typeof measured.log.value.markdown, "string");
+    const calls = Object.fromEntries(Object.entries(measured).map(([name, entry]) => [name, entry.calls]));
+    for (const [name, count] of Object.entries(calls)) {
+      assert.ok(count > 0 && count < 10, `${name} evaluated binding_read_scopes_v2 ${count} times for ${recordCount} records`);
+    }
 
     // The predecessors are no longer callable directly.
     for (const name of ["clued_mcp_commit_checkpoint_explicit_context", "clued_mcp_session_reconcile_explicit_context"]) {
