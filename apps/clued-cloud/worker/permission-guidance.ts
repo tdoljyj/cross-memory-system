@@ -15,11 +15,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // resource, so these tools never get a suggestion.
 const NO_SUGGESTION_TOOLS = new Set(['clued_project_mutate', 'clued_project_list', 'clued_context']);
 
-function contextOf(args: Json): string | null {
+function contextOf(args: Json, toolName: string): string | null {
+  // clued_search_context's scope is the search mode (all or context), not a
+  // context: its context is context_key.
+  const scope = toolName === 'clued_search_context' ? undefined : args.scope;
   const projectId = typeof args.project_id === 'string' ? args.project_id.toLowerCase() : null;
-  if ((args.level === 'project' || args.scope === 'project') && projectId && UUID.test(projectId)) return `project:${projectId}`;
+  if ((args.level === 'project' || scope === 'project') && projectId && UUID.test(projectId)) return `project:${projectId}`;
   const replacement = args.replacement && typeof args.replacement === 'object' ? (args.replacement as Json).scope : undefined;
-  const named = [args.scope, args.context_key, args.event_scope, replacement].find(value => value !== undefined && value !== null);
+  const named = [scope, args.context_key, args.event_scope, replacement].find(value => value !== undefined && value !== null);
   if (named !== undefined) return typeof named === 'string' && CONTEXT.test(named.toLowerCase()) ? named.toLowerCase() : null;
   // The database reads such calls as Global; a call naming a project in some
   // other way is not guessed.
@@ -54,7 +57,7 @@ export function permissionDenial(code: string, toolName: unknown, rawArgs: unkno
   const name = typeof toolName === 'string' ? toolName : '';
   const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as Json;
   const scope = missingScopes?.[0];
-  const context = NO_SUGGESTION_TOOLS.has(name) ? null : contextOf(args);
+  const context = NO_SUGGESTION_TOOLS.has(name) ? null : contextOf(args, name);
   const action = context ? actionOf(scope, name, args) : null;
   if (!context || !action) {
     return { status: 'rejected', error: { code, category: 'permission',

@@ -711,7 +711,7 @@
     },
     {
       "name": "clued_search_context",
-      "description": "Search authorized current context and events with deterministic term matching (whole query first, then at least 60% of its terms, or every term of a one-term query; Chinese is split into two-character terms). Without context_key, or with scope=all, every readable project and Global are searched; a context_key alone searches that scope only, and scope=context without context_key searches the session's own context. No match is not evidence that a record does not exist. Superseded history is excluded unless explicitly requested. Required Clued scope: context:read.",
+      "description": "Search authorized current context and events with deterministic term matching (whole query first, then at least 60% of its terms, or every term of a one-term query; Chinese is split into two-character terms). Without context_key, or with scope=all, every readable project and Global are searched; a context_key alone searches that scope only, and scope=context without context_key searches the session's own context. No match is not evidence that a record does not exist. Superseded history is excluded unless explicitly requested. Page with cursor set to page.next_cursor; paging stops at 10000 results (page.cursor_limit_reached), so narrow the query instead. A context_key other than the session's own context is refused with session_context_mismatch. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -750,6 +750,7 @@
           "cursor": {
             "type": "integer",
             "minimum": 0,
+            "maximum": 10000,
             "default": 0
           },
           "max_bytes": {

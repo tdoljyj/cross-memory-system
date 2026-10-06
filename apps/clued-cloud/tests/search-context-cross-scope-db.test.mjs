@@ -67,7 +67,7 @@ test('context search covers readable scopes and non-literal queries', { timeout:
     assert.deepEqual(await terms('記録を更新する'), ['する', '新す', '更新', '記録']);
     assert.deepEqual(await terms('我'), ['我']);
     assert.deepEqual(await terms('我 部署'), ['部署']);
-    // One-letter Latin runs are dropped; the first 64 distinct terms in query order are kept.
+    // One-letter Latin runs are dropped; the first 24 distinct terms in query order are kept.
     assert.deepEqual(await terms('z_bra a cd'), ['bra', 'cd', 'z_bra']);
     const many = Array.from({ length: 30 }, (_, i) => `t${String(i).padStart(2, '0')}`);
     const kept = await terms(many.reverse().join(' '));
