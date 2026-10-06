@@ -11,8 +11,8 @@
     "production_equivalent": {
       "PROJECT_VIEWS_V2": true,
       "P5_TENANT_WRITES": false,
-      "CLUED_INTEGRATION_RUNTIME_V1": false,
-      "expected_tool_count": 29
+      "CLUED_INTEGRATION_RUNTIME_V1": true,
+      "expected_tool_count": 36
     },
     "full_matrix": [
       {
