@@ -11,6 +11,7 @@ import { classifyFormat, extractOfficeText, imageInfo, StorageFormatError, EXTRA
 import { pdfOffsetPastText, pdfTimeBudget, readExactBody, withPdfSlot, PdfBusyError, PDF_BUSY_HINT, PDF_MAX_BYTES, PDF_PAGES_PER_CALL,
   type PdfExtraction } from "./storage-read-pdf-common";
 import { connectPdfExtractor, PdfExtractorError } from "./storage-read-pdf-client";
+import { connectionIdSchema } from "./storage-connections";
 
 /** StorageFullCapability.v0.1 P1 read level (list / stat / search / resolve)
  * and P2 read_content (read: one text file body, by byte range), with
@@ -106,7 +107,7 @@ export const storageReadTool = {
   inputSchema: {
     type: "object", required: ["connection_id", "operation"], additionalProperties: false,
     properties: {
-      connection_id: { type: "string", format: "uuid" },
+      connection_id: connectionIdSchema,
       operation: { type: "string", enum: ["list", "stat", "search", "resolve"] },
       folder_id: { type: "string", description: "list: folder inside the root; omit for the root itself." },
       object_id: { type: "string", description: "stat: Drive object ID." },
@@ -146,7 +147,7 @@ export const storageContentTool = {
   inputSchema: {
     type: "object", required: ["connection_id", "object_id"], additionalProperties: false,
     properties: {
-      connection_id: { type: "string", format: "uuid" },
+      connection_id: connectionIdSchema,
       object_id: { type: "string", description: "Drive file ID inside the root (from clued_storage_browse)." },
       offset: { type: "integer", minimum: 0, description: "Text: byte offset to start at; default 0. Ignored for images and metadata-only results. PDF: offset into the text of the selected pages." },
       length: { type: "integer", minimum: 4, maximum: CONTENT_MAX, description: "Text: bytes to return (4 to 262144; default 262144)." },

@@ -99,6 +99,8 @@ import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgent
 import { createStagingRuntime, handleStagingPut, loadStagedContent, stageInline, stagingErrorCode, storageUploadBeginTool,
   sweepStaging, uploadBegin, uploadErrorBody, StorageUploadError, type StagingBucket } from "./storage-staging";
 import { createStorageReadAgent, storageReadTool, storageContentTool, StorageReadError, STORAGE_IMAGE } from "./storage-read-agent";
+import { storageConnectionsInput, storageConnectionsMessages, storageConnectionsResult, storageConnectionsTool,
+  StorageConnectionsError } from "./storage-connections";
 
 declare const __CLUED_BUILD_SHA__: string | null;
 
@@ -1661,7 +1663,9 @@ export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5
   ).map(publishTool);
   const binary = storageBinaryEnabled(env);
   return [...existing, ...(storageJobsEnabled(env) ? storageAgentToolsFor(binary) : []), ...(binary ? [storageUploadBeginTool] : []),
-    ...(storageReadEnabled(env) ? [storageReadTool, storageContentTool] : [])];
+    ...(storageReadEnabled(env) ? [storageReadTool, storageContentTool] : []),
+    // Owner Decision 1721045d: where every storage tool's connection_id comes from.
+    ...(storageJobsEnabled(env) || storageReadEnabled(env) ? [storageConnectionsTool] : [])];
 }
 
 // StorageFullCapability.v0.1 P1. Independent of the write/job flags: turning
@@ -2153,6 +2157,25 @@ async function callTool(
   args: unknown,
   ctx?: ContinuityExecutionContext,
 ) {
+  if (name === storageConnectionsTool.name) {
+    // Lists only the classes whose tools this deployment offers.
+    const offered = { reads: storageReadEnabled(env), writes: storageJobsEnabled(env) };
+    if (!offered.reads && !offered.writes) throw new HttpError(404, "Storage is disabled.");
+    try {
+      storageConnectionsInput(args);
+      const token = bearerToken(request);
+      if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new StorageConnectionsError("storage_connections_unavailable");
+      const result = storageConnectionsResult(await supabaseRequest(env, "/rest/v1/rpc/clued_storage_connections_v1", {
+        method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token) }), signal: AbortSignal.timeout(10000), redirect: "manual",
+      }), offered);
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
+    } catch (error) {
+      // Fixed codes only: a denied or unknown Binding and a database failure read the same.
+      const code = error instanceof StorageConnectionsError ? error.code : "storage_connections_unavailable";
+      const result = { error: code, message: storageConnectionsMessages[code] };
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+    }
+  }
   if (name === storageReadTool.name || name === storageContentTool.name) {
     if (!storageReadEnabled(env)) throw new HttpError(404, "Storage reads are disabled.");
     try {
@@ -2548,7 +2571,8 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
       const args = rpc.params?.arguments;
       const result = await callTool(request, env, name, args, ctx);
       return json(rpcResult(rpc.id, result), 200, {
-        ...corsHeaders(request), ...(isStorageAgentTool(name) || name === storageUploadBeginTool.name || name === storageReadTool.name || name === storageContentTool.name ? { "cache-control": "no-store" } : {}),
+        ...corsHeaders(request), ...(isStorageAgentTool(name) || name === storageUploadBeginTool.name || name === storageReadTool.name || name === storageContentTool.name ||
+          name === storageConnectionsTool.name ? { "cache-control": "no-store" } : {}),
       });
     }
     return json(rpcError(rpc.id, -32601, "Method not found"), 404, corsHeaders(request));
