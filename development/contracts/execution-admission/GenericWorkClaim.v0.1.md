@@ -420,5 +420,5 @@ Owner 定的原则：规则要能支撑不同宿主的习惯，要成本低、�
 **分步（每步单独请 Owner 授权）**：
 
 1. 迁移与 DB 测试（Task `a881f82b`）：本 PR。把这个 DB 测试加进 CI 要改受保护的工作流，另开小 PR 做（Task `6970b90a`）。
-2. 合同 §1.7 与 `clued_work_claim` / `clued_work_release` 工具说明（Task `5966ce77`）：写明续接条件、填真实会话 id、完成时带新的 `evidence_ref`，并写明 `continuation.reason`。在合同 36 合入之后做。
+2. 合同 §1.7 与 `clued_work_claim` / `clued_work_release` 工具说明（Task `5966ce77`）：合同 37 与 Clued Skill 1.0.9 写明续接条件、按步认领时以 completed 释放并带这一步自己的 `evidence_ref`、15 分钟内认领下一步，以及拒绝里的 `continuation.reason`；Worker 发布后下发。
 3. 生产应用迁移（Task `aec7f28f`）。只改数据库，不用发布 Worker；回答里新增的字段原样透传。

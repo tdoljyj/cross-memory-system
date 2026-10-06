@@ -83,7 +83,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 36/);
+  assert.match(contract, /Contract version: 37/);
   // Storage connection discovery (Owner Decision 1721045d): look the connection up, never ask the Owner for it.
   assert.match(contract, /Find a storage connection yourself; never ask the Owner for a `connection_id`/);
   assert.match(contract, /Get it from `clued_storage_connections`/);
@@ -144,6 +144,9 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /\| `work_claim_not_covered`, `work_claim_not_holder`, `work_claim_fence_mismatch`, `work_claim_not_active`, `work_claim_not_found` \(storage write with `work_claim`\) \|/);
   assert.match(contract, /Either way of working is fine: claim for one step and release when that step ends, or keep one claim across turns, steps and sessions/);
   assert.match(contract, /Starts are rate-limited, not counted per day/);
+  // Continuation (Owner Decision 9aa6e329): a same-Binding claim within 15 minutes of a completed release takes no token.
+  assert.match(contract, /A continuation takes no token/);
+  assert.match(contract, /`continuation\.reason`/);
   assert.match(contract, /the Task's bucket \(8, one back per hour\) and the Binding's bucket \(30, one back per 15 minutes\)/);
   assert.doesNotMatch(contract, /at most 10 new claims or takeovers in 24 hours/);
   assert.doesNotMatch(contract, /Do not release at the end of a turn or step/);
