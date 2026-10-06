@@ -133,6 +133,14 @@ def main() -> int:
                 fail(errors, f"{host_id}/{kind}: missing required capabilities {sorted(capability_required - capabilities)}")
             if not capabilities <= allowed_labels:
                 fail(errors, f"{host_id}/{kind}: undeclared capabilities {sorted(capabilities - allowed_labels)}")
+            if kind == "windows_runner":
+                # Windows runners run as a service under a dedicated account; the
+                # login-session watchdog must not have a launcher to start them with.
+                expected_service = f"actions.runner.{data.get('repository', '').replace('/', '-')}.{name}"
+                if runner.get("service_name") != expected_service:
+                    fail(errors, f"{host_id}/{kind}: service_name must be {expected_service}")
+                if "launcher" in runner:
+                    fail(errors, f"{host_id}/{kind}: launcher is not allowed; the runner is a Windows service")
 
     windows_bootstrap = (BASE / "bootstrap-windows-runner.ps1").read_text(encoding="utf-8")
     linux_bootstrap = (BASE / "bootstrap-linux-runner.sh").read_text(encoding="utf-8")
