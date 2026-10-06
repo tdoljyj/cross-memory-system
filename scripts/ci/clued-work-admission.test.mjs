@@ -848,22 +848,22 @@ test("gate guard: every gated workflow on this branch passes and uses a listed g
   assert.deepEqual(gateFindings(ungated, ungated), []);
 });
 
-test("gate guard: the gate may move to the self-hosted Linux pool with a pinned Node", () => {
-  const moved = g4
-    .replace("  admission-gate:\n    name: admission-gate\n    runs-on: ubuntu-latest\n",
-      "  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n")
-    .replace("          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n",
-      "          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n"
-      + "      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n"
-      + "        with:\n"
-      + "          node-version: 24.19.0\n");
-  assert.notEqual(moved, g4);
-  assert.deepEqual(gateFindings(moved, g4), []);
-  const gateJob = workflowJobs(moved).find((job) => job.name === "admission-gate");
-  assert.equal(sha256Hex(gateJob.lines.join("\n")), "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4");
-  // Any other runner or Node for the gate is still a changed gate.
-  assert.deepEqual(gateFindings(moved.replace("node-version: 24.19.0", "node-version: 24"), g4), ["admission_gate_changed"]);
-  assert.deepEqual(gateFindings(moved.replace("pool-general, trust-internal]\n", "pool-general]\n"), g4), ["admission_gate_changed"]);
+test("gate guard: the gate runs on the self-hosted Linux pool with a pinned Node", () => {
+  const gateJob = workflowJobs(g4).find((job) => job.name === "admission-gate");
+  const text = gateJob.lines.join("\n");
+  assert.equal(sha256Hex(text), "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4");
+  assert.match(text, /^    runs-on: \[self-hosted, Linux, X64, clued, pool-general, trust-internal\]$/m);
+  assert.match(text, /^          node-version: 24\.19\.0$/m);
+  // Owner Decision f86179b3: the hosted gate, another runner or another Node is a changed gate.
+  const hosted = g4
+    .replace("    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n",
+      "    runs-on: ubuntu-latest\n    timeout-minutes: 10\n")
+    .replace("      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - id: gate\n",
+      "      - id: gate\n");
+  assert.notEqual(hosted, g4);
+  assert.deepEqual(gateFindings(hosted, g4), ["admission_gate_changed"]);
+  assert.deepEqual(gateFindings(g4.replace("node-version: 24.19.0", "node-version: 24"), g4), ["admission_gate_changed"]);
+  assert.deepEqual(gateFindings(g4.replace("pool-general, trust-internal]\n    timeout-minutes: 10", "pool-general]\n    timeout-minutes: 10"), g4), ["admission_gate_changed"]);
 });
 
 test("gate guard: removing or loosening the gate is found", () => {

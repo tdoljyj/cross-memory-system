@@ -132,10 +132,10 @@ jobs:
   # its result. Until the Owner sets the repository variable
   # CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits. A hand
   # dispatch needs admission_run_id from clued-work-admission-dispatch.yml;
-  # push events are admitted. Hosted runner, no install.
+  # push events are admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).
   admission-gate:
     name: admission-gate
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
     timeout-minutes: 10
     permissions:
       actions: read
@@ -150,6 +150,9 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
       - id: gate
         env:
           CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
