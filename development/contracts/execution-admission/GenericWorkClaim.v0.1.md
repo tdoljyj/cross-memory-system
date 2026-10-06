@@ -29,6 +29,7 @@
     - Worker 已发布，合同 18 经 `/clued-agent.md` 与 resume 的 `contract_version` 下发。
 - 第 4 步（Owner 2026-10-03 选定，Task `ae40c8fe`，已上线，后续由合同 17 取代）：Agent 合同 16，§1.7 写明 `write_set` 的类型资源（`storage:`、`repo:`、`record:`）、Clued 存储写入检查认领与 `work_claim` 用法，错误表加入存储门卫的拒绝码；`clued_work_claim` 的 `write_set` 说明同步。resume 返回的认领仍是原样的 `write_set`，未另加资源 kind 字段（kind 已在条目前缀中）。合并与 Worker 发布各需 Owner 授权。
 - §10 次数与花费上限（2026-10-03，Decision `136a000e`，Task `c8778299`）：取代 v1 的每 Task 每 24 小时 10 次与每认领 20 个 head。第 1 步（令牌桶）迁移 `20261003050000_work_claims_rate_buckets.sql`、测试 `apps/clued-cloud/tests/work-claims-rate-buckets-db.test.mjs`（Decision `d3d0bbe8`，Task `00af11e4`），已应用 clued-prod（2026-10-03，生产版本 `20261003051745`）。第 3 步（合同 15 与认领工具说明）：Decision `c1fe7cca`，Task `12a42be8`。被拒回执补全（续期、接管前置检查与幂等重放的拒绝）：迁移 `20261003070000_work_claims_reject_receipts_renew_takeover.sql`、测试 `apps/clued-cloud/tests/work-claims-reject-receipts-db.test.mjs`（Decision `bd4243b6`，Task `91272c5d`），已应用 clued-prod（2026-10-03，生产版本 `20261003063641`）。第 2 步（GitHub CI 按 Task 计量，Task `bb9f1e36`）：迁移 `20261003180000_work_claims_task_ci_metering.sql`、测试 `apps/clued-cloud/tests/work-claims-ci-metering-db.test.mjs`；verify 带 `pr_ref` 与 `head_sha` 时，每个新 head 记一行 `work_claim_door_usage_v1`（门口 `github-ci`），该 Task 任意 24 小时内最多 40 个，超出判 `task_ci_head_cap_reached` 并给出 `ci_retry_after`；profile 的 `max_heads_per_claim` 换成 `github_ci_heads_per_task_24h`。同一迁移顺带修好旧豁免状态函数对已删参数的读取（Task `6414f530`）。合同 21 写明到上限后换认领无用。生产应用与 Worker 发布由 Owner 另行授权。
+- §10.8 续接（2026-10-06，Owner Decision `754dff5d`，Task `a881f82b`）：迁移 `20261006180000_work_claims_continuation.sql`、测试 `apps/clued-cloud/tests/work-claims-continuation-db.test.mjs`。合同与工具说明（Task `5966ce77`）、生产应用（Task `aec7f28f`）各需 Owner 授权。
 日期：2026-10-02
 Task：`52739939`（Global）。Owner 决定：门卫原则见 Task `52739939` v3，四条规则见 Decision `2a7391ff`，三条待定见 Decision `357fce4f`（§9）。
 前置：[WorkClaimAdmission.v0.1.md](WorkClaimAdmission.v0.1.md)（v1 认领、准入检查与 GitHub 门口，已在生产生效）。本文只写在 v1 之上要扩什么，v1 已有的租约、fence、续期进展、幂等规则原样沿用，不重复；v1 的次数上限由 §10 候选取代。
@@ -360,3 +361,64 @@ Owner 定的原则：规则要能支撑不同宿主的习惯，要成本低、�
 2. 迁移（Task `bb9f1e36`）：GitHub CI 计量表与每 Task 24 小时 head 上限，取代 `max_heads_per_claim`。
 3. 合同与工具说明（Task `12a42be8`）：agent-contract §1.7、错误表、`clued_work_claim` 工具描述；Worker 发布。
 4. 生产应用与 Worker 发布：第 1 步迁移由 Decision `927b2ac8` 授权上线，Worker 发布见 Task `12a42be8`；第 2 步的生产应用归 Task `bb9f1e36`。
+
+### 10.8 续接：同一连接接着做，不算开工（Owner Decisions `754dff5d`、`9aa6e329`）
+
+**为什么**：§10.3 假设"按步认领"和"一条认领续租到底"两种做法都容得下，但 Task 桶每小时只回 1 个令牌，按步认领实际只撑得住每小时 1 步。Task `1502fd80`（第一方模型 M2）2026-10-06 6 小时认领 22 次，令牌在 10-03 到 10-06 被用完 6 次，每次都靠 Owner 批准 `work_claim.extra_claims` 放行（note `4ac547cb`）。
+
+**规则**：一次新认领（不是接管，也不是赛跑副本）同时满足下面几条，就是"续接"：
+
+1. 上一条认领是这个 Task 最新的一条（之后这个 Task 没有别的认领），并且由同一 Binding 持有。会话不限（Decision `9aa6e329`）：编排器可能每一步都新开一个 Host 会话。
+2. 上一条由持有者自己以 `completed` 释放，没有用租约钥匙，没有被 Owner 交接，不是赛跑副本，并且释放时带的 `evidence_ref` 在这一串里没出现过。
+3. 新认领在那次释放后 `continuation_window_seconds`（900 秒）之内发起，并且离这一串的硬截止还有至少 1 分钟。
+4. 上一条存续期间没有人在等它，具体是三种情况：
+   - 没有别的持有者或会话因冲突被拒时点过它的名；持有者自己同一会话的冲突不算，比如没放下一步就先认领下一步。
+   - 没有人想接管它、因为它还有效而被拒。
+   - 没有别的会话给它发过 Agent 消息请求（`kind=request`；`info` 不算）。
+
+   前两种记在 `contested_at` 上。
+
+续接的效果：
+
+- 不从 Task 桶和 Binding 桶取令牌，不动用 Owner 授权，也不占旧豁免的次数。
+- 沿用这一串第一条认领的 `hard_deadline_at`，所以一串续接和一条续租到底的认领一样，最长 24 小时。新认领的续租次数从 0 开始，租约取"2 小时"和"硬截止"中较早的那个。
+- 认领、它的 Receipt 和回答都写明 `continued_from`（上一条的 `claim_id`）。fence 照常加 1。
+
+不满足时照旧算开工：令牌够就取令牌；令牌不够时拒绝，拒绝里多一个 `continuation`，用 `reason` 说明为什么没算续接：`prior_other_holder`、`prior_not_completed`、`prior_race_copy`、`prior_handed_over`、`prior_released_by_other`、`window_passed`、`chain_deadline_reached`、`no_new_evidence`、`prior_contested`、`prior_requested`。
+
+这只对免费续接这一条路要求"已完成"和新证据；默认的开工路径和 §10.2 第 1 条一样，不看做完没有，也不要证据。
+
+**为什么这样设条件**：
+
+- 新证据：防"认领 → 失败 → 再认领"的死循环（§10.3 令牌桶本来防的就是它）。`abandoned` 之后再认领照常取令牌。证据是自报的，服务端不核实，所以这条只防意外循环，防不住故意造假。
+- 同一连接，不限会话：一开始要求会话标识一致，因为同一用户的 Claude Code 会话共用一个 Binding（Decision `533a5286`），只看 Binding 会把别的会话的认领错连成一串。但 M2 由父端每一步新开一个 Codex 会话（10-06 15:51 的 `01a111e7…`、16:32 的 `01a111f8…`），这一条对它永远不成立，所以放宽了（Decision `9aa6e329`）。防死循环靠新证据，防插队靠“没有人在等”；会话条件只影响认领页面怎么连串。
+- 冲突和请求：有人在等时不免费拿回，不能让等的人一直拿不到。
+- 不碰赛跑：副本编号按空位分配，续接可能换号。
+
+**按 Task `1502fd80` 的历史回放**（clued-prod 只读，2026-10-01 到 10-06，110 条认领）：
+
+- 按现有规则，Task 桶共有 21 次开工令牌不够（实际被拒 6 次，因为每次授权能用 5 次）。
+- 不看会话标识时，35 条满足续接，48 条接在 `abandoned` 之后，27 条是别的情况。只有这 35 条不取令牌，回放下来令牌一次也不缺。
+- 如果要求会话标识严格相同，几乎没有一条满足：M2 每一步的会话标识都不一样。这也是放宽这一条的原因。
+
+**实现**：
+
+- `work_claims_v1` 加 `continued_from`、`chain_evidence_refs`（这一串用过的释放证据）和 `contested_at`。
+- `work_claim_reject_log_v1` 给这些认领标 `contested_at`：拒绝里列出的冲突认领（调用方自己 Binding 和会话的除外，会话标识由 `work_claim_issue` 以 `requester_session_ref` 传入），以及接管时因为还有效而被拒的那条。不管这次回执有没有因为一分钟去重而省掉，都照样标；别的事务正锁着的行跳过，不等。
+- `work_claim_continuation_v1` 做判断；`work_claim_issue` 在令牌桶之前调它。只看认领行的条件先判；释放回执只在窗口之内查。这一串只存释放证据的 md5，不存原文。
+- 旧豁免的次数（`work_claim_issue` 与 `work_claim_exemption_status_v1`）不算续接认领。`continued_from` 有部分索引。
+- profile 加 `continuation_window_seconds`。`work_claim_view` 加 `continued_from`，所以幂等重放回答的 `claim` 里也带它；回答顶层的 `continued_from` 只在新发出的认领里有。
+
+**不保护什么**：
+
+- 证据是自报的。一个会编证据的循环，每 15 分钟内至少释放一次，就能在 24 小时内不取令牌地反复认领。好在这一串不会超过 24 小时，被拒回执和认领页面上的 `continued_from` 能看出来。
+- 迁移前发生过的冲突没有 `contested_at`，所以上线时还活着的认领不会因为以前的冲突被挡。
+- 租约自己过期（不是释放）后再认领，不算续接。
+- Agent 消息不在认领锁里写。和释放几乎同时发出的请求，可能晚于续接判断提交，这一次就挡不住。
+- 不填会话标识的存储写入撞上冲突，也会把冲突认领标成被等待，包括它自己的认领。同一连接的另一个会话撞上冲突也算有人在等，比如编排器的下一步会话在上一步释放之前就先认领。这两种都是保守的做法。
+
+**分步（每步单独请 Owner 授权）**：
+
+1. 迁移与 DB 测试（Task `a881f82b`）：本 PR。把这个 DB 测试加进 CI 要改受保护的工作流，另开小 PR 做（Task `6970b90a`）。
+2. 合同 §1.7 与 `clued_work_claim` / `clued_work_release` 工具说明（Task `5966ce77`）：写明续接条件、填真实会话 id、完成时带新的 `evidence_ref`，并写明 `continuation.reason`。在合同 36 合入之后做。
+3. 生产应用迁移（Task `aec7f28f`）。只改数据库，不用发布 Worker；回答里新增的字段原样透传。
