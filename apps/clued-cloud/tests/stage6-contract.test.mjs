@@ -83,7 +83,12 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 35/);
+  assert.match(contract, /Contract version: 36/);
+  // Storage connection discovery (Owner Decision 1721045d): look the connection up, never ask the Owner for it.
+  assert.match(contract, /Find a storage connection yourself; never ask the Owner for a `connection_id`/);
+  assert.match(contract, /Get it from `clued_storage_connections`/);
+  assert.match(contract, /when several match, ask the Owner to choose by name, never by ID/);
+  assert.match(skill, /get the `connection_id` from `clued_storage_connections`/);
   // Owner Decision a0d93cd0: merging the default branch into an approved head keeps the approval.
   assert.match(contract, /A head that only merges the default branch into an approved head keeps that approval/);
   // Merge slot (Owner Decision 0edf7889): one session at a time brings main in, runs CI and merges.

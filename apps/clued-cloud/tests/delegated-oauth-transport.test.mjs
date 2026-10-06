@@ -335,6 +335,8 @@ test('context write requires an explicit write scope and unknown tools fail clos
   assert.deepEqual(requiredToolScopes('clued_context', { op: 'feedback_list' }), ['context:write']);
   assert.deepEqual(requiredToolScopes('clued_event_carrier_transition'), ['context:write']);
   assert.deepEqual(requiredToolScopes('clued_session_reconcile'), ['context:read']);
+  // Storage connection discovery (Decision 1721045d): the storage evaluators decide, not a context scope.
+  assert.deepEqual(requiredToolScopes('clued_storage_connections'), []);
   assert.deepEqual(requiredToolScopes('clued_projection_rebuild'), ['context:write']);
   assert.deepEqual(requiredToolScopes('clued_full_global_reconcile'), ['context:write']);
   assert.deepEqual(requiredToolScopes('clued_currentness_g6_gate'), ['context:read']);

@@ -52,7 +52,8 @@ if (process.env.CLUED_STORAGE_RUNTIME_CHILD !== '1') {
   });
   try {
     const tools = (await (await rpc('tools/list', {})).json()).result.tools;
-    assert.equal(tools.filter(x => x.name.startsWith('clued_storage_')).length, 3);
+    // submit, inspect, trash_batch and connections (Decision 1721045d).
+    assert.equal(tools.filter(x => x.name.startsWith('clued_storage_')).length, 4);
     const mutation = { operation: 'create', target_kind: 'directory', destination_path: 'G:/My Drive/Clued_资料中心/track/topic', directory_semantics: 'topic' };
     for (const [name, args] of [['clued_storage_submit', { ...ref, mutation }], ['clued_storage_inspect', ref]]) {
       const response = await rpc('tools/call', { name, arguments: args });
