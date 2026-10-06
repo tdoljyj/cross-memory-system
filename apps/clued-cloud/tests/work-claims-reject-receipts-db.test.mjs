@@ -10,6 +10,8 @@ import EmbeddedPostgres from 'embedded-postgres';
 // The lease key case (migration 20261005190000) runs with this file, under
 // npm run test:work:claims.
 import './work-claims-lease-key-db.case.mjs';
+// The Owner handover and claims list case (migration 20261005200000) as well.
+import './work-claims-owner-handover-db.case.mjs';
 
 // Work Claim rejection Receipts for renew, takeover pre-checks and replays
 // (migration 20261003070000, Task 91272c5d): every such refusal leaves a
