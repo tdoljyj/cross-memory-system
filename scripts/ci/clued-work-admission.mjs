@@ -301,11 +301,9 @@ export async function changedPathsOfPullRequest(fetchImpl, env, repository, numb
 const GATE_JOB = "admission-gate";
 const GATE_CONDITION = "needs.admission-gate.outputs.admitted == 'true'";
 export const GATE_JOB_SHA256 = new Set([
-  // Re-review 2, N3c: the gate job has `checks: read`, so it can read the
-  // admission App's check.
-  "62f231ef508663a7c52567b465634dbbfc0ef36889d9b3875aa454171e3afc4b",
-  // Owner Decision f86179b3: the same gate on the self-hosted Linux pool,
-  // with a pinned Node, so it stops spending hosted minutes (step 1 of 2).
+  // Owner Decision f86179b3: the gate (with `checks: read`, re-review 2 N3c)
+  // runs on the self-hosted Linux pool with a pinned Node, so it spends no
+  // hosted minutes. The hosted variant (62f231ef…) is no longer accepted.
   "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
