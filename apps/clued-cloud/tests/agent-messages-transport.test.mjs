@@ -279,3 +279,38 @@ test('a work-claim conflict names who to write to; without the flag it is unchan
     } finally { restore(); }
   }
 });
+
+test('a storage write refused by a live claim names who to write to, for submit and trash batch alike', async () => {
+  const worker = await loadContinuityWorker();
+  const storage = { CLUED_STORAGE_ACCOUNT_V1: 'true', CLUED_STORAGE_JOBS_V1: 'true',
+    SUPABASE_URL: 'https://db.example.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key' };
+  const connection = '20000000-0000-4000-8000-000000000001';
+  const rejection = { status: 'rejected', error_code: 'work_claim_conflict', door: 'clued-storage',
+    resources: [`storage:${connection}/track/topic/example.md`],
+    conflicts: [{ claim_id: CLAIM, task_id: '11111111-1111-4111-8111-111111111111', holder_binding_id: 'b-2',
+      holder_session_ref: 'session-b', status: 'ACTIVE', fence: 1, expires_at: '2026-10-06T08:00:00+00:00',
+      overlap: { same_task: null, paths: [`storage:${connection}/track/**`], trigger_refs: [] } }] };
+  const submit = { connection_id: connection, job_id: '10000000-0000-4000-8000-000000000001',
+    mutation: { operation: 'create', target_kind: 'file', destination_path: 'track/topic/example.md', content: 'fixture' } };
+  const batch = { connection_id: connection, batch_id: '40000000-0000-4000-8000-000000000004',
+    items: [{ operation: 'trash', target_kind: 'file', source_path: 'track/topic/example.md', source_file_version: '3', source_file_id: 'drive-a' }] };
+  for (const [name, args] of [['clued_storage_submit', submit], ['clued_storage_trash_batch', batch]]) {
+    for (const [flags, hinted] of [[{ ...enabled, ...storage }, true], [{ ...claimsOnly, ...storage }, false]]) {
+      const { restore } = mockFetch(() => Response.json(rejection));
+      try {
+        const result = (await (await worker.fetch(mcp(bindingToken, name, args), flags, ctx)).json()).result;
+        assert.equal(result.isError, true, name);
+        assert.equal(result.structuredContent.error, 'work_claim_conflict', name);
+        if (!hinted) {
+          assert.equal('coordinate' in result.structuredContent, false, name);
+          continue;
+        }
+        assert.equal(result.structuredContent.coordinate.tool, 'clued_agent_message_send', name);
+        assert.deepEqual(result.structuredContent.coordinate.holders, [{
+          claim_id: CLAIM, task_id: '11111111-1111-4111-8111-111111111111', holder_binding_id: 'b-2',
+          holder_session_ref: 'session-b', expires_at: '2026-10-06T08:00:00+00:00' }], name);
+        assert.match(result.structuredContent.coordinate.how_to, /to\.claim_id/, name);
+      } finally { restore(); }
+    }
+  }
+});

@@ -281,6 +281,137 @@ class WorkClaimGuardTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
 
 
+# Agent messages (agent-contract §1.7, AgentMessaging.v0.1 step 2) ----------
+
+INBOX = {"unread_count": 1, "open_request_count": 1, "awaiting_reply_count": 0,
+         "latest_unread": [{"message_id": "m1", "kind": "request", "subject": "release apps/x?"}]}
+EMPTY_INBOX = {"unread_count": 0, "open_request_count": 0, "awaiting_reply_count": 0, "latest_unread": []}
+
+
+def call(use_id: str, name: str, tool_input: dict | None = None) -> dict:
+    return {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": use_id, "name": f"mcp__Clued__{name}", "input": tool_input or {}}]}}
+
+
+def result(use_id: str, body: dict, is_error: bool = False) -> dict:
+    return {"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": use_id, "is_error": is_error,
+         "content": [{"type": "text", "text": json.dumps(body)}]}]}}
+
+
+class AgentInboxTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.env = {**os.environ, "TMPDIR": self.tmp.name, "CLAUDE_PROJECT_DIR": self.tmp.name}
+        self.env.pop("CLUED_WORK_CLAIM_GUARD", None)
+        self.transcript = Path(self.tmp.name) / "session.jsonl"
+
+    def run_hook(self, payload: dict) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(HOOK)], input=json.dumps({"session_id": "s1", **payload}),
+                              text=True, capture_output=True, env=self.env, timeout=30)
+
+    def stop(self, entries: list[dict]) -> subprocess.CompletedProcess:
+        self.transcript.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
+        return self.run_hook({"hook_event_name": "Stop", "transcript_path": str(self.transcript),
+                              "stop_hook_active": False})
+
+    def post(self, name: str, response) -> subprocess.CompletedProcess:
+        return self.run_hook({"hook_event_name": "PostToolUse", "tool_name": f"mcp__Clued__{name}",
+                              "tool_input": {}, "tool_response": response})
+
+    def test_resume_and_renew_with_waiting_messages_add_a_reminder(self):
+        for name, body in (("clued_session_resume", {"session_token": "t", "agent_inbox": INBOX}),
+                           ("clued_work_renew", {"status": "committed", "claim": claim(), "agent_inbox": INBOX})):
+            for response in (body, [{"type": "text", "text": json.dumps(body)}]):
+                with self.subTest(name=name, shape=type(response).__name__):
+                    out = self.post(name, response)
+                    self.assertEqual(out.returncode, 0, out.stderr)
+                    context = json.loads(out.stdout)["hookSpecificOutput"]
+                    self.assertEqual(context["hookEventName"], "PostToolUse")
+                    self.assertIn("1 request(s) to you not yet answered", context["additionalContext"])
+                    self.assertIn("clued_agent_message_send reply_to", context["additionalContext"])
+                    self.assertIn("reconnect the Clued connector", context["additionalContext"])
+
+    def test_nothing_waiting_adds_nothing(self):
+        for body in ({"session_token": "t", "agent_inbox": EMPTY_INBOX},
+                     {"session_token": "t", "agent_inbox": None, "agent_inbox_unavailable": True},
+                     {"session_token": "t"}):
+            out = self.post("clued_session_resume", body)
+            self.assertEqual((out.returncode, out.stdout), (0, ""), out.stderr)
+        out = self.post("clued_record_list", {"agent_inbox": INBOX})
+        self.assertEqual((out.returncode, out.stdout), (0, ""))
+
+    def test_stop_blocks_once_while_messages_are_unread(self):
+        entries = [call("r1", "clued_session_resume"), result("r1", {"session_token": "t", "agent_inbox": INBOX})]
+        first = self.stop(entries)
+        self.assertEqual(first.returncode, 2)
+        self.assertIn("you have not read them", first.stderr)
+        self.assertEqual(self.stop(entries).returncode, 0, "reported once")
+
+    def test_a_read_without_a_reply_still_owes_the_answer(self):
+        entries = [call("r1", "clued_session_resume"), result("r1", {"session_token": "t", "agent_inbox": INBOX}),
+                   call("i1", "clued_agent_inbox", {"session_ref": "s1"}), result("i1", {"status": "ok", "messages": []})]
+        out = self.stop(entries)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("you have not answered any of the requests", out.stderr)
+
+    def test_a_committed_reply_settles_it(self):
+        entries = [call("n1", "clued_work_renew"),
+                   result("n1", {"status": "committed", "claim": claim(), "agent_inbox": INBOX}),
+                   call("i1", "clued_agent_inbox"), result("i1", {"status": "ok", "messages": []}),
+                   call("s1", "clued_agent_message_send", {"reply_to": "m1", "body": "releasing now"}),
+                   result("s1", {"status": "committed", "receipt_id": "x"})]
+        self.assertEqual(self.stop(entries).returncode, 0)
+
+    def test_failed_reads_and_replies_do_not_count(self):
+        base = [call("r1", "clued_session_resume"), result("r1", {"session_token": "t", "agent_inbox": INBOX})]
+        out = self.stop(base + [call("i1", "clued_agent_inbox"), result("i1", {"error": "insufficient_scope"}, True)])
+        self.assertIn("you have not read them", out.stderr)
+        out = self.stop(base + [call("i1", "clued_agent_inbox"), result("i1", {"status": "ok"}),
+                                call("s1", "clued_agent_message_send", {"reply_to": "m1"}),
+                                result("s1", {"status": "rejected", "error_code": "agent_message_not_participant"})])
+        self.assertIn("you have not answered", out.stderr)
+        out = self.stop(base[:0] + [call("r2", "clued_session_resume"),
+                                    result("r2", {"session_token": "t", "agent_inbox": INBOX}),
+                                    call("i1", "clued_agent_inbox"), result("i1", {"status": "ok"}),
+                                    call("s1", "clued_agent_message_send", {"to": {"claim_id": CLAIM_ID}}),
+                                    result("s1", {"status": "committed"})])
+        self.assertIn("you have not answered", out.stderr, "a new message is not a reply")
+
+    def test_a_later_empty_report_clears_an_earlier_one(self):
+        entries = [call("r1", "clued_session_resume"), result("r1", {"session_token": "t", "agent_inbox": INBOX}),
+                   call("r2", "clued_session_resume"), result("r2", {"session_token": "t", "agent_inbox": EMPTY_INBOX})]
+        self.assertEqual(self.stop(entries).returncode, 0)
+
+    def test_unread_info_needs_only_a_read(self):
+        info = {**INBOX, "open_request_count": 0}
+        entries = [call("r1", "clued_session_resume"), result("r1", {"session_token": "t", "agent_inbox": info})]
+        self.assertEqual(self.stop(entries).returncode, 2)
+        self.assertEqual(self.stop(entries + [call("i1", "clued_agent_inbox"),
+                                              result("i1", {"status": "ok"})]).returncode, 0)
+
+    def test_off_switch_and_odd_transcripts(self):
+        entries = [call("r1", "clued_session_resume"), result("r1", {"session_token": "t", "agent_inbox": INBOX})]
+        self.env["CLUED_WORK_CLAIM_GUARD"] = "off"
+        self.assertEqual(self.stop(entries).returncode, 0)
+        self.env.pop("CLUED_WORK_CLAIM_GUARD")
+        self.transcript.write_text("not json\n{\"type\": \"user\", \"message\": 5}\n", encoding="utf-8")
+        out = self.run_hook({"hook_event_name": "Stop", "transcript_path": str(self.transcript)})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        out = self.run_hook({"hook_event_name": "Stop", "transcript_path": str(Path(self.tmp.name) / "missing")})
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+    def test_settings_run_it_on_stop_and_after_resume(self):
+        settings = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        hooks = settings["hooks"]
+        stop = [hook["command"] for group in hooks["Stop"] for hook in group["hooks"]]
+        self.assertTrue(any(command.endswith('clued_work_claim_guard.py"') for command in stop))
+        resume = [hook["command"] for group in hooks["PostToolUse"]
+                  if group["matcher"] == "mcp__.*__clued_session_resume" for hook in group["hooks"]]
+        self.assertTrue(any(command.endswith('clued_work_claim_guard.py"') for command in resume))
+
+
 LAUNCHER = ROOT / "scripts" / "hooks" / "run_python.sh"
 STUB = "#!/bin/sh\nexit 49\n"  # what the Windows Store python3 alias does
 
@@ -316,7 +447,7 @@ class HookLauncherTest(unittest.TestCase):
         prefix = 'sh "$CLAUDE_PROJECT_DIR/scripts/hooks/run_python.sh" "$CLAUDE_PROJECT_DIR/'
         commands = [hook["command"] for groups in settings["hooks"].values()
                     for group in groups for hook in group["hooks"]]
-        self.assertEqual(len(commands), 6)
+        self.assertEqual(len(commands), 8)
         for command in commands:
             with self.subTest(command=command):
                 self.assertTrue(command.startswith(prefix), command)

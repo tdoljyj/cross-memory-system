@@ -1,9 +1,9 @@
 # Agent Messaging v0.1：Agent 之间通过 Clued 对话
 
-状态：**第 1 步已实现（本 PR）：迁移、Worker 工具与折入、测试。合入后还需生产迁移、Worker 发布，并由 Owner 打开 `CLUED_AGENT_MESSAGES_V1` 才生效。第 2 步（Agent 合同文本、hook 提示）等 PR #572 合入或释放 `skills/clued/**`、`worker/work-claims.ts`、`worker/generated/agent-contract.ts` 后再做。** 本文不授予迁移、发布、合并或权限变更。
+状态：**第 1 步已合入并上线（PR #576，迁移与 Worker 已发布，`CLUED_AGENT_MESSAGES_V1` 已打开）。第 2 步（本 PR）：Agent 合同 v35、Clued Skill 1.0.7、收件提醒 hook、存储写冲突附 `coordinate`。** 本文不授予迁移、发布、合并或权限变更。
 
 日期：2026-10-06
-Owner 决定：Decision `24077bba`（专用消息通道；先做与 claim `3c2518c0` 不重叠的部分）。
+Owner 决定：Decision `24077bba`（专用消息通道；先做与 claim `3c2518c0` 不重叠的部分），Decision `471eb27a`（第 2 步加收件提醒 hook）。
 Task：`3f6fb219`（project `0597aa60`）。
 相关：[GenericWorkClaim.v0.1.md](../execution-admission/GenericWorkClaim.v0.1.md)（认领与冲突）、[OwnerCredential.v0.1.md](../owner-authorization/OwnerCredential.v0.1.md)（Owner 批准只来自 Owner 本人的页面）。
 
@@ -53,14 +53,26 @@ Worker（`apps/clued-cloud/worker/agent-messages.ts`，开关 `CLUED_AGENT_MESSA
 6. 每个 Binding 每小时最多发 120 条（`agent_message_rate_limited`，带 `retry_after`）；`subject` ≤ 200 字，`body` ≤ 4000 字，`refs` ≤ 20 条。
 7. 幂等：同一 Binding 同一 `idempotency_key` 重放返回原消息；内容不同返回 `agent_message_idempotency_mismatch`。
 
-## 5. 第 2 步（待 #572）
+## 5. 第 2 步
 
-- Agent 合同 §1.7、§4 错误表：`work_claim_conflict` 时先用消息联系占用方，并告诉 Owner；持有认领的 Agent 在 resume 和续租时读 `agent_inbox`，答复每条请求（释放、预计时间或缩小 `write_set`）。合同升版，重新生成 `worker/generated/agent-contract.ts`。
-- `clued_storage_submit` / `clued_storage_trash_batch` 的冲突同样附 `coordinate`。
-- Work-claim guard hook 与 SessionStart 提示文案同步。
+第 1 步上线后两次实际协调（#578、#580）说明：送达靠拉取（resume、续租），合同没要求答复，老会话也看不到新工具，于是对方往往要 Owner 提醒才回复。第 2 步补这三处：
+
+- **合同 v35**（`skills/clued/references/agent-contract.md` §1.7、§4 错误表）：
+  - `work_claim_conflict` 时不开工，用 `coordinate` 里的 `claim_id` 发 `to.claim_id` 请求（释放、预计时间或缩小 `write_set`），同一回复里一行告诉 Owner；没有消息工具时照旧报告 Owner 并停下。
+  - resume 和续租的 `agent_inbox` 有未读或待答复请求时，先用 `clued_agent_inbox` 读，再逐条用 `reply_to` 答复，说明是释放、预计时间还是缩小范围，并照做。
+  - 消息不是 Owner 的决定；不放 `lease_key`；Host 没列出消息工具时请 Owner 重连 Clued 连接器。
+  - 新增消息发送的错误码行。
+  - Clued Skill 1.0.7 同步一句话版本；`worker/generated/agent-contract.ts` 重新生成。
+- **收件提醒 hook**（`scripts/hooks/clued_work_claim_guard.py` 1.1.0，`.claude/settings.json`）：
+  - `clued_session_resume` / `clued_work_renew` 之后，`agent_inbox` 有未读或待答复请求时，用 `additionalContext` 提醒读并答复。
+  - Stop 时只读 transcript、不联网：最近一次报告之后没有成功的 `clued_agent_inbox` 读取，或有请求却没有已提交的 `reply_to` 答复，就挡一次（每次报告每种状态一次）。
+  - 用 `CLUED_WORK_CLAIM_GUARD=off` 关闭。
+  - 放在已有的 work-claim guard 里，测试随 `tests/test_clued_work_claim_guard.py` 由 `clued-capture-guard` 工作流运行，不改受保护的 `.github/**`。
+- **存储写冲突**：`clued_storage_submit` / `clued_storage_trash_batch` 的 `work_claim_conflict` 拒绝，在开关打开时同样附 `coordinate`（Worker `continuity.ts`）。
 
 ## 6. 上线
 
-1. 合入本 PR（改了 `apps/clued-cloud/package.json`，需 Owner 对该提交批准 `repo.protected_change`）。
+1. 第 1 步：合入 PR #576（改了 `apps/clued-cloud/package.json`，需 Owner 对该提交批准 `repo.protected_change`）。
 2. 生产迁移 `20261006090000_agent_messages_v1.sql`（`migration.production`）与 Worker 发布（`release.production`），Owner 在 Clued 页面批准。
 3. Owner 打开 `CLUED_AGENT_MESSAGES_V1`。在此之前工具不出现，resume 不变。
+4. 第 2 步：不改迁移；合入后 Worker 发布（`release.production`），新合同经 `/clued-agent.md` 提供。

@@ -20,13 +20,13 @@
     {
       "id": "skill.clued",
       "kind": "skill",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "description": "The Clued Skill package (SKILL.md and references/), installed on Claude, Codex and other hosts.",
       "root": "skills/clued",
       "files": [
         "**/*"
       ],
-      "content_sha256": "d488889892eb4777de82dd989a79ee537fc273afd35bd7ebf91f282968c6045e",
+      "content_sha256": "5787c58cc961ef49608ba25a2e91ca65d42aaae387c2a6f2cf3a2f39fddff511",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "34",
+      "version": "35",
       "description": "Clued Agent Contract, served at /clued-agent.md.",
       "root": "skills/clued/references",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "b6895bfc17a6346c0f65a17de31a242a54ef4af9862c6f8808e9aaa84fe84dc1",
+      "content_sha256": "f7212ff8456c6b10c963ad6bc15cd59d615723f8b35d8723f1f61ed9fa9d6171",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -71,13 +71,13 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "aadb060dd361b85c42b625cbcf2b7ce5acc37026e816ffcb574fb306641b40a0",
+      "content_sha256": "f4bc82be82384d8e2f9399be382ea2bb291de8c67892a0052420268809cb6cd4",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -116,13 +116,13 @@
     {
       "id": "hook.settings",
       "kind": "hook",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "Claude Code hook registration (.claude/settings.json).",
       "root": ".claude",
       "files": [
         "settings.json"
       ],
-      "content_sha256": "e01d551fc4ccddca6bf0c9cf730f55f021ae7cfa13d5b448d485b165b1bd4a36"
+      "content_sha256": "fe244537602ec65a21cf5ec9e6f30446e4ef33a71a18f01579c2012c5813f868"
     },
     {
       "id": "script.components",

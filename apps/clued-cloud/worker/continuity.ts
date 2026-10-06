@@ -2184,10 +2184,12 @@ async function callTool(
       const input = storageTrashBatchInput(args);
       const token = bearerToken(request);
       if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new HttpError(403, "A valid Clued Binding is required.");
-      const result = storageTrashBatchResult(await supabaseRequest(env, "/rest/v1/rpc/clued_storage_trash_batch_v1", {
+      let result = storageTrashBatchResult(await supabaseRequest(env, "/rest/v1/rpc/clued_storage_trash_batch_v1", {
         method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
       }), input);
       // A Work Claim refusal (GenericWorkClaim §4.2) is a structured tool error: no batch exists.
+      // A conflict says how to reach its holder.
+      if (agentMessagesEnabled(env)) result = withCoordinationHint(result) as typeof result;
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: result.status === "rejected" };
     } catch (error) {
       const pathCode = storagePathCode(error);
@@ -2227,8 +2229,10 @@ async function callTool(
           input = { ...input, mutation: { ...rest, staging_id: staged.staging_id } };
         }
       }
-      const result = await callStorageJob(request, env, input, ctx, storageAgentResult) as Record<string, unknown>;
+      let result = await callStorageJob(request, env, input, ctx, storageAgentResult) as Record<string, unknown>;
       // A Work Claim refusal (GenericWorkClaim §4.2) is a structured tool error: no job exists, nothing is dispatched.
+      // A conflict says how to reach its holder.
+      if (agentMessagesEnabled(env)) result = withCoordinationHint(result) as Record<string, unknown>;
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: result.status === "rejected" };
     } catch (error) {
       if (binary) {
