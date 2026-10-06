@@ -311,6 +311,8 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - 限制：认领 id 不变，PR 准入（`clued_work_verify`）仍按认领判，不区分新旧会话；存储写入出示 `work_claim` 时也不要求钥匙。交接只保证旧会话续不了期、释放不了。
   - 钥匙不出现在 `work_claim_view`、活跃列表、resume、冲突与拒绝回答、回执、事件或日志；比较的是哈希，不是钥匙。迁移前签发的认领没有钥匙，行为不变。
   - 不变的部分：同一 Binding 的会话之间仍按 Binding 判持有者（GenericWorkClaim §4.1，复审 7 m4），钥匙不改变这一点。
+  - 上线顺序（Owner Decision `33ee2115`）：先合并 PR，再按发布工作流依次执行生产备份、迁移 `20261005200000`、发布 Worker（合同 v32）。迁移必须先于 Worker：`/work-claims` 页面与交接调用的三个 Native RPC 只在迁移后才存在。
+  - 兼容：迁移后、Worker 发布前，旧 Worker（合同 v31）照常工作。自报列均可为空，`work_claim_self_report_v1` 对没送的字段返回空值；`holder_label` 必填只在 v32 的 MCP 工具入参里检查，数据库不要求。所以这段时间认领的标签为空，页面上显示为空。回滚只需回退 Worker；迁移新增的列与函数不影响 v31。
 
 ### 4.5 预算
 
