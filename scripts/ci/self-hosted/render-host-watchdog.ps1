@@ -33,6 +33,13 @@ if (-not $OutputPath) {
     $OutputPath = $hostRecord.watchdog_path
 }
 
+# The Windows runner is a Windows service run by a dedicated standard account.
+# The watchdog runs in the login session and must never start the runner itself:
+# that would run jobs as the login account again.
+if (-not ($hostRecord.windows_runner.PSObject.Properties.Name -contains 'service_name') -or -not $hostRecord.windows_runner.service_name) {
+    throw "windows_runner of $HostId has no service_name; the watchdog no longer starts the Windows runner from the login session."
+}
+
 function Escape-SingleQuoted([string]$value) {
     return $value.Replace("'", "''")
 }
@@ -56,7 +63,7 @@ $ErrorActionPreference='Continue'
 $logDir='C:\clued-ci\logs'; New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $log=Join-Path $logDir '__LOG_FILE__'; function Log([string]$m){Add-Content $log ("{0} {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$m)}
 $mutex=New-Object System.Threading.Mutex($false,'Local\__MUTEX__'); if(-not $mutex.WaitOne(0,$false)){exit 0}
-$winRoot='__WIN_ROOT__'; $winExe=Join-Path $winRoot 'bin\Runner.Listener.exe'; $winLauncher='__WIN_LAUNCHER__'
+$winService='__WIN_SERVICE__'; $winServiceReported=''
 $distro='__DISTRO__'; $linuxUser='__LINUX_USER__'; $linuxUnits=@(__LINUX_UNITS__); $manageDocker=__MANAGE_DOCKER__
 $suspendMem=__SUSPEND_MEM__; $resumeMem=__RESUME_MEM__; $suspendDisk=__SUSPEND_DISK__; $resumeDisk=__RESUME_DISK__; $interval=__INTERVAL__; $capacitySuspended=$false
 $lastDeferral=''
@@ -95,9 +102,10 @@ try{while($true){
     if($manageDocker){& wsl.exe -d $distro -u root -e systemctl start containerd docker $linuxUnits 2>$null}else{& wsl.exe -d $distro -u root -e systemctl start $linuxUnits 2>$null}
     $capacitySuspended=$false; Log ("Capacity resume: mem={0}GB disk={1}GB" -f $freeMem,$freeDisk)
   }
-  $win=Get-CimInstance Win32_Process -Filter "Name='Runner.Listener.exe'" -ErrorAction SilentlyContinue | Where-Object {$_.ExecutablePath -eq $winExe}
-  if(-not $win -and (Test-Path (Join-Path $winRoot '.runner'))){Start-Process cmd.exe -ArgumentList '/c',('call "'+$winLauncher+'"') -WindowStyle Hidden; Start-Sleep 2; $win=Get-CimInstance Win32_Process -Filter "Name='Runner.Listener.exe'" -ErrorAction SilentlyContinue | Where-Object {$_.ExecutablePath -eq $winExe}; Log 'Recovered Windows runner.'}
-  if($win){try{(Get-Process -Id $win.ProcessId).PriorityClass='BelowNormal'}catch{}}
+  # Only report the Windows runner service's state when it changes; never start it from here.
+  $svc=Get-Service -Name $winService -ErrorAction SilentlyContinue
+  $svcState=if($svc){[string]$svc.Status}else{'missing'}
+  if($svcState -ne $winServiceReported){if($svcState -ne 'Running' -or $winServiceReported){Log ("Windows runner service {0}: {1}" -f $winService,$svcState)}; $winServiceReported=$svcState}
   $keep=Get-CimInstance Win32_Process -Filter "Name='wsl.exe'" -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -like ('*'+$distro+'*sleep*infinity*')}
   if(-not $keep){Start-Process "$env:SystemRoot\System32\wsl.exe" -ArgumentList '-d',$distro,'-u',$linuxUser,'-e','/bin/sleep','infinity' -WindowStyle Hidden; Start-Sleep 2; Log 'Recovered WSL keepalive.'}
   if(-not $capacitySuspended){
@@ -111,8 +119,7 @@ try{while($true){
 $replacements = [ordered]@{
     '__LOG_FILE__' = "watchdog-$HostId.log"
     '__MUTEX__' = "CluedCIWatchdog-$HostId"
-    '__WIN_ROOT__' = (Escape-SingleQuoted $hostRecord.windows_runner.root)
-    '__WIN_LAUNCHER__' = (Escape-SingleQuoted $hostRecord.windows_runner.launcher)
+    '__WIN_SERVICE__' = (Escape-SingleQuoted $hostRecord.windows_runner.service_name)
     '__DISTRO__' = (Escape-SingleQuoted $hostRecord.linux_runner.distro)
     '__LINUX_USER__' = (Escape-SingleQuoted $hostRecord.linux_runner.user)
     '__LINUX_UNITS__' = $linuxUnitsLiteral
