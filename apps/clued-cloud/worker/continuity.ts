@@ -1426,7 +1426,7 @@ const tools = [
   {
     name: "clued_search_context",
     description:
-      "Search authorized current context and events with deterministic term matching (whole query first, then at least 60% of its terms, or every term of a one-term query; Chinese is split into two-character terms). Without context_key, or with scope=all, every readable project and Global are searched; a context_key alone searches that scope only, and scope=context without context_key searches the session's own context. No match is not evidence that a record does not exist. Superseded history is excluded unless explicitly requested.",
+      "Search authorized current context and events with deterministic term matching (whole query first, then at least 60% of its terms, or every term of a one-term query; Chinese is split into two-character terms). Without context_key, or with scope=all, every readable project and Global are searched; a context_key alone searches that scope only, and scope=context without context_key searches the session's own context. No match is not evidence that a record does not exist. Superseded history is excluded unless explicitly requested. Page with cursor set to page.next_cursor; paging stops at 10000 results (page.cursor_limit_reached), so narrow the query instead. A context_key other than the session's own context is refused with session_context_mismatch.",
     inputSchema: {
       type: "object",
       required: ["session_token", "query"],
@@ -1437,7 +1437,7 @@ const tools = [
         scope: { type: "string", enum: ["all", "context"] },
         include_history: { type: "boolean", default: false },
         limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
-        cursor: { type: "integer", minimum: 0, default: 0 },
+        cursor: { type: "integer", minimum: 0, maximum: 10000, default: 0 },
         max_bytes: { type: "integer", minimum: 4096, maximum: 262144, default: 65536 },
       },
       additionalProperties: false,
@@ -2020,6 +2020,28 @@ function permissionRejection(error: unknown, name: string, args: unknown) {
   return permissionDenial(error.message, name, args, policy ? policy.scopes : null);
 }
 
+// Search re-review (Task f46591b2): clued_search_context refuses malformed
+// input with SQLSTATE 22023, which PostgREST answers with HTTP 400. Without
+// this the Agent got a transport failure with no hint; now it is a tool error
+// with a fixed message.
+const SEARCH_INPUT_REJECTIONS: Readonly<Record<string, string>> = {
+  invalid_query_length: "query must be 1 to 500 characters.",
+  invalid_search_scope: "scope must be \"all\" or \"context\". It is the search mode; name a context with context_key.",
+  invalid_page_input: "include_history must be a boolean, and limit, cursor and max_bytes integers.",
+  search_cursor_too_deep: "cursor may be at most 10000. Narrow the query instead of paging further.",
+  project_scope_unresolved: "context_key names a project that does not resolve to one current project. Use project:<canonical_project_id>, or search without context_key.",
+};
+
+function searchInputRejection(error: unknown, name: string) {
+  if (name !== "clued_search_context" || !(error instanceof HttpError) || error.status !== 400) return null;
+  const details = error.details as Record<string, unknown> | null | undefined;
+  if (details?.code !== "22023" || !Object.prototype.hasOwnProperty.call(SEARCH_INPUT_REJECTIONS, error.message)) return null;
+  return {
+    status: "rejected",
+    error: { code: error.message, category: "request_validation", message: SEARCH_INPUT_REJECTIONS[error.message] },
+  };
+}
+
 function requestRuleRejection(error: unknown) {
   if (!(error instanceof HttpError) || error.status !== 403) return null;
   const details = error.details as Record<string, unknown> | null | undefined;
@@ -2304,7 +2326,8 @@ async function callTool(
   } catch (error) {
     const denial = permissionRejection(error, name, args);
     if (denial) return permissionDenialResult(denial);
-    const rejection = (name === "clued_record_mutate" ? recordValidationRejection(error) : null) ?? requestRuleRejection(error);
+    const rejection = (name === "clued_record_mutate" ? recordValidationRejection(error) : null)
+      ?? searchInputRejection(error, name) ?? requestRuleRejection(error);
     if (!rejection) throw error;
     return { content: [{ type: "text", text: JSON.stringify(rejection) }],
       structuredContent: rejection, isError: true };

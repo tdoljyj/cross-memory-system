@@ -21,6 +21,10 @@ test('the missing context follows the arguments the database checks', () => {
   assert.deepEqual(resources('clued_decision_supersede', { replacement: { scope: `project:${project}` } }, ['context:write']), [`permission:project:${project}/write`]);
   assert.deepEqual(resources('clued_record_list', { level: 'project', project_id: project }, ['context:read']), [`permission:project:${project}/read`]);
   assert.deepEqual(resources('clued_search_context', {}, ['context:read']), ['permission:global/read']);
+  // Search's scope is the search mode, not a context: context_key names it.
+  assert.deepEqual(resources('clued_search_context', { scope: 'context', context_key: `project:${project}` }, ['context:read']),
+    [`permission:project:${project}/read`]);
+  assert.deepEqual(resources('clued_search_context', { scope: 'all' }, ['context:read']), ['permission:global/read']);
   assert.deepEqual(resources('clued_audit_receipts', {}, ['audit:read']), ['permission:global/audit']);
 });
 
