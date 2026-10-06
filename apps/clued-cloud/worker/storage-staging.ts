@@ -25,6 +25,7 @@
  *   holds no durable state. Missing R2 binding or keys fail closed.
  */
 import { createHash } from "node:crypto";
+import { connectionIdSchema } from "./storage-connections";
 import { binaryUploadTarget, firstChunkCheck, validateStagedContent, BINARY_UPLOAD_MAX_BYTES,
   BINARY_INLINE_MAX_BYTES } from "../../../kernel/host/resource-center-storage-binary.mjs";
 import { storagePathMessages, storagePathSyntaxValid, type StoragePathCode } from "./storage-agent-tools";
@@ -442,7 +443,7 @@ export const storageUploadBeginTool = {
   inputSchema: {
     type: "object", additionalProperties: false, required: ["connection_id", "destination_path", "mime_type", "size", "content_sha256"],
     properties: {
-      connection_id: { type: "string", format: "uuid" },
+      connection_id: connectionIdSchema,
       destination_path: { type: "string", minLength: 1, maxLength: 1000, description: "New file path, either relative to the connection's registered root (for example 90_待归类/photo.png) or the full path under it; its extension must match mime_type. The reply's destination_path is the full path; clued_storage_submit may repeat either form. A malformed or outside-root path is refused (storage_path_invalid, storage_path_outside_root)." },
       mime_type: { type: "string", minLength: 3, maxLength: 255 },
       size: { type: "integer", minimum: 1, maximum: BINARY_UPLOAD_MAX_BYTES },

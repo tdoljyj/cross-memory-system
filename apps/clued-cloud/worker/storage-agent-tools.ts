@@ -1,10 +1,11 @@
+import { connectionIdSchema } from "./storage-connections";
 /** Agent transport only: Canonical jobs RPC remains the authorization authority.
  * No credential, admission, grant-management or raw provider tool is exposed. */
 type Data = Record<string, unknown>;
 const object = (v: unknown): v is Data => !!v && typeof v === "object" && !Array.isArray(v);
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v);
 const idSchema = { type: "string", format: "uuid" };
-const reference = { connection_id: idSchema, job_id: { ...idSchema, description: "Stable caller-created job UUID. Keep it for the same request, including after a lost reply; never create another ID to retry an unknown effect." } };
+const reference = { connection_id: connectionIdSchema, job_id: { ...idSchema, description: "Stable caller-created job UUID. Keep it for the same request, including after a lost reply; never create another ID to retry an unknown effect." } };
 const pathForms = "Either relative to the connection's registered root (for example 90_待归类/note.md, the same form clued_storage_browse resolve takes) or the full path under that root; both name the same target and give the same job. No empty, '.' or '..' segments, trailing '/' or backslash; an absolute path outside the root is refused (storage_path_outside_root).";
 const destination = { type: "string", minLength: 1, maxLength: 1000, description: `Destination under the connection's registered root. ${pathForms} A path is a requested target, never authority to change the registered profile.` };
 const source = { type: "string", minLength: 1, maxLength: 1000, description: `Current path of a file Clued registered (one it created or adopted) under the registered root. ${pathForms}` };
@@ -140,7 +141,7 @@ export const storageAgentTools = [
     name: "clued_storage_trash_batch",
     description: "Register one batch of trash/untrash items for the Owner to confirm at once (Owner Decision 7f9daf68). Use it after clued_storage_submit refused a trash job with owner_batch_confirmation_required: list every item you still need, each with its Drive file ID, path and the Drive version from clued_storage_browse stat (at most 50). Clued checks every item against its registry and keeps the batch pending; then ask the user to open the Clued storage page and press 全部确认 for it. At most 5 batches may wait for the Owner per client registration and connection (storage_trash_batch_pending_limit). Calling again with the same batch_id and items returns the batch's status (pending, confirmed, expired or voided) and never creates another batch. A confirmed batch is valid for 24 hours, only for this client registration and the Owner's current setting, and each trash item covers one job; submit the same trash jobs again after confirmation. A job refused before it started does not use up its item. Untrash needs no confirmation; an untrash item is shown to the Owner only. This tool never moves anything itself. Needs the Owner's destructive level. A batch with an item another live work claim covers is refused with work_claim_conflict, as clued_storage_submit is.",
     inputSchema: { type: "object", required: ["connection_id", "batch_id", "items"], additionalProperties: false, properties: {
-      connection_id: idSchema,
+      connection_id: connectionIdSchema,
       batch_id: { ...idSchema, description: "Stable caller-created UUID for this batch; send the same batch_id and items again to read its status." },
       work_claim: workClaim,
       items: { type: "array", minItems: 1, maxItems: 50, items: { type: "object", additionalProperties: false,
