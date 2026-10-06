@@ -143,8 +143,8 @@ For approximately 16 GB personal hosts:
 WSL memory      6 GB
 WSL processors  3
 WSL swap        2 GB
-capacity suspend: host free memory < 2 GB or C: free < 40 GB
-capacity resume:  host free memory >= 3.5 GB and C: free >= 55 GB
+capacity suspend: host free memory < 1.5 GB or C: free < 40 GB
+capacity resume:  host free memory >= 2.5 GB and C: free >= 55 GB
 watchdog interval 30 s
 ```
 
