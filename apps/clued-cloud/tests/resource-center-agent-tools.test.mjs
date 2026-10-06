@@ -21,10 +21,11 @@ test('discovery and guessed calls require both existing account/jobs flags; no p
   for (const flags of [{}, { CLUED_STORAGE_ACCOUNT_V1: 'true' }, { CLUED_STORAGE_JOBS_V1: 'true' }, env]) {
     const result = await (await worker.fetch(rpc('tools/list', {}), flags)).json();
     const tools = result.result.tools.filter(x => x.name.startsWith('clued_storage_'));
-    assert.equal(tools.length, flags === env ? 3 : 0);
+    assert.equal(tools.length, flags === env ? 4 : 0);
     if (flags !== env) assert.equal((await submit(undefined, flags)).status, 404);
     else {
-      assert.deepEqual(tools.map(x => x.name), ['clued_storage_submit', 'clued_storage_inspect', 'clued_storage_trash_batch']);
+      // clued_storage_connections (Decision 1721045d) says where connection_id comes from.
+      assert.deepEqual(tools.map(x => x.name), ['clued_storage_submit', 'clued_storage_inspect', 'clued_storage_trash_batch', 'clued_storage_connections']);
       assert.equal(tools[0].annotations.readOnlyHint, false);
       assert.equal(tools[1].annotations.readOnlyHint, true);
       assert.equal(tools[0].inputSchema.additionalProperties, false);

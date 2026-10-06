@@ -37,6 +37,7 @@ import { testStorageNormalUse } from "./resource-center-storage-normal-use-db.fi
 import { testStorageBinaryUpload } from "./resource-center-storage-binary-db.fixture.mjs";
 import { testStorageOnboard } from "./resource-center-storage-onboard-db.fixture.mjs";
 import { testStorageBudget } from "./resource-center-storage-budget-db.fixture.mjs";
+import { testStorageConnections } from "./resource-center-storage-connections-db.fixture.mjs";
 import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refresh-upgrade-db.fixture.mjs";
 
 const USER = "10000000-0000-4000-8000-000000000071";
@@ -63,7 +64,8 @@ const focusedOnboard = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-o
 const focusedDirectoryMove = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-directory-move";
 const focusedAdopt = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-adopt";
 const focusedWorkClaim = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-work-claim";
-for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focusedOnboard || focusedDirectoryMove || focusedAdopt || focusedWorkClaim ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
+const focusedConnections = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-connections";
+for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focusedOnboard || focusedDirectoryMove || focusedAdopt || focusedWorkClaim || focusedConnections ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
@@ -160,6 +162,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       await testStorageBinaryUpload(t, admin, server, USER, DECISION);
       await testStorageBudget(t, admin, server, USER);
       await testStorageOnboard(t, admin, server, USER, DECISION);
+      await testStorageConnections(t, admin, server, USER, DECISION);
       return;
     }
 
@@ -170,6 +173,11 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
 
     if (focusedWorkClaim) {
       await testStorageWorkClaim(t, admin, server, USER, DECISION);
+      return;
+    }
+
+    if (focusedConnections) {
+      await testStorageConnections(t, admin, server, USER, DECISION);
       return;
     }
 
@@ -859,6 +867,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
     await testStorageBinaryUpload(t, admin, server, USER, DECISION);
     await testStorageBudget(t, admin, server, USER);
     await testStorageOnboard(t, admin, server, USER, DECISION);
+    await testStorageConnections(t, admin, server, USER, DECISION);
     await t.test("a directory with a recorded sharing digest is matched by sharing, not Drive version", async () => {
       const shared = "d".repeat(64), changed = "e".repeat(64);
       const rowVersion = async (id) => Number((await admin.query(

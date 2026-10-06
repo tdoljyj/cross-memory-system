@@ -3,6 +3,7 @@ import { OAuthProvider, OAuthError, GrantType, type AuthRequest, type OAuthHelpe
 import { handleContinuityRequest, publicToolPolicies, type ContinuityEnv } from './continuity';
 import { isStorageAgentTool } from './storage-agent-tools';
 import { storageReadTool, storageContentTool } from './storage-read-agent';
+import { storageConnectionsTool } from './storage-connections';
 import { OWNER_REQUEST_TOOL } from './owner-requests';
 import { permissionDenial, permissionDenialResult } from './permission-guidance';
 
@@ -255,7 +256,10 @@ export function requiredToolScopes(name: string, args: Json = {}): readonly stri
   // its exact connection/action grant check. This does not issue any grant.
   // The read tool is gated the same way: its read evaluator checks the Binding,
   // the Owner's read access row and the issuer read switch.
-  if (isStorageAgentTool(name) || name === storageReadTool.name || name === storageContentTool.name) return [];
+  // The connections list is read the same way: the database lists only what
+  // the storage evaluators admit for this Binding.
+  if (isStorageAgentTool(name) || name === storageReadTool.name || name === storageContentTool.name ||
+    name === storageConnectionsTool.name) return [];
   // Asking the Owner for a connection permission, and reading a request, need
   // no scope here: the database checks the live connection (and, for a status
   // read of another request, context:read). Other requests need context:write.
