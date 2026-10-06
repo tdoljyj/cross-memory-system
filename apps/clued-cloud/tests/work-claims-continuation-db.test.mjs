@@ -9,7 +9,7 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 
 // Work Claim continuation (migration 20261006180000, GenericWorkClaim §10.8,
-// Decision 754dff5d): a new claim that picks up, in the same session, the
+// Decisions 754dff5d and 9aa6e329): a new claim that picks up, on the same Binding, the
 // work its own claim of the Task released as completed with new evidence a
 // moment ago takes no token and no Owner Grant use, keeps the first claim's
 // hard deadline and names continued_from. Anything else is a start as before.
@@ -29,7 +29,7 @@ async function freePort() {
   return port;
 }
 
-test('work claims: a same-session continuation of a completed claim takes no token',
+test('work claims: a same-Binding continuation of a completed claim takes no token',
   { timeout: 300000 }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-work-claims-continuation-'));
   const server = new EmbeddedPostgres({
@@ -201,15 +201,20 @@ test('work claims: a same-session continuation of a completed claim takes no tok
       set expires_at=greatest(issued_at,clock_timestamp()-interval '1 second') where claim_id=$1`, [expired.claim_id]);
     assert.equal(await notContinued(expiredTask, expired), 'prior_not_completed');
 
-    // --- The same session only.
+    // --- The same Binding, whatever the session (Decision 9aa6e329): an
+    // orchestrator may run each step in a new Host session, or send none.
     const noSessionTask = await createTask('no session');
     const noSession = committed(await claim(noSessionTask, { session: null })).claim;
     committed(await release(noSession));
-    assert.equal(await notContinued(noSessionTask, noSession, { session: null }), 'no_session_ref');
+    const noSessionNext = committed(await claim(noSessionTask, { session: null }));
+    assert.equal(noSessionNext.continued_from, noSession.claim_id);
+    committed(await release(noSessionNext.claim));
     const otherSessionTask = await createTask('other session');
     const otherSession = committed(await claim(otherSessionTask)).claim;
     committed(await release(otherSession));
-    assert.equal(await notContinued(otherSessionTask, otherSession, { session: 'session-b' }), 'prior_other_holder');
+    const otherSessionNext = committed(await claim(otherSessionTask, { session: 'session-b' }));
+    assert.equal(otherSessionNext.continued_from, otherSession.claim_id);
+    committed(await release(otherSessionNext.claim));
     const otherBindingTask = await createTask('other binding');
     const otherBinding = committed(await claim(otherBindingTask)).claim;
     committed(await release(otherBinding));
@@ -353,25 +358,33 @@ test('work claims: a same-session continuation of a completed claim takes no tok
     await admin.query(`update clued_private.work_claims_v1 set status='RELEASED',released_outcome='abandoned'
       where task_id=$1 and status='ACTIVE'`, [drainTask]);
 
-    // --- A continuation on an empty bucket leaves an Owner Grant unused.
+    // --- A continuation on an empty bucket leaves an Owner Grant unused: a
+    // start after an abandoned claim asks for a grant and uses it once; the
+    // continuation of the granted claim does not use it again.
     await resetBindingBucket('claude');
     const grantTask = await createTask('grant untouched');
     const g1 = committed(await claim(grantTask)).claim;
-    committed(await release(g1));
+    committed(await release(g1, { outcome: 'abandoned' }));
     await empty(grantTask);
-    const askGrant = await claim(grantTask, { session: 'session-b' });
+    const askGrant = await claim(grantTask);
     assert.equal(askGrant.limit, 'task_claim_rate');
+    assert.equal(askGrant.continuation.reason, 'prior_not_completed');
     const issued = await native('clued_owner_grant_confirmation_issue_v1',
-      { request_id: askGrant.owner_request.request_id, choice: 'once' });
+      { request_id: askGrant.owner_request.request_id, choice: 'grant', max_uses: 5 });
     assert.equal(issued.status, 'issued', JSON.stringify(issued));
     const grant = committed(await native('clued_owner_grant_v1', { confirmation_token: issued.confirmation_token,
       view_digest: issued.view_digest })).grant;
-    const g2 = committed(await claim(grantTask));
-    assert.equal(g2.continued_from, g1.claim_id);
-    assert.equal((await admin.query('select uses from clued_private.owner_grants_v1 where id=$1',
-      [grant.grant_id])).rows[0].uses, 0, 'the grant is still unused');
-    assert.equal((await issuedReceipt(g2.claim.claim_id)).owner_grant_id, undefined);
-    committed(await release(g2.claim));
+    const g2 = committed(await claim(grantTask)).claim;
+    assert.equal((await issuedReceipt(g2.claim_id)).owner_grant_id, grant.grant_id);
+    const usesOf = async () => (await admin.query('select uses from clued_private.owner_grants_v1 where id=$1',
+      [grant.grant_id])).rows[0].uses;
+    assert.equal(await usesOf(), 1);
+    committed(await release(g2));
+    const g3 = committed(await claim(grantTask));
+    assert.equal(g3.continued_from, g2.claim_id);
+    assert.equal(await usesOf(), 1, 'the continuation leaves the grant unused');
+    assert.equal((await issuedReceipt(g3.claim.claim_id)).owner_grant_id, undefined);
+    committed(await release(g3.claim));
 
     // --- A takeover takes a token as before.
     const takeoverTask = await createTask('takeover');

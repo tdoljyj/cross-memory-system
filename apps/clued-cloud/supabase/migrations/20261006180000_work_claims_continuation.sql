@@ -1,4 +1,4 @@
--- Work Claim continuation (Owner Decision 754dff5d, Task a881f82b;
+-- Work Claim continuation (Owner Decisions 754dff5d and 9aa6e329, Task a881f82b;
 -- GenericWorkClaim §10.8).
 --
 -- The rate buckets (20261003050000, Decision 136a000e) were meant to fit both
@@ -9,9 +9,9 @@
 --
 -- A new claim (not a takeover, not a race copy) continues the Task's last
 -- claim when all of these hold:
---   1. that claim is the Task's latest (no other claim of the Task since),
---      held by this Binding, and both name the same holder_session_ref (a
---      claim without one never continues);
+--   1. that claim is the Task's latest (no other claim of the Task since)
+--      and held by this Binding. The session does not matter (Decision
+--      9aa6e329): an orchestrator may run each step in a new Host session;
 --   2. it was released as completed, by its holder, without the lease key,
 --      not handed over by the Owner, not a race copy, with an evidence_ref
 --      that no earlier claim of the chain released with;
@@ -112,7 +112,7 @@ begin
   return clued_private.work_claim_rejected(p_code,p_detail);
 end $$;
 
--- Whether a new claim of p_task by this Binding and session continues the
+-- Whether a new claim of p_task by this Binding continues the
 -- Task's last claim. Returns null when the Task has no claim yet;
 -- {continued_from, hard_deadline_at, chain_evidence_refs} when it continues;
 -- otherwise {reason, prior_claim_id}. The checks that read only the claim row
@@ -134,9 +134,7 @@ begin
   -- updated_at is the release time of a RELEASED claim: nothing writes an
   -- ended claim's row afterwards.
   v_reason:=case
-    when p_session is null then 'no_session_ref'
-    when p.holder_binding_id<>p_binding.id or p.holder_session_ref is distinct from p_session
-      then 'prior_other_holder'
+    when p.holder_binding_id<>p_binding.id then 'prior_other_holder'
     when p.status<>'RELEASED' or p.released_outcome is distinct from 'completed' then 'prior_not_completed'
     when p.copy_index is not null then 'prior_race_copy'
     when p.lease_key_required then 'prior_handed_over'
@@ -159,7 +157,8 @@ begin
       when v_evidence is null or v_evidence=any(p.chain_evidence_refs) then 'no_new_evidence'
       when exists(select 1 from clued_private.agent_messages_v1 m
           where m.user_id=p.user_id and m.to_claim_id=p.claim_id and m.kind='request'
-            and not (m.sender_binding_id=p_binding.id and m.sender_session_ref is not distinct from p_session))
+            and not (m.sender_binding_id=p_binding.id and p_session is not null
+              and m.sender_session_ref is not distinct from p_session))
         then 'prior_requested'
     end;
   end if;
