@@ -162,7 +162,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       await testStorageBinaryUpload(t, admin, server, USER, DECISION);
       await testStorageBudget(t, admin, server, USER);
       await testStorageOnboard(t, admin, server, USER, DECISION);
-      await testStorageConnections(t, admin, server, USER, DECISION);
+      await testStorageConnections(t, admin, server);
       return;
     }
 
@@ -177,7 +177,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
     }
 
     if (focusedConnections) {
-      await testStorageConnections(t, admin, server, USER, DECISION);
+      await testStorageConnections(t, admin, server);
       return;
     }
 
@@ -867,7 +867,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
     await testStorageBinaryUpload(t, admin, server, USER, DECISION);
     await testStorageBudget(t, admin, server, USER);
     await testStorageOnboard(t, admin, server, USER, DECISION);
-    await testStorageConnections(t, admin, server, USER, DECISION);
+    await testStorageConnections(t, admin, server);
     await t.test("a directory with a recorded sharing digest is matched by sharing, not Drive version", async () => {
       const shared = "d".repeat(64), changed = "e".repeat(64);
       const rowVersion = async (id) => Number((await admin.query(

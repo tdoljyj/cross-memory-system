@@ -6,13 +6,19 @@ const LIST = "public.clued_storage_connections_v1";
 const READ_DISCLOSURE = "clued.storage-read-disclosure/1";
 
 // Storage connection discovery (Owner Decision 1721045d). Synthetic, disposable
-// PostgreSQL only; setup follows the storage read fixture. Other fixtures may
-// leave active connections of the same Owner, so assertions look at this
-// fixture's own connections, never at the length of the whole list.
-export async function testStorageConnections(t, admin, server, user, decision) {
+// PostgreSQL only; setup follows the storage read fixture. The fixture uses its
+// own Owner: earlier fixtures leave many active connections on the shared one,
+// and the list holds at most 50.
+export async function testStorageConnections(t, admin, server) {
   const clients = [], session = randomUUID(), clientIssuer = sha(randomUUID());
   const resource = "https://storage-connections.invalid/mcp";
-  const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
+  const user = randomUUID(), project = randomUUID(), decision = randomUUID();
+  await admin.query("insert into auth.users(id,email) values($1,$2)", [user, `connections-${user}@example.invalid`]);
+  await admin.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at)" +
+    " values($1,$2,'Storage connections','storage connections',$3,'confirmed',now())", [project, user, "project:" + project]);
+  await admin.query("insert into public.clued_memories(id,user_id,title,content,scope,project_id,record_type,status,record_schema_version,lifecycle_status," +
+    "canonical_scope,type_fields,relations,source_refs,authority,confidence_reason) values($1,$2,'Owner approval','Temporary test objects only','project',$3," +
+    "'decision','active',1,'active',$4,'{\"rationale\":\"Test registration\"}','{}','{}','user_explicit','Owner confirmed')", [decision, user, project, "project:" + project]);
   const connect = async role => {
     const database = server.getPgClient(); clients.push(database); await database.connect();
     await database.query("set statement_timeout='10s'");
@@ -118,6 +124,7 @@ export async function testStorageConnections(t, admin, server, user, decision) {
         connection_id: target.connection, name: "Clued_资料中心", managed_root: target.root, project_id: project,
         tracks: ["20_P_产品与体验"], inspect: true, write_levels: ["create_file", "create_topic"], read: [], normal_use: false });
       assert.equal(entry(result, pending), undefined, "a connection without an active policy is not listed");
+      assert.deepEqual(result.connections.map(item => item.connection_id), [target.connection], "only this Owner's usable connections");
       for (const item of result.connections) {
         assert.deepEqual(Object.keys(item).sort(), ["connection_id", "inspect", "managed_root", "name", "normal_use", "project_id", "read", "tracks", "write_levels"]);
       }
