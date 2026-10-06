@@ -41,6 +41,8 @@ const CONFLICTS = ['integration_version_conflict', 'installation_request_version
 const RULE_MESSAGE = 'The request was refused by a Clued contract rule; reconnecting will not change the outcome.';
 
 const assets = { ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
+// The production flags without the Integration Runtime flag: the flag-off case. Production itself
+// runs with the flag on since stage C-2 (Decision 85616c43); the frozen baseline is the flag-on list.
 const production = { ...assets, PROJECT_VIEWS_V2: 'true', P5_TENANT_WRITES: 'false' };
 const enabled = { ...production, CLUED_INTEGRATION_RUNTIME_V1: 'true' };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
@@ -88,12 +90,22 @@ function mockFetch(handler) {
 }
 const committed = (supplemental = {}) => Response.json({ status: 'committed', replayed: false, receipt_id: 'receipt-1', supplemental });
 
-test('T-W-1 flag off: tools/list is byte-identical to the frozen baseline; the 8-row matrix holds through the Worker', async () => {
-  for (const value of [undefined, 'false', '0', 'off', '', 'yes']) {
-    const env = value === undefined ? production : { ...production, CLUED_INTEGRATION_RUNTIME_V1: value };
+test('T-W-1 flag on: tools/list is byte-identical to the frozen baseline; flag off drops exactly the 7 tools; the 8-row matrix holds through the Worker', async () => {
+  // Stage C-3 (Decision a109eb63): the frozen production-equivalent baseline is the flag-on list.
+  assert.equal(baseline.tools.length, 36);
+  for (const value of ['true', '1', 'on', 'enabled']) {
+    const env = { ...production, CLUED_INTEGRATION_RUNTIME_V1: value };
     assert.equal(JSON.stringify(await listTools(env)), JSON.stringify(baseline.tools), `flag ${JSON.stringify(value)}`);
   }
-  assert.equal(baseline.tools.length, 29);
+  // Flag off (the rollback): the baseline without the 7 Integration tools, byte for byte and in order,
+  // which is the surface production had before stage C.
+  const flagOff = baseline.tools.filter((tool) => !TOOLS.includes(tool.name));
+  assert.equal(flagOff.length, 29);
+  assert.equal(baseline.tools.length - flagOff.length, TOOLS.length);
+  for (const value of [undefined, 'false', '0', 'off', '', 'yes']) {
+    const env = value === undefined ? production : { ...production, CLUED_INTEGRATION_RUNTIME_V1: value };
+    assert.equal(JSON.stringify(await listTools(env)), JSON.stringify(flagOff), `flag ${JSON.stringify(value)}`);
+  }
   const rows = toolVersions.feature_flags.full_matrix;
   assert.equal(rows.length, 8);
   for (const row of rows) {
@@ -109,7 +121,7 @@ test('T-W-1 flag off: tools/list is byte-identical to the frozen baseline; the 8
   assert.deepEqual([count(false, false, false), count(true, false, false), count(false, true, false), count(true, true, false)], [18, 29, 23, 34]);
   assert.deepEqual([count(false, false, true), count(true, false, true), count(false, true, true), count(true, true, true)], [25, 36, 30, 41]);
   assert.deepEqual(toolVersions.feature_flags.production_equivalent,
-    { PROJECT_VIEWS_V2: true, P5_TENANT_WRITES: false, CLUED_INTEGRATION_RUNTIME_V1: false, expected_tool_count: 29 });
+    { PROJECT_VIEWS_V2: true, P5_TENANT_WRITES: false, CLUED_INTEGRATION_RUNTIME_V1: true, expected_tool_count: 36 });
   for (const value of ['true', 'TRUE', '1', 'on', 'enabled', ' true ']) {
     assert.equal(integrations.integrationRuntimeEnabled({ CLUED_INTEGRATION_RUNTIME_V1: value }), true, value);
   }
