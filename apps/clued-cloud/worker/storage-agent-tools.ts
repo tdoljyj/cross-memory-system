@@ -75,6 +75,7 @@ const reasonHints: Record<string, string> = {
   DIRECTORY_SHARING_DIFFERS: "The directory's current folder and the destination folder grant different access (who, or with which role), so moving it would change who can access its contents. Clued only moves a directory between folders with exactly the same access. Tell the user; do not change sharing to get around it.",
   SUBTREE_DRIFT: "Something Clued registered inside the directory was renamed, moved or deleted in Drive outside Clued, so Clued's records no longer match. Nothing was moved. Tell the user; the directory cannot be moved until Clued's records match Drive again. Do not retry.",
   DIRECTORY_ACCESS_UNAVAILABLE: "Drive did not report the full list of permissions for the directory or one of the two folders, so Clued cannot prove the move keeps everyone's access unchanged. Nothing was moved. Tell the user; do not retry.",
+  PARENT_UNREGISTERED: "The destination folder exists in Drive but Clued has not registered it (for example it was made in Drive before registration or outside Clued). Nothing was changed. If the user wants the file there, adopt the folder first (clued_storage_submit adopt, target_kind directory, top-down, one job at a time), then submit the write again under a new job_id. Do not pick another folder yourself.",
 };
 /** The untrash name option (" (n)" before the extension, n 1..99). */
 export function storageSuffixedName(name: string, candidate: string): boolean {
