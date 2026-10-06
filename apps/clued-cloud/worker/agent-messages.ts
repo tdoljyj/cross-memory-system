@@ -142,10 +142,12 @@ export function withAgentInbox(result: unknown, summary: unknown): unknown {
 }
 
 // A work-claim conflict names each holder; this says how to reach them, so an
-// Agent coordinates instead of stopping at "tell the Owner".
+// Agent coordinates instead of stopping at "tell the Owner". Work-claim tools
+// carry the code as error_code, storage writes as error.
 export function withCoordinationHint(result: unknown): unknown {
   const body = plainObject(result);
-  if (!body || body.error_code !== "work_claim_conflict" || !Array.isArray(body.conflicts)) return result;
+  if (!body || (body.error_code !== "work_claim_conflict" && body.error !== "work_claim_conflict") ||
+    !Array.isArray(body.conflicts)) return result;
   const holders = body.conflicts.flatMap((conflict) => {
     const c = plainObject(conflict);
     if (!c || typeof c.claim_id !== "string") return [];

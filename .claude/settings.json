@@ -24,6 +24,11 @@
             "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/hooks/run_python.sh\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/clued_capture_guard.py\"",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/hooks/run_python.sh\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/clued_work_claim_guard.py\"",
+            "timeout": 10
           }
         ]
       }
@@ -73,6 +78,11 @@
           {
             "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/hooks/run_python.sh\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/clued_version_check.py\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/hooks/run_python.sh\" \"$CLAUDE_PROJECT_DIR/scripts/hooks/clued_work_claim_guard.py\"",
             "timeout": 10
           }
         ]
