@@ -314,6 +314,12 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - 上线顺序（Owner Decision `33ee2115`）：先合并 PR，再按发布工作流依次执行生产备份、迁移 `20261005200000`、发布 Worker（合同 v32）。迁移必须先于 Worker：`/work-claims` 页面与交接调用的三个 Native RPC 只在迁移后才存在。
   - 兼容：迁移后、Worker 发布前，旧 Worker（合同 v31）照常工作。自报列均可为空，`work_claim_self_report_v1` 对没送的字段返回空值；`holder_label` 必填只在 v32 的 MCP 工具入参里检查，数据库不要求。所以这段时间认领的标签为空，页面上显示为空。回滚只需回退 Worker；迁移新增的列与函数不影响 v31。
 
+- **合并位（Task `f89eaf0a`，Owner Decision `0edf7889`，合同 v33 §1.7）**：`main` 要求 PR 合并前跟上最新 main，CI 跑到一半时别的会话一合并，这一轮就白跑了。2026-10-06 PR 571 因 575、576 插队连续重跑两轮。合并位是共享触发来源 `merge:<owner>/<name>:<branch>`：会话准备合并时，续期自己 PR 的认领，把它加进 `trigger_refs`；冲突检测（`work_claim_conflicts`，同账号所有 Binding、精确匹配）保证同一时间只有一个持有者。拿到合并位的会话同步 main、跑 CI、合并，然后立刻续期去掉它或释放认领；拿不到的等着重试，被拒的续期不计次数、不耗令牌。
+  - **自己的计时（Owner Decision `2ea795e4`，迁移 `20261006120000`）**：合并位在最后一次拿到或续期后 45 分钟失效（profile `merge_slot_seconds`=2700，不超过认领租约），认领视图给出 `merge_slot_until`。冲突检测只算仍有效的合并位，多副本竞赛的副本之间也互相检查有效合并位（只看合并位，不看路径和其他引用）；续期时引用没变但带着合并位，也要对其他认领的有效合并位做一次检查，所以失效后被别人拿走的合并位，原持有者续期拿不回来。Owner 交接不刷新合并位。PR 合并（`clued_work_claim_adopt_v1`）或不合并就关闭（`clued_work_merge_slot_return_v1`，同样只限 CI 准入 Binding）时，绑定该 PR 的认领去掉合并位引用，只去掉该 PR 所在仓库的合并位引用，留 `WORK_CLAIM_MERGE_SLOT_RETURNED` 回执。续期刷新合并位每次都算一次续期，计入认领的续期上限。
+  - **GitHub 强制**：准入运行另发一个 App 检查 `clued-merge-slot`（准入为提示模式时不检查）：头提交已包含基础分支最新提交时，只有认领持有有效合并位才通过；没包含时通过（GitHub 本来就不让合并）；服务还不报 `merge_slot_until` 时通过并注明未检查。它不并进 `clued-admission-verified`，因为重型工作流的准入关卡看那个检查，恰好包含最新 main 的中间推送仍要跑 CI。每小时的复核对已通过但合并位已失效或已归还的头提交补发失败检查。拿合并位时 PR 已包含最新提交，就编辑 PR 正文重跑检查。
+  - **上线顺序**：合并 → 备份 → 迁移 → Worker 发布（合同 v33）→ Owner 在 main 规则集里把 clued-admission App 的 `clued-merge-slot` 加为必需检查。加之前它只是提示。
+  - **剩余限制**：检查结果是某一时刻的判断；合并位在两次复核之间失效或被归还，已通过的检查最多一小时后才转为失败；这段时间里能合并的只有已包含最新 main 的那一个 PR，别的 PR 都还要先合入 main，所以不会白跑 CI。账号里还没有标记 `ci-admission` 角色的 Binding 时，任何 Binding 都能调用归还接口（与 adopt 相同）。仓库管理员权限可以改规则集。
+
 ### 4.5 预算
 
 复用 N4 模式：

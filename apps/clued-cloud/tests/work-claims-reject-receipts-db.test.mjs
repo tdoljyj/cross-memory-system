@@ -12,6 +12,8 @@ import EmbeddedPostgres from 'embedded-postgres';
 import './work-claims-lease-key-db.case.mjs';
 // The Owner handover and claims list case (migration 20261005200000) as well.
 import './work-claims-owner-handover-db.case.mjs';
+// The merge slot case (migration 20261006120000) as well.
+import './work-claims-merge-slot-db.case.mjs';
 
 // Work Claim rejection Receipts for renew, takeover pre-checks and replays
 // (migration 20261003070000, Task 91272c5d): every such refusal leaves a

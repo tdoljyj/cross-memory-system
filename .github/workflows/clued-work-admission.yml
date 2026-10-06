@@ -110,6 +110,15 @@ jobs:
           ADMISSION_PR_NUMBER: ${{ github.event.pull_request.number }}
           ADMISSION_OUTCOME: ${{ steps.admit.outcome }}
           ADMISSION_VERDICT: ${{ steps.admit.outputs.verdict }}
+          # Owner Decision 2ea795e4: the clued-merge-slot check on the same
+          # head. A head that contains the base branch's tip passes it only
+          # while its claim holds the merge slot; an empty state fails it.
+          ADMISSION_MERGE_SLOT: ${{ steps.admit.outputs.merge_slot }}
+          ADMISSION_MERGE_SLOT_REF: ${{ steps.admit.outputs.merge_slot_ref }}
+          ADMISSION_MERGE_SLOT_UNTIL: ${{ steps.admit.outputs.merge_slot_until }}
+          ADMISSION_MERGE_SLOT_TIP: ${{ steps.admit.outputs.merge_slot_tip }}
+          ADMISSION_CLAIM_ID: ${{ steps.admit.outputs.claim_id }}
+          ADMISSION_BASE_REF: ${{ github.event.pull_request.base.ref }}
           CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
           CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
         run: node scripts/ci/clued-work-admission.mjs --mode app-check
@@ -120,11 +129,14 @@ jobs:
   # copies are put out; their pull requests fail the next verification. A
   # pull request that is not a copy changes nothing. Base-branch code and the
   # same environment as the check above; no pull request branch is executed.
+  # Owner Decision 2ea795e4: a merged or closed pull request also gives back
+  # the merge slot of the claim bound to it (clued_work_merge_slot_return_v1
+  # when it closed without a merge).
   clued-work-adopt:
     name: clued-work-adopt
-    # Re-review 6, B1: merges into the default branch only (see above).
+    # Re-review 6, B1: pull requests into the default branch only (see above).
     if: >-
-      github.event.action == 'closed' && github.event.pull_request.merged == true &&
+      github.event.action == 'closed' &&
       github.event.pull_request.base.ref == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -136,7 +148,7 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - name: Report the merge to Clued for multi-copy adoption
+      - name: Report the merge or close to Clued (adoption, merge slot)
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
