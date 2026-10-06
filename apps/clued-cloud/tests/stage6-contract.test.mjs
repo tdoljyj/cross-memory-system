@@ -83,7 +83,9 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 33/);
+  assert.match(contract, /Contract version: 34/);
+  // Owner Decision a0d93cd0: merging the default branch into an approved head keeps the approval.
+  assert.match(contract, /A head that only merges the default branch into an approved head keeps that approval/);
   // Merge slot (Owner Decision 0edf7889): one session at a time brings main in, runs CI and merges.
   assert.match(contract, /The slot is the trigger ref `merge:<owner>\/<name>:<branch>`/);
   assert.match(contract, /Here a conflict means wait; do not stop or tell the Owner for it/);

@@ -825,7 +825,8 @@ export function plainFinding(finding) {
   return String(finding).replace(/[^A-Za-z0-9._/*:() -]/g, "?").slice(0, 160);
 }
 
-async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, outcome, baseTip) {
+async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, outcome, tipCompare) {
+  const baseTip = tipCompare ? tipCompare.tip : null;
   const enforced = ownerReviewEnforced(env);
   const headSha = pr.head.sha;
   const summary = findings.slice(0, 10).map(plainFinding).join(", ") + (findings.length > 10 ? `, and ${findings.length - 10} more` : "");
@@ -833,6 +834,34 @@ async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, 
     outcome.owner_review = { enforced, kind: "not_asked", resource: `repo:${repository}/${headSha}`, confirm_url: null, grant_id: null };
     outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): an Owner Grant on ${headSha} would be needed (${summary})`);
     return;
+  }
+  // Owner Decision a0d93cd0: the base branch merged into an approved head.
+  let source = null;
+  try {
+    source = await carriedApprovalSource(fetchImpl, env, repository, headSha, tipCompare);
+  } catch (error) {
+    outcome.notices.push(`owner_review_carry_over_unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (source) {
+    const carryNote = `${outcome.pr_ref ?? repository} @ ${source.slice(0, 12)}: earlier head of this pull request; its approval would carry over to ${headSha.slice(0, 12)}, which only merged ${pr.base.ref} into it`.slice(0, 2000);
+    let carried;
+    try {
+      carried = await ownerReviewDoor(fetchImpl, env, repository, source, workspace, carryNote);
+    } catch (error) {
+      carried = { kind: "transient", detail: error instanceof Error ? error.message : String(error) };
+    }
+    if (carried.kind === "granted" || carried.kind === "transient") {
+      outcome.owner_review = { enforced, kind: carried.kind, resource: carried.resource ?? null, confirm_url: null,
+        grant_id: carried.grant && carried.grant.grant_id ? carried.grant.grant_id : null, carried_from: source };
+      if (carried.kind === "granted") {
+        outcome.notices.push(`owner_review_carried:${outcome.owner_review.grant_id} from ${source} (${summary})`);
+        return;
+      }
+      outcome.verdict = "REJECTED";
+      outcome.reasons.push(`owner_review_unavailable:transient (${summary}; ${carried.detail})`);
+      return;
+    }
+    outcome.notices.push(`owner_review_not_carried: ${source} is not admitted by a live Owner Grant (${carried.kind})`);
   }
   // Re-review 8, MINOR-3; re-review 9, MAJOR-2: the request tells the Owner
   // which pull request and which changes it is for, with the compare link of
@@ -896,6 +925,67 @@ export async function baseTipCompare(fetchImpl, env, repository, pr) {
     paths: [...paths].sort(),
     truncated: !body || !Array.isArray(body.files) || files.length >= BASE_COMPARE_LIMIT,
   };
+}
+
+// Owner Decision a0d93cd0: merging the base branch into a head the Owner
+// approved keeps that approval when the protected change stays the one the
+// Owner saw. Each step back from the head must be a two-parent merge whose
+// second parent the base branch's tip contains (the base branch merged in),
+// and its first parent is the earlier head. An earlier head qualifies when:
+//   - no protected path the head changes against the tip was touched by the
+//     merges since that earlier head (so the head's content of those files is
+//     the approved head's), and
+//   - the base branch did not touch them either between the approved head's
+//     merge base with the tip and the tip (so the base side is the same),
+// which makes the head's protected diff against the tip the approved head's
+// diff against its own base. Any protected file a merge brought in differs
+// from the tip in nothing (it is not in the head's diff): it is main's.
+// Only an earlier head whose clued-admission-verified check passed is asked
+// about, the deepest one first (a head admitted this way leads back to the
+// head the Owner approved), and the Owner review door stays the authority: it
+// admits a head again only while the grant that admitted it is not revoked.
+export const CARRY_OVER_DEPTH = 10;
+
+async function compareSummary(fetchImpl, env, repository, from, to) {
+  const body = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${from}...${to}`);
+  const files = body && Array.isArray(body.files) ? body.files : null;
+  if (!files || files.length >= BASE_COMPARE_LIMIT) return null;
+  const paths = new Set();
+  for (const file of files) {
+    if (typeof file.filename === "string") paths.add(file.filename);
+    if (typeof file.previous_filename === "string") paths.add(file.previous_filename);
+  }
+  const mergeBase = body.merge_base_commit && typeof body.merge_base_commit.sha === "string" ? body.merge_base_commit.sha : null;
+  return { status: body.status, mergeBase, paths: [...paths] };
+}
+
+const protectedOf = (paths) => protectedPathFindings(paths).map((finding) => finding.replace(/^protected_path:/, ""));
+
+// The earlier head whose Owner Grant the head may keep, or null.
+export async function carriedApprovalSource(fetchImpl, env, repository, headSha, tipCompare) {
+  if (tipCompare.truncated || !tipCompare.upToDate) return null;
+  const changedNow = new Set(protectedOf(tipCompare.paths));
+  const untouched = (paths) => !protectedOf(paths).some((path) => changedNow.has(path));
+  let source = null;
+  let current = headSha;
+  for (let step = 0; step < CARRY_OVER_DEPTH; step += 1) {
+    const commit = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${current}`);
+    const parents = commit && Array.isArray(commit.parents) ? commit.parents.map((parent) => parent && parent.sha) : [];
+    if (parents.length !== 2 || !parents.every((sha) => typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha))) break;
+    const [earlier, merged] = parents;
+    const fromBase = await compareSummary(fetchImpl, env, repository, merged, tipCompare.tip);
+    if (!fromBase || (fromBase.status !== "ahead" && fromBase.status !== "identical")) break;
+    const sinceEarlier = await compareSummary(fetchImpl, env, repository, earlier, headSha);
+    if (!sinceEarlier || !untouched(sinceEarlier.paths)) break;
+    const earlierToTip = await compareSummary(fetchImpl, env, repository, tipCompare.tip, earlier);
+    if (!earlierToTip || !earlierToTip.mergeBase) break;
+    const onBase = await compareSummary(fetchImpl, env, repository, earlierToTip.mergeBase, tipCompare.tip);
+    if (!onBase || !untouched(onBase.paths)) break;
+    const checks = await appChecksOnHead(fetchImpl, env, repository, earlier);
+    if (checks[0] && checks[0].status === "completed" && checks[0].conclusion === "success") source = earlier;
+    current = earlier;
+  }
+  return source;
 }
 
 export async function evaluate({ env, event, eventName, fetchImpl, workspace, withSummary }) {
@@ -1046,7 +1136,7 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
         outcome.reasons.push(`protected_change_not_up_to_date:${tipCompare.tip} (merge ${pr.base.ref} into the branch first; ${ownerFindings.slice(0, 10).map(plainFinding).join(", ")}${ownerFindings.length > 10 ? `, and ${ownerFindings.length - 10} more` : ""})`);
       } else {
         if (!tipCompare.upToDate) outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): the branch would first need ${pr.base.ref} at ${tipCompare.tip}`);
-        await ownerReview(fetchImpl, env, repository, pr, workspace, ownerFindings, outcome, tipCompare.tip);
+        await ownerReview(fetchImpl, env, repository, pr, workspace, ownerFindings, outcome, tipCompare);
       }
     }
     // Re-review 7, m2: the file list was read after the head, so a push in

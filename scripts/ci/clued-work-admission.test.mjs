@@ -1744,3 +1744,102 @@ test("merge slot (review MINOR-2/3/4): advisory runs do not enforce it; a transi
   assert.match(result.errors[0].error, /Owner review door is unavailable/);
   assert.equal(calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs")).length, 0);
 });
+
+// --- Owner Decision a0d93cd0: merging main into an approved head keeps its approval.
+
+test("evaluate (Owner Decision a0d93cd0): a head that only merged main keeps the approval of the head before it", async () => {
+  const DOOR = `POST ${PUBLIC.url}/rest/v1/rpc/${OWNER_REVIEW_RPC}`;
+  const SCRIPT = "scripts/ci/clued-work-admission.mjs";
+  const APPROVED = "1".repeat(40);
+  const MIDDLE = "2".repeat(40);
+  const MAIN_1 = "3".repeat(40);
+  const MAIN_2 = "4".repeat(40);
+  const OLD_BASE = "5".repeat(40);
+  const pending = { body: { status: "ok", admitted: false, owner_request: { request_id: "r1", status: "pending", confirm_path: "/confirm/r1" } } };
+  const granted = { body: { status: "ok", admitted: true, grant: { grant_id: "g-approved", replayed: true } } };
+  // A world: commits and their parents, the compares the walk reads, the heads
+  // with a green admission check, and the door's answer per commit.
+  const run = async ({ parents = { [HEAD]: [APPROVED, MAIN_1] }, compares = {}, green = [APPROVED], door = {} } = {}) => {
+    const compareAnswer = (call) => {
+      const pair = call.url.split("/compare/")[1].split("?")[0];
+      if (pair in compares) return compares[pair];
+      if (pair === `${TIP}...${HEAD}`) return { body: { status: "ahead", files: [{ filename: SCRIPT }] } };
+      if (pair.startsWith(`${TIP}...`)) return { body: { status: "diverged", merge_base_commit: { sha: OLD_BASE }, files: [{ filename: SCRIPT }] } };
+      if (pair === `${OLD_BASE}...${TIP}`) return { body: { status: "ahead", files: [{ filename: ".github/workflows/other.yml" }] } };
+      if (pair.endsWith(`...${HEAD}`)) return { body: { status: "ahead", files: [{ filename: ".github/workflows/other.yml" }, { filename: "docs/x.md" }] } };
+      return { body: { status: "ahead", files: [] } };
+    };
+    const commitAnswer = (call) => {
+      const rest = call.url.split("/commits/")[1];
+      const sha = rest.slice(0, 40);
+      if (rest.includes("/check-runs")) {
+        return { body: { check_runs: green.includes(sha) ? [appCheckRun({ head_sha: sha })] : [] } };
+      }
+      return { body: { sha, parents: (parents[sha] ?? [OLD_BASE]).map((p) => ({ sha: p })) } };
+    };
+    const doorAnswer = (call) => {
+      const sha = call.body.p_input.resources[0].split("/").pop();
+      return door[sha] ?? (sha === APPROVED ? granted : pending);
+    };
+    const { fetchImpl, calls } = fakeFetch({
+      [`GET https://api.test/repos/o/r/compare/${TIP}...`]: compareAnswer, [COMPARE]: compareAnswer, [COMMIT]: commitAnswer,
+      [FILES]: { body: [{ filename: SCRIPT, status: "modified" }] }, [VERIFY]: { body: admittedPayload }, [DOOR]: doorAnswer });
+    const outcome = await evaluateIn({ env: env({ CLUED_OWNER_REVIEW_ENFORCE: "true" }), event: withClaim(), eventName: "pull_request", fetchImpl });
+    const asked = calls.filter((c) => c.url.endsWith(OWNER_REVIEW_RPC)).map((c) => c.body.p_input.resources[0].split("/").pop());
+    return { outcome, asked };
+  };
+
+  // The approved head with main merged in: the approval carries over, and the
+  // Owner is not asked about the new head.
+  let { outcome, asked } = await run();
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], JSON.stringify(outcome.reasons));
+  assert.equal(outcome.owner_review.carried_from, APPROVED);
+  assert.equal(outcome.owner_review.grant_id, "g-approved");
+  assert.ok(outcome.notices.some((n) => n.startsWith(`owner_review_carried:g-approved from ${APPROVED}`)));
+  assert.deepEqual(asked, [APPROVED]);
+
+  // Two merges of main in a row: the deepest admitted head is asked.
+  ({ outcome, asked } = await run({ parents: { [HEAD]: [MIDDLE, MAIN_2], [MIDDLE]: [APPROVED, MAIN_1] }, green: [MIDDLE, APPROVED] }));
+  assert.equal(outcome.verdict, "ADMITTED");
+  assert.deepEqual(asked, [APPROVED]);
+
+  const askedAboutHead = (result) => {
+    assert.equal(result.outcome.verdict, "REJECTED");
+    assert.match(result.outcome.reasons[0], /^owner_review_required/);
+    assert.equal(result.asked.at(-1), HEAD);
+  };
+  // The merge changed the protected file the pull request changes: a new approval.
+  let result = await run({ compares: { [`${APPROVED}...${HEAD}`]: { body: { status: "ahead", files: [{ filename: SCRIPT }] } } } });
+  askedAboutHead(result);
+  assert.deepEqual(result.asked, [HEAD]);
+  // Main changed that file since the approved head's base: a new approval.
+  result = await run({ compares: { [`${OLD_BASE}...${TIP}`]: { body: { status: "ahead", files: [{ filename: SCRIPT }] } } } });
+  askedAboutHead(result);
+  assert.deepEqual(result.asked, [HEAD]);
+  // The merged-in commit is not on main.
+  result = await run({ compares: { [`${MAIN_1}...${TIP}`]: { body: { status: "diverged", files: [] } } } });
+  assert.deepEqual(result.asked, [HEAD]);
+  // A head that is not a merge, or a merge of three parents.
+  result = await run({ parents: { [HEAD]: [APPROVED] } });
+  assert.deepEqual(result.asked, [HEAD]);
+  result = await run({ parents: { [HEAD]: [APPROVED, MAIN_1, MAIN_2] } });
+  assert.deepEqual(result.asked, [HEAD]);
+  // The earlier head was never admitted: the door is not asked about it.
+  result = await run({ green: [] });
+  assert.deepEqual(result.asked, [HEAD]);
+  // A long compare is not trusted.
+  result = await run({ compares: { [`${APPROVED}...${HEAD}`]: { body: { status: "ahead", files: Array.from({ length: 300 }, (_, i) => ({ filename: `docs/${i}.md` })) } } } });
+  assert.deepEqual(result.asked, [HEAD]);
+  // The door no longer admits the earlier head (its grant was revoked): the
+  // Owner is asked about the new head.
+  result = await run({ door: { [APPROVED]: pending } });
+  askedAboutHead(result);
+  assert.deepEqual(result.asked, [APPROVED, HEAD]);
+  assert.ok(result.outcome.notices.some((n) => n.startsWith(`owner_review_not_carried: ${APPROVED}`)));
+  // The door is down: a transient rejection, so the re-verification leaves the check alone.
+  result = await run({ door: { [APPROVED]: { status: 503, body: null } } });
+  assert.equal(result.outcome.verdict, "REJECTED");
+  assert.equal(result.outcome.owner_review.kind, "transient");
+  assert.match(result.outcome.reasons[0], /^owner_review_unavailable:transient/);
+  assert.deepEqual(result.asked, [APPROVED]);
+});
