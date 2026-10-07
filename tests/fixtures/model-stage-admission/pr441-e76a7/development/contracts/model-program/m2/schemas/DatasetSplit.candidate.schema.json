@@ -1,0 +1,233 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "split_id",
+    "dataset_split_ref",
+    "domain_mapping_status",
+    "purpose_description",
+    "experiment_scope",
+    "allowed_consumers",
+    "allowed_uses",
+    "final_holdout",
+    "exposure_records",
+    "sample_ids",
+    "schema_version",
+    "candidate_definition_ref",
+    "split_revision",
+    "parent_boundary",
+    "purpose_id",
+    "fixed_candidate_binding",
+    "erasure_propagation_ref"
+  ],
+  "properties": {
+    "split_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "dataset_split_ref": {
+      "const": null
+    },
+    "domain_mapping_status": {
+      "const": "UNRESOLVED"
+    },
+    "purpose_description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "experiment_scope": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "allowed_consumers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "allowed_uses": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "weight_learning",
+        "prompt_or_architecture_tuning",
+        "calibration_fit",
+        "selection"
+      ],
+      "properties": {
+        "weight_learning": {
+          "type": "boolean"
+        },
+        "prompt_or_architecture_tuning": {
+          "type": "boolean"
+        },
+        "calibration_fit": {
+          "type": "boolean"
+        },
+        "selection": {
+          "type": "boolean"
+        }
+      }
+    },
+    "final_holdout": {
+      "type": "boolean"
+    },
+    "exposure_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_id",
+          "consumer_id",
+          "purpose_description",
+          "used_for_selection",
+          "source_revision"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+          },
+          "consumer_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+          },
+          "purpose_description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "used_for_selection": {
+            "type": "boolean"
+          },
+          "source_revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      },
+      "minItems": 0,
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "sample_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "schema_version": {
+      "const": "clued.model-dataset-split-candidate/1"
+    },
+    "candidate_definition_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "definition_id",
+        "version",
+        "sha256"
+      ],
+      "properties": {
+        "definition_id": {
+          "const": "clued.model-program.DatasetSplit"
+        },
+        "version": {
+          "const": "v0.1-candidate"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "split_revision": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "parent_boundary": {
+      "enum": [
+        "TRAINING",
+        "DEVELOPMENT",
+        "QUALIFICATION",
+        "FINAL_HOLDOUT"
+      ]
+    },
+    "purpose_id": {
+      "enum": [
+        "training",
+        "development",
+        "calibration_fit",
+        "selection_policy_validation",
+        "qualification",
+        "final_holdout"
+      ]
+    },
+    "fixed_candidate_binding": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "candidate_revision_sha256",
+            "calibrator_revision",
+            "threshold_policy_revision",
+            "workflow_revision",
+            "scorer_revision",
+            "prompt_revision",
+            "schema_revision"
+          ],
+          "properties": {
+            "candidate_revision_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "calibrator_revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+            },
+            "threshold_policy_revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+            },
+            "workflow_revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+            },
+            "scorer_revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+            },
+            "prompt_revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+            },
+            "schema_revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+            }
+          }
+        }
+      ]
+    },
+    "erasure_propagation_ref": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:clued:model-program:m2:candidate:DatasetSplit"
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:clued:model-program:m2:candidate:SelectionInput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_revision_sha256",
+    "split_id",
+    "purpose_description",
+    "experiment_scope",
+    "consumer_id",
+    "saved_output_sha256",
+    "scorer_revision",
+    "normalized_score_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "clued.model-m2-selection-input-candidate/1"
+    },
+    "manifest_revision_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "split_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "purpose_description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "experiment_scope": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "consumer_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "saved_output_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "scorer_revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "normalized_score_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}
