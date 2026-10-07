@@ -38,12 +38,16 @@
 //
 // Configuration (runner machine environment, e.g. the runner's .env file):
 //   CLUED_RUNNER_HOOK_REPOSITORY   owner/name this runner serves (required)
-//   CLUED_RUNNER_HOOK_TOKEN_FILE   file holding a read-only fine-grained
-//                                  GitHub token (actions and contents: read)
+//   CLUED_RUNNER_HOOK_APP_ID       id of the hook's own read-only GitHub App
+//   CLUED_RUNNER_HOOK_APP_KEY_FILE file holding that App's private key (PEM)
+//   CLUED_RUNNER_HOOK_TOKEN_FILE   older alternative to the App: a file holding
+//                                  a read-only GitHub token (actions and
+//                                  contents: read); used only when no App is set
 //   CLUED_RUNNER_HOOK_ENFORCE      "true" refuses; anything else only reports
 //   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the admission run (480)
 // It needs Node 18 or newer (the runner bundles one under externals/).
 
+import { createSign } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,14 +62,68 @@ export function workflowPathOf(env) {
   return match ? match[1] : null;
 }
 
-async function github(fetchImpl, token, url, { allowMissing = false } = {}) {
+async function github(fetchImpl, token, url, { allowMissing = false, method = "GET", body, expect = 200 } = {}) {
   const response = await fetchImpl(`https://api.github.com${url}`, {
+    method,
     headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "user-agent": "clued-runner-hook",
-      "x-github-api-version": "2022-11-28" },
+      "x-github-api-version": "2022-11-28", ...(body ? { "content-type": "application/json" } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
   if (allowMissing && response.status === 404) return null;
-  if (response.status !== 200) throw new Error(`GitHub ${url} returned ${response.status}`);
+  if (response.status !== expect) throw new Error(`GitHub ${url} returned ${response.status}`);
   return response.json();
+}
+
+// Owner Decision d8bc893c: the hook calls GitHub as its own read-only App, on
+// the App's rate limit. On 2026-10-07 an Agent's script spent the Owner
+// account's hourly limit, which the hook's personal token shared, and every
+// pull request job was refused. The App's key mints a one-hour installation
+// token for this repository only, with actions and contents read whatever
+// else the App may hold. Every job can read the key (the hook runs as the
+// runner's account), so the clued-admission App, which posts the admission
+// checks, must never be the one configured here: its id is refused.
+// The same id as ADMISSION_APP_ID in scripts/ci/clued-work-admission.mjs
+// (this file is installed alone, so it keeps its own copy; a test compares them).
+export const ADMISSION_APP_ID = 5164952;
+
+function base64url(input) {
+  return Buffer.from(input).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+export function appJwt(appId, privateKeyPem, nowSeconds) {
+  const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const payload = base64url(JSON.stringify({ iat: nowSeconds - 60, exp: nowSeconds + 540, iss: String(appId) }));
+  const signer = createSign("RSA-SHA256");
+  signer.update(`${header}.${payload}`);
+  return `${header}.${payload}.${base64url(signer.sign(privateKeyPem))}`;
+}
+
+async function readToken({ env, fetchImpl, readFile, now, repository }) {
+  const appId = (env.CLUED_RUNNER_HOOK_APP_ID ?? "").trim();
+  const keyFile = (env.CLUED_RUNNER_HOOK_APP_KEY_FILE ?? "").trim();
+  if (appId || keyFile) {
+    if (!/^[0-9]{1,20}$/.test(appId)) throw new Error("CLUED_RUNNER_HOOK_APP_ID is not set to an App id on this runner.");
+    if (Number(appId) === ADMISSION_APP_ID) {
+      throw new Error(`App ${appId} is the clued-admission App; its key must not be on a runner. Configure the hook's read-only App.`);
+    }
+    if (!keyFile) throw new Error("CLUED_RUNNER_HOOK_APP_KEY_FILE is not set on this runner.");
+    const key = String(readFile(keyFile, "utf8")).trim();
+    if (!key) throw new Error(`${keyFile} is empty.`);
+    const jwt = appJwt(appId, key, Math.floor(now() / 1000));
+    const installation = await github(fetchImpl, jwt, `/repos/${repository}/installation`);
+    if (!installation || !/^[0-9]{1,20}$/.test(String(installation.id))) throw new Error(`App ${appId} has no installation on ${repository}.`);
+    const minted = await github(fetchImpl, jwt, `/app/installations/${installation.id}/access_tokens`, { method: "POST", expect: 201,
+      body: { repositories: [repository.split("/")[1]], permissions: { actions: "read", contents: "read" } } });
+    if (!minted || typeof minted.token !== "string" || !minted.token) throw new Error(`App ${appId} returned no installation token.`);
+    return minted.token;
+  }
+  const tokenFile = (env.CLUED_RUNNER_HOOK_TOKEN_FILE ?? "").trim();
+  if (!tokenFile) {
+    throw new Error("CLUED_RUNNER_HOOK_APP_ID and CLUED_RUNNER_HOOK_APP_KEY_FILE (or the older CLUED_RUNNER_HOOK_TOKEN_FILE) are not set on this runner.");
+  }
+  const token = String(readFile(tokenFile, "utf8")).trim();
+  if (!token) throw new Error(`${tokenFile} is empty.`);
+  return token;
 }
 
 // The workflow files a pull request changes against the default branch (from
@@ -131,7 +189,8 @@ async function admissionRun(fetchImpl, token, repository, headSha, since) {
     .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)))[0] ?? null;
 }
 
-export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  now = () => Date.now() }) {
   const result = { allow: false, reason: "", event: env.GITHUB_EVENT_NAME ?? "", ref: env.GITHUB_REF ?? "", workflow: null };
   const repository = (env.CLUED_RUNNER_HOOK_REPOSITORY ?? "").trim();
   const defaultBranch = (env.CLUED_RUNNER_HOOK_DEFAULT_BRANCH ?? "").trim() || "main";
@@ -165,14 +224,11 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
     result.reason = `${event} on ${result.ref} is not allowed on this runner`;
     return result;
   }
-  const tokenFile = (env.CLUED_RUNNER_HOOK_TOKEN_FILE ?? "").trim();
-  if (!tokenFile) throw new Error("CLUED_RUNNER_HOOK_TOKEN_FILE is not set on this runner.");
-  const token = String(readFile(tokenFile, "utf8")).trim();
-  if (!token) throw new Error(`${tokenFile} is empty.`);
   const sha = (env.GITHUB_SHA ?? "").trim();
   if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("GITHUB_SHA is not a commit SHA.");
   const runId = (env.GITHUB_RUN_ID ?? "").trim();
   if (!/^[0-9]{1,20}$/.test(runId)) throw new Error("GITHUB_RUN_ID is not a run id.");
+  const token = await readToken({ env, fetchImpl, readFile, now, repository });
   const run = await github(fetchImpl, token, `/repos/${repository}/actions/runs/${runId}`);
   const attempt = Math.max(Number(run && run.run_attempt) || 1, Number.parseInt(env.GITHUB_RUN_ATTEMPT ?? "1", 10) || 1);
   if (attempt > 1) {
