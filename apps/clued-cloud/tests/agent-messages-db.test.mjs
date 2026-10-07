@@ -206,9 +206,87 @@ test('agent messages: claim-addressed requests, replies, inbox, summary and thei
     rejected(await send('codex', { to: { claim_id: holder.claim_id }, subject: 'x', body: 'y' }), 'agent_message_claim_not_live');
     rejected(await send('codex', { to: { claim_id: uuid() }, subject: 'x', body: 'y' }), 'agent_message_claim_not_found');
 
+    // BUG-20261007-004 (migration 20261007180000): only the recipient marks a message read. A claim
+    // that names no holder session reaches every session of its Binding; when another session read
+    // its inbox first, the message stopped being unread and the holder never saw it.
+    const readAt = async (messageId) => (await admin.query(
+      'select read_at from clued_private.agent_messages_v1 where message_id=$1', [messageId])).rows[0].read_at;
+    const taskC = await createTask('holder without a session');
+    const noSession = (await claim(taskC, 'claude', undefined, ['apps/z/**'])).claim;
+    assert.equal(noSession.holder_session_ref, null);
+    const toNoSession = committed(await send('codex', { to: { claim_id: noSession.claim_id }, session_ref: 'codex-1',
+      subject: 'Need apps/z', body: 'Can you release apps/z/**?' })).message.message_id;
+    for (const read of [{ session_ref: 'session-other' }, {}, { session_ref: 'session-other', view: 'unread' }]) {
+      box = ok(await inbox('claude', read));
+      assert.equal(await readAt(toNoSession), null, `a non-holder read leaves it unread: ${JSON.stringify(read)}`);
+      const seen = box.messages.find((m) => m.message_id === toNoSession);
+      assert.ok(seen, `another session still sees it: ${JSON.stringify(read)}`);
+      assert.deepEqual([seen.direction, seen.marked_read, seen.read_at], ['incoming', false, null]);
+      assert.equal(box.left_unread, 1, JSON.stringify(box));
+      assert.match(box.left_unread_reason, /claim_id/);
+    }
+    // The holder's renewal (the Worker folds the summary for that claim in) and resume still show it.
+    const renewedC = committed(await agent('claude', 'clued_work_renew_v1', { scope: 'global',
+      claim_id: noSession.claim_id, fence: noSession.fence, lease_version: noSession.lease_version, progress_ref: 'sha-c-1' }));
+    assert.equal(renewedC.claim.claim_id, noSession.claim_id);
+    for (const input of [{ claim_id: noSession.claim_id }, { session_ref: 'session-holder' }]) {
+      s = ok(await summary('claude', input));
+      assert.ok(s.latest_unread.some((m) => m.message_id === toNoSession), `latest_unread for ${JSON.stringify(input)}`);
+      assert.ok(s.unread_count >= 1 && s.open_request_count >= 1, JSON.stringify(s));
+    }
+    // The holder reads it by naming the claim; then it is read for everyone.
+    await assert.rejects(() => inbox('claude', { claim_id: noSession.claim_id, thread_id: toNoSession }),
+      /agent_message_claim_id_invalid/);
+    await assert.rejects(() => inbox('claude', { claim_id: 'claim' }), /agent_message_claim_id_invalid/);
+    box = ok(await inbox('claude', { session_ref: 'session-holder', claim_id: noSession.claim_id }));
+    assert.equal(box.claim_id, noSession.claim_id);
+    assert.deepEqual(box.messages.map((m) => [m.message_id, m.marked_read]), [[toNoSession, true]]);
+    assert.equal(box.left_unread, 0);
+    assert.equal('left_unread_reason' in box, false);
+    assert.ok(await readAt(toNoSession));
+    s = ok(await summary('claude', { claim_id: noSession.claim_id }));
+    assert.deepEqual([s.unread_count, s.open_request_count, s.latest_unread], [0, 1, []], 'read, not yet answered');
+
+    // A claim with a holder session: a read without session_ref sees it but leaves it to that session;
+    // another session does not see it; the holder's own session reads it.
+    const taskD = await createTask('holder with a session');
+    const withSession = (await claim(taskD, 'claude', 'session-d', ['apps/w/**'])).claim;
+    const toSessionD = committed(await send('codex', { to: { claim_id: withSession.claim_id }, session_ref: 'codex-1',
+      kind: 'info', subject: 'FYI apps/w', body: 'Rebased on apps/w.' })).message.message_id;
+    box = ok(await inbox('claude', { view: 'unread' }));
+    assert.equal(await readAt(toSessionD), null, 'a read without session_ref leaves it to the holder session');
+    assert.deepEqual(box.messages.filter((m) => m.message_id === toSessionD).map((m) => m.marked_read), [false]);
+    assert.equal(ok(await inbox('claude', { session_ref: 'session-e' })).messages
+      .some((m) => m.message_id === toSessionD), false);
+    s = ok(await summary('claude', { session_ref: 'session-d' }));
+    assert.deepEqual(s.latest_unread.map((m) => m.message_id), [toSessionD], 'the holder resume still shows it');
+    box = ok(await inbox('claude', { session_ref: 'session-d', view: 'unread' }));
+    assert.deepEqual(box.messages.map((m) => [m.message_id, m.marked_read]), [[toSessionD, true]]);
+    assert.ok(await readAt(toSessionD));
+    // mark_read false marks nothing and reports nothing left behind.
+    const toSessionD2 = committed(await send('codex', { to: { claim_id: withSession.claim_id }, session_ref: 'codex-1',
+      kind: 'info', subject: 'FYI 2', body: 'Again.' })).message.message_id;
+    box = ok(await inbox('claude', { session_ref: 'session-d', view: 'unread', mark_read: false }));
+    assert.deepEqual([box.messages.map((m) => [m.message_id, m.marked_read]), box.left_unread], [[[toSessionD2, false]], 0]);
+    assert.equal(await readAt(toSessionD2), null);
+    // A message to the whole connection is still read by whichever of its sessions reads it.
+    const toConnection = committed(await send('codex', { to: { binding_id: bindingIds.claude }, session_ref: 'codex-1',
+      kind: 'info', subject: 'To all of you', body: 'Main is green again.' })).message.message_id;
+    box = ok(await inbox('claude', { session_ref: 'session-other', view: 'unread' }));
+    assert.deepEqual(box.messages.filter((m) => m.message_id === toConnection).map((m) => m.marked_read), [true]);
+    assert.ok(await readAt(toConnection));
+    committed(await agent('claude', 'clued_work_release_v1',
+      { scope: 'global', claim_id: noSession.claim_id, fence: noSession.fence, outcome: 'completed' }));
+    committed(await agent('claude', 'clued_work_release_v1',
+      { scope: 'global', claim_id: withSession.claim_id, fence: withSession.fence, outcome: 'completed' }));
+
     // To a connection (and session) directly; not to yourself; not to another user's or a blind connection.
     const direct = committed(await send('claude', { to: { binding_id: bindingIds.codex, session_ref: 'codex-2' },
       session_ref: 'session-b', kind: 'info', subject: 'Heads-up', body: 'Touching apps/y next.' }));
+    // A read without session_ref sees a message to one session but leaves it unread for that session.
+    box = ok(await inbox('codex', { view: 'unread' }));
+    assert.deepEqual(box.messages.map((m) => [m.message_id, m.marked_read]), [[direct.message.message_id, false]]);
+    assert.equal(box.left_unread, 1);
     assert.equal(ok(await summary('codex', { session_ref: 'codex-2' })).unread_count, 1);
     assert.equal(ok(await summary('codex', { session_ref: 'codex-1' })).unread_count, 0);
     assert.equal(direct.message.kind, 'info');
