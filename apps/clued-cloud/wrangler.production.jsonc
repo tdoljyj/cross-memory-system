@@ -1,6 +1,10 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "clued-cloud",
+  "vars": {
+    "CLUED_MODEL_DOMAIN_SOURCE_V1": "true",
+    "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": "false"
+  },
   "main": "./dist/server/index.js",
   "build": {
     "command": "node scripts/production-release-gate.mjs --pre-deploy"

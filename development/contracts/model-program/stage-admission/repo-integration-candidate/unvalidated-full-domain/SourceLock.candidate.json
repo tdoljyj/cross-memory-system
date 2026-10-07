@@ -1,0 +1,85 @@
+{
+  "main_commit": "d73df0d28cb2a341fcc3ea34b2215454c95e0e13",
+  "PR441_contract_commit": "e76a7db7edc6b47b5a719e165f688621efa9580a",
+  "files": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "commit": "d73df0d28cb2a341fcc3ea34b2215454c95e0e13",
+      "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "bytes": 72625,
+      "source_role": "SourceCopiedRead",
+      "actual_service_installation_proven": false
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922140000_context_v2_terminal_restore_guard.sql",
+      "commit": "d73df0d28cb2a341fcc3ea34b2215454c95e0e13",
+      "sha256": "45b2d3f603c67e7db9fdc4431918af257e54b0db901ce1d63f22e0585a740d7a",
+      "bytes": 6064,
+      "source_role": "SourceCopiedRead",
+      "actual_service_installation_proven": false
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260925020000_record_update_field_merge.sql",
+      "commit": "d73df0d28cb2a341fcc3ea34b2215454c95e0e13",
+      "sha256": "9f5499b267bbfeae1e621d7ba5c11226b4ef256f02692809811d6f96ad6f6d32",
+      "bytes": 6418,
+      "source_role": "SourceCopiedRead",
+      "actual_service_installation_proven": false
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261001030000_task_dependency_target_guard.sql",
+      "commit": "d73df0d28cb2a341fcc3ea34b2215454c95e0e13",
+      "sha256": "f9278bdc2174870dcf14a58ae0c04f413351047e0c017b8d6bffe2dcd9e26ac0",
+      "bytes": 4082,
+      "source_role": "SourceCopiedRead",
+      "actual_service_installation_proven": false
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002060000_now_conflict_null_project_guard.sql",
+      "commit": "d73df0d28cb2a341fcc3ea34b2215454c95e0e13",
+      "sha256": "e8341f5c7093e482870c81a48ec869b51f9abcaedbc5ddd5e11078c385597129",
+      "bytes": 1616,
+      "source_role": "SourceCopiedRead",
+      "actual_service_installation_proven": false
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002210000_work_claims_resource_kinds.sql",
+      "commit": "d73df0d28cb2a341fcc3ea34b2215454c95e0e13",
+      "sha256": "d2ee5761bbbb37303d85fbc282524581db06f780d4af0d8acde21522603179bb",
+      "bytes": 8555,
+      "source_role": "SourceCopiedRead",
+      "actual_service_installation_proven": false
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002220000_owner_grants_v1.sql",
+      "commit": "d73df0d28cb2a341fcc3ea34b2215454c95e0e13",
+      "sha256": "da403b8fa4ad5a08747573a187d9a49f56ae29576d5c64adea8e4509d1e00579",
+      "bytes": 34947,
+      "source_role": "SourceCopiedRead",
+      "actual_service_installation_proven": false
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924200000_information_flow_context_policy.sql",
+      "commit": "d73df0d28cb2a341fcc3ea34b2215454c95e0e13",
+      "sha256": "2f541ce5f718d679cc1a9d72f864c8fbee7bc102a760a30559bb20f064a73b46",
+      "bytes": 80080,
+      "source_role": "SourceCopiedRead",
+      "actual_service_installation_proven": false
+    },
+    {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "commit": "d73df0d28cb2a341fcc3ea34b2215454c95e0e13",
+      "sha256": "d9473ccfd18796039c12e3214184b489037cfa49d8f9dadd6967817f3b9ba024",
+      "bytes": 181263,
+      "source_role": "SourceCopiedRead",
+      "actual_service_installation_proven": false
+    },
+    {
+      "path": "work/host-harness/m2-live-reader-revised-candidate/model-domain-readonly.mjs",
+      "sha256": "c581d542241211adffb00425e7fe446724e5be285eed598028936528522f4343",
+      "bytes": 12949,
+      "source_role": "FROZEN_LOCAL_ENGINEERING_DEPENDENCY",
+      "authority_effect": "NONE"
+    }
+  ]
+}

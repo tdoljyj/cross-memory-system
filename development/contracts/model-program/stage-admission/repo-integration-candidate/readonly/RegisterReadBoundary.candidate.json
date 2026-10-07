@@ -1,0 +1,44 @@
+{
+  "schema": "clued.model-domain-register-read-separation-candidate/1",
+  "status": "UNINSTALLED_SOURCE_CANDIDATE",
+  "authority_effect": "NONE",
+  "actual_grants_created": 0,
+  "existing_protected_storage": [
+    "clued_private.owner_grant_actions",
+    "clued_private.owner_grants_v1",
+    "clued_private.native_confirmation_tokens"
+  ],
+  "ordinary_record_flags_sufficient": false,
+  "registered_actions_required": [
+    "model.dataset_split.verify",
+    "model.dataset_split.recognize",
+    "model.dataset_split.producer"
+  ],
+  "required_door": "model-domain",
+  "current_source_catalog_registration": "NOT_FOUND_IN_MAIN412E_REGISTERED_ACTION_SOURCES; production not queried and no absence inference beyond this source",
+  "registration_path": "Existing formal migration/review door registers exact actions; existing direct-human Native Owner confirmation creates actual protected grants. Reader never registers/actions/grants itself.",
+  "required_grant_fields": {
+    "grantee_binding_id": "Actual existing authenticated Binding; wildcard/null grantee refused",
+    "user_id": "Actual service owner from resolve_binding",
+    "task_id": "1502fd80-8ff8-4adc-b4f5-da6d462f4f8a",
+    "resources": [
+      "record:<exact-permission-or-producer-id>@<version>#<server-canonical-content_hash>"
+    ],
+    "max_window_seconds": 3600,
+    "max_uses": null,
+    "revoked_at": null,
+    "token_id": "Existing native_confirmation_tokens FK, not a credential value",
+    "receipt_id": "Existing protected Owner-grant Receipt FK"
+  },
+  "producer_source": "Protected model.dataset_split.producer grant exact-pins producer projection version/hash/registry/principal. Ordinary producer State is matching data, not the registration authority.",
+  "domain_permission_source": "Protected model.dataset_split.recognize grant exact-pins permission projection version/hash; ordinary user_explicit Record alone cannot grant domain permission.",
+  "read_scope": "Protected model.dataset_split.verify time-bound grant permits only existing-source verification; no issuer/newDomainAuthorityReceipt/Gold/DataGate/model/data use",
+  "installation_scope_not_granted": true,
+  "publicMCP_route_registered": false,
+  "HTTP_routes_added": 0,
+  "ActorDTO": "Private PostgreSQL/Worker verifier only; external response excludes user_id/binding_id/actor IDs/token data",
+  "native_resource_compatibility": "Only existing registered record: kind. Fixed Project/Task/definition/schema/registry/principal are independently enforced by service policy and exact hash-pinned projection fields. No scope:/model-subject: kind is registered or accepted.",
+  "ref_resolver_boundary": "Separate same-Binding RPC internal projection resolver; context:read + fixed exact Project + currentness, only id/version/server content_hash. Cannot authorize verification, recognition, training, M2 or DataGate; missing Native grants still deny verify before canonical target reads.",
+  "native_confirmation_choice": "Existing three-action Owner Request bundle. High risk remains high. Owner must select grant, requester only, exact resources, <=3600seconds and no max_uses. Default once/24hours is intentionally rejected by source verifier.",
+  "formal_migration_file": "Not created. Use Supabase CLI migration new before official numbered migration."
+}
