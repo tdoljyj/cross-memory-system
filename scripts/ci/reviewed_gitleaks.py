@@ -12,7 +12,7 @@ import tomllib
 
 PREFIX = "# clued-reviewed-finding: "
 COUNT_PREFIX = "# clued-reviewed-count: "
-EXPECTED_COUNT = 479
+EXPECTED_COUNT = 480
 IMAGE = "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 KINDS = {
     "GIT_OBJECT_METADATA", "OWNER_COMMIT_ID", "API_BUNDLE_DIGEST",
@@ -20,6 +20,9 @@ KINDS = {
     # A Supabase publishable key: a public client credential by design, the same
     # value app/supabase-public-config.ts ships to every browser (reviewed 2026-10-01).
     "PUBLIC_CLIENT_KEY",
+    # A made-up bearer token in a test under apps/clued-cloud/tests/ that never
+    # authenticated anywhere (reviewed 2026-10-07, Owner decision, Task 27aeb894).
+    "SYNTHETIC_TEST_TOKEN",
 }
 BASE_CONFIG = {
     "title": "Clued Gitleaks configuration",
