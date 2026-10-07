@@ -58,8 +58,8 @@ begin
     or (m ? 'restore_job_id' and coalesce(m->>'restore_job_id','') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
     or (m ? 'content_ref' and (jsonb_typeof(m->'content_ref') is distinct from 'object'
       or (select array_agg(k order by k) from jsonb_object_keys(m->'content_ref') k) is distinct from array['mime_type','sha256','size','staging_id']
-      or jsonb_typeof(m->'content_ref'->'size') is distinct from 'number'
-      or (m->'content_ref'->>'size')::numeric not between 1 and 5242880
+      or case when jsonb_typeof(m->'content_ref'->'size')='number'
+        then (m->'content_ref'->>'size')::numeric not between 1 and 5242880 else true end
       or coalesce(m->'content_ref'->>'sha256','') !~ '^[0-9a-f]{64}$'
       or coalesce(m->'content_ref'->>'staging_id','') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
       or not clued_private.storage_binary_mime_v1(m->>'destination_path',m->'content_ref'->>'mime_type'))) then

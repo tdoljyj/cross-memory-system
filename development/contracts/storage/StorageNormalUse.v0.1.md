@@ -330,7 +330,7 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 - **授权**：等级为 `overwrite`（与文本 `replace` 相同）。暂存本身仍按 `create_file` 评估；每个写入策略都含 `create_file`（`storage_write_actions_v1`），所以有 `overwrite` 就能暂存。二进制门槛（§6.1 “正常使用”）在暂存、消费与执行三处照常检查。
 - **提交**：`storage_jobs_policy_core_v2` 的 `replace` 分支先用 `storage_binary_replace_mutation_v1` 把暂存绑定为 `content_ref`（路径、类型、sha256 必须与暂存行一致，扩展名与类型须在 §6.3 的允许表中，大小 ≤ **5 MiB**，否则 `storage_job_input_invalid`），再按扩展后的 `storage_replace_shape_v1` 校验；`storage_staging_consume_v1` 照常把暂存行置为 `consumed`。
 - **执行**：执行器在任何预留之前取回暂存并完整核对 sha256（不符 `STORAGE_CONTENT_STAGING_MISMATCH`，effect 为 0），读入内存（≤ 5 MiB）作为替换字节；预留前要求 Drive 上目标文件的类型**等于**暂存类型（不借 `replace` 改格式）、有 sha256、大小 ≤ 5 MiB，否则 `REPLACE_TARGET_UNSUPPORTED`。effect 与文本 `replace` 相同：旧 head 设 `keepForever` → 一次 media 上传（保持原类型，> 1 MiB 时上传超时 60 s）→ 取消更早的 pin。effect 内再次核对目标类型与字节。
-- **核验与结算**：provider attempt `clued.storage-replace-attempt/1` 的 `content_after` 取 `content_ref` 的 size / sha256（`storage_replace_attempt_v1`）；核验合同仍为 `clued.storage-replace-verified/1`；pin、K = 10、撤回、定时 / 原生恢复全部沿用 P4。撤回可用于 ≤ 5 MiB 的任何非 Google 原生类型目标（下载上限随之改为 5 MiB）。
+- **核验与结算**：provider attempt `clued.storage-replace-attempt/1` 的 `content_after` 取 `content_ref` 的 size / sha256（`storage_replace_attempt_v1`）；核验合同仍为 `clued.storage-replace-verified/1`；pin、K = 10、撤回、定时 / 原生恢复全部沿用 P4。撤回可用于 ≤ 5 MiB 的任何非 Google 原生类型目标（下载上限随之改为 5 MiB，超过 1 MiB 的下载窗口为 60 s）。撤回只要求 `overwrite`，不经过“正常使用”门槛：它不上传 Agent 提供的字节，只把同一文件在 Drive 中已保存、由 Clued pin 记录的旧 revision 原样写回（大小、sha256、md5 与 pin 一致才上传）。核验另要求二进制替换后的文件类型等于暂存类型。
 - **上限的理由**：一次 media 上传、整份在 Worker 内存中；更大的文件需要 resumable 替换，留待后续。
 
 ## 7. 额度

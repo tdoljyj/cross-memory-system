@@ -355,3 +355,11 @@ test("the verifier accepts a binary replace by size and sha256 of the new head",
     previous_revision_kept: true, releases_observed: true });
   assert.deepEqual(post.verified_proof.content_after, contentAfter(BIN_NEW));
 });
+
+test("the verifier refuses a binary replace whose file no longer has the staged type", async () => {
+  const d = binaryDrive(), seen = [], mutation = binaryMutation();
+  const f = effectFixture(mutation, d, { replacement: BIN_NEW, fetch: binaryFetch(d, seen) });
+  const result = await f.effect(f.request);
+  d.files.get("file").mimeType = "application/pdf";
+  await assert.rejects(verifier(d)({ profile, mutation, provider_before: before(), effect_result: result }), /DRIVE_POSTCONDITION_CONTENT_MISMATCH/);
+});
