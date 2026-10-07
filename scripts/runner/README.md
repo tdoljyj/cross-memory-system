@@ -28,9 +28,11 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
 
 ## Install (once per runner machine, by the Owner)
 
-1. **Create a read-only token.**
-   - Use a fine-grained GitHub token for this repository only.
-   - Grant Actions: read and Contents: read. Nothing else (Metadata: read comes with them).
+1. **Create the hook's read-only GitHub App** (once, shared by all runners; Owner Decision `d8bc893c`).
+   - In the Owner account: Settings → Developer settings → GitHub Apps → New GitHub App. Turn the webhook off. Repository permissions: Actions: read and Contents: read, nothing else (Metadata: read comes with them). Let it be installed on this account only.
+   - Install it on this repository only (Only select repositories). Note the App ID, then generate a private key (a `.pem` file).
+   - The hook calls GitHub as this App, on the App's own rate limit. It must not share a limit with the Owner's account: on 2026-10-07 an Agent's script spent the Owner's hourly limit, which the hook's personal token shared, and every pull request job was refused.
+   - Never use the clued-admission App here. It posts the admission checks, and every job can read the key on a runner; the hook refuses its App id. Do not use a second account's token either: a collaborator on a personal repository can always push.
 2. **Copy the check into a directory the runner's service account can read but not write.**
    - Linux or WSL2, as root:
 
@@ -38,12 +40,10 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
      install -d -m 755 /opt/clued-runner-hook
      install -m 644 scripts/runner/clued-runner-job-started.mjs /opt/clued-runner-hook/
      install -m 755 scripts/runner/clued-runner-job-started.sh /opt/clued-runner-hook/
-     printf '%s\n' '<token>' > /opt/clued-runner-hook/token
-     chown root:<runner group> /opt/clued-runner-hook/token
-     chmod 640 /opt/clued-runner-hook/token
+     install -m 640 -o root -g <runner group> <downloaded key>.pem /opt/clued-runner-hook/app.pem
      ```
 
-   - Windows: copy the `.mjs` and `.ps1` files to `C:\ProgramData\CluedRunnerHook\`. Write the token to `token` in the same folder. In the folder's security settings, give the runner service account Read only.
+   - Windows: copy the `.mjs` and `.ps1` files to `C:\ProgramData\CluedRunnerHook\`. Copy the key to `app.pem` in the same folder. In the folder's security settings, give the runner service account Read only.
    - Copy the files from a reviewed `main` commit, and note that commit. The installed copy does not follow the repository; update it by copying again.
 3. **Add these lines to the runner's `.env` file** (in the runner directory), then restart the runner service.
 
@@ -51,21 +51,24 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
    ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/clued-runner-hook/clued-runner-job-started.sh
    CLUED_RUNNER_HOOK_NODE=<runner directory>/externals/node20/bin/node
    CLUED_RUNNER_HOOK_REPOSITORY=tdoljyj/cross-memory-system
-   CLUED_RUNNER_HOOK_TOKEN_FILE=/opt/clued-runner-hook/token
+   CLUED_RUNNER_HOOK_APP_ID=<the App ID>
+   CLUED_RUNNER_HOOK_APP_KEY_FILE=/opt/clued-runner-hook/app.pem
    CLUED_RUNNER_HOOK_ENFORCE=false
    ```
 
-   On Windows, the hook line points to `C:\ProgramData\CluedRunnerHook\clued-runner-job-started.ps1`, and the node line points to `externals\node20\bin\node.exe`.
+   On Windows, the hook line points to `C:\ProgramData\CluedRunnerHook\clued-runner-job-started.ps1`, the node line points to `externals\node20\bin\node.exe`, and the key line to `C:\ProgramData\CluedRunnerHook\app.pem`.
+
+   A runner installed before the App reads a token file instead (`CLUED_RUNNER_HOOK_TOKEN_FILE`). The hook uses it only when no App is configured. When moving a runner to the App, replace that line with the two App lines, then delete the token file and revoke the token.
 4. **Check the output.** Watch one pull request run and one push to `main`. Each job log starts with a "Set up runner" section that shows `clued-runner-hook: ALLOW ...` or `WOULD REFUSE ...`.
 5. **Turn on enforcement.** Set `CLUED_RUNNER_HOOK_ENFORCE=true` and restart the runner.
 6. **Make the setting unreachable from jobs.** Every job runs as the runner's service account, including the ungated short checks that run a pull request's own code. On a standard install that account owns the runner directory and its `.env`, so a job can delete the hook line or set `CLUED_RUNNER_HOOK_ENFORCE=false`, and the next listener restart (a self-update, a service restart, a reboot) turns the check off for every later job (re-review 7, MAJOR-4). Do one of the following:
    - **Ephemeral runners (the only hard guarantee).** Register each runner with `--ephemeral` (or a just-in-time config) on a machine or VM that is reset after one job. A job then cannot leave anything behind for the next one.
    - **A hardened persistent runner (reduces the risk, not a guarantee; re-review 8, MINOR-4).** A job can still start a process that outlives it (on Windows, a scheduled task or a detached process escapes the job's cleanup), keep using the machine after its timeout, and read or change later jobs' work directories. These runners are Windows machines, where that is easiest.
-     - Linux: put the five settings in a root-owned systemd drop-in (`/etc/systemd/system/<runner service>.d/clued-hook.conf`, one `Environment=` line each) instead of `.env`. Make the runner directory, `.env`, `.runner`, `.credentials*`, `bin/` and `externals/` owned by root and only readable by the service account; leave `_work/` and `_diag/` writable. Configure the runner with `--disableupdate` (a self-update needs to write `bin/`) and update it by hand. Set `kernel.yama.ptrace_scope` to 1 or more so a job cannot attach to the listener.
+     - Linux: put the hook settings in a root-owned systemd drop-in (`/etc/systemd/system/<runner service>.d/clued-hook.conf`, one `Environment=` line each) instead of `.env`. Make the runner directory, `.env`, `.runner`, `.credentials*`, `bin/` and `externals/` owned by root and only readable by the service account; leave `_work/` and `_diag/` writable. Configure the runner with `--disableupdate` (a self-update needs to write `bin/`) and update it by hand. Set `kernel.yama.ptrace_scope` to 1 or more so a job cannot attach to the listener.
      - Windows: put the settings in the service's `Environment` value under `HKLM\SYSTEM\CurrentControlSet\Services\<runner service>` (administrators only). Give the service account Read on the runner folder except `_work` and `_diag`, and configure the runner with `--disableupdate`.
    - Either way, check after a restart that `clued-runner-hook: ALLOW ...` still appears in a job's "Set up runner" section.
 
-   The token file stays readable by jobs: the check runs as the same account. It is a read-only token (Actions and Contents: read) for this repository, which the job's own `GITHUB_TOKEN` can already read.
+   The App key stays readable by jobs: the check runs as the same account. With it a job can mint only what the App holds, read access (Actions and Contents) to this repository, which the job's own `GITHUB_TOKEN` can already read. A job could also spend the App's rate limit, which would refuse later jobs until it resets; it cannot spend the Owner account's.
 
 ## What it does not protect
 
