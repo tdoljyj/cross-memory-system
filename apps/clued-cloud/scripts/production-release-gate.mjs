@@ -4,6 +4,8 @@ import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import pg from 'pg';
+import { baselineVersion, evaluateLedger, historyOnlyDirectory, readLedger, readSqlDirectory }
+  from './migration-ledger.mjs';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const appDirectory = join(scriptDirectory, '..');
@@ -238,13 +240,36 @@ async function main() {
   const settled = await settleProjectionLag({ errors: evaluate(watchdog), watchdog,
     readWatchdog: () => readWatchdog(dbUrl), evaluate });
   watchdog = settled.watchdog;
-  const { errors } = settled;
+  // The committed ledger must be valid against this checkout, and production
+  // history must be the ledger (docs/maintenance/migration-ledger.md): every
+  // row up to history_through, with its recorded text, and no row the
+  // repository cannot account for. A newer row exactly as migrate mode records
+  // it for a pending file is reported, not blocked.
+  const ledger = await readLedger();
+  const ledgerReport = evaluateLedger({ ledger, history,
+    migrations: await readSqlDirectory(migrationsDirectory),
+    historyOnly: await readSqlDirectory(historyOnlyDirectory),
+    historicalThrough: baselineVersion(baseline) });
+  for (const filename of ledgerReport.pending) {
+    process.stderr.write(`pending migration (not in the ledger yet): ${filename}\n`);
+  }
+  for (const warning of ledgerReport.warnings) process.stderr.write(`::warning::${warning}\n`);
+  if (ledgerReport.missingRows.length) {
+    process.stderr.write('rows to add to supabase/ledger/production-history.json:\n' +
+      `${JSON.stringify(ledgerReport.missingRows, null, 2)}\n`);
+  }
+  // Ledger errors can carry production row names; print each one so a name
+  // the final message cannot hold does not hide the others.
+  for (const error of ledgerReport.errors) process.stderr.write(`ledger: ${error}\n`);
+  const errors = [...settled.errors, ...ledgerReport.errors];
   if (errors.length) throw new Error(`production_release_blocked:${errors.join(',')}`);
   const result = {
     status: 'passed', source_commit: commit,
     migration_source_sha256: sha256(sourceSql),
     production_history_version: baseline.production_history_version,
     checked_migration_count: migrationFiles.length,
+    migration_ledger_rows: ledger.rows.length,
+    migration_ledger_rows_to_add: ledgerReport.missingRows.length,
     projection_revisions: requiredKeys.map((key) => {
       const row = watchdog.projections.find((candidate) => candidate.projection_key === key);
       return { projection_key: key, revision: row.invalidation_revision };
