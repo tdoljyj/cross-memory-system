@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveReplacePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-replace-postcondition.mjs";
+import { bytesContentSource } from "./resource-center-storage-binary.fixture.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const md5 = value => createHash("md5").update(value).digest("hex");
@@ -10,6 +11,8 @@ const ACTIONS = ["inspect", "create_file", "create_topic"];
 const CLOUD = "public.clued_storage_cloud_worker_router_v2";
 const JOBS = "public.clued_storage_jobs_router_v2";
 const WRITE = "public.clued_storage_write_access_v1";
+const STAGING = "public.clued_storage_staging_v1";
+const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const TRACK = "20_P_产品与体验";
 
@@ -192,9 +195,11 @@ export async function testStorageReplace(t, admin, server, user, decision) {
     };
     return state;
   };
-  const executor = (target, storage, database = caller, observe = async () => {}) => {
+  const executor = (target, storage, database = caller, observe = async () => {}, staged = null) => {
     let loaded;
     return createResourceCenterCloudExecutor({ verified_result_mode: true,
+      // Binary replace (Decision 06aba6c5): the staged bytes are handed to the executor directly (never R2).
+      ...(staged ? { load_staged_content: async ({ content_ref }) => bytesContentSource(staged(content_ref), content_ref) } : {}),
       load_job: async ref => {
         loaded = await cloud({ action: "load", ...ref }, database);
         const descriptor = { ...loaded }; delete descriptor.credential_envelope; delete descriptor.oauth_client_id;
@@ -239,10 +244,42 @@ export async function testStorageReplace(t, admin, server, user, decision) {
     return { target, client, storage };
   };
   const replace = (path, version, extra) => ({ operation: "replace", target_kind: "file", destination_path: path, destination_file_version: version, ...extra });
-  const run = async (target, client, storage, mutation) => {
+  const run = async (target, client, storage, mutation, staged = null) => {
     const job = await submitJob(target, client, mutation);
-    return { job, result: await executor(target, storage).run(job.reference) };
+    return { job, result: await executor(target, storage, caller, async () => {}, staged).run(job.reference) };
   };
+  // Binary replace: "normal use" on the connection, then one staged object through the staging RPC.
+  const normalUse = async target => {
+    await admin.query("update clued_private.storage_connections_v1 set provider_scope_profile='normal' where id=$1", [target.connection]);
+    const next = (await admin.query("select coalesce(max(read_generation),0)+1 n from clued_private.storage_read_access_v1 where connection_id=$1", [target.connection])).rows[0].n;
+    await admin.query("update clued_private.storage_read_access_v1 set state='revoked',revoked_at=clock_timestamp(),revocation_receipt_id=$2 where connection_id=$1 and state='active'", [target.connection, target.receipt]);
+    await admin.query(`insert into clued_private.storage_read_access_v1(owner_id,connection_id,account_policy_id,classes,read_generation,disclosure_version,consent_receipt_id,content_profile)
+      select $1,c.id,c.account_policy_id,'{read,read_content}',$3,'clued.storage-normal-use-disclosure/1',$4,'normal/1'
+      from clued_private.storage_connections_v1 c where c.id=$2`, [user, target.connection, next, target.receipt]);
+  };
+  const staging = async (input, tokenHash = null) =>
+    (await caller.query(`select ${STAGING}($1,$2,$3::jsonb) value`, [issuer, tokenHash, JSON.stringify(input)])).rows[0].value;
+  const stage = async (client, target, path, bytes, mime = XLSX) => {
+    const issued = await staging({ action: "begin", connection_id: target.connection, destination_path: path, mime_type: mime,
+      size: bytes.length, content_sha256: sha(bytes), transport: "url" }, client.token);
+    assert.equal(issued.state, "issued", JSON.stringify(issued));
+    assert.equal((await staging({ action: "receive", staging_id: issued.staging_id, owner_id: issued.owner_id, connection_id: issued.connection_id,
+      binding_id: issued.binding_id, sha256: issued.sha256, size: issued.size, mime_type: issued.mime_type, exp: issued.expires_at, key_id: "k1" })).state, "receiving");
+    assert.equal((await staging({ action: "received", staging_id: issued.staging_id, outcome: "validating" })).state, "validating");
+    assert.equal((await staging({ action: "validated", staging_id: issued.staging_id, outcome: "ready" })).state, "ready");
+    return issued.staging_id;
+  };
+  const binaryReplace = (path, version, id, bytes, mime = XLSX) => replace(path, version, { mime_type: mime, content_sha256: sha(bytes), staging_id: id });
+  // A registered .xlsx: created by Clued, then held in Drive as a spreadsheet with its own bytes.
+  const createSheet = async (target, client, storage, name, bytes) => {
+    const created = await createFile(target, client, storage, name, "placeholder\n");
+    const file = storage.files.get(created.provider_file_id);
+    const revision = storage.revisions.get(file.id).get(file.headRevisionId);
+    revision.bytes = Buffer.from(bytes);
+    Object.assign(file, { mimeType: XLSX, size: String(bytes.length), md5Checksum: md5(bytes), sha256Checksum: sha(bytes) });
+    return created;
+  };
+  const sheet = text => Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from(text)]);
 
   try {
     await t.test("replace keeps the previous revision forever, uploads the new text and settles the same Artifact", async () => {
@@ -355,6 +392,75 @@ export async function testStorageReplace(t, admin, server, user, decision) {
         await assert.rejects(caller.query(`select ${JOBS}($1,$2::jsonb)`, [client.token, JSON.stringify({ action: "submit",
           connection_id: target.connection, job_id: randomUUID(), mutation: bad })]), /storage_job_input_invalid/);
       }
+    });
+
+    await t.test("a binary replace uploads the staged bytes in place under the same Drive ID and Artifact, and revert restores them", async () => {
+      const { target, client, storage } = await setup();
+      await normalUse(target);
+      const original = sheet("asset table, 3 rows"), updated = sheet("asset table, 19 rows");
+      const created = await createSheet(target, client, storage, "assets.xlsx", original);
+      const file = storage.files.get(created.provider_file_id), previous = file.headRevisionId;
+      const id = await stage(client, target, created.path, updated);
+      const { job, result } = await run(target, client, storage, binaryReplace(created.path, file.version, id, updated), () => updated);
+      assert.equal(result.status, "committed", JSON.stringify(result));
+      assert.deepEqual(storage.revisions.get(file.id).get(file.headRevisionId).bytes, updated);
+      assert.equal(file.mimeType, XLSX, "the file keeps its type"); assert.equal(file.id, created.provider_file_id);
+      assert.equal(storage.revisions.get(file.id).get(previous).keepForever, true, "the previous content is kept");
+      const after = await artifact(target, created.path);
+      assert.equal(after.id, created.id); assert.equal(after.provider_file_version, file.version);
+      assert.deepEqual(await pins(created.id), [{ revision_id: previous, state: "pinned", job_id: job.reference.job_id }]);
+      const row = await journal(job);
+      assert.equal(row.verified_result_v2.proof.contract, "clued.storage-replace-verified/1");
+      assert.deepEqual(row.provider_attempt.content_after, { size: String(updated.length), sha256: sha(updated) });
+      assert.equal((await admin.query("select job_id from clued_private.storage_staging_v1 where id=$1", [id])).rows[0].job_id, job.reference.job_id);
+      const reverted = await run(target, client, storage, replace(created.path, file.version, { restore_job_id: job.reference.job_id }));
+      assert.equal(reverted.result.status, "committed", JSON.stringify(reverted.result));
+      assert.deepEqual(storage.revisions.get(file.id).get(file.headRevisionId).bytes, original);
+    });
+
+    await t.test("binary replace refusals: no normal use, no overwrite level, another type, too large, bad shapes", async () => {
+      const { target, client, storage } = await setup();
+      const original = sheet("before"), updated = sheet("after");
+      const created = await createSheet(target, client, storage, "guarded.xlsx", original);
+      const file = storage.files.get(created.provider_file_id);
+      const submitRaw = (c, tgt, mutation) => caller.query(`select ${JOBS}($1,$2::jsonb)`, [c.token, JSON.stringify({ action: "submit",
+        connection_id: tgt.connection, job_id: randomUUID(), mutation })]);
+      // Without normal use nothing can be staged.
+      await assert.rejects(stage(client, target, created.path, updated), /storage_binary_upload_disabled/);
+      await normalUse(target);
+      const id = await stage(client, target, created.path, updated);
+      for (const bad of [{ ...binaryReplace(created.path, file.version, id, updated), content: "x" },
+        { ...binaryReplace(created.path, file.version, id, updated), restore_job_id: randomUUID() },
+        binaryReplace(created.path, file.version, id, sheet("other bytes")),
+        binaryReplace(created.path, file.version, id, updated, "application/pdf"),
+        binaryReplace(created.path, "0", id, updated),
+        binaryReplace(`${target.root}/${TRACK}/elsewhere.xlsx`, file.version, id, updated)]) {
+        await assert.rejects(submitRaw(client, target, bad), /storage_job_input_invalid/, JSON.stringify(bad));
+      }
+      // Above 5 MiB the staged object is refused at submit.
+      const large = Buffer.concat([sheet("large"), Buffer.alloc(5 * 1024 * 1024)]);
+      const largeId = await stage(client, target, created.path, large);
+      await assert.rejects(submitRaw(client, target, binaryReplace(created.path, file.version, largeId, large)), /storage_job_input_invalid/);
+      // A Drive file of another type is never replaced by a staged spreadsheet: refused before any write.
+      const writes = storage.writes;
+      file.mimeType = "application/pdf";
+      const other = await run(target, client, storage, binaryReplace(created.path, file.version, id, updated), () => updated);
+      assert.equal(other.result.status, "deny", JSON.stringify(other.result));
+      assert.equal(storage.writes, writes, "no provider write happened");
+      file.mimeType = XLSX;
+      // Staged bytes that differ from the reference are refused with no effect.
+      const id2 = await stage(client, target, created.path, updated);
+      const mismatch = await run(target, client, storage, binaryReplace(created.path, file.version, id2, updated), () => sheet("tampered"));
+      assert.equal(mismatch.result.status, "deny", JSON.stringify(mismatch.result));
+      assert.equal(mismatch.result.error_code, "STORAGE_CONTENT_STAGING_MISMATCH");
+      assert.equal(storage.writes, writes, "no provider write happened");
+      // Without the overwrite level a binary replace is refused at submit.
+      const createOnly = await setup([]);
+      await normalUse(createOnly.target);
+      const sheet2 = await createSheet(createOnly.target, createOnly.client, createOnly.storage, "c.xlsx", original);
+      const id3 = await stage(createOnly.client, createOnly.target, sheet2.path, updated);
+      await assert.rejects(submitRaw(createOnly.client, createOnly.target,
+        binaryReplace(sheet2.path, createOnly.storage.files.get(sheet2.provider_file_id).version, id3, updated)), /storage_policy_denied/);
     });
 
     await t.test("a lost upload reply stays fenced, then recovery settles it by reads only", async () => {
