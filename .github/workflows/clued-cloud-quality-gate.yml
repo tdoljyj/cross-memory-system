@@ -1,7 +1,8 @@
 name: clued-cloud-quality
 
-# Lint, typecheck, build and unit tests of apps/clued-cloud (npm run lint, npm
-# run typecheck, npm run build, npm run test:unit) on every pull request and
+# Lint, migration ledger, typecheck, build and unit tests of apps/clued-cloud
+# (npm run lint, npm run ledger:verify, npm run typecheck, npm run build, npm
+# run test:unit) on every pull request and
 # every push to main; the build comes first because tests/rendered-html.test.mjs
 # reads the built server bundle.
 # This workflow deliberately has no paths filter: the other app checks are
@@ -89,6 +90,7 @@ jobs:
           npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline
           --fetch-retries=2 --fetch-timeout=30000
       - run: npm run lint
+      - run: npm run ledger:verify
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:unit
@@ -125,6 +127,7 @@ jobs:
       - name: Install from lockfile
         run: npm ci --ignore-scripts
       - run: npm run lint
+      - run: npm run ledger:verify
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:unit
