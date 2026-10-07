@@ -1,0 +1,45 @@
+# Dependabot version updates (audit 2026-10-06 P2-11, Task 5077b641).
+#
+# Minor and patch updates are grouped into one pull request per dependency
+# type; a major update belongs to no group and arrives on its own.
+# package.json pins almost every version exactly (two caret ranges remain:
+# @supabase/supabase-js and the gcp-metadata override), so the strategy is
+# "increase": a pin is raised, never widened to a range.
+#
+# A Dependabot pull request carries no Clued work claim and changes protected
+# paths (package.json, package-lock.json, .github/workflows/**). While the
+# repository variable CLUED_WORK_ADMISSION_ENFORCE is unset the
+# clued-work-admission check is advisory and admits it; once it is on, the
+# check admits it only after the Owner does what CONTRIBUTING.md
+# ("Dependabot pull requests") describes.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /apps/clued-cloud
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    versioning-strategy: increase
+    groups:
+      production-minor-patch:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      development-minor-patch:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: deps
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns:
+          - "*"

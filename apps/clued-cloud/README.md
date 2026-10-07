@@ -144,6 +144,14 @@ npm run test:authorization:integration
 npm run mcp:gate-receipt:test
 ```
 
+`scripts/select-tests.mjs` classifies every top-level `tests/*.test.mjs` by content: a test is a database test when it, or a fixture it imports, imports `embedded-postgres`, and a unit test otherwise. Run `npm run build` first: `tests/rendered-html.test.mjs` reads the built server bundle. The named `test:*` scripts above stay for focused runs; the `clued-cloud-quality` workflow runs `lint`, `typecheck`, `build` and `test:unit` on every pull request.
+
+```bash
+npm run test:unit    # every tests/*.test.mjs that needs no database
+npm run test:db      # every test that starts embedded PostgreSQL (needs a non-root user and libicu)
+npm run test:select  # print how each test file is classified
+```
+
 Database suites use the pinned local Supabase tooling:
 
 ```bash
