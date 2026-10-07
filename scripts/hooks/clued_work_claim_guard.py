@@ -71,6 +71,9 @@ READ_ONLY_AGENTS = {"explore", "plan", "claude-code-guide", "statusline-setup"}
 
 # Only an invocation counts: the command must start a line or follow a shell
 # separator, so text such as a commit message that mentions it does not match.
+# The patterns run on scannable(command), where quoted text is blanked, so a
+# | or ( inside quotes (rg 'a|npx tsc', grep -E '(npm test|x)') is not taken
+# for a separator.
 COMMAND_START = r"(?:^|[;&|(]\s*|&&\s*|\|\|\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
 PUBLISH_COMMAND = re.compile(COMMAND_START + r"(?:git\s+push|gh\s+pr\s+create)\b", re.MULTILINE)
 SPEND_COMMAND = re.compile(
@@ -87,6 +90,15 @@ SPEND_COMMAND = re.compile(
 )
 # Heredoc bodies (commit messages, inline scripts) are data, not commands.
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.MULTILINE | re.DOTALL)
+# Quoted text is data too, except the quoted word a shell runs as a command:
+# the one after sh / bash / zsh / dash / ksh -c (also -lc, -ec, after sudo,
+# env or xargs) and after eval. It is scanned as a command of its own.
+COMMAND_STRING_BEFORE = re.compile(
+    r"(?:^|[\s;&|(`])(?:(?:[^\s;&|(`]*/)?(?:sh|bash|zsh|dash|ksh)\s+"
+    r"(?:[-+][A-Za-z]*o\s+\S+\s+|[-+]\S*\s+)*?-[A-Za-z]*c[A-Za-z]*(?:\s+--)?|eval)\s+$"
+)
+# A # after one of these starts a comment, which runs to the end of the line.
+COMMENT_AFTER = " \t\n;&|()"
 PUBLIC_CONFIG = re.compile(r'return \{ url: "(https://[^"]+)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};')
 
 RULE = (
@@ -191,11 +203,117 @@ def record_claim(payload: dict) -> None:
     save_claims(path, claims)
 
 
+class Unbalanced(Exception):
+    """A quote or command substitution that never closes."""
+
+
+def scannable(command: str) -> str:
+    """The command as PUBLISH_COMMAND and SPEND_COMMAND see it.
+
+    Heredoc bodies are removed and quoted text is blanked: each non-blank
+    character inside the quotes becomes _, while the quotes and blanks stay, so
+    a separator or command word inside quotes cannot match. What a shell runs
+    stays scanned: $( ) and ` ` inside double quotes, and the command string
+    of sh -c or eval (COMMAND_STRING_BEFORE), which is scanned as a command of
+    its own. Comments are left as written. A quote or substitution that never
+    closes leaves the whole command as written, as before quotes were read.
+    """
+    text = HEREDOC.sub("", command)
+    try:
+        return scan(text, 0, "")[0]
+    except (Unbalanced, RecursionError):
+        return text
+
+
+def blank(text: str) -> str:
+    return re.sub(r"\S", "_", text)
+
+
+def tail(parts: list[str], size: int = 512) -> str:
+    """The end of the text scanned so far, enough to see an sh -c or eval."""
+    taken, length = [], 0
+    for part in reversed(parts):
+        taken.append(part)
+        length += len(part)
+        if length >= size:
+            break
+    return "".join(reversed(taken))
+
+
+def scan(text: str, i: int, closer: str) -> tuple[str, int]:
+    """Scannable text from i to the closer (")" of $(, "`", or "" for the end)
+    and the index after the closer."""
+    out: list[str] = []
+    depth = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\":
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if closer == ")" and ch == "(":
+            depth += 1
+        elif closer == ")" and ch == ")":
+            if not depth:
+                return "".join(out), i + 1
+            depth -= 1
+        elif closer == "`" and ch == "`":
+            return "".join(out), i + 1
+        if ch == "#" and (not out or out[-1][-1:] in COMMENT_AFTER):
+            end = text.find("\n", i)
+            end = len(text) if end < 0 else end
+            out.append(text[i:end])
+            i = end
+            continue
+        if ch in "'\"":
+            masked, body, i = quoted(text, i)
+            out.append("\n" + scannable(body) + "\n" if COMMAND_STRING_BEFORE.search(tail(out)) else masked)
+            continue
+        out.append(ch)
+        i += 1
+    if closer:
+        raise Unbalanced
+    return "".join(out), i
+
+
+def quoted(text: str, i: int) -> tuple[str, str, int]:
+    """(blanked word, the shell's value of it, index after it) for the quote at i."""
+    if text[i] == "'":
+        end = text.find("'", i + 1)
+        if end < 0:
+            raise Unbalanced
+        body = text[i + 1:end]
+        return "'" + blank(body) + "'", body, end + 1
+    masked, body = ['"'], []
+    j = i + 1
+    while j < len(text):
+        ch = text[j]
+        if ch == '"':
+            return "".join(masked) + '"', "".join(body), j + 1
+        if ch == "\\":
+            pair = text[j:j + 2]
+            masked.append(blank(pair))
+            body.append(pair[1:] if pair[1:] in ('"', "\\", "$", "`") else "" if pair[1:] == "\n" else pair)
+            j += 2
+            continue
+        if ch == "`" or text.startswith("$(", j):
+            start = j + (1 if ch == "`" else 2)
+            inner, end = scan(text, start, "`" if ch == "`" else ")")
+            masked.append(text[j:start] + inner + text[end - 1])
+            body.append(text[j:end])
+            j = end
+            continue
+        masked.append(blank(ch))
+        body.append(ch)
+        j += 1
+    raise Unbalanced
+
+
 def guarded_kind(payload: dict) -> str | None:
     name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
     if name == "Bash":
-        command = HEREDOC.sub("", str(tool_input.get("command", "")))
+        command = scannable(str(tool_input.get("command", "")))
         if PUBLISH_COMMAND.search(command):
             return "publish"
         if SPEND_COMMAND.search(command):

@@ -101,6 +101,43 @@ class WorkClaimGuardTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command, session=command).returncode, 0)
 
+    # Task ada1334c: a | ; ( or command word inside quotes is data, not a command.
+    QUOTED_DATA = ("rg 'foo|npx tsc' .", "grep -E '(npm test|node --test)' package.json",
+                   'grep -n "npm run" package.json', 'grep -n "npm run build" package.json',
+                   "grep -rn 'x; npm ci' .", 'rg "a\\"|npm ci" .', "echo 'it'\\''s; npm ci'",
+                   "rg 'x|git push' .", 'git commit -m "fix: (npm test) | npx tsc"',
+                   'git commit -m "subject\nnpm ci in the body"', 'echo "$(grep \'a|npm ci\' f)"',
+                   "sh -c \"echo 'npm test'\"", "bash -c 'cat <<EOF\nnpm ci\nEOF'")
+    # The same words outside quotes, inside $( ) or ` ` in double quotes, or in
+    # the command string of sh -c / bash -c / zsh -c / eval are still commands.
+    QUOTED_COMMANDS = ("cd apps/x && npm test", "(npm test)", "foo | npx tsc", "rg foo | npx tsc",
+                       "echo 'a|b' | npx tsc", 'echo "x" && npm test', 'echo "$(npm test)"',
+                       'echo "`cd x && npm test`"', 'sh -c "npm test"', "bash -c 'npm test'",
+                       "bash -c 'cd x && npm test'", "zsh -c 'npm ci'", "bash -lc 'npm run build'",
+                       "/bin/sh -c -- 'pytest -q'", 'eval "npm test"', "eval 'npm test'",
+                       "xargs sh -c 'npm test'", "find . -name x | xargs sh -c 'npm test'",
+                       "sudo bash -c 'pip install x'", 'sh -c "echo \\"a|b\\"; npm ci"',
+                       "ls # it's here\nnpm ci", "echo 'unterminated | npm ci")
+    QUOTED_PUBLISH = ("sh -c 'git push'", "rg -n 'x|y' . && git push", 'bash -c "gh pr create --fill"')
+
+    def test_quoted_separators_and_command_words_pass(self):
+        for n, command in enumerate(self.QUOTED_DATA):
+            with self.subTest(command=command):
+                result = self.bash(command, session=f"quoted-data-{n}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_commands_outside_quotes_and_shell_command_strings_are_guarded(self):
+        for n, command in enumerate(self.QUOTED_COMMANDS):
+            with self.subTest(command=command):
+                result = self.bash(command, session=f"quoted-spend-{n}")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("runs an install, build or test", result.stderr)
+        for n, command in enumerate(self.QUOTED_PUBLISH):
+            with self.subTest(command=command):
+                result = self.bash(command, session=f"quoted-publish-{n}")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("pushes or opens a pull request", result.stderr)
+
     def test_github_publish_tools_are_guarded(self):
         for name in ("mcp__github__create_pull_request", "mcp__github__push_files",
                      "mcp__github__create_or_update_file"):
