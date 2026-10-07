@@ -963,6 +963,62 @@ level switch (`storage_root_has_unresolved_mutation`).
   the new Worker against the old database gets an error from the release call
   and logs `storage_unattempted_release_unavailable`.
 
+### Unsettled attempted jobs no longer lock the root (BUG-20261007-005)
+
+Clued Task `c9733a6e`, migration `20261007200000_storage_recovery_deadlock_v1.sql`.
+On 2026-10-07 a binary create on the account-policy connection `Clued_资料中心`
+recorded its provider attempt and never settled; the file never reached Drive.
+Scheduled recovery looked at it only during the 10 minutes after the attempt,
+the ordinary credential refresh waits for a quiet root, and the recovery-only
+refresh accepted legacy connections only. The access token expired an hour
+later and every read of the connection answered `storage_read_unavailable`,
+with no alert, until the job was settled by hand.
+
+- **Recovery keeps trying.** `clued_storage_scheduled_recovery_v2` keeps a job
+  due after its first 10 minutes, with backoff stored in
+  `clued_private.storage_recovery_backoff_v1` (2, 4, 8 ... minutes, at most 60).
+  Jobs inside their first 10 minutes are listed first. `load` no longer has an
+  upper age bound.
+- **Recovery-only refresh for account-policy connections.**
+  `clued_storage_refresh_worker_v1` accepts `recovery_job_id` for an
+  account-policy connection when the job is an attempted, unsettled cloud job
+  admitted under the connection's still-active policy
+  (`clued_private.storage_account_recovery_refresh_v1`, the same checks as
+  the scheduled `load`). Like the legacy branch it skips only the quiet-root
+  check, keeps the file fence and issues no writer, admission or Drive write.
+  The scheduled recovery asks `createStorageCloudRecovery` to report an
+  expiring credential (`credential_expiring`) before any Drive read, runs that
+  refresh once and loads the job again.
+- **Absent effects are settled.** When the post-write verification of a create
+  fails, the recovery reads Drive (GET only) for the generated file ID and for
+  any file tagged `appProperties.clued_intent_id` with the intent, trashed
+  files included (`kernel/host/resource-center-google-drive-absence.mjs`).
+  A 404 for the ID and an empty, complete tag search is a proof
+  (`clued.storage-create-absent/1`); anything else is not.
+  `public.clued_storage_recovery_absent_v1` then re-runs every `load` check
+  and accepts only a create whose admission expired and whose attempt was
+  recorded at least 10 minutes earlier: every create request is dispatched
+  before its admission expires and is bounded at 120 s, and the resumable
+  session URI is never persisted, so nothing can complete the upload later.
+  The journal becomes `cancelled` with `{outcome: released_not_effected,
+  reason_code: PROVIDER_EFFECT_ABSENT}`, its own Receipt
+  (`storage_absent_release`) and Event (`extension:storage:absent_released`).
+  `clued_storage_inspect` reports the reason code with a fixed hint. A lost
+  reply is answered from the journal (`replayed: true`).
+- **No silent stall.** The refresh `due` call skips a connection whose root
+  has an unresolved journal (its claim would be refused anyway) and returns
+  the count as `root_busy`; the Worker logs `storage_refresh_root_busy`. A read
+  with an expired sealed token still answers `storage_read_unavailable`, now
+  with a fixed hint that the connection's Google access has expired.
+  Scheduled recovery logs `storage_recovery_released_not_effected`.
+- **Release order.** The migration first. The old Worker ignores `root_busy`
+  and never calls the new function; the new Worker against the old database
+  gets an error from the absence call (the job stays fenced, as before) and a
+  refused `recovery_job_id` refresh for account-policy connections.
+- **Residual.** A rename, move, replace, trash or untrash whose effect cannot
+  be proven still waits for the Owner's native recovery; only a create can be
+  proven absent by its generated ID and tag.
+
 ## Full scope and adopt (StorageFullCapability.v0.1 P7)
 
 Owner Decisions `c47efe38`, `746fd078` and `6dc1cf20`, Task `7a8dcb8a`,
