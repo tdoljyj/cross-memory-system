@@ -427,6 +427,7 @@
 - **结果不确定时。** 定时恢复不加载目录 move（不自动重写路径）。只有 Owner 在原生页面触发的恢复会以只读 GET 重新核验，并通过同一核验记录结算，绝不重复 effect。
 - **未记录尝试的已开始任务（Owner Decision `d9d6db4c`，迁移 `20261002170000`）。** 所有写入效果都先持久化 provider attempt，再做第一次 Drive 写入，且记录 attempt 要求日志仍为 started（行锁）。因此没有 attempt 的 started/uncertain 任务从未到达 Drive。准入过期满 60 秒后，定时任务把它结案为 cancelled（`released_unattempted`，原因码 `NO_PROVIDER_ATTEMPT`，带 Receipt 与 Event）；结案后 attempt 不能再记录，不会再有 Drive 写入。只读数据库，不需要执行开关。持久开始前的身份读取遇到超时、请求失败或无法解析时最多重读两次（错误状态码不重读）；动网盘前的复核不重读，其失败留下的无 attempt 任务由上述结案处理。任务未结时仍不允许切换写入等级，页面显示原因。
 - **已记录尝试但未结的任务（BUG-20261007-005，Task `c9733a6e`，迁移 `20261007200000`）。** 定时恢复在尝试后 10 分钟之外仍按退避（2、4、8……分钟，最多 60 分钟）继续处理，`load` 不再有年龄上限。account-policy 连接也可做绑定原任务的恢复专用续签（只跳过根目录空闲检查，保留文件栅栏，不发写权限）。新建（create）任务核验失败时，以只读 GET 确认生成的文件 ID 返回 404 且没有带该 intent 标记的文件，并且准入已过期、尝试已满 10 分钟，才结案为 cancelled（`released_not_effected`，原因码 `PROVIDER_EFFECT_ABSENT`，带 Receipt 与 Event）。根目录被未结任务挡住的续签会计数并记日志；令牌过期的读取带固定提示。其他写入类型若无法证明结果，仍需 Owner 原生恢复。
+- **派发未开始的排队任务（BUG-20261008-001，Task `f7a4dd7d`，迁移 `20261008000000`）。** 提交后只派发一次的任务，若该次派发丢失或在 `load` 被拒（例如根目录被未结任务挡住），不再永久停在 queued：定时任务在提交 90 秒后、根目录空闲时重新派发，按退避（2、4、8……分钟，最多 60 分钟）重复；文本任务提交满 2 小时仍未开始则结案为 `attention_required`（原因码 `DISPATCH_NOT_STARTED`，与执行器 report 同一 Receipt 与幂等键，带 Event），不会再执行。根目录上的未结任务超出准入 60 秒时，新提交在写入任何 Receipt 或任务之前以 `storage_root_busy` 拒绝；仍在准入内的进行中任务不影响提交。二进制任务沿用 12 小时取消。
 
 **revision 管理：**
 

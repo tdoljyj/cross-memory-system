@@ -147,9 +147,12 @@ test("signature is the only credential; declared headers are checked before the 
   const bytes = pngBytes(512);
   const { structuredContent: out } = await begin(env, bytes);
   const base = out.upload_url, tokenValue = out.upload_token;
+  // The last character of a 32-byte signature carries 4 bits; A and Q are both canonical there, so swapping them
+  // always changes the signature (tokenValue.slice(0, -2) + "AA" left it unchanged about once in 1024 runs).
+  const tampered = tokenValue.slice(0, -1) + (tokenValue.at(-1) === "A" ? "Q" : "A");
   const before = db.calls.length;
   for (const [url, headers, status, code] of [
-    [base, { "x-clued-upload-token": tokenValue.slice(0, -2) + "AA" }, 403, "upload_url_invalid"],
+    [base, { "x-clued-upload-token": tampered }, 403, "upload_url_invalid"],
     [base.replace(out.staging_id, randomUUID()), {}, 403, "upload_url_invalid"],
     // The token in the query string (the old form) is refused, with or without the header.
     [base + "?t=" + tokenValue, { "x-clued-upload-token": "" }, 403, "upload_url_invalid"],

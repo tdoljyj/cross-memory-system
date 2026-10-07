@@ -31,6 +31,7 @@ on:
       - 'apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs'
       - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'
       - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'
+      - 'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'
       - 'apps/clued-cloud/tests/resource-center-*.test.mjs'
       - 'kernel/host/resource-center-*.mjs'
       - 'kernel/host/resource-center-*.py'
@@ -86,6 +87,7 @@ on:
       - 'apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs'
       - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'
       - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'
+      - 'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'
       - 'apps/clued-cloud/tests/resource-center-*.test.mjs'
       - 'kernel/host/resource-center-*.mjs'
       - 'kernel/host/resource-center-*.py'
@@ -207,6 +209,9 @@ jobs:
       - run: npm run test:work:claims
       - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs
       - run: node --test --test-force-exit tests/work-claims-continuation-db.test.mjs
+      # Without --test-force-exit, which can end a loaded run before every test has run: this
+      # file stops its embedded PostgreSQL servers itself, so node exits once the tests are done.
+      - run: node --test tests/db-security-hygiene-db.test.mjs
       - run: npm run test:information-flow:candidates
       - run: npm run test:information-flow:intake
       - run: npm run test:information-flow:promotion
@@ -282,6 +287,9 @@ jobs:
       - run: npm run test:work:claims
       - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs
       - run: node --test --test-force-exit tests/work-claims-continuation-db.test.mjs
+      # Without --test-force-exit, which can end a loaded run before every test has run: this
+      # file stops its embedded PostgreSQL servers itself, so node exits once the tests are done.
+      - run: node --test tests/db-security-hygiene-db.test.mjs
       - run: npm run test:information-flow:candidates
       - run: npm run test:information-flow:intake
       - run: npm run test:information-flow:promotion
