@@ -20,13 +20,13 @@
     {
       "id": "skill.clued",
       "kind": "skill",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "description": "The Clued Skill package (SKILL.md and references/), installed on Claude, Codex and other hosts.",
       "root": "skills/clued",
       "files": [
         "**/*"
       ],
-      "content_sha256": "0196e13f1b0e9c9e3994648b7ad8804df5b2b58b8276899f418a85c278de1284",
+      "content_sha256": "cfdd4747a9c2cad87efda02e9e3708f23076ad9eaef930a43d91ae37678710ef",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "37",
+      "version": "38",
       "description": "Clued Agent Contract, served at /clued-agent.md.",
       "root": "skills/clued/references",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "0af1663cb809c675ed7fa9bdd7444d0392fa833dd1ae959fc1458faa4806cdae",
+      "content_sha256": "247ad34c3442b6989aba9b5248ae20fc39d7f75e93c050e6b3a3c805743d0d70",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -71,13 +71,13 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "f4bc82be82384d8e2f9399be382ea2bb291de8c67892a0052420268809cb6cd4",
+      "content_sha256": "8db59c81e47a95626818cfdd047aea8a6456c563bbf8ccbf491fca80a120ddf0",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""

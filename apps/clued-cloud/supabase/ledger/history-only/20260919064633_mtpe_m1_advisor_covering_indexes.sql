@@ -1,0 +1,5 @@
+
+create index arbitration_record_candidate_b_idx on mtpe_m0.arbitration_record(candidate_b_id);
+create index arbitration_record_candidate_b_idx on mtpe_m0_test.arbitration_record(candidate_b_id);
+create index standing_authority_carrier_registry_idx on mtpe_m0.standing_authority_carrier(registry_object_key);
+create index m1_assertion_result_assertion_idx on mtpe_m0_test.m1_assertion_result(assertion_key);

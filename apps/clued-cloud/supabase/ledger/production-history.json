@@ -1,0 +1,1699 @@
+{
+  "contract": "clued.production-migration-ledger.v1",
+  "database_project": "clued-prod",
+  "exported_at": "2026-10-07T03:49:58.107Z",
+  "history_through": "20261007003804",
+  "row_count": 202,
+  "rows": [
+    {
+      "version": "20260823154017",
+      "name": "mandatory_continuity_002",
+      "statements_md5": "b761f47ac28543c6373d74883e4297cf",
+      "statements_length": 31887,
+      "source": "migrations/202608230002_mandatory_continuity.sql",
+      "transform": "strip_final_newline"
+    },
+    {
+      "version": "20260823182409",
+      "name": "clued_memory_crud",
+      "statements_md5": "004f6c4e3f22b2a5745decacd09fae8a",
+      "statements_length": 4848,
+      "source": "migrations/20260823182409_clued_memory_crud.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260823182517",
+      "name": "harden_clued_memory_grants",
+      "statements_md5": "cca1678f256f80a79bdb71d8f3b855f3",
+      "statements_length": 405,
+      "source": "migrations/20260823182517_harden_clued_memory_grants.sql",
+      "transform": "strip_final_newline"
+    },
+    {
+      "version": "20260824113622",
+      "name": "project_lifecycle_v1",
+      "statements_md5": "0253657e916936e0ea732774234198b0",
+      "statements_length": 24385,
+      "source": "migrations/202608240003_project_lifecycle_v1.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260824113636",
+      "name": "unified_record_v2",
+      "statements_md5": "be042cb9dabc04f77dcf158f63dac65c",
+      "statements_length": 25914,
+      "source": "migrations/20260824014005_unified_record_v2.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260824131759",
+      "name": "map_optimistic_conflicts_to_http_409",
+      "statements_md5": "5ae42b65a50543e722fd356ff78270ba",
+      "statements_length": 2986,
+      "source": "migrations/20260824123000_map_optimistic_conflicts_to_http_409.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260825070935",
+      "name": "oauth_mcp_binding",
+      "statements_md5": "ff30024d62cffdffbc6cc3a67f153c5d",
+      "statements_length": 4723,
+      "source": "migrations/202608250005_oauth_mcp_binding.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260825174741",
+      "name": "clued_m1_runtime_contracts",
+      "statements_md5": "2ef9e5672b6b5d514d8a114f8cc7ee0e",
+      "statements_length": 72627,
+      "source": "migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260825184722",
+      "name": "clued_m1_map_current_legacy_records",
+      "statements_md5": "5d641b71b86772321c4568ac4a458415",
+      "statements_length": 11197,
+      "source": "migrations/20260825183608_clued_m1_map_current_legacy_records.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260828134546",
+      "name": "clued_log_card_api_contract_v12",
+      "statements_md5": "80a70111771ee6728b5e29b59180ecac",
+      "statements_length": 3497,
+      "source": "history-only/20260828134546_clued_log_card_api_contract_v12.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260829093012",
+      "name": "clued_log_isolation_forward_fix",
+      "statements_md5": "b36ce9f741341db7ab9c80dca593909a",
+      "statements_length": 3697,
+      "source": "migrations/20260829091757_clued_log_isolation_forward_fix.sql",
+      "transform": "strip_final_newline"
+    },
+    {
+      "version": "20260829100820",
+      "name": "clued_legacy_log_alias_bridge",
+      "statements_md5": "1156ccb0b85004741bb2990318e5ee47",
+      "statements_length": 7006,
+      "source": "migrations/20260829100000_clued_legacy_log_alias_bridge.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260907131834",
+      "name": "clued_search_canonical_records",
+      "statements_md5": "476236f57684fe2a4b7cc9fd72e3b4cd",
+      "statements_length": 8287,
+      "source": "history-only/20260907131834_clued_search_canonical_records.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260907140346",
+      "name": "clued_context_ownership_publication_v11",
+      "statements_md5": "736b76b1c79f5add3c405d7d745904f0",
+      "statements_length": 44089,
+      "source": "history-only/20260907140346_clued_context_ownership_publication_v11.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260907172309",
+      "name": "retire_context_ownership_publication_v11",
+      "statements_md5": "af661635a209f15568da2d6fc6f9de05",
+      "statements_length": 1947,
+      "source": "migrations/20260907172309_retire_context_ownership_publication_v11.sql",
+      "transform": "strip_final_newline"
+    },
+    {
+      "version": "20260908004449",
+      "name": "clued_development_context_runtime_v14",
+      "statements_md5": "cebbb5eb42469f212fe007450e9b318e",
+      "statements_length": 17717,
+      "source": "migrations/20260907173030_clued_development_context_runtime_v14.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260908004504",
+      "name": "clued_connection_authorization_v12",
+      "statements_md5": "7adbc5b4ab6be814b6b24a51e0de0e37",
+      "statements_length": 42493,
+      "source": "migrations/20260907173031_clued_connection_authorization_v12.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260908004524",
+      "name": "clued_project_invitations_v13",
+      "statements_md5": "43dfd9763a7d870169936b1c6a0db61b",
+      "statements_length": 56959,
+      "source": "migrations/20260907173032_clued_project_invitations_v13.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260908075600",
+      "name": "clued_project_list_authorized_scope",
+      "statements_md5": "29a541f403e97f842572d2c0beb47292",
+      "statements_length": 2988,
+      "source": "migrations/20260908073933_clued_project_list_authorized_scope.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260908100854",
+      "name": "clued_checkpoint_idempotency_binding",
+      "statements_md5": "18c127ab88e0ab172105eab210a1733b",
+      "statements_length": 6546,
+      "source": "migrations/20260908094000_clued_checkpoint_idempotency_binding.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260908104614",
+      "name": "clued_checkpoint_replay_receipt",
+      "statements_md5": "1c7a425951df7bc57fe05a5209b753c4",
+      "statements_length": 6612,
+      "source": "migrations/20260908102500_clued_checkpoint_replay_receipt.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260917050022",
+      "name": "mtpe_m0_p1_schema",
+      "statements_md5": "4e873026e1a8ec05bfab7fabfd835353",
+      "statements_length": 17688,
+      "source": "history-only/20260917050022_mtpe_m0_p1_schema.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260917110208",
+      "name": "mtpe_m0_split_structure_and_grants_digest_with_c_collation",
+      "statements_md5": "60156ca8fafa1e2deabb53f45d408571",
+      "statements_length": 3283,
+      "source": "history-only/20260917110208_mtpe_m0_split_structure_and_grants_digest_with_c_collation.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260919035047",
+      "name": "p2_p6_snapshot_meta_activation_id_append",
+      "statements_md5": "7f8268f366c695a7893efb70c45fef9f",
+      "statements_length": 585,
+      "source": "history-only/20260919035047_p2_p6_snapshot_meta_activation_id_append.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260919040423",
+      "name": "p2_p6_activation_backfill",
+      "statements_md5": "8d8c86e99fb44f11f7361fc77d387773",
+      "statements_length": 741,
+      "source": "history-only/20260919040423_p2_p6_activation_backfill.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260919060703",
+      "name": "mtpe_m1_w1_w5_structural_foundation",
+      "statements_md5": "e354a05462d2b3b97071592672580483",
+      "statements_length": 11874,
+      "source": "history-only/20260919060703_mtpe_m1_w1_w5_structural_foundation.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260919060922",
+      "name": "mtpe_m1_w5_transition_machines",
+      "statements_md5": "428861cac8a7f56695d75c071ec43155",
+      "statements_length": 8468,
+      "source": "history-only/20260919060922_mtpe_m1_w5_transition_machines.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260919061226",
+      "name": "mtpe_m1_opening_baseline_and_assertion_manifest",
+      "statements_md5": "41022bce5710dd50c34b211df5894976",
+      "statements_length": 1591,
+      "source": "history-only/20260919061226_mtpe_m1_opening_baseline_and_assertion_manifest.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260919063545",
+      "name": "mtpe_m1_w6_w9_owner_approved_values",
+      "statements_md5": "e9e5f2a0d285108150e5977d32195c61",
+      "statements_length": 7302,
+      "source": "history-only/20260919063545_mtpe_m1_w6_w9_owner_approved_values.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260919064450",
+      "name": "mtpe_m1_acceptance_automation",
+      "statements_md5": "00989d0dedf98fb636f7837f7eef7d64",
+      "statements_length": 11932,
+      "source": "history-only/20260919064450_mtpe_m1_acceptance_automation.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260919064531",
+      "name": "mtpe_m1_condition2_null_semantics_fix",
+      "statements_md5": "95db86590705c1353b4a2ac417329851",
+      "statements_length": 646,
+      "source": "history-only/20260919064531_mtpe_m1_condition2_null_semantics_fix.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260919064633",
+      "name": "mtpe_m1_advisor_covering_indexes",
+      "statements_md5": "478a04040576dbdc66524c246116571a",
+      "statements_length": 408,
+      "source": "history-only/20260919064633_mtpe_m1_advisor_covering_indexes.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260919074924",
+      "name": "mtpe_m2a_nonprod_frontier",
+      "statements_md5": "648b4dbb9ff8f974daf17c7081538938",
+      "statements_length": 12538,
+      "source": "history-only/20260919074924_mtpe_m2a_nonprod_frontier.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260921193000",
+      "name": "k_cont_single_stage",
+      "statements_md5": "3666cb0466c289cbb2c1229ebdd8a63f",
+      "statements_length": 33686,
+      "source": "migrations/20260921193000_k_cont_single_stage.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260921203000",
+      "name": "k_cont_resume_work_log_delta",
+      "statements_md5": "e952e8bddbbe9537c17ee727a204fc9b",
+      "statements_length": 23241,
+      "source": "migrations/20260921203000_k_cont_resume_work_log_delta.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260921204000",
+      "name": "k_cont_resume_import_budget_delta",
+      "statements_md5": "00c5f1ed7989ad8f1b122c4e9a0bf3b6",
+      "statements_length": 4204,
+      "source": "migrations/20260921204000_k_cont_resume_import_budget_delta.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260921211000",
+      "name": "k_cont_constraint_body_resume_delta",
+      "statements_md5": "172fb6870f7de12685f75a2dc8cc4ef1",
+      "statements_length": 13593,
+      "source": "migrations/20260921211000_k_cont_constraint_body_resume_delta.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260921215146",
+      "name": "k_cont_checkpoint_coverage_mode_guard",
+      "statements_md5": "dec8030d3fcf9fe686db89a36c51c7b0",
+      "statements_length": 9655,
+      "source": "migrations/20260921215146_k_cont_checkpoint_coverage_mode_guard.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260921230126",
+      "name": "k_cont_review_boundary_fix",
+      "statements_md5": "d009c06b75501cf13f7130fdc36c356b",
+      "statements_length": 23122,
+      "source": "migrations/20260921230126_k_cont_review_boundary_fix.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260921234000",
+      "name": "k_cont_scope_refs_redaction",
+      "statements_md5": "1476c27163a2375299b3d27ab390080f",
+      "statements_length": 16681,
+      "source": "migrations/20260921234000_k_cont_scope_refs_redaction.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260922001800",
+      "name": "k_cont_target_ref_read_boundary",
+      "statements_md5": "d838713590397bb5803cbf32bf1ad42b",
+      "statements_length": 12468,
+      "source": "migrations/20260922001800_k_cont_target_ref_read_boundary.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260922013000",
+      "name": "k_cont_audit_visibility_boundary",
+      "statements_md5": "85dcd28243bb55e52fcd36c56a64bf40",
+      "statements_length": 20077,
+      "source": "migrations/20260922013000_k_cont_audit_visibility_boundary.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260922023000",
+      "name": "k_cont_evidence_ref_scope",
+      "statements_md5": "9bfdd0958a462eb40bd00833cd52af89",
+      "statements_length": 3488,
+      "source": "migrations/20260922023000_k_cont_evidence_ref_scope.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260922030000",
+      "name": "k_cont_checkpoint_audit_visibility_guard",
+      "statements_md5": "329b843b16d1edfa0e1858d07b182a47",
+      "statements_length": 10219,
+      "source": "migrations/20260922030000_k_cont_checkpoint_audit_visibility_guard.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260922030001",
+      "name": "sync_m1_record_priority_projection",
+      "statements_md5": "0d6cda65498bc0d1a898164db3ef356f",
+      "statements_length": 2064,
+      "source": "migrations/20260922030001_sync_m1_record_priority_projection.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260922092355",
+      "name": "bug_20260922_002_currentness_core",
+      "statements_md5": "7da6a701352c324160c35a5224e91930",
+      "statements_length": 34699,
+      "source": "migrations/20260922092355_bug_20260922_002_currentness_core.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260922092810",
+      "name": "bug_20260922_002_legacy_carrier_inventory",
+      "statements_md5": "fefb64029cb1454722a0b196e2177f7b",
+      "statements_length": 27130,
+      "source": "migrations/20260922092810_bug_20260922_002_legacy_carrier_inventory.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260922092932",
+      "name": "bug_20260922_002_admission_reconcile",
+      "statements_md5": "13c393867b28b372c5eb9a9c3f458db7",
+      "statements_length": 27687,
+      "source": "migrations/20260922092932_bug_20260922_002_admission_reconcile.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260922093621",
+      "name": "bug_20260922_002_projection_rebuild_gate",
+      "statements_md5": "0bdd1398876ad1a34b4ebdacb4940323",
+      "statements_length": 31411,
+      "source": "migrations/20260922093621_bug_20260922_002_projection_rebuild_gate.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260922093948",
+      "name": "bug_20260922_002_currentness_read_surfaces",
+      "statements_md5": "4454997b712c157159c35d1ef0da8ed6",
+      "statements_length": 12020,
+      "source": "migrations/20260922093948_bug_20260922_002_currentness_read_surfaces.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260922094719",
+      "name": "bug_20260922_002_g6_full_gate",
+      "statements_md5": "7f408822e80ef684b3725840bd111142",
+      "statements_length": 16453,
+      "source": "migrations/20260922094719_bug_20260922_002_g6_full_gate.sql",
+      "transform": "crlf"
+    },
+    {
+      "version": "20260922140000",
+      "name": "context_v2_terminal_restore_guard",
+      "statements_md5": "f4d00b703019af60690dedf301c85284",
+      "statements_length": 6298,
+      "source": "migrations/20260922140000_context_v2_terminal_restore_guard.sql",
+      "transform": "cr_crlf"
+    },
+    {
+      "version": "20260922142533",
+      "name": "context_v2_frontier_source_contract",
+      "statements_md5": "f39e98b9d2c8d3489aa3bb470a936d0f",
+      "statements_length": 8909,
+      "source": "migrations/20260922142533_context_v2_frontier_source_contract.sql",
+      "transform": "cr_crlf"
+    },
+    {
+      "version": "20260922143312",
+      "name": "context_v2_execution_intent_identity",
+      "statements_md5": "5ec8883de9ac14f682356de399582e57",
+      "statements_length": 11962,
+      "source": "migrations/20260922143312_context_v2_execution_intent_identity.sql",
+      "transform": "cr_crlf"
+    },
+    {
+      "version": "20260922150000",
+      "name": "context_v2_current_read_entrypoints",
+      "statements_md5": "5c2c3b70cb82c23e5ae6858b877c0c03",
+      "statements_length": 2080,
+      "source": "migrations/20260922150000_context_v2_current_read_entrypoints.sql",
+      "transform": "cr_crlf"
+    },
+    {
+      "version": "20260922153022",
+      "name": "context_v2_resume_record_currentness",
+      "statements_md5": "edc85586cadbf776a1d1a042ec4b1d3b",
+      "statements_length": 22189,
+      "source": "migrations/20260922153022_context_v2_resume_record_currentness.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260922162702",
+      "name": "legacy_create_carrier_receipt_reconcile",
+      "statements_md5": "9c205c080ac482fe2923dd7b8c40b522",
+      "statements_length": 12378,
+      "source": "migrations/20260922162702_legacy_create_carrier_receipt_reconcile.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260922165922",
+      "name": "legacy_existing_retraction_reconcile",
+      "statements_md5": "059e9371d90baf28d3317f5a34996f2b",
+      "statements_length": 7765,
+      "source": "migrations/20260922165922_legacy_existing_retraction_reconcile.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260922173000",
+      "name": "approved_legacy_successor_reconcile",
+      "statements_md5": "67e00abec8cd135520a5dd3485cc1199",
+      "statements_length": 14219,
+      "source": "migrations/20260922173000_approved_legacy_successor_reconcile.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260922195018",
+      "name": "context_v2_approved_legacy_continuity_once",
+      "statements_md5": "9ee071a4cc76d91b8ea0acfe17e9ed7f",
+      "statements_length": 478207,
+      "source": "migrations/20260923193000_context_v2_approved_legacy_continuity_once.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260922230231",
+      "name": "post_commit_projection_refresh_pipeline_20260923",
+      "statements_md5": "64e84ae61681b10a7a233d15ab6641b9",
+      "statements_length": 32320,
+      "source": "migrations/20260923213000_post_commit_projection_refresh_pipeline.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260922233250",
+      "name": "projection_refresh_exact_key_lease_20260923",
+      "statements_md5": "30d4cfd2f62674c2b0e86d68019b171e",
+      "statements_length": 7299,
+      "source": "migrations/20260923213100_projection_refresh_exact_key_lease.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260923021931",
+      "name": "projection_refresh_watchdog_20260923",
+      "statements_md5": "b1e09feb3882340db0e23539e56a1ec3",
+      "statements_length": 6511,
+      "source": "migrations/20260923213200_projection_refresh_watchdog.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260923050444",
+      "name": "mtpe_universal_intake_auto_priority",
+      "statements_md5": "ed127913785f1cbad0973c0cb2ad7826",
+      "statements_length": 47724,
+      "source": "migrations/20260924110000_mtpe_universal_intake_auto_priority.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260923080409",
+      "name": "project_lifecycle_successor_v2",
+      "statements_md5": "01a32b8bdfe77a7f00558c7ebc19e6c5",
+      "statements_length": 49582,
+      "source": "migrations/20260924120000_project_lifecycle_successor_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260923084135",
+      "name": "project_lifecycle_successor_v2_frontier_invalidation",
+      "statements_md5": "c4a093812a039b0532dfad0302e941c1",
+      "statements_length": 1164,
+      "source": "migrations/20260924121000_project_lifecycle_successor_v2_frontier_invalidation.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260923093612",
+      "name": "mtpe_frontier_eligibility_v2",
+      "statements_md5": "fd520fab34093c04d3e2e8435f53a9b3",
+      "statements_length": 57040,
+      "source": "migrations/20260924130000_mtpe_frontier_eligibility_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260923114339",
+      "name": "mtpe_frontier_eligibility_v2_1",
+      "statements_md5": "bf7e6e19d7530c8c70aea577a974e5ba",
+      "statements_length": 55370,
+      "source": "migrations/20260924140000_mtpe_frontier_eligibility_v2_1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260923120722",
+      "name": "global_scope_projection_invalidation",
+      "statements_md5": "a3f54f2abb9b57b613cf75f58e2edb17",
+      "statements_length": 3865,
+      "source": "migrations/20260924150000_global_scope_projection_invalidation.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260923142731",
+      "name": "information_flow_candidate_store",
+      "statements_md5": "f4fb51367afa18d80113253073e19ec9",
+      "statements_length": 33660,
+      "source": "migrations/20260924160000_information_flow_candidate_store.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260923154623",
+      "name": "mtpe_read_set_coverage",
+      "statements_md5": "8c940b6fba30c94214d4ae8743c54fa5",
+      "statements_length": 7719,
+      "source": "migrations/20260924170000_mtpe_read_set_coverage.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260923224949",
+      "name": "information_flow_intake_transport",
+      "statements_md5": "6ae383b4e7a14d13372574967c47df48",
+      "statements_length": 23494,
+      "source": "migrations/20260924180000_information_flow_intake_transport.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924014938",
+      "name": "projection_watchdog_cloud_scheduler",
+      "statements_md5": "0bf97908ca5211e614d1293aa4f95148",
+      "statements_length": 10198,
+      "source": "history-only/20260924014938_projection_watchdog_cloud_scheduler.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924015654",
+      "name": "projection_watchdog_cloud_scheduler_v2",
+      "statements_md5": "1cd6d5be79c3835a62817e5f50cdd821",
+      "statements_length": 16474,
+      "source": "history-only/20260924015654_projection_watchdog_cloud_scheduler_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924015924",
+      "name": "projection_watchdog_cloud_canonical",
+      "statements_md5": "fa6336cad99436b86df5b76b4d20c89d",
+      "statements_length": 18801,
+      "source": "history-only/20260924015924_projection_watchdog_cloud_canonical.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924031406",
+      "name": "bug_20260924_001_capture_unknown",
+      "statements_md5": "cf96249a9f8a2887c53a0bb26881d6b8",
+      "statements_length": 3464,
+      "source": "migrations/20260924210000_bug_20260924_001_capture_unknown.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924074716",
+      "name": "bug_20260924_003_projection_head_event_shadow_fix",
+      "statements_md5": "8db50607182a1375ffeda08031ecff83",
+      "statements_length": 4230,
+      "source": "history-only/20260924074716_bug_20260924_003_projection_head_event_shadow_fix.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924114622",
+      "name": "event_continuity_manifest_v1",
+      "statements_md5": "957a09bdee4355be6cf420794a7a23aa",
+      "statements_length": 17470,
+      "source": "migrations/20260925005000_event_continuity_manifest_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924114714",
+      "name": "event_continuity_manifest_v1_evidence_guard",
+      "statements_md5": "7182ac219f41337be2b57de0178e33c1",
+      "statements_length": 17027,
+      "source": "migrations/20260925010000_event_continuity_manifest_v1_evidence_guard.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924121648",
+      "name": "information_flow_promotion",
+      "statements_md5": "4a3537f0b638b1aefd0deb27d0c967b6",
+      "statements_length": 55337,
+      "source": "migrations/20260924190000_information_flow_promotion.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924121719",
+      "name": "decision_supersede_v12_guard",
+      "statements_md5": "48b49e381624adf0f6c4aa4ee63c9865",
+      "statements_length": 1556,
+      "source": "migrations/20260924230000_decision_supersede_v12_guard.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924122058",
+      "name": "information_flow_context_policy",
+      "statements_md5": "76ad3ce7a7b2e5842904dadb0e684013",
+      "statements_length": 80080,
+      "source": "migrations/20260924200000_information_flow_context_policy.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924122344",
+      "name": "information_flow_invalidation",
+      "statements_md5": "8f0830340a8553423a9839465ac1e5c3",
+      "statements_length": 58507,
+      "source": "migrations/20260924220000_information_flow_invalidation.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924122417",
+      "name": "information_flow_token_hardening",
+      "statements_md5": "ea920df274bc5c9cf752c3b7e9fb6200",
+      "statements_length": 6728,
+      "source": "migrations/20260925000000_information_flow_token_hardening.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924131848",
+      "name": "projection_head_event_shadow_fix",
+      "statements_md5": "d1fcb0055791597c15f77263d3ab89c8",
+      "statements_length": 4910,
+      "source": "migrations/20260924233000_projection_head_event_shadow_fix.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924180717",
+      "name": "record_update_field_merge",
+      "statements_md5": "b8b6d8a25db1b5a67a57ba73c2d0c421",
+      "statements_length": 6418,
+      "source": "migrations/20260925020000_record_update_field_merge.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924180809",
+      "name": "search_context_cross_scope",
+      "statements_md5": "1454a184b931d39488b96fcafff2861d",
+      "statements_length": 14447,
+      "source": "migrations/20260925030000_search_context_cross_scope.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260924180902",
+      "name": "search_context_followups",
+      "statements_md5": "34384b0c00167af70f9021d6878aba3f",
+      "statements_length": 15041,
+      "source": "migrations/20260925040000_search_context_followups.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260925112812",
+      "name": "integration_runtime_registry_derivation",
+      "statements_md5": "7a792efcd22d390db548d4107bde9dee",
+      "statements_length": 50093,
+      "source": "migrations/20260926000000_integration_runtime_registry_derivation.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260926144448",
+      "name": "resource_center_artifact_authority_v1",
+      "statements_md5": "45a6eb8c7fb68100ea573c83a0c47e41",
+      "statements_length": 27377,
+      "source": "migrations/20260926134500_resource_center_artifact_authority_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260926171331",
+      "name": "resource_center_mutation_journal_v1",
+      "statements_md5": "c313bf8c0d061396ee25b0ba97d2dccc",
+      "statements_length": 24761,
+      "source": "migrations/20260926160610_resource_center_mutation_journal_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260927063758",
+      "name": "resource_center_renewal_v1",
+      "statements_md5": "7365f52404c7514e0bc774f94a2ab3f4",
+      "statements_length": 27622,
+      "source": "migrations/20260927053041_resource_center_renewal_v1.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260927121742",
+      "name": "resource_center_account_connection_v1",
+      "statements_md5": "b0220beff9daca2b3bd274dbd51ae554",
+      "statements_length": 14475,
+      "source": "migrations/20260927073103_resource_center_account_connection_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260927121751",
+      "name": "resource_center_oauth_connector_v1",
+      "statements_md5": "af9faaf56d29e6353103d79f3bcc1a70",
+      "statements_length": 9908,
+      "source": "migrations/20260927075249_resource_center_oauth_connector_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260927121800",
+      "name": "resource_center_account_refresh_v1",
+      "statements_md5": "ca02c9131dea89519bef1705dfd63654",
+      "statements_length": 20727,
+      "source": "migrations/20260927083521_resource_center_account_refresh_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260927121807",
+      "name": "resource_center_account_jobs_v1",
+      "statements_md5": "9766896f04c7455d9fa5d921373f7cc0",
+      "statements_length": 12229,
+      "source": "migrations/20260927093948_resource_center_account_jobs_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260927121816",
+      "name": "resource_center_provider_attempt_v1",
+      "statements_md5": "d23474f1e063cf0954e81c74b268bf49",
+      "statements_length": 7531,
+      "source": "migrations/20260927103110_resource_center_provider_attempt_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260927121827",
+      "name": "resource_center_cloud_bridge_v1",
+      "statements_md5": "13df110755fbc2f3ce4c92b1f0e46711",
+      "statements_length": 35857,
+      "source": "migrations/20260927104436_resource_center_cloud_bridge_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260927164102",
+      "name": "resource_center_default_refresh_consent_v1",
+      "statements_md5": "30ba4efcfd0bdef3f41b4f0248bd4945",
+      "statements_length": 9238,
+      "source": "migrations/20260927145426_resource_center_default_refresh_consent_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260927172746",
+      "name": "resource_center_client_grant_readback_v1",
+      "statements_md5": "2fce05531403039c9d25b7089003905e",
+      "statements_length": 3271,
+      "source": "migrations/20260927165558_resource_center_client_grant_readback_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260927193655",
+      "name": "resource_center_directory_probe_v1",
+      "statements_md5": "e7c93d8a2b8ab0ba24cc16edd991c741",
+      "statements_length": 13104,
+      "source": "migrations/20260927183650_resource_center_directory_probe_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260927205851",
+      "name": "resource_center_native_recovery_v1",
+      "statements_md5": "8f95d4abab01c01abc445dd4a71781e8",
+      "statements_length": 13014,
+      "source": "migrations/20260927201506_resource_center_native_recovery_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260927220749",
+      "name": "resource_center_credential_recovery_oauth_v1",
+      "statements_md5": "5a9212f9193a178208578d836b03d1ed",
+      "statements_length": 14643,
+      "source": "migrations/20260927211632_resource_center_credential_recovery_oauth_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260927235047",
+      "name": "resource_center_binding_expiry_compat_v1",
+      "statements_md5": "a63b00a0c29153e1871dd699a50f425f",
+      "statements_length": 11630,
+      "source": "migrations/20260927232454_resource_center_binding_expiry_compat_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260928083850",
+      "name": "resource_center_account_policy_foundation_v2",
+      "statements_md5": "50cc264655a651d59ef771f8b54a4492",
+      "statements_length": 27998,
+      "source": "migrations/20260928051323_resource_center_account_policy_foundation_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260928083935",
+      "name": "resource_center_account_policy_legacy_fence_v2",
+      "statements_md5": "fb6c4dc09924e5c6b120cc24a44d1b45",
+      "statements_length": 37576,
+      "source": "migrations/20260928051543_resource_center_account_policy_legacy_fence_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260928083957",
+      "name": "resource_center_client_capability_admin_v2",
+      "statements_md5": "1355200c39aaa09ecf0a63f165fb679e",
+      "statements_length": 29461,
+      "source": "migrations/20260928060125_resource_center_client_capability_admin_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260928084019",
+      "name": "resource_center_policy_transition_v2",
+      "statements_md5": "72fae5870a0e829bb45b134c3c7c85d8",
+      "statements_length": 49981,
+      "source": "migrations/20260928063442_resource_center_policy_transition_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260928084041",
+      "name": "resource_center_account_jobs_v2",
+      "statements_md5": "8836a981b498679bc7c75f30537c2965",
+      "statements_length": 16631,
+      "source": "migrations/20260928070005_resource_center_account_jobs_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260928084106",
+      "name": "resource_center_account_cloud_v2",
+      "statements_md5": "c7615bd7ab93d8e0436317127e8ac593",
+      "statements_length": 32856,
+      "source": "migrations/20260928072813_resource_center_account_cloud_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260928084130",
+      "name": "resource_center_verified_settlement_v2",
+      "statements_md5": "42a4e40b9b7bd1adc7f2e5c0d8f38bfc",
+      "statements_length": 31715,
+      "source": "migrations/20260928074834_resource_center_verified_settlement_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260928100125",
+      "name": "resource_center_storage_admin_v2",
+      "statements_md5": "bb405b3aedf61c399214a4e456ff05fb",
+      "statements_length": 41871,
+      "source": "migrations/20260928091131_resource_center_storage_admin_v2.sql",
+      "transform": "append_crlf"
+    },
+    {
+      "version": "20260928121616",
+      "name": "resource_center_storage_source_reader_v2",
+      "statements_md5": "2ca072d6079e62eb60fb0857b3d6ea80",
+      "statements_length": 2023,
+      "source": "migrations/20260928113000_resource_center_storage_source_reader_v2.sql",
+      "transform": "strip_final_newline"
+    },
+    {
+      "version": "20260928172100",
+      "name": "resource_center_account_recovery_descriptor_v2",
+      "statements_md5": "8634f0c4e59be9b7f4a2142bf1e734c2",
+      "statements_length": 6270,
+      "source": "migrations/20260928165000_resource_center_account_recovery_descriptor_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260928232457",
+      "name": "resource_center_owner_management_v2",
+      "statements_md5": "4d13730d84dd169458199f284f41984d",
+      "statements_length": 11423,
+      "source": "migrations/20260928174500_resource_center_owner_management_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260929020816",
+      "name": "resource_center_account_recovery_oauth_v2",
+      "statements_md5": "9fb14a08ea0bdd1228bd163b2c88f105",
+      "statements_length": 15122,
+      "source": "migrations/20260929010000_resource_center_account_recovery_oauth_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260929030608",
+      "name": "resource_center_recovery_auto_settle",
+      "statements_md5": "88fc3560a0e4d57c54bf6303961a6333",
+      "statements_length": 3604,
+      "source": "migrations/20260929020000_resource_center_recovery_auto_settle.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260929043401",
+      "name": "storage_scheduled_recovery_v2",
+      "statements_md5": "78b66346db72fb1e28d1ebc910f084d1",
+      "statements_length": 8345,
+      "source": "migrations/20260929040000_storage_scheduled_recovery_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260929133950",
+      "name": "resume_record_targets_primary_key_lookup",
+      "statements_md5": "d1ace4a6c07ce2202f17a5b90bb1d847",
+      "statements_length": 11387,
+      "source": "migrations/20260929133000_resume_record_targets_primary_key_lookup.sql",
+      "transform": "strip_final_newline"
+    },
+    {
+      "version": "20260929171706",
+      "name": "context_policy_decision_own_lifecycle",
+      "statements_md5": "322f724cf22f0bf115f1c61e227078d7",
+      "statements_length": 2169,
+      "source": "migrations/20260929150000_context_policy_decision_own_lifecycle.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260929181242",
+      "name": "resource_center_authority_denial_reasons_v1",
+      "statements_md5": "d45f9649feb13e28166a1e9c196fdab4",
+      "statements_length": 11270,
+      "source": "migrations/20260929180000_resource_center_authority_denial_reasons_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260929185504",
+      "name": "projection_watchdog_builder_served",
+      "statements_md5": "60de651dcc68bd0e0b23d137a90e9af2",
+      "statements_length": 4237,
+      "source": "migrations/20260929190000_projection_watchdog_builder_served.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930011252",
+      "name": "storage_read_access_v1",
+      "statements_md5": "a7dcf45870990efd912f5add2e65852f",
+      "statements_length": 33541,
+      "source": "migrations/20260930010000_storage_read_access_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930013809",
+      "name": "resource_center_directory_sharing_v1",
+      "statements_md5": "e1ce8a383186cdcc72e034000098cbbf",
+      "statements_length": 62635,
+      "source": "migrations/20260929200000_resource_center_directory_sharing_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930043841",
+      "name": "storage_client_redirect_identity_v3",
+      "statements_md5": "a860ec076c680eefc7b67f148fdd2e67",
+      "statements_length": 13013,
+      "source": "migrations/20260930040000_storage_client_redirect_identity_v3.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930054604",
+      "name": "storage_read_content_v1",
+      "statements_md5": "6d859cf76407fe472bbce3ce9837126a",
+      "statements_length": 5099,
+      "source": "migrations/20260930060000_storage_read_content_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930065131",
+      "name": "storage_modify_level_v1",
+      "statements_md5": "b3f49027dc7fae0d6fe48c2921377375",
+      "statements_length": 18798,
+      "source": "migrations/20260930080000_storage_modify_level_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930072354",
+      "name": "storage_modify_execution_v1",
+      "statements_md5": "f5eecfd01133eb7612f2622c2b421fc2",
+      "statements_length": 20928,
+      "source": "migrations/20260930100000_storage_modify_execution_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930092601",
+      "name": "storage_overwrite_v1",
+      "statements_md5": "02d528af2e355a04b4b7013d99c77c18",
+      "statements_length": 41738,
+      "source": "migrations/20260930120000_storage_overwrite_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930113752",
+      "name": "storage_scope_profile_v1",
+      "statements_md5": "da40905cc521cf2a692af4d0b9696acb",
+      "statements_length": 8228,
+      "source": "migrations/20260930140000_storage_scope_profile_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930133829",
+      "name": "storage_normal_use_n1a",
+      "statements_md5": "99bc9b616d8ff6171d9c7530d1aff18c",
+      "statements_length": 31717,
+      "source": "migrations/20260930160000_storage_normal_use_n1a.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930143328",
+      "name": "storage_binary_upload_n3",
+      "statements_md5": "079232cf08973eeba9864c093ca8b3d8",
+      "statements_length": 44018,
+      "source": "migrations/20260930180000_storage_binary_upload_n3.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930154304",
+      "name": "storage_read_budget_n4",
+      "statements_md5": "7ab658859c2468bbccbdddaa50fe0485",
+      "statements_length": 9200,
+      "source": "migrations/20260930200000_storage_read_budget_n4.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930155446",
+      "name": "checkpoint_session_renewal",
+      "statements_md5": "d7c109774729537ef214841ef39ae4a4",
+      "statements_length": 24397,
+      "source": "migrations/20260930210000_checkpoint_session_renewal.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930160525",
+      "name": "mtpe_owner_pin_read_write_consistency",
+      "statements_md5": "ac0e8d89d3950f0d0a81f712dede6003",
+      "statements_length": 12566,
+      "source": "migrations/20260930220000_mtpe_owner_pin_read_write_consistency.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930183745",
+      "name": "storage_dispatch_reason_v1",
+      "statements_md5": "32c97583b09a2a8e86eafff32dd3a1a9",
+      "statements_length": 6775,
+      "source": "migrations/20260930230000_storage_dispatch_reason_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930195723",
+      "name": "storage_relative_paths_v1",
+      "statements_md5": "0ac583a42b0e7ebd67869bd624f2d8d1",
+      "statements_length": 7931,
+      "source": "migrations/20260930233000_storage_relative_paths_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20260930203103",
+      "name": "storage_relative_paths_link_v3",
+      "statements_md5": "d26568a6331ef5ddb086d73e0d183eef",
+      "statements_length": 1920,
+      "source": "migrations/20261001010000_storage_relative_paths_link_v3.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261001024747",
+      "name": "resume_constraint_index",
+      "statements_md5": "e5d0825aeb883a832dc0516c0fd611de",
+      "statements_length": 22466,
+      "source": "migrations/20261001000000_resume_constraint_index.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261001075213",
+      "name": "storage_budgets_n4",
+      "statements_md5": "23ce6dd98b481d84b75d7f8bd4ca22e3",
+      "statements_length": 21403,
+      "source": "migrations/20261001020000_storage_budgets_n4.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261001092818",
+      "name": "storage_onboard_n0",
+      "statements_md5": "7ed1ce8ff00fd809d658c2330de7deb6",
+      "statements_length": 59358,
+      "source": "migrations/20261001040000_storage_onboard_n0.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261001113535",
+      "name": "task_dependency_target_guard",
+      "statements_md5": "8817e9cb6160a754aab2711a0c94d11b",
+      "statements_length": 4082,
+      "source": "migrations/20261001030000_task_dependency_target_guard.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261001113803",
+      "name": "work_claims_v1",
+      "statements_md5": "8e0c2b07f847070bb483c5a3165c3e00",
+      "statements_length": 34503,
+      "source": "migrations/20261001060000_work_claims_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261001113839",
+      "name": "decision_supersede_schema_version_guard",
+      "statements_md5": "a4b6bf8e10eb3d2b5bd18c3122fdd9d4",
+      "statements_length": 4837,
+      "source": "migrations/20261001070000_decision_supersede_schema_version_guard.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261001115712",
+      "name": "work_claims_transport_v1",
+      "statements_md5": "494ad61b6f0b9c17878f935f1d619f1c",
+      "statements_length": 3117,
+      "source": "migrations/20261001080000_work_claims_transport_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261001160705",
+      "name": "storage_onboard_gate_v2",
+      "statements_md5": "448b8c587042f95675892f20da56ff75",
+      "statements_length": 1568,
+      "source": "migrations/20261001120000_storage_onboard_gate_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261001175048",
+      "name": "storage_destructive_p5",
+      "statements_md5": "e36368926baff9fc0e6498eabd6c4d4d",
+      "statements_length": 64734,
+      "source": "migrations/20261001130000_storage_destructive_p5.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261001180527",
+      "name": "checkpoint_backlog_controls",
+      "statements_md5": "e79327caaf50a9e5e223c241fd585256",
+      "statements_length": 26621,
+      "source": "migrations/20261002000000_checkpoint_backlog_controls.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261001190736",
+      "name": "session_context_from_token",
+      "statements_md5": "271c631f19c3d1fb78d8a06291452549",
+      "statements_length": 4849,
+      "source": "migrations/20261002010000_session_context_from_token.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261001194854",
+      "name": "mtpe_owner_pin_focus_cas",
+      "statements_md5": "d5eca078fcac306fabb0969bf2482e2c",
+      "statements_length": 7760,
+      "source": "migrations/20261002030000_mtpe_owner_pin_focus_cas.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002022749",
+      "name": "work_claims_admission_hardening",
+      "statements_md5": "159cd20fc57769076eef0f51a0eb3ab4",
+      "statements_length": 10397,
+      "source": "migrations/20261002050000_work_claims_admission_hardening.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002024412",
+      "name": "work_claims_session_cap",
+      "statements_md5": "f59dfb40f587fe5df7829f2627d1b5be",
+      "statements_length": 7091,
+      "source": "migrations/20261002060001_work_claims_session_cap.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002024709",
+      "name": "now_conflict_null_project_guard",
+      "statements_md5": "430802dc0682583610d78dc9a908aff0",
+      "statements_length": 1616,
+      "source": "migrations/20261002060000_now_conflict_null_project_guard.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002055310",
+      "name": "storage_registered_sibling_roots_v1",
+      "statements_md5": "671d0a8b5eb77ac1828d33d9d40d7860",
+      "statements_length": 4437,
+      "source": "migrations/20261002070000_storage_registered_sibling_roots_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002071632",
+      "name": "work_claims_minor_fixes",
+      "statements_md5": "6db4b083297e2c2131605fb79d76f69c",
+      "statements_length": 15682,
+      "source": "migrations/20261002072000_work_claims_minor_fixes.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002072638",
+      "name": "storage_directory_move_p6",
+      "statements_md5": "8fe8b78dd055630dd89e6632c137c277",
+      "statements_length": 33038,
+      "source": "migrations/20261002080000_storage_directory_move_p6.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002110000",
+      "name": "storage_directory_move_descendants_v1",
+      "statements_md5": "6fa1f0906167d05ab2e1601ff76aa2d9",
+      "statements_length": 14545,
+      "source": "migrations/20261002090000_storage_directory_move_descendants_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002134000",
+      "name": "work_claims_count_caps",
+      "statements_md5": "822256cc9526c9b31b9140392b54042c",
+      "statements_length": 13293,
+      "source": "migrations/20261002100000_work_claims_count_caps.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002142951",
+      "name": "storage_directory_sharing_digest_v1",
+      "statements_md5": "b52c441b4239c427966ff5df256c4f67",
+      "statements_length": 7479,
+      "source": "migrations/20261002130000_storage_directory_sharing_digest_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002153746",
+      "name": "work_claims_retry_after",
+      "statements_md5": "46ccda23a7e9095bd91698dfaf05e8a2",
+      "statements_length": 8089,
+      "source": "migrations/20261002150000_work_claims_retry_after.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002162704",
+      "name": "storage_release_unattempted_v1",
+      "statements_md5": "53051ae19e810c183267635fcd8f7878",
+      "statements_length": 7501,
+      "source": "migrations/20261002170000_storage_release_unattempted_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002171318",
+      "name": "work_claim_exemptions_v1",
+      "statements_md5": "a3442bcf57fbc9d7ed0234ad89fa887f",
+      "statements_length": 23939,
+      "source": "migrations/20261002190000_work_claim_exemptions_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002181833",
+      "name": "work_claims_resource_kinds",
+      "statements_md5": "6a1e73b09968852ebd3ad6edc48aaee3",
+      "statements_length": 8550,
+      "source": "migrations/20261002210000_work_claims_resource_kinds.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261002190239",
+      "name": "storage_adopt_p7",
+      "statements_md5": "05524620ea5957454486222986781731",
+      "statements_length": 31497,
+      "source": "migrations/20261002200000_storage_adopt_p7.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261003005742",
+      "name": "owner_grants_v1",
+      "statements_md5": "d81b255b089bbfed0212df748ae5a062",
+      "statements_length": 34874,
+      "source": "migrations/20261002220000_owner_grants_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261003035202",
+      "name": "work_claims_owner_grants",
+      "statements_md5": "7e5c3c27c39bfe362120b23e0282d706",
+      "statements_length": 12279,
+      "source": "migrations/20261003030000_work_claims_owner_grants.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261003051745",
+      "name": "work_claims_rate_buckets",
+      "statements_md5": "015763afe49eec1a96f044321771ec4a",
+      "statements_length": 17564,
+      "source": "migrations/20261003050000_work_claims_rate_buckets.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261003063641",
+      "name": "work_claims_reject_receipts_renew_takeover",
+      "statements_md5": "9ddc7d2d093e41591f74f3345fbe2455",
+      "statements_length": 14712,
+      "source": "migrations/20261003070000_work_claims_reject_receipts_renew_takeover.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261003071945",
+      "name": "work_claims_storage_door",
+      "statements_md5": "6de7c5b65dea5916d062b988a189a942",
+      "statements_length": 26741,
+      "source": "migrations/20261003080000_work_claims_storage_door.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261003102644",
+      "name": "event_carrier_decision_guard",
+      "statements_md5": "255b561271836f9632c5202e19487d07",
+      "statements_length": 15532,
+      "source": "migrations/20261003100000_event_carrier_decision_guard.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261003144411",
+      "name": "work_claims_multi_copy",
+      "statements_md5": "40364b29e3fb5238a1cfcfedee7cc6ed",
+      "statements_length": 47457,
+      "source": "migrations/20261003120000_work_claims_multi_copy.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261003164515",
+      "name": "owner_grants_release_door",
+      "statements_md5": "80ab7dcf8cafaaa57a5e79a266aeb1d8",
+      "statements_length": 6141,
+      "source": "migrations/20261003170000_owner_grants_release_door.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261003172703",
+      "name": "work_claims_task_ci_metering",
+      "statements_md5": "3ff0dee26c2b465e81e2cf50576ed626",
+      "statements_length": 9648,
+      "source": "migrations/20261003180000_work_claims_task_ci_metering.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261003180443",
+      "name": "owner_grants_scope_choice",
+      "statements_md5": "5c6eb866b467bef73bc80f0aa4fd1535",
+      "statements_length": 10666,
+      "source": "migrations/20261003190000_owner_grants_scope_choice.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261003223125",
+      "name": "work_claims_binding_roles",
+      "statements_md5": "aef2d682a49a8e23c7148e8993e72916",
+      "statements_length": 28692,
+      "source": "migrations/20261003200000_work_claims_binding_roles.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261004022753",
+      "name": "binding_roles_list_volatile",
+      "statements_md5": "950aeb23acec0b9cd2090b4617c23c7c",
+      "statements_length": 918,
+      "source": "migrations/20261003230000_binding_roles_list_volatile.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261004044548",
+      "name": "binding_roles_fail_closed",
+      "statements_md5": "892096de9c541d6d164c5cab9fca762b",
+      "statements_length": 13608,
+      "source": "migrations/20261004050000_binding_roles_fail_closed.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261004075755",
+      "name": "headless_binding_issuance",
+      "statements_md5": "b77a9bb42aa64e0370c62d7c3339f098",
+      "statements_length": 25570,
+      "source": "migrations/20261004120000_headless_binding_issuance.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261004085454",
+      "name": "owner_grant_default_by_risk",
+      "statements_md5": "cd595f904483718789b9fb9079ea9836",
+      "statements_length": 2661,
+      "source": "migrations/20261004130000_owner_grant_default_by_risk.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261004095307",
+      "name": "authorization_expiry_365",
+      "statements_md5": "26c8d3c6aaf7c985fe7db1e4a1e63348",
+      "statements_length": 851,
+      "source": "migrations/20261004140000_authorization_expiry_365.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261004120452",
+      "name": "headless_legacy_binding_revoke",
+      "statements_md5": "964149b37b5fe6a7a4cdc7c6d3fcc2b4",
+      "statements_length": 3299,
+      "source": "migrations/20261004170000_headless_legacy_binding_revoke.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261004125656",
+      "name": "connection_permission_requests",
+      "statements_md5": "5e95ef2f4d531e840cae1fa3e66b5a22",
+      "statements_length": 17907,
+      "source": "migrations/20261004150000_connection_permission_requests.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261004140637",
+      "name": "owner_grants_list_ids",
+      "statements_md5": "8429753ba1f4f1df6ba2c229397a9e08",
+      "statements_length": 1737,
+      "source": "migrations/20261004180000_owner_grants_list_ids.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261004152631",
+      "name": "owner_request_bundles",
+      "statements_md5": "4ed969ed13b6b1024950a84925d5e435",
+      "statements_length": 14132,
+      "source": "migrations/20261004200000_owner_request_bundles.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261004160222",
+      "name": "authorization_roles",
+      "statements_md5": "962d08fdae3506740f1163054227ef6a",
+      "statements_length": 12615,
+      "source": "migrations/20261004210000_authorization_roles.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261004185617",
+      "name": "legacy_revoke_keeps_roles",
+      "statements_md5": "597fd91dfad057acf12111ee3fc379b9",
+      "statements_length": 3266,
+      "source": "migrations/20261004220000_legacy_revoke_keeps_roles.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261005145532",
+      "name": "owner_grants_admission_door",
+      "statements_md5": "9859beeacae8d81016b7baeec4d108dc",
+      "statements_length": 8779,
+      "source": "migrations/20261005120000_owner_grants_admission_door.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261005145538",
+      "name": "owner_review_hardening",
+      "statements_md5": "b02eeae013a602f38afba64e9f0f65b9",
+      "statements_length": 5105,
+      "source": "migrations/20261005140000_owner_review_hardening.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261005154422",
+      "name": "integration_runtime_identity_claim",
+      "statements_md5": "624bee78378b11864a26494dc9c7dc29",
+      "statements_length": 173860,
+      "source": "migrations/20261005090000_integration_runtime_identity_claim.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261005154430",
+      "name": "integration_runtime_errata_004",
+      "statements_md5": "d15697bb09892271b37119420b0dd02c",
+      "statements_length": 5304,
+      "source": "migrations/20261005100000_integration_runtime_errata_004.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261005154437",
+      "name": "integration_runtime_verification",
+      "statements_md5": "6de395df46dd72b0aa6e1ac703d50898",
+      "statements_length": 56670,
+      "source": "migrations/20261005130000_integration_runtime_verification.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261005154443",
+      "name": "integration_runtime_revocation_lifecycle",
+      "statements_md5": "231ec8e0811c037eca6e1ef3bb427f75",
+      "statements_length": 116347,
+      "source": "migrations/20261005150000_integration_runtime_revocation_lifecycle.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261005171439",
+      "name": "integration_runtime_grants",
+      "statements_md5": "0753e2c259569106ce8ff5aef957d118",
+      "statements_length": 1940,
+      "source": "migrations/20261005163000_integration_runtime_grants.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261005190958",
+      "name": "work_claims_lease_key",
+      "statements_md5": "8fb4c58111cfcf33a351e37a33ad0143",
+      "statements_length": 22862,
+      "source": "migrations/20261005190000_work_claims_lease_key.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261006072733",
+      "name": "binding_scopes_evaluated_once",
+      "statements_md5": "2d5390600d5a57fc48fab52b8c3bc856",
+      "statements_length": 2755,
+      "source": "migrations/20261006060000_binding_scopes_evaluated_once.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261006082731",
+      "name": "agent_messages_v1",
+      "statements_md5": "b68b05aa20f728f6d14a03cd7ee31330",
+      "statements_length": 29929,
+      "source": "migrations/20261006090000_agent_messages_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261006093150",
+      "name": "work_claims_owner_handover",
+      "statements_md5": "918fe365cbe2c7a1f78fb756a78fb1ff",
+      "statements_length": 38863,
+      "source": "migrations/20261005200000_work_claims_owner_handover.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261006123147",
+      "name": "work_claims_merge_slot",
+      "statements_md5": "778889b2118c0d7296bc89274efdf5bf",
+      "statements_length": 25307,
+      "source": "migrations/20261006120000_work_claims_merge_slot.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261006152156",
+      "name": "search_context_rereview",
+      "statements_md5": "1c60fe0c510756ffae6eb4e39bdbdda8",
+      "statements_length": 17574,
+      "source": "migrations/20261006150000_search_context_rereview.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261006162151",
+      "name": "storage_connections_list",
+      "statements_md5": "fd330e706a77298f5c8e8f0ea54802bd",
+      "statements_length": 4733,
+      "source": "migrations/20261006170000_storage_connections_list.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261006234140",
+      "name": "work_claims_continuation",
+      "statements_md5": "fbb224700681b47c6cdd1e5d4d7a5c40",
+      "statements_length": 27658,
+      "source": "migrations/20261006180000_work_claims_continuation.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261007003804",
+      "name": "storage_connections_display_name",
+      "statements_md5": "3913379070362474383be0e308161164",
+      "statements_length": 1925,
+      "source": "migrations/20261007000000_storage_connections_display_name.sql",
+      "transform": "identical"
+    }
+  ],
+  "repository_only": [
+    {
+      "file": "migrations/202608230001_clued_continuity.sql",
+      "status": "never_applied",
+      "reason": "Never applied to production: the objects it creates came from production row 20260823154017 mandatory_continuity_002, whose text is migrations/202608230002_mandatory_continuity.sql. CI db reset still applies it first; retire or keep is for the P1-5 architecture batch."
+    },
+    {
+      "file": "migrations/20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql",
+      "status": "never_applied",
+      "reason": "P5 tenant-isolation design never applied to production (no clued_organizations, clued_pending_intents or clued_p5_* objects exist there). CI db reset applies it and tests/p5-real-postgres, tests/p5-cloud-contracts, tests/p6-shadow-canary and worker/p5.ts depend on it; apply or retire is for the P1-5 architecture batch."
+    },
+    {
+      "file": "migrations/20260827050750_p5_gateway_attempt_commit_failure.sql",
+      "status": "never_applied",
+      "reason": "Part of the P5 series never applied to production; see 20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql."
+    },
+    {
+      "file": "migrations/20260827062132_p5_concurrent_attempt_replay.sql",
+      "status": "never_applied",
+      "reason": "Part of the P5 series never applied to production; see 20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql."
+    },
+    {
+      "file": "migrations/20260827072012_p5_expired_attempt_reissue.sql",
+      "status": "never_applied",
+      "reason": "Part of the P5 series never applied to production; see 20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql."
+    },
+    {
+      "file": "migrations/20260827084500_p5_attempt_reissue_linearization.sql",
+      "status": "never_applied",
+      "reason": "Part of the P5 series never applied to production; see 20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql."
+    },
+    {
+      "file": "migrations/20260828183205_p5_audit_lint_compatibility.sql",
+      "status": "never_applied",
+      "reason": "Part of the P5 series never applied to production; see 20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql."
+    },
+    {
+      "file": "migrations/20260908135500_authorized_record_list_before_limit.sql",
+      "status": "never_applied",
+      "reason": "Never applied to production. clued_private.record_list_core was redefined later (20261003100000_event_carrier_decision_guard and the bug_20260922_002 series); production's current definition does not contain this file's change."
+    },
+    {
+      "file": "migrations/20260828125643_clued_log_card_api_contract_v12.sql",
+      "status": "diverged_from_production",
+      "reason": "Production row 20260828134546 clued_log_card_api_contract_v12 holds a different text (join condition and visibility filter differ); the applied text is history-only/20260828134546_clued_log_card_api_contract_v12.sql. CI db reset applies this file."
+    },
+    {
+      "file": "migrations/20260907123955_clued_context_ownership_publication_v11.sql",
+      "status": "diverged_from_production",
+      "reason": "This file carries 18 comment lines the applied text lacks; the SQL is otherwise the same. The applied text is history-only/20260907140346_clued_context_ownership_publication_v11.sql."
+    },
+    {
+      "file": "migrations/20260907131834_clued_search_canonical_records.sql",
+      "status": "diverged_from_production",
+      "reason": "The applied text ends with a 62-line do $test$ self-test block that this file dropped. The applied text is history-only/20260907131834_clued_search_canonical_records.sql."
+    }
+  ],
+  "known_deviations": [
+    {
+      "kind": "schema",
+      "name": "mtpe_m0_test",
+      "note": "Test schema (24 tables, 9 functions) created in production by row 20260917050022 mtpe_m0_p1_schema; referenced by clued_private.reconcile_approved_legacy_continuity_once_v1, public.mtpe_m0_structure_digest and public.mtpe_m0_grants_digest. Kept on the Owner's 2026-10-07 decision; removal is for the P0-4 database-security batch together with those functions."
+    },
+    {
+      "kind": "schema",
+      "name": "mtpe_m0_work",
+      "note": "Work schema (one table, drive59) present in production without a creating migration in this history. Recorded 2026-10-07; its origin and removal are for the P0-4 database-security batch."
+    },
+    {
+      "kind": "versioning",
+      "name": "schema_migrations.version",
+      "note": "Rows applied through the release workflow's migrate mode carry the apply time as version, not the file's timestamp (clued-cloud-production-release.yml). The ledger maps each row to its file; file names and production rows are not renamed (Owner decision 2026-10-07)."
+    }
+  ]
+}

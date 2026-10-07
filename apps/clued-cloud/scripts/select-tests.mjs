@@ -114,15 +114,32 @@ function main(argv) {
     process.stdout.write(selected.map((file) => `${label(file)}${relative(file)}\n`).join(""));
     return 0;
   }
-  const child = spawnSync(process.execPath, ["--test", "--test-force-exit", ...extraArgs, ...selected.map(relative)], {
-    cwd: APP_ROOT,
-    stdio: "inherit",
-  });
-  if (child.error) {
-    console.error(`select-tests: ${child.error.message}`);
-    return 1;
+  let status = 0;
+  for (const args of nodeTestRuns(mode, { unit, db }, extraArgs, relative)) {
+    const child = spawnSync(process.execPath, args, { cwd: APP_ROOT, stdio: "inherit" });
+    if (child.error) {
+      console.error(`select-tests: ${child.error.message}`);
+      return 1;
+    }
+    if (child.status !== 0) status = child.status ?? 1; // a null status means the child was killed by a signal
   }
-  return child.status ?? 1; // a null status means the child was killed by a signal
+  return status;
+}
+
+// The node --test invocations for a mode. Unit tests run without
+// --test-force-exit: that flag exits once the tests known so far have
+// finished, and under CPU load it silently skipped later tests (a file with
+// 53 tests ran 28). Database tests keep it because embedded PostgreSQL
+// fixtures can hold the event loop open; "all" runs the two sets separately.
+export function nodeTestRuns(mode, { unit, db }, extraArgs = [], toPath = (file) => file) {
+  const runs = [];
+  if ((mode === "unit" || mode === "all") && unit.length > 0) {
+    runs.push(["--test", ...extraArgs, ...unit.map(toPath)]);
+  }
+  if ((mode === "db" || mode === "all") && db.length > 0) {
+    runs.push(["--test", "--test-force-exit", ...extraArgs, ...db.map(toPath)]);
+  }
+  return runs;
 }
 
 // Run the CLI only when this file is the entry point. The ESM loader resolves

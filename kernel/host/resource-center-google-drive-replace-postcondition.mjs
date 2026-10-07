@@ -76,6 +76,8 @@ export function createGoogleDriveReplacePostconditionVerifier({
         !file.mimeType || file.mimeType === FOLDER || typeof file.version !== "string" || !/^[1-9]\d*$/.test(file.version) ||
         !revisionId(file.headRevisionId)) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
       if (file.headRevisionId === effect.pinned_revision_id) fail("DRIVE_POSTCONDITION_REVISION_UNCHANGED");
+      // A binary replace (Decision 06aba6c5) never changes the file's type.
+      if (mutation.content_ref !== undefined && file.mimeType !== mutation.content_ref.mime_type) fail("DRIVE_POSTCONDITION_CONTENT_MISMATCH");
       if (file.size !== after.size ||
         (file.sha256Checksum != null && file.sha256Checksum !== "" && file.sha256Checksum !== after.sha256)) {
         fail("DRIVE_POSTCONDITION_CONTENT_MISMATCH");

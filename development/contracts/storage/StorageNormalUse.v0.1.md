@@ -9,6 +9,7 @@
 - **Owner 决定**：
   - Decision `dc594258`（2026-09-30）：接入 Google Drive 必须让 Owner 和以后所有用户都能正常使用。要点：直接申请 `drive.readonly`（与 `drive.file`、`drive.metadata.readonly` 并存），根内所有文件可读，服务端仍限于资料根；常见格式可用、Agent 可上传二进制、额度按每小时数百 MiB、页面一个开关开启；先于 P5 / P6 / P7，P4 独立完成。
   - Decision `7dbb4c09`（2026-09-30，取代 `7de051b5`）：Q1–Q3、Q5、Q7–Q10 不变；**Q4、Q11 改判**；新增 **N0 自助接入**与**照片处理**决定。全文见 §11。
+  - Decision `06aba6c5`（2026-10-07）：`replace` 也接受二进制文件，原位替换同类型的已登记文件、保留同一 Drive 文件 ID（§6.5）。它只修订 §1.2 关于二进制 `replace` 的那条非目标，Decision `7dbb4c09` 的其余结论不变。
 
 ### 0.1 修订关系
 
@@ -18,6 +19,7 @@
 | --- | --- | --- |
 | §4 D1、§9 D1 先实测 Picker | **作废**，改为直接申请 `drive.readonly`（§2）；Picker 只用于 N0 选择已有目录（§8.1） | N0 / N1 |
 | §3.1 二进制上传不在范围内 | `create` 支持二进制（§6） | N3 |
+| §6.2 P4 `replace` 只处理文本 | `replace` 也接受暂存的二进制文件（§6.5，Decision `06aba6c5`） | 迁移 `20261007150000` |
 | §5.4 只支持文本，256 KiB / 8 MiB | 格式矩阵（§4）；额度（§7） | N1 / N2 |
 | §5.3 `search` 只按名称和类型 | 增加 `fullText contains`（§5.2） | N1 |
 | §8 P2、P7 scope 待定 | P2 已有文件正文由 N1 覆盖；P7 写入 scope 另行决定（§1.2） | N1 |
@@ -62,7 +64,7 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 - **不申请 `drive` 或 `drive.metadata`。** `drive.readonly` 只能读。用户手动上传的文件（非 Clued 创建）在 P7 写入 scope 决定之前**不能改名、移动或进回收站**；页面与工具描述须如实说明。
 - 不改变根范围模型：一个登记根，按 provider ID 父链判定（SFC §5.2）。
 - 不做 OCR、音视频转码或抽帧（Decision `7dbb4c09`）。扫描版 PDF 无文字层时如实返回。
-- 不做二进制 `replace`（P4 保持 UTF-8 文本，Decision `7dbb4c09`）。
+- ~~不做二进制 `replace`（P4 保持 UTF-8 文本，Decision `7dbb4c09`）。~~ 由 Decision `06aba6c5`（2026-10-07）改为支持，见 §6.5。
 - 不改本机 Host 试点凭据 `kernel/host/resource-center-google-drive-credential.mjs:2-3`。
 - 不改变共享 / ACL、永久删除、跨根操作的既有禁令。
 
@@ -300,7 +302,7 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
   5. 通过后行进入 `validating`，执行 §6.3 暂存后校验，全部通过才置 `ready`；只有 `ready` 行可被 `submit` 引用，且 `submit` 的 Binding、`destination_path`、`mime_type`、`content_sha256` 必须与行一致。
 - **AEAD**（m-l）：每个暂存对象独立密钥 `K = HKDF-SHA256(master, salt = staging_id‖":"‖key_salt, info = "clued.storage-staging/1")`，`key_salt` 为数据库对每个暂存行随机生成的 128 位值（不可变，经 `receive` 与执行描述符交给 Worker）；AES-256-GCM，64 KiB 一块，96 位 nonce = 块序号大端计数（密钥按对象唯一，计数 nonce 不会重复）；内联 `staging_id` 由（Binding token, connection, job_id）派生，暂存行在 7 天保留期后被清除时，若该 owner 已有同 `job_id` 的存储作业，内联 begin 以 `storage_job_input_invalid` 拒绝，同一 `staging_id` 永不第二次暂存；AAD = `owner_id‖connection_id‖staging_id‖chunk_index‖is_final`，防截断与重排。`master` 与凭据 vault 分开，可轮换（行记 `key_id`）。
 - 作业行与 Queue 消息只含 `content_ref: {staging_id, sha256, size, mime_type}`；request digest 覆盖 `content_ref`。
-- **迁移**（m-f）：`…/20260928070005_…account_jobs_v2.sql:150-153` 的提交校验接受 `content_ref` 形态。size / sha256 目前从 `mutation.content` 推导的现行定义**全部**改为对 `content_ref` 作业取 `content_ref.size` / `content_ref.sha256`：`storage_job_provider_attempt_v2`（`20260928072813_…:130-137`，另有 `20260930100000_…:182-183`、`20260930120000_…:466-477` 两次源码补丁）；`storage_verified_result_v2`（`20260928074834_…:254-255`，现行定义为 `20260929200000_…:685-686` 的 `create or replace`，另有 `20260930100000_…:228-229`、`20260930120000_…:478-515` 补丁）；kernel 核验 `resource-center-google-drive-postcondition.mjs:52-55`。N3 迁移以锚点补丁方式修改（与 100000 / 120000 同法，锚点命中数必须等于期望值），并加测试：对每个函数取 `pg_get_functiondef`，断言不存在未受 `content_ref` 分支保护的 `mutation->>'content'` 取 size / sha256。P4 `replace` 的 `20260930120000_…:204-205` 仍只处理文本，不在此列。文本形态不变。
+- **迁移**（m-f）：`…/20260928070005_…account_jobs_v2.sql:150-153` 的提交校验接受 `content_ref` 形态。size / sha256 目前从 `mutation.content` 推导的现行定义**全部**改为对 `content_ref` 作业取 `content_ref.size` / `content_ref.sha256`：`storage_job_provider_attempt_v2`（`20260928072813_…:130-137`，另有 `20260930100000_…:182-183`、`20260930120000_…:466-477` 两次源码补丁）；`storage_verified_result_v2`（`20260928074834_…:254-255`，现行定义为 `20260929200000_…:685-686` 的 `create or replace`，另有 `20260930100000_…:228-229`、`20260930120000_…:478-515` 补丁）；kernel 核验 `resource-center-google-drive-postcondition.mjs:52-55`。N3 迁移以锚点补丁方式修改（与 100000 / 120000 同法，锚点命中数必须等于期望值），并加测试：对每个函数取 `pg_get_functiondef`，断言不存在未受 `content_ref` 分支保护的 `mutation->>'content'` 取 size / sha256。P4 `replace` 的 `20260930120000_…:204-205` 当时只处理文本，不在此列；二进制 `replace` 见 §6.5。文本形态不变。
 - **生命周期**：`issued` 行 10 分钟未 PUT → `expired`，释放预占（未收到任何字节）；`ready` 未提交 TTL 1 小时；二进制作业 12 小时内未开始执行则取消（`staging_expired`）；作业结算或 effect 开始后删除暂存（恢复只 GET、不重传）；R2 bucket 生命周期 3 天，仅作兜底；清理器按数据库状态删除。
 
 ### 6.3 类型检查（M8、m-d）
@@ -320,6 +322,16 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 - effect：≤ 5 MiB 用 multipart（`create-effect.mjs:86-88`，Content-Type 改为请求 MIME）；更大用 resumable upload，从 R2 流式解密分块上传。session URI 只在内存。中断且无法在同一执行内确认 → `uncertain`，按 `appProperties.clued_intent_id` GET 恢复，绝不重传。
 - effect 前取回暂存并重算 sha256，不符 `STORAGE_CONTENT_STAGING_MISMATCH`，effect 为 0。
 - 核验（`kernel/host/resource-center-google-drive-postcondition.mjs:52-55, 98-113`）：size / sha256 取自 `content_ref`；`mimeType` 须等于请求值；最终 `sha256Checksum` 不符判 `attention_required`。合同名升为 `clued.storage-create-verified/3`，旧作业按 `/2` 结算。
+
+### 6.5 二进制 `replace`（Decision `06aba6c5`，迁移 `20261007150000_storage_binary_replace_v1.sql`）
+
+- **用途**：用新的字节原位替换一个 Clued 已登记的二进制文件（OOXML / ODF Office、PDF、图片、zip），文件 ID 不变，旧内容保留为 Drive revision，可用 `restore_job_id` 撤回。典型场景：资产总表 `.xlsx` 每轮盘点后同 ID 写回。
+- **输入**：`{operation:"replace", target_kind:"file", destination_path, destination_file_version, mime_type, content_sha256, staging_id | content_base64}`。暂存与二进制 `create` 完全相同（§6.2）：`clued_storage_upload_begin` 声明的路径就是要替换的文件路径，内联 `content_base64` 由 Worker 先暂存成 `staging_id`。工具形态只在二进制上传开启时公布（与 §6.1 相同）。
+- **授权**：等级为 `overwrite`（与文本 `replace` 相同）。暂存本身仍按 `create_file` 评估；每个写入策略都含 `create_file`（`storage_write_actions_v1`），所以有 `overwrite` 就能暂存。二进制门槛（§6.1 “正常使用”）在暂存、消费与执行三处照常检查。
+- **提交**：`storage_jobs_policy_core_v2` 的 `replace` 分支先用 `storage_binary_replace_mutation_v1` 把暂存绑定为 `content_ref`（路径、类型、sha256 必须与暂存行一致，扩展名与类型须在 §6.3 的允许表中，大小 ≤ **5 MiB**，否则 `storage_job_input_invalid`），再按扩展后的 `storage_replace_shape_v1` 校验；`storage_staging_consume_v1` 照常把暂存行置为 `consumed`。
+- **执行**：执行器在任何预留之前取回暂存并完整核对 sha256（不符 `STORAGE_CONTENT_STAGING_MISMATCH`，effect 为 0），读入内存（≤ 5 MiB）作为替换字节；预留前要求 Drive 上目标文件的类型**等于**暂存类型（不借 `replace` 改格式）、有 sha256、大小 ≤ 5 MiB，否则 `REPLACE_TARGET_UNSUPPORTED`。effect 与文本 `replace` 相同：旧 head 设 `keepForever` → 一次 media 上传（保持原类型，> 1 MiB 时上传超时 60 s）→ 取消更早的 pin。effect 内再次核对目标类型与字节。
+- **核验与结算**：provider attempt `clued.storage-replace-attempt/1` 的 `content_after` 取 `content_ref` 的 size / sha256（`storage_replace_attempt_v1`）；核验合同仍为 `clued.storage-replace-verified/1`；pin、K = 10、撤回、定时 / 原生恢复全部沿用 P4。撤回可用于 ≤ 5 MiB 的任何非 Google 原生类型目标（下载上限随之改为 5 MiB，超过 1 MiB 的下载窗口为 60 s）。撤回只要求 `overwrite`，不经过“正常使用”门槛：它不上传 Agent 提供的字节，只把同一文件在 Drive 中已保存、由 Clued pin 记录的旧 revision 原样写回（大小、sha256、md5 与 pin 一致才上传）。核验另要求二进制替换后的文件类型等于暂存类型。
+- **上限的理由**：一次 media 上传、整份在 Worker 内存中；更大的文件需要 resumable 替换，留待后续。
 
 ## 7. 额度
 
@@ -469,6 +481,8 @@ N0–N4 全部完成并经 Owner 真实验收后，才开工 P5 / P6 / P7。P4 �
 | Q10 | 已有 `read_content` 是否自动升级 | 不升级（不变） |
 | Q11 | 升级后旧 refresh token | **改判**：不调用 Google revoke；从数据库硬删除旧凭据信封并测试无副本；revoke 只用于“撤回全部文件读取授权”与断开连接，文案写明断开该 Google 账号在 Clued 的所有连接；N1 前用真实账号核实 Google 行为 |
 | N0 | 自助接入 | 新增首期：网页选择 / 新建根 + `native_connection` 策略 + 激活事务内建立 `normal/1` 读取授权；Owner 现有连接不受影响 |
+
+**Decision `06aba6c5-20d7-4a9e-8b4b-e9898bced552`（2026-10-07）**：`replace` 扩展到二进制文件（xlsx / docx / pptx / pdf / 图片 / zip 等），原位替换、保留同一 Drive 文件 ID 与修订历史；等级 `overwrite` + “正常使用”；不允许借 `replace` 改格式，Google 原生文档不在范围。它只修订 §1.2 关于二进制 `replace` 的那条非目标（Decision `7dbb4c09`）。实现见 §6.5。
 
 ## 12. 依据与核对定位
 

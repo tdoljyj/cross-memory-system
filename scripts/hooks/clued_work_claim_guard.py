@@ -21,6 +21,8 @@ events, chosen by the payload's hook_event_name:
   npm run and npx scripts, gh workflow run / gh run rerun, the GitHub
   workflow-dispatch tool, a remote session, a Workflow or a non-read-only
   Agent subtask) and edit (Edit, Write or NotebookEdit on a repository file).
+  Text inside the quoted arguments of a read-only text command (grep, rg,
+  git log, git commit, echo and the like) is data, not a command.
 * Stop reads the transcript (no network): when the latest agent_inbox from a
   resume or renewal reported messages and no clued_agent_inbox read followed
   it, or reported requests and no committed clued_agent_message_send reply
@@ -43,7 +45,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 CLAIM_FILE = Path(".clued") / "work-claim.json"
 PUBLIC_CONFIG_SOURCE = Path("apps/clued-cloud/app/supabase-public-config.ts")
@@ -87,6 +89,226 @@ SPEND_COMMAND = re.compile(
 )
 # Heredoc bodies (commit messages, inline scripts) are data, not commands.
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.MULTILINE | re.DOTALL)
+
+# Quoted arguments of these read-only text commands are data (a search pattern,
+# a commit message), so a | ; ( or command word inside them is not a command
+# (Task ada1334c). Every other command, shells, ssh, su, eval, docker, xargs and
+# interpreters included, is scanned as written.
+TEXT_COMMANDS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "awk", "jq", "echo", "printf"}
+TEXT_GIT_COMMANDS = {"grep", "log", "show", "commit"}
+COMMAND_PREFIXES = {"sudo", "command", "time"}
+# A text command piped into anything else may be feeding a shell, so it is not blanked.
+TEXT_FILTERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "jq", "head", "tail", "wc", "sort", "uniq",
+                "cut", "tr", "cat", "less", "more", "column", "nl", "fold"}
+# Options and programs that make a text command run a command: rg --pre, git grep -O,
+# a pager, awk system() / getline / print | "cmd", and the sed e command or s///e flag.
+RUNS_OPTION = re.compile(r"^(?:--pre|--pager|--open-files-in-pager|-[A-Za-z]*O)")
+AWK_RUNS = re.compile(r"\bsystem\b|\bgetline\b|\|\s*[\"&]")
+SED_RUNS = re.compile(r"(?<![A-Za-z_\\])e\b|/[gpiImMw0-9]*e\b")
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+CLOSERS = {"(": ")", "{": "}", "`": "`"}
+
+
+def skip_nested(text: str, i: int, opener: str) -> int:
+    """Index just past the construct whose body starts at text[i], or -1.
+
+    opener is `(` for $( ), <( ) and a subshell, `{` for ${ }, a backquote, a
+    quote, or `$'` for $'...'. One pass with an explicit stack: linear time.
+    """
+    stack, dollar = [opener], -2
+    while i < len(text):
+        top, char = stack[-1], text[i]
+        if top == "'":
+            if char == "'":
+                stack.pop()
+        elif char == "\\":
+            i += 1
+        elif top == "$'":
+            if char == "'":
+                stack.pop()
+        elif top == '"':
+            if char == '"':
+                stack.pop()
+            elif char == "`":
+                stack.append("`")
+            elif text.startswith("$(", i) or text.startswith("${", i):
+                i += 1
+                stack.append(text[i])
+        elif char == CLOSERS[top]:
+            stack.pop()
+        elif char == "#" and top != "{" and text[i - 1] in " \t\n;&|(":
+            end = text.find("\n", i)
+            i = len(text) - 1 if end < 0 else end - 1
+        elif char == "'":
+            stack.append("$'" if dollar == i - 1 else "'")
+        elif char == '"' or char == "`" or char == "(":
+            stack.append(char)
+        elif text.startswith("${", i):
+            i += 1
+            stack.append("{")
+        elif char == "$":
+            dollar = i
+        i += 1
+        if not stack:
+            return i
+    return -1
+
+
+def shell_segments(text: str) -> list[tuple[list[tuple], str]] | None:
+    """Split a command line into simple commands, or None when it does not parse.
+
+    Each item is (words, separator after it). A word is (start, end, plain,
+    quotes): plain when it has no quote, escape or expansion; each quote is
+    [open, close, keep_start, keep_end, ...], the $( ), ` ` and ${ } parts of a
+    double-quoted span that a shell runs. Subshells, substitutions and comments
+    are opaque. One pass: linear time.
+    """
+    segments: list = []
+    words: list = []
+    quotes: list = []
+    start, plain, dollar, i, n = -1, True, -2, 0, len(text)
+
+    def end_word(at: int) -> None:
+        nonlocal start, plain, quotes
+        if start >= 0:
+            words.append((start, at, plain, quotes))
+        start, plain, quotes = -1, True, []
+
+    while i < n:
+        char = text[i]
+        if char in " \t":
+            end_word(i)
+            i += 1
+            continue
+        if char == "#" and start < 0:
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        redirect = (char == "&" and (text[i - 1:i] in ("<", ">") or text[i + 1:i + 2] == ">")) or \
+                   (char == "|" and text[i - 1:i] == ">")
+        if char in "\n;&|" and not redirect:
+            end_word(i)
+            pair = text[i:i + 2]
+            separator = pair if pair in ("&&", "||", "|&", ";;", ";&") else char
+            segments.append((words, separator))
+            words = []
+            i += len(separator)
+            continue
+        if char == ")":
+            return None
+        if start < 0:
+            start = i
+        if char == "\\":
+            plain, i = False, i + 2
+            continue
+        if char == "'":
+            close = skip_nested(text, i + 1, "$'" if dollar == i - 1 else "'")
+            if close < 0:
+                return None
+            plain = False
+            quotes.append([i, close - 1])
+            i = close
+            continue
+        if char == '"':
+            quote, j = [i, -1], i + 1
+            while j < n and text[j] != '"':
+                if text[j] == "\\":
+                    j += 2
+                elif text[j] == "`" or text.startswith("$(", j) or text.startswith("${", j):
+                    body, opener = (j + 1, "`") if text[j] == "`" else (j + 2, text[j + 1])
+                    end = skip_nested(text, body, opener)
+                    if end < 0:
+                        return None
+                    quote += [j, end]
+                    j = end
+                else:
+                    j += 1
+            if j >= n:
+                return None
+            quote[1] = j
+            plain = False
+            quotes.append(quote)
+            i = j + 1
+            continue
+        if char in "`(" or text.startswith("${", i):
+            body, opener = (i + 2, "{") if char == "$" else (i + 1, char)
+            end = skip_nested(text, body, opener)
+            if end < 0:
+                return None
+            plain, i = False, end
+            continue
+        if char == "$":
+            dollar, plain = i, False
+        i += 1
+    end_word(n)
+    segments.append((words, ""))
+    return segments
+
+
+def command_head(text: str, words: list[tuple]) -> tuple[str | None, int]:
+    """(command name, its word index) after assignments, sudo, command and time."""
+    index = 0
+    while index < len(words) and ASSIGNMENT.match(text, words[index][0]):
+        index += 1
+    while index < len(words) and words[index][2] and text[words[index][0]:words[index][1]] in COMMAND_PREFIXES:
+        index += 1
+    if index >= len(words) or not words[index][2]:
+        return None, index
+    return text[words[index][0]:words[index][1]], index
+
+
+def is_text_command(text: str, words: list[tuple], head: str | None, index: int) -> bool:
+    """Whether the simple command is a read-only text command whose quoted arguments are data."""
+    rest = [text[a:b] for a, b, _, _ in words[index + 1:]]
+    options = [w for w in rest if w.startswith("-") and not w.startswith("--")]
+    if any(RUNS_OPTION.match(w) for w in rest) or (head == "printf" and any("v" in o for o in options)):
+        return False
+    if head in TEXT_COMMANDS:
+        return True
+    if head == "git" and rest and words[index + 1][2]:
+        return rest[0] in TEXT_GIT_COMMANDS or (rest[0] == "tag" and (
+            any("m" in o for o in options) or any(w.startswith("--message") for w in rest)))
+    if head == "sed":
+        return any("n" in o for o in options) or any(w in ("--quiet", "--silent") for w in rest)
+    return False
+
+
+def scannable(command: str) -> str:
+    """The command with the quoted arguments of read-only text commands blanked.
+
+    The quote marks and the length are kept and only quoted text becomes
+    spaces, so blanking can remove a match but never add one. A text command
+    is blanked only at the top level and when its output reaches nothing but
+    the screen, a file or a text filter. A command that does not parse is
+    scanned as written.
+    """
+    segments = shell_segments(command)
+    if segments is None:
+        return command
+    chars = list(command)
+    pipeline: list[tuple[str | None, list]] = []
+    for words, separator in segments:
+        head, index = command_head(command, words)
+        blank = []
+        if is_text_command(command, words, head, index):
+            blank = [quote for word in words[index + 1:] for quote in word[3]]
+            if head in ("awk", "sed"):
+                runs = AWK_RUNS if head == "awk" else SED_RUNS
+                blank = [q for q in blank if not runs.search(command[q[0] + 1:q[1]])]
+        pipeline.append((head, blank))
+        if separator in ("|", "|&"):
+            continue
+        to_filters = True  # everything after this command in the pipeline is a text filter
+        for later, quotes in reversed(pipeline):
+            safe, to_filters = to_filters, to_filters and later in TEXT_FILTERS
+            for quote in quotes if safe else ():
+                bounds = [quote[0] + 1] + quote[2:] + [quote[1]]
+                for at in range(0, len(bounds), 2):
+                    chars[bounds[at]:bounds[at + 1]] = " " * (bounds[at + 1] - bounds[at])
+        pipeline = []
+    return "".join(chars)
+
+
 PUBLIC_CONFIG = re.compile(r'return \{ url: "(https://[^"]+)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};')
 
 RULE = (
@@ -195,7 +417,7 @@ def guarded_kind(payload: dict) -> str | None:
     name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
     if name == "Bash":
-        command = HEREDOC.sub("", str(tool_input.get("command", "")))
+        command = scannable(HEREDOC.sub("", str(tool_input.get("command", ""))))
         if PUBLISH_COMMAND.search(command):
             return "publish"
         if SPEND_COMMAND.search(command):
