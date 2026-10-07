@@ -1,3 +1,4 @@
+import { ownerApprovalInputSchema, ownerApprovalOutputSchema } from './model-reference-owner-schema.mjs';
 // Integration candidate. Default flags expose no tools or routes. Enabling a
 // flag is a reviewed deployment action; registration, grants and qualification
 // must be completed independently. This module cannot issue Domain Authority.
@@ -6,15 +7,16 @@ export interface ModelDomainFeatureEnv {
   CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1?: string;
 }
 
+export const MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL = "clued_model_reference_owner_approval_refs";
 export const MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL = "clued_model_dataset_split_owner_anchor_refs";
 export const MODEL_DOMAIN_REFS_TOOL = "clued_model_dataset_split_resolve_refs";
 export const MODEL_DOMAIN_VERIFY_TOOL = "clued_model_dataset_split_verify";
 export const MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL = "clued_model_dataset_split_bootstrap_request";
-export type ModelDomainToolName = typeof MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL | typeof MODEL_DOMAIN_REFS_TOOL | typeof MODEL_DOMAIN_VERIFY_TOOL |
+export type ModelDomainToolName = typeof MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL | typeof MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL | typeof MODEL_DOMAIN_REFS_TOOL | typeof MODEL_DOMAIN_VERIFY_TOOL |
   typeof MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL;
 
 export function isModelDomainTool(name: unknown): name is ModelDomainToolName {
-  return name === MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL || name === MODEL_DOMAIN_REFS_TOOL || name === MODEL_DOMAIN_VERIFY_TOOL || name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL;
+  return name === MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL || name === MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL || name === MODEL_DOMAIN_REFS_TOOL || name === MODEL_DOMAIN_VERIFY_TOOL || name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL;
 }
 export function modelDomainSourceEnabled(env: ModelDomainFeatureEnv) {
   return env.CLUED_MODEL_DOMAIN_SOURCE_V1 === "true";
@@ -30,6 +32,11 @@ const canonicalRef = {
   required: ["id", "version", "content_hash"], additionalProperties: false,
 } as const;
 export const modelDomainTools = [
+  {
+    name: MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL,
+    description: "Read only a new exact Owner experiment-approval Decision/Receipt/Event chain in fixed Project0597 and Task1502 for PC M1_FIXED_REFERENCE QUALIFICATION. This same authorized Binding is admitted with context:read before Canonical rows. Recomputes the full M1 server hash, Currentness, private Actor and exact request/operation/window/budget semantics. Returns exactly 16 actor-free/body-free verified reference/status fields; no opaque Host source_ref, Actor DTO, record body or token. This read never issues an ExperimentProfile, grants model permission, consumes an attempt, invokes Native or writes Canonical data. Host integration uses a distinct actor-free bridge and is not compatible with the old raw-Actor reader protocol.",
+    inputSchema: ownerApprovalInputSchema, outputSchema: ownerApprovalOutputSchema,
+  },
   {
     name: MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL,
     description: "Read only the two fixed Owner Decision anchor references in the fixed Model Program Project through this same authorized Binding. Returns exact id/version/full Record server content hash and projection-only markers. No caller selector, actor, raw Record or authority proof is accepted. This call never submits an Owner request, grants permission or invokes a Canonical/M1 writer; it does not resolve historical hash semantics or issue M2 qualification.",
@@ -57,6 +64,7 @@ export const modelDomainTools = [
   },
 ] as const;
 export const modelDomainToolPolicies = {
+  [MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL]: { scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   [MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL]: { scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   [MODEL_DOMAIN_REFS_TOOL]: { scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   [MODEL_DOMAIN_VERIFY_TOOL]: { scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },

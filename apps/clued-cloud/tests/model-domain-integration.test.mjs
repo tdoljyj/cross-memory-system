@@ -46,7 +46,7 @@ test('registered candidate input schemas expose no client identity, grants, proo
     assert.equal(tool.inputSchema.additionalProperties, false);
     assert(!['actor', 'subject_id', 'binding_id', 'grant', 'user_confirmed', 'clock', 'scope', 'p_token_hash'].some(key => key in tool.inputSchema.properties));
   }
-  assert.equal(modelDomainTools.length, 4);
+  assert.equal(modelDomainTools.length, 5);
 });
 test('caller actor or authority proof is rejected before source RPC or submission', async () => {
   for (const [name, input] of [[MODEL_DOMAIN_REFS_TOOL, selectors], [MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, bootstrapInput]]) {

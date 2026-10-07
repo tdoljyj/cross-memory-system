@@ -1,8 +1,9 @@
+import { readOwnerApprovalRefsWithExistingBindingRpc } from "./model-reference-owner-source.mjs";
 import { readOwnerAnchorsWithExistingBindingRpc } from "./model-domain-owner-anchor-rpc.mjs";
 import { resolveWithExistingBindingRpc } from "./model-domain-ref-resolver.mjs";
 import { verifyWithExistingBindingRpc, type ExistingBindingRpc } from "./model-domain-rpc-source.mjs";
 import { prepareNativeBootstrapRequest } from "./model-domain-native-bootstrap-request.mjs";
-import { MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL, MODEL_DOMAIN_REFS_TOOL, MODEL_DOMAIN_VERIFY_TOOL, MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL,
+import { MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL, MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL, MODEL_DOMAIN_REFS_TOOL, MODEL_DOMAIN_VERIFY_TOOL, MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL,
   modelDomainSourceEnabled, modelDomainBootstrapRequestEnabled, type ModelDomainFeatureEnv,
   type ModelDomainToolName } from "./model-domain-tools";
 
@@ -23,6 +24,7 @@ export async function dispatchModelDomainTool(env: ModelDomainFeatureEnv, name: 
     throw new ModelDomainToolDenied();
   }
   try {
+    if (name === MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL) return await readOwnerApprovalRefsWithExistingBindingRpc(transport.rpc, input);
     if (name === MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL) return await readOwnerAnchorsWithExistingBindingRpc(transport.rpc, input);
     if (name === MODEL_DOMAIN_REFS_TOOL) return await resolveWithExistingBindingRpc(transport.rpc, input);
     if (name === MODEL_DOMAIN_VERIFY_TOOL) return await verifyWithExistingBindingRpc(transport.rpc, input);
