@@ -972,7 +972,8 @@ Scheduled recovery looked at it only during the 10 minutes after the attempt,
 the ordinary credential refresh waits for a quiet root, and the recovery-only
 refresh accepted legacy connections only. The access token expired an hour
 later and every read of the connection answered `storage_read_unavailable`,
-with no alert, until the job was settled by hand.
+with no alert. Nothing could settle the job: once this change is released, the
+next scheduled recovery settles it as `PROVIDER_EFFECT_ABSENT` and reads recover.
 
 - **Recovery keeps trying.** `clued_storage_scheduled_recovery_v2` keeps a job
   due after its first 10 minutes, with backoff stored in
