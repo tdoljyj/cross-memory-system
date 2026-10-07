@@ -293,7 +293,7 @@
 
 ### 12.1 测量（随第一步实施一起上线，托管 runner，每周一次 + `workflow_dispatch`）
 
-`scripts/ci/ci-usage-report.mjs`（受保护路径），只读 GitHub API，输出 JSON artifact 与 step summary：
+`scripts/ci/ci-usage-report.mjs`（受保护路径），只读 GitHub API，输出 JSON artifact 与 step summary。**硬规则**：度量只在 GitHub Actions 内运行，用该运行的 `GITHUB_TOKEN`（每仓库每小时 1,000 次、与个人账号额度分开）或 Owner 另设的机器账号令牌，绝不用 Owner 的个人令牌；脚本设请求总预算（建议每次 ≤800）、按运行 id 落盘缓存只拉增量、每批前读 `x-ratelimit-remaining`、低于预算余量即停。来历：2026-10-07 本研究的临时采集脚本用 Owner 个人令牌对 #530–#616 逐运行、逐提交拉取，约 18 分钟发出 4,600 余次请求把 5,000 次/小时的额度用到 0，而自托管 runner 的开工前检查用同一账号的令牌，PR #617 的检查在钩子阶段被 403 拒绝。Owner 随后决定 CI 钩子改用独立机器账号的令牌（另一会话记录）。
 
 | 指标 | 定义 |
 | --- | --- |
@@ -350,6 +350,7 @@
 - `efficiency` 下普通层与文档层免合并位：它们的合并会让队列头白跑一次最后一轮；缺认领的 PR 也准入、重任务照跑且不计量（§5.3 接受了这些代价，并要求度量可见）。
 - 两个 ENFORCE 变量在第 6 步删除之前是 I1 之外的放宽开关：在 `normal` / `efficiency` 下把它们设为非 `true`，受保护层也会回到提示模式；`frozen` 不受影响（§13）。
 - 位时效绑 CI 后，一个已准入的 PR 仍可用加闸 workflow 内的长任务把队列头的位撑到 90 分钟硬上限（§7.3）；PR 自带的 workflow 不计入。
+- GitHub REST 额度是账号级共享资源：只要 runner 开工前检查、准入 workflow 或任何 Agent 还在用 Owner 个人令牌，一个失控的只读脚本就能让 CI 停摆（2026-10-07 事故，§12.1）。本文的度量规则只约束仓库内的脚本，约束不了 Host 本地的工具；钩子换用机器账号令牌是 Owner 另行决定的修法。
 - 执行器（第 5 步）之前，并入 main 仍是 Agent 的动作，Agent 不在线时队列头不会前进；兜底时效会把它出队。
 
 ---
