@@ -178,8 +178,10 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
     const before = await snapshot();
     await apply(MIGRATION);
     const after = await snapshot();
+    // Production order: the migrations up to the grant migration now, the grant migration and every later one
+    // (the security hygiene migration 20261007120000 among them) once T-S-2 has checked the database before it.
     assert.ok(migrations.includes(GRANTS));
-    for (const name of migrations.filter((name) => name > MIGRATION && name !== GRANTS)) await apply(name);
+    for (const name of migrations.filter((name) => name > MIGRATION && name < GRANTS)) await apply(name);
 
     await t.test('T-S-3 applying the migration leaves every existing object unchanged', () => {
       for (const kind of ['functions', 'relations', 'policies', 'schemas']) {
@@ -246,17 +248,29 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
 
     // the §5.13 target grants: the stage C grant migration itself (§13.0)
     await apply(GRANTS);
+    const executors = async () => (await admin.query(`select p.proname, array_agg(r.rolname order by r.rolname) filter (where
+        has_function_privilege(r.rolname, p.oid, 'execute')) roles
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
+      where n.nspname = 'public' and p.proname = any($1)
+      group by p.proname order by p.proname`, [[...BINDING_RPCS, 'clued_user_integration_v1']])).rows;
 
     await t.test('T-S-2 after the target grants: exactly §5.13', async () => {
-      const { rows } = await admin.query(`select p.proname, array_agg(r.rolname order by r.rolname) filter (where
-          has_function_privilege(r.rolname, p.oid, 'execute')) roles
-        from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
-        where n.nspname = 'public' and p.proname = any($1)
-        group by p.proname order by p.proname`, [[...BINDING_RPCS, 'clued_user_integration_v1']]);
+      const rows = await executors();
       assert.equal(rows.length, BINDING_RPCS.length + 1);
       for (const row of rows) {
         assert.deepEqual(row.roles, row.proname === 'clued_user_integration_v1' ? ['authenticated'] : ['anon', 'authenticated'], row.proname);
+      }
+    });
+
+    // every later migration, in production order
+    for (const name of migrations.filter((name) => name > GRANTS)) await apply(name);
+
+    await t.test('T-S-2 after the security hygiene migration: the Binding path is anon only', async () => {
+      const rows = await executors();
+      assert.equal(rows.length, BINDING_RPCS.length + 1);
+      for (const row of rows) {
+        assert.deepEqual(row.roles, row.proname === 'clued_user_integration_v1' ? ['authenticated'] : ['anon'], row.proname);
       }
     });
 
