@@ -426,6 +426,7 @@
   - 残余：新建核验在版本检查之后才读新文件夹的共享，identity 也分两次读版本与共享；其间共享若被改，只会让记下的指纹与 Drive 不符而拒绝后续写入，不会放宽。
 - **结果不确定时。** 定时恢复不加载目录 move（不自动重写路径）。只有 Owner 在原生页面触发的恢复会以只读 GET 重新核验，并通过同一核验记录结算，绝不重复 effect。
 - **未记录尝试的已开始任务（Owner Decision `d9d6db4c`，迁移 `20261002170000`）。** 所有写入效果都先持久化 provider attempt，再做第一次 Drive 写入，且记录 attempt 要求日志仍为 started（行锁）。因此没有 attempt 的 started/uncertain 任务从未到达 Drive。准入过期满 60 秒后，定时任务把它结案为 cancelled（`released_unattempted`，原因码 `NO_PROVIDER_ATTEMPT`，带 Receipt 与 Event）；结案后 attempt 不能再记录，不会再有 Drive 写入。只读数据库，不需要执行开关。持久开始前的身份读取遇到超时、请求失败或无法解析时最多重读两次（错误状态码不重读）；动网盘前的复核不重读，其失败留下的无 attempt 任务由上述结案处理。任务未结时仍不允许切换写入等级，页面显示原因。
+- **已记录尝试但未结的任务（BUG-20261007-005，Task `c9733a6e`，迁移 `20261007200000`）。** 定时恢复在尝试后 10 分钟之外仍按退避（2、4、8……分钟，最多 60 分钟）继续处理，`load` 不再有年龄上限。account-policy 连接也可做绑定原任务的恢复专用续签（只跳过根目录空闲检查，保留文件栅栏，不发写权限）。新建（create）任务核验失败时，以只读 GET 确认生成的文件 ID 返回 404 且没有带该 intent 标记的文件，并且准入已过期、尝试已满 10 分钟，才结案为 cancelled（`released_not_effected`，原因码 `PROVIDER_EFFECT_ABSENT`，带 Receipt 与 Event）。根目录被未结任务挡住的续签会计数并记日志；令牌过期的读取带固定提示。其他写入类型若无法证明结果，仍需 Owner 原生恢复。
 
 **revision 管理：**
 
