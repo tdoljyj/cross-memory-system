@@ -99,6 +99,8 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   }
   assert.match(byName.clued_work_renew.description, /work_claim_lease_key_required/);
   assert.match(byName.clued_work_claim.description, /lease_key is the claim's private key: keep it in this session only/);
+  assert.match(byName.clued_work_claim.description, /A continuation takes none/);
+  assert.match(byName.clued_work_release.inputSchema.properties.evidence_ref.description, /continue without a token/);
   assert.equal(byName.clued_work_claim._meta['clued/scopeEnforcement'], 'server-side');
 });
 
