@@ -40,7 +40,7 @@
   "host_hard_timeout_seconds": 120,
   "max_artifact_bytes": 1048576,
   "runner_path": "scripts/model-program/run_t0_training_smoke.py",
-  "runner_sha256": "1c194c11ffbc812f5c9e62a4a7893bf6719cae909adc4eefa5d77cb497fa9b44",
+  "runner_sha256": "a0144b87ed36a97d469487383f8d8c29581178c7040d98fde945711048a904f3",
   "dependency": "Python 3.12.14 stdlib only; CPU; no NumPy/Torch/GPU/download/install",
   "checkpoint": "Create-only step4 JSON; bounded bytes and hash; exact float roundtrip; resume4 must match uninterrupted8 weights and loss history exactly",
   "output_scope": "Fixed repository work/model-program/t0-training-smoke; exclusive profile-hash attempt marker plus one new UUID run directory",

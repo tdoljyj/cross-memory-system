@@ -179,6 +179,45 @@ class T0PreparationPolicyTests(unittest.TestCase):
             self.assertFalse(result["trusted_execution_bridge_available"])
             self.assert_untouched(training, writes)
 
+    def test_fixed_output_root_separator_equivalence_without_filesystem_resolution(self):
+        stack, training, writes = self.guards()
+        with stack, patch.object(Path, "resolve", side_effect=AssertionError("FORBIDDEN filesystem resolution")):
+            native_root = str(self.module.OUTPUT_ROOT)
+            for spelling in (native_root, native_root.replace("\\", "/")):
+                changed = self.fabricated_issued_metadata()
+                changed["output_root"] = spelling
+                result = self.precheck(profile=changed, host=self.fabricated_host_metadata())
+                self.assertEqual(result["actual_execution"], "NONE")
+                self.assertFalse(result["execution_ready"])
+            self.assert_untouched(training, writes)
+
+    def test_fixed_output_root_rejects_non_strings_relative_other_and_parent_aliases(self):
+        root = self.module.OUTPUT_ROOT
+        invalid_roots = (None, True, root, "", "work/model-program/t0-training-smoke",
+                         "C:work/model-program/t0-training-smoke", str(root.parent),
+                         str(root / "nested"), str(root / ".." / root.name),
+                         "C:/unrelated-output-root")
+        stack, training, writes = self.guards()
+        with stack, patch.object(Path, "resolve", side_effect=AssertionError("FORBIDDEN filesystem resolution")):
+            for spelling in invalid_roots:
+                changed = self.fabricated_issued_metadata()
+                changed["output_root"] = spelling
+                with self.subTest(output_root=spelling), self.assertRaisesRegex(self.module.PreflightError, "ARTIFACT_SCOPE"):
+                    self.precheck(profile=changed, host=self.fabricated_host_metadata())
+            self.assert_untouched(training, writes)
+
+    def test_profile_resource_bounds_keep_exact_integer_types(self):
+        stack, training, writes = self.guards()
+        with stack:
+            for key, value in (("max_attempts", True), ("max_sgd_updates", 16.0),
+                               ("max_wall_seconds", 30.0), ("host_hard_timeout_seconds", 120.0),
+                               ("max_artifact_bytes", 1048576.0)):
+                changed = self.fabricated_issued_metadata()
+                changed[key] = value
+                with self.subTest(key=key), self.assertRaises(self.module.PreflightError):
+                    self.precheck(profile=changed, host=self.fabricated_host_metadata())
+            self.assert_untouched(training, writes)
+
     def test_recipe_type_and_exact_bounds_rejected_without_training(self):
         for key, value in (("attempts", True), ("total_sgd_updates", True), ("control_steps", 9),
                            ("checkpoint_steps", 5), ("resume_steps", 5), ("parameter_count", 17),

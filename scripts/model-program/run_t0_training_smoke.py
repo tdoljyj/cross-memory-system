@@ -119,9 +119,15 @@ def preflight_execute(recipe, profile, host_verified_state, *, runner_sha256,
         raise PreflightError('RECIPE_RUNNER_PIN_MISMATCH')
     if type(profile.get('max_attempts')) is not int or type(profile.get('max_sgd_updates')) is not int or profile.get('max_attempts') != 1 or profile.get('max_sgd_updates') != 16:
         raise PreflightError('ONE_ATTEMPT_SIXTEEN_UPDATES_REQUIRED')
-    if profile.get('max_wall_seconds') != 30 or profile.get('host_hard_timeout_seconds') != 120:
+    if type(profile.get('max_wall_seconds')) is not int or type(profile.get('host_hard_timeout_seconds')) is not int or profile.get('max_wall_seconds') != 30 or profile.get('host_hard_timeout_seconds') != 120:
         raise PreflightError('EXACT_WALL_BUDGET_REQUIRED')
-    if profile.get('max_artifact_bytes') != MAX_BYTES or profile.get('output_root') != str(OUTPUT_ROOT):
+    output_root = profile.get('output_root')
+    if type(profile.get('max_artifact_bytes')) is not int or profile.get('max_artifact_bytes') != MAX_BYTES or type(output_root) is not str or not output_root:
+        raise PreflightError('EXACT_ARTIFACT_SCOPE_REQUIRED')
+    # Lexical Path comparison normalizes native separators without any filesystem
+    # resolution. Relative paths, other roots and parent-traversal aliases deny.
+    normalized_output = Path(output_root)
+    if not normalized_output.is_absolute() or normalized_output != OUTPUT_ROOT:
         raise PreflightError('EXACT_ARTIFACT_SCOPE_REQUIRED')
     if not isinstance(host_verified_state, dict) or host_verified_state.get('status') != 'EXTERNALLY_ADMITTED_FOR_EXACT_EXECUTION':
         raise PreflightError('EXTERNAL_HOST_ADMISSION_REQUIRED_NOT_CALLER_BOOLEAN')
