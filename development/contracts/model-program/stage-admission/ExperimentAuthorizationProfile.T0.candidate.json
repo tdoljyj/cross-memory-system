@@ -1,0 +1,63 @@
+{
+  "schema": "clued.model-program.ExperimentAuthorizationProfile/preparation-v3",
+  "profile_id": "development-t0-pipeline-candidate-20261007",
+  "status": "CANDIDATE_PREPARATION_ONLY",
+  "stage_id": "T0",
+  "environment": "NON_PRODUCTION",
+  "experiment_kind": "PIPELINE_SMOKE",
+  "weight_learning_planned": true,
+  "training_allowed": false,
+  "real_model_evaluation_allowed": false,
+  "production_allowed": false,
+  "source_lock": {
+    "formal_plan_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+    "owner_rule_json_sha256": "8223b918471f8ef8a33207509c0052322b894824b596280c601395d224bb9fd1",
+    "owner_rule_text_sha256": "9e1917c5dcead7de060d262403577407396d74a0333b6feecaec1d60ffa22baf",
+    "stage_contract_sha256": "304e7523dff4db817f10b133d857e47beada4f290595f21924b0d0bb4dc01fb5"
+  },
+  "dataset": {
+    "source_class": "OWNER_APPROVED_SYNTHETIC",
+    "source_ref": null,
+    "source_sha256": null,
+    "split_ref": null,
+    "parent_boundary": "TRAINING",
+    "purpose_id": "training",
+    "content_class": "SYNTHETIC_PUBLIC",
+    "permission_proof_ref": null
+  },
+  "recipe": {
+    "source_sha256": null,
+    "tokenizer_sha256": null,
+    "scorer_sha256": null,
+    "weights_sha256": null
+  },
+  "device": {
+    "device_profile_ref": null,
+    "actual_device_ref": null,
+    "runner_ref": null
+  },
+  "authority": {
+    "rule_decision_id": "07696647-1557-4b0d-9eed-c1f698f4b011",
+    "rule_decision_version": 1,
+    "rule_receipt_ref": "7313df9c-b97f-4d90-beb6-f43d32cf469c",
+    "experiment_authorization_ref": null,
+    "current_claim_ref": null
+  },
+  "window": {"not_before": null, "stop_at": null},
+  "budget": {
+    "max_wall_seconds": 120,
+    "max_compute_bytes": 134217728,
+    "max_cost_microunits": 0,
+    "max_steps": 16,
+    "max_model_calls": 0
+  },
+  "attempts": {"max_attempts": 1},
+  "stop_conditions": ["authority_unavailable", "budget_exhausted", "deadline_expired", "source_or_identity_drift", "validation_failure"],
+  "acceptance_flow": {
+    "m2_reference_candidate_stage": "M1_FIXED_REFERENCE",
+    "m2_reference_purpose": "QUALIFICATION",
+    "product_final_purpose": "FINAL_HOLDOUT",
+    "result_consumer": "DEVELOPMENT_EVIDENCE_ONLY"
+  },
+  "legacy_m1_profile_ref": null
+}

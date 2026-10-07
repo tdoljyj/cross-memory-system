@@ -1,0 +1,148 @@
+{
+  "schema_version": "clued.model-program-stage-admission-successor/1",
+  "contract_id": "MODEL-STAGE-ADMISSION-SUCCESSOR-v0.1-20261007",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "status": "OWNER_ADOPTED_DIRECTION_IMPLEMENTATION_CANDIDATE",
+  "qualification": "NOT_ISSUED",
+  "authority_effect": "NONE_FROM_THIS_ARTIFACT",
+  "authority": {
+    "original_task_id": "1502fd80-8ff8-4adc-b4f5-da6d462f4f8a",
+    "source_task_version": 290,
+    "project_id": "0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "owner_decision_id": "07696647-1557-4b0d-9eed-c1f698f4b011",
+    "owner_decision_version": 1,
+    "owner_receipt_id": "7313df9c-b97f-4d90-beb6-f43d32cf469c",
+    "receipt_reference_state": "EXACT_CANONICAL_ID_REPORTED_BY_ROOT; NOT_A_RUNTIME_PERMISSION",
+    "source": "AUTHENTICATED_CLUED_DECISION_REFERENCED_BY_ORIGINAL_TASK",
+    "scope": "Stage-admission contract engineering and exact Profile preparation only; no training, native experiment, model evaluation, deployment or release authority",
+    "no_replacement_task": true,
+    "canonical_resolution_required_before_effects": true
+  },
+  "source_lock": {
+    "formal_plan_version": "v1.0.1-r1",
+    "formal_plan_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+    "formal_plan_location": "Existing external Drive authority; exact SHA bound; full narrative not materialized in Git",
+    "owner_rule_json_sha256": "8223b918471f8ef8a33207509c0052322b894824b596280c601395d224bb9fd1",
+    "owner_rule_txt_sha256": "9e1917c5dcead7de060d262403577407396d74a0333b6feecaec1d60ffa22baf",
+    "proposal_status_is_not_acceptance": true,
+    "accepted_rule_source": "authority.owner_decision_id; exact refinements in the original Task",
+    "frozen_m0_m1_modified": false,
+    "existing_source_policy_ref": "../m0/MODEL-SOURCE-POLICY.json",
+    "existing_profile_schema_ref": "../m0/schemas/ExperimentAuthorizationProfile.schema.json",
+    "existing_profile_schema_is_m0_only": true,
+    "preparation_is_not_an_issued_profile": true
+  },
+  "typed_stage_refs": [
+    {"stage_id":"MODEL-PROGRAM-M2","record_type":"Task","task_id":"1502fd80-8ff8-4adc-b4f5-da6d462f4f8a","pending":"Actual qualification/DataGate and affected sourceRole/data consumers"},
+    {"stage_id":"MODEL-PROGRAM-M3","record_type":"Task","task_id":"1502fd80-8ff8-4adc-b4f5-da6d462f4f8a","pending":"Dev-only exact Profile issuance; full M3 requires full M2"},
+    {"stage_id":"MODEL-PROGRAM-M4","record_type":"Task","task_id":"1502fd80-8ff8-4adc-b4f5-da6d462f4f8a","pending":"Unchanged original full-stage acceptance"},
+    {"stage_id":"MODEL-PROGRAM-M5","record_type":"Task","task_id":"1502fd80-8ff8-4adc-b4f5-da6d462f4f8a","pending":"Unchanged original full-stage acceptance"},
+    {"stage_id":"MODEL-PROGRAM-M5A","record_type":"Task","task_id":"1502fd80-8ff8-4adc-b4f5-da6d462f4f8a","pending":"Unchanged original full-stage acceptance"},
+    {"stage_id":"MODEL-PROGRAM-M6","record_type":"Task","task_id":"1502fd80-8ff8-4adc-b4f5-da6d462f4f8a","pending":"Three-Tier qualification, Stable/ProductActivation and independent milestone review"},
+    {"stage_id":"MODEL-PROGRAM-M7","record_type":"Task","task_id":"1502fd80-8ff8-4adc-b4f5-da6d462f4f8a","pending":"Unchanged bounded-learning evolution closure; not deferred"}
+  ],
+  "existing_taxonomies": {
+    "parent_scopes": ["TRAINING", "DEVELOPMENT", "QUALIFICATION", "FINAL_HOLDOUT"],
+    "purpose_ids": ["training", "development", "calibration_fit", "selection_policy_validation", "qualification", "final_holdout"],
+    "no_new_parent_or_purpose": true,
+    "definition_ref": "PR441@e76a7db7edc6b47b5a719e165f688621efa9580a:development/contracts/model-program/m2/DatasetSplitDefinition.v0.1.json",
+    "definition_sha256": "f51cefe8eccd0faa75b45e78380e5b389ed266ca4034b511a85f51771f2d4f77",
+    "definition_schema_ref": "PR441@e76a7db7edc6b47b5a719e165f688621efa9580a:development/contracts/model-program/m2/schemas/DatasetSplit.v0.1.schema.json",
+    "definition_schema_sha256": "062860afd3dc16fa9ee1de27582439701a67b7c5976ad45981a7cca3e515468f",
+    "external_source_role": "SourceCopiedRead",
+    "qualified_producer_asserted": false,
+    "definition_state": "EXTERNAL_UNMERGED_DRAFT_SOURCE_NOT_MAIN_OR_ACCEPTANCE",
+    "purpose_parent_mapping": "Use the exact existing definition; this successor adds no inferred mapping",
+    "protected48": "Existing protected access restriction; not a seventh purpose"
+  },
+  "clause_successors": [
+    {
+      "source_clause": "7.2",
+      "source_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+      "subject": "M3 entry",
+      "successor": "Bounded T0/T1 development engineering may be prepared using reviewed exact inputs of an existing ExperimentAuthorizationProfile before complete M2. Complete M3 verdict, T2/T3 scale expansion and all qualification/release paths still require complete accepted M2.",
+      "no_m3_completion_from_development_evidence": true
+    },
+    {
+      "source_clause": "11.5",
+      "source_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+      "subject": "Dataset purpose, selection separation and final Holdout freeze",
+      "successor": "Before candidate-selection feedback, really freeze reserved source-pool manifest, near-duplicate groups, sampling version/size/statistical rationale, custody, allowed consumers, scorer/threshold/failure rules and actual access isolation. Generate actual final_holdout questions only through the independent authorized path after the final product candidate weights/tokenizer/inference config/scorer are fixed and before formal product qualification.",
+      "real_freeze_is_not_merely_a_plan": true,
+      "late_question_generation_does_not_defer_preselection_reserved_input_freeze": true
+    },
+    {
+      "source_clause": "11.6",
+      "source_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+      "subject": "M2 acceptance and DataGate",
+      "successor": "Freeze the exact M2 reference/deterministic baseline for its qualification purpose first. Then independently generate and consume qualification-purpose samples with actual Gold, thresholds, sources and applicable evidence to close DataGate. This reference is not the later M3-trained product candidate. DevelopmentFoundation and source-bound preparation never issue M2 PASS.",
+      "full_m2_requirements_preserved": true
+    },
+    {
+      "source_clause": "11.8",
+      "source_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+      "subject": "Acceptance evidence and final product qualification",
+      "successor": "M2 qualification data acceptance precedes full M3; product final_holdout use follows exact product candidate freeze. Distinct purpose-bound candidate/evidence identities and independent acceptance apply. M2 consumption of qualification samples grants no final_holdout use or final product qualification inheritance.",
+      "actual_holdout_and_independent_final_acceptance_required": true
+    }
+  ],
+  "changes": {
+    "C1": {"metadata_sharing_probe": "CANCELLED_AS_UNNECESSARY_REPROOF_OF_STATICALLY_REFUTED_DESIGN", "enhanced_continuous_handle_contract": "HOLD", "actual_host_requirements_waived": false},
+    "C2": {"DevelopmentFoundation": "EXACT_REVIEWED_INPUT_SET_OF_EXISTING_EXPERIMENT_AUTHORIZATION_PROFILE_ONLY", "new_gate": false, "new_authority": false, "qualification": "DEVELOPMENT_EVIDENCE_ONLY"},
+    "C3": {"agent_host_applicability": "Exact consumer paths that actually delegate sensitive authority", "fixed_runner": "Requires actual reviewed availability and current exact Profile authority", "current_failed_shared_path_exempted": false, "generic_host_qualification_claimed": false},
+    "C4": {"reserved_inputs_actual_freeze": "BEFORE_ANY_CANDIDATE_SELECTION_FEEDBACK", "actual_final_holdout_generation": "AFTER_FINAL_PRODUCT_CANDIDATE_FREEZE_BEFORE_FORMAL_PRODUCT_QUALIFICATION", "m2_qualification_generation": "AFTER_EXACT_M2_REFERENCE_BASELINE_FREEZE_BEFORE_DATAGATE"},
+    "C5": {"reuse": "Unchanged applicable accepted M1/DatasetSplit/Owner-designation evidence only; recheck changed source/role/purpose/consumer scope", "owner_receipt_equals_domain_authority_receipt": false, "gold_threshold_datagate_waived": false},
+    "C6": {"total_goal": "M0-M7", "m6": "FIRST_RELEASE_MILESTONE_ONLY", "m7_deferred": false, "one_tier_or_m2_equals_total_completion": false}
+  },
+  "development_admission": {
+    "foundation_semantics": "EXACT_REVIEWED_INPUT_SET_OF_EXISTING_EXPERIMENT_AUTHORIZATION_PROFILE_ONLY",
+    "allowed_tiers": ["T0", "T1"],
+    "allowed_experiment_kinds": ["PIPELINE_SMOKE", "TOKENIZER_SMOKE", "ARCHITECTURE_SMOKE"],
+    "blocked_until_full_m2": ["T2", "T3", "FULL_M3_VERDICT", "QUALIFICATION_INHERITANCE", "RELEASE"],
+    "weight_learning": {"required_parent_scope": "TRAINING", "required_purpose_id": "training", "required_partition": "Existing authorized training partition", "development_data_weight_learning_allowed": false},
+    "non_learning_engineering": {"required_parent_scope": "DEVELOPMENT", "required_purpose_id": "development"},
+    "blocked_dev_purposes": ["qualification", "final_holdout"],
+    "blocked_dev_access": ["protected48", "Reserved final Holdout pool or actual questions"],
+    "selection_comparisons_require_preselection_actual_freeze": true,
+    "smoke_is_not_final_selection_evidence": true,
+    "required_exact_inputs": ["Original Task and current claim/admission", "Applicable accepted source/role and data use permission", "Public license or explicit synthetic-data approval", "Dataset manifest/lineage/partition/purpose", "Actual reviewed runner and device", "Exact source/code/scorer versions", "Size/compute/cost/attempt/deadline budgets", "Stop/restore/failure rules", "Fresh exact effect authority and runtime window"],
+    "missing_input_effect": "BLOCK_PREPARATION_OR_ISSUANCE_FOR_AFFECTED_SCOPE",
+    "effects_from_local_preparation": "NONE",
+    "actual_profile_authority_implemented_here": false,
+    "source_role_permission_implemented_here": false,
+    "existing_kernel_unique_authority_preserved": true
+  },
+  "purpose_flow": {
+    "training_purpose": "training",
+    "non_learning_dev_purpose": "development",
+    "ordered_milestones": [
+      {"step": 1, "subject": "M2_REFERENCE_DETERMINISTIC_BASELINE", "before": "qualification sample consumption", "freeze": "Exact reference implementation/scorer/threshold/qualification purpose"},
+      {"step": 2, "subject": "M2_QUALIFICATION_AND_DATAGATE", "purpose": "qualification", "consumes": "Actual independent qualification/Gold and applicable accepted DataGate evidence"},
+      {"step": 3, "subject": "FULL_M3", "requires": "Complete accepted M2"},
+      {"step": 4, "subject": "FINAL_PRODUCT_CANDIDATE_FREEZE", "freeze": "Exact weights/tokenizer/inference config/scorer; all selection finished"},
+      {"step": 5, "subject": "FINAL_HOLDOUT_PRODUCT_QUALIFICATION", "purpose": "final_holdout", "requires": "Actual independent question generation/sealing after step4, reserved inputs and access isolation frozen before selection"}
+    ],
+    "preselection_reserved_input_freeze": "Independent ordering constraint before any selection feedback; not a demand to generate final questions before engineering smoke",
+    "final_feedback_to_selection": "FORBIDDEN",
+    "redraw_or_change_candidate_to_pass": "FORBIDDEN",
+    "qualification_to_final_holdout_inheritance": "FORBIDDEN",
+    "candidate_identity_is_purpose_bound": true,
+    "missing_actual_isolation": "BLOCK_AFFECTED_SELECTION_OR_QUALIFICATION_PATH"
+  },
+  "implementation_boundaries": {
+    "current_main_has_m2_consumers": false,
+    "m2_candidate_pr": "https://github.com/tdoljyj/cross-memory-system/pull/441",
+    "m2_candidate_head": "e76a7db7edc6b47b5a719e165f688621efa9580a",
+    "m2_candidate_state": "UNMERGED_DRAFT_EXTERNAL_IMPACT_SOURCE",
+    "m2_consumers_changed_by_this_successor": false,
+    "sourceRole_runtime_enforcement": "NOT_IMPLEMENTED_HERE; original Task and authority Decision track the remaining consumer changes",
+    "protected_data_or_runtime_qualification": "NOT_ISSUED",
+    "frozen_m0_m1_and_ci_files_changed": false,
+    "no_model_or_native_effects": true
+  },
+  "invalidation": [
+    {"changes": ["source", "code", "hash", "runner", "platform", "data", "size", "budget", "consumer"], "rule": "Recheck precisely affected existing Profile inputs; reuse only unchanged applicable evidence"},
+    {"changes": ["purpose", "stage", "holdout timing", "candidate identity", "custody"], "rule": "Revalidate affected split/DataGate/evidence/consumer bindings; no automatic qualification inheritance"},
+    {"changes": ["security-sensitive authority", "actual data permission"], "rule": "Existing Kernel admission and independent evidence required; adoption receipt creates no runtime permission"}
+  ]
+}
