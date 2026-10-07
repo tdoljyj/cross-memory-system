@@ -3,6 +3,7 @@
 | 文档 | 适用内容 |
 | --- | --- |
 | [Runner 配置与运维规范](runner-configuration-and-operations.md) | 配置底线、上线验收、看门狗、巡检、增减、排空、升级与回退 |
+| [迁移账本维护](migration-ledger.md) | 迁移历史映射及离线/发布前校验 |
 | [main 准入自检死锁](main-admission-self-test-deadlock.md) | 准入自检故障处理 |
 | [资料中心账号连接](resource-center-account-connection.md) | 账号统一存储连接 |
 | [资料中心日常入口](resource-center-daily-entry.md) | 日常操作入口 |
