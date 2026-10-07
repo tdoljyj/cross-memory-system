@@ -65,6 +65,7 @@ export function storageAdoptCode(error: unknown): StorageAdoptCode | null {
 /** Guidance for fixed execution reason codes the Agent can act on. Never from the database. */
 const reasonHints: Record<string, string> = {
   NO_PROVIDER_ATTEMPT: "The job stopped before Clued changed anything in Drive and was cancelled; nothing was changed. If the user still wants it, check the current state and submit it again under a new job_id.",
+  PROVIDER_EFFECT_ABSENT: "The job started but its file never reached Drive (Clued checked Drive and found neither the file it was creating nor any file tagged with this job), so it was cancelled; nothing was changed. If the user still wants it, check the current state and submit it again under a new job_id.",
   RESTORE_NAME_CONFLICT: storageDestructiveMessages.restore_name_conflict,
   DIRECTORY_NOT_EMPTY: "The directory is not empty in Drive (trashed items inside count). Only an empty directory can be moved to the trash; do not trash its contents to get around this unless the user asks.",
   PROVIDER_OWNER_REQUIRED: "Only items this Google account owns can be moved to the trash, taken out of it or adopted. Tell the user; there is no other way.",
@@ -134,7 +135,7 @@ export const storageAgentTools = [
   },
   {
     name: "clued_storage_inspect",
-    description: "Read one account storage job's status and receipt using an Owner-granted inspect permission on this client's Binding. A denied or attention_required job may carry a fixed reason_code (for example UNAUTHORIZED_WORKSPACE_MUTATION); details stay with the Owner. A cancelled job with reason_code NO_PROVIDER_ATTEMPT stopped before it changed anything in Drive. This does not read file contents, resume execution, refresh credentials or clear an unresolved fence. Keep the original job_id after a lost reply.",
+    description: "Read one account storage job's status and receipt using an Owner-granted inspect permission on this client's Binding. A denied or attention_required job may carry a fixed reason_code (for example UNAUTHORIZED_WORKSPACE_MUTATION); details stay with the Owner. A cancelled job with reason_code NO_PROVIDER_ATTEMPT stopped before it changed anything in Drive; one with PROVIDER_EFFECT_ABSENT started but its file never reached Drive. This does not read file contents, resume execution, refresh credentials or clear an unresolved fence. Keep the original job_id after a lost reply.",
     inputSchema: { type: "object", required: ["connection_id", "job_id"], properties: reference, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { "clued/requiredStorageGrant": ["inspect"], "clued/scopeEnforcement": "server-side" },
