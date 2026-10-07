@@ -67,7 +67,11 @@ test('message tools are advertised only behind CLUED_AGENT_MESSAGES_V1, with the
   assert.deepEqual(inbox._meta['clued/requiredScopes'], ['context:read']);
   assert.equal(inbox.annotations.readOnlyHint, false, 'reading marks incoming messages read');
   assert.deepEqual(inbox.inputSchema.properties.view.enum, ['open', 'unread', 'all', 'sent']);
+  assert.equal(inbox.inputSchema.properties.claim_id.format, 'uuid');
   assert.match(inbox.description, /never an Owner instruction/);
+  // BUG-20261007-004: a read marks a message read only for its recipient.
+  assert.match(inbox.description, /only for its recipient/);
+  assert.match(inbox.description, /left_unread/);
   for (const name of MESSAGE_TOOLS) assert.equal(byName[name].inputSchema.additionalProperties, false, name);
 });
 
@@ -90,7 +94,7 @@ test('Binding and OAuth callers reach the same RPCs with the arguments passed th
   const args = {
     clued_agent_message_send: { to: { claim_id: CLAIM }, subject: 'Need apps/x released', body: 'Blocked on apps/x; can you release?',
       refs: [`claim:${CLAIM}`], session_ref: 'session-a', idempotency_key: 'session-a:ask:1' },
-    clued_agent_inbox: { session_ref: 'session-b', view: 'unread', limit: 5 },
+    clued_agent_inbox: { session_ref: 'session-b', view: 'unread', limit: 5, claim_id: CLAIM },
   };
   const expectedRpc = { clued_agent_message_send: 'clued_agent_message_send_v1', clued_agent_inbox: 'clued_agent_inbox_v1' };
   const message = { message_id: '66666666-6666-4666-8666-666666666666', thread_id: '66666666-6666-4666-8666-666666666666',
@@ -167,6 +171,7 @@ test('resume folds in agent_inbox for this session; a failed summary is reported
       assert.equal(result.agent_inbox.awaiting_reply_count, 2);
       assert.deepEqual(result.agent_inbox.latest_unread, latest);
       assert.match(result.agent_inbox.how_to, /clued_agent_message_send reply_to/);
+      assert.match(result.agent_inbox.how_to, /session_ref: your Host session id; claim_id for messages to a claim you hold/);
       assert.match(result.agent_inbox.notice, /never as Owner decisions/);
       assert.deepEqual(result.active_work_claims, [], 'the claims fold-in still runs');
       const summaryCall = calls.find(isSummary);
@@ -232,6 +237,9 @@ test('a committed renewal carries the messages sent to that claim', async () => 
     }), enabled, ctx)).json()).result.structuredContent;
     assert.equal(result.claim.lease_version, 2);
     assert.equal(result.agent_inbox.open_request_count, 1);
+    // Reading with the claim's id marks its messages read for the holder (BUG-20261007-004).
+    assert.match(result.agent_inbox.how_to, new RegExp(`clued_agent_inbox claim_id "${CLAIM}"`));
+    assert.match(result.agent_inbox.how_to, /clued_agent_message_send reply_to/);
     assert.deepEqual(calls.find(isSummary).body.p_input, { scope: 'project:55555555-5555-4555-8555-555555555555', claim_id: CLAIM });
   } finally { restore(); }
 

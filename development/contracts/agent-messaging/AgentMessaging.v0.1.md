@@ -1,6 +1,6 @@
 # Agent Messaging v0.1：Agent 之间通过 Clued 对话
 
-状态：**第 1 步已合入并上线（PR #576，迁移与 Worker 已发布，`CLUED_AGENT_MESSAGES_V1` 已打开）。第 2 步（本 PR）：Agent 合同 v35、Clued Skill 1.0.7、收件提醒 hook、存储写冲突附 `coordinate`。** 本文不授予迁移、发布、合并或权限变更。
+状态：**第 1 步已合入并上线（PR #576，迁移与 Worker 已发布，`CLUED_AGENT_MESSAGES_V1` 已打开）。第 2 步（本 PR）：Agent 合同 v35、Clued Skill 1.0.7、收件提醒 hook、存储写冲突附 `coordinate`。BUG-20261007-004 修复（Task `d35e10cc`，迁移 `20261007180000`）：读收件箱只替消息的收件方标已读（§4.8）。** 本文不授予迁移、发布、合并或权限变更。
 
 日期：2026-10-06
 Owner 决定：Decision `24077bba`（专用消息通道；先做与 claim `3c2518c0` 不重叠的部分），Decision `471eb27a`（第 2 步加收件提醒 hook）。
@@ -22,7 +22,7 @@ Agent 合同 §1.7 对 `work_claim_conflict` 只写了"停下并告诉 Owner 谁
   1. `to.claim_id`：一个活的 work claim。**消息跟着认领走**：谁现在持有它，谁就读到；认领被 lease key 转到另一个会话或 Binding 后也一样。认领结束后，消息留给发送时的持有者（Binding + 会话）。
   2. `to.binding_id`（可带 `to.session_ref`）：一个连接，或它的某个 Host 会话。
   3. `reply_to`：回复一条消息。回复发回原发送方，留在同一 thread 和 context；回复一条 `request` 即把它标为已答复（`answered_at`）。原发送方再回复，则发往原收件方。带 `close_thread: true` 的回复关闭整个 thread，之后不能再回复。
-- **会话**：同一 Binding 可能被多个 Host 会话共用（例如所有 Claude Code 会话）。带 `session_ref` 读取时只看发给本会话（或没指定会话）的消息；不带则看整个 Binding 的。
+- **会话**：同一 Binding 可能被多个 Host 会话共用（例如所有 Claude Code 会话）。带 `session_ref` 读取时只看发给本会话（或没指定会话）的消息；不带则看整个 Binding 的。发给认领的消息，认领没有 `holder_session_ref` 时，该 Binding 的每个会话都看得到。**看得到不等于替收件方读了**：标已读只由收件方完成（§4.8）。
 - **种类**：`request`（期待答复，默认）、`info`、`reply`。
 
 ## 3. 接口
@@ -32,7 +32,7 @@ Agent 合同 §1.7 对 `work_claim_conflict` 只写了"停下并告诉 Owner 谁
 | RPC（Binding；委托 OAuth 经 `clued_oauth_call` 同名进入） | 作用 | 权限 |
 |---|---|---|
 | `clued_agent_message_send_v1` | 发送、回复、关闭 thread | 消息所在 context 的 `context:write` |
-| `clued_agent_inbox_v1` | 读收件（`open` 默认 / `unread` / `all`）、已发（`sent`）或整个 thread；返回的收件默认标为已读 | `context:read` |
+| `clued_agent_inbox_v1` | 读收件（`open` 默认 / `unread` / `all`）、已发（`sent`）或整个 thread；`claim_id` 只看发给某认领的（不能与 `thread_id` 同用）。返回的收件只在本次读取是其收件方时标为已读（§4.8）：每条带 `marked_read`，`left_unread` 数出看到但留给收件方的未读条数 | `context:read` |
 | `clued_agent_inbox_summary_v1` | 未读数、待答复请求数、等待对方答复数、最近 5 条未读（不含正文）；可按 `claim_id` 只看发给某认领的 | `context:read`，只读 |
 
 Worker（`apps/clued-cloud/worker/agent-messages.ts`，开关 `CLUED_AGENT_MESSAGES_V1`，默认关）：
@@ -52,6 +52,16 @@ Worker（`apps/clued-cloud/worker/agent-messages.ts`，开关 `CLUED_AGENT_MESSA
 5. 只有 thread 参与方能回复（`agent_message_not_participant`）；不能发给自己（`agent_message_to_self`）；认领已结束不能新发（`agent_message_claim_not_live`）。
 6. 每个 Binding 每小时最多发 120 条（`agent_message_rate_limited`，带 `retry_after`）；`subject` ≤ 200 字，`body` ≤ 4000 字，`refs` ≤ 20 条。
 7. 幂等：同一 Binding 同一 `idempotency_key` 重放返回原消息；内容不同返回 `agent_message_idempotency_mismatch`。
+8. **只有收件方能把消息标为已读**（BUG-20261007-004，Task `d35e10cc`，迁移 `20261007180000`）。消息只有一个 `read_at`，所以它记录的是收件方读过：
+   - 发给认领的消息：读取带 `claim_id` 点名该认领，或读取的 `session_ref` 等于活认领的 `holder_session_ref`（认领结束后，等于发送时的收件会话）；
+   - 发给某个会话的消息：该会话；
+   - 发给整个连接的消息（无认领、无会话）：该连接的任何会话，同以前。
+
+   其他会话照样看得到发到它面前的消息（认领没有 `holder_session_ref`，或读取不带 `session_ref`），但读了不标已读，`marked_read: false`，并计入 `left_unread`，附 `left_unread_reason`。于是持有者下次 `clued_work_renew` 或 `clued_session_resume` 的 `latest_unread` 里仍有它。续租折入的 `how_to` 直接写出 `claim_id`。回复不变：回复一条消息即读过并答复它，所以不是发给自己的请求不要回复。
+
+   为什么不按收件方各记一份已读：认领没有 `holder_session_ref` 时，服务分不出同一 Binding 的哪个会话是持有者，按会话记已读仍要一个持有者能证明的读者标识；点名认领（`claim_id`）就是这个标识，而且不用新表、不改 `read_at` 的含义。
+
+   起因：2026-10-07 发给认领 75881ebc（线程 e95d6455）的请求，被持有认领 d419f31e 的会话读收件箱时标成已读，持有者再也看不到它。
 
 ## 5. 第 2 步
 
@@ -76,3 +86,4 @@ Worker（`apps/clued-cloud/worker/agent-messages.ts`，开关 `CLUED_AGENT_MESSA
 2. 生产迁移 `20261006090000_agent_messages_v1.sql`（`migration.production`）与 Worker 发布（`release.production`），Owner 在 Clued 页面批准。
 3. Owner 打开 `CLUED_AGENT_MESSAGES_V1`。在此之前工具不出现，resume 不变。
 4. 第 2 步：不改迁移；合入后 Worker 发布（`release.production`），新合同经 `/clued-agent.md` 提供。
+5. BUG-20261007-004（Task `d35e10cc`）：先生产迁移 `20261007180000_agent_message_holder_reads.sql`（`migration.production`），再 Worker 发布（`release.production`），都由 Owner 在 Clued 页面批准。迁移在前：只换 `clued_agent_inbox_v1` 的函数体，旧 Worker 不传 `claim_id`，行为即刻变成只替收件方标已读。合同 §1.7 的对应文字随合同版本另提（Task `d35e10cc`）。
