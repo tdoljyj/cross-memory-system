@@ -83,7 +83,10 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 37/);
+  assert.match(contract, /Contract version: 38/);
+  // Merge slot: closing gives it back, reopening does not take it again (Task 6525c538).
+  assert.match(contract, /Closing gives the slot back even when you reopen the pull request at once/);
+  assert.match(contract, /close and reopen it first, then take the slot/);
   // Storage connection discovery (Owner Decision 1721045d): look the connection up, never ask the Owner for it.
   assert.match(contract, /Find a storage connection yourself; never ask the Owner for a `connection_id`/);
   assert.match(contract, /Get it from `clued_storage_connections`/);
