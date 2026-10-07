@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:clued:model-program:m2:candidate:DataSourceLicenseRegistry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "authority_effect",
+    "sources"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "clued.model-m2-source-registry-candidate/1"
+    },
+    "status": {
+      "const": "SYNTHETIC_OFFLINE_CANDIDATE"
+    },
+    "authority_effect": {
+      "const": "NONE"
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_id",
+          "source_revision",
+          "source_class",
+          "origin",
+          "license_ref",
+          "license_review",
+          "withdrawn",
+          "contains_secrets",
+          "contains_personal_data",
+          "synthetic_inputs",
+          "raw_snapshot_sha256",
+          "generator_revision",
+          "template_sha256",
+          "parameters_sha256",
+          "filter_revision",
+          "erasure_propagation_ref"
+        ],
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+          },
+          "source_revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "source_class": {
+            "enum": [
+              "A",
+              "B",
+              "C",
+              "D",
+              "E",
+              "F"
+            ]
+          },
+          "origin": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "license_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "license_review": {
+            "enum": [
+              "SYNTHETIC_TEST_ONLY",
+              "UNREVIEWED",
+              "UNKNOWN",
+              "WITHDRAWN"
+            ]
+          },
+          "withdrawn": {
+            "type": "boolean"
+          },
+          "contains_secrets": {
+            "type": "boolean"
+          },
+          "contains_personal_data": {
+            "type": "boolean"
+          },
+          "synthetic_inputs": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 10000,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          "raw_snapshot_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "generator_revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "template_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "parameters_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "filter_revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "erasure_propagation_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "maxItems": 10000
+    }
+  }
+}

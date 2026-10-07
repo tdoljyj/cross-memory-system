@@ -1,0 +1,37 @@
+{
+  "schema": "clued.model-program.m2-stage-binding-preparation/1",
+  "status": "ENGINEERING_SUCCESSOR_PREPARATION_ONLY",
+  "owner_rule": {
+    "decision_id": "07696647-1557-4b0d-9eed-c1f698f4b011",
+    "version": 1,
+    "receipt_id": "7313df9c-b97f-4d90-beb6-f43d32cf469c"
+  },
+  "original_source_commit": "e76a7db7edc6b47b5a719e165f688621efa9580a",
+  "source_pins": {
+    "scripts/model-program/validate_m2_dataset_split.py": "c80614e2832e665cd3c1a706bd8c59a54a2bf0d14c5637ecfb51347f3263f4e2",
+    "scripts/model-program/validate_m2_dataset_foundation.py": "4851363816c650c83bfd7be00d16e4a61b4d59d816d585b10c3a6f7580fe8d77",
+    "development/contracts/model-program/m2/schemas/DatasetSplit.v0.1.schema.json": "062860afd3dc16fa9ee1de27582439701a67b7c5976ad45981a7cca3e515468f",
+    "development/contracts/model-program/m2/schemas/DatasetManifest.owner-adopted.schema.json": "7352272c3d066bae22c9868ac41a043de6f9f877107c3fae798b36e8832b2d5b",
+    "development/contracts/model-program/m2/schemas/SelectionInput.schema.json": "f733cb1e6f470a1d2d222d51e90cc51b786d5f4c01ec7c9530f3fef9f7f9c76e"
+  },
+  "purpose_parent_map": {
+    "training": "TRAINING",
+    "development": "DEVELOPMENT",
+    "calibration_fit": "DEVELOPMENT",
+    "selection_policy_validation": "DEVELOPMENT",
+    "qualification": "QUALIFICATION",
+    "final_holdout": "FINAL_HOLDOUT"
+  },
+  "candidate_roles": {
+    "qualification": {"role": "M2_REFERENCE_BASELINE", "source_stages": ["M1_FIXED_REFERENCE", "FIXED_DETERMINISTIC_BASELINE"], "consumer": "M2_DATA_GATE_PREPARATION"},
+    "final_holdout": {"role": "FINAL_PRODUCT_CANDIDATE", "source_stages": ["M4", "M5", "M5A"], "consumer": "PRODUCT_FINAL_QUALIFICATION_PREPARATION"}
+  },
+  "reserved_pool_semantics": "Metadata-only declaration; source/group/sampling/size/custody/access inputs must actually freeze before selection; actual final questions follow exact product freeze. Local references never attest this.",
+  "source_copy_is_domain_authority": false,
+  "actual_question_generation": false,
+  "actual_execution": "NONE",
+  "authority_effect": "NONE",
+  "m2_qualification": "NOT_ISSUED",
+  "m3_qualification": "NOT_ISSUED",
+  "old_frozen_definition_schema_mapping_modified": false
+}
