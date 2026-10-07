@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { classifyTests, importsEmbeddedPostgres, resolveLocalImports } from "../scripts/select-tests.mjs";
+import { classifyTests, importsEmbeddedPostgres, nodeTestRuns, resolveLocalImports } from "../scripts/select-tests.mjs";
 
 const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 // Assembled at runtime so this file's own source never contains the package
@@ -93,4 +93,16 @@ test("classifyTests partitions the real tests directory", () => {
     if (importsEmbeddedPostgres(readFileSync(file, "utf8"))) assert.ok(dbSet.has(file), `${path.basename(file)} must be a db test`);
   }
   assert.ok(unit.includes(fileURLToPath(import.meta.url)));
+});
+
+test("unit tests run without --test-force-exit; database tests keep it; all runs both sets separately", () => {
+  const sets = { unit: ["u1.test.mjs", "u2.test.mjs"], db: ["d1.test.mjs"] };
+  assert.deepEqual(nodeTestRuns("unit", sets), [["--test", "u1.test.mjs", "u2.test.mjs"]]);
+  assert.deepEqual(nodeTestRuns("db", sets), [["--test", "--test-force-exit", "d1.test.mjs"]]);
+  assert.deepEqual(nodeTestRuns("all", sets, ["--test-reporter=dot"]), [
+    ["--test", "--test-reporter=dot", "u1.test.mjs", "u2.test.mjs"],
+    ["--test", "--test-force-exit", "--test-reporter=dot", "d1.test.mjs"],
+  ]);
+  assert.deepEqual(nodeTestRuns("all", { unit: sets.unit, db: [] }), [["--test", "u1.test.mjs", "u2.test.mjs"]]);
+  for (const run of nodeTestRuns("unit", sets)) assert.ok(!run.includes("--test-force-exit"));
 });
