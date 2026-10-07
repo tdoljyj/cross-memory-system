@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$HostId,
     [string]$OutputPath,
+    [string]$PythonwPath,
     [switch]$InstallStartup,
     [switch]$StartNow
 )
@@ -134,32 +135,34 @@ foreach ($entry in $replacements.GetEnumerator()) {
     $template = $template.Replace($entry.Key, $entry.Value)
 }
 
-$parent = Split-Path -Parent $OutputPath
-if ($parent) {
-    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+if (($InstallStartup -or $StartNow) -and (Test-Path -LiteralPath $OutputPath)) {
+    # Installing/starting must never overwrite deployed logic before preflight.
+    if ((Get-Content -LiteralPath $OutputPath -Raw).TrimEnd() -ne $template.TrimEnd()) {
+        throw 'Deployed watchdog differs from this render. Preview and deploy it in a separate approved step before installing/starting.'
+    }
+    Write-Host "Using unchanged watchdog: $OutputPath"
+} else {
+    $parent = Split-Path -Parent $OutputPath
+    if ($parent) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+    [IO.File]::WriteAllText($OutputPath, $template, (New-Object Text.UTF8Encoding($false)))
+    Write-Host "Rendered watchdog: $OutputPath"
 }
-[IO.File]::WriteAllText($OutputPath, $template, (New-Object Text.UTF8Encoding($false)))
-Write-Host "Rendered watchdog: $OutputPath"
 
 if ($InstallStartup) {
-    $root = Split-Path -Parent $OutputPath
-    $launcher = Join-Path $root "start-watchdog-$HostId.cmd"
-    @(
-        '@echo off',
-        ('start "" /min powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $OutputPath + '"')
-    ) | Set-Content $launcher -Encoding ASCII
-
-    $startup = [Environment]::GetFolderPath('Startup')
-    $startupFile = Join-Path $startup "Clued-CI-Watchdog-$HostId.cmd"
-    @('@echo off', ('call "' + $launcher + '"')) | Set-Content $startupFile -Encoding ASCII
-
-    $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-    New-Item -Path $runKey -Force | Out-Null
-    Set-ItemProperty -Path $runKey -Name "CluedCIWatchdog-$HostId" -Value ('cmd.exe /c ""' + $startupFile + '""')
-    Write-Host "Installed startup launcher: $startupFile"
-}
-
-if ($StartNow) {
-    Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$OutputPath -WindowStyle Hidden
-    Write-Host 'Watchdog start requested.'
+    # The compatibility switch now installs one recoverable, no-console task.
+    & (Join-Path $PSScriptRoot 'install-host-watchdog-launcher.ps1') -HostId $HostId -WatchdogPath $OutputPath -PythonwPath $PythonwPath -StartNow:$StartNow
+} elseif ($StartNow) {
+    $taskName = "Clued-CI-Watchdog-$HostId"
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+    $expectedScript = (Resolve-Path -LiteralPath $OutputPath).ProviderPath
+    $expectedLauncher = Join-Path $env:LOCALAPPDATA "CluedCIWatchdog\$HostId\launch-host-watchdog.py"
+    $expectedLog = Join-Path $env:LOCALAPPDATA "CluedCIWatchdog\$HostId\console-output.log"
+    $expectedArguments = '-I -S "' + $expectedLauncher + '" --watchdog-path "' + $expectedScript + '" --log-path "' + $expectedLog + '"'
+    if (@($task.Actions).Count -ne 1 -or (Split-Path -Leaf $task.Actions[0].Execute) -ne 'pythonw.exe' -or $task.Actions[0].Arguments -ne $expectedArguments) {
+        throw 'The installed task does not match this no-console launcher/script. Install the reviewed task first.'
+    }
+    Start-ScheduledTask -TaskName $taskName
+    Write-Host 'No-console watchdog task start requested.'
 }
