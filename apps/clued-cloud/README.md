@@ -152,6 +152,8 @@ npm run test:db      # every test that starts embedded PostgreSQL (needs a non-r
 npm run test:select  # print how each test file is classified
 ```
 
+`supabase/ledger/production-history.json` is the committed record of production's `supabase_migrations.schema_migrations`: one row per production migration with its version, name, the md5 of its single `statements` element and the repository file that carries its text (`supabase/migrations/` or, for text no migration file holds, `supabase/ledger/history-only/`). A new migration file needs no ledger edit until it is applied, as long as the release workflow's `migrate` mode can apply it (14-digit timestamp, a new short name, LF text ending with a newline). `npm run ledger:verify` checks the ledger against the files offline and runs in `clued-cloud-quality`; the production release gate runs the same check and compares the ledger with the live history. How to read and refresh it: `docs/maintenance/migration-ledger.md`.
+
 Database suites use the pinned local Supabase tooling:
 
 ```bash

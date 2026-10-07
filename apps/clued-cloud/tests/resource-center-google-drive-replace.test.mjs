@@ -277,3 +277,89 @@ test("scope profiles: replace accepts legacy and normal grants and refuses every
     assert.deepEqual(f.events, ["persist"], String(scope));
   }
 });
+
+// Binary replace (Decision 06aba6c5): a staged content_ref replaces a registered
+// file of the same type in place, as one media upload of at most 5 MiB.
+const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const BIN_OLD = Buffer.from("PK\u0003\u0004old-sheet"), BIN_NEW = Buffer.from("PK\u0003\u0004new-sheet-bytes");
+const binaryDrive = () => {
+  const d = drive();
+  Object.assign(d.files.get("file"), { name: "a.xlsx", mimeType: XLSX, size: String(BIN_OLD.byteLength),
+    sha256Checksum: sha256Hex(BIN_OLD), md5Checksum: md5Hex(BIN_OLD) });
+  Object.assign(d.revisions.get("rev-1"), { size: String(BIN_OLD.byteLength), md5Checksum: md5Hex(BIN_OLD) });
+  return d;
+};
+const contentRef = (bytes = BIN_NEW, mime = XLSX) => ({ staging_id: "10000000-0000-4000-8000-000000000003",
+  sha256: sha256Hex(bytes), size: bytes.byteLength, mime_type: mime });
+const binaryMutation = (ref = contentRef()) => ({ operation: "replace", target_kind: "file", destination_path: TRACK + "/a.xlsx",
+  destination_file_version: "5", content_ref: ref, artifact_role: "clued_resource" });
+const binaryFetch = (d, seen) => async (url, options) => {
+  const u = new URL(url), parts = u.pathname.split("/");
+  if (parts.at(-2) === "revisions") {
+    const body = JSON.parse(options.body), revision = d.revisions.get(decodeURIComponent(parts.at(-1)));
+    revision.keepForever = body.keepForever;
+    return Response.json({ id: revision.id, keepForever: revision.keepForever });
+  }
+  seen.push({ type: u.searchParams.get("uploadType"), header: options.headers["content-type"], body: Buffer.from(options.body),
+    timeout: options.signal });
+  return Response.json(upload(d, Buffer.from(options.body)));
+};
+
+test("replaceShape takes exactly one of content, restore_job_id or a content_ref of at most 5 MiB", () => {
+  assert.ok(replaceShape(binaryMutation()));
+  for (const bad of [{ ...binaryMutation(), content: "x" }, { ...binaryMutation(), restore_job_id: restoreJob },
+    binaryMutation({ ...contentRef(), size: 5 * 1024 * 1024 + 1 }), binaryMutation({ ...contentRef(), extra: 1 }),
+    binaryMutation({ ...contentRef(), sha256: "nope" }), binaryMutation({ ...contentRef(), mime_type: "application/vnd.google-apps.spreadsheet" })]) {
+    assert.equal(replaceShape(bad), null, JSON.stringify(bad));
+  }
+});
+
+test("a binary replace uploads the staged bytes in place with the file's own type and records them", async () => {
+  const d = binaryDrive(), seen = [], mutation = binaryMutation();
+  const f = effectFixture(mutation, d, { replacement: BIN_NEW, fetch: binaryFetch(d, seen) });
+  const result = await f.effect(f.request);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].type, "media"); assert.equal(seen[0].header, XLSX); assert.deepEqual(seen[0].body, BIN_NEW);
+  assert.deepEqual(f.attempt().content_after, contentAfter(BIN_NEW));
+  assert.deepEqual(result.content_after, { size: String(BIN_NEW.byteLength), sha256: sha256Hex(BIN_NEW) });
+  assert.equal(result.provider_file_id, "file");
+  const file = d.files.get("file");
+  assert.equal(file.mimeType, XLSX); assert.equal(file.sha256Checksum, sha256Hex(BIN_NEW));
+  assert.equal(d.revisions.get("rev-1").keepForever, true, "the previous content stays as a kept revision");
+});
+
+test("a binary replace never changes a file's type and never uploads bytes other than the staged ones", async () => {
+  // The staged type differs from the Drive file's type: refused before any write.
+  const d = binaryDrive(), seen = [];
+  const pdf = effectFixture(binaryMutation(contentRef(BIN_NEW, "application/pdf")), d, { replacement: BIN_NEW, fetch: binaryFetch(d, seen) });
+  await assert.rejects(pdf.effect(pdf.request), /DRIVE_NATIVE_TARGET_MISMATCH/);
+  assert.equal(seen.length, 0);
+  // Replacement bytes that do not match the content_ref are a request mismatch.
+  for (const replacement of [Buffer.from("PK\u0003\u0004other-bytes-same-l"), BIN_NEW.subarray(1)]) {
+    const d2 = binaryDrive(), seen2 = [];
+    const f = effectFixture(binaryMutation(), d2, { replacement, fetch: binaryFetch(d2, seen2) });
+    await assert.rejects(f.effect(f.request), /DRIVE_NATIVE_REQUEST_MISMATCH/);
+    assert.equal(seen2.length, 0);
+  }
+  // The writer refuses a replacement above 5 MiB.
+  assert.throws(() => effectFixture(binaryMutation(), binaryDrive(), { replacement: new Uint8Array(5 * 1024 * 1024 + 1) }), TypeError);
+});
+
+test("the verifier accepts a binary replace by size and sha256 of the new head", async () => {
+  const d = binaryDrive(), seen = [], mutation = binaryMutation();
+  const f = effectFixture(mutation, d, { replacement: BIN_NEW, fetch: binaryFetch(d, seen) });
+  const result = await f.effect(f.request);
+  const post = await verifier(d)({ profile, mutation, provider_before: before(), effect_result: result });
+  assert.equal(post.provider_file_id, "file");
+  assert.deepEqual(post.verified_proof.checks, { identity: true, ancestors: true, stable_state: true, content: true, revision_changed: true,
+    previous_revision_kept: true, releases_observed: true });
+  assert.deepEqual(post.verified_proof.content_after, contentAfter(BIN_NEW));
+});
+
+test("the verifier refuses a binary replace whose file no longer has the staged type", async () => {
+  const d = binaryDrive(), seen = [], mutation = binaryMutation();
+  const f = effectFixture(mutation, d, { replacement: BIN_NEW, fetch: binaryFetch(d, seen) });
+  const result = await f.effect(f.request);
+  d.files.get("file").mimeType = "application/pdf";
+  await assert.rejects(verifier(d)({ profile, mutation, provider_before: before(), effect_result: result }), /DRIVE_POSTCONDITION_CONTENT_MISMATCH/);
+});

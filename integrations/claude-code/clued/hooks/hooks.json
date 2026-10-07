@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/scripts/hooks/clued_capture_guard.py\" ] || sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run_python.sh\" \"${CLAUDE_PLUGIN_ROOT}/hooks/clued_capture_guard.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -175,7 +175,7 @@ test('a connection permission request: names each permission and the connection,
   assert.ok(f.nodes('a').some(n => n.props.href === '/oauth/connections'));
 });
 
-test('a bundle: every pending member is shown and 批准全部 confirms each over its own view (PermissionSimplification §3.3)', async t => {
+test('a bundle: every pending member is listed side by side, ticked; 批准 confirms each over its own view (PermissionSimplification §3.3)', async t => {
   const f = fixture(CONFIRM); t.after(() => f.unmount());
   const MEMBER = '44444444-4444-4444-8444-444444444444';
   const DONE = '55555555-5555-4555-8555-555555555555';
@@ -204,11 +204,15 @@ test('a bundle: every pending member is shown and 批准全部 confirms each ove
   await f.settle();
   const what = f.text(f.nodes('section').find(n => n.props['aria-label'] === '要批准什么'));
   assert.ok(what.includes('经发布 workflow 应用迁移到生产库'));
-  assert.ok(what.includes('同一批，一起批准（共 2 项）'));
+  assert.ok(what.includes('同一批共 2 项，勾上的才会批准'));
   assert.ok(what.includes('运行生产发布（deploy 模式）'));
   assert.ok(what.includes(commit));
-  assert.equal(f.nodes('fieldset').length, 0, 'no scope rows for a bundle');
-  f.button('批准全部 2 项').props.onClick();
+  assert.equal(f.nodes('fieldset').filter(n => n.props.className === 'owner-scope').length, 0, 'no scope rows for a bundle');
+  // Both members are equal rows with a ticked checkbox; the shared terms are shown once.
+  const boxes = f.nodes('input').filter(n => n.props.type === 'checkbox' && n.props['data-id']);
+  assert.deepEqual(boxes.map(n => [n.props['data-id'], n.props.checked]), [[REQUEST, true], [MEMBER, true]]);
+  assert.equal(what.split('只这一次，24 小时内用掉').length, 2);
+  f.button('批准').props.onClick();
   assert.deepEqual(plain([f.calls[3].name, f.calls[3].args.p_input]),
     ['clued_owner_grant_v1', { confirmation_token: 'clued_ogr_m', view_digest: 'm'.repeat(64) }]);
   f.calls[3].resolve({ data: { status: 'committed', grant: { grant_id: 'g-m', expires_at: '2099-01-02T00:00:00Z', max_uses: 1 } }, error: null });
@@ -217,7 +221,65 @@ test('a bundle: every pending member is shown and 批准全部 confirms each ove
     ['clued_owner_grant_v1', { confirmation_token: 'clued_ogr_r', view_digest: 'r'.repeat(64) }]);
   f.calls[4].resolve({ data: { status: 'committed', grant: { grant_id: 'g-r', expires_at: '2099-01-02T00:00:00Z', max_uses: 1 } }, error: null });
   await f.settle();
-  assert.ok(f.text().includes('同一批 2 项都已批准'));
+  assert.ok(f.text().includes('同一批 2 项已批准'));
+  assert.ok(!f.text().includes('仍等你确认'));
+});
+
+test('a bundle: an unticked member stays pending; deploy without its migration is flagged (Decision 383c2144)', async t => {
+  const MEMBER = '44444444-4444-4444-8444-444444444444';
+  const commit = 'repo:o/n/' + 'a'.repeat(40);
+  const file = commit + '/apps/clued-cloud/supabase/migrations/20261004200000_x.sql';
+  const view = (action, title, resources, token) => ({ data: { status: 'issued', confirmation_token: token,
+    view_digest: token.slice(-1).repeat(64), expires_at: '2099-01-01T00:05:00Z', confirmation_view: { action, action_title: title,
+      resources, grantee: { any_agent: false, agent_name: 'Claude Code' }, choice: 'once', expires_seconds: 86400, max_uses: 1 } }, error: null });
+  const start = async f => {
+    f.emit('INITIAL_SESSION', session('owner'));
+    f.calls[0].resolve({ data: { status: 'ok', default_choice: 'once', request: { ...request(), action: 'migration.production',
+      resources: [file], bundle: [{ request_id: REQUEST, action: 'migration.production', status: 'pending' },
+        { request_id: MEMBER, action: 'release.production', status: 'pending' }] }, view: { action: 'migration.production' } }, error: null });
+    await f.settle();
+    f.calls[1].resolve(view('migration.production', '经发布 workflow 应用迁移到生产库', [file], 'clued_ogr_m')); await f.settle();
+    f.calls[2].resolve(view('release.production', '运行生产发布（deploy 模式）', [commit], 'clued_ogr_r')); await f.settle();
+  };
+  const box = (f, id) => f.nodes('input').find(n => n.props['data-id'] === id);
+  const untick = (f, id) => { box(f, id).props.onChange({ currentTarget: { dataset: { id }, checked: false } }); f.render(); };
+  const warning = '部署通常依赖同批迁移，只批部署可能出错';
+
+  // Only the migration: the deploy is left pending and linked; no warning.
+  const f = fixture(CONFIRM); t.after(() => f.unmount());
+  await start(f);
+  assert.ok(!f.text().includes(warning));
+  untick(f, MEMBER);
+  assert.equal(box(f, MEMBER).props.checked, false);
+  assert.ok(f.text().includes('没勾的项保持待确认'));
+  assert.ok(!f.text().includes(warning));
+  f.button('批准').props.onClick();
+  assert.deepEqual(plain(f.calls[3].args.p_input), { confirmation_token: 'clued_ogr_m', view_digest: 'm'.repeat(64) });
+  f.calls[3].resolve({ data: { status: 'committed', grant: { grant_id: 'g-m', expires_at: '2099-01-02T00:00:00Z', max_uses: 1 } }, error: null });
+  await f.settle();
+  assert.equal(f.calls.length, 4, 'the unticked member is not approved');
+  assert.ok(f.text().includes('同一批还有 1 项没勾，仍等你确认'));
+  assert.ok(f.nodes('a').some(n => n.props.href === '/confirm/' + MEMBER && f.text(n) === '运行生产发布（deploy 模式）（release.production）'));
+
+  // Only the deploy: warned, not blocked; the request on the page stays pending.
+  const g = fixture(CONFIRM); t.after(() => g.unmount());
+  await start(g);
+  untick(g, REQUEST);
+  assert.ok(g.text().includes(warning));
+  assert.equal(g.button('批准').props.disabled, false);
+  g.button('批准').props.onClick();
+  assert.deepEqual(plain(g.calls[3].args.p_input), { confirmation_token: 'clued_ogr_r', view_digest: 'r'.repeat(64) });
+  g.calls[3].resolve({ data: { status: 'committed', grant: { grant_id: 'g-r', expires_at: '2099-01-02T00:00:00Z', max_uses: 1 } }, error: null });
+  await g.settle();
+  assert.equal(g.calls.length, 4);
+  assert.ok(g.text().includes('已批准'));
+  assert.ok(g.nodes('a').some(n => n.props.href === '/confirm/' + REQUEST));
+
+  // Nothing ticked: 批准 is disabled.
+  const h = fixture(CONFIRM); t.after(() => h.unmount());
+  await start(h);
+  untick(h, REQUEST); untick(h, MEMBER);
+  assert.equal(h.button('批准').props.disabled, true);
 });
 
 test('a bundle: a member that fails says which were approved; 拒绝 rejects every pending member', async t => {
@@ -234,7 +296,7 @@ test('a bundle: a member that fails says which were approved; 拒绝 rejects eve
   };
   const f = fixture(CONFIRM); t.after(() => f.unmount());
   await start(f);
-  f.button('批准全部 2 项').props.onClick();
+  f.button('批准').props.onClick();
   f.calls[3].resolve(committed); await f.settle();
   f.calls[4].resolve({ data: null, error: { message: 'owner_request_decided', code: '55000' } }); await f.settle();
   const alert = f.nodes('p').find(n => n.props.role === 'alert');
