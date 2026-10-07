@@ -266,7 +266,7 @@
 ## 10. 可见性与审计
 
 - **摘要**：`renderSummary` 第一行加 `**Mode:** \`<state>\` · layer \`<layer>\` · source \`<变量名或 default>\``，随后一张「有效规则」小表（§5.1 的六列）。gate 与复核的摘要同样打印状态。
-- **每个 PR 可见它被放行时的模式**：App check 的 `output.title` 为 `ADMITTED [normal · code]` 这类形式；`external_id` 不变（`pr:<n>:run:<run id>`）。verify RPC 的 `p_input` 增加 `admission_mode: {state, layer}`，写进 `work_claim_bind_pr` / `admitted_heads` 的回执，Clued 侧可查「这个 head 是在什么模式下放行的」。
+- **每个 PR 可见它被放行时的模式**：App check 的 `output.title` 为 `ADMITTED [normal · code]` 这类形式；`external_id` 不变（`pr:<n>:run:<run id>`）。verify RPC 的 `p_input` 增加 `admission_mode: {state, layer}`（随 §13 第 3 步的迁移；现行 RPC 拒绝未知键，所以第 1、2 步只在 App check 标题与摘要里记录），写进 `work_claim_bind_pr` / `admitted_heads` 的回执，Clued 侧可查「这个 head 是在什么模式下放行的」。
 - **切换**：Owner 的 Decision（§4.1 第 2 条）；复核在 `reason=state_change` 下对每个打开 PR 发一条新 App check（成功或失败），标题带新状态。
 - **度量**：§12 的报告按状态分组统计。
 
