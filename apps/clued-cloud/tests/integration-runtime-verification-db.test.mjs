@@ -159,8 +159,11 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
         assert.equal(Number(row.policies), 0, row.relname);
         assert.equal(row.any_privilege, false, row.relname);
       }
-      assert.equal(Number((await admin.query(`select count(*) n from clued_private.integration_ready_profiles_v1`)).rows[0].n), 0,
-        'no production READY profile is seeded (§5.1)');
+      // S2c seeds no production READY profile (§5.1); the only rows are the ones S3 defines
+      // (20261007060000_integration_runtime_ready_profiles.sql, tested in integration-runtime-ready-profiles-db).
+      assert.equal(Number((await admin.query(`select count(*) n from clued_private.integration_ready_profiles_v1
+        where profile_id !~ '^(anthropic\\.claude|openai\\.chatgpt)\\.[a-z_]+\\.continuity$'`)).rows[0].n), 0,
+        'no production READY profile other than the S3 continuity profiles');
     });
 
     await t.test('T-S-2 no EXECUTE on any Integration function before the target grants (OQ-21)', async () => {
@@ -956,6 +959,43 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       }
       await assert.rejects(PROFILE('Bad Id', ['context.read'], { 'context.read': RESUME }), /violates check constraint/);
       await assert.rejects(PROFILE('test.zero-ttl', ['context.read'], { 'context.read': RESUME }, { ttl: '0 seconds' }), /violates check constraint/);
+    });
+
+    // Plugin line S3 (Cross-Host v0.2.6 §20, §41.0; Task 9966975d): the production READY profiles that
+    // 20261007060000_integration_runtime_ready_profiles.sql seeds, one per registered Host surface. Kept in
+    // this suite, which already applies every migration, so S3 adds no database of its own to CI.
+    await t.test('S3 READY profiles: one continuity profile per registered surface', async () => {
+      const S3_MIGRATION = '20261007060000_integration_runtime_ready_profiles.sql';
+      const S3_FAMILIES = ['record_mutation', 'decision_supersede'];
+      assert.ok(migrations.includes(S3_MIGRATION));
+      const { rows } = await admin.query(`select profile_id, profile_version, required_capabilities, required_qualification,
+          evidence_rules, extract(epoch from freshness_ttl)::bigint ttl,
+          clued_private.integration_ready_rules_valid_v1(required_capabilities, evidence_rules) rules_valid
+        from clued_private.integration_ready_profiles_v1
+        where profile_id like any (array['anthropic.%', 'openai.%']) order by profile_id`);
+      // one profile per surface of the two seeded Hosts (this suite adds test.* hosts of its own)
+      const surfaces = (await admin.query(`select host || '.' || surface || '.continuity' id
+        from clued_private.integration_host_surfaces_v1 where host in ('anthropic.claude', 'openai.chatgpt')
+        order by 1`)).rows.map((r) => r.id);
+      assert.equal(surfaces.length, 7);
+      assert.deepEqual(rows.map((r) => r.profile_id), surfaces);
+      for (const row of rows) {
+        assert.equal(row.profile_version, 1, row.profile_id);
+        assert.deepEqual(row.required_capabilities, ['context.read', 'context.write'], row.profile_id);
+        assert.equal(row.required_qualification, 'ANY', row.profile_id);
+        assert.equal(Number(row.ttl), 30 * 24 * 3600, row.profile_id);
+        assert.equal(row.rules_valid, true, row.profile_id);
+        assert.deepEqual(row.evidence_rules, {
+          'context.read': { kind: 'resume_after_link' },
+          'context.write': { kind: 'committed_receipt_after_link', families: S3_FAMILIES },
+        }, row.profile_id);
+      }
+      // the evidence families are operation families Clued writes for ordinary record and decision writes
+      const older = await Promise.all(migrations.filter((name) => name < S3_MIGRATION)
+        .map((name) => fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')));
+      for (const family of S3_FAMILIES) {
+        assert.ok(older.some((text) => text.includes(`'${family}'`)), `${family} is an operation family`);
+      }
     });
   } finally {
     for (const client of clients) await client.end().catch(() => {});
