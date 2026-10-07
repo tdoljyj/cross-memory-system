@@ -336,7 +336,7 @@ test('inspect adds a fixed Worker hint for RESTORE_NAME_CONFLICT, DIRECTORY_NOT_
   try {
     const expected = { RESTORE_NAME_CONFLICT: /ask the user/, DIRECTORY_NOT_EMPTY: /empty directory/,
       DIRECTORY_SHARING_DIFFERS: /same access/, SUBTREE_DRIFT: /Nothing was moved/, DIRECTORY_ACCESS_UNAVAILABLE: /permissions/,
-      PARENT_UNREGISTERED: /adopt the folder first/ };
+      PARENT_UNREGISTERED: /adopt the folder first/, CLOUD_REPLACE_TARGET_UNREGISTERED: /adopt the file first/ };
     for (reason of Object.keys(expected)) {
       const r = (await (await call('clued_storage_inspect', ref, env, { waitUntil: () => {} })).json()).result;
       assert.equal(r.structuredContent.reason_code, reason); assert.match(r.structuredContent.hint, expected[reason]);
