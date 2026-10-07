@@ -7,24 +7,37 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const cloudRoot = path.resolve(here, "../..");
 const secretPath = path.join(here, ".dev.vars.public-mcp");
 
-function localPublishableKey() {
-  const output = execFileSync(
-    process.platform === "win32" ? "npx.cmd" : "npx",
-    ["--yes", "supabase@2.115.0", "status", "--output", "json"],
-    {
-      cwd: cloudRoot,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32",
-    },
-  );
-  const status = JSON.parse(output);
-  const key = status.PUBLISHABLE_KEY ?? status.ANON_KEY;
-  if (!key) throw new Error("Local Supabase did not report a publishable key.");
-  return key;
+function reportedPublishableKey() {
+  try {
+    const output = execFileSync(
+      process.platform === "win32" ? "npx.cmd" : "npx",
+      ["--yes", "supabase@2.115.0", "status", "--output", "json"],
+      {
+        cwd: cloudRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        shell: process.platform === "win32",
+      },
+    );
+    const status = JSON.parse(output);
+    return status.PUBLISHABLE_KEY ?? status.ANON_KEY;
+  } catch {
+    return undefined;
+  }
 }
 
-fs.writeFileSync(secretPath, `SUPABASE_PUBLISHABLE_KEY=${localPublishableKey()}\n`, { mode: 0o600 });
+// `db reset` ends by restarting containers, and `status` can omit the keys
+// until they are back. Wait for the key instead of failing on the first read.
+async function localPublishableKey() {
+  for (let attempt = 1; attempt <= 20; attempt += 1) {
+    const key = reportedPublishableKey();
+    if (key) return key;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error("Local Supabase did not report a publishable key.");
+}
+
+fs.writeFileSync(secretPath, `SUPABASE_PUBLISHABLE_KEY=${await localPublishableKey()}\n`, { mode: 0o600 });
 
 const command = process.platform === "win32" ? "npx.cmd" : "npx";
 const child = spawn(command, [
