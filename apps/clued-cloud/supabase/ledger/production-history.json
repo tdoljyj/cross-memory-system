@@ -2,8 +2,8 @@
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
   "exported_at": "2026-10-07T03:49:58.107Z",
-  "history_through": "20261007003804",
-  "row_count": 202,
+  "history_through": "20261007182916",
+  "row_count": 207,
   "rows": [
     {
       "version": "20260823154017",
@@ -1619,6 +1619,46 @@
       "statements_md5": "3913379070362474383be0e308161164",
       "statements_length": 1925,
       "source": "migrations/20261007000000_storage_connections_display_name.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261007091956",
+      "name": "storage_binary_replace_v1",
+      "statements_md5": "7c8d467eb58e91dbc9f4234c8af86af7",
+      "statements_length": 9711,
+      "source": "migrations/20261007150000_storage_binary_replace_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261007111133",
+      "name": "integration_runtime_ready_profiles",
+      "statements_md5": "a5f7a858e0b44e4a0d20484a1d74913e",
+      "statements_length": 2083,
+      "source": "migrations/20261007060000_integration_runtime_ready_profiles.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261007163616",
+      "name": "storage_recovery_deadlock_v1",
+      "statements_md5": "5fc46b0ae709fd0f8f59908523378f77",
+      "statements_length": 20979,
+      "source": "migrations/20261007200000_storage_recovery_deadlock_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261007182910",
+      "name": "db_security_hygiene",
+      "statements_md5": "fd88483c16dcb9ca717e87b144369d45",
+      "statements_length": 6172,
+      "source": "migrations/20261007120000_db_security_hygiene.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261007182916",
+      "name": "storage_queued_dispatch_v1",
+      "statements_md5": "44d17b0fa617a1181550d9b559618b5c",
+      "statements_length": 12497,
+      "source": "migrations/20261008000000_storage_queued_dispatch_v1.sql",
       "transform": "identical"
     }
   ],

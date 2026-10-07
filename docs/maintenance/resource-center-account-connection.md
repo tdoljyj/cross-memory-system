@@ -1064,9 +1064,18 @@ same requests submitted after the root settled ran within 90 seconds.
   `STORAGE_ROOT_BUSY` or `STORAGE_JOB_LOAD_REFUSED` instead of `UNSPECIFIED`.
   The scheduled run logs `storage_queued_sweep` with counts, or
   `storage_queued_sweep_unavailable`.
-- **The four jobs of 2026-10-07.** Once released, the first sweep settles each
-  job older than 2 hours as `DISPATCH_NOT_STARTED`; none of them runs, so the
-  files already written under the same names are not touched.
+- **Never dispatched past 2 hours** (migration
+  `20261008010000_storage_queued_dispatch_window_v1.sql`). The timeout settles
+  at most 3 text jobs per call and the redispatch candidates are listed in the
+  same call; the candidate query now skips text jobs submitted 2 hours ago or
+  earlier, so the next call settles them instead. Before this patch a fourth
+  old job could be dispatched.
+- **The four jobs of 2026-10-07.** The first sweep after the release at
+  `ac26d9f` (2026-10-07 18:35Z) settled `...a001`-`a003` as
+  `DISPATCH_NOT_STARTED`. `...a004` was dispatched in the same call, the gap the
+  patch above closes, and was denied before any reservation
+  (`ARTIFACT_AUTHORITY_RESOLUTION_FAILED`, no intent): nothing changed in Drive,
+  and the file already written under its name was not touched.
 - **Release order.** The migration first. The old Worker never calls the sweep
   and its submit path passes the new refusal through as `storage_job_unavailable`;
   the new Worker against the old database logs `storage_queued_sweep_unavailable`

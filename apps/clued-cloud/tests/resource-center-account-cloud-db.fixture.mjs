@@ -821,6 +821,20 @@ export async function testAccountCloud(t, admin, server, user, decision) {
       // A started job is never settled by the timeout, whatever its age.
       await age(fence, "3 hours"); await sweep(due);
       assert.equal((await jobRow(fence)).dispatch_outcome, null); assert.equal((await journal(fence)).state, "started");
+
+      // 5. Production 2026-10-07 (20261008010000): four text jobs past 2 hours on a quiet root. The timeout settles
+      //    3 per call; the fourth must wait for the next call and is never listed for dispatch meanwhile.
+      const quietRoot = await createRoot(), quietClient = await bind(quietRoot), quietTarget = await activate(quietRoot);
+      const old = [];
+      for (let i = 0; i < 4; i++) { const job = await submit(quietTarget, quietClient); await age(job, `${3 * 60 + i} minutes`); old.push(job); }
+      const first = await sweep(due);
+      assert.equal(old.some(job => listed(first, job)), false, "a text job past 2 hours is never dispatched");
+      const outcomes = async () => Promise.all(old.map(async job => (await jobRow(job)).dispatch_outcome?.reason?.code ?? null));
+      assert.ok((await outcomes()).filter(Boolean).length >= 3);
+      const second = await sweep(due);
+      assert.equal(old.some(job => listed(second, job)), false);
+      assert.deepEqual(await outcomes(), ["DISPATCH_NOT_STARTED", "DISPATCH_NOT_STARTED", "DISPATCH_NOT_STARTED", "DISPATCH_NOT_STARTED"]);
+      assert.ok((await Promise.all(old.map(jobRow))).every(row => row.intent_id === null && row.redispatch_attempts === 0));
     });
   } finally {
     await admin.query("rollback");
