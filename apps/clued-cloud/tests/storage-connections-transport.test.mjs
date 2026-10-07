@@ -73,6 +73,15 @@ test("lists the Binding's connections with the hashed token only, uncached", asy
   assert.equal((await call(undefined)).isError, false, "arguments may be omitted");
 });
 
+test("a root registered only by Drive ID comes with a null managed_root (Decision 8d05e50a)", async () => {
+  const onboarded = { ...entry, name: "cs", managed_root: null };
+  const { isError, value } = await call({}, { reply: () => Response.json({ ...answer, connections: [onboarded] }) });
+  assert.equal(isError, false);
+  assert.deepEqual(value.connections, [onboarded]);
+  const bad = await call({}, { reply: () => Response.json({ ...answer, connections: [{ ...entry, managed_root: "" }] }) });
+  assert.equal(bad.value.error, "storage_connections_unavailable", "an empty path is still refused");
+});
+
 test("classes whose tools this deployment does not offer are left out", async () => {
   const onlyReads = await call({}, { env: { ...base, ...reads } });
   assert.deepEqual(onlyReads.value.connections, [{ ...entry, inspect: false, write_levels: [] }]);
