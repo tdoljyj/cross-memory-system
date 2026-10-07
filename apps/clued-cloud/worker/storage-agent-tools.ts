@@ -166,8 +166,17 @@ const binaryVariants = [
     properties: { operation: { const: "create" }, target_kind: { const: "file" }, destination_path: destination,
       mime_type: binaryMime, content_sha256: binarySha,
       content_base64: { type: "string", maxLength: 1048576, description: "Standard base64 of the file bytes, for clients without a shell; the whole JSON request must fit in 1 MiB (about 700 KiB of file)." } } },
+  // Binary replace (Decision 06aba6c5): the same staged forms, for one registered file of the same type.
+  { type: "object", required: ["operation", "target_kind", "destination_path", "destination_file_version", "mime_type", "content_sha256", "staging_id"], additionalProperties: false,
+    properties: { operation: { const: "replace" }, target_kind: { const: "file" }, destination_path: destination,
+      destination_file_version: targetVersion, mime_type: binaryMime, content_sha256: binarySha,
+      staging_id: { ...idSchema, description: "The staging_id returned by clued_storage_upload_begin (declared with this file's path) after the PUT succeeded; at most 5 MiB. destination_path, mime_type and content_sha256 must repeat the declared values." } } },
+  { type: "object", required: ["operation", "target_kind", "destination_path", "destination_file_version", "mime_type", "content_sha256", "content_base64"], additionalProperties: false,
+    properties: { operation: { const: "replace" }, target_kind: { const: "file" }, destination_path: destination,
+      destination_file_version: targetVersion, mime_type: binaryMime, content_sha256: binarySha,
+      content_base64: { type: "string", maxLength: 1048576, description: "Standard base64 of the new file bytes, for clients without a shell; the whole JSON request must fit in 1 MiB (about 700 KiB of file)." } } },
 ];
-const binaryNote = " A binary file (images, PDF, zip, OOXML/ODF Office files, at most 20 MiB) needs the Owner's create_file level with normal use, and is sent either as staging_id from clued_storage_upload_begin or inline as content_base64 (whole request at most 1 MiB), with mime_type and content_sha256. Legacy Office (doc, xls, ppt), macro-enabled Office files, packages declaring VBA, ActiveX or macro sheets, executables, scripts, HTML and SVG are refused in binary form. Files the Owner uploaded by hand cannot be renamed, moved or deleted.";
+const binaryNote = " A binary file (images, PDF, zip, OOXML/ODF Office files, at most 20 MiB) needs the Owner's create_file level with normal use, and is sent either as staging_id from clued_storage_upload_begin or inline as content_base64 (whole request at most 1 MiB), with mime_type and content_sha256. Legacy Office (doc, xls, ppt), macro-enabled Office files, packages declaring VBA, ActiveX or macro sheets, executables, scripts, HTML and SVG are refused in binary form. Files the Owner uploaded by hand cannot be renamed, moved or deleted. replace also takes a binary file the same two ways (with destination_file_version), to replace one registered file in place with new bytes of its own type (an .xlsx stays an .xlsx), keeping its Drive file ID; the new file is at most 5 MiB, the file it replaces is at most 5 MiB with a Drive sha256, and it needs the Owner's overwrite level with normal use. Its previous content is kept as a Drive revision and restore_job_id restores it.";
 
 export function storageAgentToolsFor(binary: boolean) {
   if (!binary) return storageAgentTools;
@@ -255,6 +264,13 @@ export function storageTrashBatchResult(value: unknown, input: Data): Data {
     execution_permitted: false, ...("replayed" in value ? { replayed: value.replayed } : {}) };
 }
 
+/** The binary content fields of a create or replace (N3): exactly one of staging_id or content_base64, with mime_type and content_sha256. */
+const binaryShape = (m: Data) => ("staging_id" in m) !== ("content_base64" in m) && !("content" in m) && !("restore_job_id" in m) &&
+  typeof m.mime_type === "string" && m.mime_type.length >= 3 && m.mime_type.length <= 255 &&
+  typeof m.content_sha256 === "string" && /^[0-9a-f]{64}$/.test(m.content_sha256) &&
+  (!("staging_id" in m) || uuid(m.staging_id)) &&
+  (!("content_base64" in m) || (typeof m.content_base64 === "string" && m.content_base64.length <= 1048576));
+
 export function storageAgentInput(name: "clued_storage_submit" | "clued_storage_inspect", args: unknown): Data {
   const fail = () => { throw new Error("storage_job_input_invalid"); };
   if (!object(args) || !uuid(args.connection_id) || !uuid(args.job_id)) return fail();
@@ -319,6 +335,12 @@ export function storageAgentInput(name: "clued_storage_submit" | "clued_storage_
         if (m.operation === "rename" ? !sameParent || sameName : sameParent || !sameName) return fail();
       } else if (m.operation === "rename" ? sameName : !sameName) return fail();
       allowed.push("source_path", "source_file_version");
+    } else if (m.operation === "replace" && ("staging_id" in m || "content_base64" in m)) {
+      // Binary replace (Decision 06aba6c5): the binary create shape plus the observed version;
+      // staging, gate, size and type checks are server-owned.
+      if (m.target_kind !== "file" || typeof m.destination_file_version !== "string" ||
+        !/^[1-9][0-9]{0,39}$/.test(m.destination_file_version) || !binaryShape(m)) return fail();
+      allowed.push("destination_file_version", "mime_type", "content_sha256", "staging_id" in m ? "staging_id" : "content_base64");
     } else if (m.operation === "replace") {
       if (m.target_kind !== "file" || typeof m.destination_file_version !== "string" ||
         !/^[1-9][0-9]{0,39}$/.test(m.destination_file_version) || ("content" in m) === ("restore_job_id" in m)) return fail();
@@ -328,10 +350,7 @@ export function storageAgentInput(name: "clued_storage_submit" | "clued_storage_
     } else if (m.operation !== "create") return fail();
     else if (m.target_kind === "file" && ("staging_id" in m || "content_base64" in m)) {
       // Binary create (N3): shape only here; staging, gate and type checks are server-owned.
-      if (("staging_id" in m) === ("content_base64" in m) || "content" in m || typeof m.mime_type !== "string" ||
-        m.mime_type.length < 3 || m.mime_type.length > 255 || typeof m.content_sha256 !== "string" || !/^[0-9a-f]{64}$/.test(m.content_sha256) ||
-        ("staging_id" in m && !uuid(m.staging_id)) ||
-        ("content_base64" in m && (typeof m.content_base64 !== "string" || m.content_base64.length > 1048576))) return fail();
+      if (!binaryShape(m)) return fail();
       allowed.push("mime_type", "content_sha256", "staging_id" in m ? "staging_id" : "content_base64");
     }
     else if (m.target_kind === "file") {
