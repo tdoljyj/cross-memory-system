@@ -285,7 +285,7 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
   content_base64 | staging_id }
 ```
 
-- `content`、`content_base64`、`staging_id` 恰好一个。`mime_type` 只配合后两者；文本 `content` 仍固定 `text/plain`（`create-effect.mjs:68`）。
+- `content`、`content_base64`、`staging_id` 恰好一个。`mime_type` 只配合后两者；文本 `content` 按扩展名定类型：`.md` → `text/markdown`、`.csv` → `text/csv`、`.json` → `application/json`，其余（含 HTML / SVG）仍为 `text/plain`（`create-effect.mjs` 的 `textCreateMimeType`；Owner Decision 5cec9915）。
 - **授权**：任何二进制形态（`upload_begin`、PUT 端点、`submit`、执行 admission 四处）须同时满足：写入策略 active 且含 `create_file`（Q2）；该连接有 active 读取授权 `content_profile = normal/1`；**且**连接行 `provider_scope_profile = normal`（与 §8.2 数据段同一条件）。任一不满足返回 `storage_binary_upload_disabled`；已排队二进制作业在执行 admission 再查一次，不满足则拒绝、effect 为 0。文本 create 不受影响。
 - 页面：写入策略未激活（不含 `create_file`）时，在开关下写明“上传不可用：尚未开启新建文件”。
 

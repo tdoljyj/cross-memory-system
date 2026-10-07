@@ -176,6 +176,9 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         if(!verifiedResultMode || !directoryMoveShape(mutation) || !subtreeSampleShape(descriptor.subtree_sample) ||
           Object.keys(mutation).sort().join(",")!==DIRECTORY_MOVE_KEYS.join(",")) fail("CLOUD_MUTATION_SHAPE_INVALID");
       }else if(replace){
+        // The database names no revisions to release only when the target is
+        // not a file Clued registered: the Agent adopts it first.
+        if(descriptor.revision_releases===null) fail("CLOUD_REPLACE_TARGET_UNREGISTERED");
         if(!verifiedResultMode || !replaceShape(mutation) || mutation.target_kind!=="file" ||
           Object.keys(mutation).some(k=>!["operation","destination_path","target_kind","destination_file_version","content","restore_job_id"].includes(k)) ||
           !Array.isArray(descriptor.revision_releases) || descriptor.revision_releases.length>200 || !descriptor.revision_releases.every(revisionIdOk) ||
