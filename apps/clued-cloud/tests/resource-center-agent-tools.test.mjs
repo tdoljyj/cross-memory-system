@@ -271,6 +271,34 @@ test('replace passes with new content or a restore job in its exact shape and re
   } finally { globalThis.fetch = before; }
 });
 
+test('a binary replace (staging_id with the observed version) passes in its exact shape and reaches the jobs RPC unchanged', async () => {
+  const before = globalThis.fetch; const calls = [];
+  globalThis.fetch = async (_url, init) => { calls.push(JSON.parse(init.body)); return Response.json(status()); };
+  const binaryEnv = { ...env, CLUED_STORAGE_JOBS_V2: 'true', CLUED_STORAGE_GOOGLE_V1: 'true', CLUED_STORAGE_BINARY_V1: 'true' };
+  const path = 'G:/My Drive/Clued_资料中心/track/topic/assets.xlsx';
+  const good = { operation: 'replace', target_kind: 'file', destination_path: path, destination_file_version: '7',
+    mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content_sha256: 'b'.repeat(64), staging_id: ref.job_id };
+  const bad = [
+    { ...good, destination_file_version: undefined }, { ...good, content: 'x' }, { ...good, restore_job_id: ref.job_id },
+    { ...good, content_base64: 'AAAA' }, { ...good, content_sha256: 'nope' }, { ...good, staging_id: 'nope' },
+    { ...good, mime_type: undefined }, { ...good, target_kind: 'directory' }, { ...good, source_path: path },
+  ].map(m => JSON.parse(JSON.stringify(m)));
+  try {
+    for (const input of bad) {
+      const reply = await (await submit({ ...ref, mutation: input }, binaryEnv)).json();
+      assert.ok(reply.result?.isError === true || reply.error, JSON.stringify(input));
+    }
+    assert.equal(calls.length, 0);
+    const reply = (await (await submit({ ...ref, mutation: good }, binaryEnv)).json()).result;
+    assert.equal(reply.isError, false);
+    assert.deepEqual(calls.at(-1).p_input, { ...ref, mutation: good, action: 'submit' });
+    // Without the binary flags the same request is refused before any RPC.
+    const off = await (await submit({ ...ref, mutation: good })).json();
+    assert.ok(off.result?.isError === true || off.error);
+    assert.equal(calls.length, 1);
+  } finally { globalThis.fetch = before; }
+});
+
 test('trash and untrash pass only in their exact shape (Drive ID, path, version) and reach the jobs RPC as delete and restore', async () => {
   const before = globalThis.fetch; const calls = [];
   globalThis.fetch = async (_url, init) => { calls.push(JSON.parse(init.body)); return Response.json(status()); };

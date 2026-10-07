@@ -171,6 +171,8 @@ export function createGoogleDriveMetadataApi({
 
   // The bytes of one revision, at most maxBytes (P4 revert). Read-only.
   async function downloadRevision(fileId, revisionId, maxBytes, {signal} = {}) {
+    // A download above 1 MiB (a binary revert, up to 5 MiB) gets a longer window than a metadata read.
+    const downloadTimeout = maxBytes > 1024 * 1024 ? Math.max(timeoutMs, 60_000) : timeoutMs;
     if (typeof fileId !== "string" || !/^[A-Za-z0-9_-]+$/.test(fileId) ||
       typeof revisionId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(revisionId) ||
       !Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > 10 * 1024 * 1024) throw new TypeError("Invalid Drive revision download.");
@@ -180,7 +182,7 @@ export function createGoogleDriveMetadataApi({
     let response;
     try {
       response = await fetchImpl(url.href, { method: "GET", headers: { authorization: `Bearer ${token}`, "cache-control": "no-store" },
-        cache: "no-store", redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) });
+        cache: "no-store", redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(downloadTimeout)]) : AbortSignal.timeout(downloadTimeout) });
     } catch (error) {
       if (error?.name === "TimeoutError") throw new Error("DRIVE_METADATA_TIMEOUT");
       if (subrequestLimit(error)) throw new Error("DRIVE_METADATA_SUBREQUEST_LIMIT");

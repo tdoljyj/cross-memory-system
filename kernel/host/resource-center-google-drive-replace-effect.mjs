@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 import { contentIdentity } from "./resource-center-google-drive-modify-effect.mjs";
-import { textCreateMimeType } from "./resource-center-google-drive-create-effect.mjs";
+import { contentRefShape, textCreateMimeType } from "./resource-center-google-drive-create-effect.mjs";
 import { scopeProfile } from "./resource-center-google-scopes.mjs";
 
 const API = "https://www.googleapis.com/drive/v3/files";
@@ -10,20 +10,24 @@ const UPLOAD = "https://www.googleapis.com/upload/drive/v3/files";
 const FIELDS = "id,name,mimeType,parents,version,trashed,size,sha256Checksum,md5Checksum,headRevisionId";
 const FOLDER = "application/vnd.google-apps.folder";
 const MAX_BYTES = 1024 * 1024;
+// A binary replace (Decision 06aba6c5) is one Drive media upload of at most 5 MiB.
+export const BINARY_REPLACE_MAX_BYTES = 5 * 1024 * 1024;
 const fail = (code) => { throw new Error(code); };
 const uuid = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 export const sha256Hex = (bytes) => createHash("sha256").update(bytes).digest("hex");
 export const md5Hex = (bytes) => createHash("md5").update(bytes).digest("hex");
 
 /** The replace shape (StorageFullCapability §6.1/§6.2, P4): one registered
- * file as the target only, the version the Agent observed, and either new
- * UTF-8 content or restore_job_id, the committed replace job whose pinned
- * previous revision is restored (revert). */
+ * file as the target only, the version the Agent observed, and exactly one of
+ * new UTF-8 content, restore_job_id (the committed replace job whose pinned
+ * previous revision is restored: revert) or content_ref (a staged binary file
+ * of at most 5 MiB, Decision 06aba6c5). */
 export function replaceShape(mutation) {
   if (mutation?.operation !== "replace" || (mutation.target_kind ?? "file") !== "file" ||
     mutation.source_path !== undefined || mutation.directory_semantics !== undefined ||
     typeof mutation.destination_path !== "string" || !/^[1-9]\d{0,39}$/.test(mutation.destination_file_version ?? "") ||
-    (mutation.content === undefined) === (mutation.restore_job_id === undefined) ||
+    [mutation.content, mutation.restore_job_id, mutation.content_ref].filter(value => value !== undefined).length !== 1 ||
+    (mutation.content_ref !== undefined && (!contentRefShape(mutation.content_ref) || mutation.content_ref.size > BINARY_REPLACE_MAX_BYTES)) ||
     (mutation.content !== undefined && (typeof mutation.content !== "string" || Buffer.byteLength(mutation.content, "utf8") > MAX_BYTES)) ||
     (mutation.restore_job_id !== undefined && !uuid(mutation.restore_job_id))) return null;
   const destination = bindResourceCenterMutation(mutation).destination_path;
@@ -56,7 +60,7 @@ export function createGoogleDriveNativeReplaceEffect({
   if (!trustedProfile || typeof getCredential !== "function" || typeof getFile !== "function" ||
     typeof getRevision !== "function" || typeof resolveProviderIdentity !== "function" || typeof consumeStartedProvider !== "function" ||
     typeof persistProviderAttempt !== "function" || typeof fetchImpl !== "function" || typeof clock !== "function" ||
-    !(replacement instanceof Uint8Array) || replacement.byteLength > MAX_BYTES ||
+    !(replacement instanceof Uint8Array) || replacement.byteLength > BINARY_REPLACE_MAX_BYTES ||
     !Array.isArray(releaseRevisionIds) || releaseRevisionIds.length > 200 ||
     releaseRevisionIds.some((id) => typeof id !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(id))) {
     throw new TypeError("A private native writer, durable attempt store and validated replacement are required.");
@@ -73,7 +77,9 @@ export function createGoogleDriveNativeReplaceEffect({
     if (!Number.isFinite(now) || !Number.isFinite(expiresAt) || now >= expiresAt) fail("DRIVE_NATIVE_ADMISSION_EXPIRED");
     let response;
     try {
-      response = await fetchImpl(url, { method, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10000),
+      // A body above 1 MiB (a binary replace) gets a longer upload window.
+      const timeout = body instanceof Uint8Array && body.byteLength > MAX_BYTES ? 60000 : 10000;
+      response = await fetchImpl(url, { method, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(timeout),
         body, headers: { "content-type": contentType, authorization: `Bearer ${credential.access_token}` } });
       if (!response.ok) fail("DRIVE_NATIVE_REQUEST_FAILED");
       return await response.json();
@@ -95,7 +101,9 @@ export function createGoogleDriveNativeReplaceEffect({
     const shape = replaceShape(mutation);
     if (!shape || !binding || binding.request_sha256 !== requestHash || binding.profile_id !== profile.profile_id ||
       identity?.profile_id !== profile.profile_id || identity.profile_version !== profile.profile_version ||
-      (mutation.content !== undefined && !isDeepStrictEqual(Buffer.from(mutation.content, "utf8"), Buffer.from(replacement)))) {
+      (mutation.content !== undefined && !isDeepStrictEqual(Buffer.from(mutation.content, "utf8"), Buffer.from(replacement))) ||
+      (mutation.content_ref !== undefined && (String(mutation.content_ref.size) !== String(replacement.byteLength) ||
+        mutation.content_ref.sha256 !== sha256Hex(replacement)))) {
       fail("DRIVE_NATIVE_REQUEST_MISMATCH");
     }
     const started = consumeStartedProvider(binding);
@@ -105,6 +113,8 @@ export function createGoogleDriveNativeReplaceEffect({
     if (!/^[A-Za-z0-9_-]{1,160}$/.test(before.destination_file_id ?? "") || !before.destination_parent_id ||
       before.destination_file_version !== shape.destination_file_version || before.source_file_id !== null) fail("DRIVE_NATIVE_PROVIDER_CHANGED");
     const file = await targetFile(before.destination_file_id, shape, before.destination_parent_id);
+    // A binary replace never changes the file's format: the staged type is the file's own type.
+    if (mutation.content_ref !== undefined && file.mimeType !== mutation.content_ref.mime_type) fail("DRIVE_NATIVE_TARGET_MISMATCH");
     const contentBefore = contentIdentity(file), pinned = file.headRevisionId, after = contentAfter(replacement);
     if (releases.includes(pinned)) fail("DRIVE_NATIVE_REQUEST_MISMATCH");
     // A head the Owner already keeps forever is recorded as such: Clued then
