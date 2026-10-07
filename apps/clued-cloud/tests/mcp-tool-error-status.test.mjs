@@ -60,15 +60,32 @@ test('a committed write is not a tool error', async () => {
   assert.equal(result.structuredContent.status, 'committed');
 });
 
-test('every M1 write tool reports a rejected envelope as a tool error', async () => {
-  for (const [name, args] of [
-    ['clued_decision_supersede', {}],
-    ['clued_evidence_ingest', {}],
-    ['clued_event_append', {}],
-  ]) {
-    const result = await callTool(name, args, envelope('rejected', 'CAPABILITY_DENIED'));
-    assert.equal(result.isError, true, name);
-  }
+test('every write tool family reports a rejected or failed envelope as a tool error', async () => {
+  const saved = { ...env };
+  Object.assign(env, { P5_TENANT_WRITES: 'true', CLUED_P5_GATEWAY_TOKEN: 'fixture-gateway-jwt' });
+  try {
+    for (const name of [
+      'clued_decision_supersede', 'clued_evidence_ingest', 'clued_event_append',
+      'clued_project_mutate',
+      'clued_intake_submit', 'clued_intake_withdraw', 'clued_knowledge_propose',
+      'clued_mtpe_owner_pin',
+      'clued_p5_workspace_switch',
+    ]) {
+      for (const status of ['rejected', 'failed']) {
+        const result = await callTool(name, {}, envelope(status, 'CAPABILITY_DENIED'));
+        assert.equal(result.isError, true, `${name} ${status}`);
+        assert.equal(result.structuredContent.error_code, 'CAPABILITY_DENIED', `${name} ${status}`);
+      }
+      assert.equal((await callTool(name, {}, envelope('committed'))).isError, false, name);
+    }
+  } finally { for (const key of Object.keys(env)) delete env[key]; Object.assign(env, saved); }
+});
+
+test('a context pack the database refused is a tool error, as on REST (422)', async () => {
+  const refused = await callTool('clued_context_pack', {},
+    { status: 'rejected', error_code: 'CONTEXT_POLICY_REQUIRED', authoritative: false });
+  assert.equal(refused.isError, true);
+  assert.equal(refused.structuredContent.error_code, 'CONTEXT_POLICY_REQUIRED');
 });
 
 test('a result without a top-level status keeps its earlier isError', async () => {
