@@ -57,7 +57,7 @@
 | --- | --- | --- | --- |
 | 受保护层 | `protected` | 守护生产与准入本身的代码与配置：改动合并后就是之后所有运行的判定代码 | **代码常量** `CORE_PROTECTED_PATHS`（= 现行 `PROTECTED_PATHS`：`.github/**`、`scripts/ci/**`、`scripts/runner/**`、`apps/clued-cloud/scripts/**`、`apps/clued-cloud/package.json`、`apps/clued-cloud/package-lock.json`、`apps/clued-cloud/wrangler*.jsonc`、`apps/clued-cloud/app/supabase-public-config.ts`、`.gitattributes`、`**/.gitattributes`、`.gitmodules`、`.npmrc`、`**/.npmrc`）**加上**策略文件自己 `config/merge-admission-policy.json`，再加上策略文件 `layers.protected.paths` 列出的追加路径。策略文件只能追加，不能移除常量里的任何一项 |
 | 普通代码层 | `code` | 其余会被构建、部署或被带凭据的脚本加载的代码：`apps/clued-cloud/**`（除受保护项）、`kernel/**`、`scripts/**`（除 `ci`、`runner`）、`protocol/**`、`skills/**` 的脚本、`tests/**`、迁移 `apps/clued-cloud/supabase/migrations/**` 等 | 策略文件 `layers.code.paths`，默认 `**`（兜底层） |
-| 文档 / 合同草案层 | `docs` | 不被任何运行时、测试或 CI 加载的叙述文本：`docs/**`、`development/contracts/**/*.md`、`development/authority-index/**/*.md`、根目录 `*.md`、`skills/**/*.md`（合同 `agent-contract.md` 例外，归 `code`：它随 Worker 下发并被钩子比对版本） | 策略文件 `layers.docs.paths` |
+| 文档 / 合同草案层 | `docs` | 不被执行的叙述文本（`design-refs`、`active-doc-links` 两个检查只读取、不执行它们）：`docs/**`、`development/contracts/**/*.md`、`development/authority-index/**/*.md`、根目录 `*.md`、`skills/**/*.md`（合同 `agent-contract.md` 例外，归 `code`：它随 Worker 下发并被钩子比对版本） | 策略文件 `layers.docs.paths` |
 
 ### 3.2 匹配规则
 
@@ -77,7 +77,7 @@
   "state_variable": "CLUED_MERGE_ADMISSION_STATE",
   "layers": {
     "protected": { "paths": [] },
-    "docs": { "paths": ["docs/**", "development/**/*.md", "*.md", "skills/**/*.md", "!skills/clued/references/agent-contract.md"] },
+    "docs": { "paths": ["docs/**", "development/contracts/**/*.md", "development/authority-index/**/*.md", "*.md", "skills/**/*.md", "!skills/clued/references/agent-contract.md"] },
     "code": { "paths": ["**"] }
   },
   "rules": {
@@ -147,10 +147,11 @@
 理由：
 
 - `code` 层保留 `work_claim: enforce`：`advise` 不取消 Clued 对**已认领**工作的冲突判定（`work_claim_conflicts` 照常），它取消的是「未认领或 `write_set` 过窄的 PR 不得合并」这道门，而归属可追、按 Task 的 24 小时 head 计量（G4）、以及「没人认领就不会有人在 resume 里看到这份工作」都靠这道门。2026-10-01 的 #443/#444/#445 撞在依赖文件上，当时不受保护、现在属受保护层；同类撞车在 Worker 源码、测试、迁移上随时可能发生，而那些是 `code` 层。这**修正** Decision `f303f861` 第 3 项「认领只对受保护 PR 强制」（§9）。
-- `code` 层保留 `merge_slot: required`：strict 开启时，一个普通代码 PR 的最后一轮是 10–30 分钟自托管 CI（报告 §4 的数据），被别的合并插队就白跑；合并位的痛点是「Agent 轮询 + 45 分钟定时器」，§7 用队列和 CI 绑定时效解决痛点，而不是取消串行化。这也**修正** `f303f861` 第 3 项的合并位部分。
-- `docs` 层也 `merge_slot: required`：strict 开启时，文档 PR 的合并同样让队列头（受保护或普通代码 PR）的最后一轮白跑 10–30 分钟自托管 CI，被插队的是队列头不是文档 PR 自己；而取位只是一次 `clued_work_renew`，文档 PR 自己的最后一轮几分钟就过，排队代价小。`efficiency` 下才改为提示（§5.3）。`docs` 层仍 `work_claim: enforce`：认领是一次 MCP 调用，没有出现在摩擦排序里，而归属可追是 Owner 要保留的另一件事。
+- `code` 层保留 `merge_slot: required`：strict 开启时，一个普通代码 PR 的最后一轮是 5–30 分钟自托管 CI（报告 §4.3：只触发 `clued-cloud-quality` 约 5–10 分钟，命中四个路径过滤重闸 10–30 分钟），被别的合并插队就白跑；合并位的痛点是「Agent 轮询 + 45 分钟定时器」，§7 用队列和 CI 绑定时效解决痛点，而不是取消串行化。这也**修正** `f303f861` 第 3 项的合并位部分。
+- `docs` 层也 `merge_slot: required`：strict 开启时，文档 PR 的合并同样让队列头（受保护或普通代码 PR）的最后一轮白跑 5–30 分钟自托管 CI，被插队的是队列头不是文档 PR 自己；而取位只是一次 `clued_work_renew`，文档 PR 自己的最后一轮几分钟就过，排队代价小。`efficiency` 下才改为提示（§5.3）。`docs` 层仍 `work_claim: enforce`：认领是一次 MCP 调用，没有出现在摩擦排序里，而归属可追是 Owner 要保留的另一件事。
 - `reruns_per_head`：`f303f861` 第 2 项确认为 1（§8、§9）；文档层给 2，因为它的失败几乎都是基础设施原因（runner 排队超时、npm 超时）。
 - `auto_merge: allowed` 对受保护层也成立：Owner 授权在前（授权的是精确 head），strict 保证合并结果就是那个 head，auto-merge 只是替 Agent 点那一下。
+- 数据边界：报告 §4 的样本里没有仅文档 PR，也没有缺认领的 PR，所以 `docs` 行与 `work_claim: enforce` 是代价不对称的推理（一次续期 / 一次 MCP 调用，对一轮 CI / 归属与计量），不是数据结论；§12.1 的 `wasted_final_rounds`、`unclaimed_admitted` 上线后再核。
 
 ### 5.3 `efficiency` 与 `frozen` 的有效表
 
@@ -215,13 +216,13 @@
 **结论**：绑 CI 状态，保留兜底定时器。
 
 - 队列头的位在以下事件间保持：head 上**默认分支定义的**加闸 workflow 的运行处于 `queued` / `in_progress`（判定见下）；五个必需检查全部成功、head 含 tip、等待 auto-merge（给 30 分钟）；执行器正在并入 main。
-- **出队条件**：五个必需检查中任一最终失败；或自上次 CI 活动起 45 分钟无任何运行（兜底，沿用现值）；或自取位起 90 分钟（硬上限：排队 + 最长 workflow 超时 35 分钟 + 一次重跑）。
+- **出队条件**：四个 CI 类必需检查（`gitleaks`、`trivy`、`clued-work-admission`、`clued-admission-verified`）中任一最终失败；或自上次 CI 活动起 45 分钟无任何运行（兜底，沿用现值）；或自取位起 `merge_slot_hard_cap_minutes`（策略文件参数，默认 120 分钟：排队 p95 约 26 分钟 + 最长 workflow 超时 35 分钟 + 一次重跑 35 分钟再留余量；报告 §4.2 的排队最大值 48.6 分钟说明 90 分钟会把合法队列头在 CI 中途踢出）。`clued-merge-slot` **不在**出队条件里：它是位状态的结果而不是 CI 的结果，刚成为队列头、head 已含 tip 的 PR 在重判之前它本来就是红的，拿它出队是循环依赖。
 - **谁上报 CI 状态**：不是 Agent，是运行默认分支代码、持 ci-admission Binding 的 GitHub Actions job（`clued-admission` environment）。触发：`workflow_run: completed`、`push` 到 main、每小时定时、`workflow_dispatch`。它调用新 RPC `clued_work_merge_slot_touch_v1(pr_ref, head_sha, ci_state)`（仅 ci-admission Binding）：`ci_state ∈ {running, green, failed}`；`running` / `green` 刷新位的时钟，`failed` 出队并留 `WORK_CLAIM_MERGE_SLOT_RETURNED(why=ci_failed)` 回执。这样 Agent 不再为了保位而续期；认领的续期回到它本来的用途（进展）。
 - **输入不信 PR**（复审 2 N3c、复审 3 N-R1 的同类问题）：`workflow_run` 事件由 workflow 名字匹配触发，PR 自带的 workflow 也会触发它，事件负载的 `name`、`head_branch`、`conclusion`、`pull_requests` 都来自 PR 控制的运行，所以这个 job 只把事件当作「去看一眼」的信号，判定全部来自它自己的查询：
   - head → PR：`GET /repos/{o}/{r}/commits/{sha}/pulls`，只取打开、base 为默认分支的 PR；不读负载的 `pull_requests` 或 `head_branch`。
-  - `failed` / `green`：只看五个必需检查，按 (检查名, integration id) 识别（Actions 15368 的 `gitleaks`、`trivy`、`clued-work-admission`；App 5164952 的 `clued-admission-verified`、`clued-merge-slot`），取 head 上各自最新一条 check run，与规则集同一口径；PR 自带的同名 job 是另一来源，不算。
+  - `failed` / `green`：只看四个 CI 类必需检查，按 (检查名, integration id) 识别（Actions 15368 的 `gitleaks`、`trivy`、`clued-work-admission`；App 5164952 的 `clued-admission-verified`），取 head 上各自最新一条 check run，与规则集同一口径；`clued-merge-slot` 不计（见出队条件）；PR 自带的同名 job 是另一来源，不算。
   - `running`：只由默认分支上存在、且在 PR head 处文件内容与默认分支相同（contents API 的 blob SHA 相等）的加闸 workflow 的运行刷新；PR 自带或改过的 workflow 不计（改过的本来就是受保护改动，要 Owner 授权）。
-  - 兜底写进 §14：一个已准入的 PR 仍可能用加闸 workflow 内的长任务把位撑到 90 分钟硬上限；今天的 45 分钟无续期即失效在这一点上更紧，所以硬上限不放宽到 3 小时。
+  - 兜底写进 §14：一个已准入的 PR 仍可能用加闸 workflow 内的长任务把位撑到硬上限（默认 120 分钟）；今天的 45 分钟无续期即失效在这一点上更紧，所以硬上限不放宽到 3 小时，并由 `wasted_final_rounds` 与误出队计数观察后调。
 - 复核（`reverify`）对队列头以外、却仍绿着 `clued-merge-slot` 的 head 补发失败检查（现行）。
 
 ### 7.4 用 GitHub 原生 auto-merge 替代 Agent 守 CI
@@ -264,14 +265,14 @@
 | 项 | 原决定 | 本文 | 理由 |
 | --- | --- | --- | --- |
 | 2 每个当前 head 可重跑一次 | 允许一次，重跑重新读准入结果，取代关闭重开 | **确认**，边界见 §8 | 关闭重开的 19 次（Task `ada1334c`）全部可由一次重跑替代；只放「Re-run all jobs」保住 gate 重判 |
-| 3 认领与合并位只对受保护 PR 强制 | 其他 PR 认领只提示、`clued-merge-slot` 直接通过 | **修正**：认领对 `protected` 与 `code` 强制、对 `docs` 也强制（`efficiency` 下 `code` / `docs` 降为提示）；合并位对 `protected` 与 `code` 要求、`docs` 提示 | 防撞车与归属是 Owner 要保留的；合并位的痛点由 §7 解决，取消串行化会在 strict 下白跑 CI。`efficiency` 状态保留了原决定的形态，由 Owner 选用 |
+| 3 认领与合并位只对受保护 PR 强制 | 其他 PR 认领只提示、`clued-merge-slot` 直接通过 | **修正**：`normal` 下认领对三层都强制、合并位对三层都要求；`efficiency` 下 `code` / `docs` 的认领降为提示、合并位免 | 防撞车与归属是 Owner 要保留的；合并位的痛点由 §7 解决，取消串行化会在 strict 下白跑 CI。`efficiency` 状态保留了原决定的形态，由 Owner 选用 |
 
 ---
 
 ## 10. 可见性与审计
 
 - **摘要**：`renderSummary` 第一行加 `**Mode:** \`<state>\` · layer \`<layer>\` · source \`<变量名或 default>\``，随后一张「有效规则」小表（§5.1 的六列）。复核的摘要同样打印状态。gate **不自己读策略文件**（它检出的是 PR 的 `base.sha`，那份策略可能落后于 main）：它从本事件准入运行发出的 App check 的 `output.title` 解析 `[<state> · <layer>]` 与 `reruns_per_head`，策略只在默认分支的准入运行里解析一次。
-- **每个 PR 可见它被放行时的模式**：App check 的 `output.title` 为 `ADMITTED [normal · code]` 这类形式；`external_id` 不变（`pr:<n>:run:<run id>`）。verify RPC 的 `p_input` 增加 `admission_mode: {state, layer}`（随 §13 第 3 步的迁移写入回执；现行 RPC 对未列出的键静默忽略而不拒绝，所以第 1、2 步可以先送这个键，但只有 App check 标题与摘要能查到），写进 `work_claim_bind_pr` / `admitted_heads` 的回执，Clued 侧可查「这个 head 是在什么模式下放行的」。
+- **每个 PR 可见它被放行时的模式**：App check 的 `output.title` 为 `ADMITTED [normal · code · reruns 1]` 这类形式（gate 从中解析状态、层与 `reruns_per_head`）；`external_id` 不变（`pr:<n>:run:<run id>`）。verify RPC 的 `p_input` 增加 `admission_mode: {state, layer}`（随 §13 第 3 步的迁移写入回执；现行 RPC 对未列出的键静默忽略而不拒绝，所以第 1、2 步可以先送这个键，但只有 App check 标题与摘要能查到），写进 `work_claim_bind_pr` / `admitted_heads` 的回执，Clued 侧可查「这个 head 是在什么模式下放行的」。
 - **切换**：Owner 的 Decision（§4.1 第 2 条）；复核在 `reason=state_change` 下对每个打开 PR 发一条新 App check（成功或失败），标题带新状态。
 - **度量**：§12 的报告按状态分组统计。
 
@@ -293,7 +294,7 @@
 
 ### 12.1 测量（随第一步实施一起上线，托管 runner，每周一次 + `workflow_dispatch`）
 
-`scripts/ci/ci-usage-report.mjs`（受保护路径），只读 GitHub API，输出 JSON artifact 与 step summary。**硬规则**：度量只在 GitHub Actions 内运行，用该运行的 `GITHUB_TOKEN`（每仓库每小时 1,000 次、与个人账号额度分开）或一个只读 GitHub App（只有 Actions / Contents 读权限、只装本仓库）的安装令牌，绝不用 Owner 的个人令牌，也不用机器账号（个人账号下的私有仓库只能给协作者读写权限与 classic 令牌，Decision `d8bc893c`）；脚本设请求总预算（建议每次 ≤800）、按运行 id 落盘缓存只拉增量、每批前读 `x-ratelimit-remaining`、低于预算余量即停。来历：2026-10-07 本研究的临时采集脚本用 Owner 个人令牌对 #530–#616 逐运行、逐提交拉取，约 18 分钟发出 4,600 余次请求把 5,000 次/小时的额度用到 0，而自托管 runner 的开工前检查用同一账号的令牌，PR #617 的检查在钩子阶段被 403 拒绝。Owner 随后决定（Decision `d8bc893c`，Task `4e691ab6`，PR #620）：runner 启动钩子改用新建的只读 GitHub App 的安装令牌，走 App 自己的额度；不用机器账号，也不复用 clued-admission App（它的私钥放到 job 可读的 runner 上会被 PR 代码拿去伪造准入检查）。
+`scripts/ci/ci-usage-report.mjs`（受保护路径），只读 GitHub API，输出 JSON artifact 与 step summary。**硬规则**：度量只在 GitHub Actions 内运行。首选 Decision `d8bc893c` 新建的只读 GitHub App（只有 Actions / Contents 读权限、只装本仓库）的安装令牌：它有独立的 5,000 次/小时额度，私钥可放进 `clued-admission` environment 供度量 job 使用（只能换出本仓库的只读令牌，暴露面与 runner 钩子相同）。`GITHUB_TOKEN` 只作兜底：它的 1,000 次/小时是**每仓库共享池**，gate 轮询（每 10 秒 2 次请求、最多 480 秒、一个 head 最多 10 个 gate）、准入运行与复核都在同一池里，用它度量时预算 ≤200、每批前读 `x-ratelimit-remaining`、低于 600 即停、只在没有 PR 活动的时段 schedule。绝不用 Owner 的个人令牌，也不用机器账号（个人账号下的私有仓库只能给协作者读写权限与 classic 令牌，Decision `d8bc893c`）。按运行 id 落盘缓存只拉增量。来历：2026-10-07 本研究的临时采集脚本用 Owner 个人令牌对 #530–#616 逐运行、逐提交拉取，约 18 分钟发出 4,600 余次请求把 5,000 次/小时的额度用到 0，而自托管 runner 的开工前检查用同一账号的令牌，PR #617 的检查在钩子阶段被 403 拒绝。Owner 随后决定（Decision `d8bc893c`，Task `4e691ab6`，PR #620）：runner 启动钩子改用新建的只读 GitHub App 的安装令牌，走 App 自己的额度；不用机器账号，也不复用 clued-admission App（它的私钥放到 job 可读的 runner 上会被 PR 代码拿去伪造准入检查）。
 
 | 指标 | 定义 |
 | --- | --- |
@@ -307,10 +308,12 @@
 | `time_to_merge_p50` | 按层、按状态 |
 | `admission_failures_by_reason` | App check 失败标题归类（授权、未含 tip、合并位、认领） |
 | `queue_depth_p95` | 队列项数（Clued 回执） |
+| `unclaimed_admitted` | `efficiency` 下缺认领仍被准入的 head 数（§5.3） |
+| `api_requests_by_pool` | 每仓库 `GITHUB_TOKEN` 池的请求数，按 gate 轮询、准入、复核、度量自身分组 |
 
 基线取 2026-10-01 至 10-08（研究报告 §4）；目标值由 Owner 在接受时定，建议：每个合并 PR 的自托管分钟中位 ↓30%，自托管排队 p95 < 5 分钟，`wasted_final_rounds` ≈ 0（`normal`）。
 
-### 12.2 削减项（各一个 PR，按度量排序）
+### 12.2 削减项（各一个 PR；先按 n=3 样本的量级初排，§12.1 全量度量后再排）
 
 | 编号 | 项 | 依据 | 预期 |
 | --- | --- | --- | --- |
@@ -329,7 +332,7 @@
 | --- | --- | --- | --- |
 | 0 | 本文 Draft → Accepted；ADR 接受；Clued Decision 指向 Drive 报告文件 ID 与仓库 commit | 无 | 接受 |
 | 1 | `scripts/ci/merge-admission-policy.mjs` + `config/merge-admission-policy.json` + 表驱动测试；`clued-work-admission.mjs` 改为读策略；摘要与 App check 标题打印模式；**默认表先用「兼容表」**：三层 `work_claim: enforce`、`merge_slot: required`、`reruns_per_head: 0`、`auto_merge: allowed`（仓库设置仍关着，所以不生效）；`owner_grant: required` 与 `up_to_date: check_and_strict` 只对受保护层，`code` / `docs` 为 `none` / `strict_only`；今天的其他行为原样保留且不在表里：文件列表截断判 REJECTED（`changed_files_truncated`），服务未报 `merge_slot_until` 时 `clued-merge-slot` 以 `not_reported` 通过，fork PR 的 gate 一律按强制跟随 App check，workflow 守卫（`workflow_gate:*`）在所有状态、所有层无条件生效。行为与今天完全一致 | 无（只多了可见性） | 批准受保护 PR；设 `CLUED_MERGE_ADMISSION_STATE=normal`（或不设） |
-| 2 | 默认表换成 §5.2 推荐表；gate 与 runner 检查读 `reruns_per_head`；合同 §1.7 对应段落改写；`ci-usage-report.mjs` | 重跑一次放行；文档层免合并位 | 在每台 runner 更新钩子；打开仓库 `Allow auto-merge`；发布 Worker（合同） |
+| 2 | 默认表换成 §5.2 推荐表；gate 与 runner 检查按 App check 标题里的 `reruns_per_head` 放行；准入 workflow 的 `pull_request_target` 类型加 `auto_merge_enabled` / `auto_merge_disabled`；合同 §1.7 对应段落改写；`ci-usage-report.mjs` | 重跑一次放行；App check 标题带模式；auto-merge 可用（Owner 打开仓库设置后） | 在每台 runner 更新钩子；打开仓库 `Allow auto-merge`；发布 Worker（合同） |
 | 3 | 位时效绑 CI：迁移 `clued_work_merge_slot_touch_v1`（ci-admission Binding）；准入 workflow 加 `workflow_run: completed` 触发的秒级 job 上报 CI 状态；复核 `reason=state_change` 模式 | 持位不再需要续期；CI 失败自动出队 | 迁移、Worker 发布各自授权 |
 | 4 | 队列：`clued_work_renew` 带合并引用改为入队返回位置；`clued-merge-slot` 只认队列头；resume 返回 `merge_queue` | 等待不再轮询（入队一次即可，位置由检查与 resume 可见） | 迁移、Worker 发布 |
 | 5 | 执行器（可选）：clued-admission App 增加 `contents: write`、`pull_requests: write`；默认分支上的执行器 job 为队列头做「并入 main」与打开 auto-merge。用 App 安装令牌而不是 `GITHUB_TOKEN`：GitHub 不为 `GITHUB_TOKEN` 的推送创建新的 workflow 运行，用它并入 main 不会触发 CI | Agent 在入队后无事可做 | 批准 App 权限扩展（扩大了 `clued-admission` environment 里私钥的能力范围） |
@@ -349,8 +352,8 @@
 - 队列头出队到下一项开始最后一轮之间，有一个事件传递的延迟（`workflow_run` 触发是秒级，定时兜底是小时级）。
 - `efficiency` 下普通层与文档层免合并位：它们的合并会让队列头白跑一次最后一轮；缺认领的 PR 也准入、重任务照跑且不计量（§5.3 接受了这些代价，并要求度量可见）。
 - 两个 ENFORCE 变量在第 6 步删除之前是 I1 之外的放宽开关：在 `normal` / `efficiency` 下把它们设为非 `true`，受保护层也会回到提示模式；`frozen` 不受影响（§13）。
-- 位时效绑 CI 后，一个已准入的 PR 仍可用加闸 workflow 内的长任务把队列头的位撑到 90 分钟硬上限（§7.3）；PR 自带的 workflow 不计入。
-- GitHub REST 额度是账号级共享资源：只要 runner 开工前检查、准入 workflow 或任何 Agent 还在用 Owner 个人令牌，一个失控的只读脚本就能让 CI 停摆（2026-10-07 事故，§12.1）。本文的度量规则只约束仓库内的脚本，约束不了 Host 本地的工具；钩子换用只读 GitHub App 令牌是 Owner 另行决定的修法（Decision `d8bc893c`）。
+- 位时效绑 CI 后，一个已准入的 PR 仍可用加闸 workflow 内的长任务把队列头的位撑到硬上限（默认 120 分钟，§7.3）；PR 自带的 workflow 不计入。
+- GitHub REST 额度是共享资源：只要 runner 开工前检查或任何 Agent 本地工具还在用 Owner 个人令牌，一个失控的只读脚本就能让 CI 停摆（2026-10-07 事故，§12.1）；准入与复核 workflow 用的是 `github.token`（每仓库 1,000 次/小时的共享池），受的是 gate 轮询与度量的挤占（§12.1）。本文的度量规则只约束仓库内的脚本，约束不了 Host 本地的工具；钩子换用只读 GitHub App 令牌是 Owner 另行决定的修法（Decision `d8bc893c`）。
 - 执行器（第 5 步）之前，并入 main 仍是 Agent 的动作，Agent 不在线时队列头不会前进；兜底时效会把它出队。
 
 ---
