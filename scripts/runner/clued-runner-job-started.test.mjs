@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { createVerify, generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 
-import { DISPATCH_GATED_WORKFLOWS as ADMISSION_DISPATCH_GATED } from "../ci/clued-work-admission.mjs";
-import { DISPATCH_GATED_WORKFLOWS, decide, main, workflowPathOf } from "./clued-runner-job-started.mjs";
+import { ADMISSION_APP_ID as ADMISSION_APP, DISPATCH_GATED_WORKFLOWS as ADMISSION_DISPATCH_GATED } from "../ci/clued-work-admission.mjs";
+import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, decide, main, workflowPathOf } from "./clued-runner-job-started.mjs";
 
 const SHA = "a".repeat(40);
 const HEAD = "b".repeat(40);
@@ -20,7 +21,7 @@ const files = (...names) => ({ body: { files: names.map((filename) => ({ filenam
 function fakeFetch(script) {
   const calls = [];
   const fetchImpl = async (url, init) => {
-    calls.push({ url: String(url), auth: init.headers.authorization });
+    calls.push({ url: String(url), auth: init.headers.authorization, method: init.method ?? "GET", body: init.body });
     const key = Object.keys(script).find((k) => String(url).startsWith(k));
     const r = key ? (typeof script[key] === "function" ? script[key]() : script[key]) : { status: 500, body: null };
     return { status: r.status ?? 200, json: async () => r.body };
@@ -149,7 +150,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.equal(await main({ ...bad, CLUED_RUNNER_HOOK_REPOSITORY: "", CLUED_RUNNER_HOOK_ENFORCE: "true" }, fakeFetch({}).fetchImpl), 1);
     assert.match(lines.at(-1), /check failed: CLUED_RUNNER_HOOK_REPOSITORY is not set/);
     assert.equal(await main({ ...env({ CLUED_RUNNER_HOOK_TOKEN_FILE: "" }), CLUED_RUNNER_HOOK_ENFORCE: "true" }, fakeFetch({}).fetchImpl), 1);
-    assert.match(lines.at(-1), /CLUED_RUNNER_HOOK_TOKEN_FILE is not set/);
+    assert.match(lines.at(-1), /CLUED_RUNNER_HOOK_APP_ID and CLUED_RUNNER_HOOK_APP_KEY_FILE \(or the older CLUED_RUNNER_HOOK_TOKEN_FILE\) are not set/);
     assert.equal(await main({ ...env({ GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main" }), CLUED_RUNNER_HOOK_ENFORCE: "true" },
       fakeFetch({}).fetchImpl), 0);
     assert.match(lines.at(-1), /ALLOW push on main/);
@@ -217,4 +218,55 @@ test("runner hook (re-review 3, N-R2): only the dispatch-gated workflows may be 
       GITHUB_WORKFLOW_REF: `o/r/.github/workflows/${file}@refs/heads/main` }, {});
     assert.equal(onMain.result.allow, true, `${file} on main`);
   }
+});
+
+test("runner hook (Decision d8bc893c): with its read-only App configured, the hook calls GitHub as that App", async () => {
+  assert.equal(ADMISSION_APP_ID, ADMISSION_APP, "the same id as the admission script");
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" });
+  const INSTALLATION = "https://api.github.com/repos/o/r/installation";
+  const MINT = "https://api.github.com/app/installations/77/access_tokens";
+  const NOW = 1_790_000_000;
+  const reads = [];
+  const readFile = (p) => { reads.push(p); return p === "/app.pem" ? pem : p === "/token" ? "ghp_personal\n" : prEvent(); };
+  const decideWith = (overrides, script) => {
+    const fake = fakeFetch({ [INSTALLATION]: { body: { id: 77 } }, [MINT]: { status: 201, body: { token: "ghs_app" } },
+      [RUN]: thisRun(), [COMPARE]: files("apps/x.ts"), ...script });
+    return decide({ env: env({ CLUED_RUNNER_HOOK_APP_ID: "4242", CLUED_RUNNER_HOOK_APP_KEY_FILE: "/app.pem", ...overrides }),
+      fetchImpl: fake.fetchImpl, readFile, now: () => NOW * 1000, sleep: async () => {} })
+      .then((result) => ({ result, calls: fake.calls }), (error) => ({ error: error.message, calls: fake.calls }));
+  };
+
+  const { result, calls } = await decideWith({}, {});
+  assert.equal(result.allow, true);
+  assert.deepEqual(calls.map((c) => [c.method, c.url]), [["GET", INSTALLATION], ["POST", MINT], ["GET", RUN], ["GET", `${COMPARE}${HEAD}`]]);
+  // The App's JWT, signed with its key, asks for the installation token.
+  const jwt = calls[0].auth.replace(/^Bearer /, "");
+  assert.equal(calls[1].auth, `Bearer ${jwt}`);
+  const [header, payload, signature] = jwt.split(".");
+  const verifier = createVerify("RSA-SHA256");
+  verifier.update(`${header}.${payload}`);
+  assert.equal(verifier.verify(publicKey, Buffer.from(signature, "base64url")), true);
+  assert.deepEqual(JSON.parse(Buffer.from(payload, "base64url").toString()), { iat: NOW - 60, exp: NOW + 540, iss: "4242" });
+  // This repository only, actions and contents read only, whatever else the App holds.
+  assert.deepEqual(JSON.parse(calls[1].body), { repositories: ["r"], permissions: { actions: "read", contents: "read" } });
+  // Every other call uses the installation token; the personal token file is not read.
+  assert.deepEqual(calls.slice(2).map((c) => c.auth), ["Bearer ghs_app", "Bearer ghs_app"]);
+  assert.equal(reads.includes("/token"), false);
+
+  const onMain = await decideWith({ GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main" }, {});
+  assert.deepEqual([onMain.result.allow, onMain.calls.length], [true, 0], "main's own runs mint no token");
+
+  // The admission App's key would let any job post the admission checks.
+  const admission = await decideWith({ CLUED_RUNNER_HOOK_APP_ID: String(ADMISSION_APP_ID) }, {});
+  assert.match(admission.error, /is the clued-admission App; its key must not be on a runner/);
+  assert.equal(admission.calls.length, 0);
+  // A half-configured App fails; it never falls back to the token file.
+  reads.length = 0;
+  assert.match((await decideWith({ CLUED_RUNNER_HOOK_APP_KEY_FILE: "" }, {})).error, /CLUED_RUNNER_HOOK_APP_KEY_FILE is not set/);
+  assert.match((await decideWith({ CLUED_RUNNER_HOOK_APP_ID: "" }, {})).error, /CLUED_RUNNER_HOOK_APP_ID is not set to an App id/);
+  assert.equal(reads.includes("/token"), false);
+  assert.match((await decideWith({}, { [INSTALLATION]: { status: 404, body: null } })).error, /installation returned 404/);
+  assert.match((await decideWith({}, { [MINT]: { status: 403, body: null } })).error, /access_tokens returned 403/);
+  assert.match((await decideWith({}, { [MINT]: { status: 201, body: {} } })).error, /returned no installation token/);
 });
