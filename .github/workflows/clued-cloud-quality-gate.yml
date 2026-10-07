@@ -89,6 +89,7 @@ jobs:
           npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline
           --fetch-retries=2 --fetch-timeout=30000
       - run: npm run lint
+      - run: npm run ledger:verify
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:unit
@@ -125,6 +126,7 @@ jobs:
       - name: Install from lockfile
         run: npm ci --ignore-scripts
       - run: npm run lint
+      - run: npm run ledger:verify
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:unit

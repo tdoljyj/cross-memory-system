@@ -434,3 +434,11 @@ test('production deploy and attestation secrets are read only by main-only clued
     'clued-storage-read-config.yml:configure',
   ]);
 });
+
+test('the release gate compares production history with the committed migration ledger before it passes', async () => {
+  const gateSource = await readFile(new URL('../scripts/production-release-gate.mjs', import.meta.url), 'utf8');
+  assert.match(gateSource, /import \{ compareLedgerWithHistory, readLedger, readSqlDirectory \} from '\.\/migration-ledger\.mjs'/);
+  assert.match(gateSource, /compareLedgerWithHistory\(\{ ledger, history,\n\s+migrations: await readSqlDirectory\(migrationsDirectory\) \}\)/);
+  assert.match(gateSource, /const errors = \[\.\.\.settled\.errors, \.\.\.ledgerReport\.errors\];/);
+  assert.match(gateSource, /migration_ledger_rows: ledger\.rows\.length/);
+});
