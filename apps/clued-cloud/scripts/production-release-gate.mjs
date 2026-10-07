@@ -250,12 +250,17 @@ async function main() {
     migrations: await readSqlDirectory(migrationsDirectory),
     historyOnly: await readSqlDirectory(historyOnlyDirectory),
     historicalThrough: baselineVersion(baseline) });
-  for (const filename of ledgerReport.pending) process.stderr.write(`pending migration: ${filename}\n`);
+  for (const filename of ledgerReport.pending) {
+    process.stderr.write(`pending migration (not in the ledger yet): ${filename}\n`);
+  }
   for (const warning of ledgerReport.warnings) process.stderr.write(`::warning::${warning}\n`);
   if (ledgerReport.missingRows.length) {
     process.stderr.write('rows to add to supabase/ledger/production-history.json:\n' +
       `${JSON.stringify(ledgerReport.missingRows, null, 2)}\n`);
   }
+  // Ledger errors can carry production row names; print each one so a name
+  // the final message cannot hold does not hide the others.
+  for (const error of ledgerReport.errors) process.stderr.write(`ledger: ${error}\n`);
   const errors = [...settled.errors, ...ledgerReport.errors];
   if (errors.length) throw new Error(`production_release_blocked:${errors.join(',')}`);
   const result = {

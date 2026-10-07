@@ -1,7 +1,8 @@
 name: clued-cloud-quality
 
-# Lint, typecheck, build and unit tests of apps/clued-cloud (npm run lint, npm
-# run typecheck, npm run build, npm run test:unit) on every pull request and
+# Lint, migration ledger, typecheck, build and unit tests of apps/clued-cloud
+# (npm run lint, npm run ledger:verify, npm run typecheck, npm run build, npm
+# run test:unit) on every pull request and
 # every push to main; the build comes first because tests/rendered-html.test.mjs
 # reads the built server bundle.
 # This workflow deliberately has no paths filter: the other app checks are

@@ -89,6 +89,9 @@ export function migrateTextProblem(text) {
   if (typeof text !== 'string' || text.length === 0) return 'empty';
   if (!text.endsWith('\n')) return 'no_final_newline';
   if (/[\r\x01\x02]/.test(text)) return 'forbidden_character';
+  // COPY refuses NUL and invalid UTF-8 (which Node decodes to U+FFFD); a BOM
+  // would reach EXECUTE as SQL text.
+  if (/[\u0000\uFFFD]/.test(text) || text.startsWith('\uFEFF')) return 'unsupported_byte';
   if (text.split('\n').includes('\\.')) return 'copy_terminator_line';
   return null;
 }
@@ -112,6 +115,9 @@ function historyRowLength(row) {
   }
   return Number.isInteger(row.statements_length) ? row.statements_length : null;
 }
+
+const isVersion = (value) => typeof value === 'string' && /^\d{14}$/.test(value);
+const isName = (value) => typeof value === 'string' && /^[a-z0-9_]+$/.test(value);
 
 function sourceText(source, migrations, historyOnly) {
   if (source.startsWith('migrations/')) return migrations[source.slice('migrations/'.length)];
@@ -163,9 +169,25 @@ export function verifyLedger({ ledger, migrations, historyOnly, historicalThroug
   if (!Array.isArray(ledger.rows)) errors.push('ledger_rows_missing');
   const rows = ledgerRows(ledger);
   const repositoryOnly = repositoryOnlyEntries(ledger);
-  if (ledger.row_count !== rows.length) errors.push(`ledger_row_count_mismatch:${ledger.row_count}`);
-  if (!/^\d{14}$/.test(ledger.history_through ?? '')) errors.push('history_through_invalid');
-  if (!/^\d{14}$/.test(historicalThrough ?? '')) errors.push('release_baseline_invalid');
+  const rawRows = Array.isArray(ledger.rows) ? ledger.rows : [];
+  rawRows.forEach((row, index) => {
+    if (!row || typeof row !== 'object') errors.push(`ledger_row_invalid:#${index}`);
+  });
+  if (ledger.repository_only !== undefined && !Array.isArray(ledger.repository_only)) {
+    errors.push('repository_only_invalid');
+  }
+  (Array.isArray(ledger.repository_only) ? ledger.repository_only : []).forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object') errors.push(`repository_only_entry_invalid:#${index}`);
+  });
+  if (ledger.row_count !== rawRows.length) errors.push(`ledger_row_count_mismatch:${ledger.row_count}`);
+  if (!isVersion(ledger.history_through)) {
+    errors.push('history_through_invalid');
+  } else if (rows.length > 0 && isVersion(rows.at(-1).version) && ledger.history_through !== rows.at(-1).version) {
+    // history_through names the newest ledger row: lower would hide rows, higher
+    // would refuse the next migrate row as missing.
+    errors.push(`history_through_not_newest_row:${ledger.history_through}`);
+  }
+  if (!isVersion(historicalThrough)) errors.push('release_baseline_invalid');
 
   const fileHashes = new Map();
   for (const [filename, text] of Object.entries(migrations)) {
@@ -178,16 +200,16 @@ export function verifyLedger({ ledger, migrations, historyOnly, historicalThroug
   let previousVersion = '';
   for (const row of rows) {
     const label = `${row.version}_${row.name}`;
-    if (!/^\d{14}$/.test(row.version ?? '') || !/^[a-z0-9_]+$/.test(row.name ?? '') ||
-        !/^[0-9a-f]{32}$/.test(row.statements_md5 ?? '') || typeof row.source !== 'string' ||
-        !TRANSFORMS.includes(row.transform)) {
+    if (!isVersion(row.version) || !isName(row.name) ||
+        !(typeof row.statements_md5 === 'string' && /^[0-9a-f]{32}$/.test(row.statements_md5)) ||
+        typeof row.source !== 'string' || !TRANSFORMS.includes(row.transform)) {
       errors.push(`ledger_row_invalid:${label}`);
       continue;
     }
     if (versions.has(row.version)) errors.push(`ledger_duplicate_version:${row.version}`);
     if (names.has(row.name)) errors.push(`ledger_duplicate_name:${row.name}`);
     if (row.version < previousVersion) errors.push(`ledger_rows_not_sorted:${row.version}`);
-    if (/^\d{14}$/.test(ledger.history_through ?? '') && row.version > ledger.history_through) {
+    if (isVersion(ledger.history_through) && row.version > ledger.history_through) {
       errors.push(`ledger_row_after_history_through:${label}`);
     }
     versions.add(row.version);
@@ -239,6 +261,12 @@ export function verifyLedger({ ledger, migrations, historyOnly, historicalThroug
       errors.push(`repository_only_reason_missing:${file}`);
     }
     if (carried.has(file)) errors.push(`migration_double_listed:${file}`);
+    // Files after the release baseline are pending, never repository-only:
+    // listing one would skip the check that migrate mode can apply it.
+    const listedVersion = fileVersion(file.slice('migrations/'.length));
+    if (listedVersion !== null && isVersion(historicalThrough) && listedVersion > historicalThrough) {
+      errors.push(`repository_only_after_baseline:${file}`);
+    }
     if (entry.status === 'diverged_from_production') {
       const name = fileShortName(file.slice('migrations/'.length));
       const row = rows.find((candidate) => candidate.name === name);
@@ -261,7 +289,7 @@ export function verifyLedger({ ledger, migrations, historyOnly, historicalThroug
     }
     const source = `migrations/${filename}`;
     if (carried.has(source) || listed.has(source)) continue;
-    if (!/^\d{14}$/.test(historicalThrough ?? '') || version <= historicalThrough) {
+    if (!isVersion(historicalThrough) || version <= historicalThrough) {
       // At or before the release baseline: history, which the ledger must account for.
       errors.push(`historical_migration_not_in_ledger:${filename}`);
       continue;
@@ -319,7 +347,11 @@ export function compareLedgerWithHistory({ ledger, history, migrations = {}, his
   for (const text of Object.values(migrations)) {
     for (const transform of TRANSFORMS) textHashes.add(md5(applyTransform(text, transform)));
   }
-  const historyThrough = /^\d{14}$/.test(ledger.history_through ?? '') ? ledger.history_through : null;
+  const historyThrough = isVersion(ledger.history_through) ? ledger.history_through : null;
+  const neverAppliedFiles = new Set(repositoryOnlyEntries(ledger)
+    .filter((entry) => entry.status === 'never_applied' && typeof entry.file === 'string')
+    .map((entry) => entry.file.slice('migrations/'.length))
+    .filter((filename) => typeof migrations[filename] === 'string'));
   const claimed = new Set();
   const seen = new Set();
   for (const row of history) {
@@ -329,7 +361,7 @@ export function compareLedgerWithHistory({ ledger, history, migrations = {}, his
     }
     const label = `${row.version}_${row.name}`;
     seen.add(row.version);
-    if (Array.isArray(row.statements) && row.statements.length !== 1) {
+    if (Array.isArray(row.statements) && row.statements.length > 1) {
       errors.push(`production_row_multi_statement:${label}`);
       continue;
     }
@@ -344,25 +376,41 @@ export function compareLedgerWithHistory({ ledger, history, migrations = {}, his
       if (entry.statements_md5 !== hash) errors.push(`production_statements_changed:${label}`);
       continue;
     }
+    if (!isVersion(row.version) || !isName(row.name)) {
+      // Migrate mode records a 14-digit apply time and a file's short name; a row
+      // the ledger could never record is not "not recorded yet".
+      errors.push(`production_row_not_from_migrate:${label}`);
+      continue;
+    }
     if (historyThrough === null || row.version <= historyThrough) {
       // The ledger claims every row up to history_through: a removed row, a
       // reverted ledger or a row inserted with an old version.
       errors.push(`production_row_missing_from_ledger:${label}`);
       continue;
     }
-    const carrier = [...pending].find((filename) => fileShortName(filename) === row.name);
-    const migrateShaped = carrier !== undefined && !claimed.has(carrier) &&
-      md5(migrations[carrier]) === hash &&
+    // recordedNames and claimed are implied by the name being unique in
+    // production and by pendingProblem; they stay as cheap belt and braces.
+    const migrateShapedFor = (filename) => filename !== undefined && !claimed.has(filename) &&
+      md5(migrations[filename]) === hash &&
       !recordedNames.has(row.name) && historyNameCounts.get(row.name) === 1 &&
-      pendingProblem(carrier, migrations[carrier], { recordedNames, shortNameCounts }) === null;
-    if (migrateShaped) {
+      pendingProblem(filename, migrations[filename], { recordedNames, shortNameCounts }) === null;
+    const carrier = [...pending].find((filename) => fileShortName(filename) === row.name);
+    const neverApplied = [...neverAppliedFiles].find((filename) => fileShortName(filename) === row.name);
+    const missingRow = (filename) => ({
+      version: row.version, name: row.name, statements_md5: hash,
+      statements_length: historyRowLength(row),
+      source: `migrations/${filename}`, transform: 'identical',
+    });
+    if (migrateShapedFor(carrier)) {
       claimed.add(carrier);
       warnings.push(`ledger_missing_row:${label}`);
-      missingRows.push({
-        version: row.version, name: row.name, statements_md5: hash,
-        statements_length: historyRowLength(row),
-        source: `migrations/${carrier}`, transform: 'identical',
-      });
+      missingRows.push(missingRow(carrier));
+    } else if (migrateShapedFor(neverApplied)) {
+      // A never_applied historical file applied through migrate mode: blocks
+      // until the ledger records the row and drops the repository_only entry.
+      claimed.add(neverApplied);
+      errors.push(`ledger_missing_row_repository_only:${label}`);
+      missingRows.push({ ...missingRow(neverApplied), remove_repository_only: `migrations/${neverApplied}` });
     } else if (textHashes.has(hash)) {
       errors.push(`production_row_not_from_migrate:${label}`);
     } else {
@@ -406,9 +454,14 @@ export function buildLedger({ history, migrations, historyOnly = {}, previous = 
   const rows = [];
   const newHistoryOnly = {};
   const errors = [];
-  for (const row of [...history].sort((a, b) => a.version.localeCompare(b.version))) {
-    const label = `${row.version}_${row.name}`;
-    if (Array.isArray(row.statements) && row.statements.length !== 1) {
+  for (const row of [...history].sort((a, b) => String(a?.version).localeCompare(String(b?.version)))) {
+    const label = `${row?.version}_${row?.name}`;
+    if (!row || !isVersion(row.version) || !isName(row.name)) {
+      // The history-only file name is built from these: refuse anything else.
+      errors.push(`history_row_invalid:${label}`);
+      continue;
+    }
+    if (Array.isArray(row.statements) && row.statements.length > 1) {
       errors.push(`history_row_multi_statement:${label}`);
       continue;
     }
@@ -517,19 +570,31 @@ function formatLedger(ledger) {
   return `${JSON.stringify(ledger, null, 2)}\n`;
 }
 
-async function readCheckout() {
+export const defaultPaths = Object.freeze({
+  ledger: ledgerPath,
+  migrations: migrationsDirectory,
+  historyOnly: historyOnlyDirectory,
+  baseline: releaseBaselinePath,
+});
+
+async function readCheckout(paths) {
   return {
-    migrations: await readSqlDirectory(migrationsDirectory),
-    historyOnly: await readSqlDirectory(historyOnlyDirectory),
-    historicalThrough: await readHistoricalThrough(),
+    migrations: await readSqlDirectory(paths.migrations),
+    historyOnly: await readSqlDirectory(paths.historyOnly),
+    historicalThrough: await readHistoricalThrough(paths.baseline),
   };
 }
 
-export async function main(argv = process.argv.slice(2)) {
+// "Pending" means no ledger row carries the file yet: not applied, or applied
+// by migrate mode and not recorded yet.
+const pendingLine = (filename) => `pending (not in the ledger yet): ${filename}\n`;
+
+// paths lets tests run the CLI against a copy of the checkout.
+export async function main(argv = process.argv.slice(2), paths = defaultPaths) {
   const [command, ...args] = argv;
   if (command === 'verify') {
-    const ledger = await readLedger();
-    const checkout = await readCheckout();
+    const ledger = await readLedger(paths.ledger);
+    const checkout = await readCheckout(paths);
     const errors = verifyLedger({ ledger, ...checkout });
     for (const error of errors) process.stderr.write(`${error}\n`);
     if (errors.length) {
@@ -537,16 +602,16 @@ export async function main(argv = process.argv.slice(2)) {
       return 1;
     }
     const pending = listPendingMigrations({ ledger, ...checkout });
-    process.stdout.write(`migration ledger ok: ${ledger.rows.length} production rows, ` +
-      `${ledger.repository_only.length} repository-only files, ${pending.length} pending\n`);
-    for (const filename of pending) process.stdout.write(`pending (not applied yet): ${filename}\n`);
+    process.stdout.write(`migration ledger ok: ${ledgerRows(ledger).length} production rows, ` +
+      `${repositoryOnlyEntries(ledger).length} repository-only files, ${pending.length} pending\n`);
+    for (const filename of pending) process.stdout.write(pendingLine(filename));
     return 0;
   }
   if (command === 'compare') {
-    const ledger = await readLedger();
-    const checkout = await readCheckout();
+    const ledger = await readLedger(paths.ledger);
+    const checkout = await readCheckout(paths);
     const report = evaluateLedger({ ledger, history: await readHistory(args), ...checkout });
-    for (const filename of report.pending) process.stderr.write(`pending (not applied yet): ${filename}\n`);
+    for (const filename of report.pending) process.stderr.write(pendingLine(filename));
     for (const warning of report.warnings) process.stderr.write(`warning: ${warning}\n`);
     if (report.missingRows.length) {
       process.stderr.write(`rows to add to the ledger:\n${JSON.stringify(report.missingRows, null, 2)}\n`);
@@ -562,13 +627,13 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (command === 'export') {
     const outIndex = args.indexOf('--out');
-    const out = outIndex >= 0 ? resolve(args[outIndex + 1]) : ledgerPath;
+    const out = outIndex >= 0 ? resolve(args[outIndex + 1]) : paths.ledger;
     // A new --out file still keeps repository_only and known_deviations from the committed ledger.
-    const previous = await readLedger(existsSync(out) ? out : ledgerPath).catch((error) => {
+    const previous = await readLedger(existsSync(out) ? out : paths.ledger).catch((error) => {
       if (error?.code === 'ENOENT') return null;
       throw error;
     });
-    const { migrations, historyOnly } = await readCheckout();
+    const { migrations, historyOnly } = await readCheckout(paths);
     const { ledger, newHistoryOnly, errors } = buildLedger({
       history: await readHistory(args), migrations, historyOnly, previous,
       exportedAt: new Date().toISOString(),
@@ -578,9 +643,15 @@ export async function main(argv = process.argv.slice(2)) {
       process.stderr.write(`migration_ledger_export_failed:${errors.length}\n`);
       return 1;
     }
-    await mkdir(historyOnlyDirectory, { recursive: true });
+    // New history-only texts go next to the ledger that is written.
+    const historyOnlyOut = out === resolve(paths.ledger) ? paths.historyOnly : join(dirname(out), 'history-only');
+    await mkdir(historyOnlyOut, { recursive: true });
     for (const [filename, text] of Object.entries(newHistoryOnly)) {
-      await writeFile(join(historyOnlyDirectory, filename), text, { encoding: 'utf8', flag: 'wx' });
+      const target = resolve(historyOnlyOut, filename);
+      if (dirname(target) !== resolve(historyOnlyOut) || !HISTORY_ONLY_FILENAME.test(filename)) {
+        throw new Error(`history_only_path_invalid:${filename}`);
+      }
+      await writeFile(target, text, { encoding: 'utf8', flag: 'wx' });
     }
     await mkdir(dirname(out), { recursive: true });
     await writeFile(out, formatLedger(ledger), 'utf8');

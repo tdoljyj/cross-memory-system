@@ -10,9 +10,9 @@ P0-3; Owner decision 2026-10-07, Decision `d592ac9e`):
   so most rows do not carry their file's timestamp;
 - earlier applies through other tools stored the text with CRLF endings, an
   appended CRLF, a stripped final newline or a doubled carriage return;
-- 19 rows were applied from text no migration file holds (the MTPE M0/M1
-  series, the projection-watchdog cloud series, one bug fix, and three rows
-  whose file was edited after the apply);
+- 19 rows were applied from text no migration file holds (the MTPE M0/M1/M2a
+  series, the p2_p6 series, the projection-watchdog cloud series, one bug fix,
+  and three rows whose file was edited after the apply);
 - 8 migration files were never applied to production.
 
 The ledger makes every one of these explicit. The offline check runs on every
@@ -59,19 +59,26 @@ ledger with the live history.
   `strip_final_newline`, `crlf` (every newline is CRLF) or `cr_crlf` (every
   newline is CR CR LF). A row's `name` may differ from its file's name; the
   file is bound by content.
-- `history_through`: the ledger holds every production row up to this
-  version. A production row at or before it that the ledger lacks is an
-  error, so a removed row or a reverted ledger cannot pass as "not recorded
-  yet".
+- `history_through`: the version of the newest ledger row; the ledger holds
+  every production row up to it. A production row at or before it that the
+  ledger lacks is an error, so a removed row cannot pass as "not recorded
+  yet". A ledger reverted together with its `history_through` can only turn
+  rows back into warnings, and only rows that are exactly what `migrate` mode
+  records for a pending file.
 - *Pending* files: a migration file after the release baseline
   (`source_migration` in `apps/clued-cloud/scripts/production-release-baseline.json`,
-  a protected path) that no row carries is pending, in any order: added and
-  not applied yet. Adding a migration file needs no ledger edit, but it must be
-  one the release workflow's `migrate` mode can apply: a 14-digit timestamp, a
-  short name no ledger row and no other migration file has, and text that is
-  non-empty, ends with a newline and holds no carriage return, `\x01`, `\x02`
-  or a line that is only `\.`. The release gate's `verifyReleaseState` already
-  refuses a release while a file after the baseline is not applied.
+  a protected path) that no row carries is pending, in any order: not applied
+  yet, or applied by `migrate` mode and not recorded yet. Adding a migration
+  file needs no ledger edit, but it must be one the release workflow's
+  `migrate` mode can apply: a 14-digit timestamp, a short name no ledger row
+  and no other migration file has, and UTF-8 text that is non-empty, ends with
+  a newline and holds no carriage return, NUL, byte order mark, `\x01`, `\x02`
+  or a line that is only `\.`. The text also runs through plpgsql `EXECUTE`,
+  so it may not hold transaction control (`begin`, `commit`, `savepoint`,
+  `rollback`) or end with `SELECT ... INTO`; verify cannot see that. The
+  release gate's `verifyReleaseState` already refuses a release while a file
+  after the baseline is not applied. A file after the baseline can never be
+  listed under `repository_only`.
 - `repository_only`: every migration file up to the release baseline that no
   row carries, with `status` `never_applied` (the text never reached
   production) or `diverged_from_production` (production holds another text
@@ -130,8 +137,10 @@ files is a separate decision (P1-5), as is removing the test schema (P0-4).
    ledger lists the row, the release gate warns and prints it.
 3. **Record it** in the next pull request: add the printed row to `rows` (in
    version order), set `row_count`, and set `history_through` to the newest
-   row's version; if the file was listed under `repository_only`, remove that
-   entry. Or regenerate the whole file from the live history:
+   row's version. A `never_applied` historical file applied through `migrate`
+   mode blocks the gate (`ledger_missing_row_repository_only`) until it is
+   recorded; its printed row names the `repository_only` entry to remove. Or
+   regenerate the whole file from the live history:
    `node scripts/migration-ledger.mjs export --database-url "$URL"` (or
    `--history rows.json`). `export` maps rows to files by content (preferring
    the file named like the row), keeps `known_deviations` and the
@@ -141,7 +150,7 @@ files is a separate decision (P1-5), as is removing the test schema (P0-4).
    text. Export from a checkout that has every migration file of `main`.
 4. `npm run ledger:verify` must pass.
 
-A migration file that production applied from a different text is never
-edited into agreement: the applied text goes to `history-only/`, the file is
+A historical migration file (up to the release baseline) that production
+applied from a different text is never edited into agreement: the applied text goes to `history-only/`, the file is
 listed under `repository_only` as `diverged_from_production`, and the release
 gate's `historical_migration_changed` check keeps the file itself untouched.

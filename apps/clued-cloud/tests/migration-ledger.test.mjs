@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  defaultPaths, main, releaseBaselinePath,
   LEDGER_CONTRACT, TRANSFORMS, applyTransform, baselineVersion, buildLedger, characterLength,
   compareLedgerWithHistory, evaluateLedger, fileVersion, historyOnlyDirectory, historyRowMd5,
   ledgerPath, listPendingMigrations, matchTransform, md5, migrateTextProblem, migrationsDirectory,
@@ -146,7 +147,11 @@ test('verifyLedger checks lengths, history_through and the release baseline it i
   assert.deepEqual(verifyLedger(lengths), ['ledger_length_mismatch:20260104000000_epsilon']);
   const through = fixture();
   through.ledger.history_through = '20260108000000';
-  assert.deepEqual(verifyLedger(through), ['ledger_row_after_history_through:20260109000000_kappa']);
+  assert.deepEqual(verifyLedger(through), ['history_through_not_newest_row:20260108000000',
+    'ledger_row_after_history_through:20260109000000_kappa']);
+  const ahead = fixture();
+  ahead.ledger.history_through = '20991231000000';
+  assert.deepEqual(verifyLedger(ahead), ['history_through_not_newest_row:20991231000000']);
   const missing = fixture();
   delete missing.ledger.history_through;
   assert.deepEqual(verifyLedger(missing), ['history_through_invalid']);
@@ -243,9 +248,12 @@ test('rows migrate mode would not record are errors, even when a file carries th
     // The repository text of a diverged file re-applied under its recorded name.
     [[{ version: '20260111000000', name: 'delta', statements: ['select 5;\n'] }],
       ['production_row_not_from_migrate:20260111000000_delta']],
-    // A never-applied historical file applied by hand.
-    [[{ version: '20260111000000', name: 'gamma', statements: ['select 3;\n'] }],
+    // A never-applied historical file applied by hand with other line endings.
+    [[{ version: '20260111000000', name: 'gamma', statements: ['select 3;\r\n'] }],
       ['production_row_not_from_migrate:20260111000000_gamma']],
+    // A row version migrate mode never writes.
+    [[{ version: '202601110000', name: 'zeta', statements: ['select 9;\n'] }],
+      ['production_row_not_from_migrate:202601110000_zeta']],
     // The pending file recorded twice.
     [[{ version: '20260111000000', name: 'zeta', statements: ['select 9;\n'] },
       { version: '20260112000000', name: 'zeta', statements: ['select 9;\n'] }],
@@ -436,5 +444,158 @@ test('the CLI verifies offline and compares a history export, failing on drift',
     assert.equal(usage.status, 2);
   } finally {
     rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('a never-applied historical file applied through migrate mode blocks with its own code and prints the row', () => {
+  const state = fixture();
+  const report = compare(state, [...historyOf(state.ledger),
+    { version: '20260111000000', name: 'gamma', statements: ['select 3;\n'] }]);
+  assert.deepEqual(report.warnings, []);
+  assert.deepEqual(report.errors, ['ledger_missing_row_repository_only:20260111000000_gamma']);
+  assert.deepEqual(report.missingRows, [{ version: '20260111000000', name: 'gamma',
+    statements_md5: md5('select 3;\n'), statements_length: 10,
+    source: 'migrations/20260103000000_gamma.sql', transform: 'identical',
+    remove_repository_only: 'migrations/20260103000000_gamma.sql' }]);
+});
+
+test('every structural ledger check reports its own error', () => {
+  const cases = [
+    [(l) => { l.rows[4].transform = 'lf'; }, 'ledger_row_invalid:20260109000000_kappa'],
+    [(l) => { l.rows[4].statements_md5 = 'Z'.repeat(32); }, 'ledger_row_invalid:20260109000000_kappa'],
+    [(l) => { l.rows[0].version = '2026010100000'; }, 'ledger_row_invalid:2026010100000_alpha'],
+    [(l) => { l.rows[0].source = 7; }, 'ledger_row_invalid:20260101000000_alpha'],
+    [(l) => { l.rows[1].name = 'alpha'; }, 'ledger_duplicate_name:alpha'],
+    [(l) => { l.rows.push(null); l.row_count = l.rows.length; }, 'ledger_row_invalid:#5'],
+    [(l) => { l.rows = {}; }, 'ledger_rows_missing'],
+    [(l) => { l.history_through = 20260109000000; }, 'history_through_invalid'],
+    [(l) => { l.repository_only.push({ file: 'other/x.sql', status: 'never_applied', reason: 'r' }); }, 'repository_only_entry_invalid:other/x.sql'],
+    [(l) => { l.repository_only.push({ ...l.repository_only[0] }); }, 'repository_only_duplicate:migrations/20260103000000_gamma.sql'],
+    [(l) => { l.repository_only.push({ file: 'migrations/20260102500000_gone.sql', status: 'never_applied', reason: 'r' }); }, 'repository_only_file_missing:migrations/20260102500000_gone.sql'],
+    [(l) => { l.repository_only[0].status = 'retired'; }, 'repository_only_reason_missing:migrations/20260103000000_gamma.sql'],
+    [(l) => { l.repository_only.push(null); }, 'repository_only_entry_invalid:#2'],
+    [(l) => { l.repository_only = 'x'; }, 'repository_only_invalid'],
+    [(l) => { l.known_deviations.push({ kind: 'schema', name: 'y', note: ' ' }); }, 'known_deviation_invalid:y'],
+  ];
+  for (const [mutate, expected] of cases) {
+    const state = fixture();
+    mutate(state.ledger);
+    const errors = verifyLedger(state);
+    assert.ok(errors.includes(expected), `${expected} in ${errors.join(', ')}`);
+  }
+  const diverged = fixture();
+  diverged.migrations['20260106000000_delta_twin.sql'] = 'select 55;\n';
+  diverged.ledger.rows[3] = row('20260106000000', 'delta', 'select 55;\n', 'migrations/20260106000000_delta_twin.sql');
+  delete diverged.historyOnly['20260106000000_delta.sql'];
+  assert.ok(verifyLedger(diverged).includes('repository_only_divergence_unrecorded:migrations/20260105000000_delta.sql'));
+  const badName = fixture();
+  badName.historyOnly['2026-bad.sql'] = 'select 0;\n';
+  assert.ok(verifyLedger(badName).includes('invalid_history_only_filename:2026-bad.sql'));
+});
+
+test('a file after the release baseline cannot be listed under repository_only', () => {
+  const state = fixture();
+  state.migrations['20260110000000_late.sql'] = 'select 10;\r\n';
+  state.ledger.repository_only.push({ file: 'migrations/20260110000000_late.sql', status: 'never_applied', reason: 'r' });
+  assert.deepEqual(verifyLedger(state), ['repository_only_after_baseline:migrations/20260110000000_late.sql']);
+});
+
+test('the release baseline itself is history; only later files are pending', () => {
+  const state = fixture();
+  state.migrations[`${BASELINE}_same_timestamp.sql`] = 'select 6;\n';
+  assert.deepEqual(verifyLedger(state), [`historical_migration_not_in_ledger:${BASELINE}_same_timestamp.sql`]);
+  assert.deepEqual(listPendingMigrations(state), []);
+});
+
+test('every migrate text rule is enforced on pending files', () => {
+  for (const [text, problem] of [
+    ['', 'empty'], ['select 1;\n\\.\n', 'copy_terminator_line'], ['select\x02 1;\n', 'forbidden_character'],
+    ['select\x00 1;\n', 'unsupported_byte'], ['﻿select 1;\n', 'unsupported_byte'], ['select �;\n', 'unsupported_byte'],
+  ]) {
+    assert.equal(migrateTextProblem(text), problem, JSON.stringify(text));
+    const state = fixture();
+    state.migrations['20260110000000_rule.sql'] = text;
+    assert.deepEqual(verifyLedger(state), [`pending_migration_not_migratable:20260110000000_rule.sql:${problem}`]);
+  }
+});
+
+test('a history-only copy is caught under any transform, not only byte for byte', () => {
+  const state = fixture();
+  state.migrations['20260110000000_zeta.sql'] = 'select 4;\n\n';
+  state.historyOnly['20260104000000_epsilon.sql'] = 'select 4;\n';
+  state.ledger.rows[2] = row('20260104000000', 'epsilon', 'select 4;\n', 'history-only/20260104000000_epsilon.sql');
+  // 'select 4;\n' is the new file with strip_final_newline applied.
+  assert.ok(verifyLedger(state).some((error) => error.startsWith('history_only_duplicates_migration:')));
+});
+
+test('export refuses production rows whose version or name could not be a ledger row or a safe file name', () => {
+  const result = buildLedger({ migrations: {}, exportedAt: 'now', history: [
+    { version: '20260101000000', name: 'x/../../migrations/evil', statements: ['drop schema public;\n'] },
+    { version: 'zzz', name: 'ok', statements: ['select 1;\n'] },
+  ] });
+  assert.deepEqual(result.errors, ['history_row_invalid:20260101000000_x/../../migrations/evil', 'history_row_invalid:zzz_ok']);
+  assert.deepEqual(result.newHistoryOnly, {});
+});
+
+function checkoutCopy() {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'clued-ledger-checkout-'));
+  const paths = {
+    ledger: path.join(root, 'ledger', 'production-history.json'),
+    migrations: path.join(root, 'migrations'),
+    historyOnly: path.join(root, 'ledger', 'history-only'),
+    baseline: path.join(root, 'production-release-baseline.json'),
+  };
+  cpSync(defaultPaths.migrations, paths.migrations, { recursive: true });
+  cpSync(defaultPaths.historyOnly, paths.historyOnly, { recursive: true });
+  cpSync(defaultPaths.ledger, paths.ledger);
+  cpSync(defaultPaths.baseline, paths.baseline);
+  return { root, paths };
+}
+
+async function quiet(run) {
+  const out = []; const err = [];
+  const { write: o } = process.stdout; const { write: e } = process.stderr;
+  process.stdout.write = (chunk) => { out.push(String(chunk)); return true; };
+  process.stderr.write = (chunk) => { err.push(String(chunk)); return true; };
+  try { return { code: await run(), out: out.join(''), err: err.join('') }; }
+  finally { process.stdout.write = o; process.stderr.write = e; }
+}
+
+test('the CLI verify uses the release baseline: a branch file after it but before history_through is pending', async () => {
+  const baseline = JSON.parse(readFileSync(releaseBaselinePath, 'utf8'));
+  assert.equal(await readHistoricalThrough(), baselineVersion(baseline));
+  assert.equal(await readHistoricalThrough(), '20260924110000');
+  const { root, paths } = checkoutCopy();
+  try {
+    const ledger = JSON.parse(readFileSync(paths.ledger, 'utf8'));
+    const between = `${String(Number(baselineVersion(baseline)) + 1)}_branch_from_yesterday.sql`;
+    assert.ok(between.slice(0, 14) < ledger.history_through);
+    writeFileSync(path.join(paths.migrations, between), 'select 1;\n');
+    const result = await quiet(() => main(['verify'], paths));
+    assert.equal(result.code, 0, result.err);
+    assert.match(result.out, /1 pending/);
+    assert.match(result.out, new RegExp(`pending \\(not in the ledger yet\\): ${between}`));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('export --out writes new history-only texts next to that ledger, never into the checkout', async () => {
+  const { root, paths } = checkoutCopy();
+  try {
+    const ledger = JSON.parse(readFileSync(paths.ledger, 'utf8'));
+    const history = [...historyOf(ledger),
+      { version: '20991231000000', name: 'hand_applied', statements: ['select 99;\n'] }];
+    const historyFile = path.join(root, 'history.json');
+    writeFileSync(historyFile, JSON.stringify(history));
+    const out = path.join(root, 'dry', 'ledger.json');
+    mkdirSync(path.dirname(out), { recursive: true });
+    const result = await quiet(() => main(['export', '--history', historyFile, '--out', out], paths));
+    assert.equal(result.code, 0, result.err);
+    assert.ok(existsSync(path.join(root, 'dry', 'history-only', '20991231000000_hand_applied.sql')));
+    assert.ok(!existsSync(path.join(paths.historyOnly, '20991231000000_hand_applied.sql')));
+    assert.equal(JSON.parse(readFileSync(out, 'utf8')).history_through, '20991231000000');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
