@@ -9,7 +9,7 @@ import { createGoogleDriveNativeCreateEffect, contentRefShape, contentSourceShap
 import { createGoogleDriveCreatePostconditionVerifier } from "./resource-center-google-drive-postcondition.mjs";
 import { createGoogleDriveNativeModifyEffect, modifyShape } from "./resource-center-google-drive-modify-effect.mjs";
 import { createGoogleDriveModifyPostconditionVerifier } from "./resource-center-google-drive-modify-postcondition.mjs";
-import { createGoogleDriveNativeReplaceEffect, replaceShape, sha256Hex, md5Hex } from "./resource-center-google-drive-replace-effect.mjs";
+import { createGoogleDriveNativeReplaceEffect, replaceShape, sha256Hex, md5Hex, BINARY_REPLACE_MAX_BYTES } from "./resource-center-google-drive-replace-effect.mjs";
 import { createGoogleDriveReplacePostconditionVerifier } from "./resource-center-google-drive-replace-postcondition.mjs";
 import { createGoogleDriveNativeDestructiveEffect, destructiveShape, destructiveOwnershipAllowed,
   DESTRUCTIVE_PROOF_CONTRACTS } from "./resource-center-google-drive-destructive-effect.mjs";
@@ -176,8 +176,14 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         if(!verifiedResultMode || !directoryMoveShape(mutation) || !subtreeSampleShape(descriptor.subtree_sample) ||
           Object.keys(mutation).sort().join(",")!==DIRECTORY_MOVE_KEYS.join(",")) fail("CLOUD_MUTATION_SHAPE_INVALID");
       }else if(replace){
+        // The database names no revisions to release only when the target is
+        // not a file Clued registered: the Agent adopts it first.
+        if(descriptor.revision_releases===null) fail("CLOUD_REPLACE_TARGET_UNREGISTERED");
         if(!verifiedResultMode || !replaceShape(mutation) || mutation.target_kind!=="file" ||
-          Object.keys(mutation).some(k=>!["operation","destination_path","target_kind","destination_file_version","content","restore_job_id"].includes(k)) ||
+          Object.keys(mutation).some(k=>!["operation","destination_path","target_kind","destination_file_version","content","restore_job_id","content_ref"].includes(k)) ||
+          // A binary replace (Decision 06aba6c5) carries the staged object exactly as a binary create does.
+          (mutation.content_ref!==undefined && (!loadStagedContent || !contentRefShape(mutation.content_ref) ||
+            descriptor.staging?.staging_id!==mutation.content_ref.staging_id)) ||
           !Array.isArray(descriptor.revision_releases) || descriptor.revision_releases.length>200 || !descriptor.revision_releases.every(revisionIdOk) ||
           (mutation.restore_job_id===undefined ? descriptor.restore!=null :
             (!descriptor.restore || !revisionIdOk(descriptor.restore.revision_id) ||
@@ -307,13 +313,18 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           logAuthorityFailure(phase,"provider_identity","REVISION_KEEP_LIMIT");
           fail();
         }
-        // The level covers text files whose kept content can be reverted:
-        // a text type, at most 1 MiB, with a sha256 to check a restore by.
+        // The level covers files whose kept content can be reverted, with a
+        // sha256 to check a restore by: new text replaces a text type of at
+        // most 1 MiB; a staged binary file replaces a file of its own type of
+        // at most 5 MiB (Decision 06aba6c5); a revert restores either kind.
         if(replace && phase==="initial"){
           const target=await metadata.getFile(request.provider_identity.destination_file_id);
-          if(!/^(text\/[a-z0-9.+-]+|application\/(json|xml))$/.test(target?.mimeType??"") ||
-            !/^[0-9a-f]{64}$/.test(target.sha256Checksum??"") || !/^(0|[1-9]\d{0,19})$/.test(target.size??"") ||
-            Number(target.size)>1024*1024){
+          const type=target?.mimeType??"", textType=/^(text\/[a-z0-9.+-]+|application\/(json|xml))$/.test(type);
+          const typeOk=input.content!==undefined ? textType
+            : input.content_ref!==undefined ? type===input.content_ref.mime_type
+            : !!type && !type.startsWith("application/vnd.google-apps.");
+          if(!typeOk || !/^[0-9a-f]{64}$/.test(target.sha256Checksum??"") || !/^(0|[1-9]\d{0,19})$/.test(target.size??"") ||
+            Number(target.size)>(input.content!==undefined ? 1024*1024 : BINARY_REPLACE_MAX_BYTES)){
             logAuthorityFailure(phase,"provider_identity","REPLACE_TARGET_UNSUPPORTED");
             fail();
           }
@@ -352,9 +363,20 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       }
       let replacement=null;
       if(replace && mutation.content!==undefined) replacement=new Uint8Array(Buffer.from(mutation.content,"utf8"));
+      else if(replace && binary){
+        // A binary replace is one media upload: the verified staged object, read
+        // into memory (at most 5 MiB) and checked again against its reference.
+        try{
+          replacement=new Uint8Array(await new Response(staged.stream()).arrayBuffer());
+          if(replacement.byteLength!==mutation.content_ref.size || sha256Hex(replacement)!==mutation.content_ref.sha256) throw new Error("mismatch");
+        }catch{
+          logDiagnostic("deny","STORAGE_CONTENT_STAGING_MISMATCH");
+          return {status:"deny",error_code:"STORAGE_CONTENT_STAGING_MISMATCH",side_effects:0,execution_permitted:false};
+        }
+      }
       else if(replace){
         const restore=descriptor.restore;
-        replacement=await metadata.downloadRevision(restore.provider_file_id,restore.revision_id,1024*1024);
+        replacement=await metadata.downloadRevision(restore.provider_file_id,restore.revision_id,BINARY_REPLACE_MAX_BYTES);
         if(String(replacement.byteLength)!==restore.size || (restore.sha256!=null && sha256Hex(replacement)!==restore.sha256) ||
           (restore.md5!=null && md5Hex(replacement)!==restore.md5)) fail();
       }

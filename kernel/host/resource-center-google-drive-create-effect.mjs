@@ -11,6 +11,13 @@ const fail = (code) => { throw new Error(code); };
 const MULTIPART_MAX = 5 * 1024 * 1024;
 const BINARY_MAX = 20 * 1024 * 1024;
 const encoder = new TextEncoder();
+// Inline text content takes its Drive type from the file extension. Everything else, HTML and
+// SVG included, stays text/plain so Drive never serves it as an active document.
+const TEXT_EXTENSION_MIME = Object.freeze({ md: "text/markdown", csv: "text/csv", json: "application/json" });
+export function textCreateMimeType(name) {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? TEXT_EXTENSION_MIME[name.slice(dot + 1).toLowerCase()] ?? "text/plain" : "text/plain";
+}
 /** The staged content a binary create uploads: a bounded-memory source the executor has already
  * run through a full decrypt + sha256 pass (`verified`). `stream()` yields the plaintext and
  * errors before its final bytes if the running digest differs, so a mismatch never completes
@@ -119,8 +126,10 @@ export function createGoogleDriveNativeCreateEffect({
       fail("DRIVE_NATIVE_GENERATED_ID_INVALID");
     }
     const directory = (mutation.target_kind ?? "file") === "directory";
-    const metadata = { id, name: bound.destination_path.split("/").at(-1), parents: [before.destination_parent_id],
-      mimeType: directory ? "application/vnd.google-apps.folder" : ref ? ref.mime_type : "text/plain",
+    const name = bound.destination_path.split("/").at(-1);
+    const textMime = textCreateMimeType(name);
+    const metadata = { id, name, parents: [before.destination_parent_id],
+      mimeType: directory ? "application/vnd.google-apps.folder" : ref ? ref.mime_type : textMime,
       appProperties: { clued_intent_id: started.intent_id, clued_request_sha256: requestHash } };
     const attempt = Object.freeze({ contract: "clued.resource-center-provider-attempt/1", intent_id: started.intent_id,
       request_sha256: requestHash, profile_id: profile.profile_id, provider_file_id: id,
@@ -161,7 +170,7 @@ export function createGoogleDriveNativeCreateEffect({
     } else {
       const boundary = `clued_${randomUUID()}`;
       const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
-        `--${boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n${content}\r\n--${boundary}--\r\n`;
+        `--${boundary}\r\nContent-Type: ${textMime}; charset=UTF-8\r\n\r\n${content}\r\n--${boundary}--\r\n`;
       result = await request(`${UPLOAD}?uploadType=multipart&fields=${FIELDS}`, { method: "POST",
         headers: { "content-type": `multipart/related; boundary=${boundary}` }, body }, admission.expires_at_ms);
     }
