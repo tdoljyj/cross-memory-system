@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 import { contentIdentity } from "./resource-center-google-drive-modify-effect.mjs";
+import { textCreateMimeType } from "./resource-center-google-drive-create-effect.mjs";
 import { scopeProfile } from "./resource-center-google-scopes.mjs";
 
 const API = "https://www.googleapis.com/drive/v3/files";
@@ -127,9 +128,24 @@ export function createGoogleDriveNativeReplaceEffect({
       const kept = await write(revision(pinned), { body: JSON.stringify({ keepForever: true }) }, admission.expires_at_ms);
       if (kept?.id !== pinned || kept.keepForever !== true) fail("DRIVE_NATIVE_RESPONSE_MISMATCH");
     }
-    const result = await write(`${UPLOAD}/${encodeURIComponent(file.id)}?uploadType=media&fields=${FIELDS}`,
-      { body: replacement, contentType: file.mimeType }, admission.expires_at_ms);
-    if (result?.id !== file.id || result.name !== file.name || result.trashed !== false ||
+    // A file stored as text/plain whose extension names another text type
+    // (.md, .csv, .json; never HTML or SVG) takes that type with this upload,
+    // so replacing it with its own bytes corrects the type in place.
+    const mimeType = file.mimeType === "text/plain" ? textCreateMimeType(file.name) : file.mimeType;
+    let result;
+    if (mimeType === file.mimeType) {
+      result = await write(`${UPLOAD}/${encodeURIComponent(file.id)}?uploadType=media&fields=${FIELDS}`,
+        { body: replacement, contentType: file.mimeType }, admission.expires_at_ms);
+    } else {
+      const boundary = `clued_${randomUUID()}`, encoder = new TextEncoder();
+      const prefix = encoder.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ mimeType })}\r\n` +
+        `--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`), suffix = encoder.encode(`\r\n--${boundary}--\r\n`);
+      const body = new Uint8Array(prefix.byteLength + replacement.byteLength + suffix.byteLength);
+      body.set(prefix); body.set(replacement, prefix.byteLength); body.set(suffix, prefix.byteLength + replacement.byteLength);
+      result = await write(`${UPLOAD}/${encodeURIComponent(file.id)}?uploadType=multipart&fields=${FIELDS}`,
+        { body, contentType: `multipart/related; boundary=${boundary}` }, admission.expires_at_ms);
+    }
+    if (result?.id !== file.id || result.name !== file.name || result.trashed !== false || result.mimeType !== mimeType ||
       !isDeepStrictEqual(result.parents, file.parents) || !/^[1-9]\d*$/.test(result.version ?? "") ||
       typeof result.headRevisionId !== "string" || result.headRevisionId === pinned ||
       (result.size != null && result.size !== after.size) ||
