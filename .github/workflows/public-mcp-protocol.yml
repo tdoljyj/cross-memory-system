@@ -93,7 +93,7 @@ jobs:
         run: npm run mcp:gate-receipt:test
       - name: Install dependencies from runner cache
         run: >-
-          timeout --signal=TERM --kill-after=15s 4m
+          timeout --signal=TERM --kill-after=15s 8m
           npm ci --cache "$HOME/.npm" --prefer-offline
           --fetch-retries=2 --fetch-timeout=30000
       - name: Verify governed Resource Center mutation contract
