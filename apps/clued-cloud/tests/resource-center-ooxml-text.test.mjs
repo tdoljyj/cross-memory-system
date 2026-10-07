@@ -258,10 +258,10 @@ test("xlsx: heap guard, a 15 MiB sheet part extracts inside a 40 MB V8 heap", as
   try {
     const file = join(dir, "heap.xlsx");
     writeFileSync(file, bytes);
-    const module = new URL("../../../kernel/host/resource-center-ooxml-text.mjs", import.meta.url).href;
+    const moduleUrl = new URL("../../../kernel/host/resource-center-ooxml-text.mjs", import.meta.url).href;
     // The pre-streaming extractor (every cell buffered in nested Maps) ran out of heap here.
     const child = spawnSync(process.execPath, ["--max-old-space-size=40", "--input-type=module", "-e",
-      `const { extractOoxmlText } = await import(${JSON.stringify(module)});
+      `const { extractOoxmlText } = await import(${JSON.stringify(moduleUrl)});
        const bytes = new Uint8Array((await import("node:fs")).readFileSync(${JSON.stringify(file)}));
        const out = await extractOoxmlText(bytes, { kind: "xlsx" });
        console.log(JSON.stringify({ truncated: out.truncated, bytes: out.text_bytes }));`], { encoding: "utf8", timeout: 120000 });

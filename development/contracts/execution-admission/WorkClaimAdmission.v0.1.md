@@ -388,7 +388,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 **L0b：重任务 workflow 的 `admission-gate` job**
 
-- `information-flow-e2e.yml`、`clued-g4-database.yml`、`clued-cloud-node22-install.yml`、`clued-connection-authorization.yml`、`public-mcp-behavior.yml`、`public-mcp-protocol.yml` 这些自托管重任务加一个前置 job，与 L0a 同一脚本；`needs: admission-gate` 且 `if: needs.admission-gate.outputs.admitted == 'true'`。
+- `information-flow-e2e.yml`、`clued-g4-database.yml`、`clued-cloud-node22-install.yml`、`clued-connection-authorization.yml`、`public-mcp-behavior.yml`、`public-mcp-protocol.yml`、`clued-components.yml`、`design-refs.yml`、`clued-cloud-quality-gate.yml`（2026-10-07 起，Task 5077b641；与 `scripts/ci/clued-work-admission.test.mjs` 钉住的九个加闸 workflow 一致）这些自托管重任务加一个前置 job，与 L0a 同一脚本；`needs: admission-gate` 且 `if: needs.admission-gate.outputs.admitted == 'true'`。
 - 未 admitted 的 PR 仍跑 gitleaks、trivy（它们是 required，且便宜），其余跳过并在 check summary 写"未被 claim 覆盖"。
 - 这一层挡住的是本次事故中真实烧掉的东西：三份 PR 各自触发了 Information Flow E2E（12 分钟）、Supabase 栈、isolated-candidate。
 

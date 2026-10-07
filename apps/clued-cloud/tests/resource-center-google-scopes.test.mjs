@@ -32,12 +32,12 @@ test("Worker and kernel scope modules export the same values item by item", () =
   assert.deepEqual([...kernel.STORAGE_GOOGLE_SCOPE_SETS.normal], [FILE, META_RO, RO]);
   assert.deepEqual([...kernel.STORAGE_GOOGLE_SCOPE_SETS.full], [DRIVE, FILE, META_RO, RO]);
   assert.deepEqual([...kernel.STORAGE_SCOPE_PROFILES], ["legacy", "normal", "full"]);
-  for (const module of [worker, kernel]) {
-    assert.equal(module.scopeString("legacy"), `${FILE} ${META_RO}`);
-    assert.equal(module.scopeString("normal"), `${FILE} ${META_RO} ${RO}`);
-    assert.equal(module.scopeString("full"), `${DRIVE} ${FILE} ${META_RO} ${RO}`);
-    assert.throws(() => module.scopeString("drive"), TypeError);
-    assert.ok(Object.isFrozen(module.STORAGE_GOOGLE_SCOPE_SETS) && Object.isFrozen(module.STORAGE_GOOGLE_SCOPE_SETS.normal));
+  for (const scopes of [worker, kernel]) {
+    assert.equal(scopes.scopeString("legacy"), `${FILE} ${META_RO}`);
+    assert.equal(scopes.scopeString("normal"), `${FILE} ${META_RO} ${RO}`);
+    assert.equal(scopes.scopeString("full"), `${DRIVE} ${FILE} ${META_RO} ${RO}`);
+    assert.throws(() => scopes.scopeString("drive"), TypeError);
+    assert.ok(Object.isFrozen(scopes.STORAGE_GOOGLE_SCOPE_SETS) && Object.isFrozen(scopes.STORAGE_GOOGLE_SCOPE_SETS.normal));
   }
 });
 
@@ -64,18 +64,18 @@ test("scopeProfile matrix: exact sets only, after dedupe and sort", () => {
     ["", null], ["   ", null], [undefined, null], [null, null], [[FILE, META_RO], null], [42, null],
     [`${FILE} ${META_RO} ` + "x".repeat(5000), null],
   ];
-  for (const module of [worker, kernel]) {
-    for (const [value, profile] of cases) assert.equal(module.scopeProfile(value), profile, JSON.stringify(value));
-    assert.deepEqual(module.normalizeScopes(`${META_RO} ${FILE} ${FILE}`), [FILE, META_RO]);
-    assert.equal(module.isStorageScopeProfile("normal"), true);
-    assert.equal(module.isStorageScopeProfile("full"), true);
-    assert.equal(module.isStorageScopeProfile("drive"), false);
+  for (const scopes of [worker, kernel]) {
+    for (const [value, profile] of cases) assert.equal(scopes.scopeProfile(value), profile, JSON.stringify(value));
+    assert.deepEqual(scopes.normalizeScopes(`${META_RO} ${FILE} ${FILE}`), [FILE, META_RO]);
+    assert.equal(scopes.isStorageScopeProfile("normal"), true);
+    assert.equal(scopes.isStorageScopeProfile("full"), true);
+    assert.equal(scopes.isStorageScopeProfile("drive"), false);
     // full covers normal and legacy; nothing covers a higher profile.
-    assert.equal(module.scopeProfileCovers("full", "normal"), true);
-    assert.equal(module.scopeProfileCovers("normal", "normal"), true);
-    assert.equal(module.scopeProfileCovers("normal", "full"), false);
-    assert.equal(module.scopeProfileCovers("legacy", "normal"), false);
-    assert.equal(module.scopeProfileCovers("drive", "legacy"), false);
+    assert.equal(scopes.scopeProfileCovers("full", "normal"), true);
+    assert.equal(scopes.scopeProfileCovers("normal", "normal"), true);
+    assert.equal(scopes.scopeProfileCovers("normal", "full"), false);
+    assert.equal(scopes.scopeProfileCovers("legacy", "normal"), false);
+    assert.equal(scopes.scopeProfileCovers("drive", "legacy"), false);
   }
 });
 

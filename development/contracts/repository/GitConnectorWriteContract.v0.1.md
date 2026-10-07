@@ -26,7 +26,8 @@ Owner decision for tdoljyj/cross-memory-system#292: every change reaches `main` 
 GitHub enforces this with a repository ruleset on the default branch:
 
 - pull request required, 0 approving reviews (the Owner is the only maintainer and cannot approve their own PR);
-- required status checks `gitleaks` and `trivy` only. These are the only PR workflows without path filters, and both keep the same check name on the trusted and untrusted runner paths. A path-filtered check must never be required, because a PR that does not touch its paths would wait for it forever;
+- required status checks `gitleaks`, `trivy` and `clued-work-admission` (GitHub Actions) and `clued-admission-verified` and `clued-merge-slot` (the clued-admission App), as read from the ruleset on 2026-10-07; `docs/maintenance/main-admission-self-test-deadlock.md` lists the first four. `gitleaks` and `trivy` have no path filter and keep the same check name on the trusted and untrusted runner paths. A path-filtered check must never be required, because a PR that does not touch its paths would wait for it forever;
+- `clued-cloud-quality` (lint, typecheck, build and the database-free unit tests; added 2026-10-07, Task 5077b641) is also path-filter-free and keeps one check name on both runner paths, so the Owner may add it to the required checks; it is not required yet;
 - force pushes and branch deletion blocked; linear history not required (the repository merges with merge commits);
 - empty bypass list. Agents act with the Owner's GitHub identity, so any Owner or Admin bypass would also let Agents bypass.
 
