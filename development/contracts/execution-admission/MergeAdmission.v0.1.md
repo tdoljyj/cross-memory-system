@@ -9,7 +9,7 @@
 
 ## 0. 一句话结论
 
-合并到 main 只保证五件事（§2），其中只有两件要求「按最终合并状态测过并由 Owner 看过」，它们只对受保护路径成立；其余路径的保证是「归属可追、不撞车、main 自己的 push CI 会发现问题」。执行方式从「常量 + 分支」改为一张声明式策略表（§5）：三层路径 × 三个全局状态，受保护层是写死在代码里的基线、任何状态都不能放松（§6）。合并的串行化不再靠 Agent 每 10 分钟轮询续期合并位，而是 Clued 侧的 FIFO 合并队列 + GitHub 原生 auto-merge，位的时效绑 CI 运行状态（§7）。GitHub 规则集的 `strict`（必须包含 main 最新提交）保持开启：它是 GitHub 侧唯一能保证「合并结果就是测过、批过的那个 head」的开关，放松它换不来并行合并，只换来受保护层的漏洞（§7.5）。第三方合并队列不采用（ADR）。
+合并到 main 只保证五件事（§2），其中只有两件要求「按最终合并状态测过并由 Owner 看过」，它们只对受保护路径成立；其余路径的保证是「归属可追、不撞车、main 自己的 push CI 会发现问题」。执行方式从「常量 + 分支」改为一张声明式策略表（§5）：三层路径 × 三个全局状态，受保护层是写死在代码里的基线、任何状态都不能放松（§6）。合并的串行化不再靠 Agent 每 10 分钟轮询续期合并位，而是 Clued 侧的 FIFO 合并队列 + GitHub 原生 auto-merge，位的时效绑 CI 运行状态（§7）。GitHub 规则集的 `strict`（必须包含 main 最新提交）保持开启：它是 GitHub 侧唯一能保证「合并结果就是测过、批过的那个 head」的开关，放松它能换来非受保护层的并行合并，但受保护层会失去「合并结果就是批过的 head」，而 GitHub 的 strict 不能按路径开（§7.5）。第三方合并队列不采用（ADR）。
 
 ---
 
@@ -40,8 +40,8 @@
 | G1 归属与不撞车 | 每个进入 main 的改动对应一个活 Task 的认领，认领的 `write_set` 覆盖全部改动路径；同一时刻没有两个活认领覆盖同一路径 | 全部（文档层在 `normal` 下仍强制，见 §5） | Clued 数据库（冲突判定）+ `clued-work-admission` 必需检查（判定时）+ 每小时复核 | 已有 |
 | G2 受保护改动经 Owner 看过 | 改动受保护路径的 PR，只有 Owner 对其**精确 head 提交**的 `repo.protected_change` 授权才准入；并入 main 不改受保护文件时授权延续 | 受保护层 | Clued 门口函数（ci-admission Binding 专用）+ 必需检查 | 已有（`ownerReview`、`carriedApprovalSource`） |
 | G3 合并结果 = 批过、测过的 head | 受保护 PR 合并时，main 没有在它最后一次判定之后前进，所以合并结果就是 Owner 批过、CI 测过的那个 head | 受保护层（必须）；其他层顺带得到 | **GitHub 规则集 `strict`**（合并时实时判断，不是检查时） | 已有：strict 开启 + `protected_change_not_up_to_date` |
-| G4 共享资源只为被认领的工作花费 | 自托管重任务只跑被认领覆盖、准入通过的 head；每 Task 24 小时 40 个 head | 全部 | `admission-gate` job（读 App check）+ runner 开工前检查 + Clued 计量 | 已有 |
-| G5 合并串行化不浪费 CI | strict 开启意味着每次合并都让其他「已跟上 main」的 PR 过期；同一时间只有一个 PR 在做最后一轮（并入 main → CI → 合并） | 受保护层与普通代码层必须；文档层可免 | Clued 合并位 / 合并队列 + `clued-merge-slot` 必需检查 | 已有合并位（Agent 手动取、45 分钟定时器）；本文改为队列（§7） |
+| G4 共享资源只为被认领的工作花费 | 自托管重任务只跑被认领覆盖、准入通过的 head；每 Task 24 小时 40 个 head | `normal` / `frozen` 下全部；`efficiency` 下只有受保护层：普通层与文档层缺认领的 PR 也准入，其加闸重任务照跑、不计量（§5.3） | `admission-gate` job（读 App check）+ runner 开工前检查 + Clued 计量 | 已有 |
+| G5 合并串行化不浪费 CI | strict 开启意味着每次合并都让其他「已跟上 main」的 PR 过期；同一时间只有一个 PR 在做最后一轮（并入 main → CI → 合并） | `normal` / `frozen` 下全部三层；`efficiency` 下只有受保护层 | Clued 合并位 / 合并队列 + `clued-merge-slot` 必需检查 | 已有合并位（Agent 手动取、45 分钟定时器）；本文改为队列（§7） |
 
 **哪些路径要「按最终合并状态测过」**：只有受保护层**必须**（G3 是 G2 的组成部分：Owner 批的是 head，合并进去的必须就是那个 head）。普通代码层与文档层**接受**「合并后由 main 的 push CI 发现」：`clued-cloud-quality` 与各路径过滤的重任务都在 push 到 main 时运行；两个并发 PR 之间的文本冲突已被 G1 排除（活认领的 `write_set` 不相交），剩下的语义冲突由 main 的 push CI 暴露、以修复或回滚处理。但因为 GitHub 的 `strict` 是整个规则集一个开关、不能按路径设置，普通层与文档层在 v0.1 里**事实上也**按最终合并状态测过；本文不把这当作它们的保证，只当作 `strict` 的副作用（§7.5 说明为什么不关 `strict`）。
 
@@ -82,7 +82,7 @@
   },
   "rules": {
     "normal":     { "protected": "<baseline>", "code": { "work_claim": "enforce", "owner_grant": "none", "up_to_date": "strict_only", "merge_slot": "required", "reruns_per_head": 1, "auto_merge": "allowed" },
-                                              "docs": { "work_claim": "enforce", "owner_grant": "none", "up_to_date": "strict_only", "merge_slot": "advise",   "reruns_per_head": 2, "auto_merge": "allowed" } },
+                                              "docs": { "work_claim": "enforce", "owner_grant": "none", "up_to_date": "strict_only", "merge_slot": "required", "reruns_per_head": 2, "auto_merge": "allowed" } },
     "efficiency": { "protected": "<baseline>", "code": { "work_claim": "advise",  "owner_grant": "none", "up_to_date": "strict_only", "merge_slot": "advise",   "reruns_per_head": 2, "auto_merge": "allowed" },
                                               "docs": { "work_claim": "advise",  "owner_grant": "none", "up_to_date": "strict_only", "merge_slot": "advise",   "reruns_per_head": 2, "auto_merge": "allowed" } },
     "frozen":     { "all_layers_as": "protected", "merge_actor": "owner_only", "auto_merge": "forbidden" }
@@ -111,13 +111,13 @@
 
 1. **只由 Owner 切**，通过仓库变量（与 `CLUED_WORK_ADMISSION_ENFORCE` 同一做法：Settings → Variables）。Agent 不得改这个变量，不得请求 Owner 改它来放过自己的 PR（与 GitConnectorWriteContract「An Agent never disables the ruleset…」同一精神）。Agent 用 Owner 身份能改它，是 WorkClaimAdmission §4.7 已写明的信任前提，本文不改变。
 2. **每次切换写一条 Clued Decision**（`user_explicit`）：切到什么、为什么、预计持续多久、切回的条件。切回也写。Decision 由 Owner 口述、任一在场 Agent 记录，或 Owner 自己在 Clued 页面写。
-3. **切换后立即重判所有打开的 PR**：Owner（或任一 Agent，不需要认领）在默认分支 `workflow_dispatch` 复核 workflow（`clued-work-admission-reverify.yml`），输入 `reason=state_change`。复核在这个模式下对**每个**打开、非草稿、发往 main 的 PR 重新判定，并在其 head 上发一条新的 App check（成功或失败都发，与现行「只发失败」不同，见 §10）。每小时的定时复核兜底。
+3. **切换后立即重判所有打开的 PR**：Owner 在默认分支 `workflow_dispatch` 复核 workflow（`clued-work-admission-reverify.yml`），输入 `reason=state_change`；由 Agent 代劳时按合同 §1.7 先认领切换所对应的 Task（dispatch 是启动 CI）。复核在这个模式下对**每个**打开、非草稿、发往 main 的 PR 重新判定，并在其 head 上发一条新的 App check（成功或失败都发，与现行「只发失败」不同，见 §10）。每小时的定时复核兜底。边界：复核发出的 check 的 `external_id` 指向复核运行，加闸 workflow 的 gate 只认本事件准入运行的 check，所以切到更宽松状态后某个 head 若因此由红转绿，它的加闸重任务在该 head 上并未运行过；对普通层与文档层这是 §2 接受的（main 的 push CI 兜底），受保护层的判定不随状态变所以不会出现。gate 绑定本事件的准入运行，复核开始发成功 check 不重开复审 3 N-R1。
 4. **GitHub 规则集的必需检查列表不随状态变**：始终是 `gitleaks`、`trivy`、`clued-work-admission`、`clued-admission-verified`、`clued-merge-slot`。状态只改检查内部的判定：例如 `clued-merge-slot` 在不需要合并位的层 / 状态下以 `not_required(<layer>, <state>)` 通过，与现行 `not_needed` 直接通过同一做法；`clued-admission-verified` 在认领为 `advise` 的层下，缺认领时仍成功，摘要写 `claim_advisory_missing`。
 5. **切换不改 `strict`**、不改必需检查、不改 environment 与 secret。规则集改动期本身就是 `frozen` 的用途之一。
 
 ### 4.2 `frozen` 的两条说明
 
-- 「只有 Owner 合并」在 GitHub 侧**不可强制**：Agent 与 Owner 共用同一 GitHub 身份。可强制的部分是：`auto_merge: forbidden`（准入检查读到 PR 的 `auto_merge` 非空即判 `clued-merge-slot` 失败，并在摘要里要求关闭）、每个 head 都要 Owner 授权（授权本身就是 Owner 看过这个精确提交）。「Agent 不在 frozen 下点合并」是合规规则（合同 §1.7），写进 Decision 与检查摘要。
+- 「只有 Owner 合并」在 GitHub 侧**不可强制**：Agent 与 Owner 共用同一 GitHub 身份。可强制的部分是：`auto_merge: forbidden`（准入运行与每小时复核都读 PR 的 `auto_merge`，非空即判 `clued-merge-slot` 失败并在摘要里要求关闭；准入 workflow 的 `pull_request_target` 类型需加 `auto_merge_enabled`、`auto_merge_disabled`，否则 check 变绿后再打开 auto-merge 要到下次复核才被发现）、每个 head 都要 Owner 授权（授权本身就是 Owner 看过这个精确提交；`frozen` 下即便被自动化合并，合入的也是 Owner 授权过的精确 head，失守的是 `merge_actor` 规则而不是 G2/G3）。「Agent 不在 frozen 下点合并」是合规规则（合同 §1.7），写进 Decision 与检查摘要。
 - `frozen` 下每个 PR 都要 Owner 授权，Owner 的工作量就是 `frozen` 的成本，这也是它只用于短期窗口的原因。切回 `normal` 时所有 PR 由复核重判，授权只对受保护层继续需要。
 
 ---
@@ -142,13 +142,13 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `protected`（基线，代码常量） | enforce | required | check_and_strict | required | 1 | allowed |
 | `code` | enforce | none | strict_only | required | 1 | allowed |
-| `docs` | enforce | none | strict_only | advise | 2 | allowed |
+| `docs` | enforce | none | strict_only | required | 2 | allowed |
 
 理由：
 
-- `code` 层保留 `work_claim: enforce`：`write_set` 防撞车是 Owner 要保留的三件事之一（Decision `8e767ed8`），而撞车正发生在普通代码（2026-10-01 的 #443/#444/#445 是依赖升级，当时还不是受保护路径）。这**修正** Decision `f303f861` 第 3 项「认领只对受保护 PR 强制」（§9）。
+- `code` 层保留 `work_claim: enforce`：`advise` 不取消 Clued 对**已认领**工作的冲突判定（`work_claim_conflicts` 照常），它取消的是「未认领或 `write_set` 过窄的 PR 不得合并」这道门，而归属可追、按 Task 的 24 小时 head 计量（G4）、以及「没人认领就不会有人在 resume 里看到这份工作」都靠这道门。2026-10-01 的 #443/#444/#445 撞在依赖文件上，当时不受保护、现在属受保护层；同类撞车在 Worker 源码、测试、迁移上随时可能发生，而那些是 `code` 层。这**修正** Decision `f303f861` 第 3 项「认领只对受保护 PR 强制」（§9）。
 - `code` 层保留 `merge_slot: required`：strict 开启时，一个普通代码 PR 的最后一轮是 10–30 分钟自托管 CI（报告 §4 的数据），被别的合并插队就白跑；合并位的痛点是「Agent 轮询 + 45 分钟定时器」，§7 用队列和 CI 绑定时效解决痛点，而不是取消串行化。这也**修正** `f303f861` 第 3 项的合并位部分。
-- `docs` 层 `merge_slot: advise`：文档 PR 的最后一轮只有无过滤检查（admission、gitleaks、trivy、`clued-cloud-quality` 的空跑），几分钟；它插队让队列头白跑的代价由 §12 的 R2（quality gate 对非代码改动空转）削减到可忽略。`docs` 层仍 `work_claim: enforce`：认领是一次 MCP 调用，没有出现在摩擦排序里，而归属可追是 Owner 要保留的另一件事。
+- `docs` 层也 `merge_slot: required`：strict 开启时，文档 PR 的合并同样让队列头（受保护或普通代码 PR）的最后一轮白跑 10–30 分钟自托管 CI，被插队的是队列头不是文档 PR 自己；而取位只是一次 `clued_work_renew`，文档 PR 自己的最后一轮几分钟就过，排队代价小。`efficiency` 下才改为提示（§5.3）。`docs` 层仍 `work_claim: enforce`：认领是一次 MCP 调用，没有出现在摩擦排序里，而归属可追是 Owner 要保留的另一件事。
 - `reruns_per_head`：`f303f861` 第 2 项确认为 1（§8、§9）；文档层给 2，因为它的失败几乎都是基础设施原因（runner 排队超时、npm 超时）。
 - `auto_merge: allowed` 对受保护层也成立：Owner 授权在前（授权的是精确 head），strict 保证合并结果就是那个 head，auto-merge 只是替 Agent 点那一下。
 
@@ -161,7 +161,7 @@
 | efficiency | docs | advise | none | strict_only | advise | 2 | allowed | any |
 | frozen | protected / code / docs | enforce | required | check_and_strict | required | 1 | **forbidden** | **owner_only** |
 
-`efficiency` 下 `code` 的 `merge_slot: advise` 意味着接受白跑 CI 换吞吐；它的代价在 §12 的度量里能看到（`wasted_final_rounds`），Owner 据此决定在这个状态停留多久。
+`efficiency` 下 `code` / `docs` 的 `work_claim: advise` 意味着缺认领的 PR 也准入：它们的加闸重任务照跑，且不计入 Task 的 24 小时 head 计量（gate 只读 App check 的结论，缺认领时不调用 verify，计量不发生），G4 对这两层不成立；`merge_slot: advise` 意味着接受白跑 CI 换吞吐。两项代价在 §12 的度量里能看到（`unclaimed_admitted`、`wasted_final_rounds`），Owner 据此决定在这个状态停留多久。
 
 ---
 
@@ -204,7 +204,7 @@
 
 **队列**：Clued 把合并位从「一个互斥的触发引用」改为**每个仓库默认分支一条 FIFO 队列**。队列项 = `(pr_ref, claim_id, enqueued_at, layer, state_at_enqueue)`。
 
-- **入队**：Agent 在 PR 准入通过、当前 head 的 CI 绿、合并已获所需批准（受保护层即 Owner 授权已放行）后调用入队。v0.1 为了不加新工具，入队仍是 `clued_work_renew` 带合并引用；服务端不再返回 `work_claim_conflict`，而是返回 `merge_queue: {position, ahead: [...]}`。位置 1 即「持有合并位」，与今天同义。
+- **入队**：Agent 在 PR 准入通过、当前 head 的 CI 绿、合并已获所需批准（受保护层即 Owner 授权已放行）后调用入队。v0.1 为了不加新工具，入队仍是 `clued_work_renew` 带合并引用；服务端不再返回 `work_claim_conflict`，而是返回 `merge_queue: {position, ahead: [...]}`。位置 1 即「持有合并位」，与今天同义。代价变化：今天被拒的续期不计次数、不耗令牌，入队成功的续期计一次续期（上限 12）并需要新的 `progress_ref`；只入队一次，可接受。
 - **队列头的工作**：并入 main（如果 head 还不含 tip）→ CI → 合并。第一步实施里仍由 Agent 做并入与推送；第二步由执行器做（§7.3）。合并由 GitHub auto-merge 做（§7.4）。
 - **出队**：PR 合并（现有 `clued_work_claim_adopt_v1`）、关闭（现有 `clued_work_merge_slot_return_v1`）、队列头的 head 上任一必需检查**最终失败**（§7.3 的执行器上报 `ci_failed`，与 GitHub merge queue「CI 失败即移出」相同）、持有者主动退出（续期去掉引用 / 释放认领）、兜底时效（§7.3）。出队后下一项成为队列头；它的 PR 如果已含 tip 就可直接进 CI，否则并入 main。
 - **插队**：没有。Owner 需要紧急合并时用 `frozen`（队列照常，只是人人要授权）或自己手动合并（它移动 main，队列头的最后一轮白跑一次，这是 Owner 的选择）。
@@ -212,11 +212,16 @@
 
 ### 7.3 位的时效：绑 CI 运行状态，定时器只做兜底
 
-**结论**：绑 CI 状态，保留一个兜底定时器。
+**结论**：绑 CI 状态，保留兜底定时器。
 
-- 队列头的位在以下事件间保持：head 上任一适用 workflow 运行处于 `queued` / `in_progress`；全部完成且成功、head 含 tip、等待 auto-merge（给 30 分钟）；执行器正在并入 main。
-- **出队条件**：任一必需检查最终失败；或自上次 CI 活动起 45 分钟无任何运行（兜底，沿用现值）；或自取位起 3 小时（硬上限，略大于「排队 + 最长 workflow 超时 35 分钟 + 一次重跑」）。
-- **谁上报 CI 状态**：不是 Agent，是运行默认分支代码、持 ci-admission Binding 的 GitHub Actions job（`clued-admission` environment）。触发：`workflow_run: completed`（任一 PR workflow 结束时，秒级托管 job）、`push` 到 main、每小时定时、`workflow_dispatch`。它调用新 RPC `clued_work_merge_slot_touch_v1(pr_ref, head_sha, ci_state)`（仅 ci-admission Binding）：`ci_state ∈ {running, green, failed}`；`running` / `green` 刷新位的时钟，`failed` 出队并留 `WORK_CLAIM_MERGE_SLOT_RETURNED(why=ci_failed)` 回执。这样 Agent 不再为了保位而续期；认领的续期回到它本来的用途（进展）。
+- 队列头的位在以下事件间保持：head 上**默认分支定义的**加闸 workflow 的运行处于 `queued` / `in_progress`（判定见下）；五个必需检查全部成功、head 含 tip、等待 auto-merge（给 30 分钟）；执行器正在并入 main。
+- **出队条件**：五个必需检查中任一最终失败；或自上次 CI 活动起 45 分钟无任何运行（兜底，沿用现值）；或自取位起 90 分钟（硬上限：排队 + 最长 workflow 超时 35 分钟 + 一次重跑）。
+- **谁上报 CI 状态**：不是 Agent，是运行默认分支代码、持 ci-admission Binding 的 GitHub Actions job（`clued-admission` environment）。触发：`workflow_run: completed`、`push` 到 main、每小时定时、`workflow_dispatch`。它调用新 RPC `clued_work_merge_slot_touch_v1(pr_ref, head_sha, ci_state)`（仅 ci-admission Binding）：`ci_state ∈ {running, green, failed}`；`running` / `green` 刷新位的时钟，`failed` 出队并留 `WORK_CLAIM_MERGE_SLOT_RETURNED(why=ci_failed)` 回执。这样 Agent 不再为了保位而续期；认领的续期回到它本来的用途（进展）。
+- **输入不信 PR**（复审 2 N3c、复审 3 N-R1 的同类问题）：`workflow_run` 事件由 workflow 名字匹配触发，PR 自带的 workflow 也会触发它，事件负载的 `name`、`head_branch`、`conclusion`、`pull_requests` 都来自 PR 控制的运行，所以这个 job 只把事件当作「去看一眼」的信号，判定全部来自它自己的查询：
+  - head → PR：`GET /repos/{o}/{r}/commits/{sha}/pulls`，只取打开、base 为默认分支的 PR；不读负载的 `pull_requests` 或 `head_branch`。
+  - `failed` / `green`：只看五个必需检查，按 (检查名, integration id) 识别（Actions 15368 的 `gitleaks`、`trivy`、`clued-work-admission`；App 5164952 的 `clued-admission-verified`、`clued-merge-slot`），取 head 上各自最新一条 check run，与规则集同一口径；PR 自带的同名 job 是另一来源，不算。
+  - `running`：只由默认分支上存在、且在 PR head 处文件内容与默认分支相同（contents API 的 blob SHA 相等）的加闸 workflow 的运行刷新；PR 自带或改过的 workflow 不计（改过的本来就是受保护改动，要 Owner 授权）。
+  - 兜底写进 §14：一个已准入的 PR 仍可能用加闸 workflow 内的长任务把位撑到 90 分钟硬上限；今天的 45 分钟无续期即失效在这一点上更紧，所以硬上限不放宽到 3 小时。
 - 复核（`reverify`）对队列头以外、却仍绿着 `clued-merge-slot` 的 head 补发失败检查（现行）。
 
 ### 7.4 用 GitHub 原生 auto-merge 替代 Agent 守 CI
@@ -230,11 +235,11 @@
 
 ### 7.5 能否按 `write_set` 影响范围并行，取代受保护 / 非受保护二分
 
-**结论：在合并这一步不能，只要 `strict` 开着；而 `strict` 必须开着。** 分层（§3）取代了二分，但它分的是「要什么保证」，不是「能否并行合并」。
+**结论：在合并这一步不能，只要 `strict` 开着；而 `strict` 必须开着。** 关掉 `strict` 确实能换来非受保护层的并行合并（这正是 §2 让普通层与文档层「接受 push CI 事后发现」的全部意义），代价是受保护层失去 G3，而 GitHub 的 `strict` 不能按路径开。分层（§3）取代了二分，但它分的是「要什么保证」，不是「能否并行合并」。
 
 - `strict` 是规则集的一个开关，整个 main 一个值。开着时，任何一次合并都让其他「已含 tip」的 PR 立刻不满足条件，合并天然串行；这与 PR 之间是否相交无关。
 - 关掉 `strict` 换并行合并，受保护层就失去 G3：Owner 批的是 head，合并结果是 GitHub 对新 main 的三方合并；main 在授权后动过受保护文件时，合入的受保护文件内容既不是 Owner 批的也不是 CI 测的。复审 9、10、11 讨论过「检查时判定 + 几分钟后复核」关不掉这个窗口，结论就是开 `strict`。靠队列独占来替代（队列头期间不许别人合并）在 GitHub 侧同样不可强制：别的 PR 的 `clued-merge-slot` 检查是判定时的结论，不是合并时的。
-- 所以 `write_set` 不相交带来的并行性用在三处：（a）最后一轮之前的 CI 全部并行（现状）；（b）文档层免合并位（§5.2）；（c）v0.2 的批量测试候选：队列里相邻、`write_set` 不相交、都不含受保护路径的项可以合成一组测一次（Bors / GitHub merge queue 的做法），失败时二分（§7.6）。GitHub merge queue、Bors、Zuul 在 strict 语义下的并行也全是靠「推测合并后测试」，没有别的办法。
+- 所以 `write_set` 不相交带来的并行性用在三处：（a）最后一轮之前的 CI 全部并行（现状）；（b）`efficiency` 下普通层与文档层免合并位（§5.3）；（c）v0.2 的批量测试候选：队列里相邻、`write_set` 不相交、都不含受保护路径的项可以合成一组测一次（Bors / GitHub merge queue 的做法），失败时二分（§7.6）。GitHub merge queue、Bors、Zuul 在 strict 语义下的并行也全是靠「推测合并后测试」，没有别的办法。
 - Trunk 的「impacted targets 并行队列」在本仓库的对应物就是认领的 `write_set`：两个活认领不相交已由 Clued 保证，所以队列里不需要再算影响范围；它的价值在（c）而不是在合并顺序。
 
 ### 7.6 v0.2 评估项：批量与二分
@@ -247,8 +252,8 @@
 
 确认 Decision `f303f861` 第 2 项，并加三条边界：
 
-1. 允许的是 **「Re-run all jobs」**，对 `pull_request` / `pull_request_target` 运行，且该运行的 `head_sha` 等于 PR **当前** head，`run_attempt == 2`（`reruns_per_head: 1`）或 ≤ `1 + reruns_per_head`。gate（`rerunAttempt()`）与 runner 开工前检查据此放行；gate 在重跑里重新读 App check，所以 Owner 授权后的重跑能让此前被跳过的加闸任务运行——这取代「授权后关闭再重开 PR」。
-2. **「Re-run failed jobs」仍拒绝**：它沿用 gate 上一次的输出，不重新判定（复审 3 N-R3、复审 5 n2）。
+1. 允许的是 **「Re-run all jobs」**，对 `pull_request` / `pull_request_target` 运行，且该运行的 `head_sha` 等于 PR **当前** head，`run_attempt == 2`（`reruns_per_head: 1`）或 ≤ `1 + reruns_per_head`。gate（`rerunAttempt()`）据此放行并在重跑里重新读 App check，所以 Owner 授权后的重跑能让此前被跳过的加闸任务运行——这取代「授权后关闭再重开 PR」。重跑按**每个 workflow 运行**计：一个 head 上最多 10 个加闸运行，可能要各点一次，不像关闭重开一次解决；执行器（§13 第 5 步）可代点。
+2. **「Re-run failed jobs」仍拒绝**：它沿用 gate 上一次的输出，不重新判定（复审 3 N-R3、复审 5 n2）。gate 自己拦不住它（成功过的 gate job 在这种重跑里不再运行），所以 runner 开工前检查是唯一执行者，其放行条件写明为：`GITHUB_RUN_ATTEMPT ≥ 2` 时，`GET /repos/{o}/{r}/actions/runs/{run_id}/attempts/{n}/jobs` 里必须存在**同一 attempt** 的 `admission-gate` job 且 `conclusion=success`（证明 gate 在本次 attempt 重新判定过），否则拒绝；只看 `GITHUB_RUN_ATTEMPT == 2` 会把「Re-run failed jobs」一起放进来。
 3. 旧 head（不是 PR 当前 head）的重跑仍拒绝；第 `2 + reruns_per_head` 次起拒绝。runner 开工前检查需要 Owner 在每台 runner 上更新钩子脚本（Decision `f303f861`）。
 4. 准入运行（`pull_request_target`，默认分支代码）的重跑不受次数限制：它每次都重新读 PR 与 main 当前代码，没有「沿用旧输出」的问题。
 
@@ -265,8 +270,8 @@
 
 ## 10. 可见性与审计
 
-- **摘要**：`renderSummary` 第一行加 `**Mode:** \`<state>\` · layer \`<layer>\` · source \`<变量名或 default>\``，随后一张「有效规则」小表（§5.1 的六列）。gate 与复核的摘要同样打印状态。
-- **每个 PR 可见它被放行时的模式**：App check 的 `output.title` 为 `ADMITTED [normal · code]` 这类形式；`external_id` 不变（`pr:<n>:run:<run id>`）。verify RPC 的 `p_input` 增加 `admission_mode: {state, layer}`（随 §13 第 3 步的迁移；现行 RPC 拒绝未知键，所以第 1、2 步只在 App check 标题与摘要里记录），写进 `work_claim_bind_pr` / `admitted_heads` 的回执，Clued 侧可查「这个 head 是在什么模式下放行的」。
+- **摘要**：`renderSummary` 第一行加 `**Mode:** \`<state>\` · layer \`<layer>\` · source \`<变量名或 default>\``，随后一张「有效规则」小表（§5.1 的六列）。复核的摘要同样打印状态。gate **不自己读策略文件**（它检出的是 PR 的 `base.sha`，那份策略可能落后于 main）：它从本事件准入运行发出的 App check 的 `output.title` 解析 `[<state> · <layer>]` 与 `reruns_per_head`，策略只在默认分支的准入运行里解析一次。
+- **每个 PR 可见它被放行时的模式**：App check 的 `output.title` 为 `ADMITTED [normal · code]` 这类形式；`external_id` 不变（`pr:<n>:run:<run id>`）。verify RPC 的 `p_input` 增加 `admission_mode: {state, layer}`（随 §13 第 3 步的迁移写入回执；现行 RPC 对未列出的键静默忽略而不拒绝，所以第 1、2 步可以先送这个键，但只有 App check 标题与摘要能查到），写进 `work_claim_bind_pr` / `admitted_heads` 的回执，Clued 侧可查「这个 head 是在什么模式下放行的」。
 - **切换**：Owner 的 Decision（§4.1 第 2 条）；复核在 `reason=state_change` 下对每个打开 PR 发一条新 App check（成功或失败），标题带新状态。
 - **度量**：§12 的报告按状态分组统计。
 
@@ -277,7 +282,8 @@
 - WorkClaimAdmission v0.1 §4.6「Owner 复核」：不变，成为受保护层 `owner_grant: required` 的实现；`frozen` 把它扩展到所有层。
 - §4.4「合并位」：由 §7 取代（接受并实施后）。合并引用 `merge:<owner>/<name>:<branch>` 作为队列项的键保留，`merge_slot_until` 语义改为「按 §7.3 计算的时效」。
 - 合同 `agent-contract.md` §1.7：接受后随实施改写合并位段落（取位 = 入队；不再每 10 分钟重试；不再每 30 分钟为保位续期；拿到队列头后打开 auto-merge；重跑规则），并缩短。合同节奏与 §1.7 压缩属 Task `ada1334c` 的另一项，不在本文。
-- 加闸 workflow 的 `admission-gate`：不变，只在 `rerunAttempt()` 读 `reruns_per_head`。
+- 加闸 workflow 的 `admission-gate`：不变，只在 `rerunAttempt()` 按 App check 标题里的 `reruns_per_head` 放行。
+- `CONTRIBUTING.md`「Work claims」「Protected paths and Owner grants」：接受后按分层与状态改写；`.github/pull_request_template.md` 不变。
 - runner 开工前检查（`scripts/runner/`）：同上。
 - Dependabot：层按路径（多为受保护层）；Owner 流程不变。
 
@@ -308,7 +314,7 @@
 
 | 编号 | 项 | 依据 | 预期 |
 | --- | --- | --- | --- |
-| R1 | `admission-gate` job 占用自托管槽位等 App check（最多 480 秒），9 个加闸 workflow 每个 head 各一个 | gate 分钟与排队数据 | 把等待上限按准入运行的实际时长（约 1–2 分钟）下调；或把 gate 改回托管 runner（需 Owner 撤回 Decision `f86179b3`）；或合并为一个 gate workflow 由 `workflow_run` 触发重任务 |
+| R1 | `admission-gate` job 占用自托管槽位等 App check（最多 480 秒），10 个加闸 workflow（多数有路径过滤，`clued-cloud-quality` 无）每个触发的运行各一个 | gate 分钟与排队数据 | 把等待上限按准入运行的实际时长（约 1–2 分钟）下调；或把 gate 改回托管 runner（需 Owner 撤回 Decision `f86179b3`）；或合并为一个 gate workflow 由 `workflow_run` 触发重任务 |
 | R2 | `clued-cloud-quality` 无路径过滤，文档 PR 也跑 `npm ci`+lint+build+test | 按层分组的自托管分钟 | job 内按改动路径判断，无 `apps/clued-cloud/**` 改动时跳过重步骤、仍以同一 check 名成功 |
 | R3 | `gitleaks`、`trivy` 在自托管、25 分钟超时、每个 head 都跑 | 两者的分钟与排队 | 评估改回托管 runner 或缓存 trivy 数据库；它们是必需检查，不能加路径过滤 |
 | R4 | 最后一轮被插队白跑 | `wasted_final_rounds` | §7 的队列 |
@@ -322,14 +328,14 @@
 | 步 | 内容 | 行为变化 | 需要 Owner 做的 |
 | --- | --- | --- | --- |
 | 0 | 本文 Draft → Accepted；ADR 接受；Clued Decision 指向 Drive 报告文件 ID 与仓库 commit | 无 | 接受 |
-| 1 | `scripts/ci/merge-admission-policy.mjs` + `config/merge-admission-policy.json` + 表驱动测试；`clued-work-admission.mjs` 改为读策略；摘要与 App check 标题打印模式；**默认表先用「兼容表」**（三层都 enforce / required、`reruns_per_head: 0`、`auto_merge: allowed` 但不启用），行为与今天完全一致 | 无（只多了可见性） | 批准受保护 PR；设 `CLUED_MERGE_ADMISSION_STATE=normal`（或不设） |
+| 1 | `scripts/ci/merge-admission-policy.mjs` + `config/merge-admission-policy.json` + 表驱动测试；`clued-work-admission.mjs` 改为读策略；摘要与 App check 标题打印模式；**默认表先用「兼容表」**：三层 `work_claim: enforce`、`merge_slot: required`、`reruns_per_head: 0`、`auto_merge: allowed`（仓库设置仍关着，所以不生效）；`owner_grant: required` 与 `up_to_date: check_and_strict` 只对受保护层，`code` / `docs` 为 `none` / `strict_only`；今天的其他行为原样保留且不在表里：文件列表截断判 REJECTED（`changed_files_truncated`），服务未报 `merge_slot_until` 时 `clued-merge-slot` 以 `not_reported` 通过，fork PR 的 gate 一律按强制跟随 App check，workflow 守卫（`workflow_gate:*`）在所有状态、所有层无条件生效。行为与今天完全一致 | 无（只多了可见性） | 批准受保护 PR；设 `CLUED_MERGE_ADMISSION_STATE=normal`（或不设） |
 | 2 | 默认表换成 §5.2 推荐表；gate 与 runner 检查读 `reruns_per_head`；合同 §1.7 对应段落改写；`ci-usage-report.mjs` | 重跑一次放行；文档层免合并位 | 在每台 runner 更新钩子；打开仓库 `Allow auto-merge`；发布 Worker（合同） |
 | 3 | 位时效绑 CI：迁移 `clued_work_merge_slot_touch_v1`（ci-admission Binding）；准入 workflow 加 `workflow_run: completed` 触发的秒级 job 上报 CI 状态；复核 `reason=state_change` 模式 | 持位不再需要续期；CI 失败自动出队 | 迁移、Worker 发布各自授权 |
 | 4 | 队列：`clued_work_renew` 带合并引用改为入队返回位置；`clued-merge-slot` 只认队列头；resume 返回 `merge_queue` | 等待不再轮询（入队一次即可，位置由检查与 resume 可见） | 迁移、Worker 发布 |
 | 5 | 执行器（可选）：clued-admission App 增加 `contents: write`、`pull_requests: write`；默认分支上的执行器 job 为队列头做「并入 main」与打开 auto-merge。用 App 安装令牌而不是 `GITHUB_TOKEN`：GitHub 不为 `GITHUB_TOKEN` 的推送创建新的 workflow 运行，用它并入 main 不会触发 CI | Agent 在入队后无事可做 | 批准 App 权限扩展（扩大了 `clued-admission` environment 里私钥的能力范围） |
 | 6 | 删除 `CLUED_WORK_ADMISSION_ENFORCE` 与 `CLUED_OWNER_REVIEW_ENFORCE` 的读取与 advisory 分支（v0.2） | 不再有「提示模式」；回滚手段改为 `frozen` 与规则集的 Owner 紧急步骤（GitConnectorWriteContract「Emergency or recovery」） | 删除两个变量 |
 
-**两个 ENFORCE 变量在第 1–5 步期间的处理**：继续读取，作为 kill switch：任一不为 `true` 时，脚本打印 `mode: legacy-advisory`，行为与今天的提示模式相同。它们不是三个状态之一，不受 I1 保护（提示模式本来就放松受保护层），所以只保留到第 6 步；在此之前不得用它们代替 `frozen`。`CLUED_RELEASE_GRANT_ENFORCE` 不在本文范围。
+**两个 ENFORCE 变量在第 1–5 步期间的处理**：继续读取，各自保留今天的语义（`CLUED_WORK_ADMISSION_ENFORCE` 不为 `true` 时认领与合并位只提示；`CLUED_OWNER_REVIEW_ENFORCE` 不为 `true` 时不调门口、只在摘要提示），脚本打印 `mode: legacy-advisory(<哪个变量>)`。优先级：`frozen` 高于两个 kill switch——状态为 `frozen` 时忽略它们，三层仍按受保护基线判定；它们只在 `normal` / `efficiency` 下生效。它们不是三个状态之一、不受 I1 保护（提示模式本来就放松受保护层），§14 把它们列为 I1 之外的放宽开关，只保留到第 6 步；在此之前不得用它们代替 `frozen`。`CLUED_RELEASE_GRANT_ENFORCE` 不在本文范围。
 
 **回滚**：第 1 步是纯重构，回滚即 revert；第 2 步回滚是把策略文件换回兼容表（一个受保护 PR）或设 `frozen`；第 3–5 步的迁移只增不改，回滚 Worker 即可；执行器 App 权限可随时在 GitHub 收回。
 
@@ -341,14 +347,16 @@
 - `frozen` 的「只有 Owner 合并」不可在 GitHub 侧强制（§4.2）。
 - 状态变量、策略文件与规则集都在 Owner（也就是 Agent 所用身份）的管理员权限之下；本文的全部 GitHub 侧保证以 Agent 不改它们为前提。
 - 队列头出队到下一项开始最后一轮之间，有一个事件传递的延迟（`workflow_run` 触发是秒级，定时兜底是小时级）。
-- 文档层免合并位：文档 PR 的合并会让队列头白跑一次最后一轮（§5.2 接受了这个代价）。
+- `efficiency` 下普通层与文档层免合并位：它们的合并会让队列头白跑一次最后一轮；缺认领的 PR 也准入、重任务照跑且不计量（§5.3 接受了这些代价，并要求度量可见）。
+- 两个 ENFORCE 变量在第 6 步删除之前是 I1 之外的放宽开关：在 `normal` / `efficiency` 下把它们设为非 `true`，受保护层也会回到提示模式；`frozen` 不受影响（§13）。
+- 位时效绑 CI 后，一个已准入的 PR 仍可用加闸 workflow 内的长任务把队列头的位撑到 90 分钟硬上限（§7.3）；PR 自带的 workflow 不计入。
 - 执行器（第 5 步）之前，并入 main 仍是 Agent 的动作，Agent 不在线时队列头不会前进；兜底时效会把它出队。
 
 ---
 
 ## 15. 引用
 
-- 现行实现：`scripts/ci/clued-work-admission.mjs`（`PROTECTED_PATHS`、`evaluate`、`ownerReview`、`carriedApprovalSource`、`baseTipCompare`、`mergeSlotState`、`mergeSlotCheck`、`reverify`、`gate`、`rerunAttempt`、`appCheck`）、`.github/workflows/clued-work-admission.yml`、`clued-work-admission-reverify.yml`、迁移 `20261006120000_work_claims_merge_slot.sql`、`20261006180000_work_claims_continuation.sql`。
+- 现行实现：`scripts/ci/clued-work-admission.mjs`（`PROTECTED_PATHS`、`evaluate`、`ownerReview`、`carriedApprovalSource`、`baseTipCompare`、`mergeSlotState`、`mergeSlotCheck`、`reverify`、`gate`、`rerunAttempt`、`appCheck`）、`.github/workflows/clued-work-admission.yml`、`clued-work-admission-reverify.yml`、迁移 `20261006120000_work_claims_merge_slot.sql`（`20261006180000_work_claims_continuation.sql` 只作认领续接的背景，不在本文范围）。
 - 合同：`skills/clued/references/agent-contract.md` v38 §1.7；`development/contracts/repository/GitConnectorWriteContract.v0.1.md`；`CONTRIBUTING.md`。
 - GitHub 文档：Managing a merge queue（merge group、CI 失败移出、与「Require branches to be up to date」等价）；Automatically merging a pull request（可用范围、自动关闭条件）；Available rules for rulesets（`strict`）；Re-running workflows and jobs（重跑沿用原 `GITHUB_SHA` 与 workflow 文件）；Update a pull request branch（App 需要 head 仓库的 contents 写权限）。
 - 他山之石：Mergify（speculative checks / batch、免费至 5 个私有仓库用户、`$21`/seat）、Trunk Merge Queue（impacted targets 并行队列、乐观合并、二分、免费至 5 committers）、Bors-ng（已停止维护，指向 GitHub merge queue）、Zuul（dependent pipeline、推测执行、失败减半窗口）。具体链接在研究报告附录。

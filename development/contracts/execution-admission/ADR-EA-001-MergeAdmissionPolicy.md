@@ -19,7 +19,7 @@
 4. **GitHub 规则集的 `strict` 保持开启**；必需检查列表不随状态变；状态只改检查内部判定。
 5. **合并位改为 Clued 侧 FIFO 合并队列**：入队一次即排队，不再每 10 分钟轮询；位的时效绑 CI 运行状态（由默认分支上持 ci-admission Binding 的 job 上报），45 分钟改为兜底；CI 失败自动出队；队列头用 GitHub 原生 auto-merge 合并，Owner 批准仍在前；执行器为队列头并入 main 作为可选的第五步。
 6. **每个当前 head 允许一次「Re-run all jobs」**（确认 `f303f861` 第 2 项），取代授权后关闭重开；「Re-run failed jobs」仍拒绝。
-7. **认领对受保护层与普通代码层强制、对文档层也强制；合并位对受保护层与普通代码层要求、文档层提示**（修正 `f303f861` 第 3 项）；`efficiency` 状态保留原第 3 项的形态供 Owner 选用。
+7. **`normal` 下三层都强制认领、都要求合并位**（修正 `f303f861` 第 3 项：strict 开启时任何一层的插队都让队列头白跑一轮自托管 CI，而取位只是一次续期）；`efficiency` 状态保留原第 3 项的形态（普通层与文档层认领提示、免合并位）供 Owner 选用，代价是这两层缺认领的 PR 不计量、可能白跑 CI。
 8. **不采用第三方合并队列**（GitHub 原生队列不可用；Mergify、Trunk、Aviator 等不采用）；批量测试与失败二分推迟到 v0.2，由度量触发评估。
 9. **CI 用量先测后减**：每周只读报告（自托管分钟、排队、重跑、并入 main 次数、白跑的最后一轮、gate 占用），削减项按数据排序（gate 等待、quality gate 对非代码改动空转、gitleaks/trivy 在自托管、插队白跑）。
 
@@ -32,16 +32,17 @@
 | Trunk Merge Queue（impacted targets 并行队列、乐观合并、二分） | 同样是外部 App 写权限 + SaaS；其「impacted targets」在本仓库已由认领的 `write_set` 不相交保证，并行的收益只剩批量测试。可借鉴：按影响范围分队列的思路用于 v0.2 批量 |
 | Bors-ng / homu | bors-ng 已停止维护并指向 GitHub merge queue；需要自托管一个有写权限的机器人，与执行器方案等价但多一套系统 |
 | Zuul | 为多仓库、多项目的大型门禁设计，运行成本远超本仓库规模。可借鉴：失败后窗口减半的自适应、依赖链推测执行 |
+| Aviator、Graphite 等托管合并队列 | 与 Mergify / Trunk 同类：外部 App 写权限 + SaaS，与认领 / Owner Grant 两套判定并存；未逐一评估功能细节，否决理由相同 |
 | 关闭 `strict`，按 `write_set` 不相交并行合并 | 受保护层失去「合并结果 = 批过的 head」；复审 9–11 已证明检查时判定 + 几分钟后复核关不掉窗口；队列独占在 GitHub 侧同样只是判定时的结论 |
 | 全局三档对所有 PR 一视同仁（无路径分层） | Owner 未选（Decision `8e767ed8`）：受保护层需要在任何档都不放松，一视同仁做不到 |
 | 保留现行合并位，只把 45 分钟改长 | 不解决轮询与守 CI 占用 Agent 会话的问题；定时器仍与 CI 实际时长无关 |
-| 认领与合并位只对受保护 PR 强制（`f303f861` 第 3 项原文） | 普通代码正是撞车发生的地方；取消串行化在 strict 下每次插队都白跑一轮自托管 CI。改为 `efficiency` 状态下可选 |
+| 认领与合并位只对受保护 PR 强制（`f303f861` 第 3 项原文） | `advise` 取消的是「未认领或过窄的 PR 不得合并」这道门，归属与按 Task 计量都靠它；取消串行化在 strict 下每次插队都白跑一轮自托管 CI。改为 `efficiency` 状态下可选 |
 
 ## 4. 后果
 
 **正面**：以后调规则是改配置 + 写 Decision，不改脚本、不发合同版本；受保护层的安全边界有代码与表驱动测试双重保证；Agent 不再为合并位轮询与守 CI；Owner 授权后不再关闭重开；CI 用量有数据可依。
 
-**负面与代价**：准入脚本一次较大的重构（常量 + 分支 → 读表），测试改为表驱动；新增 1–2 个迁移（位时效上报、队列）；执行器需要扩大 clued-admission App 权限（Owner 决定是否做）；文档层免合并位会让队列头偶尔白跑一轮；`frozen` 的「只有 Owner 合并」在 GitHub 侧不可强制，靠合规与 Decision 记录。
+**负面与代价**：准入脚本一次较大的重构（常量 + 分支 → 读表），测试改为表驱动；新增 1–2 个迁移（位时效上报、队列）；执行器需要扩大 clued-admission App 权限（Owner 决定是否做）；`efficiency` 下普通层与文档层缺认领的 PR 不计量、插队会让队列头白跑一轮；`frozen` 的「只有 Owner 合并」在 GitHub 侧不可强制，靠合规与 Decision 记录；两个 ENFORCE 变量删除前仍是受保护层之外的放宽开关。
 
 **对现有文档的影响**：WorkClaimAdmission v0.1 §4.4 合并位段落在实施后被 MergeAdmission §7 取代；合同 §1.7 合并位与重跑段落改写并缩短；CONTRIBUTING「Work claims」「Protected paths and Owner grants」按分层改写；`docs/maintenance/main-admission-self-test-deadlock.md` 不变。
 
