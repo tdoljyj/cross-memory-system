@@ -1,0 +1,130 @@
+{
+  "schema_version": "clued.model-dataset-split-definition-candidate/1",
+  "definition_id": "clued.model-program.DatasetSplit",
+  "version": "v0.1-candidate",
+  "status": "CANDIDATE_NOT_ADOPTED",
+  "authority_effect": "NONE",
+  "domain_owner": "MODEL PROGRAM",
+  "enum_effect": "LOCAL_CANDIDATE_ONLY_NOT_PUBLISHED_DOMAIN_ENUM",
+  "plan_source": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+    "size_bytes": 356825,
+    "ranges": [
+      {
+        "start_line": 2648,
+        "end_line": 2670,
+        "sha256": "1bb8b3885728fe974e9654e5f84a5319e837c94c7052dde2b197c50c47c667de"
+      },
+      {
+        "start_line": 2709,
+        "end_line": 2728,
+        "sha256": "f69a0d689ee33cefdebe6c9c3792f968943e36f5af6488747c293f9c7480c14e"
+      }
+    ]
+  },
+  "ownership_registry": {
+    "path": "development/contracts/model-program/m0/upstream/ObjectAuthorityRegistry_model_program_v1_20260918.json",
+    "sha256": "b89bb15a047cd59390428e86d33e8e2fc59d3a83954c68c2393d0e5b3dc4f3cc",
+    "size_bytes": 2412,
+    "revision_id": "CLUED-MODEL-OBJECT-AUTHORITY-v1-20260918"
+  },
+  "parent_boundaries": [
+    "TRAINING",
+    "DEVELOPMENT",
+    "QUALIFICATION",
+    "FINAL_HOLDOUT"
+  ],
+  "purposes": [
+    {
+      "purpose_id": "training",
+      "description": "训练",
+      "parent_boundary": "TRAINING",
+      "allowed_use_keys": [
+        "weight_learning"
+      ],
+      "final_holdout": false,
+      "selection_report_allowed": false,
+      "fixed_candidate_required": false
+    },
+    {
+      "purpose_id": "development",
+      "description": "开发",
+      "parent_boundary": "DEVELOPMENT",
+      "allowed_use_keys": [
+        "prompt_or_architecture_tuning",
+        "selection"
+      ],
+      "final_holdout": false,
+      "selection_report_allowed": true,
+      "fixed_candidate_required": false
+    },
+    {
+      "purpose_id": "calibration_fit",
+      "description": "校准拟合",
+      "parent_boundary": "DEVELOPMENT",
+      "allowed_use_keys": [
+        "calibration_fit"
+      ],
+      "final_holdout": false,
+      "selection_report_allowed": false,
+      "fixed_candidate_required": false
+    },
+    {
+      "purpose_id": "selection_policy_validation",
+      "description": "选型/策略验证",
+      "parent_boundary": "DEVELOPMENT",
+      "allowed_use_keys": [
+        "selection"
+      ],
+      "final_holdout": false,
+      "selection_report_allowed": true,
+      "fixed_candidate_required": false
+    },
+    {
+      "purpose_id": "qualification",
+      "description": "资格",
+      "parent_boundary": "QUALIFICATION",
+      "allowed_use_keys": [],
+      "final_holdout": false,
+      "selection_report_allowed": false,
+      "fixed_candidate_required": true
+    },
+    {
+      "purpose_id": "final_holdout",
+      "description": "最终 Holdout",
+      "parent_boundary": "FINAL_HOLDOUT",
+      "allowed_use_keys": [],
+      "final_holdout": true,
+      "selection_report_allowed": false,
+      "fixed_candidate_required": true
+    }
+  ],
+  "cross_fitting": "NOT_SUPPORTED",
+  "sample_and_group_isolation": "EVERY_PARTITION_INCLUDING_DEVELOPMENT_SUBPARTITIONS",
+  "evaluation_effect": "DECLARED_FIXED_CANDIDATE_BINDING_ONLY_NOT_ATTESTED",
+  "direction_acceptance": {
+    "scope": "FOUR_BOUNDARIES_AND_ISOLATED_DEVELOPMENT_DIRECTION_ONLY",
+    "canonical_record_id": "46d3e8e1-81f7-43af-aa46-11a37a1fd584",
+    "record_version": 1,
+    "record_content_sha256": "7d424041b4a2a3856d4f71a79e792db517ffed2b0f7d493c5d233d483a2a86e3",
+    "canonical_receipt_id": "fd2576dc-a0c2-4769-aab8-b8d88abd967a",
+    "quote_evidence_id": "900b52e3-ff19-46b9-a214-421b66a3b7a8",
+    "quote_sha256": "53cdbb01ccff8875b0b110d507c5316dd169724b3a284b2818086bcdc117f211",
+    "quote_size_bytes": 33,
+    "corresponding_proposal": {
+      "version": "v0.1",
+      "commit": "7cdda75aba54c01cbc68bf4a269f1620dc0b349e",
+      "path": "development/contracts/model-program/m2/DatasetSplitDomainDecision.candidate.md",
+      "sha256": "182767f2be090681420ab43f75639158420a2a42cecc8efedfcaad5ed6e85ef1",
+      "size_bytes": 6957,
+      "binding_effect": "CORRESPONDING_DIRECTION_NOT_WHOLE_DOCUMENT_ADOPTION"
+    },
+    "offline_reference_status": "RECORDED_REFERENCE_NOT_LIVE_RECHECKED"
+  },
+  "instance_schema": {
+    "path": "development/contracts/model-program/m2/schemas/DatasetSplit.candidate.schema.json",
+    "sha256": "f0359d6846fa6bff94994c145f7d7077132dc077054fe1b011edaf6c3789d95d",
+    "size_bytes": 5835
+  }
+}

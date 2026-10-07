@@ -1,0 +1,132 @@
+name: model-program-m2-scoped-consumer
+
+# Pure source-fixture consumer regression; Task 1502fd80.
+# No generator, live data, model backend, DomainReceipt, deployment or M1 rerun.
+on:
+  pull_request:
+    paths:
+      - "development/contracts/model-program/stage-admission/**"
+      - "scripts/model-program/**"
+      - "tests/test_model_program_m2_scoped_consumer.py"
+      - "tests/fixtures/model-stage-admission/pr441-e76a7/**"
+      - ".github/workflows/model-program-m2-scoped-consumer.yml"
+  push:
+    branches: [main]
+    paths:
+      - "development/contracts/model-program/stage-admission/**"
+      - "scripts/model-program/**"
+      - "tests/test_model_program_m2_scoped_consumer.py"
+      - "tests/fixtures/model-stage-admission/pr441-e76a7/**"
+      - ".github/workflows/model-program-m2-scoped-consumer.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Same current 412e admission pattern as clued-components.
+  # Base code reads the trusted pull_request_target result; no Clued token.
+  admission-gate:
+    name: admission-gate
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.19.0
+      - id: gate
+        env:
+          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
+  trusted-windows:
+    name: >-
+      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository &&
+              github.actor == github.repository_owner)))
+          && 'm2-scoped-consumer' || 'm2-scoped-consumer-self-hosted-skipped' }}
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'push' && github.actor == github.repository_owner) ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.actor == github.repository_owner))
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify standard Python 3.12
+        shell: powershell
+        run: |
+          python -c "import sys; assert sys.version_info[:2] == (3, 12), sys.version"
+          if ($LASTEXITCODE -ne 0) { throw "Python 3.12 is required" }
+      - name: Install fixed official validation wheels in temporary venv
+        shell: powershell
+        run: |
+          $m2VenvPath = Join-Path $env:RUNNER_TEMP ("clued-m2-scoped-" + $env:GITHUB_RUN_ID + "-" + $env:GITHUB_RUN_ATTEMPT)
+          python -m venv $m2VenvPath
+          if ($LASTEXITCODE -ne 0) { throw "M2 temporary venv creation failed" }
+          & "$m2VenvPath\Scripts\python.exe" -m pip --isolated install --disable-pip-version-check --require-hashes --only-binary=:all: --index-url https://pypi.org/simple -r development/contracts/model-program/stage-admission/m2-scoped-successor/requirements.ci.lock.txt
+          if ($LASTEXITCODE -ne 0) { throw "Fixed M2 dependency installation failed" }
+          "$m2VenvPath\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Validate four consumers using genuine libraries and frozen public fixtures
+        shell: powershell
+        run: |
+          python -m unittest tests.test_model_program_m2_scoped_consumer -v
+          if ($LASTEXITCODE -ne 0) { throw "M2 scoped source-fixture regression failed" }
+
+  untrusted-linux:
+    name: >-
+      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              (github.event.pull_request.head.repo.full_name != github.repository ||
+               github.actor != github.repository_owner))))
+          && 'm2-scoped-consumer' || 'm2-scoped-consumer-hosted-skipped' }}
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      ((github.event_name == 'push' && github.actor != github.repository_owner) ||
+       (github.event_name == 'pull_request' &&
+        (github.event.pull_request.head.repo.full_name != github.repository ||
+         github.actor != github.repository_owner)))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Install fixed official validation wheels in temporary venv
+        shell: bash
+        run: |
+          set -euo pipefail
+          m2_venv_path="$RUNNER_TEMP/clued-m2-scoped-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          python -m venv "$m2_venv_path"
+          "$m2_venv_path/bin/python" -m pip --isolated install --disable-pip-version-check --require-hashes --only-binary=:all: --index-url https://pypi.org/simple -r development/contracts/model-program/stage-admission/m2-scoped-successor/requirements.ci.lock.txt
+          echo "$m2_venv_path/bin" >> "$GITHUB_PATH"
+      - name: Validate four consumers using genuine libraries and frozen public fixtures
+        run: python -m unittest tests.test_model_program_m2_scoped_consumer -v

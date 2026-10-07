@@ -1,0 +1,396 @@
+{
+  "registry": {
+    "schema_version": "clued.model-m2-source-registry-candidate/1",
+    "status": "SYNTHETIC_OFFLINE_CANDIDATE",
+    "authority_effect": "NONE",
+    "sources": [
+      {
+        "source_id": "synthetic-source-001",
+        "source_revision": "fixture-rev-1",
+        "source_class": "C",
+        "origin": "SELF_CONTAINED_SYNTHETIC_FIXTURE",
+        "license_ref": "tests/fixtures/model-program-m2/synthetic-foundation.json",
+        "license_review": "SYNTHETIC_TEST_ONLY",
+        "withdrawn": false,
+        "contains_secrets": false,
+        "contains_personal_data": false,
+        "synthetic_inputs": {
+          "input-0": "Synthetic arithmetic fixture 0: 0 plus 10 is 10.",
+          "input-1": "Synthetic arithmetic fixture 1: 1 plus 10 is 11.",
+          "input-2": "Synthetic arithmetic fixture 2: 2 plus 10 is 12.",
+          "input-3": "Synthetic arithmetic fixture 3: 3 plus 10 is 13.",
+          "input-4": "Synthetic arithmetic fixture 4: 4 plus 10 is 14.",
+          "input-5": "Synthetic arithmetic fixture 5: 5 plus 10 is 15."
+        },
+        "raw_snapshot_sha256": "57f90cd0d38024796430e7e60f801357711d3a29bab22c7ca62ddd0c29f5108f",
+        "generator_revision": "deterministic-handwritten-fixture-v1",
+        "template_sha256": "ed438ccff5d1a68c1998cc53ae25e235bf431bfddab2fb87e156a6821014bbb7",
+        "parameters_sha256": "3c3c083038860b0b2bfd58ad8119ea2b3c63720cbd454d8ecd1ac866953fdd8c",
+        "filter_revision": "not-a-real-scrubber-test-marker-v1",
+        "erasure_propagation_ref": "not-implemented-test-marker"
+      }
+    ]
+  },
+  "manifest": {
+    "schema_version": "clued.model-m2-manifest-candidate/1",
+    "status": "SYNTHETIC_OFFLINE_CANDIDATE",
+    "authority_effect": "NONE",
+    "dataset_id": "synthetic-fixture-001",
+    "dataset_revision": "fixture-rev-1",
+    "registry_sha256": "b49a2c873154283a826eebd06a50b9f31fe4a0b9bc6e0520bfcc76e5665973d8",
+    "dataset_split_authority_mapping": "UNRESOLVED",
+    "splits": [
+      {
+        "split_id": "fixture-partition-0",
+        "dataset_split_ref": null,
+        "domain_mapping_status": "UNRESOLVED",
+        "purpose_description": "训练",
+        "experiment_scope": "fixture-scope-0",
+        "allowed_consumers": [
+          "synthetic_metadata_checker"
+        ],
+        "allowed_uses": {
+          "weight_learning": true,
+          "prompt_or_architecture_tuning": false,
+          "calibration_fit": false,
+          "selection": false
+        },
+        "final_holdout": false,
+        "exposure_records": [],
+        "sample_ids": [
+          "fixture-sample-0"
+        ],
+        "schema_version": "clued.model-dataset-split-candidate/1",
+        "candidate_definition_ref": {
+          "definition_id": "clued.model-program.DatasetSplit",
+          "version": "v0.1-candidate",
+          "sha256": "2c8e0196c4338cf9d0c6758eb78c8d57a05a2363aacb694f1c305c602b1288ba"
+        },
+        "split_revision": "synthetic-split-v1",
+        "parent_boundary": "TRAINING",
+        "purpose_id": "training",
+        "fixed_candidate_binding": null,
+        "erasure_propagation_ref": "not-implemented-test-marker"
+      },
+      {
+        "split_id": "fixture-partition-1",
+        "dataset_split_ref": null,
+        "domain_mapping_status": "UNRESOLVED",
+        "purpose_description": "开发",
+        "experiment_scope": "fixture-scope-1",
+        "allowed_consumers": [
+          "synthetic_metadata_checker"
+        ],
+        "allowed_uses": {
+          "weight_learning": false,
+          "prompt_or_architecture_tuning": true,
+          "calibration_fit": false,
+          "selection": true
+        },
+        "final_holdout": false,
+        "exposure_records": [],
+        "sample_ids": [
+          "fixture-sample-1"
+        ],
+        "schema_version": "clued.model-dataset-split-candidate/1",
+        "candidate_definition_ref": {
+          "definition_id": "clued.model-program.DatasetSplit",
+          "version": "v0.1-candidate",
+          "sha256": "2c8e0196c4338cf9d0c6758eb78c8d57a05a2363aacb694f1c305c602b1288ba"
+        },
+        "split_revision": "synthetic-split-v1",
+        "parent_boundary": "DEVELOPMENT",
+        "purpose_id": "development",
+        "fixed_candidate_binding": null,
+        "erasure_propagation_ref": "not-implemented-test-marker"
+      },
+      {
+        "split_id": "fixture-partition-2",
+        "dataset_split_ref": null,
+        "domain_mapping_status": "UNRESOLVED",
+        "purpose_description": "校准拟合",
+        "experiment_scope": "fixture-scope-2",
+        "allowed_consumers": [
+          "synthetic_metadata_checker"
+        ],
+        "allowed_uses": {
+          "weight_learning": false,
+          "prompt_or_architecture_tuning": false,
+          "calibration_fit": true,
+          "selection": false
+        },
+        "final_holdout": false,
+        "exposure_records": [],
+        "sample_ids": [
+          "fixture-sample-2"
+        ],
+        "schema_version": "clued.model-dataset-split-candidate/1",
+        "candidate_definition_ref": {
+          "definition_id": "clued.model-program.DatasetSplit",
+          "version": "v0.1-candidate",
+          "sha256": "2c8e0196c4338cf9d0c6758eb78c8d57a05a2363aacb694f1c305c602b1288ba"
+        },
+        "split_revision": "synthetic-split-v1",
+        "parent_boundary": "DEVELOPMENT",
+        "purpose_id": "calibration_fit",
+        "fixed_candidate_binding": null,
+        "erasure_propagation_ref": "not-implemented-test-marker"
+      },
+      {
+        "split_id": "fixture-partition-3",
+        "dataset_split_ref": null,
+        "domain_mapping_status": "UNRESOLVED",
+        "purpose_description": "选型/策略验证",
+        "experiment_scope": "fixture-scope-3",
+        "allowed_consumers": [
+          "synthetic_metadata_checker"
+        ],
+        "allowed_uses": {
+          "weight_learning": false,
+          "prompt_or_architecture_tuning": false,
+          "calibration_fit": false,
+          "selection": true
+        },
+        "final_holdout": false,
+        "exposure_records": [],
+        "sample_ids": [
+          "fixture-sample-3"
+        ],
+        "schema_version": "clued.model-dataset-split-candidate/1",
+        "candidate_definition_ref": {
+          "definition_id": "clued.model-program.DatasetSplit",
+          "version": "v0.1-candidate",
+          "sha256": "2c8e0196c4338cf9d0c6758eb78c8d57a05a2363aacb694f1c305c602b1288ba"
+        },
+        "split_revision": "synthetic-split-v1",
+        "parent_boundary": "DEVELOPMENT",
+        "purpose_id": "selection_policy_validation",
+        "fixed_candidate_binding": null,
+        "erasure_propagation_ref": "not-implemented-test-marker"
+      },
+      {
+        "split_id": "fixture-partition-4",
+        "dataset_split_ref": null,
+        "domain_mapping_status": "UNRESOLVED",
+        "purpose_description": "资格",
+        "experiment_scope": "fixture-scope-4",
+        "allowed_consumers": [
+          "synthetic_qualification_verifier"
+        ],
+        "allowed_uses": {
+          "weight_learning": false,
+          "prompt_or_architecture_tuning": false,
+          "calibration_fit": false,
+          "selection": false
+        },
+        "final_holdout": false,
+        "exposure_records": [],
+        "sample_ids": [
+          "fixture-sample-4"
+        ],
+        "schema_version": "clued.model-dataset-split-candidate/1",
+        "candidate_definition_ref": {
+          "definition_id": "clued.model-program.DatasetSplit",
+          "version": "v0.1-candidate",
+          "sha256": "2c8e0196c4338cf9d0c6758eb78c8d57a05a2363aacb694f1c305c602b1288ba"
+        },
+        "split_revision": "synthetic-split-v1",
+        "parent_boundary": "QUALIFICATION",
+        "purpose_id": "qualification",
+        "fixed_candidate_binding": {
+          "candidate_revision_sha256": "04544d64187b83e1457dc9a8504cddd38dac31a92ce5661049f26a6c8ac8dda3",
+          "calibrator_revision": "synthetic-fixed-calibrator-revision-v1",
+          "threshold_policy_revision": "synthetic-fixed-threshold-policy-revision-v1",
+          "workflow_revision": "synthetic-fixed-workflow-revision-v1",
+          "scorer_revision": "synthetic-fixed-scorer-revision-v1",
+          "prompt_revision": "synthetic-fixed-prompt-revision-v1",
+          "schema_revision": "synthetic-fixed-schema-revision-v1"
+        },
+        "erasure_propagation_ref": "not-implemented-test-marker"
+      },
+      {
+        "split_id": "fixture-partition-5",
+        "dataset_split_ref": null,
+        "domain_mapping_status": "UNRESOLVED",
+        "purpose_description": "最终 Holdout",
+        "experiment_scope": "fixture-scope-5",
+        "allowed_consumers": [
+          "synthetic_final_verifier"
+        ],
+        "allowed_uses": {
+          "weight_learning": false,
+          "prompt_or_architecture_tuning": false,
+          "calibration_fit": false,
+          "selection": false
+        },
+        "final_holdout": true,
+        "exposure_records": [],
+        "sample_ids": [
+          "fixture-sample-5"
+        ],
+        "schema_version": "clued.model-dataset-split-candidate/1",
+        "candidate_definition_ref": {
+          "definition_id": "clued.model-program.DatasetSplit",
+          "version": "v0.1-candidate",
+          "sha256": "2c8e0196c4338cf9d0c6758eb78c8d57a05a2363aacb694f1c305c602b1288ba"
+        },
+        "split_revision": "synthetic-split-v1",
+        "parent_boundary": "FINAL_HOLDOUT",
+        "purpose_id": "final_holdout",
+        "fixed_candidate_binding": {
+          "candidate_revision_sha256": "04544d64187b83e1457dc9a8504cddd38dac31a92ce5661049f26a6c8ac8dda3",
+          "calibrator_revision": "synthetic-fixed-calibrator-revision-v1",
+          "threshold_policy_revision": "synthetic-fixed-threshold-policy-revision-v1",
+          "workflow_revision": "synthetic-fixed-workflow-revision-v1",
+          "scorer_revision": "synthetic-fixed-scorer-revision-v1",
+          "prompt_revision": "synthetic-fixed-prompt-revision-v1",
+          "schema_revision": "synthetic-fixed-schema-revision-v1"
+        },
+        "erasure_propagation_ref": "not-implemented-test-marker"
+      }
+    ],
+    "samples": [
+      {
+        "sample_id": "fixture-sample-0",
+        "source_id": "synthetic-source-001",
+        "source_revision": "fixture-rev-1",
+        "raw_snapshot_sha256": "57f90cd0d38024796430e7e60f801357711d3a29bab22c7ca62ddd0c29f5108f",
+        "input_key": "input-0",
+        "content_sha256": "50a8c588bab056864500275ab441dfa983e087e9ed28bea7a0976fe863250c09",
+        "split_id": "fixture-partition-0",
+        "origin_kind": "NOVEL_SYNTHETIC_TEST_CASE",
+        "isolation_groups": {
+          "source_session": "fixture-source_session-0",
+          "source_project": "fixture-source_project-0",
+          "semantic_near_duplicate_cluster": "fixture-semantic_near_duplicate_cluster-0"
+        },
+        "parent_sample_ids": [],
+        "exposure_records": [],
+        "parse_revision": "fixture-identity-parser-v1",
+        "scrub_revision": "test-marker-no-real-scrub",
+        "dedup_revision": "exact-json-sha256-v1",
+        "near_duplicate_detector_revision": "declared-clusters-only-no-detector"
+      },
+      {
+        "sample_id": "fixture-sample-1",
+        "source_id": "synthetic-source-001",
+        "source_revision": "fixture-rev-1",
+        "raw_snapshot_sha256": "57f90cd0d38024796430e7e60f801357711d3a29bab22c7ca62ddd0c29f5108f",
+        "input_key": "input-1",
+        "content_sha256": "20412f314d4c2df9a038a0b41ab37403a476d7a9c9a9a3d17c88dd205c2f70b2",
+        "split_id": "fixture-partition-1",
+        "origin_kind": "NOVEL_SYNTHETIC_TEST_CASE",
+        "isolation_groups": {
+          "source_session": "fixture-source_session-1",
+          "source_project": "fixture-source_project-1",
+          "semantic_near_duplicate_cluster": "fixture-semantic_near_duplicate_cluster-1"
+        },
+        "parent_sample_ids": [],
+        "exposure_records": [],
+        "parse_revision": "fixture-identity-parser-v1",
+        "scrub_revision": "test-marker-no-real-scrub",
+        "dedup_revision": "exact-json-sha256-v1",
+        "near_duplicate_detector_revision": "declared-clusters-only-no-detector"
+      },
+      {
+        "sample_id": "fixture-sample-2",
+        "source_id": "synthetic-source-001",
+        "source_revision": "fixture-rev-1",
+        "raw_snapshot_sha256": "57f90cd0d38024796430e7e60f801357711d3a29bab22c7ca62ddd0c29f5108f",
+        "input_key": "input-2",
+        "content_sha256": "748433920f2e45825623a7deabf1ffb08cff419af7f3de979a25949e542531e8",
+        "split_id": "fixture-partition-2",
+        "origin_kind": "NOVEL_SYNTHETIC_TEST_CASE",
+        "isolation_groups": {
+          "source_session": "fixture-source_session-2",
+          "source_project": "fixture-source_project-2",
+          "semantic_near_duplicate_cluster": "fixture-semantic_near_duplicate_cluster-2"
+        },
+        "parent_sample_ids": [],
+        "exposure_records": [],
+        "parse_revision": "fixture-identity-parser-v1",
+        "scrub_revision": "test-marker-no-real-scrub",
+        "dedup_revision": "exact-json-sha256-v1",
+        "near_duplicate_detector_revision": "declared-clusters-only-no-detector"
+      },
+      {
+        "sample_id": "fixture-sample-3",
+        "source_id": "synthetic-source-001",
+        "source_revision": "fixture-rev-1",
+        "raw_snapshot_sha256": "57f90cd0d38024796430e7e60f801357711d3a29bab22c7ca62ddd0c29f5108f",
+        "input_key": "input-3",
+        "content_sha256": "af95fe63bc74c0c8de3a36fff390c8abceabd2bb97539b72d4dac502f78e3923",
+        "split_id": "fixture-partition-3",
+        "origin_kind": "NOVEL_SYNTHETIC_TEST_CASE",
+        "isolation_groups": {
+          "source_session": "fixture-source_session-3",
+          "source_project": "fixture-source_project-3",
+          "semantic_near_duplicate_cluster": "fixture-semantic_near_duplicate_cluster-3"
+        },
+        "parent_sample_ids": [],
+        "exposure_records": [],
+        "parse_revision": "fixture-identity-parser-v1",
+        "scrub_revision": "test-marker-no-real-scrub",
+        "dedup_revision": "exact-json-sha256-v1",
+        "near_duplicate_detector_revision": "declared-clusters-only-no-detector"
+      },
+      {
+        "sample_id": "fixture-sample-4",
+        "source_id": "synthetic-source-001",
+        "source_revision": "fixture-rev-1",
+        "raw_snapshot_sha256": "57f90cd0d38024796430e7e60f801357711d3a29bab22c7ca62ddd0c29f5108f",
+        "input_key": "input-4",
+        "content_sha256": "7606a019b90e4d023c552c0ada5e2617b0b374b055271c7eb6020529585fcc5f",
+        "split_id": "fixture-partition-4",
+        "origin_kind": "NOVEL_SYNTHETIC_TEST_CASE",
+        "isolation_groups": {
+          "source_session": "fixture-source_session-4",
+          "source_project": "fixture-source_project-4",
+          "semantic_near_duplicate_cluster": "fixture-semantic_near_duplicate_cluster-4"
+        },
+        "parent_sample_ids": [],
+        "exposure_records": [],
+        "parse_revision": "fixture-identity-parser-v1",
+        "scrub_revision": "test-marker-no-real-scrub",
+        "dedup_revision": "exact-json-sha256-v1",
+        "near_duplicate_detector_revision": "declared-clusters-only-no-detector"
+      },
+      {
+        "sample_id": "fixture-sample-5",
+        "source_id": "synthetic-source-001",
+        "source_revision": "fixture-rev-1",
+        "raw_snapshot_sha256": "57f90cd0d38024796430e7e60f801357711d3a29bab22c7ca62ddd0c29f5108f",
+        "input_key": "input-5",
+        "content_sha256": "ce031f1a7192b9004b18464eb6230a48089d0397501674830a351f7e8174255b",
+        "split_id": "fixture-partition-5",
+        "origin_kind": "NOVEL_SYNTHETIC_TEST_CASE",
+        "isolation_groups": {
+          "source_session": "fixture-source_session-5",
+          "source_project": "fixture-source_project-5",
+          "semantic_near_duplicate_cluster": "fixture-semantic_near_duplicate_cluster-5"
+        },
+        "parent_sample_ids": [],
+        "exposure_records": [],
+        "parse_revision": "fixture-identity-parser-v1",
+        "scrub_revision": "test-marker-no-real-scrub",
+        "dedup_revision": "exact-json-sha256-v1",
+        "near_duplicate_detector_revision": "declared-clusters-only-no-detector"
+      }
+    ],
+    "manifest_revision_sha256": "e5d1e93158d5efb4191bd8e3c8ee278fec86af29d25cb1f46753eb74bd922774",
+    "candidate_domain_reference_sha256": "f6367aaa8dac9a7c32245bb9a249cf68fcd10c5d37e3f98bf0b1862587eb4c03"
+  },
+  "selection_reports": [
+    {
+      "schema_version": "clued.model-m2-selection-input-candidate/1",
+      "manifest_revision_sha256": "e5d1e93158d5efb4191bd8e3c8ee278fec86af29d25cb1f46753eb74bd922774",
+      "split_id": "fixture-partition-3",
+      "purpose_description": "选型/策略验证",
+      "experiment_scope": "fixture-scope-3",
+      "consumer_id": "synthetic_metadata_checker",
+      "saved_output_sha256": "4420bd3f975063e3c133eaab3ff4dac849ec39ed3c77aa116882f380f4d7a18c",
+      "scorer_revision": "synthetic-only-scorer-v1",
+      "normalized_score_sha256": "9b9b3a1471309177261cfe65ea9c298e0dd372e4b5d087f8d35d7b732485373d"
+    }
+  ]
+}

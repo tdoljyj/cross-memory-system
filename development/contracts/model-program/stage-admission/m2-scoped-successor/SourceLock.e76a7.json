@@ -1,0 +1,167 @@
+{
+  "authority_effect": "NONE",
+  "commit": "e76a7db7edc6b47b5a719e165f688621efa9580a",
+  "files": [
+    {
+      "bytes": 1352,
+      "git_blob_sha1": "63603b24f6c4159212648b528556b4eb33d304eb",
+      "path": "development/contracts/model-program/m0/ModelProgramCharter.json",
+      "sha256": "bc8e58a3d0ef4ce04c362ecd6209dd7ff0a8c98b9b6e261a35124e6ead673147"
+    },
+    {
+      "bytes": 2412,
+      "git_blob_sha1": "e88ed6b8d11137b893dd4552358df78b2d4e7fb6",
+      "path": "development/contracts/model-program/m0/upstream/ObjectAuthorityRegistry_model_program_v1_20260918.json",
+      "sha256": "b89bb15a047cd59390428e86d33e8e2fc59d3a83954c68c2393d0e5b3dc4f3cc"
+    },
+    {
+      "bytes": 4481,
+      "git_blob_sha1": "5771093f2546023fa46ea1efc4baceb23d0382dc",
+      "path": "development/contracts/model-program/m2/DatasetSplitDefinition.candidate.json",
+      "sha256": "2c8e0196c4338cf9d0c6758eb78c8d57a05a2363aacb694f1c305c602b1288ba"
+    },
+    {
+      "bytes": 5566,
+      "git_blob_sha1": "6d94a1e877a93d49cb1b315bf07ad61f0b910e91",
+      "path": "development/contracts/model-program/m2/DatasetSplitDefinition.v0.1.json",
+      "sha256": "f51cefe8eccd0faa75b45e78380e5b389ed266ca4034b511a85f51771f2d4f77"
+    },
+    {
+      "bytes": 6957,
+      "git_blob_sha1": "45c1444ccbb5530661bbd4e652a4d561c6227264",
+      "path": "development/contracts/model-program/m2/DatasetSplitDomainDecision.candidate.md",
+      "sha256": "182767f2be090681420ab43f75639158420a2a42cecc8efedfcaad5ed6e85ef1"
+    },
+    {
+      "bytes": 4649,
+      "git_blob_sha1": "3bac4d758f14f6fc7ea196a4ca48ff9b6a53f33b",
+      "path": "development/contracts/model-program/m2/DatasetSplitDomainRecognition.candidate.json",
+      "sha256": "d8599ca8148f63a7893133ad3b13426edab25f3f48bc5291b1fb7c038a04754f"
+    },
+    {
+      "bytes": 1910,
+      "git_blob_sha1": "09d9fc44a88f396da1f391b99e794ce24be3b9c4",
+      "path": "development/contracts/model-program/m2/DatasetSplitDomainReference.candidate.json",
+      "sha256": "f6367aaa8dac9a7c32245bb9a249cf68fcd10c5d37e3f98bf0b1862587eb4c03"
+    },
+    {
+      "bytes": 1782,
+      "git_blob_sha1": "1995c0f41b2faa6e9586118219db89ee963455b3",
+      "path": "development/contracts/model-program/m2/DatasetSplitDomainServerPreparation.candidate.json",
+      "sha256": "dbdc230a9926a69175f02c535f38757f446cebcda11dec4f293f55a2c3cefd6f"
+    },
+    {
+      "bytes": 3041,
+      "git_blob_sha1": "8d0c41a42638979c8e24d4f62923dfb5de7afd83",
+      "path": "development/contracts/model-program/m2/DatasetSplitMapping.candidate.json",
+      "sha256": "071afb3bdfe4a0982ce1da71fde048e9e42631c278866030c6b661fd3130efd1"
+    },
+    {
+      "bytes": 2155,
+      "git_blob_sha1": "d306c532c5d15d70c81530601917fddb2355b276",
+      "path": "development/contracts/model-program/m2/DatasetSplitOwnerAdoption.v0.1.json",
+      "sha256": "d60a2b463e9a6a53a9d3a82032acd3b31c2fd5f78df96ee7043ef1af489baa45"
+    },
+    {
+      "bytes": 3558,
+      "git_blob_sha1": "92e2b0ffb51c05d22f00cd41b642919ff05003d5",
+      "path": "development/contracts/model-program/m2/schemas/DataSourceLicenseRegistry.schema.json",
+      "sha256": "b4fa9edb670865d281469d6bf367f1ff21477995aa697fcd51dca410a5400e18"
+    },
+    {
+      "bytes": 6350,
+      "git_blob_sha1": "058391895e6cdd33019bd9f9935b11056f10b208",
+      "path": "development/contracts/model-program/m2/schemas/DatasetManifest.owner-adopted.schema.json",
+      "sha256": "7352272c3d066bae22c9868ac41a043de6f9f877107c3fae798b36e8832b2d5b"
+    },
+    {
+      "bytes": 6161,
+      "git_blob_sha1": "013115136e9977116d7d1ccec5e9e12e6e6ae892",
+      "path": "development/contracts/model-program/m2/schemas/DatasetManifest.schema.json",
+      "sha256": "c44a7514cea934583c24381b8e6655dbd49b95efed1fa3a94d68edb190de03ab"
+    },
+    {
+      "bytes": 5835,
+      "git_blob_sha1": "ac3d59630c376f04e7a5aacafdd6d556afedb947",
+      "path": "development/contracts/model-program/m2/schemas/DatasetSplit.candidate.schema.json",
+      "sha256": "f0359d6846fa6bff94994c145f7d7077132dc077054fe1b011edaf6c3789d95d"
+    },
+    {
+      "bytes": 6268,
+      "git_blob_sha1": "cf33aab50cc8cac83411e74fd133bf322378ba69",
+      "path": "development/contracts/model-program/m2/schemas/DatasetSplit.v0.1.schema.json",
+      "sha256": "062860afd3dc16fa9ee1de27582439701a67b7c5976ad45981a7cca3e515468f"
+    },
+    {
+      "bytes": 1593,
+      "git_blob_sha1": "0615cb9ef9a08a5689fbd6b9e7f0f0aeee0432a8",
+      "path": "development/contracts/model-program/m2/schemas/DatasetSplitDomainRecognitionRequest.schema.json",
+      "sha256": "a352bb5679dbecd81234e973ff705e23cf53c6f9c78708e0d04efea32c0bada9"
+    },
+    {
+      "bytes": 1355,
+      "git_blob_sha1": "49b73d86f45847b0acf43b2a1a67d77eb8215956",
+      "path": "development/contracts/model-program/m2/schemas/SelectionInput.schema.json",
+      "sha256": "f733cb1e6f470a1d2d222d51e90cc51b786d5f4c01ec7c9530f3fef9f7f9c76e"
+    },
+    {
+      "bytes": 8308,
+      "git_blob_sha1": "6d64c8c143332dcfdb2e4b94f256ff6f6fcd11d3",
+      "path": "scripts/model-program/validate_m2_adopted_definition.py",
+      "sha256": "7b42782161fac04a02cea3e5abcac580dbc66856175c7dc3086dc89fe0fe38b5"
+    },
+    {
+      "bytes": 11230,
+      "git_blob_sha1": "4e66eaa296b6b7333340a08569fdd0251922283b",
+      "path": "scripts/model-program/validate_m2_dataset_foundation.py",
+      "sha256": "4851363816c650c83bfd7be00d16e4a61b4d59d816d585b10c3a6f7580fe8d77"
+    },
+    {
+      "bytes": 6784,
+      "git_blob_sha1": "6d126c4652927cfe9ab07c77401c543fa23d59b9",
+      "path": "scripts/model-program/validate_m2_dataset_split.py",
+      "sha256": "c80614e2832e665cd3c1a706bd8c59a54a2bf0d14c5637ecfb51347f3263f4e2"
+    },
+    {
+      "bytes": 14183,
+      "git_blob_sha1": "e00637652e965969d6716282f3937b06008e4640",
+      "path": "scripts/model-program/validate_m2_domain_recognition.py",
+      "sha256": "32fa40c666074a94d4d2ccb1e0682a1993512c31422724f4f7148b1bdc11b55b"
+    },
+    {
+      "bytes": 6487,
+      "git_blob_sha1": "afe8adc696191244933f1a80978db39252f085df",
+      "path": "scripts/model-program/validate_m2_domain_service.py",
+      "sha256": "7d0ccbf528499b82c1844de76b5f49d77effd34c3bf995cd8d882cacea0f282f"
+    },
+    {
+      "bytes": 26234,
+      "git_blob_sha1": "2dad334636ae42baee8071f892df00086e74edba",
+      "path": "scripts/model-program/validate_m2_offline_pipeline.py",
+      "sha256": "e0f3aa520b7b686be35ebc12a4146257f478298f3ddcbf14768d781dfd9b0bd9"
+    },
+    {
+      "bytes": 5132,
+      "git_blob_sha1": "d1e1c5b6b4594b26f7f4c91286dd22c171f898de",
+      "path": "scripts/model-program/validate_m2_split_mapping.py",
+      "sha256": "14cd0861b675c3d3a24d93fdb7437ce623f29e440cd6070485934c7a1c8970fb"
+    },
+    {
+      "bytes": 18560,
+      "git_blob_sha1": "a74b0841123a214d23affe6c1ca756a1ccc83849",
+      "path": "tests/fixtures/model-program-m2/owner-adopted-foundation.json",
+      "sha256": "494533c6506df06cbd347a095ccc886b032eea56839df7881c754f70c458d8fb"
+    },
+    {
+      "bytes": 17106,
+      "git_blob_sha1": "c72e0daa8ac4e0016dabadfb06edc59b25009829",
+      "path": "tests/fixtures/model-program-m2/synthetic-foundation.json",
+      "sha256": "dcf5e537bcab8f594a7d57988ebf771c4d7bf861ce8c176e57162034b092a20e"
+    }
+  ],
+  "memory_paths_read": false,
+  "model_or_generation_calls": 0,
+  "repository": "tdoljyj/cross-memory-system",
+  "schema": "clued.m2-frozen-source-closure/1",
+  "source_role": "SourceCopiedRead"
+}

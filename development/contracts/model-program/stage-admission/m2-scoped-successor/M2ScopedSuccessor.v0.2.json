@@ -1,0 +1,18 @@
+{
+  "schema": "clued.model-m2-scoped-successor-contract/1",
+  "version": "v0.2",
+  "status": "ENGINEERING_CONSUMER_NOT_FORMAL_ACCEPTANCE",
+  "owner_rule": {"decision_id": "07696647-1557-4b0d-9eed-c1f698f4b011", "version": 1, "receipt_id": "7313df9c-b97f-4d90-beb6-f43d32cf469c"},
+  "consumers": ["split_mapping", "dataset_split", "dataset_foundation", "adopted_definition"],
+  "envelope_schema": "clued.model-m2-scoped-consumer-envelope/1",
+  "source_lock_sha256": "8780055e39f00ba8308d4ecdc00f5523186d0803e466baf371105cb1c863f472",
+  "preparation_contract_sha256": "636c7add97638235859163ff880339ed9090a7b8211628ea5ad18cc970d19291",
+  "preparer_sha256": "42b8be9f088592d1042801ffc667f1a10a09d70d6f15dbb14b1071d3ace2b7f6",
+  "fixture_root": "tests/fixtures/model-stage-admission/pr441-e76a7",
+  "jsonschema_version": "4.25.1",
+  "authority_effect": "NONE",
+  "live_backend_configured": false,
+  "domain_authority_receipt": "NOT_ISSUED",
+  "m2_verdict": "NOT_ISSUED",
+  "m3_verdict": "NOT_ISSUED"
+}

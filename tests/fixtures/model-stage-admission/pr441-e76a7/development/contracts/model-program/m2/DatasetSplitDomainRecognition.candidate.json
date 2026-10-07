@@ -1,0 +1,98 @@
+{
+  "schema_version": "clued.model-dataset-split-domain-recognition-contract-candidate/1",
+  "contract_id": "clued.model-program.DatasetSplitDomainRecognition",
+  "version": "v0.1-candidate",
+  "status": "NON_PRODUCTION_CANDIDATE_NOT_DOMAIN_AUTHORITY",
+  "effect": "NON_PRODUCTION_DEFINITION_RECOGNITION_ONLY",
+  "authority_effect": "NONE",
+  "subject": {
+    "definition_id": "clued.model-program.DatasetSplit",
+    "version": "v0.1",
+    "definition_sha256": "f51cefe8eccd0faa75b45e78380e5b389ed266ca4034b511a85f51771f2d4f77",
+    "instance_schema_sha256": "062860afd3dc16fa9ee1de27582439701a67b7c5976ad45981a7cca3e515468f"
+  },
+  "owner_adoption": {
+    "canonical_record_id": "b8c1d482-9eb4-4bc5-8dd1-372b0d55174e",
+    "record_version": 1,
+    "canonical_scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "record_content_sha256": "b58db4fe2cc81c123f078aeff789fcc9fe971902321ffd36a9e3ebaa1af477eb",
+    "canonical_receipt_id": "45a657d9-ba34-437e-b17c-2d792ce5c692",
+    "quote_evidence_id": "1257e89f-d6b6-4015-8712-0bab340cc1b4",
+    "quote_sha256": "905819e2e3a059a02087855e9f326d05c877c1767ec31dc012c5c44652840230",
+    "quote_size_bytes": 6,
+    "effect": "OWNER_BASELINE_ADOPTION_ONLY"
+  },
+  "engineering_permission": {
+    "canonical_decision_id": "3b5aa945-8177-4a05-944d-f797a90b41b6",
+    "record_version": 1,
+    "canonical_receipt_id": "c6999e04-51e6-4fe9-b021-1a704d5c89ec",
+    "quote_evidence_id": "95a52322-e7eb-4a5f-a7df-2680868230dd",
+    "effect": "NON_PRODUCTION_CONTRACT_ADAPTER_AND_SYNTHETIC_TESTS_ONLY",
+    "domain_permission_granted": false
+  },
+  "producer_requirement": {
+    "service": "clued-cloud/supabase",
+    "transport": "clued_record_mutate",
+    "receipt_operation_family": "record_mutation",
+    "identity": "AUTHENTICATED_SERVICE_SUBJECT_AND_BINDING",
+    "domain_role": "EXISTING_MODEL_DOMAIN_AUTHORITY_DELEGATE",
+    "domain_owner": "MODEL PROGRAM",
+    "registered_producer_ref": null,
+    "domain_permission_record_ref": null,
+    "live_backend": "NOT_CONFIGURED"
+  },
+  "permission_requirement": {
+    "canonical_scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "environment": "NON_PRODUCTION",
+    "action": "DatasetSplit.definition.recognize",
+    "max_permission_window_seconds": 3600,
+    "basis": "SEPARATE_CURRENT_USER_EXPLICIT_DOMAIN_PERMISSION_AND_PRODUCER_REGISTRATION",
+    "binds": ["service subject", "client Binding", "producer registration version/hash", "exact definition/schema", "scope", "environment", "action", "effect", "validity window", "revocation"],
+    "generic_context_write_is_sufficient": false,
+    "baseline_adoption_is_sufficient": false,
+    "engineering_approval_is_sufficient": false
+  },
+  "receipt_binding_requirement": {
+    "record_type": "state",
+    "state_kind": "model_dataset_split_domain_recognition",
+    "record_authority": "observed",
+    "typed_field": "domain_recognition",
+    "receipt_status": "committed",
+    "receipt_target": "EXACT_CURRENT_RECORD_ID_AND_VERSION",
+    "event_binding": "SAME_RECEIPT_TARGET_ACTOR_SCOPE_CANONICAL_VERSION_AND_SUCCESS",
+    "record_digest": "SERVER_CANONICAL_CONTENT_HASH_NOT_LOCAL_RECEIPT_DIGEST",
+    "max_read_age_seconds": 300,
+    "write_order": "EXISTING_M1_CANONICAL_RECORD_EVENT_RECEIPT_SAME_TRANSACTION"
+  },
+  "request_schema": {
+    "path": "development/contracts/model-program/m2/schemas/DatasetSplitDomainRecognitionRequest.schema.json",
+    "size_bytes": 1593,
+    "sha256": "a352bb5679dbecd81234e973ff705e23cf53c6f9c78708e0d04efea32c0bada9"
+  },
+  "authority_registry_sha256": "b89bb15a047cd59390428e86d33e8e2fc59d3a83954c68c2393d0e5b3dc4f3cc",
+  "existing_core_sources": [
+    {
+      "path": "development/contracts/model-program/m0/upstream/ObjectAuthorityRegistry_model_program_v1_20260918.json",
+      "size_bytes": 2412,
+      "sha256": "b89bb15a047cd59390428e86d33e8e2fc59d3a83954c68c2393d0e5b3dc4f3cc"
+    },
+    {
+      "path": "apps/clued-cloud/worker/records.ts",
+      "size_bytes": 15895,
+      "sha256": "8d2d3217af7ad5ec37c0f402f0fe3e3d6f5eb94edb2feb79e209ea7c67375104"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "size_bytes": 72625,
+      "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2"
+    }
+  ],
+  "implementation_mode": "SYNTHETIC_TEST_DOUBLE_ONLY_READ_ONLY",
+  "second_canonical_store": false,
+  "second_gate_engine": false,
+  "domain_authority_receipt_ref": null,
+  "m2_verdict": "NOT_ISSUED",
+  "training_or_data_use_authorized": false,
+  "production_enabled": false,
+  "m2_00_scope": "DOES_NOT_CLOSE_ORIGINAL_PARENT_PACKAGE_AND_DOMAIN_AUTHORITY_GATE"
+}

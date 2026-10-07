@@ -1,0 +1,47 @@
+{
+  "schema_version": "clued.model-program-charter/1",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M0",
+  "status": "NON_PRODUCTION_FOUNDATION_CANDIDATE",
+  "target_plan": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "goals": [
+    "Executable governance foundation",
+    "Exact typed source locking",
+    "Fail-closed authority/gate/carrier boundaries",
+    "Deterministic static validation"
+  ],
+  "non_goals": [
+    "Model download",
+    "Training",
+    "Real model evaluation",
+    "Promotion",
+    "Activation",
+    "Production mutation",
+    "Second Canonical",
+    "Second Gate engine",
+    "Second RC schema authority"
+  ],
+  "roles": {
+    "owner": "Adoption and explicit authority decisions",
+    "kernel": "Canonical, Authority, atomic Gate, Kernel RC and promotion authority",
+    "product": "Tier identity",
+    "model_program": "Non-production model-domain contracts and candidate registries",
+    "model_release_orchestration": "Composition/projection only; no authority creation",
+    "independent_reviewer": "Fresh-context read-only qualification"
+  },
+  "stages": [
+    "M0",
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M5A",
+    "M6",
+    "M7"
+  ],
+  "authority_effect": "NONE_BEYOND_EXISTING_NON_PRODUCTION_M0_AUTHORITY"
+}
