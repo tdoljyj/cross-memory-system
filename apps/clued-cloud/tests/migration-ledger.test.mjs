@@ -570,10 +570,14 @@ test('the CLI verify uses the release baseline: a branch file after it but befor
     const ledger = JSON.parse(readFileSync(paths.ledger, 'utf8'));
     const between = `${String(Number(baselineVersion(baseline)) + 1)}_branch_from_yesterday.sql`;
     assert.ok(between.slice(0, 14) < ledger.history_through);
+    // The checkout may already carry migrations production has not applied yet.
+    const before = await quiet(() => main(['verify'], paths));
+    assert.equal(before.code, 0, before.err);
+    const pendingBefore = Number(before.out.match(/(\d+) pending/)[1]);
     writeFileSync(path.join(paths.migrations, between), 'select 1;\n');
     const result = await quiet(() => main(['verify'], paths));
     assert.equal(result.code, 0, result.err);
-    assert.match(result.out, /1 pending/);
+    assert.match(result.out, new RegExp(`\\b${pendingBefore + 1} pending`));
     assert.match(result.out, new RegExp(`pending \\(not in the ledger yet\\): ${between}`));
   } finally {
     rmSync(root, { recursive: true, force: true });
