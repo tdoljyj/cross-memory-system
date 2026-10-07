@@ -95,6 +95,46 @@ test("replace records the exact attempt, keeps the head revision, uploads, then 
   assert.equal(f.d.revisions.get("rev-1").keepForever, true); assert.equal(f.d.revisions.get("rev-0").keepForever, false);
 });
 
+test("a text/plain file whose extension names a text type takes that type with the upload; others keep theirs", async () => {
+  for (const [name, stored, sent] of [["a.md", "text/plain", "text/markdown"], ["a.CSV", "text/plain", "text/csv"],
+    ["a.json", "text/plain", "application/json"], ["a.html", "text/plain", "text/plain"], ["a.md", "text/markdown", "text/markdown"],
+    ["a.md", "text/x-markdown", "text/x-markdown"]]) {
+    const d = drive(); Object.assign(d.files.get("file"), { name, mimeType: stored });
+    const mutation = { ...contentMutation, destination_path: TRACK + "/" + name };
+    let seen;
+    const f = effectFixture(mutation, d, { fetch: async (url, options) => {
+      const u = new URL(url), parts = u.pathname.split("/");
+      if (parts.at(-2) === "revisions") {
+        const body = JSON.parse(options.body), revision = d.revisions.get(decodeURIComponent(parts.at(-1)));
+        revision.keepForever = body.keepForever;
+        return Response.json({ id: revision.id, keepForever: revision.keepForever });
+      }
+      seen = { type: u.searchParams.get("uploadType"), header: options.headers["content-type"], body: Buffer.from(options.body) };
+      const file = upload(d, NEW);
+      if (seen.type === "multipart") file.mimeType = JSON.parse(seen.body.toString("utf8").split("\r\n")[3]).mimeType;
+      return Response.json(file);
+    } });
+    await f.effect(f.request);
+    const label = `${name} ${stored}`;
+    if (sent === stored) {
+      assert.equal(seen.type, "media", label); assert.equal(seen.header, stored, label); assert.deepEqual(seen.body, NEW, label);
+    } else {
+      assert.equal(seen.type, "multipart", label); assert.match(seen.header, /^multipart\/related; boundary=clued_/, label);
+      const text = seen.body.toString("utf8");
+      assert.deepEqual(JSON.parse(text.split("\r\n")[3]), { mimeType: sent }, label);
+      assert.ok(text.includes(`\r\nContent-Type: ${sent}\r\n\r\n${NEW.toString("utf8")}\r\n--clued_`), label);
+    }
+    assert.equal(d.files.get("file").mimeType, sent, label);
+  }
+  // Drive keeping the old type is a mismatched reply, not a success.
+  const d = drive(); Object.assign(d.files.get("file"), { name: "a.md" });
+  const kept = effectFixture({ ...contentMutation, destination_path: TRACK + "/a.md" }, d, { fetch: async (url, options) => {
+    if (new URL(url).pathname.includes("/revisions/")) { const b = JSON.parse(options.body); return Response.json({ id: "rev-1", keepForever: b.keepForever }); }
+    return Response.json(upload(d, NEW));
+  } });
+  await assert.rejects(kept.effect(kept.request), /DRIVE_NATIVE_RESPONSE_MISMATCH/);
+});
+
 test("a head the Owner already keeps is recorded as such and not written again", async () => {
   const d = drive(); d.revisions.get("rev-1").keepForever = true;
   const f = effectFixture(contentMutation, d);
