@@ -166,6 +166,30 @@ export async function testStorageConnections(t, admin, server) {
       assert.equal(entry(await list(client), target).normal_use, true);
     });
 
+    await t.test("a root registered by Drive ID is named by its display name and has no managed_root (Decision 8d05e50a)", async () => {
+      // Only storage-page onboarding registers /clued-cloud/google-drive/<ID> (the admin path reserves it),
+      // so the fixture moves an ordinary root there with triggers bypassed.
+      // Moved before the policy is activated, since the policy's scope digest covers the registered paths.
+      const bypass = async (sql, values) => {
+        await admin.query("set session_replication_role=replica");
+        try { await admin.query(sql, values); } finally { await admin.query("set session_replication_role=origin"); }
+      };
+      const created = await createRoot(), drivePath = `/clued-cloud/google-drive/${created.rootId}`;
+      await bypass("update clued_private.resource_center_profiles_v1 set managed_root=$2 where id=$1", [created.profile, drivePath]);
+      await bypass("update clued_private.resource_center_artifacts_v1 set path=$2||substr(path,length($3)+1) where profile_id=$1 and path like $3||'%'",
+        [created.profile, drivePath, created.root]);
+      const onboarded = await activate(created);
+      let item = entry(await list(client), onboarded);
+      assert.ok(item, "the moved root is still listed");
+      assert.equal(item.managed_root, null, "a Drive ID path is not returned");
+      assert.equal(item.name, onboarded.rootId, "without a display name, the last segment as before");
+      await bypass("update clued_private.resource_center_profiles_v1 set display_name='cs' where id=$1", [onboarded.profile]);
+      item = entry(await list(client), onboarded);
+      assert.equal(item.name, "cs");
+      assert.ok(!JSON.stringify(item).includes(onboarded.rootId), "the Drive ID appears nowhere");
+      assert.equal(entry(await list(client), target).managed_root, target.root, "a named root path is still returned");
+    });
+
     await t.test("a denied client and a disconnected connection are not listed", async () => {
       const denied = await bind(target);
       assert.ok(entry(await list(denied), target));

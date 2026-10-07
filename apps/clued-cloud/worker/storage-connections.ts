@@ -17,10 +17,12 @@ export const storageConnectionsTool = {
   name: "clued_storage_connections",
   description: "List the Clued storage connections this client may use, with the connection_id that every other clued_storage_* tool takes. " +
     "Call it whenever you need a connection_id; never ask the user for one, it is an internal ID they should not need to know. " +
-    "Each entry names the root folder (name, managed_root), its project_id, its tracks (the root's top-level folders), " +
+    "Each entry names the root folder (name, the folder name the Owner knows it by, and managed_root, its registered path, or null when that path is only a Drive ID), " +
+    "its project_id, its tracks (the root's top-level folders), " +
     "inspect (clued_storage_inspect is allowed), the write_levels the Owner granted (create_file, create_topic, modify, overwrite, modify_subtree, destructive), " +
     "the read classes (read: clued_storage_browse; read_content: clued_storage_read) and normal_use. " +
     "Pick the connection whose name or managed_root matches the storage the user named; when several match, ask the user to choose by name, never by ID. " +
+    "Address files with paths relative to the root (for example 90_待归类/note.md), which every storage tool accepts. " +
     "An empty list means the Owner has not authorized this client for any storage, and a missing level means the Owner has not granted it: " +
     "tell the user what to turn on, and for which storage, on the Clued storage page. " +
     "The list is not an admission: each storage call still checks its own grant. Reads only; writes nothing.",
@@ -50,11 +52,11 @@ export function storageConnectionsResult(value: unknown, offered: { reads: boole
   const connections = value.connections.map(item => {
     if (!object(item) || Object.keys(item).sort().join(",") !== ENTRY_KEYS || typeof item.connection_id !== "string" || !uuid.test(item.connection_id) ||
       typeof item.name !== "string" || item.name.length < 1 || item.name.length > 1000 ||
-      typeof item.managed_root !== "string" || item.managed_root.length < 1 || item.managed_root.length > 4096 ||
+      (item.managed_root !== null && (typeof item.managed_root !== "string" || item.managed_root.length < 1 || item.managed_root.length > 4096)) ||
       typeof item.project_id !== "string" || !uuid.test(item.project_id) || !strings(item.tracks) ||
       typeof item.inspect !== "boolean" || !strings(item.write_levels, WRITE_LEVELS) || !strings(item.read, READ_CLASSES) ||
       typeof item.normal_use !== "boolean") throw new StorageConnectionsError("storage_connections_unavailable");
-    return { connection_id: item.connection_id, name: item.name, managed_root: item.managed_root, project_id: item.project_id,
+    return { connection_id: item.connection_id, name: item.name, managed_root: item.managed_root as string | null, project_id: item.project_id,
       tracks: item.tracks as string[],
       inspect: offered.writes && item.inspect, write_levels: offered.writes ? item.write_levels as string[] : [],
       read: offered.reads ? item.read as string[] : [], normal_use: offered.reads && item.normal_use };
