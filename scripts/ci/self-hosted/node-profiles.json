@@ -136,6 +136,34 @@
             "cap-docker-linux",
             "runtime-wsl2"
           ]
+        },
+        {
+          "profile": "linux-docker-wsl2-v1",
+          "name": "clued-ci-company-linux-03",
+          "state": "active",
+          "route_label": "runner-company-linux-03",
+          "distro": "CluedCI-Linux",
+          "user": "runner",
+          "root": "/home/runner/actions-runner-03",
+          "service_unit": "actions.runner.tdoljyj-cross-memory-system.clued-ci-company-linux-03.service",
+          "capabilities": [
+            "cap-docker-linux",
+            "runtime-wsl2"
+          ]
+        },
+        {
+          "profile": "linux-docker-wsl2-v1",
+          "name": "clued-ci-company-linux-04",
+          "state": "active",
+          "route_label": "runner-company-linux-04",
+          "distro": "CluedCI-Linux",
+          "user": "runner",
+          "root": "/home/runner/actions-runner-04",
+          "service_unit": "actions.runner.tdoljyj-cross-memory-system.clued-ci-company-linux-04.service",
+          "capabilities": [
+            "cap-docker-linux",
+            "runtime-wsl2"
+          ]
         }
       ]
     },
