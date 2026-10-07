@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -18,6 +20,20 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / "scripts" / "hooks" / "clued_work_claim_guard.py"
 CLAIM_ID = "1bd72d4d-d2f8-4459-b3a7-c0521258e405"
 TASK_ID = "178ff66c-1432-46e2-8b27-d8a7a1755be5"
+
+
+def load_guard():
+    spec = importlib.util.spec_from_file_location("clued_work_claim_guard", HOOK)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+GUARD = load_guard()
+
+
+def bash_kind(command: str) -> str | None:
+    return GUARD.guarded_kind({"tool_name": "Bash", "tool_input": {"command": command}})
 
 
 def stamp(delta: timedelta) -> str:
@@ -100,6 +116,107 @@ class WorkClaimGuardTest(unittest.TestCase):
                         "cat <<'EOF' > f\ngit push\nnpm ci\nEOF"):
             with self.subTest(command=command):
                 self.assertEqual(self.bash(command, session=command).returncode, 0)
+
+    # Task ada1334c: inside the quoted arguments of a read-only text command, a
+    # | ; ( or command word is data, not a command.
+    QUOTED_DATA = ("rg 'foo|npx tsc' .", "grep -E '(npm test|node --test)' package.json",
+                   "grep -rn 'x; npm ci' .", 'git commit -m "fix: (npm test) | npx tsc"',
+                   "git log --grep 'npm ci'", 'git commit -m "subject\nnpm ci in the body"',
+                   "LC_ALL=C grep -n 'a|npm ci' f", "sudo rg 'x; git push' /", "git tag -a v1 -m 'v1; npm ci'",
+                   "sed -n '/a|npm test/p' f", "awk '/x|npm ci/' f", "echo 'a; npm test'",
+                   "printf '%s; npm ci\\n' x", "git show HEAD --grep='x|npm ci'", "git grep -n 'x|npm ci'",
+                   "rg 'a|npx tsc' . | head -5", "grep -c 'x;npm ci' f > out.txt", "egrep '(npm test)' f; ls",
+                   'echo "$(date) | npm test"', 'grep "a|npm ci" f && git status', "rg $'a\\'|npm ci' .")
+    # Everything else is scanned exactly as origin/main 1dcf6ef scanned it. The
+    # expected kinds are what that version's guarded_kind returns for each one.
+    SCANNED_AS_WRITTEN = (
+        ("ssh host 'cd app && npm ci'", "spend"),
+        ("echo 'cd x && npm test' | bash", "spend"),
+        ("$SHELL -c 'cd x && npm test'", "spend"),
+        ("docker run img ash -c 'cd x && npm test'", "spend"),
+        ("su -c 'cd x && npm test'", "spend"),
+        ("bash <<< 'cd x && npm test'", "spend"),
+        ("sh " + "-o " * 36 + "-c 'a; npm test'", "spend"),
+        ("cd apps/x && npm test", "spend"),
+        ("(npm test)", "spend"),
+        ("foo | npx tsc", "spend"),
+        ("echo 'a|b' | npx tsc", "spend"),
+        ('echo "$(npm test)"', "spend"),
+        ("grep x f && npm test", "spend"),
+        ("rg foo | npx tsc", "spend"),
+        ('sh -c "npm test"', None),
+        ("bash -c 'cd x && npm test'", "spend"),
+        ("eval 'x; npm test'", "spend"),
+        ("xargs sh -c 'x; npm test'", "spend"),
+        ("node -e 'x; npm test'", "spend"),
+        ("python3 -c 'x; npm test'", "spend"),
+        ("echo 'cd x && npm test' | grep cd | sh", "spend"),
+        ("echo 'x && npm test' 2>&1 | bash", "spend"),
+        ("(echo 'x; npm test') | sh", "spend"),
+        ("{ echo 'x; npm test'; } | sh", "spend"),
+        ("bash <(echo 'cd x; npm test')", "spend"),
+        ('echo "`cd x && npm test`"', "spend"),
+        ("echo \"$(grep 'a|npm ci' f)\"", "spend"),
+        ("grep x <(npm test)", "spend"),
+        ("awk 'BEGIN{system(\"x; npm test\")}'", "spend"),
+        ("sed -n '1e x; npm test' f", "spend"),
+        ("sed -n 's/a/x; npm test/ge' f", "spend"),
+        ("rg --pre 'x; npm test' foo", "spend"),
+        ("git grep -O'x; npm test' foo", "spend"),
+        ("printf -v c 'x; npm test'", "spend"),
+        ("/usr/bin/grep 'x; npm ci' f", "spend"),
+        ("git -C d log --grep 'x; npm ci'", "spend"),
+        ("PAGER='x; npm test' git log", "spend"),
+        ("grep 'unterminated | npm ci", "spend"),
+        ("ls # it's here\nnpm ci", "spend"),
+        ("for f in *; do grep 'a|b' $f; done; npm ci", "spend"),
+        ("git push", "publish"),
+        ("rg -n 'x|y' . && git push", "publish"),
+        ("echo 'a; git push' | sh", "publish"),
+        ("grep x f; gh pr create --fill", "publish"),
+        ("git commit -m x && git push origin HEAD", "publish"),
+        ("ssh h 'git push'", None),
+        ("sh -c 'git push'", None),
+    )
+
+    def test_quoted_data_in_text_commands_passes(self):
+        for n, command in enumerate(self.QUOTED_DATA):
+            with self.subTest(command=command):
+                self.assertIsNone(bash_kind(command))
+                result = self.bash(command, session=f"quoted-data-{n}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_other_commands_are_scanned_as_written(self):
+        for command, expected in self.SCANNED_AS_WRITTEN:
+            with self.subTest(command=command):
+                self.assertEqual(bash_kind(command), expected)
+        self.assertEqual(self.bash("echo 'cd x && npm test' | bash", session="piped").returncode, 2)
+        self.assertEqual(self.bash("ssh host 'git push'; git push", session="pushed").returncode, 2)
+
+    def test_blanking_keeps_quotes_and_length(self):
+        command = "grep -E '(npm test|x)' f && git commit -m \"a; $(date) | b\""
+        blanked = GUARD.scannable(command)
+        self.assertEqual(len(blanked), len(command))
+        self.assertEqual(blanked, "grep -E '            ' f && git commit -m \"   $(date)    \"")
+        for command in ("sh -c 'a|b'", "grep 'open", "grep x )"):
+            with self.subTest(command=command):
+                self.assertEqual(GUARD.scannable(command), command)
+
+    def test_classification_time_is_linear(self):
+        quoted = "'" + "x|npm ci; (" * 40 + "'"
+        unit = " ; ".join(("sh " + "-o " * 40, "grep " + "-o " * 30 + quoted,
+                           'git commit -m "' + "a|b $(c 'd') `e` " * 4 + '"', "rg " + "'' " * 30,
+                           "echo $(" + "$(" * 20 + ")" * 20 + ")", "echo " + quoted + " | head" * 10))
+        balanced = (unit + " ; ") * (5000 // (len(unit) + 3))
+        balanced += " " * (5000 - len(balanced))
+        for command in (balanced, "rg '" + balanced[4:]):
+            with self.subTest(parses=command is balanced):
+                self.assertEqual(len(command), 5000)
+                self.assertEqual(GUARD.shell_segments(command) is not None, command is balanced)
+                started = time.perf_counter()
+                bash_kind(command)
+                self.assertLess(time.perf_counter() - started, 0.5)
+        self.assertNotEqual(GUARD.scannable(balanced), balanced)
 
     def test_github_publish_tools_are_guarded(self):
         for name in ("mcp__github__create_pull_request", "mcp__github__push_files",
