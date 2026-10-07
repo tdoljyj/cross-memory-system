@@ -117,10 +117,19 @@ test('email contains only bounded status, and failed delivery cannot advance sta
   await assert.rejects(() => sendProjectionWatchdogEmail(changes, config, async () => ({
     ok: false, status: 403, json: async () => ({ success: false }),
   })), /alert_delivery_failed_403/);
-  await assert.rejects(() => sendProjectionWatchdogEmail(changes,
-    { ...config, timeoutMs: 1 }, async (_url, init) => new Promise((_resolve, reject) => {
-      init.signal.addEventListener('abort', () => reject(init.signal.reason));
-    })), /timeout|abort/i);
+  // AbortSignal.timeout() uses an unref'd timer, so while the mocked fetch is
+  // pending nothing else keeps the event loop alive and the process can exit
+  // with this promise unsettled (seen on Node 22). Hold the loop open until the
+  // abort fires.
+  const keepAlive = setInterval(() => {}, 1_000);
+  try {
+    await assert.rejects(() => sendProjectionWatchdogEmail(changes,
+      { ...config, timeoutMs: 1 }, async (_url, init) => new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(init.signal.reason));
+      })), /timeout|abort/i);
+  } finally {
+    clearInterval(keepAlive);
+  }
   const directory = await mkdtemp(path.join(os.tmpdir(), 'clued-watchdog-'));
   const statePath = path.join(directory, 'state.json');
   await writeFile(statePath, JSON.stringify({ active: [`${tenant}:global.priority_frontier:stale_timeout`] }));

@@ -1,0 +1,3 @@
+# The main ruleset requires 0 approving reviews, so this file enforces nothing.
+# It documents ownership and routes review requests to the Owner.
+* @tdoljyj
