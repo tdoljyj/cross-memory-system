@@ -156,6 +156,9 @@ test('search re-review: inputs, sessions, merged projects and paging limit', { t
     assert.equal(result.page.truncated, true);
 
     // The paging limit: a page that reaches 10000 results has no next_cursor.
+    // A migration leaves statement_timeout = 30s on this connection; the bulk
+    // insert below can take longer on a busy runner.
+    await admin.query('set statement_timeout = 0');
     await admin.query(`insert into public.clued_memories
       select (jsonb_populate_record(null::public.clued_memories, to_jsonb(m) || jsonb_build_object(
         'id', gen_random_uuid(), 'title', 'Bulk cap note ' || g, 'content', 'bulkcapmarker',
