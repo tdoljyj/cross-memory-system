@@ -1,0 +1,12 @@
+# 维护文档索引
+
+| 文档 | 适用内容 |
+| --- | --- |
+| [Runner 配置与运维规范](runner-configuration-and-operations.md) | 配置底线、上线验收、看门狗、巡检、增减、排空、升级与回退 |
+| [main 准入自检死锁](main-admission-self-test-deadlock.md) | 准入自检故障处理 |
+| [资料中心账号连接](resource-center-account-connection.md) | 账号统一存储连接 |
+| [资料中心日常入口](resource-center-daily-entry.md) | 日常操作入口 |
+| [资料中心续签](resource-center-renewal.md) | 续签运行约定 |
+| [资料中心 writer 恢复](resource-center-writer-recovery.md) | 受控写入入口恢复 |
+
+工程 Runbook 的正文随代码在仓库维护；历史验收与长审核材料按 AGENTS 的外部资料存放规则处理。文档不是实时在线状态或操作授权。
