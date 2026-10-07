@@ -71,6 +71,25 @@ Production-only objects are handled in guarded DO blocks, so CI's `db reset`
 applies the file unchanged. Expected advisor counts afterwards: 76 and 69 for the
 two SECURITY DEFINER findings, 0 for `function_search_path_mutable`.
 
+### Tests
+
+`.github/workflows/clued-connection-authorization.yml` runs
+`db-security-hygiene-db.test.mjs` on every change to a migration, without
+`--test-force-exit`: the file stops its embedded PostgreSQL servers itself.
+
+`integration-runtime-identity-db.test.mjs` and
+`integration-runtime-lifecycle-db.test.mjs` apply the migrations in production
+order: `20261005163000_integration_runtime_grants` in its sorted place, this
+migration after it. Each checks exactly §5.13 right after the grant migration
+and, after every later migration, that the nine `clued_integration_*_v1` RPCs
+are executable by `anon` only.
+
+`integration-runtime-verification-db.test.mjs:338` still asserts the old grants
+(`anon, authenticated` on the Binding path). It passes only because it applies
+the grant migration last, after this one, which grants `authenticated` back.
+It will be moved to production order in a follow-up once the session that
+holds that file releases it.
+
 ### Kept
 
 These have no production caller but a test on a migrated database calls them,
