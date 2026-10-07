@@ -676,7 +676,11 @@ test("gate job digest: every gated workflow's gate job has checks: read; the for
   const dir = path.join(ROOT, ".github", "workflows");
   const gated = fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f))
     .map((f) => [f, fs.readFileSync(path.join(dir, f), "utf8")]).filter(([, text]) => workflowIsGated(text));
-  assert.equal(gated.length, 10);
+  // Derived from the workflows on this branch, not a pinned count: a pinned count
+  // broke main's self-test, and so every pull request, each time a gated
+  // workflow was added (#552, #598). Admission itself refuses a removed or changed gate.
+  assert.deepEqual(gated.map(([file]) => file).sort(), [...GATED_FILES].sort());
+  assert.ok(gated.length > 0);
   for (const [file, text] of gated) {
     assert.deepEqual(gateFindings(text, text), [], file);
     const withoutChecks = text.replace("      actions: read\n      checks: read\n", "      actions: read\n");
@@ -836,11 +840,8 @@ const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filt
 const g4 = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-g4-database.yml"), "utf8");
 
 test("gate guard: every gated workflow on this branch passes and uses a listed gate job", () => {
-  assert.deepEqual(GATED_FILES.sort(), [
-    "clued-cloud-node22-install.yml", "clued-cloud-quality-gate.yml", "clued-components.yml", "clued-connection-authorization.yml",
-    "clued-g4-database.yml", "design-refs.yml", "information-flow-e2e.yml", "model-program-m2-scoped-consumer.yml",
-    "public-mcp-behavior.yml", "public-mcp-protocol.yml",
-  ]);
+  // No pinned list (see "gate job digest"); the workflow this file reads below must stay gated.
+  assert.ok(GATED_FILES.includes("clued-g4-database.yml"));
   for (const name of GATED_FILES) {
     const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
     assert.deepEqual(gateFindings(text, text), [], name);
@@ -1760,7 +1761,7 @@ test("evaluate (Owner Decision a0d93cd0): a head that only merged main keeps the
   const granted = { body: { status: "ok", admitted: true, grant: { grant_id: "g-approved", replayed: true } } };
   // A world: commits and their parents, the compares the walk reads, the heads
   // with a green admission check, and the door's answer per commit.
-  const run = async ({ parents = { [HEAD]: [APPROVED, MAIN_1] }, compares = {}, green = [APPROVED], door = {} } = {}) => {
+  const run = async ({ parents = { [HEAD]: [APPROVED, MAIN_1] }, compares = {}, green = [APPROVED], reverified = [], door = {} } = {}) => {
     const compareAnswer = (call) => {
       const pair = call.url.split("/compare/")[1].split("?")[0];
       if (pair in compares) return compares[pair];
@@ -1774,7 +1775,10 @@ test("evaluate (Owner Decision a0d93cd0): a head that only merged main keeps the
       const rest = call.url.split("/commits/")[1];
       const sha = rest.slice(0, 40);
       if (rest.includes("/check-runs")) {
-        return { body: { check_runs: green.includes(sha) ? [appCheckRun({ head_sha: sha })] : [] } };
+        const runs = green.includes(sha) ? [appCheckRun({ head_sha: sha })] : [];
+        // The re-verification's later failing check once main moved past the head.
+        if (reverified.includes(sha)) runs.push(appCheckRun({ id: 2, head_sha: sha, conclusion: "failure" }));
+        return { body: { check_runs: runs } };
       }
       return { body: { sha, parents: (parents[sha] ?? [OLD_BASE]).map((p) => ({ sha: p })) } };
     };
@@ -1798,6 +1802,16 @@ test("evaluate (Owner Decision a0d93cd0): a head that only merged main keeps the
   assert.equal(outcome.owner_review.grant_id, "g-approved");
   assert.ok(outcome.notices.some((n) => n.startsWith(`owner_review_carried:g-approved from ${APPROVED}`)));
   assert.deepEqual(asked, [APPROVED]);
+
+  // Main moved after the approval, so the re-verification posted a newer
+  // failing check on the approved head: the approval still carries over.
+  ({ outcome, asked } = await run({ reverified: [APPROVED] }));
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], JSON.stringify(outcome.reasons));
+  assert.equal(outcome.owner_review.carried_from, APPROVED);
+  assert.deepEqual(asked, [APPROVED]);
+  // Only failing checks on the earlier head: not asked about.
+  ({ asked } = await run({ green: [], reverified: [APPROVED] }));
+  assert.deepEqual(asked, [HEAD]);
 
   // Two merges of main in a row: the deepest admitted head is asked.
   ({ outcome, asked } = await run({ parents: { [HEAD]: [MIDDLE, MAIN_2], [MIDDLE]: [APPROVED, MAIN_1] }, green: [MIDDLE, APPROVED] }));

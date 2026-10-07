@@ -940,10 +940,13 @@ export async function baseTipCompare(fetchImpl, env, repository, pr) {
 // which makes the head's protected diff against the tip the approved head's
 // diff against its own base. Any protected file a merge brought in differs
 // from the tip in nothing (it is not in the head's diff): it is main's.
-// Only an earlier head whose clued-admission-verified check passed is asked
-// about, the deepest one first (a head admitted this way leads back to the
-// head the Owner approved), and the Owner review door stays the authority: it
-// admits a head again only while the grant that admitted it is not revoked.
+// Only an earlier head whose clued-admission-verified check ever passed is
+// asked about, the deepest one first (a head admitted this way leads back to
+// the head the Owner approved), and the Owner review door stays the authority:
+// it admits a head again only while the grant that admitted it is not revoked.
+// A later failing check on that head does not count against it: once main
+// moves, the re-verification posts "RE-VERIFIED: REJECTED" on the approved head
+// (it no longer contains the tip), which is exactly why the author merges main.
 export const CARRY_OVER_DEPTH = 10;
 
 async function compareSummary(fetchImpl, env, repository, from, to) {
@@ -982,7 +985,7 @@ export async function carriedApprovalSource(fetchImpl, env, repository, headSha,
     const onBase = await compareSummary(fetchImpl, env, repository, earlierToTip.mergeBase, tipCompare.tip);
     if (!onBase || !untouched(onBase.paths)) break;
     const checks = await appChecksOnHead(fetchImpl, env, repository, earlier);
-    if (checks[0] && checks[0].status === "completed" && checks[0].conclusion === "success") source = earlier;
+    if (checks.some((check) => check.status === "completed" && check.conclusion === "success")) source = earlier;
     current = earlier;
   }
   return source;
@@ -1322,7 +1325,7 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
         env, fetchImpl, now, headSha: pr.head.sha, success: false, title: verdict, prNumber: pr.number,
         summary: `The re-verification no longer admits #${pr.number}: ${outcome.reasons.join("; ") || "no reason given"}. `
           + (outcome.reasons.some((reason) => reason.startsWith("protected_change_not_up_to_date:"))
-            ? `Merge ${pr.base.ref} into the branch and push; the new head needs its own Owner Grant.`
+            ? `Merge ${pr.base.ref} into the branch and push; the approval carries over when the merge leaves the protected changes as they were, otherwise the new head needs its own Owner Grant.`
             : "Push a commit or edit the pull request once it is admitted again."),
       });
       if (!posted.posted) throw new Error(`not admitted (${outcome.verdict}) and no failing check could be posted: ${posted.error ?? posted.reason}`);

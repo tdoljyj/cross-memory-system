@@ -821,6 +821,11 @@ export async function runStorageRefreshScheduled(env: ContinuityEnv) {
     }) as Record<string, unknown>;
     const due = await rpc({ action: "due" });
     if (!Array.isArray(due.connections) || due.connections.length > 10 || !due.connections.every(c => typeof c === "string")) return { status: "unavailable" };
+    // BUG-20261007-005: a refresh held back by an unresolved journal on its root
+    // is no longer silent. Scheduled recovery settles the journal (and may run a
+    // recovery-only refresh); until then reads fail once the token expires.
+    if (Number.isSafeInteger(due.root_busy) && Number(due.root_busy) > 0)
+      console.warn(JSON.stringify({ event: "storage_refresh_root_busy", connections: Number(due.root_busy) }));
     const refresher = await createStorageGoogleRefresh({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
       client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS), rpc });
     let committed = 0, unavailable = Number.isSafeInteger(due.pending_expired) && Number(due.pending_expired)>0 ? Number(due.pending_expired) : 0;
@@ -882,6 +887,11 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
         method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
         signal: AbortSignal.timeout(10000), redirect: "manual",
       }) as Record<string, unknown>;
+    const absentRpc = async (input: Record<string, unknown>) => await supabaseRequest(env,
+      "/rest/v1/rpc/clued_storage_recovery_absent_v1", {
+        method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
+        signal: AbortSignal.timeout(10000), redirect: "manual",
+      }) as Record<string, unknown>;
     const due = await recoveryRpc({ action: "due" });
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     if (due.status !== "ok" || !Array.isArray(due.jobs) || due.jobs.length > 3 ||
@@ -889,7 +899,14 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
           Object.keys(job).sort().join(",") === "connection_id,job_id" &&
           typeof job.connection_id === "string" && uuid.test(job.connection_id) &&
           typeof job.job_id === "string" && uuid.test(job.job_id))) return { status: "unavailable" };
-    let committed = 0, attention = 0;
+    const refresher = env.CLUED_STORAGE_REFRESH_V1 === "true" && due.jobs.length ? await createStorageGoogleRefresh({
+      client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "",
+      vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
+      rpc: async input => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_refresh_worker_v1", {
+        method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
+        signal: AbortSignal.timeout(10000), redirect: "manual",
+      }) as Record<string, unknown> }).catch(() => null) : null;
+    let committed = 0, released = 0, attention = 0;
     for (const reference of due.jobs as Array<{ connection_id: string; job_id: string }>) {
       try {
         const prior = await verifiedRpc({ ...reference, action: "verified_inspect" });
@@ -916,18 +933,28 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
         if (prior.status !== "inspection_required" || prior.connection_id !== reference.connection_id ||
             prior.job_id !== reference.job_id || prior.execution_permitted !== false)
           throw new Error("original journal unavailable");
-        const descriptor = await recoveryRpc({ ...reference, action: "load" });
-        if (descriptor.status !== "recovery_only" || descriptor.connection_id !== reference.connection_id ||
-            descriptor.job_id !== reference.job_id) throw new Error("recovery descriptor unavailable");
-        const recovery = await createStorageCloudRecovery({
-          client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
-          rpc: recoveryRpc, verified: { descriptor, rpc: verifiedRpc }, timeout_ms: 10000,
-        });
-        const result = await recovery.run(reference);
-        if (result.status === "committed") committed++; else attention++;
+        const attempt = async () => {
+          const descriptor = await recoveryRpc({ ...reference, action: "load" });
+          if (descriptor.status !== "recovery_only" || descriptor.connection_id !== reference.connection_id ||
+              descriptor.job_id !== reference.job_id) throw new Error("recovery descriptor unavailable");
+          const recovery = await createStorageCloudRecovery({
+            client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!),
+            rpc: recoveryRpc, verified: { descriptor, rpc: verifiedRpc }, absent: { rpc: absentRpc }, report_expiring: true, timeout_ms: 10000,
+          });
+          return await recovery.run(reference);
+        };
+        let result = await attempt();
+        // BUG-20261007-005: an expiring credential gets one recovery-only refresh
+        // bound to this job (the root's ordinary refresh waits for a quiet root).
+        if (result.status === "credential_expiring" && refresher &&
+            (await refresher.run(reference.connection_id, reference.job_id)).status === "committed") result = await attempt();
+        if (result.status === "committed") committed++;
+        else if (result.status === "released_not_effected") released++;
+        else attention++;
       } catch { attention++; }
     }
-    return { status: attention ? "attention_required" : "ok", committed, attention };
+    if (released) console.warn(JSON.stringify({ event: "storage_recovery_released_not_effected", released }));
+    return { status: attention ? "attention_required" : "ok", committed, released, attention };
   } catch { return { status: "unavailable" }; }
 }
 
