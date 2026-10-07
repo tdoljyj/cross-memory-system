@@ -69,7 +69,14 @@ export async function createStorageCloudWorker(config: {
       verified_result_mode: config.account_policy_v2 === true,
       ...(config.load_staged_content ? { load_staged_content: config.load_staged_content } : {}),
       load_job: async (ref: Reference) => {
-        const result = await config.rpc({...ref, action:"load"});
+        // BUG-20261008-001: a refused load leaves the job queued (the scheduled sweep
+        // dispatches it again); name the fixed cause in the diagnostic instead of UNSPECIFIED.
+        let result: Data;
+        try { result = await config.rpc({...ref, action:"load"}); }
+        catch (error) {
+          throw reject(error instanceof Error && error.message === "storage_root_has_unresolved_mutation"
+            ? "STORAGE_ROOT_BUSY" : "STORAGE_JOB_LOAD_REFUSED");
+        }
         if (result.status === "queued" && result.oauth_client_id !== config.client_id) throw denied();
         loaded = result;
         const descriptor = {...result}; delete descriptor.credential_envelope; delete descriptor.oauth_client_id;
