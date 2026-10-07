@@ -5,7 +5,8 @@ name: clued-components
 # Worker's generated module matches the manifest, and a component that changed
 # against the base carries a higher version, and that VERSION and its git tag
 # agree (scripts/ci/clued_release_tags.py). Also runs the unit tests of the
-# manifest tool and of the SessionStart / resume version-check hook.
+# manifest tool and of the SessionStart / resume version-check hook, and this
+# head's copy of the admission self-tests.
 # No paths filter: a component can live anywhere in the repository.
 
 on:
@@ -84,6 +85,14 @@ jobs:
       - name: VERSION and its git tag agree
         run: python3 scripts/ci/clued_release_tags.py check
       - run: python3 -m unittest scripts/ci/test_clued_release_tags.py -v
+      # The admission check runs main's copy of these self-tests; running the
+      # pull request's copy here fails a change that would break them on main
+      # before it merges (the self-test deadlock of #552 and #598).
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Admission self-tests on this head
+        run: node --test scripts/ci/clued-work-admission.test.mjs scripts/ci/clued-release-grant.test.mjs scripts/runner/clued-runner-job-started.test.mjs
 
   untrusted-hosted:
     name: >-
@@ -115,3 +124,11 @@ jobs:
       - name: VERSION and its git tag agree
         run: python3 scripts/ci/clued_release_tags.py check
       - run: python3 -m unittest scripts/ci/test_clued_release_tags.py -v
+      # The admission check runs main's copy of these self-tests; running the
+      # pull request's copy here fails a change that would break them on main
+      # before it merges (the self-test deadlock of #552 and #598).
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Admission self-tests on this head
+        run: node --test scripts/ci/clued-work-admission.test.mjs scripts/ci/clued-release-grant.test.mjs scripts/runner/clued-runner-job-started.test.mjs
