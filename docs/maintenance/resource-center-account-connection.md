@@ -1020,6 +1020,58 @@ next scheduled recovery settles it as `PROVIDER_EFFECT_ABSENT` and reads recover
   be proven still waits for the Owner's native recovery; only a create can be
   proven absent by its generated ID and tag.
 
+### Queued jobs are dispatched again and never stay queued (BUG-20261008-001)
+
+Clued Task `f7a4dd7d`, migration `20261008000000_storage_queued_dispatch_v1.sql`,
+Worker module `apps/clued-cloud/worker/storage-queued-dispatch.ts`.
+On 2026-10-07 four text creates on `Clued_资料中心` were submitted while the
+root was fenced by the unsettled binary job of BUG-20261007-005. Submit queued
+them; the one dispatch after submit was refused at `load`
+(`storage_root_has_unresolved_mutation`); the Worker reports a dispatch outcome
+only after a successful `load`; and nothing listed a queued job again. They
+stayed `queued` with no intent and no reason for more than six hours, while the
+same requests submitted after the root settled ran within 90 seconds.
+
+- **Dispatched again.** `public.clued_storage_queued_sweep_v1` (fixed connector
+  issuer, `{action: due, dispatch: bool}`) lists at most 3 queued jobs (no
+  intent, no dispatch outcome) of active account-policy connections whose root
+  has no unresolved journal: 90 seconds after submit, then with backoff (2, 4,
+  8 ... minutes, at most 60) counted on the job (`redispatch_attempts`,
+  `redispatch_at`). A job on a fenced root is counted as `root_busy` and keeps
+  its backoff. Listing counts as the attempt, so a dispatch that is lost or
+  refused again still advances the backoff. The Worker's scheduled run
+  (`runStorageQueuedSweepScheduled`) dispatches each listed job exactly as after
+  submit: the job queue when bound, else in place. A listed job that already
+  started only answers its status at `load`; a second `begin` replays.
+- **Settled after 2 hours.** The same call settles at most 3 text jobs still
+  queued 2 hours after submit as `attention_required` with reason
+  `DISPATCH_NOT_STARTED`, through the executor report's own Receipt operation
+  and idempotency key (`storage_dispatch_outcome`,
+  `cloud-dispatch-outcome:<job>`) and Event, so a late report and the timeout
+  cannot both commit. `clued_storage_inspect` adds a fixed hint: nothing was
+  changed, submit again under a new `job_id` if still wanted. A binary job keeps
+  its own 12-hour cancellation (`staging_expired`). The settlement runs with the
+  storage account, Google and both jobs flags; dispatch also needs the executor
+  switch and an execution-enabled issuer.
+- **Refused at submit when the root is stuck.** A root whose unresolved journal
+  outlived its admission by 60 seconds (`clued_private.storage_root_stuck_v1`,
+  the unattempted release's threshold) refuses a new submit before any Receipt
+  or job with `{status: rejected, error_code: storage_root_busy}`; the MCP tool
+  answers a fixed `storage_root_busy` message. A submit while a job is still
+  inside its admission queues as before. A replay of an existing job is answered
+  from its history.
+- **Diagnosable load refusals.** The cloud executor logs a refused `load` as
+  `STORAGE_ROOT_BUSY` or `STORAGE_JOB_LOAD_REFUSED` instead of `UNSPECIFIED`.
+  The scheduled run logs `storage_queued_sweep` with counts, or
+  `storage_queued_sweep_unavailable`.
+- **The four jobs of 2026-10-07.** Once released, the first sweep settles each
+  job older than 2 hours as `DISPATCH_NOT_STARTED`; none of them runs, so the
+  files already written under the same names are not touched.
+- **Release order.** The migration first. The old Worker never calls the sweep
+  and its submit path passes the new refusal through as `storage_job_unavailable`;
+  the new Worker against the old database logs `storage_queued_sweep_unavailable`
+  every minute until the migration is applied.
+
 ## Full scope and adopt (StorageFullCapability.v0.1 P7)
 
 Owner Decisions `c47efe38`, `746fd078` and `6dc1cf20`, Task `7a8dcb8a`,
