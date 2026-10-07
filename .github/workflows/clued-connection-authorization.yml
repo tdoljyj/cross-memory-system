@@ -206,6 +206,7 @@ jobs:
       - run: npm run test:projection:refresh
       - run: npm run test:work:claims
       - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs
+      - run: node --test --test-force-exit tests/work-claims-continuation-db.test.mjs
       - run: npm run test:information-flow:candidates
       - run: npm run test:information-flow:intake
       - run: npm run test:information-flow:promotion
@@ -280,6 +281,7 @@ jobs:
       - run: npm run test:projection:refresh
       - run: npm run test:work:claims
       - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs
+      - run: node --test --test-force-exit tests/work-claims-continuation-db.test.mjs
       - run: npm run test:information-flow:candidates
       - run: npm run test:information-flow:intake
       - run: npm run test:information-flow:promotion
