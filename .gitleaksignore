@@ -251,3 +251,7 @@ c7824b34b77afda9349822528f9e6e1b10e5db9d:scripts/phase2-qualification/RuntimeMat
 # PR45: same public Python-image GPG fingerprint; exact finding locations only.
 818145420ddcd47ffcae03128ebd85c72a5b5fd7:scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/HostRuntimeConfig.json:generic-api-key:29
 818145420ddcd47ffcae03128ebd85c72a5b5fd7:scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/HostRuntimeConfig.json:generic-api-key:288
+
+# PR602 fixed mock authorization fixture; independently reviewed 2026-10-07.
+# Used only by a local handler with a stubbed fetch and reserved example URLs.
+545511d3e252680923260a47011a242e5b60ac9f:apps/clued-cloud/tests/mcp-tool-error-status.test.mjs:generic-api-key:20
