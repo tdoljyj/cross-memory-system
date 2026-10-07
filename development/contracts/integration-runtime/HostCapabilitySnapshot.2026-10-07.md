@@ -42,9 +42,9 @@ Every OpenAI row is `UNKNOWN` until a person reads the pages. On 2026-10-07 the 
 
 ## Consequences for S3
 
-1. The production READY profiles in `20261007060000_integration_runtime_ready_profiles.sql` ask, on every surface, only what all surfaces support: read and write through the connector. Hooks stay class C qualification evidence (§21 AC-2).
+1. The production READY profiles in `20261007060000_integration_runtime_ready_profiles.sql` ask, on every surface, only for read and write through the connector (`context.read`, `context.write`). Every Anthropic surface above lists the connector as SUPPORTED or CONDITIONAL. For OpenAI it is UNKNOWN (consequence 4), so an OpenAI profile states only what READY would need. It does not say that the surface can meet it. Hooks stay class C qualification evidence (§21 AC-2).
 2. AC-2 (H1 blocks a stop) is checked on Claude Code with the repository-level H1 (`.claude/settings.json`), as §41.0 S3 requires. Cowork's H1 waits for packaging.
-3. The registry's `host_features` (seeded from §55.1) stay as they are until a run disagrees. A change ships as a new registry version, which first needs a migration design, because `integration_hosts_v1` is keyed by `host` alone.
+3. The registry's `host_features` (seeded from §55.1) stay as they are until a run disagrees. A change ships as a new registry version. That first needs a migration design, because `registry_version` is in neither table's key. `integration_hosts_v1` is keyed by `host`. `integration_host_surfaces_v1` is keyed by `(host, surface)`, and `host_features` lives there.
 4. OpenAI runs start only after a person has read the current OpenAI pages and updated this table.
 
 ## Sources
