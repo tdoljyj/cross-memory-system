@@ -1,10 +1,10 @@
 # Storage Connection Discovery v0.1：Agent 自己找存储连接编号
 
-状态：**候选（本 PR）。** 本文不授予迁移、发布、合并或权限变更。
+状态：**第 1 版已上线（PR #583，23823935，迁移与 Worker 已发布）。名称修正（§5）为候选（本 PR）。** 本文不授予迁移、发布、合并或权限变更。
 
 日期：2026-10-06
-Owner 决定：Decision `1721045d`（产品与合同一起修：Agent 自助发现已授权存储连接，不得向 Owner 索要 `connection_id`）。
-Task：`1ce7cfa1`（project `0597aa60`）。
+Owner 决定：Decision `1721045d`（产品与合同一起修：Agent 自助发现已授权存储连接，不得向 Owner 索要 `connection_id`）；Decision `8d05e50a`（自助接入的存储显示可读名称，不返回 Drive ID 路径）。
+Task：`1ce7cfa1`（已完成）、`7f209eed`（名称修正，project `0597aa60`）。
 相关：[StorageFullCapability.v0.1.md](StorageFullCapability.v0.1.md)（读写等级）、[StorageNormalUse.v0.1.md](StorageNormalUse.v0.1.md)（normal use）。
 
 ---
@@ -20,7 +20,7 @@ Task：`1ce7cfa1`（project `0597aa60`）。
 - `public.clued_storage_connections_v1(p_token_hash)`，只授权 `anon`（Worker 以调用方 Binding 的哈希调用，与 jobs RPC 相同）。
 - 只读：不写 Receipt、不写任何行、不改授权。
 - 只列出本 Binding 能用的连接。判定直接调用存储工具自己的评估函数：写入侧 `storage_policy_evaluate_v2`（动作 `inspect`，每次用一个新的 job 锁键，不对应任何 job），读取侧对 `read`、`read_content` 各调一次 `storage_read_evaluate_v1`。每次评估在自己的子事务里；被拒只表示该类不可用，不说明原因。三类都不可用的连接不出现，Agent 因此不会知道它不能用的根目录。
-- 每项字段：`connection_id`、`name`（根目录最后一段）、`managed_root`、`project_id`、`tracks`、`inspect`、`write_levels`（策略里除 `inspect` 外的等级，顺序固定：`create_file`、`create_topic`、`modify`、`overwrite`、`modify_subtree`、`destructive`）、`read`、`normal_use`（有 `read_content`、`content_profile` 为 `normal/1`、且 Google 授权覆盖 normal）。不返回 provider subject、凭据、Drive ID、Receipt 或 Owner 的其它 Binding。最多 50 项，`complete` 标明是否截断。
+- 每项字段：`connection_id`、`name`（Owner 在存储页给的名称 `display_name`，没有时取根目录最后一段）、`managed_root`（登记的根路径；只是 Drive ID 时为 null，见 §5）、`project_id`、`tracks`、`inspect`、`write_levels`（策略里除 `inspect` 外的等级，顺序固定：`create_file`、`create_topic`、`modify`、`overwrite`、`modify_subtree`、`destructive`）、`read`、`normal_use`（有 `read_content`、`content_profile` 为 `normal/1`、且 Google 授权覆盖 normal）。不返回 provider subject、凭据、Receipt 或 Owner 的其它 Binding；名称修正（§5）之后也不再返回 Drive ID。最多 50 项，`complete` 标明是否截断。
 
 Worker（`worker/storage-connections.ts`、`continuity.ts`）：
 
@@ -43,3 +43,16 @@ Agent 合同 v36 §7.11、Clued Skill 1.0.8：存储连接自己找，绝不向 
 1. 合入本 PR（Task `1ce7cfa1`）。
 2. 生产迁移 `20261006170000_storage_connections_list.sql`（`migration.production`）与 Worker 发布（`release.production`），Owner 在 Clued 页面批准（Task `1ce7cfa1`）。
 3. 新合同 v36 经 `/clued-agent.md` 随 Worker 发布提供（Task `1ce7cfa1`）。
+
+## 5. 名称修正
+
+上线后实测：存储页自助接入的根目录登记为 `/clued-cloud/google-drive/<Drive 文件夹 ID>`，于是 `name` 显示成 Drive ID，`managed_root` 也带出 Drive ID。迁移 `20261007000000_storage_connections_display_name.sql` 以锚定补丁改 `clued_storage_connections_v1`：
+
+- `name` 优先取档案的 `display_name`（Owner 在存储页给的文件夹名，例如「cs」），没有时仍取根路径最后一段。
+- `managed_root` 匹配 `/clued-cloud/google-drive/<ID>` 时返回 null，其它根路径照常返回。Agent 用相对根目录的路径（例如 `90_待归类/note.md`），所有存储工具都接受。
+- Worker 接受 null 的 `managed_root`，工具说明写明这一点并提示用相对路径。
+
+上线顺序与第 1 版相反：先发布 Worker（接受 null），再应用迁移。若先迁移，旧 Worker 会把 null 当作非法回答，工具在两步之间返回 `storage_connections_unavailable`。
+
+1. 合入本 PR（Task `7f209eed`）。
+2. Worker 发布（`release.production`），再生产迁移 `20261007000000_storage_connections_display_name.sql`（`migration.production`），Owner 在 Clued 页面一次批准（Task `7f209eed`）。
