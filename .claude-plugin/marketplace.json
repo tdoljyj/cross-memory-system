@@ -1,0 +1,14 @@
+{
+  "name": "clued-private",
+  "owner": {
+    "name": "tdoljyj"
+  },
+  "description": "Private Clued plugins for trial. Not published.",
+  "plugins": [
+    {
+      "name": "clued",
+      "source": "./integrations/claude-code/clued",
+      "description": "The Clued Skill and the Clued capture Stop hook for Claude Code and Cowork."
+    }
+  ]
+}
