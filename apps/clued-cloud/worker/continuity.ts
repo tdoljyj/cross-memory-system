@@ -2085,8 +2085,9 @@ async function callOwnerRequest(request: Request, env: ContinuityEnv, args: unkn
     return { content: [{ type: "text", text: JSON.stringify(rejection) }], structuredContent: rejection, isError: true };
   }
   const body = withConfirmUrl(sanitizeCluedResult(result), new URL(request.url).origin);
-  const failed = (body as Record<string, unknown> | null)?.status === "rejected";
-  return { content: [{ type: "text", text: JSON.stringify(body) }], structuredContent: body, isError: failed };
+  const status = (body as Record<string, unknown> | null)?.status;
+  return { content: [{ type: "text", text: JSON.stringify(body) }], structuredContent: body,
+    isError: status === "rejected" || status === "failed" };
 }
 
 // IntegrationRuntime §12.3: Binding channel only (a clued_bnd_ token, else 403). The RPCs authenticate
@@ -2381,8 +2382,25 @@ async function callTool(
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
     structuredContent: result,
-    isError: measurementRefused || Boolean((result as Record<string, unknown> | null)?.error),
+    isError: measurementRefused || Boolean((result as Record<string, unknown> | null)?.error) ||
+      writeRefused(name, result),
   };
+}
+
+// BUG-20261007-001: a write the database rejected or failed is an M1 envelope
+// ({status, error_code}, HTTP 200, no `error`); over MCP it is a tool error, as
+// on REST (m1HttpStatus). Only the top-level status counts, by exact value: a
+// verdict such as mtpe_validate "fail" or a rejected item inside a listing is
+// not a refusal. The export carries its Receipt nested. Work claims and agent
+// messages keep their structured-result refusals (Task 934d981c).
+function writeRefused(name: string, result: unknown): boolean {
+  if (name in workClaimRpcByTool || name in agentMessageRpcByTool) return false;
+  if (!result || typeof result !== "object" || Array.isArray(result)) return false;
+  const body = result as Record<string, unknown>;
+  const receipt = name === "clued_canonical_export" && body.receipt && typeof body.receipt === "object"
+    ? body.receipt as Record<string, unknown> : null;
+  const status = receipt ? receipt.status : body.status;
+  return status === "rejected" || status === "failed";
 }
 
 // BUG-20260924-001 L1: Currentness only covers writes that reached Clued. The
