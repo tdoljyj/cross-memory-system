@@ -99,7 +99,7 @@ export const storageAgentTools = [
       properties: { ...reference, work_claim: workClaim, mutation: { oneOf: [
         { type: "object", required: ["operation", "target_kind", "destination_path", "content"], additionalProperties: false,
           properties: { operation: { const: "create" }, target_kind: { const: "file" }, destination_path: destination,
-            content: { type: "string", maxLength: 1048576, description: "UTF-8 text, stored as text/plain; the full JSON request must also fit the transport size limit. HTML and SVG are accepted only this way." } } },
+            content: { type: "string", maxLength: 1048576, description: "UTF-8 text, stored as text/markdown for .md, text/csv for .csv, application/json for .json and text/plain otherwise; the full JSON request must also fit the transport size limit. HTML and SVG are accepted only this way." } } },
         { type: "object", required: ["operation", "target_kind", "destination_path", "directory_semantics"], additionalProperties: false,
           properties: { operation: { const: "create" }, target_kind: { const: "directory" }, destination_path: destination,
             directory_semantics: { type: "string", enum: ["topic", "asset_collection"] } } },
