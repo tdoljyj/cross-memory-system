@@ -4,7 +4,8 @@ import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import pg from 'pg';
-import { compareLedgerWithHistory, readLedger, readSqlDirectory } from './migration-ledger.mjs';
+import { baselineVersion, evaluateLedger, historyOnlyDirectory, readLedger, readSqlDirectory }
+  from './migration-ledger.mjs';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const appDirectory = join(scriptDirectory, '..');
@@ -239,13 +240,17 @@ async function main() {
   const settled = await settleProjectionLag({ errors: evaluate(watchdog), watchdog,
     readWatchdog: () => readWatchdog(dbUrl), evaluate });
   watchdog = settled.watchdog;
-  // Production history must be the committed ledger (docs/maintenance/migration-ledger.md):
-  // every row the ledger knows, with its recorded text, and no row the repository
-  // cannot account for. A row a migration file carries but the ledger does not
-  // list yet (applied since the last refresh) is reported, not blocked.
+  // The committed ledger must be valid against this checkout, and production
+  // history must be the ledger (docs/maintenance/migration-ledger.md): every
+  // row up to history_through, with its recorded text, and no row the
+  // repository cannot account for. A newer row exactly as migrate mode records
+  // it for a pending file is reported, not blocked.
   const ledger = await readLedger();
-  const ledgerReport = compareLedgerWithHistory({ ledger, history,
-    migrations: await readSqlDirectory(migrationsDirectory) });
+  const ledgerReport = evaluateLedger({ ledger, history,
+    migrations: await readSqlDirectory(migrationsDirectory),
+    historyOnly: await readSqlDirectory(historyOnlyDirectory),
+    historicalThrough: baselineVersion(baseline) });
+  for (const filename of ledgerReport.pending) process.stderr.write(`pending migration: ${filename}\n`);
   for (const warning of ledgerReport.warnings) process.stderr.write(`::warning::${warning}\n`);
   if (ledgerReport.missingRows.length) {
     process.stderr.write('rows to add to supabase/ledger/production-history.json:\n' +

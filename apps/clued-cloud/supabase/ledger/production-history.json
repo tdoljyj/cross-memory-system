@@ -1,7 +1,8 @@
 {
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
-  "exported_at": "2026-10-07T03:15:33.867Z",
+  "exported_at": "2026-10-07T03:49:58.107Z",
+  "history_through": "20261007003804",
   "row_count": 202,
   "rows": [
     {
