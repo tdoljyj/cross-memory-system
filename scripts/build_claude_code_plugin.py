@@ -12,8 +12,13 @@ Sources (left) and their copies under integrations/claude-code/clued/ (right):
   scripts/hooks/run_python.sh        -> hooks/run_python.sh
   scripts/hooks/clued_capture_guard.py -> hooks/clued_capture_guard.py
 
-The plugin's own files (.claude-plugin/plugin.json, hooks/hooks.json,
-README.md) are written by hand and not touched here. Task 67c97003.
+Only files git tracks are copied, so an untracked draft or a .DS_Store in the
+source never reaches the plugin; on the plugin side __pycache__ and .DS_Store
+are ignored, as scripts/clued_components.py does. The plugin's own files
+(.claude-plugin/plugin.json, hooks/hooks.json, README.md) are written by hand
+and not touched here. plugin.json carries no version on purpose: Claude Code
+then versions an installed plugin by commit, so every change reaches existing
+installs without anyone having to raise a number. Task 67c97003.
 
 Usage: python3 scripts/build_claude_code_plugin.py [--check]
 """
@@ -21,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -35,7 +41,25 @@ COPIES = [
 ]
 
 
-def files_under(path: Path) -> dict[str, bytes]:
+SKIP_PARTS = {"__pycache__", ".DS_Store"}
+
+
+def tracked(source: str) -> list[str]:
+    """Paths under `source` that git tracks, relative to ROOT, in a stable order."""
+    out = subprocess.run(["git", "ls-files", "-z", "--", source], cwd=ROOT, check=True,
+                         capture_output=True).stdout
+    return sorted(p for p in out.decode("utf-8").split("\0") if p)
+
+
+def source_files(source: str) -> dict[str, bytes]:
+    files = {}
+    for rel in tracked(source):
+        name = "" if rel == source else Path(rel).relative_to(source).as_posix()
+        files[name] = (ROOT / rel).read_bytes()
+    return files
+
+
+def copy_files(path: Path) -> dict[str, bytes]:
     if path.is_file():
         return {"": path.read_bytes()}
     if not path.is_dir():
@@ -43,14 +67,14 @@ def files_under(path: Path) -> dict[str, bytes]:
     return {
         p.relative_to(path).as_posix(): p.read_bytes()
         for p in sorted(path.rglob("*"))
-        if p.is_file() and "__pycache__" not in p.parts
+        if p.is_file() and not SKIP_PARTS.intersection(p.relative_to(path).parts)
     }
 
 
 def differences() -> list[str]:
     found = []
     for source, copy in COPIES:
-        want, have = files_under(ROOT / source), files_under(PLUGIN / copy)
+        want, have = source_files(source), copy_files(PLUGIN / copy)
         if not want:
             found.append(f"{source}: source missing")
             continue
@@ -67,16 +91,16 @@ def differences() -> list[str]:
 
 def build() -> None:
     for source, copy in COPIES:
-        src, dst = ROOT / source, PLUGIN / copy
+        dst = PLUGIN / copy
         if dst.is_dir():
             shutil.rmtree(dst)
         elif dst.exists():
             dst.unlink()
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        if src.is_dir():
-            shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__"))
-        else:
-            shutil.copy2(src, dst)
+        for name, data in source_files(source).items():
+            target = dst / name if name else dst
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            shutil.copymode(ROOT / source / name if name else ROOT / source, target)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,11 +1,14 @@
 {
   "name": "clued",
   "displayName": "Clued",
-  "version": "0.1.0",
   "description": "Clued for Claude Code (private trial): the Clued Skill and the Stop hook that reminds the agent to record outcomes in Clued and checkpoint. Uses your existing Clued connector; it does not add one.",
   "author": {
     "name": "Clued"
   },
   "repository": "https://github.com/tdoljyj/cross-memory-system",
-  "keywords": ["clued", "memory", "continuity"]
+  "keywords": [
+    "clued",
+    "memory",
+    "continuity"
+  ]
 }

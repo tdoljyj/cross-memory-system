@@ -20,14 +20,18 @@ In Claude Code (local CLI or desktop app; cloud sessions do not install plugins)
 ```
 
 The repository is private, so Claude Code uses your git credentials for GitHub.
-After an update on `main`, run `/plugin marketplace update clued-private`.
+After an update on `main`, run `/plugin marketplace update clued-private` and then
+`/plugin update clued@clued-private`.
 
 In this repository the hook stays quiet: `.claude/settings.json` already runs the
 same guard. Set `CLUED_CAPTURE_GUARD=off` to turn it off anywhere.
 
 ## Maintaining
 
-`skills/clued` and the two hook scripts are copies. Change the sources
-(`skills/clued`, `scripts/hooks/`), then run `python3 scripts/build_claude_code_plugin.py`
-and raise `version` in `.claude-plugin/plugin.json`. `--check` fails when a copy is stale;
-`tests/test_claude_code_plugin.py` runs it.
+`skills/clued` and the two hook scripts are copies of the tracked sources
+(`skills/clued`, `scripts/hooks/`). After changing a source, run
+`python3 scripts/build_claude_code_plugin.py` and commit the copies; `--check` fails
+when a copy is stale, and `tests/test_clued_components.py` runs it on every pull request.
+`plugin.json` has no `version` on purpose: Claude Code versions the install by commit,
+so `/plugin marketplace update clued-private` followed by `/plugin update clued@clued-private`
+picks up every merged change.

@@ -29,10 +29,24 @@ class PluginLayoutTest(unittest.TestCase):
         run = subprocess.run([sys.executable, str(BUILD), "--check"], capture_output=True, text=True)
         self.assertEqual(run.returncode, 0, run.stderr)
 
+    def test_only_tracked_source_files_count(self) -> None:
+        # An untracked file in the source (a .DS_Store, a draft) is neither copied nor reported.
+        stray = ROOT / "skills" / "clued" / "references" / "untracked-draft-for-test.md"
+        self.assertFalse(stray.exists())
+        stray.write_text("draft\n", encoding="utf-8")
+        try:
+            run = subprocess.run([sys.executable, str(BUILD), "--check"], capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+        finally:
+            stray.unlink()
+
     def test_manifest(self) -> None:
         manifest = load(PLUGIN / ".claude-plugin" / "plugin.json")
         self.assertEqual(manifest["name"], "clued")
-        self.assertRegex(manifest["version"], r"^\d+\.\d+\.\d+$")
+        # No version on purpose: Claude Code then versions the install by commit, so a rebuilt
+        # Skill or guard reaches existing installs; a pinned version would hide it until someone
+        # raised it by hand.
+        self.assertNotIn("version", manifest)
         # Owner choice (Task 67c97003): the trial uses the existing Clued connector and adds none.
         self.assertNotIn("mcpServers", manifest)
         self.assertFalse((PLUGIN / ".mcp.json").exists())
