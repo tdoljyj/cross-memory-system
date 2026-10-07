@@ -11,9 +11,9 @@ const profile = { profile_id: "native-test", profile_version: "test/1", managed_
 const provider = { root_folder_id: "root", root_parent_id: "container", root_folder_version: "1",
   destination_parent_id: "track", destination_parent_version: "1", destination_file_id: null, destination_file_version: null };
 const intent = "10000000-0000-4000-8000-000000000001";
-function fixture(overrides = {}) {
+function fixture(overrides = {}, name = "test.txt") {
   const events = [];
-  const mutation = { operation: "create", destination_path: profile.managed_root + "/20_P_产品与体验/test.txt",
+  const mutation = { operation: "create", destination_path: profile.managed_root + "/20_P_产品与体验/" + name,
     target_kind: "file", content: "合成\n", artifact_role: "clued_resource" };
   const binding = { profile_id: profile.profile_id, operation: "create", destination_path: mutation.destination_path,
     request_sha256: createHash("sha256").update(JSON.stringify(mutation)).digest("hex") };
@@ -79,6 +79,28 @@ test("native create records exact generated ID and binding before one POST, neve
   assert.equal(f.attempt().size, "7");
   await assert.rejects(f.effect(f.request), /DURABLE_START_REQUIRED/);
   assert.equal(f.events.filter((e) => e === "storage-post").length, 1);
+});
+test("inline text takes its Drive type from the extension; HTML, SVG and the rest stay text/plain", async () => {
+  const cases = [["评分标准.md", "text/markdown"], ["data.CSV", "text/csv"], ["config.Json", "application/json"],
+    ["test.txt", "text/plain"], ["page.html", "text/plain"], ["logo.svg", "text/plain"], [".md", "text/plain"],
+    ["README", "text/plain"], ["notes.md.html", "text/plain"]];
+  for (const [name, mime] of cases) {
+    let sent;
+    const f = fixture({ fetch: async (url, options) => {
+      if (url.includes("/generateIds")) return Response.json({ ids: ["generated-id"] });
+      sent = options.body;
+      const metadata = JSON.parse(sent.split("\r\n")[3]);
+      return Response.json({ id: "generated-id", name: metadata.name, parents: ["track"],
+        mimeType: metadata.mimeType, version: "1", trashed: false });
+    } }, name);
+    await f.effect(f.request);
+    assert.equal(JSON.parse(sent.split("\r\n")[3]).mimeType, mime, name);
+    assert.match(sent, new RegExp(`\r\nContent-Type: ${mime.replace("/", "\\/")}; charset=UTF-8\r\n\r\n合成`), name);
+  }
+  // Drive answering with another type than the one asked for is a substituted response.
+  const changed = fixture({ fetch: async (url) => Response.json(url.includes("generateIds") ? { ids: ["generated-id"] }
+    : { id: "generated-id", name: "a.md", parents: ["track"], mimeType: "text/plain", version: "1", trashed: false }) }, "a.md");
+  await assert.rejects(changed.effect(changed.request), /RESPONSE_MISMATCH/);
 });
 test("changed content or missing durable start never reaches Google", async () => {
   const f = fixture(); f.request.mutation.content = "changed";
