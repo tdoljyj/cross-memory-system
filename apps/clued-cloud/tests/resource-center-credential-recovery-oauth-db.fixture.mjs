@@ -227,9 +227,10 @@ export async function testCredentialRecoveryOAuth(t,admin,server,{user,connectio
           select id,$2,true,receipt_id from clued_private.storage_connections_v1 where id=$1`,[connection,issuer]);
         const input=await start(),oauth=await createStorageGoogleOAuth({...config,rpc:async v=>{
           if(v.action==='complete'){
+            // BUG-20261007-005: the fenced root is skipped and counted, not polled.
             const result=(await db.query('select public.clued_storage_refresh_worker_v1($1,$2::jsonb) v',[issuer,{action:'due'}])).rows[0].v;
-            assert.ok(result.connections.includes(connection));
-            assert.ok((await db.query('select last_polled_at from clued_private.storage_refresh_delegations_v1 where connection_id=$1',[connection])).rows[0].last_polled_at);
+            assert.equal(result.connections.includes(connection),false); assert.ok(result.root_busy>=1);
+            assert.equal((await db.query('select last_polled_at from clued_private.storage_refresh_delegations_v1 where connection_id=$1',[connection])).rows[0].last_polled_at,null);
           }return call(v);
         }});
         assert.equal((await oauth.complete(input)).status,'completed');assert.equal(exchanges,1);
