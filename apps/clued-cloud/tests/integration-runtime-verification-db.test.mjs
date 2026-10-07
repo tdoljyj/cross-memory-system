@@ -119,7 +119,10 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
     await apply(MIGRATION);
     const after = await snapshot();
     assert.ok(migrations.includes(GRANTS));
-    for (const name of migrations.filter((name) => name > MIGRATION && name !== GRANTS)) await apply(name);
+    // Production order: the migrations between this one and the grant migration now, the grant migration
+    // after T-S-2 has checked the database without it, then every later migration (among them
+    // 20261007120000_db_security_hygiene.sql, which narrows the grants).
+    for (const name of migrations.filter((name) => name > MIGRATION && name < GRANTS)) await apply(name);
 
     await t.test('T-S-3 the migration adds only PR-3 objects and replaces only the two PR-2 entry points', () => {
       for (const kind of ['relations', 'policies']) {
@@ -181,8 +184,9 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       for (const name of [...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1']) assert.ok(publicRpcs.includes(name), name);
     });
 
-    // the §5.13 target grants: the stage C grant migration itself (§13.0)
+    // the §5.13 target grants: the stage C grant migration itself (§13.0), then the later migrations
     await apply(GRANTS);
+    for (const name of migrations.filter((name) => name > GRANTS)) await apply(name);
 
     // ---- fixtures ----------------------------------------------------------------------------
     const newUser = async () => {
@@ -329,7 +333,8 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       'clued_private.integration_binding_owners_v1', 'clued_private.integration_revocations_v1',
       'clued_private.integration_capability_declarations_v1', 'clued_private.integration_claims_v1'].map(async (table) => [table, await rowHash(table)])));
 
-    await t.test('T-S-2 after the target grants: exactly §5.13', async () => {
+    // §5.13 as narrowed by 20261007120000_db_security_hygiene.sql: the Binding RPCs are reached as anon only.
+    await t.test('T-S-2 after the target grants and the hygiene migration: exactly §5.13, narrowed', async () => {
       const { rows } = await admin.query(`select p.proname, array_agg(r.rolname order by r.rolname) filter (where
           has_function_privilege(r.rolname, p.oid, 'execute')) roles
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -338,7 +343,7 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
         group by p.proname order by p.proname`, [[...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1']]);
       assert.equal(rows.length, BINDING_RPCS.length + 2);
       for (const row of rows) {
-        assert.deepEqual(row.roles, row.proname.startsWith('clued_integration_') ? ['anon', 'authenticated'] : ['authenticated'], row.proname);
+        assert.deepEqual(row.roles, row.proname.startsWith('clued_integration_') ? ['anon'] : ['authenticated'], row.proname);
       }
     });
 
