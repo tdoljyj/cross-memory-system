@@ -23,16 +23,19 @@ import "../owner.css";
 // what the connection already has, and approval adds them to that connection.
 // A bundle (PermissionSimplification §3.3, Task 23045c17) is several requests
 // the Agent or the release door opened together, for example a production
-// migration and the deploy of the same commit. The page shows every pending
-// member and "批准" approves all of them: each still gets its own two-step
-// confirmation over its own view, with the same choice; scope rows are not
-// offered for a bundle.
+// migration and the deploy of the same commit. The page lists every pending
+// member side by side, each with a checkbox ticked by default (Decision
+// 383c2144); "批准" approves the ticked ones, each still with its own two-step
+// confirmation over its own view and the same choice. An unticked member stays
+// pending; "拒绝" still rejects the whole bundle. Scope rows are not offered
+// for a bundle.
 type Json = Record<string, unknown>;
 type Choice = "once" | "grant";
 type Options = { choice: Choice; seconds: number; anyAgent: boolean; scope: string[] };
 type ScopeRow = { resource: string; options: string[] };
 type Issued = { confirmation_token: string; view_digest: string; expires_at: string; view: Json; options: Options };
 type Member = { id: string; issued: Issued | null };
+type Left = { id: string; action: string };
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DURATIONS: [number, string][] = [[3600, "1 小时"], [14400, "4 小时"], [86400, "24 小时"], [604800, "7 天"]];
@@ -103,6 +106,12 @@ function bundleOthers(request: Json, id: string): Json[] {
   return Array.isArray(request.bundle) ? request.bundle.filter(object)
     .filter(member => typeof member.request_id === "string" && REQUEST_ID.test(member.request_id) && member.request_id !== id) : [];
 }
+const termText = (view: Json) => view.choice === "once" ? "只这一次，24 小时内用掉" : durationText(Number(view.expires_seconds)) + "内有效";
+const usesText = (view: Json) => view.max_uses == null ? "不限" : "最多 " + String(view.max_uses) + " 次";
+function actionText(view: Json | null | undefined, fallback?: unknown) {
+  if (view && view.action_title) return String(view.action_title) + "（" + String(view.action ?? "") + "）";
+  return String(view?.action ?? fallback ?? "");
+}
 const PERMISSION_ACTION = "connection.permission";
 const ACTION_LABELS: Record<string, string> = { read: "读取", write: "新增和修改", close: "关闭和归档", restore: "恢复", audit: "查看审计回执" };
 const CONTEXT_LABELS: Record<string, string> = { global: "个人记忆", profile: "个人资料" };
@@ -127,8 +136,10 @@ export default function OwnerConfirmPage() {
   const [rows, setRows] = useState<ScopeRow[]>([]);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [pending, setPending] = useState<Issued | null>(null);
-  const [done, setDone] = useState<{ kind: "granted" | "rejected"; grant?: Json; count?: number } | null>(null);
+  const [done, setDone] = useState<{ kind: "granted" | "rejected"; grant?: Json; count?: number; left?: Left[] } | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
+  // Bundle members (the request on the page included) the Owner unticked.
+  const [skipped, setSkipped] = useState<string[]>([]);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
@@ -146,6 +157,7 @@ export default function OwnerConfirmPage() {
       if (!changed) return;
       ++epoch.current;
       setRequest(null); setIssued(null); setPending(null); setDone(null); setError(""); setWorking(false); setRows([]); setMembers([]);
+      setSkipped([]);
     });
     return () => { disposed = true; ++lifetime.current; data.subscription.unsubscribe(); };
   }, []);
@@ -175,7 +187,7 @@ export default function OwnerConfirmPage() {
         anyAgent: false, scope: offered.map(row => row.resource) };
       setRows(offered); setOptions(initial);
       const next: Member[] = others.map(member => ({ id: String(member.request_id), issued: null }));
-      setMembers(next);
+      setMembers(next); setSkipped([]);
       if (value.request.status === "pending") {
         await issue(id, initial, generation, offered);
         await issueMembers(next, initial, generation);
@@ -242,29 +254,40 @@ export default function OwnerConfirmPage() {
     void choose({ ...options, scope: options.scope.map((value, at) => at === index ? chosen : value) });
   }
 
+  // A retry re-checks the request on the page; otherwise it is committed only
+  // when ticked, then every ticked member follows.
   async function approve(retry?: Issued) {
     let target = retry ?? issued;
-    if (!requestId || !current.current || working || !target) return;
+    const mine = Boolean(retry) || !skipped.includes(requestId ?? "");
+    const chosen = members.filter(member => !skipped.includes(member.id));
+    if (!requestId || !current.current || working || (mine ? !target : !chosen.length)) return;
     const generation = epoch.current;
     setWorking(true); setError("");
     try {
-      if (!retry && Date.parse(target.expires_at) - Date.now() < REFRESH_MS) {
-        const shown = target.view_digest;
-        const fresh = await issue(requestId, target.options, generation);
-        if (!fresh) return;
-        if (fresh.view_digest !== shown) throw new RequestFailure("请求内容有变化，请核对后再点批准。");
-        target = fresh;
+      let grant: Json | undefined;
+      if (mine && target) {
+        if (!retry && Date.parse(target.expires_at) - Date.now() < REFRESH_MS) {
+          const shown = target.view_digest;
+          const fresh = await issue(requestId, target.options, generation);
+          if (!fresh) return;
+          if (fresh.view_digest !== shown) throw new RequestFailure("请求内容有变化，请核对后再点批准。");
+          target = fresh;
+        }
+        setPending(target); setIssued(null);
+        const value = await rpc("clued_owner_grant_v1", { confirmation_token: target.confirmation_token, view_digest: target.view_digest });
+        if (epoch.current !== generation) return;
+        if (value.status !== "committed" || !object(value.grant) || typeof value.grant.grant_id !== "string") {
+          throw new RequestFailure("批准结果尚未确认，请核对原操作。", true);
+        }
+        setPending(null);
+        grant = value.grant;
       }
-      setPending(target); setIssued(null);
-      const value = await rpc("clued_owner_grant_v1", { confirmation_token: target.confirmation_token, view_digest: target.view_digest });
-      if (epoch.current !== generation) return;
-      if (value.status !== "committed" || !object(value.grant) || typeof value.grant.grant_id !== "string") {
-        throw new RequestFailure("批准结果尚未确认，请核对原操作。", true);
-      }
-      setPending(null);
-      const count = await approveMembers(target.options, generation);
-      if (count === null) return;
-      setDone({ kind: "granted", grant: value.grant, count: count + 1 });
+      const result = await approveMembers(chosen, mine ? 1 : 0, generation);
+      if (!result) return;
+      const left: Left[] = [...(mine ? [] : [{ id: requestId, action: actionText(issued?.view, request?.action) }]),
+        ...members.filter(member => skipped.includes(member.id))
+          .map(member => ({ id: member.id, action: actionText(member.issued?.view) }))];
+      setDone({ kind: "granted", grant: grant ?? result.grant, count: result.count + (mine ? 1 : 0), left });
     } catch (failure) {
       if (epoch.current !== generation) return;
       const uncertain = !(failure instanceof RequestFailure) || failure.uncertain;
@@ -273,18 +296,19 @@ export default function OwnerConfirmPage() {
     } finally { if (epoch.current === generation) setWorking(false); }
   }
 
-  // After the request on the page: every other member, each over its own
-  // view. A member whose token is about to expire is reissued first and used
-  // only if Clued renders the identical view.
-  async function approveMembers(chosen: Options, generation: number): Promise<number | null> {
+  // The ticked members after the request on the page (`before` counts it when
+  // it was approved), each over its own view. A member whose token is about to
+  // expire is reissued first and used only if Clued renders the identical view.
+  async function approveMembers(chosen: Member[], before: number, generation: number): Promise<{ count: number; grant?: Json } | null> {
     let count = 0;
-    for (const member of members) {
-      const stop = (reason: string) => new RequestFailure("前 " + (count + 1) + " 项已批准，第 " + (count + 2) + " 项未完成："
-        + reason + "请刷新页面核对剩下的。");
+    let grant: Json | undefined;
+    for (const member of chosen) {
+      const stop = (reason: string) => new RequestFailure((before + count ? "前 " + (before + count) + " 项已批准，" : "")
+        + "第 " + (before + count + 1) + " 项未完成：" + reason + "请刷新页面核对剩下的。");
       let target = member.issued;
       if (!target) throw stop("确认还没生成。");
       if (Date.parse(target.expires_at) - Date.now() < REFRESH_MS) {
-        const fresh = await issueMembers([member], chosen, generation);
+        const fresh = await issueMembers([member], target.options, generation);
         if (!fresh) return null;
         if (fresh[0].issued?.view_digest !== target.view_digest || !fresh[0].issued) throw stop("内容有变化。");
         target = fresh[0].issued;
@@ -293,12 +317,21 @@ export default function OwnerConfirmPage() {
         const value = await rpc("clued_owner_grant_v1", { confirmation_token: target.confirmation_token, view_digest: target.view_digest });
         if (epoch.current !== generation) return null;
         if (value.status !== "committed") throw new RequestFailure("批准结果尚未确认。");
+        grant ??= object(value.grant) ? value.grant : undefined;
       } catch (failure) {
         throw stop(failure instanceof RequestFailure ? failure.message : "批准结果尚未确认。");
       }
       count++;
     }
-    return count;
+    return { count, grant };
+  }
+
+  // A bundle checkbox: data-id names the member (or the request on the page).
+  function pick(event: ChangeEvent<HTMLInputElement>) {
+    const id = event.currentTarget.dataset.id;
+    const ticked = event.currentTarget.checked;
+    if (!id || working) return;
+    setSkipped(now => ticked ? now.filter(item => item !== id) : now.includes(id) ? now : [...now, id]);
   }
 
   async function reject() {
@@ -327,7 +360,7 @@ export default function OwnerConfirmPage() {
 
   async function signOut() {
     ++epoch.current; current.current = null; setSession(null);
-    setRequest(null); setIssued(null); setPending(null); setDone(null); setError(""); setMembers([]);
+    setRequest(null); setIssued(null); setPending(null); setDone(null); setError(""); setMembers([]); setSkipped([]);
     try { await supabase.auth.signOut(); } catch { setError("退出尚未确认，请重新加载页面后检查登录状态。"); }
   }
 
@@ -350,6 +383,13 @@ export default function OwnerConfirmPage() {
   const connection = view && object(view.connection) ? view.connection : null;
   const permissions = view && Array.isArray(view.permissions) ? view.permissions.filter(object) : [];
   const existing = connection && Array.isArray(connection.current) ? connection.current.filter(object) : [];
+  // A bundle is listed side by side, the request on the page first.
+  const items = view && members.length ? [{ id: requestId ?? "", view: view as Json | null },
+    ...members.map(member => ({ id: member.id, view: member.issued?.view ?? null }))] : [];
+  const picked = items.filter(item => !skipped.includes(item.id));
+  // A deploy usually needs the migration opened with it in the same bundle.
+  const deployAlone = picked.some(item => item.view?.action === "release.production")
+    && items.some(item => skipped.includes(item.id) && item.view?.action === "migration.production");
   const leftover = request && status !== "pending" ? bundleOthers(request, requestId ?? "").filter(member => member.status === "pending") : [];
 
   return <main className="context-page owner-confirm">
@@ -370,9 +410,11 @@ export default function OwnerConfirmPage() {
           <p>权限已加到这个连接上。Agent 重试刚才被拒的操作即可，不用重新连接。</p>
           <p>可以在 <Link href="/oauth/connections">连接管理</Link> 随时收窄或撤销这个连接的权限。</p></section>}
         {done?.kind === "granted" && !permission && <section aria-label="已批准" role="status"><h2>已批准</h2>
-          {(done.count ?? 1) > 1 && <p>同一批 {done.count} 项都已批准，每项各自生成一个授权。</p>}
+          {(done.count ?? 1) > 1 && <p>同一批 {done.count} 项已批准，每项各自生成一个授权。</p>}
           <p>{done.grant?.max_uses === 1 ? "只允许这一次" : "授权已生效"}，有效期至 {new Date(String(done.grant?.expires_at)).toLocaleString()}。</p>
-          <p>Agent 重试时会自动用上这次批准。可以在 <Link href="/grants">我的授权</Link> 随时撤销。</p></section>}
+          <p>Agent 重试时会自动用上这次批准。可以在 <Link href="/grants">我的授权</Link> 随时撤销。</p>
+          {(done.left?.length ?? 0) > 0 && <><p>同一批还有 {done.left?.length} 项没勾，仍等你确认：</p><ul>{done.left?.map(item =>
+            <li key={item.id}><a href={"/confirm/" + item.id}>{item.action}</a></li>)}</ul></>}</section>}
         {done?.kind === "rejected" && <section aria-label="已拒绝" role="status"><h2>已拒绝</h2><p>Agent 不会得到这次授权。</p></section>}
         {!done && request && status !== "pending" && <section aria-label="请求状态"><h2>{STATUS[status] ?? status}</h2>
           <p>这个请求已不需要处理。{status === "expired" ? "如仍需要，请让 Agent 重新发起。" : ""}</p>
@@ -425,24 +467,28 @@ export default function OwnerConfirmPage() {
           {view && !permission && <section aria-label="要批准什么"><h2>要批准什么</h2>
             <p className="context-muted">以下内容由 Clued 生成，Agent 改不了。</p>
             <dl>
-              <dt>动作</dt><dd>{String(view.action_title ?? "")}（{String(view.action ?? "")}）</dd>
-              <dt>范围</dt><dd><ul>{list(view.resources).map(resource => <li key={resource}>{resource}</li>)}</ul></dd>
+              {!items.length && <><dt>动作</dt><dd>{actionText(view)}</dd>
+                <dt>范围</dt><dd><ul>{list(view.resources).map(resource => <li key={resource}>{resource}</li>)}</ul></dd></>}
               {task && <><dt>任务</dt><dd>{String(task.title ?? "")}</dd></>}
               <dt>给谁</dt><dd>{grantee?.any_agent ? "我的任何 Agent" : String(grantee?.agent_name ?? "发起请求的 Agent") + (grantee?.vendor ? "（" + String(grantee.vendor) + "）" : "")}</dd>
-              <dt>期限</dt><dd>{view.choice === "once" ? "只这一次，24 小时内用掉" : durationText(Number(view.expires_seconds)) + "内有效"}</dd>
-              <dt>次数</dt><dd>{view.max_uses == null ? "不限" : "最多 " + String(view.max_uses) + " 次"}</dd>
+              <dt>期限</dt><dd>{termText(view)}</dd>
+              <dt>次数</dt><dd>{usesText(view)}</dd>
             </dl>
-            {members.length > 0 && <section aria-label="同一批" className="owner-bundle">
-              <h3>同一批，一起批准（共 {members.length + 1} 项）</h3>
-              <p className="context-muted">点“批准全部”会把下面每一项也按上面的选择批准，每项各自生成一个授权。</p>
-              {members.map(member => {
-                const other = member.issued?.view;
-                return <dl key={member.id}>
-                  <dt>动作</dt><dd>{other ? String(other.action_title ?? "") + "（" + String(other.action ?? "") + "）" : "正在生成…"}</dd>
-                  {other && <><dt>范围</dt><dd><ul>{list(other.resources).map(resource => <li key={resource}>{resource}</li>)}</ul></dd></>}
-                </dl>;
+            {items.length > 0 && <fieldset aria-label="同一批" className="owner-bundle" disabled={working}>
+              <legend>同一批共 {items.length} 项，勾上的才会批准</legend>
+              {items.map(item => {
+                const other = item.view;
+                const differs = other && (termText(other) !== termText(view) || usesText(other) !== usesText(view));
+                return <label key={item.id} className="owner-check owner-bundle-item">
+                  <input type="checkbox" checked={!skipped.includes(item.id)} data-id={item.id} onChange={pick} />
+                  <span><strong>{other ? actionText(other) : "正在生成…"}</strong>
+                    {other && <ul>{list(other.resources).map(resource => <li key={resource}>{resource}</li>)}</ul>}
+                    {differs && <span className="context-muted">期限：{termText(other)}；次数：{usesText(other)}</span>}</span>
+                </label>;
               })}
-            </section>}</section>}
+            </fieldset>}
+            {items.length > 0 && picked.length < items.length && <p className="context-muted">没勾的项保持待确认，之后还可以再批。</p>}
+            {deployAlone && <p className="owner-warning" role="note">部署通常依赖同批迁移，只批部署可能出错。</p>}</section>}
           {note && admissionNote && <section aria-label="准入检查说明" className="owner-note"><h2>准入检查说明</h2>
             <p className="context-muted">这段话由 Clued 的准入检查根据 PR 写出，不是 Agent 自述；批准前请打开链接看这些提交改了什么。</p><p>{note}</p>
             {compareLink ? <p><a href={compareLink} target="_blank" rel="noreferrer">在 GitHub 上查看这些提交的改动</a></p>
@@ -450,8 +496,8 @@ export default function OwnerConfirmPage() {
           {note && !admissionNote && <section aria-label="Agent 说明" className="owner-note"><h2>Agent 说明（未核实）</h2>
             <p className="context-muted">这段话是 Agent 自己写的，不改变上面要批准的内容。</p><p>{note}</p></section>}
           {!pending && <div className="owner-actions">
-            <button type="button" disabled={working || !issued || members.some(member => !member.issued)} onClick={() => void approve()}>
-              {members.length ? "批准全部 " + (members.length + 1) + " 项" : "批准"}</button>
+            <button type="button" disabled={working || (items.length ? !picked.length || picked.some(item => !item.view) : !issued)}
+              onClick={() => void approve()}>批准</button>
             <button type="button" disabled={working} onClick={() => void reject()}>拒绝</button>
           </div>}
         </>}

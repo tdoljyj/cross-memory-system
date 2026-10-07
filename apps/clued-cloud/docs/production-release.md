@@ -54,7 +54,10 @@ Supabase process **before** dispatching the Worker release. The release gate
 reads `supabase_migrations.schema_migrations` and compares the recorded SQL
 with repository files. It checks the projection pipeline predecessors, the
 MTPE selector, a fresh healthy Worker heartbeat, and CURRENT revision/digest
-for `global.priority_frontier` and `global.__aggregate__`.
+for `global.priority_frontier` and `global.__aggregate__`. It also checks the
+committed migration ledger (`supabase/ledger/production-history.json`) and
+compares it with the live history; after a `migrate` run, the next pull
+request records the new rows (see `docs/maintenance/migration-ledger.md`).
 
 Production migration history predates a unified versioning convention. The
 MTPE source file `20260924110000_mtpe_universal_intake_auto_priority.sql` was
