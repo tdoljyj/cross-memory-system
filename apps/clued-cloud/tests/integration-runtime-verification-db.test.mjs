@@ -159,8 +159,11 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
         assert.equal(Number(row.policies), 0, row.relname);
         assert.equal(row.any_privilege, false, row.relname);
       }
-      assert.equal(Number((await admin.query(`select count(*) n from clued_private.integration_ready_profiles_v1`)).rows[0].n), 0,
-        'no production READY profile is seeded (§5.1)');
+      // S2c seeds no production READY profile (§5.1); the only rows are the ones S3 defines
+      // (20261007060000_integration_runtime_ready_profiles.sql, tested in integration-runtime-ready-profiles-db).
+      assert.equal(Number((await admin.query(`select count(*) n from clued_private.integration_ready_profiles_v1
+        where profile_id !~ '^(anthropic\\.claude|openai\\.chatgpt)\\.[a-z_]+\\.continuity$'`)).rows[0].n), 0,
+        'no production READY profile other than the S3 continuity profiles');
     });
 
     await t.test('T-S-2 no EXECUTE on any Integration function before the target grants (OQ-21)', async () => {
