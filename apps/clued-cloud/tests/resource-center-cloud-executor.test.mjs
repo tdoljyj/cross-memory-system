@@ -493,6 +493,9 @@ test('unavailable runs log one fixed code: shape checks, boundary scan refusals,
   const cases=[
     ['CLOUD_MUTATION_SHAPE_INVALID',f=>{const load=f.config.load_job;f.config.load_job=async r=>({...await load(r),mutation:{operation:'create',target_kind:'file',destination_path:root+'/track/x.txt'}});}],
     ['CLOUD_DESCRIPTOR_INVALID',f=>{const load=f.config.load_job;f.config.load_job=async r=>({...await load(r),request_digest:'private '+root});}],
+    // A replace of a file Clued has not registered: the database names no revisions to release.
+    ['CLOUD_REPLACE_TARGET_UNREGISTERED',f=>{const load=f.config.load_job;f.config.load_job=async r=>({...await load(r),revision_releases:null,
+      mutation:{operation:'replace',target_kind:'file',destination_path:root+'/track/map.json',destination_file_version:'16',content:'{}'}});}],
     ['CLOUD_PROFILE_INVALID',f=>{const load=f.config.load_job;f.config.load_job=async r=>{const d=await load(r);d.profile.policy_version='other';return d;};}],
     ['DRIVE_BOUNDARY_PATH_AMBIGUOUS',f=>{f.files.set('dup',ownerEntry('dup','track','parent'));f.files.set('dup2',ownerEntry('dup2','track','parent'));}],
     ['UNSPECIFIED',f=>{f.config.load_job=async()=>{throw new Error('private database detail '+ids.job);};}],
