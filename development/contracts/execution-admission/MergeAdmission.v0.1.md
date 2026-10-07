@@ -221,7 +221,7 @@
 
 ### 7.4 用 GitHub 原生 auto-merge 替代 Agent 守 CI
 
-**结论：可以，且推荐；前提是 Owner 在仓库设置里打开 `Allow auto-merge`（现为关闭）。** GitHub 文档：auto-merge 对私有仓库在 GitHub Pro 及以上可用；本仓库是个人账号私有仓库且已有规则集（规则集对私有仓库同样需要 Pro），所以可用。
+**结论：可以，且推荐；前提是 Owner 在仓库设置里打开 `Allow auto-merge`（现为关闭）。** GitHub 文档：auto-merge 在公开仓库对 Free 可用，对私有仓库在 GitHub Pro、Team、Enterprise 可用。本仓库是个人账号私有仓库，账号计划从 Agent 侧 API 读不到（令牌无 `user` scope）；它已对私有仓库启用了规则集与分支保护，通常意味着 Pro 及以上，Owner 打开设置时 GitHub 界面会直接显示该选项是否可用，以此为准。
 
 - **顺序**：Owner 合并批准（受保护层的 `repo.protected_change` 授权）在前 → PR 准入通过 → 入队 → 队列头 → Agent（或执行器）打开 auto-merge → GitHub 在全部必需检查通过且 head 含 tip 时合并。auto-merge 不绕过任何必需检查：`clued-merge-slot` 变红它就不合并，这正是把位绑到必需检查上的意义。
 - **谁打开**：第一步实施里由 Agent 用 `gh pr merge --auto --merge` 打开（它用 Owner 身份，权限足够）；第二步由执行器打开（需要 App 的 `pull_requests: write` + `contents: write`）。
