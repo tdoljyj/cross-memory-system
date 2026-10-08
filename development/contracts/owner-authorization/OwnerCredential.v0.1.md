@@ -32,6 +32,7 @@
   - 发布 workflow：job 进 `clued-release` environment；新增 `migrate` 模式（输入 `migrations`，逗号分隔的文件名）；`deploy` 与 `migrate` 先跑 `scripts/ci/clued-release-grant.mjs`。
   - 授权检查先只提示（Owner 选择）：Owner 设仓库变量 `CLUED_RELEASE_GRANT_ENFORCE=true` 后才拦。
   - Agent 合同升到第 20 版，§6.6 写明发布与迁移前按提交申请授权。
+- 自动审批开关（§12，Owner Decision `5ce219c6`，Task `8eb340c7`）：迁移 `20261008170000_owner_auto_approve_v1.sql`，测试 `tests/owner-auto-approve-db.test.mjs`、`tests/owner-grants-ui.test.mjs`、`tests/owner-requests-transport.test.mjs`。需生产迁移与 Worker 发布后生效；Agent 合同与工具说明的补写见 Task `ce42fc18`。
 - 第 5 步（Owner 授权 2026-10-03，Task `340693ee`）：Agent 合同升到第 14 版，§6.6 写明 Owner 批准只来自 Owner 本人登录的页面、`confirm_url` 原样交给 Owner、不得自称已批准、被拒或过期就停；§4 错误表的 `work_claim_budget_exhausted` 改为先给 `owner_request.confirm_url`。尚无门口消费的动作（发布、迁移）仍按 §6.4 需要明确授权。Worker 发布后服务端 `/clued-agent.md` 才是第 14 版。
 日期：2026-10-02
 Task：`17ab25b3`（Global）。Owner 决定：方向与优先级见 Task `17ab25b3` v3，规则见 Decision `6fa79397`，待定三条见 Decision `667f588b`（§11）。
@@ -286,3 +287,46 @@ Clued 维护一张"受信宿主公钥"表，由 Owner 在 Native 页面登记。
 1. **受权方**：默认授权给发起请求的那个 Agent 宿主（Binding），确认页可选"任何 Agent"。Owner 的所有 Claude Code 会话共用一个 Binding（Decision `533a5286`），所以授权对这些会话都有效。
 2. **不要求最近登录**：授权与确认请求只要求 Owner 本人有效的登录会话，不检查最近一次登录的时间。仍拒绝委托 OAuth 与 Binding，仍用一次性两步令牌。现有 Information Flow S3/S4/S5 与认领豁免的 15 分钟规则不在本决定范围内，保持不变。
 3. **旧豁免**：现有认领豁免记录保留到过期，新豁免一律走授权。
+
+---
+
+## 12. 自动审批开关（Owner Decision `5ce219c6`，Task `8eb340c7`）
+
+Owner 打开开关后，在开关有效期内，Agent 或门口提交的申请当场获批，不用 Owner 逐条点。打开开关本身就是 Owner 提前给出的批准，所以 §3.2"Agent 只能发起请求，不能批准请求"不变：Agent 开不了开关，也批不了、放宽不了任何授权。
+
+### 12.1 开与关
+
+- **打开**：只在 `/grants` 页面，由 Owner 本人登录后两步确认（`clued_owner_auto_approve_confirmation_issue_v1` + `clued_owner_auto_approve_on_v1`），与 §5 的授权确认同一套一次性令牌：只在同一登录会话、5 分钟内、对 Clued 渲染出的同一份视图有效。视图列出会自动通过的动作、每个动作的批法和仍需 Owner 确认的动作。
+- **时长**：打开时选，默认 24 小时，最长 7 天，到期自动关闭。再次打开会替换正在生效的那一段。
+- **关闭**：一步（`clued_owner_auto_approve_off_v1`），与撤销授权一样，因为它只收回权限。关闭后新申请照常等 Owner 确认；已自动发出的授权留在 `/grants`，到期或由 Owner 逐条撤销。
+- Receipt：`OWNER_AUTO_APPROVE_ON`、`OWNER_AUTO_APPROVE_OFF`；令牌出错时记 `OWNER_AUTO_APPROVE_REJECTED`。
+
+### 12.2 自动通过的范围
+
+只有 Owner 选定的动作（`owner_grant_actions.auto_approvable`）：`release.production`、`migration.production`、`repo.protected_change`、`work_claim.extra_claims`。
+
+- `connection.permission` 永远要 Owner 点：它扩大的是连接本身，开关关了也收不回（数据库约束保证它不能被设为可自动通过）。
+- `model.dataset_split.*` 不自动：它的门口只认 Owner 在确认页上确认过的授权（第一方模型权限边界）。
+- 以后新登记的动作默认不自动，Owner 加入后才自动。
+
+### 12.3 自动发出的授权
+
+与确认页按风险的默认选择一致（§4、默认选择按风险）：
+
+- 高风险动作"只批这一次"：1 次、24 小时；
+- 常规动作"管一段时间"：按 Agent 建议的时长和次数，没有建议时为 4 小时。
+
+授权只给发起请求的那个 Binding，只覆盖请求里的资源，到期时间不晚于开关的到期时间。授权记 `OWNER_GRANT_GIVEN` Receipt，`principal` 为 `owner_auto_approve`，并记下开关那次打开的 Receipt。`/grants` 上标"来源：自动审批"。
+
+### 12.4 在哪里生效（当场回执）
+
+申请在下面四处打开，开关有效时都在同一事务里批准，调用方拿到的就是已决定的申请和授权，这就是回执：
+
+1. `clued_owner_request`（Agent 申请；一次申请多个动作时逐个批准）：结果的 `status` 为 `approved_once` 或 `granted`，`grant.auto_approved` 为 true，不再带 `confirm_url`。
+2. 发布门口（`release.production`、`migration.production`）：批准后当场用掉这次授权，返回 `consumed: true`、`auto_approved: true`，运行直接继续。
+3. 准入门口（`repo.protected_change`）：同样当场准入，返回 `admitted: true`、`auto_approved: true`。
+4. 认领超出每 Task 上限（`work_claim.extra_claims`）：批准后用掉一次，认领照常签发。
+
+### 12.5 不保护什么（补充 §9）
+
+开关有效期间，§6.1 发布授权与 §6.3 准入复核对上述动作不再等 Owner：Agent 可以在这段时间里发布、迁移，或合并改动准入与发布门口本身的 PR。开关的保护只剩时长上限、Receipt 记录和随时可关。所以默认 24 小时，最长 7 天。

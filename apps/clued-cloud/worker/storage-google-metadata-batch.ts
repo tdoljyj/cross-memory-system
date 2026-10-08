@@ -179,11 +179,13 @@ export function createStorageGoogleMetadataBatch(config: {
       if (values.some((value, i) => !object(value) || value.id !== fileIds[i])) throw new Error("DRIVE_METADATA_MISMATCH");
       return values;
     },
-    // Sharing state only, for directory sharing digests (resource-center-google-drive-sharing.mjs).
+    // Sharing state and permissions only, for directory sharing and access
+    // digests (resource-center-google-drive-sharing.mjs; access: storage step 2).
     async getSharings(fileIds: string[], { signal }: { signal?: AbortSignal } = {}) {
       ids(fileIds);
       const values = await groups(fileIds.map(id => "/drive/v3/files/" + id + "?" +
-        new URLSearchParams({ fields: "id,shared,permissionIds", supportsAllDrives: "true" })), signal);
+        new URLSearchParams({ fields: "id,shared,permissionIds,permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted)",
+          supportsAllDrives: "true" })), signal);
       if (values.some((value, i) => !object(value) || value.id !== fileIds[i])) throw new Error("DRIVE_METADATA_MISMATCH");
       return values;
     },

@@ -134,15 +134,50 @@ alter default privileges for role postgres in schema public
 Production originally granted the table privileges only on the seven tables
 named above; the blanket grant is broader than the original state.
 
+## Credential table privileges, 2026-10-08
+
+Migration `20261008150000_credential_table_privileges_v1.sql` (P0-4 step 1,
+Owner Decisions `1427642f` and `096df8b8`). Production gave `authenticated`
+SELECT, INSERT, UPDATE and DELETE on `public.clued_agent_bindings`; the
+migrations grant only SELECT, so the rest was granted outside the repository.
+Row security limits each user to their own rows, but a stolen session could
+read a working `token_hash`, insert a Binding outside the v12 issuance flow
+(`authorization_assert_entry_v12` lets a Binding without an
+`authorizations_v12` row through), rewrite a Binding's `token_hash`, or
+un-revoke one.
+
+After the migration a signed-in session can:
+
+- read every column of `clued_agent_bindings` and `clued_continuity_sessions`
+  except `token_hash` (column-level SELECT);
+- set `revoked_at` on a live Binding, and nothing else: UPDATE is granted on
+  that column only, and the trigger `clued_agent_bindings_session_revoke_only`
+  refuses un-revoking or moving it when the current role is `authenticated`.
+
+That is exactly what the Worker does with the user's session
+(`worker/continuity.ts` `listBindings` and `revokeBinding`). SECURITY DEFINER
+functions run as their owner and are unaffected. Test:
+`apps/clued-cloud/tests/credential-table-privileges-db.test.mjs`.
+
+Rollback (restores the production state before the migration):
+
+```sql
+drop trigger if exists clued_agent_bindings_session_revoke_only on public.clued_agent_bindings;
+drop function if exists clued_private.agent_binding_session_revoke_only_v1();
+grant select, insert, update, delete on table public.clued_agent_bindings to authenticated;
+grant select on table public.clued_continuity_sessions to authenticated;
+notify pgrst, 'reload schema';
+```
+
 ## Left for later
 
-- **Token hashing inside the database.** The `anon` RPCs take `p_token_hash`,
-  and the stored hash is the credential: anyone who obtains a hash (a dump, a
-  backup, a log) can call as that Binding with the publishable key. Sending the
-  token and hashing it inside the function would make a leaked hash useless.
-- **G6 gate trusts `__transport_source_commit`.** The Worker adds its build SHA
-  to the `clued_mcp_currentness_g6_gate` payload, but the RPC is directly
-  callable through PostgREST, so a Binding holder can send any SHA.
+- **Stored hash is the credential; G6 trusts `__transport_source_commit`.**
+  Designed in
+  [DatabaseCallerAuthentication.v0.1](../../development/contracts/database-access/DatabaseCallerAuthentication.v0.1.md)
+  (Task `9a4d6d2c`, Owner Decision `1427642f`): the database stores a verifier,
+  `sha256` of what callers send, so a leaked column is useless and no caller
+  changes; the Worker moves to its own database role, which also closes the G6
+  claim. Each step is its own PR and Owner approval.
 - **MTPE test schemas.** `mtpe_m0_test` (four functions executable by `PUBLIC`)
   and `mtpe_m0_work` remain in production. Export them and drop them; no API role
   has USAGE on them, so this is latent.

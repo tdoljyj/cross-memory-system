@@ -109,12 +109,16 @@ export function ownerRequestRejection(status: number, message: string) {
 
 // Adds the absolute confirmation link to the request in the result: "request"
 // from this tool, "owner_request" from a work claim refused over the per-Task
-// cap (OwnerCredential §6.2).
+// cap (OwnerCredential §6.2). A request the Owner's auto-approval switch
+// already approved (§12) gets no link: there is nothing left to confirm, and
+// the grant in the result is the receipt.
 export function withConfirmUrl(result: unknown, origin: string, key: "request" | "owner_request" = "request"): unknown {
   if (!result || typeof result !== "object" || Array.isArray(result)) return result;
   const body = result as Record<string, unknown>;
   const request = body[key];
   if (!request || typeof request !== "object" || Array.isArray(request)) return result;
+  const grant = (request as Record<string, unknown>).grant;
+  if (grant && typeof grant === "object" && (grant as Record<string, unknown>).auto_approved === true) return result;
   const path = (request as Record<string, unknown>).confirm_path;
   if (typeof path !== "string" || !/^\/confirm\/[0-9a-f-]{36}$/.test(path)) return result;
   return { ...body, [key]: { ...(request as Record<string, unknown>), confirm_url: origin + path } };
