@@ -1,6 +1,6 @@
 # Database Caller Authentication v0.1：库里只存校验值、Worker 不走 anon、G6 运输证明
 
-状态：**Proposed，部分已定（Owner 2026-10-08 Decision `1427642f`：接受设计 A 与 7 天备份；第 1 步先单独上线；设计 C 先做第 3 步只读核实，再选 C1 或 C2）。** 本文不授予任何迁移、Worker 发布、规则集或合同版本改动的权限；每一步实施由 Owner 单独批准，每步一个 PR。
+状态：**Proposed，部分已定（Owner 2026-10-08 Decision `1427642f`：接受设计 A 与 7 天备份；第 1 步先单独上线；设计 C 先做第 3 步只读核实，再选 C1 或 C2。Decision `096df8b8`：第 1 步一并收紧 Binding 表的插入、修改、删除；「无 v12 授权记录即放行」加为后续一步）。** 本文不授予任何迁移、Worker 发布、规则集或合同版本改动的权限；每一步实施由 Owner 单独批准，每步一个 PR。
 日期：2026-10-08
 来源：审计 P0-4 Task `9a4d6d2c` 的步骤 4（库里存的哈希不再等于口令、G6 门不再信任客户端提交的提交号）与步骤 5（Worker 脱离 anon）；Owner Decision `8a7e345f`（2026-10-08，两步合并为一份设计稿，只写方案）。前置工作：步骤 1 卫生迁移 `20261007120000_db_security_hygiene.sql`（Decision `eed7154f`，已在生产），以及 [docs/maintenance/database-security.md](../../../docs/maintenance/database-security.md) 的「Left for later」。
 对照基线：main `b290d0dd`（2026-10-08），生产库 `clued-prod` 2026-10-08 只读核对（安全检查：anon 可执行的 SECURITY DEFINER 函数 84、authenticated 69、search_path 可变 0、`rls_enabled_no_policy` 118、泄露密码保护关闭）。
@@ -107,9 +107,22 @@ T1 不依赖 T2/T3：即使只有 Worker 能调用，读到哈希的人只要再
 - 冻结合同 IntegrationRuntime v0.1.8 §10.1、§11 写的是「Worker 以 `p_token_hash = sha256(token)` 调用」与「按 `token_hash` 锁定」，仍然成立；只需在 ERRATA 记一条说明存储形式（§10）。
 - 回退：校验值不可逆，所以迁移前把旧值复制到 `clued_private.credential_proof_backup_v1(table_name, row_id, column_name, old_value, delete_after)`，`delete_after = now() + 7 天`，到期由现有清理任务删除。能读这张私有表的人本来就能读整个库，复制不扩大暴露面。回退迁移按备份逐列还原并恢复旧函数定义。
 
-### 4.5 顺带的小口子
+### 4.5 已登录用户对凭据表的直接权限（第 1 步）
 
-`authenticated` 对 `clued_agent_bindings.token_hash` 与 `clued_continuity_sessions.token_hash` 的 SELECT 改为列级授权，不含这两列（后者存的是库内对原始会话令牌求的哈希，本身不能用来调用，收回只为不无谓暴露）。Worker 的 Binding 列表（`select=id,vendor,agent_name,scopes,context_keys,created_at,last_used_at,revoked_at`）与撤销（`PATCH revoked_at`）都不读这两列。A 完成后这两列即使被读到也无用，这一步是纵深防御，可以先于 A 单独上线。
+生产核对（2026-10-08）：`authenticated` 对 `public.clued_agent_bindings` 有 SELECT、INSERT、UPDATE、DELETE（RLS 只放行本人的行，表上没有触发器），对 `public.clued_continuity_sessions` 有 SELECT。这些权限比迁移文件建出来的多（迁移只授 SELECT），来源不在仓库里。再加上 `clued_private.authorization_assert_entry_v12` 对没有 `authorizations_v12` 记录的 Binding 直接放行（§4.6），拿到 Owner 登录会话的人可以：读到能直接调用的 `token_hash`；自己插入一个全权限、不过期、不经确认、没有授权审计的 Binding；把现有 Binding 的 `token_hash` 改成自己知道的值来接管它；把已撤销的 Binding 改回有效。
+
+Worker 用用户会话直接访问这张表只有两处（`worker/continuity.ts`）：列表（`select=id,vendor,agent_name,scopes,context_keys,created_at,last_used_at,revoked_at`）与撤销（`PATCH revoked_at`）。所以迁移 `20261008150000_credential_table_privileges_v1.sql`：
+
+- 收回 `authenticated` 对两张表的表级权限，改为列级 SELECT，覆盖除 `token_hash` 外的所有列；
+- 不再授予 INSERT、DELETE；UPDATE 只授 `revoked_at` 一列；
+- 触发器 `clued_agent_bindings_session_revoke_only`：当前角色是 `authenticated` 时只允许「未撤销 → 已撤销」，拒绝撤销后再改回或挪动时间；SECURITY DEFINER 函数以属主身份执行，不受影响；
+- 可重复执行（经 plpgsql EXECUTE 跑第二遍无变化）。数据库测试 `credential-table-privileges-db.test.mjs` 固定上述行为，并做过变异检查（去掉触发器即失败）。
+
+`clued_continuity_sessions.token_hash` 存的是库内对原始会话令牌求的哈希，本身不能用来调用，收回只为不无谓暴露。A 完成后 `clued_agent_bindings.token_hash` 即使被读到也无用，这一步是纵深防御，同时堵住插入与改写。
+
+### 4.6 「无 v12 授权记录即放行」（后续一步）
+
+`authorization_assert_entry_v12` 在找不到 `authorizations_v12` 记录时直接返回（注释写的是「Existing non-migrated raw bindings keep their explicit existing grant」）。生产 62 个 Binding 中 17 个没有 v12 授权记录，其中 3 个仍有效：两个 2026-08-29 的旧 OAuth 审计 Binding（`c0cc5abf`、`b3603c56`，旧 OAuth 路径已一律拒绝，应已不可用）与 Projection Builder（`05effaa9`，`context:read`，`*`，Worker 机密 `CLUED_PROJECTION_BUILDER_TOKEN` 在用）。第 1 步之后已登录会话再也插不进新的这类行，但这条放行规则本身仍在。关闭它：先给 Projection Builder 补 v12 授权记录与条目、确认并撤销两个旧 OAuth 审计 Binding，再把 `if not found then return` 改为拒绝。见 §8 第 7 步。
 
 ---
 
@@ -185,14 +198,15 @@ CI 与钩子直接调用的函数保留 `anon`（「anon 白名单」）。理�
 
 ## 8. 分步实施（每步一个 PR，每步单独请 Owner 批准）
 
-1. **列级授权**：收回 `authenticated` 对 `clued_agent_bindings.token_hash` 与 `clued_continuity_sessions.token_hash` 的 SELECT，其余列照旧；数据库测试固定 Console 与 Worker 用到的列仍可读。一个小迁移，需要 `migration.production` 授权。归属 Task `9a4d6d2c`。
+1. **凭据表直接权限**（§4.5）：列级 SELECT 不含 `token_hash`；收回 INSERT、DELETE；UPDATE 只留 `revoked_at` 并只许撤销。迁移 `20261008150000_credential_table_privileges_v1.sql` 与数据库测试随本 PR 提交，需要 `migration.production` 授权。归属 Task `9a4d6d2c`，依据 Decision `096df8b8`。
 2. **校验值迁移（设计 A）**：先用目录查询列出全部比对点与写入点作为 PR 附件，再写迁移、`credential_verifier_v1`、守卫测试、7 天备份表与回退迁移，更新两份运行手册；`test:db` 全绿、守卫测试通过后请 Owner 批准生产迁移；迁移后按 §4.3 只读核对。归属 Task `9a4d6d2c`，依据 Decision `8a7e345f`。
-3. **核实 Worker 凭据签发（只读）**：查清生产项目 JWT 签名方式与 `CLUED_P5_GATEWAY_TOKEN` 的签发与有效期，写成结论交 Owner 选 C1 或 C2。不改任何东西。归属 Task `9a4d6d2c`。
+3. **核实 Worker 凭据签发（只读）**：查清生产项目 JWT 签名方式与 `CLUED_P5_GATEWAY_TOKEN` 的签发与有效期，写成结论交 Owner 选 C1 或 C2。不改任何东西。2026-10-08 已完成，结论见 §6.4。归属 Task `9a4d6d2c`。
 4. **Worker 角色上线（过渡）**：建角色、给 Worker 用的函数加授新角色（`anon` 暂留）、Worker 改带新凭据并发布；按角色统计确认生产调用全部切换。需要 `migration.production` 与 `release.production` 授权。归属 Task `9a4d6d2c`。
 5. **收回 anon**：Worker 用的函数收回 `anon`，只留 §6.3 白名单；G6 门加角色断言；数据库测试固定 anon 集合等于白名单；更新 database-security.md 的预期数字。归属 Task `9a4d6d2c`。
 6. **合同文字**：IntegrationRuntime v0.1.8 是冻结文件，§5.13（grant `anon, authenticated` → Worker 角色）与 §10.1、§11（存储形式）改动经 ERRATA 记录并需 Owner Decision；同步 HeadlessBindingIssuance「令牌能用在哪里」、WorkClaimAdmission §4.6、OwnerCredential §9、StorageNormalUse §6.2 的措辞。归属 Task `9a4d6d2c`。
+7. **关闭「无 v12 授权记录即放行」**（§4.6）：给 Projection Builder 补 v12 授权、撤销两个旧 OAuth 审计 Binding，再让 `authorization_assert_entry_v12` 找不到记录时拒绝；需要 `migration.production` 授权。归属 Task `9a4d6d2c`，依据 Decision `096df8b8`。
 
-第 1、2 步与第 3–5 步互不依赖，可以并行；第 6 步跟随第 2、5 步。
+第 1、2 步与第 3–5 步互不依赖，可以并行；第 6 步跟随第 2、5 步；第 7 步在第 1 步之后任何时候都可以做。
 
 ---
 
@@ -214,7 +228,7 @@ CI 与钩子直接调用的函数保留 `anon`（「anon 白名单」）。理�
 1. 是否接受设计 A（只存校验值、调用方不改），以及 7 天备份表。
 2. Worker 角色选 C1 还是 C2：第 3 步结论见 §6.4，推荐 C1。
 3. §6.3 的 anon 白名单规则（由 CI 与钩子源码推出，不写死名单）是否可以。
-4. 第 1 步是否先单独上线。
+4. 第 1 步是否先单独上线（已定：先行，并一并收紧插入、修改、删除，Decision `096df8b8`）。
 
 ---
 
