@@ -84,7 +84,7 @@ jobs:
       - name: Self-test the admission script (no network, mocked fetch)
         run: |
           node --version
-          node --test scripts/ci/clued-work-admission.test.mjs scripts/ci/clued-release-grant.test.mjs scripts/runner/clued-runner-job-started.test.mjs
+          node --test scripts/ci/clued-work-admission.test.mjs scripts/ci/merge-admission-policy.test.mjs scripts/ci/clued-release-grant.test.mjs scripts/runner/clued-runner-job-started.test.mjs
       - name: Verify the work claim with Clued and summarize applicable workflows
         id: admit
         env:
@@ -92,6 +92,10 @@ jobs:
           CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
           # Re-review 7, MAJOR-3: protected changes need an Owner Grant on the head.
           CLUED_OWNER_REVIEW_ENFORCE: ${{ vars.CLUED_OWNER_REVIEW_ENFORCE }}
+          # Merge Admission v0.1 §4: the Owner's global state (normal when
+          # unset, efficiency, frozen; any other value is frozen). The rules
+          # come from config/merge-admission-policy.json of this checkout.
+          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode required
       # Owner Decision 37e01bb1: the same result once more as the Owner's
@@ -110,6 +114,9 @@ jobs:
           ADMISSION_PR_NUMBER: ${{ github.event.pull_request.number }}
           ADMISSION_OUTCOME: ${{ steps.admit.outcome }}
           ADMISSION_VERDICT: ${{ steps.admit.outputs.verdict }}
+          # Merge Admission v0.1 §10: the mode the head was judged in, shown
+          # in the check's title ("ADMITTED [normal · code · reruns 0]").
+          ADMISSION_MODE: ${{ steps.admit.outputs.admission_mode }}
           # Owner Decision 2ea795e4: the clued-merge-slot check on the same
           # head. A head that contains the base branch's tip passes it only
           # while its claim holds the merge slot; an empty state fails it.
