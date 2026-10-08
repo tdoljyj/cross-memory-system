@@ -115,7 +115,9 @@ export async function createStorageCloudRecovery(config: {
             [...url.searchParams.keys()].some(key => !["fields", "supportsAllDrives", "includeItemsFromAllDrives", "q", "pageSize", "pageToken"].includes(key))) throw denied();
         return bounded(fetcher(input, { ...init, signal: AbortSignal.any([abort.signal, ...(init.signal ? [init.signal] : [])]) }));
       };
-      const metadata = createGoogleDriveMetadataApi({ get_credential: credential, fetch: metadataFetch });
+      // Storage step 1 (Task ce5c725e): a rate-limited or failed read is retried twice
+      // with backoff inside the budget instead of waiting for the next listing.
+      const metadata = createGoogleDriveMetadataApi({ get_credential: credential, fetch: metadataFetch, transient_retries: 2 });
       // Rename and file move (P3) settle only through the verified record.
       const operation = String(d.mutation.operation);
       // A directory move (P6) settles only through the verified record, and
