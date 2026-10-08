@@ -1,6 +1,6 @@
 # Database Caller Authentication v0.1：库里只存校验值、Worker 不走 anon、G6 运输证明
 
-状态：**Proposed（草案，待 Owner 决定）。** 本文只提出方案，不授予任何迁移、Worker 发布、规则集或合同版本改动的权限；每一步实施由 Owner 单独批准，每步一个 PR。
+状态：**Proposed，部分已定（Owner 2026-10-08 Decision `1427642f`：接受设计 A 与 7 天备份；第 1 步先单独上线；设计 C 先做第 3 步只读核实，再选 C1 或 C2）。** 本文不授予任何迁移、Worker 发布、规则集或合同版本改动的权限；每一步实施由 Owner 单独批准，每步一个 PR。
 日期：2026-10-08
 来源：审计 P0-4 Task `9a4d6d2c` 的步骤 4（库里存的哈希不再等于口令、G6 门不再信任客户端提交的提交号）与步骤 5（Worker 脱离 anon）；Owner Decision `8a7e345f`（2026-10-08，两步合并为一份设计稿，只写方案）。前置工作：步骤 1 卫生迁移 `20261007120000_db_security_hygiene.sql`（Decision `eed7154f`，已在生产），以及 [docs/maintenance/database-security.md](../../../docs/maintenance/database-security.md) 的「Left for later」。
 对照基线：main `b290d0dd`（2026-10-08），生产库 `clued-prod` 2026-10-08 只读核对（安全检查：anon 可执行的 SECURITY DEFINER 函数 84、authenticated 69、search_path 可变 0、`rls_enabled_no_policy` 118、泄露密码保护关闭）。
@@ -146,7 +146,26 @@ T1 不依赖 T2/T3：即使只有 Worker 能调用，读到哈希的人只要再
 
 ### 6.3 CI 与钩子
 
-CI 准入、CI 发布、钩子用到的 6 个函数保留 `anon`（「anon 白名单」）：`clued_owner_grant_admission_door_v1`、`clued_owner_grant_door_consume_v1`、`clued_work_verify_v1`、`clued_work_claim_adopt_v1`、`clued_work_merge_slot_return_v1`、`clued_work_claims_active_v1`。理由：这些是专为 CI 设计的门口，调用方没有 Worker 凭据，也不该有；A 之后它们只认证明值，T1 已解决；它们的输入不经 Worker 校验本来就是设计如此。其中 `clued_work_verify_v1` 与 `clued_work_claims_active_v1` Worker 也在用，同时授予新角色。白名单写进迁移注释与 [docs/maintenance/database-security.md](../../../docs/maintenance/database-security.md)，并由数据库测试固定：`anon` 可执行的 SECURITY DEFINER 函数集合必须等于白名单。
+CI 与钩子直接调用的函数保留 `anon`（「anon 白名单」）。理由：这些是专为 CI 设计的门口，调用方没有 Worker 凭据，也不该有；A 之后它们只认证明值，T1 已解决；它们的输入不经 Worker 校验本来就是设计如此。
+
+- 规则：**白名单 = `scripts/ci/**` 与 `scripts/hooks/**` 直接调用的 RPC**，不写死名单。数据库测试从这两个目录的源码里提取 `/rest/v1/rpc/<name>` 与 RPC 名常量，`anon` 可执行的 SECURITY DEFINER 函数集合必须等于这个集合；新增 CI 调用的 RPC 只要出现在 CI 源码里就自动进入白名单，反过来 Worker 专用函数误授 `anon` 会被测试拦下。
+- 2026-10-08 的集合：`clued_owner_grant_admission_door_v1`、`clued_owner_grant_door_consume_v1`、`clued_work_verify_v1`、`clued_work_claim_adopt_v1`、`clued_work_merge_slot_return_v1`、`clued_work_claims_active_v1`，加上 MergeAdmission 第 3 步（PR #631，Task `3576d10d`）新增的 `clued_work_merge_slot_touch_v1`、`clued_work_merge_slot_holders_v1`。MergeAdmission 第 4、5 步（Task `38e0c90d`、`91039d74`）若再加 CI 调用的 RPC，按同一规则进入白名单。
+- 其中 Worker 也在用的（如 `clued_work_verify_v1`、`clued_work_claims_active_v1`）同时授予 Worker 角色。白名单的来源规则写进迁移注释与 [docs/maintenance/database-security.md](../../../docs/maintenance/database-security.md)。
+
+---
+
+## 6.4 与 MergeAdmission 的关系（避免重复与冲突）
+
+[MergeAdmission.v0.1.md](../execution-admission/MergeAdmission.v0.1.md) 的 §13 各步（Task `ada1334c` 下，第 2 步 Task `745c288f`（部署验收 Task `fb97ebd5`）、第 3 步 Task `3576d10d`、第 4 步 Task `38e0c90d`、第 5 步 Task `91039d74`）与本文改的是同一批 CI 门口与 `clued_work_*` 函数周边，分工如下：
+
+| 方面 | MergeAdmission 管 | 本文管 | 不冲突的理由 |
+|---|---|---|---|
+| CI 准入脚本、runner 钩子、工作流、策略文件 | 是 | 否 | 本文不改 `scripts/ci/**`、`scripts/runner/**`、`.github/**`；A 让调用方零改动 |
+| `clued_work_*` 函数的业务逻辑（合并位、队列、上报） | 是 | 否 | 这些函数都经 `clued_private.resolve_binding` 认证；A 只改解析器与少数内联比对函数，不重写 `clued_work_*` 的函数体，双方迁移不会互相覆盖 |
+| Binding 认证方式（解析器、存储形式） | 否（§1 非目标：不改 Owner Grant 信任根） | 是 | A 不改门口的判定语义与授权表，只改比对形式 |
+| 哪些函数授予 `anon` | 新增的 CI RPC 授予 `anon`（如 #631） | 第 5 步收回 Worker 专用函数的 `anon` | 白名单按 §6.3 的规则由 CI 源码推出，MergeAdmission 新增的 CI RPC 自动在内 |
+
+顺序：两边的迁移谁先上线都可以。A 上线后，守卫测试（§4.3）要求以后的迁移不再内联比对调用方提交的哈希；MergeAdmission 后续迁移只要沿用 `resolve_binding`（现有写法），就不受影响。本文第 2、5 步的 PR 各自在描述里列出与当时在途 MergeAdmission PR 的交叉检查结果。
 
 ---
 
@@ -187,7 +206,7 @@ CI 准入、CI 发布、钩子用到的 6 个函数保留 `anon`（「anon 白�
 
 1. 是否接受设计 A（只存校验值、调用方不改），以及 7 天备份表。
 2. Worker 角色选 C1 还是 C2，等第 3 步结论后再定。
-3. §6.3 的 anon 白名单是否就是这 6 个函数。
+3. §6.3 的 anon 白名单规则（由 CI 与钩子源码推出，不写死名单）是否可以。
 4. 第 1 步是否先单独上线。
 
 ---
