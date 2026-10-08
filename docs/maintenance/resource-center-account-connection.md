@@ -1225,9 +1225,13 @@ Clued Task `469700eb`, Decision `3196d6f2`, migration
   not be read). `root_folder_version` and `destination_parent_version` are
   null when that folder is matched by a digest, and `provider_version` covers
   only version-matched ancestors (none: the fixed
-  `sha256("clued.provider-version/empty")`). Adopt and directory move keep
-  their version fields and the old `provider_version`, with `ancestors` added.
-  Without `ancestor_match` (an older database) the identity is the legacy one.
+  `sha256("clued.provider-version/empty")`). A sharing-matched folder also
+  has its access digest in `ancestor_access`; the server does not match it,
+  but the effects' re-resolution then stops a job on a role-only change, as
+  the folder's Drive version did before. Adopt and directory move keep the
+  legacy identity, and the authority refuses them with `ancestors`
+  (`request_invalid`). Without `ancestor_match` (an older database) the
+  identity is the legacy one.
 - **Authority and settlement.** A request with `ancestors` is checked by
   `resource_center_ancestors_match_v1` instead of the root and destination
   folder version clauses: the set must equal the registered directories on
@@ -1241,7 +1245,15 @@ Clued Task `469700eb`, Decision `3196d6f2`, migration
   in) or `ancestor_`. `storage_verified_result_v2` applies the same check, and
   `settle_verified` compares the saved registry ancestors by identity, mode
   and matched value (`resource_center_ancestor_rows_identity_v1`) instead of
-  whole rows.
+  whole rows. That projection applies to every request; for a request
+  without `ancestors` the root and destination folder are still compared by
+  version there, and the selected row's version still enters the authority
+  version.
+- **Match mode race.** `load` reads each directory's mode on a quiet root but
+  holds no lock afterwards. If the backfill or an Owner directory check
+  records a digest between `load` and the authority, the job is refused with
+  `*_match_changed` and the Agent submits it again. Accepted: it needs a
+  write to the registry within seconds of the job's start.
 - **Postconditions.** Create, rename/file move, replace, trash and untrash
   walk the chain by the registered Drive IDs: each folder keeps its name,
   sits alone under the expected parent and is not trashed. A create pins only
@@ -1249,13 +1261,25 @@ Clued Task `469700eb`, Decision `3196d6f2`, migration
 - **Owner hint.** The connection list (`clued_storage_owner_manage_v2`
   `connections`) reports `access_digest_missing` (count and up to 20 paths);
   the storage page asks the Owner to run the directory check for them.
-- **Release order.** Migration first, then the Worker. The migration changes
-  nothing for a request without `ancestors`. Before rolling the Worker back,
-  check that no started or uncertain journal has an
-  `authority_request->'provider_identity' ? 'ancestors'` without a verified
-  result: the old Worker cannot verify such a journal and it would wait for
-  recovery. Rolling the migration back while such journals exist leaves the
-  authority unable to check them; settle them first.
+  Directories the backfill has not reached yet are matched by version too but
+  are not listed.
+- **Limits.** At most 64 registered directories on the source and
+  destination chains together; a deeper job is refused
+  (`CLOUD_DESCRIPTOR_INVALID`). Each access- or sharing-matched folder costs
+  one more Drive read per identity resolution.
+- **Release order.** Migration first, then the Worker. Apart from the
+  settlement projection above, the migration changes nothing for a request
+  without `ancestors`. Rolling back the Worker or the migration needs no
+  journal carrying ancestors to be open: an old Worker cannot verify one
+  (its postconditions need the folder versions the new identity leaves
+  null), and the old functions would see those nulls as a registry change.
+  Drain them first; this must return 0:
+
+  ```sql
+  select count(*) from clued_private.resource_center_mutations_v1
+  where state in ('prepared','started','uncertain')
+    and authority_request->'provider_identity' ? 'ancestors';
+  ```
 - **Local writer path.** The authority client used by local native writers
   never sends `ancestors`; those requests are checked exactly as before.
 

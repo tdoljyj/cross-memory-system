@@ -224,19 +224,26 @@ export function createGoogleDriveProviderIdentityResolver({
 
     // Ancestors (step 3). A folder the server did not describe is matched by
     // version; the server refuses the set. Adopt and directory move keep
-    // their version fields and provider_version and report ancestors as well.
-    let ancestors = null;
+    // their legacy identity (version fields and provider_version) and never
+    // report ancestors. A folder matched by its sharing digest also has its
+    // access digest in ancestor_access: the server does not match it, but the
+    // effects' re-resolution then notices a role-only change during the job,
+    // as its Drive version did before.
+    let ancestors = null, ancestorAccess = null;
     const modeOf = path => matchByPath.get(path) ?? "version";
-    if (matchByPath) {
+    if (matchByPath && !directoryMove && !adopt) {
       ancestors = [];
+      ancestorAccess = [];
       for (const [path, { file, parent_id: parentId }] of [...folders].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
         const match = modeOf(path);
         const value = match === "access" ? await access(file) : match === "sharing" ? await sharing(file) : file.version;
         ancestors.push(Object.freeze({ path, id: file.id, parent_id: parentId, match, value }));
+        if (match === "sharing") ancestorAccess.push(Object.freeze([file.id, await access(file)]));
       }
       Object.freeze(ancestors);
+      Object.freeze(ancestorAccess);
     }
-    const byIdentity = ancestors !== null && !directoryMove && !adopt;
+    const byIdentity = ancestors !== null;
     const versionMatched = ancestors?.filter(entry => entry.match === "version").map(entry => [entry.id, entry.value]) ?? [];
     const destinationParentPath = mutation.destination_path
       ? `${root}/${segmentsWithin(mutation.destination_path, root).slice(0, -1).join("/")}`.replace(/\/$/, "") : null;
@@ -256,6 +263,7 @@ export function createGoogleDriveProviderIdentityResolver({
         : versionMatched.length === 0 ? EMPTY_PROVIDER_VERSION
           : createHash("sha256").update(JSON.stringify(versionMatched)).digest("hex"),
       ...(ancestors ? { ancestors } : {}),
+      ...(ancestorAccess?.length ? { ancestor_access: ancestorAccess } : {}),
       root_sharing_digest: rootSharingDigest,
       destination_parent_sharing_digest: destinationParentSharingDigest,
       // Trash and untrash name the source's folder, which the authority and

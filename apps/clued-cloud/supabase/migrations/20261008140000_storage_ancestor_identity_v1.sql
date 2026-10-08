@@ -24,10 +24,13 @@
 --   only the live re-resolution during the job watches it.
 -- * storage_verified_result_v2 checks the same way, and compares the
 --   registry ancestors saved by verified_record with the current ones by
---   identity, mode and matched value rather than as whole rows.
--- * A request without ancestors is checked exactly as before, so the old
---   Worker keeps working between this migration and the release. Adopt and
---   directory move keep their own version and digest checks.
+--   identity, mode and matched value rather than as whole rows (for every
+--   request; the root and destination folder of a request without ancestors
+--   are still compared by version there).
+-- * A request without ancestors is otherwise checked exactly as before, so
+--   the old Worker keeps working between this migration and the release.
+--   Adopt and directory move keep their own version and digest checks and
+--   are refused with ancestors.
 -- * The Owner's connection list reports the directories whose access digest
 --   could not be established (access_digest_missing, up to 20 paths).
 --
@@ -65,13 +68,15 @@ language sql immutable set search_path='' as $$
     where x is not null
 $$;
 
--- The registered directories on the way from the root to those folders.
+-- The registered directories on the way from the root to those folders: every
+-- path prefix of each folder, looked up by (profile_id, path).
 create function clued_private.resource_center_ancestor_rows_v1(p_profile uuid,p_user uuid,p_parents text[])
 returns setof clued_private.resource_center_artifacts_v1
 language sql stable security definer set search_path='' as $$
   select a.* from clued_private.resource_center_artifacts_v1 a
     where a.profile_id=p_profile and a.user_id=p_user and a.state='active' and a.target_kind='directory'
-      and exists(select 1 from unnest(p_parents) q where a.path=q or left(q,char_length(a.path)+1)=a.path||'/')
+      and a.path=any(array(select left(q,i) from unnest(p_parents) q, generate_series(1,char_length(q)) i
+        where i=char_length(q) or substr(q,i+1,1)='/'))
 $$;
 
 -- load's descriptor: which directories the identity reads and how each is
@@ -162,6 +167,14 @@ do $migration$
 declare patch record; body text; hits int; current text;
 begin
   for patch in select * from (values
+    -- Adopt and a directory move keep their version checks (§4.2).
+    ('public.clued_resource_center_authority_v1(text,jsonb)',
+     $a$  select * into v_binding from clued_private.resource_center_bindings_v1$a$,
+     $r$  if v_provider ? 'ancestors' and (v_operation='adopt'
+      or (v_operation='move' and v_mutation->>'target_kind'='directory')) then
+    return jsonb_build_object('status','denied','reason','request_invalid');
+  end if;
+  select * into v_binding from clued_private.resource_center_bindings_v1$r$,1),
     ('public.clued_resource_center_authority_v1(text,jsonb)',
      $a$  v_existing boolean;$a$,
      $r$  v_existing boolean;

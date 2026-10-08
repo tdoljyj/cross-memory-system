@@ -211,15 +211,23 @@ test("step 3: with ancestor_match the identity names each walked folder by its d
   assert.deepEqual(moved.ancestors.map(entry => entry.path), [root, `${root}/20_P_产品与体验`, `${root}/90_待归类`]);
   assert.equal(moved.source_file_version, "5");
   assert.equal(moved.destination_parent_version, null);
-  // Adopt keeps its version fields and the legacy provider_version.
+  // Adopt and a directory move keep the legacy identity exactly.
   const adopt = { operation: "adopt", target_kind: "file", source_path: `${root}/90_待归类/a.md` };
-  const legacy = await make(undefined)({ profile: { managed_root: root }, mutation: adopt });
-  const adopted = await make([...descriptor, { path: `${root}/90_待归类`, provider_file_id: "inbox", match: "access" }])({ profile: { managed_root: root }, mutation: adopt });
-  assert.equal(adopted.root_folder_version, legacy.root_folder_version);
-  assert.equal(adopted.source_parent_version, legacy.source_parent_version);
-  assert.equal(adopted.provider_version, legacy.provider_version);
-  assert.deepEqual(adopted.ancestors.map(entry => entry.path), [root, `${root}/90_待归类`]);
-  assert.equal("ancestors" in legacy, false);
+  const withInbox = [...descriptor, { path: `${root}/90_待归类`, provider_file_id: "inbox", match: "access" }];
+  assert.deepEqual(await make(withInbox)({ profile: { managed_root: root }, mutation: adopt }),
+    await make(undefined)({ profile: { managed_root: root }, mutation: adopt }));
+  assert.equal("ancestors" in await make(undefined)({ profile: { managed_root: root }, mutation: adopt }), false);
+  files.push(file("dir", "目录", "inbox", "6", true));
+  const directoryMove = { operation: "move", target_kind: "directory", source_path: `${root}/90_待归类/目录`, destination_path: `${root}/20_P_产品与体验/目录` };
+  assert.deepEqual(await make(withInbox)({ profile: { managed_root: root }, mutation: directoryMove }),
+    await make(undefined)({ profile: { managed_root: root }, mutation: directoryMove }));
+  // A sharing-matched folder also has its access digest compared during the job.
+  const shared = await make(descriptor)({ profile: { managed_root: root }, mutation: create });
+  assert.deepEqual(shared.ancestor_access, [["topic", googleDriveAccessDigest({ permissions: permissions.get("topic") ?? [] })]]);
+  permissions.set("topic", [{ id: "owner", type: "user", role: "owner" }]);
+  assert.notDeepEqual((await make(descriptor)({ profile: { managed_root: root }, mutation: create })).ancestor_access, shared.ancestor_access);
+  assert.equal("ancestor_access" in first, true);
+  assert.equal("ancestor_access" in await make(descriptor.map(entry => ({ ...entry, match: "access" })))({ profile: { managed_root: root }, mutation: create }), false);
   // The descriptor shape.
   for (const bad of [{}, [{ path: root, provider_file_id: "root-id" }], [{ path: root, provider_file_id: "root-id", match: "name" }],
     [{ path: "G:/elsewhere", provider_file_id: "x", match: "version" }], [descriptor[0], descriptor[0]],

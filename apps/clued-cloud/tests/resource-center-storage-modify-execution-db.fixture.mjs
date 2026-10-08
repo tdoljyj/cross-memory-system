@@ -166,12 +166,14 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
     };
     return state;
   };
-  const executor = (target, storage, database = caller, observe = async () => {}) => {
+  // legacy: a Worker from before storage step 3 ignores load's ancestor_match.
+  const executor = (target, storage, database = caller, observe = async () => {}, { legacy = false } = {}) => {
     let loaded;
     return createResourceCenterCloudExecutor({ verified_result_mode: true,
       load_job: async ref => {
         loaded = await cloud({ action: "load", ...ref }, database);
         const descriptor = { ...loaded }; delete descriptor.credential_envelope; delete descriptor.oauth_client_id;
+        if (legacy) delete descriptor.ancestor_match;
         return descriptor;
       },
       get_credential: async expected => ({ ...expected, access_token: "fixture-modify-exec-access", scope: SCOPES, expires_at_ms: Date.now() + 3600000 }),
@@ -296,6 +298,43 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
       });
       assert.notEqual(refused.result.status, "committed");
       assert.equal(role.storage.posts, before);
+
+      // A digest changed between the verified record and the settlement is a registry change: nothing is registered.
+      const raced = await prepared({ digests: true });
+      const racedJob = await submitJob(raced.target, raced.client, { operation: "create", target_kind: "file",
+        destination_path: `${raced.target.root}/${TRACK}/raced.txt`, content: "step 3 fixture" });
+      const racedResult = await executor(raced.target, raced.storage, caller, async request => {
+        if (request.action === "settle_verified") await admin.query(`update clued_private.resource_center_artifacts_v1 set provider_access_digest=$2
+          where profile_id=$1 and path=$3 and state='active'`, [raced.target.profile, "e".repeat(64), `${raced.target.root}/${TRACK}`]);
+      }).run(racedJob.reference);
+      assert.notEqual(racedResult.status, "committed");
+      const racedIntent = await journal(racedJob);
+      assert.ok(racedIntent.verified_result_v2, "the verification was recorded");
+      assert.notEqual(racedIntent.state, "committed");
+      assert.equal(await artifact(raced.target, `${raced.target.root}/${TRACK}/raced.txt`), undefined);
+    });
+
+    await t.test("storage step 3: a Worker from before step 3 keeps working against the new database", async () => {
+      const { target, client, storage } = await setup();
+      await admin.query(`update clued_private.resource_center_artifacts_v1 set provider_access_digest=$2 where profile_id=$1 and path=$3 and state='active'`,
+        [target.profile, "a".repeat(64), target.root]);
+      const old = { legacy: true };
+      const create = await submitJob(target, client, { operation: "create", target_kind: "file", destination_path: `${target.root}/${TRACK}/old.txt`, content: "legacy Worker" });
+      assert.equal((await executor(target, storage, caller, undefined, old).run(create.reference)).status, "committed");
+      const created = await artifact(target, create.mutation.destination_path);
+      const topic = await directoryIn(target, storage, "legacy-topic");
+      const renamedPath = `${target.root}/${TRACK}/old-renamed.txt`;
+      const rename = await submitJob(target, client, modify("rename", created.path, renamedPath, storage.files.get(created.provider_file_id).version));
+      assert.equal((await executor(target, storage, caller, undefined, old).run(rename.reference)).status, "committed");
+      const move = await submitJob(target, client, modify("move", renamedPath, `${topic.path}/old-renamed.txt`, storage.files.get(created.provider_file_id).version));
+      assert.equal((await executor(target, storage, caller, undefined, old).run(move.reference)).status, "committed");
+      for (const job of [create, rename, move]) {
+        const intent = await journal(job);
+        assert.equal(intent.state, "committed");
+        assert.ok(intent.verified_result_v2);
+        assert.equal("ancestors" in intent.authority_request.provider_identity, false);
+        assert.match(intent.authority_request.provider_identity.root_folder_version, /^\d+$/);
+      }
     });
 
     await t.test("a content edit racing the update is never settled into the registry", async () => {

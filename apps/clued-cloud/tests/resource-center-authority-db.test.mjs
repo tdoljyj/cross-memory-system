@@ -363,6 +363,15 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
         destination_parent_version: "6", root_folder_version: root.provider_file_version } }), { status: "denied", reason: "parent_version_mismatch" });
       assert.equal((await resolve({ mutation: createMutation, provider_identity: { ...providerIdentity, destination_parent_id: MID_ID,
         destination_parent_version: "5", root_folder_version: root.provider_file_version } })).status, "resolved");
+      // Adopt and a directory move keep their version checks: ancestors are refused.
+      for (const shape of [{ operation: "adopt", target_kind: "file", directory_semantics: null, source_path: MID + "/外来.txt", destination_path: null },
+        { operation: "move", target_kind: "directory", source_path: MID, destination_path: TRACK + "/另一处" }]) {
+        const request = { mutation: { ...mutation, ...shape }, provider_identity: { ...providerIdentity, destination_parent_id: null,
+          destination_parent_version: null, source_file_id: "x", source_file_version: "1" } };
+        assert.deepEqual(await resolve({ ...request, provider_identity: { ...request.provider_identity, ancestors: chain() } }),
+          { status: "denied", reason: "request_invalid" });
+        assert.notEqual((await resolve(request)).reason, "request_invalid");
+      }
       // A version-matched directory between the root and the destination
       // folder is not compared with its registered version (as today); a
       // sharing-matched one is compared by sharing.

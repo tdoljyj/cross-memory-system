@@ -237,7 +237,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       // the ancestors (load's ancestor_match) has them matched by identity
       // and digest; otherwise the identity is the legacy one.
       let ancestorMatch;
-      if(verifiedResultMode && descriptor.ancestor_match!==undefined){
+      // Adopt and a directory move keep their legacy identity (§4.2).
+      if(verifiedResultMode && !subtree && !adopt && descriptor.ancestor_match!==undefined){
         ancestorMatch=ancestorMatchShape(descriptor.ancestor_match,profile.managed_root);
         if(ancestorMatch===null) fail("CLOUD_DESCRIPTOR_INVALID");
       }
