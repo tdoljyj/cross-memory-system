@@ -65,7 +65,8 @@ const focusedDirectoryMove = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "sto
 const focusedAdopt = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-adopt";
 const focusedWorkClaim = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-work-claim";
 const focusedConnections = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-connections";
-for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focusedOnboard || focusedDirectoryMove || focusedAdopt || focusedWorkClaim || focusedConnections ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
+const focusedAncestors = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-ancestors";
+for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focusedOnboard || focusedDirectoryMove || focusedAdopt || focusedWorkClaim || focusedConnections || focusedAncestors ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
@@ -275,6 +276,144 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       currentness_identity: allowed.authority.currentness_identity,
       governance_class: allowed.authority.governance_class,
     } });
+
+    // Storage step 3 (Task 469700eb): a request that carries
+    // provider_identity.ancestors is matched by identity and digest.
+    const ancestorIdentity = () => t.test("a new-shape request matches its ancestors by identity and digest, not by Drive version", async () => {
+      const ACCESS = "a1".repeat(32), OTHER = "b2".repeat(32), SHARED = "c3".repeat(32);
+      const MID = TRACK + "/中间", MID_ID = "drive-mid-id";
+      const query = async (sql, args) => (await admin.query(sql, args)).rows[0];
+      const rowOf = path => query(`select * from clued_private.resource_center_artifacts_v1
+        where profile_id=$1 and path=$2 and state='active'`, [profileId, path]);
+      const update = async (path, extra) => {
+        const row = await rowOf(path);
+        const result = await adminCall({ action: "artifact_update", profile_id: profileId, artifact_id: row.id, base_version: Number(row.version),
+          path, provider_file_id: row.provider_file_id, provider_file_version: row.provider_file_version,
+          governance_class: row.governance_class, delete_authority: row.delete_authority, ...extra });
+        assert.equal(result.status, "committed", JSON.stringify(result));
+      };
+      const match2 = async (...args) => (await query(
+        "select clued_private.resource_center_directory_match_v2($1,$2,$3,$4,$5) value", args)).value;
+      assert.equal(await match2("3", null, null, "version", "3"), "match");
+      assert.equal(await match2("3", null, null, "version", "4"), "version_mismatch");
+      assert.equal(await match2("3", null, null, "version", null), "version_mismatch");
+      assert.equal(await match2(null, null, null, "version", null), "version_mismatch");
+      assert.equal(await match2("3", SHARED, null, "sharing", SHARED), "match");
+      assert.equal(await match2("3", SHARED, null, "sharing", OTHER), "sharing_changed");
+      assert.equal(await match2("3", SHARED, null, "sharing", null), "sharing_unavailable");
+      assert.equal(await match2("3", SHARED, null, "version", "3"), "match_changed");
+      assert.equal(await match2("3", SHARED, ACCESS, "access", ACCESS), "match");
+      assert.equal(await match2("3", SHARED, ACCESS, "access", OTHER), "access_changed");
+      assert.equal(await match2("3", SHARED, ACCESS, "access", null), "access_unavailable");
+      assert.equal(await match2("3", SHARED, ACCESS, "sharing", SHARED), "match_changed");
+      assert.equal(await match2("3", null, ACCESS, "version", "3"), "match_changed");
+
+      const parents = async value => (await query("select clued_private.resource_center_ancestor_parents_v1($1::jsonb) value",
+        [JSON.stringify(value)])).value;
+      assert.deepEqual(await parents({ operation: "create", destination_path: MID + "/x" }), [MID]);
+      assert.deepEqual(await parents({ operation: "move", source_path: TRACK + "/a", destination_path: MID + "/a" }), [TRACK, MID].sort());
+      assert.deepEqual(await parents({ operation: "delete", source_path: MID + "/a" }), [MID]);
+      assert.deepEqual(await parents({ operation: "restore", source_path: MID + "/a" }), [MID]);
+      assert.deepEqual(await parents({ operation: "restore", source_path: MID + "/a", destination_path: TRACK + "/a" }), [TRACK]);
+      assert.deepEqual(await parents({ operation: "rename", source_path: MID + "/a", destination_path: MID + "/b" }), [MID]);
+
+      const midRegistered = await adminCall({ action: "artifact_register", profile_id: profileId, path: MID, provider_file_id: MID_ID,
+        provider_file_version: "5", target_kind: "directory", governance_class: "ordinary", delete_authority: false });
+      assert.equal(midRegistered.status, "committed");
+      await update(TRACK, { provider_access_digest: ACCESS });
+      const root = await rowOf(ROOT);
+      const createMutation = { ...mutation, destination_path: MID + "/新目录" };
+      const descriptor = (await query(`select clued_private.storage_ancestor_match_v1(p,$2,$3::jsonb) value
+        from clued_private.resource_center_profiles_v1 p where id=$1`, [profileId, USER, JSON.stringify(createMutation)])).value;
+      assert.deepEqual(descriptor, [
+        { path: ROOT, provider_file_id: ROOT_ID, match: "version" },
+        { path: TRACK, provider_file_id: TRACK_ID, match: "access" },
+        { path: MID, provider_file_id: MID_ID, match: "version" },
+      ]);
+      const chain = () => [
+        { path: ROOT, id: ROOT_ID, parent_id: "my-drive", match: "version", value: root.provider_file_version },
+        { path: TRACK, id: TRACK_ID, parent_id: ROOT_ID, match: "access", value: ACCESS },
+        { path: MID, id: MID_ID, parent_id: TRACK_ID, match: "version", value: "5" },
+      ];
+      const withChain = (ancestors, extra = {}) => resolve({ mutation: createMutation, provider_identity: { ...providerIdentity,
+        destination_parent_id: MID_ID, root_folder_version: null, destination_parent_version: null, ancestors, ...extra } });
+      const edit = (index, change) => chain().map((entry, i) => i === index ? { ...entry, ...change } : entry);
+      // Root and destination folder versions are not consulted for a new-shape request.
+      assert.equal((await withChain(chain())).status, "resolved");
+      assert.equal((await withChain(chain(), { root_folder_version: "999", destination_parent_version: "999" })).status, "resolved");
+      // Each ancestor by its own mode.
+      assert.deepEqual(await withChain(edit(1, { value: OTHER })), { status: "denied", reason: "ancestor_access_changed" });
+      assert.deepEqual(await withChain(edit(1, { value: null })), { status: "denied", reason: "ancestor_access_unavailable" });
+      assert.deepEqual(await withChain(edit(1, { match: "version", value: "3" })), { status: "denied", reason: "ancestor_match_changed" });
+      assert.deepEqual(await withChain(edit(2, { value: "6" })), { status: "denied", reason: "parent_version_mismatch" });
+      assert.deepEqual(await withChain(edit(0, { value: "999" })), { status: "denied", reason: "root_version_mismatch" });
+      // Identity and set.
+      assert.deepEqual(await withChain(edit(1, { id: "another-id" })), { status: "denied", reason: "ancestor_identity_mismatch" });
+      assert.deepEqual(await withChain(edit(2, { parent_id: ROOT_ID })), { status: "denied", reason: "ancestor_identity_mismatch" });
+      assert.deepEqual(await withChain(edit(0, { parent_id: "elsewhere" })), { status: "denied", reason: "ancestor_identity_mismatch" });
+      assert.deepEqual(await withChain(chain().slice(1)), { status: "denied", reason: "ancestor_set_mismatch" });
+      assert.deepEqual(await withChain(chain().slice(0, 2)), { status: "denied", reason: "ancestor_set_mismatch" });
+      assert.deepEqual(await withChain([...chain(), { path: MID + "/外", id: "x", parent_id: MID_ID, match: "version", value: "1" }]),
+        { status: "denied", reason: "ancestor_set_mismatch" });
+      for (const malformed of [{}, [], "x", [...chain(), chain()[0]], edit(1, { extra: 1 }), edit(1, { match: "name" }),
+        edit(1, { value: 7 }), edit(1, { id: "bad id" }), chain().map(({ parent_id, ...entry }) => entry)])
+        assert.deepEqual(await withChain(malformed), { status: "denied", reason: "ancestors_invalid" }, JSON.stringify(malformed));
+      // Without ancestors the request is checked exactly as before.
+      assert.deepEqual(await resolve({ mutation: createMutation, provider_identity: { ...providerIdentity, destination_parent_id: MID_ID,
+        destination_parent_version: "6", root_folder_version: root.provider_file_version } }), { status: "denied", reason: "parent_version_mismatch" });
+      assert.equal((await resolve({ mutation: createMutation, provider_identity: { ...providerIdentity, destination_parent_id: MID_ID,
+        destination_parent_version: "5", root_folder_version: root.provider_file_version } })).status, "resolved");
+      // A version-matched directory between the root and the destination
+      // folder is not compared with its registered version (as today); a
+      // sharing-matched one is compared by sharing.
+      await update(TRACK, { provider_access_digest: null });
+      assert.equal((await withChain(edit(1, { match: "version", value: "777" }))).status, "resolved");
+      assert.deepEqual(await withChain(edit(1, { match: "access", value: ACCESS })), { status: "denied", reason: "ancestor_match_changed" });
+      await update(TRACK, { provider_sharing_digest: SHARED });
+      assert.equal((await withChain(edit(1, { match: "sharing", value: SHARED }))).status, "resolved");
+      assert.deepEqual(await withChain(edit(1, { match: "sharing", value: OTHER })), { status: "denied", reason: "ancestor_sharing_changed" });
+      // The root and the destination folder by access digest.
+      await update(ROOT, { provider_access_digest: ACCESS });
+      await update(MID, { provider_access_digest: OTHER });
+      const digestChain = [{ ...chain()[0], match: "access", value: ACCESS }, { ...chain()[1], match: "sharing", value: SHARED },
+        { ...chain()[2], match: "access", value: OTHER }];
+      assert.equal((await withChain(digestChain)).status, "resolved");
+      assert.deepEqual(await withChain([{ ...digestChain[0], value: OTHER }, ...digestChain.slice(1)]),
+        { status: "denied", reason: "root_access_changed" });
+      assert.deepEqual(await withChain([...digestChain.slice(0, 2), { ...digestChain[2], value: ACCESS }]),
+        { status: "denied", reason: "parent_access_changed" });
+      // A file move works in both folders; the source folder is a parent_.
+      const move = { ...mutation, operation: "move", target_kind: "file", directory_semantics: null,
+        source_path: TRACK + "/文件.txt", destination_path: MID + "/文件.txt" };
+      assert.deepEqual((await query(`select clued_private.storage_ancestor_match_v1(p,$2,$3::jsonb) value
+        from clued_private.resource_center_profiles_v1 p where id=$1`, [profileId, USER, JSON.stringify(move)])).value.map(e => e.path), [ROOT, TRACK, MID]);
+      const moveMatch = async ancestors => (await query(`select clued_private.resource_center_ancestors_match_v1(p,$2::jsonb,$3::jsonb) value
+        from clued_private.resource_center_profiles_v1 p where id=$1`, [profileId, JSON.stringify({ ancestors }), JSON.stringify(move)])).value;
+      assert.equal(await moveMatch(digestChain), "match");
+      assert.equal(await moveMatch([digestChain[0], { ...digestChain[1], value: OTHER }, digestChain[2]]), "parent_sharing_changed");
+
+      // settle_verified compares registry ancestors by identity, mode and value.
+      const identity = async rows => (await query("select clued_private.resource_center_ancestor_rows_identity_v1($1::jsonb) value",
+        [JSON.stringify(rows)])).value;
+      const saved = [await rowOf(ROOT), await rowOf(TRACK), await rowOf(MID)].map(row => JSON.parse(JSON.stringify(row)));
+      const same = saved.map(row => ({ ...row, version: Number(row.version) + 1, updated_at: "2026-10-08T00:00:00Z", receipt_id: crypto.randomUUID(),
+        provider_file_version: row.provider_file_version + "0" }));
+      assert.deepEqual(await identity(same), await identity(saved));
+      assert.notDeepEqual(await identity(saved.map((row, i) => i === 1 ? { ...row, provider_sharing_digest: OTHER } : row)), await identity(saved));
+      assert.notDeepEqual(await identity(saved.map((row, i) => i === 0 ? { ...row, provider_access_digest: null } : row)), await identity(saved));
+      assert.notDeepEqual(await identity(saved.map((row, i) => i === 2 ? { ...row, path: MID + "x" } : row)), await identity(saved));
+      const versionRow = { ...saved[1], provider_sharing_digest: null, provider_access_digest: null };
+      assert.notDeepEqual(await identity([{ ...versionRow, provider_file_version: "8" }]), await identity([versionRow]));
+      assert.equal(await identity(null), null);
+
+      // Leave the registry as the later checks expect it.
+      await update(ROOT, { provider_access_digest: null });
+      await update(TRACK, { provider_sharing_digest: null });
+      const mid = await rowOf(MID);
+      assert.equal((await adminCall({ action: "artifact_revoke", profile_id: profileId, artifact_id: mid.id,
+        base_version: Number(mid.version) })).status, "committed");
+    });
+    if (focusedAncestors) { await ancestorIdentity(); return; }
 
     await t.test("durable journal fences restart, start replay and uncertain effects", async () => {
       const journal = async (input, client = admin) => (await client.query(
@@ -929,6 +1068,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
           { provider_sharing_digest: shared })).status, "rejected");
       }
     });
+    await ancestorIdentity();
     const removed = await adminCall({
       action: "artifact_revoke", profile_id: profileId, artifact_id: trackId,
       base_version: Number((await admin.query(
