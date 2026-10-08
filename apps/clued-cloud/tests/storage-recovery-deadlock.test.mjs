@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -40,11 +40,19 @@ function drive(options = {}) {
       if (options.searchStatus) return new Response("{}", { status: options.searchStatus });
       return Response.json({ files: options.tagged ? [{ id: "elsewhere0000001" }] : [], ...(options.nextPage ? { nextPageToken: "more" } : {}) });
     }
+    // BUG-20261008-002: the registered folders exist and are unchanged, so the verifier
+    // finds them and keeps polling for the missing file instead of failing at once.
+    if (options.folders && u.pathname === "/drive/v3/files/rootFolder000001") return Response.json(ROOT_FOLDER);
+    if (options.folders && u.pathname === "/drive/v3/files" && u.searchParams.get("q")?.includes("name = '20_P'"))
+      return Response.json({ files: [TRACK_FOLDER] });
     if (u.pathname === "/drive/v3/files") return Response.json({ files: [] });
     return Response.json({ error: { code: 404 } }, { status: 404 });
   };
   return { fetch, requests };
 }
+const FOLDER = "application/vnd.google-apps.folder";
+const ROOT_FOLDER = { id: "rootFolder000001", name: "Clued_资料中心", parents: ["myDrive000000001"], trashed: false, version: "5", mimeType: FOLDER };
+const TRACK_FOLDER = { id: PARENT, name: "20_P", parents: ["rootFolder000001"], trashed: false, version: "7", mimeType: FOLDER };
 const credential = (scope = SCOPE) => async () => ({ access_token: "fixture-access-token-0001", scope });
 const target = { provider_file_id: FILE, parent_id: PARENT, intent_id: INTENT };
 
@@ -86,7 +94,10 @@ async function recovery(options = {}) {
     mutation: operation === "create"
       ? { operation, target_kind: "file", destination_path: "G:/My Drive/Clued_资料中心/20_P/evidence.zip" }
       : { operation, target_kind: "file", source_path: "G:/My Drive/Clued_资料中心/20_P/a.md", destination_path: "G:/My Drive/Clued_资料中心/20_P/b.md" },
-    provider_before: { destination_parent_id: PARENT },
+    provider_before: options.folders ? { root_folder_id: "rootFolder000001", root_parent_id: "myDrive000000001", root_folder_version: "5",
+      destination_parent_id: PARENT, destination_parent_version: "7", destination_file_id: null, destination_file_version: null,
+      provider_version: createHash("sha256").update(JSON.stringify([["rootFolder000001", "5"], [PARENT, "7"]])).digest("hex") }
+      : { destination_parent_id: PARENT },
     attempt: { provider_file_id: FILE, parent_id: PARENT, intent_id: INTENT,
       destination_path: operation === "create" ? "G:/My Drive/Clued_资料中心/20_P/evidence.zip" : "G:/My Drive/Clued_资料中心/20_P/b.md",
       ...(operation === "create" ? {} : { contract: "clued.storage-modify-attempt/1", operation, source_path: "G:/My Drive/Clued_资料中心/20_P/a.md" }) },
@@ -94,7 +105,7 @@ async function recovery(options = {}) {
   descriptor.credential_envelope = await vault.seal(JSON.stringify({ token_type: "Bearer", access_token: "fixture-access-token-0001",
     scope: SCOPE, expires_at_ms: now + (options.expiresInMs ?? 3600000) }), { owner_id: owner, connection_id: reference.connection_id,
     provider: "google-drive", provider_subject: "subject-1", oauth_client_id: "fixture-client", credential_version: 4 });
-  const d = drive(options.drive), settles = [], verifiedCalls = [];
+  const d = drive({ ...options.drive, ...(options.folders ? { folders: true } : {}) }), settles = [], verifiedCalls = [];
   const run = await createStorageCloudRecovery({
     client_id: "fixture-client", vault: vaultConfig, clock: () => now, fetch: d.fetch, timeout_ms: 2000,
     rpc: async () => assert.fail("scheduled recovery passes its descriptor; no load RPC"),
@@ -118,6 +129,18 @@ test("a create proven absent is settled once through the absence RPC with the ex
   assert.deepEqual(f.settles, [{ action: "settle_absent", ...f.reference, intent_id: INTENT, base_version: 2,
     request_sha256: "a".repeat(64), proof: { contract: CREATE_ABSENT_CONTRACT, ...target } }]);
   assert.equal(f.d.requests.every(r => r.method === "GET"), true);
+});
+
+test("a missing create under unchanged registered folders is still settled as absent (BUG-20261008-002)", async () => {
+  // The verifier polls for the file for half the budget only, leaving the rest for the
+  // absence probe and its settlement; polling the whole budget left the job started.
+  const receipt = randomUUID();
+  const f = await recovery({ receipt, folders: true });
+  assert.deepEqual(await f.run.run(f.reference),
+    { status: "released_not_effected", job_id: f.reference.job_id, receipt_id: receipt, execution_permitted: false });
+  assert.equal(f.settles.length, 1);
+  assert.equal(f.d.requests.filter(r => r.q?.includes("name = 'evidence.zip'")).length >= 1, true, "the verifier looked for the file first");
+  assert.equal(f.d.requests.some(r => r.q?.startsWith("appProperties has")), true);
 });
 
 test("present, tagged or unreadable effects, other operations and bad replies are never settled as absent", async () => {

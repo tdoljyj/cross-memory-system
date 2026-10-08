@@ -150,6 +150,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
         if (method === "PUT") assert.equal(recorded, 1, "the exact attempt is durable before the upload");
       }
       if (method === "POST" && u.searchParams.get("uploadType") === "multipart") {
+        if (state.onUpload) await state.onUpload();
         state.writes++;
         const part = parseMultipart(await bodyBytes(init.body), new Headers(init.headers).get("content-type"));
         const file = createFile(part.metadata, part.mediaType, part.bytes);
@@ -162,6 +163,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
         return new Response("", { status: 200, headers: { location: "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=FIXTURE" } });
       }
       if (method === "PUT") {
+        if (state.onUpload) await state.onUpload();
         state.writes++;
         assert.equal(u.searchParams.get("upload_id"), "FIXTURE");
         const file = createFile(pendingSession.metadata, new Headers(init.headers).get("content-type"), await bodyBytes(init.body));
@@ -396,8 +398,13 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
     await t.test("multipart binary create commits with a create-verified/3 proof and a deletable staging object", async () => {
       const { target, client, storage } = await setup();
       const bytes = pngBytes(64 * 1024 + 3);
+      // BUG-20261008-002: the staging sweep runs while the effect uploads the staged object.
+      let duringUpload = null;
+      storage.onUpload = async () => { duringUpload = await staging({ action: "sweep" }); };
       const { id, job, result } = await run(target, client, storage, bytes, "photo.png", "image/png");
       assert.equal(result.status, "committed", JSON.stringify(result));
+      assert.ok(duringUpload, "the sweep ran during the upload");
+      assert.equal(duringUpload.delete.includes(id), false, "a started job's staged object is never deletable while it uploads");
       const created = await artifact(target, pathFor(target, "photo.png"));
       assert.ok(created);
       assert.equal(Buffer.compare(storage.bytes.get(created.provider_file_id), Buffer.from(bytes)), 0);
@@ -408,7 +415,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       assert.equal(proof.sha256, sha(bytes)); assert.equal(proof.size, String(bytes.length));
       assert.equal((await journal(job)).provider_attempt.size, String(bytes.length));
       const swept = await staging({ action: "sweep" });
-      assert.ok(swept.delete.includes(id), "consumed and started: the object may be deleted");
+      assert.ok(swept.delete.includes(id), "consumed and committed: the object may be deleted");
       assert.equal((await staging({ action: "object_deleted", staging_ids: [id] })).marked, 1);
       assert.ok((await row(id)).object_deleted_at);
       assert.equal((await staging({ action: "sweep" })).delete.includes(id), false);
@@ -486,10 +493,11 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       const { target, client, storage } = await setup();
       storage.loseUpload = true;
       const bytes = pngBytes(6 * MiB);
-      const { job, result } = await run(target, client, storage, bytes, "lost.png", "image/png");
+      const { id, job, result } = await run(target, client, storage, bytes, "lost.png", "image/png");
       assert.equal(result.status, "unreconciled", JSON.stringify(result));
       const m = await journal(job);
       assert.equal(m.state, "started");
+      assert.equal((await staging({ action: "sweep" })).delete.includes(id), false, "an unsettled job keeps its staged object");
       const writes = storage.writes;
       await admin.query("update clued_private.storage_connections_v1 set credential_envelope=$2::jsonb where id=$1", [target.connection,
         JSON.stringify({ contract: "clued.storage-credential/1", key_id: "fixture", nonce: "A".repeat(16), ciphertext: "B".repeat(24) })]);
@@ -517,6 +525,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
         request_sha256: descriptor.request_sha256, verified_receipt_id: recorded.verified_receipt_id, verified_digest: recorded.verified_digest });
       assert.equal(settled.state, "committed", JSON.stringify(settled));
       assert.equal(storage.writes, writes, "recovery never writes");
+      assert.ok((await staging({ action: "sweep" })).delete.includes(id), "once settled, the staged object may be deleted");
     });
 
     await t.test("a create-verified/2 proof cannot settle a binary job", async () => {
