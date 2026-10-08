@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 import { contentRefShape } from "./resource-center-google-drive-create-effect.mjs";
 import { googleDriveAccessDigest, googleDriveSharingDigest } from "./resource-center-google-drive-sharing.mjs";
+import { ancestorChain, walkAncestorChain } from "./resource-center-google-drive-ancestors.mjs";
 
 const FOLDER = "application/vnd.google-apps.folder";
 const normalized = (value) => bindResourceCenterMutation({ destination_path: value }).destination_path;
@@ -55,7 +56,8 @@ export function createGoogleDriveCreatePostconditionVerifier({
       !destination?.startsWith(root + "/") || !effect || effect.operation !== "create" ||
       normalized(effect.destination_path) !== destination ||
       before?.root_folder_id !== rootId || before.root_parent_id !== rootParentId ||
-      !before.destination_parent_id || !before.destination_parent_version || !/^[0-9a-f]{64}$/.test(before.provider_version ?? "") ||
+      !before.destination_parent_id || (!Array.isArray(before.ancestors) && !before.destination_parent_version) ||
+      !/^[0-9a-f]{64}$/.test(before.provider_version ?? "") ||
       before.destination_file_id !== null || before.destination_file_version !== null ||
       (requireEffectProviderId && !/^[A-Za-z0-9_-]{1,160}$/.test(effect.provider_file_id ?? ""))) {
       fail("DRIVE_POSTCONDITION_REQUEST_MISMATCH");
@@ -72,7 +74,13 @@ export function createGoogleDriveCreatePostconditionVerifier({
     const size = folder ? null : ref ? String(ref.size) : String(Buffer.byteLength(content, "utf8"));
     const digest = folder ? null : ref ? ref.sha256 : createHash("sha256").update(content, "utf8").digest("hex");
     const mimeType = ref ? ref.mime_type : undefined;
+    // Step 3: an identity that names its ancestors is walked by their Drive
+    // IDs; only the folders matched by version keep their version pinned.
+    const chain = ancestorChain(before, { root, root_folder_id: rootId, root_parent_id: rootParentId },
+      parts.length ? `${root}/${parts.join("/")}` : root);
+    if (chain && chain.at(-1).id !== before.destination_parent_id) fail("DRIVE_POSTCONDITION_REQUEST_MISMATCH");
     async function parentIdentity() {
+      if (chain) return walkAncestorChain(chain, getFile, { pin_versions: true });
       let node = await getFile(rootId);
       check(node, rootId, root.slice(root.lastIndexOf("/") + 1), rootParentId, true);
       const versions = [[node.id, node.version]];

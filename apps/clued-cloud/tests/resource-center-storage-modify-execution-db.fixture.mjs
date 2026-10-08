@@ -3,6 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveModifyPostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-modify-postcondition.mjs";
+import { googleDriveAccessDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
+import { EMPTY_PROVIDER_VERSION } from "../../../kernel/host/resource-center-google-drive-identity.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const ACTIONS = ["inspect", "create_file", "create_topic"];
@@ -247,6 +249,53 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
       const afterMove = await artifact(target, movedPath);
       assert.equal(afterMove.id, created.id); assert.equal(afterMove.provider_file_version, file.version);
       assert.equal((await journal(move)).verified_result_v2.proof.contract, "clued.storage-move-verified/1");
+    });
+
+    await t.test("storage step 3: a sibling change during a create no longer fails it; a changed role on the track does", async () => {
+      const OWNER = [{ id: "owner", type: "user", role: "owner" }];
+      const prepared = async ({ digests }) => {
+        const { target, client, storage } = await setup();
+        for (const id of [target.rootId, target.trackId]) storage.files.get(id).permissions = structuredClone(OWNER);
+        if (digests) await admin.query(`update clued_private.resource_center_artifacts_v1 set provider_access_digest=$2
+          where profile_id=$1 and path in ($3,$4) and state='active'`,
+          [target.profile, googleDriveAccessDigest({ permissions: OWNER }), target.root, `${target.root}/${TRACK}`]);
+        return { target, client, storage };
+      };
+      const createWith = async ({ target, client, storage }, name, during) => {
+        const job = await submitJob(target, client, { operation: "create", target_kind: "file", destination_path: `${target.root}/${TRACK}/${name}`, content: "step 3 fixture" });
+        const result = await executor(target, storage, caller, async request => { if (request.action === "provider_attempt") during(storage.files, target); }).run(job.reference);
+        return { job, result };
+      };
+      const sibling = (files, target) => {
+        for (const id of [target.rootId, target.trackId]) files.get(id).version = String(Number(files.get(id).version) + 5);
+        const id = `sibling-${randomUUID()}`;
+        files.set(id, { id, name: "other.txt", parents: [target.trackId], version: "1", trashed: false, mimeType: "text/plain" });
+      };
+      // Digest-matched ancestors: the job completes and settles.
+      const matched = await prepared({ digests: true });
+      const done = await createWith(matched, "with-sibling.txt", sibling);
+      assert.equal(done.result.status, "committed", JSON.stringify(done.result));
+      const identity = (await journal(done.job)).authority_request.provider_identity;
+      assert.deepEqual(identity.ancestors.map(entry => [entry.path, entry.match]),
+        [[matched.target.root, "access"], [`${matched.target.root}/${TRACK}`, "access"]]);
+      assert.equal(identity.provider_version, EMPTY_PROVIDER_VERSION);
+      assert.equal(identity.root_folder_version, null);
+      assert.ok(await artifact(matched.target, `${matched.target.root}/${TRACK}/with-sibling.txt`));
+      // Version-matched ancestors (no digest): the same change still stops the job before any write.
+      const legacy = await prepared({ digests: false });
+      const posts = legacy.storage.posts;
+      const stopped = await createWith(legacy, "stopped.txt", sibling);
+      assert.notEqual(stopped.result.status, "committed");
+      assert.equal(legacy.storage.posts, posts);
+      assert.equal((await journal(stopped.job)).authority_request.provider_identity.ancestors[1].match, "version");
+      // A changed role on the track stops the job before any write.
+      const role = await prepared({ digests: true });
+      const before = role.storage.posts;
+      const refused = await createWith(role, "role.txt", (files, target) => {
+        files.get(target.trackId).permissions = [...OWNER, { id: "anyone", type: "anyone", role: "reader" }];
+      });
+      assert.notEqual(refused.result.status, "committed");
+      assert.equal(role.storage.posts, before);
     });
 
     await t.test("a content edit racing the update is never settled into the registry", async () => {

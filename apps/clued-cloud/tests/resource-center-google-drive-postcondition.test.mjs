@@ -228,3 +228,35 @@ test("storage step 2: a created directory carries its access digest only togethe
   assert.throws(() => createGoogleDriveCreatePostconditionVerifier({ managed_root: root, root_folder_id: "root",
     root_parent_id: "container", get_file: async () => null, list_children: async () => [], get_access: "x" }), TypeError);
 });
+
+// Storage step 3: an identity that names its ancestors is walked by their Drive IDs.
+test("step 3: with ancestors the chain is walked by Drive ID; only version-matched folders are pinned", async () => {
+  const ancestors = (trackMatch = "access") => [
+    { path: root, id: "root", parent_id: "container", match: "access", value: "a".repeat(64) },
+    { path: `${root}/20_P_产品与体验`, id: "track", parent_id: "root", match: trackMatch, value: trackMatch === "version" ? "1" : "b".repeat(64) },
+  ];
+  const newShape = (f, trackMatch) => ({ ...f.request, provider_before: { ...f.request.provider_before, root_folder_version: null,
+    destination_parent_version: trackMatch === "version" ? "1" : null, provider_version: "c".repeat(64), ancestors: ancestors(trackMatch) } });
+  // A sibling change moves the folder versions: fine by digest.
+  const f = fixture({ alter: files => { files.root.version = "7"; files.track.version = "8"; } });
+  assert.equal((await f.verify(newShape(f))).provider_file_id, "topic");
+  // The legacy identity still pins every version.
+  const legacy = fixture({ alter: files => { files.track.version = "8"; } });
+  await assert.rejects(legacy.verify(legacy.request), /ANCESTOR_CHANGED/);
+  // A version-matched destination folder is still pinned.
+  const pinned = fixture({ alter: files => { files.track.version = "8"; } });
+  await assert.rejects(pinned.verify(newShape(pinned, "version")), /ANCESTOR_CHANGED/);
+  // A renamed, moved or trashed ancestor fails.
+  for (const change of [files => { files.track.name = "renamed"; }, files => { files.track.parents = ["elsewhere"]; },
+    files => { files.track.trashed = true; }, files => { files.root.parents = ["other-container"]; }]) {
+    const changed = fixture({ alter: change });
+    await assert.rejects(changed.verify(newShape(changed)), /ANCESTOR_CHANGED/);
+  }
+  // An inconsistent chain is a request mismatch.
+  const broken = fixture();
+  for (const before of [{ ancestors: ancestors().slice(0, 1) }, { ancestors: [ancestors()[0], { ...ancestors()[1], parent_id: "x" }] },
+    { ancestors: [{ ...ancestors()[0], id: "other" }, ancestors()[1]] }, { ancestors: [ancestors()[0], { ...ancestors()[1], id: "topic" }] }]) {
+    await assert.rejects(broken.verify({ ...newShape(broken), provider_before: { ...newShape(broken).provider_before, ...before } }),
+      /REQUEST_MISMATCH/);
+  }
+});

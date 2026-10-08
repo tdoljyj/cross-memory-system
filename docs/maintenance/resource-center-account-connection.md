@@ -1201,6 +1201,64 @@ This step only collects the digest; no matching rule changes until step 3
   the verified record compares whole registry rows, which the new columns
   change. Let such jobs settle first.
 
+### Ancestors matched by identity (storage step 3)
+
+Clued Task `469700eb`, Decision `3196d6f2`, migration
+`20261008140000_storage_ancestor_identity_v1.sql`, kernel
+`kernel/host/resource-center-google-drive-identity.mjs` and
+`resource-center-google-drive-ancestors.mjs`. Design:
+`development/contracts/storage/StorageFineGrainedConcurrency.v0.1.md` §4.2.
+
+- **Why.** Drive moves a folder's version whenever anything inside it
+  changes, so matching ancestors by version failed a job when an unrelated
+  file appeared next to it. Ancestors are now matched by identity and digest;
+  the target (the file replaced, renamed, moved or trashed) keeps its own
+  Drive version precondition.
+- **Matching order** (`resource_center_directory_match_v2`): access digest,
+  else sharing digest, else Drive version. An empty digest never matches.
+- **Descriptor.** `load` (cloud worker v2) returns `ancestor_match`: every
+  registered directory from the root to the destination folder and to the
+  source folder (not for a relocating untrash), each with its match mode.
+- **Identity.** In the verified-result mode, with `ancestor_match`, the
+  identity carries `ancestors[]` = `{path, id, parent_id, match, value}` for
+  every walked folder; `value` is the digest or version (null when it could
+  not be read). `root_folder_version` and `destination_parent_version` are
+  null when that folder is matched by a digest, and `provider_version` covers
+  only version-matched ancestors (none: the fixed
+  `sha256("clued.provider-version/empty")`). Adopt and directory move keep
+  their version fields and the old `provider_version`, with `ancestors` added.
+  Without `ancestor_match` (an older database) the identity is the legacy one.
+- **Authority and settlement.** A request with `ancestors` is checked by
+  `resource_center_ancestors_match_v1` instead of the root and destination
+  folder version clauses: the set must equal the registered directories on
+  the way, each Drive ID and parent ID must equal the registry (the root's
+  parent is `root_parent_id`), and each value must match by its mode. A
+  version-matched directory is compared by version only where it was before
+  (the root and the destination folder). Denials are `ancestors_invalid`,
+  `ancestor_set_mismatch`, `ancestor_identity_mismatch`, or a match reason
+  (`access_changed`, `access_unavailable`, `match_changed`, `sharing_*`,
+  `version_mismatch`) prefixed `root_`, `parent_` (a folder the mutation works
+  in) or `ancestor_`. `storage_verified_result_v2` applies the same check, and
+  `settle_verified` compares the saved registry ancestors by identity, mode
+  and matched value (`resource_center_ancestor_rows_identity_v1`) instead of
+  whole rows.
+- **Postconditions.** Create, rename/file move, replace, trash and untrash
+  walk the chain by the registered Drive IDs: each folder keeps its name,
+  sits alone under the expected parent and is not trashed. A create pins only
+  version-matched folders. A renamed, moved or trashed ancestor fails.
+- **Owner hint.** The connection list (`clued_storage_owner_manage_v2`
+  `connections`) reports `access_digest_missing` (count and up to 20 paths);
+  the storage page asks the Owner to run the directory check for them.
+- **Release order.** Migration first, then the Worker. The migration changes
+  nothing for a request without `ancestors`. Before rolling the Worker back,
+  check that no started or uncertain journal has an
+  `authority_request->'provider_identity' ? 'ancestors'` without a verified
+  result: the old Worker cannot verify such a journal and it would wait for
+  recovery. Rolling the migration back while such journals exist leaves the
+  authority unable to check them; settle them first.
+- **Local writer path.** The authority client used by local native writers
+  never sends `ancestors`; those requests are checked exactly as before.
+
 ## Full scope and adopt (StorageFullCapability.v0.1 P7)
 
 Owner Decisions `c47efe38`, `746fd078` and `6dc1cf20`, Task `7a8dcb8a`,

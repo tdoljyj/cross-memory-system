@@ -356,7 +356,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       assert.deepEqual(await withChain([...chain(), { path: MID + "/外", id: "x", parent_id: MID_ID, match: "version", value: "1" }]),
         { status: "denied", reason: "ancestor_set_mismatch" });
       for (const malformed of [{}, [], "x", [...chain(), chain()[0]], edit(1, { extra: 1 }), edit(1, { match: "name" }),
-        edit(1, { value: 7 }), edit(1, { id: "bad id" }), chain().map(({ parent_id, ...entry }) => entry)])
+        edit(1, { value: 7 }), edit(1, { id: "bad id" }), chain().map(entry => Object.fromEntries(Object.entries(entry).filter(([key]) => key !== "parent_id")))])
         assert.deepEqual(await withChain(malformed), { status: "denied", reason: "ancestors_invalid" }, JSON.stringify(malformed));
       // Without ancestors the request is checked exactly as before.
       assert.deepEqual(await resolve({ mutation: createMutation, provider_identity: { ...providerIdentity, destination_parent_id: MID_ID,
@@ -413,7 +413,11 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       assert.equal((await adminCall({ action: "artifact_revoke", profile_id: profileId, artifact_id: mid.id,
         base_version: Number(mid.version) })).status, "committed");
     });
-    if (focusedAncestors) { await ancestorIdentity(); return; }
+    if (focusedAncestors) {
+      await ancestorIdentity();
+      await testStorageModifyExecution(t, admin, server, USER, DECISION);
+      return;
+    }
 
     await t.test("durable journal fences restart, start replay and uncertain effects", async () => {
       const journal = async (input, client = admin) => (await client.query(
