@@ -258,7 +258,7 @@ export function readWorkflowTriggers(workspace, readDir = fs.readdirSync, readFi
 // ---------------------------------------------------------------------------
 // GitHub REST (GITHUB_TOKEN of the run; read-only).
 
-async function githubJson(fetchImpl, env, route, { allowMissing = false } = {}) {
+export async function githubJson(fetchImpl, env, route, { allowMissing = false } = {}) {
   const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
   const response = await fetchImpl(`${base}${route}`, {
     headers: {
@@ -273,7 +273,7 @@ async function githubJson(fetchImpl, env, route, { allowMissing = false } = {}) 
   return await response.json();
 }
 
-async function githubPaged(fetchImpl, env, route, key) {
+export async function githubPaged(fetchImpl, env, route, key) {
   const items = [];
   for (let page = 1; page <= 50; page += 1) {
     const sep = route.includes("?") ? "&" : "?";
@@ -1146,6 +1146,10 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
           head_sha: pr.head.sha,
           base_sha: pr.base.sha,
           pr_ref: outcome.pr_ref,
+          // Merge Admission v0.1 §10 (step 3): the Receipts of the binding and
+          // of a newly admitted head name the mode it was judged in. A service
+          // before migration 20261008100000 ignores the key.
+          admission_mode: { state: mode.state, layer, reruns_per_head: rules.reruns_per_head },
         }, workspace);
       } catch (error) {
         if (!claimAdvisory) throw error;
@@ -1387,11 +1391,49 @@ export async function appChecksOnHead(fetchImpl, env, repository, headSha, name 
     .sort((a, b) => Number(b.id) - Number(a.id));
 }
 
+// Merge Admission v0.1 §4.1 item 3 (step 3): after the Owner switches the
+// state, the Owner dispatches this workflow with reason=state_change. Every
+// open, non-draft pull request into the default branch is then judged again
+// and gets both App checks anew, passing or failing, with the new mode in the
+// title; advisory or not, since a switch back from frozen must turn its red
+// checks green. The hourly run keeps posting failures only.
+export const STATE_CHANGE_REASON = "state_change";
+const STATE_CHANGE_PREFIX = "RE-VERIFIED (state change): ";
+
+async function rejudge({ env, fetchImpl, now, pr, outcome, result }) {
+  const label = outcome.admission_mode && outcome.admission_mode.label;
+  // A transient Owner review door leaves both checks as they are (review MINOR-2).
+  if (outcome.owner_review && outcome.owner_review.kind === "transient") {
+    throw new Error(`Clued's Owner review door is unavailable (${outcome.reasons.join("; ")}); the checks stay as they are until the next run`);
+  }
+  const verdict = outcome.verdict ?? (outcome.admitted ? "ADMITTED" : "NOT ADMITTED");
+  const admission = await postAppCheck({
+    env, fetchImpl, now, headSha: pr.head.sha, success: outcome.admitted, prNumber: pr.number,
+    title: `${STATE_CHANGE_PREFIX}${verdict}${label ? ` [${label}]` : ""}`,
+    summary: `Merge admission state changed; #${pr.number} was judged again${label ? ` in mode ${label}` : ""}: `
+      + (outcome.admitted ? "admitted." : `not admitted: ${outcome.reasons.join("; ") || "no reason given"}.`),
+  });
+  if (!admission.posted) throw new Error(`no ${APP_CHECK_NAME} check could be posted: ${admission.error ?? admission.reason}`);
+  const state = outcome.merge_slot ? outcome.merge_slot.state : (outcome.admitted && !outcome.enforced ? "not_checked" : "unknown");
+  const slot = mergeSlotCheck({ admitted: outcome.admitted, state,
+    ref: outcome.merge_slot ? outcome.merge_slot.ref : mergeSlotRef(env.GITHUB_REPOSITORY, pr.base.ref),
+    until: outcome.merge_slot ? outcome.merge_slot.until : null, tip: outcome.merge_slot ? outcome.merge_slot.tip : null,
+    claimId: outcome.claim_id, branch: pr.base.ref, mode: label });
+  const posted = await postAppCheck({
+    env, fetchImpl, now, headSha: pr.head.sha, success: slot.success, title: `${STATE_CHANGE_PREFIX}${slot.title}`,
+    prNumber: pr.number, name: MERGE_SLOT_CHECK_NAME, summary: slot.summary,
+  });
+  if (!posted.posted) throw new Error(`no ${MERGE_SLOT_CHECK_NAME} check could be posted: ${posted.error ?? posted.reason}`);
+  result.rejudged.push({ pr: pr.number, verdict, admitted: outcome.admitted, check_run_id: admission.check_run_id,
+    merge_slot: state, merge_slot_passed: slot.success, merge_slot_check_run_id: posted.check_run_id });
+}
+
 export async function reverify({ env, fetchImpl, workspace, now = () => Date.now(), readPolicyFile = fs.readFileSync }) {
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
+  const stateChange = (env.CLUED_REVERIFY_REASON ?? "").trim() === STATE_CHANGE_REASON;
   const result = { enforced: admissionEnforced(env, mode), mode: { state: mode.state, source: mode.source, errors: mode.errors },
-    checked: [], blocked: [], errors: [] };
-  if (!result.enforced) {
+    reason: stateChange ? STATE_CHANGE_REASON : "scheduled", checked: [], blocked: [], rejudged: [], errors: [] };
+  if (!result.enforced && !stateChange) {
     result.skipped = "CLUED_WORK_ADMISSION_ENFORCE is not set; checks are advisory";
     return result;
   }
@@ -1408,6 +1450,16 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
     if (pr.draft || !pr.head || !pr.base) continue;
     const defaultBranch = pr.base.repo && pr.base.repo.default_branch;
     if (defaultBranch && pr.base.ref !== defaultBranch) continue;
+    if (stateChange) {
+      try {
+        const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false, readPolicyFile });
+        if (outcome.verdict === "PR_NOT_OPEN") continue;
+        await rejudge({ env, fetchImpl, now, pr, outcome, result });
+      } catch (error) {
+        result.errors.push({ pr: pr.number, error: error instanceof Error ? error.message : String(error) });
+      }
+      continue;
+    }
     try {
       const green = (checks) => Boolean(checks[0]) && checks[0].status === "completed" && checks[0].conclusion === "success";
       const admissionGreen = green(await appChecksOnHead(fetchImpl, env, repository, pr.head.sha));
@@ -1475,6 +1527,15 @@ export function renderReverifySummary(result) {
   }
   if (result.skipped) {
     lines.push(`Skipped: ${result.skipped}.`, "");
+    return lines.join("\n");
+  }
+  if (result.reason === STATE_CHANGE_REASON) {
+    lines.push(`State change: open PRs judged again: ${result.rejudged.length} · errors: ${result.errors.length}`);
+    for (const pr of result.rejudged) {
+      lines.push(`- #${pr.pr}: ${pr.verdict} (check ${pr.check_run_id}), merge slot \`${pr.merge_slot}\` ${pr.merge_slot_passed ? "passing" : "failing"} (check ${pr.merge_slot_check_run_id})`);
+    }
+    for (const error of result.errors) lines.push(`- ${error.pr === null ? "re-verification" : `#${error.pr}`}: error ${error.error}`);
+    lines.push("");
     return lines.join("\n");
   }
   lines.push(`Open PRs with a passing admission check checked: ${result.checked.length} · failing checks posted: ${result.blocked.length} · errors: ${result.errors.length}`);
@@ -2116,7 +2177,7 @@ async function claimReferenceOf(fetchImpl, env, pr) {
   return reference;
 }
 
-async function cluedRpc(fetchImpl, env, workspace, rpc, input) {
+export async function cluedRpc(fetchImpl, env, workspace, rpc, input) {
   const { url: base, key } = resolvePublicSupabaseConfig(env, workspace);
   const response = await fetchImpl(`${base}/rest/v1/rpc/${rpc}`, {
     method: "POST",

@@ -227,6 +227,14 @@
   - 兜底写进 §14：一个已准入的 PR 仍可能用加闸 workflow 内的长任务把位撑到硬上限（默认 120 分钟）；今天的 45 分钟无续期即失效在这一点上更紧，所以硬上限不放宽到 3 小时，并由 `wasted_final_rounds` 与误出队计数观察后调。
 - 复核（`reverify`）对队列头以外、却仍绿着 `clued-merge-slot` 的 head 补发失败检查（现行）。
 
+**实施说明（2026-10-08，第 3 步，Task `3576d10d`，Owner Decision `4f576896`、`1fb7f6b3`）**：第 4 步（队列）之前，位仍是互斥的触发引用，第 3 步只换它的时钟。落地时与上文的差别如下，均不放松 §2 的保证：
+- 上报 job 是独立的 `.github/workflows/clued-merge-slot-ci.yml`（Owner 选择，不放进准入 workflow，避免与 PR 事件的并发组互相取消）。触发为 `workflow_run: completed`、每小时、`workflow_dispatch`；不加 `push` 到 main：合并由 `clued_work_claim_adopt_v1` 还位，main 移动不改变持位 PR 的 CI 状态。
+- head → PR 不用 `commits/{sha}/pulls`：job 先读打开的 PR 列表，从 PR 正文的认领尾注取作用域，再用新 RPC `clued_work_merge_slot_holders_v1(scope, repository)` 向 Clued 取持位者，只看持位 PR 的当前 head。事件里的 head 只用来在「这个 head 不持位」时提前结束。正文里没有尾注、只在 head 提交里有的 PR 不会被上报，退回 45 分钟无续期即失效。
+- `running` 除加闸 workflow 外，也算 `gitleaks.yml`、`trivy.yml` 的运行（同样要求 head 处文件与默认分支 blob SHA 相同）；只认 `pull_request` 事件的运行。判定顺序：四个 CI 类必需检查任一最新一条最终失败（`success`、`neutral`、`skipped` 以外的结论）→ `failed`；否则有计入的运行在排队或进行 → `running`；否则四个都通过 → `green`；其余不上报。
+- `green` 的 30 分钟从上报时起算，不另查 `clued-merge-slot` 是否已绿，也不查 head 是否含 tip：持位者本来就在取位后才并入 main。续期仍刷新 45 分钟时钟，位在两个时钟中较晚者失效；硬上限从取位起算（取位 = 带合并引用签发、新加合并引用、或位已失效时带合并引用续期），每次上报带上策略文件的 `merge_slot_hard_cap_minutes`，到点即失效，上报不能复活已失效的位；硬上限之后位空着时，持有者可以像新取位一样再取。
+- `failed` 立即还位，回执 `WORK_CLAIM_MERGE_SLOT_RETURNED(why=ci_failed)`；`running` / `green` 在状态或 head 变化时写 `WORK_CLAIM_MERGE_SLOT_TOUCHED`。认领视图增加 `merge_slot_ci`（取位时间、硬上限、最近一次上报）。
+- 合同 §1.7 随本步发 agent-contract v40（Owner 在 Decision `1fb7f6b3` 选择，再次豁免每周一版）：有上报 workflow 的仓库不再为保位续期。
+
 ### 7.4 用 GitHub 原生 auto-merge 替代 Agent 守 CI
 
 **结论：可以，且推荐；前提是 Owner 在仓库设置里打开 `Allow auto-merge`（现为关闭）。** GitHub 文档：auto-merge 在公开仓库对 Free 可用，对私有仓库在 GitHub Pro、Team、Enterprise 可用。本仓库是个人账号私有仓库，账号计划从 Agent 侧 API 读不到（令牌无 `user` scope）；它已对私有仓库启用了规则集与分支保护，通常意味着 Pro 及以上，Owner 打开设置时 GitHub 界面会直接显示该选项是否可用，以此为准。
@@ -338,7 +346,7 @@
 | 0 | 本文 Draft → Accepted；ADR 接受；Clued Decision 指向 Drive 报告文件 ID 与仓库 commit | 无 | 接受 | `ada1334c`（已完成：Decision `d130195e`） |
 | 1 | `scripts/ci/merge-admission-policy.mjs` + `config/merge-admission-policy.json` + 表驱动测试；`clued-work-admission.mjs` 改为读策略；摘要与 App check 标题打印模式；**默认表先用「兼容表」**：三层 `work_claim: enforce`、`merge_slot: required`、`reruns_per_head: 0`、`auto_merge: allowed`（仓库设置仍关着，所以不生效）；`owner_grant: required` 与 `up_to_date: check_and_strict` 只对受保护层，`code` / `docs` 为 `none` / `strict_only`；今天的其他行为原样保留且不在表里：文件列表截断判 REJECTED（`changed_files_truncated`），服务未报 `merge_slot_until` 时 `clued-merge-slot` 以 `not_reported` 通过，fork PR 的 gate 一律按强制跟随 App check，workflow 守卫（`workflow_gate:*`）在所有状态、所有层无条件生效。行为与今天完全一致 | 无（只多了可见性） | 批准受保护 PR；设 `CLUED_MERGE_ADMISSION_STATE=normal`（或不设） | `2c7c7430` |
 | 2 | 默认表换成 §5.2 推荐表；gate 按 App check 标题里的 `reruns_per_head` 放行，runner 开工前检查沿用现有路径（读准入运行的结论与同一 attempt 的 `admission-gate` job），不读 check 标题、不需要 `checks: read`；准入 workflow 的 `pull_request_target` 类型加 `auto_merge_enabled` / `auto_merge_disabled`；合同 §1.7 对应段落改写，并在本步作为 agent-contract v39 发布（Owner 对每周合同节奏的一次性豁免，Decision `77216370`）；`ci-usage-report.mjs` 移出本步，归 Task `f70546e5` | 重跑一次放行；App check 标题带模式；auto-merge 可用（Owner 打开仓库设置后） | 在每台 runner 更新钩子；打开仓库 `Allow auto-merge`；发布 Worker（合同） | `745c288f` |
-| 3 | 位时效绑 CI：迁移 `clued_work_merge_slot_touch_v1`（ci-admission Binding）；准入 workflow 加 `workflow_run: completed` 触发的秒级 job 上报 CI 状态；复核 `reason=state_change` 模式 | 持位不再需要续期；CI 失败自动出队 | 迁移、Worker 发布各自授权 | `3576d10d` |
+| 3 | 位时效绑 CI：迁移 `clued_work_merge_slot_touch_v1`（ci-admission Binding）；准入 workflow 加 `workflow_run: completed` 触发的秒级 job 上报 CI 状态；复核 `reason=state_change` 模式。实施时（2026-10-08，Decision `4f576896`、`1fb7f6b3`）上报 job 放在独立 workflow，加 `clued_work_merge_slot_holders_v1`，§10 的 `admission_mode` 回执随同一迁移，合同发 agent-contract v40，见 §7.3 实施说明 | 持位不再需要续期；CI 失败自动出队 | 迁移、Worker 发布各自授权 | `3576d10d` |
 | 4 | 队列：`clued_work_renew` 带合并引用改为入队返回位置；`clued-merge-slot` 只认队列头；resume 返回 `merge_queue` | 等待不再轮询（入队一次即可，位置由检查与 resume 可见） | 迁移、Worker 发布 | `38e0c90d` |
 | 5 | 执行器（可选）：clued-admission App 增加 `contents: write`、`pull_requests: write`；默认分支上的执行器 job 为队列头做「并入 main」与打开 auto-merge。用 App 安装令牌而不是 `GITHUB_TOKEN`：GitHub 不为 `GITHUB_TOKEN` 的推送创建新的 workflow 运行，用它并入 main 不会触发 CI | Agent 在入队后无事可做 | 批准 App 权限扩展（扩大了 `clued-admission` environment 里私钥的能力范围） | `91039d74` |
 | 6 | 删除 `CLUED_WORK_ADMISSION_ENFORCE` 与 `CLUED_OWNER_REVIEW_ENFORCE` 的读取与 advisory 分支（v0.2） | 不再有「提示模式」；回滚手段改为 `frozen` 与规则集的 Owner 紧急步骤（GitConnectorWriteContract「Emergency or recovery」） | 删除两个变量 | `958f8ed7` |

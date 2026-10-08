@@ -56,6 +56,7 @@ import {
   mergeSlotState,
 } from "./clued-work-admission.mjs";
 import { fixedPolicy } from "./merge-admission-policy.fixtures.mjs";
+import { parseModeLabel } from "./merge-admission-policy.mjs";
 
 // Merge Admission v0.1 (review MAJOR-1): these self-tests run on the default
 // branch before every admission, so every evaluation here judges against the
@@ -197,7 +198,9 @@ test("enforced: the RPC is called on PostgREST with the publishable key and the 
   assert.match(PUBLIC.url, /^https:\/\/[a-z]+\.supabase\.co$/);
   assert.deepEqual(call.body, {
     p_token_hash: sha256Hex("clued_bnd_test"),
-    p_input: { scope: "global", claim_id: CLAIM, changed_paths: ["apps/clued-cloud/worker/index.ts", "docs/new.md", "docs/old.md"], head_sha: HEAD, base_sha: BASE, pr_ref: "o/r#452" },
+    p_input: { scope: "global", claim_id: CLAIM, changed_paths: ["apps/clued-cloud/worker/index.ts", "docs/new.md", "docs/old.md"], head_sha: HEAD, base_sha: BASE, pr_ref: "o/r#452",
+      // Merge Admission v0.1 §10 (step 3): the mode goes into the Receipts.
+      admission_mode: { state: "normal", layer: "code", reruns_per_head: outcome.admission_mode.rules.reruns_per_head } },
   });
   assert.equal(sha256Hex("clued_bnd_test").length, 64);
   assert.ok(!JSON.stringify(call.body).includes("clued_bnd_test"), "only the hash leaves the runner");
@@ -603,6 +606,48 @@ test("reverify: a pull request whose green App check outlived its claim gets a f
   assert.match(frozen.errors[0].error, /App is not configured/);
 });
 
+test("reverify reason=state_change (Merge Admission step 3): every open pull request is judged again and gets both checks", async () => {
+  const sha = (c) => c.repeat(40);
+  const other = "1f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
+  const pulls = [
+    freshPull({ number: 452 }), // its claim no longer admits it
+    freshPull({ number: 453, head: { sha: sha("e") }, body: `x\n\nClued-Work-Claim: ${other}` }), // admitted
+    freshPull({ number: 455, draft: true }),
+    freshPull({ number: 457, head: { sha: sha("8") }, base: { sha: BASE, ref: "dev", repo: { default_branch: "main" } } }),
+  ];
+  // No App check is read: a red check is judged again too.
+  const { fetchImpl, calls } = reverifyScript(pulls, () => { throw new Error("no check lookup in state_change"); });
+  const appEnv = { CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: appKeyPem(), CLUED_REVERIFY_REASON: "state_change" };
+  const result = await reverify({ env: env(appEnv), fetchImpl, workspace: ROOT, now: () => 1_800_000_000_000 });
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.reason, "state_change");
+  assert.deepEqual(result.rejudged.map((r) => [r.pr, r.verdict, r.admitted]), [[452, "REJECTED", false], [453, "ADMITTED", true]]);
+  const posts = calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs"));
+  assert.deepEqual(posts.map((c) => [c.body.name, c.body.head_sha, c.body.conclusion, c.body.external_id]), [
+    [APP_CHECK_NAME, sha("d"), "failure", "pr:452:run:9001"], [MERGE_SLOT_CHECK_NAME, sha("d"), "failure", "pr:452:run:9001"],
+    [APP_CHECK_NAME, sha("e"), "success", "pr:453:run:9001"], [MERGE_SLOT_CHECK_NAME, sha("e"), posts[3].body.conclusion, "pr:453:run:9001"]]);
+  assert.match(posts[0].body.output.title, /^RE-VERIFIED \(state change\): REJECTED \[normal · code · reruns \d\]$/);
+  assert.match(posts[1].body.output.title, /^RE-VERIFIED \(state change\): Not admitted$/);
+  assert.match(posts[2].body.output.title, /^RE-VERIFIED \(state change\): ADMITTED \[normal · code · reruns \d\]$/);
+  // The gate reads the mode back from a state-change title.
+  assert.equal(parseModeLabel(posts[2].body.output.title).state, "normal");
+  assert.ok(!calls.some((c) => c.url.includes("/pulls/455") || c.url.includes("/pulls/457")), "drafts and other bases are skipped");
+  assert.match(renderReverifySummary(result), /State change: open PRs judged again: 2 · errors: 0\n- #452: REJECTED \(check 5005\)/);
+
+  // Advisory or not: a switch back from frozen has to turn red checks green.
+  const advisory = reverifyScript([freshPull({ number: 453, head: { sha: sha("e") }, body: `x\n\nClued-Work-Claim: ${other}` })], () => []);
+  const quiet = await reverify({ env: env({ ...appEnv, CLUED_WORK_ADMISSION_ENFORCE: "" }), fetchImpl: advisory.fetchImpl, workspace: ROOT, now: () => 1_800_000_000_000 });
+  assert.deepEqual([quiet.skipped, quiet.rejudged.map((r) => [r.pr, r.admitted])], [undefined, [[453, true]]]);
+  assert.deepEqual(advisory.calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs")).map((c) => c.body.conclusion), ["success", "success"]);
+  // Any other reason is the hourly run.
+  const hourly = await reverify({ env: env({ CLUED_REVERIFY_REASON: "scheduled", CLUED_WORK_ADMISSION_ENFORCE: "" }), fetchImpl: fakeFetch({}).fetchImpl, workspace: ROOT });
+  assert.deepEqual([hourly.reason, Boolean(hourly.skipped)], ["scheduled", true]);
+  // The workflow passes the dispatch input through.
+  const workflow = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission-reverify.yml"), "utf8");
+  assert.match(workflow, /options: \[scheduled, state_change\]/);
+  assert.match(workflow, /CLUED_REVERIFY_REASON: \$\{\{ inputs\.reason \}\}/);
+});
+
 test("reverify (re-review 8): without the App key it reads nothing and fails", async () => {
   const { fetchImpl, calls } = reverifyScript([freshPull()], () => []);
   const result = await reverify({ env: env(), fetchImpl, workspace: ROOT });
@@ -755,7 +800,8 @@ test("workflows: only base-branch jobs in the clued-admission environment get th
     // before the rename gets no token and no App key.
     assert.doesNotMatch(text, /secrets\.(CLUED_CONTEXT_READ_TOKEN|CLUED_ADMISSION_APP_PRIVATE_KEY)\b/, file);
   }
-  assert.deepEqual(holders.sort(), ["clued-work-admission-dispatch.yml", "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
+  // Merge Admission step 3: clued-merge-slot-ci reports CI states with the same token.
+  assert.deepEqual(holders.sort(), ["clued-merge-slot-ci.yml", "clued-work-admission-dispatch.yml", "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
   const admission = fs.readFileSync(path.join(dir, "clued-work-admission.yml"), "utf8");
   assert.doesNotMatch(admission, /^ {2}pull_request:/m, "no pull_request trigger: PR-edited copies never run");
   assert.match(admission, /^ {2}pull_request_target:$/m);
@@ -1481,7 +1527,7 @@ test("owner review: the workflows on main that hold an environment are exactly t
     assert.deepEqual(ownerReviewFindings(text, text).filter((f) => f !== "environment_workflow_changed"), [], file);
   }
   assert.deepEqual(holders, ["clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml",
-    "clued-integration-runtime-config.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
+    "clued-integration-runtime-config.yml", "clued-merge-slot-ci.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
     "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
 });
 

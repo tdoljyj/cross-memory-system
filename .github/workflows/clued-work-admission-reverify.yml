@@ -24,7 +24,16 @@ on:
   # once instead of within the hour.
   push:
     branches: [main]
+  # Merge Admission v0.1 §4.1 item 3: after switching CLUED_MERGE_ADMISSION_STATE
+  # the Owner dispatches this with reason state_change, which judges every open
+  # pull request again and posts both App checks, passing or failing.
   workflow_dispatch:
+    inputs:
+      reason:
+        description: "scheduled: fail checks that no longer hold; state_change: judge every open pull request again after a state switch"
+        type: choice
+        options: [scheduled, state_change]
+        default: scheduled
 
 permissions:
   actions: read
@@ -59,5 +68,6 @@ jobs:
           CLUED_OWNER_REVIEW_ENFORCE: ${{ vars.CLUED_OWNER_REVIEW_ENFORCE }}
           # Merge Admission v0.1 §4: judged in the same state as the check.
           CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
+          CLUED_REVERIFY_REASON: ${{ inputs.reason }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode reverify

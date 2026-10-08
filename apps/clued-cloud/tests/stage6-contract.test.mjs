@@ -83,7 +83,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 39/);
+  assert.match(contract, /Contract version: 40/);
   // Merge slot: closing gives it back, reopening does not take it again (Task 6525c538).
   assert.match(contract, /Closing gives the slot back even when you reopen the pull request at once/);
   // MergeAdmission step 2 (Owner Decisions 73050422, 77216370): "Re-run all jobs" on the current head
@@ -104,6 +104,12 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /Merge dependent pull requests one at a time/);
   // Owner Decision 2ea795e4: the slot lapses on its own clock and a required App check enforces it.
   assert.match(contract, /The slot lapses 45 minutes after you last took or renewed it/);
+  // Merge Admission step 3 (Owner Decisions 4f576896, 1fb7f6b3): CI keeps the slot, a failure returns it, a hard cap ends it.
+  assert.match(contract, /Where the `clued-merge-slot-ci` workflow runs, CI keeps the slot for you, so do not renew only to keep it/);
+  assert.match(contract, /a CI required check that fails gives the slot back at once/);
+  assert.match(contract, /the slot ends `merge_slot_hard_cap_minutes` \(the policy file's, 120 by default\) after you took it/);
+  assert.match(contract, /Without that workflow, renew with the same refs and a new `progress_ref`/);
+  assert.doesNotMatch(contract, /Give the slot back, and turn auto-merge off, as soon as CI fails/);
   assert.match(contract, /posts a `clued-merge-slot` check on every head/);
   assert.match(contract, /`migration\.production`: one resource per migration file the run applies/);
   assert.match(contract, /ask for everything the release needs in one call: `clued_owner_request` with `actions`/);
