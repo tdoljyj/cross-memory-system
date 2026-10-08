@@ -911,10 +911,44 @@ test("gate guard: every gated workflow on this branch passes and uses a listed g
   assert.deepEqual(gateFindings(ungated, ungated), []);
 });
 
+test("gate guard: the exact PR-read version is registered before workflow rollout; other changes are refused", () => {
+  const legacyDigest = "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4";
+  const prReadDigest = "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd";
+  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest], "only the two exact gate versions");
+  for (const name of GATED_FILES) {
+    const current = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
+    // Exercise both bootstrap phases, before and after the workflow PR.
+    const legacy = current.replace("      pull-requests: read\n", "");
+    const withPrRead = legacy.replace("      contents: read\n    outputs:",
+      "      contents: read\n      pull-requests: read\n    outputs:");
+    assert.notEqual(withPrRead, legacy, `${name}: fixture adds the permission`);
+    assert.deepEqual(gateFindings(legacy, legacy), [], `${name}: old version stays valid`);
+    assert.deepEqual(gateFindings(withPrRead, legacy), [], `${name}: only PR read is added`);
+    const gateJob = workflowJobs(withPrRead).find((job) => job.name === "admission-gate");
+    assert.equal(sha256Hex(gateJob.lines.join("\n")), prReadDigest, name);
+    const changes = [
+      ["pull request write", "      pull-requests: read", "      pull-requests: write"],
+      ["actions write", "      actions: read", "      actions: write"],
+      ["additional permission", "      pull-requests: read", "      pull-requests: read\n      issues: read"],
+      ["checkout version", "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683", "actions/checkout@v4"],
+      ["untrusted ref", "ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+        "ref: ${{ github.event.pull_request.head.sha }}"],
+      ["gate command", "run: node scripts/ci/clued-work-admission.mjs --mode gate", "run: echo admitted=true"],
+      ["extra step", "      - id: gate\n", "      - run: echo extra\n      - id: gate\n"],
+      ["timeout", "    timeout-minutes: 10\n", "    timeout-minutes: 11\n"],
+    ];
+    for (const [label, from, to] of changes) {
+      const changed = withPrRead.replace(from, to);
+      assert.notEqual(changed, withPrRead, `${name}: ${label} fixture changed`);
+      assert.deepEqual(gateFindings(changed, legacy), ["admission_gate_changed"], `${name}: ${label}`);
+    }
+  }
+});
+
 test("gate guard: the gate runs on the self-hosted Linux pool with a pinned Node", () => {
   const gateJob = workflowJobs(g4).find((job) => job.name === "admission-gate");
   const text = gateJob.lines.join("\n");
-  assert.equal(sha256Hex(text), "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4");
+  assert.ok(GATE_JOB_SHA256.has(sha256Hex(text)), "the gate is one of the exact registered versions");
   assert.match(text, /^    runs-on: \[self-hosted, Linux, X64, clued, pool-general, trust-internal\]$/m);
   assert.match(text, /^          node-version: 24\.19\.0$/m);
   // Owner Decision f86179b3: the hosted gate, another runner or another Node is a changed gate.

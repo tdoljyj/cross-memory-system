@@ -1201,6 +1201,88 @@ This step only collects the digest; no matching rule changes until step 3
   the verified record compares whole registry rows, which the new columns
   change. Let such jobs settle first.
 
+### Ancestors matched by identity (storage step 3)
+
+Clued Task `469700eb`, Decision `3196d6f2`, migration
+`20261008140000_storage_ancestor_identity_v1.sql`, kernel
+`kernel/host/resource-center-google-drive-identity.mjs` and
+`resource-center-google-drive-ancestors.mjs`. Design:
+`development/contracts/storage/StorageFineGrainedConcurrency.v0.1.md` §4.2.
+
+- **Why.** Drive moves a folder's version whenever anything inside it
+  changes, so matching ancestors by version failed a job when an unrelated
+  file appeared next to it. Ancestors are now matched by identity and digest;
+  the target (the file replaced, renamed, moved or trashed) keeps its own
+  Drive version precondition.
+- **Matching order** (`resource_center_directory_match_v2`): access digest,
+  else sharing digest, else Drive version. An empty digest never matches.
+- **Descriptor.** `load` (cloud worker v2) returns `ancestor_match`: every
+  registered directory from the root to the destination folder and to the
+  source folder (not for a relocating untrash), each with its match mode.
+- **Identity.** In the verified-result mode, with `ancestor_match`, the
+  identity carries `ancestors[]` = `{path, id, parent_id, match, value}` for
+  every walked folder; `value` is the digest or version (null when it could
+  not be read). `root_folder_version` and `destination_parent_version` are
+  null when that folder is matched by a digest, and `provider_version` covers
+  only version-matched ancestors (none: the fixed
+  `sha256("clued.provider-version/empty")`). A sharing-matched folder also
+  has its access digest in `ancestor_access`; the server does not match it,
+  but the effects' re-resolution then stops a job on a role-only change, as
+  the folder's Drive version did before. Adopt and directory move keep the
+  legacy identity, and the authority refuses them with `ancestors`
+  (`request_invalid`). Without `ancestor_match` (an older database) the
+  identity is the legacy one.
+- **Authority and settlement.** A request with `ancestors` is checked by
+  `resource_center_ancestors_match_v1` instead of the root and destination
+  folder version clauses: the set must equal the registered directories on
+  the way, each Drive ID and parent ID must equal the registry (the root's
+  parent is `root_parent_id`), and each value must match by its mode. A
+  version-matched directory is compared by version only where it was before
+  (the root and the destination folder). Denials are `ancestors_invalid`,
+  `ancestor_set_mismatch`, `ancestor_identity_mismatch`, or a match reason
+  (`access_changed`, `access_unavailable`, `match_changed`, `sharing_*`,
+  `version_mismatch`) prefixed `root_`, `parent_` (a folder the mutation works
+  in) or `ancestor_`. `storage_verified_result_v2` applies the same check, and
+  `settle_verified` compares the saved registry ancestors by identity, mode
+  and matched value (`resource_center_ancestor_rows_identity_v1`) instead of
+  whole rows. That projection applies to every request; for a request
+  without `ancestors` the root and destination folder are still compared by
+  version there, and the selected row's version still enters the authority
+  version.
+- **Match mode race.** `load` reads each directory's mode on a quiet root but
+  holds no lock afterwards. If the backfill or an Owner directory check
+  records a digest between `load` and the authority, the job is refused with
+  `*_match_changed` and the Agent submits it again. Accepted: it needs a
+  write to the registry within seconds of the job's start.
+- **Postconditions.** Create, rename/file move, replace, trash and untrash
+  walk the chain by the registered Drive IDs: each folder keeps its name,
+  sits alone under the expected parent and is not trashed. A create pins only
+  version-matched folders. A renamed, moved or trashed ancestor fails.
+- **Owner hint.** The connection list (`clued_storage_owner_manage_v2`
+  `connections`) reports `access_digest_missing` (count and up to 20 paths);
+  the storage page asks the Owner to run the directory check for them.
+  Directories the backfill has not reached yet are matched by version too but
+  are not listed.
+- **Limits.** At most 64 registered directories on the source and
+  destination chains together; a deeper job is refused
+  (`CLOUD_DESCRIPTOR_INVALID`). Each access- or sharing-matched folder costs
+  one more Drive read per identity resolution.
+- **Release order.** Migration first, then the Worker. Apart from the
+  settlement projection above, the migration changes nothing for a request
+  without `ancestors`. Rolling back the Worker or the migration needs no
+  journal carrying ancestors to be open: an old Worker cannot verify one
+  (its postconditions need the folder versions the new identity leaves
+  null), and the old functions would see those nulls as a registry change.
+  Drain them first; this must return 0:
+
+  ```sql
+  select count(*) from clued_private.resource_center_mutations_v1
+  where state in ('prepared','started','uncertain')
+    and authority_request->'provider_identity' ? 'ancestors';
+  ```
+- **Local writer path.** The authority client used by local native writers
+  never sends `ancestors`; those requests are checked exactly as before.
+
 ## Full scope and adopt (StorageFullCapability.v0.1 P7)
 
 Owner Decisions `c47efe38`, `746fd078` and `6dc1cf20`, Task `7a8dcb8a`,

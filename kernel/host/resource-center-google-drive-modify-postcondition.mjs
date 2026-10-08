@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { contentIdentity, modifyShape } from "./resource-center-google-drive-modify-effect.mjs";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
+import { ancestorChain, walkAncestorChain } from "./resource-center-google-drive-ancestors.mjs";
 
 const FOLDER = "application/vnd.google-apps.folder";
 const normalized = (value) => bindResourceCenterMutation({ destination_path: value }).destination_path;
@@ -47,7 +48,7 @@ export function createGoogleDriveModifyPostconditionVerifier({
         md5Checksum: effect.content.md5, headRevisionId: effect.content.head_revision_id } : null) ||
       before?.root_folder_id !== rootId || before.root_parent_id !== rootParentId ||
       before.source_file_id !== effect.provider_file_id || before.source_file_version !== shape.source_file_version ||
-      !before.destination_parent_id || !before.destination_parent_version ||
+      !before.destination_parent_id || (!Array.isArray(before.ancestors) && !before.destination_parent_version) ||
       before.destination_file_id !== null || before.destination_file_version !== null) {
       fail("DRIVE_POSTCONDITION_REQUEST_MISMATCH");
     }
@@ -56,7 +57,12 @@ export function createGoogleDriveModifyPostconditionVerifier({
     parts.pop();
     // The chain to the destination parent is the same: root ID under its
     // pinned parent, each folder by name and parent, the destination parent ID.
+    // Step 3: an identity that names its ancestors is walked by their Drive IDs.
+    const chain = ancestorChain(before, { root, root_folder_id: rootId, root_parent_id: rootParentId },
+      parts.length ? `${root}/${parts.join("/")}` : root);
+    if (chain && chain.at(-1).id !== before.destination_parent_id) fail("DRIVE_POSTCONDITION_REQUEST_MISMATCH");
     async function parentIdentity() {
+      if (chain) return walkAncestorChain(chain, getFile);
       let node = await getFile(rootId);
       folderCheck(node, rootId, root.slice(root.lastIndexOf("/") + 1), rootParentId);
       for (const part of parts) {

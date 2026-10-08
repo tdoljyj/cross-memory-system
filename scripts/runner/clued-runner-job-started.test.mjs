@@ -158,7 +158,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "merge-admission-step2");
+  assert.equal(HOOK_VERSION, "merge-admission-step2-pr-read");
   assert.ok(lines.length >= 5);
   for (const line of lines) assert.ok(line.endsWith(` [hook ${HOOK_VERSION}]`), line);
   const { result } = await run({ GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/x" }, { [LIST]: { status: 403, body: null } })
@@ -533,11 +533,31 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
   verifier.update(`${header}.${payload}`);
   assert.equal(verifier.verify(publicKey, Buffer.from(signature, "base64url")), true);
   assert.deepEqual(JSON.parse(Buffer.from(payload, "base64url").toString()), { iat: NOW - 60, exp: NOW + 540, iss: "4242" });
-  // This repository only, actions and contents read only, whatever else the App holds.
-  assert.deepEqual(JSON.parse(calls[1].body), { repositories: ["r"], permissions: { actions: "read", contents: "read" } });
+  // This repository only, actions, contents and pull requests read only, whatever else the App holds.
+  assert.deepEqual(JSON.parse(calls[1].body), { repositories: ["r"], permissions: { actions: "read", contents: "read", pull_requests: "read" } });
   // Every other call uses the installation token; the personal token file is not read.
   assert.deepEqual(calls.slice(2).map((c) => c.auth), ["Bearer ghs_app", "Bearer ghs_app"]);
   assert.equal(reads.includes("/token"), false);
+
+  // A re-run must use the App installation token for the live pull request
+  // read, both for the gate and for a job that waits on the fresh gate.
+  for (const job of [GATE, HEAVY]) {
+    const current = await decideWith({ ...job, GITHUB_RUN_ATTEMPT: "2" }, {
+      [RUN]: rerunOf(2), [PULLS]: pull(), [JOBS(2)]: jobsOf(gateJob(), heavyJob()),
+    });
+    assert.equal(current.result.allow, true, job.GITHUB_JOB);
+    const pullRead = current.calls.find((c) => c.url === PULLS);
+    assert.deepEqual([pullRead.method, pullRead.auth], ["GET", "Bearer ghs_app"], job.GITHUB_JOB);
+    assert.equal(current.calls.some((c) => c.url.startsWith(JOBS(2))), job === HEAVY);
+  }
+  // Adding the read scope must not admit a re-run when GitHub still refuses
+  // the pull request read (for example, an installation not yet approved).
+  const refused = await decideWith({ ...GATE, GITHUB_RUN_ATTEMPT: "2" }, {
+    [RUN]: rerunOf(2), [PULLS]: { status: 403, body: null },
+  });
+  assert.equal(refused.result.allow, false);
+  assert.match(refused.result.reason, /cannot read the pull request .*returned 403.*re-run refused/);
+  assert.equal(refused.calls.some((c) => c.url.startsWith(COMPARE) || c.url.startsWith(JOBS(2))), false);
 
   const onMain = await decideWith({ GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main" }, {});
   assert.deepEqual([onMain.result.allow, onMain.calls.length], [true, 0], "main's own runs mint no token");

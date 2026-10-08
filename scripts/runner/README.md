@@ -39,34 +39,36 @@ MergeAdmission v0.1 §8, Owner Decisions `77216370` and `1b93760d`. A re-run is 
 - **A refused re-run still uses up its attempt number.** The next re-run of the same run is one attempt later.
 - **Never re-run an old head's run.** It is refused anyway, and its concurrency group can cancel the current head's run before any job starts.
 
-**After an Owner grant for a protected change:** edit the pull request body, which runs admission again, and wait until `clued-admission-verified` is green on the head. Then use "Re-run all jobs" once on each gated workflow run of that head (and on `gitleaks` / `trivy` if they were refused). Until every runner has this version of the check (see below), a re-run refused at "Set up runner" means a runner still has the old one: fall back to closing and reopening the pull request once.
+**After an Owner grant for a protected change:** edit the pull request body, which runs admission again, and wait until `clued-admission-verified` is green on the head. Under contract v39, use "Re-run all jobs" once on each gated workflow run of that current head (and on `gitleaks` / `trivy` if they were refused). Closing and reopening once is an exception only when the "Set up runner" log identifies a hook older than `merge-admission-step2`, or an old gate explicitly refuses with "re-runs are not admitted". A 403 from the current hook requires the permission repair below; a "Set up runner" refusal alone does not establish an old hook.
 
 ## Updating the check
 
-The installed copy does not follow the repository. Roll out `merge-admission-step2` in this order:
+The installed copy does not follow the repository. Roll out `merge-admission-step2-pr-read` in this order:
 
-1. **Merge** the change into `main`.
-2. **Copy the new check to every runner, keeping the old one.** On each runner, first keep the installed `clued-runner-job-started.mjs` for rollback (for example as `clued-runner-job-started.mjs.prev` in the same directory), then copy only `clued-runner-job-started.mjs` from the merged `main` commit over the installed copy (the directory of Install step 2 below). The wrappers (`.sh`, `.ps1`), the App key and the `.env` lines stay as they are. The runner starts the script afresh for every job, so no restart is needed.
-3. **Confirm the version on each runner.** Every `ALLOW` / `REFUSE` line ends with `[hook <version>]`. Find `[hook merge-admission-step2]` in a "Set up runner" log of a job on each runner; the runner heartbeat (`clued-ci-runner-heartbeat`, every 15 minutes on `main`) shows it in each runner's "Set up runner" section.
-4. **Only then** the Owner releases the Worker that serves agent contract v39 (which tells Agents to re-run instead of closing and reopening).
+1. **Grant the hook App Pull requests: read and approve that permission for its repository installation.** Keep Actions: read and Contents: read. Do this before installing the new check: GitHub refuses a token request for a permission the installation has not been granted. Keep the installation limited to this repository.
+2. **Merge the repair into `main` in two PRs, tracked by Task `fb97ebd5`.** The [gate guard](../ci/clued-work-admission.mjs) requires the new exact gate digest to be registered first. The first PR registers that digest and changes the hook token request while keeping all workflow files at their base version. After it merges, a second PR adds `pull-requests: read` only to the ten `admission-gate` job tokens; other jobs and workflow-wide permissions do not need an increase. Both PRs belong to the same root Task.
+3. **Copy the new check to every runner, keeping the old one.** On each runner, first keep the installed `clued-runner-job-started.mjs` for rollback (for example as `clued-runner-job-started.mjs.prev` in the same directory), then copy only `clued-runner-job-started.mjs` from the merged `main` commit over the installed copy (the directory of Install step 2 below). The wrappers (`.sh`, `.ps1`), the App key and the `.env` lines stay as they are. The runner starts the script afresh for every job, so no restart is needed.
+4. **Confirm the version on each runner.** Every `ALLOW` / `REFUSE` line ends with `[hook <version>]`. Find `[hook merge-admission-step2-pr-read]` in a "Set up runner" log of a job on each runner; the runner heartbeat (`clued-ci-runner-heartbeat`, every 15 minutes on `main`) shows it in each runner's "Set up runner" section.
+5. **Verify one live re-run of a new pull request run that includes the corrected workflow permissions.** Select a run created by a new PR event on the current head after the added job permission is present, for example after actually merging the corrected `main` into the PR branch and pushing that merge. Do not create an empty commit just to get a new run. After that head's admission is green, use "Re-run all jobs" within its allowed attempts, and check both the hook's pull request read and the gate's read. Re-running an older run replays its original workflow and job permissions even when the gate checks out newer code. The failed PR #630 design-refs run 37761411890 attempt 2 is spent; do not use its attempt 3 for this verification.
+
+The original `merge-admission-step2` rollout required all runners to be updated before releasing agent contract v39. This permission correction uses the already released v39 contract.
 
 **Rollback:** put the kept old copy back over `clued-runner-job-started.mjs` on each runner (no restart needed), and confirm its older `[hook ...]` version in a "Set up runner" log.
 
-A runner not yet updated refuses every re-run of a pull request run. That is safe; fall back to closing and reopening the pull request.
+An installed hook older than `merge-admission-step2` refuses every pull request re-run; that explicit old-hook exception may use one close and reopen. The original `merge-admission-step2` hook instead needs the App permission and corrected token request above when its pull request read returns 403. Keep "Re-run all jobs" as the normal v39 path after qualification.
 
-**Runs from before the merge.** A pull request run whose event predates the step-2 merge runs the old gate on re-run: the gate checks out the event's `base.sha`, which is the `main` of that event. It refuses with "re-runs are not admitted". Merge `main` into the branch and push (a new event on the new `main`), or close and reopen the pull request once.
+**Runs from before the merge.** A re-run uses its original event's workflow files, job permissions and `base.sha`; checking out newer gate code does not raise its `GITHUB_TOKEN` permissions. A run from before the original step-2 merge can explicitly refuse with "re-runs are not admitted": merge `main` into the branch and push the real change, or use the one-close-and-reopen exception for that old gate. For this PR-read permission correction, follow Updating step 5 and verify a new current-head PR run whose workflow includes the added permission; an older run cannot validate the corrected gate permissions.
 
-**Not verified until the first live re-run.** Two things the re-run path needs have only been tested against fixtures:
+**Live re-run qualification.** The first live re-run on 2026-10-08 ([PR #630, design-refs run 37761411890, attempt 2](https://github.com/tdoljyj/cross-memory-system/actions/runs/37761411890/attempts/2)) was refused at "Set up runner": the hook's `GET /repos/{owner}/{repo}/pulls/{n}` returned 403. The gate and its dependent jobs did not run. That attempt is spent.
 
-- `GET /repos/{owner}/{repo}/pulls/{n}` with the hook App's installation token, which holds Actions: read and Contents: read only;
-- `GITHUB_JOB` being present in the hook's environment (the hook tells the `admission-gate` job from the others by it).
+The hook App and the single-repository token it mints now require Actions: read, Contents: read and Pull requests: read. Each workflow's `admission-gate` job needs the matching `pull-requests: read` permission for its `GITHUB_TOKEN`, because the gate independently checks the pull request's current head.
 
-If either fails, the hook refuses the re-run (safe): a failed pull request read refuses with "cannot read the pull request", and without `GITHUB_JOB` the gate job is taken for a heavy job and waits for itself until it is refused. The fix for the first is to add Pull requests: read to the hook App (and to the token it mints), which is an Owner change to the App and to the hook's token request.
+The corrected permission path and `GITHUB_JOB` being present in the hook environment still require a successful live re-run. Without `GITHUB_JOB`, the hook takes the gate for a heavy job and waits for itself until refusal. A failed pull request read continues to refuse with "cannot read the pull request"; fixtures or a skipped gate do not prove live qualification.
 
 ## Install (once per runner machine, by the Owner)
 
 1. **Create the hook's read-only GitHub App** (once, shared by all runners; Owner Decision `d8bc893c`).
-   - In the Owner account: Settings → Developer settings → GitHub Apps → New GitHub App. Turn the webhook off. Repository permissions: Actions: read and Contents: read, nothing else (Metadata: read comes with them). Let it be installed on this account only.
+   - In the Owner account: Settings → Developer settings → GitHub Apps → New GitHub App. Turn the webhook off. Repository permissions: Actions: read, Contents: read and Pull requests: read, nothing else (Metadata: read comes with them). Let it be installed on this account only.
    - Install it on this repository only (Only select repositories). Note the App ID, then generate a private key (a `.pem` file).
    - The hook calls GitHub as this App, on the App's own rate limit. It must not share a limit with the Owner's account: on 2026-10-07 an Agent's script spent the Owner's hourly limit, which the hook's personal token shared, and every pull request job was refused.
    - Never use the clued-admission App here. It posts the admission checks, and every job can read the key on a runner; the hook refuses its App id. Do not use a second account's token either: a collaborator on a personal repository can always push.
@@ -96,7 +98,7 @@ If either fails, the hook refuses the re-run (safe): a failed pull request read 
    On Windows, the hook line points to `C:\ProgramData\CluedRunnerHook\clued-runner-job-started.ps1`, the node line points to `externals\node20\bin\node.exe`, and the key line to `C:\ProgramData\CluedRunnerHook\app.pem`.
 
    A runner installed before the App reads a token file instead (`CLUED_RUNNER_HOOK_TOKEN_FILE`). The hook uses it only when no App is configured. When moving a runner to the App, replace that line with the two App lines, then delete the token file and revoke the token.
-4. **Check the output.** Watch one pull request run and one push to `main`. Each job log starts with a "Set up runner" section that shows `clued-runner-hook: ALLOW ...` or `WOULD REFUSE ...`, ending with the hook's version (`[hook merge-admission-step2]`).
+4. **Check the output.** Watch one pull request run and one push to `main`. Each job log starts with a "Set up runner" section that shows `clued-runner-hook: ALLOW ...` or `WOULD REFUSE ...`, ending with the hook's version (`[hook merge-admission-step2-pr-read]`).
 5. **Turn on enforcement.** Set `CLUED_RUNNER_HOOK_ENFORCE=true` and restart the runner.
 6. **Make the setting unreachable from jobs.** Every job runs as the runner's service account, including the ungated short checks that run a pull request's own code. On a standard install that account owns the runner directory and its `.env`, so a job can delete the hook line or set `CLUED_RUNNER_HOOK_ENFORCE=false`, and the next listener restart (a self-update, a service restart, a reboot) turns the check off for every later job (re-review 7, MAJOR-4). Do one of the following:
    - **Ephemeral runners (the only hard guarantee).** Register each runner with `--ephemeral` (or a just-in-time config) on a machine or VM that is reset after one job. A job then cannot leave anything behind for the next one.
@@ -105,7 +107,7 @@ If either fails, the hook refuses the re-run (safe): a failed pull request read 
      - Windows: put the settings in the service's `Environment` value under `HKLM\SYSTEM\CurrentControlSet\Services\<runner service>` (administrators only). Give the service account Read on the runner folder except `_work` and `_diag`, and configure the runner with `--disableupdate`.
    - Either way, check after a restart that `clued-runner-hook: ALLOW ...` still appears in a job's "Set up runner" section.
 
-   The App key stays readable by jobs: the check runs as the same account. With it a job can mint only what the App holds, read access (Actions and Contents) to this repository, which the job's own `GITHUB_TOKEN` can already read. A job could also spend the App's rate limit, which would refuse later jobs until it resets; it cannot spend the Owner account's.
+   The App key stays readable by jobs: the check runs as the same account. With it a job can mint only what the App holds, read access (Actions, Contents and Pull requests) to this repository. The gate's own `GITHUB_TOKEN` has the corresponding read permissions. A job could also spend the App's rate limit, which would refuse later jobs until it resets; it cannot spend the Owner account's.
 
 ## What it does not protect
 

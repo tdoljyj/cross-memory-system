@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { contentIdentity } from "./resource-center-google-drive-modify-effect.mjs";
 import { DESTRUCTIVE_PROOF_CONTRACTS, destructiveProviderBefore, destructiveShape } from "./resource-center-google-drive-destructive-effect.mjs";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
+import { ancestorChain, walkAncestorChain } from "./resource-center-google-drive-ancestors.mjs";
 
 const FOLDER = "application/vnd.google-apps.folder";
 const normalized = (value) => bindResourceCenterMutation({ destination_path: value }).destination_path;
@@ -60,7 +61,11 @@ export function createGoogleDriveDestructivePostconditionVerifier({
     const parts = shape.final_parent_path === root ? [] : shape.final_parent_path.slice(root.length + 1).split("/");
     // The chain to the expected folder is the same: root ID under its pinned
     // parent, each folder by name and parent, the recorded folder ID.
+    // Step 3: an identity that names its ancestors is walked by their Drive IDs.
+    const chain = ancestorChain(before, { root, root_folder_id: rootId, root_parent_id: rootParentId }, shape.final_parent_path);
+    if (chain && chain.at(-1).id !== expectedParent) fail("DRIVE_POSTCONDITION_REQUEST_MISMATCH");
     async function parentIdentity() {
+      if (chain) return walkAncestorChain(chain, getFile);
       let node = await getFile(rootId);
       folderCheck(node, rootId, root.slice(root.lastIndexOf("/") + 1), rootParentId);
       for (const part of parts) {
