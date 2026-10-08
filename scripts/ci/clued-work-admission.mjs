@@ -316,6 +316,9 @@ export const GATE_JOB_SHA256 = new Set([
   // runs on the self-hosted Linux pool with a pinned Node, so it spends no
   // hosted minutes. The hosted variant (62f231ef…) is no longer accepted.
   "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4",
+  // Task fb97ebd5: the same gate with Pull requests: read for private-PR
+  // re-runs. Register this exact version before updating the workflows.
+  "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 
